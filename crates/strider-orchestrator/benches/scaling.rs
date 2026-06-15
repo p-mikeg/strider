@@ -15,15 +15,15 @@
 )]
 
 use std::hint::black_box;
-use strider_ir::IRViewer;
 use std::path::PathBuf;
+use strider_ir::IRViewer;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use object::{Object, ObjectSymbol};
 
-use strider_ir::node::{ValueKind, ValueType};
 use strider_ir::IRBuilderExt;
-use strider_ir::{IntBinaryOp};
+use strider_ir::IntBinaryOp;
+use strider_ir::node::{ValueKind, ValueType};
 use strider_ir_test_utils::{RegisterSet, stack_vn_aarch64};
 use strider_orchestrator::opt::{
     ConstantFold, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse,
@@ -113,10 +113,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     let cfg = ana
         .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_opts)
         .expect("Cfg build");
-    let mut function = ana
-        .build_ir(&cfg, &cc)
-        .expect("build_ir")
-        .function;
+    let mut function = ana.build_ir(&cfg, &cc).expect("build_ir").function;
     let rom_for_opt =
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let p = strider_orchestrator::opt::default_pipeline();
@@ -394,7 +391,11 @@ fn bench_stack_store_chain(c: &mut Criterion) {
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
                     let pass = LoadForward;
-                    let _ = strider_orchestrator::opt::run_one(&pass, &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None));
+                    let _ = strider_orchestrator::opt::run_one(
+                        &pass,
+                        &mut fg,
+                        &mut strider_orchestrator::opt::OptCtx::new(None),
+                    );
                     black_box(fg);
                 },
                 BatchSize::LargeInput,
@@ -449,7 +450,9 @@ fn bench_find_joined_shared_capture(c: &mut Criterion) {
             bnch.iter(|| {
                 let m = Matcher::try_new(&fg).expect("bench fixture is built");
                 let pat_refs: Vec<&strider_pattern::Pattern> = vec![&pat1, &pat2];
-                let result = m.find_joined(&pat_refs).expect("bench patterns are single-rooted");
+                let result = m
+                    .find_joined(&pat_refs)
+                    .expect("bench patterns are single-rooted");
                 black_box(result);
             });
         });

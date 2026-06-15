@@ -97,7 +97,9 @@ impl NodeCache {
         // `u64::MAX` sentinel is remapped here, INSIDE the mechanism — the
         // policy's `hash` knows nothing about it.
         let h = Self::avoid_sentinel(C::hash(&kind, &inputs, &outputs));
-        if let Some(&cand) = self.table.find(h, |&cand| C::eq(store, cand, &kind, &inputs, &outputs))
+        if let Some(&cand) = self
+            .table
+            .find(h, |&cand| C::eq(store, cand, &kind, &inputs, &outputs))
         {
             return cand;
         }
@@ -112,6 +114,61 @@ impl NodeCache {
             .insert_unique(h, node, |&existing| self.node_hashes[existing]);
         self.node_hashes[node] = h;
         node
+    }
+
+    /// Re-canonicalize an EXISTING node whose inputs may have changed — the
+    /// dual of [`get_or_alloc`](Self::get_or_alloc) for a node already in the
+    /// store.
+    ///
+    /// Returns `Some(twin)` if a structurally-equal OTHER cacheable node is
+    /// already cached (the caller merges `node` into `twin`). Returns `None` if
+    /// the node is not cacheable, or if no twin exists — in which case `node` is
+    /// (re-)inserted as its own canonical representative. Touches no edges; the
+    /// merge itself is the caller's job.
+    pub(crate) fn canonicalize<N, V, C: NodeCacheable<N, V>>(
+        &mut self,
+        store: &RawStore<N, V>,
+        node: NodeId,
+    ) -> Option<NodeId>
+    where
+        V: Clone,
+    {
+        let kind = store.kind_of(node);
+        if !C::should_cache(kind) {
+            return None;
+        }
+        let inputs = store.input_values(node);
+        let outputs = store.output_kinds(node);
+        let h = Self::avoid_sentinel(C::hash(kind, &inputs, &outputs));
+        // Probe for a structurally-equal OTHER node (exclude `node` itself).
+        if let Some(&twin) = self.table.find(h, |&cand| {
+            cand != node && C::eq(store, cand, kind, &inputs, &outputs)
+        }) {
+            return Some(twin);
+        }
+        // No twin: ensure `node` is its own canonical entry. It was evicted when
+        // its inputs changed (hash == HASH_NONE), so (re-)insert it now.
+        //
+        // If the node is still present (hash != HASH_NONE), every structural
+        // mutation verb must have invalidated it first, which drives the stored
+        // hash to HASH_NONE — so the only way to reach here with a stored hash is
+        // for that hash to still equal the freshly-recomputed `h` (i.e. the
+        // structure is unchanged from when it was last cached). A future verb
+        // that mutates inputs without invalidating would land here with a STALE
+        // stored hash != h, mislocate the node, and only blow up later in
+        // `invalidate`'s `expect`. This debug-assert turns that silent
+        // invariant breach into a loud, immediate dev/test failure.
+        debug_assert!(
+            self.node_hashes[node] == HASH_NONE || self.node_hashes[node] == h,
+            "canonicalize: node {node:?} has a stale stored hash \
+             (a mutation verb changed its structure without invalidating)"
+        );
+        if self.node_hashes[node] == HASH_NONE {
+            self.table
+                .insert_unique(h, node, |&existing| self.node_hashes[existing]);
+            self.node_hashes[node] = h;
+        }
+        None
     }
 
     /// Drops the dedup entry for a node whose input/output structure is about
@@ -163,12 +220,20 @@ impl NodeCache {
                 &store.input_values(node),
                 &store.output_kinds(node),
             ));
-            // Structurally-distinct nodes that share a hash coexist: the bucket
-            // holds each one and lookup re-reads for equality. (An owned-key map
-            // using `or_insert` would silently drop a colliding distinct key;
-            // this is strictly more correct, and identical for structurally-
-            // equal nodes — reachable duplicates are already deduped, so no real
-            // collision survives into here.)
+            // Every cacheable survivor is inserted unconditionally — `rebuild`
+            // does NOT enforce "at most one node per structural key". Two kinds
+            // of multi-occupancy are possible and both are sound:
+            //   * hash collision between structurally-DISTINCT nodes — the bucket
+            //     holds each, and lookup re-reads structure for equality (an
+            //     owned-key map using `or_insert` would silently drop a colliding
+            //     distinct key; re-reading is strictly more correct);
+            //   * structurally-EQUAL twins — a rewrite that rewires a live node's
+            //     inputs can transiently turn it into a twin of an existing node
+            //     (the consumer is re-canonicalized at the next `clean()` drain,
+            //     but until then both live in the bucket). A lookup resolves to
+            //     whichever the walk hits first, which is semantically identical
+            //     since twins compute the same value. So single-key-uniqueness is
+            //     NOT an invariant of the table itself.
             self.table
                 .insert_unique(hash, node, |&existing| self.node_hashes[existing]);
             self.node_hashes[node] = hash;

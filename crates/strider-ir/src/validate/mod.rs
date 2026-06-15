@@ -1,7 +1,8 @@
 //! Whole-graph validator for the IR.
 //!
-//! The validator walks a built [`crate::graph::Graph`] starting from an entry [`NodeId`] and
-//! checks structural invariants across three groups:
+//! The validator walks a built [`crate::graph::Graph`] starting from the
+//! function's own entry node and checks structural invariants across three
+//! groups:
 //!   - **Local typing** (`local_typing`): per-node input/output kind checks
 //!     against `node_signature::expected_signature` (reachability-scoped).
 //!   - **Use-list consistency** (`use_list_consistency`): bidirectional
@@ -23,34 +24,37 @@
 //! aggregates every [`ValidationError`] it found during a single pass, so
 //! callers can see all problems at once rather than only the first.
 
+use crate::IRViewer;
 use crate::function::Function;
 use crate::node::{NodeId, UseId, ValueId, ValueKind, ValueType};
-use crate::IRViewer;
 use crate::node_signature::ExpectedValueKind;
 use crate::walk::NodeIdSet;
 
 mod graph_invariants;
 mod local_typing;
-mod use_list_consistency;
 #[cfg(test)]
 mod tests;
+mod use_list_consistency;
 
 use graph_invariants::{
     check_graph_invariants_asm_fingerprints, check_graph_invariants_cc_arity,
     check_graph_invariants_memory_chain, check_graph_invariants_phis,
-    check_graph_invariants_region, check_graph_invariants_uniqueness,
-    check_graph_invariants_wide_consts,
+    check_graph_invariants_region, check_graph_invariants_side_indices,
+    check_graph_invariants_uniqueness, check_graph_invariants_wide_consts,
 };
 use local_typing::check_local_typing;
 use use_list_consistency::check_use_list_consistency;
 
-/// Validates the structural invariants of `function` starting from `entry`.
+/// Validates the structural invariants of `function`, starting the walk from
+/// the function's own entry node.
 ///
 /// Returns `Ok(())` if every checked invariant holds, or a
-/// [`ValidationErrors`] bundle describing every violation otherwise.
+/// [`ValidationErrors`] bundle describing every violation otherwise. If the
+/// function has not been built (no entry node), returns a bundle containing a
+/// single [`ValidationError::NoEntry`].
 ///
 /// Local per-node checks (`check_local_typing`) are scoped to nodes
-/// reachable from `entry` so that detached zombie nodes left behind by
+/// reachable from the entry so that detached zombie nodes left behind by
 /// optimization passes (e.g. orphaned dead-branch residue) do not trigger
 /// false positives.  Use-list consistency and graph-invariants
 /// checks iterate all nodes but are naturally tolerant of detached nodes:
@@ -64,7 +68,10 @@ use use_list_consistency::check_use_list_consistency;
 /// use-list, and graph-invariants violation found in `function`. Validation
 /// does not fail fast — every check runs to completion so the caller sees
 /// the full set of problems at once.
-pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErrors> {
+pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
+    let Some(entry) = function.entry() else {
+        return Err(ValidationErrors(vec![ValidationError::NoEntry]));
+    };
     // Drive the walk to completion and reuse its internal DenseEntitySet
     // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
     // and one extra allocation per validate call.
@@ -86,6 +93,7 @@ pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErro
     check_graph_invariants_cc_arity(function, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_graph_invariants_memory_chain(function, &reachable, &mut errs);
+    check_graph_invariants_side_indices(function, &reachable, &mut errs);
 
     if errs.is_empty() {
         Ok(())
@@ -126,6 +134,9 @@ pub struct ValidationErrors(pub Vec<ValidationError>);
 /// An individual IR validation failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
+    #[error("function has no entry node (not built)")]
+    NoEntry,
+
     #[error("node {node:?} has {actual} inputs, expected {expected}")]
     NodeInputCountMismatch {
         node: NodeId,
@@ -170,10 +181,7 @@ pub enum ValidationError {
         "output {value:?}'s use-list contains input {listed_use:?} \
          that no longer references this output"
     )]
-    UseListContainsStaleInput {
-        value: ValueId,
-        listed_use: UseId,
-    },
+    UseListContainsStaleInput { value: ValueId, listed_use: UseId },
 
     #[error("multiple Entry nodes: {first:?} and {second:?}")]
     MultipleEntryNodes { first: NodeId, second: NodeId },
@@ -282,6 +290,29 @@ pub enum ValidationError {
     OrphanedMemoryOutput {
         node: NodeId,
         kind: crate::node::NodeKind,
+    },
+
+    #[error(
+        "initial_var_index entry for varnode {vn:?} points at reachable node \
+         {node:?} (kind {actual_kind:?}); expected an InitialVar({vn:?}) node — \
+         the index has drifted from the live graph"
+    )]
+    StaleInitialVarIndex {
+        node: NodeId,
+        vn: rsleigh::Vn,
+        actual_kind: crate::node::NodeKind,
+    },
+
+    #[error(
+        "value_vn entry tags value {value:?} (varnode {vn:?}) whose reachable \
+         producer {producer:?} has kind {producer_kind:?}; only Phi / Call / \
+         CallOther outputs carry a value_vn tag"
+    )]
+    StaleValueVn {
+        value: ValueId,
+        vn: rsleigh::Vn,
+        producer: NodeId,
+        producer_kind: crate::node::NodeKind,
     },
 }
 

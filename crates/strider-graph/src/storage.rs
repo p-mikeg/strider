@@ -101,6 +101,7 @@ impl<N> Node<N> {
 /// backing the per-node slot lists. This is the SINGLE place that mutates the
 /// arenas; the graph's structural verbs and the caching policy both go through
 /// these primitives.
+#[derive(Clone)]
 pub struct RawStore<N, V> {
     /// Dense map from [`NodeId`] to [`Node`] metadata.
     pub(crate) nodes: PrimaryMap<NodeId, Node<N>>,
@@ -158,10 +159,10 @@ impl<N, V> RawStore<N, V> {
         }
 
         // Allocate one output value per output payload.
-        let output_values = outputs
-            .into_iter()
-            .enumerate()
-            .map(|(index, kind)| self.outputs.push(ValueData::new(kind, node_id, index as u32)));
+        let output_values = outputs.into_iter().enumerate().map(|(index, kind)| {
+            self.outputs
+                .push(ValueData::new(kind, node_id, index as u32))
+        });
 
         self.nodes[node_id].inputs = UseIdList::from_iter(input_uses, &mut self.input_pool);
         self.nodes[node_id].outputs = ValueIdList::from_iter(output_values, &mut self.output_pool);
@@ -207,12 +208,6 @@ impl<N, V> RawStore<N, V> {
     }
 
     // ── raw read accessors ──────────────────────────────────────────────────
-
-    /// Returns a reference to the payload of `node_id`.
-    #[inline]
-    pub(crate) fn node_kind(&self, node_id: NodeId) -> &N {
-        &self.nodes[node_id].kind
-    }
 
     /// Returns a mutable reference to the payload of `node_id`. Mutating the
     /// payload leaves the input/output slot lists (and so the use-lists)

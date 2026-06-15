@@ -98,7 +98,11 @@ mod tests {
     /// Mirrors the local `empty_builder` helper in `builder/tests.rs`:
     /// no registered variables, no stamped lift address.
     fn empty_builder() -> crate::error::Result<FunctionBuilder> {
-        FunctionBuilder::new(vec![], &strider_target::BuiltCallingConvention::default(), strider_target::Endianness::Little)
+        FunctionBuilder::new(
+            vec![],
+            &strider_target::BuiltCallingConvention::default(),
+            strider_target::Endianness::Little,
+        )
     }
 
     #[test]
@@ -114,6 +118,9 @@ mod tests {
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
-        assert!(matches!(IRViewer::function(&b).node_kind(n), NodeKind::IntConst(IntPayload::Small(3))));
+        assert!(matches!(
+            IRViewer::function(&b).node_kind(n),
+            NodeKind::IntConst(IntPayload::Small(3))
+        ));
     }
 }

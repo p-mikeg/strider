@@ -4,16 +4,12 @@
 use super::*;
 use crate::IRViewer;
 use crate::function::Function;
-use crate::node::{NodeId, IntPayload, NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::{IntPayload, NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
 #[track_caller]
-fn check_node_inputs(
-    graph: &Graph,
-    node_id: NodeId,
-    expected: impl IntoIterator<Item = ValueId>,
-) {
+fn check_node_inputs(graph: &Graph, node_id: NodeId, expected: impl IntoIterator<Item = ValueId>) {
     let expected: Vec<_> = expected.into_iter().collect();
     let actual: Vec<_> = graph.node_inputs(node_id).into_iter().collect();
     assert_eq!(actual, expected);
@@ -59,7 +55,10 @@ fn create_single_node() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    assert_eq!(function.node_kind(node_id), &NodeKind::IntConst(IntPayload::Small(5)));
+    assert_eq!(
+        function.node_kind(node_id),
+        &NodeKind::IntConst(IntPayload::Small(5))
+    );
     assert_eq!(function.graph().all_node_ids().count(), 1);
     check_node_inputs(function.graph(), node_id, []);
     check_node_output_kinds(
@@ -237,12 +236,21 @@ fn non_cacheable_node_is_never_deduplicated() {
 #[test]
 fn region_nodes_never_dedup() {
     let mut function = Function::default();
-    let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let entry = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let [entry_ctrl] = function.node_outputs_exact::<1>(entry).unwrap();
     let outs = [ValueKind::Control, ValueKind::PhiToken];
-    let r1 = function.graph_mut().create_node(NodeKind::Region, [entry_ctrl], outs);
-    let r2 = function.graph_mut().create_node(NodeKind::Region, [entry_ctrl], outs);
-    assert_ne!(r1, r2, "identical Regions must stay distinct (non-cacheable)");
+    let r1 = function
+        .graph_mut()
+        .create_node(NodeKind::Region, [entry_ctrl], outs);
+    let r2 = function
+        .graph_mut()
+        .create_node(NodeKind::Region, [entry_ctrl], outs);
+    assert_ne!(
+        r1, r2,
+        "identical Regions must stay distinct (non-cacheable)"
+    );
 }
 
 /// Two structurally identical `Phi` nodes must get distinct ids — Phi is
@@ -251,7 +259,9 @@ fn region_nodes_never_dedup() {
 #[test]
 fn phi_nodes_never_dedup() {
     let mut function = Function::default();
-    let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let entry = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let [entry_ctrl] = function.node_outputs_exact::<1>(entry).unwrap();
     let region = function.graph_mut().create_node(
         NodeKind::Region,
@@ -266,8 +276,12 @@ fn phi_nodes_never_dedup() {
     );
     let [c_value] = function.node_outputs_exact::<1>(c).unwrap();
     let ty = ValueKind::Typed(ValueType::I64);
-    let p1 = function.graph_mut().create_node(NodeKind::Phi, [phi_token, c_value], [ty]);
-    let p2 = function.graph_mut().create_node(NodeKind::Phi, [phi_token, c_value], [ty]);
+    let p1 = function
+        .graph_mut()
+        .create_node(NodeKind::Phi, [phi_token, c_value], [ty]);
+    let p2 = function
+        .graph_mut()
+        .create_node(NodeKind::Phi, [phi_token, c_value], [ty]);
     assert_ne!(p1, p2, "identical Phis must stay distinct (non-cacheable)");
 }
 
@@ -276,8 +290,12 @@ fn phi_nodes_never_dedup() {
 #[test]
 fn entry_node_kind_dedupes_on_repeated_create() {
     let mut function = Function::default();
-    let e1 = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    let e2 = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let e1 = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let e2 = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     assert_eq!(e1, e2, "Entry must dedupe — only one per function");
 }
 
@@ -286,8 +304,12 @@ fn entry_node_kind_dedupes_on_repeated_create() {
 #[test]
 fn initial_memory_dedupes_on_repeated_create() {
     let mut function = Function::default();
-    let m1 = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let m2 = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let m1 = function
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let m2 = function
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     assert_eq!(m1, m2, "InitialMemory must dedupe — only one per function");
 }
 
@@ -308,11 +330,17 @@ fn initial_var_dedupes_per_vn() {
         size: 8,
     };
     let value_kind = ValueKind::Typed(ValueType::I64);
-    let v1 = function.graph_mut().create_node(NodeKind::InitialVar(vn_a), [], [value_kind]);
-    let v2 = function.graph_mut().create_node(NodeKind::InitialVar(vn_a), [], [value_kind]);
+    let v1 = function
+        .graph_mut()
+        .create_node(NodeKind::InitialVar(vn_a), [], [value_kind]);
+    let v2 = function
+        .graph_mut()
+        .create_node(NodeKind::InitialVar(vn_a), [], [value_kind]);
     assert_eq!(v1, v2, "InitialVar with the same Vn must dedupe");
 
-    let v3 = function.graph_mut().create_node(NodeKind::InitialVar(vn_b), [], [value_kind]);
+    let v3 = function
+        .graph_mut()
+        .create_node(NodeKind::InitialVar(vn_b), [], [value_kind]);
     assert_ne!(v1, v3, "InitialVar with a different Vn must NOT dedupe");
 }
 
@@ -322,8 +350,12 @@ fn initial_var_dedupes_per_vn() {
 #[test]
 fn adjacent_calls_with_same_args_are_distinct() {
     let mut function = Function::default();
-    let ctrl_a = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    let mem_a = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let ctrl_a = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem_a = function
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [ctrl_value] = function.node_outputs_exact::<1>(ctrl_a).unwrap();
     let [mem_value] = function.node_outputs_exact::<1>(mem_a).unwrap();
     let target = function.graph_mut().create_node(
@@ -333,8 +365,16 @@ fn adjacent_calls_with_same_args_are_distinct() {
     );
     let [target_value] = function.node_outputs_exact::<1>(target).unwrap();
     let outs = [ValueKind::Control, ValueKind::Memory];
-    let call_a = function.graph_mut().create_node(NodeKind::Call, [ctrl_value, mem_value, target_value], outs);
-    let call_b = function.graph_mut().create_node(NodeKind::Call, [ctrl_value, mem_value, target_value], outs);
+    let call_a = function.graph_mut().create_node(
+        NodeKind::Call,
+        [ctrl_value, mem_value, target_value],
+        outs,
+    );
+    let call_b = function.graph_mut().create_node(
+        NodeKind::Call,
+        [ctrl_value, mem_value, target_value],
+        outs,
+    );
     assert_ne!(
         call_a, call_b,
         "Call is non-cacheable so identical-argument calls must be distinct"
@@ -351,9 +391,14 @@ fn call_other_name_round_trip() {
     let outs = [ValueKind::Control, ValueKind::Memory];
     // We need a control + memory input to construct a CallOther; build a
     // throwaway Entry and InitialMemory.
-    let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let entry = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let [entry_ctrl] = function.node_outputs_exact::<1>(entry).unwrap();
-    let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let init_mem =
+        function
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [init_mem_value] = function.node_outputs_exact::<1>(init_mem).unwrap();
     let id_a = function.graph_mut().create_node(
         NodeKind::CallOther { user_op_id: 62 },
@@ -426,7 +471,10 @@ fn remove_node_input_cleans_up_use_list() {
     function.graph_mut().add_node_input(ret, out1);
 
     // Remove the first input (index 0 = out0)
-    assert!(function.graph_mut().remove_node_input(ret, 0), "removal must succeed");
+    assert!(
+        function.graph_mut().remove_node_input(ret, 0),
+        "removal must succeed"
+    );
 
     // Only out1 should remain
     check_node_inputs(function.graph(), ret, [out1]);
@@ -592,7 +640,10 @@ fn output_has_one_usage_tracks_consumer_count() {
     );
     let [value] = function.node_outputs_exact::<1>(c).unwrap();
 
-    assert!(!function.graph().value_has_one_use(value), "zero uses is not one");
+    assert!(
+        !function.graph().value_has_one_use(value),
+        "zero uses is not one"
+    );
 
     let ret1 = function.graph_mut().create_node(NodeKind::Return, [], []);
     function.graph_mut().add_node_input(ret1, value);
@@ -832,10 +883,17 @@ fn remove_node_input_from_middle_reindexes_remaining() {
     function.graph_mut().add_node_input(sink, out1); // index 1
     function.graph_mut().add_node_input(sink, out2); // index 2
 
-    assert!(function.graph_mut().remove_node_input(sink, 1), "removal must succeed"); // remove middle
+    assert!(
+        function.graph_mut().remove_node_input(sink, 1),
+        "removal must succeed"
+    ); // remove middle
 
     check_node_inputs(function.graph(), sink, [out0, out2]);
-    assert_eq!(function.graph().value_uses(out1).count(), 0, "out1 must be removed");
+    assert_eq!(
+        function.graph().value_uses(out1).count(),
+        0,
+        "out1 must be removed"
+    );
     assert_eq!(function.graph().value_uses(out0).count(), 1);
     assert_eq!(function.graph().value_uses(out2).count(), 1);
 
@@ -878,7 +936,10 @@ fn remove_node_input_from_end_leaves_others_intact() {
     function.graph_mut().add_node_input(sink, out0);
     function.graph_mut().add_node_input(sink, out1);
 
-    assert!(function.graph_mut().remove_node_input(sink, 1), "removal must succeed"); // remove last
+    assert!(
+        function.graph_mut().remove_node_input(sink, 1),
+        "removal must succeed"
+    ); // remove last
 
     check_node_inputs(function.graph(), sink, [out0]);
     assert_eq!(function.graph().value_uses(out1).count(), 0);
@@ -1132,8 +1193,11 @@ fn remove_node_input_returns_false_on_out_of_bounds() {
 #[test]
 fn node_input_id_at_returns_error_on_out_of_bounds() {
     let mut function = Function::default();
-    let n = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    let err = function.graph()
+    let n = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let err = function
+        .graph()
         .node_input_id_at(n, 0)
         .expect_err("Entry has no inputs");
     let msg = err.to_string();
@@ -1150,14 +1214,18 @@ fn node_input_id_at_returns_error_on_out_of_bounds() {
 #[test]
 fn asm_fingerprint_unset_returns_empty_slice() {
     let mut function = Function::default();
-    let n = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let n = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     assert_eq!(function.asm_fingerprint(n), &[] as &[u64]);
 }
 
 #[test]
 fn asm_fingerprint_extend_then_get() {
     let mut function = Function::default();
-    let n = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let n = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     function.extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
     assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
 }
@@ -1165,7 +1233,9 @@ fn asm_fingerprint_extend_then_get() {
 #[test]
 fn asm_fingerprint_extend_sorts_and_dedupes() {
     let mut function = Function::default();
-    let n = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let n = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     function.extend_asm_fingerprint(n, &[0x1004, 0x1000, 0x1004]);
     assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004]);
     // Extending with one new + two duplicates yields a sorted, deduplicated set.
@@ -1176,8 +1246,12 @@ fn asm_fingerprint_extend_sorts_and_dedupes() {
 #[test]
 fn asm_fingerprint_extend_from_unions_two_nodes() {
     let mut function = Function::default();
-    let a = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    let b = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let a = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let b = function
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     function.extend_asm_fingerprint(a, &[0x1000, 0x1004]);
     function.extend_asm_fingerprint(b, &[0x1004, 0x100C]);
     function.extend_asm_fingerprint_from(a, b);
@@ -1189,7 +1263,9 @@ fn asm_fingerprint_extend_from_unions_two_nodes() {
 #[test]
 fn asm_fingerprint_extend_never_shrinks() {
     let mut function = Function::default();
-    let n = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let n = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     function.extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
     // Extending with a strict subset must NOT remove any existing entries.
     function.extend_asm_fingerprint(n, &[0x1004]);
@@ -1202,7 +1278,9 @@ fn asm_fingerprint_extend_never_shrinks() {
 #[test]
 fn asm_fingerprint_extend_from_self_is_noop() {
     let mut function = Function::default();
-    let n = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let n = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     function.extend_asm_fingerprint(n, &[0x1000, 0x1004]);
     function.extend_asm_fingerprint_from(n, n);
     assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004]);
@@ -1239,10 +1317,7 @@ fn call_cc_round_trips_and_derives_stack_args() {
     function.set_call_cc(nid, cc.clone());
     assert!(function.call_cc(nid).is_some());
     // The stack-arg accessor derives from the stored CC.
-    assert_eq!(
-        function.call_stack_args_override(nid),
-        cc.stack_args,
-    );
+    assert_eq!(function.call_stack_args_override(nid), cc.stack_args,);
 }
 
 #[test]
@@ -1251,7 +1326,11 @@ fn value_vn_clobber_tag_round_trips() {
     let nid = function.graph_mut().create_node(
         NodeKind::Call,
         [],
-        [ValueKind::Control, ValueKind::Memory, ValueKind::Typed(ValueType::I64)],
+        [
+            ValueKind::Control,
+            ValueKind::Memory,
+            ValueKind::Typed(ValueType::I64),
+        ],
     );
     // The clobber output value is slot 2.
     let clobber_value = function.node_outputs(nid)[2];
@@ -1287,4 +1366,3 @@ fn asm_fingerprint_dedup_cache_hit_unions_via_extend() {
     function.extend_asm_fingerprint(b, &[0x3000]);
     assert_eq!(function.asm_fingerprint(a), &[0x2000, 0x3000]);
 }
-

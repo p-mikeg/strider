@@ -38,9 +38,8 @@
 //! (see the crate-internal `indirect_branch_resolve` module); it is not
 //! a pipeline pass.
 
-mod options;
 pub mod error;
-pub(crate) mod memory_ssa;
+mod options;
 pub(crate) mod peephole;
 mod pipeline;
 pub mod rewrite_rule;
@@ -50,65 +49,49 @@ pub mod rewrite_rule;
 // become nameable downstream; the alias-classification internals (including
 // `SpDecomposer`) stay `pub(crate)`.
 pub mod sp_expr;
-pub use options::{AliasMode, FunctionArgsOptions, OptOptions};
 pub use error::Result;
+pub use options::{AliasMode, FunctionArgsOptions, OptOptions};
 pub use rewrite_rule::{
     BoxedRule, apply_rules_count, apply_rules_in_order, rewrite_rule, rewrite_rule_runtime,
 };
 pub use strider_ir::{EditFunction, FunctionState};
-mod call_stack_args;
-mod cfg_detach;
-pub(crate) mod constant_fold;
-mod dead_branch;
-mod flag_cmp_canonicalize;
-mod function_args;
-mod if_cond_inversion;
-pub mod indirect_branch_resolve;
-mod known_bits;
-pub(crate) mod load_forward;
-mod load_readonly;
-mod phi_collapse;
-mod region_collapse;
-mod stack_offset_detect;
+
+/// In-loop optimization passes (graph→graph transforms run in the fixed-point
+/// loop).
+mod opt;
+/// Converged-graph post-passes (run once after the loop).
+mod post_opt;
 #[cfg(test)]
 mod test_support;
 pub mod value_range;
 
-pub use call_stack_args::CallStackArgCollect;
-pub use cfg_detach::CfgDetach;
-pub use constant_fold::ConstantFold;
-pub use dead_branch::DeadBranchElimination;
-pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
-pub use function_args::FunctionArgDetect;
-pub use if_cond_inversion::IfCondInversion;
-pub use indirect_branch_resolve::{
-    IndirectBranchClassify, classify_anchor, classify_table_dispatch,
-};
-pub use known_bits::{KnownBits, analyze as analyze_known_bits};
+// `indirect_branch_resolve` keeps a public module path (downstream reaches its
+// classifiers); the rest of the passes surface only through their re-exported
+// pass types below.
+pub use post_opt::indirect_branch_resolve;
+
+pub use opt::cfg_detach::CfgDetach;
+pub use opt::constant_fold::ConstantFold;
+pub use opt::dead_branch::DeadBranchElimination;
+pub use opt::flag_cmp_canonicalize::FlagCmpCanonicalize;
+pub use opt::if_cond_inversion::IfCondInversion;
 #[cfg(test)]
-pub(crate) use known_bits::KnownBitsMap;
-pub use load_forward::LoadForward;
-pub use load_readonly::LoadReadOnly;
-pub use phi_collapse::PhiCollapse;
+pub(crate) use opt::known_bits::KnownBitsMap;
+pub use opt::known_bits::{KnownBits, analyze as analyze_known_bits};
+pub use opt::load_forward::LoadForward;
+pub use opt::load_readonly::LoadReadOnly;
+pub use opt::phi_collapse::PhiCollapse;
+pub use opt::region_collapse::RegionCollapse;
 pub use pipeline::{
     OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, PostOptimizer, run_one, run_post,
 };
-pub use region_collapse::RegionCollapse;
-pub use stack_offset_detect::StackOffsetDetect;
+pub use post_opt::call_stack_args::CallStackArgCollect;
+pub use post_opt::function_args::FunctionArgDetect;
+pub use post_opt::indirect_branch_resolve::{
+    IndirectBranchClassify, classify_anchor, classify_table_dispatch,
+};
+pub use post_opt::stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;
-
-/// Returns the first consumer of `value` whose node kind satisfies `pred`,
-/// scanning the value's use-list in order, or `None` when none matches.
-pub(crate) fn first_consumer_of_kind(
-    graph: &strider_ir::Graph,
-    value: strider_ir::node::ValueId,
-    pred: impl Fn(&strider_ir::node::NodeKind) -> bool,
-) -> Option<strider_ir::node::NodeId> {
-    graph
-        .value_uses(value)
-        .map(|(consumer, _slot)| consumer)
-        .find(|&consumer| pred(graph.node_kind(consumer)))
-}
 
 /// Builds the default optimizer pipeline containing all built-in passes.
 ///
@@ -164,6 +147,10 @@ pub fn default_pipeline() -> OptimizerPipeline {
     p.add(IfCondInversion::new());
     p.add(PhiCollapse);
     p.add(RegionCollapse);
+    // (Structural twins a rewrite leaves behind — e.g. `PhiCollapse` redirecting
+    // two SSA phis to the same value, leaving two identical `Truncate`/`Add`
+    // nodes — are now re-merged incrementally by `EditFunction::clean()`'s
+    // re-canonicalization at every pass boundary, so no dedup pass is needed.)
     p.add(DeadBranchElimination);
     p.add(CfgDetach);
     // SP-relative store→load forwarding runs in the fixed-point loop; it

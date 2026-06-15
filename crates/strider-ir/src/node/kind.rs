@@ -210,8 +210,7 @@ impl NodeKind {
     #[inline]
     pub fn is_const(self) -> bool {
         match self {
-            Self::IntConst(..)
-            | Self::FloatConst(..) => true,
+            Self::IntConst(..) | Self::FloatConst(..) => true,
 
             // Every other variant — explicitly named so adding a new
             // `NodeKind` is a compile error here.
@@ -426,7 +425,10 @@ impl NodeKind {
     #[inline]
     pub fn has_side_effects(&self) -> bool {
         self.has_control_flow()
-            || matches!(self, NodeKind::Store(_) | NodeKind::CPoolRef | NodeKind::New)
+            || matches!(
+                self,
+                NodeKind::Store(_) | NodeKind::CPoolRef | NodeKind::New
+            )
     }
 
     /// Returns `true` if this node kind is commutative under operand swap.

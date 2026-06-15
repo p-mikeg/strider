@@ -143,7 +143,11 @@ impl Bindings {
     /// Scans newest-first so a re-bound capture resolves to its most
     /// recent value.
     pub(crate) fn get_binding(&self, c: Capture) -> Option<Binding> {
-        self.entries.iter().rev().find(|(k, _)| *k == c).map(|(_, b)| *b)
+        self.entries
+            .iter()
+            .rev()
+            .find(|(k, _)| *k == c)
+            .map(|(_, b)| *b)
     }
 
     /// Convenience: returns the value `ValueId` bound to `c`, or
@@ -464,8 +468,8 @@ mod tests {
 
     #[test]
     fn unbound_capture_yields_none_for_every_typed_extractor() {
-        let function = make_empty_fn(|b| b.build_int_const(0u64, ValueType::I64))
-            .expect("build graph");
+        let function =
+            make_empty_fn(|b| b.build_int_const(0u64, ValueType::I64)).expect("build graph");
         let bindings = Bindings::default();
         let v = Capture::new();
         assert_eq!(bindings.get(v), None);
@@ -494,8 +498,8 @@ mod tests {
     /// stale entry).
     #[test]
     fn restore_drops_tail_and_allows_rebind() {
-        let function = make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64))
-            .expect("build graph");
+        let function =
+            make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).expect("build graph");
         let n = function
             .walk()
             .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
@@ -534,8 +538,8 @@ mod tests {
     /// no-op — truncating to the current length leaves the list intact.
     #[test]
     fn restore_to_current_mark_is_noop() {
-        let function = make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64))
-            .expect("build graph");
+        let function =
+            make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).expect("build graph");
         let n = function
             .walk()
             .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))

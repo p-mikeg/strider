@@ -71,10 +71,14 @@ impl ElfFileMemReader {
 impl rsleigh::MemReader for ElfFileMemReader {
     type Err = crate::MemReadError;
 
-    fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> std::result::Result<usize, Self::Err> {
-        self.lookup
-            .read(addr.off, out_buf)
-            .ok_or_else(|| crate::MemReadError(anyhow::anyhow!("address {:#x} is not mapped", addr.off)))
+    fn read(
+        &self,
+        addr: rsleigh::VnAddr,
+        out_buf: &mut [u8],
+    ) -> std::result::Result<usize, Self::Err> {
+        self.lookup.read(addr.off, out_buf).ok_or_else(|| {
+            crate::MemReadError(anyhow::anyhow!("address {:#x} is not mapped", addr.off))
+        })
     }
 }
 

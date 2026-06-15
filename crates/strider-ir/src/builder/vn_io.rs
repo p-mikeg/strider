@@ -13,11 +13,12 @@
 
 use anyhow::{anyhow, bail};
 
+use crate::Value;
 use crate::builder::IRBuilderExt;
 use crate::error::Result;
 use crate::node::ValueType;
+use crate::node::VnTypeExt;
 use crate::node::{ExtendOp, IntBinaryOp};
-use crate::Value;
 
 use super::FunctionBuilder;
 
@@ -78,10 +79,7 @@ impl FunctionBuilder {
     ///
     /// Returns an error if `reg` is not in a fixed-offset space (REGISTER
     /// or UNIQUE).
-    pub(crate) fn find_largest_fitting_register(
-        &self,
-        reg: &rsleigh::Vn,
-    ) -> Result<rsleigh::Vn> {
+    pub(crate) fn find_largest_fitting_register(&self, reg: &rsleigh::Vn) -> Result<rsleigh::Vn> {
         let space = reg.addr_space;
         if space != rsleigh::VnSpace::REGISTER && space != rsleigh::VnSpace::UNIQUE {
             bail!("unsupported varnode space {space:?}");
@@ -147,7 +145,7 @@ impl FunctionBuilder {
         // container width, which breaks downstream type-aware operations
         // (e.g. bitcasting a I64 read to F32 is ill-defined — the widths differ —
         // IntBitsToFloat and the optimizer ends up dropping the chain).
-        let reg_ty: ValueType = ValueType::int_for_byte_size(reg.size)?;
+        let reg_ty: ValueType = reg.int_type()?;
         let curr_reg_val = self.read_variable(&ctx.container_reg)?;
         let shifted = self.build_shift_by_const(
             curr_reg_val,
@@ -196,7 +194,7 @@ impl FunctionBuilder {
                 // type-homogeneous.  The flag→`If` flow stays correct: the
                 // cond-branch lifter narrows the register read back to `I1`,
                 // and ConstantFold collapses the extend/truncate round-trip.
-                let reg_ty: ValueType = ValueType::int_for_byte_size(reg.size)?;
+                let reg_ty: ValueType = reg.int_type()?;
                 let coerced = self.convert_to_int_if_needed(val, reg_ty)?;
                 return self.write_variable(reg, coerced);
             }
@@ -206,6 +204,19 @@ impl FunctionBuilder {
         let container_reg_val = self.read_variable(&ctx.container_reg)?;
         let reg_mask = vn_mask(reg)? << ctx.shift_bits;
         let container_mask = vn_mask(&ctx.container_reg)? & !reg_mask;
+
+        // Coerce `val` to the sub-register's integer width through the SAME
+        // prelude the direct-container arm uses (`convert_to_int_if_needed`):
+        // a 1-bit `I1` flag result is zero-extended to the sub-register width,
+        // and a non-integer `val` (e.g. a scalar-FP write into a SIMD slice)
+        // surfaces the identical "bitcast required first" error here rather
+        // than the divergent "cannot integer-extend non-integer" that
+        // `build_masked_insert`'s `extend_if_needed` would raise.  This makes
+        // both write paths accept exactly the same operand-type set.  The
+        // subsequent `build_masked_insert` zero-extends this reg-width value to
+        // the container width before positioning it.
+        let reg_ty: ValueType = reg.int_type()?;
+        let val = self.convert_to_int_if_needed(val, reg_ty)?;
 
         // SOUNDNESS: this sub-register write PRESERVES the bits outside
         // `reg`, and that is correct.  Some ISAs zero the upper bits of the
@@ -248,11 +259,7 @@ impl FunctionBuilder {
     /// defensive shift-bound check, both of which are correctness-critical.
     /// `op` is the caller's function name, used as a prefix in the shift-bound
     /// error so the failure points at the originating site.
-    fn enter_sub_register(
-        &self,
-        reg: &rsleigh::Vn,
-        op: &'static str,
-    ) -> Result<SubRegOutcome> {
+    fn enter_sub_register(&self, reg: &rsleigh::Vn, op: &'static str) -> Result<SubRegOutcome> {
         let container_reg = self.find_largest_fitting_register(reg)?;
         if container_reg == *reg {
             return Ok(SubRegOutcome::Direct { container_reg });
@@ -271,7 +278,7 @@ impl FunctionBuilder {
                 container_reg,
             ));
         }
-        let container_ty: ValueType = ValueType::int_for_byte_size(container_reg.size)?;
+        let container_ty: ValueType = container_reg.int_type()?;
         let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
         // Defensive bound: any shift ≥ container_bits is undefined per the
         // IR's `ShiftRight` / `ShiftLeft` semantics (the lifted shift would
@@ -340,21 +347,12 @@ fn build_masked_insert(
     let shifted_value =
         builder.build_shift_by_const(val_extended, shift_bits, IntBinaryOp::ShiftLeft, ty)?;
 
-    let reg_mask_val = builder.build_int_const(reg_mask, ty)?;
-    let reg_val = builder.build_int_binary_operation(
-        reg_mask_val,
-        shifted_value,
-        IntBinaryOp::And,
-        ty,
-    )?;
-
-    let container_mask_val = builder.build_int_const(container_mask, ty)?;
-    let preserved = builder.build_int_binary_operation(
-        container_mask_val,
-        container_val,
-        IntBinaryOp::And,
-        ty,
-    )?;
+    // Isolate the positioned value's bits (`shifted_value & reg_mask`) and
+    // clear that slot in the container (`container_val & container_mask`); both
+    // ANDs fold the const + binary-op via `build_const_binop` (And is
+    // commutative, so the operand order matches the former explicit form).
+    let reg_val = builder.build_const_binop(reg_mask, shifted_value, IntBinaryOp::And, ty)?;
+    let preserved = builder.build_const_binop(container_mask, container_val, IntBinaryOp::And, ty)?;
 
     builder.build_int_binary_operation(preserved, reg_val, IntBinaryOp::Or, ty)
 }
@@ -370,7 +368,11 @@ mod shift_formula_tests {
     use rsleigh::{Vn, VnSpace};
 
     fn reg(off: u64, size: u32) -> Vn {
-        Vn { addr_off: off, addr_space: VnSpace::REGISTER, size }
+        Vn {
+            addr_off: off,
+            addr_space: VnSpace::REGISTER,
+            size,
+        }
     }
 
     /// Shift placement for little-endian: byte offset within container × 8.
@@ -379,15 +381,22 @@ mod shift_formula_tests {
     #[test]
     fn le_shift_for_subregs_in_4byte_container() {
         let cases = [
-            (0, 1, 0),  (1, 1, 8),  (2, 1, 16), (3, 1, 24),
-            (0, 2, 0),  (2, 2, 16), (0, 4, 0),
+            (0, 1, 0),
+            (1, 1, 8),
+            (2, 1, 16),
+            (3, 1, 24),
+            (0, 2, 0),
+            (2, 2, 16),
+            (0, 4, 0),
         ];
         for (sub_off, sub_size, expected) in cases {
             let container = reg(0, 4);
             let sub = reg(sub_off, sub_size);
             let shift = compute_shift_le(&sub, &container);
-            assert_eq!(shift, expected,
-                "LE sub({sub_off},{sub_size}): expected {expected}, got {shift}");
+            assert_eq!(
+                shift, expected,
+                "LE sub({sub_off},{sub_size}): expected {expected}, got {shift}"
+            );
         }
     }
 
@@ -396,15 +405,22 @@ mod shift_formula_tests {
     #[test]
     fn be_shift_for_subregs_in_4byte_container() {
         let cases = [
-            (0, 1, 24), (1, 1, 16), (2, 1, 8), (3, 1, 0),
-            (0, 2, 16), (2, 2, 0),  (0, 4, 0),
+            (0, 1, 24),
+            (1, 1, 16),
+            (2, 1, 8),
+            (3, 1, 0),
+            (0, 2, 16),
+            (2, 2, 0),
+            (0, 4, 0),
         ];
         for (sub_off, sub_size, expected) in cases {
             let container = reg(0, 4);
             let sub = reg(sub_off, sub_size);
             let shift = compute_shift_be(&sub, &container);
-            assert_eq!(shift, expected,
-                "BE sub({sub_off},{sub_size}): expected {expected}, got {shift}");
+            assert_eq!(
+                shift, expected,
+                "BE sub({sub_off},{sub_size}): expected {expected}, got {shift}"
+            );
         }
     }
 
@@ -446,7 +462,11 @@ mod positioned_mask_tests {
     use rsleigh::{Vn, VnSpace};
 
     fn reg_at(off: u64, size: u32) -> Vn {
-        Vn { addr_off: off, addr_space: VnSpace::REGISTER, size }
+        Vn {
+            addr_off: off,
+            addr_space: VnSpace::REGISTER,
+            size,
+        }
     }
 
     /// Positioned mask = `vn_mask(reg) << shift_bits` must select exactly the
@@ -454,8 +474,8 @@ mod positioned_mask_tests {
     #[test]
     fn positioned_mask_isolates_reg_bits_inside_16byte_container() {
         let q0 = reg_at(0, 16);
-        let s0 = reg_at(0, 4);    // lower 4 bytes
-        let d0 = reg_at(0, 8);    // lower 8 bytes
+        let s0 = reg_at(0, 4); // lower 4 bytes
+        let d0 = reg_at(0, 8); // lower 8 bytes
         let v0_upper8 = reg_at(8, 8); // upper 8 bytes (the AArch64 SIMD upper-half hot spot)
 
         let q0_mask = vn_mask(&q0).unwrap();
@@ -469,8 +489,7 @@ mod positioned_mask_tests {
 
         let upper8_pos = vn_mask(&v0_upper8).unwrap() << 64;
         assert_eq!(
-            upper8_pos,
-            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
+            upper8_pos, 0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
             "upper 8-byte sub at offset 8 occupies bits 64..128"
         );
 
@@ -490,13 +509,11 @@ mod positioned_mask_tests {
         let container_mask = vn_mask(&q0).unwrap() & !positioned_reg_mask;
 
         assert_eq!(
-            container_mask,
-            0x0000_0000_0000_0000_FFFF_FFFF_FFFF_FFFF,
+            container_mask, 0x0000_0000_0000_0000_FFFF_FFFF_FFFF_FFFF,
             "upper-8 write must preserve the lower 8 bytes of q0"
         );
         assert_ne!(
-            container_mask,
-            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
+            container_mask, 0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
             "regression check: container_mask must NOT be the upper-half mask"
         );
     }
@@ -511,8 +528,7 @@ mod positioned_mask_tests {
         let container_mask = vn_mask(&q0).unwrap() & !positioned_reg_mask;
 
         assert_eq!(
-            container_mask,
-            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
+            container_mask, 0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
             "d0 (lower 8) write must preserve the upper 8 bytes of q0"
         );
     }
@@ -563,8 +579,8 @@ mod positioned_mask_tests {
     fn container_mask_byte_subregs_in_4byte_container() {
         let container = reg_at(0, 4);
         let cases: [(u64, u32, u32); 4] = [
-            (0, 0,  0xFFFF_FF00),
-            (1, 8,  0xFFFF_00FF),
+            (0, 0, 0xFFFF_FF00),
+            (1, 8, 0xFFFF_00FF),
             (2, 16, 0xFF00_FFFF),
             (3, 24, 0x00FF_FFFF),
         ];
@@ -573,7 +589,8 @@ mod positioned_mask_tests {
             let positioned = vn_mask(&sub).unwrap() << shift;
             let mask = vn_mask(&container).unwrap() & !positioned;
             assert_eq!(
-                mask & 0xFFFF_FFFF, u128::from(expected_container_mask),
+                mask & 0xFFFF_FFFF,
+                u128::from(expected_container_mask),
                 "byte-sub at off {off}, shift {shift}: \
                  expected container_mask 0x{expected_container_mask:08x}, got 0x{mask:032x}"
             );
@@ -587,7 +604,11 @@ mod vn_mask_tests {
     use rsleigh::{Vn, VnSpace};
 
     fn reg(size: u32) -> Vn {
-        Vn { size, addr_off: 0, addr_space: VnSpace::REGISTER }
+        Vn {
+            size,
+            addr_off: 0,
+            addr_space: VnSpace::REGISTER,
+        }
     }
 
     /// Masks must exactly cover each supported byte width with no extra bits.
@@ -634,7 +655,8 @@ mod vn_mask_tests {
             let r = vn_mask(&reg(bad));
             match r {
                 Err(e) => assert!(
-                    e.to_string().contains(&format!("unsupported register size {bad}")),
+                    e.to_string()
+                        .contains(&format!("unsupported register size {bad}")),
                     "size {bad}: expected UnsupportedRegSize, got {e}"
                 ),
                 Ok(_) => panic!("size {bad}: expected error, got Ok"),
@@ -649,7 +671,11 @@ mod wide_register_tests {
     use rsleigh::{Vn, VnSpace};
 
     fn reg(off: u64, size: u32) -> Vn {
-        Vn { addr_space: VnSpace::REGISTER, addr_off: off, size }
+        Vn {
+            addr_space: VnSpace::REGISTER,
+            addr_off: off,
+            size,
+        }
     }
 
     // A 256-/512-bit mask has no `u128` representation, so `vn_mask` fails

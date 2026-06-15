@@ -20,15 +20,14 @@ fn arithmetic_x86_add_validate_with_asm_fingerprint_check() {
     // Same invariant as above, but driven through the IR validator's opt-in
     // hook so we exercise the public surface end-to-end.
     let function = analyze(Arch::X86, "arithmetic", "add");
-    validate(&function, function.entry().unwrap())
-        .expect("every reachable non-exempt node must have a fingerprint");
+    validate(&function).expect("every reachable non-exempt node must have a fingerprint");
 }
 
 #[test]
 fn arithmetic_x86_default_validate_remains_unchanged() {
     // Sanity: the default `validate` call still works post-pipeline.
     let function = analyze(Arch::X86, "arithmetic", "add");
-    validate(&function, function.entry().unwrap()).expect("default validate still passes");
+    validate(&function).expect("default validate still passes");
 }
 
 #[test]
@@ -36,16 +35,14 @@ fn control_x86_clamp_validate_with_asm_fingerprint_check() {
     // Control flow with two If branches; exercises constant-fold,
     // dead-branch, redundant-phi propagation alongside lift-time.
     let function = analyze(Arch::X86, "control", "clamp");
-    validate(&function, function.entry().unwrap())
-        .expect("clamp pipeline preserves the fingerprint invariant");
+    validate(&function).expect("clamp pipeline preserves the fingerprint invariant");
 }
 
 #[test]
 fn control_x86_count_bits_validate_with_asm_fingerprint_check() {
     // Loop body — exercises mem-phi / var-phi at the join points.
     let function = analyze(Arch::X86, "control", "count_bits");
-    validate(&function, function.entry().unwrap())
-        .expect("count_bits pipeline preserves the fingerprint invariant");
+    validate(&function).expect("count_bits pipeline preserves the fingerprint invariant");
 }
 
 #[test]
@@ -54,7 +51,7 @@ fn arithmetic_x86_complex_validate_with_asm_fingerprint_check() {
     // KnownBits and the AND-mask merge.
     for fn_name in ["bit_and", "bit_or", "shl", "lshr", "bit_xor"] {
         let function = analyze(Arch::X86, "arithmetic", fn_name);
-        validate(&function, function.entry().unwrap()).unwrap_or_else(|e| panic!("{fn_name}: {e}"));
+        validate(&function).unwrap_or_else(|e| panic!("{fn_name}: {e}"));
     }
 }
 
@@ -99,8 +96,8 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
     // Valid contributor addresses are therefore exactly
     // {0x1000, 0x1003, 0x1006, 0x1009, 0x100c}.
     use rsleigh::mem_readers::BufMemReader;
-    use strider_orchestrator::{LiftOptions, Strider};
     use strider_orchestrator::opt::OptOptions;
+    use strider_orchestrator::{LiftOptions, Strider};
 
     let base = 0x1000u64;
     let bytes = vec![
@@ -114,8 +111,7 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
 
     let arch = strider_target::SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh =
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let regs = sleigh.regs().expect("regs");
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .unwrap()
@@ -123,7 +119,13 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
     let result = strider
-        .analyze(base, &cc, &LiftOptions::default(), &OptOptions::default(), None)
+        .analyze(
+            base,
+            &cc,
+            &LiftOptions::default(),
+            &OptOptions::default(),
+            None,
+        )
         .expect("analyze");
     assert!(result.unresolved_indirect_branches.is_empty());
     let function = result.function;

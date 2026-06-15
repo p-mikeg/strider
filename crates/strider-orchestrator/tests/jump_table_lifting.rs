@@ -19,12 +19,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
 use rustc_hash::FxHashMap;
+use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::Function;
 use strider_ir::node::{IntPayload, NodeKind};
-use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
+use strider_ir::{IRViewer, IRWalker};
 
 mod common;
 
@@ -156,7 +156,10 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
 
     let pipeline = strider_orchestrator::opt::default_pipeline();
     pipeline
-        .run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
+        .run(
+            &mut function,
+            &mut strider_orchestrator::opt::OptCtx::new(None),
+        )
         .expect("optimizer pipeline");
 
     let if_count_post = common::count_ifs(&function);

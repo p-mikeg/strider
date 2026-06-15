@@ -69,11 +69,12 @@ def test_default_pipeline_mirrors_rust_default():
     `LoadReadOnly`, `KnownBits`, `FlagCmpCanonicalize`, `IfCondInversion`,
     `PhiCollapse`, `RegionCollapse`, `DeadBranchElimination`, `CfgDetach`,
     `LoadForward`) plus three post-passes (`StackOffsetDetect`,
-    `CallStackArgCollect`, `FunctionArgDetect`).  An out-of-sync Python
-    wrapper silently produces a graph that doesn't canonicalise
-    flag-cmp shapes, so pattern queries that work under the orchestrator
-    path (which uses the Rust default) fail under the custom-pipeline
-    path.
+    `CallStackArgCollect`, `FunctionArgDetect`).  (Structural twins a rewrite
+    leaves behind are re-merged incrementally by the edit context's `clean()`
+    re-canonicalization, not a dedup pass.)  An out-of-sync Python wrapper
+    silently produces a graph that doesn't canonicalise flag-cmp shapes, so
+    pattern queries that work under the orchestrator path (which uses the Rust
+    default) fail under the custom-pipeline path.
     """
     assert strider.OptimizerPipeline.default().pass_count() == 10
     assert strider.OptimizerPipeline.default().post_pass_count() == 3

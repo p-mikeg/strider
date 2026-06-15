@@ -1,9 +1,7 @@
 use petgraph::graph::NodeIndex;
 
 use super::Builder;
-use crate::types::{
-    MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
-};
+use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator};
 use anyhow::{anyhow, bail};
 
 use crate::Result;
@@ -27,11 +25,10 @@ fn branch_target_operand(insn: &rsleigh::Insn, addr: PcodeInsnAddr) -> Result<rs
 ///
 /// # Errors
 /// Returns an error when the current machine address plus
-/// `lift_res.machine_insn_len` overflows `u64`.
-fn next_pcode_addr(
-    addr: PcodeInsnAddr,
-    lift_res: &rsleigh::LiftRes,
-) -> Result<PcodeInsnAddr> {
+/// `lift_res.machine_insn_len` overflows `u64`, or when
+/// `lift_res.machine_insn_len` is zero (advancing to the next machine
+/// instruction would not move the address, hanging the decode loop).
+fn next_pcode_addr(addr: PcodeInsnAddr, lift_res: &rsleigh::LiftRes) -> Result<PcodeInsnAddr> {
     // Compare in u64 space: usize → u64 is widening on every supported
     // target and avoids a potentially-truncating u64 → usize cast.
     let pcode_count = lift_res.insns.len() as u64;
@@ -40,6 +37,14 @@ fn next_pcode_addr(
             machine_addr: addr.machine_addr,
             insn_index: addr.insn_index + 1,
         });
+    }
+    // `rsleigh::LiftRes` imposes no `machine_insn_len > 0` invariant.  A
+    // zero-length machine instruction would leave the machine address
+    // unchanged on the next-instruction branch below, re-lifting the same
+    // address forever (the build loop's fall-through-OOB guard never fires
+    // because `cur_addr` never advances).  Bail instead of hanging.
+    if lift_res.machine_insn_len == 0 {
+        bail!("sleigh returned zero-length machine instruction at pcode addr {addr:?}");
     }
     let next_machine = addr
         .machine_addr
@@ -292,7 +297,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             // records that this region ended with a branch opcode, and the
             // IR lifter wires the unconditional successor through the
             // region linker.
-            self.builder.work_queue.push((Some(region), branch_target_addr));
+            self.builder
+                .work_queue
+                .push((Some(region), branch_target_addr));
         }
         Ok(InsnOutcome::RegionClosed)
     }
@@ -373,7 +380,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let name = self.builder.sleigh.user_op_name(id_u32);
         let preset = self.builder.arch.preset();
         let class = name.and_then(|n| strider_target::call_other_abi::classify(preset, n));
-        if matches!(class, Some(strider_target::call_other_abi::CallOtherClass::NoReturn)) {
+        if matches!(
+            class,
+            Some(strider_target::call_other_abi::CallOtherClass::NoReturn)
+        ) {
             // CallOther is already in self.insns from the
             // process_new_insn prologue push; finish_current_region
             // carries it.  Trailing BranchIndirect is never decoded.
@@ -422,9 +432,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         // `Return(target_value)` anchoring the value for IR-level
         // indirect-branch resolver inspection.  No outgoing edge.
         let Some(resolved) = resolved else {
-            self.finish_current_region(
-                RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
-            )?;
+            self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
+                target_vn,
+                addr,
+            })?;
             return Ok(InsnOutcome::RegionClosed);
         };
         match resolved {
@@ -449,18 +460,20 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // set carries no dispatch information, so treat it as
                 // unresolved rather than emit a Switch region with zero edges.
                 if targets.is_empty() {
-                    self.finish_current_region(
-                        RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
-                    )?;
+                    self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
+                        target_vn,
+                        addr,
+                    })?;
                     return Ok(InsnOutcome::RegionClosed);
                 }
-                let any_out_of_range = targets.iter().any(|t| {
-                    self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t))
-                });
+                let any_out_of_range = targets
+                    .iter()
+                    .any(|t| self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t)));
                 if any_out_of_range {
-                    self.finish_current_region(
-                        RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
-                    )?;
+                    self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
+                        target_vn,
+                        addr,
+                    })?;
                     return Ok(InsnOutcome::RegionClosed);
                 }
                 let region = self.finish_current_region(RegionTerminator::Switch {
@@ -640,8 +653,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// overflowed anything, so it returns `Ok(())`; every later iteration
     /// applies the bound to `cur_addr` regardless of pcode-op count.
     fn detect_fallthrough_oob_tail_call(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
-        let advanced_past_start =
-            cur_addr.machine_addr.addr != self.start_addr.machine_addr.addr;
+        let advanced_past_start = cur_addr.machine_addr.addr != self.start_addr.machine_addr.addr;
         if !advanced_past_start || !self.is_branch_tail_call_nocheck(cur_addr) {
             return Ok(());
         }
@@ -715,8 +727,7 @@ mod tests {
     fn make_sleigh() -> rsleigh::Sleigh<TestReader> {
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
-            .expect("create empty Sleigh")
+        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create empty Sleigh")
     }
 
     fn make_builder<'a>(
@@ -792,7 +803,9 @@ mod tests {
         let vn = code_space_vn(default_cs, 0xabc0);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let lift = fake_lift_res(1);
-        let target = rb.decode_branch_target(vn, addr_at(0x1000, 4), &lift).unwrap();
+        let target = rb
+            .decode_branch_target(vn, addr_at(0x1000, 4), &lift)
+            .unwrap();
         assert_eq!(target, addr_at(0xabc0, 0));
     }
 
@@ -926,7 +939,9 @@ mod tests {
             addr_space: VnSpace::CONST,
             size: 8,
         };
-        let target = rb.decode_branch_target(vn, addr_at(0x1000, 0), &lift).unwrap();
+        let target = rb
+            .decode_branch_target(vn, addr_at(0x1000, 0), &lift)
+            .unwrap();
         assert_eq!(target, addr_at(0x1004, 0));
     }
 
@@ -960,6 +975,20 @@ mod tests {
         let err = next_pcode_addr(cur, &lift).unwrap_err();
         assert!(
             err.to_string().contains("machine-address overflow"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn next_pcode_addr_zero_length_machine_insn_errors() {
+        // A non-terminating instruction that lifts to a non-empty pcode body
+        // but reports `machine_insn_len == 0` would leave `cur_addr` pinned,
+        // hanging the build loop forever.  Treat it as a hard error.
+        let lift = fake_lift_res_with_len(1, 0);
+        let cur = addr_at(0x1000, 0);
+        let err = next_pcode_addr(cur, &lift).unwrap_err();
+        assert!(
+            err.to_string().contains("zero-length machine instruction"),
             "got: {err}"
         );
     }
@@ -1082,8 +1111,7 @@ mod tests {
     fn make_sleigh_with_bytes(bytes: Vec<u8>, base: u64) -> rsleigh::Sleigh<TestReader> {
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(bytes, base);
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
-            .expect("create x86_64 Sleigh")
+        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 Sleigh")
     }
 
     fn make_builder_with_bytes<'a>(
@@ -1125,7 +1153,9 @@ mod tests {
         let mut b = make_builder_with_bytes(&mut sleigh, base);
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
-        let res = rb.process_new_insn(&first, addr_at(base, 0), &lift).unwrap();
+        let res = rb
+            .process_new_insn(&first, addr_at(base, 0), &lift)
+            .unwrap();
         assert_eq!(res, InsnOutcome::Continue);
         assert_eq!(rb.insns.len(), 1);
     }
@@ -1140,7 +1170,9 @@ mod tests {
         let mut b = make_builder_with_bytes(&mut sleigh, base);
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
-        let res = rb.process_new_insn(&ret_insn, addr_at(base, pos), &lift).unwrap();
+        let res = rb
+            .process_new_insn(&ret_insn, addr_at(base, pos), &lift)
+            .unwrap();
         assert_eq!(res, InsnOutcome::RegionClosed);
 
         let regions: Vec<&Region> = b.region_graph.node_weights().collect();
@@ -1187,7 +1219,9 @@ mod tests {
         let mut b = make_builder_with_bytes(&mut sleigh, base);
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
-        let res = rb.process_new_insn(&cbr, addr_at(base, pos), &lift).unwrap();
+        let res = rb
+            .process_new_insn(&cbr, addr_at(base, pos), &lift)
+            .unwrap();
         assert_eq!(res, InsnOutcome::RegionClosed);
 
         let regions: Vec<&Region> = b.region_graph.node_weights().collect();
@@ -1210,7 +1244,11 @@ mod tests {
         );
         let region_id = b.region_graph.node_indices().next().unwrap();
         for (parent, target) in &b.work_queue {
-            assert_eq!(*parent, Some(region_id), "successor wired to the cond-branch region");
+            assert_eq!(
+                *parent,
+                Some(region_id),
+                "successor wired to the cond-branch region"
+            );
             assert_eq!(*target, addr_at(0x1002, 0));
         }
     }
@@ -1226,7 +1264,9 @@ mod tests {
         let mut b = make_builder_with_bytes(&mut sleigh, base);
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
-        let res = rb.process_new_insn(&branch, addr_at(base, pos), &lift).unwrap();
+        let res = rb
+            .process_new_insn(&branch, addr_at(base, pos), &lift)
+            .unwrap();
         assert_eq!(res, InsnOutcome::RegionClosed);
 
         let regions: Vec<&Region> = b.region_graph.node_weights().collect();
@@ -1246,7 +1286,9 @@ mod tests {
         let mut b = make_builder_with_bytes(&mut sleigh, base);
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
-        let res = rb.process_new_insn(&branch, addr_at(base, pos), &lift).unwrap();
+        let res = rb
+            .process_new_insn(&branch, addr_at(base, pos), &lift)
+            .unwrap();
         assert_eq!(res, InsnOutcome::RegionClosed);
 
         assert_eq!(
@@ -1270,7 +1312,10 @@ mod tests {
         let err = rb
             .finish_current_region(RegionTerminator::Return)
             .unwrap_err();
-        assert!(err.to_string().contains("has no instructions"), "got: {err}");
+        assert!(
+            err.to_string().contains("has no instructions"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -1313,4 +1358,3 @@ mod tests {
         );
     }
 }
-

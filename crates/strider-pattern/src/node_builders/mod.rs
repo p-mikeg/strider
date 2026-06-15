@@ -42,9 +42,7 @@ pub mod memory;
 pub(crate) mod node_pat;
 pub mod phi;
 
-pub use flow::{
-    CallOtherPat, CallPat, IfPat, RetPat, call, call_other, if_node, ret,
-};
+pub use flow::{CallOtherPat, CallPat, IfPat, RetPat, call, call_other, if_node, ret};
 pub use function_arg::{
     FunctionArgPat, function_arg, function_arg_any, function_arg_reg, function_arg_stack,
 };

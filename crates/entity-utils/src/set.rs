@@ -208,8 +208,7 @@ mod tests {
 
     #[test]
     fn from_iter_dedups() {
-        let s: DenseEntitySet<Id> =
-            [Id(2), Id(1), Id(2), Id(3)].into_iter().collect();
+        let s: DenseEntitySet<Id> = [Id(2), Id(1), Id(2), Id(3)].into_iter().collect();
         let collected: Vec<_> = s.iter().collect();
         assert_eq!(collected, vec![Id(1), Id(2), Id(3)]);
     }
@@ -271,8 +270,14 @@ mod tests {
     #[test]
     fn insert_returns_true_on_first_insert_false_on_repeat() {
         let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
-        assert!(s.insert(Id(42)), "first insert must report 'newly inserted'");
-        assert!(!s.insert(Id(42)), "repeat insert must report 'already present'");
+        assert!(
+            s.insert(Id(42)),
+            "first insert must report 'newly inserted'"
+        );
+        assert!(
+            !s.insert(Id(42)),
+            "repeat insert must report 'already present'"
+        );
         assert!(s.insert(Id(43)), "different entity is newly inserted");
     }
 }

@@ -5,8 +5,8 @@
 //! and the `Function::arg_index_to_values` side-table populated by
 //! `FunctionArgDetect`.
 
-use strider_ir::IntCmpOp;
 use strider_ir::IRViewer;
+use strider_ir::IntCmpOp;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_pattern::*;
 
@@ -79,7 +79,10 @@ fn graph_phi_for_reg() -> (strider_ir::Function, rsleigh::Vn) {
 fn phi_matches_any() {
     let (g, _reg) = graph_phi_for_reg();
     // At least one phi exists at the merge region.
-    let hits = Matcher::try_new(&g).unwrap().find_all(&phi().build()).unwrap();
+    let hits = Matcher::try_new(&g)
+        .unwrap()
+        .find_all(&phi().build())
+        .unwrap();
     assert!(!hits.is_empty(), "expected at least one phi");
 }
 
@@ -88,7 +91,8 @@ fn phi_for_matches_exact_vn() {
     let (g, reg) = graph_phi_for_reg();
     let hits = Matcher::try_new(&g)
         .unwrap()
-        .find_all(&phi_for(reg).build()).unwrap();
+        .find_all(&phi_for(reg).build())
+        .unwrap();
     assert!(!hits.is_empty(), "phi_for({reg:?}) should match");
 }
 
@@ -113,8 +117,10 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     // The pass reads its layout from the function's own CC, so the fixture
     // carries `sp` as the SP and a stack-arg layout based at +4.
     let mut t = Tb::raw(vec![sp], &[], &[sp], &[], Some(sp), 0);
-    t.fb_mut()
-        .set_stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }));
+    t.fb_mut().set_stack_args(Some(strider_target::StackArgs {
+        base_offset: 4,
+        increment: 4,
+    }));
 
     // `read *(sp + 4)` — the first stack arg in cdecl-style.
     let sp_v = t.read_var(&sp);
@@ -129,11 +135,18 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
     pre.add(strider_orchestrator::opt::PhiCollapse);
     pre.add(strider_orchestrator::opt::RegionCollapse);
-    pre.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .expect("phi collapse");
+    pre.run(
+        &mut function,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .expect("phi collapse");
 
-    strider_orchestrator::opt::run_post(&FunctionArgDetect, &mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .expect("FunctionArgDetect");
+    strider_orchestrator::opt::run_post(
+        &FunctionArgDetect,
+        &mut function,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .expect("FunctionArgDetect");
     function
 }
 

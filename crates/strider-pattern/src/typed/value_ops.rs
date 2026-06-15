@@ -10,13 +10,15 @@
 //! data-driven (`NodeKind::is_commutative`), so no per-struct work.
 
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+};
 
-use crate::matcher::{MatcherBuilder, PatValueRef};
-use crate::matcher::match_pat::{MatchPat, Pre};
 use crate::matcher::KindSpec;
-use crate::template::{TemplateBuilder, TmplValueRef};
+use crate::matcher::match_pat::{MatchPat, Pre};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::template::template_pat::TemplatePat;
+use crate::template::{TemplateBuilder, TmplValueRef};
 use crate::typed::builder_like::{
     compile_bool_binary, compile_int_binary, compile_two_input, compile_unary_kind,
 };
@@ -200,18 +202,38 @@ macro_rules! int_binary_op {
     };
 }
 
-int_binary_op!(add, Add, "Match unsigned addition `lhs + rhs`. Commutative.");
-int_binary_op!(mul, Mul, "Match wrapping multiplication `lhs * rhs`. Commutative.");
+int_binary_op!(
+    add,
+    Add,
+    "Match unsigned addition `lhs + rhs`. Commutative."
+);
+int_binary_op!(
+    mul,
+    Mul,
+    "Match wrapping multiplication `lhs * rhs`. Commutative."
+);
 int_binary_op!(div, Div, "Match unsigned division `lhs / rhs`.");
-int_binary_op!(sdiv, Sdiv, "Match signed division `(signed)lhs / (signed)rhs`.");
+int_binary_op!(
+    sdiv,
+    Sdiv,
+    "Match signed division `(signed)lhs / (signed)rhs`."
+);
 int_binary_op!(rem, Rem, "Match unsigned remainder `lhs % rhs`.");
-int_binary_op!(srem, Srem, "Match signed remainder `(signed)lhs % (signed)rhs`.");
+int_binary_op!(
+    srem,
+    Srem,
+    "Match signed remainder `(signed)lhs % (signed)rhs`."
+);
 int_binary_op!(and, And, "Match bitwise AND `lhs & rhs`. Commutative.");
 int_binary_op!(or, Or, "Match bitwise OR `lhs | rhs`. Commutative.");
 int_binary_op!(xor, Xor, "Match bitwise XOR `lhs ^ rhs`. Commutative.");
 int_binary_op!(shl, ShiftLeft, "Match logical left-shift `lhs << rhs`.");
 int_binary_op!(shr, ShiftRight, "Match logical right-shift `lhs >> rhs`.");
-int_binary_op!(sshr, SShiftRight, "Match arithmetic right-shift `(signed)lhs >> rhs`.");
+int_binary_op!(
+    sshr,
+    SShiftRight,
+    "Match arithmetic right-shift `(signed)lhs >> rhs`."
+);
 
 /// Match a subtraction `lhs - rhs`, lowered to `add(lhs, neg(rhs))`.
 pub struct Sub<L, R> {
@@ -281,9 +303,21 @@ macro_rules! int_unary_op {
     };
 }
 
-int_unary_op!(neg, NodeKind::IntUnaryOp(IntUnaryOp::Neg), "Match two's-complement negation `-inner`.");
-int_unary_op!(popcount, NodeKind::Popcount, "Match a `Popcount(inner)` (count-set-bits) node.");
-int_unary_op!(lzcount, NodeKind::Lzcount, "Match an `Lzcount(inner)` (leading-zero-count) node.");
+int_unary_op!(
+    neg,
+    NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+    "Match two's-complement negation `-inner`."
+);
+int_unary_op!(
+    popcount,
+    NodeKind::Popcount,
+    "Match a `Popcount(inner)` (count-set-bits) node."
+);
+int_unary_op!(
+    lzcount,
+    NodeKind::Lzcount,
+    "Match an `Lzcount(inner)` (leading-zero-count) node."
+);
 
 variant_unary_any!(
     /// Match **any** `IntUnaryOp` variant. Match-only.
@@ -359,14 +393,46 @@ macro_rules! cast_op {
     };
 }
 
-cast_op!(truncate, NodeKind::Truncate, "Match a `Truncate(inner)` (integer narrowing) node.");
-cast_op!(zero_extend, NodeKind::Extend(ExtendOp::ZeroExtend), "Match a zero-extension `Extend(ZeroExtend)(inner)` node.");
-cast_op!(sign_extend, NodeKind::Extend(ExtendOp::SignExtend), "Match a sign-extension `Extend(SignExtend)(inner)` node.");
-cast_op!(int_to_float, NodeKind::IntToFloat, "Match an `IntToFloat(inner)` value-conversion.");
-cast_op!(float_to_int, NodeKind::FloatToInt, "Match a `FloatToInt(inner)` value-conversion.");
-cast_op!(int_bits_to_float, NodeKind::IntBitsToFloat, "Match an `IntBitsToFloat(inner)` bitcast.");
-cast_op!(float_bits_to_int, NodeKind::FloatBitsToInt, "Match a `FloatBitsToInt(inner)` bitcast.");
-cast_op!(float_to_float, NodeKind::FloatToFloat, "Match a `FloatToFloat(inner)` precision-conversion.");
+cast_op!(
+    truncate,
+    NodeKind::Truncate,
+    "Match a `Truncate(inner)` (integer narrowing) node."
+);
+cast_op!(
+    zero_extend,
+    NodeKind::Extend(ExtendOp::ZeroExtend),
+    "Match a zero-extension `Extend(ZeroExtend)(inner)` node."
+);
+cast_op!(
+    sign_extend,
+    NodeKind::Extend(ExtendOp::SignExtend),
+    "Match a sign-extension `Extend(SignExtend)(inner)` node."
+);
+cast_op!(
+    int_to_float,
+    NodeKind::IntToFloat,
+    "Match an `IntToFloat(inner)` value-conversion."
+);
+cast_op!(
+    float_to_int,
+    NodeKind::FloatToInt,
+    "Match a `FloatToInt(inner)` value-conversion."
+);
+cast_op!(
+    int_bits_to_float,
+    NodeKind::IntBitsToFloat,
+    "Match an `IntBitsToFloat(inner)` bitcast."
+);
+cast_op!(
+    float_bits_to_int,
+    NodeKind::FloatBitsToInt,
+    "Match a `FloatBitsToInt(inner)` bitcast."
+);
+cast_op!(
+    float_to_float,
+    NodeKind::FloatToFloat,
+    "Match a `FloatToFloat(inner)` precision-conversion."
+);
 
 /// Match an `Extend(op)` node with the given runtime `ExtendOp`.
 pub fn extend<I: MatchPat>(op: ExtendOp, inner: I) -> Cast<I> {
@@ -430,11 +496,27 @@ macro_rules! int_cmp_op {
     };
 }
 
-int_cmp_op!(int_eq, Equal, "Match an unsigned equality `lhs == rhs`. Commutative.");
+int_cmp_op!(
+    int_eq,
+    Equal,
+    "Match an unsigned equality `lhs == rhs`. Commutative."
+);
 int_cmp_op!(int_lt, Less, "Match an unsigned less-than `lhs < rhs`.");
-int_cmp_op!(int_slt, Sless, "Match a signed less-than `(signed)lhs < (signed)rhs`.");
-int_cmp_op!(int_carry, Carry, "Match an unsigned addition carry-out. Commutative.");
-int_cmp_op!(int_scarry, Scarry, "Match a signed addition overflow. Commutative.");
+int_cmp_op!(
+    int_slt,
+    Sless,
+    "Match a signed less-than `(signed)lhs < (signed)rhs`."
+);
+int_cmp_op!(
+    int_carry,
+    Carry,
+    "Match an unsigned addition carry-out. Commutative."
+);
+int_cmp_op!(
+    int_scarry,
+    Scarry,
+    "Match a signed addition overflow. Commutative."
+);
 int_cmp_op!(int_sborrow, Sborrow, "Match a signed subtraction borrow.");
 
 /// Match an unsigned not-equal `lhs != rhs` — `xor(int_eq(l, r), 1):I1`.
@@ -506,8 +588,16 @@ macro_rules! float_binary_op {
     };
 }
 
-float_binary_op!(float_add, Add, "Match a float addition `lhs + rhs`. Commutative.");
-float_binary_op!(float_mul, Mul, "Match a float multiplication `lhs * rhs`. Commutative.");
+float_binary_op!(
+    float_add,
+    Add,
+    "Match a float addition `lhs + rhs`. Commutative."
+);
+float_binary_op!(
+    float_mul,
+    Mul,
+    "Match a float multiplication `lhs * rhs`. Commutative."
+);
 float_binary_op!(float_div, Div, "Match a float division `lhs / rhs`.");
 
 /// Match a float subtraction `lhs - rhs`, lowered to
@@ -650,7 +740,11 @@ macro_rules! float_cmp_op {
     };
 }
 
-float_cmp_op!(float_eq, Equal, "Match a float equality `lhs == rhs`. Commutative.");
+float_cmp_op!(
+    float_eq,
+    Equal,
+    "Match a float equality `lhs == rhs`. Commutative."
+);
 float_cmp_op!(float_lt, Less, "Match a float less-than `lhs < rhs`.");
 
 /// Match a float not-equal `lhs != rhs` — `xor(float_eq(l, r), 1):I1`.
@@ -776,9 +870,21 @@ macro_rules! bool_op {
     };
 }
 
-bool_op!(bool_and, And, "Match a boolean AND (`IntBinaryOp::And` at `I1`). Commutative.");
-bool_op!(bool_or, Or, "Match a boolean OR (`IntBinaryOp::Or` at `I1`). Commutative.");
-bool_op!(bool_xor, Xor, "Match a boolean XOR (`IntBinaryOp::Xor` at `I1`). Commutative.");
+bool_op!(
+    bool_and,
+    And,
+    "Match a boolean AND (`IntBinaryOp::And` at `I1`). Commutative."
+);
+bool_op!(
+    bool_or,
+    Or,
+    "Match a boolean OR (`IntBinaryOp::Or` at `I1`). Commutative."
+);
+bool_op!(
+    bool_xor,
+    Xor,
+    "Match a boolean XOR (`IntBinaryOp::Xor` at `I1`). Commutative."
+);
 
 /// Match a boolean NOT `~operand` — `xor(operand, 1):I1`.
 pub struct BoolNot<I> {
@@ -805,7 +911,12 @@ where
     I: crate::typed::builder_like::CompileInto<B>,
     crate::typed::consts::BoolConst: crate::typed::builder_like::CompileInto<B>,
 {
-    compile_bool_binary(b, IntBinaryOp::Xor, inner, crate::typed::consts::bool_const(true))
+    compile_bool_binary(
+        b,
+        IntBinaryOp::Xor,
+        inner,
+        crate::typed::consts::bool_const(true),
+    )
 }
 
 /// Match a boolean NOT — `xor(operand, IntConst(1)):I1`.
@@ -885,15 +996,27 @@ pub mod template {
     int_binary_op_tpl!(add, Add, "Build an unsigned addition `lhs + rhs`.");
     int_binary_op_tpl!(mul, Mul, "Build a wrapping multiplication `lhs * rhs`.");
     int_binary_op_tpl!(div, Div, "Build an unsigned division `lhs / rhs`.");
-    int_binary_op_tpl!(sdiv, Sdiv, "Build a signed division `(signed)lhs / (signed)rhs`.");
+    int_binary_op_tpl!(
+        sdiv,
+        Sdiv,
+        "Build a signed division `(signed)lhs / (signed)rhs`."
+    );
     int_binary_op_tpl!(rem, Rem, "Build an unsigned remainder `lhs % rhs`.");
-    int_binary_op_tpl!(srem, Srem, "Build a signed remainder `(signed)lhs % (signed)rhs`.");
+    int_binary_op_tpl!(
+        srem,
+        Srem,
+        "Build a signed remainder `(signed)lhs % (signed)rhs`."
+    );
     int_binary_op_tpl!(and, And, "Build a bitwise AND `lhs & rhs`.");
     int_binary_op_tpl!(or, Or, "Build a bitwise OR `lhs | rhs`.");
     int_binary_op_tpl!(xor, Xor, "Build a bitwise XOR `lhs ^ rhs`.");
     int_binary_op_tpl!(shl, ShiftLeft, "Build a logical left-shift `lhs << rhs`.");
     int_binary_op_tpl!(shr, ShiftRight, "Build a logical right-shift `lhs >> rhs`.");
-    int_binary_op_tpl!(sshr, SShiftRight, "Build an arithmetic right-shift `(signed)lhs >> rhs`.");
+    int_binary_op_tpl!(
+        sshr,
+        SShiftRight,
+        "Build an arithmetic right-shift `(signed)lhs >> rhs`."
+    );
 
     /// Build a subtraction `lhs - rhs` (the lifter's `Add(lhs, Neg(rhs))` shape).
     pub fn sub<L: TemplatePat, R: TemplatePat>(lhs: L, rhs: R) -> Sub<L, R> {
@@ -910,9 +1033,21 @@ pub mod template {
         };
     }
 
-    int_unary_op_tpl!(neg, NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg), "Build a two's-complement negation `-inner`.");
-    int_unary_op_tpl!(popcount, NodeKind::Popcount, "Build a `Popcount(inner)` node.");
-    int_unary_op_tpl!(lzcount, NodeKind::Lzcount, "Build an `Lzcount(inner)` node.");
+    int_unary_op_tpl!(
+        neg,
+        NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg),
+        "Build a two's-complement negation `-inner`."
+    );
+    int_unary_op_tpl!(
+        popcount,
+        NodeKind::Popcount,
+        "Build a `Popcount(inner)` node."
+    );
+    int_unary_op_tpl!(
+        lzcount,
+        NodeKind::Lzcount,
+        "Build an `Lzcount(inner)` node."
+    );
 
     /// Build a bitwise complement `~inner` (the canonical `xor(_, all_ones)`).
     pub fn bit_not<I: TemplatePat>(inner: I) -> BitNot<I> {
@@ -934,14 +1069,46 @@ pub mod template {
         };
     }
 
-    cast_op_tpl!(truncate, NodeKind::Truncate, "Build a `Truncate(inner)` node.");
-    cast_op_tpl!(zero_extend, NodeKind::Extend(ExtendOp::ZeroExtend), "Build a `Extend(ZeroExtend)(inner)` node.");
-    cast_op_tpl!(sign_extend, NodeKind::Extend(ExtendOp::SignExtend), "Build a `Extend(SignExtend)(inner)` node.");
-    cast_op_tpl!(int_to_float, NodeKind::IntToFloat, "Build an `IntToFloat(inner)` node.");
-    cast_op_tpl!(float_to_int, NodeKind::FloatToInt, "Build a `FloatToInt(inner)` node.");
-    cast_op_tpl!(int_bits_to_float, NodeKind::IntBitsToFloat, "Build an `IntBitsToFloat(inner)` node.");
-    cast_op_tpl!(float_bits_to_int, NodeKind::FloatBitsToInt, "Build a `FloatBitsToInt(inner)` node.");
-    cast_op_tpl!(float_to_float, NodeKind::FloatToFloat, "Build a `FloatToFloat(inner)` node.");
+    cast_op_tpl!(
+        truncate,
+        NodeKind::Truncate,
+        "Build a `Truncate(inner)` node."
+    );
+    cast_op_tpl!(
+        zero_extend,
+        NodeKind::Extend(ExtendOp::ZeroExtend),
+        "Build a `Extend(ZeroExtend)(inner)` node."
+    );
+    cast_op_tpl!(
+        sign_extend,
+        NodeKind::Extend(ExtendOp::SignExtend),
+        "Build a `Extend(SignExtend)(inner)` node."
+    );
+    cast_op_tpl!(
+        int_to_float,
+        NodeKind::IntToFloat,
+        "Build an `IntToFloat(inner)` node."
+    );
+    cast_op_tpl!(
+        float_to_int,
+        NodeKind::FloatToInt,
+        "Build a `FloatToInt(inner)` node."
+    );
+    cast_op_tpl!(
+        int_bits_to_float,
+        NodeKind::IntBitsToFloat,
+        "Build an `IntBitsToFloat(inner)` node."
+    );
+    cast_op_tpl!(
+        float_bits_to_int,
+        NodeKind::FloatBitsToInt,
+        "Build a `FloatBitsToInt(inner)` node."
+    );
+    cast_op_tpl!(
+        float_to_float,
+        NodeKind::FloatToFloat,
+        "Build a `FloatToFloat(inner)` node."
+    );
 
     /// Build an `Extend(op)` node with the given runtime `ExtendOp`.
     pub fn extend<I: TemplatePat>(op: ExtendOp, inner: I) -> Cast<I> {
@@ -967,7 +1134,11 @@ pub mod template {
 
     int_cmp_op_tpl!(int_eq, Equal, "Build an unsigned equality `lhs == rhs`.");
     int_cmp_op_tpl!(int_lt, Less, "Build an unsigned less-than `lhs < rhs`.");
-    int_cmp_op_tpl!(int_slt, Sless, "Build a signed less-than `(signed)lhs < (signed)rhs`.");
+    int_cmp_op_tpl!(
+        int_slt,
+        Sless,
+        "Build a signed less-than `(signed)lhs < (signed)rhs`."
+    );
     int_cmp_op_tpl!(int_carry, Carry, "Build an unsigned addition carry-out.");
     int_cmp_op_tpl!(int_scarry, Scarry, "Build a signed addition overflow.");
     int_cmp_op_tpl!(int_sborrow, Sborrow, "Build a signed subtraction borrow.");
@@ -998,11 +1169,7 @@ pub mod template {
     }
 
     /// Variant-agnostic integer comparison `int_cmp(op, l, r)` (output `I1`).
-    pub fn int_cmp<L: TemplatePat, R: TemplatePat>(
-        op: IntCmpOp,
-        lhs: L,
-        rhs: R,
-    ) -> IntCmp<L, R> {
+    pub fn int_cmp<L: TemplatePat, R: TemplatePat>(op: IntCmpOp, lhs: L, rhs: R) -> IntCmp<L, R> {
         IntCmp { op, lhs, rhs }
     }
 
@@ -1010,10 +1177,7 @@ pub mod template {
     macro_rules! float_binary_op_tpl {
         ($name:ident, $variant:ident, $doc:literal) => {
             #[doc = $doc]
-            pub fn $name<L: TemplatePat, R: TemplatePat>(
-                lhs: L,
-                rhs: R,
-            ) -> FloatBinaryFixed<L, R> {
+            pub fn $name<L: TemplatePat, R: TemplatePat>(lhs: L, rhs: R) -> FloatBinaryFixed<L, R> {
                 FloatBinaryFixed {
                     op: FloatBinaryOp::$variant,
                     lhs,
@@ -1106,9 +1270,21 @@ pub mod template {
         };
     }
 
-    bool_op_tpl!(bool_and, And, "Build a boolean AND (`IntBinaryOp::And` at `I1`).");
-    bool_op_tpl!(bool_or, Or, "Build a boolean OR (`IntBinaryOp::Or` at `I1`).");
-    bool_op_tpl!(bool_xor, Xor, "Build a boolean XOR (`IntBinaryOp::Xor` at `I1`).");
+    bool_op_tpl!(
+        bool_and,
+        And,
+        "Build a boolean AND (`IntBinaryOp::And` at `I1`)."
+    );
+    bool_op_tpl!(
+        bool_or,
+        Or,
+        "Build a boolean OR (`IntBinaryOp::Or` at `I1`)."
+    );
+    bool_op_tpl!(
+        bool_xor,
+        Xor,
+        "Build a boolean XOR (`IntBinaryOp::Xor` at `I1`)."
+    );
 
     /// Build a boolean NOT — `xor(operand, IntConst(1)):I1`.
     pub fn bool_not<I: TemplatePat>(operand: I) -> BoolNot<I> {

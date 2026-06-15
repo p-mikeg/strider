@@ -162,10 +162,7 @@ fn lookup_table_empty_returns_none() {
 
 #[test]
 fn lookup_table_gap_between_regions_is_none() {
-    let table = MemRegionsLookupTable::new([
-        make_region(0x1000, 8),
-        make_region(0x1010, 8),
-    ]);
+    let table = MemRegionsLookupTable::new([make_region(0x1000, 8), make_region(0x1010, 8)]);
     let mut buf = [0u8; 1];
     assert_eq!(table.read(0x1008, &mut buf), None);
     assert_eq!(table.read(0x100f, &mut buf), None);
@@ -237,7 +234,10 @@ fn lookup_table_shorter_inner_region_does_not_shadow_outer_tail() {
 
     // 0x1018 is in A's tail but past B's end.
     assert_eq!(table.read(0x1018, &mut buf), Some(1));
-    assert_eq!(buf[0], 0xaa, "should fall through to A when B does not cover addr");
+    assert_eq!(
+        buf[0], 0xaa,
+        "should fall through to A when B does not cover addr"
+    );
 
     // Inside B's range, B still wins (existing "later start wins" rule).
     assert_eq!(table.read(0x1011, &mut buf), Some(1));
@@ -278,7 +278,10 @@ fn lookup_table_multibyte_read_straddling_inner_end_uses_outer() {
     // A read that the inner region fully satisfies still resolves to it.
     let mut buf2 = [0u8; 4];
     assert_eq!(table.read(0x1082, &mut buf2), Some(4));
-    assert_eq!(&buf2, &[0xbb; 4], "inner still wins when it covers the whole read");
+    assert_eq!(
+        &buf2, &[0xbb; 4],
+        "inner still wins when it covers the whole read"
+    );
 }
 
 // ── MemRegion::new overflow rejection ─────────────────────────────────────
@@ -289,8 +292,7 @@ fn lookup_table_multibyte_read_straddling_inner_end_uses_outer() {
 fn mem_region_new_rejects_overflow() {
     let start = u64::MAX - 3;
     // len = 4 ⇒ end would be u64::MAX + 1 — reject.
-    let err = MemRegion::new(start, vec![0u8; 4])
-        .expect_err("overflowing region must be rejected");
+    let err = MemRegion::new(start, vec![0u8; 4]).expect_err("overflowing region must be rejected");
     let msg = err.to_string();
     let expected_addr = format!("{start:#x}");
     assert!(
@@ -365,7 +367,9 @@ fn read_exact_ending_exactly_at_region_end_is_ok() {
 
     // Single-byte read of the very last byte (exact last-byte lookup).
     let mut one = [0u8; 1];
-    table.read_exact(0x100f, &mut one).expect("last byte is mapped");
+    table
+        .read_exact(0x100f, &mut one)
+        .expect("last byte is mapped");
     assert_eq!(one[0], 15);
 }
 
@@ -389,7 +393,9 @@ fn read_exact_spanning_past_region_end_errors() {
 fn read_exact_one_past_region_end_errors_not_mapped() {
     let table = MemRegionsLookupTable::new([make_region(0x1000, 16)]);
     let mut buf = [0u8; 1];
-    let err = table.read_exact(0x1010, &mut buf).expect_err("end_addr is exclusive");
+    let err = table
+        .read_exact(0x1010, &mut buf)
+        .expect_err("end_addr is exclusive");
     assert!(err.to_string().contains("not mapped"), "got: {err}");
 }
 
@@ -430,7 +436,79 @@ fn read_exact_across_two_adjacent_regions_errors() {
     );
 
     // Sanity: the same-size read fully inside either region succeeds.
-    table.read_exact(0x1000, &mut buf).expect("fully inside first region");
-    table.read_exact(0x1010, &mut buf).expect("fully inside second region");
+    table
+        .read_exact(0x1000, &mut buf)
+        .expect("fully inside first region");
+    table
+        .read_exact(0x1010, &mut buf)
+        .expect("fully inside second region");
 }
 
+// ── boundary: zero-length read_exact at exactly end_addr ──────────────────
+
+/// Pinned boundary: a zero-length `read_exact` at exactly a region's
+/// `end_addr` must ERROR ("not mapped"), not succeed.  `end_addr` is
+/// outside the region (the range is `[start, end)`), and that exclusion
+/// holds even for a zero-byte request — mirroring `MemRegion::read`'s
+/// rule that a zero-length read at `end_addr` returns `None`, not
+/// `Some(0)`.  Existing tests cover zero-length *inside* a region; this
+/// pins the exact-`end_addr` corner.
+#[test]
+fn mem_region_read_exact_zero_length_at_exact_end_addr() {
+    let table = MemRegionsLookupTable::new([make_region(0x1000, 16)]);
+    // end_addr == 0x1010 (start 0x1000 + len 16).
+    let mut empty: [u8; 0] = [];
+    let err = table
+        .read_exact(0x1010, &mut empty)
+        .expect_err("zero-length read at exactly end_addr must error (end is exclusive)");
+    assert!(err.to_string().contains("not mapped"), "got: {err}");
+
+    // Sanity: the last in-range byte address (0x100f) still maps for a
+    // zero-length read.
+    table
+        .read_exact(0x100f, &mut empty)
+        .expect("zero-length at the last in-range address is a (trivial) full fill");
+}
+
+// ── R-3: overlapping regions, differing bytes, straddling partial read ────
+
+/// Pins the unspecified-until-now resolution for two overlapping regions
+/// at distinct starts that *disagree* on the overlap bytes, read with a
+/// partial (`MemReader`-style) request that straddles the higher-start
+/// region's end.
+///
+/// Geometry:
+/// - Outer A: `[0x1000, 0x1020)`, all `0xaa`.
+/// - Inner B: `[0x1010, 0x1018)`, all `0xbb` (higher start, shorter,
+///   different bytes).
+///
+/// A 16-byte read at `0x1014`: B can supply only 4 bytes
+/// (`[0x1014, 0x1018)`); A can supply 12 (`[0x1014, 0x1020)`).  Neither
+/// fully covers, so the "covers the most" rule picks A — the read
+/// resolves entirely to A's bytes, NOT to B's truncated 4-byte prefix and
+/// NOT to an A/B mix.  This locks the documented all-or-most behaviour.
+#[test]
+fn lookup_table_overlapping_regions_differing_bytes_partial_read_is_specified() {
+    let a = MemRegion::new(0x1000, vec![0xaa; 0x20]).expect("valid region");
+    let b = MemRegion::new(0x1010, vec![0xbb; 0x08]).expect("valid region");
+    let table = MemRegionsLookupTable::new([a, b]);
+
+    // 16-byte read straddling B's end at 0x1018.
+    let mut buf = [0u8; 16];
+    assert_eq!(
+        table.read(0x1014, &mut buf),
+        Some(12),
+        "winner is the region covering the most (A: 12 bytes), not B's 4-byte prefix",
+    );
+    assert_eq!(
+        &buf[..12],
+        &[0xaa; 12],
+        "the 12 returned bytes must all come from A (no A/B mix, no B prefix)",
+    );
+    assert_eq!(buf[12], 0, "untouched tail of the buffer");
+
+    // Inside B's range and fully covered by B, B still wins.
+    let mut small = [0u8; 4];
+    assert_eq!(table.read(0x1014, &mut small), Some(4));
+    assert_eq!(&small, &[0xbb; 4], "B wins when it fully covers the request");
+}

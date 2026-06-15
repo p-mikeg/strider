@@ -72,9 +72,6 @@ fn main() -> Result<()> {
         fs::write(&dest, format!("{module}"))?;
         println!("wrote {}", dest.display());
     }
-    println!(
-        "Reference stubs generated under {}",
-        out_root.display(),
-    );
+    println!("Reference stubs generated under {}", out_root.display(),);
     Ok(())
 }

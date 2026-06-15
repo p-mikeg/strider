@@ -50,7 +50,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut function = strider.build_ir(&cfg, &cc)?.function;
 
-    let dot = dot::GraphDot::new(function.dot_dumper(strider.sleigh())?, dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(
+        function.dot_dumper(strider.sleigh())?,
+        dot::DotStyle::dark(),
+    );
     println!("dumping pre-opt IR graph -> memory-graph.html");
     std::fs::write("memory-graph.html", dot.as_html_from_dot()?)?;
 
@@ -60,7 +63,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut strider_orchestrator::opt::OptCtx::new(Some(&rom)),
     )?;
 
-    let dot = dot::GraphDot::new(function.dot_dumper(strider.sleigh())?, dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(
+        function.dot_dumper(strider.sleigh())?,
+        dot::DotStyle::dark(),
+    );
     println!("dumping post-opt IR graph -> memory-graph-opt.html");
     std::fs::write("memory-graph-opt.html", dot.as_html_from_dot()?)?;
 

@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
-use crate::pattern::{intern_str, PyCapture};
+use crate::pattern::{PyCapture, intern_str};
 
 /// Result of a successful pattern match.
 ///
@@ -161,7 +161,9 @@ impl PyMatch {
     /// The capture's value as raw float bits (`u64`), or `None` when not
     /// bound to a float-valued node.
     fn float_bits(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u64>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_float_bits(c, g.graph()))
+        self.with_function(py, key, |c, g| {
+            self.inner.bindings().get_float_bits(c, g.graph())
+        })
     }
 
     /// Returns True if the capture has a binding.
@@ -182,24 +184,44 @@ impl PyMatch {
     /// Recover the matched `IntBinaryOp` variant name from `c`,
     /// e.g. `"Add"`, `"Sub"`, `"And"`.
     fn int_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_int_binary_op(c, g.graph()).map(op_name))
+        self.with_function(py, key, |c, g| {
+            self.inner
+                .bindings()
+                .get_int_binary_op(c, g.graph())
+                .map(op_name)
+        })
     }
 
     /// Recover the matched `IntUnaryOp` variant name from `c`.
     fn int_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_int_unary_op(c, g.graph()).map(op_name))
+        self.with_function(py, key, |c, g| {
+            self.inner
+                .bindings()
+                .get_int_unary_op(c, g.graph())
+                .map(op_name)
+        })
     }
 
     /// Recover the matched `IntCmpOp` variant name from `c`,
     /// e.g. `"Less"`, `"Equal"`, `"Sless"`.
     fn int_cmp_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_int_cmp_op(c, g.graph()).map(op_name))
+        self.with_function(py, key, |c, g| {
+            self.inner
+                .bindings()
+                .get_int_cmp_op(c, g.graph())
+                .map(op_name)
+        })
     }
 
     /// Recover the matched boolean binary op's variant name (an `IntBinaryOp`
     /// — `And` / `Or` / `Xor` — at `I1`) from `c`.
     fn bool_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_bool_binary_op(c, g.graph()).map(op_name))
+        self.with_function(py, key, |c, g| {
+            self.inner
+                .bindings()
+                .get_bool_binary_op(c, g.graph())
+                .map(op_name)
+        })
     }
 
     // Note: there is no `bool_unary_op` accessor.  A boolean logical NOT
@@ -210,24 +232,37 @@ impl PyMatch {
     /// Recover the matched `FloatBinaryOp` variant name from `c`.
     fn float_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
         self.with_function(py, key, |c, g| {
-            self.inner.bindings().get_float_binary_op(c, g.graph()).map(op_name)
+            self.inner
+                .bindings()
+                .get_float_binary_op(c, g.graph())
+                .map(op_name)
         })
     }
 
     /// Recover the matched `FloatUnaryOp` variant name from `c`.
     fn float_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_float_unary_op(c, g.graph()).map(op_name))
+        self.with_function(py, key, |c, g| {
+            self.inner
+                .bindings()
+                .get_float_unary_op(c, g.graph())
+                .map(op_name)
+        })
     }
 
     /// Recover the matched `FloatCmpOp` variant name from `c`.
     fn float_cmp_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_float_cmp_op(c, g.graph()).map(op_name))
+        self.with_function(py, key, |c, g| {
+            self.inner
+                .bindings()
+                .get_float_cmp_op(c, g.graph())
+                .map(op_name)
+        })
     }
 
     /// Recover the matched varnode from `c`.  Returns the `Vn`
     /// associated with the captured `InitialVar` / tagged `Phi`
-    /// (via `Function::get_vn_for_value` on the Phi's output value) /
-    /// `FunctionArg` node, or `None` when `c` doesn't bind such a node.
+    /// (via `Function::get_vn_for_value` on the Phi's output value),
+    /// or `None` when `c` doesn't bind such a node.
     fn vn(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
         self.with_function(py, key, |c, g| {
             self.inner.get_vn(c, g).map(crate::sleigh::PyVn::from_inner)
@@ -244,11 +279,7 @@ impl PyMatch {
     /// query captures a value node, this list names the machine
     /// instructions whose lifting (or subsequent rewrite) contributed
     /// to that node's value.
-    fn asm_fingerprint(
-        &self,
-        py: Python<'_>,
-        key: CaptureKey<'_>,
-    ) -> PyResult<Vec<u64>> {
+    fn asm_fingerprint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Vec<u64>> {
         let cap = key.resolve()?;
         let function = self.function.borrow(py);
         let function = function.read_inner().map_err(into_strider_err)?;
@@ -277,11 +308,8 @@ impl PyMatch {
         };
         match nid {
             Some(nid) => {
-                let pynode = crate::node::PyNode::new(
-                    py,
-                    self.function.clone_ref(py),
-                    nid.as_u32(),
-                )?;
+                let pynode =
+                    crate::node::PyNode::new(py, self.function.clone_ref(py), nid.as_u32())?;
                 Ok(Some(pynode))
             }
             None => Ok(None),

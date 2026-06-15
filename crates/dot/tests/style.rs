@@ -20,7 +20,11 @@ fn dark_has_known_graph_node_and_edge_attrs() {
     assert!(s.graph.iter().any(|(k, v)| *k == "rankdir" && *v == "TB"));
     assert!(s.graph.iter().any(|(k, _v)| *k == "bgcolor"));
     assert!(s.node.iter().any(|(k, v)| *k == "shape" && *v == "box"));
-    assert!(s.node.iter().any(|(k, v)| *k == "fontname" && *v == "monospace"));
+    assert!(
+        s.node
+            .iter()
+            .any(|(k, v)| *k == "fontname" && *v == "monospace")
+    );
     assert!(s.node.iter().any(|(k, v)| *k == "margin" && *v == "0.2"));
     assert!(s.edge.iter().any(|(k, _v)| *k == "fontcolor"));
 }
@@ -29,7 +33,9 @@ fn dark_has_known_graph_node_and_edge_attrs() {
 fn dark_cfg_replaces_fontname_with_courier() {
     let s = DotStyle::dark_cfg();
     assert!(
-        s.node.iter().any(|(k, v)| *k == "fontname" && *v == "Courier"),
+        s.node
+            .iter()
+            .any(|(k, v)| *k == "fontname" && *v == "Courier"),
         "expected fontname=Courier in dark_cfg().node",
     );
     assert!(

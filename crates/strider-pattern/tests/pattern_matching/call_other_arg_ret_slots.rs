@@ -9,10 +9,10 @@
 //! argument slots.
 
 use strider_ir::IRBuilderExt;
-use strider_pattern::{Capture, CaptureExt, Matcher, any, call_other, int_const, mem_phi};
 use strider_ir::node::ValueType;
 use strider_ir::{Function, FunctionBuilder};
 use strider_ir_test_utils::RegisterSet;
+use strider_pattern::{Capture, CaptureExt, Matcher, any, call_other, int_const, mem_phi};
 
 /// Build a graph with a single `cpuid` CallOther whose pcode-explicit
 /// inputs/outputs are bound through real Vns so we can pattern-match
@@ -24,7 +24,19 @@ fn build_cpuid_graph() -> Function {
     // CPUID per the ABI table is empty-channel + memory_edge=true.
     // Pass no pcode-explicit args, no implicit reads, no implicit writes.
     let _ = b
-        .build_call_other(7, "cpuid", None, &[], &strider_target::BuiltCallOtherAbi { implicit_reads: Vec::new(), implicit_writes: Vec::new(), clobbers_memory: false }, None, false)
+        .build_call_other(
+            7,
+            "cpuid",
+            None,
+            &[],
+            &strider_target::BuiltCallOtherAbi {
+                implicit_reads: Vec::new(),
+                implicit_writes: Vec::new(),
+                clobbers_memory: false,
+            },
+            None,
+            false,
+        )
         .expect("cpuid");
     b.build_return(None, &[]).expect("return");
     b.build().expect("FunctionBuilder::build")
@@ -54,7 +66,10 @@ fn mem_alias_binds_memory_predecessor() {
     let pat = call_other().name("cpuid").mem(mem_phi().capture(c)).build();
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
-    assert!(hits[0].node(c, function.graph()).is_some(), "mem input capture must bind");
+    assert!(
+        hits[0].node(c, function.graph()).is_some(),
+        "mem input capture must bind"
+    );
 }
 
 /// `arg(idx, value_pat)` constrains a pcode-explicit value argument.
@@ -67,7 +82,19 @@ fn arg_constrains_pcode_explicit_value_argument() {
     // A modeled CallOther with one pcode-explicit value arg.  Its inputs
     // are `[ctrl(0), mem(1), arg0(2)]`.
     let _ = b
-        .build_call_other(9, "rdmsr", None, &[a0], &strider_target::BuiltCallOtherAbi { implicit_reads: Vec::new(), implicit_writes: Vec::new(), clobbers_memory: false }, None, false)
+        .build_call_other(
+            9,
+            "rdmsr",
+            None,
+            &[a0],
+            &strider_target::BuiltCallOtherAbi {
+                implicit_reads: Vec::new(),
+                implicit_writes: Vec::new(),
+                clobbers_memory: false,
+            },
+            None,
+            false,
+        )
         .expect("rdmsr");
     b.build_return(None, &[]).expect("return");
     let function = b.build().expect("build");
@@ -75,12 +102,28 @@ fn arg_constrains_pcode_explicit_value_argument() {
 
     // arg slot 2 holds the value argument IntConst(0x11).
     assert_eq!(
-        matcher.find_all(&call_other().name("rdmsr").arg(2, int_const(0x11u128)).build()).unwrap().len(),
+        matcher
+            .find_all(
+                &call_other()
+                    .name("rdmsr")
+                    .arg(2, int_const(0x11u128))
+                    .build()
+            )
+            .unwrap()
+            .len(),
         1
     );
     // Wrong value at the same slot → reject.
     assert_eq!(
-        matcher.find_all(&call_other().name("rdmsr").arg(2, int_const(0x99u128)).build()).unwrap().len(),
+        matcher
+            .find_all(
+                &call_other()
+                    .name("rdmsr")
+                    .arg(2, int_const(0x99u128))
+                    .build()
+            )
+            .unwrap()
+            .len(),
         0
     );
 }

@@ -8,9 +8,9 @@
 #![allow(clippy::unwrap_used)]
 
 use rsleigh::mem_readers::BufMemReader;
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::Strider;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::LiftOptions;
 use strider_target::{CallingConvention, SleighArch};
 
 mod common;
@@ -67,11 +67,13 @@ fn compact_preserves_reachable_pattern_matches() {
     let pat = ret().build();
     let compact_matches = Matcher::try_new(&compact_function)
         .unwrap()
-        .find_all(&pat).unwrap()
+        .find_all(&pat)
+        .unwrap()
         .len();
     let noncompact_matches = Matcher::try_new(&noncompact_function)
         .unwrap()
-        .find_all(&pat).unwrap()
+        .find_all(&pat)
+        .unwrap()
         .len();
     assert_eq!(
         compact_matches, noncompact_matches,

@@ -44,8 +44,7 @@ fn build_lift_driver(
 )> {
     let reader = mem.into_any();
     let sleigh = build_orch_sleigh(&arch, reader)?;
-    let driver =
-        strider_orchestrator::Lifter::new(arch.inner, sleigh).map_err(into_strider_err)?;
+    let driver = strider_orchestrator::Lifter::new(arch.inner, sleigh).map_err(into_strider_err)?;
     // Resolve the CC against the driver's (the lifter's) register table.
     let cc_built = build_cc(cc, driver.sleigh_regs())?;
     Ok((driver, cc_built))
@@ -121,7 +120,13 @@ impl PyLifter {
         allow_code_before_start_addr: bool,
         function_max_size: Option<u64>,
     ) -> PyResult<PyCfg> {
-        Self::build_cfg_internal(slf, py, entry, allow_code_before_start_addr, function_max_size)
+        Self::build_cfg_internal(
+            slf,
+            py,
+            entry,
+            allow_code_before_start_addr,
+            function_max_size,
+        )
     }
 
     /// Lift `cfg` into the IR graph, returning an `AnalyzeOutcome`

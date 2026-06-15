@@ -79,14 +79,13 @@ impl SealNode for TmplNodeKind {
 /// node. The **raw** verbs — [`node`](Self::node) plus
 /// [`input`](Self::input) and the `*_output` slot verbs — do not enforce
 /// this: a hand-built node can declare an output signature that does not
-/// match its `NodeKind`'s `expected_signature`, and wiring two producers
-/// into the same input slot silently drops the earlier edge (inputs are
-/// collected into a slot-keyed `BTreeMap` at instantiation). Because
+/// match its `NodeKind`'s `expected_signature`. Because
 /// [`instantiate`](crate::template::instantiate) does **not** run
-/// [`strider_ir::validate`], such a malformed node is not caught. Authors
-/// using the raw verbs own both invariants: declare an output signature
-/// matching the `NodeKind`, and never wire two producers into one input
-/// slot.
+/// [`strider_ir::validate`], such an output-signature mismatch is not
+/// caught — authors using the raw verbs own that invariant. Input-slot
+/// wiring, by contrast, **is** validated at instantiation: gapped
+/// (non-contiguous) or duplicate input slots are rejected with an error
+/// rather than silently closed / overwritten.
 pub struct TemplateBuilder {
     core: StagedGraph<TmplNodeKind, TmplValue>,
 }
@@ -298,7 +297,10 @@ mod tests {
                     saw_build = true;
                     // Built node produces a TmplOutput.
                     let out = t.graph.node_outputs(node)[0];
-                    assert!(matches!(t.graph.value_kind_ref(out), TmplValue::TmplOutput(_)));
+                    assert!(matches!(
+                        t.graph.value_kind_ref(out),
+                        TmplValue::TmplOutput(_)
+                    ));
                 }
                 TmplNodeKind::Capture => {
                     saw_capture = true;

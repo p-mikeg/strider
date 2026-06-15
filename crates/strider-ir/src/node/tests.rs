@@ -40,10 +40,7 @@ fn unsigned_int_masks_i1_to_low_bit() {
 /// negative.
 #[test]
 fn signed_int_sign_extends_from_declared_width() {
-    assert_eq!(
-        ValueType::I8.get_signed_int(u128::from(u8::MAX)),
-        Some(-1)
-    );
+    assert_eq!(ValueType::I8.get_signed_int(u128::from(u8::MAX)), Some(-1));
     assert_eq!(
         ValueType::I8.get_signed_int(u128::from(i8::MIN as u8)),
         Some(i128::from(i8::MIN))
@@ -134,11 +131,7 @@ fn is_integer_for_all_integer_output_types() {
             "{ty:?} should be integer"
         );
     }
-    for ty in [
-        ValueType::F32,
-        ValueType::F64,
-        ValueType::F80,
-    ] {
+    for ty in [ValueType::F32, ValueType::F64, ValueType::F80] {
         assert!(
             !ValueKind::Typed(ty).is_integer(),
             "{ty:?} must not be integer"
@@ -231,10 +224,7 @@ fn is_integer_false_for_float_types() {
 #[test]
 fn get_unsigned_int_returns_none_for_floats() {
     assert_eq!(ValueType::F32.get_unsigned_int(0x3F800000), None);
-    assert_eq!(
-        ValueType::F64.get_unsigned_int(0x3FF0000000000000),
-        None
-    );
+    assert_eq!(ValueType::F64.get_unsigned_int(0x3FF0000000000000), None);
 }
 
 #[test]
@@ -287,17 +277,17 @@ fn type_info_table_matches_variants() {
     // Table indices must match discriminant order. Enumerate every variant
     // explicitly and check `info().name` / category.
     let cases: &[(ValueType, &str, usize, bool, bool, bool)] = &[
-        (ValueType::I1,   "i1",   1, true,  true,  false),
-        (ValueType::I8,   "i8",   1, true,  false, false),
-        (ValueType::I16,  "i16",  2, true,  false, false),
-        (ValueType::I32,  "i32",  4, true,  false, false),
-        (ValueType::I64,  "i64",  8, true,  false, false),
-        (ValueType::I80,  "i80",  10, true, false, false),
+        (ValueType::I1, "i1", 1, true, true, false),
+        (ValueType::I8, "i8", 1, true, false, false),
+        (ValueType::I16, "i16", 2, true, false, false),
+        (ValueType::I32, "i32", 4, true, false, false),
+        (ValueType::I64, "i64", 8, true, false, false),
+        (ValueType::I80, "i80", 10, true, false, false),
         (ValueType::I128, "i128", 16, true, false, false),
         (ValueType::I256, "i256", 32, true, false, false),
-        (ValueType::F32,  "f32",  4, false, false, true),
-        (ValueType::F64,  "f64",  8, false, false, true),
-        (ValueType::F80,  "f80",  10, false, false, true),
+        (ValueType::F32, "f32", 4, false, false, true),
+        (ValueType::F64, "f64", 8, false, false, true),
+        (ValueType::F80, "f80", 10, false, false, true),
     ];
     for (ty, name, size, is_int, is_bool, is_float) in cases {
         assert_eq!(ty.as_str(), *name);
@@ -453,4 +443,3 @@ fn asm_fingerprint_exempt_matches_legacy() {
         );
     }
 }
-

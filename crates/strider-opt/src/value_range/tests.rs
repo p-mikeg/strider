@@ -3,11 +3,46 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, control_dominators};
+use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp, control_dominators};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
 use super::compute_value_ranges;
 use crate::analyze_known_bits;
+
+/// Run the canonicalising passes the range analysis assumes have already run in
+/// production (its sole caller is a post-pipeline post-pass), so a hand-built
+/// fixture matches the converged IR shape: no single-input phis (`PhiCollapse`),
+/// no single-predecessor regions (`RegionCollapse`), no `If(Xor(C,1))` conds
+/// (`IfCondInversion`, which rewrites them to `If(C)` with the branches swapped).
+fn canonicalize(f: &mut strider_ir::Function) {
+    let mut p = crate::OptimizerPipeline::new();
+    p.add(crate::IfCondInversion::new());
+    p.add(crate::PhiCollapse);
+    p.add(crate::RegionCollapse);
+    p.run(f, &mut crate::OptCtx::new(None)).unwrap();
+}
+
+/// `(true_edge_consumer, false_edge_consumer)` of the sole `If` after
+/// canonicalisation — the nodes that directly consume each branch edge once the
+/// single-predecessor dispatch/exit regions have collapsed away.  These are the
+/// post-collapse query points where each edge's guard holds.  (Remember
+/// `IfCondInversion` swaps the branches of an `Xor(C,1)` cond, so the original
+/// "true" dispatch becomes the false edge in that case.)
+fn if_edge_consumers(f: &strider_ir::Function) -> (NodeId, NodeId) {
+    let if_node = f
+        .walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::If))
+        .expect("an If node");
+    let outs: Vec<ValueId> = f.node_outputs(if_node).to_vec();
+    let consumer = |ctrl: ValueId| {
+        f.graph()
+            .value_uses(ctrl)
+            .next()
+            .expect("each If edge has a consumer")
+            .0
+    };
+    (consumer(outs[0]), consumer(outs[1]))
+}
 
 // ---------------------------------------------------------------------------
 // Helper: Build a "guarded dispatch" function:
@@ -51,7 +86,6 @@ fn build_guarded_dispatch(
 
     // dispatch region: return idx (true successor of If).
     b.set_region(dispatch);
-    let dispatch_ctrl_val = b.region_cur_ctrl(dispatch);
     b.build_return(Some(idx), &[]).unwrap();
 
     // exit region: return idx (false successor of If).
@@ -59,23 +93,12 @@ fn build_guarded_dispatch(
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_lift_addr(None);
-    let f = b.build().unwrap();
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
 
-    // Find dispatch_region NodeId by finding the Region whose control value was
-    // `dispatch_ctrl_val` — that value is produced by the Region node itself.
-    let dispatch_node = f.graph().producer(dispatch_ctrl_val);
-
-    // Find exit_region NodeId: the Region node that is NOT the entry (entry has
-    // no control inputs) and is NOT the dispatch node.
-    let entry_node = f.entry().unwrap();
-    let exit_node = f
-        .graph()
-        .all_node_ids()
-        .find(|&n| {
-            matches!(f.node_kind(n), NodeKind::Region) && n != entry_node && n != dispatch_node
-        })
-        .expect("exit_region must exist");
-
+    // Cond is a bare `Less(idx, N)` (no Xor), so IfCondInversion does not swap:
+    // the dispatch query point is the If's true-edge consumer, exit the false.
+    let (dispatch_node, exit_node) = if_edge_consumers(&f);
     (f, idx, dispatch_node, exit_node)
 }
 
@@ -88,11 +111,113 @@ fn strict_less_guard_bounds_index_on_true_edge() {
     let (f, idx, dispatch_region, _exit) = build_guarded_dispatch(8, ValueType::I32);
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_region);
     assert_eq!(iv.lo, 0, "lower bound must be 0");
     assert_eq!(iv.hi, 7, "upper bound must be 7 for idx < 8");
+}
+
+// A guard on `Add(X, const)` must propagate the bound back to `X` (shifted by
+// `-const`).  This is the masked-Thumb shape: the guard bounds `(kind&7) - 1`,
+// and the dispatch indexes `kind&7`, so `kind&7 = ((kind&7)-1) + 1` must inherit
+// `[1, 7]` from a guard `((kind&7)-1) < 7`.
+#[test]
+fn guard_on_add_propagates_bound_back_to_operand() {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let entry = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+    // X = load (no KB info), diff = X + (-1), guard `diff < 7`.
+    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let x = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
+    let neg1 = b.build_int_const((0u128).wrapping_sub(1), ty).unwrap();
+    let diff = b
+        .build_int_binary_operation(x, neg1, IntBinaryOp::Add, ty)
+        .unwrap();
+    let seven = b.build_int_const(7u64, ty).unwrap();
+    let cond = b
+        .build_int_cmp_operation(diff, seven, IntCmpOp::Less, ty)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+    b.set_region(dispatch);
+    b.build_return(Some(x), &[]).unwrap();
+    b.set_region(exit);
+    b.build_return(Some(x), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    // Bare `Less(diff, 7)` cond (no Xor) → no branch swap → dispatch is the
+    // If's true-edge consumer.  `x` is a Load and survives canonicalisation.
+    let (dispatch_node, _exit_node) = if_edge_consumers(&f);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(x, dispatch_node);
+    assert_eq!(
+        (iv.lo, iv.hi),
+        (1, 7),
+        "guard on Add(X,-1) ∈ [0,6] must bound X ∈ [1,7]"
+    );
+}
+
+// A guard on `Add(X, const)` whose back-propagated interval WRAPS must be
+// rejected (→ X stays top), not silently recorded as a straddle-zero interval.
+// Guard `(X + 4) < 8` bounds `diff ∈ [0, 7]`; shifting back by `-4` gives
+// `lo = 0 - 4` (wraps to a huge value) and `hi = 7 - 4 = 3`, so `lo > hi`.
+// `add_operand_shifted_interval` must return None and `range_of(X)` stays top.
+#[test]
+fn guard_on_add_with_wrapping_backprop_stays_top() {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let entry = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+    // X = load (no KB info), diff = X + 4, guard `diff < 8` → diff ∈ [0, 7].
+    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let x = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
+    let four = b.build_int_const(4u64, ty).unwrap();
+    let diff = b
+        .build_int_binary_operation(x, four, IntBinaryOp::Add, ty)
+        .unwrap();
+    let eight = b.build_int_const(8u64, ty).unwrap();
+    let cond = b
+        .build_int_cmp_operation(diff, eight, IntCmpOp::Less, ty)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+    b.set_region(dispatch);
+    b.build_return(Some(x), &[]).unwrap();
+    b.set_region(exit);
+    b.build_return(Some(x), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    // Bare `Less(diff, 8)` cond → no branch swap → dispatch is the true-edge
+    // consumer.  `x` is a Load and survives canonicalisation.
+    let (dispatch_node, _exit_node) = if_edge_consumers(&f);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(x, dispatch_node);
+    let type_mask = ty.bit_mask_u128();
+    assert!(
+        iv.is_top(type_mask),
+        "wrapping back-prop of guard on Add(X,4) ∈ [0,7] must leave X top, \
+         got [{}, {}]",
+        iv.lo,
+        iv.hi,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -136,8 +261,8 @@ fn trivial_phi_of_guarded_index_is_bounded() {
     b.build_if(cond, dispatch, exit).unwrap();
 
     b.set_region(dispatch);
-    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
-    // Read idx back through the builder's phi mechanism.
+    // Read idx back through the builder's phi mechanism (a single-input phi
+    // for the tracked variable).
     let phi_idx = b.read_variable(&idx_vn).unwrap();
     b.build_return(Some(phi_idx), &[]).unwrap();
 
@@ -145,15 +270,18 @@ fn trivial_phi_of_guarded_index_is_bounded() {
     b.build_return(Some(raw_idx), &[]).unwrap();
 
     b.set_lift_addr(None);
-    let f = b.build().unwrap();
-
-    let dispatch_node = f.graph().producer(dispatch_ctrl);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    // `PhiCollapse` removes the trivial single-input phi, so `idx` is now the
+    // underlying `raw_idx` Load (which survives).  The cond is a bare
+    // `Less(raw_idx, 8)` (no Xor) → no swap → dispatch is the true-edge consumer.
+    let (dispatch_node, _exit_node) = if_edge_consumers(&f);
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
-    let iv = ranges.range_of(phi_idx, dispatch_node);
+    let iv = ranges.range_of(raw_idx, dispatch_node);
     assert_eq!(iv.lo, 0, "trivial phi: lower bound must be 0");
     assert_eq!(iv.hi, 7, "trivial phi: upper bound must be 7");
 }
@@ -200,7 +328,7 @@ fn known_bits_mask_bounds_index_everywhere() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // In entry region: KnownBits should see max_value = 7 → [0, 7].
     let iv_entry = ranges.range_of(idx, entry_node);
@@ -268,7 +396,7 @@ fn unguarded_predecessor_makes_range_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(phi_idx, dispatch_node);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -321,19 +449,22 @@ fn lowered_le_guard_bounds_index() {
     b.build_if(cond, dispatch, exit).unwrap();
 
     b.set_region(dispatch);
-    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_region(exit);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_lift_addr(None);
-    let f = b.build().unwrap();
-    let dispatch_node = f.graph().producer(dispatch_ctrl);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    // `If(Xor(Less(15,idx),1)){dispatch}{exit}` → IfCondInversion rewrites to
+    // `If(Less(15,idx)){exit}{dispatch}` (branches swapped), so the original
+    // dispatch is now the If's FALSE-edge consumer.
+    let (_exit_node, dispatch_node) = if_edge_consumers(&f);
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_node);
     assert_eq!(iv.lo, 0, "lowered <=: lower bound must be 0");
@@ -383,19 +514,21 @@ fn lowered_le_guard_swapped_xor_operands_still_bounds_index() {
     b.build_if(cond, dispatch, exit).unwrap();
 
     b.set_region(dispatch);
-    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_region(exit);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_lift_addr(None);
-    let f = b.build().unwrap();
-    let dispatch_node = f.graph().producer(dispatch_ctrl);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    // Same `Xor(Less,1)` cond (operands swapped) → IfCondInversion rewrites to
+    // `If(Less){exit}{dispatch}`, so the original dispatch is now the FALSE edge.
+    let (_exit_node, dispatch_node) = if_edge_consumers(&f);
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_node);
     assert_eq!(iv.lo, 0, "swapped Xor: lower bound must be 0");
@@ -440,23 +573,28 @@ fn sless_guard_with_known_zero_sign_bit_bounds_index() {
     b.build_if(cond, dispatch, exit).unwrap();
 
     b.set_region(dispatch);
-    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_region(exit);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_lift_addr(None);
-    let f = b.build().unwrap();
-    let dispatch_node = f.graph().producer(dispatch_ctrl);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    // Bare `Sless(idx, 8)` cond (no Xor) → no branch swap → dispatch is the
+    // If's true-edge consumer.
+    let (dispatch_node, _exit_node) = if_edge_consumers(&f);
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_node);
     assert_eq!(iv.lo, 0, "Sless with known-zero sign bit: lower bound 0");
-    assert_eq!(iv.hi, 7, "Sless with known-zero sign bit: idx s< 8 → [0, 7]");
+    assert_eq!(
+        iv.hi, 7,
+        "Sless with known-zero sign bit: idx s< 8 → [0, 7]"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -498,21 +636,22 @@ fn inverted_less_guard_bounds_index_on_false_edge() {
     b.build_if(cond, oob, dispatch).unwrap();
 
     b.set_region(oob);
-    let oob_ctrl = b.region_cur_ctrl(oob);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_region(dispatch);
-    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_lift_addr(None);
-    let f = b.build().unwrap();
-    let oob_node = f.graph().producer(oob_ctrl);
-    let dispatch_node = f.graph().producer(dispatch_ctrl);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    // `If(Xor(Less(idx,8),1)){oob}{dispatch}` → IfCondInversion rewrites to
+    // `If(Less(idx,8)){dispatch}{oob}` (branches swapped).  So the `idx < 8`
+    // dispatch is now the TRUE edge and oob (idx >= 8) is the FALSE edge.
+    let (dispatch_node, oob_node) = if_edge_consumers(&f);
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let type_mask = ValueType::I32.bit_mask_u128();
     // True edge: `idx >= 8` — lower-only, no useful upper bound → top.
@@ -553,7 +692,7 @@ fn no_constraint_is_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, entry_node);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -609,7 +748,7 @@ fn sless_guard_without_known_sign_bit_is_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_node);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -634,7 +773,7 @@ fn false_successor_of_guard_is_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, exit);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -701,7 +840,6 @@ fn sibling_region_not_dominated_is_top() {
 
     // dispatch: idx is bounded < 8 here.
     b.set_region(dispatch);
-    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
     b.build_return(Some(raw_idx), &[]).unwrap();
 
     // guarded_exit: just return.
@@ -710,17 +848,39 @@ fn sibling_region_not_dominated_is_top() {
 
     // right branch: sibling — NOT dominated by dispatch.
     b.set_region(right);
-    let right_ctrl = b.region_cur_ctrl(right);
     b.build_return(Some(raw_idx), &[]).unwrap();
 
     b.set_lift_addr(None);
-    let f = b.build().unwrap();
-    let dispatch_node = f.graph().producer(dispatch_ctrl);
-    let right_node = f.graph().producer(right_ctrl);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+
+    // Two Ifs survive (the const `flag` split and the `Less(raw_idx,8)` guard).
+    // The guard If has an IntCmpOp cond; its bare-`Less` true edge is dispatch.
+    // The `flag` If's false edge is the sibling `right` branch.
+    let guard_if = f
+        .walk()
+        .find(|&n| {
+            matches!(f.node_kind(n), NodeKind::If)
+                && matches!(
+                    f.node_kind(f.graph().producer(f.graph().nth_input(n, 1).unwrap())),
+                    NodeKind::IntCmpOp(_)
+                )
+        })
+        .expect("guard If");
+    let flag_if = f
+        .walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::If) && n != guard_if)
+        .expect("flag If");
+    let edge_consumer = |if_node: NodeId, slot: usize| -> NodeId {
+        let ctrl = f.node_outputs(if_node)[slot];
+        f.graph().value_uses(ctrl).next().expect("edge consumer").0
+    };
+    let dispatch_node = edge_consumer(guard_if, 0); // true edge of the guard
+    let right_node = edge_consumer(flag_if, 1); // false edge → sibling right
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // dispatch is dominated by guard true-succ → bounded.
     let iv_dispatch = ranges.range_of(raw_idx, dispatch_node);
@@ -751,8 +911,11 @@ fn sibling_region_not_dominated_is_top() {
 //   loop_body: idx_next = idx_phi + 1 → back to loop_header
 //   loop_exit: return idx_phi
 //
-// range_of(idx_phi, loop_header) must return top (depth-cap hit or
-// cycle detected via the multi-input phi fail-closed path).
+// range_of(idx_phi, loop_header) must return top: the back-edge arm
+// `idx_next = idx_phi + 1` is an `Add` (an opaque leaf to value_range) with no
+// guard or KnownBits bound, so the arm union is top and no guard on idx_phi
+// dominates the header.  (For the cycle that genuinely drives the resolver into
+// itself — a phi referencing a phi — see `phi_of_phi_cycle_terminates_top`.)
 // ---------------------------------------------------------------------------
 #[test]
 fn cyclic_phi_is_top() {
@@ -805,17 +968,105 @@ fn cyclic_phi_is_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
-    // The loop-carried phi has two data inputs (zero and idx_next).
-    // The back-edge arm (from body) has a loop-relative predecessor
-    // whose range is bounded but whose phi input is itself loop-carried,
-    // causing a recursive cycle that the depth-cap terminates as top.
+    // The loop-carried phi has two data inputs (zero and idx_next).  The
+    // back-edge arm `idx_next` is an unguarded `Add`, so its range is top and
+    // the arm union is top — no recursion through the phi is even needed.
     let iv = ranges.range_of(idx_phi, header_node);
     let type_mask = ValueType::I32.bit_mask_u128();
     assert!(
         iv.is_top(type_mask),
         "cyclic phi must yield top, got [{}, {}]",
+        iv.lo,
+        iv.hi
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 (d'): True phi-of-phi cycle (mutually loop-carried) ⇒ top, and the
+// query terminates.
+//
+// `value_range` only recurses through `Phi` nodes — arithmetic is an opaque
+// leaf — so an ordinary loop index `Phi(0, idx+1)` never forms a resolution
+// cycle (the `idx+1` arm stops at the `Add`, which is why `cyclic_phi_is_top`
+// above gets its top from the unguarded arm, not from recursion).  A
+// *phi-of-phi* cycle is the one shape that drives the recursion back into
+// itself: two loop variables that swap every iteration, so `phi_a = Phi(0,
+// phi_b)` and `phi_b = Phi(1, phi_a)` reference each other directly with no
+// intervening node.
+//
+// This is the case the resolver must break.  Absent a dominating guard on
+// either phi at the query point the answer is top; the point of the test is
+// that `range_of` *returns at all* — the cycle is detected and cut, not chased
+// forever.
+// ---------------------------------------------------------------------------
+#[test]
+fn phi_of_phi_cycle_terminates_top() {
+    use strider_ir_test_utils::reg_vn;
+
+    let a_vn = reg_vn(0x10, 4); // 4-byte register → I32
+    let b_vn = reg_vn(0x20, 4); // 4-byte register → I32
+    let mut b = RegisterSet::new()
+        .tracked(a_vn)
+        .tracked(b_vn)
+        .build_fn()
+        .unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let header = b.create_region().unwrap();
+    let body = b.create_region().unwrap();
+    let loop_exit = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+
+    // entry: a = 0, b = 1, branch header.
+    b.set_region(entry);
+    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let one_seed = b.build_int_const(1u64, ValueType::I32).unwrap();
+    b.write_variable(&a_vn, zero).unwrap();
+    b.write_variable(&b_vn, one_seed).unwrap();
+    b.build_branch(header).unwrap();
+
+    // header: read a (→ phi_a after linking), gate on a < 16, branch body/exit.
+    b.set_region(header);
+    let header_ctrl = b.region_cur_ctrl(header);
+    let phi_a = b.read_variable(&a_vn).unwrap();
+    let bound = b.build_int_const(16u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(phi_a, bound, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, body, loop_exit).unwrap();
+
+    // body: swap — a' = old b, b' = old a — then branch header.  This makes the
+    // back-edge value of `a` be `phi_b` and the back-edge value of `b` be
+    // `phi_a`, so the two header phis reference each other directly.
+    b.set_region(body);
+    let old_a = b.read_variable(&a_vn).unwrap();
+    let old_b = b.read_variable(&b_vn).unwrap();
+    b.write_variable(&a_vn, old_b).unwrap();
+    b.write_variable(&b_vn, old_a).unwrap();
+    b.build_branch(header).unwrap();
+
+    // exit: return a.
+    b.set_region(loop_exit);
+    b.build_return(Some(phi_a), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let header_node = f.graph().producer(header_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+
+    // Must terminate (cycle cut) and, absent a dominating guard, yield top.
+    let iv = ranges.range_of(phi_a, header_node);
+    let type_mask = ValueType::I32.bit_mask_u128();
+    assert!(
+        iv.is_top(type_mask),
+        "phi-of-phi cycle must yield top, got [{}, {}]",
         iv.lo,
         iv.hi
     );
@@ -864,7 +1115,6 @@ fn nested_guards_intersect_at_inner_region() {
 
     // dispatch: idx is bounded by BOTH guards → [0, 7].
     b.set_region(dispatch);
-    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
     b.build_return(Some(idx), &[]).unwrap();
 
     // mid_exit: idx is only bounded by the outer guard.
@@ -876,12 +1126,34 @@ fn nested_guards_intersect_at_inner_region() {
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_lift_addr(None);
-    let f = b.build().unwrap();
-    let dispatch_node = f.graph().producer(dispatch_ctrl);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+
+    // Two bare-`Less` guard Ifs survive (bounds 16 and 8); `if_edge_consumers`
+    // (sole-If helper) can't be used.  The inner dispatch is the true edge of
+    // the `Less(idx, 8)` guard.
+    let inner_if = f
+        .walk()
+        .find(|&n| {
+            if !matches!(f.node_kind(n), NodeKind::If) {
+                return false;
+            }
+            let cmp = f.graph().producer(f.graph().nth_input(n, 1).unwrap());
+            matches!(f.node_kind(cmp), NodeKind::IntCmpOp(_))
+                && f.int_const_val(f.graph().nth_input(cmp, 1).unwrap()) == Some(8)
+        })
+        .expect("inner guard If (bound 8)");
+    let inner_true_ctrl = f.node_outputs(inner_if)[0];
+    let dispatch_node = f
+        .graph()
+        .value_uses(inner_true_ctrl)
+        .next()
+        .expect("inner true-edge consumer")
+        .0;
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_node);
     assert_eq!(
@@ -916,7 +1188,7 @@ fn strict_less_zero_bound_is_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_region);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -951,7 +1223,7 @@ fn strict_less_at_type_mask_narrows_by_one() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_region);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -1020,7 +1292,6 @@ fn two_sibling_guard_regions_give_independent_bounds() {
 
     // dispatch_a: idx bounded < 8 → [0, 7].
     b.set_region(dispatch_a);
-    let dispatch_a_ctrl = b.region_cur_ctrl(dispatch_a);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_region(sink_a);
@@ -1036,20 +1307,48 @@ fn two_sibling_guard_regions_give_independent_bounds() {
 
     // dispatch_b: idx bounded < 16 → [0, 15].
     b.set_region(dispatch_b);
-    let dispatch_b_ctrl = b.region_cur_ctrl(dispatch_b);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_region(sink_b);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_lift_addr(None);
-    let f = b.build().unwrap();
-    let da_node = f.graph().producer(dispatch_a_ctrl);
-    let db_node = f.graph().producer(dispatch_b_ctrl);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+
+    // There are multiple Ifs (the const `flag` split plus the two guards), so
+    // `if_edge_consumers` (sole-If helper) can't be used.  Find each guard If by
+    // its `Less(idx, bound)` cond constant and take its true-edge consumer (bare
+    // `Less` cond → no branch swap → dispatch is the true edge).
+    let true_edge_consumer_of_guard = |bound: u64| -> NodeId {
+        let if_node = f
+            .walk()
+            .find(|&n| {
+                if !matches!(f.node_kind(n), NodeKind::If) {
+                    return false;
+                }
+                let cond = f.graph().nth_input(n, 1).expect("If cond");
+                let cmp = f.graph().producer(cond);
+                if !matches!(f.node_kind(cmp), NodeKind::IntCmpOp(_)) {
+                    return false;
+                }
+                let rhs = f.graph().nth_input(cmp, 1).expect("cmp rhs");
+                f.int_const_val(rhs) == Some(bound)
+            })
+            .expect("guard If with matching bound");
+        let true_ctrl = f.node_outputs(if_node)[0];
+        f.graph()
+            .value_uses(true_ctrl)
+            .next()
+            .expect("true-edge consumer")
+            .0
+    };
+    let da_node = true_edge_consumer_of_guard(8);
+    let db_node = true_edge_consumer_of_guard(16);
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv_a = ranges.range_of(idx, da_node);
     assert_eq!(iv_a.lo, 0, "dispatch_a lo must be 0");
@@ -1078,6 +1377,98 @@ fn two_sibling_guard_regions_give_independent_bounds() {
 // (unconstrained) arms — so without intersecting the guard recorded on the
 // phi output the bound is silently dropped and the result is top.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Phi union of two DISTINCT finite arms widens (NOT tightens).
+//
+// A join phi merges two arms with different finite KnownBits bounds —
+// path_a's value is masked `& 7` ([0,7]) and path_b's `& 15` ([0,15]).  The
+// phi resolver must UNION the per-arm ranges to [0,15] (the wider bound), not
+// intersect to [0,7] and not fall back to top.  This pins `resolve_phi`'s
+// `acc.union(arm_range)` loop on two genuinely-distinct bounded arms (every
+// existing phi test covers a top arm or a guard on the phi output, never two
+// distinct finite arms).
+// ---------------------------------------------------------------------------
+#[test]
+fn multi_input_phi_unions_two_distinct_finite_arms() {
+    use rsleigh::VnSpace;
+    use strider_ir_test_utils::reg_vn;
+
+    let idx_vn = reg_vn(0x10, 4); // 4-byte register → I32
+    let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let path_a = b.create_region().unwrap();
+    let path_b = b.create_region().unwrap();
+    let join = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+
+    // entry: split unconditionally to path_a / path_b.
+    b.set_region(entry);
+    let flag = b.build_boolean_const(true);
+    b.build_if(flag, path_a, path_b).unwrap();
+
+    // path_a: idx_a = load_a & 7 → KnownBits bound [0, 7].
+    b.set_region(path_a);
+    let dummy_a = b.build_int_const(0xAAAAu64, ValueType::I64).unwrap();
+    let load_a = b.build_load(dummy_a, VnSpace::RAM, ValueType::I32).unwrap();
+    let mask7 = b.build_int_const(7u64, ValueType::I32).unwrap();
+    let idx_a = b
+        .build_int_binary_operation(load_a, mask7, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    b.write_variable(&idx_vn, idx_a).unwrap();
+    b.build_branch(join).unwrap();
+
+    // path_b: idx_b = load_b & 15 → KnownBits bound [0, 15].  A DISTINCT load so
+    // the join phi is genuinely multi-input (survives PhiCollapse).
+    b.set_region(path_b);
+    let dummy_b = b.build_int_const(0xBBBBu64, ValueType::I64).unwrap();
+    let load_b = b.build_load(dummy_b, VnSpace::RAM, ValueType::I32).unwrap();
+    let mask15 = b.build_int_const(15u64, ValueType::I32).unwrap();
+    let idx_b = b
+        .build_int_binary_operation(load_b, mask15, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    b.write_variable(&idx_vn, idx_b).unwrap();
+    b.build_branch(join).unwrap();
+
+    // join: read the multi-input phi (NO further guard) and return it.
+    b.set_region(join);
+    let phi_idx = b.read_variable(&idx_vn).unwrap();
+    b.build_return(Some(phi_idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+
+    // Recover the surviving multi-input phi (at the join control merge) and the
+    // join region it lives at — the query point for its range.
+    let phi_producer = f
+        .walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Phi) && f.phi_data_inputs(n).count() >= 2)
+        .expect("the multi-input join phi");
+    let phi_idx = f.node_outputs(phi_producer)[0];
+    // The phi's joining Region is the producer of its slot-0 PhiToken input.
+    let phi_token = f.graph().nth_input(phi_producer, 0).unwrap();
+    let join_region = f.graph().producer(phi_token);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(phi_idx, join_region);
+    assert_eq!(iv.lo, 0, "union lower bound is 0");
+    assert_eq!(
+        iv.hi, 15,
+        "phi must UNION the two distinct finite arms ([0,7] ∪ [0,15] = [0,15]); \
+         it must NOT tighten to [0,7] nor widen to top"
+    );
+    assert!(
+        !iv.is_top(ValueType::I32.bit_mask_u128()),
+        "the union of two finite arms must stay finite, not be top"
+    );
+}
+
 #[test]
 fn multi_input_phi_output_guard_bounds_index() {
     use rsleigh::VnSpace;
@@ -1104,14 +1495,22 @@ fn multi_input_phi_output_guard_bounds_index() {
     let flag = b.build_boolean_const(true);
     b.build_if(flag, path_a, path_b).unwrap();
 
-    // path_a: write idx and branch to join.
+    // path_a: write a DISTINCT load and branch to join.  The two arms must carry
+    // different SSA values so the join phi is genuinely multi-input and survives
+    // `PhiCollapse` (a phi whose inputs resolve to one value is trivial and gets
+    // removed — that would defeat this test).
     b.set_region(path_a);
-    b.write_variable(&idx_vn, raw_idx).unwrap();
+    let dummy_a = b.build_int_const(0xAAAAu64, ValueType::I64).unwrap();
+    let idx_a = b.build_load(dummy_a, VnSpace::RAM, ValueType::I32).unwrap();
+    b.write_variable(&idx_vn, idx_a).unwrap();
     b.build_branch(join).unwrap();
 
-    // path_b: write idx and branch to join — gives the join phi TWO data inputs.
+    // path_b: write a DISTINCT load and branch to join — gives the join phi TWO
+    // distinct data inputs.
     b.set_region(path_b);
-    b.write_variable(&idx_vn, raw_idx).unwrap();
+    let dummy_b = b.build_int_const(0xBBBBu64, ValueType::I64).unwrap();
+    let idx_b = b.build_load(dummy_b, VnSpace::RAM, ValueType::I32).unwrap();
+    b.write_variable(&idx_vn, idx_b).unwrap();
     b.build_branch(join).unwrap();
 
     // join: read the (multi-input) phi, guard it with `phi_idx < 8`.
@@ -1125,18 +1524,45 @@ fn multi_input_phi_output_guard_bounds_index() {
 
     // dispatch: phi_idx is guarded < 8 here.
     b.set_region(dispatch);
-    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
     b.build_return(Some(phi_idx), &[]).unwrap();
 
     b.set_region(exit);
     b.build_return(Some(phi_idx), &[]).unwrap();
 
     b.set_lift_addr(None);
-    let f = b.build().unwrap();
-    let dispatch_node = f.graph().producer(dispatch_ctrl);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+
+    // The real ≥2-input phi at the `join` control merge survives PhiCollapse,
+    // but the surrounding single-pred dispatch regions collapse.  Two Ifs
+    // survive (the const `flag` split and the `Less(phi_idx, 8)` guard), so find
+    // the GUARD If by its IntCmpOp cond.  Recover the guarded value directly from
+    // that cond (so it is exactly the value the guard was recorded against), and
+    // take the dispatch query point (bare `Less` cond → no swap → true edge).
+    let guard_if = f
+        .walk()
+        .find(|&n| {
+            matches!(f.node_kind(n), NodeKind::If)
+                && matches!(
+                    f.node_kind(f.graph().producer(f.graph().nth_input(n, 1).unwrap())),
+                    NodeKind::IntCmpOp(_)
+                )
+        })
+        .expect("the guard If");
+    let cmp = f
+        .graph()
+        .producer(f.graph().nth_input(guard_if, 1).unwrap());
+    let phi_idx = f.graph().nth_input(cmp, 0).unwrap();
+    let phi_producer = f.graph().producer(phi_idx);
+    let true_ctrl = f.node_outputs(guard_if)[0];
+    let dispatch_node = f
+        .graph()
+        .value_uses(true_ctrl)
+        .next()
+        .expect("dispatch true-edge consumer")
+        .0;
 
     // Sanity: the guarded value really is a multi-input Phi.
-    let phi_producer = f.graph().producer(phi_idx);
     assert!(
         matches!(f.node_kind(phi_producer), NodeKind::Phi),
         "guarded value must be a Phi"
@@ -1148,7 +1574,7 @@ fn multi_input_phi_output_guard_bounds_index() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(phi_idx, dispatch_node);
     assert_eq!(iv.lo, 0, "multi-phi output guard: lower bound must be 0");
@@ -1237,7 +1663,7 @@ fn join_fails_closed_when_one_predecessor_unguarded() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // The phi at dispatch merges a guarded arm (path_a) and an unguarded arm
     // (path_b).  The correct result is TOP — one unconstrained arm poisons the
@@ -1290,21 +1716,21 @@ fn const_lhs_less_guard_bounds_false_edge() {
     b.build_if(cond, above, at_or_below).unwrap();
 
     b.set_region(above);
-    let above_ctrl = b.region_cur_ctrl(above);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_region(at_or_below);
-    let below_ctrl = b.region_cur_ctrl(at_or_below);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_lift_addr(None);
-    let f = b.build().unwrap();
-    let above_node = f.graph().producer(above_ctrl);
-    let below_node = f.graph().producer(below_ctrl);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    // Bare `Less(IntConst(8), idx)` cond (no Xor) → no branch swap → `above` is
+    // the If's true-edge consumer, `at_or_below` the false-edge consumer.
+    let (above_node, below_node) = if_edge_consumers(&f);
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let type_mask = ValueType::I32.bit_mask_u128();
     // True edge: v > 8 — lower-only → top.
@@ -1315,7 +1741,10 @@ fn const_lhs_less_guard_bounds_false_edge() {
     // False edge: v <= 8 → [0, 8].
     let iv = ranges.range_of(idx, below_node);
     assert_eq!(iv.lo, 0, "const-LHS Less false edge: lower bound 0");
-    assert_eq!(iv.hi, 8, "const-LHS Less false edge: v <= 8 → upper bound 8");
+    assert_eq!(
+        iv.hi, 8,
+        "const-LHS Less false edge: v <= 8 → upper bound 8"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1369,7 +1798,7 @@ fn guard_into_control_merge_is_not_applied() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // The guard's true-edge consumer is the 2-pred merge Region; the gate
     // skips it, so `idx` is unbounded at the merge.
@@ -1442,7 +1871,7 @@ fn guard_on_edge_into_merge_is_top_below_merge() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // The If's true edge is consumed directly by the 2-pred merge, so the gate
     // skips recording the guard; `idx` is unbounded at the merge.
@@ -1469,8 +1898,8 @@ fn guard_on_edge_into_merge_is_top_below_merge() {
 // ---------------------------------------------------------------------------
 #[test]
 fn guard_survives_region_collapse_at_nonregion_consumer() {
-    use crate::pipeline::OptimizerTestExt;
     use crate::RegionCollapse;
+    use crate::pipeline::OptimizerTestExt;
 
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -1532,7 +1961,7 @@ fn guard_survives_region_collapse_at_nonregion_consumer() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // The guard keys on the non-Region consumer; querying there finds [0, 7].
     let iv = ranges.range_of(idx, consumer);

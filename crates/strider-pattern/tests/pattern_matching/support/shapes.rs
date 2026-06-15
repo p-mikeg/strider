@@ -3,7 +3,7 @@
 //! readability.
 
 use strider_ir::node::ValueType;
-use strider_ir::{Function, FloatBinaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{FloatBinaryOp, Function, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use strider_ir_test_utils::{Tb, reg_vn, stack_vn_x86_64 as stack_vn};
 
@@ -201,4 +201,3 @@ pub fn single_initial_var() -> (Function, rsleigh::Vn) {
 // without inverting the crate graph), so the helper would be unbuildable
 // here.  The single test consumer (`pattern_matching/ssa.rs`) lives in
 // the strider-orchestrator tests crate alongside its required optimiser pass.
-

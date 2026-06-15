@@ -71,7 +71,10 @@ mod endianness_tests {
             Endianness::Little.read_uint(&bytes),
             u128::from_le_bytes(bytes),
         );
-        assert_eq!(Endianness::Big.read_uint(&bytes), u128::from_be_bytes(bytes));
+        assert_eq!(
+            Endianness::Big.read_uint(&bytes),
+            u128::from_be_bytes(bytes)
+        );
         // Sanity: the high byte actually participates (would be lost on a
         // u64-width decode).
         assert_eq!(

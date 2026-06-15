@@ -90,8 +90,7 @@ pub(crate) fn try_match_node(
 fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
     pat.graph.produced_outputs(root).into_iter().any(|ov| {
         let o = pat.graph.output_weight(ov);
-        o.width.is_some()
-            || matches!(o.kind, OutputKindSpec::Value(_) | OutputKindSpec::AnyValue)
+        o.width.is_some() || matches!(o.kind, OutputKindSpec::Value(_) | OutputKindSpec::AnyValue)
     })
 }
 
@@ -131,9 +130,8 @@ fn root_output_vertex_for(
     // Multiple output vertices (the `If` control root): keep the per-slot
     // lookup so each control output's constraints land on the right slot.
     let (_node, ir_slot) = matcher.function().value_definition(root_value);
-    outs.into_iter().find(|&out_vertex| {
-        pat.graph.output_weight(out_vertex).slot as u32 == ir_slot
-    })
+    outs.into_iter()
+        .find(|&out_vertex| pat.graph.output_weight(out_vertex).slot as u32 == ir_slot)
 }
 
 /// Recursive worker. `pat_node` is the current pattern node index;
@@ -216,7 +214,11 @@ fn try_match_at(
             } else {
                 edge.consumer_slot
             };
-            let Ok(use_id) = matcher.function().graph().node_input_id_at(ir_node, ir_slot) else {
+            let Ok(use_id) = matcher
+                .function()
+                .graph()
+                .node_input_id_at(ir_node, ir_slot)
+            else {
                 return false;
             };
             let producer_value = matcher.function().graph().value_of_use(use_id);
@@ -229,10 +231,19 @@ fn try_match_at(
             if cast_mask.is_empty() {
                 return false;
             }
-            let unwrapped = skip_casts(matcher, producer_value, cast_mask);
+            let mut skipped = Vec::new();
+            let unwrapped = skip_casts(matcher, producer_value, cast_mask, &mut skipped);
             if unwrapped == producer_value {
                 // Producer wasn't a registered cast — no further fallback.
                 return false;
+            }
+            // Record the skipped casts into the footprint BEFORE the
+            // sub-match: they are journaled like every other footprint
+            // entry, so a subsequent failure here is rolled back by the
+            // caller's `restore(mark)`. On success they stay, keeping the
+            // asm-fingerprint superset contract intact.
+            for &cast in &skipped {
+                b.record_matched(cast);
             }
             if !match_subpattern(matcher, pat, edge, unwrapped, b) {
                 return false;

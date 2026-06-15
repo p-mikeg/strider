@@ -2,9 +2,9 @@
 //! [`strider_ir::Graph::call_other_name`] side-table), independent of
 //! the `user_op_id` payload.  Combinable with `user_op_id` / `arg`.
 
-use strider_pattern::{Matcher, call_other};
 use strider_ir::FunctionBuilder;
 use strider_ir_test_utils::RegisterSet;
+use strider_pattern::{Matcher, call_other};
 
 #[test]
 fn name_matches_only_target() {
@@ -14,16 +14,41 @@ fn name_matches_only_target() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let _ = b
-        .build_call_other(1, "cpuid", None, &[], &strider_target::BuiltCallOtherAbi { implicit_reads: Vec::new(), implicit_writes: Vec::new(), clobbers_memory: false }, None, false)
+        .build_call_other(
+            1,
+            "cpuid",
+            None,
+            &[],
+            &strider_target::BuiltCallOtherAbi {
+                implicit_reads: Vec::new(),
+                implicit_writes: Vec::new(),
+                clobbers_memory: false,
+            },
+            None,
+            false,
+        )
         .expect("cpuid");
     let _ = b
-        .build_call_other(2, "rdtsc", None, &[], &strider_target::BuiltCallOtherAbi { implicit_reads: Vec::new(), implicit_writes: Vec::new(), clobbers_memory: false }, None, false)
+        .build_call_other(
+            2,
+            "rdtsc",
+            None,
+            &[],
+            &strider_target::BuiltCallOtherAbi {
+                implicit_reads: Vec::new(),
+                implicit_writes: Vec::new(),
+                clobbers_memory: false,
+            },
+            None,
+            false,
+        )
         .expect("rdtsc");
     b.build_return(None, &[]).expect("return");
     let function = b.build().expect("build");
 
     let matches = Matcher::try_new(&function)
         .unwrap()
-        .find_all(&call_other().name("cpuid").build()).unwrap();
+        .find_all(&call_other().name("cpuid").build())
+        .unwrap();
     assert_eq!(matches.len(), 1, "should match exactly the cpuid CallOther");
 }

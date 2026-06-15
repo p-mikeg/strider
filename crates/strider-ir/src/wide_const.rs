@@ -117,7 +117,6 @@ impl WideConstStorage {
             }
         }
     }
-
 }
 
 #[cfg(test)]
@@ -131,16 +130,31 @@ mod tests {
     fn intern_dedups_equal_values_per_width() {
         // Rows: (label = former test name, storage value).
         let cases: [(&str, WideConstStorage); 4] = [
-            ("intern_dedups_equal_i80_values", WideConstStorage::I80(0xABCD)),
-            ("intern_dedups_equal_i128_values", WideConstStorage::I128(1u128 << 100)),
-            ("intern_dedups_equal_u256_values", WideConstStorage::I256([1, 2, 3, 4])),
-            ("intern_dedups_equal_u512_values", WideConstStorage::I512([0xdead; 8])),
+            (
+                "intern_dedups_equal_i80_values",
+                WideConstStorage::I80(0xABCD),
+            ),
+            (
+                "intern_dedups_equal_i128_values",
+                WideConstStorage::I128(1u128 << 100),
+            ),
+            (
+                "intern_dedups_equal_u256_values",
+                WideConstStorage::I256([1, 2, 3, 4]),
+            ),
+            (
+                "intern_dedups_equal_u512_values",
+                WideConstStorage::I512([0xdead; 8]),
+            ),
         ];
         for (label, v) in cases {
             let mut g = Function::default();
             let id1 = g.intern_wide_const(v.clone());
             let id2 = g.intern_wide_const(v);
-            assert_eq!(id1, id2, "{label}: interning the same value must return the same id");
+            assert_eq!(
+                id1, id2,
+                "{label}: interning the same value must return the same id"
+            );
         }
     }
 

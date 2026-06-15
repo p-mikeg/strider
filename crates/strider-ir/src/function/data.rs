@@ -19,10 +19,10 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
-use crate::node::{NodeId, NodeKind, ValueId};
 use crate::IRViewer;
 use crate::IRWalker;
+use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
+use crate::node::{NodeId, NodeKind, ValueId};
 
 /// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
 /// inclusion) that fully contains `vn`, or `vn` itself when none does.
@@ -36,13 +36,8 @@ use crate::IRWalker;
 /// This is the single linear containment scan shared by
 /// [`Function::container_of`]'s fallback and the bulk `vn_to_container`
 /// map build in `FunctionBuilder::new`.
-pub(crate) fn largest_container_in(
-    vns: &[rsleigh::Vn],
-    vn: &rsleigh::Vn,
-) -> rsleigh::Vn {
-    if vn.addr_space != rsleigh::VnSpace::REGISTER
-        && vn.addr_space != rsleigh::VnSpace::UNIQUE
-    {
+pub(crate) fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
+    if vn.addr_space != rsleigh::VnSpace::REGISTER && vn.addr_space != rsleigh::VnSpace::UNIQUE {
         return *vn;
     }
     let start = vn.addr_off;
@@ -79,8 +74,7 @@ fn remap_hashmap<K, V, NK, NV>(
 where
     NK: std::hash::Hash + Eq,
 {
-    let mut dst =
-        FxHashMap::with_capacity_and_hasher(map.len(), Default::default());
+    let mut dst = FxHashMap::with_capacity_and_hasher(map.len(), Default::default());
     for (old_key, old_payload) in map.drain() {
         if let Some((new_key, new_payload)) = f(old_key, old_payload) {
             dst.insert(new_key, new_payload);
@@ -99,7 +93,7 @@ where
 /// `node_outputs`, `value_kind`) are forwarded as inherent methods on
 /// `Function`; every other [`Graph`] method is reached explicitly through
 /// [`Function::graph`] / [`Function::graph_mut`].
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Function {
     pub(crate) graph: Graph,
     entry: Option<NodeId>,
@@ -114,7 +108,6 @@ pub struct Function {
     // there are no cached projected lists, so a per-address-CC override
     // produces a correct per-call clobber set by deriving against that
     // call's effective CC over the same `all_vns`.
-
     /// The calling convention this function was built under.  Always a
     /// real value: production functions carry their resolved target ABI;
     /// synthetic test functions constructed via [`Self::new`] / the
@@ -164,7 +157,6 @@ pub struct Function {
     // `value_vn`, by a node's output ValueId) but is not part of the
     // structural graph identity.  They are remapped by [`Self::compact`]
     // whenever the arena is compacted.
-
     /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
     /// nodes.
     pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
@@ -177,8 +169,7 @@ pub struct Function {
     // The mutation API (`extend_asm_fingerprint`,
     // `extend_asm_fingerprint_from`) keeps using `&[u64]` /
     // `impl IntoIterator<Item = u64>` so callers are unaffected.
-    pub(crate) asm_fingerprints:
-        SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
+    pub(crate) asm_fingerprints: SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
     /// The varnode a value *represents*, keyed by [`ValueId`].  Two
     /// disjoint populations share this one map:
     ///
@@ -398,27 +389,49 @@ impl Function {
     /// sub-register ABI ret reg (e.g. `eax`) classified as the return
     /// value when the function tracks the wider container (`rax`) instead
     /// of silently dropping it.  Identity on full-width preset regs.
-    pub fn call_ret_vals_for(
+    /// The shared call-clobber predicate: a register (resolved to its tracked
+    /// container) is clobbered iff it is neither callee-saved under `cc` nor the
+    /// stack pointer.  The callee-saved set is hashed once so the predicate is
+    /// O(1) per probe (keeping the `call_*_for` derivations O(N), not O(N·M)).
+    /// CC regs are resolved to their tracked container first so a sub-register
+    /// ABI reg matches the wider tracked vn.
+    fn clobber_oracle(
         &self,
         cc: &strider_target::BuiltCallingConvention,
-    ) -> Vec<rsleigh::Vn> {
+    ) -> impl Fn(&rsleigh::Vn) -> bool + use<> {
         let stack_vn = self.default_cc.stack_vn;
-        // Hash the per-element membership probes so the derivation stays
-        // O(N) rather than O(N·M): `callee_saved_regs` is consulted per
-        // candidate, and `all_vns` is consulted per candidate.  CC regs
-        // are resolved to their tracked container first so that
-        // sub-register ABI regs match the wider tracked vn.
         let callee_saved: FxHashSet<rsleigh::Vn> = cc
             .callee_saved_regs
             .iter()
             .map(|v| self.container_of(v))
             .collect();
-        let tracked: FxHashSet<rsleigh::Vn> = self.all_vns.iter().copied().collect();
-        let is_clobbered = |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn;
+        move |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn
+    }
+
+    /// The convention's combined return-register list (integer ++ float),
+    /// each resolved to its tracked container via [`Self::container_of`].
+    ///
+    /// The shared CC-ret-reg → container chain behind both
+    /// [`Self::call_ret_vals_for`] (which keeps the tracked + clobbered ones)
+    /// and [`Self::call_clobbered_for`] (which excludes them) — one place that
+    /// owns "the ret regs, in container coordinates".
+    fn combined_ret_containers<'a>(
+        &'a self,
+        cc: &'a strider_target::BuiltCallingConvention,
+    ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
         cc.ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
             .map(|v| self.container_of(v))
+    }
+
+    pub fn call_ret_vals_for(
+        &self,
+        cc: &strider_target::BuiltCallingConvention,
+    ) -> Vec<rsleigh::Vn> {
+        let is_clobbered = self.clobber_oracle(cc);
+        let tracked: FxHashSet<rsleigh::Vn> = self.all_vns.iter().copied().collect();
+        self.combined_ret_containers(cc)
             .filter(|c| tracked.contains(c) && is_clobbered(c))
             .collect()
     }
@@ -448,28 +461,14 @@ impl Function {
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
-        let stack_vn = self.default_cc.stack_vn;
-        // Hashed membership probes keep the per-element filter O(1) so the
-        // whole derivation is O(N) instead of O(N·M): `callee_saved_regs`
-        // and the combined ret-reg list (used to EXCLUDE ret regs from the
-        // clobber tail) are each resolved to tracked containers and turned
-        // into an `FxHashSet`.  The output ORDER (`all_vns` allocation
-        // order) is unchanged.
-        let callee_saved: FxHashSet<rsleigh::Vn> = cc
-            .callee_saved_regs
-            .iter()
-            .map(|v| self.container_of(v))
-            .collect();
-        let is_clobbered = |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn;
+        // The clobber predicate (callee-saved + stack-vn exclusion) is shared
+        // with `call_ret_vals_for` via `clobber_oracle`.  The output ORDER
+        // (`all_vns` allocation order) is unchanged.
+        let is_clobbered = self.clobber_oracle(cc);
         // The combined ret-reg list, resolved to tracked containers: the
         // ret-val group is emitted separately by `call_ret_vals_for`, so
         // exclude its containers here.
-        let ret_vars: FxHashSet<rsleigh::Vn> = cc
-            .ret_val_regs
-            .iter()
-            .chain(cc.ret_val_regs_float.iter())
-            .map(|v| self.container_of(v))
-            .collect();
+        let ret_vars: FxHashSet<rsleigh::Vn> = self.combined_ret_containers(cc).collect();
         self.all_vns
             .iter()
             .copied()
@@ -525,7 +524,6 @@ impl Function {
         self.default_cc.stack_vn
     }
 
-
     /// The function-default `CallOther` clobber list: every tracked
     /// varnode except the stack pointer, in `all_vns` order.
     /// Reproduces the old build-time `call_other_clobbered` (`build()`
@@ -570,9 +568,15 @@ impl Function {
 
     /// Records that `value` represents varnode `vn`. Replaces any prior value.
     ///
-    /// Valid targets mirror the populations [`Self::get_vn_for_value`] reads: a
-    /// `Phi`'s single typed output, or a `Call`/`CallOther` ret-val / clobber
-    /// output. Not for control / memory / phi-token edges.
+    /// CONTRACT — this one map holds TWO disjoint facts, distinguished only by
+    /// the producing node's kind (they never collide because `Phi` outputs and
+    /// `Call`/`CallOther` outputs are distinct `ValueId`s): a lift-time `Phi`'s
+    /// source-level varnode tag, and a `Call`/`CallOther` ret-val / clobber
+    /// output's register.  A reader must therefore filter by `producer(value)`'s
+    /// kind before interpreting the tag — e.g. the jump-table classifier's
+    /// Phi-of-IntConst arm must not mistake a clobber tag for a phi tag.  Valid
+    /// targets are exactly those populations; not control / memory / phi-token
+    /// edges.
     #[inline]
     pub fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
         self.value_vn.insert(value, vn);
@@ -615,11 +619,7 @@ impl Function {
     /// `CallDescriptor` value; this wrapper exists for call sites that only
     /// deal with `BuiltCallingConvention`.
     #[inline]
-    pub fn set_call_cc(
-        &mut self,
-        node_id: NodeId,
-        cc: strider_target::BuiltCallingConvention,
-    ) {
+    pub fn set_call_cc(&mut self, node_id: NodeId, cc: strider_target::BuiltCallingConvention) {
         self.call_descriptor
             .insert(node_id, crate::CallDescriptor::Call(cc));
     }
@@ -723,6 +723,23 @@ impl Function {
         self.initial_var_index.insert(vn, node_id);
     }
 
+    /// Iterates the `initial_var_index` as `(vn, node_id)` pairs.  Used by the
+    /// validator to enforce that every entry still resolves to a live
+    /// `InitialVar(vn)` node with the matching varnode.
+    #[inline]
+    pub(crate) fn initial_var_index_entries(
+        &self,
+    ) -> impl Iterator<Item = (rsleigh::Vn, NodeId)> + '_ {
+        self.initial_var_index.iter().map(|(&vn, &id)| (vn, id))
+    }
+
+    /// Iterates the `value_vn` map as `(value, vn)` pairs.  Used by the
+    /// validator to enforce that every key is a live value output.
+    #[inline]
+    pub(crate) fn value_vn_entries(&self) -> impl Iterator<Item = (ValueId, rsleigh::Vn)> + '_ {
+        self.value_vn.iter().map(|(&value, &vn)| (value, vn))
+    }
+
     /// Returns the entry stack-pointer value — the output of the
     /// `InitialVar(stack_vn)` node, where `stack_vn` is the calling
     /// convention's stack pointer — or `None` when the function never
@@ -762,23 +779,63 @@ impl Function {
         if contributors.is_empty() {
             return;
         }
-        let existing = &mut self.asm_fingerprints[node_id];
-        let mut needs_resort = false;
-        for &addr in contributors {
-            match existing.last() {
-                None => existing.push(addr),
-                Some(&last) if addr > last => existing.push(addr),
-                Some(&last) if addr == last => { /* already present */ }
-                Some(_) => {
-                    existing.push(addr);
-                    needs_resort = true;
+        // Normalise the contributor list (callers may pass it unsorted / with
+        // duplicates) into a sorted-deduped small buffer.  `k` is tiny in
+        // practice (1–2 addresses), so this `sort_unstable` is cheap and lets
+        // the union below be a single linear merge against the already-sorted
+        // `existing` — O(k·log k + m + k) — instead of an append + full
+        // O((m+k)·log(m+k)) re-sort of the combined list.
+        let mut incoming: smallvec::SmallVec<[u64; 2]> = contributors.iter().copied().collect();
+        incoming.sort_unstable();
+        incoming.dedup();
+
+        let existing = &self.asm_fingerprints[node_id];
+        // Fast path: the very first contribution onto an empty entry — adopt
+        // the normalised contributor list wholesale, no merge needed.
+        if existing.is_empty() {
+            self.asm_fingerprints[node_id] = incoming;
+            return;
+        }
+        // Both `existing` and `incoming` are now sorted-deduped, so union them
+        // with a single linear merge (O(m + k)).
+        let mut merged: smallvec::SmallVec<[u64; 2]> =
+            smallvec::SmallVec::with_capacity(existing.len() + incoming.len());
+        let mut ai = existing.iter().copied().peekable();
+        let mut bi = incoming.iter().copied().peekable();
+        loop {
+            match (ai.peek().copied(), bi.peek().copied()) {
+                (Some(a), Some(b)) => {
+                    let next = if a < b {
+                        ai.next();
+                        a
+                    } else if b < a {
+                        bi.next();
+                        b
+                    } else {
+                        ai.next();
+                        bi.next();
+                        a
+                    };
+                    if merged.last() != Some(&next) {
+                        merged.push(next);
+                    }
                 }
+                (Some(a), None) => {
+                    ai.next();
+                    if merged.last() != Some(&a) {
+                        merged.push(a);
+                    }
+                }
+                (None, Some(b)) => {
+                    bi.next();
+                    if merged.last() != Some(&b) {
+                        merged.push(b);
+                    }
+                }
+                (None, None) => break,
             }
         }
-        if needs_resort {
-            existing.sort_unstable();
-            existing.dedup();
-        }
+        self.asm_fingerprints[node_id] = merged;
     }
 
     /// Unions the fingerprint of `src` into `dst`.  Self-extension
@@ -823,21 +880,25 @@ impl Function {
         // the wide interner is reserved for values that genuinely exceed
         // `u64`; everything else lives inline as `Small` with the width
         // carried by the output `ValueKind`.
+        // Mask an inline `u64` to the declared integer width.  Masking only
+        // clears bits, so the result always fits `u64` for ANY declared type —
+        // an inline value therefore stays `Small` regardless of width
+        // (I80/I128/I256/I512 included).  Shared by the `Small` and the
+        // `Wide`-fits-`u64` arms so both produce an identical canonical payload.
+        let mask_inline = |v: u64| -> u64 {
+            match output_kinds.first().and_then(|vk| vk.as_value()) {
+                Some(ty) if ty.is_integer() => {
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        (u128::from(v) & ty.bit_mask_u128()) as u64
+                    }
+                }
+                _ => v,
+            }
+        };
         let kind = match kind {
             crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v)) => {
-                // Mask to the declared integer width.  `v` is a `u64`, and
-                // masking only clears bits, so the result always fits `u64`
-                // for ANY declared type — a `Small` payload therefore stays
-                // `Small` regardless of width (I80/I128/I256/I512 included).
-                let ty = output_kinds.first().and_then(|vk| vk.as_value());
-                match ty {
-                    Some(ty) if ty.is_integer() => {
-                        let masked = u128::from(v) & ty.bit_mask_u128();
-                        #[allow(clippy::cast_possible_truncation)]
-                        crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(masked as u64))
-                    }
-                    _ => crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v)),
-                }
+                crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(mask_inline(v)))
             }
             // A `Wide` payload whose interned value fits `u64` is the inline
             // `Small` form in disguise — canonicalise it down so a given
@@ -845,12 +906,10 @@ impl Function {
             // Genuinely-wide values pass through unchanged.
             crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id)) => {
                 match self.wide_const(id).as_u64() {
-                    Some(v) => {
-                        crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v))
-                    }
-                    None => {
-                        crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id))
-                    }
+                    Some(v) => crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(
+                        mask_inline(v),
+                    )),
+                    None => crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id)),
                 }
             }
             other => other,
@@ -878,12 +937,19 @@ impl Function {
     /// is itself — the generic pass then retains exactly the IR reachable set,
     /// and its cacher rebuild re-keys the dedup cache over the survivors.
     ///
+    /// "Reachable" is from [`Self::entry`] — the receiver owns the anchor, so it
+    /// is read internally rather than passed (a non-entry root would be a misuse:
+    /// "retain reachable" means "from the function's entry").
+    ///
     /// # Errors
     ///
-    /// Currently infallible in practice; the `Result` is kept so a future
-    /// invariant check has a typed channel and Python callers see a clean
-    /// exception rather than a panic.
-    pub fn retain_reachable(&mut self, entry: NodeId) -> crate::Result<NodeIdRemap> {
+    /// Returns an error if [`Self::entry`] is `None`.  Otherwise infallible in
+    /// practice; the `Result` is kept so a future invariant check has a typed
+    /// channel and Python callers see a clean exception rather than a panic.
+    pub fn retain_reachable(&mut self) -> crate::Result<NodeIdRemap> {
+        let entry = self
+            .entry
+            .ok_or_else(|| anyhow::anyhow!("Function::retain_reachable: entry node is not set"))?;
         // Collect the reachable set into a `Vec` first: that ends the
         // immutable borrow before the mutable `graph_mut()` borrow below.
         let reachable: Vec<NodeId> = self.walk_from(entry).collect();
@@ -902,10 +968,10 @@ impl Function {
     /// Returns an error if [`Self::entry`] is `None`, or if the retain-
     /// reachable remap doesn't include the entry (invariant violation).
     pub fn compact(&mut self) -> crate::Result<NodeIdRemap> {
-        let entry = self.entry.ok_or_else(|| {
-            anyhow::anyhow!("Function::compact: entry node is not set")
-        })?;
-        let remap = self.retain_reachable(entry)?;
+        let entry = self
+            .entry
+            .ok_or_else(|| anyhow::anyhow!("Function::compact: entry node is not set"))?;
+        let remap = self.retain_reachable()?;
         let new_entry = remap.node_old_to_new(entry).ok_or_else(|| {
             anyhow::anyhow!(
                 "Function::compact: entry {:?} missing from remap (invariant violation)",
@@ -961,7 +1027,9 @@ impl Function {
         // did not survive compaction is dropped (the phi / clobber output
         // became unreachable).
         self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn| {
-            remap.value_old_to_new(old_value).map(|new_value| (new_value, vn))
+            remap
+                .value_old_to_new(old_value)
+                .map(|new_value| (new_value, vn))
         });
         // `initial_var_index` is `FxHashMap<Vn, NodeId>` — Vn-keyed, not
         // NodeId-keyed, so the standard `SecondaryMap` remap helper
@@ -977,13 +1045,14 @@ impl Function {
         // it needs an inline remap.  Carrier values whose value didn't
         // survive compaction are dropped; an index whose carriers all
         // vanished is removed entirely.
-        self.arg_index_to_values = remap_hashmap(&mut self.arg_index_to_values, |index, old_values| {
-            let mapped: Vec<ValueId> = old_values
-                .into_iter()
-                .filter_map(|old_value| remap.value_old_to_new(old_value))
-                .collect();
-            (!mapped.is_empty()).then_some((index, mapped))
-        });
+        self.arg_index_to_values =
+            remap_hashmap(&mut self.arg_index_to_values, |index, old_values| {
+                let mapped: Vec<ValueId> = old_values
+                    .into_iter()
+                    .filter_map(|old_value| remap.value_old_to_new(old_value))
+                    .collect();
+                (!mapped.is_empty()).then_some((index, mapped))
+            });
         // GC the wide-const interner over only the values referenced by
         // surviving `IntConst(Wide(id))` nodes, rewriting each survivor's id
         // to the new dense id, then re-key the graph's dedup cache over those
@@ -1038,8 +1107,7 @@ impl Function {
             WideConstId,
             crate::wide_const::WideConstStorage,
         > = entity_utils::EntityInterner::default();
-        let mut old_to_new: FxHashMap<WideConstId, WideConstId> =
-            FxHashMap::default();
+        let mut old_to_new: FxHashMap<WideConstId, WideConstId> = FxHashMap::default();
         for old_id in live_old_ids {
             if old_to_new.contains_key(&old_id) {
                 continue;
@@ -1071,15 +1139,14 @@ impl Function {
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,
     ) -> crate::Result<crate::function::dot::FunctionDotDumper<'a, R>> {
-        let entry = self.entry.ok_or_else(|| {
-            anyhow::anyhow!("Function::dot_dumper: entry node is not set")
-        })?;
+        let entry = self
+            .entry
+            .ok_or_else(|| anyhow::anyhow!("Function::dot_dumper: entry node is not set"))?;
         let node_to_arg_indices = crate::function::dot::build_arg_reverse_map(self);
         Ok(crate::function::dot::FunctionDotDumper {
             entry,
             function: self,
             sleigh,
-            node_filter: None,
             node_to_arg_indices,
         })
     }
@@ -1245,9 +1312,13 @@ mod compact_tests {
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let entry = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
         f.set_entry(entry);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let mem = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         let base = f.graph_mut().create_node(
@@ -1256,19 +1327,25 @@ mod compact_tests {
             [ValueKind::Typed(ValueType::I64)],
         );
         let [base_value] = f.node_outputs_exact::<1>(base).unwrap();
-        let ret = f.graph_mut().create_node(
-            NodeKind::Return,
-            [entry_ctrl, mem_value, base_value],
-            [],
-        );
+        let ret =
+            f.graph_mut()
+                .create_node(NodeKind::Return, [entry_ctrl, mem_value, base_value], []);
         f.set_stack_offset(ret, base_value, -16);
 
         let remap = f.compact().expect("compact must succeed");
 
-        assert!(remap.node_old_to_new(zombie).is_none(), "zombie must be dropped");
+        assert!(
+            remap.node_old_to_new(zombie).is_none(),
+            "zombie must be dropped"
+        );
         let new_ret = remap.node_old_to_new(ret).expect("Return survives");
-        let new_base_value = remap.value_old_to_new(base_value).expect("base value survives");
-        assert_ne!(new_ret, ret, "the zombie ahead of it must shift the Return's id");
+        let new_base_value = remap
+            .value_old_to_new(base_value)
+            .expect("base value survives");
+        assert_ne!(
+            new_ret, ret,
+            "the zombie ahead of it must shift the Return's id"
+        );
         assert_eq!(
             f.stack_offset(new_ret),
             Some((new_base_value, -16)),
@@ -1286,8 +1363,12 @@ mod compact_tests {
         use crate::node::ValueType;
 
         let mut f = Function::default();
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let entry = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         // Reachable IntConst whose Return-input consumer keeps it live.
@@ -1297,11 +1378,9 @@ mod compact_tests {
             [ValueKind::Typed(ValueType::I64)],
         );
         let [surv_value] = f.node_outputs_exact::<1>(surviving).unwrap();
-        let _ret = f.graph_mut().create_node(
-            NodeKind::Return,
-            [entry_ctrl, mem_value, surv_value],
-            [],
-        );
+        let _ret =
+            f.graph_mut()
+                .create_node(NodeKind::Return, [entry_ctrl, mem_value, surv_value], []);
         f.set_entry(entry);
 
         // Stamp three asm addresses on the surviving IntConst before compact.
@@ -1323,16 +1402,22 @@ mod compact_tests {
     /// detached-but-still-arena-present nodes.
     #[test]
     fn retain_reachable_drops_zombie_node() {
-        use crate::node::ValueType;
         use crate::graph::NodeIdRemap;
+        use crate::node::ValueType;
 
         let mut f = Function::default();
         // Entry + InitialMemory + a Return (minimal reachable graph).
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let entry = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-        let _ret = f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
+        let _ret = f
+            .graph_mut()
+            .create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
         f.set_entry(entry);
 
         // Zombie: a cacheable IntConst not connected to anything reachable.
@@ -1344,13 +1429,19 @@ mod compact_tests {
 
         // Zombie must be in the arena before compact.
         let pre_ids: Vec<_> = f.graph().all_node_ids().collect();
-        assert!(pre_ids.contains(&zombie), "zombie must be present before compact");
+        assert!(
+            pre_ids.contains(&zombie),
+            "zombie must be present before compact"
+        );
 
         let _remap: NodeIdRemap = f.compact().expect("compact must succeed");
 
         // After compact the zombie NodeId is invalid; verify by checking
         // that the remap returns None for it (it was dropped).
-        assert!(_remap.node_old_to_new(zombie).is_none(), "zombie must be dropped by compact");
+        assert!(
+            _remap.node_old_to_new(zombie).is_none(),
+            "zombie must be dropped by compact"
+        );
         // Node count must decrease.
         assert!(
             f.graph().all_node_ids().count() < pre_ids.len(),
@@ -1365,19 +1456,23 @@ mod compact_tests {
         use crate::node::ValueType;
 
         let mut f = Function::default();
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let entry = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-        let _ret = f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
+        let _ret = f
+            .graph_mut()
+            .create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
         f.set_entry(entry);
 
         // Zombie Phi node with a value_vn entry.
-        let zombie_phi = f.graph_mut().create_node(
-            NodeKind::Phi,
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let zombie_phi =
+            f.graph_mut()
+                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
         let dead_vn = rsleigh::Vn {
             size: 8,
             addr_off: 0x88,
@@ -1417,16 +1512,20 @@ mod compact_tests {
         // only surviving nodes.  In both cases the dropped zombies' entries
         // are gone.  We verify indirectly: no surviving node carries the
         // tag/offset.
-        let surviving_with_tag = f
-            .graph().all_node_ids()
-            .any(|n| f.node_outputs(n).first().copied()
-                .and_then(|v| f.get_vn_for_value(v)) == Some(dead_vn));
+        let surviving_with_tag = f.graph().all_node_ids().any(|n| {
+            f.node_outputs(n)
+                .first()
+                .copied()
+                .and_then(|v| f.get_vn_for_value(v))
+                == Some(dead_vn)
+        });
         assert!(
             !surviving_with_tag,
             "dead_vn value_vn tag must not survive compaction"
         );
         let surviving_with_offset = f
-            .graph().all_node_ids()
+            .graph()
+            .all_node_ids()
             .any(|n| f.stack_offset(n).map(|(_, o)| o) == Some(-8));
         assert!(
             !surviving_with_offset,
@@ -1448,8 +1547,12 @@ mod compact_tests {
         use crate::node::ValueType;
 
         let mut f = Function::default();
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let entry = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         // A zombie created *before* the arg carrier so that compaction
         // reassigns the carrier's NodeId (the zombie's slot is dropped).
         let _zombie = f.graph_mut().create_node(
@@ -1471,9 +1574,9 @@ mod compact_tests {
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         let [arg_value] = f.node_outputs_exact::<1>(arg_node).unwrap();
-        let _ret = f
-            .graph_mut()
-            .create_node(NodeKind::Return, [entry_ctrl, mem_value, arg_value], []);
+        let _ret =
+            f.graph_mut()
+                .create_node(NodeKind::Return, [entry_ctrl, mem_value, arg_value], []);
         f.set_entry(entry);
         f.register_arg_value(0, arg_value);
 
@@ -1504,12 +1607,16 @@ mod compact_tests {
         use crate::node::ValueType;
 
         let mut f = Function::default();
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-        // A reachable Phi kept live by Return.
-        let live_phi = f
+        let entry = f
             .graph_mut()
-            .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        // A reachable Phi kept live by Return.
+        let live_phi =
+            f.graph_mut()
+                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         let [live_phi_value] = f.node_outputs_exact::<1>(live_phi).unwrap();
@@ -1521,9 +1628,9 @@ mod compact_tests {
         f.set_entry(entry);
 
         // Unreachable Phi (not wired to anything reachable).
-        let dead_phi = f
-            .graph_mut()
-            .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
+        let dead_phi =
+            f.graph_mut()
+                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
 
         let live_vn = rsleigh::Vn {
             size: 8,
@@ -1559,8 +1666,12 @@ mod compact_tests {
         );
         // No surviving node carries the dead tag.
         assert!(
-            !f.graph().all_node_ids().any(|n| f.node_outputs(n).first().copied()
-                .and_then(|v| f.get_vn_for_value(v)) == Some(dead_vn)),
+            !f.graph().all_node_ids().any(|n| f
+                .node_outputs(n)
+                .first()
+                .copied()
+                .and_then(|v| f.get_vn_for_value(v))
+                == Some(dead_vn)),
             "dead phi tag must not survive compaction"
         );
     }
@@ -1572,8 +1683,12 @@ mod compact_tests {
         use crate::node::ValueType;
 
         let mut f = Function::default();
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let entry = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let live_vn = rsleigh::Vn {
             size: 8,
             addr_off: 0x10,
@@ -1587,9 +1702,9 @@ mod compact_tests {
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         let [live_value] = f.node_outputs_exact::<1>(live_carrier).unwrap();
-        let _ret = f
-            .graph_mut()
-            .create_node(NodeKind::Return, [entry_ctrl, mem_value, live_value], []);
+        let _ret =
+            f.graph_mut()
+                .create_node(NodeKind::Return, [entry_ctrl, mem_value, live_value], []);
         f.set_entry(entry);
 
         // A pruned (unreachable) carrier for a different arg index.
@@ -1669,8 +1784,12 @@ mod compact_tests {
             .unwrap();
 
         let mut f = Function::default();
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let entry = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         // A zombie created before the Call so compaction reassigns ids.
         let _zombie = f.graph_mut().create_node(
             NodeKind::IntConst(IntPayload::Small(0xDEAD_u64)),
@@ -1711,10 +1830,7 @@ mod compact_tests {
 
         // Pre-compact: round-trips.
         assert!(f.call_cc(call).is_some());
-        assert_eq!(
-            f.call_stack_args_override(call),
-            cc.stack_args,
-        );
+        assert_eq!(f.call_stack_args_override(call), cc.stack_args,);
         assert_eq!(f.get_vn_for_value(clob), Some(clob_vn));
 
         let remap = f.compact().expect("compact must succeed");
@@ -1727,10 +1843,7 @@ mod compact_tests {
 
         // call_cc survives the NodeId remap; stack-arg offsets still derive.
         assert!(f.call_cc(new_call).is_some());
-        assert_eq!(
-            f.call_stack_args_override(new_call),
-            cc.stack_args,
-        );
+        assert_eq!(f.call_stack_args_override(new_call), cc.stack_args,);
         // The clobber tag survives the ValueId remap.
         assert_eq!(f.get_vn_for_value(new_clob), Some(clob_vn));
     }

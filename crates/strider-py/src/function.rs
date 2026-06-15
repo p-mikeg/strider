@@ -50,7 +50,10 @@ enum DotResult {
 
 /// Convert a Python-supplied `u32` node id into a validated `strider_ir::NodeId`,
 /// returning `StriderError` on lookup failure.
-fn node_id_from_u32(function: &strider_ir::Function, node_id: u32) -> PyResult<strider_ir::node::NodeId> {
+fn node_id_from_u32(
+    function: &strider_ir::Function,
+    node_id: u32,
+) -> PyResult<strider_ir::node::NodeId> {
     // O(1) validated lookup (NodeIds are dense arena indices), replacing an
     // O(N) scan over `all_node_ids` on every per-node accessor call.
     function.graph().node_id_from_u32(node_id).ok_or_else(|| {
@@ -68,7 +71,9 @@ impl PyFunction {
 
     /// Borrow the inner graph for read.  Returns an `anyhow::Error`
     /// when the lock is poisoned.
-    pub(crate) fn read_inner(&self) -> anyhow::Result<std::sync::RwLockReadGuard<'_, strider_ir::Function>> {
+    pub(crate) fn read_inner(
+        &self,
+    ) -> anyhow::Result<std::sync::RwLockReadGuard<'_, strider_ir::Function>> {
         self.inner
             .read()
             .map_err(|_| anyhow::anyhow!("Function lock poisoned"))
@@ -76,7 +81,9 @@ impl PyFunction {
 
     /// Borrow the inner graph for write.  Returns an `anyhow::Error`
     /// when the lock is poisoned.
-    pub(crate) fn write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
+    pub(crate) fn write_inner(
+        &self,
+    ) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
         self.inner
             .write()
             .map_err(|_| anyhow::anyhow!("Function lock poisoned"))
@@ -87,7 +94,9 @@ impl PyFunction {
     /// re-entrant call from inside a `.when()` predicate (which holds the
     /// read lock for the duration of `find_all`) surfaces a typed error
     /// rather than deadlocking the thread.
-    pub(crate) fn try_write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
+    pub(crate) fn try_write_inner(
+        &self,
+    ) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
         use std::sync::TryLockError;
         self.inner.try_write().map_err(|e| match e {
             TryLockError::Poisoned(_) => anyhow::anyhow!("Function lock poisoned"),
@@ -106,10 +115,7 @@ impl PyFunction {
     /// every read-only `#[pymethods]` accessor would otherwise repeat.  Use
     /// this variant when `f` itself returns a `PyResult` (e.g. it propagates
     /// `?` from `node_id_from_u32` or builds an error from graph state).
-    fn with_read<R>(
-        &self,
-        f: impl FnOnce(&strider_ir::Function) -> PyResult<R>,
-    ) -> PyResult<R> {
+    fn with_read<R>(&self, f: impl FnOnce(&strider_ir::Function) -> PyResult<R>) -> PyResult<R> {
         let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
         f(&function)
     }
@@ -117,10 +123,7 @@ impl PyFunction {
     /// Like [`Self::with_read`] but for accessors whose closure just
     /// produces a value with no further fallible step — saves the
     /// per-site `Ok(...)` wrapping.
-    fn with_read_value<R>(
-        &self,
-        f: impl FnOnce(&strider_ir::Function) -> R,
-    ) -> PyResult<R> {
+    fn with_read_value<R>(&self, f: impl FnOnce(&strider_ir::Function) -> R) -> PyResult<R> {
         let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
         Ok(f(&function))
     }
@@ -241,19 +244,20 @@ impl PyFunction {
     /// See `raw_dot_str` for what "raw" means.
     fn to_raw_dot(&self, path: &str) -> PyResult<()> {
         let dot = self.raw_dot_str()?;
-        std::fs::write(path, dot)
-            .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
+        std::fs::write(path, dot).map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
     }
 
     /// Write the raw (as-stored) standalone HTML rendering to `path`.
     /// See `raw_dot_str` for what "raw" means.
     fn to_raw_html(&self, path: &str) -> PyResult<()> {
         let html = self.raw_html_str()?;
-        std::fs::write(path, html)
-            .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
+        std::fs::write(path, html).map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
     }
 
-    /// Returns the number of nodes reachable from entry in the IR graph.
+    /// Returns the number of node ids in the IR arena — every allocated
+    /// slot, reachable or not.  After in-place optimization, culled-but-not-
+    /// compacted nodes are still counted; analyze with compaction (or compare
+    /// against [`count_regions`], which walks from entry) to exclude them.
     fn node_count(&self) -> PyResult<usize> {
         self.with_read_value(|function| function.graph().all_node_ids().count())
     }
@@ -273,11 +277,17 @@ impl PyFunction {
         })
     }
 
-    /// Returns a list of all reachable node ids in the graph as raw
-    /// integers.  Useful for iterating from Python without going
+    /// Returns a list of all node ids in the IR arena (reachable or not) as
+    /// raw integers.  Useful for iterating from Python without going
     /// through pattern matching.
     fn node_ids(&self) -> PyResult<Vec<u32>> {
-        self.with_read_value(|function| function.graph().all_node_ids().map(|n| n.as_u32()).collect())
+        self.with_read_value(|function| {
+            function
+                .graph()
+                .all_node_ids()
+                .map(|n| n.as_u32())
+                .collect()
+        })
     }
 
     /// Returns the [`NodeKind`] of the node at `node_id`, formatted as
@@ -287,7 +297,9 @@ impl PyFunction {
     ///
     /// Raises `StriderError` for an invalid `node_id`.
     fn node_kind(&self, node_id: u32) -> PyResult<String> {
-        self.with_node(node_id, |function, nid| format!("{:?}", function.node_kind(nid)))
+        self.with_node(node_id, |function, nid| {
+            format!("{:?}", function.node_kind(nid))
+        })
     }
 
     /// Returns the asm-fingerprint addresses recorded on the node at
@@ -295,10 +307,12 @@ impl PyFunction {
     /// addresses whose lift contributed to the node's value.
     ///
     /// Empty for "structural" node kinds (Entry, InitialMemory, phis,
-    /// Region, FunctionArg) whose existence is synthesised by
+    /// Region, InitialVar) whose existence is synthesised by
     /// the IR builder rather than tied to a specific asm instruction.
     fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
-        self.with_node(node_id, |function, nid| function.asm_fingerprint(nid).to_vec())
+        self.with_node(node_id, |function, nid| {
+            function.asm_fingerprint(nid).to_vec()
+        })
     }
 
     /// Returns the raw little-endian bytes of a wide-typed integer constant
@@ -310,7 +324,9 @@ impl PyFunction {
     /// I80/I128/I256/I512 register constants; narrow constants (≤ I64) are
     /// accessible via `Match.get_uint(c)` instead.
     fn wide_const_bytes(&self, node_id: u32) -> PyResult<Option<Vec<u8>>> {
-        self.with_node(node_id, |function, nid| function.int_const_wide_le_bytes(nid))
+        self.with_node(node_id, |function, nid| {
+            function.int_const_wide_le_bytes(nid)
+        })
     }
 
     /// Returns the Sleigh user-op name attached to a `CallOther` node,
@@ -328,12 +344,14 @@ impl PyFunction {
     /// non-exempt node must carry a non-empty contributor list.
     fn validate(&self) -> PyResult<Option<String>> {
         self.with_read(|function| {
-            let entry = function.entry().ok_or_else(|| {
-                crate::errors::into_strider_err(anyhow::anyhow!(
+            // Presence guard: an unbuilt function raises an exception, distinct
+            // from the validation-failure-as-string path below.
+            if function.entry().is_none() {
+                return Err(crate::errors::into_strider_err(anyhow::anyhow!(
                     "Function.validate: function has not been built (entry is None)"
-                ))
-            })?;
-            match strider_ir::validate::validate(function, entry) {
+                )));
+            }
+            match strider_ir::validate::validate(function) {
                 Ok(()) => Ok(None),
                 Err(e) => Ok(Some(format!("{e}"))),
             }
@@ -344,8 +362,12 @@ impl PyFunction {
     /// `entry` via [`strider_ir::graph::Graph::walk_from`].  Mutates in place.
     /// Pre-compaction node ids become invalid across this call.
     fn compact(&self) -> PyResult<()> {
-        let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let _remap = function.compact().map_err(crate::errors::into_strider_err)?;
+        let mut function = self
+            .try_write_inner()
+            .map_err(crate::errors::into_strider_err)?;
+        let _remap = function
+            .compact()
+            .map_err(crate::errors::into_strider_err)?;
         Ok(())
     }
 
@@ -360,14 +382,23 @@ impl PyFunction {
     /// through `strider.run(..., rom=mem)` instead.
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
         let real_pipeline = pipeline.drain_into_pipeline()?;
-        let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        real_pipeline
-            .run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-            .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
-        // The pipeline mutates in place without compacting, so it leaves
-        // the generation untouched; bump it so handles created beforehand
-        // fail their staleness guard.
+        let mut function = self
+            .try_write_inner()
+            .map_err(crate::errors::into_strider_err)?;
+        // Bump the generation BEFORE running: the pipeline mutates the
+        // arena in place, and a pass that errors mid-run can leave the
+        // graph partially rewritten.  Invalidating outstanding handles
+        // unconditionally means a stale handle can never silently read
+        // that partially-optimized graph after the error is surfaced.
         function.graph_mut().bump_generation();
+        real_pipeline
+            .run(
+                &mut function,
+                &mut strider_orchestrator::opt::OptCtx::new(None),
+            )
+            .map_err(|e| {
+                crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}"))
+            })?;
         Ok(())
     }
 
@@ -376,13 +407,20 @@ impl PyFunction {
     /// re-converge the graph.
     fn reoptimize(&self) -> PyResult<()> {
         let pipe = strider_orchestrator::opt::default_pipeline();
-        let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        pipe.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None)).map_err(|e| {
+        let mut function = self
+            .try_write_inner()
+            .map_err(crate::errors::into_strider_err)?;
+        // Bump BEFORE running (see `optimize`): a mid-run failure can
+        // leave the arena partially rewritten, and invalidating handles
+        // unconditionally prevents a stale read of that state.
+        function.graph_mut().bump_generation();
+        pipe.run(
+            &mut function,
+            &mut strider_orchestrator::opt::OptCtx::new(None),
+        )
+        .map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })?;
-        // In-place mutation leaves the generation untouched; bump it so
-        // pre-existing handles fail their staleness guard.
-        function.graph_mut().bump_generation();
         Ok(())
     }
 
@@ -488,7 +526,13 @@ impl PyFunction {
         // each), then pass `&[&Pattern]` to the matcher.
         let owned: Vec<strider_pattern::Pattern> = pats
             .iter()
-            .map(|p| Ok(apply_cast_mask(p.to_pattern(py)?, ignore_casts, ignore_casts_mask)))
+            .map(|p| {
+                Ok(apply_cast_mask(
+                    p.to_pattern(py)?,
+                    ignore_casts,
+                    ignore_casts_mask,
+                ))
+            })
             .collect::<PyResult<Vec<_>>>()?;
         let pat_refs: Vec<&strider_pattern::Pattern> = owned.iter().collect();
         let (raw, generation) = run_query(&slf, py, |matcher| matcher.find_joined(&pat_refs))?;
@@ -526,8 +570,8 @@ impl PyFunction {
     ) -> PyResult<usize> {
         let lhs = find.to_pattern(py)?;
         let rhs = replace.to_template(py)?;
-        let rule = strider_opt::rewrite_rule_runtime(lhs, rhs)
-            .map_err(crate::errors::into_strider_err)?;
+        let rule =
+            strider_opt::rewrite_rule_runtime(lhs, rhs).map_err(crate::errors::into_strider_err)?;
         let mut function = self
             .try_write_inner()
             .map_err(crate::errors::into_strider_err)?;

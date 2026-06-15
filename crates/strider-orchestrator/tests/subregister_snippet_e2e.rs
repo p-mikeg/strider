@@ -46,7 +46,10 @@ fn narrow_alias_read_lifts_with_truncate_or_mask_shape() {
     let reader = BufMemReader::new(snippet_bytes(), BASE);
     let (mut driver, cc) = common::strider_x86_64(reader);
     let cfg = driver
-        .build_cfg(MachineInsnAddr::from(BASE), &strider_cfg::CfgOptions::default())
+        .build_cfg(
+            MachineInsnAddr::from(BASE),
+            &strider_cfg::CfgOptions::default(),
+        )
         .expect("cfg");
     let function = driver.build_ir(&cfg, &cc).expect("build_ir").function;
 
@@ -74,7 +77,13 @@ fn narrow_alias_write_folds_to_zero_in_ret_val_register() {
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
     let result = strider
-        .analyze(BASE, &cc, &LiftOptions::default(), &OptOptions::default(), None)
+        .analyze(
+            BASE,
+            &cc,
+            &LiftOptions::default(),
+            &OptOptions::default(),
+            None,
+        )
         .expect("analyze");
     assert!(result.unresolved_indirect_branches.is_empty());
     let function = result.function;

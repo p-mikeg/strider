@@ -57,8 +57,10 @@ impl PyCfg {
     #[pyo3(signature = (path,))]
     fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
         self.with_sleigh(py, |sleigh| {
-            let d =
-                dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some("dark_cfg")));
+            let d = dot::GraphDot::new(
+                self.inner.dot_dumper(sleigh),
+                dot_style_for(Some("dark_cfg")),
+            );
             d.dump_as_dot(Path::new(path)).map_err(into_strider_err)
         })
     }

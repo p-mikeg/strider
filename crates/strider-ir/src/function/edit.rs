@@ -17,8 +17,8 @@ use entity_utils::{DenseEntitySet, Worklist};
 
 use crate::function::state::{FunctionState, NodeFlags};
 
-use crate::builder::IRBuilder;
 use crate::IRViewer;
+use crate::builder::IRBuilder;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
 use crate::{Function, Graph};
@@ -90,9 +90,16 @@ impl<'g> EditFunction<'g> {
 
     /// Mutable access to the wrapped [`Function`].
     ///
-    /// Bypasses the cached live/roots bookkeeping — callers that mutate the
-    /// graph structure through this handle are responsible for any state the
-    /// curated verbs would otherwise maintain.
+    /// ESCAPE HATCH — this is the ONE seam that bypasses the cached live/roots
+    /// bookkeeping the curated edit verbs maintain incrementally.  The cached
+    /// `live_nodes` / `roots` are a derived view of the entry-reachable graph;
+    /// any structural mutation made through this handle (creating, detaching, or
+    /// rewiring nodes) is NOT observed by that cache, so a subsequent
+    /// `postorder()` / `reverse_postorder()` / `roots`-based read can return a
+    /// STALE set.  A caller that mutates structure here is responsible for
+    /// restoring consistency — reseed via the curated verbs, or re-`populate`
+    /// — before relying on a cached-order walk.  Payload-only edits (e.g.
+    /// `node_kind_mut`) that don't change input/output structure are safe.
     pub fn function_mut(&mut self) -> &mut Function {
         self.function
     }
@@ -189,9 +196,9 @@ impl<'g> EditFunction<'g> {
     /// Function-entry `NodeId` anchor.
     #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
-        self.function.entry().expect(
-            "EditFunction wraps a built Function with an entry node (new() invariant)",
-        )
+        self.function
+            .entry()
+            .expect("EditFunction wraps a built Function with an entry node (new() invariant)")
     }
 
     // ── self-cleaning core ───────────────────────────────────────────
@@ -288,6 +295,17 @@ impl<'g> EditFunction<'g> {
             if !self.state.live_nodes.insert(node) {
                 continue;
             }
+            // The resurrected node re-enters the live set, but a structural
+            // twin may have been minted into the dedup cache while it was dead
+            // (e.g. a fold created its equal after the dead one was detached).
+            // Flag every freshly-resurrected cacheable node for re-canon so the
+            // next `clean()` merges it into any live twin instead of leaking a
+            // duplicate — the same canonicality `update_input` / `replace_value`
+            // maintain incrementally for in-place edits.  `node` is now live, so
+            // `enqueue_for_recanon` flags + enqueues it.
+            if self.function.node_kind(node).is_cacheable() {
+                self.enqueue_for_recanon(node);
+            }
             // Snapshot inputs before touching `self.state` (same borrow
             // pattern as `kill_node`).
             let inputs: smallvec::SmallVec<[ValueId; 4]> =
@@ -321,6 +339,48 @@ impl<'g> EditFunction<'g> {
         {
             self.state.flags[node].insert(NodeFlags::ENQUEUED);
             self.state.queue.enqueue(node);
+        }
+    }
+
+    /// Flag a live node whose inputs just changed as maybe-non-canonical and
+    /// enqueue it for the next `clean` drain.  A node's inputs change only via
+    /// `update_input` (and `redirect_input`, which routes through it) and via
+    /// `replace_value`'s use-redirect — both call this.
+    fn enqueue_for_recanon(&mut self, node: NodeId) {
+        if self.state.live_nodes.contains(node) {
+            self.state.flags[node].insert(NodeFlags::NEEDS_RECANON);
+            self.enqueue(node);
+        }
+    }
+
+    /// Re-canonicalize a node flagged `NEEDS_RECANON`: if its (now-changed)
+    /// structure matches an existing cacheable node, merge it into that twin;
+    /// otherwise `Graph::canonicalize_node` re-inserts it as the canonical
+    /// representative.  A merge reuses `replace_value`, so the survivor absorbs
+    /// the duplicate's asm-fingerprint, the redirected consumers are re-flagged
+    /// for re-canonicalization (the cascade), and the now-dead duplicate is
+    /// enqueued for the same drain to cull.
+    fn canonicalize_node(&mut self, node: NodeId) {
+        self.state.flags[node].remove(NodeFlags::NEEDS_RECANON);
+        if let Some(twin) = self.function.graph_mut().canonicalize_node(node) {
+            // `canonicalize_node` returns `Some(twin)` only for a cacheable
+            // kind, and every cacheable kind is single-value-output by the
+            // node-signature invariant the validator enforces.  A non-single
+            // output here is structural corruption, not a recoverable case —
+            // be loud rather than silently leaking the un-merged duplicate.
+            let [node_out] = self
+                .function
+                .node_outputs_exact::<1>(node)
+                .expect("a cacheable node flagged for re-canon is single-value-output");
+            let [twin_out] = self
+                .function
+                .node_outputs_exact::<1>(twin)
+                .expect("a cacheable twin is single-value-output");
+            // `replace_value`'s only error arm is `replace_all_uses`'s, which is
+            // documented infallible; surface a broken merge loudly instead of
+            // discarding it with `let _ =` and leaking the duplicate.
+            self.replace_value(node_out, twin_out)
+                .expect("merging a re-canonicalized node into its twin cannot fail");
         }
     }
 
@@ -400,11 +460,18 @@ impl<'g> EditFunction<'g> {
     /// fixed point (the queue empties).
     pub fn clean(&mut self) {
         while let Some(node) = self.dequeue() {
-            let was_output_killed =
-                self.state.flags[node].contains(NodeFlags::OUTPUT_KILLED);
+            let flags = self.state.flags[node];
             self.state.flags[node].remove(NodeFlags::OUTPUT_KILLED);
-            if was_output_killed && self.is_node_dead(node) {
+            // Deadness recheck first: a dead node is killed, not canonicalized.
+            if flags.contains(NodeFlags::OUTPUT_KILLED) && self.is_node_dead(node) {
                 self.kill_node(node);
+                continue;
+            }
+            // A node whose inputs changed may now be a structural twin of an
+            // existing node — merge it in (the cascade re-enqueues its
+            // consumers, so this same drain settles it).
+            if flags.contains(NodeFlags::NEEDS_RECANON) {
+                self.canonicalize_node(node);
             }
         }
     }
@@ -496,12 +563,16 @@ impl<'g> EditFunction<'g> {
     /// (via `will_attach_value`) if it was dead.
     pub fn update_input(&mut self, input_id: UseId, output_id: ValueId) {
         let displaced = self.function.graph().value_of_use(input_id);
-        // No-op self-redirect: nothing is displaced and nothing is attached.
-        if displaced != output_id {
-            self.will_detach_value(displaced);
-            self.will_attach_value(output_id);
+        // No-op self-redirect: nothing is displaced, attached, or re-canonicalized.
+        if displaced == output_id {
+            return;
         }
+        let consumer = self.function.graph().node_of_use(input_id);
+        self.will_detach_value(displaced);
+        self.will_attach_value(output_id);
         self.function.graph_mut().update_input(input_id, output_id);
+        // The consumer's inputs changed — it may now be a structural twin.
+        self.enqueue_for_recanon(consumer);
     }
 
     /// Append an input to a (non-cacheable) node — delegates to
@@ -515,11 +586,7 @@ impl<'g> EditFunction<'g> {
     /// # Errors
     /// Never — always `Ok(())`; the `Result` keeps the edit-verb surface
     /// uniform.
-    pub fn add_node_input(
-        &mut self,
-        node: NodeId,
-        output_id: ValueId,
-    ) -> crate::error::Result<()> {
+    pub fn add_node_input(&mut self, node: NodeId, output_id: ValueId) -> crate::error::Result<()> {
         let was_input_less = self.function.graph().node_inputs(node).is_empty();
         self.will_attach_value(output_id);
         self.function.graph_mut().add_node_input(node, output_id);
@@ -539,11 +606,7 @@ impl<'g> EditFunction<'g> {
     /// # Errors
     /// Never — always `Ok(())`; the `Result` keeps the edit-verb surface
     /// uniform.
-    pub fn remove_node_input(
-        &mut self,
-        node: NodeId,
-        index: u32,
-    ) -> crate::error::Result<()> {
+    pub fn remove_node_input(&mut self, node: NodeId, index: u32) -> crate::error::Result<()> {
         // Snapshot the displaced value BEFORE removal so its remaining-use
         // count still includes the edge we're about to drop.
         let displaced = self
@@ -570,17 +633,30 @@ impl<'g> EditFunction<'g> {
     /// # Errors
     /// Never — always `Ok`; the `Result` keeps the edit-verb surface
     /// uniform.
-    pub fn replace_all_uses(
-        &mut self,
-        old: ValueId,
-        new: ValueId,
-    ) -> crate::error::Result<bool> {
+    pub fn replace_all_uses(&mut self, old: ValueId, new: ValueId) -> crate::error::Result<bool> {
+        // Consumers of `old` will be rewired onto `new` — each may become a
+        // structural twin. Snapshot them BEFORE the redirect (the raw Graph
+        // redirect bypasses `update_input`'s per-edge hook) so each can be
+        // flagged for re-canonicalization afterwards.
+        let consumers: smallvec::SmallVec<[NodeId; 4]> = if old != new {
+            self.function
+                .graph()
+                .value_uses(old)
+                .map(|(consumer, _)| consumer)
+                .collect()
+        } else {
+            smallvec::SmallVec::new()
+        };
         // The redirect attaches `new` wherever `old` was used; with no uses
         // to move there is nothing to attach (and nothing to resurrect).
         if old != new && self.function.graph().value_uses(old).next().is_some() {
             self.will_attach_value(new);
         }
-        Ok(self.function.graph_mut().replace_all_uses(old, new))
+        let changed = self.function.graph_mut().replace_all_uses(old, new);
+        for consumer in consumers {
+            self.enqueue_for_recanon(consumer);
+        }
+        Ok(changed)
     }
 
     /// Register an argument-carrier value under a CC argument index —
@@ -610,15 +686,19 @@ impl<'g> EditFunction<'g> {
     /// Propagates [`Self::replace_all_uses`]'s error arm unchanged.
     pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> Result<bool> {
         let into = self.function.producer(new);
+        // `from` is `old`'s producer.  `replace_all_uses` below moves every use
+        // off `old` but never reassigns its producer, so this single snapshot
+        // serves both the fingerprint absorption and the post-redirect cull
+        // (afterwards every use of `old` has moved to `new`, leaving `from`
+        // orphaned).
         let from = self.function.producer(old);
         self.function.extend_asm_fingerprint_from(into, from);
-        // Snapshot old's producer before the redirect; afterwards every use of
-        // `old` has moved to `new`, so its producer is a cull candidate.
-        let old_producer = self.function.producer(old);
+        // `replace_all_uses` redirects every use of `old` onto `new` AND flags
+        // each redirected consumer for re-canonicalization (the cascade).
         let changed = self.replace_all_uses(old, new)?;
         // `replace_all_uses` bypasses `update_input`'s per-edge hook, so enqueue
         // the now-orphaned producer here (side-effect-guarded inside).
-        self.enqueue_killed_def_node(old_producer);
+        self.enqueue_killed_def_node(from);
         Ok(changed)
     }
 
@@ -663,13 +743,16 @@ impl<'g> EditFunction<'g> {
     /// from the asm-fingerprint non-empty check, so no fingerprint work is needed.
     ///
     /// The caller passes ALL dead predecessor indices for the region at once;
-    /// this method removes them highest-index-first internally so earlier
-    /// removals never invalidate a later (lower) index — the caller does not
-    /// need to pre-sort or remove one-by-one. Duplicate indices are deduped,
-    /// and out-of-range indices are skipped per-node via bounds checks.
+    /// duplicate and out-of-range indices are handled internally. Each affected
+    /// node (the Region and every Phi/MemPhi over it) has all its dead slots
+    /// removed in a SINGLE [`Graph::remove_node_inputs_batch`] linear pass — so
+    /// collapsing K of a wide Region's P predecessors across its M phis is
+    /// O((1 + M)·P), not O(K·P·M) independent tail-shifting removals — and the
+    /// caller does not need to pre-sort or remove one-by-one.
     ///
     /// # Errors
-    /// Propagates [`Self::remove_node_input`]'s error arm.
+    /// Never — always `Ok(())`; the `Result` keeps the edit-verb surface
+    /// uniform with the other structural primitives.
     pub fn remove_region_predecessors(
         &mut self,
         region: NodeId,
@@ -682,10 +765,10 @@ impl<'g> EditFunction<'g> {
         if pred_indices.is_empty() {
             return Ok(());
         }
-        // Highest-index-first, deduped: removing a higher slot never shifts a
-        // lower one, so every remaining index stays valid across the batch.
+        // Deduped pred-index set (order-independent: the batch remover takes the
+        // whole set at once and reindexes survivors in one pass).
         let mut indices: Vec<u32> = pred_indices.to_vec();
-        indices.sort_unstable_by(|a, b| b.cmp(a));
+        indices.sort_unstable();
         indices.dedup();
 
         // Collect the phi-token consumers once (the set of Phi/MemPhi nodes
@@ -703,18 +786,48 @@ impl<'g> EditFunction<'g> {
             }
         };
 
-        for pred_index in indices {
-            let phi_input_idx = pred_index + 1;
-            for &phi in &phi_nodes {
-                if phi_input_idx < self.node_inputs(phi).len() as u32 {
-                    self.remove_node_input(phi, phi_input_idx)?;
-                }
-            }
-            if pred_index < self.node_inputs(region).len() as u32 {
-                self.remove_node_input(region, pred_index)?;
+        // Each Phi/MemPhi loses its value slots `pred_index + 1`; the Region
+        // loses slots `pred_index`.  Remove them per node in one batch each.
+        for &phi in &phi_nodes {
+            let phi_idxs: Vec<u32> = indices.iter().map(|&i| i + 1).collect();
+            self.remove_node_inputs_batch(phi, &phi_idxs);
+        }
+        self.remove_node_inputs_batch(region, &indices);
+        Ok(())
+    }
+
+    /// Remove a batch of input slots from a (non-cacheable) node in a single
+    /// linear pass — the batched counterpart of [`Self::remove_node_input`].
+    ///
+    /// Maintains the maybe-dead queue: every value at a removed (in-range)
+    /// slot loses a use, so its producer is enqueued (via `will_detach_value`)
+    /// when this removal drops its last use.  Out-of-range and duplicate
+    /// indices are ignored.  Delegates the structural edit to
+    /// [`Graph::remove_node_inputs_batch`] (one O(degree) filter-rebuild).
+    fn remove_node_inputs_batch(&mut self, node: NodeId, indices: &[u32]) {
+        // Snapshot the values at the removed (in-range) slots BEFORE the edit.
+        let degree = self.node_inputs(node).len();
+        let inputs: smallvec::SmallVec<[ValueId; 8]> =
+            self.function.node_inputs(node).into_iter().collect();
+        let mut displaced: smallvec::SmallVec<[ValueId; 8]> = smallvec::SmallVec::new();
+        for &idx in indices {
+            if (idx as usize) < degree {
+                displaced.push(inputs[idx as usize]);
             }
         }
-        Ok(())
+        self.function
+            .graph_mut()
+            .remove_node_inputs_batch(node, indices.iter().map(|&i| i as usize));
+        // Deadness is checked AFTER the batch removal (mirrors `kill_node`): a
+        // value appearing in several removed slots only reaches zero uses once
+        // ALL its edges are gone, so a pre-removal per-slot check could miss it.
+        // Enqueue each now-orphaned producer (the gate inside is side-effect-aware).
+        for value in displaced {
+            if self.function.graph().value_uses(value).next().is_none() {
+                let producer = self.function.producer(value);
+                self.enqueue_killed_def_node(producer);
+            }
+        }
     }
 }
 
@@ -792,12 +905,12 @@ pub(crate) mod test_fixtures {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::test_fixtures::single_region_builder;
     use super::EditFunction;
+    use super::test_fixtures::single_region_builder;
     use crate::IRViewer;
+    use crate::IntBinaryOp;
     use crate::builder::IRBuilderExt;
     use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
-    use crate::IntBinaryOp;
     use cranelift_entity::EntityRef;
     use std::collections::BTreeSet;
 
@@ -823,6 +936,161 @@ mod tests {
         ctx.kill_node(node);
         assert!(!ctx.is_live(node), "killed node is no longer live");
         assert!(!ctx.is_root(node), "killed node dropped from roots");
+    }
+
+    /// Resurrecting a previously-dead cone that is a structural twin of a live
+    /// cacheable node must schedule the resurrected node for re-canonicalization
+    /// so the next `clean()` MERGES it into its twin (IR-2).  Without the fix the
+    /// resurrected twin stays live alongside its structural equal, leaking a
+    /// duplicate cacheable node into the live set.
+    #[test]
+    fn will_attach_value_resurrection_re_canonicalizes_twin() {
+        let mut b = single_region_builder();
+        b.set_lift_addr(Some(0xA));
+        let x = b.build_int_const(11u64, ValueType::I64).unwrap();
+        let y = b.build_int_const(22u64, ValueType::I64).unwrap();
+        let z = b.build_int_const(33u64, ValueType::I64).unwrap();
+        // A = Add(x, y): live (consumed by the Return), kept in the dedup cache.
+        let a = b
+            .build_int_binary_operation(x, y, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        // C = Add(x, z): a DIFFERENT cacheable shape, left orphaned (nothing
+        // consumes it) so it is dead/unreachable at EditFunction populate time.
+        b.set_lift_addr(Some(0xC));
+        let c = b
+            .build_int_binary_operation(x, z, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.set_lift_addr(Some(0xA));
+        b.build_return(Some(a), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let a_node = function.producer(a);
+        let c_node = function.producer(c);
+        let return_node = function
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
+            .expect("a Return node");
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        assert!(!ctx.is_live(c_node), "C starts dead (orphaned)");
+        assert!(ctx.is_live(a_node), "A starts live");
+
+        // While C is still DEAD, rewire its slot-1 (z) -> y so it becomes
+        // structurally Add(x, y) == A. (Dead nodes aren't enqueued here.)
+        let c_use_z = ctx.function().node_input_id_at(c_node, 1).unwrap();
+        ctx.update_input(c_use_z, y);
+
+        // Resurrect C by appending its output as an extra Return value. The
+        // attach hook marks C live; the IR-2 fix additionally enqueues it for
+        // re-canonicalization so the merge into A is scheduled.
+        ctx.add_node_input(return_node, c).unwrap();
+        assert!(ctx.is_live(c_node), "C is resurrected by the attach");
+
+        ctx.clean();
+
+        assert!(
+            !ctx.is_live(c_node),
+            "the resurrected twin C must be merged into A and culled, not leaked"
+        );
+        assert!(ctx.is_live(a_node), "the survivor A stays live");
+        assert!(
+            ctx.function().asm_fingerprint(a_node).contains(&0xC),
+            "A absorbs C's asm address 0xC on merge (superset contract), got {:?}",
+            ctx.function().asm_fingerprint(a_node)
+        );
+    }
+
+    /// The re-canonicalization merge path runs through `expect`-guarded
+    /// single-output extraction + a propagated `replace_value` (IR-3): on a
+    /// well-formed twin merge the path must complete WITHOUT panicking, fully
+    /// redirecting the duplicate's uses onto the survivor.  This pins that the
+    /// loud-on-broken-invariant rewrite of `canonicalize_node` does not regress
+    /// the valid merge (the only path the always-on validator guarantees).
+    #[test]
+    fn canonicalize_node_merge_is_loud_on_broken_invariant() {
+        let mut b = single_region_builder();
+        b.set_lift_addr(Some(0x1));
+        let x = b.build_int_const(7u64, ValueType::I64).unwrap();
+        let y = b.build_int_const(8u64, ValueType::I64).unwrap();
+        let z = b.build_int_const(9u64, ValueType::I64).unwrap();
+        let a = b
+            .build_int_binary_operation(x, y, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let c = b
+            .build_int_binary_operation(x, z, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let top = b
+            .build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(top), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let a_node = function.producer(a);
+        let c_node = function.producer(c);
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        // Rewire C's slot-1 (z) -> y so C becomes structurally Add(x, y) == A.
+        // The ensuing `clean()` drives `canonicalize_node`, whose `expect`-
+        // guarded merge must complete normally (no panic) and cull the twin.
+        let c_use_z = ctx.function().node_input_id_at(c_node, 1).unwrap();
+        ctx.update_input(c_use_z, y);
+        ctx.clean();
+
+        assert!(!ctx.is_live(c_node), "the twin is merged + culled");
+        assert!(ctx.is_live(a_node), "the survivor stays live");
+    }
+
+    /// A node whose inputs are rewired into a structural twin of an existing
+    /// node is merged into that twin at `clean()` (incremental
+    /// re-canonicalization), and the survivor absorbs the duplicate's
+    /// asm-fingerprint (superset contract).
+    #[test]
+    fn clean_merges_a_mutated_twin_and_absorbs_fingerprint() {
+        let mut b = single_region_builder();
+        // A = Add(x, y) under addr 0xA; C = Add(x, z) under DISTINCT addr 0xC.
+        b.set_lift_addr(Some(0xA));
+        let x = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let y = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let z = b.build_int_const(3u64, ValueType::I64).unwrap();
+        let a = b
+            .build_int_binary_operation(x, y, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.set_lift_addr(Some(0xC));
+        let c = b
+            .build_int_binary_operation(x, z, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        // top = Add(a, c) keeps BOTH A and C live (neither is culled as dead).
+        b.set_lift_addr(Some(0xA));
+        let top = b
+            .build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(top), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let a_node = function.producer(a);
+        let c_node = function.producer(c);
+        assert_ne!(a_node, c_node, "A and C start distinct");
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        // Rewire C's input slot 1 (z) -> y so C becomes structurally Add(x, y) == A.
+        let c_use_z = ctx.function().node_input_id_at(c_node, 1).unwrap();
+        ctx.update_input(c_use_z, y);
+        ctx.clean();
+
+        assert!(
+            !ctx.is_live(c_node),
+            "the duplicate C is culled after canonicalization"
+        );
+        assert!(ctx.is_live(a_node), "the survivor A stays live");
+        assert!(
+            ctx.function().asm_fingerprint(a_node).contains(&0xC),
+            "A absorbs C's asm address 0xC (superset contract), got {:?}",
+            ctx.function().asm_fingerprint(a_node)
+        );
     }
 
     /// After `replace_value` + `clean`, the cached live set must equal a fresh
@@ -860,8 +1128,7 @@ mod tests {
         let entry = ctx.entry();
         let info = crate::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
         let fresh: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
-        let cached: BTreeSet<usize> =
-            ctx.live_snapshot().iter().map(|n| n.index()).collect();
+        let cached: BTreeSet<usize> = ctx.live_snapshot().iter().map(|n| n.index()).collect();
         assert_eq!(
             cached, fresh,
             "cached live_nodes must equal the entry-reachable set after replace + clean"
@@ -903,7 +1170,10 @@ mod tests {
             "the killed node's cache entry was evicted, so the same shape mints a fresh node"
         );
         assert!(ctx.is_live(recreated), "re-created node is live");
-        assert!(ctx.is_root(recreated), "input-less re-created const is a root");
+        assert!(
+            ctx.is_root(recreated),
+            "input-less re-created const is a root"
+        );
     }
 
     /// `cull_dead` is idempotent: the first call kills the dead consumer of
@@ -970,16 +1240,31 @@ mod tests {
         let c2_node = function.producer(c2);
 
         let mut ctx = EditFunction::new(&mut function).unwrap();
-        assert!(!ctx.is_live(orphan_node), "orphan starts outside the live set");
-        assert!(!ctx.is_live(c2_node), "the orphan's operand starts dead too");
+        assert!(
+            !ctx.is_live(orphan_node),
+            "orphan starts outside the live set"
+        );
+        assert!(
+            !ctx.is_live(c2_node),
+            "the orphan's operand starts dead too"
+        );
 
         // Redirect the Return's value from c1 to the orphan's output.
         ctx.replace_value(c1, orphan).unwrap();
 
-        assert!(ctx.is_live(orphan_node), "attach resurrects the orphan producer");
+        assert!(
+            ctx.is_live(orphan_node),
+            "attach resurrects the orphan producer"
+        );
         assert!(ctx.is_live(c2_node), "…and its transitive input cone");
-        assert!(ctx.is_root(c2_node), "the resurrected input-less const is a root");
-        assert!(!ctx.is_root(orphan_node), "the Neg has an input, so it is not a root");
+        assert!(
+            ctx.is_root(c2_node),
+            "the resurrected input-less const is a root"
+        );
+        assert!(
+            !ctx.is_root(orphan_node),
+            "the Neg has an input, so it is not a root"
+        );
         assert!(
             ctx.postorder().contains(&orphan_node),
             "the cached postorder visits the resurrected node"
@@ -989,12 +1274,14 @@ mod tests {
         // the cached live set equals a fresh entry-reachable walk.
         ctx.clean();
         ctx.cull_dead();
-        assert!(ctx.is_live(orphan_node), "cull_dead keeps the resurrected node");
+        assert!(
+            ctx.is_live(orphan_node),
+            "cull_dead keeps the resurrected node"
+        );
         let entry = ctx.entry();
         let info = crate::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
         let fresh: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
-        let cached: BTreeSet<usize> =
-            ctx.live_snapshot().iter().map(|n| n.index()).collect();
+        let cached: BTreeSet<usize> = ctx.live_snapshot().iter().map(|n| n.index()).collect();
         assert_eq!(
             cached, fresh,
             "cached live_nodes must equal the entry-reachable set after resurrect + clean + cull"
@@ -1046,13 +1333,25 @@ mod tests {
         for n in [k_node, inner_node, outer_node] {
             assert!(ctx.is_live(n), "the whole resurrected cone is live");
         }
-        assert!(ctx.is_root(k_node), "the cone's input-less const becomes a root");
-        assert!(!ctx.is_root(inner_node), "inner Neg has an input — not a root");
-        assert!(!ctx.is_root(outer_node), "outer Neg has an input — not a root");
+        assert!(
+            ctx.is_root(k_node),
+            "the cone's input-less const becomes a root"
+        );
+        assert!(
+            !ctx.is_root(inner_node),
+            "inner Neg has an input — not a root"
+        );
+        assert!(
+            !ctx.is_root(outer_node),
+            "outer Neg has an input — not a root"
+        );
 
         let post = ctx.postorder();
         for n in [k_node, inner_node, outer_node] {
-            assert!(post.contains(&n), "cached postorder visits the resurrected cone");
+            assert!(
+                post.contains(&n),
+                "cached postorder visits the resurrected cone"
+            );
         }
     }
 
@@ -1079,13 +1378,22 @@ mod tests {
             .expect("a Return node");
 
         let mut ctx = EditFunction::new(&mut function).unwrap();
-        assert!(!ctx.is_live(orphan_node), "orphan starts outside the live set");
+        assert!(
+            !ctx.is_live(orphan_node),
+            "orphan starts outside the live set"
+        );
 
         ctx.add_node_input(return_node, orphan).unwrap();
 
-        assert!(ctx.is_live(orphan_node), "attach resurrects the orphan producer");
+        assert!(
+            ctx.is_live(orphan_node),
+            "attach resurrects the orphan producer"
+        );
         assert!(ctx.is_live(c2_node), "…and its transitive input cone");
-        assert!(ctx.is_root(c2_node), "the resurrected input-less const is a root");
+        assert!(
+            ctx.is_root(c2_node),
+            "the resurrected input-less const is a root"
+        );
         assert!(
             ctx.postorder().contains(&orphan_node),
             "the cached postorder visits the resurrected node"
@@ -1163,7 +1471,10 @@ mod tests {
             .expect("a Return node");
 
         let mut ctx = EditFunction::new(&mut function).unwrap();
-        assert!(!ctx.is_live(orphan_node), "orphan starts outside the live set");
+        assert!(
+            !ctx.is_live(orphan_node),
+            "orphan starts outside the live set"
+        );
 
         // Rewire the Return's c1 slot onto the orphan's output.
         let slot = ctx
@@ -1174,7 +1485,10 @@ mod tests {
             .expect("Return consumes c1");
         let use_id = ctx.graph_ref().node_input_id_at(return_node, slot).unwrap();
         ctx.update_input(use_id, orphan);
-        assert!(ctx.is_live(orphan_node), "attach resurrects the orphan producer");
+        assert!(
+            ctx.is_live(orphan_node),
+            "attach resurrects the orphan producer"
+        );
 
         ctx.cull_dead();
         assert!(
@@ -1185,8 +1499,7 @@ mod tests {
             !ctx.function().node_inputs(orphan_node).is_empty(),
             "the resurrected node's inputs stay attached"
         );
-        let entry = ctx.entry();
-        crate::validate::validate(ctx.function(), entry)
+        crate::validate::validate(ctx.function())
             .expect("graph validates after resurrect + cull_dead");
     }
 
@@ -1314,8 +1627,7 @@ mod tests {
             ctx.is_live(store_node),
             "cull_dead must not kill the in-use memory Store"
         );
-        let entry = ctx.entry();
-        crate::validate::validate(ctx.function(), entry)
+        crate::validate::validate(ctx.function())
             .expect("graph validates after resurrecting a Load over a memory Store");
     }
 
@@ -1354,7 +1666,82 @@ mod tests {
         ctx.enqueue_killed_def_node(return_node);
         ctx.clean();
 
-        assert!(ctx.is_live(store_node), "Store (side-effecting) never culled");
+        assert!(
+            ctx.is_live(store_node),
+            "Store (side-effecting) never culled"
+        );
         assert!(ctx.is_live(return_node), "Return (control) never culled");
+    }
+
+    /// `remove_region_predecessors` drops a batch of dead predecessor slots
+    /// from a Region and the matching value slots from every Phi over it in a
+    /// SINGLE per-node batch (IR-7), collapsing a wide fan-in correctly: the
+    /// surviving Region control inputs and Phi value inputs end up in their
+    /// original relative order with contiguous slots, and the Region pred `i`
+    /// ↔ Phi input `i + 1` correspondence is preserved.
+    #[test]
+    fn remove_region_predecessors_wide_fanin_is_linear() {
+        use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
+
+        let mut b = single_region_builder();
+        b.build_return(None, &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+
+        // A wide Region fan-in: one Control input per predecessor.  The entry
+        // region's control output is reused verbatim for each slot (the batch
+        // mechanics manipulate slots, not control validity).
+        let entry = ctx.entry();
+        let entry_ctrl = ctx.function().node_outputs(entry)[0];
+        const FANIN: usize = 8;
+        let region = ctx.create_node(
+            NodeKind::Region,
+            std::iter::repeat_n(entry_ctrl, FANIN),
+            [ValueKind::Control, ValueKind::PhiToken],
+        );
+        let phi_token = ctx.function().node_outputs(region)[1];
+
+        // A Phi over the Region: [phi_token, v0, v1, …, v7], one value per
+        // predecessor.  Each value is a distinct constant so survivors are
+        // identifiable by value after the removal.
+        let mut phi_inputs = vec![phi_token];
+        let mut consts = Vec::new();
+        for i in 0..FANIN {
+            let k = ctx.create_node(
+                NodeKind::IntConst(IntPayload::Small(0xC0 + i as u64)),
+                [],
+                [ValueKind::Typed(ValueType::I64)],
+            );
+            let v = ctx.function().node_outputs(k)[0];
+            consts.push(v);
+            phi_inputs.push(v);
+        }
+        let phi = ctx.create_node(
+            NodeKind::Phi,
+            phi_inputs,
+            [ValueKind::Typed(ValueType::I64)],
+        );
+
+        // Remove predecessors {1, 3, 6} in one batch (unsorted on purpose).
+        ctx.remove_region_predecessors(region, &[3, 1, 6]).unwrap();
+
+        // Region: 8 - 3 = 5 control inputs remain.
+        assert_eq!(
+            ctx.function().node_inputs(region).len(),
+            FANIN - 3,
+            "5 of 8 Region predecessors survive"
+        );
+
+        // Phi: phi_token + the value inputs for the surviving preds {0,2,4,5,7}.
+        let surviving: Vec<_> = ctx.function().node_inputs(phi).into_iter().collect();
+        let expected: Vec<_> = std::iter::once(phi_token)
+            .chain([0usize, 2, 4, 5, 7].into_iter().map(|i| consts[i]))
+            .collect();
+        assert_eq!(
+            surviving, expected,
+            "surviving Phi value inputs keep original order, contiguous, token first"
+        );
     }
 }

@@ -20,8 +20,8 @@
 
 pub mod arch;
 pub mod call_descriptor;
-pub mod calling_convention;
 pub mod call_other_abi;
+pub mod calling_convention;
 
 pub use arch::{ArchPreset, Endianness, SleighArch};
 pub use call_descriptor::CallDescriptor;

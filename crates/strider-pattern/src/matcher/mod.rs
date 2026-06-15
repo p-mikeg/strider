@@ -11,15 +11,15 @@
 //! helper in `cast_walk_through`. The cast mask is carried on the
 //! [`Pattern`] itself, not on the matcher.
 
-mod cast_walk_through;
 pub(crate) mod builder;
+mod cast_walk_through;
 pub(crate) mod graph;
 pub(crate) mod match_pat;
 pub(crate) mod vertex;
 pub(crate) mod walk;
 
-pub(crate) use cast_walk_through::skip_casts;
 pub use builder::{MatcherBuilder, PatNodeRef, PatValueRef};
+pub(crate) use cast_walk_through::skip_casts;
 pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
 pub use vertex::{
@@ -257,13 +257,52 @@ impl<'f> Matcher<'f> {
     /// O(N₁ × N₂ × … × N_M) worst case where N_i is the number of
     /// matches for pattern i.
     ///
+    /// # Shared-capture requirement
+    ///
+    /// A join correlates patterns on their *shared* captures. A pattern
+    /// that itself declares ≥1 capture but shares **none** of them with
+    /// the preceding patterns is almost always a mis-wired correlation
+    /// (the author meant the captures to line up but they don't), and
+    /// without a shared capture `prefix_agrees` approves *every* tuple —
+    /// turning the join into an unbounded cartesian explosion. Such a
+    /// pattern is therefore rejected. A *capture-free* pattern (a pure
+    /// filter, e.g. `call().at(0x1234).build()`) is exempt: it deliberately
+    /// imposes no correlation and degrades to a documented cross-product.
+    ///
+    /// # Deduplication
+    ///
+    /// Surviving tuples are deduplicated by their shared-capture binding
+    /// signature (resolved to nodes): two tuples that agree on every
+    /// shared capture but differ only on an uncaptured / non-shared
+    /// internal binding are equivalent for any correlated-site consumer,
+    /// so only the first is kept.
+    ///
     /// # Errors
     /// Errors if any pattern is not a single-rooted, acyclic graph the
-    /// matcher can handle (see [`Pattern::root`]).
+    /// matcher can handle (see [`Pattern::root`]), or if a capture-bearing
+    /// pattern shares no capture with the patterns before it.
     pub fn find_joined(&self, pats: &[&Pattern]) -> anyhow::Result<Vec<Vec<Match>>> {
         if pats.is_empty() {
             return Ok(Vec::new());
         }
+
+        // Reject a capture-bearing pattern that shares no capture with the
+        // accumulated prefix (a mis-wired correlation that would explode
+        // into a cartesian product). A capture-free pattern is exempt.
+        let mut seen_captures: std::collections::HashSet<crate::Capture> =
+            pats[0].bound_captures().collect();
+        for (i, p) in pats.iter().enumerate().skip(1) {
+            let own: Vec<crate::Capture> = p.bound_captures().collect();
+            if !own.is_empty() && !own.iter().any(|c| seen_captures.contains(c)) {
+                anyhow::bail!(
+                    "find_joined: pattern {i} shares no capture with the others — \
+                     a join correlates on shared captures (use a capture-free \
+                     pattern for an intentional cross-product)"
+                );
+            }
+            seen_captures.extend(own);
+        }
+
         let per_pat: Vec<Vec<Match>> = pats
             .iter()
             .map(|p| self.find_all(p))
@@ -295,6 +334,8 @@ impl<'f> Matcher<'f> {
                 break;
             }
         }
+
+        dedup_on_shared_captures(&mut acc, self.function().graph());
         Ok(acc)
     }
 
@@ -317,10 +358,15 @@ impl<'f> Matcher<'f> {
         let mut indices: Vec<u32> = f.iter_arg_indices().collect();
         indices.sort_unstable();
         indices.into_iter().filter_map(move |i| {
-            f.arg_index_to_values(i)
-                .first()
-                .copied()
-                .map(|value| (i, FunctionArgHandle { function: f, node: f.producer(value) }))
+            f.arg_index_to_values(i).first().copied().map(|value| {
+                (
+                    i,
+                    FunctionArgHandle {
+                        function: f,
+                        node: f.producer(value),
+                    },
+                )
+            })
         })
     }
 }
@@ -371,6 +417,40 @@ impl FunctionArgHandle<'_> {
 /// compare would treat them as different and silently drop a valid tuple.  Two
 /// *value* captures are still compared at value granularity so distinct outputs
 /// of one multi-output node don't falsely agree.
+/// Deduplicate joined tuples by their capture binding signature.
+///
+/// The signature is every capture bound anywhere in the tuple, resolved
+/// to its node and sorted. Two tuples with an identical signature bind
+/// every capture to the same node, so they are indistinguishable to a
+/// consumer that acts on captures (they differ only in uncaptured /
+/// internal bindings or in which redundant correlated pairing produced
+/// them) — only the first is kept, order-preserving.
+///
+/// A tuple whose signature is **empty** (no capture bound anywhere) is
+/// always kept: that is the documented capture-free cross-product, whose
+/// tuples are intentionally distinct even though they bind nothing.
+fn dedup_on_shared_captures(acc: &mut Vec<Vec<Match>>, graph: &Graph) {
+    let mut seen: std::collections::HashSet<Vec<(u32, NodeId)>> = std::collections::HashSet::new();
+    acc.retain(|tuple| {
+        let mut sig: Vec<(u32, NodeId)> = Vec::new();
+        for m in tuple {
+            for (cap, _) in m.bindings.iter() {
+                if let Some(node) = m.bindings.get_node(cap, graph)
+                    && !sig.iter().any(|(id, _)| *id == cap.id())
+                {
+                    sig.push((cap.id(), node));
+                }
+            }
+        }
+        // Empty signature: a pure cross-product tuple — never dedup.
+        if sig.is_empty() {
+            return true;
+        }
+        sig.sort_unstable_by_key(|(id, _)| *id);
+        seen.insert(sig)
+    });
+}
+
 fn prefix_agrees(prefix: &[Match], m: &Match, graph: &Graph) -> bool {
     for prev in prefix {
         for (cap, prev_binding) in prev.bindings.iter() {

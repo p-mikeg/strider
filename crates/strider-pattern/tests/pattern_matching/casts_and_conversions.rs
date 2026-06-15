@@ -8,11 +8,11 @@
 //! on `FunctionBuilder`, tests use those helpers to create the target nodes
 //! and then match against them with the corresponding pattern constructor.
 
-use strider_pattern::*;
-use strider_pattern::matcher::CastMask;
 use strider_ir::ExtendOp;
 use strider_ir::IRViewer;
 use strider_ir::node::ValueType;
+use strider_pattern::matcher::CastMask;
+use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn};
 
@@ -61,16 +61,30 @@ fn extend_op_variant_matches_zero_and_sign() {
     let s = non_const_u32(&mut t, 1, 2);
     let x = t.zext_to(s, ValueType::I64);
     let function = t.ret_val(x);
-    a::matches(&function, extend(ExtendOp::ZeroExtend, any()).into_pattern(), 1);
-    a::none(&function, extend(ExtendOp::SignExtend, any()).into_pattern());
+    a::matches(
+        &function,
+        extend(ExtendOp::ZeroExtend, any()).into_pattern(),
+        1,
+    );
+    a::none(
+        &function,
+        extend(ExtendOp::SignExtend, any()).into_pattern(),
+    );
 
     // Sign-extend graph.
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
     let x = t.sext_to(s, ValueType::I64);
     let function = t.ret_val(x);
-    a::matches(&function, extend(ExtendOp::SignExtend, any()).into_pattern(), 1);
-    a::none(&function, extend(ExtendOp::ZeroExtend, any()).into_pattern());
+    a::matches(
+        &function,
+        extend(ExtendOp::SignExtend, any()).into_pattern(),
+        1,
+    );
+    a::none(
+        &function,
+        extend(ExtendOp::ZeroExtend, any()).into_pattern(),
+    );
 }
 
 #[test]
@@ -252,7 +266,10 @@ fn deep_alternating_cast_chain_walked_through() {
     };
 
     // Without a cast mask the chain is opaque.
-    a::none(&function, add(mul(any(), any()), int_const(4u128)).into_pattern());
+    a::none(
+        &function,
+        add(mul(any(), any()), int_const(4u128)).into_pattern(),
+    );
 
     // With ignore_casts the matcher reaches the Mul through all 32 casts,
     // and the const-4 leaf still matches as-is.

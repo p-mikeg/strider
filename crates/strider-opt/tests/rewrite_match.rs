@@ -450,8 +450,7 @@ fn apply_count_preserves_use_list_integrity() {
         let mut ctx = EditFunction::new(&mut function).unwrap();
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap();
     }
-    strider_ir::validate::validate(&function, function.entry().unwrap())
-        .expect("validate must pass after rewrite");
+    strider_ir::validate::validate(&function).expect("validate must pass after rewrite");
 }
 
 // ── RewriteSkip sentinel public contract ─────────────────────────────────────

@@ -21,7 +21,10 @@ fn x86_64_ud2_terminates_cleanly() {
     let reader = BufMemReader::new(bytes, entry);
     let (mut strider, cc) = common::strider_x86_64(reader);
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(entry), &strider_cfg::CfgOptions::default())
+        .build_cfg(
+            MachineInsnAddr::from(entry),
+            &strider_cfg::CfgOptions::default(),
+        )
         .expect("cfg");
 
     let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
@@ -46,7 +49,10 @@ fn aarch64_brk_terminates_cleanly() {
     let reader = BufMemReader::new(bytes, entry);
     let (mut strider, cc) = common::strider_aarch64(reader);
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(entry), &strider_cfg::CfgOptions::default())
+        .build_cfg(
+            MachineInsnAddr::from(entry),
+            &strider_cfg::CfgOptions::default(),
+        )
         .expect("cfg");
 
     let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");

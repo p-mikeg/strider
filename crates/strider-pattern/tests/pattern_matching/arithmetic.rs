@@ -14,13 +14,20 @@ use super::support::{Tb, assertions as a, shapes};
 #[test]
 fn add_matches() {
     let function = shapes::add_consts(5, 3);
-    a::matches(&function, add(int_const(5u128), int_const(3u128)).into_pattern(), 1);
+    a::matches(
+        &function,
+        add(int_const(5u128), int_const(3u128)).into_pattern(),
+        1,
+    );
 }
 
 #[test]
 fn add_wrong_operand_rejects() {
     let function = shapes::add_consts(5, 3);
-    a::none(&function, add(int_const(5u128), int_const(99u128)).into_pattern());
+    a::none(
+        &function,
+        add(int_const(5u128), int_const(99u128)).into_pattern(),
+    );
 }
 
 #[test]
@@ -66,7 +73,10 @@ fn wrong_op_rejects() {
     // Use Mul as the "different op" graph (Sub no longer exists; the
     // pattern's wrong-op-rejection check is op-agnostic).
     let function = shapes::int_bin_5_3(IntBinaryOp::Mul);
-    a::none(&function, add(int_const(5u128), int_const(3u128)).into_pattern());
+    a::none(
+        &function,
+        add(int_const(5u128), int_const(3u128)).into_pattern(),
+    );
 }
 
 /// `pattern::sub(a, b)` is an ergonomic alias that constructs the lowered
@@ -79,7 +89,11 @@ fn sub_matches_lowered_shape() {
     let r = t.u64(3);
     let lowered = t.sub(l, r); // Tb::sub builds Add(l, Neg(r)) directly.
     let function = t.ret_val(lowered);
-    a::matches(&function, sub(int_const(5u128), int_const(3u128)).into_pattern(), 1);
+    a::matches(
+        &function,
+        sub(int_const(5u128), int_const(3u128)).into_pattern(),
+        1,
+    );
 }
 
 // ── Integer unary ops ─────────────────────────────────────────────────────────
@@ -144,12 +158,24 @@ fn unary_wrong_op_rejects() {
 fn every_int_cmp_op_has_a_working_ctor() {
     type Ctor = fn() -> strider_pattern::matcher::Pattern;
     let cases: &[(IntCmpOp, Ctor)] = &[
-        (IntCmpOp::Equal, || int_eq(int_const(5u128), int_const(3u128)).into_pattern()),
-        (IntCmpOp::Less, || int_lt(int_const(5u128), int_const(3u128)).into_pattern()),
-        (IntCmpOp::Sless, || int_slt(int_const(5u128), int_const(3u128)).into_pattern()),
-        (IntCmpOp::Carry, || int_carry(int_const(5u128), int_const(3u128)).into_pattern()),
-        (IntCmpOp::Scarry, || int_scarry(int_const(5u128), int_const(3u128)).into_pattern()),
-        (IntCmpOp::Sborrow, || int_sborrow(int_const(5u128), int_const(3u128)).into_pattern()),
+        (IntCmpOp::Equal, || {
+            int_eq(int_const(5u128), int_const(3u128)).into_pattern()
+        }),
+        (IntCmpOp::Less, || {
+            int_lt(int_const(5u128), int_const(3u128)).into_pattern()
+        }),
+        (IntCmpOp::Sless, || {
+            int_slt(int_const(5u128), int_const(3u128)).into_pattern()
+        }),
+        (IntCmpOp::Carry, || {
+            int_carry(int_const(5u128), int_const(3u128)).into_pattern()
+        }),
+        (IntCmpOp::Scarry, || {
+            int_scarry(int_const(5u128), int_const(3u128)).into_pattern()
+        }),
+        (IntCmpOp::Sborrow, || {
+            int_sborrow(int_const(5u128), int_const(3u128)).into_pattern()
+        }),
     ];
     for &(op, ctor) in cases {
         let function = shapes::int_cmp_5_3(op);
@@ -164,20 +190,31 @@ fn every_int_cmp_op_has_a_working_ctor() {
 #[test]
 fn int_le_matches_lowered_shape() {
     let function = shapes::int_le_lowered_5_3();
-    a::matches(&function, int_le(int_const(5u128), int_const(3u128)).into_pattern(), 1);
+    a::matches(
+        &function,
+        int_le(int_const(5u128), int_const(3u128)).into_pattern(),
+        1,
+    );
 }
 
 /// Signed analogue of [`int_le_matches_lowered_shape`].
 #[test]
 fn int_sle_matches_lowered_shape() {
     let function = shapes::int_sle_lowered_5_3();
-    a::matches(&function, int_sle(int_const(5u128), int_const(3u128)).into_pattern(), 1);
+    a::matches(
+        &function,
+        int_sle(int_const(5u128), int_const(3u128)).into_pattern(),
+        1,
+    );
 }
 
 #[test]
 fn cmp_wrong_op_rejects() {
     let function = shapes::int_cmp_5_3(IntCmpOp::Equal);
-    a::none(&function, int_lt(int_const(5u128), int_const(3u128)).into_pattern());
+    a::none(
+        &function,
+        int_lt(int_const(5u128), int_const(3u128)).into_pattern(),
+    );
 }
 
 // ── Nested / deep patterns ────────────────────────────────────────────────────
@@ -215,7 +252,10 @@ fn nested_pattern_depth_five() {
         &function,
         add(
             add(
-                add(add(add(int_const(1u128), int_const(2u128)), int_const(3u128)), int_const(4u128)),
+                add(
+                    add(add(int_const(1u128), int_const(2u128)), int_const(3u128)),
+                    int_const(4u128),
+                ),
                 int_const(5u128),
             ),
             int_const(6u128),
@@ -229,7 +269,10 @@ fn nested_pattern_depth_five() {
         &function,
         add(
             add(
-                add(add(add(int_const(1u128), int_const(999u128)), int_const(3u128)), int_const(4u128)),
+                add(
+                    add(add(int_const(1u128), int_const(999u128)), int_const(3u128)),
+                    int_const(4u128),
+                ),
                 int_const(5u128),
             ),
             int_const(6u128),
@@ -243,7 +286,10 @@ fn nested_any_partial_matches() {
     // (inner + 3) with any() captures — inner add can be any shape.
     let function = shapes::add_nested_3(1, 2, 3);
     let inner = Capture::new();
-    let m = a::unique(&function, add(any().capture(inner), int_const(3u128)).into_pattern());
+    let m = a::unique(
+        &function,
+        add(any().capture(inner), int_const(3u128)).into_pattern(),
+    );
     // `inner` should point to the inner Add's value output.
     assert!(m.value(inner).is_some());
 }

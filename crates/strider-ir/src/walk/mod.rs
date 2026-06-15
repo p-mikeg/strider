@@ -1,7 +1,7 @@
 use core::{iter, ops::ControlFlow};
 
-pub use entity_utils::set::DenseEntitySet;
 use entity_utils::Worklist;
+pub use entity_utils::set::DenseEntitySet;
 
 use crate::{
     graph::Graph,
@@ -9,7 +9,7 @@ use crate::{
 };
 
 mod cast;
-pub use cast::{cast_mask_of, skip_casts, CastMask};
+pub use cast::{CastMask, cast_mask_of, skip_casts};
 
 /// Convenience alias for the `cfg_reachable` return shape.  Re-exported so
 /// downstream crates can take `&NodeIdSet` parameters without depending on
@@ -110,7 +110,6 @@ pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
         .flat_map(|output| graph.value_uses(output))
         .map(|(succ_node, _succ_input_idx)| succ_node)
 }
-
 
 impl graphwalk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
@@ -305,59 +304,6 @@ impl GraphWalkInfo {
     }
 }
 
-/// Collects every node within `depth` hops of `anchor`, following both
-/// forward (use-of-output) and backward (input-from-producer) edges.
-///
-/// `depth = 0` returns the singleton `{anchor}`; `depth = 1` returns
-/// the anchor plus every direct predecessor (input producer) and
-/// successor (output consumer); and so on.  Used by neighborhood-focus
-/// HTML dumps to render a subgraph around a node of interest without
-/// pulling in the whole reachable graph.
-///
-/// Both edge directions are followed because IR debugging typically
-/// wants to see both "what produced this value" (backward) and "what
-/// uses it" (forward) from the anchor.
-pub fn collect_neighborhood(
-    graph: &Graph,
-    anchor: NodeId,
-    depth: u32,
-) -> DenseEntitySet<NodeId> {
-    let mut visited: DenseEntitySet<NodeId> = DenseEntitySet::new();
-    visited.insert(anchor);
-    if depth == 0 {
-        return visited;
-    }
-    // BFS-style frontier expansion: at iteration `k`, `frontier`
-    // contains every node first discovered at hop distance `k`.  This
-    // gives a depth-bounded walk in O((depth) * neighborhood_size).
-    let mut frontier: Vec<NodeId> = vec![anchor];
-    for _ in 0..depth {
-        let mut next_frontier: Vec<NodeId> = Vec::new();
-        for node in frontier {
-            // Backward edges: each input's producer.
-            for input in graph.node_inputs(node) {
-                let (producer, _) = graph.value_definition(input);
-                if visited.insert(producer) {
-                    next_frontier.push(producer);
-                }
-            }
-            // Forward edges: each output's consumers.
-            for &output in graph.node_outputs(node) {
-                for (consumer, _) in graph.value_uses(output) {
-                    if visited.insert(consumer) {
-                        next_frontier.push(consumer);
-                    }
-                }
-            }
-        }
-        if next_frontier.is_empty() {
-            break;
-        }
-        frontier = next_frontier;
-    }
-    visited
-}
-
 /// Like [`walk_graph`] but accepts an optional entry: returns an
 /// empty walk when `entry` is `None`.  Used by [`Graph::preorder`] so
 /// pre-build graphs yield no nodes instead of panicking.
@@ -366,7 +312,6 @@ pub fn collect_neighborhood(
 pub(crate) fn walk_graph_opt(graph: &Graph, entry: Option<NodeId>) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), entry)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -660,68 +605,6 @@ mod tests {
         assert!(outs.is_empty());
     }
 
-    // ── collect_neighborhood ──────────────────────────────────────────────────
-
-    /// depth=0 returns the singleton anchor set.
-    #[test]
-    fn collect_neighborhood_depth_zero_is_singleton() {
-        let mut graph = Graph::new();
-        let (entry, _) = make_entry(&mut graph);
-        let nbhd = collect_neighborhood(&graph, entry, 0);
-        assert!(nbhd.contains(entry));
-        // No other nodes should be present.
-        let total: usize = nbhd.iter().count();
-        assert_eq!(total, 1, "depth=0 must yield exactly the anchor");
-    }
-
-    /// depth=1 includes immediate predecessors and successors of the anchor.
-    #[test]
-    fn collect_neighborhood_depth_one_includes_direct_neighbors() {
-        // entry → a → b: anchor = a at depth=1 must include entry, a, b.
-        let mut graph = Graph::new();
-        let (entry, c0) = make_entry(&mut graph);
-        let (a, c1) = make_ctrl_node(&mut graph, c0);
-        let b = make_return(&mut graph, c1);
-
-        let nbhd = collect_neighborhood(&graph, a, 1);
-        assert!(nbhd.contains(a), "anchor must be included");
-        assert!(nbhd.contains(entry), "1-hop predecessor must be included");
-        assert!(nbhd.contains(b), "1-hop successor must be included");
-    }
-
-    /// depth=2 includes 2-hop neighbours.
-    #[test]
-    fn collect_neighborhood_depth_two_extends_one_more_hop() {
-        // entry → a → b → c: anchor = a at depth=2 must include entry,
-        // a, b, AND c (1 hop forward from b, 2 hops from a).
-        let mut graph = Graph::new();
-        let (entry, c0) = make_entry(&mut graph);
-        let (a, c1) = make_ctrl_node(&mut graph, c0);
-        let (b, c2) = make_ctrl_node(&mut graph, c1);
-        let c = make_return(&mut graph, c2);
-
-        let nbhd_1 = collect_neighborhood(&graph, a, 1);
-        assert!(!nbhd_1.contains(c), "depth=1 must NOT reach the 2-hop neighbour");
-
-        let nbhd_2 = collect_neighborhood(&graph, a, 2);
-        assert!(nbhd_2.contains(entry));
-        assert!(nbhd_2.contains(a));
-        assert!(nbhd_2.contains(b));
-        assert!(nbhd_2.contains(c), "depth=2 must include the 2-hop neighbour");
-    }
-
-    /// A high depth stops naturally when the frontier is exhausted.
-    #[test]
-    fn collect_neighborhood_high_depth_terminates_at_reachable_set() {
-        let mut graph = Graph::new();
-        let (entry, c0) = make_entry(&mut graph);
-        let _ret = make_return(&mut graph, c0);
-
-        // depth=100 still terminates because the frontier empties at hop 1.
-        let nbhd = collect_neighborhood(&graph, entry, 100);
-        assert_eq!(nbhd.iter().count(), 2, "frontier exhausted after 1 hop");
-    }
-
     // ── rpo (defs-before-uses data-cone walk) ─────────────────────────────────
 
     /// `rpo` over `Add(InitialVar, IntConst)` must emit BOTH operands before
@@ -748,9 +631,14 @@ mod tests {
         );
         let [_add_value] = graph.node_outputs_exact::<1>(add).unwrap();
 
-        let order: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, add).reverse_postorder(&graph);
+        let order: Vec<NodeId> =
+            crate::walk::GraphWalkInfo::compute_full(&graph, add).reverse_postorder(&graph);
 
-        assert_eq!(order.len(), 3, "rpo must visit each cone node once: {order:?}");
+        assert_eq!(
+            order.len(),
+            3,
+            "rpo must visit each cone node once: {order:?}"
+        );
         let pos = |n: NodeId| order.iter().position(|&x| x == n).unwrap();
         assert!(pos(a) < pos(add), "first IntConst must precede Add");
         assert!(pos(c) < pos(add), "second IntConst must precede Add");
@@ -774,21 +662,35 @@ mod tests {
         );
         let [_add_value] = graph.node_outputs_exact::<1>(add).unwrap();
 
-        let order: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, add).reverse_postorder(&graph);
-        assert_eq!(order, vec![c, add], "shared operand visited once, before Add");
+        let order: Vec<NodeId> =
+            crate::walk::GraphWalkInfo::compute_full(&graph, add).reverse_postorder(&graph);
+        assert_eq!(
+            order,
+            vec![c, add],
+            "shared operand visited once, before Add"
+        );
     }
 
     // ── GraphWalkInfo / real RPO machinery ────────────────────────────────────
 
     /// Builds an `IntConst` and returns `(node, value)`.
     fn int_const(graph: &mut Graph, v: u64) -> (NodeId, ValueId) {
-        let n = graph.create_node(NodeKind::IntConst(IntPayload::Small(v)), [], [ValueKind::Typed(ValueType::I64)]);
+        let n = graph.create_node(
+            NodeKind::IntConst(IntPayload::Small(v)),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
         let [out] = graph.node_outputs_exact::<1>(n).unwrap();
         (n, out)
     }
 
     /// Builds an `IntBinaryOp(op)` over `[l, r]` and returns `(node, value)`.
-    fn int_bin(graph: &mut Graph, op: crate::IntBinaryOp, l: ValueId, r: ValueId) -> (NodeId, ValueId) {
+    fn int_bin(
+        graph: &mut Graph,
+        op: crate::IntBinaryOp,
+        l: ValueId,
+        r: ValueId,
+    ) -> (NodeId, ValueId) {
         let n = graph.create_node(
             NodeKind::IntBinaryOp(op),
             [l, r],
@@ -813,7 +715,11 @@ mod tests {
         let (add, _addv) = int_bin(&mut graph, crate::IntBinaryOp::Add, kv, negv);
 
         let info = GraphWalkInfo::compute_full(&graph, add);
-        assert_eq!(info.roots, vec![k], "only the input-less IntConst is a root");
+        assert_eq!(
+            info.roots,
+            vec![k],
+            "only the input-less IntConst is a root"
+        );
         for n in [k, neg, add] {
             assert!(info.live_nodes.contains(n), "{n:?} must be live");
         }
@@ -834,7 +740,8 @@ mod tests {
         let (right, rv) = int_bin(&mut graph, crate::IntBinaryOp::Mul, k1v, k2v);
         let (sink, _sv) = int_bin(&mut graph, crate::IntBinaryOp::Add, lv, rv);
 
-        let order = crate::walk::GraphWalkInfo::compute_full(&graph, sink).reverse_postorder(&graph);
+        let order =
+            crate::walk::GraphWalkInfo::compute_full(&graph, sink).reverse_postorder(&graph);
         assert_eq!(order.len(), 5, "each node once: {order:?}");
         let pos = |n: NodeId| order.iter().position(|&x| x == n).unwrap();
         for op in [left, right] {
@@ -859,13 +766,25 @@ mod tests {
         // Back-edge: A also consumes B's control → cycle A → B → A.
         graph.add_node_input(a, b_ctrl);
 
-        let order = crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
+        let order =
+            crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
         let unique: HashSet<NodeId> = order.iter().copied().collect();
-        assert_eq!(order.len(), unique.len(), "no node visited twice despite the cycle: {order:?}");
+        assert_eq!(
+            order.len(),
+            unique.len(),
+            "no node visited twice despite the cycle: {order:?}"
+        );
         for n in [entry, a, b] {
-            assert!(unique.contains(&n), "{n:?} missing despite the cycle: {order:?}");
+            assert!(
+                unique.contains(&n),
+                "{n:?} missing despite the cycle: {order:?}"
+            );
         }
-        assert_eq!(order.first(), Some(&entry), "input-less root (entry) first: {order:?}");
+        assert_eq!(
+            order.first(),
+            Some(&entry),
+            "input-less root (entry) first: {order:?}"
+        );
     }
 
     // ── RawDefUseSuccs (unfiltered forward def→use) ───────────────────────────
@@ -894,11 +813,17 @@ mod tests {
         // Raw walk reaches the dead consumer.
         let raw: Vec<NodeId> =
             PostOrder::new(RawDefUseSuccs::new(&graph), std::iter::once(k)).collect();
-        assert!(raw.contains(&neg), "raw walk must reach the dead consumer: {raw:?}");
+        assert!(
+            raw.contains(&neg),
+            "raw walk must reach the dead consumer: {raw:?}"
+        );
         assert!(raw.contains(&k), "raw walk includes the root: {raw:?}");
         // Post-order: consumer before producer.
         let pos = |n: NodeId| raw.iter().position(|&x| x == n).unwrap();
-        assert!(pos(neg) < pos(k), "post-order yields the consumer before the producer");
+        assert!(
+            pos(neg) < pos(k),
+            "post-order yields the consumer before the producer"
+        );
     }
 
     // ── reverse_postorder (global reverse-post-order) ─────────────────────────
@@ -923,13 +848,22 @@ mod tests {
         graph.add_node_input(b, c1);
         graph.add_node_input(b, data_value);
 
-        let order: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
+        let order: Vec<NodeId> =
+            crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
 
         // Entry first.
-        assert_eq!(order.first(), Some(&entry), "RPO must start at entry: {order:?}");
+        assert_eq!(
+            order.first(),
+            Some(&entry),
+            "RPO must start at entry: {order:?}"
+        );
         // Each reachable node exactly once.
         let unique: HashSet<NodeId> = order.iter().copied().collect();
-        assert_eq!(order.len(), unique.len(), "no node visited twice: {order:?}");
+        assert_eq!(
+            order.len(),
+            unique.len(),
+            "no node visited twice: {order:?}"
+        );
         for n in [entry, a, b, data] {
             assert!(unique.contains(&n), "{n:?} missing from RPO: {order:?}");
         }
@@ -951,7 +885,11 @@ mod tests {
             .into_iter()
             .filter(|&n| matches!(graph.node_kind(n), NodeKind::Region))
             .collect();
-        assert_eq!(regions, vec![a, b], "only Regions, earlier before later: {regions:?}");
+        assert_eq!(
+            regions,
+            vec![a, b],
+            "only Regions, earlier before later: {regions:?}"
+        );
     }
 
     /// Unreachable nodes are excluded from the RPO.
@@ -961,9 +899,13 @@ mod tests {
         let (entry, _c0) = make_entry(&mut graph);
         let isolated = graph.create_node(NodeKind::Return, [], []);
 
-        let order: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
+        let order: Vec<NodeId> =
+            crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
         assert!(order.contains(&entry));
-        assert!(!order.contains(&isolated), "unreachable node must be excluded");
+        assert!(
+            !order.contains(&isolated),
+            "unreachable node must be excluded"
+        );
     }
 
     /// Global RPO is deterministic: two calls on the same graph yield the
@@ -994,8 +936,10 @@ mod tests {
         graph.add_node_input(ret, e_ctrl);
         graph.add_node_input(ret, add_value);
 
-        let order1: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
-        let order2: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
+        let order1: Vec<NodeId> =
+            crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
+        let order2: Vec<NodeId> =
+            crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
         assert_eq!(order1, order2, "RPO must be deterministic");
         assert_eq!(order1[0], entry, "entry first: {order1:?}");
         // Every reachable node present exactly once.
@@ -1068,7 +1012,11 @@ mod tests {
 
         let info = GraphWalkInfo::compute_full(&graph, entry);
         let order: Vec<NodeId> = info.postorder(&graph).collect();
-        assert_eq!(order.len(), 4, "diamond postorder yields exactly 4 nodes: {order:?}");
+        assert_eq!(
+            order.len(),
+            4,
+            "diamond postorder yields exactly 4 nodes: {order:?}"
+        );
         for n in [entry, left, right, merge] {
             assert_eq!(
                 order.iter().filter(|&&x| x == n).count(),

@@ -6,9 +6,9 @@
 //! and graph-lookup helpers (`get_uint`, `get_bool`, `get_float_bits`) —
 //! including the "unbound var returns None" contract.
 
-use strider_pattern::*;
 use strider_ir::IRViewer;
 use strider_ir::node::IntPayload;
+use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
 
@@ -41,7 +41,11 @@ fn var_used_three_times_enforces_all() {
 
     let x = Capture::new();
     assert_eq!(
-        a::unique_uint(&function, add(add(var(x), var(x)), var(x)).into_pattern(), x),
+        a::unique_uint(
+            &function,
+            add(add(var(x), var(x)), var(x)).into_pattern(),
+            x
+        ),
         Some(7),
     );
 }
@@ -54,7 +58,10 @@ fn node_var_captures_node_id() {
     let n = Capture::new();
     let m = a::unique(&function, call().at(0xABCD).capture(n).build());
     let node = m.node(n, function.graph()).expect("call node");
-    assert!(matches!(function.node_kind(node), strider_ir::node::NodeKind::Call));
+    assert!(matches!(
+        function.node_kind(node),
+        strider_ir::node::NodeKind::Call
+    ));
 }
 
 // ── Predicates: `.when` on root pattern ──────────────────────────────────────
@@ -64,7 +71,9 @@ fn when_true_passes_match_through() {
     let function = shapes::add_consts(5, 3);
     a::matches(
         &function,
-        add(int_const(5u128), int_const(3u128)).when_match(|_m, _ty, _b| true).into_pattern(),
+        add(int_const(5u128), int_const(3u128))
+            .when_match(|_m, _ty, _b| true)
+            .into_pattern(),
         1,
     );
 }
@@ -74,7 +83,9 @@ fn when_false_rejects_match() {
     let function = shapes::add_consts(5, 3);
     a::none(
         &function,
-        add(int_const(5u128), int_const(3u128)).when_match(|_m, _ty, _b| false).into_pattern(),
+        add(int_const(5u128), int_const(3u128))
+            .when_match(|_m, _ty, _b| false)
+            .into_pattern(),
     );
 }
 
@@ -86,12 +97,20 @@ fn when_on_subpattern_filters() {
     // Inner pattern requires the int_const(5) but rejects via when.
     a::none(
         &function,
-        add(int_const(5u128).when_match(|_m, _ty, _b| false), int_const(3u128)).into_pattern(),
+        add(
+            int_const(5u128).when_match(|_m, _ty, _b| false),
+            int_const(3u128),
+        )
+        .into_pattern(),
     );
     // Same pattern with a pass-through when succeeds.
     a::matches(
         &function,
-        add(int_const(5u128).when_match(|_m, _ty, _b| true), int_const(3u128)).into_pattern(),
+        add(
+            int_const(5u128).when_match(|_m, _ty, _b| true),
+            int_const(3u128),
+        )
+        .into_pattern(),
         1,
     );
 }
@@ -103,7 +122,8 @@ fn predicate_true_matches_all_outputs() {
     let function = shapes::add_consts(5, 3);
     let hits = Matcher::try_new(&function)
         .unwrap()
-        .find_all(&predicate(|_m, _ty| true).into_pattern()).unwrap();
+        .find_all(&predicate(|_m, _ty| true).into_pattern())
+        .unwrap();
     assert!(!hits.is_empty());
 }
 
@@ -128,17 +148,23 @@ fn predicate_inspects_node_kind() {
     // matched node's output id we capture it and check via the bindings in
     // `when_match`.
     let c = Capture::new();
-    let hits = Matcher::try_new(&function).unwrap().find_all(
-        &any()
-            .capture(c)
-            .when_match(move |m, _ty, b| {
-                let Some(o) = b.get_value(c) else {
-                    return false;
-                };
-                matches!(m.function().kind_of_value(o), strider_ir::node::NodeKind::IntConst(IntPayload::Small(7)))
-            })
-            .into_pattern(),
-    ).unwrap();
+    let hits = Matcher::try_new(&function)
+        .unwrap()
+        .find_all(
+            &any()
+                .capture(c)
+                .when_match(move |m, _ty, b| {
+                    let Some(o) = b.get_value(c) else {
+                        return false;
+                    };
+                    matches!(
+                        m.function().kind_of_value(o),
+                        strider_ir::node::NodeKind::IntConst(IntPayload::Small(7))
+                    )
+                })
+                .into_pattern(),
+        )
+        .unwrap();
     assert_eq!(hits.len(), 1);
 }
 
@@ -149,12 +175,15 @@ fn capture_then_when_composes() {
     let function = shapes::add_consts(5, 3);
     let x = Capture::new();
     // Root matches; the predicate later inspects the capture and filters.
-    let hits = Matcher::try_new(&function).unwrap().find_all(
-        &add(int_const(5u128), int_const(3u128))
-            .capture(x)
-            .when_match(|_m, _ty, _b| true)
-            .into_pattern(),
-    ).unwrap();
+    let hits = Matcher::try_new(&function)
+        .unwrap()
+        .find_all(
+            &add(int_const(5u128), int_const(3u128))
+                .capture(x)
+                .when_match(|_m, _ty, _b| true)
+                .into_pattern(),
+        )
+        .unwrap();
     assert_eq!(hits.len(), 1);
     assert!(hits[0].value(x).is_some());
 }
@@ -165,7 +194,10 @@ fn capture_then_when_composes() {
 fn get_int_const_returns_value() {
     let function = shapes::add_consts(5, 3);
     let x = Capture::new();
-    assert_eq!(a::unique_uint(&function, add(var(x), int_const(3u128)).into_pattern(), x), Some(5));
+    assert_eq!(
+        a::unique_uint(&function, add(var(x), int_const(3u128)).into_pattern(), x),
+        Some(5)
+    );
 }
 
 #[test]
@@ -174,7 +206,13 @@ fn get_int_const_on_non_const_returns_none() {
     let function = shapes::add_consts(5, 3);
     let x = Capture::new();
     assert_eq!(
-        a::unique_uint(&function, add(int_const(5u128), int_const(3u128)).capture(x).into_pattern(), x),
+        a::unique_uint(
+            &function,
+            add(int_const(5u128), int_const(3u128))
+                .capture(x)
+                .into_pattern(),
+            x
+        ),
         None,
     );
 }
@@ -215,7 +253,10 @@ fn get_node_on_unbound_returns_none() {
 #[test]
 fn match_root_is_the_matched_node() {
     let function = shapes::add_consts(5, 3);
-    let m = a::unique(&function, add(int_const(5u128), int_const(3u128)).into_pattern());
+    let m = a::unique(
+        &function,
+        add(int_const(5u128), int_const(3u128)).into_pattern(),
+    );
     // The matched root should be an Add.
     assert!(matches!(
         function.node_kind(m.root()),

@@ -41,11 +41,13 @@ fn apply_elf_relocations_defined_mips_rel32_writes_symbol_value() {
     // Load every allocatable file-backed section so `.data.rel.ro`
     // (the relocation site) has a region to patch.
     let mut regions =
-        strider_reader::elf::elf_get_loadable_regions_including_writable(&obj)
-            .expect("regions");
+        strider_reader::elf::elf_get_loadable_regions_including_writable(&obj).expect("regions");
     let stats = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
 
-    assert_eq!(stats.applied, 1, "the one REL32 must be applied; stats = {stats:?}");
+    assert_eq!(
+        stats.applied, 1,
+        "the one REL32 must be applied; stats = {stats:?}"
+    );
     assert_eq!(
         read_u32_be(&regions, fx.slot_addr),
         Some(fx.sym_addr as u32),
@@ -65,11 +67,13 @@ fn apply_elf_relocations_undefined_mips_rel32_stays_addend_only() {
     let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
     let mut regions =
-        strider_reader::elf::elf_get_loadable_regions_including_writable(&obj)
-            .expect("regions");
+        strider_reader::elf::elf_get_loadable_regions_including_writable(&obj).expect("regions");
     let stats = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
 
-    assert_eq!(stats.applied, 1, "the one REL32 must be applied; stats = {stats:?}");
+    assert_eq!(
+        stats.applied, 1,
+        "the one REL32 must be applied; stats = {stats:?}"
+    );
     assert_eq!(
         read_u32_be(&regions, fx.slot_addr),
         Some(0),
@@ -89,8 +93,7 @@ fn apply_elf_relocations_patches_slot_at_very_end_of_region() {
     let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
     let mut regions =
-        strider_reader::elf::elf_get_loadable_regions_including_writable(&obj)
-            .expect("regions");
+        strider_reader::elf::elf_get_loadable_regions_including_writable(&obj).expect("regions");
     {
         let slot_region = regions
             .iter()
@@ -104,12 +107,96 @@ fn apply_elf_relocations_patches_slot_at_very_end_of_region() {
     }
 
     let stats = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
-    assert_eq!(stats.applied, 1, "the end-of-region slot must be patched; stats = {stats:?}");
+    assert_eq!(
+        stats.applied, 1,
+        "the end-of-region slot must be patched; stats = {stats:?}"
+    );
     assert_eq!(
         read_u32_be(&regions, fx.slot_addr),
         Some(fx.sym_addr as u32),
         "patch touching the region's final bytes must apply cleanly",
     );
+}
+
+#[test]
+fn apply_elf_relocations_autoload_field_straddling_section_end_is_observable() {
+    // Synthesised ELF: the `.data.rel.ro` section is 6 bytes, but the
+    // 4-byte `R_X86_64_PC32` relocation site sits at offset 4 — so the
+    // field `[off 4, off 8)` runs past the section's 6 file-backed bytes.
+    //
+    // Load code-only so autoload must stage `.data.rel.ro`.  The site's
+    // FIRST byte is covered by the staged region, but the full field
+    // straddles the region's end, so the patch can't land.  The drop
+    // MUST be observable via the dedicated `skipped_straddles_region`
+    // counter — not silently lumped into `skipped_no_region` (which means
+    // "the site's first byte isn't covered at all").
+    let fx = common::elf_fixture::build_x86_64_pc32_rela_elf(/* slot_len */ 6, /* off */ 4, 0);
+    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
+
+    // Code-and-readonly only: excludes the writable `.data.rel.ro`.
+    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
+
+    let stats =
+        strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).expect("autoload");
+
+    assert_eq!(stats.seen, 1, "exactly one reloc; stats = {stats:?}");
+    assert_eq!(
+        stats.applied, 0,
+        "the straddling field cannot be patched; stats = {stats:?}"
+    );
+    assert_eq!(
+        stats.skipped_straddles_region, 1,
+        "a field straddling the staged region's end must be observable; stats = {stats:?}"
+    );
+    assert_eq!(
+        stats.skipped_no_region, 0,
+        "the site's first byte IS covered, so this is NOT a plain no-region skip; stats = {stats:?}"
+    );
+}
+
+#[test]
+fn apply_elf_relocations_negative_addend_pc_relative() {
+    // A PC-relative `R_X86_64_PC32` (object's `RelocationKind::Relative`,
+    // `S + A - P`) with a *negative* addend.  The applier casts the i64
+    // addend to u64 (2's-complement bit pattern) and `wrapping_add`s it,
+    // then truncates to the 4-byte field — the correct modular result.
+    // This guards against a future "fix" to a checked/saturating add that
+    // would silently break negative-addend relocations.
+    let addend: i64 = -0x40;
+    let fx = common::elf_fixture::build_x86_64_pc32_rela_elf(/* slot_len */ 4, /* off */ 0, addend);
+    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
+
+    let mut regions =
+        strider_reader::elf::elf_get_loadable_regions_including_writable(&obj).expect("regions");
+    let stats = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
+
+    assert_eq!(
+        stats.applied, 1,
+        "the one PC32 reloc must be applied; stats = {stats:?}"
+    );
+
+    // Expected: (S + A - P) truncated to 32 bits, written little-endian.
+    let expected = fx
+        .sym_addr
+        .wrapping_add(addend as u64)
+        .wrapping_sub(fx.site_addr) as u32;
+    let got = read_u32_le_at(&regions, fx.site_addr).expect("site must be mapped");
+    assert_eq!(
+        got, expected,
+        "negative-addend PC32 must write the modular (S + A - P) low 32 bits; stats = {stats:?}"
+    );
+}
+
+/// Read 4 bytes (LE) from `regions` at virtual address `addr`.
+fn read_u32_le_at(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u32> {
+    for r in regions {
+        if r.contains(addr) && addr + 4 <= r.end_addr() {
+            let off = (addr - r.start_addr()) as usize;
+            let bytes = &r.data()[off..off + 4];
+            return Some(u32::from_le_bytes(bytes.try_into().unwrap()));
+        }
+    }
+    None
 }
 
 fn fixture_path(arch: &str, case: &str) -> PathBuf {
@@ -150,7 +237,8 @@ fn apply_elf_relocations_patches_dispatch_table_x86_64() {
     // gets relro-protected at runtime).  The default
     // code-and-readonly loader skips it; the wider loader picks it
     // up so the applier has somewhere to patch.
-    let (regions, stats) = strider_reader::elf::elf_load_with_relocations(&obj).expect("load+apply");
+    let (regions, stats) =
+        strider_reader::elf::elf_load_with_relocations(&obj).expect("load+apply");
 
     let table_addr = sym_addr(&obj, "dispatch_table");
     let helper_a = sym_addr(&obj, "helper_a");
@@ -237,8 +325,7 @@ fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
         return; // skip if fixture not built
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj)
-        .expect("regions");
+    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
     let stats = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
     // ET_EXEC with no dynamic relocations: every counter is 0 (or a
     // small set of GLOB_DAT / JUMP_SLOT entries we deliberately skip
@@ -260,17 +347,28 @@ fn apply_elf_relocations_autoload_pulls_in_missing_site_sections() {
         return;
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let mut regions =
-        strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
+    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
     let regions_before = regions.len();
 
     let stats = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj)
         .expect("autoload apply");
 
-    assert!(stats.seen > 0, "fixture should have at least one reloc; stats = {stats:?}");
-    assert_eq!(stats.skipped_no_region, 0, "autoload must cover every site; stats = {stats:?}");
-    assert_eq!(stats.applied, stats.seen, "every reloc should land; stats = {stats:?}");
-    assert!(regions.len() > regions_before, "autoload must have added at least one region");
+    assert!(
+        stats.seen > 0,
+        "fixture should have at least one reloc; stats = {stats:?}"
+    );
+    assert_eq!(
+        stats.skipped_no_region, 0,
+        "autoload must cover every site; stats = {stats:?}"
+    );
+    assert_eq!(
+        stats.applied, stats.seen,
+        "every reloc should land; stats = {stats:?}"
+    );
+    assert!(
+        regions.len() > regions_before,
+        "autoload must have added at least one region"
+    );
 
     let table_addr = sym_addr(&obj, "dispatch_table");
     let helper_a = sym_addr(&obj, "helper_a");
@@ -306,16 +404,19 @@ fn apply_elf_relocations_autoload_is_idempotent() {
         return;
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let mut regions =
-        strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
+    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
 
     let _ = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
-    let snapshot: Vec<(u64, Vec<u8>)> =
-        regions.iter().map(|r| (r.start_addr(), r.data().to_vec())).collect();
+    let snapshot: Vec<(u64, Vec<u8>)> = regions
+        .iter()
+        .map(|r| (r.start_addr(), r.data().to_vec()))
+        .collect();
 
     let _ = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
-    let after: Vec<(u64, Vec<u8>)> =
-        regions.iter().map(|r| (r.start_addr(), r.data().to_vec())).collect();
+    let after: Vec<(u64, Vec<u8>)> = regions
+        .iter()
+        .map(|r| (r.start_addr(), r.data().to_vec()))
+        .collect();
 
     assert_eq!(snapshot, after, "autoload must be idempotent");
 }
@@ -336,14 +437,22 @@ fn apply_elf_relocations_autoload_does_not_fabricate_values_for_undefined_extern
         return;
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let mut regions =
-        strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
+    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
 
     let stats = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
 
-    assert!(stats.seen > 0, "fixture should expose dynamic relocs: {stats:?}");
-    assert_eq!(stats.applied, 0, "undefined externs must not be fabricated: {stats:?}");
-    assert_eq!(stats.skipped_no_region, 0, "autoload should cover every site: {stats:?}");
+    assert!(
+        stats.seen > 0,
+        "fixture should expose dynamic relocs: {stats:?}"
+    );
+    assert_eq!(
+        stats.applied, 0,
+        "undefined externs must not be fabricated: {stats:?}"
+    );
+    assert_eq!(
+        stats.skipped_no_region, 0,
+        "autoload should cover every site: {stats:?}"
+    );
     assert_eq!(
         stats.skipped_unresolved_target, stats.seen,
         "every reloc here targets an undefined extern: {stats:?}"
@@ -361,8 +470,7 @@ fn apply_elf_relocations_autoload_no_op_when_no_dynamic_table() {
         return;
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let mut regions =
-        strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
+    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
     let regions_before = regions.len();
 
     let stats = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
@@ -374,7 +482,11 @@ fn apply_elf_relocations_autoload_no_op_when_no_dynamic_table() {
     // emitted a small table — the previous test covers that).
     if stats.seen == 0 {
         assert_eq!(stats.applied, 0);
-        assert_eq!(regions.len(), regions_before, "no dynamic table ⇒ no autoload work");
+        assert_eq!(
+            regions.len(),
+            regions_before,
+            "no dynamic table ⇒ no autoload work"
+        );
     }
 }
 

@@ -18,8 +18,8 @@ use crate::IRViewer;
 use crate::builder::IRBuilder;
 use crate::error::Result;
 use crate::node::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
-    NodeKind, ValueId, ValueKind, ValueType,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeKind,
+    ValueId, ValueKind, ValueType,
 };
 
 /// The shared `build_*` construction vocabulary, available on every
@@ -53,11 +53,7 @@ pub trait IRBuilderExt: IRBuilder {
     /// # Errors
     ///
     /// Returns an error when `value_id` is not a value edge.
-    fn truncate_if_needed(
-        &mut self,
-        value_id: ValueId,
-        output_type: ValueType,
-    ) -> Result<ValueId> {
+    fn truncate_if_needed(&mut self, value_id: ValueId, output_type: ValueType) -> Result<ValueId> {
         let curr_output_type = self.value_type(value_id)?;
 
         if let Some(val) = self.get_as_unsigned_int(value_id)? {
@@ -154,11 +150,7 @@ pub trait IRBuilderExt: IRBuilder {
     /// # Errors
     ///
     /// Returns an error when `input` is not a value edge.
-    fn cast_to_float_if_needed(
-        &mut self,
-        input: ValueId,
-        float_ty: ValueType,
-    ) -> Result<ValueId> {
+    fn cast_to_float_if_needed(&mut self, input: ValueId, float_ty: ValueType) -> Result<ValueId> {
         let in_ty = self.value_type(input)?;
         if in_ty == float_ty {
             return Ok(input);
@@ -318,6 +310,26 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntBinaryOp(op), [lhs_id, rhs_id], output_type))
     }
 
+    /// Builds `x <op> IntConst(k):ty` in one call — mints the `k` constant at
+    /// `ty` and applies the binary op against `x`.  Folds the recurring
+    /// `let kc = build_int_const(k, ty)?; build_int_binary_operation(x, kc, op, ty)`
+    /// pair at the register-aliasing mask/merge sites (`build_masked_insert`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `k` cannot be built at `ty`
+    /// ([`Self::build_int_const`]'s arm) or `x` is not a `ty`-typed value edge.
+    fn build_const_binop(
+        &mut self,
+        k: u128,
+        x: ValueId,
+        op: IntBinaryOp,
+        ty: ValueType,
+    ) -> Result<ValueId> {
+        let kc = self.build_int_const(k, ty)?;
+        self.build_int_binary_operation(x, kc, op, ty)
+    }
+
     /// Shifts `value` by a constant `shift_bits` amount using `op` (a
     /// `ShiftLeft` / `ShiftRight`), returning `value` unchanged when the shift
     /// is zero.  Folds the zero-shift guard + the const + the shift op shared
@@ -414,7 +426,13 @@ pub trait IRBuilderExt: IRBuilder {
     ) -> Result<ValueId> {
         let lhs_id = self.require_value_type(lhs_id, operand_type)?;
         let rhs_id = self.require_value_type(rhs_id, operand_type)?;
-        Ok(self.build_single_output_pure(NodeKind::IntCmpOp(kind), [lhs_id, rhs_id], ValueType::I1))
+        Ok(
+            self.build_single_output_pure(
+                NodeKind::IntCmpOp(kind),
+                [lhs_id, rhs_id],
+                ValueType::I1,
+            ),
+        )
     }
 
     // ── float constructors ───────────────────────────────────────────────
@@ -532,7 +550,11 @@ pub trait IRBuilderExt: IRBuilder {
     ///
     /// Returns an error when `value` is not an integer, when `float_type` is
     /// not `F32`/`F64`, or when the input/float widths differ.
-    fn build_int_bits_to_float(&mut self, value: ValueId, float_type: ValueType) -> Result<ValueId> {
+    fn build_int_bits_to_float(
+        &mut self,
+        value: ValueId,
+        float_type: ValueType,
+    ) -> Result<ValueId> {
         self.require_integer_value(value)?;
         Self::require_float_type(float_type)?;
         // A bit-reinterpret preserves width by definition; reject mismatched
@@ -635,7 +657,11 @@ pub trait IRBuilderExt: IRBuilder {
         output_type: ValueType,
     ) -> Result<ValueId> {
         self.validate_value_inputs(inputs)?;
-        let node = self.create_node(kind, inputs.iter().copied(), [ValueKind::Typed(output_type)]);
+        let node = self.create_node(
+            kind,
+            inputs.iter().copied(),
+            [ValueKind::Typed(output_type)],
+        );
         let [value] = self.function().node_outputs_exact(node)?;
         Ok(value)
     }

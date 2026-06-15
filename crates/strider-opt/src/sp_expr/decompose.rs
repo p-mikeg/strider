@@ -34,75 +34,18 @@ pub struct SpExpr {
 }
 
 impl SpExpr {
+    /// Adds `delta` to the offset, returning `None` (fail-closed: opaque
+    /// base, no provable slot) on `i64` overflow rather than wrapping a deep
+    /// Add chain into a wrong concrete offset that the alias oracle would then
+    /// reason about as a valid nearby slot.  Real frames have small offsets;
+    /// the decomposer is fed arbitrary lifted arithmetic.
     #[must_use]
-    pub(crate) fn shifted(self, delta: i64) -> Self {
-        SpExpr {
+    pub(crate) fn shifted(self, delta: i64) -> Option<Self> {
+        Some(SpExpr {
             base: self.base,
-            offset: self.offset.wrapping_add(delta),
-        }
+            offset: self.offset.checked_add(delta)?,
+        })
     }
-}
-
-/// Reads an integer-constant output as signed, sign-extended from its declared
-/// bit width. Returns `None` for non-integer-constant or when the
-/// sign-extended value does not fit in `i64`.
-///
-/// Also recognises `IntUnaryOp::Neg(IntConst(K))` as the signed value `-K`
-/// so callers can treat the lowered subtraction shape
-/// (`Add(_, Neg(IntConst(K)))`) the same way they treat the post-`ConstantFold`
-/// shape (`Add(_, IntConst(-K))`).  Without this peephole the SP-expression
-/// walker would return `None` during fixed-point iterations where
-/// `ConstantFold` hasn't yet collapsed the `Neg` of a constant, breaking
-/// `StackOffsetDetect`'s ability to make progress on the same iteration.
-#[must_use]
-pub(crate) fn int_const_signed(function: &Function, value: ValueId) -> Option<i64> {
-    if let Some(c) = function.int_const_val(value) {
-        // `value` is an `IntConst`, so its output is always a value type;
-        // `get_signed_int` can still fail for wide (>128-bit) types.
-        let ty = function
-            .value_kind(value)
-            .as_value()
-            .expect("IntConst output is a value");
-        let signed = ty.get_signed_int(u128::from(c))?;
-        return i64::try_from(signed).ok();
-    }
-    // Peephole: Neg(IntConst(K)) → wrapping-negate K modulo the inner
-    // type's width, then sign-extend.  The lifter produces this shape for
-    // every `IntSub _, IntConst(K)`; intermediate fixed-point iterations
-    // may inspect the graph before `ConstantFold` collapses the
-    // `Neg(IntConst)` to a single negative `IntConst`.
-    //
-    // Use modular `wrapping_neg` (matching `ConstantFold`'s
-    // `IntUnaryOp::Neg` evaluator at `constant_fold/rules.rs:413`) rather
-    // than `checked_neg` on the sign-extended value.  Without modular
-    // negation we would silently disagree with `ConstantFold` on the
-    // type-minimum input (e.g. `0x80000000_U32`): `checked_neg` on the
-    // sign-extended `-2^31` yields `+2^31`, while the IR's actual
-    // semantics (modular two's-complement) yield `0x80000000_U32` which
-    // sign-extends to `-2^31`.  The pre-fold and post-fold view of the
-    // same SP-relative subtraction would then return different offsets
-    // and `StackOffsetDetect` could classify the same store inconsistently.
-    let node = function.producer(value);
-    if matches!(
-        function.node_kind(node),
-        NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg)
-    ) {
-        // IntUnaryOp has exactly 1 input (validated structural invariant).
-        let inner = function
-            .node_inputs_exact::<1>(node)
-            .expect("IntUnaryOp(Neg) has 1 input (validated)")[0];
-        let k = function.int_const_val(inner)?;
-        // `inner` is an `IntConst` (checked above), so its output is a value.
-        let inner_ty = function
-            .value_kind(inner)
-            .as_value()
-            .expect("IntConst output is a value");
-        let neg_raw = u128::from(k).wrapping_neg();
-        let neg_masked = inner_ty.get_unsigned_int(neg_raw)?;
-        let signed = inner_ty.get_signed_int(neg_masked)?;
-        return i64::try_from(signed).ok();
-    }
-    None
 }
 
 /// Per-pass-call memo for `decompose_sp`.
@@ -192,6 +135,11 @@ impl<'a> SpDecomposer<'a> {
             let expr = self.classify_sp_node(node, node_out);
             self.memo.insert(node_out, expr);
         }
+        // The sweep only inserts entries for single-output producers, so a
+        // queried `value` whose producer has ≠1 output (never an SP terminal)
+        // would otherwise stay absent and force a full re-walk on every repeat
+        // query.  Memoise its `None` so the second query is a hit.
+        self.memo.entry(value).or_insert(None);
         self.memo.get(&value).copied().flatten()
     }
 
@@ -211,11 +159,11 @@ impl<'a> SpDecomposer<'a> {
                 let [l, r] = function
                     .node_inputs_exact::<2>(node)
                     .expect("IntBinaryOp(Add) has 2 inputs (validated)");
-                if let Some(c) = int_const_signed(function, r) {
-                    return self.memo.get(&l).copied().flatten().map(|e| e.shifted(c));
+                if let Some(c) = function.int_const_i64(r) {
+                    return self.memo.get(&l).copied().flatten().and_then(|e| e.shifted(c));
                 }
-                if let Some(c) = int_const_signed(function, l) {
-                    return self.memo.get(&r).copied().flatten().map(|e| e.shifted(c));
+                if let Some(c) = function.int_const_i64(l) {
+                    return self.memo.get(&r).copied().flatten().and_then(|e| e.shifted(c));
                 }
                 None
             }
@@ -238,9 +186,20 @@ impl<'a> SpDecomposer<'a> {
                 let [l, r] = function
                     .node_inputs_exact::<2>(node)
                     .expect("IntBinaryOp(And) has 2 inputs (validated)");
-                let sp_value = if int_const_signed(function, r).is_some() {
+                // Require the constant operand to be an *alignment* mask —
+                // a contiguous run of high 1-bits (e.g. 0xFFFF_FFF0).  A
+                // low-bit mask like `And(sp, 0xF)` is a bit-extraction (value
+                // in [0,15]), NOT a stack base; treating it as one would feed
+                // a bogus opaque base to `distinct_sp_bases_disjoint`.
+                let sp_value = if function
+                    .int_const_u128(r)
+                    .is_some_and(is_alignment_mask)
+                {
                     l
-                } else if int_const_signed(function, l).is_some() {
+                } else if function
+                    .int_const_u128(l)
+                    .is_some_and(is_alignment_mask)
+                {
                     r
                 } else {
                     return None;
@@ -256,6 +215,23 @@ impl<'a> SpDecomposer<'a> {
             _ => None,
         }
     }
+}
+
+/// Is `m` a stack-*alignment* mask — a contiguous run of high 1-bits with at
+/// least one low 0-bit (e.g. `0xFFFF_FFF8`, `0xFFFF_FFF0`)?  An alignment mask
+/// clears only the low-order bits; a low-bit mask (`0xF`) is a bit-extraction,
+/// not a base.  `0` and all-ones masks are rejected (no alignment effect / not
+/// a low-clearing mask).
+fn is_alignment_mask(m: u128) -> bool {
+    let tz = m.trailing_zeros();
+    if tz == 0 {
+        // No low zero bits → not clearing any alignment (low mask or all-ones).
+        return false;
+    }
+    // After dropping the low zero run, the remaining bits must be a contiguous
+    // block of 1s (all-ones once shifted), i.e. `shifted + 1` is a power of two.
+    let shifted = m >> tz;
+    shifted != 0 && shifted & shifted.wrapping_add(1) == 0
 }
 
 #[cfg(test)]
@@ -277,7 +253,10 @@ mod tests {
     /// Collapses the single-predecessor `read_variable(sp)` phi so an SP
     /// address becomes a bare `InitialVar(sp) + k` terminal — the shape
     /// `decompose_sp` sees in production (it no longer looks through phis;
-    /// the pipeline's `PhiCollapse` has run by then).
+    /// the pipeline's `PhiCollapse` has run by then).  ConstantFold is
+    /// intentionally NOT run here: these tests build the canonical
+    /// `Add(_, IntConst(-K))` offset shape directly (via [`sub_off`]) and the
+    /// deep-chain / memo tests need the un-collapsed structure.
     fn collapse_phis(fg: &mut strider_ir::Function) {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
@@ -286,66 +265,19 @@ mod tests {
             .expect("phi collapse");
     }
 
-    #[test]
-    fn int_const_signed_u32_negative() -> crate::Result<()> {
-        // 0xFFFF_FFFC at I32 must read as -4 signed.
-        let mut b = strider_ir_test_utils::empty_builder()?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let v = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
-        b.build_return(Some(v), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        assert_eq!(int_const_signed(&fg, v), Some(-4));
-        Ok(())
-    }
-
-    #[test]
-    fn int_const_signed_neg_of_min_uses_modular_negation() -> crate::Result<()> {
-        // `Neg(IntConst(0x8000_0000_U32))` must agree with the IR's modular
-        // semantics: in two's-complement at I32, `-(-2^31) = -2^31`.  The
-        // peephole here must NOT return `+2^31` (which is what
-        // `checked_neg(-2^31i128)` produces) — that would silently disagree
-        // with `ConstantFold::IntUnaryOp::Neg`'s `wrapping_neg` evaluator
-        // and `StackOffsetDetect` could classify the same store inconsistently
-        // depending on whether the inner Neg had been folded yet.
-        let mut b = strider_ir_test_utils::empty_builder()?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let inner = b.build_int_const(0x8000_0000u64, ValueType::I32)?;
-        let neg =
-            b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, ValueType::I32)?;
-        b.build_return(Some(neg), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        // Modular: wrapping_neg(0x8000_0000) = 0x8000_0000 → sign-extended to i32 = -2^31.
-        assert_eq!(int_const_signed(&fg, neg), Some(i32::MIN.into()));
-        Ok(())
-    }
-
-    #[test]
-    fn int_const_signed_neg_of_positive_const() -> crate::Result<()> {
-        // Sanity: `Neg(IntConst(7_U32))` peeps through to `-7`.
-        let mut b = strider_ir_test_utils::empty_builder()?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let inner = b.build_int_const(7u64, ValueType::I32)?;
-        let neg =
-            b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, ValueType::I32)?;
-        b.build_return(Some(neg), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        assert_eq!(int_const_signed(&fg, neg), Some(-7));
-        Ok(())
+    /// Builds the canonical `Add(x, IntConst(-k))` — the post-`ConstantFold`
+    /// shape of `x - k`.  The lifter emits `Add(x, Neg(IntConst(k)))`, but
+    /// `ConstantFold` folds the `Neg` to a single negative `IntConst` before
+    /// any SP-aware pass runs, so the decomposer only ever meets this shape
+    /// (it does not peel `Neg` itself).
+    fn sub_off(
+        b: &mut strider_ir::FunctionBuilder,
+        x: ValueId,
+        k: i64,
+        ty: ValueType,
+    ) -> crate::Result<ValueId> {
+        let neg_k = b.build_int_const((-k) as u64, ty)?;
+        b.build_int_binary_operation(x, neg_k, IntBinaryOp::Add, ty)
     }
 
     #[test]
@@ -385,8 +317,7 @@ mod tests {
             .arg(sp)
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr = b.build_sub_as_add_neg(sp_val, four, ValueType::I32)?;
+        let addr = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -429,8 +360,7 @@ mod tests {
             .arg(sp)
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr = b.build_sub_as_add_neg(sp_val, four, ValueType::I32)?;
+        let addr = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -465,7 +395,11 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        assert!(SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(c).is_none());
+        assert!(
+            SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+                .decompose(c)
+                .is_none()
+        );
         Ok(())
     }
 
@@ -483,12 +417,9 @@ mod tests {
             .arg(sp)
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
-        let twelve = b.build_int_const(12u64, ValueType::I32)?;
-        let s1 = b.build_sub_as_add_neg(sp_val, four, ValueType::I32)?;
-        let s2 = b.build_sub_as_add_neg(s1, eight, ValueType::I32)?;
-        let s3 = b.build_sub_as_add_neg(s2, twelve, ValueType::I32)?;
+        let s1 = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
+        let s2 = sub_off(&mut b, s1, 8, ValueType::I32)?;
+        let s3 = sub_off(&mut b, s2, 12, ValueType::I32)?;
         b.build_return(Some(s3), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -535,7 +466,10 @@ mod tests {
         let cached = memo
             .get(&c)
             .expect("decompose_sp must cache the None verdict so the cone is not re-walked");
-        assert!(cached.is_none(), "cached verdict for a non-SP address is None");
+        assert!(
+            cached.is_none(),
+            "cached verdict for a non-SP address is None"
+        );
         Ok(())
     }
 
@@ -563,8 +497,7 @@ mod tests {
         // branch back to the header — a data cycle through the sp Phi.
         b.set_region(loop_hdr);
         let sp_phi = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let sp_dec = b.build_sub_as_add_neg(sp_phi, four, ValueType::I32)?;
+        let sp_dec = sub_off(&mut b, sp_phi, 4, ValueType::I32)?;
         b.write_variable(&sp, sp_dec)?;
         let keep_looping = b.build_boolean_const(true);
         b.build_if(keep_looping, loop_hdr, exit)?;
@@ -591,7 +524,10 @@ mod tests {
         // The cycle nodes are not provable SP terminals (the decomposer does
         // not look through phis), and the global is genuinely non-SP.
         assert!(t_phi.is_none(), "loop-header Phi(sp) is not an SP terminal");
-        assert!(t_dec.is_none(), "loop-carried Add over a Phi is not provable");
+        assert!(
+            t_dec.is_none(),
+            "loop-carried Add over a Phi is not provable"
+        );
         assert!(t_global.is_none(), "global address is not SP-rooted");
 
         // Now query in every order through ONE shared memo and assert each
@@ -647,8 +583,7 @@ mod tests {
         // a: sp = sp - 4 (SP-rooted)
         b.set_region(a);
         let sp_a = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let sp_minus_4 = b.build_sub_as_add_neg(sp_a, four, ValueType::I32)?;
+        let sp_minus_4 = sub_off(&mut b, sp_a, 4, ValueType::I32)?;
         b.write_variable(&sp, sp_minus_4)?;
         b.build_branch(c)?;
 
@@ -743,17 +678,18 @@ mod tests {
         let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
         let aligned =
             b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
-        let frame = b.build_int_const(0x1D0u64, ValueType::I32)?;
-        let post_sub = b.build_sub_as_add_neg(aligned, frame, ValueType::I32)?;
+        let post_sub = sub_off(&mut b, aligned, 0x1D0, ValueType::I32)?;
         b.build_return(Some(post_sub), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let aligned_dec =
-            SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(aligned).expect("aligned must decompose");
-        let post_sub_dec =
-            SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(post_sub).expect("post_sub must decompose");
+        let aligned_dec = SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+            .decompose(aligned)
+            .expect("aligned must decompose");
+        let post_sub_dec = SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+            .decompose(post_sub)
+            .expect("post_sub must decompose");
         let SpExpr {
             base: aligned_base,
             offset: aligned_off,
@@ -825,7 +761,8 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let SpExpr { offset, .. } = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(current)
+        let SpExpr { offset, .. } = SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+            .decompose(current)
             .expect("5000-node chain must decompose without stack-overflowing");
         assert_eq!(
             offset, N as i64,

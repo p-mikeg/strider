@@ -6,10 +6,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_ir::IRBuilderExt;
-use strider_ir::{
-    ExtendOp, FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
-};
 use strider_ir::node::ValueType;
+use strider_ir::{ExtendOp, FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::make_empty_fn;
 
 #[test]
@@ -120,7 +118,7 @@ fn float_ops_validate() {
 
 #[test]
 fn loads_and_stores_validate() {
-    use strider_ir_test_utils::{reg_vn, RegisterSet};
+    use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     let sp_vn = reg_vn(0x20, 8);
     let mut b = RegisterSet::new()
@@ -130,9 +128,7 @@ fn loads_and_stores_validate() {
         .expect("builder");
 
     let sp_val = b.read_variable(&sp_vn).expect("read sp");
-    let offset = b
-        .build_int_const(8u64, ValueType::I64)
-        .expect("const 8");
+    let offset = b.build_int_const(8u64, ValueType::I64).expect("const 8");
     let addr = b
         .build_int_binary_operation(sp_val, offset, IntBinaryOp::Add, ValueType::I64)
         .expect("addr");
@@ -150,12 +146,13 @@ fn loads_and_stores_validate() {
     b.build_return(Some(loaded), &[]).expect("return");
     b.set_lift_addr(None);
 
-    b.build().expect("loads_and_stores_validate: build() must succeed");
+    b.build()
+        .expect("loads_and_stores_validate: build() must succeed");
 }
 
 #[test]
 fn region_join_with_phi_validates() {
-    use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
+    use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
     // Diamond: entry → if(true) { region_t → var=1 } { region_f → var=2 } → join → return var
     // Uses a tracked register variable so FunctionBuilder's create_region
@@ -196,7 +193,8 @@ fn region_join_with_phi_validates() {
     b.build_return(Some(phi_val), &[]).expect("return");
     b.set_lift_addr(None);
 
-    b.build().expect("region_join_with_phi_validates: build() must succeed");
+    b.build()
+        .expect("region_join_with_phi_validates: build() must succeed");
 }
 
 #[test]
@@ -211,9 +209,8 @@ fn const_then_return_validates() {
         (0u128, ValueType::I8),
         (0xFF_u128, ValueType::I8),
     ] {
-        make_empty_fn(|b| b.build_int_const(val, ty)).unwrap_or_else(|e| {
-            panic!("const_then_return failed for ({val:#x}, {ty:?}): {e}")
-        });
+        make_empty_fn(|b| b.build_int_const(val, ty))
+            .unwrap_or_else(|e| panic!("const_then_return failed for ({val:#x}, {ty:?}): {e}"));
     }
 }
 
@@ -253,12 +250,7 @@ fn extend_and_truncate_validate() {
         let v32_sign = b.extend_if_needed(v8, ValueType::I32, ExtendOp::SignExtend)?;
         let _back_to_u8 = b.truncate_if_needed(v32_sign, ValueType::I8)?;
         // Combine both extensions so neither becomes dead.
-        b.build_int_binary_operation(
-            v32_zero,
-            v32_sign,
-            IntBinaryOp::Add,
-            ValueType::I32,
-        )
+        b.build_int_binary_operation(v32_zero, v32_sign, IntBinaryOp::Add, ValueType::I32)
     })
     .expect("extend_and_truncate must validate");
 }

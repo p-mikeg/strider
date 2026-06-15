@@ -27,11 +27,22 @@ struct Spine {
 
 fn spine() -> Spine {
     let mut f = Function::default();
-    let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let entry = f
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    f.set_entry(entry);
+    let mem = f
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-    Spine { f, entry, mem, entry_ctrl, mem_value }
+    Spine {
+        f,
+        entry,
+        mem,
+        entry_ctrl,
+        mem_value,
+    }
 }
 
 /// Create an `IntConst(Small(v))` node typed `ty`, returning
@@ -48,12 +59,8 @@ fn int_const(f: &mut Function, v: u64, ty: ValueType) -> (NodeId, ValueId) {
 
 /// Assert `validate` fails with at least one error matching `pred`.
 #[track_caller]
-fn assert_validation_err(
-    f: &Function,
-    entry: NodeId,
-    pred: impl Fn(&ValidationError) -> bool,
-) {
-    let errs = validate(f, entry).unwrap_err();
+fn assert_validation_err(f: &Function, pred: impl Fn(&ValidationError) -> bool) {
+    let errs = validate(f).unwrap_err();
     assert!(
         errs.0.iter().any(pred),
         "no validation error matched the predicate; got: {errs:?}"
@@ -63,9 +70,29 @@ fn assert_validation_err(
 #[test]
 fn empty_graph_with_entry_only() {
     let mut function = Function::default();
-    let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    assert!(validate(&function, entry).is_ok());
+    let entry = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    function.set_entry(entry);
+    let _mem = function
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    assert!(validate(&function).is_ok());
+}
+
+/// An unbuilt [`Function`] (`Function::default()`, no entry node set) must
+/// short-circuit `validate` with a bundle containing a single
+/// [`ValidationError::NoEntry`] — rather than panicking inside the
+/// entry-rooted walk.
+#[test]
+fn unbuilt_function_with_no_entry_reports_no_entry() {
+    let function = Function::default();
+    assert!(function.entry().is_none(), "default function has no entry");
+    let errs = validate(&function).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::NoEntry]),
+        "an entry-less function validates to exactly NoEntry; got: {errs:?}"
+    );
 }
 
 #[test]
@@ -80,8 +107,11 @@ fn local_typing_wrong_input_kind_on_int_unary_op() {
         [ValueKind::Typed(ValueType::I64)],
     );
 
-    assert_validation_err(&s.f, s.entry, |e| {
-        matches!(e, ValidationError::NodeInputKindMismatch { input_idx: 0, .. })
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::NodeInputKindMismatch { input_idx: 0, .. }
+        )
     });
 }
 
@@ -89,11 +119,19 @@ fn local_typing_wrong_input_kind_on_int_unary_op() {
 fn local_typing_wrong_output_kind() {
     let mut function = Function::default();
     // Entry should produce Control, we make it produce Memory instead.
-    let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Memory]);
-    let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let entry = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Memory]);
+    function.set_entry(entry);
+    let _mem = function
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
-    assert_validation_err(&function, entry, |e| {
-        matches!(e, ValidationError::NodeOutputKindMismatch { output_idx: 0, .. })
+    assert_validation_err(&function, |e| {
+        matches!(
+            e,
+            ValidationError::NodeOutputKindMismatch { output_idx: 0, .. }
+        )
     });
 }
 
@@ -118,14 +156,15 @@ fn use_list_input_missing_from_use_list() {
     // check_graph_invariants_phis), so wire `neg` onto the reachable spine via
     // a Return that consumes Control + Memory + the value output.
     let neg_value = s.f.node_outputs(neg).iter().copied().next().unwrap();
-    let _ret = s.f.graph_mut().create_node(
-        NodeKind::Return,
-        [s.entry_ctrl, s.mem_value, neg_value],
-        [],
-    );
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, neg_value], []);
 
-    assert_validation_err(&s.f, s.entry, |e| {
-        matches!(e, ValidationError::InputMissingFromUseList { input_idx: 0, .. })
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::InputMissingFromUseList { input_idx: 0, .. }
+        )
     });
 }
 
@@ -161,7 +200,7 @@ fn use_list_stale_input_in_use_list() {
         [],
     );
 
-    assert_validation_err(&s.f, s.entry, |e| {
+    assert_validation_err(&s.f, |e| {
         matches!(e, ValidationError::UseListContainsStaleInput { .. })
     });
 }
@@ -191,13 +230,11 @@ fn use_list_forward_check_catches_missing_at_non_zero_slot() {
     // use-list consistency is reachability-scoped; wire `add` onto the reachable
     // spine via Return[Ctrl, Memory, add_value].
     let add_value = s.f.node_outputs(add).iter().copied().next().unwrap();
-    let _ret = s.f.graph_mut().create_node(
-        NodeKind::Return,
-        [s.entry_ctrl, s.mem_value, add_value],
-        [],
-    );
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, add_value], []);
 
-    let errs = validate(&s.f, s.entry).unwrap_err();
+    let errs = validate(&s.f).unwrap_err();
     let missing: Vec<_> = errs
         .0
         .iter()
@@ -236,18 +273,23 @@ fn use_list_skips_unreachable_zombie_node() {
 
     // Minimal reachable spine — entry + memory + a Return that takes
     // no values.  Neither `c` nor `_zombie_consumer` is reachable.
-    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     stamp(&mut s.f, ret);
 
-    validate(&s.f, s.entry).expect("validator must skip unreachable use-list inconsistencies");
+    validate(&s.f).expect("validator must skip unreachable use-list inconsistencies");
 }
 
 #[test]
 fn graph_invariants_missing_initial_memory() {
     let mut function = Function::default();
-    let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let entry = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    function.set_entry(entry);
 
-    assert_validation_err(&function, entry, |e| {
+    assert_validation_err(&function, |e| {
         matches!(e, ValidationError::MissingInitialMemoryNode)
     });
 }
@@ -263,17 +305,21 @@ fn graph_invariants_missing_initial_memory() {
 #[test]
 fn graph_invariants_entry_dedupes_on_repeated_create() {
     let mut s = spine();
-    let entry2 = s.f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let entry2 =
+        s.f.graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     assert_eq!(s.entry, entry2, "Entry must dedup");
-    validate(&s.f, s.entry).expect("graph with single deduped Entry must validate");
+    validate(&s.f).expect("graph with single deduped Entry must validate");
 }
 
 #[test]
 fn graph_invariants_initial_memory_dedupes_on_repeated_create() {
     let mut s = spine();
-    let mem2 = s.f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let mem2 =
+        s.f.graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     assert_eq!(s.mem, mem2, "InitialMemory must dedup");
-    validate(&s.f, s.entry).expect("graph with single deduped InitialMemory must validate");
+    validate(&s.f).expect("graph with single deduped InitialMemory must validate");
 }
 
 #[test]
@@ -295,10 +341,15 @@ fn graph_invariants_region_bad_predecessor() {
         [ValueKind::Control, ValueKind::PhiToken],
     );
     let bad_cs_ctrl = s.f.node_outputs(bad_cs).iter().copied().next().unwrap();
-    let _ret = s.f.graph_mut().create_node(NodeKind::Return, [bad_cs_ctrl, s.mem_value], []);
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [bad_cs_ctrl, s.mem_value], []);
 
-    assert_validation_err(&s.f, s.entry, |e| {
-        matches!(e, ValidationError::RegionNonControlPredecessor { input_idx: 1, .. })
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::RegionNonControlPredecessor { input_idx: 1, .. }
+        )
     });
 }
 
@@ -308,6 +359,79 @@ fn test_vn() -> rsleigh::Vn {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     }
+}
+
+/// IR-5: the validator flags an `initial_var_index` entry that points at a
+/// REACHABLE node whose payload was rewritten away from `InitialVar(vn)`.  The
+/// NodeId survives (so `compact` keeps the entry), but the index no longer
+/// describes the live graph.
+#[test]
+fn validate_flags_stale_initial_var_index_entry() {
+    let mut s = spine();
+    let vn = test_vn();
+    // A reachable InitialVar(vn): its value output is returned so the walk
+    // keeps it in the reachable set.
+    let iv = s.f.graph_mut().create_node(
+        NodeKind::InitialVar(vn),
+        [],
+        [ValueKind::Typed(ValueType::I32)],
+    );
+    stamp(&mut s.f, iv);
+    let iv_value = s.f.node_outputs(iv)[0];
+    s.f.register_initial_var(vn, iv);
+    let ret = s.f.graph_mut().create_node(
+        NodeKind::Return,
+        [s.entry_ctrl, s.mem_value, iv_value],
+        [],
+    );
+    stamp(&mut s.f, ret);
+    // Valid so far.
+    validate(&s.f).expect("a well-formed initial_var_index entry validates");
+
+    // Rewrite the node's payload IN PLACE (NodeId survives) to a DIFFERENT
+    // InitialVar varnode, so the index entry for `vn` is now stale.
+    let other_vn = rsleigh::Vn {
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    *s.f.graph_mut().node_kind_mut(iv) = NodeKind::InitialVar(other_vn);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::StaleInitialVarIndex { node, vn: indexed_vn, .. }
+                if *node == iv && *indexed_vn == vn
+        )
+    });
+}
+
+/// IR-5: a `value_vn` tag on a value whose REACHABLE producer is not a
+/// Phi / Call / CallOther is flagged (the tag's documented populations are
+/// exactly those three).
+#[test]
+fn validate_flags_stale_value_vn_entry() {
+    let mut s = spine();
+    let vn = test_vn();
+    // Tag an IntConst output with a value_vn — IntConst is NOT a valid tag
+    // population, so the producer-kind check must flag it.
+    let (k, kv) = int_const(&mut s.f, 7, ValueType::I32);
+    stamp(&mut s.f, k);
+    s.f.set_vn_for_value(kv, vn);
+    // Make it reachable via the Return.
+    let ret = s.f.graph_mut().create_node(
+        NodeKind::Return,
+        [s.entry_ctrl, s.mem_value, kv],
+        [],
+    );
+    stamp(&mut s.f, ret);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::StaleValueVn { value, .. } if *value == kv
+        )
+    });
 }
 
 #[test]
@@ -328,7 +452,7 @@ fn graph_invariants_phi_token_from_wrong_node() {
     let phi_value = s.f.node_outputs(phi)[0];
     s.f.set_vn_for_value(phi_value, vn);
 
-    assert_validation_err(&s.f, s.entry, |e| {
+    assert_validation_err(&s.f, |e| {
         matches!(e, ValidationError::PhiTokenNotFromRegion { .. })
     });
 }
@@ -364,7 +488,7 @@ fn graph_invariants_phi_value_arity_mismatch() {
     s.f.graph_mut().add_node_input(ret, cs_ctrl_value);
     s.f.graph_mut().add_node_input(ret, phi_val_value);
 
-    assert_validation_err(&s.f, s.entry, |e| {
+    assert_validation_err(&s.f, |e| {
         matches!(
             e,
             ValidationError::PhiValueArityMismatch {
@@ -404,7 +528,7 @@ fn graph_invariants_phi_input_type_mismatch() {
     s.f.graph_mut().add_node_input(ret, cs_ctrl_value);
     s.f.graph_mut().add_node_input(ret, phi_val_value);
 
-    assert_validation_err(&s.f, s.entry, |e| {
+    assert_validation_err(&s.f, |e| {
         matches!(
             e,
             ValidationError::PhiInputTypeMismatch {
@@ -428,20 +552,20 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
     // function and asserting validate() succeeds.
     let mut s = spine();
     // Return needs Ctrl + Memory inputs (per node_signature: [CTRL, MEM]).
-    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     stamp(&mut s.f, ret);
 
     // Detached zombie Phi with NO inputs.
     let vn = test_vn();
-    let zombie = s.f.graph_mut().create_node(
-        NodeKind::Phi,
-        [],
-        [ValueKind::Typed(ValueType::I64)],
-    );
+    let zombie =
+        s.f.graph_mut()
+            .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
     let zombie_value = s.f.node_outputs(zombie)[0];
     s.f.set_vn_for_value(zombie_value, vn);
 
-    validate(&s.f, s.entry).expect("validator must skip unreachable zombie phis");
+    validate(&s.f).expect("validator must skip unreachable zombie phis");
 }
 
 #[test]
@@ -462,9 +586,11 @@ fn local_typing_wrong_input_count() {
     // Wire `bad` into the reachable sub-graph so the reachability-scoped
     // the local-typing check actually inspects it.  A Return consuming entry's Control
     // plus `bad`'s value output is the smallest reachable shape.
-    let _ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, bad_value], []);
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, bad_value], []);
 
-    assert_validation_err(&s.f, s.entry, |e| {
+    assert_validation_err(&s.f, |e| {
         matches!(
             e,
             ValidationError::NodeInputCountMismatch {
@@ -501,13 +627,22 @@ fn local_typing_mem_phi_variadic_tail_must_be_memory() {
         [cs_phi_token, s.entry_ctrl],
         [ValueKind::Memory],
     );
-    let bad_mem_value = s.f.node_outputs(bad_mem_phi).iter().copied().next().unwrap();
+    let bad_mem_value =
+        s.f.node_outputs(bad_mem_phi)
+            .iter()
+            .copied()
+            .next()
+            .unwrap();
 
     // Reach the MemPhi via a Return so the local-typing check walks to it.
-    s.f.graph_mut().create_node(NodeKind::Return, [cs_ctrl, bad_mem_value], []);
+    s.f.graph_mut()
+        .create_node(NodeKind::Return, [cs_ctrl, bad_mem_value], []);
 
-    assert_validation_err(&s.f, s.entry, |e| {
-        matches!(e, ValidationError::NodeInputKindMismatch { input_idx: 1, .. })
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::NodeInputKindMismatch { input_idx: 1, .. }
+        )
     });
 }
 
@@ -537,11 +672,13 @@ fn local_typing_accepts_bool_value_phi_inputs() {
     let vp_value = s.f.node_outputs(vp).iter().copied().next().unwrap();
 
     // Use the phi'd value so the validator's reachability walk hits it.
-    let ret = s.f.graph_mut().create_node(NodeKind::Return, [cs_ctrl, s.mem_value, vp_value], []);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [cs_ctrl, s.mem_value, vp_value], []);
     stamp(&mut s.f, bc);
     stamp(&mut s.f, ret);
 
-    validate(&s.f, s.entry).expect("Bool-typed value phi inputs must validate");
+    validate(&s.f).expect("Bool-typed value phi inputs must validate");
 }
 
 #[test]
@@ -562,9 +699,10 @@ fn graph_invariants_mem_phi_arity_mismatch() {
         [ValueKind::Memory],
     );
     let mem_phi_value = s.f.node_outputs(mem_phi).iter().copied().next().unwrap();
-    s.f.graph_mut().create_node(NodeKind::Return, [cs_ctrl_value, mem_phi_value], []);
+    s.f.graph_mut()
+        .create_node(NodeKind::Return, [cs_ctrl_value, mem_phi_value], []);
 
-    assert_validation_err(&s.f, s.entry, |e| {
+    assert_validation_err(&s.f, |e| {
         matches!(
             e,
             ValidationError::PhiValueArityMismatch {
@@ -596,9 +734,10 @@ fn graph_invariants_value_phi_arity_mismatch() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let vp_value = s.f.node_outputs(vp).iter().copied().next().unwrap();
-    s.f.graph_mut().create_node(NodeKind::Return, [cs_ctrl_value, s.mem_value, vp_value], []);
+    s.f.graph_mut()
+        .create_node(NodeKind::Return, [cs_ctrl_value, s.mem_value, vp_value], []);
 
-    assert_validation_err(&s.f, s.entry, |e| {
+    assert_validation_err(&s.f, |e| {
         matches!(
             e,
             ValidationError::PhiValueArityMismatch {
@@ -623,11 +762,16 @@ fn local_typing_rejects_wrong_output_count() {
         ],
     );
     let bad_value0 = s.f.node_outputs(bad).iter().copied().next().unwrap();
-    s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value0], []);
+    s.f.graph_mut().create_node(
+        NodeKind::Return,
+        [s.entry_ctrl, s.mem_value, bad_value0],
+        [],
+    );
 
-    assert_validation_err(&s.f, s.entry, |e| {
-        matches!(e, ValidationError::NodeOutputCountMismatch { node, expected: 1, actual: 2 } if *node == bad)
-    });
+    assert_validation_err(
+        &s.f,
+        |e| matches!(e, ValidationError::NodeOutputCountMismatch { node, expected: 1, actual: 2 } if *node == bad),
+    );
 }
 
 #[test]
@@ -650,11 +794,13 @@ fn graph_invariants_rejects_region_with_zero_predecessors() {
     let cs_ctrl = s.f.node_outputs(cs).iter().copied().next().unwrap();
     // Return consumes entry's control (reaches Return via cfg_succs of Entry)
     // and cs_ctrl as a "ret value" (reaches Region via Return's backward-data).
-    s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, cs_ctrl], []);
+    s.f.graph_mut()
+        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, cs_ctrl], []);
 
-    assert_validation_err(&s.f, s.entry, |e| {
-        matches!(e, ValidationError::EmptyRegionPredecessors { region } if *region == cs)
-    });
+    assert_validation_err(
+        &s.f,
+        |e| matches!(e, ValidationError::EmptyRegionPredecessors { region } if *region == cs),
+    );
 }
 
 #[test]
@@ -669,10 +815,12 @@ fn graph_invariants_tolerates_unreachable_zero_predecessor_region() {
         [],
         [ValueKind::Control, ValueKind::PhiToken],
     );
-    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     stamp(&mut s.f, ret);
 
-    validate(&s.f, s.entry).expect("zombie Region must not trigger validation error");
+    validate(&s.f).expect("zombie Region must not trigger validation error");
 }
 
 /// IndirectBranch consumes (control, memory, target_value) and produces no
@@ -686,7 +834,7 @@ fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
     let mut s = spine();
     let _const_node = int_const(&mut s.f, 7, ValueType::I64);
     // The IntConst is unreachable from entry; default validate ignores it.
-    validate(&s.f, s.entry).expect("default validate is unaffected");
+    validate(&s.f).expect("default validate is unaffected");
 }
 
 #[test]
@@ -700,11 +848,23 @@ fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
         [s.entry_ctrl, s.mem_value, const_value],
         [],
     );
-    assert_validation_err(&s.f, s.entry, |e| {
-        matches!(e, ValidationError::MissingAsmFingerprint { kind: NodeKind::IntConst(_), .. })
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::MissingAsmFingerprint {
+                kind: NodeKind::IntConst(_),
+                ..
+            }
+        )
     });
-    assert_validation_err(&s.f, s.entry, |e| {
-        matches!(e, ValidationError::MissingAsmFingerprint { kind: NodeKind::Return, .. })
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::MissingAsmFingerprint {
+                kind: NodeKind::Return,
+                ..
+            }
+        )
     });
 }
 
@@ -719,7 +879,7 @@ fn asm_fingerprint_check_accepts_when_fingerprint_present() {
     );
     s.f.extend_asm_fingerprint(int_const_node, &[0x1000]);
     s.f.extend_asm_fingerprint(ret, &[0x1004]);
-    validate(&s.f, s.entry).expect("populated fingerprints validate");
+    validate(&s.f).expect("populated fingerprints validate");
 }
 
 #[test]
@@ -733,8 +893,10 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
         [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_ctrl = s.f.node_outputs(cs).iter().copied().next().unwrap();
-    let _ret = s.f.graph_mut().create_node(NodeKind::Return, [cs_ctrl, s.mem_value], []);
-    let res = validate(&s.f, s.entry);
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [cs_ctrl, s.mem_value], []);
+    let res = validate(&s.f);
     // The Return is reachable and non-exempt — it must be flagged.  But
     // Region / Entry / InitialMemory must NOT be flagged.
     let errs = res.unwrap_err();
@@ -743,9 +905,7 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
             assert!(
                 !matches!(
                     kind,
-                    NodeKind::Entry
-                        | NodeKind::InitialMemory
-                        | NodeKind::Region
+                    NodeKind::Entry | NodeKind::InitialMemory | NodeKind::Region
                 ),
                 "exempt kind {kind:?} was flagged"
             );
@@ -753,9 +913,13 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
     }
     // Sanity: at least one MissingAsmFingerprint for the Return.
     assert!(
-        errs.0
-            .iter()
-            .any(|e| matches!(e, ValidationError::MissingAsmFingerprint { kind: NodeKind::Return, .. })),
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::MissingAsmFingerprint {
+                kind: NodeKind::Return,
+                ..
+            }
+        )),
         "expected Return to be flagged"
     );
 }
@@ -769,7 +933,9 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
 fn unreachable_region_with_non_control_input_does_not_fire() {
     let mut s = spine();
     // Reachable spine: Entry → Return.
-    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     stamp(&mut s.f, ret);
 
     // Detached zombie: a Region whose input is a non-Control output
@@ -786,7 +952,7 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
     // The unreachable zombie must be skipped by the reachability gate;
     // the validator must not flag a `RegionNonControlPredecessor`
     // error.  (Pre-fix this would have fired.)
-    validate(&s.f, s.entry).expect(
+    validate(&s.f).expect(
         "unreachable Region zombies must not produce \
          RegionNonControlPredecessor errors",
     );
@@ -803,7 +969,7 @@ fn indirect_branch_with_control_memory_and_value_validates() {
     );
     stamp(&mut s.f, target);
     stamp(&mut s.f, ib);
-    validate(&s.f, s.entry).expect("IndirectBranch with [ctrl, mem, target] must validate");
+    validate(&s.f).expect("IndirectBranch with [ctrl, mem, target] must validate");
 }
 
 #[test]
@@ -824,7 +990,7 @@ fn graph_invariants_dangling_wide_const_id_detected() {
         [],
     );
 
-    assert_validation_err(&s.f, s.entry, |e| {
+    assert_validation_err(&s.f, |e| {
         matches!(e, ValidationError::DanglingWideConstId { .. })
     });
 }
@@ -841,13 +1007,11 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
         [ValueKind::Typed(ValueType::I512)],
     );
     let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
-    let _ret = s.f.graph_mut().create_node(
-        NodeKind::Return,
-        [s.entry_ctrl, s.mem_value, bad_value],
-        [],
-    );
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
 
-    assert_validation_err(&s.f, s.entry, |e| {
+    assert_validation_err(&s.f, |e| {
         matches!(
             e,
             ValidationError::WideConstWidthMismatch {
@@ -874,13 +1038,11 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
-    let _ret = s.f.graph_mut().create_node(
-        NodeKind::Return,
-        [s.entry_ctrl, s.mem_value, bad_value],
-        [],
-    );
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
 
-    assert_validation_err(&s.f, s.entry, |e| {
+    assert_validation_err(&s.f, |e| {
         matches!(
             e,
             ValidationError::WideConstInvalidOutputType {
@@ -897,7 +1059,9 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
 /// Used by the cc-arity tests below.
 fn fn_with_declared_cc() -> (Function, NodeId) {
     let mut f = Function::default();
-    let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let entry = f
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     stamp(&mut f, entry);
     f.set_entry(entry);
     let mk_vn = |off: u64| rsleigh::Vn {
@@ -924,19 +1088,27 @@ fn cc_arity_catches_return_dropping_a_declared_ret_val_reg() {
     // a too-short Return.
     let (mut f, entry) = fn_with_declared_cc();
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let mem = f
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     stamp(&mut f, mem);
     let (v1, v1_value) = int_const(&mut f, 7, ValueType::I64);
     stamp(&mut f, v1);
     // Return with only ONE ret-val input — dropping v2's slot.
-    let ret = f.graph_mut().create_node(NodeKind::Return, [ctrl, mem_value, v1_value], []);
+    let ret = f
+        .graph_mut()
+        .create_node(NodeKind::Return, [ctrl, mem_value, v1_value], []);
     stamp(&mut f, ret);
 
-    assert_validation_err(&f, entry, |e| {
+    assert_validation_err(&f, |e| {
         matches!(
             e,
-            ValidationError::NodeInputCountMismatch { expected: 4, actual: 3, .. }
+            ValidationError::NodeInputCountMismatch {
+                expected: 4,
+                actual: 3,
+                ..
+            }
         )
     });
 }
@@ -957,11 +1129,15 @@ fn cc_arity_catches_override_call_with_untagged_clobber_output() {
         .unwrap();
 
     let mut f = Function::default();
-    let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let entry = f
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     stamp(&mut f, entry);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let mem = f
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     stamp(&mut f, mem);
     let (target, target_value) = int_const(&mut f, 0x1000, ValueType::I64);
@@ -972,18 +1148,28 @@ fn cc_arity_catches_override_call_with_untagged_clobber_output() {
     let call = f.graph_mut().create_node(
         NodeKind::Call,
         [ctrl, mem_value, target_value],
-        [ValueKind::Control, ValueKind::Memory, ValueKind::Typed(ValueType::I64)],
+        [
+            ValueKind::Control,
+            ValueKind::Memory,
+            ValueKind::Typed(ValueType::I64),
+        ],
     );
     stamp(&mut f, call);
     f.set_call_cc(call, cc);
     let [call_ctrl, call_mem, _clob] = f.node_outputs_exact::<3>(call).unwrap();
-    let ret = f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem], []);
+    let ret = f
+        .graph_mut()
+        .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
     stamp(&mut f, ret);
 
-    assert_validation_err(&f, entry, |e| {
+    assert_validation_err(&f, |e| {
         matches!(
             e,
-            ValidationError::NodeOutputCountMismatch { expected: 2, actual: 3, .. }
+            ValidationError::NodeOutputCountMismatch {
+                expected: 2,
+                actual: 3,
+                ..
+            }
         )
     });
 }
@@ -994,8 +1180,12 @@ fn cc_arity_passes_override_call_with_tagged_clobber_output() {
     // CC's clobber list.  The CC clobbers exactly one tracked register, so the
     // CC-derived expected count (2 + 0 ret + 1 clobber = 3) matches the actual
     // (3) and the arity check passes.
-    let clob0 = rsleigh::Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
-    let (mut f, entry, ctrl, mem_value, cc) = fn_with_override_clobber_cc(&[clob0]);
+    let clob0 = rsleigh::Vn {
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let (mut f, _entry, ctrl, mem_value, cc) = fn_with_override_clobber_cc(&[clob0]);
     let (target, target_value) = int_const(&mut f, 0x1000, ValueType::I64);
     stamp(&mut f, target);
     let (sp, sp_value) = int_const(&mut f, 0x7fff_0000, ValueType::I64);
@@ -1003,16 +1193,22 @@ fn cc_arity_passes_override_call_with_tagged_clobber_output() {
     let call = f.graph_mut().create_node(
         NodeKind::Call,
         [ctrl, mem_value, target_value, sp_value],
-        [ValueKind::Control, ValueKind::Memory, ValueKind::Typed(ValueType::I64)],
+        [
+            ValueKind::Control,
+            ValueKind::Memory,
+            ValueKind::Typed(ValueType::I64),
+        ],
     );
     stamp(&mut f, call);
     f.set_call_cc(call, cc);
     let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
     f.set_vn_for_value(clob, clob0);
-    let ret = f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem], []);
+    let ret = f
+        .graph_mut()
+        .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
     stamp(&mut f, ret);
 
-    validate(&f, entry).expect("override Call with a tagged clobber output must validate");
+    validate(&f).expect("override Call with a tagged clobber output must validate");
 }
 
 /// Build a `Function` tracking `clobbers` (REGISTER vns), with an override
@@ -1021,30 +1217,44 @@ fn cc_arity_passes_override_call_with_tagged_clobber_output() {
 /// returns `clobbers`, giving the validator an independent expected count.
 fn fn_with_override_clobber_cc(
     clobbers: &[rsleigh::Vn],
-) -> (Function, NodeId, ValueId, ValueId, strider_target::BuiltCallingConvention) {
+) -> (
+    Function,
+    NodeId,
+    ValueId,
+    ValueId,
+    strider_target::BuiltCallingConvention,
+) {
     let mut f = Function::default();
-    let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let entry = f
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     stamp(&mut f, entry);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let mem = f
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     stamp(&mut f, mem);
     // Track the clobber regs so call_clobbered_for(cc) (which filters on the
     // tracked all_vns) returns them. A distinct stack vn keeps SP out of the
     // clobber set.
-    let sp = rsleigh::Vn { addr_off: 0x7000, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
+    let sp = rsleigh::Vn {
+        addr_off: 0x7000,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
     f.all_vns = clobbers.to_vec();
     let cc = strider_target::BuiltCallingConvention::try_new(
-        vec![],            // arg_passing_regs
-        vec![],            // callee_saved_regs (none → every tracked reg clobbers)
-        vec![],            // ret_val_regs
-        vec![],            // ret_val_regs_float
-        sp,                // stack_vn
-        None,              // stack_args
-        0,                 // ret_stack_pop
-        None,              // link_register_vn
-        false,             // preserves_memory
+        vec![], // arg_passing_regs
+        vec![], // callee_saved_regs (none → every tracked reg clobbers)
+        vec![], // ret_val_regs
+        vec![], // ret_val_regs_float
+        sp,     // stack_vn
+        None,   // stack_args
+        0,      // ret_stack_pop
+        None,   // link_register_vn
+        false,  // preserves_memory
     )
     .unwrap();
     (f, entry, ctrl, mem_value, cc)
@@ -1058,9 +1268,17 @@ fn fn_with_override_clobber_cc(
 /// expected from `call_clobbered_for(cc)` catches it.
 #[test]
 fn cc_arity_catches_override_call_dropping_a_clobber_output() {
-    let clob0 = rsleigh::Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
-    let clob1 = rsleigh::Vn { addr_off: 0x18, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
-    let (mut f, entry, ctrl, mem_value, cc) = fn_with_override_clobber_cc(&[clob0, clob1]);
+    let clob0 = rsleigh::Vn {
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let clob1 = rsleigh::Vn {
+        addr_off: 0x18,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let (mut f, _entry, ctrl, mem_value, cc) = fn_with_override_clobber_cc(&[clob0, clob1]);
     let (target, target_value) = int_const(&mut f, 0x1000, ValueType::I64);
     stamp(&mut f, target);
     let (sp, sp_value) = int_const(&mut f, 0x7fff_0000, ValueType::I64);
@@ -1072,19 +1290,29 @@ fn cc_arity_catches_override_call_dropping_a_clobber_output() {
     let call = f.graph_mut().create_node(
         NodeKind::Call,
         [ctrl, mem_value, target_value, sp_value],
-        [ValueKind::Control, ValueKind::Memory, ValueKind::Typed(ValueType::I64)],
+        [
+            ValueKind::Control,
+            ValueKind::Memory,
+            ValueKind::Typed(ValueType::I64),
+        ],
     );
     stamp(&mut f, call);
     f.set_call_cc(call, cc);
     let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
     f.set_vn_for_value(clob, clob0);
-    let ret = f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem], []);
+    let ret = f
+        .graph_mut()
+        .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
     stamp(&mut f, ret);
 
-    assert_validation_err(&f, entry, |e| {
+    assert_validation_err(&f, |e| {
         matches!(
             e,
-            ValidationError::NodeOutputCountMismatch { expected: 4, actual: 3, .. }
+            ValidationError::NodeOutputCountMismatch {
+                expected: 4,
+                actual: 3,
+                ..
+            }
         )
     });
 }
@@ -1093,17 +1321,21 @@ fn cc_arity_catches_override_call_dropping_a_clobber_output() {
 fn cc_arity_passes_when_return_matches_declared_ret_val_regs() {
     let (mut f, entry) = fn_with_declared_cc();
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let mem = f
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     stamp(&mut f, mem);
     let (v1, v1_value) = int_const(&mut f, 7, ValueType::I64);
     stamp(&mut f, v1);
     let (v2, v2_value) = int_const(&mut f, 8, ValueType::I64);
     stamp(&mut f, v2);
-    let ret = f.graph_mut().create_node(NodeKind::Return, [ctrl, mem_value, v1_value, v2_value], []);
+    let ret =
+        f.graph_mut()
+            .create_node(NodeKind::Return, [ctrl, mem_value, v1_value, v2_value], []);
     stamp(&mut f, ret);
 
-    validate(&f, entry).expect("Return with declared 2 ret-val regs and 2 value inputs must validate");
+    validate(&f).expect("Return with declared 2 ret-val regs and 2 value inputs must validate");
 }
 
 // ── memory-chain anchoring ──────────────────────────────────────────────────
@@ -1131,10 +1363,12 @@ fn memory_chain_wired_store_to_return_validates() {
     let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
     stamp(&mut s.f, data_n);
     let (_st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
-    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, st_mem], []);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, st_mem], []);
     stamp(&mut s.f, ret);
 
-    validate(&s.f, s.entry).expect("wired Store→Return memory chain must validate");
+    validate(&s.f).expect("wired Store→Return memory chain must validate");
 }
 
 /// A `Store` in DEAD control (unreachable from entry) must NOT be flagged:
@@ -1145,7 +1379,9 @@ fn memory_chain_dead_control_store_not_flagged() {
     let mut s = spine();
     // Live spine: Return consumes Entry's control + InitialMemory directly,
     // so neither the dead Store nor its dangling memory output is reachable.
-    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     stamp(&mut s.f, ret);
 
     // Dead Store: consumes InitialMemory's output but nothing consumes the
@@ -1156,7 +1392,7 @@ fn memory_chain_dead_control_store_not_flagged() {
     stamp(&mut s.f, data_n);
     let (_dead_store, _dead_mem) = store(&mut s.f, s.mem_value, addr, data);
 
-    validate(&s.f, s.entry).expect("a Store in dead control must not be flagged");
+    validate(&s.f).expect("a Store in dead control must not be flagged");
 }
 
 /// RED: a reachable `Store` whose memory output has no consumer is flagged.
@@ -1177,7 +1413,9 @@ fn memory_chain_orphaned_store_flagged() {
     let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
     stamp(&mut s.f, data_n);
     let (_st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
-    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, st_mem], []);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, st_mem], []);
     stamp(&mut s.f, ret);
 
     // Orphan the store: sever the forward use-list link from its memory
@@ -1185,8 +1423,14 @@ fn memory_chain_orphaned_store_flagged() {
     // stays reachable but its memory output has zero uses.
     s.f.graph_mut().corrupt_clear_first_use(st_mem);
 
-    assert_validation_err(&s.f, s.entry, |e| {
-        matches!(e, ValidationError::OrphanedMemoryOutput { kind: NodeKind::Store(_), .. })
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::OrphanedMemoryOutput {
+                kind: NodeKind::Store(_),
+                ..
+            }
+        )
     });
 }
 
@@ -1215,9 +1459,11 @@ fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
     let [call_ctrl, _call_mem] = s.f.node_outputs_exact::<2>(call).unwrap();
 
     // Return takes the Call's control but the pre-call memory edge.
-    let ret = s.f.graph_mut().create_node(NodeKind::Return, [call_ctrl, s.mem_value], []);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [call_ctrl, s.mem_value], []);
     stamp(&mut s.f, ret);
 
-    validate(&s.f, s.entry)
+    validate(&s.f)
         .expect("a memory-preserving Call's unconsumed memory output must not be flagged");
 }

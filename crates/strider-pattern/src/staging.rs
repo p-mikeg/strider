@@ -138,7 +138,10 @@ impl<N, V> StagedGraph<N, V> {
         N: SealNode,
     {
         let order = toposort(&self.g, None).map_err(|c| {
-            anyhow!("cycle in staged pattern/template graph at {:?}", c.node_id())
+            anyhow!(
+                "cycle in staged pattern/template graph at {:?}",
+                c.node_id()
+            )
         })?;
         // Own each weight, indexable by node id; `take`n exactly once, in
         // topo order.

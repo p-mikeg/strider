@@ -7,9 +7,9 @@
 //! populates in production.  We bypass `StackOffsetDetect` here so tests stay
 //! focused on the pattern-matcher behaviour rather than the optimizer.
 
-use strider_pattern::{Capture, Matcher, load, store};
-use strider_ir::node::{NodeId, IntPayload, NodeKind, ValueType};
+use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueType};
 use strider_ir::{IRViewer, IRWalker};
+use strider_pattern::{Capture, Matcher, load, store};
 
 use super::support::Tb;
 
@@ -142,11 +142,19 @@ fn offset_exact_filter_store() {
 
     let pat_match = store().stack_offset(0x10).build();
     let hits_match = matcher.find_all(&pat_match).unwrap();
-    assert_eq!(hits_match.len(), 1, "stack_offset(0x10) must match the annotated store");
+    assert_eq!(
+        hits_match.len(),
+        1,
+        "stack_offset(0x10) must match the annotated store"
+    );
 
     let pat_miss = store().stack_offset(0x20).build();
     let hits_miss = matcher.find_all(&pat_miss).unwrap();
-    assert_eq!(hits_miss.len(), 0, "stack_offset(0x20) must reject the store");
+    assert_eq!(
+        hits_miss.len(),
+        0,
+        "stack_offset(0x20) must reject the store"
+    );
 }
 
 // ── Capture + Function::stack_offset side-table recovery ─────────────────────
@@ -161,7 +169,11 @@ fn capture_then_read_stack_offset_via_side_table() {
     let node_cap = Capture::new();
     let pat = store().stack_only().capture(node_cap).build();
     let hits = matcher.find_all(&pat).unwrap();
-    assert_eq!(hits.len(), 1, "stack_only must restrict to the annotated store");
+    assert_eq!(
+        hits.len(),
+        1,
+        "stack_only must restrict to the annotated store"
+    );
     let m = &hits[0];
     let bound = m.node(node_cap, g.graph()).expect("captured node");
     assert_eq!(bound, stack_store, "capture must bind the stack store");

@@ -11,7 +11,7 @@
 //! **Property checked here.**
 //!
 //!  Every random `Graph` produced by the action-driven strategy passes
-//!  `validate(graph, entry)` (Layer-A + Layer-B + always-on Layer-C
+//!  `validate(function)` (Layer-A + Layer-B + always-on Layer-C
 //!  asm-fingerprint check).  The strategy stamps a per-action lift address
 //!  via [`FunctionBuilder::set_lift_addr`] so every emitted node carries a
 //!  non-empty fingerprint by construction; if the strategy ever produces a
@@ -30,14 +30,12 @@
     clippy::enum_variant_names
 )]
 
+use proptest::prelude::*;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRWalker;
-use proptest::prelude::*;
 
 use strider_ir::node::ValueType;
-use strider_ir::{
-    ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
-};
+use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 /// Sentinel lift-address base; per-step `lift_off` is added on top.
 /// Mirrors `strider_ir_test_utils::SENTINEL_LIFT_ADDR`.
@@ -378,7 +376,7 @@ proptest! {
             // violation.
             return Ok(());
         };
-        let res = strider_ir::validate::validate(&fg, fg.entry().unwrap());
+        let res = strider_ir::validate::validate(&fg);
         prop_assert!(
             res.is_ok(),
             "validate failed on a strategy-generated graph: {:?}",

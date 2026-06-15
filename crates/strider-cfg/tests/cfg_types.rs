@@ -8,8 +8,7 @@
 //! containment, distinctness of variants) and need no internal CFG state.
 
 use strider_cfg::{
-    CfgOptions, MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction,
-    RegionTerminator,
+    CfgOptions, MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -30,7 +29,10 @@ fn fake_insn() -> rsleigh::Insn {
 }
 
 fn make_region(addrs: &[(u64, u64)]) -> Region {
-    assert!(!addrs.is_empty(), "make_region requires at least one address");
+    assert!(
+        !addrs.is_empty(),
+        "make_region requires at least one address"
+    );
     let start = addr(addrs[0].0, addrs[0].1);
     let insns: Vec<_> = addrs
         .iter()

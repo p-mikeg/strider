@@ -104,9 +104,9 @@ impl MemRegion {
     /// [`read`](Self::read)) can treat the region's end as a plain `u64`.
     pub fn new(start_addr: u64, data: Vec<u8>) -> Result<Self> {
         let len = data.len() as u64;
-        start_addr
-            .checked_add(len)
-            .ok_or_else(|| anyhow::anyhow!("region at {start_addr:#x} with length {len} would overflow u64"))?;
+        start_addr.checked_add(len).ok_or_else(|| {
+            anyhow::anyhow!("region at {start_addr:#x} with length {len} would overflow u64")
+        })?;
         Ok(Self { start_addr, data })
     }
 
@@ -220,6 +220,27 @@ impl MemRegionsLookupTable {
     /// covers — a read straddling the inner region's end falls through to the
     /// fully-covering outer region rather than returning a short partial read.
     ///
+    /// # Overlapping regions with differing bytes
+    ///
+    /// When two regions overlap at *distinct* start addresses and disagree
+    /// on the bytes in the overlap (a malformed / synthesised region set —
+    /// well-formed ELF loadable ranges are disjoint), the resolution is
+    /// fully specified by the two rules above and is intentionally
+    /// **all-or-most**, not a per-byte merge:
+    ///
+    /// - If exactly one candidate region *fully covers* the request, that
+    ///   region's bytes win (the highest-start such region if several do).
+    /// - Otherwise the region that covers the **most** of the request wins
+    ///   outright, and `out` is filled entirely from that one region.  When
+    ///   two candidates tie on coverage length, the highest-start one wins
+    ///   (it is encountered first and `best` updates only on strictly
+    ///   greater coverage).
+    ///
+    /// In particular a partial read that *straddles* a shorter higher-start
+    /// region's end resolves to the lower-start region that reaches further,
+    /// not to the higher-start region's truncated prefix — `out` is never a
+    /// cross-region byte mix.
+    ///
     /// Availability is computed without writing so `out` is filled exactly
     /// once from the winning region (no cross-region byte mixing).
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
@@ -264,4 +285,3 @@ impl MemRegionsLookupTable {
         Ok(())
     }
 }
-

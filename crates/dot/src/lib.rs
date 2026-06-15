@@ -353,13 +353,6 @@ impl<G: GraphDotDumper> GraphDot<G> {
         }
     }
 
-    /// Sets the name of the emitted `digraph`. The name is escaped and
-    /// double-quoted by [`DotEmitter::new`], so any string is accepted.
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
-        self.name = name.into();
-        self
-    }
-
     fn render_dot_string(&self) -> anyhow::Result<String> {
         let mut dot = DotEmitter::new(&self.name, &self.style);
         let mut state = self.dumper.create_initial_state();
@@ -559,8 +552,7 @@ mod engine_choice_tests {
 
     #[test]
     fn dot_node_count_matches_label_statements() {
-        let dot =
-            "digraph G {\n  a [label=\"x\"];\n  b [label=\"y\"];\n  a -> b;\n}";
+        let dot = "digraph G {\n  a [label=\"x\"];\n  b [label=\"y\"];\n  a -> b;\n}";
         assert_eq!(dot_node_count(dot), 2);
     }
 
@@ -568,6 +560,17 @@ mod engine_choice_tests {
     fn dot_node_count_empty_source_is_zero() {
         assert_eq!(dot_node_count(""), 0);
         assert_eq!(dot_node_count("digraph G { }"), 0);
+    }
+
+    #[test]
+    fn dot_node_count_over_counts_literal_bracket_label_substring() {
+        // A single node whose label text itself contains `[label=` is counted
+        // twice by the substring heuristic: once for its own node statement and
+        // once for the literal substring inside the label.  This pins the
+        // documented over-count so a future "fix" that tightens the heuristic
+        // doesn't silently change engine selection without updating this test.
+        let dot = "digraph G {\n  a [label=\"see [label= here\"];\n}";
+        assert_eq!(dot_node_count(dot), 2);
     }
 }
 

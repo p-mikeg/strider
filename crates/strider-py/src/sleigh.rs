@@ -106,32 +106,46 @@ impl PyVnSpace {
     /// The RAM (main memory) address space.
     #[classmethod]
     fn ram(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: rsleigh::VnSpace::RAM }
+        Self {
+            inner: rsleigh::VnSpace::RAM,
+        }
     }
     /// The register address space.
     #[classmethod]
     fn register(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: rsleigh::VnSpace::REGISTER }
+        Self {
+            inner: rsleigh::VnSpace::REGISTER,
+        }
     }
     /// The constant ("const") address space.
     #[classmethod]
     fn const_(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: rsleigh::VnSpace::CONST }
+        Self {
+            inner: rsleigh::VnSpace::CONST,
+        }
     }
     /// The unique (temporary) address space.
     #[classmethod]
     fn unique(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: rsleigh::VnSpace::UNIQUE }
+        Self {
+            inner: rsleigh::VnSpace::UNIQUE,
+        }
     }
 
     /// The space's name (`"RAM"`, `"REGISTER"`, `"CONST"`, `"UNIQUE"`,
     /// or `"OTHER"`).
     fn name(&self) -> &'static str {
-        if self.inner == rsleigh::VnSpace::RAM { "RAM" }
-        else if self.inner == rsleigh::VnSpace::REGISTER { "REGISTER" }
-        else if self.inner == rsleigh::VnSpace::CONST { "CONST" }
-        else if self.inner == rsleigh::VnSpace::UNIQUE { "UNIQUE" }
-        else { "OTHER" }
+        if self.inner == rsleigh::VnSpace::RAM {
+            "RAM"
+        } else if self.inner == rsleigh::VnSpace::REGISTER {
+            "REGISTER"
+        } else if self.inner == rsleigh::VnSpace::CONST {
+            "CONST"
+        } else if self.inner == rsleigh::VnSpace::UNIQUE {
+            "UNIQUE"
+        } else {
+            "OTHER"
+        }
     }
 
     /// `VnSpace.<name>` (lowercased).
@@ -202,7 +216,9 @@ impl PyVn {
     /// The varnode's address space.
     #[getter]
     fn space(&self) -> PyVnSpace {
-        PyVnSpace { inner: self.inner.addr_space }
+        PyVnSpace {
+            inner: self.inner.addr_space,
+        }
     }
     /// The varnode's offset within its space.
     #[getter]
@@ -237,8 +253,7 @@ impl PyVn {
         // equal-size varnodes in different spaces shared a bucket.
         let mut h = self.inner.addr_off;
         h ^= u64::from(self.inner.size).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        h ^= u64::from(self.inner.addr_space.shortcut_raw())
-            .wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= u64::from(self.inner.addr_space.shortcut_raw()).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         h
     }
 }

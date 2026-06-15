@@ -79,12 +79,12 @@ impl LoadFilter {
     /// Sections always require `SHF_ALLOC`; the `SHF_WRITE` /
     /// `SHF_EXECINSTR` axes pick exec-or-rodata vs include-writable.
     fn section_accepts(self, sh_flags: u64) -> bool {
-        let is_alloc    = sh_flags & u64::from(object::elf::SHF_ALLOC)     != 0;
+        let is_alloc = sh_flags & u64::from(object::elf::SHF_ALLOC) != 0;
         if !is_alloc {
             return false;
         }
-        let is_exec     = sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0;
-        let is_writable = sh_flags & u64::from(object::elf::SHF_WRITE)     != 0;
+        let is_exec = sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0;
+        let is_writable = sh_flags & u64::from(object::elf::SHF_WRITE) != 0;
         match self {
             LoadFilter::CodeAndReadOnly => is_exec || !is_writable,
             LoadFilter::AllAllocatable => true,
@@ -135,10 +135,7 @@ pub fn elf_get_loadable_regions_including_writable(
 
 /// Kind-dispatch: program-headers path for ET_EXEC / ET_DYN, sections
 /// path (with first-wins VMA dedup) for ET_REL and everything else.
-fn collect_loadable_regions(
-    obj: &object::File<'_>,
-    filter: LoadFilter,
-) -> Result<Vec<MemRegion>> {
+fn collect_loadable_regions(obj: &object::File<'_>, filter: LoadFilter) -> Result<Vec<MemRegion>> {
     match obj.kind() {
         ObjectKind::Executable | ObjectKind::Dynamic => collect_loadable_segments(obj, filter),
         // ET_REL (Relocatable) plus any unknown/core kind: the safest
@@ -156,15 +153,16 @@ fn collect_loadable_regions(
 ///
 /// Empty `data()` (a BSS-only segment with `p_filesz == 0`) is silently
 /// skipped — there's nothing to load.
-fn collect_loadable_segments(
-    obj: &object::File<'_>,
-    filter: LoadFilter,
-) -> Result<Vec<MemRegion>> {
+fn collect_loadable_segments(obj: &object::File<'_>, filter: LoadFilter) -> Result<Vec<MemRegion>> {
     let mut out = Vec::new();
     for seg in obj.segments() {
-        // Restrict to PT_LOAD; `obj.segments()` already filters to
-        // PT_LOAD on every backend that defines a meaningful "loadable"
-        // segment, but we read `p_flags` here so check explicitly.
+        // `obj.segments()` only yields PT_LOAD entries: the `object`
+        // crate's ELF segment iterator filters on `p_type == PT_LOAD`
+        // internally, and the generic `Segment` trait exposes no
+        // `p_type` to re-assert here.  We read `p_flags` only to apply
+        // the writable / executable `LoadFilter` axis below — NOT to
+        // re-check the segment type (which is already guaranteed
+        // PT_LOAD-only by the iterator).
         let object::SegmentFlags::Elf { p_flags } = seg.flags() else {
             continue;
         };
@@ -210,9 +208,7 @@ fn collect_loadable_sections_dedup(
         // no region already occupies this start address.  Avoids the
         // copy on the loser of a VMA collision (`.text` vs `.text.foo`
         // in an ET_REL `.o` before linking).
-        if let std::collections::btree_map::Entry::Vacant(e) =
-            by_addr.entry(sec.address())
-        {
+        if let std::collections::btree_map::Entry::Vacant(e) = by_addr.entry(sec.address()) {
             let region = MemRegion::new(sec.address(), data.to_vec())?;
             e.insert(region);
         }

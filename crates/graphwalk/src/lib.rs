@@ -372,4 +372,3 @@ where
 {
     PostOrder::new(graph, roots)
 }
-

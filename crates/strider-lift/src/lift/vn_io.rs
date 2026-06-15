@@ -10,6 +10,7 @@
 
 use anyhow::anyhow;
 use strider_ir::IRBuilderExt;
+use strider_ir::VnTypeExt;
 
 use super::FunctionLifter;
 use super::pcode_util::Result;
@@ -31,13 +32,25 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .sleigh()
             .space_info(space)
             .ok_or_else(|| anyhow!("no space info for {what} {space:?}"))?;
-        self.builder
-            .build_int_const(off, strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?)
+        self.builder.build_int_const(
+            off,
+            strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?,
+        )
     }
 
     /// Reads a sequence of varnodes into IR values, preserving order.
     pub(crate) fn read_vns(&mut self, vns: &[rsleigh::Vn]) -> Result<Vec<strider_ir::Value>> {
         vns.iter().map(|vn| self.read_vn(vn)).collect()
+    }
+
+    /// Reads the value of input varnode `n` of `insn` (checked index).
+    pub(super) fn read_input(
+        &mut self,
+        insn: &rsleigh::Insn,
+        n: usize,
+    ) -> Result<strider_ir::Value> {
+        let vn = crate::lift::pcode_util::nth_input_or_err(insn, n)?;
+        self.read_vn(vn)
     }
 
     /// Reads any varnode into an IR value.
@@ -60,13 +73,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(crate) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<strider_ir::Value> {
         let space = vn.addr_space;
         match space {
-            rsleigh::VnSpace::CONST => self
-                .builder
-                .build_int_const(vn.addr_off, strider_ir::ValueType::int_for_byte_size(vn.size)?),
+            rsleigh::VnSpace::CONST => self.builder.build_int_const(vn.addr_off, vn.int_type()?),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.builder.read_reg_vn(vn),
             rsleigh::VnSpace::RAM => {
                 let addr = self.build_addr_const(space, vn.addr_off, "RAM space")?;
-                Ok(self.builder.build_load(addr, space, strider_ir::ValueType::int_for_byte_size(vn.size)?)?)
+                Ok(self.builder.build_load(addr, space, vn.int_type()?)?)
             }
             _ => Err(anyhow!("unsupported varnode space {space:?}")),
         }
@@ -91,7 +102,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let space = vn.addr_space;
         match space {
             rsleigh::VnSpace::CONST => Err(anyhow!("attempted to write to CONST space: {space:?}")),
-            rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.builder.write_reg_vn(vn, val),
+            rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => {
+                self.builder.write_reg_vn(vn, val)
+            }
             rsleigh::VnSpace::RAM => {
                 let addr = self.build_addr_const(space, vn.addr_off, "RAM space")?;
                 Ok(self.builder.build_store(addr, val, space)?)

@@ -18,7 +18,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{IntPayload, NodeId, NodeKind};
 use strider_ir::{FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use crate::lift::{Lifter, FunctionLifter};
+use crate::lift::{FunctionLifter, Lifter};
 
 type TestReader = BufMemReader<Vec<u8>>;
 
@@ -27,12 +27,20 @@ const TEST_ENDIAN: strider_target::Endianness = strider_target::Endianness::Litt
 
 /// 4-byte register at the given REGISTER-space offset.
 fn reg(off: u64) -> Vn {
-    Vn { size: 4, addr_off: off, addr_space: VnSpace::REGISTER }
+    Vn {
+        size: 4,
+        addr_off: off,
+        addr_space: VnSpace::REGISTER,
+    }
 }
 
 /// CONST-space varnode of byte width `size` carrying integer `val`.
 fn const_vn(val: u64, size: u32) -> Vn {
-    Vn { size, addr_off: val, addr_space: VnSpace::CONST }
+    Vn {
+        size,
+        addr_off: val,
+        addr_space: VnSpace::CONST,
+    }
 }
 
 /// A throwaway pcode address for the `process_insn` funnel.  Tests that
@@ -54,7 +62,11 @@ fn empty_cc() -> strider_target::BuiltCallingConvention {
         callee_saved_regs: Vec::new(),
         ret_val_regs: Vec::new(),
         ret_val_regs_float: Vec::new(),
-        stack_vn: Vn { size: 4, addr_off: 0x9000, addr_space: VnSpace::REGISTER },
+        stack_vn: Vn {
+            size: 4,
+            addr_off: 0x9000,
+            addr_space: VnSpace::REGISTER,
+        },
         stack_args: None,
         ret_stack_pop: 0,
         link_register_vn: None,
@@ -69,9 +81,7 @@ fn empty_cc() -> strider_target::BuiltCallingConvention {
 /// The Sleigh + CFG are throwaway scaffolding (a single `ret` at 0x1000);
 /// the helper owns all the borrowed locals so the per-CFG lifter — which
 /// borrows them — need not be returned.
-fn with_test_lifter(
-    f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
-) {
+fn with_test_lifter(f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId)) {
     with_test_lifter_tracking(vec![reg(0), reg(4), reg(8)], f);
 }
 
@@ -107,14 +117,16 @@ fn with_test_lifter_tracking(
     // The Lifter now owns the Sleigh; CC is a per-call argument.
     let cc = empty_cc();
     let lifter = Lifter::new(arch, sleigh).expect("lifter");
-    let mut driver =
-        FunctionLifter::new(&lifter, &cc, &cfg, all_vns, None).expect("driver");
+    let mut driver = FunctionLifter::new(&lifter, &cc, &cfg, all_vns, None).expect("driver");
     // Entry-region setup (matches the old `make_builder`).  Clear the
     // lift address so tests start from `lift_addr = None`.
     driver.builder.set_lift_addr(None);
     driver.builder.build_entry().expect("build_entry");
     let region = driver.builder.create_region().expect("create_region");
-    driver.builder.set_entry_region(region).expect("set_entry_region");
+    driver
+        .builder
+        .set_entry_region(region)
+        .expect("set_entry_region");
     driver.builder.set_region(region);
     f(&mut driver, region_id);
 }
@@ -125,9 +137,13 @@ fn with_test_lifter_tracking(
 /// `RegionMap` is passed.
 fn assert_lifts_one(opcode: Opcode, output: Option<Vn>, inputs: Vec<Vn>) {
     with_test_lifter(|d, rid| {
-        let insn = Insn { opcode, output, inputs: inputs.into() };
+        let insn = Insn {
+            opcode,
+            output,
+            inputs: inputs.into(),
+        };
         d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-        .unwrap_or_else(|e| panic!("process_insn failed for {opcode:?}: {e}"));
+            .unwrap_or_else(|e| panic!("process_insn failed for {opcode:?}: {e}"));
     });
 }
 
@@ -135,17 +151,29 @@ fn assert_lifts_one(opcode: Opcode, output: Option<Vn>, inputs: Vec<Vn>) {
 
 #[test]
 fn lift_int_add_of_consts() {
-    assert_lifts_one(Opcode::IntAdd, Some(reg(0)), vec![const_vn(7, 4), const_vn(35, 4)]);
+    assert_lifts_one(
+        Opcode::IntAdd,
+        Some(reg(0)),
+        vec![const_vn(7, 4), const_vn(35, 4)],
+    );
 }
 
 #[test]
 fn lift_int_sub_of_consts() {
-    assert_lifts_one(Opcode::IntSub, Some(reg(0)), vec![const_vn(50, 4), const_vn(8, 4)]);
+    assert_lifts_one(
+        Opcode::IntSub,
+        Some(reg(0)),
+        vec![const_vn(50, 4), const_vn(8, 4)],
+    );
 }
 
 #[test]
 fn lift_bool_and_of_consts() {
-    assert_lifts_one(Opcode::BoolAnd, Some(reg(0)), vec![const_vn(1, 1), const_vn(1, 1)]);
+    assert_lifts_one(
+        Opcode::BoolAnd,
+        Some(reg(0)),
+        vec![const_vn(1, 1), const_vn(1, 1)],
+    );
 }
 
 #[test]
@@ -173,7 +201,11 @@ fn lift_insert_field_past_dest_width_errors() {
 
 #[test]
 fn lift_bool_or_of_consts() {
-    assert_lifts_one(Opcode::BoolOr, Some(reg(0)), vec![const_vn(0, 1), const_vn(1, 1)]);
+    assert_lifts_one(
+        Opcode::BoolOr,
+        Some(reg(0)),
+        vec![const_vn(0, 1), const_vn(1, 1)],
+    );
 }
 
 #[test]
@@ -202,7 +234,11 @@ fn lift_int_sext_extends_const() {
 
 #[test]
 fn lift_int_mul_of_consts() {
-    assert_lifts_one(Opcode::IntMul, Some(reg(0)), vec![const_vn(6, 4), const_vn(7, 4)]);
+    assert_lifts_one(
+        Opcode::IntMul,
+        Some(reg(0)),
+        vec![const_vn(6, 4), const_vn(7, 4)],
+    );
 }
 
 /// `IntNeg` (Sleigh bitwise complement) at a narrow width lowers to
@@ -224,7 +260,10 @@ fn lift_int_neg_narrow_lowers_to_xor_all_ones() {
         );
         // The I32 all-ones constant is inline `Small(0xFFFF_FFFF)`.
         assert!(
-            graph_has_kind(&d.builder, NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF))),
+            graph_has_kind(
+                &d.builder,
+                NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF))
+            ),
             "narrow IntNeg must materialise the I32 all-ones constant"
         );
     });
@@ -246,7 +285,11 @@ fn lift_int_neg_register_wide_lowers_to_xor_all_ones() {
         // A wide REGISTER varnode (own container — direct access, no
         // sub-register masking).  Offset well clear of the default 4-byte
         // regs at 0/4/8; tracked so the read resolves to its InitialVar.
-        let wide = Vn { size: width, addr_off: 0x100, addr_space: VnSpace::REGISTER };
+        let wide = Vn {
+            size: width,
+            addr_off: 0x100,
+            addr_space: VnSpace::REGISTER,
+        };
         with_test_lifter_tracking(vec![wide], |d, rid| {
             let insn = Insn {
                 opcode: Opcode::IntNeg,
@@ -254,7 +297,9 @@ fn lift_int_neg_register_wide_lowers_to_xor_all_ones() {
                 inputs: vec![wide].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap_or_else(|e| panic!("{label}: register-wide IntNeg must lift, got error: {e}"));
+                .unwrap_or_else(|e| {
+                    panic!("{label}: register-wide IntNeg must lift, got error: {e}")
+                });
             assert!(
                 graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Xor)),
                 "{label}: register-wide IntNeg must lower to an Xor at the wide type"
@@ -268,18 +313,42 @@ fn lift_int_neg_register_wide_lowers_to_xor_all_ones() {
 #[test]
 fn lift_truncate_extracts_low_bits() {
     // Subpiece(value, byte_offset, out_size).
-    assert_lifts_one(Opcode::Subpiece, Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }), vec![const_vn(0x1234_5678, 4), const_vn(0, 4)]);
+    assert_lifts_one(
+        Opcode::Subpiece,
+        Some(Vn {
+            size: 1,
+            addr_off: 0,
+            addr_space: VnSpace::REGISTER,
+        }),
+        vec![const_vn(0x1234_5678, 4), const_vn(0, 4)],
+    );
 }
 
 #[test]
 fn lift_piece_concatenates() {
-    assert_lifts_one(Opcode::Piece, Some(Vn { size: 4, addr_off: 0, addr_space: VnSpace::REGISTER }), vec![const_vn(0xAA, 2), const_vn(0xBB, 2)]);
+    assert_lifts_one(
+        Opcode::Piece,
+        Some(Vn {
+            size: 4,
+            addr_off: 0,
+            addr_space: VnSpace::REGISTER,
+        }),
+        vec![const_vn(0xAA, 2), const_vn(0xBB, 2)],
+    );
 }
 
 #[test]
 fn lift_extract_returns_slice() {
     // Extract(value, lsb, bit_count).
-    assert_lifts_one(Opcode::Extract, Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }), vec![const_vn(0xFF00, 4), const_vn(8, 4), const_vn(8, 4)]);
+    assert_lifts_one(
+        Opcode::Extract,
+        Some(Vn {
+            size: 1,
+            addr_off: 0,
+            addr_space: VnSpace::REGISTER,
+        }),
+        vec![const_vn(0xFF00, 4), const_vn(8, 4), const_vn(8, 4)],
+    );
 }
 
 #[test]
@@ -289,7 +358,11 @@ fn lift_extract_field_past_input_width_errors() {
     with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::Extract,
-            output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
+            output: Some(Vn {
+                size: 1,
+                addr_off: 0,
+                addr_space: VnSpace::REGISTER,
+            }),
             inputs: vec![const_vn(0xFFFF_FFFF, 4), const_vn(28, 4), const_vn(8, 4)].into(),
         };
         assert!(
@@ -318,7 +391,7 @@ fn lift_float_add_of_consts() {
             inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
         };
         d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-        .unwrap();
+            .unwrap();
     });
 }
 
@@ -340,7 +413,11 @@ fn lift_float_neg() {
 
 #[test]
 fn lift_segment_op_recognised() {
-    assert_lifts_one(Opcode::SegmentOp, Some(reg(0)), vec![const_vn(0, 4), const_vn(0, 2), const_vn(0, 4)]);
+    assert_lifts_one(
+        Opcode::SegmentOp,
+        Some(reg(0)),
+        vec![const_vn(0, 4), const_vn(0, 2), const_vn(0, 4)],
+    );
 }
 
 // ── Lift-time canonicalisation shape checks ─────────────────────────────────
@@ -355,7 +432,8 @@ fn lift_segment_op_recognised() {
 fn graph_has_kind(builder: &FunctionBuilder, target: NodeKind) -> bool {
     builder
         .function()
-        .graph().all_node_ids()
+        .graph()
+        .all_node_ids()
         .any(|id| builder.function().node_kind(id) == &target)
 }
 
@@ -363,7 +441,8 @@ fn graph_has_kind(builder: &FunctionBuilder, target: NodeKind) -> bool {
 fn find_first_node(builder: &FunctionBuilder, target: NodeKind) -> Option<NodeId> {
     builder
         .function()
-        .graph().all_node_ids()
+        .graph()
+        .all_node_ids()
         .find(|id| builder.function().node_kind(*id) == &target)
 }
 
@@ -382,14 +461,17 @@ fn signed_binary_op_sign_extends_narrower_operand() {
                 inputs: vec![const_vn(0xFFFF, 2), const_vn(2, 4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         assert!(
             graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Sdiv)),
             "expected an Sdiv node"
         );
         assert!(
-            graph_has_kind(&d.builder, NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF))),
+            graph_has_kind(
+                &d.builder,
+                NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF))
+            ),
             "the 2-byte -1 dividend must be SIGN-extended to the 4-byte op width (0xFFFF_FFFF)"
         );
     });
@@ -412,14 +494,17 @@ fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
                 inputs: vec![const_vn(0xFFFF_FFFF, 4), const_vn(5, 8)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         assert!(
             graph_has_kind(&d.builder, NodeKind::IntCmpOp(IntCmpOp::Sless)),
             "expected an Sless comparison node"
         );
         assert!(
-            graph_has_kind(&d.builder, NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF_FFFF_FFFF))),
+            graph_has_kind(
+                &d.builder,
+                NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF_FFFF_FFFF))
+            ),
             "the 4-byte -1 operand must be SIGN-extended to the 8-byte max width \
              (0xFFFF_FFFF_FFFF_FFFF) — proving max-width comparison + sign-correct extension"
         );
@@ -475,7 +560,7 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
                 inputs: vec![const_vn(3, 4), const_vn(4, 4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         // The funnel has reset `lift_addr` to `None`; a fresh node minted
         // now must have no fingerprint.
@@ -485,7 +570,10 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
             .unwrap();
         let outside_node = d.builder.function().producer(outside);
         assert!(
-            d.builder.function().asm_fingerprint(outside_node).is_empty(),
+            d.builder
+                .function()
+                .asm_fingerprint(outside_node)
+                .is_empty(),
             "a node built after process_insn returns should have an empty fingerprint \
              (the funnel reset lift_addr to None)"
         );
@@ -535,18 +623,62 @@ fn lift_int_less_equal_lowers_to_boolneg_less() {
                 inputs: vec![const_vn(5, 4), const_vn(7, 4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         // Canonical shape: `Xor(IntLess(_, _), IntConst(1)):I1` (a 1-bit
         // logical NOT — the former BitNot unary-op was removed in favour of the
         // Xor-with-all-ones shape).  Pin the I1 Xor and the IntCmpOp::Less.
         assert!(
-            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)),
+            graph_has_kind(
+                &d.builder,
+                NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)
+            ),
             "expected IntBinaryOp::Xor in graph (the I1 logical-NOT wrap)"
         );
         assert!(
             graph_has_kind(&d.builder, NodeKind::IntCmpOp(IntCmpOp::Less)),
             "expected IntCmpOp::Less in graph (the lowered cmp)"
+        );
+    });
+}
+
+/// `IntLessEqual(a, b)` lowers to `Xor(IntLess(b, a), 1):I1` — a SWAP.
+/// Feeding two DISTINCT register operands lets us assert the `Less` node's
+/// inputs are in SWAPPED order (rhs-then-lhs vs instruction order): the
+/// first cmp input is the read of `b` (reg(4)), the second is the read of
+/// `a` (reg(0)).  Existing const-fed tests could not catch a dropped swap.
+#[test]
+fn lift_int_less_equal_swaps_operands() {
+    with_test_lifter(|d, rid| {
+        {
+            // IntLessEqual(reg(0), reg(4)): a = reg(0), b = reg(4).
+            let insn = Insn {
+                opcode: Opcode::IntLessEqual,
+                output: Some(reg(8)),
+                inputs: vec![reg(0), reg(4)].into(),
+            };
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+                .unwrap();
+        }
+        let less = find_first_node(&d.builder, NodeKind::IntCmpOp(IntCmpOp::Less))
+            .expect("IntLessEqual must lower to an IntLess cmp");
+        let [cmp_lhs, cmp_rhs] = d
+            .builder
+            .function()
+            .node_inputs_exact::<2>(less)
+            .expect("Less has two inputs");
+        // Swapped: cmp_lhs is the read of b (reg(4)), cmp_rhs is the read of
+        // a (reg(0)).  An entry-region register read materialises as a Phi
+        // whose source-varnode tag (get_vn_for_value) names the register.
+        assert_eq!(
+            d.builder.function().get_vn_for_value(cmp_lhs),
+            Some(reg(4)),
+            "Less first operand must be the SWAPPED rhs (read of b = reg(4))"
+        );
+        assert_eq!(
+            d.builder.function().get_vn_for_value(cmp_rhs),
+            Some(reg(0)),
+            "Less second operand must be the SWAPPED lhs (read of a = reg(0))"
         );
     });
 }
@@ -561,7 +693,7 @@ fn lift_int_sub_lowers_to_add_neg() {
                 inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         // Canonical shape: IntBinaryOp::Add over (lhs, IntUnaryOp::Neg(rhs)).
         assert!(
@@ -588,7 +720,8 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
     with_test_lifter(|d, rid| {
         let count = |b: &FunctionBuilder, target: NodeKind| -> usize {
             b.function()
-                .graph().all_node_ids()
+                .graph()
+                .all_node_ids()
                 .filter(|&id| b.function().node_kind(id) == &target)
                 .count()
         };
@@ -600,12 +733,18 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
                 inputs: vec![reg(0), reg(4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         let adds_after_first = count(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add));
         let negs_after_first = count(&d.builder, NodeKind::IntUnaryOp(IntUnaryOp::Neg));
-        assert_eq!(adds_after_first, 1, "first IntSub lift must produce exactly one Add");
-        assert_eq!(negs_after_first, 1, "first IntSub lift must produce exactly one Neg");
+        assert_eq!(
+            adds_after_first, 1,
+            "first IntSub lift must produce exactly one Add"
+        );
+        assert_eq!(
+            negs_after_first, 1,
+            "first IntSub lift must produce exactly one Neg"
+        );
         {
             // Same inputs (reg(0), reg(4)), DIFFERENT output reg.  Cache must
             // dedupe the inner Neg(reg(4)) and outer Add(reg(0), Neg(reg(4))).
@@ -615,7 +754,7 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
                 inputs: vec![reg(0), reg(4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         let adds_after_second = count(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add));
         let negs_after_second = count(&d.builder, NodeKind::IntUnaryOp(IntUnaryOp::Neg));
@@ -638,8 +777,14 @@ fn lift_int_sub_caches_lowered_shape() {
     with_test_lifter(|d, rid| {
         let count_subs_in_graph = |b: &FunctionBuilder| -> usize {
             b.function()
-                .graph().all_node_ids()
-                .filter(|&id| matches!(b.function().node_kind(id), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+                .graph()
+                .all_node_ids()
+                .filter(|&id| {
+                    matches!(
+                        b.function().node_kind(id),
+                        NodeKind::IntBinaryOp(IntBinaryOp::Add)
+                    )
+                })
                 .count()
         };
         {
@@ -649,7 +794,7 @@ fn lift_int_sub_caches_lowered_shape() {
                 inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         let after_first = count_subs_in_graph(&d.builder);
         {
@@ -661,7 +806,7 @@ fn lift_int_sub_caches_lowered_shape() {
                 inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         let after_second = count_subs_in_graph(&d.builder);
         assert_eq!(
@@ -681,10 +826,13 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
                 inputs: vec![const_vn(5, 4), const_vn(7, 4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         assert!(
-            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)),
+            graph_has_kind(
+                &d.builder,
+                NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)
+            ),
             "expected IntBinaryOp::Xor in graph (the I1 logical-NOT wrap, post-BitNot removal)"
         );
         assert!(
@@ -709,7 +857,11 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
 #[test]
 fn process_insn_branch_is_noop_ok() {
     with_test_lifter(|d, rid| {
-        let insn = Insn { opcode: Opcode::Branch, output: None, inputs: Default::default() };
+        let insn = Insn {
+            opcode: Opcode::Branch,
+            output: None,
+            inputs: Default::default(),
+        };
         assert!(
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_ok(),
@@ -721,7 +873,11 @@ fn process_insn_branch_is_noop_ok() {
 #[test]
 fn process_insn_cond_branch_errors_on_missing_cond() {
     with_test_lifter(|d, rid| {
-        let insn = Insn { opcode: Opcode::CondBranch, output: None, inputs: Default::default() };
+        let insn = Insn {
+            opcode: Opcode::CondBranch,
+            output: None,
+            inputs: Default::default(),
+        };
         assert!(
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
@@ -733,7 +889,11 @@ fn process_insn_cond_branch_errors_on_missing_cond() {
 #[test]
 fn process_insn_branch_indirect_dispatches_to_return() {
     with_test_lifter(|d, rid| {
-        let insn = Insn { opcode: Opcode::BranchIndirect, output: None, inputs: Default::default() };
+        let insn = Insn {
+            opcode: Opcode::BranchIndirect,
+            output: None,
+            inputs: Default::default(),
+        };
         assert!(
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_ok(),
@@ -745,7 +905,11 @@ fn process_insn_branch_indirect_dispatches_to_return() {
 #[test]
 fn process_insn_return_dispatches_to_return() {
     with_test_lifter(|d, rid| {
-        let insn = Insn { opcode: Opcode::Return, output: None, inputs: Default::default() };
+        let insn = Insn {
+            opcode: Opcode::Return,
+            output: None,
+            inputs: Default::default(),
+        };
         assert!(
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_ok(),
@@ -757,7 +921,11 @@ fn process_insn_return_dispatches_to_return() {
 #[test]
 fn process_insn_call_errors_on_missing_target() {
     with_test_lifter(|d, rid| {
-        let insn = Insn { opcode: Opcode::Call, output: None, inputs: Default::default() };
+        let insn = Insn {
+            opcode: Opcode::Call,
+            output: None,
+            inputs: Default::default(),
+        };
         assert!(
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
@@ -769,7 +937,11 @@ fn process_insn_call_errors_on_missing_target() {
 #[test]
 fn process_insn_call_indirect_errors_on_missing_target() {
     with_test_lifter(|d, rid| {
-        let insn = Insn { opcode: Opcode::CallIndirect, output: None, inputs: Default::default() };
+        let insn = Insn {
+            opcode: Opcode::CallIndirect,
+            output: None,
+            inputs: Default::default(),
+        };
         assert!(
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
@@ -781,7 +953,11 @@ fn process_insn_call_indirect_errors_on_missing_target() {
 #[test]
 fn process_insn_call_other_errors_on_missing_user_op_id() {
     with_test_lifter(|d, rid| {
-        let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: Default::default() };
+        let insn = Insn {
+            opcode: Opcode::CallOther,
+            output: None,
+            inputs: Default::default(),
+        };
         assert!(
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
@@ -793,7 +969,11 @@ fn process_insn_call_other_errors_on_missing_user_op_id() {
 #[test]
 fn process_insn_store_errors_on_missing_operands() {
     with_test_lifter(|d, rid| {
-        let insn = Insn { opcode: Opcode::Store, output: None, inputs: Default::default() };
+        let insn = Insn {
+            opcode: Opcode::Store,
+            output: None,
+            inputs: Default::default(),
+        };
         assert!(
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
@@ -805,7 +985,11 @@ fn process_insn_store_errors_on_missing_operands() {
 #[test]
 fn process_insn_nop_is_ok() {
     with_test_lifter(|d, rid| {
-        let insn = Insn { opcode: Opcode::Nop, output: None, inputs: Default::default() };
+        let insn = Insn {
+            opcode: Opcode::Nop,
+            output: None,
+            inputs: Default::default(),
+        };
         assert!(
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_ok(),
@@ -880,14 +1064,21 @@ fn lift_subpiece_out_of_range_errors() {
     with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::Subpiece,
-            output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
+            output: Some(Vn {
+                size: 1,
+                addr_off: 0,
+                addr_space: VnSpace::REGISTER,
+            }),
             // input is 4 bytes wide, byte_offset = 5 (> 4) ⇒ error.
             inputs: vec![const_vn(0, 4), const_vn(5, 4)].into(),
         };
         let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
         assert!(res.is_err(), "out-of-range Subpiece should error");
         if let Err(e) = res {
-            assert!(e.to_string().contains("Subpiece byte_offset"), "got: {e}");
+            assert!(
+                format!("{e:#}").contains("Subpiece byte_offset"),
+                "got: {e:#}"
+            );
         }
     });
 }
@@ -904,8 +1095,8 @@ fn lift_missing_output_errors_for_op_that_needs_one() {
         assert!(res.is_err(), "Copy without output_vn should error");
         if let Err(e) = res {
             assert!(
-                e.to_string().contains("instruction has no output varnode"),
-                "got: {e}"
+                format!("{e:#}").contains("instruction has no output varnode"),
+                "got: {e:#}"
             );
         }
     });
@@ -939,7 +1130,11 @@ fn process_insn_call_other_dispatches_to_call_other_handler() {
     // unified dispatch routes CallOther to its handler rather than declining
     // it as the pre-merge value lifter did.
     with_test_lifter(|d, rid| {
-        let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: Default::default() };
+        let insn = Insn {
+            opcode: Opcode::CallOther,
+            output: None,
+            inputs: Default::default(),
+        };
         assert!(
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
@@ -960,14 +1155,20 @@ fn lift_float_sub_lowers_to_float_add_neg() {
                 inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         assert!(
-            graph_has_kind(&d.builder, NodeKind::FloatBinaryOp(strider_ir::FloatBinaryOp::Add)),
+            graph_has_kind(
+                &d.builder,
+                NodeKind::FloatBinaryOp(strider_ir::FloatBinaryOp::Add)
+            ),
             "FloatSub lift must produce a FloatAdd (the lowering wrap)"
         );
         assert!(
-            graph_has_kind(&d.builder, NodeKind::FloatUnaryOp(strider_ir::FloatUnaryOp::Neg)),
+            graph_has_kind(
+                &d.builder,
+                NodeKind::FloatUnaryOp(strider_ir::FloatUnaryOp::Neg)
+            ),
             "FloatSub lift must produce a FloatUnaryOp::Neg (the negated rhs)"
         );
     });
@@ -983,14 +1184,20 @@ fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
                 inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         assert!(
-            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)),
+            graph_has_kind(
+                &d.builder,
+                NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)
+            ),
             "FloatNotEqual lift must produce an IntBinaryOp::Xor (the I1 logical-NOT wrap, post-BitNot removal)"
         );
         assert!(
-            graph_has_kind(&d.builder, NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal)),
+            graph_has_kind(
+                &d.builder,
+                NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal)
+            ),
             "FloatNotEqual lift must produce a FloatCmpOp::Equal (the lowered cmp)"
         );
     });
@@ -1008,19 +1215,214 @@ fn lift_float_less_equal_lowers_to_or_less_equal() {
                 inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
+                .unwrap();
         }
         assert!(
             graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Or)),
             "FloatLessEqual lift must produce an IntBinaryOp::Or (the disjunction wrap)"
         );
         assert!(
-            graph_has_kind(&d.builder, NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Less)),
+            graph_has_kind(
+                &d.builder,
+                NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Less)
+            ),
             "FloatLessEqual lift must produce a FloatCmpOp::Less"
         );
         assert!(
-            graph_has_kind(&d.builder, NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal)),
+            graph_has_kind(
+                &d.builder,
+                NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal)
+            ),
             "FloatLessEqual lift must produce a FloatCmpOp::Equal"
+        );
+    });
+}
+
+/// `FloatNan(x)` lowers to `Xor(FloatEqual(x, x), 1):I1` — `is_nan(x)` ≡
+/// `x != x`.  Assert the `FloatEqual`'s two inputs are the SAME value, and
+/// that it is wrapped by an `IntBinaryOp::Xor` at I1 (the I1 logical-NOT).
+#[test]
+fn lift_float_nan_lowers_to_self_inequality() {
+    with_test_lifter(|d, rid| {
+        {
+            // Single 4-byte (F32) input read from a register so both
+            // FloatEqual operands resolve to the same value.
+            let insn = Insn {
+                opcode: Opcode::FloatNan,
+                output: Some(reg(4)),
+                inputs: vec![reg(0)].into(),
+            };
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+                .unwrap();
+        }
+        let eq = find_first_node(
+            &d.builder,
+            NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal),
+        )
+        .expect("FloatNan must lower to a FloatEqual cmp");
+        let [eq_lhs, eq_rhs] = d
+            .builder
+            .function()
+            .node_inputs_exact::<2>(eq)
+            .expect("FloatEqual has two inputs");
+        assert_eq!(
+            eq_lhs, eq_rhs,
+            "FloatNan(x) compares x against ITSELF — both FloatEqual operands \
+             must be the identical value"
+        );
+
+        // The FloatEqual (I1) feeds the I1 logical-NOT Xor.
+        let xor = find_first_node(
+            &d.builder,
+            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor),
+        )
+        .expect("FloatNan must wrap the cmp in an I1 Xor (logical NOT)");
+        let [xor_out] = d
+            .builder
+            .function()
+            .node_outputs_exact::<1>(xor)
+            .expect("Xor has one output");
+        assert_eq!(
+            d.builder.function().value_type(xor_out).ok(),
+            Some(strider_ir::ValueType::I1),
+            "the Xor wrap must be at I1"
+        );
+        let [eq_out] = d
+            .builder
+            .function()
+            .node_outputs_exact::<1>(eq)
+            .expect("FloatEqual has one output");
+        assert!(
+            d.builder
+                .function()
+                .node_inputs(xor)
+                .into_iter()
+                .any(|v| v == eq_out),
+            "the I1 Xor must consume the FloatEqual result"
+        );
+    });
+}
+
+// ── Signed-op width-mismatch guard (MED-2) ───────────────────────────────────
+
+/// `IntSdiv` with a LHS wider than the output must not silently truncate the
+/// wider operand before the signed division (which would drop high bits with
+/// no sign awareness).  The dispatched signed-op path now guards on
+/// equal input widths, surfacing the mismatch as a loud lift-time error.
+#[test]
+fn sdiv_with_wider_lhs_does_not_silently_truncate() {
+    with_test_lifter_tracking(
+        vec![
+            Vn {
+                size: 8,
+                addr_off: 0x200,
+                addr_space: VnSpace::REGISTER,
+            },
+            reg(0),
+            reg(4),
+        ],
+        |d, rid| {
+            // lhs is an 8-byte register, rhs + output are 4 bytes.  The old
+            // path would `extend_if_needed(lhs, I32, SignExtend)` which
+            // truncates the 8-byte lhs to 4 bytes *before* the signed div.
+            let wide_lhs = Vn {
+                size: 8,
+                addr_off: 0x200,
+                addr_space: VnSpace::REGISTER,
+            };
+            let insn = Insn {
+                opcode: Opcode::IntSdiv,
+                output: Some(reg(0)),
+                inputs: vec![wide_lhs, reg(4)].into(),
+            };
+            let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
+            assert!(
+                res.is_err(),
+                "IntSdiv with lhs wider than output must error (no silent truncate)"
+            );
+            if let Err(e) = res {
+                // `{:#}` renders the full anyhow cause chain (the per-insn
+                // funnel wraps the inner error with asm context).
+                let msg = format!("{e:#}");
+                assert!(
+                    msg.contains("width mismatch"),
+                    "error must name the width mismatch; got: {msg}"
+                );
+            }
+        },
+    );
+}
+
+// ── Wide SUBPIECE high-lane extract (MED-3) ──────────────────────────────────
+
+/// A YMM (I256) SUBPIECE with a nonzero byte_offset builds its right-shift at
+/// the *input* width (I256).  The shift constant must route through the
+/// wide-const path so the extract lifts cleanly rather than hard-aborting on
+/// `build_int_const`'s I256/I512 rejection.
+#[test]
+fn subpiece_ymm_high_lane() {
+    let wide = Vn {
+        size: 32,
+        addr_off: 0x100,
+        addr_space: VnSpace::REGISTER,
+    };
+    let out = Vn {
+        size: 16,
+        addr_off: 0x80,
+        addr_space: VnSpace::REGISTER,
+    };
+    with_test_lifter_tracking(vec![out, wide], |d, rid| {
+        // SUBPIECE(ymm, byte_offset=16, out=xmm) — extract the high 128-bit
+        // lane of a 256-bit YMM register.
+        let insn = Insn {
+            opcode: Opcode::Subpiece,
+            output: Some(out),
+            inputs: vec![wide, const_vn(16, 4)].into(),
+        };
+        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+            .unwrap_or_else(|e| panic!("YMM high-lane SUBPIECE must lift, got error: {e}"));
+        assert!(
+            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight)),
+            "wide SUBPIECE with offset must build a ShiftRight at the input width"
+        );
+    });
+}
+
+// ── Odd-width load asm-attribution (MED-1) ───────────────────────────────────
+
+/// A 6-byte load (e.g. an x86 far-pointer `lds`/`les`) has no supported
+/// integer `ValueType`, so `int_for_byte_size` hard-errors.  The lifter
+/// cannot widen that type, but the lift error must name the offending
+/// machine instruction (its address / opcode) so a failed lift is
+/// debuggable instead of being a bare "unsupported node output size".
+#[test]
+fn load_odd_byte_width_errors_with_asm_context() {
+    with_test_lifter(|d, rid| {
+        // A 6-byte output varnode — no supported integer type.  Use a Copy
+        // from a 6-byte CONST so the size flows through `int_type`/output.
+        let insn = Insn {
+            opcode: Opcode::Copy,
+            output: Some(Vn {
+                size: 6,
+                addr_off: 0,
+                addr_space: VnSpace::REGISTER,
+            }),
+            inputs: vec![const_vn(0, 6)].into(),
+        };
+        let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
+        let err = res.expect_err("6-byte output must error (unsupported width)");
+        // `{:#}` renders the full anyhow cause chain — both the asm context
+        // (outer) and the inner unsupported-width cause.
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("unsupported node output size") || msg.contains("6 bytes"),
+            "error must still describe the unsupported width; got: {msg}"
+        );
+        // The machine address (0x1000, from `test_addr`) and/or opcode must
+        // appear so the failed lift names the offending instruction.
+        assert!(
+            msg.contains("0x1000") || msg.contains("4096") || msg.contains("Copy"),
+            "lift error must attach the machine address / opcode for context; got: {msg}"
         );
     });
 }

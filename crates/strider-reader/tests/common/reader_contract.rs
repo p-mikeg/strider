@@ -7,8 +7,8 @@
 
 #![allow(dead_code)]
 
-use strider_reader::ReadOnlyMemory;
 use rsleigh::{MemReader, VnAddr, VnSpace};
+use strider_reader::ReadOnlyMemory;
 
 // ── MemReader ────────────────────────────────────────────────────────────
 
@@ -21,10 +21,25 @@ where
 {
     let mut buf = vec![0u8; expected.len()];
     let n = r
-        .read(VnAddr { off: addr, space: VnSpace::RAM }, &mut buf)
+        .read(
+            VnAddr {
+                off: addr,
+                space: VnSpace::RAM,
+            },
+            &mut buf,
+        )
         .expect("MemReader::read");
-    assert_eq!(n, expected.len(), "expected full read of {} bytes", expected.len());
-    assert_eq!(&buf[..], expected, "MemReader read returned unexpected bytes");
+    assert_eq!(
+        n,
+        expected.len(),
+        "expected full read of {} bytes",
+        expected.len()
+    );
+    assert_eq!(
+        &buf[..],
+        expected,
+        "MemReader read returned unexpected bytes"
+    );
 }
 
 /// Asserts that a read at an unmapped address fails with an error whose
@@ -37,7 +52,13 @@ where
 {
     let mut buf = [0u8; 1];
     let err = r
-        .read(VnAddr { off: addr, space: VnSpace::RAM }, &mut buf)
+        .read(
+            VnAddr {
+                off: addr,
+                space: VnSpace::RAM,
+            },
+            &mut buf,
+        )
         .expect_err("read at unmapped addr must error");
     let msg = err.to_string();
     let expected_addr = format!("{addr:#x}");
@@ -57,7 +78,13 @@ where
     assert!(expected_n <= buf_len);
     let mut buf = vec![0u8; buf_len];
     let n = r
-        .read(VnAddr { off: addr, space: VnSpace::RAM }, &mut buf)
+        .read(
+            VnAddr {
+                off: addr,
+                space: VnSpace::RAM,
+            },
+            &mut buf,
+        )
         .expect("MemReader partial read");
     assert_eq!(n, expected_n, "partial read length");
 }
@@ -67,11 +94,7 @@ where
 /// Asserts that filling a `expected.len()`-byte buffer at `addr` succeeds
 /// and yields exactly the RAW mapped bytes (no endianness swap — the
 /// reader copies bytes verbatim; decode is the optimizer's job).
-pub fn assert_readonly_reads(
-    r: &impl ReadOnlyMemory,
-    addr: u64,
-    expected: &[u8],
-) {
+pub fn assert_readonly_reads(r: &impl ReadOnlyMemory, addr: u64, expected: &[u8]) {
     let mut buf = vec![0u8; expected.len()];
     r.read(addr, &mut buf).expect("ReadOnlyMemory::read");
     assert_eq!(&buf[..], expected, "ReadOnlyMemory raw bytes");
@@ -79,11 +102,7 @@ pub fn assert_readonly_reads(
 
 /// Asserts that filling a `len`-byte buffer at `addr` errors (any byte in
 /// the range is unmapped — the all-or-nothing contract).
-pub fn assert_readonly_errors(
-    r: &impl ReadOnlyMemory,
-    addr: u64,
-    len: usize,
-) {
+pub fn assert_readonly_errors(r: &impl ReadOnlyMemory, addr: u64, len: usize) {
     let mut buf = vec![0u8; len];
     assert!(
         r.read(addr, &mut buf).is_err(),

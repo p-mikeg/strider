@@ -87,43 +87,37 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let rom_for_classify: &dyn strider_orchestrator::opt::ReadOnlyMemory = &rom_for_opt;
     for (anchor_addr, _placeholder) in &unresolved {
         // Mirror the orchestrator's `IndirectBranchClassify` post-pass:
-        // walk every reachable `IndirectBranch` node and classify its
-        // *current* slot-2 input — the live dispatch value, not the
-        // lift-time one an opt pass may have `replace_all_uses`-rewired
-        // away.
-        let mut live_anchors: Vec<strider_ir::node::ValueId> = Vec::new();
+        // walk every reachable `IndirectBranch` node and classify it (the
+        // classifier reads its *current* slot-2 dispatch value off the node).
+        let mut live_branches: Vec<strider_ir::node::NodeId> = Vec::new();
         for n in function.walk() {
             if matches!(
                 function.node_kind(n),
                 strider_ir::node::NodeKind::IndirectBranch
             ) {
-                let inputs: Vec<strider_ir::node::ValueId> =
-                    function.node_inputs(n).into_iter().collect();
-                if inputs.len() == 3 {
-                    live_anchors.push(inputs[2]);
-                }
+                live_branches.push(n);
             }
         }
         // If no placeholder survived, the optimizer collapsed the
         // dispatch entirely (e.g. ConstantFold proved a single target and
         // the placeholder became an ABI Return).  The test's promise holds
         // vacuously.
-        if live_anchors.is_empty() {
+        if live_branches.is_empty() {
             continue;
         }
         let mut any_resolved = false;
-        let view: &strider_ir::Function =
-            &function;
+        let view: &strider_ir::Function = &function;
         let known =
             strider_orchestrator::opt::analyze_known_bits(view).expect("analyze_known_bits");
         let doms = strider_ir::control_dominators(view);
-        let ranges = strider_orchestrator::opt::value_range::compute_value_ranges(view, &doms, &known);
-        for live in &live_anchors {
+        let mut ranges =
+            strider_orchestrator::opt::value_range::compute_value_ranges(view, &doms, &known);
+        for &branch in &live_branches {
             let resolved = strider_orchestrator::opt::classify_anchor(
                 view,
-                *live,
+                branch,
                 Some(rom_for_classify),
-                &ranges,
+                &mut ranges,
                 strider_orchestrator::opt::AliasMode::StackGlobalDisjoint,
             );
             if resolved.is_some() {

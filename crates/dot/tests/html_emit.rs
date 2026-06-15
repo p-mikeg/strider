@@ -54,6 +54,54 @@ fn render_html(n: usize) -> String {
     gd.as_html_from_dot().expect("html emit succeeded")
 }
 
+/// A dumper whose `dump_as_dot` always fails — used to pin the error path of
+/// `as_dot` / `as_html_from_dot` / `dump_as_html`.
+struct FailingDumper;
+
+impl GraphDotDumper for FailingDumper {
+    type Node = usize;
+    type Error = anyhow::Error;
+    type State = ();
+
+    fn create_initial_state(&self) -> Self::State {}
+
+    fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
+        0..1
+    }
+
+    fn dump_as_dot(
+        &self,
+        _node: Self::Node,
+        _out: &mut DotEmitter,
+        _state: &mut Self::State,
+    ) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!("boom"))
+    }
+}
+
+#[test]
+fn dumper_error_propagates_wrapped() {
+    // `render_dot_string` wraps a dumper error as `anyhow!("dot dump error: {e}")`
+    // and propagates it through `as_dot` / `as_html_from_dot`.  Pin both the
+    // failure and the wrapping prefix so the error path stays observable.
+    let gd = GraphDot::new(FailingDumper, DotStyle::dark());
+
+    let dot_err = gd.as_dot().expect_err("as_dot must surface the dumper error");
+    let msg = format!("{dot_err}");
+    assert!(
+        msg.contains("dot dump error") && msg.contains("boom"),
+        "expected wrapped dumper error, got: {msg}"
+    );
+
+    let html_err = gd
+        .as_html_from_dot()
+        .expect_err("as_html_from_dot must surface the dumper error");
+    assert!(
+        format!("{html_err}").contains("dot dump error"),
+        "html path must propagate the wrapped dumper error"
+    );
+}
+
 #[test]
 fn html_emit_substitutes_every_placeholder() {
     let html = render_html(3);

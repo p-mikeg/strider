@@ -20,10 +20,10 @@ use std::mem::Discriminant;
 
 use strider_ir::node::NodeKind;
 
-use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, NodePredicate, Pattern};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 
 use super::{IndexedInputs, MemPat, SubCompiler};
 
@@ -74,7 +74,8 @@ impl LowerResult {
     /// [`MemPat`] impls of the memory-rooted wrappers.
     #[allow(clippy::expect_used)]
     pub(crate) fn mem_value(self) -> PatValueRef {
-        self.anchor_out.expect("memory-anchored NodePat has a memory output")
+        self.anchor_out
+            .expect("memory-anchored NodePat has a memory output")
     }
 }
 
@@ -142,7 +143,8 @@ impl NodePat {
     /// Wire a memory-producing sub-pattern into raw input `slot` (its
     /// memory-token output feeds the slot).
     pub(crate) fn input_mem<M: MemPat + 'static>(mut self, slot: usize, p: M) -> Self {
-        self.inputs.push((slot, Box::new(move |b| p.compile_mem(b))));
+        self.inputs
+            .push((slot, Box::new(move |b| p.compile_mem(b))));
         self
     }
 
@@ -237,7 +239,9 @@ impl NodePat {
     /// impls of value-rooted wrappers that nest as a value operand).
     #[allow(clippy::expect_used)]
     pub(crate) fn compile_value(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.lower(b).anchor_out.expect("value-rooted NodePat has a value output")
+        self.lower(b)
+            .anchor_out
+            .expect("value-rooted NodePat has a value output")
     }
 }
 
@@ -262,9 +266,15 @@ pub(crate) type KindCheck = Box<dyn Fn(&NodeKind) -> bool>;
 /// `check` is `Some`, additionally narrows the exact payload via
 /// [`KindSpec::VariantWith`]. Shared by `CallOther` (`user_op_id`) and
 /// `Load` / `Store` (`space`).
-pub(crate) fn variant_kind(discriminant: Discriminant<NodeKind>, check: Option<KindCheck>) -> KindSpec {
+pub(crate) fn variant_kind(
+    discriminant: Discriminant<NodeKind>,
+    check: Option<KindCheck>,
+) -> KindSpec {
     match check {
         None => KindSpec::Variant(discriminant),
-        Some(check) => KindSpec::VariantWith { discriminant, check },
+        Some(check) => KindSpec::VariantWith {
+            discriminant,
+            check,
+        },
     }
 }

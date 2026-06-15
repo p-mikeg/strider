@@ -162,7 +162,9 @@ mod tests {
     fn builds_bipartite_add_shape() {
         let mut b = MatcherBuilder::new();
         let x = b.leaf(crate::matcher::KindSpec::Any);
-        let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(1))));
+        let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(
+            IntPayload::Small(1),
+        )));
         let _sum = b.binary(strider_ir::IntBinaryOp::Add, x, k);
         let p = b.finish();
         assert_eq!(p.node_count(), 3);

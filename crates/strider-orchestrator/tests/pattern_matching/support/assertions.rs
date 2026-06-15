@@ -2,8 +2,8 @@
 //! of these helpers so failure messages are uniform and informative.
 
 use strider_ir::Function;
-use strider_ir::{IRViewer, IRWalker};
 use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{IRViewer, IRWalker};
 use strider_pattern::{Match, Matcher, Pattern};
 
 // Callers finalise their pattern before handing it to these helpers:

@@ -4,9 +4,10 @@
 //! call return outputs, `.capture`, `ret().ret_val()` / `.preceded_by()`,
 //! `if_node().cond().true_branch().false_branch()`, `.at(addr)` convenience.
 
-use strider_pattern::*;
 use strider_ir::IRViewer;
 use strider_ir::IntCmpOp;
+use strider_pattern::matcher::{KindSpec, MatcherBuilder};
+use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};
 
@@ -38,7 +39,11 @@ fn call_target_with_pattern() {
 fn call_at_any_matches_when_target_is_in_set() {
     let function = shapes::call_at(0x1234);
     // Set contains the call's target → match.
-    a::matches(&function, call().at_any([0x1000u64, 0x1234, 0x9999]).build(), 1);
+    a::matches(
+        &function,
+        call().at_any([0x1000u64, 0x1234, 0x9999]).build(),
+        1,
+    );
 }
 
 #[test]
@@ -65,12 +70,16 @@ fn int_const_any_of_matches_set_membership() {
     // the standalone any-of ctor.
     a::matches(
         &function,
-        call().target(int_const_any_of([0x1234u64, 0xDEADBEEF])).build(),
+        call()
+            .target(int_const_any_of([0x1234u64, 0xDEADBEEF]))
+            .build(),
         1,
     );
     a::none(
         &function,
-        call().target(int_const_any_of([0x1000u64, 0xDEADBEEF])).build(),
+        call()
+            .target(int_const_any_of([0x1000u64, 0xDEADBEEF]))
+            .build(),
     );
 }
 
@@ -123,13 +132,19 @@ fn call_multiple_args() {
     let function = graph_call_with_two_args();
     a::matches(
         &function,
-        call().arg(0, int_const(11u128)).arg(1, int_const(22u128)).build(),
+        call()
+            .arg(0, int_const(11u128))
+            .arg(1, int_const(22u128))
+            .build(),
         1,
     );
     // Right arg 0, wrong arg 1.
     a::none(
         &function,
-        call().arg(0, int_const(11u128)).arg(1, int_const(0u128)).build(),
+        call()
+            .arg(0, int_const(11u128))
+            .arg(1, int_const(0u128))
+            .build(),
     );
 }
 
@@ -160,9 +175,14 @@ fn with_root_post_match_filters_control_pattern() {
 fn with_root_post_match_sees_root_node() {
     // The guard receives the matched root `NodeId` and can inspect it.
     let function = shapes::call_at(0x1234);
-    let guarded = call().build().with_root_post_match(Box::new(|m, node, _ty, _b| {
-        matches!(m.function().node_kind(node), strider_ir::node::NodeKind::Call)
-    }));
+    let guarded = call()
+        .build()
+        .with_root_post_match(Box::new(|m, node, _ty, _b| {
+            matches!(
+                m.function().node_kind(node),
+                strider_ir::node::NodeKind::Call
+            )
+        }));
     a::matches(&function, guarded, 1);
 }
 
@@ -179,7 +199,9 @@ fn ret_val_matches_returned_value() {
     let function = shapes::add_consts(5, 3);
     a::matches(
         &function,
-        ret().ret_val(0, add(int_const(5u128), int_const(3u128))).build(),
+        ret()
+            .ret_val(0, add(int_const(5u128), int_const(3u128)))
+            .build(),
         1,
     );
     // Ret val constrained to something not in the graph → reject.
@@ -231,13 +253,17 @@ fn if_node_cond_matches() {
     let function = shapes::if_cmp_then_return(4);
     a::matches(
         &function,
-        if_node().cond(int_eq(int_const(4u128), int_const(1u128))).build(),
+        if_node()
+            .cond(int_eq(int_const(4u128), int_const(1u128)))
+            .build(),
         1,
     );
     // Wrong cond subpattern.
     a::none(
         &function,
-        if_node().cond(int_eq(int_const(99u128), int_const(1u128))).build(),
+        if_node()
+            .cond(int_eq(int_const(99u128), int_const(1u128)))
+            .build(),
     );
 }
 
@@ -314,14 +340,62 @@ fn if_branch_slot_accepts_built_control_pattern() {
     // `any()` matches the false-branch consumer Region → the composition
     // matches the single If.
     assert_eq!(
-        m.find_all(&if_node().with_false(any().into_pattern()).build()).unwrap().len(),
+        m.find_all(&if_node().with_false(any().into_pattern()).build())
+            .unwrap()
+            .len(),
         1
     );
     // A built `call()` control Pattern is accepted by the slot (compiles)
     // and is matched node-wise against the consumer Region → no match.
     assert_eq!(
-        m.find_all(&if_node().with_false(call().at(0x9999).build()).build()).unwrap().len(),
+        m.find_all(&if_node().with_false(call().at(0x9999).build()).build())
+            .unwrap()
+            .len(),
         0
+    );
+}
+
+/// MED-2: a malformed (multi-sink / rootless) branch pattern must be
+/// rejected LOUDLY at `with_true` build time, not silently swallowed into
+/// "branch did not match". A user typo in the branch pattern should
+/// surface, not vanish.
+#[test]
+#[should_panic(expected = "branch pattern")]
+fn with_true_multi_sink_branch_pattern_panics_not_silently_skips() {
+    // Two unconsumed leaf sinks → a multi-sink pattern whose `root()`
+    // errors. Feeding it to `with_true` must panic at build time.
+    let mut mb = MatcherBuilder::new();
+    let _a = mb.leaf(KindSpec::Any);
+    let _b = mb.leaf(KindSpec::Any);
+    let bad = mb.finish();
+    let _ = if_node().with_true(bad).build();
+}
+
+/// MED-2: a capture bound inside an If branch sub-pattern is matched
+/// against an isolated `Bindings` and is NOT propagated into the outer
+/// match. Reading it from the outer `Match` returns `None` — documented
+/// isolation, not enforced rejection (a capture used by the branch's own
+/// `when_match` predicate is a supported idiom). The composition still
+/// matches; only the outer read is `None`.
+#[test]
+fn with_true_branch_capture_is_isolated_from_outer_match() {
+    let function = shapes::if_cmp_then_return(4);
+    let branch_cap = Capture::new();
+    // `any().capture(branch_cap)` matches the true-branch consumer and binds
+    // the capture inside the isolated branch attempt.
+    let pat = if_node()
+        .with_true(any().capture(branch_cap).into_pattern())
+        .build();
+    let m = a::unique(&function, pat);
+    // The composition matched (the branch capture did not block it) ...
+    assert!(matches!(
+        function.node_kind(m.root()),
+        strider_ir::node::NodeKind::If
+    ));
+    // ... but the branch capture is not visible in the outer match.
+    assert!(
+        m.node(branch_cap, function.graph()).is_none(),
+        "branch capture must be isolated from the outer match"
     );
 }
 
@@ -334,17 +408,14 @@ fn graph_call_other(user_op_id: u64) -> strider_ir::Function {
     // (produces an I64-typed ret-val output slot tagged with this vn).  The
     // builder writes the result back via `write_reg_vn`, so the output vn
     // must be a tracked register.
-    let out_vn = rsleigh::Vn { size: 8, addr_off: 0x100, addr_space: VnSpace::REGISTER };
+    let out_vn = rsleigh::Vn {
+        size: 8,
+        addr_off: 0x100,
+        addr_space: VnSpace::REGISTER,
+    };
     let mut t = Tb::with_vars(&[out_vn]);
     let arg = t.u64(7);
-    t.call_other(
-        "cpuid",
-        user_op_id,
-        &[arg],
-        Some(out_vn),
-        &[],
-        &[],
-    );
+    t.call_other("cpuid", user_op_id, &[arg], Some(out_vn), &[], &[]);
     t.ret_nothing()
 }
 

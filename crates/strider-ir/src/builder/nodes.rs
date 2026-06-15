@@ -1,8 +1,8 @@
 use smallvec::SmallVec;
 
 use super::{FunctionBuilder, require_reg_or_unique};
-use crate::builder::IRBuilderExt;
 use crate::IRViewer;
+use crate::builder::IRBuilderExt;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::RegionId;
@@ -30,8 +30,7 @@ impl FunctionBuilder {
         let entry_node = self.create_node(NodeKind::Entry, [], vec![ValueKind::Control]);
         self.function.set_entry(entry_node);
 
-        let memory_node =
-            self.create_node(NodeKind::InitialMemory, [], vec![ValueKind::Memory]);
+        let memory_node = self.create_node(NodeKind::InitialMemory, [], vec![ValueKind::Memory]);
         let [memory] = self.function().node_outputs_exact(memory_node)?;
         self.entry_memory = memory;
         Ok(())
@@ -57,11 +56,7 @@ impl FunctionBuilder {
     /// edges are mistyped (graph-construction bug); or
     /// `ExpectedValue` when `value` or any read return register
     /// is not a value edge.
-    pub fn build_return(
-        &mut self,
-        value: Option<ValueId>,
-        ret_vars: &[rsleigh::Vn],
-    ) -> Result<()> {
+    pub fn build_return(&mut self, value: Option<ValueId>, ret_vars: &[rsleigh::Vn]) -> Result<()> {
         let mut ret_inputs: SmallVec<[ValueId; 4]> = SmallVec::new();
         if let Some(v) = value {
             ret_inputs.push(v);

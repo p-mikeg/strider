@@ -15,9 +15,9 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 use strider_ir::IRBuilderExt;
-use strider_ir::{IRViewer, IRWalker};
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueType};
+use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::make_empty_fn;
 use strider_orchestrator::opt::{ConstantFold, KnownBits};
 
@@ -44,12 +44,19 @@ fn constant_fold_add_consts_preserves_fingerprints() {
     })
     .unwrap();
     assert!(
-        strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
-            .unwrap()
-            .changed()
+        strider_orchestrator::opt::run_one(
+            &ConstantFold::new(),
+            &mut fg,
+            &mut strider_orchestrator::opt::OptCtx::new(None)
+        )
+        .unwrap()
+        .changed()
     );
     // The surviving node feeds the Return; find it.
-    let const7 = find(&fg, |k| matches!(k, NodeKind::IntConst(IntPayload::Small(7)))).expect("IntConst(7)");
+    let const7 = find(&fg, |k| {
+        matches!(k, NodeKind::IntConst(IntPayload::Small(7)))
+    })
+    .expect("IntConst(7)");
     let fp = fg.asm_fingerprint(const7);
     assert!(
         fp.contains(&0x108),
@@ -69,13 +76,20 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
     })
     .unwrap();
     assert!(
-        strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
-            .unwrap()
-            .changed()
+        strider_orchestrator::opt::run_one(
+            &ConstantFold::new(),
+            &mut fg,
+            &mut strider_orchestrator::opt::OptCtx::new(None)
+        )
+        .unwrap()
+        .changed()
     );
     // Result is IntConst(0); its fingerprint must include 0x204 (the
     // Xor's address — absorbed via after_replace).
-    let const0 = find(&fg, |k| matches!(k, NodeKind::IntConst(IntPayload::Small(0)))).expect("IntConst(0)");
+    let const0 = find(&fg, |k| {
+        matches!(k, NodeKind::IntConst(IntPayload::Small(0)))
+    })
+    .expect("IntConst(0)");
     let fp = fg.asm_fingerprint(const0);
     assert!(
         fp.contains(&0x204),
@@ -103,8 +117,16 @@ fn known_bits_fold_preserves_fingerprints() {
         Ok(outer)
     })
     .unwrap();
-    let _ = strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None));
-    let _ = strider_orchestrator::opt::run_one(&KnownBits, &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None));
+    let _ = strider_orchestrator::opt::run_one(
+        &ConstantFold::new(),
+        &mut fg,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    );
+    let _ = strider_orchestrator::opt::run_one(
+        &KnownBits,
+        &mut fg,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    );
     // The eventual return value should be an IntConst with at least one
     // of the rewritten addresses absorbed into it.
     let ret = fg
@@ -142,8 +164,12 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
         Ok(outer)
     })
     .unwrap();
-    let _ = strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .unwrap();
+    let _ = strider_orchestrator::opt::run_one(
+        &ConstantFold::new(),
+        &mut fg,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .unwrap();
     // Whatever value reaches the Return must carry the outer-And's
     // address — that's the canonical "rewrite root".
     let ret = fg

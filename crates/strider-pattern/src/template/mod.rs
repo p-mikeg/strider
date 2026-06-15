@@ -21,7 +21,7 @@ pub(crate) mod template_pat;
 
 pub use builder::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 pub use ctx::TemplateCtx;
-pub use graph::{TmplValue, Template, TmplNode, TmplNodeKind, TmplOutput};
+pub use graph::{Template, TmplNode, TmplNodeKind, TmplOutput, TmplValue};
 
 // Build-side twin value-op factories (`template::add`, `template::sub`,
 // …). These share the typed structs of the bare match-side factories but
@@ -40,7 +40,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 use crate::bindings::Bindings;
-use crate::graph_ext::{reachable_topo, PatGraphRead};
+use crate::graph_ext::{PatGraphRead, reachable_topo};
 use crate::matcher::OutputKindSpec;
 
 /// Type alias for the [`TemplateKind::Fn`] closure shape. Factored out
@@ -110,19 +110,20 @@ pub enum TemplateTy {
 /// signature; this function does **not** run [`strider_ir::validate`] on
 /// the materialised sub-graph, and the rewrite path never validates
 /// afterward either. It is the [`Template`] author's responsibility that
-/// (a) every node's declared output signature matches its `NodeKind`'s
-/// `expected_signature`, and (b) no two producers are wired into the same
-/// input slot — inputs are collected into a `BTreeMap` keyed by slot, so a
-/// duplicate slot silently overwrites the earlier edge. The typed
-/// `template::` builders guarantee both by construction; a [`Template`]
-/// hand-built via the raw [`TemplateBuilder`]
-/// node / output verbs does not.
+/// every node's declared output signature matches its `NodeKind`'s
+/// `expected_signature`. Input-slot wiring **is** checked here: a gap in a
+/// node's input slots (non-contiguous `0..n`) or a duplicate slot is
+/// rejected with an error rather than being silently closed / overwritten.
+/// The typed `template::` builders wire contiguous single-occupancy slots
+/// by construction; a [`Template`] hand-built via the raw
+/// [`TemplateBuilder`] node / output verbs is validated against this here.
 ///
 /// # Errors
 ///
 /// Returns an error if the template is rootless, references an unbound
-/// capture, has a [`TemplateKind::Fn`] closure that itself errors, or if
-/// the underlying `create_node_attributed` call fails to produce a value output.
+/// capture, has a [`TemplateKind::Fn`] closure that itself errors, has a
+/// node with gapped / duplicate input slots, or if the underlying
+/// `create_node_attributed` call fails to produce a value output.
 /// `proof_nodes` is the attribution set unioned into the asm-fingerprint of
 /// **every** node this function creates (via `create_node_attributed`): the
 /// caller passes the matched LHS footprint so each fresh RHS node — root and
@@ -207,15 +208,17 @@ pub fn instantiate<B: IRBuilder>(
                 use strider_ir::wide_const::WideConstStorage;
                 match value_ty {
                     strider_ir::node::ValueType::I80 => {
-                        let id = builder.function_mut().intern_wide_const(
-                            WideConstStorage::I80(v & strider_ir::node::ValueType::I80.bit_mask_u128()),
-                        );
+                        let id = builder
+                            .function_mut()
+                            .intern_wide_const(WideConstStorage::I80(
+                                v & strider_ir::node::ValueType::I80.bit_mask_u128(),
+                            ));
                         strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
                     }
                     strider_ir::node::ValueType::I128 => {
-                        let id = builder.function_mut().intern_wide_const(
-                            WideConstStorage::I128(v),
-                        );
+                        let id = builder
+                            .function_mut()
+                            .intern_wide_const(WideConstStorage::I128(v));
                         strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
                     }
                     strider_ir::node::ValueType::I256 => {
@@ -223,9 +226,9 @@ pub fn instantiate<B: IRBuilder>(
                         let low64 = v as u64;
                         #[allow(clippy::cast_possible_truncation)]
                         let high64 = (v >> 64) as u64;
-                        let id = builder.function_mut().intern_wide_const(
-                            WideConstStorage::I256([low64, high64, 0, 0]),
-                        );
+                        let id = builder
+                            .function_mut()
+                            .intern_wide_const(WideConstStorage::I256([low64, high64, 0, 0]));
                         strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
                     }
                     strider_ir::node::ValueType::I512 => {
@@ -233,9 +236,11 @@ pub fn instantiate<B: IRBuilder>(
                         let low64 = v as u64;
                         #[allow(clippy::cast_possible_truncation)]
                         let high64 = (v >> 64) as u64;
-                        let id = builder.function_mut().intern_wide_const(
-                            WideConstStorage::I512([low64, high64, 0, 0, 0, 0, 0, 0]),
-                        );
+                        let id = builder
+                            .function_mut()
+                            .intern_wide_const(WideConstStorage::I512([
+                                low64, high64, 0, 0, 0, 0, 0, 0,
+                            ]));
                         strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
                     }
                     _ => {
@@ -258,18 +263,39 @@ pub fn instantiate<B: IRBuilder>(
         // producer output vertex feeding this node's slot; read its
         // already-materialised IR output.
         //
-        // NOTE: `into_values()` produces a DENSE vector keyed by ascending
-        // slot, so a *gap* in the slot set (e.g. a raw `TemplateBuilder` node
-        // wiring slots 0 and 2 but not 1) is silently CLOSED — slot 2's
-        // producer lands at IR input index 1.  Raw-verb template authors must
-        // therefore wire contiguous slots `0..n`; the typed builders always do.
-        // (A duplicate slot likewise overwrites, as the builder docs note.)
+        // The raw `TemplateBuilder` verbs do not enforce contiguous,
+        // single-occupancy slots; a gap (slots 0 and 2 but not 1) would be
+        // silently CLOSED by `into_values()` and a duplicate slot would
+        // silently overwrite the earlier edge — both producing wrong IR with
+        // no diagnostic on the validate-skipping rewrite path. Reject both
+        // here (the typed builders always wire `0..n` once, so they never
+        // trip this).
         let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
         for (slot, producer_out_vtx) in template.graph.consumed_inputs(vtx) {
             let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {
                 anyhow!("producer output not materialised before consumer — topo order bug")
             })?;
-            inputs_by_slot.insert(slot, producer_value);
+            if inputs_by_slot.insert(slot, producer_value).is_some() {
+                return Err(anyhow!(
+                    "template node wires two producers into input slot {slot} \
+                     (raw-builder mis-wire)"
+                ));
+            }
+        }
+        // Reject a gap: the keys must be exactly the contiguous range
+        // `0..len`, else the dense `into_values()` would shift later slots
+        // down onto the wrong IR input index.
+        if inputs_by_slot
+            .keys()
+            .enumerate()
+            .any(|(i, &slot)| i != slot)
+        {
+            let slots: Vec<usize> = inputs_by_slot.keys().copied().collect();
+            return Err(anyhow!(
+                "template node has non-contiguous input slots {slots:?} \
+                 (expected 0..{}) — raw-builder mis-wire",
+                inputs_by_slot.len()
+            ));
         }
         let inputs: Vec<ValueId> = inputs_by_slot.into_values().collect();
 
@@ -292,14 +318,19 @@ pub fn instantiate<B: IRBuilder>(
                 continue;
             };
             let ir_value = *ir_outputs.get(o.slot).ok_or_else(|| {
-                anyhow!("template output slot {} out of range for instantiated node", o.slot)
+                anyhow!(
+                    "template output slot {} out of range for instantiated node",
+                    o.slot
+                )
             })?;
             materialised.insert(out_vtx, ir_value);
         }
 
         if vtx == root {
             root_value = Some(
-                builder.function().first_value_output_of(node)
+                builder
+                    .function()
+                    .first_value_output_of(node)
                     .ok_or_else(|| anyhow!("instantiated root node has no value output"))?,
             );
         }
@@ -343,11 +374,7 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> V
 /// [`TemplateTy`] against `root_ty`. Falls back to a single value output
 /// of the root's type when the node has no explicit output vertex (the
 /// common value-expression case).
-fn output_kinds_for(
-    template: &Template,
-    node_vtx: NodeId,
-    root_ty: ValueType,
-) -> Vec<ValueKind> {
+fn output_kinds_for(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> Vec<ValueKind> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.produced_outputs(node_vtx) {
         if let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) {
@@ -372,4 +399,3 @@ fn output_kinds_for(
         by_slot.into_values().collect()
     }
 }
-

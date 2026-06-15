@@ -200,7 +200,34 @@ impl PyOptimizerPipeline {
     /// silently run an empty pipeline and report success — masking
     /// caller bugs where the same wrapper is reused after a previous
     /// `optimize` / `strider.run` consumed it.
-    pub(crate) fn drain_into_pipeline(&self) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
+    pub(crate) fn drain_into_pipeline(
+        &self,
+    ) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
+        self.drain_into_pipeline_inner(false)
+    }
+
+    /// Like [`drain_into_pipeline`](Self::drain_into_pipeline) but
+    /// prepends a unit `LoadReadOnly` pass to the materialised pipeline
+    /// so a caller-supplied `rom` is consumed even when the user's
+    /// hand-built pipeline didn't add `LoadReadOnly` explicitly (the rom
+    /// itself flows via the [`strider_orchestrator::opt::OptCtx`] passed
+    /// to `OptimizerPipeline::run`).
+    ///
+    /// The prepend happens on the *materialised* pipeline, NOT on the
+    /// wrapper's own `state`, so the caller's `PyOptimizerPipeline`
+    /// object is only drained (its documented "consumed on use"
+    /// behaviour) — never silently grown with an extra pass that would
+    /// double up on a second `run`.
+    pub(crate) fn drain_into_pipeline_with_load_read_only(
+        &self,
+    ) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
+        self.drain_into_pipeline_inner(true)
+    }
+
+    fn drain_into_pipeline_inner(
+        &self,
+        prepend_load_read_only: bool,
+    ) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
         let mut state = self.lock_state()?;
         if state.passes.is_empty() && state.post_passes.is_empty() {
             return Err(into_strider_err(anyhow::anyhow!(
@@ -211,6 +238,9 @@ impl PyOptimizerPipeline {
             )));
         }
         let mut pipe = strider_orchestrator::opt::OptimizerPipeline::new();
+        if prepend_load_read_only {
+            pipe.add(strider_orchestrator::opt::LoadReadOnly);
+        }
         for p in state.passes.drain(..) {
             pipe.add(ForwardPass(p));
         }
@@ -218,19 +248,6 @@ impl PyOptimizerPipeline {
             pipe.add_post_pass(ForwardPostPass(p));
         }
         Ok(pipe)
-    }
-
-    /// Prepend a `LoadReadOnly` pass to the front of the pipeline's
-    /// pass list.  Used by `run_with_custom_pipeline` to ensure the
-    /// user-supplied `rom` is consumed even if the caller's pipeline
-    /// didn't include `LoadReadOnly` explicitly — the rom itself
-    /// flows via the [`strider_orchestrator::opt::OptCtx`] passed to
-    /// `OptimizerPipeline::run`.
-    pub(crate) fn prepend_load_read_only(&self) -> PyResult<()> {
-        let mut state = self.lock_state()?;
-        let pass: ErasedPass = Box::new(strider_orchestrator::opt::LoadReadOnly);
-        state.passes.insert(0, pass);
-        Ok(())
     }
 }
 
@@ -252,9 +269,10 @@ impl PyOptimizerPipeline {
     /// Append a pass to the fixed-point pass list (any fixed-point
     /// `strider.opt.*` pass instance).
     ///
-    /// The four single-shot post-passes (`StackOffsetDetect`,
+    /// The three single-shot post-passes (`StackOffsetDetect`,
     /// `FunctionArgDetect`, `CallStackArgCollect`) are rejected here — register
-    /// them with `add_post` instead.
+    /// them with `add_post` instead.  (`IndirectBranchClassify` is also a
+    /// post-pass but is appended by the orchestrator, not user-registerable.)
     fn add(&self, pass_obj: PyOptPass<'_>) -> PyResult<()> {
         let erased = pass_obj.into_erased()?;
         let mut state = self.lock_state()?;
@@ -302,7 +320,9 @@ macro_rules! pure_pass_class {
         impl $rust {
             #[doc = concat!("Construct the ", $pyname, " pass (no configuration).")]
             #[new]
-            fn new() -> Self { Self }
+            fn new() -> Self {
+                Self
+            }
         }
     };
 }
@@ -482,10 +502,16 @@ impl PyOptPass<'_> {
             PyOptPass::KnownBits(_) => Box::new(strider_orchestrator::opt::KnownBits),
             PyOptPass::PhiCollapse(_) => Box::new(strider_orchestrator::opt::PhiCollapse),
             PyOptPass::RegionCollapse(_) => Box::new(strider_orchestrator::opt::RegionCollapse),
-            PyOptPass::DeadBranchElimination(_) => Box::new(strider_orchestrator::opt::DeadBranchElimination),
+            PyOptPass::DeadBranchElimination(_) => {
+                Box::new(strider_orchestrator::opt::DeadBranchElimination)
+            }
             PyOptPass::CfgDetach(_) => Box::new(strider_orchestrator::opt::CfgDetach),
-            PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_orchestrator::opt::FlagCmpCanonicalize::new()),
-            PyOptPass::IfCondInversion(_) => Box::new(strider_orchestrator::opt::IfCondInversion::new()),
+            PyOptPass::FlagCmpCanonicalize(_) => {
+                Box::new(strider_orchestrator::opt::FlagCmpCanonicalize::new())
+            }
+            PyOptPass::IfCondInversion(_) => {
+                Box::new(strider_orchestrator::opt::IfCondInversion::new())
+            }
             PyOptPass::LoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::LoadReadOnly(_) => Box::new(strider_orchestrator::opt::LoadReadOnly),
             PyOptPass::FunctionArgDetect(_)

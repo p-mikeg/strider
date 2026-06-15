@@ -12,12 +12,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use strider_ir::IRViewer;
 use rsleigh::mem_readers::BufMemReader;
-use strider_ir::Function;
-use strider_ir::node::{NodeId, NodeKind};
 use strider_cfg::CfgOptions;
 use strider_cfg::MachineInsnAddr;
+use strider_ir::Function;
+use strider_ir::IRViewer;
+use strider_ir::node::{NodeId, NodeKind};
 use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 
@@ -29,7 +29,8 @@ mod common;
 fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let base = 0x1000u64;
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
+    let sleigh =
+        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
 
     // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
@@ -41,8 +42,11 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let mut function = outcome.function;
 
     let p = strider_orchestrator::opt::default_pipeline();
-    p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .expect("optimizer pipeline");
+    p.run(
+        &mut function,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .expect("optimizer pipeline");
     function
 }
 

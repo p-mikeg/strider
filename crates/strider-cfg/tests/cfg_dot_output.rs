@@ -15,10 +15,10 @@
 //!   + operands), not the hand-rolled `<Opcode>, <Reg>` form.
 
 use dot::{DotStyle, GraphDot};
-use rsleigh::mem_readers::BufMemReader;
 use rsleigh::Sleigh;
-use strider_cfg::{Builder, Cfg};
+use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::CfgOptions;
+use strider_cfg::{Builder, Cfg};
 use strider_target::SleighArch;
 
 type TestReader = BufMemReader<Vec<u8>>;

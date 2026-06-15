@@ -22,10 +22,10 @@
 use strider_ir::IRViewer;
 use strider_ir::node::{FunctionArgSource, NodeKind};
 
-use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, Pattern};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 
 /// Builder for a function-argument-carrier pattern. Created by
 /// [`function_arg`] / [`function_arg_any`] / [`function_arg_reg`] /

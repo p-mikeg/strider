@@ -206,7 +206,11 @@ pub fn function_arg_reg() -> (Function, rsleigh::Vn) {
     let mut t = Tb::raw(vec![reg, sp], &[reg], &[reg], &[reg], Some(sp), 0);
     let v = t.read_var(&reg);
     let mut function = t.ret_val(v);
-    strider_orchestrator::opt::run_post(&FunctionArgDetect, &mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .expect("FunctionArgDetect");
+    strider_orchestrator::opt::run_post(
+        &FunctionArgDetect,
+        &mut function,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .expect("FunctionArgDetect");
     (function, reg)
 }

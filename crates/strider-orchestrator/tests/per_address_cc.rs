@@ -9,9 +9,9 @@ use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::Strider;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::LiftOptions;
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -42,7 +42,10 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         FxHashMap::default();
     overrides.insert(
         call_target,
-        TargetCC::x86_64_all_preserving().unwrap().build(&regs).unwrap(),
+        TargetCC::x86_64_all_preserving()
+            .unwrap()
+            .build(&regs)
+            .unwrap(),
     );
     let lift_opts = LiftOptions {
         per_address_ccs: overrides,
@@ -76,7 +79,9 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     );
     let tagged_outputs = outs.iter().skip(2).count();
     assert!(
-        outs.iter().skip(2).all(|&v| bfg.get_vn_for_value(v).is_some()),
+        outs.iter()
+            .skip(2)
+            .all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every ret-val / clobber output must carry its varnode tag"
     );
     assert_eq!(
@@ -110,7 +115,13 @@ fn call_without_override_uses_function_default_clobber_set() {
 
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     let bfg = strider
-        .analyze(entry, &cc, &LiftOptions::default(), &OptOptions::default(), None)
+        .analyze(
+            entry,
+            &cc,
+            &LiftOptions::default(),
+            &OptOptions::default(),
+            None,
+        )
         .unwrap()
         .function;
 

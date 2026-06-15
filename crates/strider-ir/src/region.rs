@@ -208,19 +208,19 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.require_control_kind(control)?;
         let control_node = self.regions[region].control_node;
-        self.function_mut().graph_mut().add_node_input(control_node, control);
+        self.function_mut()
+            .graph_mut()
+            .add_node_input(control_node, control);
         Ok(())
     }
 
     /// Adds `memory` as an incoming memory edge to `region`'s `MemPhi` node.
-    pub(crate) fn link_memory_regions(
-        &mut self,
-        region: RegionId,
-        memory: ValueId,
-    ) -> Result<()> {
+    pub(crate) fn link_memory_regions(&mut self, region: RegionId, memory: ValueId) -> Result<()> {
         self.require_memory_kind(memory)?;
         let memory_node = self.regions[region].memory_node;
-        self.function_mut().graph_mut().add_node_input(memory_node, memory);
+        self.function_mut()
+            .graph_mut()
+            .add_node_input(memory_node, memory);
         Ok(())
     }
 

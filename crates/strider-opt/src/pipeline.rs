@@ -121,10 +121,8 @@ pub struct OptCtx<'mem> {
     /// (pruned by the node-removing passes) never appear here, so a branch
     /// optimisation proved unreachable is silently dropped rather than
     /// reported unresolved.
-    pub indirect_resolutions: rustc_hash::FxHashMap<
-        strider_ir::node::NodeId,
-        Option<strider_cfg::ResolvedTargets>,
-    >,
+    pub indirect_resolutions:
+        rustc_hash::FxHashMap<strider_ir::node::NodeId, Option<strider_cfg::ResolvedTargets>>,
 }
 
 impl<'mem> OptCtx<'mem> {
@@ -507,7 +505,6 @@ impl OptimizerPipeline {
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
-        let entry;
         {
             // Build ONE self-cleaning EditFunction for the whole run and share
             // it across every pass, instead of each pass reconstructing one.
@@ -517,9 +514,6 @@ impl OptimizerPipeline {
             // this scope and released before the final validation step below.
             let mut edit = crate::EditFunction::new(function)?;
             edit.cull_dead();
-            // `new` requires the entry-set invariant, so `entry()` never
-            // panics; capture it for re-validation.
-            entry = edit.entry();
             let mut iters: u32 = 0;
             loop {
                 let mut changed = false;
@@ -558,7 +552,7 @@ impl OptimizerPipeline {
                 ctx.sp_memo.clear();
             }
         } // edit + state dropped here → function borrow released
-        strider_ir::validate::validate(function, entry)?;
+        strider_ir::validate::validate(function)?;
         Ok(())
     }
 }
@@ -675,7 +669,10 @@ mod tests {
             0,
             strider_target::Endianness::Little,
         )?;
-        b.set_stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 8 }));
+        b.set_stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 8,
+        }));
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -780,7 +777,10 @@ mod tests {
             0,
             strider_target::Endianness::Little,
         )?;
-        b.set_stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }));
+        b.set_stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }));
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);

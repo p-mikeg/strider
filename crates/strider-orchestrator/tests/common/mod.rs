@@ -27,18 +27,14 @@
 )]
 
 use object::{Object, ObjectSymbol};
-use strider_ir::{IRViewer, IRWalker};
 use std::path::PathBuf;
+use strider_ir::{IRViewer, IRWalker};
 
 // Sub-module containing fixture builders for the indirect-branch classifier
 // integration tests in `tests/indirect_resolve_classify.rs`.  Kept as a sub-module
 // so the rest of the per-arch fixture infrastructure above remains
 // unchanged.
 pub mod indirect_resolve_helpers;
-
-// Sub-module with the shared lift + temp-dir setup used by the
-// `dump_neighborhood` integration tests.
-pub mod dump_helpers;
 
 // ── Architecture enum ────────────────────────────────────────────────────────
 
@@ -179,8 +175,7 @@ pub fn driver_for_reader<R: rsleigh::MemReader>(
     let sleigh_arch = arch.sleigh();
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), reader)
         .expect("create sleigh");
-    let driver =
-        strider_orchestrator::Lifter::new(sleigh_arch, sleigh).expect("Lifter::new");
+    let driver = strider_orchestrator::Lifter::new(sleigh_arch, sleigh).expect("Lifter::new");
     let cc = arch
         .cc()
         .build(driver.sleigh_regs())
@@ -274,10 +269,7 @@ pub fn analyze_with_known_targets(
         .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
         .expect("cfg build with Multiple known targets");
 
-    let function = driver
-        .build_ir(&cfg, &cc)
-        .expect("build_ir")
-        .function;
+    let function = driver.build_ir(&cfg, &cc).expect("build_ir").function;
     (function, driver, cc)
 }
 
@@ -371,8 +363,7 @@ pub fn lift_for_pipeline(
 /// the binary is missing, the panic carries an actionable message including
 /// the `make -C fixtures` instruction.
 pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
-    let (outcome, _lifter, _cc, _sleigh_arch, rom_for_opt) =
-        lift_for_pipeline(arch, case, fn_name);
+    let (outcome, _lifter, _cc, _sleigh_arch, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
     let mut function = outcome.function;
     // The default pipeline already includes `LoadReadOnly`; it folds rodata
     // loads when the ctx carries a ROM.  The reader serves RAW bytes —

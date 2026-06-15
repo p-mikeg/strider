@@ -36,11 +36,22 @@
 //!    terminators from `known_targets` at build time).
 //!
 //! Unresolvable branches are **not** an error: [`Strider::analyze`] returns
-//! an [`AnalyzeResult`] whose `unresolved_indirect_branches` lists them
-//! (their placeholders remain in `function`). `MAX_RESOLUTION_ITERATIONS`
-//! is only a backstop — step 3's "nothing new resolved" check is the real
-//! terminator, since every continued iteration strictly grows the bounded
-//! `known_targets` map.
+//! an [`AnalyzeResult`] whose `unresolved_indirect_branches` lists the
+//! sites that are still *live-and-unclassified* in the final function
+//! (their placeholders remain in `function`).  A site is **dropped** from
+//! that report when the optimizer proved its placeholder dead, or when the
+//! loop already folded a classification for it (even one the cfg layer
+//! could not seat, e.g. an out-of-range `Multiple` table).
+//!
+//! `MAX_RESOLUTION_ITERATIONS` is only a backstop — step 3's "nothing new
+//! resolved" check is the real terminator.  Convergence does **not** rely
+//! on monotone growth of `known_targets` (`apply_resolutions` *overwrites*
+//! entries it folds): instead, each site's classification is folded in at
+//! most once (`apply_resolutions` skips a site already present in
+//! `known_targets`), so a classifier whose re-lifted graph keeps reporting
+//! a *different* target set for an un-seatable site cannot churn the loop.
+//! Falling through the cap is treated as a non-convergence bug (a
+//! `debug_assert!` fires), not a silent stale return.
 //!
 //! ## Tail-call and link-register detection
 //!
@@ -59,11 +70,11 @@
 /// passes via `strider_orchestrator::opt::…` alongside the orchestration API.
 pub use strider_opt as opt;
 
+pub use strider_lift::LiftOptions;
 /// The CFG→IR lift engine and its option / outcome types, re-exported from
 /// `strider-lift` so downstream consumers (the Python bindings, tests) reach
 /// them via `strider_orchestrator::…` without a direct `strider-lift` dep.
 pub use strider_lift::lift::{LiftOutcome, Lifter};
-pub use strider_lift::LiftOptions;
 
 use std::collections::BTreeSet;
 
@@ -71,10 +82,8 @@ use rustc_hash::FxHashMap;
 
 use anyhow::{Result, anyhow};
 
-use strider_ir::node::NodeId;
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
-
 
 /// Builds the shared [`OptCtx`] for one pipeline run from the
 /// orchestrator's borrowed rom slot and the per-run [`OptOptions`].
@@ -140,12 +149,6 @@ where
         let lifter = Lifter::new(arch, sleigh)
             .map_err(|e| anyhow!("Strider::new: Lifter::new failed: {e:?}"))?;
         Ok(Self { lifter, rom })
-    }
-
-    /// Returns the target architecture description.
-    #[must_use]
-    pub fn arch(&self) -> &strider_target::SleighArch {
-        self.lifter.arch()
     }
 
     /// Returns the cached Sleigh register-name table.
@@ -220,36 +223,70 @@ where
                 known_targets: FxHashMap::default(),
             },
             per_address_ccs: lift_opts.per_address_ccs.clone(),
-            // Carried for completeness; not used during lifting — the
-            // finalize step below reads `lift_opts.compact` directly.
-            compact: lift_opts.compact,
+            // `compact` is a finalize-only knob (the lift methods ignore
+            // it); the post-loop finalize step below reads
+            // `lift_opts.compact` directly.  Pinned `false` here so the
+            // in-loop `working` clone carries only loop-relevant knobs and
+            // no future edit can accidentally read a stale duplicate.
+            compact: false,
         };
 
         let (mut function, mut unresolved, mut resolutions) =
             self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
         // Each non-terminal iteration folds the classifier's results into
-        // `known_targets` and re-lifts. The loop terminates as soon as
-        // nothing new resolves (`apply_resolutions` returns `false`); the
-        // cap is only a backstop, since every continued iteration strictly
-        // grows the bounded `known_targets` map.
+        // `known_targets` and re-lifts.  The loop terminates as soon as
+        // nothing new resolves (`apply_resolutions` returns `false`).  The
+        // cap is only a backstop; `converged` records whether the loop hit
+        // a natural fixed point (vs. exhausting the cap) so we can surface
+        // non-convergence rather than silently returning a stale result.
+        let mut converged = false;
         for _ in 0..MAX_RESOLUTION_ITERATIONS {
             if unresolved.is_empty() {
+                converged = true;
                 break;
             }
+            // `known_targets` is the SSoT for "already-classified" sites:
+            // `apply_resolutions` only folds in *new* classifications and
+            // never re-defers a site whose entry already matches, so a
+            // `Multiple`-with-OOB table (which the cfg builder re-emits as an
+            // unresolved placeholder) cannot churn the loop — its second
+            // identical classification is a no-op and the loop converges.
             if !apply_resolutions(&mut working.cfg.known_targets, &unresolved, resolutions)? {
+                converged = true;
                 break;
             }
             (function, unresolved, resolutions) =
                 self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
         }
 
+        // OR-3: the cap is the crate's core-invariant backstop — falling
+        // through it means the resolve/re-lift loop never reached a fixed
+        // point, which is a bug (a pathological classifier/cfg oscillation),
+        // not an unresolvable branch.  Surface it loudly in debug builds
+        // rather than returning a silently-truncated result.
+        debug_assert!(
+            converged,
+            "indirect-branch resolution did not converge within \
+             MAX_RESOLUTION_ITERATIONS={MAX_RESOLUTION_ITERATIONS}; \
+             returning a possibly-stale result"
+        );
+        let _ = converged;
+
+        // OR-1 / OR-2: report a site as unresolved only when its
+        // `IndirectBranch` placeholder is still LIVE in the final function
+        // AND the loop never folded a classification for it into
+        // `known_targets`.  A placeholder the node-removing passes proved
+        // dead is silently dropped (matching the classifier's contract); a
+        // site that *was* classified but the cfg layer could not seat (an
+        // OOB `Multiple` table) is treated as resolved-but-unseatable, not
+        // unresolved.  This MUST run before `compact`, since `unresolved`'s
+        // `NodeId`s index into the un-renumbered function.
+        let unresolved_indirect_branches =
+            live_unresolved_branches(&function, &unresolved, &working.cfg.known_targets);
+
         if lift_opts.compact {
             function.compact()?;
         }
-        let mut unresolved_indirect_branches: Vec<PcodeInsnAddr> =
-            unresolved.into_iter().map(|(addr, _node)| addr).collect();
-        unresolved_indirect_branches.sort_unstable();
-        unresolved_indirect_branches.dedup();
         Ok(AnalyzeResult {
             function,
             unresolved_indirect_branches,
@@ -333,6 +370,24 @@ const MAX_RESOLUTION_ITERATIONS: usize = 256;
 /// induced edge set grew (i.e. at least one new branch resolved) — the
 /// loop's progress signal.
 ///
+/// Convergence (OR-2): a site already present in `known_targets` is
+/// **terminal** — its classification was folded in on an earlier
+/// iteration.  If its placeholder still reappears in `unresolved` (the cfg
+/// builder could not seat the terminator, e.g. an out-of-range `Multiple`
+/// table that it re-emits as an unresolved placeholder), we do **not**
+/// re-fold a fresh classification for it.  This stops a classifier whose
+/// re-lifted graph yields a *different* target set each iteration (value-
+/// range widening) from churning the edge set to the iteration cap: each
+/// stuck site contributes its classification exactly once.
+///
+/// Collision (OR-4): two distinct `IndirectBranch` placeholders sharing one
+/// `PcodeInsnAddr` (overlapping/duplicated code terminating two regions at
+/// the same machine address) both fold onto the same `known_targets` entry.
+/// Rather than let the last write silently win, their target sets are
+/// **merged** (the union of `Multiple` targets; a `LinkRegister` /
+/// `Single` clash widens to `Multiple`) so the seated terminator covers
+/// every classified successor.
+///
 /// # Errors
 ///
 /// Returns an error if the post-pass classified an `IndirectBranch` node
@@ -343,17 +398,107 @@ fn apply_resolutions(
     unresolved: &UnresolvedAnchors,
     resolutions: IndirectResolutions,
 ) -> Result<bool> {
-    let node_to_addr: FxHashMap<strider_ir::node::NodeId, PcodeInsnAddr> =
-        unresolved.iter().map(|(addr, node)| (*node, *addr)).collect();
+    let node_to_addr: FxHashMap<strider_ir::node::NodeId, PcodeInsnAddr> = unresolved
+        .iter()
+        .map(|(addr, node)| (*node, *addr))
+        .collect();
     let prev_edge_set = edge_set_of(known_targets);
+
+    // Stage this iteration's new classifications per-address first, merging
+    // same-address collisions (OR-4) before touching `known_targets`.
+    let mut staged: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     for (node, resolved) in resolutions {
         let Some(targets) = resolved else { continue };
         let addr = node_to_addr.get(&node).copied().ok_or_else(|| {
             anyhow!("classified IndirectBranch node {node:?} has no recorded pcode address")
         })?;
-        known_targets.insert(addr, targets);
+        match staged.entry(addr) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(targets);
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let merged = merge_resolved(e.get(), &targets);
+                e.insert(merged);
+            }
+        }
+    }
+    // OR-2 convergence without dropping improvements: re-deriving the SAME
+    // classification for an already-present site is a no-op (so an unchanged
+    // cone converges instead of churning to the iteration cap), but a
+    // genuinely DIFFERENT classification — e.g. a previously-unseatable target
+    // set that narrows to a seatable one once other branches resolve — does
+    // overwrite the stale entry rather than being silently dropped.
+    for (addr, targets) in staged {
+        if known_targets.get(&addr) != Some(&targets) {
+            known_targets.insert(addr, targets);
+        }
     }
     Ok(edge_set_of(known_targets) != prev_edge_set)
+}
+
+/// Merge two `ResolvedTargets` classifications for the same pcode address
+/// (OR-4 same-address collision) into one whose target set is the union of
+/// both.  Two `LinkRegister`s stay `LinkRegister`; otherwise every concrete
+/// successor address is unioned and the result widens to `Single` (one
+/// distinct target) or `Multiple` (more than one).  Order-independent.
+fn merge_resolved(a: &ResolvedTargets, b: &ResolvedTargets) -> ResolvedTargets {
+    if matches!(a, ResolvedTargets::LinkRegister) && matches!(b, ResolvedTargets::LinkRegister) {
+        return ResolvedTargets::LinkRegister;
+    }
+    let mut targets: BTreeSet<u64> = BTreeSet::new();
+    for r in [a, b] {
+        match r {
+            ResolvedTargets::LinkRegister => {}
+            ResolvedTargets::Single(k) => {
+                targets.insert(*k);
+            }
+            ResolvedTargets::Multiple(ks) => targets.extend(ks.iter().copied()),
+        }
+    }
+    let targets: Vec<u64> = targets.into_iter().collect();
+    match targets.as_slice() {
+        [single] => ResolvedTargets::Single(*single),
+        _ => ResolvedTargets::Multiple(targets),
+    }
+}
+
+/// The pcode addresses to report as unresolved indirect branches: the
+/// lift-time deferred sites filtered down to those that are genuinely
+/// *live-and-unclassified* in the final function (sorted, deduplicated).
+///
+/// A lift-time placeholder is **excluded** from the report when either:
+///   * it is no longer live in `function` — the node-removing optimizer
+///     passes proved it unreachable, so it needs no resolution (matching
+///     [`strider_opt::IndirectBranchClassify`]'s "silently dropped"
+///     contract); or
+///   * the loop already folded a classification for its address into
+///     `known_targets` — the site *was* classified, even if the cfg layer
+///     could not seat the terminator (e.g. an out-of-range `Multiple`
+///     table, which it re-emits as an unresolved placeholder).  Reporting
+///     such a site as unresolved would contradict the fact that the
+///     orchestrator did resolve it.
+fn live_unresolved_branches(
+    function: &strider_ir::Function,
+    unresolved: &UnresolvedAnchors,
+    known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+) -> Vec<PcodeInsnAddr> {
+    use strider_ir::{IRViewer, IRWalker, node::NodeKind};
+
+    // The live `IndirectBranch` placeholder nodes still reachable from the
+    // entry (one cheap reachability walk shared across every anchor).
+    let live_indirect: rustc_hash::FxHashSet<strider_ir::node::NodeId> = function
+        .walk()
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::IndirectBranch))
+        .collect();
+
+    let mut out: Vec<PcodeInsnAddr> = unresolved
+        .iter()
+        .filter(|(addr, node)| live_indirect.contains(node) && !known_targets.contains_key(addr))
+        .map(|(addr, _node)| *addr)
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// Lift-time correlation: each deferred `BranchIndirect`'s pcode address
@@ -364,8 +509,6 @@ type UnresolvedAnchors = Vec<(PcodeInsnAddr, strider_ir::node::NodeId)>;
 /// Classifier post-pass output: each live `IndirectBranch` placeholder
 /// mapped to its classification (`None` = unresolvable this iteration).
 type IndirectResolutions = FxHashMap<strider_ir::node::NodeId, Option<ResolvedTargets>>;
-
-
 
 /// The induced edge set of a `known_targets` map.  Used to test
 /// convergence between iterations.
@@ -397,69 +540,6 @@ fn edge_set_of(
         }
     }
     edges
-}
-
-/// Renders `function` filtered to `members` as a dark-themed HTML
-/// viewer at `path`.  Rendering tail of [`dump_neighborhood`]: build a
-/// `FunctionDotDumper` limited to `members`, then dump it via
-/// `dot::GraphDot`.  `ctx` prefixes the write-failure error message
-/// (the caller's function name).
-///
-/// # Errors
-///
-/// Returns an error if [`strider_ir::Function::dot_dumper`] fails (graph
-/// not built) or if the HTML write to `path` fails.
-fn render_filtered_html<R>(
-    function: &strider_ir::Function,
-    sleigh: &rsleigh::Sleigh<R>,
-    members: strider_ir::walk::NodeIdSet,
-    path: &std::path::Path,
-    ctx: &str,
-) -> Result<()>
-where
-    R: rsleigh::MemReader,
-{
-    let dumper = function.dot_dumper(sleigh)?.with_node_filter(members);
-    ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
-        .dump_as_html(path)
-        .map_err(|e| anyhow!("{ctx}: write {} failed: {e}", path.display()))
-}
-
-/// Writes an HTML viewer for the subgraph within `depth` hops of
-/// `anchor` (forward + backward) to `out_path`.
-///
-/// Uses [`strider_ir::walk::collect_neighborhood`] to build the visible
-/// node set and renders via [`strider_ir::Function::dot_dumper`]'s
-/// `with_node_filter` chain.  Useful for "focus on this node" debug
-/// dumps when the whole-function view is too dense.
-///
-/// `depth = 0` produces a singleton viewer; `depth = 1` includes
-/// immediate predecessors and successors; larger depths walk further.
-///
-/// # Errors
-///
-/// Returns an error when `anchor` is not a live node in `function` (e.g.
-/// a stale id from a pre-compaction snapshot, or a foreign id from a
-/// different `Graph`), when dumper construction fails (function not
-/// built), HTML rendering fails, or the write to `out_path` fails.
-pub fn dump_neighborhood<R>(
-    function: &strider_ir::Function,
-    anchor: NodeId,
-    depth: u32,
-    sleigh: &rsleigh::Sleigh<R>,
-    out_path: &std::path::Path,
-) -> Result<()>
-where
-    R: rsleigh::MemReader,
-{
-    if !function.graph().has_node(anchor) {
-        return Err(anyhow!(
-            "dump_neighborhood: anchor {anchor:?} is not a live node in this function \
-             (stale id from a pre-compaction snapshot, or a foreign id)",
-        ));
-    }
-    let visible = strider_ir::walk::collect_neighborhood(function.graph(), anchor, depth);
-    render_filtered_html(function, sleigh, visible, out_path, "dump_neighborhood")
 }
 
 #[cfg(test)]
@@ -533,5 +613,183 @@ mod tests {
             ResolvedTargets::Multiple(vec![0x2000, 0x2000, 0x2000]),
         );
         assert_eq!(edge_set_of(&map).len(), 1);
+    }
+
+    // ── live-unresolved filtering (OR-1 / OR-2) ───────────────────────────
+
+    use strider_ir::node::NodeId;
+
+    /// Build a minimal valid function whose entry region terminates in a
+    /// single `IndirectBranch` placeholder anchoring an `IntConst`.  Returns
+    /// the function and the placeholder's live `NodeId`.
+    fn fn_with_live_indirect_branch() -> (strider_ir::Function, NodeId) {
+        use strider_ir::IRBuilderExt;
+        let mut b = strider_ir_test_utils::empty_builder().expect("builder");
+        let region = b.create_region().expect("region");
+        b.set_entry_region(region).expect("entry");
+        b.set_region(region);
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let target = b
+            .build_int_const(0u128, strider_ir::ValueType::I64)
+            .expect("const");
+        let placeholder = b.build_indirect_branch(target).expect("indirect");
+        b.set_lift_addr(None);
+        let function = b.build().expect("build");
+        (function, placeholder)
+    }
+
+    #[test]
+    fn live_unresolved_reports_live_unclassified_branch() {
+        let (function, node) = fn_with_live_indirect_branch();
+        let addr = pcode_addr(0x1000);
+        let unresolved: UnresolvedAnchors = vec![(addr, node)];
+        let known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        // Live placeholder, never classified → reported.
+        assert_eq!(
+            live_unresolved_branches(&function, &unresolved, &known),
+            vec![addr]
+        );
+    }
+
+    #[test]
+    fn live_unresolved_excludes_dead_branch() {
+        // OR-1: a lift-time anchor whose `NodeId` is NOT a live
+        // `IndirectBranch` in the final graph (e.g. the optimizer culled it,
+        // here simulated by pairing the address with a non-IndirectBranch
+        // live node — the function's entry node) must NOT be reported.
+        let (function, _node) = fn_with_live_indirect_branch();
+        use strider_ir::{IRViewer, IRWalker, node::NodeKind};
+        let non_indirect = function
+            .walk()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Entry))
+            .expect("entry node");
+        let addr = pcode_addr(0x1000);
+        let unresolved: UnresolvedAnchors = vec![(addr, non_indirect)];
+        let known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        assert!(
+            live_unresolved_branches(&function, &unresolved, &known).is_empty(),
+            "a dead / non-live IndirectBranch placeholder must not be reported"
+        );
+    }
+
+    #[test]
+    fn live_unresolved_excludes_already_classified_branch() {
+        // OR-2: a site whose address is already in `known_targets` (it was
+        // classified, even if the cfg layer re-emitted its placeholder) is
+        // treated as resolved-but-unseatable, not unresolved.
+        let (function, node) = fn_with_live_indirect_branch();
+        let addr = pcode_addr(0x1000);
+        let unresolved: UnresolvedAnchors = vec![(addr, node)];
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        known.insert(addr, ResolvedTargets::Multiple(vec![0x2000, 0x9999_0000]));
+        assert!(
+            live_unresolved_branches(&function, &unresolved, &known).is_empty(),
+            "a classified (in known_targets) site must not be reported unresolved"
+        );
+    }
+
+    // ── apply_resolutions convergence (OR-2) ──────────────────────────────
+
+    #[test]
+    fn apply_resolutions_skips_identical_reclassification_but_applies_improved() {
+        // OR-2 convergence WITHOUT dropping improvements: re-deriving the SAME
+        // classification for an already-present site is a no-op (so a site whose
+        // cone is unchanged converges instead of churning), but a genuinely
+        // DIFFERENT classification — e.g. a previously-unseatable set that
+        // narrows to a seatable one once other branches resolve — IS applied.
+        let (_function, node) = fn_with_live_indirect_branch();
+        let addr = pcode_addr(0x1000);
+        let unresolved: UnresolvedAnchors = vec![(addr, node)];
+
+        // (a) identical re-classification → no change, loop can converge.
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        known.insert(addr, ResolvedTargets::Multiple(vec![0x2000, 0x3000]));
+        let mut same: IndirectResolutions = FxHashMap::default();
+        same.insert(node, Some(ResolvedTargets::Multiple(vec![0x2000, 0x3000])));
+        let grew = apply_resolutions(&mut known, &unresolved, same).expect("apply");
+        assert!(!grew, "identical re-classification must not report growth");
+        assert_eq!(known[&addr], ResolvedTargets::Multiple(vec![0x2000, 0x3000]));
+
+        // (b) an improved (different) classification IS applied, so an
+        // unseatable-then-seatable site is not stranded unresolved.
+        let mut improved: IndirectResolutions = FxHashMap::default();
+        improved.insert(node, Some(ResolvedTargets::Multiple(vec![0x2000, 0x2004])));
+        let grew = apply_resolutions(&mut known, &unresolved, improved).expect("apply");
+        assert!(grew, "an improved classification must be applied");
+        assert_eq!(known[&addr], ResolvedTargets::Multiple(vec![0x2000, 0x2004]));
+    }
+
+    #[test]
+    fn apply_resolutions_first_classification_grows() {
+        let (_function, node) = fn_with_live_indirect_branch();
+        let addr = pcode_addr(0x1000);
+        let unresolved: UnresolvedAnchors = vec![(addr, node)];
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        let mut resolutions: IndirectResolutions = FxHashMap::default();
+        resolutions.insert(node, Some(ResolvedTargets::Single(0x2000)));
+        let grew = apply_resolutions(&mut known, &unresolved, resolutions).expect("apply");
+        assert!(grew, "a first-time classification must register as growth");
+        assert_eq!(known[&addr], ResolvedTargets::Single(0x2000));
+    }
+
+    // ── same-address collision merge (OR-4) ───────────────────────────────
+
+    #[test]
+    fn merge_resolved_unions_multiple_targets() {
+        let merged = merge_resolved(
+            &ResolvedTargets::Multiple(vec![0x1000, 0x2000]),
+            &ResolvedTargets::Multiple(vec![0x2000, 0x3000]),
+        );
+        assert_eq!(
+            merged,
+            ResolvedTargets::Multiple(vec![0x1000, 0x2000, 0x3000])
+        );
+    }
+
+    #[test]
+    fn merge_resolved_two_link_registers_stay_link_register() {
+        assert_eq!(
+            merge_resolved(&ResolvedTargets::LinkRegister, &ResolvedTargets::LinkRegister),
+            ResolvedTargets::LinkRegister
+        );
+    }
+
+    #[test]
+    fn merge_resolved_single_plus_single_widens_to_multiple() {
+        assert_eq!(
+            merge_resolved(&ResolvedTargets::Single(0x1000), &ResolvedTargets::Single(0x2000)),
+            ResolvedTargets::Multiple(vec![0x1000, 0x2000])
+        );
+    }
+
+    #[test]
+    fn apply_resolutions_merges_two_anchors_at_same_addr() {
+        // OR-4: two DISTINCT placeholder `NodeId`s mapped to one shared
+        // `PcodeInsnAddr` classify independently; `apply_resolutions` merges
+        // (unions) their target sets into the single `known_targets` entry
+        // rather than letting the second insert silently overwrite the first.
+        // We use the two distinct live nodes a single function already owns
+        // (the `IntConst` value node and the `IndirectBranch` placeholder) as
+        // the two anchor keys — `apply_resolutions` keys purely off `NodeId`,
+        // never node kind.
+        use strider_ir::{IRViewer, IRWalker, node::NodeKind};
+        let (function, indirect) = fn_with_live_indirect_branch();
+        let other = function
+            .walk()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
+            .expect("const node");
+        assert_ne!(indirect, other, "need two distinct NodeIds");
+        let addr = pcode_addr(0x1000);
+        let unresolved: UnresolvedAnchors = vec![(addr, indirect), (addr, other)];
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        let mut resolutions: IndirectResolutions = FxHashMap::default();
+        resolutions.insert(indirect, Some(ResolvedTargets::Single(0x2000)));
+        resolutions.insert(other, Some(ResolvedTargets::Single(0x3000)));
+        apply_resolutions(&mut known, &unresolved, resolutions).expect("apply");
+        assert_eq!(
+            known[&addr],
+            ResolvedTargets::Multiple(vec![0x2000, 0x3000]),
+            "two same-addr classifications must be merged, not overwritten"
+        );
     }
 }

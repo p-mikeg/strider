@@ -69,7 +69,10 @@ fn assert_smoke(arch: &str) {
     let mut buf = [0u8; 1];
     let n = rsleigh::MemReader::read(
         &r,
-        rsleigh::VnAddr { off: exec_addr, space: rsleigh::VnSpace::RAM },
+        rsleigh::VnAddr {
+            off: exec_addr,
+            space: rsleigh::VnSpace::RAM,
+        },
         &mut buf,
     )
     .unwrap();

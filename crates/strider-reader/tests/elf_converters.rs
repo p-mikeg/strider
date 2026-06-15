@@ -14,10 +14,7 @@
 mod common;
 
 use common::elf_fixture::{SectionSpec, build_elf_with_sections};
-use strider_reader::elf::{
-    elf_get_loadable_regions_including_writable,
-    elf_get_loadable_regions,
-};
+use strider_reader::elf::{elf_get_loadable_regions, elf_get_loadable_regions_including_writable};
 
 /// Parses the bytes as an ELF; panics with a clear message if parse fails.
 fn parse(bytes: &[u8]) -> object::File<'_> {
@@ -29,10 +26,10 @@ fn parse(bytes: &[u8]) -> object::File<'_> {
 #[test]
 fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss() {
     let bytes = build_elf_with_sections(&[
-        SectionSpec::text(0x1000, vec![1, 2]),    // exec     → include
-        SectionSpec::rodata(0x2000, vec![3, 4]),  // ro data  → include
-        SectionSpec::data(0x3000, vec![5, 6]),    // writable → exclude
-        SectionSpec::bss(0x4000, 16),             // NOBITS   → exclude (empty data)
+        SectionSpec::text(0x1000, vec![1, 2]),   // exec     → include
+        SectionSpec::rodata(0x2000, vec![3, 4]), // ro data  → include
+        SectionSpec::data(0x3000, vec![5, 6]),   // writable → exclude
+        SectionSpec::bss(0x4000, 16),            // NOBITS   → exclude (empty data)
     ]);
     let obj = parse(&bytes);
     let regions = elf_get_loadable_regions(&obj).unwrap();
@@ -311,8 +308,22 @@ fn code_and_readonly_preset_skips_rejected_malformed_section() {
 #[test]
 fn et_rel_sections_same_start_first_wins() {
     let bytes = build_elf_with_sections(&[
-        SectionSpec { name: b".first",  addr: 0x1000, data: vec![0xaa], exec: true,  writable: false, nobits: false },
-        SectionSpec { name: b".second", addr: 0x1000, data: vec![0xbb], exec: false, writable: false, nobits: false },
+        SectionSpec {
+            name: b".first",
+            addr: 0x1000,
+            data: vec![0xaa],
+            exec: true,
+            writable: false,
+            nobits: false,
+        },
+        SectionSpec {
+            name: b".second",
+            addr: 0x1000,
+            data: vec![0xbb],
+            exec: false,
+            writable: false,
+            nobits: false,
+        },
     ]);
     let obj = parse(&bytes);
     let regions = elf_get_loadable_regions(&obj).unwrap();
@@ -323,7 +334,10 @@ fn et_rel_sections_same_start_first_wins() {
 
     let mut buf = [0u8; 1];
     assert_eq!(table.read(0x1000, &mut buf), Some(1));
-    assert_eq!(buf[0], 0xaa, "first section wins on duplicate start_addr (ET_REL)");
+    assert_eq!(
+        buf[0], 0xaa,
+        "first section wins on duplicate start_addr (ET_REL)"
+    );
 }
 
 // ── elf_get_loadable_regions_including_writable ───────────────
@@ -350,8 +364,7 @@ fn allocatable_sections_include_text_rodata_data_and_exclude_bss() {
         SectionSpec::bss(0x4000, 16),
     ]);
     let obj = parse(&bytes);
-    let regions =
-        elf_get_loadable_regions_including_writable(&obj).unwrap();
+    let regions = elf_get_loadable_regions_including_writable(&obj).unwrap();
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
     assert!(addrs.contains(&0x1000), ".text must be included");
@@ -371,8 +384,7 @@ fn allocatable_preset_skips_nobits() {
         SectionSpec::bss(0x2000, 64),
     ]);
     let obj = parse(&bytes);
-    let regions =
-        elf_get_loadable_regions_including_writable(&obj).unwrap();
+    let regions = elf_get_loadable_regions_including_writable(&obj).unwrap();
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
     assert!(addrs.contains(&0x1000), ".text must be present");

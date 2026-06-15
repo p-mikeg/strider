@@ -4,9 +4,9 @@
 //! output-constraint API was deleted), so the remaining test only
 //! exercises the side-table directly.
 
+use strider_ir::FunctionBuilder;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
-use strider_ir::FunctionBuilder;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
@@ -27,7 +27,8 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         .unwrap()
         .build(&regs)
         .unwrap();
-    let mut b = FunctionBuilder::new(vec![rax, rsp], &cc, strider_target::Endianness::Little).unwrap();
+    let mut b =
+        FunctionBuilder::new(vec![rax, rsp], &cc, strider_target::Endianness::Little).unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
@@ -46,20 +47,18 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         callee_saved.push(regs.name_to_vn(n).unwrap());
     }
     let override_cc = BuiltCallingConvention::try_new(
-        vec![],                          // arg_passing_regs
-        callee_saved,                    // callee_saved_regs (every tracked var)
-        vec![],                          // ret_val_regs
-        vec![],                          // ret_val_regs_float
-        rsp,                             // stack_vn
-        None,                            // stack_args
-        0,                               // ret_stack_pop
-        None,                            // link_register_vn
-        false,                           // preserves_memory
+        vec![],       // arg_passing_regs
+        callee_saved, // callee_saved_regs (every tracked var)
+        vec![],       // ret_val_regs
+        vec![],       // ret_val_regs_float
+        rsp,          // stack_vn
+        None,         // stack_args
+        0,            // ret_stack_pop
+        None,         // link_register_vn
+        false,        // preserves_memory
     )
     .unwrap();
-    let addr = b
-        .build_int_const(0xdead_u64, ValueType::I64)
-        .unwrap();
+    let addr = b.build_int_const(0xdead_u64, ValueType::I64).unwrap();
     let _call_node = b.build_call(addr, Some(&override_cc)).unwrap();
     let ret_vars: Vec<rsleigh::Vn> = b.ret_val_vars().to_vec();
     b.build_return(None, &ret_vars).unwrap();
@@ -68,7 +67,8 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     // The single Call has 0 clobber outputs (ctrl + mem only); the override
     // CC is still recorded (it just clobbers nothing).
     let call_id = function
-        .graph().all_node_ids()
+        .graph()
+        .all_node_ids()
         .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
         .unwrap();
     assert!(function.call_cc(call_id).is_some());

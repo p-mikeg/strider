@@ -8,11 +8,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
-use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
+use strider_cfg::MachineInsnAddr;
 use strider_ir::Function;
 use strider_ir::node::NodeKind;
-use strider_cfg::MachineInsnAddr;
+use strider_ir::{IRViewer, IRWalker};
 use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 
@@ -69,7 +69,10 @@ pub fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Opti
         .expect("build cc");
     let lr_vn = cc.link_register_vn;
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(base), &strider_cfg::CfgOptions::default())
+        .build_cfg(
+            MachineInsnAddr::from(base),
+            &strider_cfg::CfgOptions::default(),
+        )
         .expect("cfg build");
     let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
     let mut function = outcome.function;
@@ -80,8 +83,11 @@ pub fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Opti
     // PhiCollapse simplifies the trivial Return shape we don't
     // need to walk past.
     let p = strider_orchestrator::opt::default_pipeline();
-    p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .expect("optimizer pipeline");
+    p.run(
+        &mut function,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .expect("optimizer pipeline");
 
     assert_eq!(
         outcome.unresolved_branches.len(),
