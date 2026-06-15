@@ -246,6 +246,46 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
     Ok(())
 }
 
+/// A load wider than 16 bytes (I256 / I512) must NOT fold, even when the
+/// ROM can serve the full width.  The decode path tops out at a 16-byte
+/// `u128` word, so folding a wider load would silently truncate to the low
+/// 16 bytes — the `size > 16` guard returns NoChange and leaves the Load
+/// intact.  This pins the *non*-folding side of the 16-byte cutoff;
+/// `const_load_16_bytes_folds_to_i128_both_endians` pins the folding side
+/// at exactly 16.  Critically the ROM here maps 64 bytes, so the read
+/// itself would succeed — only the width guard blocks the fold (i.e. this
+/// is distinct from `load_oversize_read_no_change`, which exercises the
+/// read-failure path).
+#[test]
+fn const_load_wider_than_16_bytes_does_not_fold() -> Result<()> {
+    use strider_ir::IRViewer;
+
+    let rom = RawBytesRom {
+        base: 0x1000,
+        bytes: (0..64u8).collect(),
+    };
+
+    for ty in [ValueType::I256, ValueType::I512] {
+        let mut fg = make_fn(|b| {
+            let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+            b.build_load(addr, rsleigh::VnSpace::RAM, ty)
+        })?;
+        assert!(
+            !LoadReadOnly
+                .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
+                .changed(),
+            "{ty:?}: wider-than-16-byte load must not fold",
+        );
+        // The Load survives — no IntConst replacement happened.
+        assert!(
+            fg.walk()
+                .any(|n| matches!(fg.node_kind(n), NodeKind::Load(_))),
+            "{ty:?}: Load node must remain in the graph",
+        );
+    }
+    Ok(())
+}
+
 // ── comprehensive tests ───────────────────────────────────────────────────────
 
 /// Loading more bytes than the ROM provides (read returns None) leaves the
