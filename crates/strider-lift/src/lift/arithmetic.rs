@@ -164,30 +164,32 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// The lift-time equality check is reserved for the lowered forms
     /// (`handle_int_sub`, `handle_int_not_equal`, `handle_int_less_equal`,
     /// `handle_int_sless_equal`) whose lowering arithmetic *does* require
-    /// matching widths, plus the signedness-sensitive table ops
-    /// (`Sdiv` / `Srem` / `SShiftRight`): those route their value operand
-    /// through `extend_if_needed(.., SignExtend)`, which SILENTLY TRUNCATES
-    /// a wider-than-output operand (dropping the high bits with no sign
-    /// awareness) before the signed operation.  A width mismatch there would
-    /// corrupt the signed result, so it is guarded loud rather than
-    /// mis-lifted.  The unsigned / bitwise ops are width-agnostic in their
-    /// low bits and stay permissive.
+    /// matching widths, plus the width-sensitive table ops.  The
+    /// signedness-sensitive ones (`Sdiv` / `Srem` / `SShiftRight`) route their
+    /// value operand through `extend_if_needed(.., SignExtend)`, which SILENTLY
+    /// TRUNCATES a wider-than-output operand before the signed operation; the
+    /// unsigned `Div` / `Rem` truncate via the zero-extend path.  Either way a
+    /// wider operand corrupts a quotient / remainder (their low bits are NOT
+    /// width-agnostic), so every division / remainder is guarded loud rather
+    /// than mis-lifted.  The bitwise / shift-left / add / mul ops are
+    /// width-agnostic in their low bits and stay permissive.
     pub(super) fn process_int_binary_op(
         &mut self,
         insn: &rsleigh::Insn,
         op: IntBinaryOp,
     ) -> Result<()> {
-        // Signed ops sign-extend an operand via `extend_if_needed(..,
-        // SignExtend)`, which SILENTLY TRUNCATES (sign-blind) when that
-        // operand is WIDER than the output — corrupting the signed result.
-        // A *narrower* operand sign-extends correctly (the intended
-        // semantics), so guard only the wider-than-output direction.
-        // `Sdiv` / `Srem` sign-extend BOTH operands, so neither may exceed
-        // the output; `SShiftRight` sign-extends only the value (lhs) — its
-        // shift count (rhs) zero-extends and may legally be any width (e.g.
-        // `sar reg, cl`), so only the value is guarded.
+        // The operand coercion below SILENTLY TRUNCATES an operand WIDER than
+        // the output (sign-blind on the signed sign-extend path, value-blind on
+        // the unsigned zero-extend path).  For ops whose low bits are NOT
+        // width-agnostic — every division / remainder, signed (`Sdiv` / `Srem`)
+        // or unsigned (`Div` / `Rem`) — truncating a wider operand corrupts the
+        // quotient / remainder, so BOTH operands are guarded.  `SShiftRight`
+        // sign-extends only the value (lhs) — its shift count (rhs) zero-extends
+        // and may legally be any width (e.g. `sar reg, cl`), so only the value
+        // is guarded.  A *narrower* operand extends correctly (the intended
+        // semantics), so only the wider-than-output direction is rejected.
         match op {
-            IntBinaryOp::Sdiv | IntBinaryOp::Srem => {
+            IntBinaryOp::Sdiv | IntBinaryOp::Srem | IntBinaryOp::Div | IntBinaryOp::Rem => {
                 let out_vn = require_output_vn(insn)?;
                 reject_operand_wider_than_output(nth_input_or_err(insn, 0)?, out_vn)?;
                 reject_operand_wider_than_output(nth_input_or_err(insn, 1)?, out_vn)?;

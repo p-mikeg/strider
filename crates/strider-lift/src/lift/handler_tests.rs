@@ -1353,6 +1353,53 @@ fn sdiv_with_wider_lhs_does_not_silently_truncate() {
     );
 }
 
+/// `IntDiv` / `IntRem` are unsigned, but the permissive arm still routes a
+/// wider-than-output operand through `convert_to_int_if_needed`, which
+/// SILENTLY TRUNCATES it.  Unlike the bitwise / shift-left / add / mul ops,
+/// a divide's (or remainder's) low bits are NOT width-agnostic, so a
+/// truncated wider dividend yields the wrong quotient.  They must guard the
+/// wider-than-output operand exactly as the signed `Sdiv` / `Srem` do.
+#[test]
+fn unsigned_div_rem_with_wider_lhs_does_not_silently_truncate() {
+    for opcode in [Opcode::IntDiv, Opcode::IntRem] {
+        with_test_lifter_tracking(
+            vec![
+                Vn {
+                    size: 8,
+                    addr_off: 0x200,
+                    addr_space: VnSpace::REGISTER,
+                },
+                reg(0),
+                reg(4),
+            ],
+            |d, rid| {
+                let wide_lhs = Vn {
+                    size: 8,
+                    addr_off: 0x200,
+                    addr_space: VnSpace::REGISTER,
+                };
+                let insn = Insn {
+                    opcode,
+                    output: Some(reg(0)),
+                    inputs: vec![wide_lhs, reg(4)].into(),
+                };
+                let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
+                assert!(
+                    res.is_err(),
+                    "{opcode:?} with lhs wider than output must error (no silent truncate)"
+                );
+                if let Err(e) = res {
+                    let msg = format!("{e:#}");
+                    assert!(
+                        msg.contains("width mismatch"),
+                        "error must name the width mismatch; got: {msg}"
+                    );
+                }
+            },
+        );
+    }
+}
+
 // ── Wide SUBPIECE high-lane extract (MED-3) ──────────────────────────────────
 
 /// A YMM (I256) SUBPIECE with a nonzero byte_offset builds its right-shift at
