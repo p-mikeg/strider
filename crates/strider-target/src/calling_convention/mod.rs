@@ -401,6 +401,32 @@ impl StackArgs {
         }
         Some(((offset - self.base_offset) / self.increment) as usize)
     }
+
+    /// The number of consecutive stack slots a `size`-byte argument occupies:
+    /// `ceil(max(size, 1) / increment)`, always `>= 1`.
+    ///
+    /// A zero- or one-byte argument occupies one slot; an argument wider than
+    /// `increment` (a 32-bit-ABI `double`, an x86-64 `long double`) spans the
+    /// slots its bytes cover.  This is the cursor-advance companion to
+    /// [`Self::slot_of`]: `slot_of` anchors a wide argument at the slot of its
+    /// first byte, and `slots_spanned` says how many slots to step past it.
+    ///
+    /// Like [`Self::offset_of`] the arithmetic **saturates** rather than
+    /// overflowing: a garbage decoded `size` (from arbitrary lifted
+    /// arithmetic) degrades to a large-but-finite span instead of wrapping the
+    /// `i64` intermediate.
+    #[must_use]
+    pub fn slots_spanned(&self, size: i64) -> usize {
+        debug_assert!(
+            self.increment > 0,
+            "StackArgs::slots_spanned requires increment > 0"
+        );
+        let size = size.max(1);
+        // ceil(size / increment): add `increment - 1` to the numerator, but
+        // saturate so a pathological `size` can't overflow the i64 add.
+        let numerator = size.saturating_add(self.increment - 1);
+        (numerator / self.increment) as usize
+    }
 }
 
 /// A convention's positional-argument layout: register slots first (indices
