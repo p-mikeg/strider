@@ -79,7 +79,7 @@ pub fn classify_table_dispatch(
     // the branch NODE (not the bare value) means the index-range query below is
     // scoped to the branch ACTUALLY being resolved, never the first
     // `IndirectBranch` that happens to share the dispatch value.
-    let [_, _, anchor_value] = ctx.node_inputs_exact::<3>(branch).ok()?;
+    let anchor_value = ctx.indirect_branch_target(branch);
 
     // The dispatch is `f(index)` for one bounded `index`.  We don't pattern-
     // match the addressing; instead we find candidate bounded values in the

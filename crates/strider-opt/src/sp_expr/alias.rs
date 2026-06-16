@@ -173,13 +173,7 @@ pub(crate) fn store_alias_verdict(
     mode: AliasMode,
     distinct_sp_bases_disjoint: bool,
 ) -> AliasVerdict {
-    // Store inputs: [MEM, ADDR, DATA] — exactly 3 once the kind is
-    // established by the caller (validated structural invariant).
-    let inputs = function
-        .graph()
-        .node_inputs_exact::<3>(store_node)
-        .expect("Store node has 3 inputs (validated)");
-    let store_size = store_value_byte_size(function.graph(), inputs[2]);
+    let store_size = store_value_byte_size(function.graph(), function.store_data(store_node));
     // `Function::stack_offsets` (populated by `StackOffsetDetect`) is the SSoT
     // for a store's SP-relative offset: it survives address rewrites that leave
     // `decompose_sp` unable to re-derive the offset (an earlier pass folding the
@@ -187,7 +181,7 @@ pub(crate) fn store_alias_verdict(
     // `decompose_sp`.
     let store_class = match function.stack_offset(store_node) {
         Some((base, offset)) => AddrClass::SpRooted { base, offset },
-        None => classify_addr(function, inputs[1], sp_memo),
+        None => classify_addr(function, function.store_addr(store_node), sp_memo),
     };
     alias_verdict(
         load_class,

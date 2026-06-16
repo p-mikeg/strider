@@ -118,9 +118,8 @@ fn try_forward_load(
     // 3. Exact-match check: the store must write the SAME location
     //    (address class + base + offset) and its value must cover the
     //    load's byte range.  An overlapping-but-not-exact store bails.
-    // Store inputs: [memory, addr, data] — exactly 3 once the kind is
-    // established (validated structural invariant).
-    let [_store_mem, store_addr, data] = ctx.graph_ref().node_inputs_exact::<3>(clobber_node)?;
+    let store_addr = ctx.store_addr(clobber_node);
+    let data = ctx.store_data(clobber_node);
     // A `Store`'s data input is an `AnyInt` value slot (validated), so its
     // source output is always a value.
     let data_ty = ctx

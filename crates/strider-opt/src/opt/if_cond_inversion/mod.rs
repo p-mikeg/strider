@@ -138,7 +138,7 @@ fn is_inverted_cond_match(
     inner_pat: &Pattern,
     inner_capture: Capture,
 ) -> Option<ValueId> {
-    let [_ctrl, cond_value] = function.graph().node_inputs_exact::<2>(if_node).ok()?;
+    let cond_value = function.if_cond(if_node);
     let cond_node = function.producer(cond_value);
     // `match_at` is the single-node entry point: try the pattern at
     // exactly the cond's producer node (not a full graph walk).

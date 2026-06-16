@@ -294,6 +294,67 @@ pub trait IRViewer {
         }
     }
 
+    // ── semantic-slot accessors ──────────────────────────────────────────
+    //
+    // Named operand reads keyed off the node already in hand, deriving the
+    // fixed input slot (per `node_signature`) so consumers never re-encode the
+    // positional index `node_inputs_exact::<N>(n)[k]` at each call site. Each
+    // panics on the arity invariant the validator already guarantees for a
+    // well-formed node of that kind.
+
+    /// The condition value of an `If` node — input slot 1 (`[control, cond]`).
+    ///
+    /// # Panics
+    /// Panics if `node` does not have the `If` input arity (2 inputs); a
+    /// validator-guaranteed invariant for a well-formed `If`.
+    fn if_cond(&self, node: NodeId) -> ValueId {
+        self.node_inputs_exact::<2>(node)
+            .expect("If node has [control, cond] inputs")[1]
+    }
+
+    /// The dispatch value of an `IndirectBranch` node — input slot 2
+    /// (`[control, memory, target]`).
+    ///
+    /// # Panics
+    /// Panics if `node` does not have the `IndirectBranch` input arity (3
+    /// inputs); a validator-guaranteed invariant for a well-formed node.
+    fn indirect_branch_target(&self, node: NodeId) -> ValueId {
+        self.node_inputs_exact::<3>(node)
+            .expect("IndirectBranch node has [control, memory, target] inputs")[2]
+    }
+
+    /// The address operand of a `Store` node — input slot 1
+    /// (`[memory, addr, data]`).
+    ///
+    /// # Panics
+    /// Panics if `node` does not have the `Store` input arity (3 inputs); a
+    /// validator-guaranteed invariant for a well-formed `Store`.
+    fn store_addr(&self, node: NodeId) -> ValueId {
+        self.node_inputs_exact::<3>(node)
+            .expect("Store node has [memory, addr, data] inputs")[1]
+    }
+
+    /// The data operand of a `Store` node — input slot 2
+    /// (`[memory, addr, data]`).
+    ///
+    /// # Panics
+    /// Panics if `node` does not have the `Store` input arity (3 inputs); a
+    /// validator-guaranteed invariant for a well-formed `Store`.
+    fn store_data(&self, node: NodeId) -> ValueId {
+        self.node_inputs_exact::<3>(node)
+            .expect("Store node has [memory, addr, data] inputs")[2]
+    }
+
+    /// The address operand of a `Load` node — input slot 1 (`[memory, addr]`).
+    ///
+    /// # Panics
+    /// Panics if `node` does not have the `Load` input arity (2 inputs); a
+    /// validator-guaranteed invariant for a well-formed `Load`.
+    fn load_addr(&self, node: NodeId) -> ValueId {
+        self.node_inputs_exact::<2>(node)
+            .expect("Load node has [memory, addr] inputs")[1]
+    }
+
     /// Yields `(NodeId, &NodeKind)` for every node in the arena whose id is in
     /// `reachable`, in ascending-`NodeId` order.
     fn reachable_kind_iter<'a>(

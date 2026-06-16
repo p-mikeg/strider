@@ -196,18 +196,13 @@ impl<'m> SpAliasCfg<'m> {
         if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
             return None;
         }
-        // Store inputs: [memory, addr, data].
-        let inputs = function
-            .graph()
-            .node_inputs_exact::<3>(clobber)
-            .expect("Store node has 3 inputs (validated)");
-        let data = inputs[2];
+        let data = function.store_data(clobber);
         // Resolve the store's own SP offset (side-table SSoT, else decompose); it
         // must share `base` to be comparable to the probed location.
         let store_offset = match function.stack_offset(clobber) {
             Some((b, off)) if b == base => off,
             Some(_) => return None,
-            None => match SpDecomposer::new(function, oracle.sp_memo).decompose(inputs[1]) {
+            None => match SpDecomposer::new(function, oracle.sp_memo).decompose(function.store_addr(clobber)) {
                 Some(SpExpr {
                     base: b,
                     offset: off,
