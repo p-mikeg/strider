@@ -172,7 +172,6 @@ pub fn apply_elf_relocations(
     regions: &mut [MemRegion],
     obj: &object::File<'_>,
 ) -> Result<RelocationStats> {
-    let endian_le = matches!(obj.endianness(), object::Endianness::Little);
     let mut stats = RelocationStats::default();
 
     // Build a sorted `start_addr -> index` map once so the per-relocation
@@ -205,7 +204,6 @@ pub fn apply_elf_relocations(
                         &region_index,
                         site_addr,
                         &reloc,
-                        endian_le,
                         &mut stats,
                     );
                 }
@@ -227,7 +225,6 @@ pub fn apply_elf_relocations(
                     &region_index,
                     site_addr,
                     &reloc,
-                    endian_le,
                     &mut stats,
                 );
             }
@@ -251,9 +248,11 @@ fn apply_one_relocation(
     region_index: &RegionIndex,
     site_addr: u64,
     reloc: &object::Relocation,
-    endian_le: bool,
     stats: &mut RelocationStats,
 ) {
+    // Endianness of the patched field, derived from `obj` (its sole source)
+    // rather than threaded in alongside it.
+    let endian_le = matches!(obj.endianness(), object::Endianness::Little);
     stats.seen += 1;
 
     // Image-relative relocations (`R_X86_64_RELATIVE` /
