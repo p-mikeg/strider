@@ -484,7 +484,9 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   - `LiftOptions` (crate root) is the whole-lift options type: it embeds
     a `strider_cfg::CfgOptions` (`cfg`, handed to
     `strider_cfg::Builder::for_arch` as `&lift_opts.cfg`) plus the IR-lift
-    knobs `all_vns` / `per_address_ccs`.
+    knob `per_address_ccs` and the post-pipeline `compact` knob.  The
+    tracked varnode set is scanned fresh from the CFG at lift time
+    (`Lifter::find_all_unique_vns`), so it is NOT a `LiftOptions` field.
 
 - **`strider-opt`** (optimization passes) **+ `strider-orchestrator`**
   (orchestration).  `strider-opt` is the crate root for the former `opt`
