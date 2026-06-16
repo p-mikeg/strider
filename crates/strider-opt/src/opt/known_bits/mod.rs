@@ -194,8 +194,7 @@ pub(crate) fn node_known_bits(
                     // producing the wrong known-bits result for any
                     // literal shift at-or-past the type width.
                     let rhs_mask = ctx
-                        .value_kind(rhs)
-                        .as_value()
+                        .value_type_opt(rhs)
                         .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
                     match classify_const_shift(known[rhs], rhs_mask, ty.bit_width() as u64) {
@@ -233,8 +232,7 @@ pub(crate) fn node_known_bits(
                     // Mirror that here — see the ShiftLeft arm for the
                     // pre-fix bug rationale.
                     let rhs_mask = ctx
-                        .value_kind(rhs)
-                        .as_value()
+                        .value_type_opt(rhs)
                         .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
                     match classify_const_shift(known[rhs], rhs_mask, ty.bit_width() as u64) {

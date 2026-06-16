@@ -146,8 +146,7 @@ pub(crate) fn try_fold_const_load_at(
     // here means malformed IR, not a fold we should silently skip.
     let [data_value] = ctx.node_outputs_exact::<1>(node_id)?;
     let ty = ctx
-        .value_kind(data_value)
-        .as_value()
+        .value_type_opt(data_value)
         .expect("Load output is a value");
     let size = ty.byte_size();
     // Bail on wider-than-I128 loads (I256 / I512): the decode below tops

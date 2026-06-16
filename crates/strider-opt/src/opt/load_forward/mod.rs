@@ -91,8 +91,7 @@ fn try_forward_load(
     let [load_value] = ctx.node_outputs_exact::<1>(load)?;
     // A `Load` always produces a value output (validated signature).
     let load_ty = ctx
-        .value_kind(load_value)
-        .as_value()
+        .value_type_opt(load_value)
         .expect("Load output is a value");
 
     let load_size = load_ty.byte_size() as i64;
@@ -123,8 +122,7 @@ fn try_forward_load(
     // A `Store`'s data input is an `AnyInt` value slot (validated), so its
     // source output is always a value.
     let data_ty = ctx
-        .value_kind(data)
-        .as_value()
+        .value_type_opt(data)
         .expect("Store data input is a value");
     let store_size = data_ty.byte_size() as i64;
     let store_class = alias_cfg.classify_addr(ctx.function(), store_addr);
