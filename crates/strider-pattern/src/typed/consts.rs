@@ -19,6 +19,23 @@ use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::template::template_pat::TemplatePat;
 use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef};
+use crate::typed::builder_like::BuilderLike;
+
+/// Shared lowering for the fixed-shape constant leaves (`BoolConst`,
+/// `FloatConst`): one `leaf` node, optionally pinned to an exact value type.
+/// Written once over any [`BuilderLike`] so the match- and build-side impls
+/// don't carry byte-for-byte twin bodies.
+fn compile_const_leaf<B: BuilderLike>(
+    b: &mut B,
+    kind: KindSpec,
+    ty: Option<ValueType>,
+) -> B::OutRef {
+    let o = b.leaf(kind);
+    if let Some(t) = ty {
+        b.set_value_ty(o, t);
+    }
+    o
+}
 
 /// Match the integer constant `v` (width-aware: masks `v` and the stored
 /// payload to the matched node's output width before comparing).
@@ -172,20 +189,20 @@ pub struct BoolConst {
 
 impl MatchPat for BoolConst {
     fn compile(self, builder: &mut MatcherBuilder) -> PatValueRef {
-        let v: u64 = u64::from(self.b);
-        let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(v))));
-        builder.set_value_ty(o, ValueType::I1);
-        o
+        compile_const_leaf(builder, bool_const_kind(self.b), Some(ValueType::I1))
     }
 }
 
 impl crate::template::template_pat::TemplatePat for BoolConst {
     fn compile(self, builder: &mut TemplateBuilder) -> TmplValueRef {
-        let v: u64 = u64::from(self.b);
-        let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(v))));
-        builder.set_value_ty(o, ValueType::I1);
-        o
+        compile_const_leaf(builder, bool_const_kind(self.b), Some(ValueType::I1))
     }
+}
+
+/// The leaf node kind for the boolean constant `b` (an `I1`-typed
+/// `IntConst`), shared by `BoolConst`'s match- and build-side lowerings.
+fn bool_const_kind(b: bool) -> KindSpec {
+    KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(u64::from(b))))
 }
 
 /// Match the boolean constant `b` at width `I1`.
@@ -200,13 +217,13 @@ pub struct FloatConst {
 
 impl MatchPat for FloatConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        b.leaf(KindSpec::Exact(NodeKind::FloatConst(self.bits)))
+        compile_const_leaf(b, KindSpec::Exact(NodeKind::FloatConst(self.bits)), None)
     }
 }
 
 impl crate::template::template_pat::TemplatePat for FloatConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        b.leaf(KindSpec::Exact(NodeKind::FloatConst(self.bits)))
+        compile_const_leaf(b, KindSpec::Exact(NodeKind::FloatConst(self.bits)), None)
     }
 }
 

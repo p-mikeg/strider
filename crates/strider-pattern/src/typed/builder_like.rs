@@ -52,6 +52,8 @@ pub trait BuilderLike {
     fn value_output(&mut self, node: Self::NodeRef, slot: usize) -> Self::OutRef;
     /// Pin `out`'s value output to an exact type.
     fn set_value_ty(&mut self, out: Self::OutRef, ty: ValueType);
+    /// A leaf node of `kind` (no inputs) with a single value output.
+    fn leaf(&mut self, kind: KindSpec) -> Self::OutRef;
 }
 
 impl BuilderLike for MatcherBuilder {
@@ -76,6 +78,9 @@ impl BuilderLike for MatcherBuilder {
     fn set_value_ty(&mut self, out: Self::OutRef, ty: ValueType) {
         MatcherBuilder::set_value_ty(self, out, ty);
     }
+    fn leaf(&mut self, kind: KindSpec) -> Self::OutRef {
+        MatcherBuilder::leaf(self, kind)
+    }
 }
 
 impl BuilderLike for TemplateBuilder {
@@ -99,6 +104,9 @@ impl BuilderLike for TemplateBuilder {
     }
     fn set_value_ty(&mut self, out: Self::OutRef, ty: ValueType) {
         TemplateBuilder::set_value_ty(self, out, ty);
+    }
+    fn leaf(&mut self, kind: KindSpec) -> Self::OutRef {
+        TemplateBuilder::leaf(self, kind)
     }
 }
 
