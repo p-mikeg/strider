@@ -66,6 +66,35 @@ fn known_bits_popcount_range() -> Result<()> {
     Ok(())
 }
 
+/// Popcount range at the I64 width edge: the popcount of an OPAQUE
+/// (unknown-bits) 64-bit value is at most 64 (7 bits), so bits 7..63 are
+/// known zero.  ANDing with a mask over those bits folds to 0.  Unlike the
+/// I8 case above — whose const input can't distinguish exact-vs-range and
+/// never touches the 7-bit boundary — this pins the `[0, bit_width]` range
+/// derivation at I64 with a genuinely-unknown input.
+#[test]
+fn known_bits_popcount_range_i64_opaque() -> Result<()> {
+    let v = rsleigh::Vn {
+        addr_off: 0x80,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut b = RegisterSet::new().tracked(v).build_fn_single_region()?;
+    let x = b.read_variable(&v)?; // opaque I64 (InitialVar) — bits unknown
+    let pc = b.build_popcount(x, ValueType::I64)?;
+    // Mask covering bits 7..63 — everything above the 7 bits that hold 0..=64.
+    let mask = b
+        .build_int_const(0xFFFF_FFFF_FFFF_FF80u64, ValueType::I64)
+        .unwrap();
+    let and = b.build_int_binary_operation(pc, mask, IntBinaryOp::And, ValueType::I64)?;
+    b.build_return(Some(and), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    assert_returns_const(fg.graph(), 0);
+    Ok(())
+}
+
 // ── Comprehensive tests ───────────────────────────────────────────────────────
 
 /// After `x >> 4` for I8, the upper 4 bits are statically zero. ANDing
