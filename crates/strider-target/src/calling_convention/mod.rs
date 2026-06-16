@@ -198,6 +198,8 @@ impl BuiltCallingConvention {
     ///   `callee_saved_regs` (CLAUDE.md "Note (link-register
     ///   handling)" deliberate tradeoff)
     /// - `ret_stack_pop` is non-negative
+    /// - When `stack_args` is `Some`, its `increment` is `> 0` and its
+    ///   `base_offset` is `>= 0`
     ///
     /// # Errors
     ///
@@ -305,6 +307,18 @@ impl BuiltCallingConvention {
             return Err(anyhow::anyhow!(
                 "BuiltCallingConvention: stack-arg increment must be > 0, got {}",
                 sa.increment,
+            ));
+        }
+        // A negative base_offset would let `index_of` / `slot_of`'s
+        // `offset - base_offset` overflow on a garbage offset; reject it here
+        // (the construction boundary) so those hot-path subtractions stay
+        // overflow-free for any `offset >= base_offset`.
+        if let Some(sa) = stack_args
+            && sa.base_offset < 0
+        {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: stack-arg base_offset must be >= 0, got {}",
+                sa.base_offset,
             ));
         }
         Ok(Self {
