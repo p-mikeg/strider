@@ -298,6 +298,72 @@ fn classify_table_dispatch_unbounded_idx_returns_none() {
     assert_eq!(result, None);
 }
 
+/// The `count <= MAX_TABLE_ENTRIES` (4096) cap: the SAME masked-dispatch
+/// shape resolves when the index range is small (`& 0x3` → 4 entries) but
+/// DEFERS when it exceeds the cap (`& 0x1FFF` → 8192 entries).  The masked
+/// index passes the `hi < type_mask` candidate filter (unlike the unbounded
+/// case above, which fails it), so the cap is the only thing that changes
+/// the verdict.  The guard short-circuits BEFORE the per-entry fold, so the
+/// over-cap case stays cheap (no 8192 clone+optimize rounds).
+#[test]
+fn classify_table_dispatch_defers_over_cap_resolves_under_cap() {
+    let build = |mask: u64| {
+        build_with_anchor(move |fb| {
+            let idx_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
+            let idx_raw = fb
+                .build_load(idx_addr, VnSpace::RAM, ValueType::I32)
+                .expect("load idx");
+            let mask_c = fb.build_int_const(mask, ValueType::I32).unwrap();
+            let idx = fb
+                .build_int_binary_operation(idx_raw, mask_c, IntBinaryOp::And, ValueType::I32)
+                .expect("mask idx");
+            let stride_c = fb.build_int_const(4u64, ValueType::I32).unwrap();
+            let mul = fb
+                .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+                .expect("mul");
+            let base_c = fb.build_int_const(0x4000u64, ValueType::I32).unwrap();
+            let addr = fb
+                .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+                .expect("add");
+            fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+                .expect("dispatch load")
+        })
+    };
+    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
+
+    // Under the cap (mask 0x3 → range [0,3], 4 entries): resolves.
+    let (g, _) = build(0x3);
+    let (known, doms) = make_known_and_doms(&g);
+    let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
+    let under = classify_table_dispatch(
+        &g,
+        sole_indirect_branch(&g),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    assert!(
+        matches!(under, Some(ResolvedTargets::Multiple(_))),
+        "a 4-entry table resolves, got {under:?}",
+    );
+
+    // Over the cap (mask 0x1FFF → range [0,8191], 8192 > 4096 entries): defers.
+    let (g2, _) = build(0x1FFF);
+    let (known2, doms2) = make_known_and_doms(&g2);
+    let mut ranges2 = crate::value_range::compute_value_ranges(&g2, &doms2, &known2);
+    let over = classify_table_dispatch(
+        &g2,
+        sole_indirect_branch(&g2),
+        Some(&rom),
+        &mut ranges2,
+        AliasMode::StackGlobalDisjoint,
+    );
+    assert_eq!(
+        over, None,
+        "an 8192-entry table exceeds MAX_TABLE_ENTRIES and must defer",
+    );
+}
+
 #[test]
 fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
     // ARM `tbb`-style shape: the index is itself a table ENTRY — a byte loaded
