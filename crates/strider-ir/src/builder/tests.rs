@@ -2958,6 +2958,81 @@ fn write_subregister_merge_preserves_container_high_bytes() -> Result<()> {
     Ok(())
 }
 
+/// Writing a 4-byte sub-register into a 10-byte x87 extended container
+/// (`I80`) merges via the same positioned-mask `Or` shape, but with the
+/// 80-bit container mask `(1<<80)-1` (NOT a full-width `u64`/`u128` mask):
+/// the preserve arm keeps bits 32..80 and the value arm writes bits 0..32.
+/// This pins the 10-byte arm of `vn_mask` (`(1u128<<80)-1`), which the
+/// existing 8/16-byte aliasing tests never exercise.
+#[test]
+fn write_subregister_into_x87_80bit_container_preserves_high_bits() -> Result<()> {
+    let st = reg_vn(0x200, 10); // x87 80-bit extended register
+    let lo4 = reg_vn(0x200, 4); // low 4 bytes → LE shift 0
+    let mut b = raw_builder(
+        vec![st],
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let initial = b.read_variable(&st)?;
+    let val = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
+    b.write_reg_vn(&lo4, val)?;
+
+    let merged = b.read_reg_vn(&st)?;
+    assert_eq!(
+        b.function().value_type(merged)?,
+        ValueType::I80,
+        "the 10-byte container reads back as I80",
+    );
+    assert_eq!(
+        producer_kind(&b, merged),
+        NodeKind::IntBinaryOp(IntBinaryOp::Or)
+    );
+    let [lhs, rhs] = b
+        .function()
+        .node_inputs_exact::<2>(b.function().producer(merged))?;
+
+    // The mask constants are 80-bit, so read them via int_const_u128 (the
+    // u64 projection would discard the ~80-bit preserve mask).
+    let mut consts: Vec<u128> = Vec::new();
+    let mut saw_initial = false;
+    for and_val in [lhs, rhs] {
+        assert_eq!(
+            producer_kind(&b, and_val),
+            NodeKind::IntBinaryOp(IntBinaryOp::And),
+            "each Or operand is an And"
+        );
+        for input in b.function().node_inputs(b.function().producer(and_val)) {
+            if let Some(c) = b.function().int_const_u128(input) {
+                consts.push(c);
+            }
+            if input == initial {
+                saw_initial = true;
+            }
+        }
+    }
+    consts.sort_unstable();
+    let container_mask = (1u128 << 80) - 1;
+    let keep_mask = container_mask & !0xFFFF_FFFFu128;
+    assert_eq!(
+        consts,
+        vec![0xDEAD_BEEF, 0xFFFF_FFFF, keep_mask],
+        "byte mask 0xFFFFFFFF + 80-bit preserve mask + the written value",
+    );
+    assert!(
+        saw_initial,
+        "the preserve arm must consume the pre-write 80-bit container value"
+    );
+    Ok(())
+}
+
 /// Writing the x86 high-byte sub-register `ah` (offset 1 → LE shift 8) into
 /// `rax` positions the byte mask at bits 8..16, preserves the low byte (and
 /// the 6 high bytes) via the keep-mask, and left-shifts the written value by
