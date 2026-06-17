@@ -945,8 +945,12 @@ impl Function {
     ///
     /// Returns an error if [`Self::entry`] is `None`.  Otherwise infallible in
     /// practice; the `Result` is kept so a future invariant check has a typed
-    /// channel and Python callers see a clean exception rather than a panic.
-    pub fn retain_reachable(&mut self) -> crate::Result<NodeIdRemap> {
+    /// channel.
+    ///
+    /// Crate-internal: this remaps only the graph and leaves the `Function`
+    /// side-tables stale, so [`Self::compact`] (which remaps them) is the only
+    /// safe public entry point.
+    pub(crate) fn retain_reachable(&mut self) -> crate::Result<NodeIdRemap> {
         let entry = self
             .entry
             .ok_or_else(|| anyhow::anyhow!("Function::retain_reachable: entry node is not set"))?;
@@ -1293,6 +1297,66 @@ mod compact_tests {
         let outs: Vec<_> = f.node_outputs(entry_id).to_vec();
         assert_eq!(outs.len(), 1);
         assert!(f.value_kind(outs[0]).is_control());
+    }
+
+    /// `compact` GCs the wide-const interner and remaps surviving
+    /// `IntConst(Wide(id))` references.  A wide const on a DROPPED node
+    /// (interned first → id 0) is collected, forcing the live wide const's
+    /// id to shift; the survivor must still be a `Wide` `IntConst` whose
+    /// remapped id resolves to its original value.  Without a correct GC +
+    /// payload rewrite the survivor would dangle or read the wrong constant.
+    #[test]
+    fn compact_gcs_and_remaps_surviving_wide_const() {
+        use crate::node::ValueType;
+        use crate::wide_const::WideConstStorage;
+
+        const LIVE: u128 = 0x1234_5678_9ABC_DEF0_1122_3344_5566_7788;
+
+        let mut f = Function::default();
+        // A wide const referenced only by a zombie (interned FIRST → id 0).
+        let dropped_id = f.intern_wide_const(WideConstStorage::I128(0xAAAA_BBBB));
+        let _zombie = f.graph_mut().create_node(
+            NodeKind::IntConst(IntPayload::Wide(dropped_id)),
+            [],
+            [ValueKind::Typed(ValueType::I128)],
+        );
+
+        let entry = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        f.set_entry(entry);
+        let mem = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+
+        // The live wide const, referenced by a reachable Return.
+        let live_id = f.intern_wide_const(WideConstStorage::I128(LIVE));
+        let wide_node = f.graph_mut().create_node(
+            NodeKind::IntConst(IntPayload::Wide(live_id)),
+            [],
+            [ValueKind::Typed(ValueType::I128)],
+        );
+        let [wide_value] = f.node_outputs_exact::<1>(wide_node).unwrap();
+        f.graph_mut()
+            .create_node(NodeKind::Return, [entry_ctrl, mem_value, wide_value], []);
+
+        let remap = f.compact().expect("compact succeeds");
+
+        let new_wide = remap
+            .node_old_to_new(wide_node)
+            .expect("the referenced wide const survives");
+        match *f.node_kind(new_wide) {
+            NodeKind::IntConst(IntPayload::Wide(new_id)) => {
+                assert_eq!(
+                    f.wide_const_opt(new_id),
+                    Some(&WideConstStorage::I128(LIVE)),
+                    "GC'd + remapped wide-const id must still resolve to its value",
+                );
+            }
+            ref other => panic!("expected IntConst(Wide(_)), got {other:?}"),
+        }
     }
 
     /// A SURVIVING `stack_offsets` entry is remapped through compaction on

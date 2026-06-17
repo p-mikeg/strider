@@ -12,8 +12,7 @@
 use bitflags::bitflags;
 
 use crate::ExtendOp;
-use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, ValueId};
+use crate::node::NodeKind;
 
 bitflags! {
     /// Bitset selecting which value-passthrough cast `NodeKind`s a
@@ -78,38 +77,6 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         | NodeKind::SegmentOp { .. }
         | NodeKind::CPoolRef
         | NodeKind::New => CastMask::empty(),
-    }
-}
-
-/// Tail-loop that unwraps value-passthrough cast producers until either
-/// the producer is not a registered cast (per `mask`), the producer
-/// doesn't have exactly one input, or the input is not a value port.
-///
-/// Stack-safe at any cast-chain depth.  Returns `value` unchanged when the
-/// initial producer doesn't qualify.
-///
-/// Used by the pattern matcher's `ignore_cast_mask` walk-through to
-/// canonicalise across redundant zero-extends / truncates / bit-cast
-/// pairs without recursion.
-pub fn skip_casts(graph: &Graph, value: ValueId, mask: CastMask) -> ValueId {
-    if mask.is_empty() {
-        return value;
-    }
-    let mut value = value;
-    loop {
-        let producer: NodeId = graph.producer(value);
-        let bit = cast_mask_of(graph.node_kind(producer));
-        if bit.is_empty() || !mask.contains(bit) {
-            return value;
-        }
-        let inputs = graph.node_inputs(producer);
-        if inputs.len() != 1 {
-            return value;
-        }
-        let Some(input_value) = inputs.into_iter().next() else {
-            return value;
-        };
-        value = input_value;
     }
 }
 

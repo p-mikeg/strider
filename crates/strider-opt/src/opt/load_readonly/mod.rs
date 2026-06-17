@@ -96,11 +96,9 @@ impl Optimizer for LoadReadOnly {
         let nodes: Vec<NodeId> = edit
             .live_of_kind(|k| matches!(k, NodeKind::Load(s) if *s == rsleigh::VnSpace::RAM))
             .collect();
-        // SSoT: decode the rom bytes with the function's own endianness.
-        let endianness = edit.function().endianness();
         let mut overall = OptimizationResult::NoChange;
         for node_id in nodes {
-            if try_fold_const_load_at(edit, node_id, rom, endianness)? {
+            if try_fold_const_load_at(edit, node_id, rom)? {
                 overall = OptimizationResult::Changed;
             }
         }
@@ -133,11 +131,12 @@ pub(crate) fn try_fold_const_load_at(
     ctx: &mut crate::EditFunction<'_>,
     node_id: NodeId,
     rom: &dyn ReadOnlyMemory,
-    endianness: strider_target::Endianness,
 ) -> Result<bool> {
-    // Load inputs: [memory_token, addr] — exactly 2 once the kind is
-    // established (validated structural invariant).
-    let addr_value = ctx.graph_ref().node_inputs_exact::<2>(node_id)?[1];
+    // SSoT: the rom bytes are decoded with the function's own endianness,
+    // derived here rather than threaded in (it is `ctx.function().endianness()`
+    // at the sole call site).
+    let endianness = ctx.function().endianness();
+    let addr_value = ctx.load_addr(node_id);
     let Some(addr) = ctx.function().int_const_val(addr_value) else {
         return Ok(false);
     };
@@ -147,8 +146,7 @@ pub(crate) fn try_fold_const_load_at(
     // here means malformed IR, not a fold we should silently skip.
     let [data_value] = ctx.node_outputs_exact::<1>(node_id)?;
     let ty = ctx
-        .value_kind(data_value)
-        .as_value()
+        .value_type_opt(data_value)
         .expect("Load output is a value");
     let size = ty.byte_size();
     // Bail on wider-than-I128 loads (I256 / I512): the decode below tops

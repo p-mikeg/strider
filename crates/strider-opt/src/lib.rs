@@ -43,12 +43,11 @@ mod options;
 pub(crate) mod peephole;
 mod pipeline;
 pub mod rewrite_rule;
-// `pub` so `OptCtx::sp_memo` (a public field of type
-// `sp_expr::SpExprMemo`) is reachable through a public path.  Only the
-// already-`pub`-re-exported `SpExpr` / `SpExprMemo` / `ranges_disjoint`
-// become nameable downstream; the alias-classification internals (including
-// `SpDecomposer`) stay `pub(crate)`.
-pub mod sp_expr;
+// Crate-internal: the SP-expression decomposition cache lives on
+// `OptCtx::sp_memo` (a `pub(crate)` field) and is shared only between the
+// SP-aware passes — no downstream crate names `SpExpr` / `SpExprMemo` /
+// `ranges_disjoint`, so the whole module stays `pub(crate)`.
+pub(crate) mod sp_expr;
 pub use error::Result;
 pub use options::{AliasMode, FunctionArgsOptions, OptOptions};
 pub use rewrite_rule::{

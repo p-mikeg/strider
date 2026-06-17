@@ -296,12 +296,6 @@ impl Tb {
     pub fn trunc_to(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb.truncate_if_needed(v, ty).expect("truncate")
     }
-    pub fn as_bool(&mut self, v: ValueId) -> ValueId {
-        // Booleans are 1-bit (`I1`) integers; coerce to that width.
-        self.fb
-            .convert_to_int_if_needed(v, ValueType::I1)
-            .expect("as_bool")
-    }
     pub fn as_int(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb.convert_to_int_if_needed(v, ty).expect("as_int")
     }

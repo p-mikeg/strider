@@ -1067,6 +1067,46 @@ fn stack_args_slot_of_floors_by_increment() {
     assert_eq!(s.slot_of(0), None); // below base
 }
 
+/// `slots_spanned` is the cursor-advance companion to `slot_of`: how many
+/// consecutive slots a `size`-byte argument occupies, `ceil(max(size,1) /
+/// increment)`, never below 1.  Pinned across the 4- and 8-byte strides.
+#[test]
+fn stack_args_slots_spanned_ceils_by_increment() {
+    use crate::calling_convention::StackArgs;
+    for (label, inc) in [("x86 4/4", 4i64), ("x86_64 8/8", 8i64)] {
+        let s = StackArgs {
+            base_offset: inc,
+            increment: inc,
+        };
+        // Zero / one byte → one slot (never zero).
+        assert_eq!(s.slots_spanned(0), 1, "{label}: zero-size occupies one slot");
+        assert_eq!(s.slots_spanned(1), 1, "{label}: one byte");
+        // Exactly one slot wide.
+        assert_eq!(s.slots_spanned(inc), 1, "{label}: exactly one slot");
+        // One byte into the next slot rounds up to two.
+        assert_eq!(s.slots_spanned(inc + 1), 2, "{label}: spills into slot 2");
+        // Exactly two slots, then a byte more is three.
+        assert_eq!(s.slots_spanned(2 * inc), 2, "{label}: exactly two slots");
+        assert_eq!(s.slots_spanned(2 * inc + 1), 3, "{label}: spills into slot 3");
+    }
+}
+
+/// A garbage decoded size near `i64::MAX` must not overflow the
+/// `size + increment - 1` numerator — the span saturates instead of
+/// wrapping (mirroring `offset_of`'s saturation contract).
+#[test]
+fn stack_args_slots_spanned_saturates_on_overflow() {
+    use crate::calling_convention::StackArgs;
+    let s = StackArgs {
+        base_offset: 8,
+        increment: 8,
+    };
+    // `i64::MAX + 7` would overflow without the saturating add; the result is
+    // a large-but-finite slot count, computed without panicking.
+    let span = s.slots_spanned(i64::MAX);
+    assert_eq!(span, (i64::MAX as usize) / 8);
+}
+
 /// Adversarial near-`i64::MAX` offsets (decoded from binary content, not a
 /// trusted input) must degrade to `None`/saturation rather than panic in
 /// debug or wrap in release.  `index_of`'s `offset + size` is the overflow
@@ -1087,4 +1127,34 @@ fn stack_args_slot_math_degrades_on_overflow_not_panics() {
     // offset_of with a runaway (large positive) index saturates instead of
     // overflowing: (1<<62)*8 overflows i64 → i64::MAX.
     assert_eq!(s.offset_of(1usize << 62), i64::MAX);
+}
+
+/// A negative `base_offset` is rejected at the construction boundary
+/// (`try_new`), the same way a non-positive `increment` is.  `base_offset`
+/// flows in unvalidated from the Python `CallingConvention.custom`
+/// (`stack_arg_base`); without this guard a negative base lets the
+/// `offset - base_offset` subtraction in `index_of` / `slot_of` overflow
+/// on a garbage offset decoded from a crafted binary.
+#[test]
+fn try_new_rejects_negative_stack_arg_base_offset() {
+    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let sp = regs.name_to_vn("RSP").expect("x86_64 has RSP");
+    let result = BuiltCallingConvention::try_new(
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        sp,
+        Some(StackArgs {
+            base_offset: -8,
+            increment: 8,
+        }),
+        0,
+        None,
+        false,
+    );
+    assert!(
+        result.is_err(),
+        "negative stack-arg base_offset must be rejected by try_new",
+    );
 }

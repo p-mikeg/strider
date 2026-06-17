@@ -90,11 +90,9 @@ fn collect_stack_args(
             break;
         }
         args.push(store.data);
-        // A store wider than one slot is one argument spanning several slots:
-        // `ceil(size / increment)` (both positive; `i64::div_ceil` is still
-        // unstable, so compute it directly).
-        let span = (store.size.max(1) + stack_args.increment - 1) / stack_args.increment;
-        cursor += span.max(1) as usize;
+        // A store wider than one slot is one argument spanning several slots;
+        // advance the cursor past every slot it covers.
+        cursor += stack_args.slots_spanned(store.size);
     }
     args
 }

@@ -9,7 +9,7 @@ use crate::{
 };
 
 mod cast;
-pub use cast::{CastMask, cast_mask_of, skip_casts};
+pub use cast::{CastMask, cast_mask_of};
 
 /// Convenience alias for the `cfg_reachable` return shape.  Re-exported so
 /// downstream crates can take `&NodeIdSet` parameters without depending on

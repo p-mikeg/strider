@@ -524,12 +524,8 @@ pub fn compute_value_ranges<'f>(
         let true_ctrl = if_outputs[0];
         let false_ctrl = if_outputs[1];
 
-        // The condition value is If's input[1].
-        let if_inputs: Vec<ValueId> = function.node_inputs(if_node).iter().collect();
-        if if_inputs.len() < 2 {
-            continue;
-        }
-        let cond_value = if_inputs[1];
+        // The condition is If's input slot 1 (`[control, cond]`).
+        let cond_value = function.if_cond(if_node);
 
         // Per edge: shape-match the condition (under the edge's polarity) to
         // extract the guarded `(value, interval)`, then key the guard by the

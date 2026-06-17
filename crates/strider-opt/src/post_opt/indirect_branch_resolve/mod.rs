@@ -111,7 +111,7 @@ pub fn classify_anchor(
     // target]) is its dispatch value.  Taking the branch NODE (not the bare
     // value) keeps the table classifier's index-range query scoped to THIS
     // branch, even when several branches share one dispatch value.
-    let [_, _, anchor_value] = ctx.node_inputs_exact::<3>(branch).ok()?;
+    let anchor_value = ctx.indirect_branch_target(branch);
     single_const_target(ctx, anchor_value)
         .or_else(|| link_register_return(ctx, anchor_value))
         .or_else(|| table::classify_table_dispatch(ctx, branch, rom, ranges, alias_mode))

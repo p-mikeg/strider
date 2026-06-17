@@ -109,7 +109,8 @@ pub struct OptCtx<'mem> {
     /// Shared `ValueId → SpExpr` decomposition cache.  Cleared by the
     /// pipeline at every drain point (graph change), so a memoised entry
     /// is valid within a pass and never stale across a changed iteration.
-    pub sp_memo: crate::sp_expr::SpExprMemo,
+    /// Crate-internal — only the SP-aware passes touch it.
+    pub(crate) sp_memo: crate::sp_expr::SpExprMemo,
     /// Output channel for the [`crate::IndirectBranchClassify`] post-pass:
     /// maps each **live** `IndirectBranch` placeholder the pass visited to
     /// its classification (`Some` when the dispatch target was recovered,
@@ -217,16 +218,6 @@ pub trait Optimizer: OptimizerClone {
         edit: &mut crate::EditFunction<'_>,
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<OptimizationResult>;
-
-    /// Symbolic name of this pass.  Defaults to
-    /// `std::any::type_name::<Self>()`, which yields fully-qualified
-    /// paths like `strider_opt::constant_fold::ConstantFold`
-    /// — sufficient for substring-match assertions in tests pinning
-    /// pipeline composition.  Override only if you need a friendlier
-    /// short name (and document why).
-    fn name(&self) -> &'static str {
-        std::any::type_name::<Self>()
-    }
 }
 
 /// Run a single pass against `function` through a throwaway self-cleaning
@@ -385,13 +376,6 @@ pub trait PostOptimizer: PostOptimizerClone {
     /// Returns the first error encountered by the pass, propagated up through
     /// `anyhow::Error`.
     fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()>;
-
-    /// Symbolic name of this pass.  Defaults to
-    /// `std::any::type_name::<Self>()`; override only for a friendlier short
-    /// name (and document why).
-    fn name(&self) -> &'static str {
-        std::any::type_name::<Self>()
-    }
 }
 
 /// Object-safe clone shim for [`PostOptimizer`], mirroring [`OptimizerClone`].

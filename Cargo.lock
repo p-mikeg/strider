@@ -1376,7 +1376,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cranelift-entity",
- "graphwalk",
  "hashbrown 0.16.1",
  "petgraph",
  "proptest",
@@ -1489,7 +1488,6 @@ dependencies = [
  "anyhow",
  "cranelift-entity",
  "criterion 0.5.1",
- "entity-utils",
  "expect-test",
  "petgraph",
  "rsleigh",
@@ -1530,8 +1528,6 @@ dependencies = [
  "object",
  "read-only-memory",
  "rsleigh",
- "strider-ir",
- "strider-target",
  "tempfile",
 ]
 

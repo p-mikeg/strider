@@ -4,7 +4,7 @@
 
 use std::mem::Discriminant;
 
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
 
 use crate::matcher::Matcher;
 
@@ -58,10 +58,6 @@ impl KindSpec {
 /// or reject the match. Keyed on the node it constrains; a closure that
 /// needs the node's output type derives it from the node.
 pub type NodePredicate = Box<dyn Fn(&Matcher, NodeId) -> bool>;
-
-/// Per-output predicate: given the matcher and the matched IR output
-/// value, accept or reject the match. Keyed on the value it constrains.
-pub type ValuePredicate = Box<dyn Fn(&Matcher, ValueId) -> bool>;
 
 /// Post-match constraint with visibility into the accumulated
 /// bindings (distinct from the pre-recursion node predicate: it runs
@@ -155,11 +151,6 @@ pub struct PatValue {
     /// Optional bit-width constraint on the matched output's value
     /// type.
     pub width: Option<u32>,
-    /// Optional predicate on the matched output value.
-    ///
-    /// Read by the engine, but no builder setter wires it yet — reserved
-    /// for the typed/wildcard layer.
-    pub value_predicate: Option<ValuePredicate>,
     /// Optional capture binding the matched output value (`Binding::Value`).
     ///
     /// This is where value captures live — `add(var(x), …)` captures `x`'s
@@ -177,7 +168,6 @@ impl PatValue {
             slot,
             kind: OutputKindSpec::AnyValue,
             width: None,
-            value_predicate: None,
             capture: None,
         }
     }
@@ -188,7 +178,6 @@ impl PatValue {
             slot,
             kind: OutputKindSpec::Control,
             width: None,
-            value_predicate: None,
             capture: None,
         }
     }
@@ -201,7 +190,6 @@ impl PatValue {
             slot,
             kind: OutputKindSpec::Memory,
             width: None,
-            value_predicate: None,
             capture: None,
         }
     }
@@ -222,9 +210,7 @@ mod tests {
     #[test]
     fn predicates_are_keyed_by_their_entity_no_value_type_arg() {
         // A node predicate constrains the matched node: (&Matcher, NodeId).
-        // A value predicate constrains a matched output: (&Matcher, ValueId).
-        // Neither takes a redundant ValueType — closures derive it if needed.
+        // It takes no redundant ValueType — a closure derives it if needed.
         let _node: NodePredicate = Box::new(|_m, _node| true);
-        let _value: ValuePredicate = Box::new(|_m, _value| true);
     }
 }

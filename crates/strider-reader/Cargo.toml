@@ -7,8 +7,6 @@ edition.workspace = true
 object.workspace = true
 read-only-memory.workspace = true
 rsleigh.workspace = true
-strider-ir.workspace = true
-strider-target.workspace = true
 anyhow.workspace = true
 
 [lints]

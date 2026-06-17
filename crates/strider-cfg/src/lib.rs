@@ -42,7 +42,7 @@ pub use builder::Builder;
 pub use indirect_resolver::ResolvedTargets;
 pub use options::CfgOptions;
 
-pub use query::{IfRegionSuccessors, SwitchBoundaryWarning, is_addr_tail_call};
+pub use query::{IfRegionSuccessors, is_addr_tail_call};
 pub use types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator};
 
 use types::RegionGraph;

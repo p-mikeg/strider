@@ -407,9 +407,7 @@ pub fn sentinel_node(
 /// file.
 ///
 /// Construct one with [`MockRom::strided`], [`MockRom::fixed_table`],
-/// [`MockRom::always_answer`], or [`MockRom::limited`].  Builder-style
-/// modifier [`MockRom::with_cutoff`] covers the additional behaviour
-/// real tests need.
+/// [`MockRom::always_answer`], or [`MockRom::limited`].
 ///
 /// `RecordingRom` deliberately stays separate — it records reads to a
 /// side log and is not shape-compatible with this helper.
@@ -420,13 +418,11 @@ pub struct MockRom {
 enum MockRomShape {
     /// Strided table: returns `entries[i]` at `base + i * stride`.
     /// `size_filter` restricts which read sizes match (None = any).
-    /// `cutoff` caps how many entries can be served (None = all).
     Strided {
         base: u64,
         stride: u64,
         entries: Vec<u64>,
         size_filter: Option<usize>,
-        cutoff: Option<usize>,
     },
     /// Lookup table keyed by exact address; matches any read size.
     FixedTable { entries: BTreeMap<u64, u64> },
@@ -452,24 +448,8 @@ impl MockRom {
                 stride,
                 entries,
                 size_filter: Some(size),
-                cutoff: None,
             },
         }
-    }
-
-    /// Cap a [`MockRom::strided`] to serve only the first `n` entries.
-    /// Reads at valid table addresses past the cutoff return `None`.
-    /// Replaces the bespoke `PartialRom` shape.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `self` was not constructed via [`MockRom::strided`].
-    pub fn with_cutoff(mut self, n: usize) -> Self {
-        match &mut self.shape {
-            MockRomShape::Strided { cutoff, .. } => *cutoff = Some(n),
-            _ => panic!("with_cutoff only supported on MockRom::strided"),
-        }
-        self
     }
 
     /// Fixed `(addr, value)` lookup table; size is not constrained.
@@ -515,7 +495,6 @@ impl MockRom {
                 stride,
                 entries,
                 size_filter,
-                cutoff,
             } => {
                 if let Some(sz) = size_filter
                     && size != *sz
@@ -533,11 +512,6 @@ impl MockRom {
                     return None;
                 }
                 let idx = (offset / *stride) as usize;
-                if let Some(c) = cutoff
-                    && idx >= *c
-                {
-                    return None;
-                }
                 entries.get(idx).copied()
             }
             MockRomShape::FixedTable { entries } => entries.get(&addr).copied(),

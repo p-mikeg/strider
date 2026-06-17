@@ -7,7 +7,6 @@ edition = { workspace = true }
 strider-ir = { workspace = true }
 strider-graph = { workspace = true }
 strider-target = { workspace = true }
-entity-utils = { workspace = true }
 rsleigh = { workspace = true }
 petgraph = { workspace = true }
 cranelift-entity = { workspace = true }

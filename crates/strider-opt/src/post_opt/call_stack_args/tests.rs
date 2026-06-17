@@ -241,6 +241,75 @@ fn outgoing_span_four_wide_arg_store_collected_as_one_arg() -> Result<()> {
     Ok(())
 }
 
+/// Outgoing arg spanning an ODD number of slots: an `I80` (10-byte) `Store`
+/// at `sp+0` spans THREE 4-byte slots (`ceil(10/4) = 3`), and a following
+/// `I32` `Store` at `sp+12` is the next argument.  Pins the odd-span cursor
+/// advance (`slots_spanned(10) == 3`, sitting between the covered 2- and
+/// 4-slot cases): the wide store is exactly ONE Call input and the int lands
+/// as arg 1 (slot 3), neither absorbed into the span nor mis-indexed.
+#[test]
+fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
+    let sp = stack_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
+        .build_fn_single_region()?;
+    let sp_v0 = b.read_variable(&sp)?;
+    // a = 10-byte value stored as I80 at sp+0 — covers slots 0,1,2.
+    let a = strider_ir_test_utils::sentinel_node(
+        b.function_mut(),
+        NodeKind::IntConst(IntPayload::Small(0xABCD)),
+        [],
+        [strider_ir::node::ValueKind::Typed(ValueType::I80)],
+    );
+    let a_val = b.function().node_outputs_exact::<1>(a).unwrap()[0];
+    b.build_store(sp_v0, a_val, rsleigh::VnSpace::RAM)?;
+    // b = int stored as I32 at sp+12 — slot 3.
+    let twelve = b.build_int_const(12u64, ValueType::I32)?;
+    let sp_plus_12 =
+        b.build_int_binary_operation(sp_v0, twelve, IntBinaryOp::Add, ValueType::I32)?;
+    let bv = b.build_int_const(7u64, ValueType::I32)?;
+    b.build_store(sp_plus_12, bv, rsleigh::VnSpace::RAM)?;
+
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call(target, None)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(CallStackArgCollect);
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let call_id = find_call(fg.graph())?;
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    // ctrl + mem + target + sp + exactly 2 args: the I80 store advances the
+    // cursor by its 3-slot span so the int lands as arg 1 — NOT three inputs
+    // for the three slots the I80 covers, and NOT absorbing the int.
+    assert_eq!(
+        inputs.len(),
+        6,
+        "I80 store spans 3 slots = one arg; the int lands as arg 1 (slot 3); \
+         got inputs={inputs:?}"
+    );
+    let arg0_kind = *fg.kind_of_value(inputs[4]);
+    let arg1_kind = *fg.kind_of_value(inputs[5]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(0xABCD))),
+        "arg0 should be the 10-byte I80 value, got {arg0_kind:?}"
+    );
+    assert!(
+        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(7))),
+        "arg1 should be the int 7, got {arg1_kind:?}"
+    );
+    Ok(())
+}
+
 /// Finds the unique Call node in `graph`.
 fn find_call(graph: &Graph) -> Result<NodeId> {
     graph
