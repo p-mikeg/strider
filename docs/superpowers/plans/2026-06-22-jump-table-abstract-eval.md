@@ -30,8 +30,10 @@
 - `crates/strider-opt/src/lib.rs` — **Modify (Task 3).** Declare `mod const_eval;`.
 - `crates/strider-opt/src/opt/load_readonly/mod.rs` — **Modify (Task 3).** Fold via `eval_node_const` instead of an inline ROM decode.
 - `crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs` — **Modify.** Swap the per-index fold to the evaluator; delete `fold_dispatch_to_const`, the clone, the compact/remap, the pipeline run.
-- `crates/strider-ir/src/function/data.rs` — **Modify.** Remove `Clone` from `Function`'s derive.
-- `crates/strider-graph/src/graph.rs` — **Modify.** Delete the generic `Graph` `Clone` impl.
+- `crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs` — **Modify again (Task 5).** Replace the `initial_sp_value` sp-leaf detection with `SpDecomposer::decompose` so alignment-masked `(sp & mask)` frame bases resolve.
+- `crates/strider-opt/src/post_opt/indirect_branch_resolve/table_tests.rs` — **Modify (Task 5).** Add an aligned-stack (`& mask`) resolution test.
+- `crates/strider-ir/src/function/data.rs` — **Modify (Task 6).** Remove `Clone` from `Function`'s derive.
+- `crates/strider-graph/src/graph.rs` — **Modify (Task 6).** Delete the generic `Graph` `Clone` impl.
 
 `SpAliasCfg::reaching_store` and `ReachingSpStore` already exist (`crates/strider-opt/src/sp_expr/cfg.rs`) — no new SP-lookup helper is needed.
 
@@ -893,7 +895,101 @@ git commit -m "refactor(opt): resolve jump tables via abstract eval, drop clone+
 
 ---
 
-### Task 5: Remove `Clone` from `Function` and the generic `Graph`
+### Task 5: Fix evaluator SP detection to reuse `decompose_sp` (aligned `& mask` stacks)
+
+The evaluator currently recognizes the stack-pointer terminal only as `value == initial_sp_value()`. That is wrong for a realigned frame, whose base is `(initial_sp & mask)` (e.g. `and rsp, -16`): the `&`-output is not `initial_sp`, so the load's address never becomes `SpRel`, and even if it did the wrong `base` would be handed to `reaching_store` (the stores decompose to the `&`-output base, so `base` equality would fail → no match). Replace the ad-hoc detection with `SpDecomposer::decompose` — the same decomposer `stack_offsets` / `reaching_store` use, which already anchors at an alignment-masked `(sp & mask)` and returns the correct terminal `base`.
+
+**Files:**
+- Modify: `crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs`
+- Modify: `crates/strider-opt/src/post_opt/indirect_branch_resolve/table_tests.rs`
+- Test: a new aligned-stack table test (RED on the current detection, GREEN after the fix) + the full `indirect_branch_resolve` suite stays green.
+
+**Interfaces:** no public API change — `Evaluator::{new, eval_target}` / `cone_order` signatures are unchanged. Internally the `sp_base` field is removed.
+
+- [ ] **Step 1: Write the failing test**
+
+In `table_tests.rs`, add a test that builds the same SP-rooted two-target stack array as `build_two_target_array`, except the frame base is alignment-masked: replace the bare `sp_val` used for the stores and the load address with `aligned = And(sp_val, IntConst(0xFFFF_FFFF_FFFF_FFF0, I64))`, and use `aligned` everywhere `build_two_target_array` uses `sp_val`. (Either parameterize `build_two_target_array` with an optional align mask, or add a sibling `build_two_target_array_aligned`; do not duplicate the whole body verbatim — factor the shared part.) Then:
+
+```rust
+#[test]
+fn classify_table_dispatch_aligned_stack_resolves() {
+    let targets = [0x401190u64, 0x401180u64];
+    let (fg, _load_value) = build_two_target_array_aligned(targets, -24, 8);
+    let (known, doms) = make_known_and_doms(&fg);
+    let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
+    let result = classify_table_dispatch(
+        &fg,
+        sole_indirect_branch(&fg),
+        None,
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    let mut expected = targets.to_vec();
+    expected.sort_unstable();
+    assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cargo test -p strider-opt classify_table_dispatch_aligned_stack_resolves`
+Expected: FAIL — returns `None` (the `(sp & mask)` base is not `initial_sp_value()`, so the load address never resolves to `SpRel` and the table is left unresolved). This depends on Task 4 having rewired `classify_table_dispatch` onto the evaluator; if it still returns `Multiple` here, Task 4 was not applied — stop and check.
+
+- [ ] **Step 3: Apply the fix in `eval.rs`**
+
+(a) Add `SpDecomposer` and `SpExpr` to the `sp_expr` import:
+```rust
+use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
+```
+
+(b) Remove the `sp_base: Option<ValueId>,` field from `struct Evaluator` and the `sp_base: function.initial_sp_value(),` line from `Evaluator::new`.
+
+(c) In `eval_node`, replace the opening sp-leaf short-circuit:
+```rust
+    fn eval_node(&mut self, value: ValueId) -> Option<Abs> {
+        if Some(value) == self.sp_base {
+            return Some(Abs::SpRel { base: value, offset: 0 });
+        }
+        let f = self.function;
+```
+with a decompose-first block:
+```rust
+    fn eval_node(&mut self, value: ValueId) -> Option<Abs> {
+        let f = self.function;
+        // An sp-rooted constant expression — InitialVar(sp), an alignment-masked
+        // `(sp & mask)`, or either plus a constant `Add` chain — decomposes to
+        // its SP terminal + offset via the same decomposer the stores /
+        // `reaching_store` use, so the aligned base is recognized and matches
+        // the stores' base. Memoized in `sp_memo`, so the load's index-
+        // independent sp-spine is computed once and reused across indices.
+        if let Some(SpExpr { base, offset }) =
+            SpDecomposer::new(f, &mut self.sp_memo).decompose(value)
+        {
+            return Some(Abs::SpRel { base, offset });
+        }
+```
+Leave the rest of `eval_node` (the `IntConst` / `Add` / `Load` / `Phi` / `_` arms), `eval_add`, `eval_load`, `reshape`, `eval_phi`, and `cone_order` unchanged. `eval_add` still handles the top-level `Add(sp_spine, idx*stride)` combination (`decompose` returns `None` for that index-dependent Add, so it reaches the `Add` arm where one operand is the decomposed `SpRel` and the other the evaluated `Const`).
+
+- [ ] **Step 4: Run the aligned test (GREEN)**
+
+Run: `cargo test -p strider-opt classify_table_dispatch_aligned_stack_resolves`
+Expected: PASS.
+
+- [ ] **Step 5: Run the full indirect-branch suite (no regression)**
+
+Run: `cargo test -p strider-opt indirect_branch_resolve` and `cargo clippy -p strider-opt`
+Expected: all PASS (the non-aligned stack tests still resolve — `decompose` returns `SpExpr{base: InitialVar(sp), offset}` for the bare-sp case too); clippy clean (no more `sp_base` field; `initial_sp_value` may now be unused elsewhere — if clippy flags it as dead, that is a pre-existing public API used by other passes, so confirm it is still referenced before touching it; do NOT delete `Function::initial_sp_value`).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs crates/strider-opt/src/post_opt/indirect_branch_resolve/table_tests.rs
+git commit -m "fix(opt): resolve aligned (sp & mask) stack jump tables via decompose_sp"
+```
+
+---
+
+### Task 6: Remove `Clone` from `Function` and the generic `Graph`
 
 With the only whole-`Function` clones gone, delete the capability. The compiler is the gate.
 

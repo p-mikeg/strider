@@ -53,15 +53,20 @@ The evaluator is a concrete struct (no trait — three node families, one
 `match`), holding `{function, rom, alias_mode, endianness, sp_base, sp_memo,
 map}`:
 
-- `sp_base = function.initial_sp_value()` — the `InitialVar(stack_vn)` output,
-  the canonical SP terminal (the same `ValueId` `decompose_sp`/`reaching_store`
-  compare against).
 - `map: FxHashMap<ValueId, Abs>` — results for the current index.
+- `sp_memo` — the decomposer cache (also used by `reaching_store`).
 
 `eval_node(value) -> Option<Abs>` reads its inputs' results from `map` (never
 recurses):
 
-- `value == sp_base` → `SpRel { base: sp_base, offset: 0 }`.
+- an sp-rooted constant expression → `SpRel { base, offset }`, detected via
+  `SpDecomposer::decompose(value)` — the same decomposer the stores /
+  `reaching_store` use. It anchors `InitialVar(sp)` **and** an alignment-masked
+  `(sp & mask)` (returning the `&`-output as `base`, so it matches the stores'
+  decomposed base), plus any `+const` `Add` chain on top. The index-dependent
+  `Add(sp_spine, idx*stride)` decomposes to `None` (variable), so it falls to
+  the `Add` arm, which combines the decomposed `SpRel` with the evaluated
+  `Const` residual.
 - `IntConst` → `Const(int_const_u128(value))`.
 - `IntBinaryOp(Add)` → combine: `(Const,Const)` via `eval_int_binary`;
   `(SpRel{b,o}, Const(c))` / `(Const(c), SpRel{b,o})` →
@@ -84,8 +89,8 @@ inputs" SSoT (arithmetic via the `eval_int_*` helpers, `Load(RAM)` via
 delegates with `resolve = map-as-const`) and `LoadReadOnly` (folds its `Load`
 with `resolve = int_const`) call it, so the decode/fold logic lives in one
 place. The evaluator keeps only the `Abs`/`SpRel`-specific cases the passes have
-no analogue for: the `sp_base` leaf, `Add` propagation, the stack `Load` arm,
-and `Phi`. `ConstFold` shares the leaf `eval_int_*` primitives directly and is
+no analogue for: the `SpDecomposer`-based sp-spine detection, `Add`
+propagation, the stack `Load` arm, and `Phi`. `ConstFold` shares the leaf `eval_int_*` primitives directly and is
 intentionally not routed through `eval_node_const` (its delicate rule engine
 already shares at the primitive level).
 
