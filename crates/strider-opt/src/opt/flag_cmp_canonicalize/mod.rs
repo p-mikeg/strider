@@ -562,9 +562,13 @@ fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueI
     found.map(|cmp| (cond_out, cmp))
 }
 
-/// Flattens a (possibly nested) `Or` tree into its leaf terms.
+/// Flattens the CR-field `Or` tree into its leaf terms.  A single CR field is
+/// 4 bits (LT/GT/EQ/SO), so the pack is at most 4 terms — at most 3 binary
+/// `Or` nodes, depth ≤ 3.  The cap rejects anything wider (a misrouted full-CR
+/// `mfcr` pack never reaches this single-field shape): an over-deep `Or` is
+/// pushed as an opaque leaf, which `single_bit_term` then rejects → no fold.
 fn flatten_or(f: &impl IRViewer, value: ValueId, out: &mut Vec<ValueId>, depth: u32) {
-    const MAX_DEPTH: u32 = 32;
+    const MAX_DEPTH: u32 = 4;
     if depth <= MAX_DEPTH
         && let NodeKind::IntBinaryOp(IntBinaryOp::Or) = f.node_kind(f.producer(value))
         && let Ok([a, b]) = f.node_inputs_exact::<2>(f.producer(value))
