@@ -255,6 +255,7 @@ impl<'a> Evaluator<'a> {
                 Some(_) => return None,
             }
         }
+        // Zero-arm phi violates a validator invariant; fail closed (None).
         agreed
     }
 }
@@ -333,7 +334,7 @@ mod tests {
         let (function, idx, sum) = build_add_idx_100();
         let order = cone_order(&function, sum);
         let mut ev = Evaluator::new(&function, None, crate::AliasMode::default());
-        // Seed the SUM (not idx) → idx stays symbolic → sum cannot collapse.
+        // Seeding dispatch=sum directly returns the seed without evaluating the cone.
         assert_eq!(ev.eval_target(&order, sum, sum, 5), Some(5)); // sum seeded directly
         // A fresh eval where nothing relevant is seeded:
         let const_100 = sum_unrelated_leaf(&function, sum);
