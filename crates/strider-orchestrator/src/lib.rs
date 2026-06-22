@@ -85,25 +85,6 @@ use anyhow::{Result, anyhow};
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
 
-/// Builds the shared [`OptCtx`] for one pipeline run from the
-/// orchestrator's borrowed rom slot and the per-run [`OptOptions`].
-/// Threaded into every `pipeline.run` site so every iteration of the
-/// fixed-point loop sees the same rom image (as the cfg builder) and the
-/// same opt configuration (alias precision for every SP-aware pass, plus
-/// `calls_clobber_stack_arguments`).
-///
-/// The byte order used to decode rom bytes is NOT carried here —
-/// `LoadReadOnly` reads it from the function's own `Function::endianness`
-/// (the SSoT) at decode time.  `sp_memo` starts empty — the pipeline clears
-/// it at every drain.
-fn opt_ctx_for_run<'mem>(
-    rom: Option<&'mem dyn ReadOnlyMemory>,
-    opt_opts: &OptOptions,
-) -> OptCtx<'mem> {
-    let mut ctx = OptCtx::new(rom);
-    ctx.options = opt_opts.clone();
-    ctx
-}
 
 /// Generic, per-binary analysis handle.
 ///
@@ -333,7 +314,11 @@ where
             ..
         } = lifter.build_ir_with(&cfg, cc, working)?;
 
-        let mut ctx = opt_ctx_for_run(rom_ref, opt_opts);
+        let mut ctx = {
+            let mut ctx = OptCtx::new(rom_ref);
+            ctx.options = opt_opts.clone();
+            ctx
+        };
         pipeline.run(&mut function, &mut ctx)?;
         let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
 
@@ -445,17 +430,16 @@ fn merge_resolved(a: &ResolvedTargets, b: &ResolvedTargets) -> ResolvedTargets {
     if matches!(a, ResolvedTargets::LinkRegister) && matches!(b, ResolvedTargets::LinkRegister) {
         return ResolvedTargets::LinkRegister;
     }
-    let mut targets: BTreeSet<u64> = BTreeSet::new();
+    let mut targets: Vec<u64> = Vec::new();
     for r in [a, b] {
         match r {
             ResolvedTargets::LinkRegister => {}
-            ResolvedTargets::Single(k) => {
-                targets.insert(*k);
-            }
+            ResolvedTargets::Single(k) => targets.push(*k),
             ResolvedTargets::Multiple(ks) => targets.extend(ks.iter().copied()),
         }
     }
-    let targets: Vec<u64> = targets.into_iter().collect();
+    targets.sort_unstable();
+    targets.dedup();
     match targets.as_slice() {
         [single] => ResolvedTargets::Single(*single),
         _ => ResolvedTargets::Multiple(targets),

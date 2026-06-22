@@ -134,9 +134,7 @@ pub enum RegionTerminator {
     /// target only against the function address bounds, not against
     /// instruction boundaries (those are known only post-decode); a target
     /// that lands mid-instruction cannot be wired by the lifter
-    /// (`Cfg::region_id_at_start` misses it).  Use
-    /// [`crate::Cfg::switch_target_boundary_warnings`] to observe any such
-    /// off-boundary target on a finished CFG.
+    /// (`Cfg::region_id_at_start` misses it).
     Switch {
         /// The dispatch varnode — the `BranchIndirect`'s
         /// `inputs[0]`.  Strider reads this at the region exit to

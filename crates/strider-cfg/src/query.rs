@@ -176,7 +176,6 @@ impl Cfg {
         // greatest start_addr ≤ (addr, pcode=u64::MAX), then verify it
         // matches the requested machine address exactly.  The BTreeMap
         // was promoted from the Builder at construction time.
-        use std::collections::Bound;
         let lower = super::types::PcodeInsnAddr {
             machine_addr: addr,
             insn_index: 0,
@@ -187,7 +186,7 @@ impl Cfg {
         };
         let mut range = self
             .start_addr_to_region_id
-            .range((Bound::Included(lower), Bound::Included(upper)));
+            .range(lower..=upper);
         let (_, &rid) = range.next()?;
         Some(rid)
     }
