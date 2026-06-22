@@ -78,10 +78,7 @@ fn render_int_const_wide_shows_value_not_debug() {
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     // limbs are little-endian; high limb set keeps it genuinely Wide.
-    let id = f.intern_int_const_limbs(
-        &[0x1234, 0xabcd, 0, 0x8000_0000_0000_0000],
-        ValueType::I256,
-    );
+    let id = f.intern_int_const_limbs(&[0x1234, 0xabcd, 0, 0x8000_0000_0000_0000], ValueType::I256);
     let wide = f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],

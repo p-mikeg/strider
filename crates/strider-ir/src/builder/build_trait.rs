@@ -90,10 +90,10 @@ impl IRBuilder for FunctionBuilder {
 
 #[cfg(test)]
 mod tests {
-    use cranelift_entity::EntityRef;
     use super::*;
     use crate::IRViewer;
-    use crate::node::{ValueType};
+    use crate::node::ValueType;
+    use cranelift_entity::EntityRef;
 
     /// Construct a minimal `FunctionBuilder` with no tracked variables.
     /// Mirrors the local `empty_builder` helper in `builder/tests.rs`:

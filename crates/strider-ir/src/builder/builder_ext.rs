@@ -194,7 +194,9 @@ pub trait IRBuilderExt: IRBuilder {
                 "build_int_const called with non-integer type {output_type:?}"
             ));
         }
-        let id = self.function_mut().intern_int_const(val.into(), output_type);
+        let id = self
+            .function_mut()
+            .intern_int_const(val.into(), output_type);
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 
@@ -212,7 +214,9 @@ pub trait IRBuilderExt: IRBuilder {
                  use build_int_const for ≤ I128"
             ));
         }
-        let id = self.function_mut().intern_int_const_limbs(limbs, output_type);
+        let id = self
+            .function_mut()
+            .intern_int_const_limbs(limbs, output_type);
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 

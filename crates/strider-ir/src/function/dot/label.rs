@@ -131,7 +131,10 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                         // Wide (I80 / I128 / I256 / I512): little-endian bytes,
                         // rendered high→low.  Read through the SSoT accessor.
                         let bits = out_ty.map_or(0, |t| t.byte_size() * 8);
-                        let bytes = self.function.int_const_wide_le_bytes(node).unwrap_or_default();
+                        let bytes = self
+                            .function
+                            .int_const_wide_le_bytes(node)
+                            .unwrap_or_default();
                         let mut hex = String::new();
                         for &b in bytes.iter().rev() {
                             if hex.is_empty() {

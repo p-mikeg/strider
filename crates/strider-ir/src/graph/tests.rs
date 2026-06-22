@@ -84,7 +84,10 @@ fn kind_of_output_matches_two_step_lookup() {
     let two_step = function.node_kind(function.producer(value));
     let one_step = function.kind_of_value(value);
     assert_eq!(one_step, two_step);
-    assert_eq!(one_step, &NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)));
+    assert_eq!(
+        one_step,
+        &NodeKind::IntConst(crate::const_value::ConstId::new(7_usize))
+    );
 }
 
 /// Cacheable nodes with identical kind and inputs must be deduplicated:

@@ -415,7 +415,10 @@ fn float_bits_to_int_folds_float_const_immediately() -> Result<()> {
     // Should be an IntConst, not a FloatBitsToInt node
     let kind = *b.function().kind_of_value(int_value);
     assert!(matches!(kind, NodeKind::IntConst(_)));
-    assert_eq!(b.function().int_const_u128(int_value), Some(u128::from(bits)));
+    assert_eq!(
+        b.function().int_const_u128(int_value),
+        Some(u128::from(bits))
+    );
     Ok(())
 }
 
@@ -2155,10 +2158,7 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
         "consecutive create_node calls must produce distinct ids"
     );
     // Both nodes are in the arena.
-    assert!(matches!(
-        b.function().node_kind(a),
-        NodeKind::IntConst(_)
-    ));
+    assert!(matches!(b.function().node_kind(a), NodeKind::IntConst(_)));
     assert!(matches!(
         b.function().node_kind(b_id),
         NodeKind::IntConst(_)
@@ -2319,10 +2319,8 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     // Genuinely-wide value (high limb set).
-    let value = b.build_int_const_limbs(
-        &[0x1234_5678, 0, 0, 0x8000_0000_0000_0000],
-        ValueType::I256,
-    )?;
+    let value =
+        b.build_int_const_limbs(&[0x1234_5678, 0, 0, 0x8000_0000_0000_0000], ValueType::I256)?;
     b.set_lift_addr(None);
     // Wire the wide const into the reachable spine via Return[ctrl, mem, value].
     let entry_ctrl = b
@@ -2637,14 +2635,8 @@ mod build_call_with_cc {
         assert_ne!(r1, r2, "consecutive create_node calls produce distinct ids");
 
         // Both synthesized nodes are live in the arena.
-        assert!(matches!(
-            b.function().node_kind(r1),
-            NodeKind::IntConst(_)
-        ));
-        assert!(matches!(
-            b.function().node_kind(r2),
-            NodeKind::IntConst(_)
-        ));
+        assert!(matches!(b.function().node_kind(r1), NodeKind::IntConst(_)));
+        assert!(matches!(b.function().node_kind(r2), NodeKind::IntConst(_)));
     }
 
     /// After driving the builder through several rounds of in-place

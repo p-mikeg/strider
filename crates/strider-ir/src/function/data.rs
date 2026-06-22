@@ -248,10 +248,8 @@ pub struct Function {
     /// [`entity_utils::EntityInterner`] owns both the forward `ConstId → value`
     /// map and the reverse value-dedup index.  Rebuilt over the live ids by
     /// [`Self::compact`].
-    pub(crate) const_interner: entity_utils::EntityInterner<
-        crate::const_value::ConstId,
-        crate::const_value::ConstValue,
-    >,
+    pub(crate) const_interner:
+        entity_utils::EntityInterner<crate::const_value::ConstId, crate::const_value::ConstValue>,
 }
 
 impl Function {
@@ -317,28 +315,28 @@ impl Function {
             .intern(crate::const_value::ConstValue::Bits(masked))
     }
 
-    /// Interns a > 64-bit-limbed integer value (I256/I512), canonicalising to
-    /// `Bits` when the limbs fit `u128`. `limbs` is little-endian.
+    /// Interns a limbed integer value, canonicalising to `Bits` when the limbs
+    /// fit `u128`. `limbs` is little-endian. A fits-`u128` value routes through
+    /// [`Self::intern_int_const`] so it is masked to `ty`'s width — keeping the
+    /// two builders symmetric (no unmasked `Bits` can slip in via the limb
+    /// path). Genuinely-wide values (I256/I512) use the full declared width, so
+    /// the `Wide` arm needs no sub-width masking.
     pub fn intern_int_const_limbs(
         &mut self,
         limbs: &[u64],
-        _ty: crate::node::ValueType,
+        ty: crate::node::ValueType,
     ) -> crate::const_value::ConstId {
         let cv = crate::const_value::ConstValue::Wide(limbs.to_vec().into_boxed_slice());
-        let canon = match cv.fits_u128() {
-            Some(v) => crate::const_value::ConstValue::Bits(v),
-            None => cv,
-        };
-        self.const_interner.intern(canon)
+        match cv.fits_u128() {
+            Some(v) => self.intern_int_const(v, ty),
+            None => self.const_interner.intern(cv),
+        }
     }
 
     /// Looks up a const value by id.  The id must have been produced by
     /// `intern_const` / `intern_int_const*` on this function; ids from other
     /// functions are not portable.
-    pub fn const_value(
-        &self,
-        id: crate::const_value::ConstId,
-    ) -> &crate::const_value::ConstValue {
+    pub fn const_value(&self, id: crate::const_value::ConstId) -> &crate::const_value::ConstValue {
         &self.const_interner[id]
     }
 
@@ -1320,8 +1318,6 @@ mod compact_tests {
     /// `retain_reachable_drops_side_table_entry_for_dropped_node`.)
     #[test]
     fn compact_remaps_surviving_stack_offset_entry() {
-        
-
         let mut f = Function::default();
         // Zombie FIRST so the surviving nodes' ids shift during compaction.
         let zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::I64);
@@ -1369,8 +1365,6 @@ mod compact_tests {
     /// surviving node whose id was remapped.
     #[test]
     fn retain_reachable_preserves_asm_fingerprint_on_surviving_node() {
-        
-
         let mut f = Function::default();
         let entry = f
             .graph_mut()
@@ -1408,7 +1402,6 @@ mod compact_tests {
     #[test]
     fn retain_reachable_drops_zombie_node() {
         use crate::graph::NodeIdRemap;
-        
 
         let mut f = Function::default();
         // Entry + InitialMemory + a Return (minimal reachable graph).
@@ -1488,7 +1481,8 @@ mod compact_tests {
         );
 
         // Zombie IntConst node with a stack_offsets entry.
-        let zombie_stack = int_const_node(&mut f, (0xBEEF_u64) as u128, crate::node::ValueType::I64);
+        let zombie_stack =
+            int_const_node(&mut f, (0xBEEF_u64) as u128, crate::node::ValueType::I64);
         let zombie_value = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
         f.set_stack_offset(zombie_stack, zombie_value, -8);
         assert_eq!(

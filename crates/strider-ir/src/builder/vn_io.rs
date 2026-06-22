@@ -352,7 +352,8 @@ fn build_masked_insert(
     // ANDs fold the const + binary-op via `build_const_binop` (And is
     // commutative, so the operand order matches the former explicit form).
     let reg_val = builder.build_const_binop(reg_mask, shifted_value, IntBinaryOp::And, ty)?;
-    let preserved = builder.build_const_binop(container_mask, container_val, IntBinaryOp::And, ty)?;
+    let preserved =
+        builder.build_const_binop(container_mask, container_val, IntBinaryOp::And, ty)?;
 
     builder.build_int_binary_operation(preserved, reg_val, IntBinaryOp::Or, ty)
 }

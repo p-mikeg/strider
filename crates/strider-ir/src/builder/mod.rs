@@ -109,7 +109,10 @@ fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh:
             open.retain(|&(end, _)| end >= v.addr_off);
             // Strictly-larger enclosing open (`off ≤ v.off` by sort,
             // `end ≥ v_end`, `size > v.size`) ⇒ this entry is subsumed.
-            if open.iter().any(|&(end, size)| end >= v_end && size > v.size) {
+            if open
+                .iter()
+                .any(|&(end, size)| end >= v_end && size > v.size)
+            {
                 dropped[idx] = true;
             } else {
                 open.push((v_end, v.size));

@@ -60,10 +60,10 @@ pub use graph::Inputs;
 mod node_signature;
 mod region;
 pub use ::read_only_memory::ReadOnlyMemory;
+pub mod const_value;
 pub mod validate;
 mod viewer;
 pub mod walk;
-pub mod const_value;
 
 pub use crate::const_value::{ConstId, ConstValue};
 pub use crate::error::Result;

@@ -378,11 +378,9 @@ fn validate_flags_stale_initial_var_index_entry() {
     stamp(&mut s.f, iv);
     let iv_value = s.f.node_outputs(iv)[0];
     s.f.register_initial_var(vn, iv);
-    let ret = s.f.graph_mut().create_node(
-        NodeKind::Return,
-        [s.entry_ctrl, s.mem_value, iv_value],
-        [],
-    );
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, iv_value], []);
     stamp(&mut s.f, ret);
     // Valid so far.
     validate(&s.f).expect("a well-formed initial_var_index entry validates");
@@ -418,11 +416,9 @@ fn validate_flags_stale_value_vn_entry() {
     stamp(&mut s.f, k);
     s.f.set_vn_for_value(kv, vn);
     // Make it reachable via the Return.
-    let ret = s.f.graph_mut().create_node(
-        NodeKind::Return,
-        [s.entry_ctrl, s.mem_value, kv],
-        [],
-    );
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, kv], []);
     stamp(&mut s.f, ret);
 
     assert_validation_err(&s.f, |e| {
@@ -1002,9 +998,8 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
     let mut s = spine();
     // Intern a genuinely-wide (> u128, 4 limbs) value but assign it to a
     // narrower (I64) output — bits set above the declared width.
-    let id = s
-        .f
-        .intern_const(ConstValue::Wide(vec![0, 0, 0, 1].into_boxed_slice()));
+    let id =
+        s.f.intern_const(ConstValue::Wide(vec![0, 0, 0, 1].into_boxed_slice()));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],

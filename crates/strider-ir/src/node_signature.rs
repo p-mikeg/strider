@@ -383,9 +383,9 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
 
 #[cfg(test)]
 mod tests {
-    use cranelift_entity::EntityRef;
     use super::*;
     use crate::node::NodeKind;
+    use cranelift_entity::EntityRef;
 
     /// Convenience: projects the head slot kinds of a signature into the
     /// `(Vec<Kind>, Vec<Kind>)` shape used by the pre-refactor assertions.
@@ -399,7 +399,9 @@ mod tests {
 
     #[test]
     fn expected_signature_int_const() {
-        let (inputs, outputs) = kinds(&NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)));
+        let (inputs, outputs) = kinds(&NodeKind::IntConst(crate::const_value::ConstId::new(
+            42_usize,
+        )));
         assert_eq!(inputs, vec![]);
         assert_eq!(outputs, vec![ExpectedValueKind::AnyInt]);
     }

@@ -80,6 +80,35 @@ mod tests {
     use super::*;
     use crate::Function;
 
+    /// The limb path masks a fits-`u128` value to the declared width, exactly
+    /// like the scalar path — so no unmasked `Bits` can slip in via limbs.
+    #[test]
+    fn intern_int_const_limbs_masks_fits_u128_to_width() {
+        use crate::node::ValueType;
+        let mut f = Function::default();
+        // High limb mixes one bit inside I80's 80-bit width (bit 69) and one
+        // above it (bit 84); only the in-width bit must survive.
+        let hi: u64 = (1 << 5) | (1 << 20);
+        let value = u128::from(hi) << 64;
+        let limbed = f.intern_int_const_limbs(&[0, hi], ValueType::I80);
+        let scalar = f.intern_int_const(value, ValueType::I80);
+        assert_eq!(
+            limbed, scalar,
+            "limb path must mask to width like the scalar path"
+        );
+        match f.const_value(limbed) {
+            ConstValue::Bits(v) => {
+                assert_eq!(*v, value & ValueType::I80.bit_mask_u128());
+                assert_eq!(
+                    *v & !ValueType::I80.bit_mask_u128(),
+                    0,
+                    "no bits above width"
+                );
+            }
+            other => panic!("expected Bits, got {other:?}"),
+        }
+    }
+
     /// Interning the same value twice returns the same id, for both the inline
     /// `Bits` form and the boxed `Wide` form.
     #[test]

@@ -1,7 +1,7 @@
 //! White-box tests for the `node` submodules.
 
 use super::*;
-    use cranelift_entity::EntityRef;
+use cranelift_entity::EntityRef;
 
 // ── ValueType ───────────────────────────────────────────────────────
 
@@ -463,7 +463,10 @@ fn same_value_distinct_width_shares_const_id_distinct_node() {
     };
     assert_eq!(id80, id128, "equal value must share one ConstId");
     // ... but two distinct nodes (output type differs).
-    assert_ne!(n80, n128, "different declared widths must be distinct nodes");
+    assert_ne!(
+        n80, n128,
+        "different declared widths must be distinct nodes"
+    );
     assert_eq!(f.int_const_u128(v80), Some(42));
     assert_eq!(f.int_const_u128(v128), Some(42));
 }
