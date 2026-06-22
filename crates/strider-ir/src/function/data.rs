@@ -93,7 +93,7 @@ where
 /// `node_outputs`, `value_kind`) are forwarded as inherent methods on
 /// `Function`; every other [`Graph`] method is reached explicitly through
 /// [`Function::graph`] / [`Function::graph_mut`].
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct Function {
     pub(crate) graph: Graph,
     entry: Option<NodeId>,

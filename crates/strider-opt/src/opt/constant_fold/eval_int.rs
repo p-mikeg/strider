@@ -1,5 +1,5 @@
 use strider_ir::node::ValueType;
-use strider_ir::{IntBinaryOp, IntCmpOp};
+use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use anyhow::anyhow;
 
@@ -224,4 +224,70 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Res
             }
         }
     })
+}
+
+/// Evaluates a unary integer op on a constant, masked to `ty`.
+pub(crate) fn eval_int_unary(op: IntUnaryOp, v: u128, ty: ValueType) -> Option<u128> {
+    let raw = match op {
+        IntUnaryOp::Neg => v.wrapping_neg(),
+    };
+    ty.get_unsigned_int(raw)
+}
+
+/// Sign-extends `v` from `in_ty`, masked to `out_ty`.
+pub(crate) fn eval_sign_extend(v: u128, in_ty: ValueType, out_ty: ValueType) -> Option<u128> {
+    let signed = require_signed(in_ty, v).ok()? as u128;
+    out_ty.get_unsigned_int(signed)
+}
+
+/// Population count of `v` masked to `in_ty`.
+pub(crate) fn eval_popcount(v: u128, in_ty: ValueType) -> Option<u128> {
+    let masked = in_ty.get_unsigned_int(v)?;
+    Some(u128::from(masked.count_ones()))
+}
+
+/// Leading-zero count of `v` within `in_ty`'s width; `None` for widths > 128.
+pub(crate) fn eval_lzcount(v: u128, in_ty: ValueType) -> Option<u128> {
+    let masked = in_ty.get_unsigned_int(v)?;
+    let bits = in_ty.bit_width() as u32;
+    if bits > 128 {
+        return None;
+    }
+    Some(if masked == 0 {
+        u128::from(bits)
+    } else if bits == 128 {
+        u128::from(masked.leading_zeros())
+    } else {
+        u128::from((masked << (128 - bits)).leading_zeros())
+    })
+}
+
+#[cfg(test)]
+mod eval_helper_tests {
+    use super::*;
+    use strider_ir::node::ValueType;
+
+    #[test]
+    fn unary_neg_masks_to_width() {
+        assert_eq!(eval_int_unary(IntUnaryOp::Neg, 1, ValueType::I8), Some(0xFF));
+    }
+
+    #[test]
+    fn sign_extend_i8_to_i32() {
+        assert_eq!(
+            eval_sign_extend(0x80, ValueType::I8, ValueType::I32),
+            Some(0xFFFF_FF80)
+        );
+    }
+
+    #[test]
+    fn popcount_masks_input_width() {
+        assert_eq!(eval_popcount(0x1FF, ValueType::I8), Some(8));
+    }
+
+    #[test]
+    fn lzcount_zero_is_width_and_msb_is_zero() {
+        assert_eq!(eval_lzcount(0, ValueType::I8), Some(8));
+        assert_eq!(eval_lzcount(0x80, ValueType::I8), Some(0));
+    }
 }

@@ -62,6 +62,7 @@ use crate::EditFunction;
 use crate::ReadOnlyMemory;
 use crate::pipeline::{OptCtx, PostOptimizer};
 
+mod eval;
 pub mod table;
 
 /// Per-anchor enumeration cap for the table-dispatch arm

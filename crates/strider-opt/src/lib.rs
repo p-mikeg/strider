@@ -55,6 +55,10 @@ pub use rewrite_rule::{
 };
 pub use strider_ir::{EditFunction, FunctionState};
 
+/// Shared "node → constant from constant inputs" utility (single ROM-decode +
+/// per-op fold dispatch site shared by `LoadReadOnly` and the jump-table
+/// abstract evaluator).
+mod const_eval;
 /// In-loop optimization passes (graph→graph transforms run in the fixed-point
 /// loop).
 mod opt;

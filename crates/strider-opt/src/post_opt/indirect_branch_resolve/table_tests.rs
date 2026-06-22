@@ -857,30 +857,41 @@ fn classify_table_dispatch_decoy_offpath_value_not_enumerated() {
 
 // ── End-to-end classifier tests (SP-rooted / on-stack arm) ───────────────────
 
-fn build_two_target_array(
+/// Shared post-builder pipeline: run the standard optimization passes and
+/// return the dispatch `Load`'s output value from the converged graph.
+fn finish_two_target_array(mut fg: strider_ir::Function) -> (strider_ir::Function, ValueId) {
+    let mut p = OptimizerPipeline::new();
+    p.add(ConstantFold::new());
+    p.add(KnownBits);
+    p.add(PhiCollapse);
+    p.add(RegionCollapse);
+    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
+    let load = fg
+        .graph()
+        .all_node_ids()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .expect("Load survives — LoadForward not in pipeline");
+    let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
+    (fg, load_value)
+}
+
+/// Core IR construction shared by `build_two_target_array` and
+/// `build_two_target_array_aligned`.  `frame_base` is the SP-derived value
+/// to use as the base for all stores and the load address: either bare `sp_val`
+/// (non-aligned) or `And(sp_val, align_mask)` (aligned).
+fn wire_two_target_array(
     targets: [u64; 2],
     base_offset: i64,
     stride: u64,
-) -> (strider_ir::Function, ValueId) {
-    let sp = sp64();
-    let arg_vn = rsleigh::Vn {
-        addr_off: 0x38,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .tracked(arg_vn)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .build_fn_single_region()
-        .unwrap();
-    let sp_val = b.read_variable(&sp).unwrap();
+    frame_base: ValueId,
+    b: &mut strider_ir::FunctionBuilder,
+    arg_vn: rsleigh::Vn,
+) {
     for (i, &target_addr) in targets.iter().enumerate() {
         let off = base_offset + (i as i64) * (stride as i64);
         let off_const = b.build_int_const(off as u64, ValueType::I64).unwrap();
         let addr = b
-            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(frame_base, off_const, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
         let target = b.build_int_const(target_addr, ValueType::I64).unwrap();
         b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
@@ -917,7 +928,7 @@ fn build_two_target_array(
         .build_int_const(base_offset as u64, ValueType::I64)
         .unwrap();
     let sp_plus_base = b
-        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(frame_base, base_const, IntBinaryOp::Add, ValueType::I64)
         .unwrap();
     let load_addr = b
         .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
@@ -929,26 +940,93 @@ fn build_two_target_array(
     // dispatch region via find_anchor_consumer_placeholder.
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
-    let mut fg = b.build().unwrap();
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(KnownBits);
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
-    let load = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .expect("Load survives — LoadForward not in pipeline");
-    let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
-    (fg, load_value)
+}
+
+fn build_two_target_array(
+    targets: [u64; 2],
+    base_offset: i64,
+    stride: u64,
+) -> (strider_ir::Function, ValueId) {
+    let sp = sp64();
+    let arg_vn = rsleigh::Vn {
+        addr_off: 0x38,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .tracked(arg_vn)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .build_fn_single_region()
+        .unwrap();
+    let sp_val = b.read_variable(&sp).unwrap();
+    wire_two_target_array(targets, base_offset, stride, sp_val, &mut b, arg_vn);
+    let fg = b.build().unwrap();
+    finish_two_target_array(fg)
+}
+
+/// Same as `build_two_target_array` but with an alignment-masked frame base:
+/// `frame_base = And(sp_val, 0xFFFF_FFFF_FFFF_FFF0)`.  Exercises the
+/// `(sp & mask)` stack-base path that `SpDecomposer::decompose` recognises as
+/// an opaque SP terminal.
+fn build_two_target_array_aligned(
+    targets: [u64; 2],
+    base_offset: i64,
+    stride: u64,
+) -> (strider_ir::Function, ValueId) {
+    let sp = sp64();
+    let arg_vn = rsleigh::Vn {
+        addr_off: 0x38,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .tracked(arg_vn)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .build_fn_single_region()
+        .unwrap();
+    let sp_val = b.read_variable(&sp).unwrap();
+    let align_mask = b
+        .build_int_const(0xFFFF_FFFF_FFFF_FFF0u64, ValueType::I64)
+        .unwrap();
+    let frame_base = b
+        .build_int_binary_operation(sp_val, align_mask, IntBinaryOp::And, ValueType::I64)
+        .unwrap();
+    wire_two_target_array(targets, base_offset, stride, frame_base, &mut b, arg_vn);
+    let fg = b.build().unwrap();
+    finish_two_target_array(fg)
 }
 
 #[test]
 fn classify_table_dispatch_two_stack_targets_resolves() {
     let targets = [0x401190u64, 0x401180u64];
     let (fg, _load_value) = build_two_target_array(targets, -24, 8);
+    let (known, doms) = make_known_and_doms(&fg);
+    let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
+    let result = classify_table_dispatch(
+        &fg,
+        sole_indirect_branch(&fg),
+        None,
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    let mut expected = targets.to_vec();
+    expected.sort_unstable();
+    assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
+}
+
+#[test]
+fn classify_table_dispatch_aligned_stack_resolves() {
+    // Same SP-rooted two-target stack array as `build_two_target_array`, but
+    // with the frame base alignment-masked: `And(sp_val, 0xFFFF_FFFF_FFFF_FFF0)`.
+    // The evaluator must recognise the And-masked value as an SP terminal
+    // (via `SpDecomposer::decompose`) so the load address resolves to `SpRel`
+    // and `reaching_store` can match the prologue stores.
+    let targets = [0x401190u64, 0x401180u64];
+    let (fg, _load_value) = build_two_target_array_aligned(targets, -24, 8);
     let (known, doms) = make_known_and_doms(&fg);
     let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
     let result = classify_table_dispatch(
