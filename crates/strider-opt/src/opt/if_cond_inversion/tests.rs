@@ -9,7 +9,7 @@ use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
 
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{IntPayload, NodeKind, ValueId, ValueType};
+use strider_ir::node::{NodeKind, ValueId, ValueType};
 use strider_ir_test_utils::RegisterSet;
 
 /// Builds the canonical 1-bit logical NOT shape `Xor(operand, IntConst(1)):I1`
@@ -24,7 +24,8 @@ fn build_bool_not(b: &mut strider_ir::FunctionBuilder, operand: ValueId) -> Resu
 /// True when `node` is the canonical 1-bit logical NOT shape — an
 /// `IntBinaryOp::Xor` at `I1` whose RHS (or LHS, since Xor is commutative
 /// in the dedup cache) is `IntConst(1):I1`.
-fn is_i1_xor_with_one(fg: &strider_ir::Graph, node: strider_ir::node::NodeId) -> bool {
+fn is_i1_xor_with_one(fg: &strider_ir::Function, node: strider_ir::node::NodeId) -> bool {
+    use strider_ir::IRViewer;
     if !matches!(fg.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Xor)) {
         return false;
     }
@@ -33,10 +34,7 @@ fn is_i1_xor_with_one(fg: &strider_ir::Graph, node: strider_ir::node::NodeId) ->
     };
     let is_one = |value: ValueId| {
         fg.value_kind(value).as_value().is_some_and(|t| t.is_bool())
-            && matches!(
-                *fg.kind_of_value(value),
-                NodeKind::IntConst(IntPayload::Small(1))
-            )
+            && fg.int_const_val(value) == Some(1)
     };
     is_one(lhs) || is_one(rhs)
 }
@@ -73,13 +71,13 @@ fn if_cond_kind(fg: &strider_ir::Graph, if_node: strider_ir::node::NodeId) -> No
 fn new_builds_pass_that_inverts() -> Result<()> {
     let (mut fg, if_node) = build_if_with_neg_cond()?;
     let cond_pre = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
-    assert!(is_i1_xor_with_one(fg.graph(), cond_pre));
+    assert!(is_i1_xor_with_one(&fg, cond_pre));
 
     let r = IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
     assert!(r.changed(), "constructed pass should invert the cond");
 
     let cond_post = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
-    assert!(!is_i1_xor_with_one(fg.graph(), cond_post));
+    assert!(!is_i1_xor_with_one(&fg, cond_post));
     Ok(())
 }
 
@@ -98,7 +96,7 @@ fn two_independent_instances_each_invert() -> Result<()> {
             .changed()
     );
     let cond_a = fg_a.producer(fg_a.graph().node_inputs_exact::<2>(if_a)?[1]);
-    assert!(!is_i1_xor_with_one(fg_a.graph(), cond_a));
+    assert!(!is_i1_xor_with_one(&fg_a, cond_a));
 
     let (mut fg_b, if_b) = build_if_with_neg_cond()?;
     assert!(
@@ -107,7 +105,7 @@ fn two_independent_instances_each_invert() -> Result<()> {
             .changed()
     );
     let cond_b = fg_b.producer(fg_b.graph().node_inputs_exact::<2>(if_b)?[1]);
-    assert!(!is_i1_xor_with_one(fg_b.graph(), cond_b));
+    assert!(!is_i1_xor_with_one(&fg_b, cond_b));
     Ok(())
 }
 
@@ -116,7 +114,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     let (mut fg, if_node) = build_if_with_neg_cond()?;
     // Before: cond is the canonical 1-bit `Xor(_, IntConst(1))` (logical NOT).
     let cond_node_pre = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
-    assert!(is_i1_xor_with_one(fg.graph(), cond_node_pre));
+    assert!(is_i1_xor_with_one(&fg, cond_node_pre));
 
     let r = IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
     assert!(r.changed());
@@ -125,7 +123,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     // No `Xor(_, IntConst(1))` (logical NOT) remains on the If's cond
     // input.
     let cond_node_post = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
-    assert!(!is_i1_xor_with_one(fg.graph(), cond_node_post));
+    assert!(!is_i1_xor_with_one(&fg, cond_node_post));
     let _ = if_cond_kind; // keep helper alive for other tests
     Ok(())
 }
@@ -242,7 +240,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     let bool_neg_node = fg
         .graph()
         .all_node_ids()
-        .find(|&n| is_i1_xor_with_one(fg.graph(), n))
+        .find(|&n| is_i1_xor_with_one(&fg, n))
         .expect("I1 Xor(_, 1) (logical NOT) present pre-pass");
 
     let r = IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
@@ -296,7 +294,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let bool_neg_node = fg
         .graph()
         .all_node_ids()
-        .find(|&n| is_i1_xor_with_one(fg.graph(), n))
+        .find(|&n| is_i1_xor_with_one(&fg, n))
         .expect("I1 Xor(_, 1) pre-pass");
     let if_node_pre = find_unique_if(fg.graph());
     // The Xor's non-constant operand is whichever input is *not* the
@@ -304,10 +302,8 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let [lhs, rhs] = fg.graph().node_inputs_exact::<2>(bool_neg_node)?;
     let inner_producer_pre = {
         let pick = |value: ValueId| {
-            !matches!(
-                *fg.kind_of_value(value),
-                NodeKind::IntConst(IntPayload::Small(1))
-            )
+            !(matches!(fg.kind_of_value(value), NodeKind::IntConst(_))
+                && fg.int_const_val(value) == Some(1))
         };
         let chosen = if pick(lhs) { lhs } else { rhs };
         fg.producer(chosen)
@@ -389,15 +385,13 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     let bool_neg_node = fg
         .graph()
         .all_node_ids()
-        .find(|&n| n != second_neg_node && is_i1_xor_with_one(fg.graph(), n))
+        .find(|&n| n != second_neg_node && is_i1_xor_with_one(&fg, n))
         .expect("first Xor(_, 1) (logical NOT) present pre-pass");
     let [lhs, rhs] = fg.graph().node_inputs_exact::<2>(bool_neg_node)?;
     let inner_producer_pre = {
         let pick = |value: ValueId| {
-            !matches!(
-                *fg.kind_of_value(value),
-                NodeKind::IntConst(IntPayload::Small(1))
-            )
+            !(matches!(fg.kind_of_value(value), NodeKind::IntConst(_))
+                && fg.int_const_val(value) == Some(1))
         };
         let chosen = if pick(lhs) { lhs } else { rhs };
         fg.producer(chosen)

@@ -16,7 +16,7 @@
 
 use strider_ir::IRBuilderExt;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{IntPayload, NodeKind, ValueType as T};
+use strider_ir::node::{NodeKind, ValueType as T};
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
@@ -70,10 +70,9 @@ fn add_zero_identity_fires_and_redirects() {
         .into_iter()
         .map(|inp| ctx.function().producer(inp))
         .all(|n| {
-            matches!(
-                ctx.function().node_kind(n),
-                NodeKind::IntConst(IntPayload::Small(7))
-            )
+            let f = ctx.function();
+            matches!(f.node_kind(n), NodeKind::IntConst(_))
+                && f.int_const_val(f.node_outputs(n)[0]) == Some(7)
         });
     assert!(or_reads_const, "Or should now read the redirected constant");
 }
@@ -117,10 +116,9 @@ fn const_fold_rule_via_macro() {
 
     // A fresh IntConst(7) now exists.
     let has_seven = ctx.function().walk().any(|n| {
-        matches!(
-            ctx.function().node_kind(n),
-            NodeKind::IntConst(IntPayload::Small(7))
-        )
+        let f = ctx.function();
+        matches!(f.node_kind(n), NodeKind::IntConst(_))
+            && f.int_const_val(f.node_outputs(n)[0]) == Some(7)
     });
     assert!(has_seven, "3 + 4 should fold to IntConst(7)");
 }
@@ -173,10 +171,9 @@ fn reassoc_rule_nests_computed_const_in_add() {
 
     // The folded constant 1 + 2 == 3 now exists in the graph.
     let has_three = ctx.function().walk().any(|n| {
-        matches!(
-            ctx.function().node_kind(n),
-            NodeKind::IntConst(IntPayload::Small(3))
-        )
+        let f = ctx.function();
+        matches!(f.node_kind(n), NodeKind::IntConst(_))
+            && f.int_const_val(f.node_outputs(n)[0]) == Some(3)
     });
     assert!(has_three, "(x + 1) + 2 should reassociate to x + 3");
 }

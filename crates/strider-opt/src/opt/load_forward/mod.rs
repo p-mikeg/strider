@@ -214,9 +214,8 @@ fn narrow(ctx: &mut crate::EditFunction<'_>, data: ValueId, load: NodeId) -> Res
             let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
             // shift_bits is a byte-offset * 8 — always fits in u64.  Route it
             // through `build_int_const` so a wide `data_ty` (I80 / I128) mints
-            // the canonical `IntPayload::Wide` const via the interner instead
-            // of a convention-violating `IntPayload::Small`-at-wide-type node
-            // (which validates but never dedups against the wide form).
+            // the interned const via `build_int_const` so it dedups correctly
+            // against any other node with the same value and type.
             let shift_const = ctx.build_int_const(u128::from(shift_bits), data_ty)?;
             // `build_int_const` does not carry the `&[load]` contributor stamp
             // that `create_node_attributed` would, so attribute the fresh const

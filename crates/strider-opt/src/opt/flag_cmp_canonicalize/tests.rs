@@ -12,7 +12,7 @@ use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
 
 use strider_ir::IRWalker;
-use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, Graph};
 use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
@@ -223,10 +223,7 @@ fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
     };
     let is_one = |value: ValueId| {
         fg.value_type_opt(value).is_some_and(|t| t.is_bool())
-            && matches!(
-                *fg.kind_of_value(value),
-                NodeKind::IntConst(IntPayload::Small(1))
-            )
+            && fg.int_const_val(value) == Some(1)
     };
     is_one(lhs) || is_one(rhs)
 }
@@ -356,13 +353,11 @@ fn assert_if_cond_is_neg_intcmp(
     // The non-constant operand is the cmp; the other is the I1
     // IntConst(1) (might be on either side due to dedup).
     let is_one_const = |value: ValueId| {
-        matches!(
-            *function.kind_of_value(value),
-            NodeKind::IntConst(IntPayload::Small(1))
-        ) && function
-            .value_kind(value)
-            .as_value()
-            .is_some_and(|t| t.is_bool())
+        function.int_const_val(value) == Some(1)
+            && function
+                .value_kind(value)
+                .as_value()
+                .is_some_and(|t| t.is_bool())
     };
     let cmp_value = if is_one_const(rhs_value) {
         lhs_value

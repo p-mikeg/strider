@@ -9,7 +9,7 @@
 use super::*;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRWalker;
-use strider_ir::node::{IntPayload, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::node::{NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir_test_utils::make_empty_fn;
 
 /// Oracle that classifies a specific set of store memory outputs as
@@ -227,9 +227,10 @@ fn base_with_store() -> (Function, ValueId, ValueId, ValueId) {
 
 /// Grafts an `IntConst` and returns its value output.
 fn mk_const(fg: &mut Function, v: u64) -> ValueId {
+    let const_id = fg.intern_int_const(u128::from(v), ValueType::I64);
     let n = strider_ir_test_utils::sentinel_node(
         fg,
-        NodeKind::IntConst(IntPayload::Small(v)),
+        NodeKind::IntConst(const_id),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );

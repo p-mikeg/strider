@@ -1,6 +1,6 @@
 use super::*;
 use strider_ir::{IRBuilderExt, IRWalker};
-use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType};
+use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
 use crate::pipeline::OptimizerTestExt;
@@ -40,10 +40,9 @@ fn simulate_dbe_redirect_without_strip(
                 return false;
             }
             let cond_producer = fg.value_definition(ins[1]).0;
-            matches!(
-                fg.node_kind(cond_producer),
-                NodeKind::IntConst(IntPayload::Small(v)) if *v == want_cond_val
-            )
+            let cond_out = fg.node_outputs(cond_producer);
+            matches!(fg.node_kind(cond_producer), NodeKind::IntConst(_))
+                && cond_out.first().is_some_and(|&v| fg.int_const_val(v) == Some(want_cond_val))
         })
         .expect("a live If with the requested constant condition must exist");
     let if_outputs = fg.node_outputs(if_node).to_vec();

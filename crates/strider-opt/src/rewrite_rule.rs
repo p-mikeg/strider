@@ -331,7 +331,7 @@ mod tests {
     //! `Function` (entry set) so `EditFunction::new` succeeds.
 
     use strider_ir::EditFunction;
-    use strider_ir::node::{IntPayload, NodeKind, ValueType};
+    use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
@@ -660,22 +660,14 @@ mod tests {
         ctx.cull_dead();
 
         // Input-less const → live + root.
-        let k = ctx.create_node(
-            NodeKind::IntConst(IntPayload::Small(5)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let kv = ctx.node_outputs(k)[0];
+        use strider_ir::IRBuilderExt;
+        let kv = ctx.build_int_const(5u64, ValueType::I64).unwrap();
+        let k = ctx.producer(kv);
         assert!(ctx.is_live(k), "fresh const is live");
         assert!(ctx.is_root(k), "input-less const is a root");
 
         // Another const + an Add over both → Add is live, NOT a root.
-        let k2 = ctx.create_node(
-            NodeKind::IntConst(IntPayload::Small(6)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let k2v = ctx.node_outputs(k2)[0];
+        let k2v = ctx.build_int_const(6u64, ValueType::I64).unwrap();
         let add = ctx.create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [kv, k2v],
@@ -844,10 +836,8 @@ mod tests {
         // The freshly-built IntConst(7) must be live and discoverable via
         // the cache-based `live_of_kind` iterator (no graph walk).
         assert!(
-            matches!(
-                ctx.node_kind(new_node),
-                NodeKind::IntConst(IntPayload::Small(7))
-            ),
+            matches!(ctx.node_kind(new_node), NodeKind::IntConst(_))
+                && ctx.int_const_val(new_value) == Some(7),
             "RHS built IntConst(7)"
         );
         assert!(
@@ -855,7 +845,7 @@ mod tests {
             "freshly-instantiated RHS node must be registered live"
         );
         assert!(
-            ctx.live_of_kind(|k| matches!(k, NodeKind::IntConst(IntPayload::Small(7))))
+            ctx.live_of_kind(|k| matches!(k, NodeKind::IntConst(_)))
                 .any(|n| n == new_node),
             "live_of_kind must surface the fresh node"
         );
@@ -1345,7 +1335,7 @@ mod tests {
         use strider_ir::node::ValueType as VT;
         use strider_pattern::load;
         use strider_pattern::matcher::KindSpec;
-        use strider_pattern::template::TemplateBuilder;
+        use strider_pattern::template::{TemplateBuilder, TemplateKind};
 
         // Build a function with a Load(addr) we will rewrite into
         // Load(addr, Store(addr, data, mem)) — forwarding nothing, just a
@@ -1371,7 +1361,9 @@ mod tests {
         let rhs = {
             let mut tb = TemplateBuilder::new();
             let a = tb.capture(addr_cap);
-            let data = tb.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(7))));
+            let data = tb.leaf(KindSpec::Any);
+            tb.set_template_kind(data, TemplateKind::FnIntConst(Box::new(|_| Ok(7u128))));
+            tb.set_value_ty(data, VT::I64);
             // The store needs an incoming memory token; use a fresh
             // InitialMemory leaf (input-less, becomes a root).
             let init_mem_node = tb.node(KindSpec::Exact(NodeKind::InitialMemory));

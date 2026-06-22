@@ -20,8 +20,8 @@
 
 use anyhow::anyhow;
 
-use strider_ir::node::{IntPayload, NodeId, NodeKind};
-use strider_ir::{Graph, Value};
+use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{Graph, IRViewer, Value};
 
 pub(crate) use strider_ir_test_utils::{make_empty_fn as make_fn, make_fn_with_var};
 
@@ -52,11 +52,17 @@ pub(crate) fn assert_return_kind(graph: &Graph, expected: NodeKind) {
     assert_eq!(got, expected, "return-value producer kind mismatch");
 }
 
-/// Asserts the function returns `IntConst(IntPayload::Small(expected))` —
+/// Asserts the function returns an `IntConst` with the given value —
 /// the most common post-fold assertion across the pass test suites.
 #[track_caller]
-pub(crate) fn assert_returns_const(graph: &Graph, expected: u64) {
-    assert_return_kind(graph, NodeKind::IntConst(IntPayload::Small(expected)));
+pub(crate) fn assert_returns_const(f: &strider_ir::Function, expected: u64) {
+    let val = return_value(f.graph()).expect("function must return a value");
+    let got = f.int_const_val(val);
+    assert_eq!(
+        got,
+        Some(expected),
+        "return-value must be IntConst({expected:#x})"
+    );
 }
 
 /// Returns a fresh pipeline containing exactly `ConstantFold` +

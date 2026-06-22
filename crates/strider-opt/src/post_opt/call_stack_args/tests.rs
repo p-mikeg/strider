@@ -6,9 +6,21 @@ use anyhow::anyhow;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
 use strider_ir::IRWalker;
-use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Graph, IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, stack_vn_x86 as stack_vn};
+
+/// Returns `true` when `v` is an `IntConst` whose value equals `expected`.
+fn is_const(fg: &strider_ir::Function, v: ValueId, expected: u64) -> bool {
+    matches!(fg.kind_of_value(v), NodeKind::IntConst(_))
+        && fg.int_const_val(v) == Some(expected)
+}
+
+/// Extracts the u64 value from an IntConst value, panicking with context on failure.
+fn const_val(fg: &strider_ir::Function, v: ValueId, ctx: &str) -> u64 {
+    fg.int_const_val(v)
+        .unwrap_or_else(|| panic!("collected arg should be an IntConst, got {:?} — {ctx}", fg.kind_of_value(v)))
+}
 
 /// Prologue local-variable zero-init writes (and a `push ebx` save) land at
 /// offsets that fall in the arg-slot window for a later call, chronologically
@@ -93,10 +105,7 @@ fn local_inits_in_arg_window_are_collected_too() -> Result<()> {
     // four buf-init zeros, and the saved EBX = 7 collected args (11 inputs).
     let collected: Vec<u64> = inputs[4..]
         .iter()
-        .map(|&v| match *fg.kind_of_value(v) {
-            NodeKind::IntConst(IntPayload::Small(n)) => n,
-            other => panic!("collected arg should be an IntConst, got {other:?}"),
-        })
+        .map(|&v| const_val(&fg, v, "local_inits_in_arg_window_are_collected_too"))
         .collect();
     assert_eq!(
         collected,
@@ -155,18 +164,13 @@ fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
         "wide store = one arg; cursor advances past both slots it covers so the \
          int lands as arg 1; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[4]);
-    let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
-        matches!(
-            arg0_kind,
-            NodeKind::IntConst(IntPayload::Small(0xDEAD_BEEF_CAFE_BABE))
-        ),
-        "arg0 should be the 8-byte double value, got {arg0_kind:?}"
+        is_const(&fg, inputs[4], 0xDEAD_BEEF_CAFE_BABE),
+        "arg0 should be the 8-byte double value, got {:?}", fg.kind_of_value(inputs[4])
     );
     assert!(
-        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(7))),
-        "arg1 should be the int 7, got {arg1_kind:?}"
+        is_const(&fg, inputs[5], 7),
+        "arg1 should be the int 7, got {:?}", fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -192,9 +196,10 @@ fn outgoing_span_four_wide_arg_store_collected_as_one_arg() -> Result<()> {
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // a = (16-byte) stored as I128 at sp+0 — covers slots 0,1,2,3.
+    let const_id_a = b.function_mut().intern_int_const(0xABCD_u128, ValueType::I128);
     let a = strider_ir_test_utils::sentinel_node(
         b.function_mut(),
-        NodeKind::IntConst(IntPayload::Small(0xABCD)),
+        NodeKind::IntConst(const_id_a),
         [],
         [strider_ir::node::ValueKind::Typed(ValueType::I128)],
     );
@@ -228,15 +233,13 @@ fn outgoing_span_four_wide_arg_store_collected_as_one_arg() -> Result<()> {
         "wide I128 store = one arg; cursor advances past all four slots it \
          covers so the int lands as arg 1; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[4]);
-    let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(0xABCD))),
-        "arg0 should be the 16-byte I128 value, got {arg0_kind:?}"
+        is_const(&fg, inputs[4], 0xABCD),
+        "arg0 should be the 16-byte I128 value, got {:?}", fg.kind_of_value(inputs[4])
     );
     assert!(
-        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(7))),
-        "arg1 should be the int 7, got {arg1_kind:?}"
+        is_const(&fg, inputs[5], 7),
+        "arg1 should be the int 7, got {:?}", fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -261,9 +264,10 @@ fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // a = 10-byte value stored as I80 at sp+0 — covers slots 0,1,2.
+    let const_id_a = b.function_mut().intern_int_const(0xABCD_u128, ValueType::I80);
     let a = strider_ir_test_utils::sentinel_node(
         b.function_mut(),
-        NodeKind::IntConst(IntPayload::Small(0xABCD)),
+        NodeKind::IntConst(const_id_a),
         [],
         [strider_ir::node::ValueKind::Typed(ValueType::I80)],
     );
@@ -297,15 +301,13 @@ fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
         "I80 store spans 3 slots = one arg; the int lands as arg 1 (slot 3); \
          got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[4]);
-    let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(0xABCD))),
-        "arg0 should be the 10-byte I80 value, got {arg0_kind:?}"
+        is_const(&fg, inputs[4], 0xABCD),
+        "arg0 should be the 10-byte I80 value, got {:?}", fg.kind_of_value(inputs[4])
     );
     assert!(
-        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(7))),
-        "arg1 should be the int 7, got {arg1_kind:?}"
+        is_const(&fg, inputs[5], 7),
+        "arg1 should be the int 7, got {:?}", fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -368,17 +370,13 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
         "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
     );
 
-    let arg0_val = inputs[4];
-    let arg1_val = inputs[5];
-    let arg0_kind = *fg.kind_of_value(arg0_val);
-    let arg1_kind = *fg.kind_of_value(arg1_val);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(11))),
-        "arg0 should be 11, got {arg0_kind:?}"
+        is_const(&fg, inputs[4], 11),
+        "arg0 should be 11, got {:?}", fg.kind_of_value(inputs[4])
     );
     assert!(
-        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(22))),
-        "arg1 should be 22, got {arg1_kind:?}"
+        is_const(&fg, inputs[5], 22),
+        "arg1 should be 22, got {:?}", fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -431,11 +429,11 @@ fn collects_ten_stack_args() -> Result<()> {
         "expected ctrl+mem+target+sp+{N} stack args; got {inputs:?}"
     );
     for i in 0..N {
-        let kind = *fg.kind_of_value(inputs[4 + i]);
         assert!(
-            matches!(kind, NodeKind::IntConst(IntPayload::Small(v)) if v == (100 + i) as u64),
-            "stack arg {i} should be {}, got {kind:?}",
-            100 + i
+            is_const(&fg, inputs[4 + i], (100 + i) as u64),
+            "stack arg {i} should be {}, got {:?}",
+            100 + i,
+            fg.kind_of_value(inputs[4 + i])
         );
     }
     Ok(())
@@ -488,11 +486,8 @@ fn slot_hole_truncates_collection_to_dense_prefix() -> Result<()> {
         "only the dense prefix (slot 0) is collected across the hole"
     );
     assert!(
-        matches!(
-            *fg.kind_of_value(inputs[4]),
-            NodeKind::IntConst(IntPayload::Small(0xA0))
-        ),
-        "the collected arg must be slot 0's 0xA0"
+        is_const(&fg, inputs[4], 0xA0),
+        "the collected arg must be slot 0's 0xA0, got {:?}", fg.kind_of_value(inputs[4])
     );
     Ok(())
 }
@@ -688,10 +683,7 @@ fn disjoint_in_window_store_is_collected_not_a_terminator() -> Result<()> {
     // ctrl + mem + target + sp + 3 collected args (slots 0,1,2).
     let collected: Vec<u64> = inputs[4..]
         .iter()
-        .map(|&v| match *fg.kind_of_value(v) {
-            NodeKind::IntConst(IntPayload::Small(n)) => n,
-            other => panic!("collected arg should be an IntConst, got {other:?}"),
-        })
+        .map(|&v| const_val(&fg, v, "trash_in_arg_window"))
         .collect();
     // All three reaching SP-relative stores are collected — the in-window
     // "trash" at slot 2 is indistinguishable from a real arg.
@@ -768,10 +760,9 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
         "strict walker collects only the most-recent push before the global \
          terminator; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(11))),
-        "arg0 should be 11, got {arg0_kind:?}"
+        is_const(&fg, inputs[4], 11),
+        "arg0 should be 11, got {:?}", fg.kind_of_value(inputs[4])
     );
     Ok(())
 }
@@ -909,15 +900,13 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
         6,
         "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[4]);
-    let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(11))),
-        "arg0 should be 11, got {arg0_kind:?}"
+        is_const(&fg, inputs[4], 11),
+        "arg0 should be 11, got {:?}", fg.kind_of_value(inputs[4])
     );
     assert!(
-        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(22))),
-        "arg1 should be 22, got {arg1_kind:?}"
+        is_const(&fg, inputs[5], 22),
+        "arg1 should be 22, got {:?}", fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -983,10 +972,9 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
         "expected ctrl+mem+target+sp+3 stack args; got {inputs:?}"
     );
     for (slot_idx, expected) in [11u64, 22, 33].iter().enumerate() {
-        let kind = *fg.kind_of_value(inputs[4 + slot_idx]);
         assert!(
-            matches!(kind, NodeKind::IntConst(IntPayload::Small(v)) if v == *expected),
-            "arg{slot_idx} should be {expected}, got {kind:?}"
+            is_const(&fg, inputs[4 + slot_idx], *expected),
+            "arg{slot_idx} should be {expected}, got {:?}", fg.kind_of_value(inputs[4 + slot_idx])
         );
     }
     Ok(())
@@ -1049,10 +1037,9 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
         6,
         "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(11))),
-        "arg0 must be the most-recent write (11), not the stale 0xBAD; got {arg0_kind:?}"
+        is_const(&fg, inputs[4], 11),
+        "arg0 must be the most-recent write (11), not the stale 0xBAD; got {:?}", fg.kind_of_value(inputs[4])
     );
     Ok(())
 }
@@ -1122,8 +1109,8 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     let collected: Vec<u64> = inputs[3..]
         .iter()
         .filter_map(|&out| {
-            if let NodeKind::IntConst(IntPayload::Small(v)) = *fg.kind_of_value(out) {
-                Some(v)
+            if matches!(fg.kind_of_value(out), NodeKind::IntConst(_)) {
+                fg.int_const_val(out)
             } else {
                 None
             }
@@ -1140,15 +1127,13 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
         6,
         "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[4]);
-    let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(11))),
-        "arg0 should be 11, got {arg0_kind:?}"
+        is_const(&fg, inputs[4], 11),
+        "arg0 should be 11, got {:?}", fg.kind_of_value(inputs[4])
     );
     assert!(
-        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(22))),
-        "arg1 should be 22, got {arg1_kind:?}"
+        is_const(&fg, inputs[5], 22),
+        "arg1 should be 22, got {:?}", fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -1203,10 +1188,9 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
         5,
         "default-CC arg at offset +4 must be collected; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(77))),
-        "arg0 should be IntConst(77), got {arg0_kind:?}"
+        is_const(&fg, inputs[4], 77),
+        "arg0 should be IntConst(77), got {:?}", fg.kind_of_value(inputs[4])
     );
     Ok(())
 }
@@ -1290,10 +1274,9 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         5,
         "override CC [0,4] must collect arg at offset +0; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(66))),
-        "arg0 should be IntConst(66) from override table, got {arg0_kind:?}"
+        is_const(&fg, inputs[4], 66),
+        "arg0 should be IntConst(66) from override table, got {:?}", fg.kind_of_value(inputs[4])
     );
     Ok(())
 }
@@ -1359,11 +1342,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
                 return false;
             }
             let inputs = fg.node_inputs(n);
-            inputs.len() == 3
-                && matches!(
-                    fg.node_kind(fg.producer(inputs[2])),
-                    NodeKind::IntConst(IntPayload::Small(77))
-                )
+            inputs.len() == 3 && is_const(&fg, inputs[2], 77)
         })
         .expect("arg0 Store(IntConst(77)) must exist");
 
@@ -1409,10 +1388,9 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         5,
         "side-table offset must be used to collect arg0 even with opaque address; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(77))),
-        "arg0 should be IntConst(77), got {arg0_kind:?}"
+        is_const(&fg, inputs[4], 77),
+        "arg0 should be IntConst(77), got {:?}", fg.kind_of_value(inputs[4])
     );
     Ok(())
 }

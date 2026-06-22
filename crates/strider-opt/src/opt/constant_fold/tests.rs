@@ -2,7 +2,7 @@ use super::*;
 use crate::pipeline::OptimizerTestExt;
 use anyhow::anyhow;
 use strider_ir::IRBuilderExt;
-use strider_ir::node::{IntPayload, NodeKind, ValueType};
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir::{IRViewer, IRWalker};
 
@@ -65,7 +65,7 @@ fn new_builds_pass_that_folds() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_returns_const(fg.graph(), 7);
+    assert_returns_const(&fg, 7);
     Ok(())
 }
 
@@ -84,7 +84,7 @@ fn two_independent_instances_each_fold() -> Result<()> {
             .run_one(&mut fg_a, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_returns_const(fg_a.graph(), 7);
+    assert_returns_const(&fg_a, 7);
 
     let mut fg_b = add_consts_fixture()?;
     assert!(
@@ -92,7 +92,7 @@ fn two_independent_instances_each_fold() -> Result<()> {
             .run_one(&mut fg_b, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_returns_const(fg_b.graph(), 7);
+    assert_returns_const(&fg_b, 7);
     Ok(())
 }
 
@@ -224,12 +224,16 @@ fn fold_int_binary_two_consts_cases() -> Result<()> {
             c.case,
             c.op,
         );
-        assert_eq!(
-            return_kind(fg.graph())?,
-            NodeKind::IntConst(IntPayload::Small(c.expected)),
-            "{}",
-            c.case,
-        );
+        {
+            let ret_val = return_value(fg.graph())?;
+            assert!(
+                fg.int_const_val(ret_val) == Some(c.expected),
+                "{}: expected IntConst({:#x}), got {:?}",
+                c.case,
+                c.expected,
+                fg.int_const_val(ret_val),
+            );
+        }
     }
     Ok(())
 }
@@ -245,7 +249,7 @@ fn fold_int_xor_self() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -260,7 +264,7 @@ fn fold_int_sub_self() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -276,7 +280,7 @@ fn fold_add_zero_identity() -> Result<()> {
     })?;
     // After at least one fold pass x+0 should collapse to x, then x folds too.
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_returns_const(fg.graph(), 3);
+    assert_returns_const(&fg, 3);
     Ok(())
 }
 
@@ -294,7 +298,7 @@ fn fold_and_and_masks() -> Result<()> {
     // Run to convergence (both-const fold + mask-merge may each fire once).
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // 0xFF & 4 = 4, 4 & 7 = 4.
-    assert_returns_const(fg.graph(), 4);
+    assert_returns_const(&fg, 4);
     Ok(())
 }
 
@@ -303,12 +307,12 @@ fn fold_and_and_masks() -> Result<()> {
 /// Asserts the return-value node is `expected_base + expected_const`
 /// (type-masked; operand order irrelevant).
 fn assert_add_with_const(
-    fg: &strider_ir::Graph,
+    fg: &strider_ir::Function,
     expected_base: strider_ir::Value,
     expected_const: u64,
     ty: ValueType,
 ) -> Result<()> {
-    let val = return_value(fg)?;
+    let val = return_value(fg.graph())?;
     let node = fg.producer(val);
     assert!(
         matches!(fg.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Add)),
@@ -323,10 +327,8 @@ fn assert_add_with_const(
         .get_unsigned_int(u128::from(expected_const))
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
     let const_on = |o: strider_ir::Value| -> bool {
-        matches!(
-            *fg.kind_of_value(o),
-            NodeKind::IntConst(IntPayload::Small(v)) if ty.get_unsigned_int(u128::from(v)) == Some(masked)
-        )
+        matches!(fg.kind_of_value(o), NodeKind::IntConst(_))
+            && ty.get_unsigned_int(fg.int_const_u128(o).unwrap_or(u128::MAX)) == Some(masked)
     };
     let ok = (l == expected_base && const_on(r)) || (r == expected_base && const_on(l));
     assert!(
@@ -347,12 +349,12 @@ fn assert_add_with_const(
 /// `Add(a, Neg(b))` and `ConstantFold` collapses `Neg(IntConst(K))` to
 /// `IntConst(-K)`, leaving a single `Add` node with a negative-valued constant.
 fn assert_sub_with_const(
-    fg: &strider_ir::Graph,
+    fg: &strider_ir::Function,
     expected_base: strider_ir::Value,
     expected_const: u64,
     ty: ValueType,
 ) -> Result<()> {
-    let val = return_value(fg)?;
+    let val = return_value(fg.graph())?;
     let node = fg.producer(val);
     assert!(
         matches!(fg.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Add)),
@@ -370,10 +372,8 @@ fn assert_sub_with_const(
         .get_unsigned_int(u128::from(expected_const).wrapping_neg())
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
     let const_match = |value: strider_ir::Value| {
-        matches!(
-            *fg.kind_of_value(value),
-            NodeKind::IntConst(IntPayload::Small(v)) if ty.get_unsigned_int(u128::from(v)) == Some(neg_masked)
-        )
+        matches!(fg.kind_of_value(value), NodeKind::IntConst(_))
+            && ty.get_unsigned_int(fg.int_const_u128(value).unwrap_or(u128::MAX)) == Some(neg_masked)
     };
     let ok = (l == expected_base && const_match(r)) || (r == expected_base && const_match(l));
     assert!(
@@ -398,14 +398,10 @@ fn assert_sub_with_const(
 /// "missing binding for capture of kind uint" error that aborts the pass.
 #[test]
 fn unary_fold_skips_wide_const_cleanly() -> Result<()> {
-    use strider_ir::wide_const::WideConstStorage;
     // Neg(IntConst(I256)) — exercises rule 2 (`v: uint`).
     let mut fg = make_fn(|b| {
         // A 256-bit value with a non-zero high limb so it cannot fit u128.
-        let c = b.build_int_const_wide(
-            WideConstStorage::I256([1, 2, 3, 4]),
-            ValueType::I256,
-        )?;
+        let c = b.build_int_const_limbs(&[1, 2, 3, 4], ValueType::I256)?;
         b.build_int_unary_operation(c, IntUnaryOp::Neg, ValueType::I256)
     })?;
     // Must not error (the bug surfaced here as `Err(missing binding …)`).
@@ -447,10 +443,8 @@ fn canonicalize_commutative_const_to_right() -> Result<()> {
         "operand 0 must be the variable, not the const"
     );
     assert!(
-        matches!(
-            fg.node_kind(fg.producer(inputs[1])),
-            NodeKind::IntConst(IntPayload::Small(5))
-        ),
+        matches!(fg.node_kind(fg.producer(inputs[1])), NodeKind::IntConst(_))
+            && fg.int_const_val(inputs[1]) == Some(5),
         "operand 1 must be the const (canonicalised to the right)"
     );
     Ok(())
@@ -467,7 +461,7 @@ fn reassoc_add_add_consts() -> Result<()> {
         b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, ValueType::I64)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_add_with_const(fg.graph(), x, 7, ValueType::I64)?;
+    assert_add_with_const(&fg, x, 7, ValueType::I64)?;
     Ok(())
 }
 
@@ -482,7 +476,7 @@ fn reassoc_add_sub_consts() -> Result<()> {
         b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, ValueType::I64)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_add_with_const(fg.graph(), x, 1, ValueType::I64)?;
+    assert_add_with_const(&fg, x, 1, ValueType::I64)?;
     Ok(())
 }
 
@@ -497,7 +491,7 @@ fn reassoc_sub_add_consts_wrapping() -> Result<()> {
         b.build_sub_as_add_neg(inner, c4, ValueType::I64)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_add_with_const(fg.graph(), x, 0xFFFF_FFFF_FFFF_FFFF, ValueType::I64)?;
+    assert_add_with_const(&fg, x, 0xFFFF_FFFF_FFFF_FFFF, ValueType::I64)?;
     Ok(())
 }
 
@@ -512,7 +506,7 @@ fn reassoc_sub_sub_consts() -> Result<()> {
         b.build_sub_as_add_neg(inner, c4, ValueType::I64)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_sub_with_const(fg.graph(), x, 7, ValueType::I64)?;
+    assert_sub_with_const(&fg, x, 7, ValueType::I64)?;
     Ok(())
 }
 
@@ -527,7 +521,7 @@ fn reassoc_add_commuted_inner() -> Result<()> {
         b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, ValueType::I64)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_add_with_const(fg.graph(), x, 7, ValueType::I64)?;
+    assert_add_with_const(&fg, x, 7, ValueType::I64)?;
     Ok(())
 }
 
@@ -542,7 +536,7 @@ fn reassoc_add_commuted_outer() -> Result<()> {
         b.build_int_binary_operation(c4, inner, IntBinaryOp::Add, ValueType::I64)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_add_with_const(fg.graph(), x, 7, ValueType::I64)?;
+    assert_add_with_const(&fg, x, 7, ValueType::I64)?;
     Ok(())
 }
 
@@ -558,7 +552,7 @@ fn reassoc_chain_three_subs() -> Result<()> {
         b.build_sub_as_add_neg(b_, c4, ValueType::I64)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_sub_with_const(fg.graph(), x, 12, ValueType::I64)?;
+    assert_sub_with_const(&fg, x, 12, ValueType::I64)?;
     Ok(())
 }
 
@@ -573,7 +567,7 @@ fn reassoc_chain_three_subs_u32() -> Result<()> {
         b.build_sub_as_add_neg(b_, c4, ValueType::I32)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_sub_with_const(fg.graph(), x, 12, ValueType::I32)?;
+    assert_sub_with_const(&fg, x, 12, ValueType::I32)?;
     Ok(())
 }
 
@@ -829,11 +823,9 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     // i.e. the low byte of 0xFFFF — *masked* to I8. A pre-fix run would
     // store `0xFFFF` (the wider raw value) here.
     let val = return_value(fg.graph())?;
-    let kind = *fg.kind_of_value(val);
-    let raw = match kind {
-        NodeKind::IntConst(IntPayload::Small(v)) => v,
-        other => panic!("expected IntConst producer for Return value, got {other:?}"),
-    };
+    let raw = fg
+        .int_const_val(val)
+        .unwrap_or_else(|| panic!("expected IntConst producer for Return value, got {:?}", fg.kind_of_value(val)));
     assert_eq!(
         raw & 0xFF,
         raw,
@@ -1016,7 +1008,7 @@ fn fold_narrow_mul_through_sign_extend() -> Result<()> {
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // After narrowing-through-Mul + constant fold: 3 * 7 = 21 at I32.
-    assert_returns_const(fg.graph(), 21);
+    assert_returns_const(&fg, 21);
     // Nothing wider than I32 should survive (no SignExtend/Mul@I64/Truncate).
     for nid in fg.walk() {
         let kind = fg.node_kind(nid);
@@ -1060,7 +1052,7 @@ fn fold_drop_high_half_in_or_truncate() -> Result<()> {
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // After dropping the high half + folding 0xAA | 0xAA = 0xAA at I32:
     // the result is IntConst(0xAA).  No Or remains.
-    assert_returns_const(fg.graph(), 0xAA);
+    assert_returns_const(&fg, 0xAA);
     for nid in fg.walk() {
         let kind = fg.node_kind(nid);
         assert!(
@@ -1089,7 +1081,7 @@ fn fold_drop_low_mask_under_truncate() -> Result<()> {
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // After dropping the redundant And + folding the OR-of-itself:
     // result is IntConst(0xDEADBEEF) at I32.
-    assert_returns_const(fg.graph(), 0xDEADBEEF);
+    assert_returns_const(&fg, 0xDEADBEEF);
     Ok(())
 }
 
@@ -1108,7 +1100,7 @@ fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
         b.truncate_if_needed(masked, ValueType::I32)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_returns_const(fg.graph(), 0xDEADBEEF);
+    assert_returns_const(&fg, 0xDEADBEEF);
     Ok(())
 }
 
@@ -1136,7 +1128,7 @@ fn fold_drop_high_half_in_or_truncate_and_term_on_left() -> Result<()> {
         b.truncate_if_needed(merged, ValueType::I32)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_returns_const(fg.graph(), 0xAA);
+    assert_returns_const(&fg, 0xAA);
     for nid in fg.walk() {
         assert!(
             !matches!(fg.node_kind(nid), NodeKind::IntBinaryOp(IntBinaryOp::Or)),
@@ -1197,7 +1189,7 @@ fn fold_bool_neg_const() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -1215,7 +1207,7 @@ fn fold_bool_and_consts() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -1298,7 +1290,7 @@ fn fold_bool_or_true_to_true() -> Result<()> {
             .changed()
     );
     // `x | true → true`: folds to the constant 1 (true at I1), not the cmp.
-    assert_returns_const(fg.graph(), 1);
+    assert_returns_const(&fg, 1);
     Ok(())
 }
 
@@ -1320,7 +1312,7 @@ fn fold_int_or_all_ones_to_all_ones() -> Result<()> {
             .changed()
     );
     // Folds to the all-ones constant.
-    assert_returns_const(fg.graph(), 0xFFFF_FFFF);
+    assert_returns_const(&fg, 0xFFFF_FFFF);
     Ok(())
 }
 
@@ -1448,11 +1440,14 @@ fn fold_shift_by_width_minus_one_cases() -> Result<()> {
                 .changed(),
             "{case}: shift by width-1 must fold",
         );
-        assert_eq!(
-            return_kind(fg.graph())?,
-            NodeKind::IntConst(IntPayload::Small(expected)),
-            "{case}",
-        );
+        {
+            let ret_val = return_value(fg.graph())?;
+            assert!(
+                fg.int_const_val(ret_val) == Some(expected),
+                "{case}: expected IntConst({expected:#x}), got {:?}",
+                fg.int_const_val(ret_val),
+            );
+        }
     }
     Ok(())
 }
@@ -1483,11 +1478,14 @@ fn fold_i1_arithmetic_cases() -> Result<()> {
                 .changed(),
             "{case}: I1 two-const op must fold",
         );
-        assert_eq!(
-            return_kind(fg.graph())?,
-            NodeKind::IntConst(IntPayload::Small(expected)),
-            "{case}",
-        );
+        {
+            let ret_val = return_value(fg.graph())?;
+            assert!(
+                fg.int_const_val(ret_val) == Some(expected),
+                "{case}: expected IntConst({expected:#x}), got {:?}",
+                fg.int_const_val(ret_val),
+            );
+        }
     }
     Ok(())
 }
@@ -1504,7 +1502,7 @@ fn fold_int_cmp_equal_consts() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_returns_const(fg.graph(), 1);
+    assert_returns_const(&fg, 1);
     Ok(())
 }
 
@@ -1520,7 +1518,7 @@ fn fold_int_cmp_less_consts() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_returns_const(fg.graph(), 1);
+    assert_returns_const(&fg, 1);
     Ok(())
 }
 
@@ -1575,12 +1573,16 @@ fn fold_count_op_const_cases() -> Result<()> {
             "{}: ConstantFold must fold",
             c.case,
         );
-        assert_eq!(
-            return_kind(fg.graph())?,
-            NodeKind::IntConst(IntPayload::Small(c.expected)),
-            "{}",
-            c.case,
-        );
+        {
+            let ret_val = return_value(fg.graph())?;
+            assert!(
+                fg.int_const_val(ret_val) == Some(c.expected),
+                "{}: expected IntConst({:#x}), got {:?}",
+                c.case,
+                c.expected,
+                fg.int_const_val(ret_val),
+            );
+        }
     }
     Ok(())
 }
@@ -1603,15 +1605,21 @@ fn build_unary_with_wide_const_input(
     use strider_ir::node::ValueKind;
     let mut fg = make_fn(|b| Ok(b.build_int_const(0u64, ValueType::I64).unwrap()))?;
     let placeholder = return_value(fg.graph())?;
+    // Intern the constant value (0xFF) at the wide type so we have a valid
+    // ConstId for the new IntConst node.
+    let const_id = fg.intern_int_const(0xFF_u128, wide_ty);
     let wide_node = fg.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0xFF)),
+        NodeKind::IntConst(const_id),
         [],
         [ValueKind::Typed(wide_ty)],
     );
+    // Stamp the asm fingerprint on the new node (required by the validator).
+    fg.extend_asm_fingerprint(wide_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let wide_const = fg.node_outputs_exact::<1>(wide_node)?[0];
     let unary_node = fg
         .graph_mut()
         .create_node(kind, [wide_const], [ValueKind::Typed(out_ty)]);
+    fg.extend_asm_fingerprint(unary_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let unary_value = fg.node_outputs_exact::<1>(unary_node)?[0];
     fg.graph_mut().replace_all_uses(placeholder, unary_value);
     Ok(fg)
@@ -1727,12 +1735,16 @@ fn fold_float_cmp_two_consts_cases() -> Result<()> {
             c.case,
             c.op,
         );
-        assert_eq!(
-            return_kind(fg.graph())?,
-            NodeKind::IntConst(IntPayload::Small(c.expected)),
-            "{}",
-            c.case,
-        );
+        {
+            let ret_val = return_value(fg.graph())?;
+            assert!(
+                fg.int_const_val(ret_val) == Some(c.expected),
+                "{}: expected IntConst({:#x}), got {:?}",
+                c.case,
+                c.expected,
+                fg.int_const_val(ret_val),
+            );
+        }
     }
     Ok(())
 }
@@ -1974,11 +1986,14 @@ fn single_pass_propagates_through_chain() -> Result<()> {
     // Single optimize() call — must converge without the outer pipeline loop.
     ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(10)),
-        "expected single-pass convergence to IntConst(10)"
-    );
+    {
+        let ret_val = return_value(fg.graph())?;
+        assert!(
+            fg.int_const_val(ret_val) == Some(10),
+            "expected single-pass convergence to IntConst(10), got {:?}",
+            fg.int_const_val(ret_val)
+        );
+    }
     Ok(())
 }
 
@@ -1996,7 +2011,7 @@ fn fold_chain_of_ten_subs_reassociates() -> Result<()> {
         Ok(acc)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    assert_sub_with_const(fg.graph(), x, 10, ValueType::I64)?;
+    assert_sub_with_const(&fg, x, 10, ValueType::I64)?;
     Ok(())
 }
 
@@ -2180,12 +2195,15 @@ fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xFFFF_FFCE)),
-        "IntUnaryOp::Neg(50) must fold to two's complement (=-50=0xFFFFFFCE), \
-         not bitwise NOT (=~50=0xFFFFFFCD)"
-    );
+    {
+        let ret_val = return_value(fg.graph())?;
+        assert!(
+            fg.int_const_val(ret_val) == Some(0xFFFF_FFCE),
+            "IntUnaryOp::Neg(50) must fold to two's complement (=-50=0xFFFFFFCE), \
+             not bitwise NOT (=~50=0xFFFFFFCD); got {:?}",
+            fg.int_const_val(ret_val)
+        );
+    }
     Ok(())
 }
 
@@ -2201,7 +2219,7 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -2282,7 +2300,7 @@ fn fold_i128_interner_backed_add_round_trip() -> Result<()> {
         b.build_int_binary_operation(ca, cb, IntBinaryOp::Add, ValueType::I128)
     })?;
 
-    // Fold should fire: both operands are IntPayload::Wide-backed I128.
+    // Fold should fire: both operands are I128 int constants.
     let changed = ConstantFold::new()
         .run_one(&mut fg, &mut crate::OptCtx::new(None))?
         .changed();

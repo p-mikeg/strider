@@ -1,7 +1,7 @@
 use super::*;
 use crate::pipeline::OptimizerTestExt;
 use crate::test_support::{assert_returns_const, make_fn, return_kind, run_to_fixed_point};
-use strider_ir::node::{IntPayload, NodeKind, ValueType};
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::RegisterSet;
 
@@ -19,7 +19,7 @@ fn known_bits_or_then_and() -> Result<()> {
         b.build_int_binary_operation(ored, c4, IntBinaryOp::And, ValueType::I64)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg2)?;
-    assert_returns_const(fg2.graph(), 4);
+    assert_returns_const(&fg2, 4);
     Ok(())
 }
 
@@ -34,7 +34,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
         b.build_int_binary_operation(inner, f, IntBinaryOp::And, ValueType::I8)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -62,7 +62,7 @@ fn known_bits_popcount_range() -> Result<()> {
         b.build_int_binary_operation(pc, mask, IntBinaryOp::And, ValueType::I8)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -91,7 +91,7 @@ fn known_bits_popcount_range_i64_opaque() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -110,7 +110,7 @@ fn known_bits_shift_right_upper_zero() -> Result<()> {
         b.build_int_binary_operation(shr, mask_high, IntBinaryOp::And, ValueType::I8)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -126,7 +126,7 @@ fn known_bits_shift_left_lower_zero() -> Result<()> {
         b.build_int_binary_operation(shl, mask_low, IntBinaryOp::And, ValueType::I8)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -144,7 +144,7 @@ fn known_bits_long_or_and_chain() -> Result<()> {
         b.build_int_binary_operation(acc, mask, IntBinaryOp::And, ValueType::I64)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_returns_const(fg.graph(), 0xFF);
+    assert_returns_const(&fg, 0xFF);
     Ok(())
 }
 
@@ -160,7 +160,7 @@ fn known_bits_lzcount_range() -> Result<()> {
         b.build_int_binary_operation(lz, mask, IntBinaryOp::And, ValueType::I8)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -178,7 +178,7 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
         b.build_int_binary_operation(or_, or_, IntBinaryOp::Xor, ValueType::I8)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_returns_const(fg.graph(), 0);
+    assert_returns_const(&fg, 0);
     Ok(())
 }
 
@@ -200,7 +200,7 @@ fn known_bits_neg_round_trip() -> Result<()> {
         b.build_int_binary_operation(n1, all_ones, IntBinaryOp::Xor, ValueType::I8)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_returns_const(fg.graph(), 0xFF);
+    assert_returns_const(&fg, 0xFF);
     Ok(())
 }
 
@@ -304,11 +304,7 @@ fn known_bits_i1_folds_via_map() -> Result<()> {
         b.build_int_binary_operation(zero, one, IntBinaryOp::Or, ValueType::I1)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(1)),
-        "fully-known I1 output must fold to IntConst(1):I1 via the map rewrite",
-    );
+    assert_returns_const(&fg, 1);
     Ok(())
 }
 
@@ -543,12 +539,7 @@ fn known_bits_sign_extend_msb_zero_folds_to_const() -> Result<()> {
         b.extend_if_needed(or_, ValueType::I64, ExtendOp::SignExtend)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0x7F_u64)),
-        "SignExtend of (0|0x7F) (MSB=0) must fold to IntConst(0x7F) once \
-         the SignExtend arm propagates known bits"
-    );
+    assert_returns_const(&fg, 0x7F_u64);
     Ok(())
 }
 
@@ -564,12 +555,7 @@ fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
         b.extend_if_needed(or_, ValueType::I64, ExtendOp::SignExtend)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF_FFFF_FF80_u64)),
-        "SignExtend of (0|0x80) (MSB=1) must fold to all-ones upper bits \
-         once the SignExtend arm propagates known bits"
-    );
+    assert_returns_const(&fg, 0xFFFF_FFFF_FFFF_FF80_u64);
     Ok(())
 }
 
@@ -680,7 +666,7 @@ fn known_bits_fold_absorbs_contributing_operand_fingerprint() -> Result<()> {
 
     run_to_fixed_point(&KnownBits, &mut fg)?;
 
-    assert_returns_const(fg.graph(), 4);
+    assert_returns_const(&fg, 4);
     let folded = fg.producer(return_value(fg.graph())?);
     assert!(
         fg.asm_fingerprint(folded).contains(&OPERAND_ADDR),
@@ -721,11 +707,7 @@ fn known_bits_fold_absorbs_cone_through_nonfolding_intermediate() -> Result<()> 
 
     run_to_fixed_point(&KnownBits, &mut fg)?;
 
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0)),
-        "AND with 0 makes every bit known-zero → folds to IntConst(0)"
-    );
+    assert_returns_const(&fg, 0);
     let folded = fg.producer(return_value(fg.graph())?);
     assert!(
         fg.asm_fingerprint(folded).contains(&INNER_ADDR),
@@ -762,11 +744,7 @@ fn known_bits_fold_does_not_taint_opaque_load_address_cone() -> Result<()> {
 
     run_to_fixed_point(&KnownBits, &mut fg)?;
 
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0)),
-        "AND with 0 folds to IntConst(0)"
-    );
+    assert_returns_const(&fg, 0);
     let folded = fg.producer(return_value(fg.graph())?);
     assert!(
         !fg.asm_fingerprint(folded).contains(&ADDR_ADDR),
