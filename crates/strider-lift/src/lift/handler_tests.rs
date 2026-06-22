@@ -15,7 +15,7 @@ use rsleigh::{Insn, Opcode, Vn, VnSpace};
 
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
-use strider_ir::node::{IntPayload, NodeId, NodeKind};
+use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::lift::{FunctionLifter, Lifter};
@@ -258,12 +258,9 @@ fn lift_int_neg_narrow_lowers_to_xor_all_ones() {
             graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Xor)),
             "narrow IntNeg must lower to an Xor"
         );
-        // The I32 all-ones constant is inline `Small(0xFFFF_FFFF)`.
+        // The I32 all-ones constant has value 0xFFFF_FFFF.
         assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF))
-            ),
+            graph_has_int_const_value(&d.builder, 0xFFFF_FFFF),
             "narrow IntNeg must materialise the I32 all-ones constant"
         );
     });
@@ -446,6 +443,40 @@ fn find_first_node(builder: &FunctionBuilder, target: NodeKind) -> Option<NodeId
         .find(|id| builder.function().node_kind(*id) == &target)
 }
 
+/// Returns true if the graph contains an `IntConst` node whose value (masked
+/// to width, read via `int_const_val`) equals `expected`.  Used in tests that
+/// pin a specific small-integer constant value without depending on the opaque
+/// `ConstId` internals.
+fn graph_has_int_const_value(builder: &FunctionBuilder, expected: u64) -> bool {
+    builder
+        .function()
+        .graph()
+        .all_node_ids()
+        .any(|id| {
+            if !matches!(builder.function().node_kind(id), NodeKind::IntConst(_)) {
+                return false;
+            }
+            let outputs = builder.function().node_outputs(id);
+            outputs.iter().any(|&v| builder.function().int_const_val(v) == Some(expected))
+        })
+}
+
+/// Returns the first `IntConst` node-id whose output value equals `expected`,
+/// or `None` if no such node is present.
+fn find_int_const_node(builder: &FunctionBuilder, expected: u64) -> Option<NodeId> {
+    builder
+        .function()
+        .graph()
+        .all_node_ids()
+        .find(|&id| {
+            if !matches!(builder.function().node_kind(id), NodeKind::IntConst(_)) {
+                return false;
+            }
+            let outputs = builder.function().node_outputs(id);
+            outputs.iter().any(|&v| builder.function().int_const_val(v) == Some(expected))
+        })
+}
+
 #[test]
 fn signed_binary_op_sign_extends_narrower_operand() {
     // IntSdiv with a 2-byte dividend (0xFFFF = -1) and a 4-byte output.
@@ -468,10 +499,7 @@ fn signed_binary_op_sign_extends_narrower_operand() {
             "expected an Sdiv node"
         );
         assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF))
-            ),
+            graph_has_int_const_value(&d.builder, 0xFFFF_FFFF),
             "the 2-byte -1 dividend must be SIGN-extended to the 4-byte op width (0xFFFF_FFFF)"
         );
     });
@@ -501,10 +529,7 @@ fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
             "expected an Sless comparison node"
         );
         assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF_FFFF_FFFF))
-            ),
+            graph_has_int_const_value(&d.builder, 0xFFFF_FFFF_FFFF_FFFF),
             "the 4-byte -1 operand must be SIGN-extended to the 8-byte max width \
              (0xFFFF_FFFF_FFFF_FFFF) — proving max-width comparison + sign-correct extension"
         );
@@ -537,9 +562,9 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
         let fp = d.builder.function().asm_fingerprint(add_node);
         assert_eq!(fp, &[0x4242], "Add node fingerprint should record 0x4242");
         // The two IntConst inputs should also carry the address.
-        let const3 = find_first_node(&d.builder, NodeKind::IntConst(IntPayload::Small(3)))
+        let const3 = find_int_const_node(&d.builder, 3)
             .expect("IntConst(3) must be present");
-        let const4 = find_first_node(&d.builder, NodeKind::IntConst(IntPayload::Small(4)))
+        let const4 = find_int_const_node(&d.builder, 4)
             .expect("IntConst(4) must be present");
         assert_eq!(d.builder.function().asm_fingerprint(const3), &[0x4242]);
         assert_eq!(d.builder.function().asm_fingerprint(const4), &[0x4242]);
@@ -1036,11 +1061,16 @@ fn write_vn_then_read_vn_round_trip() {
         // Read it back.
         let value = d.read_vn(&reg(0)).expect("read_vn");
         let producer = d.builder.function().producer(value);
-        let kind = d.builder.function().node_kind(producer);
-        match kind {
-            NodeKind::IntConst(IntPayload::Small(n)) => assert_eq!(*n, 42u64),
-            other => panic!("expected IntConst(42), got {other:?}"),
-        }
+        assert!(
+            matches!(d.builder.function().node_kind(producer), NodeKind::IntConst(_)),
+            "expected IntConst node, got {:?}",
+            d.builder.function().node_kind(producer)
+        );
+        assert_eq!(
+            d.builder.function().int_const_val(value),
+            Some(42u64),
+            "expected IntConst(42)"
+        );
     });
 }
 

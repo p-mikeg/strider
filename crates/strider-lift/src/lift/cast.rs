@@ -75,29 +75,29 @@ fn build_bit_field_insert(
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Builds a small (`u64`-fitting) integer constant at `ty`, routing the
-    /// wide widths (I80 / I128 / I256 / I512) through the wide-const path so
-    /// an I256 / I512 type (rejected by `build_int_const`) still lifts.
+    /// wide widths (I80 / I128 / I256 / I512) through the appropriate path so
+    /// an I256 / I512 type still lifts cleanly.
     ///
     /// Used for the SUBPIECE shift amount, which carries the *input*
     /// varnode's width: a YMM (I256) / ZMM (I512) input with a nonzero
     /// byte_offset would otherwise hard-abort the lift.  `value` is always a
-    /// small bit-count, so the wide path stores it inline as `Small` (the
-    /// width lives in the output type) — no actual wide payload is interned.
+    /// small bit-count; for I256/I512 the limb array carries it in slot 0 with
+    /// the remaining limbs zero.
     fn build_shift_const(
         &mut self,
         value: u64,
         ty: ValueType,
     ) -> Result<strider_ir::Value> {
-        use strider_ir::wide_const::WideConstStorage;
-        let storage = match ty {
-            ValueType::I80 => WideConstStorage::I80(u128::from(value)),
-            ValueType::I128 => WideConstStorage::I128(u128::from(value)),
-            ValueType::I256 => WideConstStorage::I256([value, 0, 0, 0]),
-            ValueType::I512 => WideConstStorage::I512([value, 0, 0, 0, 0, 0, 0, 0]),
-            // I1..I64 — the plain const path masks to the width.
-            _ => return self.builder.build_int_const(value, ty),
-        };
-        self.builder.build_int_const_wide(storage, ty)
+        if ty.byte_size() <= 16 {
+            // I1..I128 (including I80) — fits u128, mask applied by build_int_const.
+            self.builder.build_int_const(u128::from(value), ty)
+        } else if ty == ValueType::I256 {
+            self.builder.build_int_const_limbs(&[value, 0, 0, 0], ty)
+        } else {
+            // I512
+            self.builder
+                .build_int_const_limbs(&[value, 0, 0, 0, 0, 0, 0, 0], ty)
+        }
     }
 
     /// Translates a no-op `Cast` instruction.

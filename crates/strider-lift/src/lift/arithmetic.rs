@@ -131,24 +131,21 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 
     /// Materialises the all-ones (every bit set) integer constant for `ty`.
     ///
-    /// For widths ≤ I64 `build_int_const(u128::MAX, ty)` masks `u128::MAX`
-    /// down to `(2^bit_width) - 1`.  The wide widths (I80 / I128 / I256 /
-    /// I512) don't fit `build_int_const` — I256/I512 are rejected outright —
-    /// so they go through `build_int_const_wide` with the correctly-sized
-    /// all-ones [`WideConstStorage`]: I80's top 48 bits stay zero (the
-    /// declared width is 80 bits), while I128/I256/I512 set every limb bit.
+    /// For I1..I128 (including I80) `build_int_const(u128::MAX, ty)` masks
+    /// `u128::MAX` down to `(2^bit_width) - 1`, which gives the correct
+    /// all-ones value.  For I256/I512 `build_int_const_limbs` fills every
+    /// limb with `u64::MAX`.
     fn build_all_ones(&mut self, ty: strider_ir::ValueType) -> Result<strider_ir::Value> {
         use strider_ir::ValueType;
-        use strider_ir::wide_const::WideConstStorage;
-        let storage = match ty {
-            ValueType::I80 => WideConstStorage::I80((1u128 << 80) - 1),
-            ValueType::I128 => WideConstStorage::I128(u128::MAX),
-            ValueType::I256 => WideConstStorage::I256([u64::MAX; 4]),
-            ValueType::I512 => WideConstStorage::I512([u64::MAX; 8]),
-            // I1..I64 — `build_int_const` masks `u128::MAX` to the width.
-            _ => return self.builder.build_int_const(u128::MAX, ty),
-        };
-        self.builder.build_int_const_wide(storage, ty)
+        if ty.byte_size() <= 16 {
+            // I1..I128 (including I80): build_int_const masks u128::MAX to the width.
+            self.builder.build_int_const(u128::MAX, ty)
+        } else if ty == ValueType::I256 {
+            self.builder.build_int_const_limbs(&[u64::MAX; 4], ty)
+        } else {
+            // I512
+            self.builder.build_int_const_limbs(&[u64::MAX; 8], ty)
+        }
     }
 
     /// Translates a p-code integer binary instruction into an IR binary node
