@@ -62,13 +62,6 @@ pub struct PyBufferReader {
 }
 
 impl PyBufferReader {
-    fn rebuild_table(&self) -> Arc<MemRegionsLookupTable> {
-        let mut inner = self.inner.borrow_mut();
-        let t = Arc::new(MemRegionsLookupTable::new(inner.regions.clone()));
-        inner.table = Some(Arc::clone(&t));
-        t
-    }
-
     /// Returns a snapshot of the current lookup table, building it on
     /// demand if invalidated.  Used internally by both `read` and the
     /// `MemReader` view supplied to `Sleigh::new`.
@@ -76,7 +69,10 @@ impl PyBufferReader {
         if let Some(t) = self.inner.borrow().table.as_ref() {
             return Arc::clone(t);
         }
-        self.rebuild_table()
+        let mut inner = self.inner.borrow_mut();
+        let t = Arc::new(MemRegionsLookupTable::new(inner.regions.clone()));
+        inner.table = Some(Arc::clone(&t));
+        t
     }
 
     /// Mint a `PyBufferReaderView` snapshot of the current state — the
@@ -160,6 +156,27 @@ impl PyBufferReader {
 
 // ── _LoadedElf (ELF parse + symbols, built by load_elf) ──────────────────
 
+/// Shared helper: load ELF regions into a `Vec<MemRegion>`.
+///
+/// When `apply_relocations` is `false` every call site returns the same
+/// set of loadable sections; when `true` the caller supplies the
+/// appropriate relocation loader (mem-inclusive vs read-only-only) as
+/// `with_relocs`.
+fn elf_regions(
+    obj: &object::File<'static>,
+    apply_relocations: bool,
+    with_relocs: impl FnOnce(
+        &object::File<'static>,
+    ) -> anyhow::Result<(Vec<MemRegion>, strider_reader::elf::RelocationStats)>,
+) -> PyResult<Vec<MemRegion>> {
+    if apply_relocations {
+        let (regions, _stats) = with_relocs(obj).map_err(into_strider_err)?;
+        Ok(regions)
+    } else {
+        strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
+    }
+}
+
 /// Load an ELF's code + read-only (and, when `apply_relocations`, the
 /// relocated-data) sections into the instruction-fetch / raw-read `mem`
 /// region list, applying every understood relocation in-place when
@@ -168,13 +185,9 @@ fn elf_to_mem_regions(
     obj: &object::File<'static>,
     apply_relocations: bool,
 ) -> PyResult<Vec<MemRegion>> {
-    if apply_relocations {
-        let (regions, _stats) =
-            strider_reader::elf::elf_load_with_relocations(obj).map_err(into_strider_err)?;
-        Ok(regions)
-    } else {
-        strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
-    }
+    elf_regions(obj, apply_relocations, |o| {
+        strider_reader::elf::elf_load_with_relocations(o)
+    })
 }
 
 /// Load an ELF's **runtime-immutable** code + read-only sections into a
@@ -193,13 +206,9 @@ fn elf_to_rom_regions(
     obj: &object::File<'static>,
     apply_relocations: bool,
 ) -> PyResult<Vec<MemRegion>> {
-    if apply_relocations {
-        let (regions, _stats) = strider_reader::elf::elf_load_readonly_with_relocations(obj)
-            .map_err(into_strider_err)?;
-        Ok(regions)
-    } else {
-        strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
-    }
+    elf_regions(obj, apply_relocations, |o| {
+        strider_reader::elf::elf_load_readonly_with_relocations(o)
+    })
 }
 
 /// Parsed ELF binary: the friendly face is the Python `Program`
@@ -229,6 +238,22 @@ pub struct PyLoadedElf {
     /// `ro_reader()`: the `LoadReadOnly` rom MUST be runtime-immutable
     /// because the fold trusts it unconditionally.
     rom: PyBufferReader,
+}
+
+/// Returns `Some(s)` when `s != 0`, `None` otherwise — used to map
+/// a zero ELF `st_size` to "unknown" and a positive size to its value.
+fn nonzero_size(s: u64) -> Option<u64> {
+    (s != 0).then_some(s)
+}
+
+/// Extend `reader`'s region list with `regions` and invalidate its
+/// cached lookup table.  Used by `add_elf` for both the mem and rom
+/// readers so the two identical borrow_mut + extend + table=None blocks
+/// don't need to be written twice.
+fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
+    let mut inner = reader.inner.borrow_mut();
+    inner.regions.extend(regions);
+    inner.table = None;
 }
 
 impl PyLoadedElf {
@@ -289,10 +314,7 @@ impl PyLoadedElf {
     /// Pair with `symbol(name)` to derive a `function_max_size`
     /// argument for `strider.run` / `strider.build_cfg`.
     fn symbol_size(&self, name: &str) -> PyResult<Option<u64>> {
-        self.find_symbol(name, |sym| {
-            let size = sym.size();
-            if size == 0 { None } else { Some(size) }
-        })
+        self.find_symbol(name, |sym| nonzero_size(sym.size()))
     }
 
     /// Convenience shortcut for the `(symbol(name), symbol_size(name))`
@@ -302,10 +324,7 @@ impl PyLoadedElf {
     /// The `size` half is exactly what `strider.run`'s
     /// `function_max_size=` keyword expects.
     fn symbol_addr_and_size(&self, name: &str) -> PyResult<(u64, Option<u64>)> {
-        self.find_symbol(name, |sym| {
-            let size = sym.size();
-            (sym.address(), if size == 0 { None } else { Some(size) })
-        })
+        self.find_symbol(name, |sym| (sym.address(), nonzero_size(sym.size())))
     }
 
     /// All function/data symbols across every loaded ELF as a
@@ -356,16 +375,8 @@ impl PyLoadedElf {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
         let mem_regions = elf_to_mem_regions(&obj, apply_relocations)?;
         let rom_regions = elf_to_rom_regions(&obj, apply_relocations)?;
-        {
-            let mut inner = self.mem.inner.borrow_mut();
-            inner.regions.extend(mem_regions);
-            inner.table = None;
-        }
-        {
-            let mut inner = self.rom.inner.borrow_mut();
-            inner.regions.extend(rom_regions);
-            inner.table = None;
-        }
+        invalidate_and_extend(&self.mem, mem_regions);
+        invalidate_and_extend(&self.rom, rom_regions);
         self.elfs.push(obj);
         Ok(())
     }

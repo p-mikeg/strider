@@ -34,7 +34,7 @@ use crate::run::{
 
 /// Build a `Lifter<AnyMemReader>` (owning a fresh `Sleigh` built from
 /// `mem`) plus the resolved calling convention for `cc`.  Shared by the
-/// `#[new]` constructor and `new_internal`.
+/// `#[new]` constructor and the internal snapshot path.
 fn build_lift_driver(
     arch: PySleighArch,
     mem: MemInput,
@@ -96,7 +96,7 @@ impl PyLifter {
     /// register table.  Raises `StriderError` on Sleigh-construction or
     /// CC-resolution failure.
     #[new]
-    fn new(arch: PySleighArch, mem: MemInput, cc: PyCallingConvention) -> PyResult<Self> {
+    pub(crate) fn new(arch: PySleighArch, mem: MemInput, cc: PyCallingConvention) -> PyResult<Self> {
         let (inner, cc) = build_lift_driver(arch, mem, &cc)?;
         Ok(Self { inner, cc })
     }
@@ -160,16 +160,6 @@ impl PyLifter {
 }
 
 impl PyLifter {
-    /// Internal constructor used by `strider.run`'s custom-pipeline path.
-    pub(crate) fn new_internal(
-        arch: PySleighArch,
-        mem: MemInput,
-        cc: PyCallingConvention,
-    ) -> PyResult<Self> {
-        let (inner, cc) = build_lift_driver(arch, mem, &cc)?;
-        Ok(Self { inner, cc })
-    }
-
     /// Build a CFG for `entry` using `slf`'s owned Sleigh, returning a
     /// `PyCfg` that back-references `slf`.  Shared by the `build_cfg`
     /// pymethod and `strider.run`'s internal paths.

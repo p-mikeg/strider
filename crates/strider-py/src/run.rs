@@ -173,7 +173,7 @@ pub(crate) fn build_snapshot_cfg(
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
 ) -> PyResult<Py<PyCfg>> {
-    let snapshot_lifter = Py::new(py, PyLifter::new_internal(arch, mem, cc)?)?;
+    let snapshot_lifter = Py::new(py, PyLifter::new(arch, mem, cc)?)?;
     Py::new(
         py,
         PyLifter::build_cfg_internal(
@@ -447,7 +447,7 @@ fn run_with_custom_pipeline(
 
     // The `Lifter` owns its Sleigh (built from `mem`); it both builds the
     // CFG and lifts it.
-    let lifter = PyLifter::new_internal(arch.clone(), mem, cc.clone())?;
+    let lifter = PyLifter::new(arch.clone(), mem, cc.clone())?;
     let lifter_obj = Py::new(py, lifter)?;
 
     let cfg_inner = prefer_pending_control_flow(PyLifter::build_cfg_internal(
@@ -463,15 +463,8 @@ fn run_with_custom_pipeline(
     // same table the function-default CC was built against — mirroring
     // the orchestrator's `LoopState::new` behaviour so both pipeline
     // paths honour `per_address_ccs` identically.
-    let per_address_built_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention> =
-        if per_address_ccs_py.is_empty() {
-            rustc_hash::FxHashMap::default()
-        } else {
-            build_per_address_ccs(
-                per_address_ccs_py,
-                lifter_obj.borrow(py).inner.sleigh_regs(),
-            )?
-        };
+    let per_address_built_ccs =
+        build_per_address_ccs(per_address_ccs_py, lifter_obj.borrow(py).inner.sleigh_regs())?;
 
     let lifter_borrow = lifter_obj.borrow(py);
     let cfg_borrow = cfg_obj.borrow(py);
