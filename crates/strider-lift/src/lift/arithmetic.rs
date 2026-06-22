@@ -188,20 +188,19 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // and may legally be any width (e.g. `sar reg, cl`), so only the value
         // is guarded.  A *narrower* operand extends correctly (the intended
         // semantics), so only the wider-than-output direction is rejected.
+        let out_vn = require_output_vn(insn)?;
         match op {
             IntBinaryOp::Sdiv | IntBinaryOp::Srem | IntBinaryOp::Div | IntBinaryOp::Rem => {
-                let out_vn = require_output_vn(insn)?;
                 reject_operand_wider_than_output(nth_input_or_err(insn, 0)?, out_vn)?;
                 reject_operand_wider_than_output(nth_input_or_err(insn, 1)?, out_vn)?;
             }
             IntBinaryOp::SShiftRight => {
-                reject_operand_wider_than_output(nth_input_or_err(insn, 0)?, require_output_vn(insn)?)?;
+                reject_operand_wider_than_output(nth_input_or_err(insn, 0)?, out_vn)?;
             }
             _ => {}
         }
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
-        let out_vn = require_output_vn(insn)?;
         let out_ty = out_vn.int_type()?;
         // The signed ops interpret their operands as signed, so a narrower
         // operand must be SIGN-extended to the op width (via `extend_if_needed`)
