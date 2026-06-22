@@ -612,12 +612,9 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         {
             rewrite_rule(
                 int_unary_any(any_int_const().capture(v)).capture(op),
-                int_const_with!([op: int_unary_op, v: uint, ty] => {
-                    let raw = match op {
-                        strider_ir::IntUnaryOp::Neg => v.wrapping_neg(),
-                    };
-                    ty.get_unsigned_int(raw).ok_or_else(strider_pattern::skip)?
-                }),
+                int_const_with!([op: int_unary_op, v: uint, ty] =>
+                    super::eval_int::eval_int_unary(op, v, ty).ok_or_else(strider_pattern::skip)?
+                ),
             )
         },
         // 3. IntCmpOp(op)(IntConst(l), IntConst(r)) =>
@@ -698,8 +695,8 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 sign_extend(any_int_const().capture(v)),
                 int_const_with!([v: uint, in_ty, ty] => {
                     let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    let signed = super::eval_int::require_signed(input_ty, v)? as u128;
-                    ty.get_unsigned_int(signed).ok_or_else(strider_pattern::skip)?
+                    super::eval_int::eval_sign_extend(v, input_ty, ty)
+                        .ok_or_else(strider_pattern::skip)?
                 }),
             )
         },
@@ -710,10 +707,8 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 popcount(any_int_const().capture(v)),
                 int_const_with!([v: uint, in_ty] => {
                     let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    let masked = input_ty
-                        .get_unsigned_int(v)
-                        .ok_or_else(strider_pattern::skip)?;
-                    u128::from(masked.count_ones())
+                    super::eval_int::eval_popcount(v, input_ty)
+                        .ok_or_else(strider_pattern::skip)?
                 }),
             )
         },
@@ -727,24 +722,8 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 lzcount(any_int_const().capture(v)),
                 int_const_with!([v: uint, in_ty] => {
                     let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    let masked = input_ty
-                        .get_unsigned_int(v)
-                        .ok_or_else(strider_pattern::skip)?;
-                    let bits = input_ty.bit_width() as u32;
-                    // Lzcount fold is only computable when the input type
-                    // fits in u128.  Wider widths (I256) skip cleanly — the
-                    // rule simply doesn't fire and the IR keeps the Lzcount
-                    // node as opaque.
-                    if bits > 128 {
-                        return Err(strider_pattern::skip());
-                    }
-                    if masked == 0 {
-                        u128::from(bits)
-                    } else if bits == 128 {
-                        u128::from(masked.leading_zeros())
-                    } else {
-                        u128::from((masked << (128 - bits)).leading_zeros())
-                    }
+                    super::eval_int::eval_lzcount(v, input_ty)
+                        .ok_or_else(strider_pattern::skip)?
                 }),
             )
         },
