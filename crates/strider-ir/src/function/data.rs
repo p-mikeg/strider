@@ -816,21 +816,15 @@ impl Function {
                         bi.next();
                         a
                     };
-                    if merged.last() != Some(&next) {
-                        merged.push(next);
-                    }
+                    merged.push(next);
                 }
                 (Some(a), None) => {
                     ai.next();
-                    if merged.last() != Some(&a) {
-                        merged.push(a);
-                    }
+                    merged.push(a);
                 }
                 (None, Some(b)) => {
                     bi.next();
-                    if merged.last() != Some(&b) {
-                        merged.push(b);
-                    }
+                    merged.push(b);
                 }
                 (None, None) => break,
             }
@@ -991,14 +985,9 @@ impl Function {
         // rare and a descriptor payload can be large), so remap its KEYS
         // through the translation table, dropping entries whose Call /
         // CallOther node was pruned.
-        let mut new_call_descriptor: FxHashMap<NodeId, crate::CallDescriptor> =
-            FxHashMap::with_capacity_and_hasher(self.call_descriptor.len(), Default::default());
-        for (old_node, descriptor) in self.call_descriptor.drain() {
-            if let Some(new_node) = remap.node_old_to_new(old_node) {
-                new_call_descriptor.insert(new_node, descriptor);
-            }
-        }
-        self.call_descriptor = new_call_descriptor;
+        self.call_descriptor = remap_hashmap(&mut self.call_descriptor, |old, d| {
+            remap.node_old_to_new(old).map(|n| (n, d))
+        });
         // `stack_offsets` is the only NodeId-keyed side-table whose VALUE
         // also references a node — the slot `base` (a `ValueId`).  So
         // remap both the key (NodeId) and the value's base through the same

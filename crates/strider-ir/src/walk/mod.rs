@@ -126,31 +126,6 @@ impl graphwalk::GraphRef for GraphWalkSuccs<'_> {
 /// The concrete pre-order walk type used by [`crate::IRWalker::walk`].
 pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 
-/// A [`graphwalk::GraphRef`] whose successors are a node's **data-input
-/// producers only** (no forward control edges).  Driving a post-order walk
-/// with this relation yields every producer before the node that consumes
-/// it — the defs-before-uses order used by value-cone analyses such as
-/// `decompose_sp`.
-#[derive(Clone, Copy)]
-pub struct InputSuccs<'a>(&'a Graph);
-
-impl graphwalk::GraphRef for InputSuccs<'_> {
-    type NodeId = NodeId;
-
-    fn try_successors(
-        &self,
-        node: NodeId,
-        f: impl FnMut(NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        self.0
-            .node_inputs(node)
-            .into_iter()
-            .filter(|&value| !self.0.value_kind(value).is_control())
-            .map(|value| self.0.value_definition(value).0)
-            .try_for_each(f)
-    }
-}
-
 /// Walks all nodes reachable in `graph` from `entry` in an unspecified order.
 ///
 /// Note that "reachable" nodes here include dead CFG inputs.
@@ -167,26 +142,6 @@ pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
 /// The forward def→use post-order walk backing the real reverse-post-order
 /// ([`GraphWalkInfo::reverse_postorder`]).
 pub type DefUsePostorder<'a> = PostOrder<DefUseSuccs<'a>>;
-
-/// Every `(consumer, input_slot)` that consumes one of `node`'s outputs —
-/// the raw forward def→use successor relation, unfiltered by liveness.
-pub fn raw_def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = (NodeId, u32)> + '_ {
-    graph
-        .node_outputs(node)
-        .iter()
-        .flat_map(move |output| graph.value_uses(*output))
-}
-
-/// [`raw_def_use_succs`] restricted to consumers in `live_nodes` — the
-/// successor relation a forward walk follows so it never steps outside the
-/// reachable set computed by [`GraphWalkInfo::compute_full`].
-pub fn def_use_succs<'a>(
-    graph: &'a Graph,
-    live_nodes: &'a DenseEntitySet<NodeId>,
-    node: NodeId,
-) -> impl Iterator<Item = (NodeId, u32)> + 'a {
-    raw_def_use_succs(graph, node).filter(move |&(succ, _use_idx)| live_nodes.contains(succ))
-}
 
 /// A [`graphwalk::GraphRef`] over the forward def→use edges, **unrestricted**
 /// by liveness — the raw counterpart of [`DefUseSuccs`].
@@ -216,7 +171,11 @@ impl graphwalk::GraphRef for RawDefUseSuccs<'_> {
         node: NodeId,
         mut f: impl FnMut(NodeId) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
-        raw_def_use_succs(self.0, node).try_for_each(|(succ, _input_idx)| f(succ))
+        self.0
+            .node_outputs(node)
+            .iter()
+            .flat_map(move |output| self.0.value_uses(*output))
+            .try_for_each(|(succ, _input_idx)| f(succ))
     }
 }
 
@@ -246,7 +205,12 @@ impl graphwalk::GraphRef for DefUseSuccs<'_> {
         node: NodeId,
         mut f: impl FnMut(NodeId) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
-        def_use_succs(self.graph, self.live_nodes, node).try_for_each(|(succ, _input_idx)| f(succ))
+        self.graph
+            .node_outputs(node)
+            .iter()
+            .flat_map(move |output| self.graph.value_uses(*output))
+            .filter(move |&(succ, _use_idx)| self.live_nodes.contains(succ))
+            .try_for_each(|(succ, _input_idx)| f(succ))
     }
 }
 

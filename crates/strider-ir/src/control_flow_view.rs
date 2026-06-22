@@ -3,7 +3,7 @@
 //! control edges only (no data, no Phi back-edges), so
 //! `petgraph::algo::dominators::simple_fast` can compute dominators directly.
 
-use petgraph::visit::{GraphBase, IntoNeighbors, IntoNodeIdentifiers, NodeCount, Visitable};
+use petgraph::visit::{GraphBase, IntoNeighbors, IntoNodeIdentifiers, Visitable};
 use rustc_hash::FxHashSet;
 
 use crate::function::Function;
@@ -69,12 +69,6 @@ impl<'a> IntoNodeIdentifiers for &'a ControlFlowView<'a> {
     fn node_identifiers(self) -> Self::NodeIdentifiers {
         let ids: Vec<NodeId> = self.control_nodes().collect();
         ids.into_iter()
-    }
-}
-
-impl NodeCount for &ControlFlowView<'_> {
-    fn node_count(&self) -> usize {
-        self.control_nodes().count()
     }
 }
 
