@@ -7,7 +7,7 @@
 //! populates in production.  We bypass `StackOffsetDetect` here so tests stay
 //! focused on the pattern-matcher behaviour rather than the optimizer.
 
-use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueType};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{IRViewer, IRWalker};
 use strider_pattern::{Capture, Matcher, load, store};
 
@@ -42,8 +42,8 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     for &load_node in &loads {
         let inputs = function.node_inputs(load_node);
         let addr_value = inputs[1];
-        if let NodeKind::IntConst(IntPayload::Small(v)) = function.kind_of_value(addr_value) {
-            if *v == 0x1000 {
+        if let Some(v) = function.int_const_val(addr_value) {
+            if v == 0x1000 {
                 stack_node = Some(load_node);
             } else {
                 heap_node = Some(load_node);
@@ -83,8 +83,8 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     for &store_node in &stores {
         let inputs = function.node_inputs(store_node);
         let addr_value = inputs[1];
-        if let NodeKind::IntConst(IntPayload::Small(v)) = function.kind_of_value(addr_value) {
-            if *v == 0x1000 {
+        if let Some(v) = function.int_const_val(addr_value) {
+            if v == 0x1000 {
                 stack_store = Some(store_node);
             } else {
                 heap_store = Some(store_node);

@@ -11,7 +11,7 @@
 use strider_ir::EditFunction;
 use strider_ir::IRBuilderExt;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType as T};
+use strider_ir::{ConstId, node::{NodeKind, ValueKind, ValueType as T}};
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::make_empty_fn;
 
@@ -86,7 +86,13 @@ fn instantiate_add_const_builds_fresh_node() {
         .node_inputs(new_node)
         .into_iter()
         .map(|inp| fx.producer(inp))
-        .any(|n| matches!(fx.node_kind(n), NodeKind::IntConst(IntPayload::Small(2))));
+        .any(|n| {
+            matches!(fx.node_kind(n), NodeKind::IntConst(_))
+                && fx
+                    .node_outputs(n)
+                    .iter()
+                    .any(|&o| fx.int_const_val(o) == Some(2))
+        });
     assert!(has_two, "RHS should materialise IntConst(2)");
 }
 
@@ -117,11 +123,23 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     let proof_a = fx
         .walk()
-        .find(|&n| matches!(fx.node_kind(n), NodeKind::IntConst(IntPayload::Small(5))))
+        .find(|&n| {
+            matches!(fx.node_kind(n), NodeKind::IntConst(_))
+                && fx
+                    .node_outputs(n)
+                    .iter()
+                    .any(|&o| fx.int_const_val(o) == Some(5))
+        })
         .unwrap();
     let proof_b = fx
         .walk()
-        .find(|&n| matches!(fx.node_kind(n), NodeKind::IntConst(IntPayload::Small(1))))
+        .find(|&n| {
+            matches!(fx.node_kind(n), NodeKind::IntConst(_))
+                && fx
+                    .node_outputs(n)
+                    .iter()
+                    .any(|&o| fx.int_const_val(o) == Some(1))
+        })
         .unwrap();
     assert!(fx.asm_fingerprint(proof_a).contains(&PROOF_A));
     assert!(fx.asm_fingerprint(proof_b).contains(&PROOF_B));
@@ -143,7 +161,13 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
         .node_inputs(new_root)
         .into_iter()
         .map(|inp| fx.producer(inp))
-        .find(|&n| matches!(fx.node_kind(n), NodeKind::IntConst(IntPayload::Small(2))))
+        .find(|&n| {
+            matches!(fx.node_kind(n), NodeKind::IntConst(_))
+                && fx
+                    .node_outputs(n)
+                    .iter()
+                    .any(|&o| fx.int_const_val(o) == Some(2))
+        })
         .expect("RHS materialised IntConst(2)");
     let fp = fx.asm_fingerprint(new_const2);
     assert!(
@@ -198,10 +222,10 @@ fn template_wires_multi_output_interior_memory_node() {
     let mem0 = b.memory_output(mem0_node, 0);
 
     // addr / data leaves (value).
-    let addr = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(
-        0x100,
-    ))));
-    let data = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(42))));
+    // ConstId::from_u32 is used as a struct-literal placeholder here;
+    // these raw-builder tests only check structural wiring, not constant values.
+    let addr = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(0x100))));
+    let data = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(42))));
 
     // store = Store(mem0, addr, data) — inputs [MEM, ADDR, DATA],
     // output [MEM]. The memory output is the multi-output interior edge.
@@ -271,9 +295,8 @@ fn template_wires_multi_output_interior_memory_node() {
 /// `int_const(V)` as a template RHS for V > u64::MAX must produce the FULL
 /// value when the root is I128 — not a u64-truncated one.
 ///
-/// Before the fix, `IntConst::TemplatePat::compile` emitted
-/// `IntPayload::Small(v as u64)`, losing the high bits before
-/// `create_node_attributed` could promote to Wide.
+/// Before the `ConstId` unification, the old narrow-cast path truncated the high
+/// bits before the interner could preserve them.
 #[test]
 fn int_const_wide_template_rhs_preserves_full_value() {
     // A value whose high 64 bits are non-zero — the truncation bug drops them.
@@ -364,8 +387,8 @@ fn signed_int_const_negative_i128_template_rhs() {
 fn instantiate_noncontiguous_raw_template_slots_errors() {
     // Build an `Add` node wired at slots 0 and 2 — slot 1 is left empty.
     let mut b = TemplateBuilder::new();
-    let l = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(5))));
-    let r = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(7))));
+    let l = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(5))));
+    let r = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(7))));
     let add_node = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
     b.input(add_node, 0, l);
     b.input(add_node, 2, r); // gap at slot 1
@@ -391,8 +414,8 @@ fn instantiate_noncontiguous_raw_template_slots_errors() {
 #[test]
 fn instantiate_duplicate_raw_template_slot_errors() {
     let mut b = TemplateBuilder::new();
-    let l = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(5))));
-    let r = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(7))));
+    let l = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(5))));
+    let r = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(7))));
     let add_node = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
     b.input(add_node, 0, l);
     b.input(add_node, 0, r); // duplicate slot 0

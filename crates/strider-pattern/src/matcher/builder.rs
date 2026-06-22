@@ -238,8 +238,8 @@ impl MatcherBuilder {
 mod tests {
     use super::*;
     use strider_ir::{
-        IntBinaryOp,
-        node::{IntPayload, NodeKind},
+        ConstId, IntBinaryOp,
+        node::NodeKind,
     };
 
     #[test]
@@ -247,7 +247,7 @@ mod tests {
         let mut b = MatcherBuilder::new();
         let x = b.leaf(crate::matcher::KindSpec::Any);
         let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(
-            IntPayload::Small(1),
+            ConstId::from_u32(1),
         )));
         let _sum = b.binary(IntBinaryOp::Add, x, k);
         let p = b.finish();

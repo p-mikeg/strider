@@ -28,7 +28,7 @@
 //! straight through.
 
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{IntPayload, NodeKind, ValueType};
+use strider_ir::{ConstId, node::{NodeKind, ValueType}};
 
 use crate::matcher::KindSpec;
 use crate::staging::{SealNode, StagedGraph};
@@ -238,7 +238,7 @@ impl TemplateBuilder {
             // Placeholder; overwritten by `set_template_kind` before
             // sealing. (Captures are created directly via `capture`, not
             // by overwriting a build node.)
-            _ => TemplateKind::Exact(NodeKind::IntConst(IntPayload::Small(0))),
+            _ => TemplateKind::Exact(NodeKind::IntConst(ConstId::from_u32(0))),
         };
         TmplNodeRef(self.core.add_node(TmplNodeKind::Build(spec)))
     }
@@ -258,13 +258,13 @@ impl TemplateBuilder {
 mod tests {
     use super::*;
     use strider_ir::IntBinaryOp;
-    use strider_ir::node::{IntPayload, NodeKind};
+    use strider_ir::node::NodeKind;
 
     #[test]
     fn binary_builder_wires_two_inputs_and_one_output() {
         let mut b = TemplateBuilder::new();
-        let x = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(5))));
-        let k = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(1))));
+        let x = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(5))));
+        let k = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(1))));
         let _sum = b.binary(IntBinaryOp::Add, x, k);
         let t = b.finish();
         assert_eq!(t.node_count(), 3);
@@ -283,7 +283,7 @@ mod tests {
         // the verb returns only the value handle.
         let c = crate::capture::Capture::new();
         let mut b = TemplateBuilder::new();
-        let _built = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(5))));
+        let _built = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(5))));
         let _cap = b.capture(c);
         let t = b.finish();
 

@@ -12,7 +12,7 @@ use std::mem::{Discriminant, discriminant};
 use rustc_hash::FxHashSet;
 
 use strider_ir::IRViewer;
-use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueType};
+use strider_ir::{ConstId, node::{NodeId, NodeKind, ValueType}};
 
 use crate::matcher::KindSpec;
 use crate::matcher::match_pat::MatchPat;
@@ -49,7 +49,9 @@ pub struct IntConst {
 /// structurally rather than hiding a discriminant check inside an opaque
 /// closure.
 fn int_const_discriminant() -> Discriminant<NodeKind> {
-    discriminant(&NodeKind::IntConst(IntPayload::Small(0)))
+    // ConstId::new(0) is a valid exemplar — discriminant only cares about the
+    // variant, not the payload value.
+    discriminant(&NodeKind::IntConst(ConstId::from_u32(0)))
 }
 
 /// Shared match-time read for the integer-constant predicates: finds the
@@ -189,20 +191,37 @@ pub struct BoolConst {
 
 impl MatchPat for BoolConst {
     fn compile(self, builder: &mut MatcherBuilder) -> PatValueRef {
-        compile_const_leaf(builder, bool_const_kind(self.b), Some(ValueType::I1))
+        let b = self.b;
+        let expected: u128 = u128::from(b);
+        // Use Variant prefilter + a value-reading predicate. KindSpec::Exact
+        // cannot be used here because NodeKind::IntConst(ConstId) stores an
+        // opaque interned id, not a value — the same value in two different
+        // Functions will have different ConstIds.
+        let o = builder.leaf(KindSpec::Variant(int_const_discriminant()));
+        builder.set_value_ty(o, ValueType::I1);
+        builder.set_node_predicate(
+            o,
+            Box::new(move |m, node| {
+                first_int_const_value(m.function(), node)
+                    .is_some_and(|(v, _ty)| v == expected)
+            }),
+        );
+        o
     }
 }
 
 impl crate::template::template_pat::TemplatePat for BoolConst {
-    fn compile(self, builder: &mut TemplateBuilder) -> TmplValueRef {
-        compile_const_leaf(builder, bool_const_kind(self.b), Some(ValueType::I1))
+    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
+        // Route through FnIntConst (fixed to I1) so the instantiator interns
+        // the value into the Function at rewrite time (ConstId is
+        // function-specific and cannot be materialised at pattern-build time).
+        let v: u128 = u128::from(self.b);
+        ConstWith {
+            kind: TemplateKind::FnIntConst(Box::new(move |_ctx| Ok(v))),
+            ty: TemplateTy::Fixed(ValueType::I1),
+        }
+        .compile(b)
     }
-}
-
-/// The leaf node kind for the boolean constant `b` (an `I1`-typed
-/// `IntConst`), shared by `BoolConst`'s match- and build-side lowerings.
-fn bool_const_kind(b: bool) -> KindSpec {
-    KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(u64::from(b))))
 }
 
 /// Match the boolean constant `b` at width `I1`.
@@ -239,31 +258,29 @@ pub struct AnyIntConst;
 
 impl MatchPat for AnyIntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        // Both Small (≤I64) and Wide (I80+) integer constants are now the
-        // single `IntConst` variant.  Use KindSpec::Variant to bucket by
-        // discriminant, then accept Wide only when the stored value fits in
-        // u128 (i.e. I80 or I128); I256/I512 are excluded.
-        let int_const_d = discriminant(&NodeKind::IntConst(IntPayload::Small(0)));
-        let o = b.leaf(KindSpec::Variant(int_const_d));
+        // All integer constants are now `IntConst(ConstId)` — a single
+        // payload-uniform variant. Use KindSpec::Variant to prefilter by
+        // discriminant, then a predicate that accepts any constant whose
+        // value fits in u128 (I1..I128 always fit; I256/I512 are excluded
+        // when their high limbs are nonzero).
+        let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
         b.set_node_predicate(
             o,
             Box::new(move |m, ir_node| {
                 let f = m.function();
-                match f.node_kind(ir_node) {
-                    // Small inline constant — always matches.
-                    NodeKind::IntConst(IntPayload::Small(_)) => true,
-                    // Wide constant — accept only if the stored value fits in
-                    // u128 (I80 or I128); I256/I512 are excluded.
-                    NodeKind::IntConst(IntPayload::Wide(_)) => {
-                        let out = f
-                            .node_outputs(ir_node)
-                            .iter()
-                            .copied()
-                            .find(|&o| f.value_kind(o).as_value().is_some());
-                        out.is_some_and(|o| f.int_const_u128(o).is_some())
-                    }
-                    _ => false,
+                // Guard: must be an IntConst node (the Variant prefilter
+                // already ensured this, but be explicit).
+                if !matches!(f.node_kind(ir_node), NodeKind::IntConst(_)) {
+                    return false;
                 }
+                // Accept only when the value fits in u128 (rejects I256/I512
+                // constants whose high limbs are nonzero).
+                let out = f
+                    .node_outputs(ir_node)
+                    .iter()
+                    .copied()
+                    .find(|&o| f.value_kind(o).as_value().is_some());
+                out.is_some_and(|o| f.int_const_u128(o).is_some())
             }),
         );
         o
@@ -314,16 +331,27 @@ pub struct IntConstAnyOf {
 
 impl MatchPat for IntConstAnyOf {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let exemplar = NodeKind::IntConst(IntPayload::Small(0));
+        // NodeKind::IntConst(ConstId) is payload-uniform — the value can only
+        // be read through the Function's interner (not from the NodeKind
+        // directly). Use Variant prefilter + a node predicate that reads the
+        // value via int_const_u128. Only ≤u64 values are in the set
+        // (int_const_any_of accepts u64 inputs), so I256/I512 constants
+        // (whose value may not fit u128) never match.
         let set = self.set;
-        b.leaf(KindSpec::VariantWith {
-            discriminant: std::mem::discriminant(&exemplar),
-            check: Box::new(move |k: &NodeKind| {
-                // Only Small (≤I64) values match; Wide values are never in
-                // the set (int_const_any_of accepts u64 inputs only).
-                matches!(k, NodeKind::IntConst(IntPayload::Small(v)) if set.contains(&u128::from(*v)))
+        let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
+        b.set_node_predicate(
+            o,
+            Box::new(move |m, ir_node| {
+                let f = m.function();
+                let out = f
+                    .node_outputs(ir_node)
+                    .iter()
+                    .copied()
+                    .find(|&o| f.value_kind(o).as_value().is_some());
+                out.is_some_and(|o| f.int_const_u128(o).is_some_and(|v| set.contains(&v)))
             }),
-        })
+        );
+        o
     }
 }
 
@@ -356,9 +384,10 @@ pub struct ConstWith {
 impl TemplatePat for ConstWith {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // Materialise a leaf whose kind is computed at instantiation.
-        // The exact-kind stamp from `leaf` is overwritten with the
-        // dynamic closure.
-        let o = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(0))));
+        // The placeholder KindSpec::Any is overwritten by set_template_kind
+        // with the actual dynamic closure below — the placeholder value is
+        // never used.
+        let o = b.leaf(KindSpec::Any);
         b.set_template_kind(o, self.kind);
         match self.ty {
             TemplateTy::Fixed(t) => b.set_value_ty(o, t),
@@ -386,17 +415,18 @@ where
     }
 }
 
-/// Builds a boolean constant (an `IntConst(Small(b as u64))` typed `I1`) whose
-/// value is computed by `f` at rewrite time. Used by the
-/// `bool_const_with!` macro.
+/// Builds a boolean constant (an `IntConst` typed `I1`) whose value is
+/// computed by `f` at rewrite time. Used by the `bool_const_with!` macro.
+///
+/// Uses [`TemplateKind::FnIntConst`] so the instantiator interns the value
+/// via `intern_int_const` at rewrite time (ConstId is function-specific and
+/// cannot be materialised at pattern-build time).
 pub fn bool_const_with_fn<F>(f: F) -> ConstWith
 where
     F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<bool> + 'static,
 {
     ConstWith {
-        kind: TemplateKind::Fn(Box::new(move |ctx| {
-            Ok(NodeKind::IntConst(IntPayload::Small(u64::from(f(ctx)?))))
-        })),
+        kind: TemplateKind::FnIntConst(Box::new(move |ctx| Ok(u128::from(f(ctx)?)))),
         ty: TemplateTy::Fixed(ValueType::I1),
     }
 }

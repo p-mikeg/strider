@@ -7,7 +7,6 @@
 //! including the "unbound var returns None" contract.
 
 use strider_ir::IRViewer;
-use strider_ir::node::IntPayload;
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
@@ -157,10 +156,7 @@ fn predicate_inspects_node_kind() {
                     let Some(o) = b.get_value(c) else {
                         return false;
                     };
-                    matches!(
-                        m.function().kind_of_value(o),
-                        strider_ir::node::NodeKind::IntConst(IntPayload::Small(7))
-                    )
+                    m.function().int_const_val(o) == Some(7)
                 })
                 .into_pattern(),
         )

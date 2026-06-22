@@ -50,8 +50,8 @@ use crate::matcher::OutputKindSpec;
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
 
 /// Type alias for the [`TemplateKind::FnIntConst`] closure shape.
-/// Returns a `u128` value; the instantiator routes it to the correct
-/// `IntPayload` form (Small or Wide) based on the output type.
+/// Returns a `u128` value; the instantiator interns it as a `ConstId` via
+/// `intern_int_const` (≤I128) or `intern_int_const_limbs` (I256/I512).
 ///
 /// The `u128` return caps the expressible range: for an I256/I512 output
 /// type only the low 128 bits are materialised (the high limbs are zero).
@@ -71,9 +71,9 @@ pub enum TemplateKind {
     /// value is computed from captured operand values at rewrite time.
     Fn(TemplateKindFn),
     /// Dynamic `IntConst` variant: the closure computes a `u128` value
-    /// at rewrite time, and the instantiator routes it to
-    /// `IntPayload::Small` (≤I64) or the wide interner (I80/I128/I256/I512)
-    /// based on the node's resolved output type — without ever truncating
+    /// at rewrite time, and the instantiator interns it via the unified
+    /// `ConstId` interner — `intern_int_const` for ≤128-bit types,
+    /// `intern_int_const_limbs` for I256/I512 — without ever truncating
     /// to `u64` prematurely.  Used by [`int_const_with_fn`](crate::int_const_with_fn)
     /// so that I128 rewrites preserve values wider than 64 bits.
     FnIntConst(TemplateKindFnIntConst),
@@ -193,9 +193,10 @@ pub fn instantiate<B: IRBuilder>(
                 f(&ctx)?
             }
             TmplNodeKind::Build(TemplateKind::FnIntConst(f)) => {
-                // Compute the u128 value via the closure, then route it to
-                // the correct IntPayload form based on the output type.
-                // wide types use the interner; ≤I64 truncate safely to u64.
+                // Compute the u128 value via the closure, then intern it.
+                // For ≤128-bit types (I1..I128 and I80) use intern_int_const
+                // which masks to width and stores as Bits. For I256/I512 build
+                // the little-endian limb array and use intern_int_const_limbs.
                 let value_ty = node_value_ty(template, vtx, root_ty);
                 let ctx = TemplateCtx {
                     function: builder.function(),
@@ -204,58 +205,28 @@ pub fn instantiate<B: IRBuilder>(
                     root_ty: value_ty,
                 };
                 let v = f(&ctx)?;
-                use strider_ir::node::IntPayload;
-                use strider_ir::wide_const::WideConstStorage;
-                match value_ty {
-                    strider_ir::node::ValueType::I80 => {
-                        let id = builder
-                            .function_mut()
-                            .intern_wide_const(WideConstStorage::I80(
-                                v & strider_ir::node::ValueType::I80.bit_mask_u128(),
-                            ));
-                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
-                    }
-                    strider_ir::node::ValueType::I128 => {
-                        let id = builder
-                            .function_mut()
-                            .intern_wide_const(WideConstStorage::I128(v));
-                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
-                    }
+                let id = match value_ty {
                     strider_ir::node::ValueType::I256 => {
                         #[allow(clippy::cast_possible_truncation)]
                         let low64 = v as u64;
                         #[allow(clippy::cast_possible_truncation)]
                         let high64 = (v >> 64) as u64;
-                        let id = builder
+                        builder
                             .function_mut()
-                            .intern_wide_const(WideConstStorage::I256([low64, high64, 0, 0]));
-                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
+                            .intern_int_const_limbs(&[low64, high64, 0, 0], value_ty)
                     }
                     strider_ir::node::ValueType::I512 => {
                         #[allow(clippy::cast_possible_truncation)]
                         let low64 = v as u64;
                         #[allow(clippy::cast_possible_truncation)]
                         let high64 = (v >> 64) as u64;
-                        let id = builder
+                        builder
                             .function_mut()
-                            .intern_wide_const(WideConstStorage::I512([
-                                low64, high64, 0, 0, 0, 0, 0, 0,
-                            ]));
-                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
+                            .intern_int_const_limbs(&[low64, high64, 0, 0, 0, 0, 0, 0], value_ty)
                     }
-                    _ => {
-                        // For ≤I64 output types the mask is at most u64::MAX,
-                        // so the cast to u64 is lossless after masking.
-                        let mask = value_ty.bit_mask_u128();
-                        debug_assert!(
-                            mask <= u128::from(u64::MAX),
-                            "non-wide output type must have a ≤u64 bit mask; \
-                             got mask {mask:#x} for {value_ty:?}"
-                        );
-                        #[allow(clippy::cast_possible_truncation)]
-                        strider_ir::node::NodeKind::IntConst(IntPayload::Small((v & mask) as u64))
-                    }
-                }
+                    _ => builder.function_mut().intern_int_const(v, value_ty),
+                };
+                strider_ir::node::NodeKind::IntConst(id)
             }
         };
 

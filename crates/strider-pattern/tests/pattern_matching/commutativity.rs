@@ -465,7 +465,6 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
 #[test]
 fn child_when_match_rejection_still_tries_swapped_order() {
     use strider_ir::IRViewer;
-    use strider_ir::node::IntPayload;
 
     // add(2, 3): the guarded child sits on pattern slot 0, which the
     // natural order maps to operand 2 (guard fails) and the swap retry
@@ -476,10 +475,7 @@ fn child_when_match_rejection_still_tries_swapped_order() {
         let Some(v) = b.get_value(c) else {
             return false;
         };
-        matches!(
-            m.function().kind_of_value(v),
-            strider_ir::node::NodeKind::IntConst(IntPayload::Small(3))
-        )
+        m.function().int_const_val(v) == Some(3)
     });
     let m = a::unique(&function, add(guarded, int_const(2u128)).into_pattern());
     assert_eq!(
@@ -496,7 +492,6 @@ fn child_when_match_rejection_still_tries_swapped_order() {
 #[test]
 fn root_when_match_rejection_does_not_redrive_swap() {
     use strider_ir::IRViewer;
-    use strider_ir::node::IntPayload;
 
     let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
     let l = Capture::new();
@@ -507,10 +502,7 @@ fn root_when_match_rejection_does_not_redrive_swap() {
             let Some(v) = b.get_value(l) else {
                 return false;
             };
-            matches!(
-                m.function().kind_of_value(v),
-                strider_ir::node::NodeKind::IntConst(IntPayload::Small(3))
-            )
+            m.function().int_const_val(v) == Some(3)
         })
         .into_pattern();
     a::none(&function, pat);
