@@ -352,7 +352,12 @@ impl<G: GraphDotDumper> GraphDot<G> {
         }
     }
 
-    fn render_dot_string(&self) -> anyhow::Result<String> {
+    /// Returns the raw DOT source string.
+    ///
+    /// # Errors
+    /// Forwards any `Self::Error` returned by the underlying
+    /// [`GraphDotDumper::dump_as_dot`] for any node.
+    pub fn as_dot(&self) -> anyhow::Result<String> {
         let mut dot = DotEmitter::new(&self.name, &self.style);
         let mut state = self.dumper.create_initial_state();
         for node in self.dumper.iter_nodes() {
@@ -362,15 +367,6 @@ impl<G: GraphDotDumper> GraphDot<G> {
         }
 
         Ok(dot.finish())
-    }
-
-    /// Returns the raw DOT source string.
-    ///
-    /// # Errors
-    /// Forwards any `Self::Error` returned by the underlying
-    /// [`GraphDotDumper::dump_as_dot`] for any node.
-    pub fn as_dot(&self) -> anyhow::Result<String> {
-        self.render_dot_string()
     }
 
     /// Produces an interactive HTML page that renders the DOT source
