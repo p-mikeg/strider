@@ -224,8 +224,9 @@ impl<'a> SpDecomposer<'a> {
 /// a low-clearing mask).
 fn is_alignment_mask(m: u128) -> bool {
     let tz = m.trailing_zeros();
-    if tz == 0 {
-        // No low zero bits → not clearing any alignment (low mask or all-ones).
+    // `tz == 0`: no low zero bits → not clearing any alignment (low mask or all-ones).
+    // `tz == 128`: m is zero → all bits cleared, not a valid alignment mask.
+    if tz == 0 || tz == 128 {
         return false;
     }
     // After dropping the low zero run, the remaining bits must be a contiguous

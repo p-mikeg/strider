@@ -50,21 +50,6 @@ impl<N, V, C: NodeCacheable<N, V>> Default for Graph<N, V, C> {
     }
 }
 
-// Manual `Clone` (not derived) so it requires only `N: Clone, V: Clone` — the
-// policy `C` is a `PhantomData` ZST and never needs to be `Clone`.  Cloning
-// copies the structural arenas and the dedup cache verbatim; ids stay stable,
-// so a cloned graph is a faithful, independent duplicate.
-impl<N: Clone, V: Clone, C: NodeCacheable<N, V>> Clone for Graph<N, V, C> {
-    fn clone(&self) -> Self {
-        Graph {
-            store: self.store.clone(),
-            cache: self.cache.clone(),
-            _policy: PhantomData,
-            generation: self.generation,
-        }
-    }
-}
-
 impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Creates an empty graph.
     ///

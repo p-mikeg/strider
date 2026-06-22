@@ -4,20 +4,23 @@
 //! table lives in rodata (`Load[ base + idx*stride ]`, absolute base), on the
 //! stack (`Load[ (sp + K) + idx*stride ]`, SP-rooted), or behind a GP/GOT
 //! indirection.  Rather than pattern-match each addressing shape, this arm
-//! **delegates the addressing to the real optimiser**:
+//! **delegates the addressing to the abstract evaluator**:
 //!
 //! 1. **Find candidate indices.**  Walk the dispatch cone for integer values
 //!    with a finite [`crate::value_range`] bound — the guard-/mask-constrained
 //!    switch variable and its value-preserving derivations
 //!    ([`find_index_candidates`]).
-//! 2. **Pin and fold.**  For each candidate, clone the function, substitute the
-//!    candidate with `IntConst(i)` for every `i` in its proven range, and run
-//!    the canonical [`crate::default_pipeline`] on the clone
-//!    ([`fold_dispatch_to_const`]).  `ConstantFold` folds the address
-//!    arithmetic and dispatch mask, `LoadReadOnly` folds the rodata read, and
-//!    `LoadForward` forwards an on-stack store — exactly the passes that handle
-//!    these shapes everywhere else.  The branch's dispatch input is then an
-//!    `IntConst` target iff the addressing fully resolved.
+//! 2. **Pin and fold.**  For each candidate, evaluate the dispatch cone under
+//!    `index = i` via the read-only [`super::eval::Evaluator`] (ConstFold
+//!    arithmetic + `LoadReadOnly` ROM reads + `LoadForward` via
+//!    `reaching_store`) for every `i` in its proven range.  The dispatch value
+//!    is a concrete constant iff the addressing fully resolved.  The evaluator
+//!    covers *only* those three foldings — intentionally narrower than the full
+//!    `default_pipeline` the former clone-and-optimise path ran.  A cone whose
+//!    collapse to a constant would have required some other pass (e.g. a
+//!    `KnownBits` bit-lattice narrowing) resolves to `None` here and the branch
+//!    defers — sound (an unresolved branch is never a wrong edge), just less
+//!    eager than the old approach.
 //! 3. **Accept the index that folds every value.**  The candidate whose whole
 //!    range folds to constants IS the index; the folded constants are the
 //!    targets ([`enumerate_targets`]).  A wrong candidate leaves the dispatch
@@ -36,11 +39,10 @@
 //!
 //! 2. **Complete fold.**  *Every* value in `lo..=hi` must fold to a constant
 //!    target; any failure returns `None` (a `Multiple` omitting a real runtime
-//!    target would wire a CFG missing edges).  The clone is disposable, so a
-//!    destructive pipeline run leaves the analysed function untouched, and the
-//!    caller's [`AliasMode`] is threaded into the clone's pipeline so a
-//!    global-clobbered on-stack table defers under `Strict` exactly as it
-//!    would in the orchestrator's own run.
+//!    target would wire a CFG missing edges).  The evaluator is read-only, so
+//!    the analysed function is never mutated, and the caller's [`AliasMode`] is
+//!    threaded into the evaluator so a global-clobbered on-stack table defers
+//!    under `Strict` exactly as it would in the orchestrator's own run.
 //!
 //! Over-approximating the bound (extra targets) is sound — the surplus become
 //! dead CFG edges.  Under-approximating is not.  Failing either gate returns
@@ -93,22 +95,18 @@ pub fn classify_table_dispatch(
         return None;
     }
 
-    // Clone + compact ONCE up front: the converged pipeline leaves dead nodes in
-    // the arena (killed slots are not physically reclaimed until compaction), so
-    // a single compact tightens the graph that every per-index fold then clones.
-    // The branch / index ids are translated into the compacted id space via the
-    // returned remap.
-    let mut base = ctx.clone();
-    let remap = base.compact().ok()?;
-    let branch = remap.node_old_to_new(branch)?;
-
+    // Evaluate the dispatch cone under each concrete index — no clone, no
+    // pipeline. The cone + its topological order are index-independent, so
+    // build them once and reuse across candidates and indices. The candidate
+    // whose whole range collapses to constants IS the index; the constants are
+    // the targets. A wrong candidate leaves the cone dependent on a non-seeded
+    // runtime value and fails to collapse → rejected.
+    let order = super::eval::cone_order(ctx, anchor_value);
+    let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
     for (idx_value, lo, hi) in candidates {
-        let Some(idx_value) = remap.value_old_to_new(idx_value) else {
-            continue;
-        };
-        if let Some(targets) = enumerate_targets(lo, hi, |v| {
-            fold_dispatch_to_const(&base, branch, idx_value, v, rom, alias_mode)
-        }) {
+        if let Some(targets) =
+            enumerate_targets(lo, hi, |v| ev.eval_target(&order, anchor_value, idx_value, v))
+        {
             return Some(ResolvedTargets::Multiple(targets));
         }
     }
@@ -239,42 +237,6 @@ fn is_load_derived(
     result
 }
 
-/// Clone the (compacted) `base` function, pin `index = i`, run the real
-/// optimiser, and read the branch's now-folded dispatch value as a constant
-/// target — `None` if it does not fold (defer).  This is the generalisation of
-/// every addressing-pattern arm: `ConstantFold` folds the arithmetic and masks,
-/// `LoadReadOnly` folds the rodata read, `LoadForward` forwards the stack store
-/// — all on a disposable copy, so there is nothing to revert.  `branch` /
-/// `idx_value` are ids in `base`'s (post-compaction) id space.
-fn fold_dispatch_to_const(
-    base: &strider_ir::Function,
-    branch: NodeId,
-    idx_value: ValueId,
-    subst: u128,
-    rom: Option<&dyn ReadOnlyMemory>,
-    alias_mode: AliasMode,
-) -> Option<u64> {
-    let idx_ty = base.value_type_opt(idx_value)?;
-    let mut clone = base.clone();
-    {
-        use strider_ir::IRBuilderExt;
-        let mut edit = crate::EditFunction::new(&mut clone).ok()?;
-        let const_value = edit.build_int_const(subst, idx_ty).ok()?;
-        edit.replace_value(idx_value, const_value).ok()?;
-    }
-    let pipeline = crate::default_pipeline();
-    let mut octx = crate::OptCtx::new(rom);
-    // Honour the caller's alias policy: under `Strict`, `LoadForward` must not
-    // forward a stack-table store across a possibly-aliasing global store, so
-    // a global-clobbered on-stack table fails to fold and the branch defers —
-    // matching the soundness the old SP-rooted reader enforced directly.
-    octx.options.alias_mode = alias_mode;
-    pipeline.run(&mut clone, &mut octx).ok()?;
-    // The branch survives for in-range `i` (the range guard holds); its slot-2
-    // dispatch input is now `IntConst(target)` if the fold succeeded.
-    let [_, _, folded] = clone.node_inputs_exact::<3>(branch).ok()?;
-    u64::try_from(clone.int_const_u128(folded)?).ok()
-}
 #[cfg(test)]
 #[path = "table_tests.rs"]
 mod table_tests;

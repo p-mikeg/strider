@@ -132,45 +132,20 @@ pub(crate) fn try_fold_const_load_at(
     node_id: NodeId,
     rom: &dyn ReadOnlyMemory,
 ) -> Result<bool> {
-    // SSoT: the rom bytes are decoded with the function's own endianness,
-    // derived here rather than threaded in (it is `ctx.function().endianness()`
-    // at the sole call site).
+    // SSoT: fold this Load via the shared const-eval utility (constant address
+    // → ROM decode), so the decode logic is not duplicated in the jump-table
+    // evaluator.
     let endianness = ctx.function().endianness();
-    let addr_value = ctx.load_addr(node_id);
-    let Some(addr) = ctx.function().int_const_val(addr_value) else {
+    let [data_value] = ctx.node_outputs_exact::<1>(node_id)?;
+    let resolve = |v| ctx.function().int_const_u128(v);
+    let Some(masked) =
+        crate::const_eval::eval_node_const(ctx.function(), data_value, &resolve, Some(rom), endianness)
+    else {
         return Ok(false);
     };
-    // Load output: the single value output always carries the loaded data
-    // type, and `Load` is integer-only (validated signature —
-    // `outputs: [INT_VAL]`, an `AnyInt` slot).  A non-value / non-integer
-    // here means malformed IR, not a fold we should silently skip.
-    let [data_value] = ctx.node_outputs_exact::<1>(node_id)?;
     let ty = ctx
         .value_type_opt(data_value)
         .expect("Load output is a value");
-    let size = ty.byte_size();
-    // Bail on wider-than-I128 loads (I256 / I512): the decode below tops
-    // out at a 16-byte raw word — the full width of the `u128` carrier
-    // that `IntConst` / `Endianness::read_uint` use.  Loads up to 16
-    // bytes (I8…I128, including the x87 10-byte I80) fold; wider rodata
-    // loads are left for a future pass rather than silently truncated.
-    if size > 16 {
-        return Ok(false);
-    }
-    // Read the RAW bytes (the reader no longer decodes), then decode to
-    // an integer per the context's target endianness.  Fill-or-error:
-    // a partial/unmapped range errors and we leave the Load intact.
-    let mut bytes = [0u8; 16];
-    if rom.read(addr, &mut bytes[..size]).is_err() {
-        return Ok(false);
-    }
-    let loaded = endianness.read_uint(&bytes[..size]);
-    // `ty` is an integer type (checked above), so the mask is infallible —
-    // a `None` here would mean `Load` produced a float output, which the
-    // validator forbids.
-    let masked = ty
-        .get_unsigned_int(loaded)
-        .expect("Load output type is integer");
     let new_value = ctx.build_int_const(masked, ty)?;
     // The loaded constant is justified by the load ADDRESS — *which* byte run
     // got read depends entirely on the address cone, which is about to be
@@ -178,6 +153,7 @@ pub(crate) fn try_fold_const_load_at(
     // asm-fingerprint into the new IntConst (the proof of why this value was
     // read) before the `replace_value` below removes it.  Over-tainting is
     // intentional — the fingerprint is a generous superset proof aid.
+    let addr_value = ctx.load_addr(node_id);
     let addr_producer = ctx.producer(addr_value);
     let new_producer = ctx.producer(new_value);
     ctx.function_mut()
