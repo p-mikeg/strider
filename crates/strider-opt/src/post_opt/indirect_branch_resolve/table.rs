@@ -53,6 +53,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::MAX_TABLE_ENTRIES;
+use super::eval::value_input_producers;
 use crate::AliasMode;
 use crate::ReadOnlyMemory;
 use strider_cfg::ResolvedTargets;
@@ -191,10 +192,8 @@ fn find_index_candidates(
                 }
             }
         }
-        for input in ctx.node_inputs(ctx.producer(v)) {
-            if ctx.value_type_opt(input).is_some() {
-                stack.push(input);
-            }
+        for input in value_input_producers(ctx, ctx.producer(v)) {
+            stack.push(input);
         }
     }
     // Try the tightest-bounded candidates first: a wrong one fails fast, and the

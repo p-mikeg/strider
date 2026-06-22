@@ -254,12 +254,15 @@ fn build_rules() -> Vec<BoxedRule> {
         // `Equal(zext(Sless), zext(Sborrow))`).  When the branch is lifted with
         // inverted sense (ARM/Thumb wrap the tree in an outer `BitNot`), this
         // pass can't fire until `IfCondInversion` strips that `BitNot`, and by
-        // then ConstantFold rule 1 (`Equal(a-b,0) → Equal(a,b)`) and rule 5
-        // (`Equal(zext N, zext V) → BitNot(Sless(a,b))`) have already
-        // decomposed the sub-terms into direct comparisons on `(a, b)`.  These
-        // four rules canonicalise that decomposed form.  They are sound
-        // arch-independent identities, so they are harmless where the raw
-        // rules already fired (the decomposed shape simply never appears).
+        // then ConstantFold rule 1 (`Equal(a-b,0) → Equal(a,b)`) has already
+        // simplified the difference sub-term, and this pass's own rules 2/3/6/7
+        // have already matched and decomposed the NZCV `Equal(zext(Sless),
+        // zext(Sborrow))` tree into direct comparisons on `(a, b)`.
+        // ConstantFold does NOT pre-decompose symbolic flag trees — that
+        // decomposition is performed entirely by `FlagCmpCanonicalize`.  These
+        // four rules canonicalise the resulting decomposed form.  They are sound
+        // arch-independent identities, so they are harmless where the raw rules
+        // already fired (the decomposed shape simply never appears).
         //
         // 10. GT (signed):  And(BitNot(Equal(a,b)), BitNot(Sless(a,b))) → Sless(b,a)
         //     (a≠b) ∧ ¬(a<b)  ≡  a>b  ≡  b<a

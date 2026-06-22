@@ -19,6 +19,19 @@ use strider_target::Endianness;
 use crate::opt::constant_fold::eval_int::eval_int_binary;
 use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 
+/// Returns an iterator over the value-typed inputs of `node` — i.e., inputs
+/// whose `value_type_opt` is `Some`.  Skips control, memory, and phi-token
+/// slots.  Used in both the evaluator and the cone-order traversal to avoid
+/// repeating the `value_type_opt(i).is_some()` filter inline.
+pub(crate) fn value_input_producers(
+    f: &strider_ir::Function,
+    node: NodeId,
+) -> impl Iterator<Item = ValueId> + '_ {
+    f.node_inputs(node)
+        .into_iter()
+        .filter(move |&i| f.value_type_opt(i).is_some())
+}
+
 /// Abstract value: a concrete number, or `sp_base + offset`.
 #[derive(Clone, Copy, PartialEq)]
 enum Abs {
@@ -103,11 +116,7 @@ impl<'a> Evaluator<'a> {
         let node = f.producer(value);
         let kind = *f.node_kind(node);
         let out_ty = f.value_type_opt(value);
-        let ins: SmallVec<[ValueId; 2]> = f
-            .node_inputs(node)
-            .into_iter()
-            .filter(|&i| f.value_type_opt(i).is_some())
-            .collect();
+        let ins: SmallVec<[ValueId; 2]> = value_input_producers(f, node).collect();
         match kind {
             NodeKind::IntConst(_) => Some(Abs::Const(f.int_const_u128(value)?)),
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add) => {
@@ -204,12 +213,8 @@ impl<'a> Evaluator<'a> {
 
     /// All-arms-agree: every value arm must resolve to the same `Abs`.
     fn eval_phi(&mut self, node: NodeId) -> Option<Abs> {
-        let arms: SmallVec<[ValueId; 4]> = self
-            .function
-            .node_inputs(node)
-            .into_iter()
-            .filter(|&i| self.function.value_type_opt(i).is_some())
-            .collect();
+        let arms: SmallVec<[ValueId; 4]> =
+            value_input_producers(self.function, node).collect();
         let mut agreed: Option<Abs> = None;
         for arm in arms {
             let v = self.get(arm)?;
@@ -242,8 +247,8 @@ pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<
             continue;
         }
         stack.push((v, true));
-        for input in function.node_inputs(function.producer(v)) {
-            if function.value_type_opt(input).is_some() && !seen.contains(&input) {
+        for input in value_input_producers(function, function.producer(v)) {
+            if !seen.contains(&input) {
                 stack.push((input, false));
             }
         }

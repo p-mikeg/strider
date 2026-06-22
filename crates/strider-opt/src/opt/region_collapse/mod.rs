@@ -7,13 +7,13 @@
 //!
 //! Phis layered over the Region are handled independently by
 //! [`crate::PhiCollapse`]; this pass deliberately does **not** touch
-//! them.  Once both of the Region's outputs have no remaining uses this
-//! pass kills the now-dead Region (it is side-effecting, so the automatic
-//! dead-cone cull never reaches it); until then the now-dead Region is
-//! left attached (a fully-unreachable orphan is harmless — the validator
-//! and pattern queries only walk from entry).
+//! them.  Once both of the Region's outputs have no remaining *live* uses
+//! (checked via [`crate::EditFunction::is_live`]) this pass kills the
+//! now-dead Region (it is side-effecting, so the automatic dead-cone cull
+//! never reaches it); until then the now-dead Region is left attached (a
+//! fully-unreachable orphan is harmless — the validator and pattern
+//! queries only walk from entry).
 
-use entity_utils::DenseEntitySet;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
@@ -34,30 +34,22 @@ impl Optimizer for RegionCollapse {
         ctx: &mut crate::EditFunction<'_>,
         _opt: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        // Snapshot the set of nodes reachable from entry ONCE per run.  The
-        // detach decision below treats a phi-token consumer as "live" only if
-        // it is in this set — an unreachable orphan `Phi`/`MemPhi` must not
-        // pin its Region (see the comment in `try_collapse`).  Detaching only
-        // ever shrinks reachability, so this once-per-run snapshot is a safe
-        // over-approximation: a stale entry can only make us *more*
-        // conservative (keep a Region we could have detached), never wrongly
-        // detach a live one; the next fixed-point iteration recomputes it.
-        // Computing it once keeps the pass O(n) per run rather than O(n²).
-        let reachable: DenseEntitySet<NodeId> = ctx.walk().collect();
-
-        // Walk the cached live `Region`s once — no worklist.  Collapsing a
-        // Region that exposes a downstream single-pred Region is handled
-        // without an explicit re-enqueue: if the newly-exposed Region appears
-        // later in this list it folds in the same pass, and otherwise the
-        // outer fixed-point loop (RegionCollapse is a main-loop pass) re-runs
-        // until nothing collapses.  `try_collapse` reads each root's CURRENT
-        // inputs, so an edit earlier in the pass is observed here.
+        // Walk the cached live `Region`s once — no worklist.  The liveness
+        // check in `try_collapse` uses `EditFunction::is_live`, which reflects
+        // the maintained live-set and is updated by each edit, so detaching a
+        // Region earlier in this list is immediately visible for later entries.
+        // Collapsing a Region that exposes a downstream single-pred Region is
+        // handled without an explicit re-enqueue: if the newly-exposed Region
+        // appears later in this list it folds in the same pass, and otherwise
+        // the outer fixed-point loop (RegionCollapse is a main-loop pass)
+        // re-runs until nothing collapses.  `try_collapse` reads each root's
+        // CURRENT inputs, so an edit earlier in the pass is observed here.
         let regions: Vec<NodeId> = ctx
             .live_of_kind(|k| matches!(k, NodeKind::Region))
             .collect();
         let mut overall = OptimizationResult::NoChange;
         for root in regions {
-            if self.try_collapse(ctx, root, &reachable)?.changed() {
+            if self.try_collapse(ctx, root)?.changed() {
                 overall = OptimizationResult::Changed;
             }
         }
@@ -70,7 +62,6 @@ impl RegionCollapse {
         &self,
         ctx: &mut crate::EditFunction<'_>,
         root: NodeId,
-        reachable: &DenseEntitySet<NodeId>,
     ) -> Result<OptimizationResult> {
         // Both the seed walk and the consumer re-enqueue filter on
         // `NodeKind::Region`, so `root` is always a `Region` here and the
@@ -90,27 +81,28 @@ impl RegionCollapse {
 
         // After rewiring the control consumers, detach the now-dead Region's
         // own input edge — but ONLY once BOTH of its outputs (control AND
-        // phi_token) have no remaining *reachable* uses.  Otherwise the Region
+        // phi_token) have no remaining *live* uses.  Otherwise the Region
         // lingers as a second consumer of `sole_ctrl_value`, which breaks a
         // forward single-consumer walk (e.g. `IfPat::true_branch`) and keeps
         // the node control-reachable.
         //
-        // A phi-token consumer only counts if it is reachable from entry.  An
-        // orphan `Phi`/`MemPhi` (e.g. a builder-emitted single-pred VarPhi for
-        // a register that's never read, or a phi `PhiCollapse` rewired past but
-        // couldn't visit because it was already dead — possibly chained behind
-        // other dead phis) is harmless residue in the arena, never swept (the
-        // validator and pattern queries only walk from entry).  Counting such
-        // orphans as live uses would pin the Region forever.
+        // A phi-token consumer only counts if it is live (in the maintained
+        // live-set via `EditFunction::is_live`).  An orphan `Phi`/`MemPhi`
+        // (e.g. a builder-emitted single-pred VarPhi for a register that's
+        // never read, or a phi `PhiCollapse` rewired past but couldn't visit
+        // because it was already dead — possibly chained behind other dead phis)
+        // is harmless residue in the arena, never swept (the validator and
+        // pattern queries only walk from entry).  Counting such orphans as live
+        // uses would pin the Region forever.
         //
-        // When a *reachable* `Phi`/`MemPhi` still consumes the phi-token, leave
-        // the Region attached this iteration — `PhiCollapse` will collapse that
-        // phi, after which a later iteration finds both outputs free and
-        // finishes the detach.
+        // When a *live* `Phi`/`MemPhi` still consumes the phi-token, leave the
+        // Region attached this iteration — `PhiCollapse` will collapse that phi,
+        // after which a later iteration finds both outputs free and finishes the
+        // detach.
         let all_outputs_unused = ctx.node_outputs(root).iter().all(|&out| {
             ctx.graph_ref()
                 .value_uses(out)
-                .all(|(consumer, _)| !reachable.contains(consumer))
+                .all(|(consumer, _)| !ctx.is_live(consumer))
         });
         if all_outputs_unused && !ctx.node_inputs(root).is_empty() {
             // `Region` is side-effecting, so the automatic dead-cone cull
