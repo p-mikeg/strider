@@ -16,7 +16,7 @@
 
 use strider_ir::IRBuilderExt;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueType};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::make_empty_fn;
 use strider_orchestrator::opt::{ConstantFold, KnownBits};
@@ -53,10 +53,15 @@ fn constant_fold_add_consts_preserves_fingerprints() {
         .changed()
     );
     // The surviving node feeds the Return; find it.
-    let const7 = find(&fg, |k| {
-        matches!(k, NodeKind::IntConst(IntPayload::Small(7)))
-    })
-    .expect("IntConst(7)");
+    let const7 = fg
+        .walk()
+        .find(|&nid| {
+            matches!(fg.node_kind(nid), NodeKind::IntConst(_))
+                && fg
+                    .first_value_output_of(nid)
+                    .is_some_and(|v| fg.int_const_val(v) == Some(7))
+        })
+        .expect("IntConst(7)");
     let fp = fg.asm_fingerprint(const7);
     assert!(
         fp.contains(&0x108),
@@ -86,10 +91,15 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
     );
     // Result is IntConst(0); its fingerprint must include 0x204 (the
     // Xor's address — absorbed via after_replace).
-    let const0 = find(&fg, |k| {
-        matches!(k, NodeKind::IntConst(IntPayload::Small(0)))
-    })
-    .expect("IntConst(0)");
+    let const0 = fg
+        .walk()
+        .find(|&nid| {
+            matches!(fg.node_kind(nid), NodeKind::IntConst(_))
+                && fg
+                    .first_value_output_of(nid)
+                    .is_some_and(|v| fg.int_const_val(v) == Some(0))
+        })
+        .expect("IntConst(0)");
     let fp = fg.asm_fingerprint(const0);
     assert!(
         fp.contains(&0x204),
