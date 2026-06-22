@@ -130,11 +130,7 @@ pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
 /// register usage), they slot in here too.
 fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     ARCH_SPECIFIC_TABLE.iter().find_map(|row| {
-        if row.preset_arches.contains(&preset) && row.op_names.contains(&name) {
-            Some(row.class)
-        } else {
-            None
-        }
+        (row.preset_arches.contains(&preset) && row.op_names.contains(&name)).then_some(row.class)
     })
 }
 

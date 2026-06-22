@@ -301,25 +301,23 @@ impl BuiltCallingConvention {
                 ret_stack_pop,
             ));
         }
-        if let Some(sa) = stack_args
-            && sa.increment <= 0
-        {
-            return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: stack-arg increment must be > 0, got {}",
-                sa.increment,
-            ));
-        }
-        // A negative base_offset would let `index_of` / `slot_of`'s
-        // `offset - base_offset` overflow on a garbage offset; reject it here
-        // (the construction boundary) so those hot-path subtractions stay
-        // overflow-free for any `offset >= base_offset`.
-        if let Some(sa) = stack_args
-            && sa.base_offset < 0
-        {
-            return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: stack-arg base_offset must be >= 0, got {}",
-                sa.base_offset,
-            ));
+        if let Some(sa) = stack_args {
+            if sa.increment <= 0 {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: stack-arg increment must be > 0, got {}",
+                    sa.increment,
+                ));
+            }
+            // A negative base_offset would let `index_of` / `slot_of`'s
+            // `offset - base_offset` overflow on a garbage offset; reject it here
+            // (the construction boundary) so those hot-path subtractions stay
+            // overflow-free for any `offset >= base_offset`.
+            if sa.base_offset < 0 {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: stack-arg base_offset must be >= 0, got {}",
+                    sa.base_offset,
+                ));
+            }
         }
         Ok(Self {
             arg_passing_regs,
@@ -996,10 +994,7 @@ impl CallingConvention {
         // any `UnknownRegName` from `vn_for_name` so a typo in the preset
         // surfaces at build time rather than later in the indirect-branch
         // resolver.
-        let link_register_vn = match self.link_register_reg_name {
-            Some(name) => Some(vn_for_name(sleigh_regs, name)?),
-            None => None,
-        };
+        let link_register_vn = self.link_register_reg_name.map(|name| vn_for_name(sleigh_regs, name)).transpose()?;
         // Route through `try_new` so the disjointness invariants
         // (SP not in any reg list, arg/callee-saved disjoint, no
         // duplicates within a list, link-reg in callee-saved when set,

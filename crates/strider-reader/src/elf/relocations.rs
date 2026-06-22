@@ -716,16 +716,7 @@ fn resolve_symbol_target(
 ) -> Option<u64> {
     match reloc.target() {
         RelocationTarget::Symbol(idx) => {
-            let resolved = if let Some(dynsym) = obj.dynamic_symbol_table() {
-                dynsym
-                    .symbol_by_index(idx)
-                    .map(|s| (s.address(), s.is_undefined()))
-                    .ok()
-            } else {
-                obj.symbol_by_index(idx)
-                    .map(|s| (s.address(), s.is_undefined()))
-                    .ok()
-            };
+            let resolved = obj.dynamic_symbol_table().map_or_else(|| obj.symbol_by_index(idx), |t| t.symbol_by_index(idx)).map(|s| (s.address(), s.is_undefined())).ok();
             let Some((addr, undef)) = resolved else {
                 // symbol_by_index returned Err — the index is invalid
                 // (malformed ELF), distinct from the legitimate
@@ -927,17 +918,11 @@ fn got_or_plt_slot_reloc_size(
         {
             Some(4)
         }
-        A::Mips
+        A::Mips | A::Mips64
             if r_type == object::elf::R_MIPS_GLOB_DAT
                 || r_type == object::elf::R_MIPS_JUMP_SLOT =>
         {
-            Some(4)
-        }
-        A::Mips64
-            if r_type == object::elf::R_MIPS_GLOB_DAT
-                || r_type == object::elf::R_MIPS_JUMP_SLOT =>
-        {
-            Some(8)
+            Some(if matches!(arch, A::Mips64) { 8 } else { 4 })
         }
         _ => None,
     }
@@ -987,11 +972,7 @@ type RegionIndex = std::collections::BTreeMap<u64, usize>;
 
 /// Builds a [`RegionIndex`] over `regions` (start address → slice index).
 fn build_region_index(regions: &[MemRegion]) -> RegionIndex {
-    let mut idx = RegionIndex::new();
-    for (i, r) in regions.iter().enumerate() {
-        idx.insert(r.start_addr(), i);
-    }
-    idx
+    regions.iter().enumerate().map(|(i, r)| (r.start_addr(), i)).collect()
 }
 
 /// Returns the index of the region that fully covers
@@ -1119,9 +1100,7 @@ fn write_at(bytes: &mut [u8], off: usize, value: u64, size_bytes: usize, endian_
         bytes[off..off + size_bytes].copy_from_slice(&v_bytes[..size_bytes]);
     } else {
         // Big-endian: write the low N bytes most-significant-first.
-        for i in 0..size_bytes {
-            bytes[off + i] = v_bytes[size_bytes - 1 - i];
-        }
+        bytes[off..off + size_bytes].copy_from_slice(&value.to_be_bytes()[8 - size_bytes..]);
     }
 }
 
