@@ -10,7 +10,7 @@
 //! mutation, no clone, no pipeline. Any unresolved value, a non-`Const` dispatch
 //! result, or a cycle yields `None`, so the caller rejects the candidate.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
@@ -229,31 +229,33 @@ impl<'a> Evaluator<'a> {
     }
 }
 
-/// The dispatch cone in producers-before-consumers order: backward reachability
-/// from `root` over value edges only (the memory token is not followed — store
-/// data is resolved at eval time via `reaching_store`). Iterative postorder, so
-/// a deep cone costs O(1) host stack; cycles terminate via `seen` (a back-edge
-/// input is absent at eval time → `None`).
-pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<ValueId> {
-    let mut order: Vec<ValueId> = Vec::new();
-    let mut seen: FxHashSet<ValueId> = FxHashSet::default();
-    let mut stack: Vec<(ValueId, bool)> = vec![(root, false)];
-    while let Some((v, processed)) = stack.pop() {
-        if processed {
-            order.push(v);
-            continue;
-        }
-        if !seen.insert(v) {
-            continue;
-        }
-        stack.push((v, true));
-        for input in value_input_producers(function, function.producer(v)) {
-            if !seen.contains(&input) {
-                stack.push((input, false));
-            }
-        }
+/// Successor relation for the dispatch-cone walk: a value's successors are its
+/// own value-input producers (the memory token is not followed — store data is
+/// resolved at eval time via `reaching_store`).  Feeding this backward relation
+/// to a post-order walk yields producers before consumers.
+struct ValueInputSuccs<'a> {
+    function: &'a strider_ir::Function,
+}
+
+impl graphwalk::GraphRef for ValueInputSuccs<'_> {
+    type NodeId = ValueId;
+
+    fn try_successors(
+        &self,
+        value: ValueId,
+        f: impl FnMut(ValueId) -> std::ops::ControlFlow<()>,
+    ) -> std::ops::ControlFlow<()> {
+        value_input_producers(self.function, self.function.producer(value)).try_for_each(f)
     }
-    order
+}
+
+/// The dispatch cone in producers-before-consumers order: backward reachability
+/// from `root` over value edges only (see [`ValueInputSuccs`]).  Reuses the
+/// shared iterative post-order walk (`graphwalk::PostOrder`), so a deep cone
+/// costs O(1) host stack and each value is yielded once; a cycle's back-edge
+/// input is simply absent at eval time → `None`.
+pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<ValueId> {
+    graphwalk::entity_postorder(ValueInputSuccs { function }, [root]).collect()
 }
 
 #[cfg(test)]

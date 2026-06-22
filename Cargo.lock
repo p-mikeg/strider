@@ -1441,6 +1441,7 @@ dependencies = [
  "cranelift-entity",
  "criterion 0.5.1",
  "entity-utils",
+ "graphwalk",
  "object",
  "petgraph",
  "proptest",
