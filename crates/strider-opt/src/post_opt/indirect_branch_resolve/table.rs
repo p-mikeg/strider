@@ -14,7 +14,13 @@
 //!    `index = i` via the read-only [`super::eval::Evaluator`] (ConstFold
 //!    arithmetic + `LoadReadOnly` ROM reads + `LoadForward` via
 //!    `reaching_store`) for every `i` in its proven range.  The dispatch value
-//!    is a concrete constant iff the addressing fully resolved.
+//!    is a concrete constant iff the addressing fully resolved.  The evaluator
+//!    covers *only* those three foldings — intentionally narrower than the full
+//!    `default_pipeline` the former clone-and-optimise path ran.  A cone whose
+//!    collapse to a constant would have required some other pass (e.g. a
+//!    `KnownBits` bit-lattice narrowing) resolves to `None` here and the branch
+//!    defers — sound (an unresolved branch is never a wrong edge), just less
+//!    eager than the old approach.
 //! 3. **Accept the index that folds every value.**  The candidate whose whole
 //!    range folds to constants IS the index; the folded constants are the
 //!    targets ([`enumerate_targets`]).  A wrong candidate leaves the dispatch
