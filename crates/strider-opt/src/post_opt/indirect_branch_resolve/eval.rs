@@ -17,7 +17,7 @@ use strider_ir::{IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
 
 use crate::opt::constant_fold::eval_int::eval_int_binary;
-use crate::sp_expr::{SpAliasCfg, SpExprMemo};
+use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 
 /// Abstract value: a concrete number, or `sp_base + offset`.
 #[derive(Clone, Copy)]
@@ -50,7 +50,6 @@ pub(crate) struct Evaluator<'a> {
     rom: Option<&'a dyn ReadOnlyMemory>,
     alias_mode: crate::AliasMode,
     endianness: Endianness,
-    sp_base: Option<ValueId>,
     sp_memo: SpExprMemo,
     map: FxHashMap<ValueId, Abs>,
 }
@@ -66,7 +65,6 @@ impl<'a> Evaluator<'a> {
             rom,
             alias_mode,
             endianness: function.endianness(),
-            sp_base: function.initial_sp_value(),
             sp_memo: SpExprMemo::default(),
             map: FxHashMap::default(),
         }
@@ -100,10 +98,18 @@ impl<'a> Evaluator<'a> {
     }
 
     fn eval_node(&mut self, value: ValueId) -> Option<Abs> {
-        if Some(value) == self.sp_base {
-            return Some(Abs::SpRel { base: value, offset: 0 });
-        }
         let f = self.function;
+        // An sp-rooted constant expression — InitialVar(sp), an alignment-masked
+        // `(sp & mask)`, or either plus a constant `Add` chain — decomposes to
+        // its SP terminal + offset via the same decomposer the stores /
+        // `reaching_store` use, so the aligned base is recognized and matches
+        // the stores' base. Memoized in `sp_memo`, so the load's index-
+        // independent sp-spine is computed once and reused across indices.
+        if let Some(SpExpr { base, offset }) =
+            SpDecomposer::new(f, &mut self.sp_memo).decompose(value)
+        {
+            return Some(Abs::SpRel { base, offset });
+        }
         let node = f.producer(value);
         let kind = *f.node_kind(node);
         let out_ty = f.value_type_opt(value);
