@@ -779,57 +779,14 @@ impl Function {
         if contributors.is_empty() {
             return;
         }
-        // Normalise the contributor list (callers may pass it unsorted / with
-        // duplicates) into a sorted-deduped small buffer.  `k` is tiny in
-        // practice (1–2 addresses), so this `sort_unstable` is cheap and lets
-        // the union below be a single linear merge against the already-sorted
-        // `existing` — O(k·log k + m + k) — instead of an append + full
-        // O((m+k)·log(m+k)) re-sort of the combined list.
-        let mut incoming: smallvec::SmallVec<[u64; 2]> = contributors.iter().copied().collect();
-        incoming.sort_unstable();
-        incoming.dedup();
-
-        let existing = &self.asm_fingerprints[node_id];
-        // Fast path: the very first contribution onto an empty entry — adopt
-        // the normalised contributor list wholesale, no merge needed.
-        if existing.is_empty() {
-            self.asm_fingerprints[node_id] = incoming;
-            return;
-        }
-        // Both `existing` and `incoming` are now sorted-deduped, so union them
-        // with a single linear merge (O(m + k)).
-        let mut merged: smallvec::SmallVec<[u64; 2]> =
-            smallvec::SmallVec::with_capacity(existing.len() + incoming.len());
-        let mut ai = existing.iter().copied().peekable();
-        let mut bi = incoming.iter().copied().peekable();
-        loop {
-            match (ai.peek().copied(), bi.peek().copied()) {
-                (Some(a), Some(b)) => {
-                    let next = if a < b {
-                        ai.next();
-                        a
-                    } else if b < a {
-                        bi.next();
-                        b
-                    } else {
-                        ai.next();
-                        bi.next();
-                        a
-                    };
-                    merged.push(next);
-                }
-                (Some(a), None) => {
-                    ai.next();
-                    merged.push(a);
-                }
-                (None, Some(b)) => {
-                    bi.next();
-                    merged.push(b);
-                }
-                (None, None) => break,
-            }
-        }
-        self.asm_fingerprints[node_id] = merged;
+        // Union `contributors` into the node's fingerprint, keeping it sorted
+        // and deduplicated.  Both `m` (existing) and `k` (contributors) are
+        // tiny (a handful of addresses), so the standard extend + sort + dedup
+        // is the right wheel — no hand-rolled two-pointer merge needed.
+        let fp = &mut self.asm_fingerprints[node_id];
+        fp.extend_from_slice(contributors);
+        fp.sort_unstable();
+        fp.dedup();
     }
 
     /// Unions the fingerprint of `src` into `dst`.  Self-extension
