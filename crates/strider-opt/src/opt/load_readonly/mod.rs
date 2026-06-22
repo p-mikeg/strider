@@ -4,7 +4,7 @@ use strider_ir::ReadOnlyMemory;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
+use crate::pipeline::OptCtx;
 
 // ── LoadReadOnly optimizer ────────────────────────────────────────────────────
 
@@ -72,37 +72,36 @@ use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 #[derive(Clone, Copy)]
 pub struct LoadReadOnly;
 
-impl Optimizer for LoadReadOnly {
-    fn apply(
+impl crate::peephole::PeepholePass for LoadReadOnly {
+    // The filter gates on `Load(RAM)` directly: REGISTER / CONST / UNIQUE /
+    // OTHER Load nodes are folded by varnode aliasing or constant propagation
+    // before reaching this pass, and `ReadOnlyMemory` only models RAM.  Each
+    // Load folds INDEPENDENTLY against the read-only rom, so the driver's RPO
+    // seed order does not affect the outcome.
+    fn matches_kind(&self, kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::Load(s) if *s == rsleigh::VnSpace::RAM)
+    }
+
+    // A folded `Load` becomes a constant, never another load's operand.
+    fn propagate_to_consumers(&self) -> bool {
+        false
+    }
+
+    fn try_rewrite(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        ctx: &mut OptCtx<'_>,
-    ) -> Result<OptimizationResult> {
-        let Some(rom) = ctx.rom else {
+        opt_ctx: &mut OptCtx<'_>,
+        root: NodeId,
+    ) -> Result<crate::peephole::PeepholeRewrite> {
+        let Some(rom) = opt_ctx.rom else {
             // No rom configured — nothing to fold.
-            return Ok(OptimizationResult::NoChange);
+            return Ok(crate::peephole::PeepholeRewrite::NoChange);
         };
-        // Snapshot the live `Load(RAM)` nodes up front: the borrow only needs
-        // the immutable view, and it ends (the `Vec` is owned) before the
-        // per-node folding loop takes `edit` mutably.  Each Load folds
-        // INDEPENDENTLY against the read-only rom, so processing order does
-        // not affect the outcome — iterate the cached live set directly
-        // (`live_of_kind`, no graph walk) rather than canonicalising to RPO.
-        // `ctx` here is the read-only `OptCtx` (carrying the rom) — `edit` is
-        // the shared rewrite ctx.  The filter gates on `Load(RAM)` directly:
-        // REGISTER / CONST / UNIQUE / OTHER Load nodes are folded by
-        // varnode aliasing or constant propagation before reaching this
-        // pass and `ReadOnlyMemory` only models RAM.
-        let nodes: Vec<NodeId> = edit
-            .live_of_kind(|k| matches!(k, NodeKind::Load(s) if *s == rsleigh::VnSpace::RAM))
-            .collect();
-        let mut overall = OptimizationResult::NoChange;
-        for node_id in nodes {
-            if try_fold_const_load_at(edit, node_id, rom)? {
-                overall = OptimizationResult::Changed;
-            }
+        if try_fold_const_load_at(edit, root, rom)? {
+            Ok(crate::peephole::PeepholeRewrite::Changed { new_node: None })
+        } else {
+            Ok(crate::peephole::PeepholeRewrite::NoChange)
         }
-        Ok(overall)
     }
 }
 

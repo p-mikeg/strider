@@ -97,6 +97,7 @@ impl crate::peephole::PeepholePass for IfCondInversion {
     fn try_rewrite(
         &self,
         ctx: &mut crate::EditFunction<'_>,
+        _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         let Some(inner_value) =

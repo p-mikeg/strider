@@ -91,6 +91,7 @@ pub(crate) trait PeepholePass {
     fn try_rewrite(
         &self,
         ctx: &mut crate::EditFunction<'_>,
+        opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite>;
 
@@ -126,6 +127,7 @@ pub(crate) trait PeepholePass {
 pub(crate) fn run_peephole<P: PeepholePass>(
     pass: &P,
     ctx: &mut crate::EditFunction<'_>,
+    opt_ctx: &mut crate::pipeline::OptCtx<'_>,
 ) -> Result<OptimizationResult> {
     // Seed in the pass's chosen order, computed DIRECTLY for each variant —
     // no `reverse()` of an already-reversed sequence.  `ReversePostorder`
@@ -169,7 +171,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
                 }
             }
         }
-        let r = pass.try_rewrite(ctx, root)?;
+        let r = pass.try_rewrite(ctx, opt_ctx, root)?;
         if let PeepholeRewrite::Changed { new_node } = r {
             overall = OptimizationResult::Changed;
             // Re-examine the node the rewrite reports it freshly created
@@ -205,9 +207,9 @@ impl<P: PeepholePass + Clone + 'static> crate::pipeline::Optimizer for P {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        _ctx: &mut crate::pipeline::OptCtx<'_>,
+        ctx: &mut crate::pipeline::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        run_peephole(self, edit)
+        run_peephole(self, edit, ctx)
     }
 }
 
@@ -254,6 +256,7 @@ mod tests {
         fn try_rewrite(
             &self,
             ctx: &mut crate::EditFunction<'_>,
+            _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
             root: NodeId,
         ) -> Result<PeepholeRewrite> {
             use cranelift_entity::EntityRef;
@@ -338,7 +341,8 @@ mod tests {
             create_matching_once: RefCell::new(false),
         };
         let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let r = run_peephole(&pass, &mut ctx).unwrap();
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
     }
@@ -356,7 +360,8 @@ mod tests {
             create_matching_once: RefCell::new(false),
         };
         let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let r = run_peephole(&pass, &mut ctx).unwrap();
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
     }
@@ -373,7 +378,8 @@ mod tests {
             create_matching_once: RefCell::new(false),
         };
         let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let r = run_peephole(&pass, &mut ctx).unwrap();
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         assert!(!pass.visit_log.borrow().is_empty());
 
@@ -412,7 +418,8 @@ mod tests {
             create_matching_once: RefCell::new(false),
         };
         let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let _ = run_peephole(&pass, &mut ctx).unwrap();
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let _ = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 2, "exactly two visits, no re-enqueue: {log:?}");
     }
@@ -436,7 +443,8 @@ mod tests {
             create_matching_once: RefCell::new(false),
         };
         let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let r = run_peephole(&pass, &mut ctx).unwrap();
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         // Each Add visited at least once; propagate-true allows extra
         // re-enqueue visits.  The exact count depends on worklist dedup
@@ -466,9 +474,10 @@ mod tests {
             create_matching_once: RefCell::new(true),
         };
         let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
+        let mut octx = crate::pipeline::OptCtx::new(None);
         // The id the next created node will take == the new `Add`'s id.
         let new_node_idx = ctx.graph_ref().next_node_id().index() as u32;
-        let r = run_peephole(&pass, &mut ctx).unwrap();
+        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         let log = pass.visit_log.borrow().clone();
         assert!(
@@ -489,7 +498,8 @@ mod tests {
             create_matching_once: RefCell::new(false),
         };
         let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let r = run_peephole(&pass, &mut ctx);
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut ctx, &mut octx);
         assert!(r.is_err(), "errored pass must surface error");
         let msg = format!("{:?}", r.unwrap_err());
         assert!(

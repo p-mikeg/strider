@@ -33,9 +33,8 @@ use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 use strider_target::Endianness;
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::OptimizationResult;
 use crate::sp_expr::{AliasVerdict, SpAliasCfg, SpExprMemo, alias_verdict};
-use entity_utils::Worklist;
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///
@@ -52,27 +51,34 @@ use entity_utils::Worklist;
 #[derive(Clone)]
 pub struct LoadForward;
 
-impl Optimizer for LoadForward {
-    fn apply(
+impl crate::peephole::PeepholePass for LoadForward {
+    fn matches_kind(&self, kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::Load(_))
+    }
+
+    // A `Load` is never another load's operand, so a forwarded load needs no
+    // consumer re-enqueue.
+    fn propagate_to_consumers(&self) -> bool {
+        false
+    }
+
+    fn try_rewrite(
         &self,
         ctx: &mut crate::EditFunction<'_>,
-        opt_ctx: &mut crate::OptCtx<'_>,
-    ) -> Result<OptimizationResult> {
+        opt_ctx: &mut crate::pipeline::OptCtx<'_>,
+        root: NodeId,
+    ) -> Result<crate::peephole::PeepholeRewrite> {
+        // The SP-decompose memo is `opt_ctx.sp_memo` — it persists across the
+        // loads of one driver sweep and is fresh per `apply` (the pipeline
+        // clears it after any changed pass), matching the old per-`apply`
+        // local memo.
         let alias_mode = opt_ctx.options.alias_mode;
-        let mut work: Worklist<NodeId> = ctx
-            .reverse_postorder_filter(|k| matches!(k, NodeKind::Load(_)))
-            .collect();
-        // Local memo rather than `opt_ctx.sp_memo`: the post-passes
-        // (`function_args` / `call_stack_args`) share `octx.sp_memo`, but
-        // `LoadForward` runs inside the fixed-point loop and keeps a
-        // per-`apply` memo — sharing would buy nothing since the post-passes
-        // receive a freshly-cleared memo after the loop exits anyway.
-        let mut memo: SpExprMemo = Default::default();
-        let mut result = OptimizationResult::NoChange;
-        while let Some(load) = work.dequeue() {
-            result |= try_forward_load(ctx, load, &mut memo, alias_mode)?;
+        match try_forward_load(ctx, root, &mut opt_ctx.sp_memo, alias_mode)? {
+            OptimizationResult::Changed => {
+                Ok(crate::peephole::PeepholeRewrite::Changed { new_node: None })
+            }
+            OptimizationResult::NoChange => Ok(crate::peephole::PeepholeRewrite::NoChange),
         }
-        Ok(result)
     }
 }
 

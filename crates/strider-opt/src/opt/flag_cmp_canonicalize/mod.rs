@@ -109,6 +109,7 @@ impl PeepholePass for FlagCmpCanonicalize {
     fn try_rewrite(
         &self,
         ctx: &mut crate::EditFunction<'_>,
+        _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         // PowerPC condition-register bit test: an imperative arm, because the
