@@ -95,7 +95,7 @@ impl MatchPat for IntConst {
 impl crate::template::template_pat::TemplatePat for IntConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // Route the full u128 through the FnIntConst path so the instantiator
-        // chooses Small vs Wide from the resolved output type without ever
+        // interns the value at the resolved output width without ever
         // truncating here (e.g. int_const(u128::MAX) on an I128 root must
         // produce a full-width all-ones, not a u64-truncated one).
         let v = self.v;
@@ -171,9 +171,9 @@ impl MatchPat for SignedIntConst {
 impl crate::template::template_pat::TemplatePat for SignedIntConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // Carry the full sign-extended two's-complement bit pattern to
-        // instantiate time via FnIntConst so the instantiator picks
-        // Small vs Wide from the resolved output type.  A u64-truncated
-        // Small(v as u64) loses the upper bits for I128+ roots.
+        // instantiate time via FnIntConst so the instantiator interns at the
+        // resolved output width.  A u64-truncated value would lose the upper
+        // bits for I128+ roots.
         let v: u128 = i128::from(self.v) as u128; // full-width two's-complement
         int_const_with_fn(move |_ctx| Ok(v)).compile(b)
     }
@@ -251,9 +251,8 @@ pub fn float_const(bits: u64) -> FloatConst {
     FloatConst { bits }
 }
 
-/// Match any integer constant — `IntConst(Small(_))` (I1..I64) or
-/// `IntConst(Wide(_))` whose stored value fits in `u128` (I80 / I128).
-/// Match-only.
+/// Match any integer constant whose value fits in `u128` (I1..I128 always;
+/// I256/I512 only when their high limbs are zero). Match-only.
 pub struct AnyIntConst;
 
 impl MatchPat for AnyIntConst {
@@ -287,8 +286,8 @@ impl MatchPat for AnyIntConst {
     }
 }
 
-/// Match any integer constant — `IntConst(Small(_))` (I1..I64) or
-/// `IntConst(Wide(_))` whose stored value fits in `u128` (I80 / I128).
+/// Match any integer constant whose value fits in `u128` (I1..I128 always;
+/// I256/I512 only when their high limbs are zero).
 pub fn any_int_const() -> AnyIntConst {
     AnyIntConst
 }
@@ -355,12 +354,13 @@ impl MatchPat for IntConstAnyOf {
     }
 }
 
-/// Match an inline `IntConst` whose value is one of `set`.
+/// Match an `IntConst` whose value is one of `set`.
 ///
-/// Matches only ≤I64 inline `IntConst(Small)` nodes; I80/I128/I256/I512
-/// constants stored in the wide interner are intentionally excluded.  This
-/// limitation is correct for the primary use-case (jump-table target
-/// addresses, which are pointer-width — at most 64 bits).
+/// The value is read via the interner (`int_const_u128`), so any constant
+/// whose value fits `u128` and equals a set member matches; an I256/I512
+/// value too wide for `u128` never matches. The set is built from `u64`
+/// inputs (the primary use-case is jump-table target addresses, which are
+/// pointer-width — at most 64 bits).
 pub fn int_const_any_of<I: IntoIterator<Item = u64>>(set: I) -> IntConstAnyOf {
     IntConstAnyOf {
         set: set.into_iter().map(u128::from).collect(),
@@ -406,9 +406,8 @@ where
     F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u128> + 'static,
 {
     ConstWith {
-        // Use TemplateKind::FnIntConst so the instantiator routes the full
-        // u128 value through the correct payload (Small for ≤I64, Wide via
-        // the interner for I80/I128/I256/I512) without ever truncating to
+        // Use TemplateKind::FnIntConst so the instantiator interns the full
+        // u128 value at the resolved output width without ever truncating to
         // u64 here.  This preserves large I128 constants through rewrites.
         kind: TemplateKind::FnIntConst(Box::new(f)),
         ty: TemplateTy::InheritRoot,
