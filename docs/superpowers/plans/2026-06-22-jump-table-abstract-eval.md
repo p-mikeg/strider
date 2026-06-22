@@ -24,8 +24,11 @@
 
 - `crates/strider-opt/src/opt/constant_fold/eval_int.rs` — **Modify.** Add pure `eval_int_unary` / `eval_sign_extend` / `eval_popcount` / `eval_lzcount`.
 - `crates/strider-opt/src/opt/constant_fold/rules.rs` — **Modify.** Refactor the inline unary/sign-extend/popcount/lzcount closures to call the new helpers.
-- `crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs` — **Create.** The `Abs` value, the `Evaluator`, and `cone_order`.
+- `crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs` — **Create (Task 2), then Modify (Task 3).** The `Abs` value, the `Evaluator`, and `cone_order`; Task 3 slims it to delegate const arms to the shared utility.
 - `crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs` — **Modify.** Declare `mod eval;`.
+- `crates/strider-opt/src/const_eval.rs` — **Create (Task 3).** Shared `read_rom_const` + `eval_node_const` — the single "node → constant from constant inputs" SSoT, used by the evaluator and `LoadReadOnly`.
+- `crates/strider-opt/src/lib.rs` — **Modify (Task 3).** Declare `mod const_eval;`.
+- `crates/strider-opt/src/opt/load_readonly/mod.rs` — **Modify (Task 3).** Fold via `eval_node_const` instead of an inline ROM decode.
 - `crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs` — **Modify.** Swap the per-index fold to the evaluator; delete `fold_dispatch_to_const`, the clone, the compact/remap, the pipeline run.
 - `crates/strider-ir/src/function/data.rs` — **Modify.** Remove `Clone` from `Function`'s derive.
 - `crates/strider-graph/src/graph.rs` — **Modify.** Delete the generic `Graph` `Clone` impl.
@@ -579,7 +582,250 @@ git commit -m "feat(opt): abstract evaluator (Const|SpRel) for jump-table cones"
 
 ---
 
-### Task 3: Rewire `table.rs` onto the evaluator; delete clone+pipeline
+### Task 3: Extract shared const-eval utility; route the evaluator + LoadReadOnly through it
+
+De-duplicate the ROM decode and per-op fold logic into one shared module that both the jump-table evaluator and `LoadReadOnly` call, so the evaluator stops re-implementing optimization logic. `Const | SpRel` and the SpRel-specific handling stay in the evaluator (the passes have no stack-relative domain). ConstFold is intentionally left sharing at the `eval_int_*` primitive level. Behavior-preserving: the existing `eval`, `load_readonly`, and `constant_fold` suites are the gate.
+
+**Files:**
+- Create: `crates/strider-opt/src/const_eval.rs`
+- Modify: `crates/strider-opt/src/lib.rs` (add `mod const_eval;` near the other private module declarations)
+- Modify: `crates/strider-opt/src/opt/load_readonly/mod.rs` (`try_fold_const_load_at` folds via `eval_node_const`)
+- Modify: `crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs` (delegate const arms to `eval_node_const`; `Const`-address `Load` via `read_rom_const`; drop the now-shared `eval_int_*` imports)
+- Test: inline `#[cfg(test)]` in `const_eval.rs`; the existing `eval` / `load_readonly` / `constant_fold` suites are the behavior gate.
+
+**Interfaces:**
+- Produces:
+  - `pub(crate) fn read_rom_const(rom: &dyn ReadOnlyMemory, addr: u64, ty: ValueType, endianness: Endianness) -> Option<u128>`
+  - `pub(crate) fn eval_node_const(function: &Function, value: ValueId, resolve: &dyn Fn(ValueId) -> Option<u128>, rom: Option<&dyn ReadOnlyMemory>, endianness: Endianness) -> Option<u128>`
+- The `Evaluator` public API (`new` / `eval_target` / `cone_order`) is UNCHANGED — Task 4 is unaffected.
+- Consumes: Task 1 `eval_int_*` helpers.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `crates/strider-opt/src/const_eval.rs` with ONLY the test module first:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::eval_node_const;
+    use strider_ir::IRBuilderExt;
+    use strider_ir::node::ValueType;
+
+    // Build `Add(IntConst(5), IntConst(100)):I64`; eval_node_const with an
+    // int-const resolver folds it to 105. Copy the builder pattern from
+    // constant_fold/tests.rs.
+    #[test]
+    fn folds_add_of_two_constants() {
+        let (function, sum) = build_add_5_100();
+        let resolve = |v| function.int_const_u128(v);
+        let got = eval_node_const(&function, sum, &resolve, None, function.endianness());
+        assert_eq!(got, Some(105));
+    }
+
+    fn build_add_5_100() -> (strider_ir::Function, strider_ir::node::ValueId) {
+        // Build with the test-utils FunctionBuilder; see constant_fold/tests.rs.
+        // Return (built function, the Add output value).
+        todo!("build Add(IntConst(5), IntConst(100)):I64 via test-utils")
+    }
+}
+```
+
+> NOTE TO IMPLEMENTER: this `todo!` is the only one — fill it from
+> `constant_fold/tests.rs`'s graph-build pattern before Step 3, and remove it.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cargo test -p strider-opt const_eval`
+Expected: FAIL — `eval_node_const` not found.
+
+- [ ] **Step 3: Implement `const_eval.rs`**
+
+Prepend (above the test module):
+
+```rust
+//! Shared "what constant does this node produce from constant inputs" SSoT,
+//! used by the jump-table abstract evaluator and by `LoadReadOnly` so the ROM
+//! decode and the per-op fold dispatch live in exactly one place. ConstFold
+//! shares the leaf arithmetic (`eval_int_*`) directly and does not route
+//! through here.
+
+use smallvec::SmallVec;
+use strider_ir::Function;
+use strider_ir::IRViewer;
+use strider_ir::ReadOnlyMemory;
+use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
+use strider_target::Endianness;
+
+use crate::opt::constant_fold::eval_int::{
+    eval_int_binary, eval_int_cmp, eval_int_unary, eval_lzcount, eval_popcount, eval_sign_extend,
+};
+
+/// Decode `ty` bytes at `addr` from a read-only image into an integer masked to
+/// `ty`. The single ROM-decode site. `None` for widths > 16 bytes, an unmapped
+/// read, or a non-integer `ty`.
+pub(crate) fn read_rom_const(
+    rom: &dyn ReadOnlyMemory,
+    addr: u64,
+    ty: ValueType,
+    endianness: Endianness,
+) -> Option<u128> {
+    let size = ty.byte_size();
+    if size > 16 {
+        return None;
+    }
+    let mut bytes = [0u8; 16];
+    rom.read(addr, &mut bytes[..size]).ok()?;
+    let loaded = endianness.read_uint(&bytes[..size]);
+    ty.get_unsigned_int(loaded)
+}
+
+/// The constant value of `value`, given `resolve` for its inputs' constants.
+/// Covers `IntConst`, integer arithmetic/casts/compares (via the shared
+/// `eval_int_*` helpers), and a constant-address `Load(RAM)` (via
+/// [`read_rom_const`]). `None` for anything not foldable to one integer
+/// constant from `resolve`d inputs. Does NOT handle `Phi` or any
+/// stack-relative address — those stay in the jump-table evaluator.
+pub(crate) fn eval_node_const(
+    function: &Function,
+    value: ValueId,
+    resolve: &dyn Fn(ValueId) -> Option<u128>,
+    rom: Option<&dyn ReadOnlyMemory>,
+    endianness: Endianness,
+) -> Option<u128> {
+    let node = function.producer(value);
+    let kind = *function.node_kind(node);
+    let out_ty = function.value_type_opt(value);
+    let ins: SmallVec<[ValueId; 2]> = function
+        .node_inputs(node)
+        .into_iter()
+        .filter(|&i| function.value_type_opt(i).is_some())
+        .collect();
+    match kind {
+        NodeKind::IntConst(_) => function.int_const_u128(value),
+        NodeKind::IntBinaryOp(op) => {
+            eval_int_binary(op, resolve(*ins.first()?)?, resolve(*ins.get(1)?)?, out_ty?)
+        }
+        NodeKind::IntUnaryOp(op) => eval_int_unary(op, resolve(*ins.first()?)?, out_ty?),
+        NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
+            out_ty?.get_unsigned_int(resolve(*ins.first()?)?)
+        }
+        NodeKind::Extend(ExtendOp::SignExtend) => {
+            let in_ty = function.value_type_opt(*ins.first()?)?;
+            eval_sign_extend(resolve(ins[0])?, in_ty, out_ty?)
+        }
+        NodeKind::Popcount => {
+            let in_ty = function.value_type_opt(*ins.first()?)?;
+            eval_popcount(resolve(ins[0])?, in_ty)
+        }
+        NodeKind::Lzcount => {
+            let in_ty = function.value_type_opt(*ins.first()?)?;
+            eval_lzcount(resolve(ins[0])?, in_ty)
+        }
+        NodeKind::IntCmpOp(op) => {
+            let in_ty = function.value_type_opt(*ins.first()?)?;
+            Some(u128::from(
+                eval_int_cmp(op, resolve(ins[0])?, resolve(*ins.get(1)?)?, in_ty).ok()?,
+            ))
+        }
+        NodeKind::Load(_) => {
+            let rom = rom?;
+            let addr = u64::try_from(resolve(function.load_addr(node))?).ok()?;
+            read_rom_const(rom, addr, out_ty?, endianness)
+        }
+        _ => None,
+    }
+}
+```
+
+Add `mod const_eval;` to `crates/strider-opt/src/lib.rs` (with the other private `mod` declarations, e.g. near `mod opt;` / `mod post_opt;`).
+
+- [ ] **Step 4: Run the new test (GREEN)**
+
+Run: `cargo test -p strider-opt const_eval`
+Expected: PASS.
+
+- [ ] **Step 5: Route `LoadReadOnly` through the utility**
+
+In `crates/strider-opt/src/opt/load_readonly/mod.rs`, refactor `try_fold_const_load_at` so the address-constant check + ROM decode go through `eval_node_const`. Replace the body from the `let addr_value = ...` line through the `let masked = ...` block with:
+
+```rust
+    // SSoT: fold this Load via the shared const-eval utility (constant address
+    // → ROM decode), so the decode logic is not duplicated in the jump-table
+    // evaluator.
+    let endianness = ctx.function().endianness();
+    let [data_value] = ctx.node_outputs_exact::<1>(node_id)?;
+    let resolve = |v| ctx.function().int_const_u128(v);
+    let Some(masked) =
+        crate::const_eval::eval_node_const(ctx.function(), data_value, &resolve, Some(rom), endianness)
+    else {
+        return Ok(false);
+    };
+    let ty = ctx
+        .value_type_opt(data_value)
+        .expect("Load output is a value");
+```
+
+Keep the existing asm-fingerprint + `build_int_const` + `replace_value` tail unchanged (it still needs `ty`, `data_value`, and the address producer for the fingerprint — derive `addr_value` once via `ctx.load_addr(node_id)` for the fingerprint step if the tail references it). Adjust only what the borrow checker / unused-var warnings require; do not change observable behavior.
+
+- [ ] **Step 6: Run the LoadReadOnly suite**
+
+Run: `cargo test -p strider-opt load_readonly`
+Expected: PASS (behavior unchanged).
+
+- [ ] **Step 7: Slim `eval.rs` to delegate**
+
+In `crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs`:
+
+- Remove the `use crate::opt::constant_fold::eval_int::{...}` import (no longer used directly).
+- Replace the arithmetic arms of `eval_node` (every arm except the `sp_base` short-circuit, `IntBinaryOp(Add)`, `Load(_)`, and `Phi`) with a single delegation:
+
+```rust
+            _ => {
+                let resolve = |v| self.get(v).and_then(Abs::as_const);
+                crate::const_eval::eval_node_const(
+                    self.function,
+                    value,
+                    &resolve,
+                    self.rom,
+                    self.endianness,
+                )
+                .map(Abs::Const)
+            }
+```
+
+  Keep the `sp_base` short-circuit, the `IntBinaryOp(strider_ir::IntBinaryOp::Add) => self.eval_add(...)` arm, `Load(_) => self.eval_load(...)`, and `Phi => self.eval_phi(...)` arms exactly as they are (these are the `Abs`/SpRel-specific cases the shared utility deliberately does not cover).
+- In `eval_load`, replace the `Abs::Const` arm's inline ROM decode with:
+
+```rust
+            Abs::Const(c) => {
+                let rom = self.rom?;
+                let addr = u64::try_from(c).ok()?;
+                crate::const_eval::read_rom_const(rom, addr, load_ty, self.endianness).map(Abs::Const)
+            }
+```
+
+  Leave the `Abs::SpRel` arm (reaching_store + exact-anchor + `int_const_u128` + `reshape`) unchanged.
+
+- [ ] **Step 8: Run eval + clippy**
+
+Run: `cargo test -p strider-opt indirect_branch_resolve::eval` and `cargo clippy -p strider-opt`
+Expected: the 2 eval tests PASS; clippy clean (dead-code on `Abs`/`Evaluator`/`cone_order` is still expected — Task 4 wires them).
+
+- [ ] **Step 9: Run the three behavior gates together**
+
+Run: `cargo test -p strider-opt constant_fold load_readonly indirect_branch_resolve::eval const_eval`
+Expected: all PASS (the refactor preserved behavior).
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add crates/strider-opt/src/const_eval.rs crates/strider-opt/src/lib.rs crates/strider-opt/src/opt/load_readonly/mod.rs crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs
+git commit -m "refactor(opt): shared const-eval utility for evaluator + LoadReadOnly"
+```
+
+---
+
+### Task 4: Rewire `table.rs` onto the evaluator; delete clone+pipeline
 
 The existing `table_tests.rs` suite is the characterization gate.
 
@@ -647,7 +893,7 @@ git commit -m "refactor(opt): resolve jump tables via abstract eval, drop clone+
 
 ---
 
-### Task 4: Remove `Clone` from `Function` and the generic `Graph`
+### Task 5: Remove `Clone` from `Function` and the generic `Graph`
 
 With the only whole-`Function` clones gone, delete the capability. The compiler is the gate.
 

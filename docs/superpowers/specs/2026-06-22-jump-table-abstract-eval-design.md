@@ -75,6 +75,20 @@ recurses):
   of which arm control takes, because all arms are equal.
 - anything else → `None`.
 
+**Shared fold logic (no duplication).** The constant arithmetic and the ROM
+decode are NOT re-implemented in the evaluator. A shared `strider-opt` module
+exposes `read_rom_const(rom, addr, ty, endian)` and `eval_node_const(function,
+value, resolve, rom, endian)` — the single "node → constant from constant
+inputs" SSoT (arithmetic via the `eval_int_*` helpers, `Load(RAM)` via
+`read_rom_const`). Both the evaluator (every non-`SpRel`, non-`Phi` arm
+delegates with `resolve = map-as-const`) and `LoadReadOnly` (folds its `Load`
+with `resolve = int_const`) call it, so the decode/fold logic lives in one
+place. The evaluator keeps only the `Abs`/`SpRel`-specific cases the passes have
+no analogue for: the `sp_base` leaf, `Add` propagation, the stack `Load` arm,
+and `Phi`. `ConstFold` shares the leaf `eval_int_*` primitives directly and is
+intentionally not routed through `eval_node_const` (its delicate rule engine
+already shares at the primitive level).
+
 ### 2. `Load` evaluation — ConstFold's two memory passes, read-only
 
 `eval_load(load, value)` splits on the address's `Abs`:
