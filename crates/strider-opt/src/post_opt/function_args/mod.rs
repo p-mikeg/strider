@@ -215,7 +215,7 @@ fn detect_stack_args(
             offset,
             load_size,
         };
-        let dirty = mem_chain_is_dirty(ctx, node_id, probe, memo, &mut shadow_memo, knobs)?;
+        let dirty = mem_chain_is_dirty(ctx, node_id, probe, memo, &mut shadow_memo, knobs);
         if dirty {
             disqualified.insert(start_slot);
             groups.remove(&start_slot);
@@ -317,9 +317,9 @@ fn mem_chain_is_dirty(
     sp_memo: &mut SpExprMemo,
     memo: &mut ShadowMemo,
     knobs: AliasKnobs,
-) -> Result<bool> {
+) -> bool {
     if let Some(&cached) = memo.get(&probe) {
-        return Ok(cached);
+        return cached;
     }
 
     // Walk from the def that produced the load's memory input.  The oracle
@@ -345,7 +345,7 @@ fn mem_chain_is_dirty(
     );
     let result = !matches!(ctx.node_kind(clobber), NodeKind::InitialMemory);
     memo.insert(probe, result);
-    Ok(result)
+    result
 }
 
 #[cfg(test)]

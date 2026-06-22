@@ -13,7 +13,7 @@ use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
 use crate::pipeline::PostOptimizer;
-use crate::sp_expr::{SpDecomposer, SpExpr, SpExprMemo};
+use crate::sp_expr::{SpDecomposer, SpExpr};
 
 /// Detects SP-relative Store / Load addresses and records each one's
 /// concrete offset in the `Function::stack_offsets` side-table.
@@ -28,9 +28,9 @@ impl PostOptimizer for StackOffsetDetect {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        _ctx: &mut crate::OptCtx<'_>,
+        ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
-        let mut memo = SpExprMemo::default();
+        let memo = &mut ctx.sp_memo;
 
         // Snapshot the live Store/Load nodes.  Each access is decomposed and
         // stamped INDEPENDENTLY into the `stack_offsets` side-table (a pure
@@ -60,7 +60,7 @@ impl PostOptimizer for StackOffsetDetect {
             // base (different SP bases, e.g. entry-SP vs an aligned SP, differ
             // by the caller-dependent `sp mod align`).
             let Some(SpExpr { base, offset }) =
-                SpDecomposer::new(function, &mut memo).decompose(addr)
+                SpDecomposer::new(function, memo).decompose(addr)
             else {
                 continue;
             };

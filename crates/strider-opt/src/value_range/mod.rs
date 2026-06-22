@@ -268,7 +268,7 @@ impl<'f> RangeMap<'f> {
             });
         }
 
-        let union = result.unwrap_or_else(|| Interval::top(type_mask));
+        let union = result.expect("union has >= 1 arm by the guards above");
         // Intersect any dominating guard recorded on the phi output itself.  A
         // guard holding at the query point is valid for every arm, so it
         // refines the arm union (and recovers a bound the union alone loses).

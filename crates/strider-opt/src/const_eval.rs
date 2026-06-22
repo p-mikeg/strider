@@ -4,7 +4,6 @@
 //! shares the leaf arithmetic (`eval_int_*`) directly and does not route
 //! through here.
 
-use smallvec::SmallVec;
 use strider_ir::Function;
 use strider_ir::IRViewer;
 use strider_ir::ReadOnlyMemory;
@@ -50,36 +49,32 @@ pub(crate) fn eval_node_const(
     let node = function.producer(value);
     let kind = *function.node_kind(node);
     let out_ty = function.value_type_opt(value);
-    let ins: SmallVec<[ValueId; 2]> = function
-        .node_inputs(node)
-        .into_iter()
-        .filter(|&i| function.value_type_opt(i).is_some())
-        .collect();
+    let ins = function.node_inputs(node);
     match kind {
         NodeKind::IntConst(_) => function.int_const_u128(value),
         NodeKind::IntBinaryOp(op) => {
-            eval_int_binary(op, resolve(*ins.first()?)?, resolve(*ins.get(1)?)?, out_ty?)
+            eval_int_binary(op, resolve(ins.get(0).copied()?)?, resolve(ins.get(1).copied()?)?, out_ty?)
         }
-        NodeKind::IntUnaryOp(op) => eval_int_unary(op, resolve(*ins.first()?)?, out_ty?),
+        NodeKind::IntUnaryOp(op) => eval_int_unary(op, resolve(ins.get(0).copied()?)?, out_ty?),
         NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
-            out_ty?.get_unsigned_int(resolve(*ins.first()?)?)
+            out_ty?.get_unsigned_int(resolve(ins.get(0).copied()?)?)
         }
         NodeKind::Extend(ExtendOp::SignExtend) => {
-            let in_ty = function.value_type_opt(*ins.first()?)?;
+            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
             eval_sign_extend(resolve(ins[0])?, in_ty, out_ty?)
         }
         NodeKind::Popcount => {
-            let in_ty = function.value_type_opt(*ins.first()?)?;
+            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
             eval_popcount(resolve(ins[0])?, in_ty)
         }
         NodeKind::Lzcount => {
-            let in_ty = function.value_type_opt(*ins.first()?)?;
+            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
             eval_lzcount(resolve(ins[0])?, in_ty)
         }
         NodeKind::IntCmpOp(op) => {
-            let in_ty = function.value_type_opt(*ins.first()?)?;
+            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
             Some(u128::from(
-                eval_int_cmp(op, resolve(ins[0])?, resolve(*ins.get(1)?)?, in_ty).ok()?,
+                eval_int_cmp(op, resolve(ins[0])?, resolve(ins.get(1).copied()?)?, in_ty).ok()?,
             ))
         }
         NodeKind::Load(_) => {

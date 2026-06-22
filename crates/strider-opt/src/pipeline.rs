@@ -394,12 +394,6 @@ impl<T: PostOptimizer + Clone + 'static> PostOptimizerClone for T {
     }
 }
 
-impl Clone for Box<dyn PostOptimizer> {
-    fn clone(&self) -> Self {
-        self.clone_box()
-    }
-}
-
 /// An ordered list of `Optimizer` passes that are run in a shared fixed-point
 /// loop.
 ///
