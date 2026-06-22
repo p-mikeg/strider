@@ -1,6 +1,6 @@
 # Jump-table resolution via a non-mutating abstract evaluator
 
-Date: 2026-06-22
+Date: 2026-06-22 (revised)
 Branch: `feature/jump-table-abstract-eval` (off `develop`)
 
 ## Problem
@@ -21,83 +21,108 @@ This is sound but heavy: two clones plus a full optimizer pipeline run per index
 `Clone`. The only whole-`Function` clones in the entire workspace are these two
 sites — nothing else needs `Clone`.
 
-We do not actually need to collapse the graph. We only need to *evaluate* the
-dispatch value for each concrete index. The only optimizations that move a value
-from a concrete index to a concrete target are **ConstFold**, **LoadReadOnly**,
-and **LoadForward** (plus seeding the index constant). The rest of the pipeline
-(KnownBits, DeadBranchElimination, FlagCmp, RegionCollapse, …) does control/bit
-simplification that never contributes to "index `i` → address → target".
+We do not need to collapse the graph. We only need to *evaluate* the dispatch
+value for each concrete index. The only optimizations that move a value from a
+concrete index to a concrete target are **ConstFold**, **LoadReadOnly**, and
+**LoadForward** (plus seeding the index constant). The rest of the pipeline does
+control/bit simplification that never contributes to "index `i` → address →
+target".
 
 ## Design
 
 Replace the clone-and-optimize core with a **read-only abstract evaluator**: no
 `Function`/`Graph` clone, no `EditFunction`, no `default_pipeline`, no
-`compact`. Walk the dispatch value's cone once and evaluate it under each
-concrete index.
+`compact`. Build the dispatch value's cone once, topologically order it, and run
+a flat per-index pass over that order.
 
-### 1. `ValueEvaluator` trait (in `strider-opt`)
+### 1. Abstract value + evaluator (in `strider-opt`)
+
+A jump-table address is either an absolute number (rodata) or stack-pointer
+relative (on-stack table). The stack pointer is symbolic — never a constant —
+so a pure-`u128` value can't represent a stack address. The abstract value is
+therefore two-element:
 
 ```rust
-trait ValueEvaluator {
-    fn evaluate(
-        &self,
-        ctx: &EvalCtx<'_>,
-        value: ValueId,
-        map: &FxHashMap<ValueId, u128>,
-    ) -> Option<u128>;
+enum Abs {
+    Const(u128),                          // a concrete number (rodata addr, arithmetic)
+    SpRel { base: ValueId, offset: i64 }, // sp_base + offset (on-stack addr)
 }
 ```
 
-- `map` is read-only to the evaluators; the **driver** owns insertion.
-- `EvalCtx<'_>` carries `&Function`, `Option<&dyn ReadOnlyMemory>` (ROM),
-  `AliasMode`, and `Endianness`.
-- The driver tries impls in fixed order — **ConstFold → LoadReadOnly →
-  LoadForward** — and the first `Some` wins.
+The evaluator is a concrete struct (no trait — three node families, one
+`match`), holding `{function, rom, alias_mode, endianness, sp_base, sp_memo,
+map}`:
 
-### 2. The three implementations
+- `sp_base = function.initial_sp_value()` — the `InitialVar(stack_vn)` output,
+  the canonical SP terminal (the same `ValueId` `decompose_sp`/`reaching_store`
+  compare against).
+- `map: FxHashMap<ValueId, Abs>` — results for the current index.
 
-**ConstFold.** Reads operand values out of `map`, then calls the existing pure
-cores: `constant_fold/eval_int.rs::eval_int_binary` / `eval_int_cmp`, plus the
-unary / `Truncate` / `Extend` / `Popcount` / `Lzcount` evaluators. It must cover
-**every integer node kind ConstFold currently folds** — completeness is verified
-during TDD against the existing test suite. Also owns the `Phi` rule (below). An
-`IntConst` node evaluates to its own value (no inputs).
+`eval_node(value) -> Option<Abs>` reads its inputs' results from `map` (never
+recurses):
 
-**LoadReadOnly.** Address from `map` → `rom.read(addr, buf)` →
-`endianness.read_uint(buf)` → mask to the load's type. Returns `None` when no
-ROM is configured. Mirrors `load_readonly/mod.rs:138-173`, with the graph
-mutation stripped.
+- `value == sp_base` → `SpRel { base: sp_base, offset: 0 }`.
+- `IntConst` → `Const(int_const_u128(value))`.
+- `IntBinaryOp(Add)` → combine: `(Const,Const)` via `eval_int_binary`;
+  `(SpRel{b,o}, Const(c))` / `(Const(c), SpRel{b,o})` →
+  `SpRel{b, o + sign_interpret(c)}`; `(SpRel,SpRel)` → `None`.
+- every other `IntBinaryOp` / `IntUnaryOp` / `Truncate` / `Extend` / `Popcount`
+  / `Lzcount` / `IntCmpOp` → require all inputs `Const` (an `SpRel` operand →
+  `None`), compute via the existing pure `eval_int_*` helpers, return `Const`.
+- `Load` → see §2.
+- `Phi` → all-arms-agree: every value arm must resolve to the *same* `Abs`
+  (`Const` by value, `SpRel` by `(base, offset)`), else `None`. Sound regardless
+  of which arm control takes, because all arms are equal.
+- anything else → `None`.
 
-**LoadForward.** `find_nearest_clobber(&Function, mem)` (already read-only over
-`&Function`) → dominating `Store` → read `map[store_data]`, reshaping on the
-`u128` (truncate / shift) when store width ≠ load width. A `MemPhi` / `Call` /
-`InitialMemory` boundary, or a non-exact-overlap store, yields `None`. Honors
-`AliasMode` exactly as the pass does today.
+### 2. `Load` evaluation — ConstFold's two memory passes, read-only
 
-**Why the store's value is already available.** The cone is built over *all*
-value inputs **including the memory token**, not just data edges. A `Load` takes
-`[memory, address]`; the memory input's producer is the upstream memory op, so
-walking it backward traverses the whole memory chain, every `Store` in it, and
-each store's `data` value. Therefore `store_data ≺ store ≺ load` in topological
-order, and the stored value is evaluated *before* the load that consumes it — in
-the same single pass. `find_nearest_clobber` can only ever return a store that
-is already in the cone and already in `map`. No recursion and no second cone are
-needed.
+`eval_load(load, value)` splits on the address's `Abs`:
+
+- **`Const(c)` (LoadReadOnly).** `c` is an absolute address: `rom.read(c, buf)` →
+  `endianness.read_uint` → mask to the load type → `Const`. `None` if no ROM or
+  unmapped. Mirrors `load_readonly/mod.rs:138-173`, mutation stripped.
+- **`SpRel{base, offset}` (LoadForward).** The index has already been folded
+  into `offset` (a concrete `i64`), so call the existing
+  **`SpAliasCfg::reaching_store(function, mem, base, offset, load_size)`**
+  (`sp_expr/cfg.rs`) — the shared `MemPhi`-sound memory-SSA store lookup. It
+  walks the load's memory token backward (purely structural, index-independent),
+  decomposes each candidate *store's own* address (`sp + constant`,
+  index-independent) and returns the covering store's `data`, `store_offset`,
+  `size`. We then require `store_offset == offset` (exact anchor), read the
+  store's `data` as a constant (`int_const_u128` — jump-table targets are always
+  constants on the converged graph), and reshape from store width to load width
+  (`Endianness`-aware, mirroring `LoadForward::narrow`). It honors
+  `alias_mode`/call-clobbering exactly as the pass does (so the `Strict` and
+  call-clobber tests behave identically).
+
+**Why `reaching_store` works without graph mutation.** It never reads the load's
+address node. The load offset is supplied by us (folded from the seeded index in
+the `SpRel` domain); the store offsets are decomposed from their own addresses,
+which are `sp + constant` with no index term. eval stays read-only; the only
+index-dependent input is the `offset` argument. This is the asymmetry the
+clone+pipeline got via `ConstantFold` rewriting the address — here the rewrite
+is replaced by folding the index into `offset`.
 
 ### 3. Cone construction + per-index driver
 
-Build the cone as backward reachability from the dispatch value over all value
-inputs (memory token included; control edges excluded), then topologically order
-it (postorder-over-inputs, producers before consumers). The cone and its order
-are **fixed across all `i`** — compute them **once per candidate**.
+Build the cone as backward reachability from the dispatch value over **value
+edges only** (`value_type_opt(input).is_some()` — the same edge set
+`find_index_candidates` already walks; the memory token is *not* followed). The
+store's data is reached at eval time via `reaching_store` + `int_const_u128`, not
+through the cone — so no memory-edge traversal and no recursion are needed.
+Topologically order the cone (postorder over inputs, producers before
+consumers); the order is index-independent, so compute it **once** per
+`classify_table_dispatch` call.
 
 ```text
-cone_rpo = topo_order(backward_value_cone(dispatch_value))   // once per candidate
+order = topo(value_cone(dispatch_value))   // once per classify call
 for i in lo..=hi:
-    map = { idx_value: i }
-    for val in cone_rpo:                 // producers before consumers
-        if let Some(v) = evaluate_any(ctx, val, &map) { map.insert(val, v); }
-    targets.push(u64::try_from(*map.get(&dispatch_value)?)?)   // any miss ⇒ reject candidate
+    map = { idx_value: Const(i) }
+    for val in order:
+        if map.contains(val) { continue }      // skip the seed
+        if let Some(a) = eval_node(val) { map.insert(val, a) }
+    targets.push(u64::try_from(map[dispatch_value].as_const()?)?)   // any miss / SpRel ⇒ reject
 ```
 
 Cost: O(cone × range) per candidate, versus today's O(pipeline × graph × range).
@@ -107,45 +132,42 @@ Cost: O(cone × range) per candidate, versus today's O(pipeline × graph × rang
 Preserve the existing **never-over-approximate** contract (range analysis gives a
 sound upper bound; enumeration treats `lo..=hi` as the complete target set):
 
-- Any value that fails to collapse ⇒ `None` ⇒ the whole candidate is rejected
-  (`enumerate_targets` returns `None`), identical to today's behavior when a
-  wrong candidate fails to fold.
-- **Cycles** (loop-carried phi): inputs stay unresolved ⇒ `None` ⇒ reject. A
-  single RPO pass is sufficient; there is no fixpoint loop.
-- **Value-`Phi`**: evaluate every arm; if all arms collapse to the *same*
-  constant, return it, else `None`. Sound regardless of which arm control would
-  take, because they are all equal. Arm values are in the cone (they are value
-  inputs of the phi) and therefore ordered before it.
+- Any value that fails to resolve (`None`, or a non-`Const` dispatch result) ⇒
+  the whole candidate is rejected (`enumerate_targets` returns `None`), identical
+  to today when a wrong candidate fails to fold.
+- **Cycles** (loop-carried phi): a back-edge input is absent from `map` when its
+  consumer is evaluated ⇒ `None` ⇒ reject. The flat RPO pass needs no explicit
+  cycle guard.
+- **Value-`Phi`**: all-arms-agree (§1).
 
 ### 5. Clone deletion
 
-- Remove `Clone` from `Function`'s derive (`crates/strider-ir/src/function/data.rs:96`,
-  `#[derive(Default, Clone)]` → `#[derive(Default)]`).
+- Remove `Clone` from `Function`'s derive (`crates/strider-ir/src/function/data.rs:96`).
 - Delete the manual `Clone` impl on the generic `strider_graph::Graph<N, V, C>`
-  (`crates/strider-graph/src/graph.rs`), now unused.
-- Delete both clone sites and the now-pointless `compact` in `table.rs`, plus
-  the per-index `EditFunction` / `replace_value` / `default_pipeline` machinery
-  there.
-- Clone removal is enforced by the compiler — if anything else relied on it, the
-  build breaks (exploration confirms nothing does).
+  (`crates/strider-graph/src/graph.rs`).
+- Delete both clone sites + the `compact`/remap + the per-index `EditFunction` /
+  `replace_value` / `default_pipeline` machinery in `table.rs`.
+- Compiler-enforced — exploration confirms `table.rs` was the only consumer.
 
 ### 6. Testing (TDD)
 
 - The existing cross-arch `table_tests.rs` suite (x86 / x64 / aarch64 / arm /
-  thumb / mips32 / ppc32; mips64 stays a known pre-existing gap) is the
-  behavioral gate — the new evaluator must keep every test green.
-- Add unit tests for the evaluator per node-kind family (binary, unary,
-  truncate/extend, popcount/lzcount, cmp), for LoadReadOnly (rodata read,
-  no-ROM), for LoadForward (exact store→load, width-reshape, boundary ⇒ `None`),
-  and for the `Phi` all-arms-agree and fail-closed paths.
-- Clone removal is a compile-time gate (the derive and impl simply go away).
+  thumb / mips32 / ppc32; mips64 stays a known gap; includes the SP-rooted
+  stack-table and alias-mode cases) is the behavioral gate — the new evaluator
+  must keep every test green.
+- Add unit tests for the evaluator's arithmetic + fail-closed paths; rely on
+  `table_tests.rs` for the load/forward/phi/reshape end-to-end paths (isolated
+  graph fixtures for those cost more than the lifted-binary coverage already
+  provides).
+- Clone removal is a compile-time gate.
 - Gate on the full workspace: `cargo test --workspace` + `cargo clippy
   --workspace` + `pytest` before requesting merge.
 
 ## Out of scope
 
-- Other optimization passes' participation in jump-table resolution — explicitly
-  only ConstFold / LoadReadOnly / LoadForward + the index seed.
-- The mips64 PIC/GOT `gp` gap (pre-existing, unchanged).
-- Any change to range analysis / candidate detection (`find_index_candidates`),
-  which stays as-is and continues to feed `(value, lo, hi)` candidates.
+- A GP/GOT-rooted (PIC) table base — a third symbolic base; stays the existing
+  mips64 gap, unchanged.
+- Non-constant stack-table store data (computed-then-spilled targets) — jump
+  targets are constants; `int_const_u128` on the store data suffices.
+- Other optimization passes' participation in jump-table resolution.
+- Range analysis / candidate detection (`find_index_candidates`), unchanged.

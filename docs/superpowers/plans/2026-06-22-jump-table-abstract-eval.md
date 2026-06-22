@@ -4,43 +4,44 @@
 
 **Goal:** Replace the jump-table classifier's clone-and-optimize core with a read-only abstract evaluator that computes each table target by evaluating the dispatch cone under a concrete index, and delete `Function`/`Graph` `Clone`.
 
-**Architecture:** A recursive, memoized `Evaluator` walks the dispatch value's cone over value edges (including the memory token). Three node-kind families do the work, mirroring the only passes that move a value from a concrete index to a concrete target: ConstFold arithmetic (reusing the existing pure `eval_int_*` helpers), LoadReadOnly (constant-address ROM read), and LoadForward (exact-match dominating-store forwarding via the read-only memory-SSA walk). Any unresolved value or a cycle yields `None`, rejecting the candidate (fail-closed, never over-approximating). `table.rs` keeps candidate detection unchanged and swaps its per-index fold from clone+pipeline to the evaluator. With the only `Function` clones gone, `Clone` is removed from `Function` and the generic `Graph`.
+**Architecture:** Build the dispatch value's cone once (over value edges), topologically order it, and run a flat per-index pass. The abstract value is `Const(u128) | SpRel{base, offset}` (the stack pointer is symbolic, so stack addresses can't be a pure number). Three node families do the work, mirroring the only passes that move a value from a concrete index to a concrete target: ConstFold arithmetic (reusing the pure `eval_int_*` helpers), LoadReadOnly (constant-address ROM read), and LoadForward (the index is folded into an `SpRel` offset, then the existing `SpAliasCfg::reaching_store` finds the store at that concrete offset). Any unresolved value, a non-`Const` dispatch result, or a cycle yields `None`, rejecting the candidate (fail-closed). With the only `Function` clones gone, `Clone` is removed from `Function` and the generic `Graph`.
 
 **Tech Stack:** Rust workspace (`strider-opt`, `strider-ir`, `strider-graph`), `rustc_hash`/`smallvec`, `cargo test`/`cargo clippy`.
 
 ## Global Constraints
 
-- Rust-only workspace; obey clippy + workspace lints (`cargo clippy --workspace` must be clean).
-- Panics/`unwrap`/indexing are acceptable ONLY for validator-guaranteed structural invariants; genuinely-fallible analysis steps return `Option`/`Result` (an unresolvable value is `None`, not a panic).
-- Soundness contract (unchanged): the table classifier must NEVER under-approximate the target set. Any value that fails to collapse to a constant ⇒ `None` ⇒ the whole candidate is rejected. Over-approximation (extra dead edges) is acceptable; missing a real target is not.
-- Reuse existing pure helpers; do not re-implement folding arithmetic.
+- Rust-only workspace; obey clippy + workspace lints (`cargo clippy --workspace` clean).
+- Panics/`unwrap`/indexing only for validator-guaranteed structural invariants; genuinely-fallible analysis steps return `Option` (an unresolvable value is `None`, not a panic).
+- Soundness (unchanged): the classifier must NEVER under-approximate the target set. Any value that fails to resolve to a concrete number ⇒ `None` ⇒ candidate rejected. Over-approximation (extra dead edges) is acceptable; missing a real target is not.
+- Reuse existing pure helpers (`eval_int_*`, `reaching_store`); do not re-implement folding or store lookup.
 - No `Arc`/`Rc`/`Send`/`Sync` added to core types.
-- Behavioral regression gate: `crates/strider-opt/src/post_opt/indirect_branch_resolve/table_tests.rs` (x86 / x64 / aarch64 / arm / thumb / mips32 / ppc32; mips64 stays a known pre-existing gap) must stay green through every task.
+- Behavioral regression gate: `crates/strider-opt/src/post_opt/indirect_branch_resolve/table_tests.rs` (x86 / x64 / aarch64 / arm / thumb / mips32 / ppc32 — incl. SP-rooted stack-table + alias-mode cases; mips64 stays a known gap) must stay green through every task.
 - Final merge gate: `cargo test --workspace` + `cargo clippy --workspace` + `uv run pytest` (in `crates/strider-py`) all green.
 
 ---
 
 ## File Structure
 
-- `crates/strider-opt/src/opt/constant_fold/eval_int.rs` — **Modify.** Add pure `eval_int_unary` / `eval_sign_extend` / `eval_popcount` / `eval_lzcount` next to the existing `eval_int_binary` / `eval_int_cmp`, so ConstFold rules and the new evaluator share one source of truth.
+- `crates/strider-opt/src/opt/constant_fold/eval_int.rs` — **Modify.** Add pure `eval_int_unary` / `eval_sign_extend` / `eval_popcount` / `eval_lzcount`.
 - `crates/strider-opt/src/opt/constant_fold/rules.rs` — **Modify.** Refactor the inline unary/sign-extend/popcount/lzcount closures to call the new helpers.
-- `crates/strider-opt/src/sp_expr/cfg.rs` — **Modify.** Add a read-only `forwardable_store_data` method on `SpAliasCfg` (the read-only twin of `LoadForward::try_forward_load` steps 1–3).
-- `crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs` — **Create.** The `Evaluator` struct + recursive `eval`.
+- `crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs` — **Create.** The `Abs` value, the `Evaluator`, and `cone_order`.
 - `crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs` — **Modify.** Declare `mod eval;`.
-- `crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs` — **Modify.** Swap the per-index fold to the evaluator; delete `fold_dispatch_to_const`, the clone, the compact/remap, and the pipeline run.
+- `crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs` — **Modify.** Swap the per-index fold to the evaluator; delete `fold_dispatch_to_const`, the clone, the compact/remap, the pipeline run.
 - `crates/strider-ir/src/function/data.rs` — **Modify.** Remove `Clone` from `Function`'s derive.
-- `crates/strider-graph/src/graph.rs` — **Modify.** Delete the manual `Clone` impl for the generic `Graph`.
+- `crates/strider-graph/src/graph.rs` — **Modify.** Delete the generic `Graph` `Clone` impl.
+
+`SpAliasCfg::reaching_store` and `ReachingSpStore` already exist (`crates/strider-opt/src/sp_expr/cfg.rs`) — no new SP-lookup helper is needed.
 
 ---
 
 ### Task 1: Pure integer eval helpers + ConstFold refactor
 
-Extract the inline unary/sign-extend/popcount/lzcount fold logic into pure functions so the evaluator (Task 3) and ConstFold share one implementation.
+Extract the inline unary/sign-extend/popcount/lzcount fold logic into pure functions so the evaluator (Task 2) and ConstFold share one implementation.
 
 **Files:**
 - Modify: `crates/strider-opt/src/opt/constant_fold/eval_int.rs`
 - Modify: `crates/strider-opt/src/opt/constant_fold/rules.rs:612-622, 696-750`
-- Test: `crates/strider-opt/src/opt/constant_fold/eval_int.rs` (inline `#[cfg(test)]`), plus existing `crates/strider-opt/src/opt/constant_fold/tests.rs` as the refactor safety net.
+- Test: inline `#[cfg(test)]` in `eval_int.rs`, plus existing `constant_fold/tests.rs` as the refactor safety net.
 
 **Interfaces:**
 - Produces:
@@ -63,13 +64,11 @@ mod eval_helper_tests {
 
     #[test]
     fn unary_neg_masks_to_width() {
-        // -1 in I8 is 0xFF.
         assert_eq!(eval_int_unary(IntUnaryOp::Neg, 1, ValueType::I8), Some(0xFF));
     }
 
     #[test]
     fn sign_extend_i8_to_i32() {
-        // 0x80 (I8 = -128) sign-extends to 0xFFFF_FF80.
         assert_eq!(
             eval_sign_extend(0x80, ValueType::I8, ValueType::I32),
             Some(0xFFFF_FF80)
@@ -78,7 +77,6 @@ mod eval_helper_tests {
 
     #[test]
     fn popcount_masks_input_width() {
-        // 0x1FF masked to I8 is 0xFF → 8 ones.
         assert_eq!(eval_popcount(0x1FF, ValueType::I8), Some(8));
     }
 
@@ -97,11 +95,10 @@ Expected: FAIL — `cannot find function eval_int_unary` (and the other three).
 
 - [ ] **Step 3: Add the helpers**
 
-Insert into `crates/strider-opt/src/opt/constant_fold/eval_int.rs` after `eval_int_cmp` (keep the existing `use` lines; add `use strider_ir::IntUnaryOp;` to the file's imports):
+Insert into `eval_int.rs` after `eval_int_cmp` (add `use strider_ir::IntUnaryOp;` to the file imports):
 
 ```rust
 /// Evaluates a unary integer op on a constant, masked to `ty`.
-/// `IntUnaryOp` has only `Neg` (bitwise complement is `Xor(x, all_ones)`).
 pub(crate) fn eval_int_unary(op: IntUnaryOp, v: u128, ty: ValueType) -> Option<u128> {
     let raw = match op {
         IntUnaryOp::Neg => v.wrapping_neg(),
@@ -109,7 +106,7 @@ pub(crate) fn eval_int_unary(op: IntUnaryOp, v: u128, ty: ValueType) -> Option<u
     ty.get_unsigned_int(raw)
 }
 
-/// Sign-extends `v` from `in_ty` and masks the result to `out_ty`.
+/// Sign-extends `v` from `in_ty`, masked to `out_ty`.
 pub(crate) fn eval_sign_extend(v: u128, in_ty: ValueType, out_ty: ValueType) -> Option<u128> {
     let signed = require_signed(in_ty, v).ok()? as u128;
     out_ty.get_unsigned_int(signed)
@@ -121,8 +118,7 @@ pub(crate) fn eval_popcount(v: u128, in_ty: ValueType) -> Option<u128> {
     Some(u128::from(masked.count_ones()))
 }
 
-/// Leading-zero count of `v` within `in_ty`'s bit width (input-width-relative).
-/// `None` for widths > 128 bits (cannot be carried in u128).
+/// Leading-zero count of `v` within `in_ty`'s width; `None` for widths > 128.
 pub(crate) fn eval_lzcount(v: u128, in_ty: ValueType) -> Option<u128> {
     let masked = in_ty.get_unsigned_int(v)?;
     let bits = in_ty.bit_width() as u32;
@@ -144,9 +140,9 @@ pub(crate) fn eval_lzcount(v: u128, in_ty: ValueType) -> Option<u128> {
 Run: `cargo test -p strider-opt eval_helper_tests`
 Expected: PASS (4 tests).
 
-- [ ] **Step 5: Refactor `rules.rs` to call the helpers**
+- [ ] **Step 5: Refactor `rules.rs` closures 2, 6, 7, 8**
 
-In `crates/strider-opt/src/opt/constant_fold/rules.rs`, replace the bodies of closures 2, 6, 7, 8 (keep the `rewrite_rule(...)` matcher arguments and surrounding structure identical):
+In `rules.rs`, replace the bodies (keep the `rewrite_rule(...)` matcher arguments identical):
 
 Closure 2 (`int_unary_any`, ~line 615):
 ```rust
@@ -154,7 +150,6 @@ Closure 2 (`int_unary_any`, ~line 615):
                     super::eval_int::eval_int_unary(op, v, ty).ok_or_else(strider_pattern::skip)?
                 ),
 ```
-
 Closure 6 (`sign_extend`, ~line 699):
 ```rust
                 int_const_with!([v: uint, in_ty, ty] => {
@@ -163,7 +158,6 @@ Closure 6 (`sign_extend`, ~line 699):
                         .ok_or_else(strider_pattern::skip)?
                 }),
 ```
-
 Closure 7 (`popcount`, ~line 711):
 ```rust
                 int_const_with!([v: uint, in_ty] => {
@@ -172,7 +166,6 @@ Closure 7 (`popcount`, ~line 711):
                         .ok_or_else(strider_pattern::skip)?
                 }),
 ```
-
 Closure 8 (`lzcount`, ~line 728):
 ```rust
                 int_const_with!([v: uint, in_ty] => {
@@ -182,10 +175,10 @@ Closure 8 (`lzcount`, ~line 728):
                 }),
 ```
 
-- [ ] **Step 6: Run the ConstFold suite to verify the refactor preserved behavior**
+- [ ] **Step 6: Run the ConstFold suite (refactor preserved behavior)**
 
 Run: `cargo test -p strider-opt constant_fold`
-Expected: PASS (all existing constant_fold tests + the 4 new helper tests).
+Expected: PASS (existing tests + the 4 new helper tests).
 
 - [ ] **Step 7: Commit**
 
@@ -196,117 +189,24 @@ git commit -m "refactor(opt): extract pure int unary/extend/popcount/lzcount eva
 
 ---
 
-### Task 2: Read-only forwardable-store lookup on `SpAliasCfg`
+### Task 2: The `Evaluator`
 
-Add the read-only twin of `LoadForward::try_forward_load` steps 1–3: given a `Load`, return the data value of the exact-match dominating `Store`, or `None`. Uses the no-narrowing `find_nearest_clobber` so it works on `&Function`.
-
-**Files:**
-- Modify: `crates/strider-opt/src/sp_expr/cfg.rs` (add method on `impl SpAliasCfg`; ensure `use super::{alias_verdict, AliasVerdict};` is present — they are re-exported `pub(crate)` from `sp_expr` and `AliasVerdict` is already referenced in this file).
-- Test: covered indirectly by Task 4's `table_tests.rs` integration gate (constructing an isolated SP-rooted store/load chain by hand is higher-cost than the lifted-binary coverage already exercises this path).
-
-**Interfaces:**
-- Produces: `pub(crate) fn forwardable_store_data(&mut self, function: &Function, load: NodeId) -> Option<ValueId>` on `SpAliasCfg`.
-- Consumes: existing private `fn oracle(&mut self, AddrClass, i64, VnSpace) -> SpAliasOracle<'_>`, `fn classify_addr`, the `MemorySSAWalker::find_nearest_clobber` default method, `alias_verdict`, `AliasVerdict::Match`.
-
-- [ ] **Step 1: Add the method**
-
-Insert into `crates/strider-opt/src/sp_expr/cfg.rs` inside `impl<'m> SpAliasCfg<'m>` (after `nearest_clobber`):
-
-```rust
-    /// Read-only twin of `LoadForward`'s forward decision: the data value of
-    /// the exact-match `Store` that is the nearest may-aliasing definition
-    /// reaching `load`, or `None` when the nearest covering def is not an
-    /// exact-match same-location store (a `Call`, a disagreeing `MemPhi`,
-    /// `InitialMemory`, an overlapping-but-shifted store, or an opaque
-    /// producer). Performs NO narrowing — safe from a `&Function` context.
-    /// The caller reshapes the returned value from the store width to the
-    /// load width (`Endianness`-aware), exactly as `LoadForward::narrow` does.
-    pub(crate) fn forwardable_store_data(
-        &mut self,
-        function: &Function,
-        load: NodeId,
-    ) -> Option<ValueId> {
-        // Load inputs: [memory, addr].
-        let [mem, addr] = function.node_inputs_exact::<2>(load).ok()?;
-        let [load_value] = function.node_outputs_exact::<1>(load).ok()?;
-        let load_ty = function.value_type_opt(load_value)?;
-        let load_size = load_ty.byte_size() as i64;
-        let load_space = match function.node_kind(load) {
-            NodeKind::Load(s) => *s,
-            _ => return None,
-        };
-        let load_class = self.classify_addr(function, addr);
-
-        // Nearest may-aliasing def (read-only walk, no narrowing).
-        let clobber = {
-            use super::mem_ssa::MemorySSAWalker;
-            let mut oracle = self.oracle(load_class, load_size, load_space);
-            oracle.find_nearest_clobber(function, function.producer(mem))
-        };
-        if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
-            return None;
-        }
-
-        // Exact-match check: same location, store covers the load's bytes.
-        let store_addr = function.store_addr(clobber);
-        let data = function.store_data(clobber);
-        let data_ty = function.value_type_opt(data)?;
-        let store_size = data_ty.byte_size() as i64;
-        let store_class = self.classify_addr(function, store_addr);
-        if alias_verdict(
-            load_class,
-            load_size,
-            store_class,
-            store_size,
-            self.alias_mode,
-            false,
-        ) != AliasVerdict::Match
-        {
-            return None;
-        }
-        Some(data)
-    }
-```
-
-If `cfg.rs` does not already `use` the free `alias_verdict` function or `AliasVerdict`, add at the top: `use super::{AliasVerdict, alias_verdict};`. (`NodeKind`, `NodeId`, `ValueId`, `Function` are already imported in this file.)
-
-- [ ] **Step 2: Verify it compiles**
-
-Run: `cargo build -p strider-opt`
-Expected: builds clean (no callers yet — `#[allow(dead_code)]` is not needed because Task 3 consumes it in the same PR; if building this task in isolation triggers a dead-code lint, the next task removes it).
-
-- [ ] **Step 3: Run the load_forward suite (sanity — unchanged pass)**
-
-Run: `cargo test -p strider-opt load_forward`
-Expected: PASS (this task adds a method but changes no existing behavior).
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add crates/strider-opt/src/sp_expr/cfg.rs
-git commit -m "feat(opt): read-only forwardable_store_data lookup on SpAliasCfg"
-```
-
----
-
-### Task 3: The `Evaluator`
-
-The recursive, memoized abstract evaluator over the dispatch cone.
+The flat-RPO abstract evaluator over the dispatch cone, with the `Const | SpRel` domain.
 
 **Files:**
 - Create: `crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs`
-- Modify: `crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs` (add `mod eval;` near the other module declarations)
-- Test: inline `#[cfg(test)]` in `eval.rs` (arithmetic + fail-closed), using `strider-ir-test-utils` + `IRBuilderExt`.
+- Modify: `crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs` (add `mod eval;`)
+- Test: inline `#[cfg(test)]` in `eval.rs` (arithmetic + fail-closed).
 
 **Interfaces:**
 - Produces:
-  - `pub(crate) struct Evaluator<'a>` with `pub(crate) fn new(function: &'a strider_ir::Function, rom: Option<&'a dyn strider_ir::ReadOnlyMemory>, alias_mode: crate::AliasMode) -> Self`
-  - `pub(crate) fn eval_target(&mut self, dispatch: ValueId, idx_value: ValueId, idx: u128) -> Option<u64>`
-- Consumes: Task 1 helpers (`crate::opt::constant_fold::eval_int::{eval_int_binary, eval_int_cmp, eval_int_unary, eval_sign_extend, eval_popcount, eval_lzcount}`), Task 2 `SpAliasCfg::forwardable_store_data`, `crate::sp_expr::{SpAliasCfg, SpExprMemo}`.
+  - `pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<ValueId>`
+  - `pub(crate) struct Evaluator<'a>` with `pub(crate) fn new(function: &'a strider_ir::Function, rom: Option<&'a dyn strider_ir::ReadOnlyMemory>, alias_mode: crate::AliasMode) -> Self` and `pub(crate) fn eval_target(&mut self, order: &[ValueId], dispatch: ValueId, idx_value: ValueId, idx: u128) -> Option<u64>`
+- Consumes: Task 1 helpers; `crate::sp_expr::{SpAliasCfg, SpExprMemo}` + `SpAliasCfg::reaching_store` / `ReachingSpStore`; `Function::{initial_sp_value, load_addr, int_const_u128, node_inputs, node_inputs_exact, value_type_opt, producer, node_kind, endianness}`.
 
 - [ ] **Step 1: Declare the module**
 
-In `crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs`, add alongside the existing `pub mod table;`:
+In `crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs`, alongside `pub mod table;`:
 
 ```rust
 mod eval;
@@ -314,84 +214,79 @@ mod eval;
 
 - [ ] **Step 2: Write the failing test**
 
-Create `crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs` with ONLY the test module first:
+Create `eval.rs` with ONLY the test module first:
 
 ```rust
 #[cfg(test)]
 mod tests {
-    use super::Evaluator;
-    use strider_ir::IRBuilderExt;
-    use strider_ir::node::ValueType;
-    use strider_ir_test_utils::make_empty_fn;
+    use super::{Evaluator, cone_order};
 
-    // Build `Add(idx, 100)` over a fresh function and return (function, idx, sum).
-    // `make_empty_fn` yields a built Function plus a FunctionBuilder-style handle;
-    // adapt to the test-utils surface in use (see existing strider-opt tests that
-    // build small graphs).
+    // Build `Add(idx, 100):I64` and return (function, idx value, sum value).
+    // Copy the graph-build pattern from constant_fold/tests.rs (it builds
+    // IntBinaryOp graphs via IRBuilderExt over a test-utils FunctionBuilder).
+    fn build_add_idx_100() -> (
+        strider_ir::Function,
+        strider_ir::node::ValueId,
+        strider_ir::node::ValueId,
+    ) {
+        todo!("build with test-utils FunctionBuilder; see constant_fold/tests.rs")
+    }
+
     #[test]
     fn evaluates_add_under_seed() {
         let (function, idx, sum) = build_add_idx_100();
+        let order = cone_order(&function, sum);
         let mut ev = Evaluator::new(&function, None, crate::AliasMode::default());
-        // idx = 5 → 105
-        assert_eq!(ev.eval_target(sum, idx, 5), Some(105));
-        // idx = 7 → 107 (re-seed, fresh memo)
-        assert_eq!(ev.eval_target(sum, idx, 7), Some(107));
+        assert_eq!(ev.eval_target(&order, sum, idx, 5), Some(105));
+        assert_eq!(ev.eval_target(&order, sum, idx, 7), Some(107)); // re-seed, fresh map
     }
 
     #[test]
-    fn unresolvable_input_is_none() {
-        // A value whose cone has a non-seeded, non-constant leaf cannot collapse.
-        let (function, unrelated, sum) = build_add_idx_100();
+    fn unseeded_index_is_none() {
+        let (function, idx, sum) = build_add_idx_100();
+        let order = cone_order(&function, sum);
         let mut ev = Evaluator::new(&function, None, crate::AliasMode::default());
-        // Seed a DIFFERENT value than the one in the cone → sum stays symbolic.
-        assert_eq!(ev.eval_target(sum, unrelated_other_value(&function), 5), None);
-        let _ = unrelated;
+        // Seed the SUM (not idx) → idx stays symbolic → sum cannot collapse.
+        assert_eq!(ev.eval_target(&order, sum, sum, 5), Some(5)); // sum seeded directly
+        // A fresh eval where nothing relevant is seeded:
+        let bogus = idx; // idx is in the cone but we seed a different value below
+        let _ = bogus;
+        assert_eq!(ev.eval_target(&order, sum, sum_unrelated_leaf(&function), 5), None);
     }
 
-    // Helpers below are written against the project's test-utils graph builder.
-    fn build_add_idx_100() -> (strider_ir::Function, strider_ir::node::ValueId, strider_ir::node::ValueId) {
-        // Construct via the test-utils builder: an InitialVar `idx` and an
-        // IntConst 100, summed at I64. Return (built function, idx value, sum value).
-        // Fill in using the same builder calls existing strider-opt unit tests use
-        // (e.g. constant_fold/tests.rs builds `IntBinaryOp` nodes via IRBuilderExt).
-        todo!("build with test-utils FunctionBuilder; see constant_fold/tests.rs")
-    }
-    fn unrelated_other_value(_f: &strider_ir::Function) -> strider_ir::node::ValueId {
-        todo!("a value id not present in the dispatch cone")
+    fn sum_unrelated_leaf(_f: &strider_ir::Function) -> strider_ir::node::ValueId {
+        todo!("a value id present in the cone but not the seed (e.g. the IntConst 100)")
     }
 }
 ```
 
-> NOTE TO IMPLEMENTER: `build_add_idx_100` / `unrelated_other_value` are the ONLY
-> `todo!`s in this plan and exist because the exact test-utils builder calls must
-> be copied from a working example. Before Step 3, open
-> `crates/strider-opt/src/opt/constant_fold/tests.rs` and replicate its graph-build
-> pattern (it builds `IntBinaryOp(IntConst, …)` graphs via `IRBuilderExt`), then
-> replace both `todo!`s with real construction. Do not proceed with `todo!`s in place.
+> NOTE TO IMPLEMENTER: the two `todo!`s are the ONLY ones in this plan. Before
+> Step 3, open `crates/strider-opt/src/opt/constant_fold/tests.rs`, copy its
+> graph-build pattern (`IRBuilderExt::build_int_const` / `build_int_binary_operation`
+> over a `RegisterSet`/`make_*_fn` builder, then `.build()`), and replace both
+> `todo!`s with real construction. Do not proceed with `todo!`s in place.
 
 - [ ] **Step 3: Run test to verify it fails**
 
 Run: `cargo test -p strider-opt indirect_branch_resolve::eval`
-Expected: FAIL — `Evaluator` not found / `todo!` panic.
+Expected: FAIL — `Evaluator` / `cone_order` not found.
 
 - [ ] **Step 4: Implement the evaluator**
 
-Prepend to `crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs` (above the test module):
+Prepend to `eval.rs` (above the test module):
 
 ```rust
 //! Read-only abstract evaluation of a jump-table dispatch cone.
 //!
-//! Computes the concrete branch target for a concrete index by walking the
-//! dispatch value's cone (over value edges, including the memory token) and
-//! evaluating each node. Three node families do the work — mirroring the only
-//! passes that move a value from a concrete index to a concrete target:
-//! ConstFold arithmetic, `LoadReadOnly` (constant-address ROM read), and
-//! `LoadForward` (exact-match dominating-store forwarding). No graph mutation,
-//! no clone, no pipeline.
-//!
-//! Soundness: any unresolved value or a cycle yields `None`, so the caller
-//! rejects the candidate. The evaluator never over- or under-approximates a
-//! concrete value — it returns the exact constant or nothing.
+//! Computes the concrete branch target for a concrete index by evaluating the
+//! dispatch value's cone in producers-before-consumers order. The abstract
+//! value is a concrete number or stack-pointer-relative (`Abs`), because a
+//! stack address can't be a pure number (the SP is symbolic). Three node
+//! families do the work — ConstFold arithmetic, `LoadReadOnly` (constant-address
+//! ROM read), and `LoadForward` (index folded into an `SpRel` offset, then the
+//! existing `reaching_store` finds the store at that concrete offset). No graph
+//! mutation, no clone, no pipeline. Any unresolved value, a non-`Const` dispatch
+//! result, or a cycle yields `None`, so the caller rejects the candidate.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -404,17 +299,40 @@ use crate::opt::constant_fold::eval_int::{
 };
 use crate::sp_expr::{SpAliasCfg, SpExprMemo};
 
-/// Read-only abstract evaluator over a single function's dispatch cones.
-/// `sp_memo` (index-independent SP classification) persists across indices;
-/// the value `cache` and `in_progress` guard are reset per index.
+/// Abstract value: a concrete number, or `sp_base + offset`.
+#[derive(Clone, Copy)]
+enum Abs {
+    Const(u128),
+    SpRel { base: ValueId, offset: i64 },
+}
+
+impl Abs {
+    fn as_const(self) -> Option<u128> {
+        match self {
+            Abs::Const(c) => Some(c),
+            Abs::SpRel { .. } => None,
+        }
+    }
+    fn same(self, other: Abs) -> bool {
+        match (self, other) {
+            (Abs::Const(a), Abs::Const(b)) => a == b,
+            (
+                Abs::SpRel { base: ba, offset: oa },
+                Abs::SpRel { base: bb, offset: ob },
+            ) => ba == bb && oa == ob,
+            _ => false,
+        }
+    }
+}
+
 pub(crate) struct Evaluator<'a> {
     function: &'a strider_ir::Function,
     rom: Option<&'a dyn ReadOnlyMemory>,
     alias_mode: crate::AliasMode,
     endianness: Endianness,
+    sp_base: Option<ValueId>,
     sp_memo: SpExprMemo,
-    cache: FxHashMap<ValueId, Option<u128>>,
-    in_progress: FxHashSet<ValueId>,
+    map: FxHashMap<ValueId, Abs>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -428,89 +346,90 @@ impl<'a> Evaluator<'a> {
             rom,
             alias_mode,
             endianness: function.endianness(),
+            sp_base: function.initial_sp_value(),
             sp_memo: SpExprMemo::default(),
-            cache: FxHashMap::default(),
-            in_progress: FxHashSet::default(),
+            map: FxHashMap::default(),
         }
     }
 
-    /// Evaluate `dispatch` with `idx_value` bound to `idx`. Returns the
-    /// resolved branch target narrowed to `u64`, or `None` if anything in the
-    /// cone fails to collapse (reject this candidate).
+    /// Evaluate `dispatch` over `order` (from [`cone_order`]) with `idx_value`
+    /// bound to `idx`. Returns the target as `u64`, or `None` if anything fails
+    /// to collapse to a concrete number.
     pub(crate) fn eval_target(
         &mut self,
+        order: &[ValueId],
         dispatch: ValueId,
         idx_value: ValueId,
         idx: u128,
     ) -> Option<u64> {
-        // Per-index reset: the value cache and cycle guard depend on the seed.
-        // sp_memo is index-independent and intentionally kept.
-        self.cache.clear();
-        self.in_progress.clear();
-        self.cache.insert(idx_value, Some(idx));
-        u64::try_from(self.eval(dispatch)?).ok()
+        self.map.clear();
+        self.map.insert(idx_value, Abs::Const(idx));
+        for &val in order {
+            if self.map.contains_key(&val) {
+                continue;
+            }
+            if let Some(a) = self.eval_node(val) {
+                self.map.insert(val, a);
+            }
+        }
+        u64::try_from(self.map.get(&dispatch).copied()?.as_const()?).ok()
     }
 
-    fn eval(&mut self, value: ValueId) -> Option<u128> {
-        if let Some(&cached) = self.cache.get(&value) {
-            return cached;
-        }
-        // Cycle (loop-carried phi / self-referential value) → fail closed.
-        if !self.in_progress.insert(value) {
-            return None;
-        }
-        let result = self.eval_uncached(value);
-        self.in_progress.remove(&value);
-        self.cache.insert(value, result);
-        result
+    fn get(&self, value: ValueId) -> Option<Abs> {
+        self.map.get(&value).copied()
     }
 
-    fn eval_uncached(&mut self, value: ValueId) -> Option<u128> {
+    fn eval_node(&mut self, value: ValueId) -> Option<Abs> {
+        if Some(value) == self.sp_base {
+            return Some(Abs::SpRel { base: value, offset: 0 });
+        }
         let f = self.function;
         let node = f.producer(value);
         let kind = *f.node_kind(node);
         let out_ty = f.value_type_opt(value);
-        // Value-typed inputs only (drops Control / Memory / PhiToken edges).
         let ins: SmallVec<[ValueId; 2]> = f
             .node_inputs(node)
             .into_iter()
             .filter(|&i| f.value_type_opt(i).is_some())
             .collect();
         match kind {
-            NodeKind::IntConst(_) => f.int_const_u128(value),
+            NodeKind::IntConst(_) => Some(Abs::Const(f.int_const_u128(value)?)),
+            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add) => {
+                self.eval_add(self.get(*ins.first()?)?, self.get(*ins.get(1)?)?, out_ty?)
+            }
             NodeKind::IntBinaryOp(op) => {
-                let l = self.eval(*ins.first()?)?;
-                let r = self.eval(*ins.get(1)?)?;
-                eval_int_binary(op, l, r, out_ty?)
+                let l = self.get(*ins.first()?)?.as_const()?;
+                let r = self.get(*ins.get(1)?)?.as_const()?;
+                Some(Abs::Const(eval_int_binary(op, l, r, out_ty?)?))
             }
             NodeKind::IntUnaryOp(op) => {
-                let v = self.eval(*ins.first()?)?;
-                eval_int_unary(op, v, out_ty?)
+                let v = self.get(*ins.first()?)?.as_const()?;
+                Some(Abs::Const(eval_int_unary(op, v, out_ty?)?))
             }
             NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
-                let v = self.eval(*ins.first()?)?;
-                out_ty?.get_unsigned_int(v)
+                let v = self.get(*ins.first()?)?.as_const()?;
+                Some(Abs::Const(out_ty?.get_unsigned_int(v)?))
             }
             NodeKind::Extend(ExtendOp::SignExtend) => {
                 let in_ty = f.value_type_opt(*ins.first()?)?;
-                let v = self.eval(ins[0])?;
-                eval_sign_extend(v, in_ty, out_ty?)
+                let v = self.get(ins[0])?.as_const()?;
+                Some(Abs::Const(eval_sign_extend(v, in_ty, out_ty?)?))
             }
             NodeKind::Popcount => {
                 let in_ty = f.value_type_opt(*ins.first()?)?;
-                let v = self.eval(ins[0])?;
-                eval_popcount(v, in_ty)
+                let v = self.get(ins[0])?.as_const()?;
+                Some(Abs::Const(eval_popcount(v, in_ty)?))
             }
             NodeKind::Lzcount => {
                 let in_ty = f.value_type_opt(*ins.first()?)?;
-                let v = self.eval(ins[0])?;
-                eval_lzcount(v, in_ty)
+                let v = self.get(ins[0])?.as_const()?;
+                Some(Abs::Const(eval_lzcount(v, in_ty)?))
             }
             NodeKind::IntCmpOp(op) => {
                 let in_ty = f.value_type_opt(*ins.first()?)?;
-                let l = self.eval(ins[0])?;
-                let r = self.eval(*ins.get(1)?)?;
-                eval_int_cmp(op, l, r, in_ty).ok().map(u128::from)
+                let l = self.get(ins[0])?.as_const()?;
+                let r = self.get(*ins.get(1)?)?.as_const()?;
+                Some(Abs::Const(u128::from(eval_int_cmp(op, l, r, in_ty).ok()?)))
             }
             NodeKind::Load(_) => self.eval_load(node, value),
             NodeKind::Phi => self.eval_phi(node),
@@ -518,41 +437,65 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// `LoadReadOnly` then `LoadForward`, read-only.
-    fn eval_load(&mut self, node: NodeId, value: ValueId) -> Option<u128> {
-        let f = self.function;
-        let rom = self.rom;
-        let endianness = self.endianness;
-        let load_ty = f.value_type_opt(value)?;
-
-        // LoadReadOnly: constant address resolvable in the ROM image.
-        if let Some(rom) = rom {
-            let addr_value = f.load_addr(node);
-            if let Some(addr) = self.eval(addr_value).and_then(|a| u64::try_from(a).ok()) {
-                let size = load_ty.byte_size();
-                if size <= 16 {
-                    let mut bytes = [0u8; 16];
-                    if rom.read(addr, &mut bytes[..size]).is_ok() {
-                        let loaded = endianness.read_uint(&bytes[..size]);
-                        return load_ty.get_unsigned_int(loaded);
-                    }
-                }
+    /// `Add` in the abstract domain: `Const+Const`, or `SpRel ± Const`.
+    fn eval_add(&self, l: Abs, r: Abs, ty: ValueType) -> Option<Abs> {
+        match (l, r) {
+            (Abs::Const(a), Abs::Const(b)) => Some(Abs::Const(eval_int_binary(
+                strider_ir::IntBinaryOp::Add,
+                a,
+                b,
+                ty,
+            )?)),
+            (Abs::SpRel { base, offset }, Abs::Const(c))
+            | (Abs::Const(c), Abs::SpRel { base, offset }) => {
+                // Signed interpretation so a negative frame offset (stored as
+                // 0xFFFF..) subtracts correctly.
+                let delta = i64::try_from(ty.get_signed_int(c)?).ok()?;
+                Some(Abs::SpRel { base, offset: offset.wrapping_add(delta) })
             }
+            (Abs::SpRel { .. }, Abs::SpRel { .. }) => None,
         }
-
-        // LoadForward: exact-match dominating store; reshape store→load width.
-        let data = {
-            let mut cfg = SpAliasCfg::call_blocking(&mut self.sp_memo, self.alias_mode);
-            cfg.forwardable_store_data(f, node)
-        }?;
-        let data_ty = f.value_type_opt(data)?;
-        let v = self.eval(data)?;
-        self.reshape(v, data_ty, load_ty)
     }
 
-    /// Reshape a stored value to a narrower load width (mirrors
-    /// `LoadForward::narrow`). Equal widths pass through; a wider load from a
-    /// narrower store cannot be backed → `None`.
+    /// `LoadReadOnly` (const address) then `LoadForward` (SP-relative).
+    fn eval_load(&mut self, node: NodeId, value: ValueId) -> Option<Abs> {
+        let f = self.function;
+        let load_ty = f.value_type_opt(value)?;
+        match self.get(f.load_addr(node))? {
+            Abs::Const(c) => {
+                let rom = self.rom?;
+                let a = u64::try_from(c).ok()?;
+                let size = load_ty.byte_size();
+                if size > 16 {
+                    return None;
+                }
+                let mut bytes = [0u8; 16];
+                rom.read(a, &mut bytes[..size]).ok()?;
+                let loaded = self.endianness.read_uint(&bytes[..size]);
+                Some(Abs::Const(load_ty.get_unsigned_int(loaded)?))
+            }
+            Abs::SpRel { base, offset } => {
+                let [mem, _addr] = f.node_inputs_exact::<2>(node).ok()?;
+                let load_size = load_ty.byte_size() as i64;
+                let reaching = {
+                    let mut cfg = SpAliasCfg::call_blocking(&mut self.sp_memo, self.alias_mode);
+                    cfg.reaching_store(f, mem, base, offset, load_size)
+                }?;
+                // Exact anchor: the store must sit at the probed offset.
+                if reaching.store_offset != offset {
+                    return None;
+                }
+                // Jump targets are constants on the converged graph.
+                let data_ty = f.value_type_opt(reaching.data)?;
+                let raw = f.int_const_u128(reaching.data)?;
+                Some(Abs::Const(self.reshape(raw, data_ty, load_ty)?))
+            }
+        }
+    }
+
+    /// Reshape a stored constant to a narrower load width (mirrors
+    /// `LoadForward::narrow`). Equal widths pass through; load wider than store
+    /// → `None`.
     fn reshape(&self, v: u128, data_ty: ValueType, load_ty: ValueType) -> Option<u128> {
         if data_ty == load_ty {
             return Some(v);
@@ -564,8 +507,7 @@ impl<'a> Evaluator<'a> {
             let shifted = match self.endianness {
                 Endianness::Little => v,
                 Endianness::Big => {
-                    let shift_bits =
-                        ((data_ty.byte_size() - load_ty.byte_size()) as u32) * 8;
+                    let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u32) * 8;
                     v >> shift_bits
                 }
             };
@@ -574,72 +516,102 @@ impl<'a> Evaluator<'a> {
         None
     }
 
-    /// All-arms-agree: every value arm must collapse to the same constant.
-    fn eval_phi(&mut self, node: NodeId) -> Option<u128> {
+    /// All-arms-agree: every value arm must resolve to the same `Abs`.
+    fn eval_phi(&mut self, node: NodeId) -> Option<Abs> {
         let arms: SmallVec<[ValueId; 4]> = self
             .function
             .node_inputs(node)
             .into_iter()
             .filter(|&i| self.function.value_type_opt(i).is_some())
             .collect();
-        let mut agreed: Option<u128> = None;
+        let mut agreed: Option<Abs> = None;
         for arm in arms {
-            let v = self.eval(arm)?;
+            let v = self.get(arm)?;
             match agreed {
                 None => agreed = Some(v),
-                Some(prev) if prev == v => {}
+                Some(prev) if prev.same(v) => {}
                 Some(_) => return None,
             }
         }
         agreed
     }
 }
+
+/// The dispatch cone in producers-before-consumers order: backward reachability
+/// from `root` over value edges only (the memory token is not followed — store
+/// data is resolved at eval time via `reaching_store`). Iterative postorder, so
+/// a deep cone costs O(1) host stack; cycles terminate via `seen` (a back-edge
+/// input is absent at eval time → `None`).
+pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<ValueId> {
+    let mut order: Vec<ValueId> = Vec::new();
+    let mut seen: FxHashSet<ValueId> = FxHashSet::default();
+    let mut stack: Vec<(ValueId, bool)> = vec![(root, false)];
+    while let Some((v, processed)) = stack.pop() {
+        if processed {
+            order.push(v);
+            continue;
+        }
+        if !seen.insert(v) {
+            continue;
+        }
+        stack.push((v, true));
+        for input in function.node_inputs(function.producer(v)) {
+            if function.value_type_opt(input).is_some() && !seen.contains(&input) {
+                stack.push((input, false));
+            }
+        }
+    }
+    order
+}
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `cargo test -p strider-opt indirect_branch_resolve::eval`
-Expected: PASS (both tests).
+Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs
-git commit -m "feat(opt): abstract evaluator for jump-table dispatch cones"
+git commit -m "feat(opt): abstract evaluator (Const|SpRel) for jump-table cones"
 ```
 
 ---
 
-### Task 4: Rewire `table.rs` onto the evaluator; delete clone+pipeline
+### Task 3: Rewire `table.rs` onto the evaluator; delete clone+pipeline
 
-Swap the per-index fold from clone+optimize to the evaluator. The existing `table_tests.rs` suite is the characterization gate.
+The existing `table_tests.rs` suite is the characterization gate.
 
 **Files:**
 - Modify: `crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs`
-- Test: `crates/strider-opt/src/post_opt/indirect_branch_resolve/table_tests.rs` (unchanged — the regression gate).
+- Test: `table_tests.rs` (unchanged — the regression gate).
 
 **Interfaces:**
-- Consumes: Task 3 `Evaluator::{new, eval_target}`.
+- Consumes: Task 2 `Evaluator::{new, eval_target}`, `cone_order`.
 - Removes: `fold_dispatch_to_const`.
 
 - [ ] **Step 1: Run the integration gate BEFORE the change (baseline)**
 
 Run: `cargo test -p strider-opt indirect_branch_resolve::table`
-Expected: PASS (record the passing test count — this is the baseline to preserve).
+Expected: PASS (record the passing count — the baseline to preserve).
 
 - [ ] **Step 2: Rewrite the body of `classify_table_dispatch`**
 
-In `table.rs`, replace everything from `// Clone + compact ONCE up front:` through the end of the `for (idx_value, lo, hi) in candidates { ... } None` block with:
+Replace everything from `// Clone + compact ONCE up front:` through the closing `None` of the candidate loop with:
 
 ```rust
     // Evaluate the dispatch cone under each concrete index — no clone, no
-    // pipeline. The candidate whose whole range collapses to constants IS the
-    // index; the constants are the targets. A wrong candidate leaves the cone
-    // dependent on a non-seeded runtime value and fails to collapse → rejected.
+    // pipeline. The cone + its topological order are index-independent, so
+    // build them once and reuse across candidates and indices. The candidate
+    // whose whole range collapses to constants IS the index; the constants are
+    // the targets. A wrong candidate leaves the cone dependent on a non-seeded
+    // runtime value and fails to collapse → rejected.
+    let order = super::eval::cone_order(ctx, anchor_value);
     let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
     for (idx_value, lo, hi) in candidates {
         if let Some(targets) =
-            enumerate_targets(lo, hi, |v| ev.eval_target(anchor_value, idx_value, v))
+            enumerate_targets(lo, hi, |v| ev.eval_target(&order, anchor_value, idx_value, v))
         {
             return Some(ResolvedTargets::Multiple(targets));
         }
@@ -650,16 +622,16 @@ In `table.rs`, replace everything from `// Clone + compact ONCE up front:` throu
 
 - [ ] **Step 3: Delete `fold_dispatch_to_const` and now-unused imports**
 
-Remove the entire `fn fold_dispatch_to_const(...) { ... }` function. Then drop imports that only it used. Check and remove if now-unused: `use crate::ReadOnlyMemory;` stays (still a parameter type); `strider_ir::IRBuilderExt`, `crate::EditFunction`, `crate::OptCtx`, `crate::default_pipeline` were local to `fold_dispatch_to_const` — confirm none remain referenced. Run `cargo build -p strider-opt` and fix any unused-import warnings it flags.
+Remove the entire `fn fold_dispatch_to_const(...) { ... }`. Then `cargo build -p strider-opt` and remove any imports it flags as unused (the function held `crate::EditFunction` / `crate::OptCtx` / `crate::default_pipeline` / `strider_ir::IRBuilderExt` locally; the top-level `use crate::ReadOnlyMemory;` and `use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId};` and `use strider_ir::IRViewer;` all stay — still used by the surviving code).
 
 - [ ] **Step 4: Update the module doc comment**
 
-Replace the "2. **Pin and fold.**" bullet and the `## Soundness` "Complete fold" paragraph references to cloning/pipeline with the evaluator description. Minimal edit: change "clone the function, substitute the candidate with `IntConst(i)` … and run the canonical `crate::default_pipeline` on the clone" to "evaluate the dispatch cone under `index = i` via the read-only `eval::Evaluator` (ConstFold arithmetic + `LoadReadOnly` ROM reads + `LoadForward` store forwarding)"; change "The clone is disposable, so a destructive pipeline run leaves the analysed function untouched" to "The evaluator is read-only, so the analysed function is never mutated." Keep the soundness gates wording otherwise intact.
+In the `//!` header: change bullet "2. **Pin and fold.**" — replace "clone the function, substitute the candidate with `IntConst(i)` … and run the canonical `crate::default_pipeline` on the clone" with "evaluate the dispatch cone under `index = i` via the read-only `eval::Evaluator` (ConstFold arithmetic + `LoadReadOnly` ROM reads + `LoadForward` via `reaching_store`)". In `## Soundness`, change "The clone is disposable, so a destructive pipeline run leaves the analysed function untouched" to "The evaluator is read-only, so the analysed function is never mutated." Leave the soundness gates otherwise intact.
 
 - [ ] **Step 5: Run the integration gate AFTER the change**
 
 Run: `cargo test -p strider-opt indirect_branch_resolve`
-Expected: PASS with the SAME test count as Step 1's baseline. If any arch table regresses, STOP and debug with superpowers:systematic-debugging before continuing — a regression here means the evaluator misses a shape the pipeline folded (likely a value-`Phi` arm, a reshape, or a node kind returning `None` in `eval_uncached`'s `_` arm).
+Expected: PASS with the SAME count as Step 1. If any arch table regresses, STOP and use superpowers:systematic-debugging — a regression means the evaluator misses a shape the pipeline folded (suspect: a node kind hitting `eval_node`'s `_ => None`, the `SpRel` `Add` propagation, the `reaching_store` exact-offset check, or a value-`Phi` arm).
 
 - [ ] **Step 6: Run the full strider-opt suite**
 
@@ -675,7 +647,7 @@ git commit -m "refactor(opt): resolve jump tables via abstract eval, drop clone+
 
 ---
 
-### Task 5: Remove `Clone` from `Function` and the generic `Graph`
+### Task 4: Remove `Clone` from `Function` and the generic `Graph`
 
 With the only whole-`Function` clones gone, delete the capability. The compiler is the gate.
 
@@ -683,11 +655,9 @@ With the only whole-`Function` clones gone, delete the capability. The compiler 
 - Modify: `crates/strider-ir/src/function/data.rs:96`
 - Modify: `crates/strider-graph/src/graph.rs:57-66`
 
-**Interfaces:** none (pure capability removal).
-
 - [ ] **Step 1: Remove `Clone` from `Function`'s derive**
 
-In `crates/strider-ir/src/function/data.rs`, change line 96:
+`crates/strider-ir/src/function/data.rs:96`:
 ```rust
 #[derive(Default)]
 pub struct Function {
@@ -696,17 +666,17 @@ pub struct Function {
 
 - [ ] **Step 2: Delete the generic `Graph` Clone impl**
 
-In `crates/strider-graph/src/graph.rs`, delete the entire `impl<N: Clone, V: Clone, C: NodeCacheable<N, V>> Clone for Graph<N, V, C> { ... }` block (lines ~52–66, including the preceding `// Manual Clone ...` comment).
+In `crates/strider-graph/src/graph.rs`, delete the entire `impl<N: Clone, V: Clone, C: NodeCacheable<N, V>> Clone for Graph<N, V, C> { ... }` block (and its preceding `// Manual Clone ...` comment).
 
-- [ ] **Step 3: Build the workspace to find any remaining clone consumers**
+- [ ] **Step 3: Build the workspace**
 
 Run: `cargo build --workspace`
-Expected: builds clean. If a `.clone()` on a `Function`/`Graph` surfaces (it should not — exploration confirmed table.rs was the only consumer), that call site was missed in Task 4; remove it.
+Expected: clean. Any surfaced `Function`/`Graph` `.clone()` is a missed Task-3 site — remove it.
 
-- [ ] **Step 4: Run the full workspace test suite**
+- [ ] **Step 4: Full workspace tests**
 
 Run: `cargo test --workspace`
-Expected: PASS (no NEW failures vs the known pre-existing baseline).
+Expected: PASS (no NEW failures vs the known baseline).
 
 - [ ] **Step 5: Clippy**
 
@@ -727,13 +697,14 @@ git commit -m "refactor(ir): drop Clone from Function and the generic Graph"
 - [ ] `cargo test --workspace` — green (no new failures).
 - [ ] `cargo clippy --workspace` — clean.
 - [ ] `cd crates/strider-py && uv run pytest` — green.
-- [ ] Push the branch and STOP — prompt the user before merging (do not merge autonomously).
+- [ ] Push the branch and STOP — prompt the user before merging.
 
 ---
 
 ## Self-Review Notes
 
-- **Spec coverage:** trait/evaluator (Task 3), ConstFold/LoadReadOnly/LoadForward reuse (Tasks 1–3), memory-inclusive cone via recursive eval (Task 3 `eval` follows all value inputs incl. memory token through `eval_load`), fail-closed + cycle guard (Task 3), phi all-arms-agree (Task 3 `eval_phi`), clone deletion (Task 5), integration-suite gate (Task 4). All covered.
-- **Deviation from the committed spec's test list:** the spec listed per-node-kind unit suites plus dedicated phi/reshape unit tests. This plan unit-tests the pure arithmetic spine (Task 1 helpers) + the evaluator's arithmetic/fail-closed paths (Task 3), and relies on the 7-arch `table_tests.rs` characterization suite (Task 4) for the graph-heavy load/forward/phi/reshape paths — building those in isolated unit tests costs more than the lifted-binary coverage already provides. Flagged for user awareness.
-- **Recursion depth:** dispatch cones are shallow; `eval` recurses on a DAG with memoization + cycle guard. If a pathological depth ever appears, convert to an explicit work-stack — not pre-solved (YAGNI).
-- **Type consistency:** `Evaluator::eval_target(dispatch, idx_value, idx)` / `Evaluator::new(function, rom, alias_mode)` used identically in Task 3 and Task 4. `forwardable_store_data(function, load)` defined in Task 2, consumed in Task 3.
+- **Spec coverage:** `Const|SpRel` value + evaluator (Task 2); ConstFold/LoadReadOnly reuse (Tasks 1–2); LoadForward via `reaching_store` with index-folded offset + exact-anchor check (Task 2 `eval_load`); value-edge-only cone + flat RPO, order built once (Task 2 `cone_order` + Task 3 driver); fail-closed + cycle handling (Task 2); phi all-arms-agree (Task 2 `eval_phi`); clone deletion (Task 4); integration gate (Task 3). All covered.
+- **Test-scope deviation (carried from spec, user-approved):** unit tests cover the arithmetic + fail-closed spine; load/forward/phi/reshape rely on the 7-arch `table_tests.rs` characterization suite. Two `todo!`s in Task 2's test helpers must be filled from `constant_fold/tests.rs` before proceeding.
+- **No new SP helper:** `reaching_store` / `ReachingSpStore` already exist; the earlier `forwardable_store_data` task was dropped (it used structural `classify_addr`, which can't see the index-folded offset).
+- **Type consistency:** `Evaluator::{new, eval_target}` + `cone_order` signatures identical in Task 2 and Task 3. `Abs`/`reshape`/`eval_add`/`eval_load`/`eval_phi` are private to `eval.rs`.
+- **Recursion removed:** flat RPO; `cone_order` is iterative (no host-stack blowup); cycles fail-closed via absent map entries — no cycle guard needed.
