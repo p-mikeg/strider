@@ -459,17 +459,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // Defend the documented non-empty invariant: an empty target
                 // set carries no dispatch information, so treat it as
                 // unresolved rather than emit a Switch region with zero edges.
-                if targets.is_empty() {
-                    self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
-                        target_vn,
-                        addr,
-                    })?;
-                    return Ok(InsnOutcome::RegionClosed);
-                }
-                let any_out_of_range = targets
-                    .iter()
-                    .any(|t| self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t)));
-                if any_out_of_range {
+                // Also defer if any target is a tail call (out of range).
+                if targets.is_empty()
+                    || targets
+                        .iter()
+                        .any(|t| self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t)))
+                {
                     self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
                         target_vn,
                         addr,
@@ -615,7 +610,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             for (i, insn) in lift_res.insns.iter().enumerate().skip(start_pcode_idx) {
                 cur_addr.insn_index = i as u64;
                 let res = self.process_insn(insn, cur_addr, &lift_res)?;
-                if matches!(res, InsnOutcome::RegionClosed) {
+                if res == InsnOutcome::RegionClosed {
                     return Ok(());
                 }
             }

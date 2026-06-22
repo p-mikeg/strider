@@ -31,26 +31,10 @@ use super::node_pat::{KindCheck, NodePat, variant_kind};
 
 // ── Stack-access filter (shared by LoadPat / StorePat) ───────────────────────
 
-/// Filter applied at match time by looking up `Function::stack_offset`
-/// on the matched node (O(1) — no re-decomposition of the address).
-#[derive(Clone)]
-enum StackOffsetFilter {
-    /// Match exactly one concrete offset.
-    Exact(i64),
-}
-
-impl StackOffsetFilter {
-    fn matches(&self, offset: i64) -> bool {
-        match self {
-            Self::Exact(k) => offset == *k,
-        }
-    }
-}
-
 /// SP-relative match state shared by `LoadPat` and `StorePat`.
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct StackAccessSpec {
-    stack_offset_filter: Option<StackOffsetFilter>,
+    stack_offset_filter: Option<i64>,
     /// When `true`, rejects matches where `Function::stack_offset` is `None`.
     stack_only: bool,
 }
@@ -67,8 +51,8 @@ impl StackAccessSpec {
         let Some((_base, offset)) = function.stack_offset(node) else {
             return false;
         };
-        if let Some(f) = &self.stack_offset_filter
-            && !f.matches(offset)
+        if let Some(k) = self.stack_offset_filter
+            && offset != k
         {
             return false;
         }
@@ -94,19 +78,16 @@ impl StackAccessSpec {
 /// kind-match time.
 fn load_store_kind(exemplar: NodeKind, space: Option<rsleigh::VnSpace>) -> KindSpec {
     let discriminant = std::mem::discriminant(&exemplar);
+    let is_load = matches!(exemplar, NodeKind::Load(_));
     let check = space.map(|s| {
         let check: KindCheck = Box::new(move |k| {
-            matches!((exemplar_is_load(&exemplar), k),
+            matches!((is_load, k),
                 (true, NodeKind::Load(actual)) | (false, NodeKind::Store(actual))
                     if *actual == s)
         });
         check
     });
     variant_kind(discriminant, check)
-}
-
-fn exemplar_is_load(k: &NodeKind) -> bool {
-    matches!(k, NodeKind::Load(_))
 }
 
 // ── LoadPat ───────────────────────────────────────────────────────────────────
@@ -157,7 +138,7 @@ impl LoadPat {
     /// Restrict the match to loads whose address decomposes to exactly
     /// `sp + k` (reads `Function::stack_offset` in O(1)).
     pub fn stack_offset(mut self, k: i64) -> Self {
-        self.stack.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
+        self.stack.stack_offset_filter = Some(k);
         self
     }
 
@@ -275,7 +256,7 @@ impl StorePat {
     /// Restrict the match to stores whose address decomposes to exactly
     /// `sp + k`.
     pub fn stack_offset(mut self, k: i64) -> Self {
-        self.stack.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
+        self.stack.stack_offset_filter = Some(k);
         self
     }
 
@@ -340,7 +321,7 @@ impl StorePat {
 
 impl MemPat for StorePat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().lower(b).mem_value()
+        self.configured().lower(b).expect("memory-anchored NodePat has a memory output")
     }
 }
 

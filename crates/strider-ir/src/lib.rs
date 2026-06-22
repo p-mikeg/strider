@@ -74,7 +74,7 @@ pub use node::{
     IntUnaryOp, VnTypeExt,
 };
 pub use region::RegionId;
-pub use viewer::{ConstValue, IRViewer, IRWalker};
+pub use viewer::{IRViewer, IRWalker};
 
 pub type Value = node::ValueId;
 pub type ValueType = node::ValueType;

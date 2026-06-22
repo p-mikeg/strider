@@ -32,6 +32,11 @@ fn next_id() -> u32 {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Capture(u32);
 
+// `new()` intentionally does NOT have a `Default` implementation: a
+// `Default` that mints a globally-unique id on every `.default()` call
+// is a hazard (a `#[derive(Default)]` on a containing struct silently
+// allocates ids).  Suppress the lint here.
+#[allow(clippy::new_without_default)]
 impl Capture {
     pub fn new() -> Self {
         Self(next_id())
@@ -45,12 +50,6 @@ impl Capture {
     /// dense or sequential.
     pub fn id(self) -> u32 {
         self.0
-    }
-}
-
-impl Default for Capture {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

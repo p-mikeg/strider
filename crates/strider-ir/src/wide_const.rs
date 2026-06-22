@@ -95,8 +95,9 @@ impl WideConstStorage {
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Self::I80(v) | Self::I128(v) => u64::try_from(*v).ok(),
-            Self::I256(limbs) => limbs[1..].iter().all(|&l| l == 0).then_some(limbs[0]),
-            Self::I512(limbs) => limbs[1..].iter().all(|&l| l == 0).then_some(limbs[0]),
+            Self::I256(_) | Self::I512(_) => {
+                self.limbs()[1..].iter().all(|&l| l == 0).then_some(self.limbs()[0])
+            }
         }
     }
 

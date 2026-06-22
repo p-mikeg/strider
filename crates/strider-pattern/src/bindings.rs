@@ -231,7 +231,6 @@ impl Bindings {
     /// If the node bound to `c` is a boolean constant (an `IntConst`
     /// typed `I1`), returns the stored boolean value (`!= 0`).
     pub fn get_bool(&self, c: Capture, function: &strider_ir::Function) -> Option<bool> {
-        use strider_ir::IRViewer;
         function.bool_const_val(self.get_value(c)?)
     }
 

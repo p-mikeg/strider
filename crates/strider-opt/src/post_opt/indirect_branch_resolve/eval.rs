@@ -20,7 +20,7 @@ use crate::opt::constant_fold::eval_int::eval_int_binary;
 use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 
 /// Abstract value: a concrete number, or `sp_base + offset`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum Abs {
     Const(u128),
     SpRel { base: ValueId, offset: i64 },
@@ -31,16 +31,6 @@ impl Abs {
         match self {
             Abs::Const(c) => Some(c),
             Abs::SpRel { .. } => None,
-        }
-    }
-    fn same(self, other: Abs) -> bool {
-        match (self, other) {
-            (Abs::Const(a), Abs::Const(b)) => a == b,
-            (
-                Abs::SpRel { base: ba, offset: oa },
-                Abs::SpRel { base: bb, offset: ob },
-            ) => ba == bb && oa == ob,
-            _ => false,
         }
     }
 }
@@ -225,7 +215,7 @@ impl<'a> Evaluator<'a> {
             let v = self.get(arm)?;
             match agreed {
                 None => agreed = Some(v),
-                Some(prev) if prev.same(v) => {}
+                Some(prev) if prev == v => {}
                 Some(_) => return None,
             }
         }

@@ -106,9 +106,7 @@ impl<N, V, C: NodeCacheable<N, V>> IntoNodeIdentifiers for &Graph<N, V, C> {
 
 impl<N, V, C: NodeCacheable<N, V>> NodeCount for &Graph<N, V, C> {
     fn node_count(&self) -> usize {
-        self.all_node_ids()
-            .map(|n| 1 + self.node_outputs(n).len())
-            .sum()
+        self.store.nodes.len() + self.store.outputs.len()
     }
 }
 

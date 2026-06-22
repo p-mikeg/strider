@@ -1,7 +1,7 @@
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
+use crate::node::{NodeId, NodeKind, ValueKind};
 use crate::walk::NodeIdSet;
 
 use super::ValidationError;
@@ -108,8 +108,7 @@ pub(super) fn check_graph_invariants_phis(
             continue;
         }
 
-        let inputs: smallvec::SmallVec<[ValueId; 4]> =
-            graph.node_inputs(node).into_iter().collect();
+        let inputs = graph.node_inputs(node);
         if inputs.is_empty() {
             // The local-typing check fires a count or kind mismatch for
             // empty-input phis; skip here.
@@ -159,7 +158,7 @@ pub(super) fn check_graph_invariants_phis(
                 .iter()
                 .find_map(|&o| graph.value_kind(o).as_value());
             if let Some(out_ty) = phi_out_ty {
-                for (i, &inp) in inputs.iter().enumerate().skip(1) {
+                for (i, inp) in inputs.iter().enumerate().skip(1) {
                     if let Some(in_ty) = graph.value_kind(inp).as_value()
                         && in_ty != out_ty
                     {
@@ -414,36 +413,6 @@ pub(super) fn check_graph_invariants_side_indices(
     }
 }
 
-/// Returns the `(expected_byte_size, output_type)` pair that the
-/// declared `ValueType` of a wide-const node prescribes, or
-/// `None` when the node lacks a value-typed output (skip — let
-/// Layer A handle the structural error).
-///
-/// Emits [`ValidationError::WideConstInvalidOutputType`] when the declared
-/// output type isn't one of the valid wide-const storage types (I80, I128,
-/// I256, I512): `IntConst(Wide)`'s local-typing signature accepts any
-/// `INT_VAL` slot kind, but only these four are semantically valid.
-fn wide_const_expected_bytes(
-    graph: &Graph,
-    node: NodeId,
-) -> Result<Option<(usize, crate::node::ValueType)>, ValidationError> {
-    let outputs = graph.node_outputs(node);
-    let Some(&out) = outputs.first() else {
-        return Ok(None);
-    };
-    let ValueKind::Typed(ty) = graph.value_kind(out) else {
-        return Ok(None);
-    };
-    if ty.is_wide_int() {
-        Ok(Some((ty.byte_size(), ty)))
-    } else {
-        Err(ValidationError::WideConstInvalidOutputType {
-            node,
-            output_type: ty,
-        })
-    }
-}
-
 /// Graph invariant: verify every reachable `IntConst(Wide(id))` node
 /// references a live entry in `Function::wide_const_interner` and that the
 /// stored value's byte size matches the node's declared output type.
@@ -469,17 +438,30 @@ pub(super) fn check_graph_invariants_wide_consts(
             continue;
         };
         let actual = storage.byte_size();
-        match wide_const_expected_bytes(graph, node) {
-            Err(e) => errs.push(e),
-            Ok(Some((expected, ty))) if expected != actual => {
-                errs.push(ValidationError::WideConstWidthMismatch {
-                    node,
-                    output_type: ty,
-                    expected_bytes: expected,
-                    actual_bytes: actual,
-                });
-            }
-            Ok(_) => {}
+        // Determine expected byte size from the node's declared output type.
+        // Skip the node (let Layer A handle it) if there is no value-typed output.
+        let outputs = graph.node_outputs(node);
+        let Some(&out) = outputs.first() else {
+            continue;
+        };
+        let ValueKind::Typed(ty) = graph.value_kind(out) else {
+            continue;
+        };
+        if !ty.is_wide_int() {
+            errs.push(ValidationError::WideConstInvalidOutputType {
+                node,
+                output_type: ty,
+            });
+            continue;
+        }
+        let expected = ty.byte_size();
+        if expected != actual {
+            errs.push(ValidationError::WideConstWidthMismatch {
+                node,
+                output_type: ty,
+                expected_bytes: expected,
+                actual_bytes: actual,
+            });
         }
     }
 }

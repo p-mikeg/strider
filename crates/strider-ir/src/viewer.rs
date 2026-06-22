@@ -24,20 +24,6 @@ use anyhow::anyhow;
 use crate::function::Function;
 use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
-/// Unified return shape for [`IRViewer::const_value`].
-///
-/// `Int { val, ty }` carries the raw `u128` payload of an `IntConst`
-/// node alongside its declared `ValueType` so callers can decide
-/// whether to view it unsigned / signed / mask / etc.  `Float` carries
-/// the raw bit pattern of a `FloatConst` — the analyzer never needs
-/// the float type for constant folding (`f32` vs `f64` is inferred
-/// from the surrounding op), so the type isn't carried here.
-#[derive(Debug, Clone, Copy)]
-pub enum ConstValue {
-    Int { val: u128, ty: ValueType },
-    Float { bits: u64 },
-}
-
 /// The shared IR **point-read** vocabulary, available on every value that
 /// can hand out a `&Function` — [`Function`] itself and every [`IRBuilder`](crate::IRBuilder)
 /// (the lift builder, the editing context).
@@ -519,72 +505,6 @@ pub trait IRViewer {
             self.require_value_kind(v)?;
         }
         Ok(())
-    }
-
-    // ── constant inspection ──────────────────────────────────────────────
-
-    /// Returns the constant value carried by `value_id` if its defining
-    /// node is `IntConst` or `FloatConst`; `Ok(None)` otherwise.  The
-    /// `get_as_*` helpers below are thin projections off this unified
-    /// shape.  Booleans are `IntConst` values typed `I1`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn const_value(&self, value_id: ValueId) -> crate::Result<Option<ConstValue>> {
-        let ty = self.value_type(value_id)?;
-        if ty.is_integer()
-            && let Some(val) = self.int_const_u128(value_id)
-        {
-            return Ok(Some(ConstValue::Int { val, ty }));
-        }
-        Ok(match self.kind_of_value(value_id) {
-            NodeKind::FloatConst(bits) if ty.is_float() => Some(ConstValue::Float { bits: *bits }),
-            _ => None,
-        })
-    }
-
-    /// If `value_id` is a constant node, returns its value truncated to the
-    /// declared [`ValueType`] as an unsigned 64-bit integer.
-    ///
-    /// Returns `Ok(None)` for non-constant nodes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn get_as_unsigned_int(&self, value_id: ValueId) -> crate::Result<Option<u64>> {
-        // Keep the value-edge type check (errors on a non-value edge), then
-        // reuse the narrowing `u64` projection of `int_const_u128`.
-        self.value_type(value_id)?;
-        Ok(self.int_const_val(value_id))
-    }
-
-    /// If `value_id` is an integer constant, returns its value
-    /// sign-extended to `i64` according to the declared [`ValueType`].
-    /// An `I1` boolean folds as `0` / `1` per [`Self::get_as_unsigned_int`].
-    ///
-    /// Returns `Ok(None)` for non-constant nodes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn get_as_signed_int(&self, value_id: ValueId) -> crate::Result<Option<i64>> {
-        self.value_type(value_id)?;
-        Ok(self
-            .int_const_i128(value_id)
-            .and_then(|v| i64::try_from(v).ok()))
-    }
-
-    /// Returns both the unsigned and signed interpretations of `value_id` if
-    /// it is an integer constant, or `None` otherwise.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn get_as_int(&self, value_id: ValueId) -> crate::Result<Option<(u64, i64)>> {
-        Ok(self
-            .get_as_unsigned_int(value_id)?
-            .zip(self.get_as_signed_int(value_id)?))
     }
 
     /// Infers the float type to use for a value that may be int or float.

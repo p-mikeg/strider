@@ -76,7 +76,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // value lifter.  The result destination (if any) is now written by
         // the builder via `write_reg_vn`, so it must name a register /
         // unique varnode (the builder enforces this).
-        let explicit_args = self.read_call_other_args(insn)?;
+        // Slot 0 is the user-op id, not a real argument — skip it.
+        let explicit_args = self.read_vns(insn.inputs.get(1..).unwrap_or(&[]))?;
         let output_vn: Option<rsleigh::Vn> = insn.output.as_ref().copied();
 
         // Resolve the ABI register names → Vns exactly once, building the
@@ -88,7 +89,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // writes the result back to `output`, and records the
         // `CallDescriptor::CallOther` footprint.  The result writeback now
         // lives in the builder — the lifter no longer touches it.
-        let _ = self.builder.build_call_other(
+        self.builder.build_call_other(
             user_op_id,
             name,
             None,
@@ -96,17 +97,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             &built_abi,
             output_vn,
             false,
-        )?;
-
-        Ok(())
-    }
-
-    /// Read every p-code-explicit input past slot 0 (the user-op id)
-    /// as a value via the aliasing-aware value lifter.  Slot 0 is
-    /// excluded because it carries the user-op id, not a real argument.
-    /// Called by [`Self::handle_call_other_modeled`].
-    fn read_call_other_args(&mut self, insn: &rsleigh::Insn) -> Result<Vec<strider_ir::Value>> {
-        self.read_vns(insn.inputs.get(1..).unwrap_or(&[]))
+        ).map(|_| ())
     }
 }
 

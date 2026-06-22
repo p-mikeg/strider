@@ -625,7 +625,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
                 let input_index = old_input.input_index;
                 let new_use_id =
                     new_inputs.push(UseData::new(new_value_id, new_node_id, input_index));
-                remap.inputs[old_use_id] = Some(new_use_id);
                 new_use_ids.push(new_use_id);
             }
             new_nodes[new_node_id].inputs = UseIdList::from_iter(new_use_ids, &mut new_input_pool);
@@ -687,7 +686,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 pub struct NodeIdRemap {
     nodes: SecondaryMap<NodeId, Option<NodeId>>,
     outputs: SecondaryMap<ValueId, Option<ValueId>>,
-    inputs: SecondaryMap<UseId, Option<UseId>>,
 }
 
 impl NodeIdRemap {

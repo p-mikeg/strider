@@ -63,7 +63,7 @@ impl ValueKind {
     /// Returns `true` if this is a memory edge.
     #[inline]
     pub fn is_memory(self) -> bool {
-        matches!(self, Self::Memory)
+        self == Self::Memory
     }
 
     /// Returns `true` if this is a value output carrying a `Bool` type.

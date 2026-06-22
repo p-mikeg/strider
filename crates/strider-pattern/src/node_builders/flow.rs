@@ -112,7 +112,7 @@ impl CallPat {
 
 impl MemPat for CallPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.lower(b).mem_value()
+        self.0.lower(b).expect("memory-anchored NodePat has a memory output")
     }
 }
 
@@ -205,7 +205,7 @@ impl CallOtherPat {
 
 impl MemPat for CallOtherPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().lower(b).mem_value()
+        self.configured().lower(b).expect("memory-anchored NodePat has a memory output")
     }
 }
 

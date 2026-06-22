@@ -281,8 +281,7 @@ pub struct AnyBoolConst;
 
 impl MatchPat for AnyBoolConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let exemplar = NodeKind::IntConst(IntPayload::Small(0));
-        let o = b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)));
+        let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
         b.set_value_ty(o, ValueType::I1);
         o
     }

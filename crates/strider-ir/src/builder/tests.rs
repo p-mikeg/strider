@@ -69,7 +69,7 @@ fn producer_kind(b: &FunctionBuilder, value: ValueId) -> NodeKind {
 #[track_caller]
 fn assert_const_folded(b: &FunctionBuilder, value: ValueId, expected: u64) {
     assert_eq!(
-        b.get_as_unsigned_int(value).unwrap(),
+        b.int_const_val(value),
         Some(expected),
         "folded constant must read back as {expected:#x}"
     );
@@ -100,7 +100,7 @@ fn get_unsigned_int_truncates_to_declared_width() -> Result<()> {
     let value = b.build_int_const(u8::MAX as u64 + 1, ValueType::I8)?;
     // The node was created with kind IntConst(256) but the type is I8,
     // so get_as_unsigned_int must mask it.
-    let val = b.get_as_unsigned_int(value)?;
+    let val = b.int_const_val(value);
     assert_eq!(val, Some(0)); // 256 & 0xFF == 0
     Ok(())
 }
@@ -112,8 +112,14 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
     let bf = b.build_boolean_const(false);
     // Booleans are 1-bit integers: the single bit is the sign bit, so a
     // `true` (bit 1) sign-extends to -1, while its unsigned view is 1.
-    assert_eq!(b.get_as_int(bt)?, Some((1u64, -1i64)));
-    assert_eq!(b.get_as_int(bf)?, Some((0u64, 0i64)));
+    assert_eq!(
+        b.int_const_val(bt).zip(b.int_const_i64(bt)),
+        Some((1u64, -1i64))
+    );
+    assert_eq!(
+        b.int_const_val(bf).zip(b.int_const_i64(bf)),
+        Some((0u64, 0i64))
+    );
     Ok(())
 }
 
@@ -122,7 +128,7 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
 fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
     let add = non_const_add(&mut b, ValueType::I64)?;
-    assert_eq!(b.get_as_unsigned_int(add)?, None);
+    assert_eq!(b.int_const_val(add), None);
     Ok(())
 }
 
@@ -149,7 +155,7 @@ fn get_signed_int_sign_extension_cases() -> Result<()> {
     let mut b = empty_builder()?;
     for (label, raw, expected) in cases {
         let value = b.build_int_const(raw, ValueType::I8)?;
-        assert_eq!(b.get_as_signed_int(value)?, Some(expected), "{label}");
+        assert_eq!(b.int_const_i64(value), Some(expected), "{label}");
     }
     Ok(())
 }
@@ -224,7 +230,7 @@ fn extend_const_folds_to_wider_const() -> Result<()> {
         let mut b = empty_builder()?;
         let value = b.build_int_const(u8::MAX as u64, ValueType::I8)?;
         let extended = b.extend_if_needed(value, ValueType::I32, op)?;
-        assert_eq!(b.get_as_unsigned_int(extended)?, Some(expected), "{label}");
+        assert_eq!(b.int_const_val(extended), Some(expected), "{label}");
         assert!(
             matches!(producer_kind(&b, extended), NodeKind::IntConst(_)),
             "{label}: const extend must fold to IntConst"
@@ -2883,7 +2889,7 @@ fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
         "all 64 bits must survive the width mask, got {:?}",
         producer_kind(&b, v)
     );
-    assert_eq!(b.get_as_unsigned_int(v)?, Some(u64::MAX));
+    assert_eq!(b.int_const_val(v), Some(u64::MAX));
     Ok(())
 }
 

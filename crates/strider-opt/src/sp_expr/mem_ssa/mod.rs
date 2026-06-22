@@ -200,14 +200,11 @@ fn join_phi_results(phi_value: ValueId, preds: &[Option<ValueId>]) -> Option<Val
     }
 }
 
-/// Memoization state for a memory output during one walk.  Keyed densely
-/// by `ValueId` in the walk's memo map, so an absent key reads back as the
-/// default `Unseen` — the state of every output not yet entered.
-#[derive(Clone, Copy, Default)]
+/// Memoization state for a memory output during one walk.  An absent key in
+/// the memo map means "not yet entered on this walk"; only `InProgress` and
+/// `Done` are ever stored.
+#[derive(Clone, Copy)]
 enum Resolve {
-    /// Not yet entered on this walk.
-    #[default]
-    Unseen,
     /// Currently on the resolution path — re-encountering it is a cycle.
     InProgress,
     /// Fully resolved to this (nearest-clobber) result.
@@ -282,7 +279,7 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
         // per stack slot / table entry over the same chain — so a hash map
         // (O(visited) space/init) is the right structure here, not an
         // entity-keyed dense `SecondaryMap` (O(function) per walk).  An absent
-        // key reads back as `Resolve::Unseen` (the enum's `Default`).
+        // key means "not yet entered"; only `InProgress` and `Done` are stored.
         let mut memo: FxHashMap<ValueId, Resolve> = FxHashMap::default();
         let mut work: Vec<Frame> = vec![Frame::Enter(start_mem)];
 
@@ -296,10 +293,7 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                     //    Leave it `InProgress` so the `combine` that consumes
                     //    it reads `None` for this edge (the cycle adds no new
                     //    clobber).
-                    if !matches!(
-                        memo.get(&cur).copied().unwrap_or(Resolve::Unseen),
-                        Resolve::Unseen
-                    ) {
+                    if memo.contains_key(&cur) {
                         continue;
                     }
                     let node = self.function.producer(cur);
@@ -332,8 +326,8 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                     let succ_results: SmallVec<[Option<ValueId>; 4]> = self
                         .successors(cur)
                         .into_iter()
-                        .map(|s| match memo.get(&s).copied().unwrap_or(Resolve::Unseen) {
-                            Resolve::Done(r) => r,
+                        .map(|s| match memo.get(&s).copied() {
+                            Some(Resolve::Done(r)) => r,
                             _ => None,
                         })
                         .collect();
@@ -343,8 +337,8 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
             }
         }
 
-        match memo.get(&start_mem).copied().unwrap_or(Resolve::Unseen) {
-            Resolve::Done(r) => r,
+        match memo.get(&start_mem).copied() {
+            Some(Resolve::Done(r)) => r,
             _ => None,
         }
     }
