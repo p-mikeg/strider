@@ -808,7 +808,7 @@ impl<I: MatchPat> MatchPat for FloatIsNan<I> {
             rhs: Pre(x),
         }
         .compile(b);
-        let one = bool_one_out(b);
+        let one = bool_one().compile(b);
         bool_binary_out(b, IntBinaryOp::Xor, eq, one)
     }
 }
@@ -937,12 +937,6 @@ fn bool_binary_out(
     let out = b.binary(op, l, r);
     b.set_value_ty(out, ValueType::I1);
     out
-}
-
-/// A `bool_const(true)` operand handle (the `IntConst(1):I1` all-ones at
-/// `I1`), compiled into `b` — the raw [`PatValueRef`] form of [`bool_one`].
-fn bool_one_out(b: &mut MatcherBuilder) -> PatValueRef {
-    bool_one().compile(b)
 }
 
 /// A `bool_one` operand re-presented as a [`MatchPat`].

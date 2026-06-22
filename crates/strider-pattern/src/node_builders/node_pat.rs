@@ -63,21 +63,6 @@ pub(crate) struct NodePat {
     input_widths: Vec<(usize, u32)>,
 }
 
-/// The output produced by [`NodePat::lower`]: the anchor output (when the
-/// anchor is not [`AnchorKind::None`]).
-pub(crate) struct LowerResult {
-    anchor_out: Option<PatValueRef>,
-}
-
-impl LowerResult {
-    /// The anchor output, asserting it is a memory token. Used by the
-    /// [`MemPat`] impls of the memory-rooted wrappers.
-    #[allow(clippy::expect_used)]
-    pub(crate) fn mem_value(self) -> PatValueRef {
-        self.anchor_out
-            .expect("memory-anchored NodePat has a memory output")
-    }
-}
 
 impl NodePat {
     /// A node-rooted builder over `kind` with no anchor output.
@@ -185,7 +170,7 @@ impl NodePat {
     /// output, wire every indexed input, then apply the node-limit and
     /// capture. Shared by [`build`](Self::build) and the wrappers'
     /// [`MemPat`] / [`MatchPat`] impls.
-    pub(crate) fn lower(self, b: &mut MatcherBuilder) -> LowerResult {
+    pub(crate) fn lower(self, b: &mut MatcherBuilder) -> Option<PatValueRef> {
         let NodePat {
             kind,
             inputs,
@@ -224,7 +209,7 @@ impl NodePat {
                 None => b.capture_node(node, c),
             }
         }
-        LowerResult { anchor_out }
+        anchor_out
     }
 
     /// Seal the builder into a finished [`Pattern`]: on the value output
@@ -240,7 +225,6 @@ impl NodePat {
     #[allow(clippy::expect_used)]
     pub(crate) fn compile_value(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.lower(b)
-            .anchor_out
             .expect("value-rooted NodePat has a value output")
     }
 }
