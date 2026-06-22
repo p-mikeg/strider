@@ -12,13 +12,11 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
 
-use crate::opt::constant_fold::eval_int::{
-    eval_int_binary, eval_int_cmp, eval_int_unary, eval_lzcount, eval_popcount, eval_sign_extend,
-};
+use crate::opt::constant_fold::eval_int::eval_int_binary;
 use crate::sp_expr::{SpAliasCfg, SpExprMemo};
 
 /// Abstract value: a concrete number, or `sp_base + offset`.
@@ -119,43 +117,19 @@ impl<'a> Evaluator<'a> {
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add) => {
                 self.eval_add(self.get(*ins.first()?)?, self.get(*ins.get(1)?)?, out_ty?)
             }
-            NodeKind::IntBinaryOp(op) => {
-                let l = self.get(*ins.first()?)?.as_const()?;
-                let r = self.get(*ins.get(1)?)?.as_const()?;
-                Some(Abs::Const(eval_int_binary(op, l, r, out_ty?)?))
-            }
-            NodeKind::IntUnaryOp(op) => {
-                let v = self.get(*ins.first()?)?.as_const()?;
-                Some(Abs::Const(eval_int_unary(op, v, out_ty?)?))
-            }
-            NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
-                let v = self.get(*ins.first()?)?.as_const()?;
-                Some(Abs::Const(out_ty?.get_unsigned_int(v)?))
-            }
-            NodeKind::Extend(ExtendOp::SignExtend) => {
-                let in_ty = f.value_type_opt(*ins.first()?)?;
-                let v = self.get(ins[0])?.as_const()?;
-                Some(Abs::Const(eval_sign_extend(v, in_ty, out_ty?)?))
-            }
-            NodeKind::Popcount => {
-                let in_ty = f.value_type_opt(*ins.first()?)?;
-                let v = self.get(ins[0])?.as_const()?;
-                Some(Abs::Const(eval_popcount(v, in_ty)?))
-            }
-            NodeKind::Lzcount => {
-                let in_ty = f.value_type_opt(*ins.first()?)?;
-                let v = self.get(ins[0])?.as_const()?;
-                Some(Abs::Const(eval_lzcount(v, in_ty)?))
-            }
-            NodeKind::IntCmpOp(op) => {
-                let in_ty = f.value_type_opt(*ins.first()?)?;
-                let l = self.get(ins[0])?.as_const()?;
-                let r = self.get(*ins.get(1)?)?.as_const()?;
-                Some(Abs::Const(u128::from(eval_int_cmp(op, l, r, in_ty).ok()?)))
-            }
             NodeKind::Load(_) => self.eval_load(node, value),
             NodeKind::Phi => self.eval_phi(node),
-            _ => None,
+            _ => {
+                let resolve = |v| self.get(v).and_then(Abs::as_const);
+                crate::const_eval::eval_node_const(
+                    self.function,
+                    value,
+                    &resolve,
+                    self.rom,
+                    self.endianness,
+                )
+                .map(Abs::Const)
+            }
         }
     }
 
@@ -186,15 +160,9 @@ impl<'a> Evaluator<'a> {
         match self.get(f.load_addr(node))? {
             Abs::Const(c) => {
                 let rom = self.rom?;
-                let a = u64::try_from(c).ok()?;
-                let size = load_ty.byte_size();
-                if size > 16 {
-                    return None;
-                }
-                let mut bytes = [0u8; 16];
-                rom.read(a, &mut bytes[..size]).ok()?;
-                let loaded = self.endianness.read_uint(&bytes[..size]);
-                Some(Abs::Const(load_ty.get_unsigned_int(loaded)?))
+                let addr = u64::try_from(c).ok()?;
+                crate::const_eval::read_rom_const(rom, addr, load_ty, self.endianness)
+                    .map(Abs::Const)
             }
             Abs::SpRel { base, offset } => {
                 let [mem, _addr] = f.node_inputs_exact::<2>(node).ok()?;
