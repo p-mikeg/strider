@@ -4,7 +4,8 @@
 use super::*;
 use crate::IRViewer;
 use crate::function::Function;
-use crate::node::{IntPayload, NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use cranelift_entity::EntityRef;
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -51,13 +52,13 @@ fn check_node_output_definitions(
 fn create_single_node() {
     let mut function = Function::default();
     let node_id = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(5)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(5_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     assert_eq!(
         function.node_kind(node_id),
-        &NodeKind::IntConst(IntPayload::Small(5))
+        &NodeKind::IntConst(crate::const_value::ConstId::new(5_usize))
     );
     assert_eq!(function.graph().all_node_ids().count(), 1);
     check_node_inputs(function.graph(), node_id, []);
@@ -75,7 +76,7 @@ fn create_single_node() {
 fn kind_of_output_matches_two_step_lookup() {
     let mut function = Function::default();
     let node_id = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(7)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -83,7 +84,7 @@ fn kind_of_output_matches_two_step_lookup() {
     let two_step = function.node_kind(function.producer(value));
     let one_step = function.kind_of_value(value);
     assert_eq!(one_step, two_step);
-    assert_eq!(one_step, &NodeKind::IntConst(IntPayload::Small(7)));
+    assert_eq!(one_step, &NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)));
 }
 
 /// Cacheable nodes with identical kind and inputs must be deduplicated:
@@ -93,12 +94,12 @@ fn kind_of_output_matches_two_step_lookup() {
 fn cacheable_node_is_deduplicated() {
     let mut function = Function::default();
     let id_a = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(42)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
     let id_b = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(42)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
@@ -125,14 +126,14 @@ fn cacheable_node_is_deduplicated() {
 fn cacheable_node_dedup_is_stable_across_many_calls() {
     let mut function = Function::default();
     let first = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0xdead_beef_u64)),
+        NodeKind::IntConst(crate::const_value::ConstId::new((0xdead_beef_u64) as usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     let arena_after_first = function.graph().all_node_ids().count();
     for _ in 0..1000 {
         let id = function.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xdead_beef_u64)),
+            NodeKind::IntConst(crate::const_value::ConstId::new((0xdead_beef_u64) as usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -155,12 +156,12 @@ fn cacheable_node_dedup_is_stable_across_many_calls() {
 fn cacheable_int_const_with_different_type_does_not_dedup() {
     let mut function = Function::default();
     let a = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
     let b = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -172,43 +173,31 @@ fn cacheable_int_const_with_different_type_does_not_dedup() {
 }
 
 /// Two `IntConst` nodes that are semantically equal under their declared
-/// integer output type — one carrying a payload already masked to the
-/// width, the other carrying extra high bits above the width — must dedup
-/// to the SAME `NodeId`.  `Function::create_node_attributed` (the single
-/// canonical creation choke-point for all production paths) masks every
-/// `IntConst(Small)` payload to its declared integer output width before
-/// forwarding to the graph, so an un-masked constant and the masked form
-/// share one node.
-///
-/// The raw `graph_mut().create_node(...)` path bypasses this normalisation
-/// (used only in tests that already supply correctly-masked literals).
+/// integer output type — one built from a value already masked to the width,
+/// the other from a value with extra high bits above the width — must dedup
+/// to the SAME `NodeId`.  Masking now lives at the interning choke-point
+/// (`Function::intern_int_const`, reached via `build_int_const`): equal
+/// masked values share one `ConstId`, so the two `IntConst(id)` nodes are
+/// structurally equal and dedup.
 #[test]
 fn int_const_payload_is_normalised_to_output_type_width() {
+    use crate::IRBuilderExt;
+    use crate::IRViewer;
     let mut function = Function::default();
     // -4 as I8: value with bits above bit 7 vs the 8-bit-masked form.
     // 0x1FC = 0b1_1111_1100 — only low 8 bits (0xFC) matter for I8.
-    // Route through create_node_attributed (the production choke-point).
-    let wide = function.create_node_attributed(
-        NodeKind::IntConst(IntPayload::Small(0x1FC)),
-        [],
-        [ValueKind::Typed(ValueType::I8)],
-        &[],
-    );
-    let masked = function.create_node_attributed(
-        NodeKind::IntConst(IntPayload::Small(0xFC)),
-        [],
-        [ValueKind::Typed(ValueType::I8)],
-        &[],
-    );
+    let wide = function.build_int_const(0x1FCu128, ValueType::I8).unwrap();
+    let masked = function.build_int_const(0xFCu128, ValueType::I8).unwrap();
     assert_eq!(
-        wide, masked,
+        function.producer(wide),
+        function.producer(masked),
         "semantically-equal IntConst values must normalise to the output \
          type width and dedup to the same node"
     );
     assert_eq!(
-        function.node_kind(wide),
-        &NodeKind::IntConst(IntPayload::Small(0xFC)),
-        "stored payload must be masked to the I8 width"
+        function.int_const_u128(wide),
+        Some(0xFC),
+        "stored value must be masked to the I8 width"
     );
     assert_eq!(
         function.graph().all_node_ids().count(),
@@ -270,7 +259,7 @@ fn phi_nodes_never_dedup() {
     );
     let [_region_ctrl, phi_token] = function.node_outputs_exact::<2>(region).unwrap();
     let c = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(7)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -359,7 +348,7 @@ fn adjacent_calls_with_same_args_are_distinct() {
     let [ctrl_value] = function.node_outputs_exact::<1>(ctrl_a).unwrap();
     let [mem_value] = function.node_outputs_exact::<1>(mem_a).unwrap();
     let target = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0x1000)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0x1000_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -427,7 +416,7 @@ fn add_node_input_registers_use() {
     let mut function = Function::default();
     // Produce a value
     let const_node = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(1)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(1_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -453,14 +442,14 @@ fn remove_node_input_cleans_up_use_list() {
     let mut function = Function::default();
 
     let c0 = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     let [out0] = function.node_outputs_exact::<1>(c0).unwrap();
 
     let c1 = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(1)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(1_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -509,14 +498,14 @@ fn update_input_moves_use_to_new_output() {
     let mut function = Function::default();
 
     let old = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(10)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(10_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     let [old_value] = function.node_outputs_exact::<1>(old).unwrap();
 
     let new = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(20)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(20_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -545,7 +534,7 @@ fn detach_node_inputs_removes_all_uses() {
     let mut function = Function::default();
 
     let c = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(5)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(5_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -586,12 +575,12 @@ fn detach_evicts_cacheable_node_from_dedup_cache() {
     use crate::node::IntBinaryOp;
     let mut function = Function::default();
     let lhs = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(7)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
     let rhs = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(9)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(9_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
@@ -634,7 +623,7 @@ fn output_has_one_usage_tracks_consumer_count() {
     let mut function = Function::default();
 
     let c = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(99)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(99_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
@@ -665,7 +654,7 @@ fn output_has_one_usage_tracks_consumer_count() {
 fn node_for_output_returns_source_node() {
     let mut function = Function::default();
     let node = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(7)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)),
         [],
         [ValueKind::Typed(ValueType::I8)],
     );
@@ -698,7 +687,7 @@ fn node_with_multiple_outputs() {
 fn output_uses_reports_all_consumers_with_correct_indices() {
     let mut function = Function::default();
     let src = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(7)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
@@ -732,7 +721,7 @@ fn output_uses_reports_all_consumers_with_correct_indices() {
 fn output_uses_same_output_multiple_times_reports_each_position() {
     let mut function = Function::default();
     let src = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(3)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(3_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -759,14 +748,14 @@ fn output_use_cursor_replace_redirects_first_use() {
     let mut function = Function::default();
 
     let old_src = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(1)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(1_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     let [old_value] = function.node_outputs_exact::<1>(old_src).unwrap();
 
     let new_src = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(2)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(2_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -808,14 +797,14 @@ fn output_use_cursor_replace_all_drains_source() {
     let mut function = Function::default();
 
     let old_src = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(10)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(10_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
     let [old_value] = function.node_outputs_exact::<1>(old_src).unwrap();
 
     let new_src = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(20)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(20_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
@@ -855,7 +844,7 @@ fn remove_node_input_from_middle_reindexes_remaining() {
 
     let out0 = {
         let n = function.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(10)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(10_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -863,7 +852,7 @@ fn remove_node_input_from_middle_reindexes_remaining() {
     };
     let out1 = {
         let n = function.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(20)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(20_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -871,7 +860,7 @@ fn remove_node_input_from_middle_reindexes_remaining() {
     };
     let out2 = {
         let n = function.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(30)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(30_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -917,7 +906,7 @@ fn remove_node_input_from_end_leaves_others_intact() {
 
     let out0 = {
         let n = function.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(1)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(1_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -925,7 +914,7 @@ fn remove_node_input_from_end_leaves_others_intact() {
     };
     let out1 = {
         let n = function.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(2)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(2_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -963,17 +952,17 @@ fn update_input_on_cacheable_evicts_stale_cache_entry() {
     let mut function = Function::default();
 
     let a = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(1)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(1_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
     let b = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(2)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(2_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
     let c = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(3)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(3_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
@@ -1017,7 +1006,7 @@ fn update_input_to_same_output_is_idempotent() {
     let mut function = Function::default();
 
     let src = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(99)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(99_usize)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
@@ -1044,7 +1033,7 @@ fn detach_then_readd_restores_use_count() {
     let mut function = Function::default();
 
     let src = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(42)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1082,7 +1071,7 @@ fn two_independent_consumers_both_in_use_list() {
     let mut function = Function::default();
 
     let src = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(1)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(1_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1106,7 +1095,7 @@ fn two_independent_consumers_both_in_use_list() {
 fn node_outputs_exact_errors_on_wrong_count() {
     let mut function = Function::default();
     let node = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
         [],
         [ValueKind::Typed(ValueType::I8)],
     );
@@ -1123,7 +1112,7 @@ fn node_outputs_exact_errors_on_wrong_count() {
 fn node_inputs_exact_errors_on_wrong_count() {
     let mut function = Function::default();
     let src = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1144,7 +1133,7 @@ fn update_input_self_redirect_preserves_use_list_order() {
     use crate::node::IntUnaryOp;
     let mut function = Function::default();
     let c = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1290,7 +1279,7 @@ fn asm_fingerprint_extend_from_self_is_noop() {
 fn call_cc_default_is_none() {
     let mut function = Function::default();
     let nid = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1352,13 +1341,13 @@ fn asm_fingerprint_dedup_cache_hit_unions_via_extend() {
     // both contributors end up unioned into the single side-table entry.
     let mut function = Function::default();
     let a = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(7)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     function.extend_asm_fingerprint(a, &[0x2000]);
     let b = function.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(7)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );

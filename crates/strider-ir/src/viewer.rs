@@ -129,35 +129,19 @@ pub trait IRViewer {
     /// constants through this (or its `u64`/`i64` projections) so the storage
     /// representation stays encapsulated.
     ///
-    /// Returns `None` for `IntConst(Wide(id))` nodes backed by `I256`/`I512`
-    /// (their values don't fit in `u128`); returns `Some` for the
-    /// `I80`/`I128`-backed `Wide` variants and all `Small` variants.
+    /// Returns `None` for `IntConst` nodes whose interned value exceeds 128
+    /// bits (`I256`/`I512` values that don't fit `u128`); returns `Some` for
+    /// every value that fits `u128`, masked to the declared width.
     fn int_const_u128(&self, value: ValueId) -> Option<u128> {
-        use crate::node::IntPayload;
         let ty = self.value_kind(value).as_value()?;
         if !ty.is_integer() {
             return None;
         }
-        match *self.kind_of_value(value) {
-            // A `Small` payload always fits `u64`, so mask it to the declared
-            // width directly via `bit_mask_u128` — NOT `get_unsigned_int`, which
-            // (by design, mirroring `get_signed_int`) rejects > 128-bit types.
-            // A `Small`-payload value is always representable in `u128`, so this
-            // funnel surfaces it for the few callers that build narrow consts
-            // under a wide-typed slot; genuinely wide values use the `Wide` arm.
-            NodeKind::IntConst(IntPayload::Small(v)) => Some(u128::from(v) & ty.bit_mask_u128()),
-            // Wide: read the interner.  I80/I128 fit in u128 (as_u128
-            // returns Some); I256/I512 return None — too wide for this funnel.
-            // Mask to the declared width via `bit_mask_u128` (which approximates
-            // > 128-bit as `u128::MAX`, harmless here since those route through
-            // the `None` arm of `as_u128`).
-            NodeKind::IntConst(IntPayload::Wide(id)) => self
-                .function()
-                .wide_const_opt(id)
-                .and_then(|w| w.as_u128())
-                .map(|v| v & ty.bit_mask_u128()),
-            _ => None,
-        }
+        let NodeKind::IntConst(id) = *self.kind_of_value(value) else {
+            return None;
+        };
+        let v = self.function().const_value_opt(id)?.fits_u128()?;
+        Some(v & ty.bit_mask_u128())
     }
 
     /// Signed projection of [`Self::int_const_u128`]: the value sign-extended
@@ -192,35 +176,24 @@ pub trait IRViewer {
     }
 
     /// Little-endian bytes of a WIDE-typed (`I80`/`I128`/`I256`/`I512`)
-    /// integer-constant node — 10 / 16 / 32 / 64 bytes respectively —
-    /// regardless of whether the payload is the inline `Small` form (a value
-    /// that fits `u64`) or the interned `Wide` form.  The byte width is taken
-    /// from the node's output type, so a small-valued wide constant
-    /// (e.g. `IntConst(Small(5)):I128`) still yields its full 16-byte
+    /// integer-constant node — 10 / 16 / 32 / 64 bytes respectively.  The byte
+    /// width is taken from the node's output type, so a small-valued wide
+    /// constant (e.g. `IntConst(5):I128`) still yields its full 16-byte
     /// representation.
     ///
     /// Returns `None` for a narrow (≤ `I64`) constant — use
     /// [`Self::int_const_val`] / [`Self::int_const_u128`] there — or for a
     /// non-`IntConst` node / a node without a single value output.
     fn int_const_wide_le_bytes(&self, node: crate::node::NodeId) -> Option<Vec<u8>> {
-        use crate::node::IntPayload;
         let [out] = self.node_outputs_exact::<1>(node).ok()?;
         let ty = self.value_kind(out).as_value()?;
         if !ty.is_wide_int() {
             return None;
         }
-        let byte_size = ty.byte_size();
-        match *self.node_kind(node) {
-            NodeKind::IntConst(IntPayload::Wide(id)) => {
-                Some(self.function().wide_const(id).to_le_bytes())
-            }
-            NodeKind::IntConst(IntPayload::Small(v)) => {
-                let mut bytes = vec![0u8; byte_size];
-                bytes[..8].copy_from_slice(&v.to_le_bytes());
-                Some(bytes)
-            }
-            _ => None,
-        }
+        let NodeKind::IntConst(id) = *self.node_kind(node) else {
+            return None;
+        };
+        Some(self.function().const_value(id).to_le_bytes(ty.byte_size()))
     }
 
     /// Returns the boolean constant value of `value`, or `None` if it is not an

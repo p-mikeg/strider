@@ -910,7 +910,7 @@ mod tests {
     use crate::IRViewer;
     use crate::IntBinaryOp;
     use crate::builder::IRBuilderExt;
-    use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
+    use crate::node::{NodeKind, ValueKind, ValueType};
     use cranelift_entity::EntityRef;
     use std::collections::BTreeSet;
 
@@ -926,7 +926,7 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function).unwrap();
 
         let node = ctx.create_node(
-            NodeKind::IntConst(IntPayload::Small(42)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1153,7 +1153,7 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function).unwrap();
 
         let node = ctx.create_node(
-            NodeKind::IntConst(IntPayload::Small(42)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1161,7 +1161,7 @@ mod tests {
         assert!(!ctx.is_live(node));
 
         let recreated = ctx.create_node(
-            NodeKind::IntConst(IntPayload::Small(42)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1681,7 +1681,7 @@ mod tests {
     /// ↔ Phi input `i + 1` correspondence is preserved.
     #[test]
     fn remove_region_predecessors_wide_fanin_is_linear() {
-        use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
+        use crate::node::{NodeKind, ValueKind, ValueType};
 
         let mut b = single_region_builder();
         b.build_return(None, &[]).unwrap();
@@ -1710,7 +1710,7 @@ mod tests {
         let mut consts = Vec::new();
         for i in 0..FANIN {
             let k = ctx.create_node(
-                NodeKind::IntConst(IntPayload::Small(0xC0 + i as u64)),
+                NodeKind::IntConst(crate::const_value::ConstId::new((0xC0 + i as u64) as usize)),
                 [],
                 [ValueKind::Typed(ValueType::I64)],
             );

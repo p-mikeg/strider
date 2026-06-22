@@ -122,54 +122,43 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             },
 
             // ── constants ─────────────────────────────────────────────────────
-            NodeKind::IntConst(crate::node::IntPayload::Small(_)) => {
-                let ty = self.out_type_suffix(node, ":");
-                // Read value through the SSoT funnel rather than matching the
-                // node kind payload directly.
-                let v = self
-                    .function
-                    .node_outputs(node)
-                    .iter()
-                    .find_map(|&o| self.function.int_const_u128(o))
-                    .unwrap_or(0);
-                format!("const {v:#x}{ty}")
-            }
-            NodeKind::IntConst(crate::node::IntPayload::Wide(id)) => {
-                // I80 / I128 / I256 / I512 payload interned in
-                // `Function::wide_const_interner`.  Render the actual value
-                // rather than the Debug form of the interning id.
+            NodeKind::IntConst(id) => {
+                let out_ty = self.out_type(node);
                 // A dangling id (malformed graph) labels rather than panics.
-                match self.function.wide_const_opt(*id) {
-                    None => format!("const <dangling wide-const {id:?}>"),
-                    Some(storage) => {
-                        let bits = storage.byte_size() * 8;
-                        let hex = if let Some(v) = storage.as_u128() {
-                            // I80 / I128: render the u128 directly.
-                            if v == 0 {
-                                "0".to_string()
-                            } else {
-                                format!("{v:x}")
-                            }
-                        } else {
-                            // I256 / I512: limbs are little-endian, walk high→low.
-                            let limbs = storage.limbs();
-                            let mut hex = String::new();
-                            for &limb in limbs.iter().rev() {
-                                if hex.is_empty() {
-                                    if limb == 0 {
-                                        continue;
-                                    }
-                                    hex.push_str(&format!("{limb:x}"));
-                                } else {
-                                    hex.push_str(&format!("{limb:016x}"));
-                                }
-                            }
+                match self.function.const_value_opt(*id) {
+                    None => format!("const <dangling const {id:?}>"),
+                    Some(_) if out_ty.is_some_and(|t| t.is_wide_int()) => {
+                        // Wide (I80 / I128 / I256 / I512): little-endian bytes,
+                        // rendered high→low.  Read through the SSoT accessor.
+                        let bits = out_ty.map_or(0, |t| t.byte_size() * 8);
+                        let bytes = self.function.int_const_wide_le_bytes(node).unwrap_or_default();
+                        let mut hex = String::new();
+                        for &b in bytes.iter().rev() {
                             if hex.is_empty() {
-                                hex.push('0');
+                                if b == 0 {
+                                    continue;
+                                }
+                                hex.push_str(&format!("{b:x}"));
+                            } else {
+                                hex.push_str(&format!("{b:02x}"));
                             }
-                            hex
-                        };
+                        }
+                        if hex.is_empty() {
+                            hex.push('0');
+                        }
                         format!("const 0x{hex}:i{bits}")
+                    }
+                    Some(_) => {
+                        let ty = self.out_type_suffix(node, ":");
+                        // Read value through the SSoT funnel rather than matching
+                        // the interned payload directly.
+                        let v = self
+                            .function
+                            .node_outputs(node)
+                            .iter()
+                            .find_map(|&o| self.function.int_const_u128(o))
+                            .unwrap_or(0);
+                        format!("const {v:#x}{ty}")
                     }
                 }
             }

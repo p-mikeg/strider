@@ -63,15 +63,15 @@ pub use ::read_only_memory::ReadOnlyMemory;
 pub mod validate;
 mod viewer;
 pub mod walk;
-pub mod wide_const;
+pub mod const_value;
 
+pub use crate::const_value::{ConstId, ConstValue};
 pub use crate::error::Result;
 pub use builder::FunctionBuilder;
 pub use builder::IRBuilder;
 pub use builder::IRBuilderExt;
 pub use node::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntPayload,
-    IntUnaryOp, VnTypeExt,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, VnTypeExt,
 };
 pub use region::RegionId;
 pub use viewer::{IRViewer, IRWalker};

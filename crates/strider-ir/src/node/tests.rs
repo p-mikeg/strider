@@ -1,6 +1,7 @@
 //! White-box tests for the `node` submodules.
 
 use super::*;
+    use cranelift_entity::EntityRef;
 
 // ── ValueType ───────────────────────────────────────────────────────
 
@@ -148,7 +149,7 @@ fn is_integer_for_all_integer_output_types() {
 /// `IntConst(Small(0|1))` values typed `I1`.
 #[test]
 fn is_const_only_for_constant_kinds() {
-    assert!(NodeKind::IntConst(IntPayload::Small(42)).is_const());
+    assert!(NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)).is_const());
     assert!(NodeKind::FloatConst(0).is_const());
     assert!(!NodeKind::Entry.is_const());
     assert!(!NodeKind::Return.is_const());
@@ -180,7 +181,7 @@ fn non_cacheable_kinds_are_not_cacheable() {
 /// with equal inputs produce the same result and can be deduplicated.
 #[test]
 fn arithmetic_kinds_are_cacheable() {
-    assert!(NodeKind::IntConst(IntPayload::Small(0)).is_cacheable());
+    assert!(NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)).is_cacheable());
     assert!(NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add).is_cacheable());
     assert!(NodeKind::IntUnaryOp(crate::node::IntUnaryOp::Neg).is_cacheable());
     assert!(NodeKind::If.is_cacheable());
@@ -358,8 +359,8 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Load(space),
         NodeKind::Store(space),
         // pure value: integer
-        NodeKind::IntConst(IntPayload::Small(0)),
-        NodeKind::IntConst(IntPayload::Wide(crate::wide_const::WideConstId::new(0))),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0)),
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::IntCmpOp(IntCmpOp::Equal),
@@ -442,4 +443,27 @@ fn asm_fingerprint_exempt_matches_legacy() {
             "asm_fingerprint_exempt disagrees with legacy for {k:?}"
         );
     }
+}
+
+#[test]
+fn same_value_distinct_width_shares_const_id_distinct_node() {
+    use crate::node::{NodeKind, ValueType};
+    use crate::{IRBuilderExt, IRViewer};
+    let mut f = crate::Function::default();
+    // build_int_const interns by value; I80 and I128 both hold 42.
+    let v80 = f.build_int_const(42u128, ValueType::I80).unwrap();
+    let v128 = f.build_int_const(42u128, ValueType::I128).unwrap();
+    let n80 = f.producer(v80);
+    let n128 = f.producer(v128);
+    // One interned ConstId (same value) ...
+    let (NodeKind::IntConst(id80), NodeKind::IntConst(id128)) =
+        (*f.node_kind(n80), *f.node_kind(n128))
+    else {
+        panic!("expected IntConst nodes")
+    };
+    assert_eq!(id80, id128, "equal value must share one ConstId");
+    // ... but two distinct nodes (output type differs).
+    assert_ne!(n80, n128, "different declared widths must be distinct nodes");
+    assert_eq!(f.int_const_u128(v80), Some(42));
+    assert_eq!(f.int_const_u128(v128), Some(42));
 }

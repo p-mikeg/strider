@@ -413,55 +413,49 @@ pub(super) fn check_graph_invariants_side_indices(
     }
 }
 
-/// Graph invariant: verify every reachable `IntConst(Wide(id))` node
-/// references a live entry in `Function::wide_const_interner` and that the
-/// stored value's byte size matches the node's declared output type.
+/// Graph invariant: verify every reachable `IntConst(id)` node references a
+/// live entry in `Function::const_interner` and that the interned value does
+/// not exceed the node's declared output width.
 ///
-/// Emits [`ValidationError::DanglingWideConstId`] when the id is not
-/// present in the side-table (caller bypassed `intern_wide_const`),
-/// and [`ValidationError::WideConstWidthMismatch`] when the storage
-/// width contradicts the output type (e.g. I256 storage with I512
-/// declared output).
-pub(super) fn check_graph_invariants_wide_consts(
+/// Emits [`ValidationError::DanglingConstId`] when the id is not present in
+/// the interner (caller bypassed `intern_int_const*`), and
+/// [`ValidationError::ConstWidthMismatch`] when the stored value has bits set
+/// above the declared type's bit width (non-canonical masking).
+pub(super) fn check_graph_invariants_consts(
     function: &crate::Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    use crate::node::IntPayload;
+    use crate::node::NodeKind;
     let graph = function.graph();
     for (node, kind) in function.reachable_kind_iter(reachable) {
-        let NodeKind::IntConst(IntPayload::Wide(id)) = kind else {
+        let NodeKind::IntConst(id) = *kind else {
             continue;
         };
-        let Some(storage) = function.wide_const_opt(*id) else {
-            errs.push(ValidationError::DanglingWideConstId { node, id: *id });
+        let Some(value) = function.const_value_opt(id) else {
+            errs.push(ValidationError::DanglingConstId { node, id });
             continue;
         };
-        let actual = storage.byte_size();
-        // Determine expected byte size from the node's declared output type.
-        // Skip the node (let Layer A handle it) if there is no value-typed output.
         let outputs = graph.node_outputs(node);
         let Some(&out) = outputs.first() else {
-            continue;
+            continue; // arity reported elsewhere
         };
         let ValueKind::Typed(ty) = graph.value_kind(out) else {
             continue;
         };
-        if !ty.is_wide_int() {
-            errs.push(ValidationError::WideConstInvalidOutputType {
-                node,
-                output_type: ty,
-            });
-            continue;
-        }
-        let expected = ty.byte_size();
-        if expected != actual {
-            errs.push(ValidationError::WideConstWidthMismatch {
-                node,
-                output_type: ty,
-                expected_bytes: expected,
-                actual_bytes: actual,
-            });
+        // Every bit above the declared width must be zero (canonical masking).
+        let too_wide = match value {
+            crate::const_value::ConstValue::Bits(v) => v & !ty.bit_mask_u128() != 0,
+            crate::const_value::ConstValue::Wide(limbs) => {
+                limbs.len() * 64 > ty.bit_width()
+                    && limbs
+                        .iter()
+                        .enumerate()
+                        .any(|(i, &l)| (i + 1) * 64 > ty.bit_width() && l != 0)
+            }
+        };
+        if too_wide {
+            errs.push(ValidationError::ConstWidthMismatch { node, id });
         }
     }
 }

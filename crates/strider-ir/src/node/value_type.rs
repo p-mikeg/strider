@@ -23,9 +23,9 @@ pub enum ValueType {
     I80,
     I128,
     I256,
-    /// 512-bit unsigned integer (AVX-512 `zmm` registers).  Stored
-    /// off-side via `crate::wide_const::WideConstStorage::I512`
-    /// because the value doesn't fit in `IntConst`'s `u128` payload.
+    /// 512-bit unsigned integer (AVX-512 `zmm` registers).  Constant
+    /// values are interned via `crate::const_value::ConstValue::Wide`
+    /// because they don't fit a `u128`.
     I512,
     /// 32-bit IEEE 754 single-precision float.
     F32,
@@ -215,8 +215,7 @@ impl ValueType {
     }
 
     /// Returns `true` if this type is a WIDE integer — one that doesn't fit a
-    /// `u64` (I80, I128, I256, I512), the set stored off-side via
-    /// `crate::wide_const::WideConstStorage`.
+    /// `u64` (I80, I128, I256, I512).
     ///
     /// `F80` shares I80's 10-byte size but is excluded (it is a float, so
     /// `is_integer()` is false); every ≤ `I64` integer and every float is
@@ -249,12 +248,10 @@ impl ValueType {
     /// `I128` returns `u128::MAX`.  `I256` and `I512` also return
     /// `u128::MAX` because the mask cannot represent 256+ bits in a
     /// `u128` carrier — callers that need to mask a 256-bit value must
-    /// route through `IntConst(Wide(...))` / `Graph::wide_const_interner`.  Wide-type
-    /// rejection happens at the `IntConst` build site
-    /// ([`crate::IRBuilderExt::build_int_const`] returns `Err`
-    /// for `I256` / `I512`); `bit_mask_u128` and
-    /// [`Self::get_unsigned_int`] do not reject `I256` themselves —
-    /// they return the conservative `u128`-width approximation.
+    /// route through `IntConst` / the const interner's `ConstValue::Wide`
+    /// limbs.  `bit_mask_u128` and [`Self::get_unsigned_int`] do not reject
+    /// `I256` themselves — they return the conservative `u128`-width
+    /// approximation.
     /// Float types return `0` (defensive — no caller should ask).
     pub fn bit_mask_u128(self) -> u128 {
         let bits = self.bit_width();

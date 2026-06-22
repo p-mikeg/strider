@@ -52,30 +52,19 @@ impl<'a> RawFunctionDumper<'a> {
         // debug.  Every other kind's debug form is already terse.
         let kind_str = match kind {
             NodeKind::InitialVar(vn) => format!("InitialVar({})", fmt_vn(vn)),
+            // Constants carry their value off-side in `const_interner`; show the
+            // interner id compactly (`IntConst(#N)`) and the value below.
+            NodeKind::IntConst(id) => format!("IntConst(#{})", id.as_u32()),
             other => format!("{other:?}"),
         };
         let mut s = format!("n{}  {kind_str}", node.as_u32());
 
-        // Wide constants carry their value off-side in `wide_const_interner`; show it.
-        if let NodeKind::IntConst(crate::node::IntPayload::Wide(id)) = kind {
-            let value = match f.wide_const_opt(*id) {
-                Some(storage) => {
-                    if let Some(v) = storage.as_u128() {
-                        // I80 / I128: render the u128 directly.
-                        format!("0x{v:x}")
-                    } else {
-                        // I256 / I512: limbs are little-endian, walk high→low.
-                        let hex: String = storage
-                            .limbs()
-                            .iter()
-                            .rev()
-                            .map(|limb| format!("{limb:016x}"))
-                            .collect();
-                        let trimmed = hex.trim_start_matches('0');
-                        format!("0x{}", if trimmed.is_empty() { "0" } else { trimmed })
-                    }
-                }
-                None => format!("<dangling wide-const {id:?}>"),
+        // Constants carry their value off-side in `const_interner`; show the
+        // raw `ConstValue` debug (dangling ids labelled, not panicked).
+        if let NodeKind::IntConst(id) = kind {
+            let value = match f.const_value_opt(*id) {
+                Some(cv) => format!("{cv:?}"),
+                None => format!("<dangling const {id:?}>"),
             };
             s.push_str(&format!("\n= {value}"));
         }

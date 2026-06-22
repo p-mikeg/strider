@@ -4,11 +4,20 @@ use super::*;
 use crate::{
     IRViewer, IRWalker,
     function::Function,
-    node::{IntPayload, NodeKind, ValueKind, ValueType},
+    node::{NodeKind, ValueKind, ValueType},
 };
 use ::dot::GraphDotDumper as _;
 
 // ── helpers ───────────────────────────────────────────────────────────────
+
+/// Interns `v` (masked to `ty`) and creates a single-output `IntConst` node,
+/// returning its `NodeId`.  The const value is interned so the renderers'
+/// `int_const_u128` / `const_value` reads resolve.
+fn int_const_node(f: &mut Function, v: u128, ty: ValueType) -> NodeId {
+    let id = f.intern_int_const(v, ty);
+    f.graph_mut()
+        .create_node(NodeKind::IntConst(id), [], [ValueKind::Typed(ty)])
+}
 
 /// Creates a probe `Sleigh` context backed by an empty buffer.
 /// Sufficient for all dot tests (no instructions decoded).
@@ -55,7 +64,7 @@ fn edge_lines(dot: &str) -> Vec<&str> {
 }
 
 /// A wide `IntConst` (I256/I512) node must render its actual value, not the
-/// Debug form of the interning id (e.g. `IntConst(Wide(WideConstId(0)))`).
+/// Debug form of the interning id (e.g. `IntConst(ConstId(0))`).
 #[test]
 fn render_int_const_wide_shows_value_not_debug() {
     let mut f = Function::default();
@@ -68,12 +77,13 @@ fn render_int_const_wide_shows_value_not_debug() {
         .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-    // limbs are little-endian: value = 0xabcd<48 zeros>1234.
-    let id = f.intern_wide_const(crate::wide_const::WideConstStorage::I256([
-        0x1234, 0xabcd, 0, 0,
-    ]));
+    // limbs are little-endian; high limb set keeps it genuinely Wide.
+    let id = f.intern_int_const_limbs(
+        &[0x1234, 0xabcd, 0, 0x8000_0000_0000_0000],
+        ValueType::I256,
+    );
     let wide = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Wide(id)),
+        NodeKind::IntConst(id),
         [],
         [ValueKind::Typed(ValueType::I256)],
     );
@@ -87,8 +97,8 @@ fn render_int_const_wide_shows_value_not_debug() {
         "wide const must render with a u256 suffix, got: {dot}"
     );
     assert!(
-        !dot.contains("Wide(WideConstId"),
-        "wide const must not render as the Debug fallback (Wide(WideConstId(...))), got: {dot}"
+        !dot.contains("ConstId"),
+        "wide const must not render as the Debug fallback (ConstId(...)), got: {dot}"
     );
     assert!(
         dot.contains("abcd") && dot.contains("1234"),
@@ -112,20 +122,12 @@ fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     // A constant the pretty renderer would inline into its consumer.
-    let c = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0xABC)),
-        [],
-        [ValueKind::Typed(ValueType::I64)],
-    );
+    let c = int_const_node(&mut f, 0xABC_u128, ValueType::I64);
     let [c_value] = f.node_outputs_exact::<1>(c).unwrap();
     f.graph_mut()
         .create_node(NodeKind::Return, [ctrl, mem_value, c_value], []);
     // A detached node not reachable from entry — must NOT appear in the raw view.
-    let zombie = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0xDEAD_BEEF)),
-        [],
-        [ValueKind::Typed(ValueType::I64)],
-    );
+    let zombie = int_const_node(&mut f, 0xDEAD_BEEF_u128, ValueType::I64);
 
     let dot = f.raw_dot().expect("raw_dot must render");
 
@@ -143,8 +145,8 @@ fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
         zombie.as_u32()
     );
     assert!(
-        dot.contains("IntConst(Small(2748))"),
-        "the reachable constant is a standalone node, not inlined"
+        dot.contains("IntConst(#") && dot.contains("Bits(2748)"),
+        "the reachable constant is a standalone node, not inlined, got dot:\n{dot}"
     );
     // The Return's three inputs are real edges.
     assert!(
@@ -192,11 +194,7 @@ fn dot_output_diamond_is_deterministic() {
         .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let cond = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0)),
-        [],
-        [ValueKind::Typed(ValueType::I1)],
-    );
+    let cond = int_const_node(&mut f, 0_u128, ValueType::I1);
     let [cond_value] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.graph_mut().create_node(
         NodeKind::If,
@@ -242,11 +240,7 @@ fn all_edge_endpoints_are_declared() {
         .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let cond = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(1)),
-        [],
-        [ValueKind::Typed(ValueType::I1)],
-    );
+    let cond = int_const_node(&mut f, 1_u128, ValueType::I1);
     let [cond_value] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.graph_mut().create_node(
         NodeKind::If,
@@ -324,11 +318,7 @@ fn if_node_produces_exactly_two_branch_virtual_nodes() {
         .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let cond = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(1)),
-        [],
-        [ValueKind::Typed(ValueType::I1)],
-    );
+    let cond = int_const_node(&mut f, 1_u128, ValueType::I1);
     let [cond_value] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.graph_mut().create_node(
         NodeKind::If,
@@ -388,11 +378,7 @@ fn int_const_label_contains_value_and_type() {
         .graph_mut()
         .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
-    let c = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0xdeadbeef)),
-        [],
-        [ValueKind::Typed(ValueType::I32)],
-    );
+    let c = int_const_node(&mut f, 0xdeadbeef_u128, ValueType::I32);
     let [c_value] = f.node_outputs_exact::<1>(c).unwrap();
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     f.graph_mut()
@@ -423,11 +409,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
         .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let cond_node = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(1)),
-        [],
-        [ValueKind::Typed(ValueType::I1)],
-    );
+    let cond_node = int_const_node(&mut f, 1_u128, ValueType::I1);
     let [cond] = f.node_outputs_exact::<1>(cond_node).unwrap();
     let if_node = f.graph_mut().create_node(
         NodeKind::If,
@@ -526,11 +508,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
         .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
-    let target = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0x1000)),
-        [],
-        [ValueKind::Typed(ValueType::I64)],
-    );
+    let target = int_const_node(&mut f, 0x1000_u128, ValueType::I64);
     let target_value = f.node_outputs(target).iter().copied().next().unwrap();
     // One Bool clobbered output, but the function's call_clobbered list is empty.
     let call = f.graph_mut().create_node(
@@ -658,19 +636,11 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
     let [region_ctrl, _phi_tok] = f.node_outputs_exact::<2>(region).unwrap();
 
     // addr is a constant (SP + 0x10 — represented as a raw IntConst here).
-    let addr = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0x10)),
-        [],
-        [ValueKind::Typed(ValueType::I64)],
-    );
+    let addr = int_const_node(&mut f, 0x10_u128, ValueType::I64);
     let [addr_value] = f.node_outputs_exact::<1>(addr).unwrap();
 
     // data value to store.
-    let val = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0xdeadbeef_u64)),
-        [],
-        [ValueKind::Typed(ValueType::I32)],
-    );
+    let val = int_const_node(&mut f, (0xdeadbeef_u64) as u128, ValueType::I32);
     let [val_value] = f.node_outputs_exact::<1>(val).unwrap();
 
     // Store(ram): inputs = [mem, addr, data], output = [mem].
@@ -742,11 +712,7 @@ fn load_keeps_addr_edge_and_labels_base_sp_offset() {
     let [mem0] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
     // addr.
-    let addr = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0x8)),
-        [],
-        [ValueKind::Typed(ValueType::I64)],
-    );
+    let addr = int_const_node(&mut f, 0x8_u128, ValueType::I64);
     let [addr_value] = f.node_outputs_exact::<1>(addr).unwrap();
 
     // Load(ram): inputs = [mem, addr], output = [value].
@@ -856,11 +822,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let [im_value] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
     // IntConst(1) (I1-typed true) so DBE/DCE leave the If alone for the test.
-    let cond = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(1)),
-        [],
-        [ValueKind::Typed(ValueType::I1)],
-    );
+    let cond = int_const_node(&mut f, 1_u128, ValueType::I1);
     let [cond_value] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.graph_mut().create_node(
         NodeKind::If,
@@ -892,16 +854,8 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let [_join_ctrl, join_phi_token] = f.node_outputs_exact::<2>(join).unwrap();
 
     // Two distinct values to phi over (so the Phi has two value inputs).
-    let v_t = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0xAA)),
-        [],
-        [ValueKind::Typed(ValueType::I64)],
-    );
-    let v_f = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0xBB)),
-        [],
-        [ValueKind::Typed(ValueType::I64)],
-    );
+    let v_t = int_const_node(&mut f, 0xAA_u128, ValueType::I64);
+    let v_f = int_const_node(&mut f, 0xBB_u128, ValueType::I64);
     let [v_t_value] = f.node_outputs_exact::<1>(v_t).unwrap();
     let [v_f_value] = f.node_outputs_exact::<1>(v_f).unwrap();
 

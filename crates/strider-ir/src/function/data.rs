@@ -4,7 +4,7 @@
 //! [`Graph`] holds structural state (nodes/edges, dedup cache).
 //! [`Function`] holds the overlay that gives those nodes their
 //! function-level meaning: which node is the entry, the calling convention
-//! metadata, asm fingerprint attribution, the wide-const interner, and the
+//! metadata, asm fingerprint attribution, the const interner, and the
 //! other `NodeId`-keyed side tables.
 //!
 //! Passes that only need structure take `&Graph`; passes that need the overlay
@@ -234,21 +234,23 @@ pub struct Function {
     /// [`Self::compact`].
     initial_var_index: FxHashMap<rsleigh::Vn, NodeId>,
 
-    /// Wide-integer constant values (I80, I128, I256, I512) referenced by
-    /// `IntConst(IntPayload::Wide(id))` nodes.
+    /// Every integer-constant value referenced by an `IntConst(id)` node.
     ///
-    /// Values wider than 64 bits don't fit in `IntPayload::Small`; the IR
-    /// stores them off-side here and the node carries a
-    /// `crate::wide_const::WideConstId` index instead.  Interning
-    /// (via [`Self::intern_wide_const`]) dedups by value so two
-    /// `IntConst(Wide(id))` nodes referencing the same logical value are
-    /// structurally equal under [`Graph::create_node`]'s dedup cache.
-    /// An [`entity_utils::EntityInterner`] owns both the forward
-    /// `WideConstId → value` map and the reverse value-dedup index.
-    /// Rebuilt over the live ids by [`Self::compact`].
-    pub(crate) wide_const_interner: entity_utils::EntityInterner<
-        crate::wide_const::WideConstId,
-        crate::wide_const::WideConstStorage,
+    /// The single interner for ALL integer constants (I1..I512): a value that
+    /// fits `u128` is held inline as `ConstValue::Bits`, a value that exceeds
+    /// 128 bits as `ConstValue::Wide` (boxed little-endian limbs).  The
+    /// constant's WIDTH is carried by the node's output `ValueKind`, not by the
+    /// stored value, so `IntConst(42):I80` and `IntConst(42):I128` share one
+    /// `ConstId`.  Interning (via [`Self::intern_const`] /
+    /// [`Self::intern_int_const`]) dedups by value so two `IntConst(id)` nodes
+    /// referencing the same logical value are structurally equal under
+    /// [`Graph::create_node`]'s dedup cache.  An
+    /// [`entity_utils::EntityInterner`] owns both the forward `ConstId → value`
+    /// map and the reverse value-dedup index.  Rebuilt over the live ids by
+    /// [`Self::compact`].
+    pub(crate) const_interner: entity_utils::EntityInterner<
+        crate::const_value::ConstId,
+        crate::const_value::ConstValue,
     >,
 }
 
@@ -290,37 +292,65 @@ impl Function {
         &mut self.graph
     }
 
-    /// Interns `value` and returns its `crate::wide_const::WideConstId`.
+    /// Interns `value` and returns its `crate::const_value::ConstId`.
     /// Subsequent calls with an equal value return the same id — the
     /// dedup invariant the [`Graph::create_node`] cache relies on so
-    /// two `IntConst(Wide(id))` nodes referencing the same logical value
+    /// two `IntConst(id)` nodes referencing the same logical value
     /// share a single `NodeId`.
-    pub fn intern_wide_const(
+    pub fn intern_const(
         &mut self,
-        value: crate::wide_const::WideConstStorage,
-    ) -> crate::wide_const::WideConstId {
-        self.wide_const_interner.intern(value)
+        value: crate::const_value::ConstValue,
+    ) -> crate::const_value::ConstId {
+        self.const_interner.intern(value)
     }
 
-    /// Looks up a wide-const value by id.  The id must have been
-    /// produced by `intern_wide_const` on this function; ids
-    /// from other functions are not portable.
-    pub fn wide_const(
+    /// Interns the integer value `value`, masked to `ty`'s width, returning its
+    /// `ConstId`. The single canonicalisation point for ≤ u128 constants: equal
+    /// (masked) values share one id regardless of declared type.
+    pub fn intern_int_const(
+        &mut self,
+        value: u128,
+        ty: crate::node::ValueType,
+    ) -> crate::const_value::ConstId {
+        let masked = value & ty.bit_mask_u128();
+        self.const_interner
+            .intern(crate::const_value::ConstValue::Bits(masked))
+    }
+
+    /// Interns a > 64-bit-limbed integer value (I256/I512), canonicalising to
+    /// `Bits` when the limbs fit `u128`. `limbs` is little-endian.
+    pub fn intern_int_const_limbs(
+        &mut self,
+        limbs: &[u64],
+        _ty: crate::node::ValueType,
+    ) -> crate::const_value::ConstId {
+        let cv = crate::const_value::ConstValue::Wide(limbs.to_vec().into_boxed_slice());
+        let canon = match cv.fits_u128() {
+            Some(v) => crate::const_value::ConstValue::Bits(v),
+            None => cv,
+        };
+        self.const_interner.intern(canon)
+    }
+
+    /// Looks up a const value by id.  The id must have been produced by
+    /// `intern_const` / `intern_int_const*` on this function; ids from other
+    /// functions are not portable.
+    pub fn const_value(
         &self,
-        id: crate::wide_const::WideConstId,
-    ) -> &crate::wide_const::WideConstStorage {
-        &self.wide_const_interner[id]
+        id: crate::const_value::ConstId,
+    ) -> &crate::const_value::ConstValue {
+        &self.const_interner[id]
     }
 
-    /// Non-panicking variant of [`Self::wide_const`]: returns `None` for a
+    /// Non-panicking variant of [`Self::const_value`]: returns `None` for a
     /// dangling id rather than panicking.  The debug renderers use this so
     /// they can label a malformed graph (e.g. one inspected mid-rewrite)
     /// instead of aborting.
-    pub fn wide_const_opt(
+    pub fn const_value_opt(
         &self,
-        id: crate::wide_const::WideConstId,
-    ) -> Option<&crate::wide_const::WideConstStorage> {
-        self.wide_const_interner.get(id)
+        id: crate::const_value::ConstId,
+    ) -> Option<&crate::const_value::ConstValue> {
+        self.const_interner.get(id)
     }
 
     /// Returns the entry node, if one has been recorded.
@@ -801,21 +831,17 @@ impl Function {
     }
 
     /// Same as [`Graph::create_node`] plus unions the asm-fingerprint of
-    /// every node in `contributors` into the resulting node, and masks any
-    /// `IntConst(Small)` payload to its declared integer output width so
-    /// every creation path produces the same canonical form:
-    ///
-    /// * narrow (≤ I64): payload stays `Small`, masked to the declared width.
-    /// * wide (I80 / I128 / I256 / I512): promoted to `IntConst(Wide)` via
-    ///   the wide-const interner so no inline `Small` payload holds > 64 bits.
+    /// every node in `contributors` into the resulting node.
     ///
     /// This is the canonical node-creation funnel for ALL mutable paths:
     /// `FunctionBuilder::create_node` (the lift-time path),
     /// [`crate::EditFunction::create_node_attributed`] (the rewrite /
-    /// template-engine path), and any direct caller.  Routing every
-    /// creation through here is what makes the IntConst-masking invariant
-    /// hold workspace-wide without any knowledge of it in the generic
-    /// dedup-cache layer.
+    /// template-engine path), and any direct caller.
+    ///
+    /// `IntConst` no longer needs special-casing here: every `ConstId` is
+    /// minted through [`Self::intern_int_const`] / [`Self::intern_int_const_limbs`]
+    /// (which mask-to-width and canonicalise by value), so a constant arrives
+    /// pre-canonical and passes straight through to the dedup cache.
     pub fn create_node_attributed(
         &mut self,
         kind: crate::node::NodeKind,
@@ -823,48 +849,6 @@ impl Function {
         output_kinds: impl IntoIterator<Item = crate::node::ValueKind>,
         contributors: &[NodeId],
     ) -> NodeId {
-        // Collect output kinds so we can inspect the declared type for the
-        // IntConst normalisation below.
-        let output_kinds: smallvec::SmallVec<[crate::node::ValueKind; 4]> =
-            output_kinds.into_iter().collect();
-        // Canonicalise the `IntConst` payload by VALUE, not by declared type:
-        // the wide interner is reserved for values that genuinely exceed
-        // `u64`; everything else lives inline as `Small` with the width
-        // carried by the output `ValueKind`.
-        // Mask an inline `u64` to the declared integer width.  Masking only
-        // clears bits, so the result always fits `u64` for ANY declared type —
-        // an inline value therefore stays `Small` regardless of width
-        // (I80/I128/I256/I512 included).  Shared by the `Small` and the
-        // `Wide`-fits-`u64` arms so both produce an identical canonical payload.
-        let mask_inline = |v: u64| -> u64 {
-            match output_kinds.first().and_then(|vk| vk.as_value()) {
-                Some(ty) if ty.is_integer() => {
-                    #[allow(clippy::cast_possible_truncation)]
-                    {
-                        (u128::from(v) & ty.bit_mask_u128()) as u64
-                    }
-                }
-                _ => v,
-            }
-        };
-        let kind = match kind {
-            crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v)) => {
-                crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(mask_inline(v)))
-            }
-            // A `Wide` payload whose interned value fits `u64` is the inline
-            // `Small` form in disguise — canonicalise it down so a given
-            // (value, type) has exactly one representation (preserving dedup).
-            // Genuinely-wide values pass through unchanged.
-            crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id)) => {
-                match self.wide_const(id).as_u64() {
-                    Some(v) => crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(
-                        mask_inline(v),
-                    )),
-                    None => crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id)),
-                }
-            }
-            other => other,
-        };
         let node_id = self.graph.create_node(kind, inputs, output_kinds);
         for &src in contributors {
             self.extend_asm_fingerprint_from(node_id, src);
@@ -1003,74 +987,62 @@ impl Function {
                     .collect();
                 (!mapped.is_empty()).then_some((index, mapped))
             });
-        // GC the wide-const interner over only the values referenced by
-        // surviving `IntConst(Wide(id))` nodes, rewriting each survivor's id
-        // to the new dense id, then re-key the graph's dedup cache over those
-        // rewritten ids.  The dedup cache keys on `NodeKind` (which carries
-        // the `WideConstId`), so the rewrite must precede the cache rebuild —
-        // exactly as it did when this GC lived inside `Graph::retain_reachable`
-        // before the cache-rebuild step.
-        if self.gc_wide_consts() {
+        // GC the const interner over only the values referenced by surviving
+        // `IntConst(id)` nodes, rewriting each survivor's id to the new dense
+        // id, then re-key the graph's dedup cache over those rewritten ids.
+        // The dedup cache keys on `NodeKind` (which carries the `ConstId`), so
+        // the rewrite must precede the cache rebuild.
+        if self.gc_consts() {
             self.graph.rebuild_cache();
         }
         Ok(remap)
     }
 
-    /// Rebuilds [`Self::wide_const_interner`] over only the values
-    /// referenced by surviving `IntConst(Wide(id))` nodes, rewriting each
-    /// such node's id in place to the new id assigned by the rebuilt
-    /// interner.  Returns `true` iff at least one node's id was rewritten
-    /// (so the caller knows whether the dedup cache must be re-keyed).
-    /// Returns `false` when there are no surviving wide nodes — including
-    /// the case where the graph previously had wide nodes that were all
-    /// pruned by `retain_reachable`; in that case any stale interner
-    /// entries are dropped and the cache needs no rebuild.
+    /// Rebuilds [`Self::const_interner`] over only the values referenced by
+    /// surviving `IntConst(id)` nodes, rewriting each such node's id in place
+    /// to the new id assigned by the rebuilt interner.  Returns `true` iff at
+    /// least one node's id was rewritten (so the caller knows whether the dedup
+    /// cache must be re-keyed).  Returns `false` when there are no surviving
+    /// constant nodes — including the case where the graph previously had
+    /// constants that were all pruned by `retain_reachable`; in that case any
+    /// stale interner entries are dropped and the cache needs no rebuild.
     ///
     /// Only safe to call after [`Graph::retain_reachable`] has settled
     /// the arena — at that point `self.graph.nodes.keys()` iterates only
     /// surviving nodes, so the live-id scan correctly excludes zombie
     /// references.
-    fn gc_wide_consts(&mut self) -> bool {
-        use crate::node::{IntPayload, NodeKind};
-        use crate::wide_const::WideConstId;
+    fn gc_consts(&mut self) -> bool {
+        use crate::const_value::ConstId;
+        use crate::node::NodeKind;
 
-        // Build the live-id set + collect every IntConst(Wide) node.
-        let mut live_old_ids: Vec<WideConstId> = Vec::new();
-        let mut wide_nodes: Vec<NodeId> = Vec::new();
+        let mut live_old_ids: Vec<ConstId> = Vec::new();
+        let mut const_nodes: Vec<NodeId> = Vec::new();
         for node in self.graph.all_node_ids() {
-            if let NodeKind::IntConst(IntPayload::Wide(id)) = *self.graph.node_kind(node) {
-                wide_nodes.push(node);
+            if let NodeKind::IntConst(id) = *self.graph.node_kind(node) {
+                const_nodes.push(node);
                 live_old_ids.push(id);
             }
         }
         if live_old_ids.is_empty() {
-            // No surviving wide nodes — drop any stale interner entries
-            // (e.g. zombie ids left by retain_reachable) and report that
-            // no node id was rewritten, so the caller skips the rebuild.
-            self.wide_const_interner = Default::default();
+            self.const_interner = Default::default();
             return false;
         }
-
-        // Rebuild the interner over only live values; `intern` dedups, so
-        // distinct old ids that aliased one value collapse to one new id.
         let mut new_interner: entity_utils::EntityInterner<
-            WideConstId,
-            crate::wide_const::WideConstStorage,
+            ConstId,
+            crate::const_value::ConstValue,
         > = entity_utils::EntityInterner::default();
-        let mut old_to_new: FxHashMap<WideConstId, WideConstId> = FxHashMap::default();
+        let mut old_to_new: FxHashMap<ConstId, ConstId> = FxHashMap::default();
         for old_id in live_old_ids {
             if old_to_new.contains_key(&old_id) {
                 continue;
             }
-            let value = self.wide_const_interner[old_id].clone();
+            let value = self.const_interner[old_id].clone();
             let new_id = new_interner.intern(value);
             old_to_new.insert(old_id, new_id);
         }
-        self.wide_const_interner = new_interner;
-
-        // Rewrite the surviving IntConst(Wide(old_id)) nodes' payloads.
-        for node in wide_nodes {
-            if let NodeKind::IntConst(IntPayload::Wide(id)) = self.graph.node_kind_mut(node)
+        self.const_interner = new_interner;
+        for node in const_nodes {
+            if let NodeKind::IntConst(id) = self.graph.node_kind_mut(node)
                 && let Some(&new_id) = old_to_new.get(id)
             {
                 *id = new_id;
@@ -1099,6 +1071,33 @@ impl Function {
             sleigh,
             node_to_arg_indices,
         })
+    }
+}
+
+/// `Function` is itself an [`crate::IRBuilder`]: it owns the canonical
+/// [`Self::create_node_attributed`] funnel, so the blanket
+/// [`crate::IRBuilderExt`] construction vocabulary (`build_int_const`,
+/// `build_int_const_limbs`, …) is available directly on a `Function` for
+/// synthetic / test construction.  Unlike [`crate::FunctionBuilder`] this
+/// applies no ambient `lift_addr` stamp — callers that need fingerprint
+/// attribution pass contributors explicitly.
+impl crate::IRBuilder for Function {
+    fn function_mut(&mut self) -> &mut Function {
+        self
+    }
+
+    fn create_node_attributed<I, O>(
+        &mut self,
+        kind: NodeKind,
+        inputs: I,
+        outputs: O,
+        contributors: &[NodeId],
+    ) -> NodeId
+    where
+        I: IntoIterator<Item = crate::node::ValueId>,
+        O: IntoIterator<Item = crate::node::ValueKind>,
+    {
+        Function::create_node_attributed(self, kind, inputs, outputs, contributors)
     }
 }
 
@@ -1218,7 +1217,15 @@ mod compact_tests {
 
     use super::Function;
     use crate::IRViewer;
-    use crate::node::{IntPayload, NodeKind, ValueKind};
+    use crate::node::{NodeId, NodeKind, ValueKind, ValueType};
+
+    /// Interns `v` (masked to `ty`) and creates a single-output `IntConst`
+    /// node, returning its `NodeId`.
+    fn int_const_node(f: &mut Function, v: u128, ty: ValueType) -> NodeId {
+        let id = f.intern_int_const(v, ty);
+        f.graph_mut()
+            .create_node(NodeKind::IntConst(id), [], [ValueKind::Typed(ty)])
+    }
 
     #[test]
     fn compact_remaps_entry_and_drops_zombies() {
@@ -1226,11 +1233,7 @@ mod compact_tests {
         let entry = f
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let _zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xdead)),
-            [],
-            [ValueKind::Typed(crate::node::ValueType::I64)],
-        );
+        let _zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::I64);
         f.set_entry(entry);
         let pre_count = f.graph().all_node_ids().count();
 
@@ -1253,18 +1256,24 @@ mod compact_tests {
     /// payload rewrite the survivor would dangle or read the wrong constant.
     #[test]
     fn compact_gcs_and_remaps_surviving_wide_const() {
+        use crate::const_value::ConstValue;
         use crate::node::ValueType;
-        use crate::wide_const::WideConstStorage;
 
-        const LIVE: u128 = 0x1234_5678_9ABC_DEF0_1122_3344_5566_7788;
+        // Genuinely-wide I256 value (high limb set ⇒ stays `Wide`).
+        const LIVE_LIMBS: [u64; 4] = [
+            0x1122_3344_5566_7788,
+            0x99AA_BBCC_DDEE_FF00,
+            0,
+            0x8000_0000_0000_0000,
+        ];
 
         let mut f = Function::default();
         // A wide const referenced only by a zombie (interned FIRST → id 0).
-        let dropped_id = f.intern_wide_const(WideConstStorage::I128(0xAAAA_BBBB));
+        let dropped_id = f.intern_int_const_limbs(&[0xAAAA_BBBB, 0, 0, 1], ValueType::I256);
         let _zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Wide(dropped_id)),
+            NodeKind::IntConst(dropped_id),
             [],
-            [ValueKind::Typed(ValueType::I128)],
+            [ValueKind::Typed(ValueType::I256)],
         );
 
         let entry = f
@@ -1278,11 +1287,11 @@ mod compact_tests {
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
 
         // The live wide const, referenced by a reachable Return.
-        let live_id = f.intern_wide_const(WideConstStorage::I128(LIVE));
+        let live_id = f.intern_int_const_limbs(&LIVE_LIMBS, ValueType::I256);
         let wide_node = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Wide(live_id)),
+            NodeKind::IntConst(live_id),
             [],
-            [ValueKind::Typed(ValueType::I128)],
+            [ValueKind::Typed(ValueType::I256)],
         );
         let [wide_value] = f.node_outputs_exact::<1>(wide_node).unwrap();
         f.graph_mut()
@@ -1293,16 +1302,14 @@ mod compact_tests {
         let new_wide = remap
             .node_old_to_new(wide_node)
             .expect("the referenced wide const survives");
-        match *f.node_kind(new_wide) {
-            NodeKind::IntConst(IntPayload::Wide(new_id)) => {
-                assert_eq!(
-                    f.wide_const_opt(new_id),
-                    Some(&WideConstStorage::I128(LIVE)),
-                    "GC'd + remapped wide-const id must still resolve to its value",
-                );
-            }
-            ref other => panic!("expected IntConst(Wide(_)), got {other:?}"),
-        }
+        let NodeKind::IntConst(new_id) = *f.node_kind(new_wide) else {
+            panic!("expected IntConst(_), got {:?}", f.node_kind(new_wide));
+        };
+        assert_eq!(
+            f.const_value_opt(new_id),
+            Some(&ConstValue::Wide(LIVE_LIMBS.to_vec().into_boxed_slice())),
+            "GC'd + remapped const id must still resolve to its value",
+        );
     }
 
     /// A SURVIVING `stack_offsets` entry is remapped through compaction on
@@ -1313,15 +1320,11 @@ mod compact_tests {
     /// `retain_reachable_drops_side_table_entry_for_dropped_node`.)
     #[test]
     fn compact_remaps_surviving_stack_offset_entry() {
-        use crate::node::ValueType;
+        
 
         let mut f = Function::default();
         // Zombie FIRST so the surviving nodes' ids shift during compaction.
-        let zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xdead)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::I64);
         let entry = f
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
@@ -1331,11 +1334,7 @@ mod compact_tests {
             .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-        let base = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0x7000)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let base = int_const_node(&mut f, 0x7000_u128, crate::node::ValueType::I64);
         let [base_value] = f.node_outputs_exact::<1>(base).unwrap();
         let ret =
             f.graph_mut()
@@ -1370,7 +1369,7 @@ mod compact_tests {
     /// surviving node whose id was remapped.
     #[test]
     fn retain_reachable_preserves_asm_fingerprint_on_surviving_node() {
-        use crate::node::ValueType;
+        
 
         let mut f = Function::default();
         let entry = f
@@ -1382,11 +1381,7 @@ mod compact_tests {
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         // Reachable IntConst whose Return-input consumer keeps it live.
-        let surviving = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xCAFE_u64)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let surviving = int_const_node(&mut f, (0xCAFE_u64) as u128, crate::node::ValueType::I64);
         let [surv_value] = f.node_outputs_exact::<1>(surviving).unwrap();
         let _ret =
             f.graph_mut()
@@ -1413,7 +1408,7 @@ mod compact_tests {
     #[test]
     fn retain_reachable_drops_zombie_node() {
         use crate::graph::NodeIdRemap;
-        use crate::node::ValueType;
+        
 
         let mut f = Function::default();
         // Entry + InitialMemory + a Return (minimal reachable graph).
@@ -1431,11 +1426,7 @@ mod compact_tests {
         f.set_entry(entry);
 
         // Zombie: a cacheable IntConst not connected to anything reachable.
-        let zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xC0FFEE_u64)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let zombie = int_const_node(&mut f, (0xC0FFEE_u64) as u128, crate::node::ValueType::I64);
 
         // Zombie must be in the arena before compact.
         let pre_ids: Vec<_> = f.graph().all_node_ids().collect();
@@ -1497,11 +1488,7 @@ mod compact_tests {
         );
 
         // Zombie IntConst node with a stack_offsets entry.
-        let zombie_stack = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xBEEF_u64)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let zombie_stack = int_const_node(&mut f, (0xBEEF_u64) as u128, crate::node::ValueType::I64);
         let zombie_value = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
         f.set_stack_offset(zombie_stack, zombie_value, -8);
         assert_eq!(
@@ -1565,11 +1552,7 @@ mod compact_tests {
             .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         // A zombie created *before* the arg carrier so that compaction
         // reassigns the carrier's NodeId (the zombie's slot is dropped).
-        let _zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xDEAD_u64)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let _zombie = int_const_node(&mut f, (0xDEAD_u64) as u128, crate::node::ValueType::I64);
         // The arg carrier: a register-arg-style InitialVar kept live by Return.
         let arg_vn = rsleigh::Vn {
             size: 8,
@@ -1801,18 +1784,10 @@ mod compact_tests {
             .graph_mut()
             .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         // A zombie created before the Call so compaction reassigns ids.
-        let _zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xDEAD_u64)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let _zombie = int_const_node(&mut f, (0xDEAD_u64) as u128, crate::node::ValueType::I64);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-        let target = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0x1000)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let target = int_const_node(&mut f, 0x1000_u128, crate::node::ValueType::I64);
         let [target_value] = f.node_outputs_exact::<1>(target).unwrap();
         // Call with one clobber output, kept live by Return consuming its
         // ctrl/mem outputs.

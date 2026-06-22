@@ -1,5 +1,5 @@
 use super::*;
-use crate::node::{IntPayload, NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 /// Sentinel asm-fingerprint base used by [`stamp`] below — distinct from
 /// any real machine address.
@@ -45,14 +45,13 @@ fn spine() -> Spine {
     }
 }
 
-/// Create an `IntConst(Small(v))` node typed `ty`, returning
+/// Create an `IntConst(v)` node typed `ty`, returning
 /// `(node, value output)`.
 fn int_const(f: &mut Function, v: u64, ty: ValueType) -> (NodeId, ValueId) {
-    let n = f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(v)),
-        [],
-        [ValueKind::Typed(ty)],
-    );
+    let id = f.intern_int_const(u128::from(v), ty);
+    let n = f
+        .graph_mut()
+        .create_node(NodeKind::IntConst(id), [], [ValueKind::Typed(ty)]);
     let [value] = f.node_outputs_exact::<1>(n).unwrap();
     (n, value)
 }
@@ -753,8 +752,9 @@ fn graph_invariants_value_phi_arity_mismatch() {
 fn local_typing_rejects_wrong_output_count() {
     let mut s = spine();
     // IntConst expects exactly one output but we give it two.
+    let id = s.f.intern_int_const(0, ValueType::I64);
     let bad = s.f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(0)),
+        NodeKind::IntConst(id),
         [],
         [
             ValueKind::Typed(ValueType::I64),
@@ -973,13 +973,14 @@ fn indirect_branch_with_control_memory_and_value_validates() {
 }
 
 #[test]
-fn graph_invariants_dangling_wide_const_id_detected() {
-    use crate::wide_const::WideConstId;
+fn graph_invariants_dangling_const_id_detected() {
+    use crate::const_value::ConstId;
+    use cranelift_entity::EntityRef;
     let mut s = spine();
-    // Construct an IntConst(Wide) pointing at an id that was never interned.
-    let bogus_id = WideConstId::from_u32(99);
+    // Construct an IntConst pointing at an id that was never interned.
+    let bogus_id = ConstId::new(99);
     let bogus = s.f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Wide(bogus_id)),
+        NodeKind::IntConst(bogus_id),
         [],
         [ValueKind::Typed(ValueType::I256)],
     );
@@ -991,49 +992,21 @@ fn graph_invariants_dangling_wide_const_id_detected() {
     );
 
     assert_validation_err(&s.f, |e| {
-        matches!(e, ValidationError::DanglingWideConstId { .. })
+        matches!(e, ValidationError::DanglingConstId { .. })
     });
 }
 
 #[test]
 fn graph_invariants_wide_const_width_mismatch_detected() {
-    use crate::wide_const::WideConstStorage;
+    use crate::const_value::ConstValue;
     let mut s = spine();
-    // Intern a I256 storage but assign it to a I512-typed output.
-    let id = s.f.intern_wide_const(WideConstStorage::I256([0; 4]));
+    // Intern a genuinely-wide (> u128, 4 limbs) value but assign it to a
+    // narrower (I64) output — bits set above the declared width.
+    let id = s
+        .f
+        .intern_const(ConstValue::Wide(vec![0, 0, 0, 1].into_boxed_slice()));
     let bad = s.f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Wide(id)),
-        [],
-        [ValueKind::Typed(ValueType::I512)],
-    );
-    let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
-    let _ret =
-        s.f.graph_mut()
-            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
-
-    assert_validation_err(&s.f, |e| {
-        matches!(
-            e,
-            ValidationError::WideConstWidthMismatch {
-                expected_bytes: 64,
-                actual_bytes: 32,
-                ..
-            }
-        )
-    });
-}
-
-#[test]
-fn graph_invariants_wide_const_non_wide_output_type_detected() {
-    use crate::wide_const::WideConstStorage;
-    let mut s = spine();
-    let id = s.f.intern_wide_const(WideConstStorage::I256([0; 4]));
-    // IntConst(Wide) declaring a non-wide (I64) output type — invalid: only
-    // I256 / I512 are valid wide-const output types.  The validator must
-    // report this as a distinct WideConstInvalidOutputType, not a width
-    // mismatch with a misleading 0-byte "expected" size.
-    let bad = s.f.graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Wide(id)),
+        NodeKind::IntConst(id),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1043,13 +1016,29 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
             .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
 
     assert_validation_err(&s.f, |e| {
-        matches!(
-            e,
-            ValidationError::WideConstInvalidOutputType {
-                output_type: ValueType::I64,
-                ..
-            }
-        )
+        matches!(e, ValidationError::ConstWidthMismatch { .. })
+    });
+}
+
+#[test]
+fn graph_invariants_const_bits_above_declared_width_detected() {
+    use crate::const_value::ConstValue;
+    let mut s = spine();
+    // A `Bits` value with bits set above the declared I8 width (un-masked) is
+    // non-canonical: the validator flags it as a width mismatch.
+    let id = s.f.intern_const(ConstValue::Bits(0x1FF));
+    let bad = s.f.graph_mut().create_node(
+        NodeKind::IntConst(id),
+        [],
+        [ValueKind::Typed(ValueType::I8)],
+    );
+    let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(e, ValidationError::ConstWidthMismatch { .. })
     });
 }
 

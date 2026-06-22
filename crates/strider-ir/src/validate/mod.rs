@@ -38,9 +38,9 @@ mod use_list_consistency;
 
 use graph_invariants::{
     check_graph_invariants_asm_fingerprints, check_graph_invariants_cc_arity,
-    check_graph_invariants_memory_chain, check_graph_invariants_phis,
-    check_graph_invariants_region, check_graph_invariants_side_indices,
-    check_graph_invariants_uniqueness, check_graph_invariants_wide_consts,
+    check_graph_invariants_consts, check_graph_invariants_memory_chain,
+    check_graph_invariants_phis, check_graph_invariants_region,
+    check_graph_invariants_side_indices, check_graph_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 use use_list_consistency::check_use_list_consistency;
@@ -89,7 +89,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_graph_invariants_uniqueness(function.graph(), &mut errs);
     check_graph_invariants_region(function.graph(), &reachable, &mut errs);
     check_graph_invariants_phis(function.graph(), &reachable, &mut errs);
-    check_graph_invariants_wide_consts(function, &reachable, &mut errs);
+    check_graph_invariants_consts(function, &reachable, &mut errs);
     check_graph_invariants_cc_arity(function, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_graph_invariants_memory_chain(function, &reachable, &mut errs);
@@ -253,32 +253,21 @@ pub enum ValidationError {
     },
 
     #[error(
-        "node {node:?} is `IntConst(Wide({id:?}))` but the wide-const \
-         side-table has no entry for that id"
+        "node {node:?} is `IntConst({id:?})` but the const \
+         interner has no entry for that id"
     )]
-    DanglingWideConstId {
+    DanglingConstId {
         node: NodeId,
-        id: crate::wide_const::WideConstId,
+        id: crate::const_value::ConstId,
     },
 
     #[error(
-        "node {node:?} (`IntConst(Wide(...))`) stores {actual_bytes}-byte value \
-         but its output type is {output_type:?} ({expected_bytes}-byte)"
+        "node {node:?} (`IntConst(...)`) has an interned value that exceeds its \
+         declared output width (bits set above the type's bit width)"
     )]
-    WideConstWidthMismatch {
+    ConstWidthMismatch {
         node: NodeId,
-        output_type: ValueType,
-        expected_bytes: usize,
-        actual_bytes: usize,
-    },
-
-    #[error(
-        "node {node:?} (`IntConst(Wide(...))`) declares non-wide output type \
-         {output_type:?}; only I80 / I128 / I256 / I512 are valid wide-const output types"
-    )]
-    WideConstInvalidOutputType {
-        node: NodeId,
-        output_type: ValueType,
+        id: crate::const_value::ConstId,
     },
 
     #[error(
