@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn unseeded_index_is_none() {
-        let (function, idx, sum) = build_add_idx_100();
+        let (function, _idx, sum) = build_add_idx_100();
         let order = cone_order(&function, sum);
         let mut ev = Evaluator::new(&function, None, crate::AliasMode::default());
         // Seeding dispatch=sum directly returns the seed without evaluating the cone.
