@@ -152,9 +152,10 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 
     /// Returns the [`UseId`] of the input slot at position `idx` of `node`, or
-    /// `None` if out of bounds.
+    /// `None` if out of bounds.  Internal helper backing the public fallible
+    /// [`Self::node_input_id_at`]; callers use that (or `.ok()`) instead.
     #[inline]
-    pub fn node_input_id_at_opt(&self, node: NodeId, idx: usize) -> Option<UseId> {
+    pub(crate) fn node_input_id_at_opt(&self, node: NodeId, idx: usize) -> Option<UseId> {
         self.store.node_input_uses(node).get(idx).copied()
     }
 

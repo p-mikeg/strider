@@ -448,7 +448,7 @@ fn mutating_cached_node_evicts_it() {
 
     // Mutate the cached node's first input x -> z via update_input. This must
     // invalidate the stale (Add, [x, y], _) cache entry BEFORE the change.
-    let slot0 = g.node_input_id_at_opt(add, 0).unwrap();
+    let slot0 = g.node_input_id_at(add, 0).ok().unwrap();
     g.update_input(slot0, z);
     assert_eq!(g.nth_input(add, 0), Some(z), "input was rewritten");
 
@@ -996,7 +996,7 @@ mod node_cache_hooks {
         // Mutate `mutate` so its shape is 8u8,[yv] — still collides on hash with
         // `keep` (8u8,[xv]) but is structurally different from BOTH. The kind
         // differs from `keep`, so there must be no twin.
-        let slot0 = g.node_input_id_at_opt(mutate, 0).unwrap();
+        let slot0 = g.node_input_id_at(mutate, 0).ok().unwrap();
         g.update_input(slot0, yv);
         assert_eq!(
             g.canonicalize_node(mutate),
