@@ -717,12 +717,7 @@ mod tests {
         p.add(LoadForward);
         p.run(&mut function, &mut OptCtx::new(None))?;
 
-        let ret = function
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
-            .expect("Return present");
-        let val = function.node_inputs(ret)[2];
+        let val = crate::test_support::return_value(function.graph())?;
         let kind = *function.kind_of_value(val);
         assert!(
             matches!(kind, NodeKind::IntConst(_))

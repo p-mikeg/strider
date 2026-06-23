@@ -274,12 +274,7 @@ mod tests {
         // value input) is the bare `InitialVar(sp)` that decomposes to
         // offset 0.  (Decomposing the now-detached phi output would be None.)
         collapse_phis(&mut fg);
-        let ret = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-            .expect("return");
-        let live_sp = fg.node_inputs(ret)[2];
+        let live_sp = crate::test_support::return_value(fg.graph())?;
         let mut memo = SpExprMemo::default();
         let r = SpDecomposer::new(&fg, &mut memo).decompose(live_sp);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));

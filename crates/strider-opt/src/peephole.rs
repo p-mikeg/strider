@@ -384,12 +384,7 @@ mod tests {
         assert!(!pass.visit_log.borrow().is_empty());
 
         // Return's value-input is now an IntConst (the rewrite replacement).
-        let ret = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-            .expect("Return must exist");
-        let value = fg.node_inputs(ret)[2];
+        let value = crate::test_support::return_value(fg.graph()).unwrap();
         let producer = fg.producer(value);
         assert!(
             matches!(fg.node_kind(producer), NodeKind::IntConst(_)),

@@ -161,10 +161,7 @@ fn detect_stack_args(
         .live_of_kind(|k| matches!(k, NodeKind::Load(_)))
         .collect();
     for node_id in loads {
-        let [_, addr] = ctx
-            .graph_ref()
-            .node_inputs_exact::<2>(node_id)
-            .expect("Load has 2 inputs per node signature");
+        let addr = ctx.load_addr(node_id);
         let [load_value] = ctx
             .node_outputs_exact::<1>(node_id)
             .expect("Load has 1 output per node signature");
