@@ -80,7 +80,7 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// * `rom` — the optional borrowed read-only memory image consumed by
 ///   [`crate::LoadReadOnly`].
 /// * `options` — the [`crate::OptOptions`] struct holding all per-run tuning
-///   knobs (`alias_mode`, `calls_clobber_stack_arguments`).  The
+///   knobs (`alias_mode`, `calls_clobber`).  The
 ///   SP-aware passes ([`crate::LoadForward`], [`crate::FunctionArgDetect`],
 ///   [`crate::CallStackArgCollect`]) read from it; set fields on
 ///   `ctx.options` after constructing via [`OptCtx::new`].

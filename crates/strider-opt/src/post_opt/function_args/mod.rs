@@ -94,11 +94,7 @@ impl PostOptimizer for FunctionArgDetect {
             stack_args,
             first_stack_arg,
             opt_ctx.options.alias_mode,
-            opt_ctx.options.function_args.calls_clobber_stack_arguments,
-            opt_ctx
-                .options
-                .function_args
-                .args_assume_distinct_sp_bases_disjoint,
+            opt_ctx.options.mem_alias,
             &mut opt_ctx.sp_memo,
         )?;
         // Arg detection only populates the arg_index_to_values side-table,
@@ -123,14 +119,12 @@ impl PostOptimizer for FunctionArgDetect {
 /// The original `Load` nodes survive unchanged — no consumer rewiring.
 /// Multiple `Load`s touching one argument (e.g. different widths or sub-field
 /// offsets) are all registered into the side-table for that ordinal.
-#[allow(clippy::too_many_arguments)]
 fn detect_stack_args(
     ctx: &mut crate::EditFunction<'_>,
     stack_args: strider_target::StackArgs,
     first_stack_arg: usize,
     alias_mode: crate::AliasMode,
-    calls_clobber_stack_arguments: bool,
-    args_assume_distinct_sp_bases_disjoint: bool,
+    mem_opts: crate::MemAliasOptions,
     memo: &mut SpExprMemo,
 ) -> Result<()> {
     // Incoming stack args live at fixed offsets from the *entry* stack
@@ -167,7 +161,7 @@ fn detect_stack_args(
         .live_of_kind(|k| matches!(k, NodeKind::Load(_)))
         .collect();
     for node_id in loads {
-        let [memory, addr] = ctx
+        let [_, addr] = ctx
             .graph_ref()
             .node_inputs_exact::<2>(node_id)
             .expect("Load has 2 inputs per node signature");
@@ -205,23 +199,10 @@ fn detect_stack_args(
         if disqualified.contains(&start_slot) {
             continue;
         }
-        // (c) memory chain clean.
-        let probe = LoadProbe {
-            mem: memory,
-            base,
-            offset,
-            load_size,
-        };
-        let dirty = mem_chain_is_dirty(
-            ctx,
-            node_id,
-            probe,
-            memo,
-            &mut shadow_memo,
-            alias_mode,
-            calls_clobber_stack_arguments,
-            args_assume_distinct_sp_bases_disjoint,
-        );
+        // (c) memory chain clean.  `mem_chain_is_dirty` re-derives the probe
+        // (memory token / SP slot / width) from `node_id` — the SP decompose
+        // is a memo hit from step (a).
+        let dirty = mem_chain_is_dirty(ctx, node_id, alias_mode, mem_opts, memo, &mut shadow_memo);
         if dirty {
             disqualified.insert(start_slot);
             groups.remove(&start_slot);
@@ -294,51 +275,59 @@ struct LoadProbe {
 /// Per-pass-call memo for [`mem_chain_is_dirty`], keyed by the [`LoadProbe`].
 type ShadowMemo = rustc_hash::FxHashMap<LoadProbe, bool>;
 
-/// Walks the memory chain backward from `mem` looking for any def that
-/// may shadow the byte range `[offset, offset + load_size)`.  Returns
-/// `true` if any path through the chain may overwrite bytes in the
-/// load's range.
+/// Walks the memory chain backward from the load's memory input looking for any
+/// def that may shadow its SP slot.  Returns `true` if any path through the
+/// chain may overwrite bytes in the load's range.
 ///
-/// Delegates the traversal (cycle-guarded, MemPhi-forking, stack-safe at
-/// any chain depth) to [`SpAliasCfg::nearest_clobber`]; the per-def shadow
-/// verdict comes from the pass-scoped [`SpAliasCfg`] with the candidate
-/// load's `AddrClass::SpRooted { base, offset }` class.  Memoised per
-/// pass-call on `(mem, base, offset, load_size)`.
-#[allow(clippy::too_many_arguments)]
+/// Everything the probe needs — the memory token, the SP slot
+/// (`AddrClass::SpRooted { base, offset }`), and the width — is derived from the
+/// `load` node; the SP decompose is a memo hit (the sole caller already
+/// decomposed the same address to qualify the load).  Delegates the traversal
+/// (cycle-guarded, MemPhi-forking, stack-safe at any chain depth) to
+/// [`SpAliasCfg::nearest_clobber`], whose per-def verdict comes from
+/// `alias_mode` + the [`crate::MemAliasOptions`] relaxations.  Memoised per
+/// pass-call on the derived [`LoadProbe`].
 fn mem_chain_is_dirty(
     ctx: &mut crate::EditFunction<'_>,
     load: NodeId,
-    probe: LoadProbe,
+    alias_mode: crate::AliasMode,
+    mem_opts: crate::MemAliasOptions,
     sp_memo: &mut SpExprMemo,
     memo: &mut ShadowMemo,
-    alias_mode: crate::AliasMode,
-    calls_clobber_stack_arguments: bool,
-    args_assume_distinct_sp_bases_disjoint: bool,
 ) -> bool {
+    let [mem_token, addr] = ctx
+        .graph_ref()
+        .node_inputs_exact::<2>(load)
+        .expect("Load has 2 inputs per node signature");
+    let [load_value] = ctx
+        .node_outputs_exact::<1>(load)
+        .expect("Load has 1 output per node signature");
+    let load_size = ctx
+        .value_type_opt(load_value)
+        .expect("Load output is a value")
+        .byte_size() as i64;
+    let SpExpr { base, offset } = SpDecomposer::new(ctx.function(), sp_memo)
+        .decompose(addr)
+        .expect("caller qualified this load: its address decomposes to SP + K");
+    let probe = LoadProbe {
+        mem: mem_token,
+        base,
+        offset,
+        load_size,
+    };
     if let Some(&cached) = memo.get(&probe) {
         return cached;
     }
 
-    // Walk from the def that produced the load's memory input.  The oracle
-    // does not consult the load node (the slot range is carried by
-    // `offset`/`load_size`), but `nearest_clobber` uses it to narrow the load's
-    // memory edge onto the nearest clobber.  The chain is dirty iff that
+    // The oracle uses the load only to narrow its memory edge onto the nearest
+    // clobber; the slot range comes from the probe.  The chain is dirty iff that
     // nearest clobber is anything but the clean `InitialMemory` root.
-    let clobber = SpAliasCfg::new(
-        sp_memo,
-        alias_mode,
-        calls_clobber_stack_arguments,
-        args_assume_distinct_sp_bases_disjoint,
-    )
-    .nearest_clobber(
+    let clobber = SpAliasCfg::new(sp_memo, alias_mode, mem_opts).nearest_clobber(
         ctx,
         load,
-        AddrClass::SpRooted {
-            base: probe.base,
-            offset: probe.offset,
-        },
-        probe.load_size,
-        probe.mem,
+        AddrClass::SpRooted { base, offset },
+        load_size,
+        mem_token,
     );
     let result = !matches!(ctx.node_kind(clobber), NodeKind::InitialMemory);
     memo.insert(probe, result);

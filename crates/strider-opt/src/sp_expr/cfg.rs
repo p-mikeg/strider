@@ -12,7 +12,7 @@ use super::alias::{AddrClass, AliasVerdict, classify_addr, store_alias_verdict};
 use super::decompose::{SpDecomposer, SpExpr, SpExprMemo};
 use super::mem_ssa::MemorySSAWalker;
 use super::ranges::store_value_byte_size;
-use crate::AliasMode;
+use crate::{AliasMode, MemAliasOptions};
 
 /// The single SP-aware [`MemorySSAWalker`] oracle, shared by `load_forward`
 /// (store-to-load forwarding) and `function_args` (stack-arg shadow walk).
@@ -22,10 +22,10 @@ use crate::AliasMode;
 ///
 /// * `Store` — via [`store_alias_verdict`]: anything but `Disjoint`
 ///   clobbers (a `load_forward` caller re-checks exact-`Match` afterward).
-/// * `Call` / `CallOther` — clobbers iff [`call_clobbers`](Self::call_clobbers)
-///   is set.  `load_forward` sets it (a load can never forward across a
-///   call); `function_args` passes its `calls_clobber_stack_arguments` knob (off by
-///   default — the callee is opaque, so there is nothing to inspect).
+/// * `Call` / `CallOther` — clobbers iff `mem.calls_clobber` is set.
+///   `load_forward` sets it (a load can never forward across a call);
+///   `function_args` passes its `calls_clobber` knob (off by default — the
+///   callee is opaque, so there is nothing to inspect).
 /// * any other (opaque) memory producer — conservatively clobbers.
 ///
 /// `MemPhi` is handled structurally by [`may_clobber`], so the oracle never
@@ -41,13 +41,11 @@ struct SpAliasOracle<'a> {
     load_space: rsleigh::VnSpace,
     sp_memo: &'a mut SpExprMemo,
     alias_mode: AliasMode,
-    /// Whether a `Call` / `CallOther` clobbers the load.
-    call_clobbers: bool,
-    /// Whether two SP-rooted addresses with *different* base nodes are
-    /// assumed disjoint (vs. conservatively may-alias).  `function_args`
-    /// sets this from its `args_assume_distinct_sp_bases_disjoint` knob (off
-    /// by default); `load_forward` leaves it `false`.
-    distinct_sp_bases_disjoint: bool,
+    /// Memory-aliasing relaxation knobs (`calls_clobber`,
+    /// `assume_distinct_sp_bases_disjoint`).  `load_forward` /
+    /// `call_stack_args` use the call-blocking preset; `function_args` passes
+    /// the user's [`MemAliasOptions`].
+    mem: MemAliasOptions,
 }
 
 impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_> {
@@ -68,10 +66,10 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_> {
                         self.load_size,
                         self.sp_memo,
                         self.alias_mode,
-                        self.distinct_sp_bases_disjoint,
+                        self.mem.assume_distinct_sp_bases_disjoint,
                     ) != AliasVerdict::Disjoint
             }
-            NodeKind::Call | NodeKind::CallOther { .. } => self.call_clobbers,
+            NodeKind::Call | NodeKind::CallOther { .. } => self.mem.calls_clobber,
             // Any other (opaque) memory producer cannot be proven disjoint.
             _ => true,
         }
@@ -85,32 +83,36 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_> {
 pub(crate) struct SpAliasCfg<'m> {
     sp_memo: &'m mut SpExprMemo,
     alias_mode: AliasMode,
-    call_clobbers: bool,
-    distinct_sp_bases_disjoint: bool,
+    mem: MemAliasOptions,
 }
 
 impl<'m> SpAliasCfg<'m> {
     pub(crate) fn new(
         sp_memo: &'m mut SpExprMemo,
         alias_mode: AliasMode,
-        call_clobbers: bool,
-        distinct_sp_bases_disjoint: bool,
+        mem: MemAliasOptions,
     ) -> Self {
         Self {
             sp_memo,
             alias_mode,
-            call_clobbers,
-            distinct_sp_bases_disjoint,
+            mem,
         }
     }
 
     /// Config for the call-blocking consumers (load-forward, call-stack-arg
     /// collection, stack-array jump tables): a `Call` on the memory chain
-    /// clobbers the probed location (`call_clobbers: true`) and distinct SP
-    /// bases stay conservatively non-disjoint (`distinct_sp_bases_disjoint:
-    /// false`).
+    /// clobbers the probed location (`calls_clobber: true`) and distinct SP
+    /// bases stay conservatively non-disjoint
+    /// (`assume_distinct_sp_bases_disjoint: false`).
     pub(crate) fn call_blocking(sp_memo: &'m mut SpExprMemo, alias_mode: AliasMode) -> Self {
-        Self::new(sp_memo, alias_mode, true, false)
+        Self::new(
+            sp_memo,
+            alias_mode,
+            MemAliasOptions {
+                calls_clobber: true,
+                assume_distinct_sp_bases_disjoint: false,
+            },
+        )
     }
 
     /// Build the per-query oracle from this config + the load's address class
@@ -127,8 +129,7 @@ impl<'m> SpAliasCfg<'m> {
             load_space,
             sp_memo: &mut *self.sp_memo,
             alias_mode: self.alias_mode,
-            call_clobbers: self.call_clobbers,
-            distinct_sp_bases_disjoint: self.distinct_sp_bases_disjoint,
+            mem: self.mem,
         }
     }
 

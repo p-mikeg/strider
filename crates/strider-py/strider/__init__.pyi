@@ -211,8 +211,8 @@ class Strider:
         allow_code_before_start_addr: bool = ...,
         compact: bool = ...,
         per_address_ccs: Optional[dict] = ...,
-        calls_clobber_stack_arguments: bool = ...,
-        args_assume_distinct_sp_bases_disjoint: bool = ...,
+        calls_clobber: bool = ...,
+        assume_distinct_sp_bases_disjoint: bool = ...,
         alias_mode: str = ...,
     ) -> Tuple[Function, List[int]]: ...
 
@@ -482,8 +482,8 @@ class ElfStrider:
         allow_code_before_start_addr: bool = ...,
         compact: bool = ...,
         per_address_ccs: Optional[dict] = ...,
-        calls_clobber_stack_arguments: bool = ...,
-        args_assume_distinct_sp_bases_disjoint: bool = ...,
+        calls_clobber: bool = ...,
+        assume_distinct_sp_bases_disjoint: bool = ...,
         alias_mode: str = ...,
     ) -> Analysis:
         """Lift the function at `target` (symbol name or absolute

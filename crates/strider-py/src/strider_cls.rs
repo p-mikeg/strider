@@ -234,6 +234,11 @@ impl PyStriderRun {
     ///     allow_code_before_start_addr: Permit lifting before `entry`.
     ///     compact: Compact the IR arena after analysis (default `True`).
     ///     per_address_ccs: Per-target-address calling-convention overrides.
+    ///     calls_clobber: Treat a call on a stack-arg load's memory chain as
+    ///         shadowing the slot (default `False`).
+    ///     assume_distinct_sp_bases_disjoint: Assume a store rooted at a
+    ///         different SP base than the entry SP is disjoint from the
+    ///         incoming-arg slots (default `False`).
     ///     alias_mode: SP-aware alias precision for every memory pass —
     ///         `"stack_global_disjoint"` (default) trusts that stack and
     ///         global/constant memory never overlap; `"strict"` is the
@@ -248,8 +253,8 @@ impl PyStriderRun {
         allow_code_before_start_addr = false,
         compact = true,
         per_address_ccs = None,
-        calls_clobber_stack_arguments = false,
-        args_assume_distinct_sp_bases_disjoint = false,
+        calls_clobber = false,
+        assume_distinct_sp_bases_disjoint = false,
         alias_mode = "stack_global_disjoint",
     ))]
     #[allow(clippy::too_many_arguments)]
@@ -261,8 +266,8 @@ impl PyStriderRun {
         allow_code_before_start_addr: bool,
         compact: bool,
         per_address_ccs: Option<std::collections::HashMap<u64, PyCallingConvention>>,
-        calls_clobber_stack_arguments: bool,
-        args_assume_distinct_sp_bases_disjoint: bool,
+        calls_clobber: bool,
+        assume_distinct_sp_bases_disjoint: bool,
         alias_mode: &str,
     ) -> PyResult<(Py<PyFunction>, Vec<u64>)> {
         reject_zero_max_size(function_max_size)?;
@@ -282,9 +287,9 @@ impl PyStriderRun {
         );
         let opt_opts = strider_orchestrator::opt::OptOptions {
             alias_mode,
-            function_args: strider_orchestrator::opt::FunctionArgsOptions {
-                calls_clobber_stack_arguments,
-                args_assume_distinct_sp_bases_disjoint,
+            mem_alias: strider_orchestrator::opt::MemAliasOptions {
+                calls_clobber,
+                assume_distinct_sp_bases_disjoint,
             },
         };
 

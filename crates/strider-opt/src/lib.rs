@@ -49,7 +49,7 @@ pub mod rewrite_rule;
 // `ranges_disjoint`, so the whole module stays `pub(crate)`.
 pub(crate) mod sp_expr;
 pub use error::Result;
-pub use options::{AliasMode, FunctionArgsOptions, OptOptions};
+pub use options::{AliasMode, MemAliasOptions, OptOptions};
 pub use rewrite_rule::{
     BoxedRule, apply_rules_count, apply_rules_in_order, rewrite_rule, rewrite_rule_runtime,
 };

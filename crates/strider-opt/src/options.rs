@@ -53,8 +53,9 @@ pub enum AliasMode {
 /// `OptOptions` is the single source of truth for all per-run tuning
 /// parameters.  It lives on [`crate::OptCtx`] as `options` so callers have one
 /// named struct to set rather than scattered loose fields.  `alias_mode` is
-/// shared by every SP-aware pass; the FunctionArgDetect-only knobs are grouped
-/// under [`function_args`](Self::function_args).
+/// shared by every SP-aware pass; the relaxation knobs that currently apply
+/// only to incoming function-argument detection are grouped under
+/// [`mem_alias`](Self::mem_alias).
 ///
 /// (Post-run arena compaction is not an optimiser knob — it lives on
 /// `strider_lift::LiftOptions::compact`, consumed by the analyze/run
@@ -66,22 +67,28 @@ pub struct OptOptions {
     /// [`crate::CallStackArgCollect`]).  Default is
     /// [`AliasMode::StackGlobalDisjoint`] (`AliasMode`'s own `Default`).
     pub alias_mode: AliasMode,
-    /// Knobs read only by [`crate::FunctionArgDetect`].
-    pub function_args: FunctionArgsOptions,
+    /// Memory-aliasing relaxation knobs.  Conceptually general (they describe
+    /// how aggressively the SP memory-walk may assume non-aliasing), but for
+    /// now only [`crate::FunctionArgDetect`] applies them — incoming arguments
+    /// are, by ABI, written before the function body and are not normally
+    /// clobbered by later calls or other-SP-base stores.  Conservative
+    /// (`false` / `false`) by default.
+    pub mem_alias: MemAliasOptions,
 }
 
-/// Tuning knobs specific to [`crate::FunctionArgDetect`] — grouped so their
-/// FunctionArgDetect-only scope is clear at the call site
-/// (`options.function_args.calls_clobber_stack_arguments`).
-#[derive(Debug, Clone, Default)]
-pub struct FunctionArgsOptions {
-    /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
-    /// chain shadows the slot.  Default `false` (aggressive arg detection).
-    pub calls_clobber_stack_arguments: bool,
+/// Memory-aliasing relaxation knobs for the SP memory-walk.  Conservative by
+/// default; currently fed only into incoming-argument detection (see
+/// [`OptOptions::mem_alias`]).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MemAliasOptions {
+    /// Whether a `Call` / `CallOther` on the probed location's memory chain
+    /// shadows it.  Default `false` (aggressive: incoming args survive a
+    /// later call).
+    pub calls_clobber: bool,
     /// Whether a `Store` rooted at a *different* SP base than the entry SP
     /// (e.g. an alignment-masked `sp & -16` frame local) is assumed disjoint
-    /// from the incoming-arg slots rather than conservatively may-aliasing
-    /// them.  Default `false` (may-alias — sound but can block arg detection
-    /// when a distinct-base store happens to overlap a slot offset).
-    pub args_assume_distinct_sp_bases_disjoint: bool,
+    /// from the probed location rather than conservatively may-aliasing it.
+    /// Default `false` (may-alias — sound but can block arg detection when a
+    /// distinct-base store happens to overlap a slot offset).
+    pub assume_distinct_sp_bases_disjoint: bool,
 }
