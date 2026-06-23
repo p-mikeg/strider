@@ -16,15 +16,10 @@
 
 use strider_ir::IRBuilderExt;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeId, NodeKind, ValueType};
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::make_empty_fn;
 use strider_orchestrator::opt::{ConstantFold, KnownBits};
-
-/// Walks the graph for the first node whose kind matches `pred`.
-fn find<F: Fn(&NodeKind) -> bool>(fg: &strider_ir::Function, pred: F) -> Option<NodeId> {
-    fg.walk().find(|&n| pred(fg.node_kind(n)))
-}
 
 #[test]
 fn constant_fold_add_consts_preserves_fingerprints() {
