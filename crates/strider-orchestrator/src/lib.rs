@@ -161,7 +161,7 @@ where
     /// `compact` — applied after the pipeline at finalize); its
     /// `cfg.known_targets` seed is ignored — the loop grows its own.
     /// `opt_opts` supplies the optimiser configuration (`alias_mode`,
-    /// `calls_clobber_stack_arguments`).
+    /// `calls_clobber`).
     ///
     /// `pipeline` lets the caller control which optimisations run: pass
     /// `Some(p)` to use a custom [`strider_opt::OptimizerPipeline`], or
