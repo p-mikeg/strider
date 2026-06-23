@@ -21,6 +21,7 @@ use strider_ir::IRViewer;
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use object::{Object, ObjectSymbol};
 
+use strider_ir::IRBuilder;
 use strider_ir::IRBuilderExt;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{ValueKind, ValueType};
@@ -321,20 +322,25 @@ mod synthetic {
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        let arg_u32 = b.function_mut().graph_mut().create_node(
+        // Route through the attributed builder so the synthetic node carries an
+        // asm-fingerprint (the raw graph create_node bypasses attribution and
+        // trips the always-on fingerprint validator).
+        let arg_u32 = b.create_node_attributed(
             strider_ir::node::NodeKind::Truncate,
             [arg_val],
             [ValueKind::Typed(ValueType::I32)],
+            &[],
         );
         let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let mask_c = b.build_int_const(mask, ValueType::I32).unwrap();
         let masked = b
             .build_int_binary_operation(arg_u32_value, mask_c, IntBinaryOp::And, ValueType::I32)
             .unwrap();
-        let idx_u64 = b.function_mut().graph_mut().create_node(
+        let idx_u64 = b.create_node_attributed(
             strider_ir::node::NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend),
             [masked],
             [ValueKind::Typed(ValueType::I64)],
+            &[],
         );
         let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride = b.build_int_const(8u64, ValueType::I64).unwrap();
