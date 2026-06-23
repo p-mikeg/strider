@@ -44,7 +44,6 @@ pub(crate) fn eval_node_const(
     value: ValueId,
     resolve: &dyn Fn(ValueId) -> Option<u128>,
     rom: Option<&dyn ReadOnlyMemory>,
-    endianness: Endianness,
 ) -> Option<u128> {
     let node = function.producer(value);
     let kind = *function.node_kind(node);
@@ -80,7 +79,7 @@ pub(crate) fn eval_node_const(
         NodeKind::Load(_) => {
             let rom = rom?;
             let addr = u64::try_from(resolve(function.load_addr(node))?).ok()?;
-            read_rom_const(rom, addr, out_ty?, endianness)
+            read_rom_const(rom, addr, out_ty?, function.endianness())
         }
         _ => None,
     }
@@ -100,7 +99,7 @@ mod tests {
     fn folds_add_of_two_constants() {
         let (function, sum) = build_add_5_100();
         let resolve = |v| function.int_const_u128(v);
-        let got = eval_node_const(&function, sum, &resolve, None, function.endianness());
+        let got = eval_node_const(&function, sum, &resolve, None);
         assert_eq!(got, Some(105));
     }
 

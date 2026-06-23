@@ -89,10 +89,10 @@ fn collect_stack_args(
         if store.store_offset != slot_off {
             break;
         }
-        args.push(store.data);
+        args.push(store.data(function));
         // A store wider than one slot is one argument spanning several slots;
         // advance the cursor past every slot it covers.
-        cursor += stack_args.slots_spanned(store.size);
+        cursor += stack_args.slots_spanned(store.size(function));
     }
     args
 }

@@ -52,7 +52,6 @@ pub(crate) struct Evaluator<'a> {
     function: &'a strider_ir::Function,
     rom: Option<&'a dyn ReadOnlyMemory>,
     alias_mode: crate::AliasMode,
-    endianness: Endianness,
     sp_memo: SpExprMemo,
     map: FxHashMap<ValueId, Abs>,
 }
@@ -67,7 +66,6 @@ impl<'a> Evaluator<'a> {
             function,
             rom,
             alias_mode,
-            endianness: function.endianness(),
             sp_memo: SpExprMemo::default(),
             map: FxHashMap::default(),
         }
@@ -126,14 +124,8 @@ impl<'a> Evaluator<'a> {
             NodeKind::Phi => self.eval_phi(node),
             _ => {
                 let resolve = |v| self.get(v).and_then(Abs::as_const);
-                crate::const_eval::eval_node_const(
-                    self.function,
-                    value,
-                    &resolve,
-                    self.rom,
-                    self.endianness,
-                )
-                .map(Abs::Const)
+                crate::const_eval::eval_node_const(self.function, value, &resolve, self.rom)
+                    .map(Abs::Const)
             }
         }
     }
@@ -166,7 +158,7 @@ impl<'a> Evaluator<'a> {
             Abs::Const(c) => {
                 let rom = self.rom?;
                 let addr = u64::try_from(c).ok()?;
-                crate::const_eval::read_rom_const(rom, addr, load_ty, self.endianness)
+                crate::const_eval::read_rom_const(rom, addr, load_ty, self.function.endianness())
                     .map(Abs::Const)
             }
             Abs::SpRel { base, offset } => {
@@ -181,8 +173,9 @@ impl<'a> Evaluator<'a> {
                     return None;
                 }
                 // Jump targets are constants on the converged graph.
-                let data_ty = f.value_type_opt(reaching.data)?;
-                let raw = f.int_const_u128(reaching.data)?;
+                let data = reaching.data(f);
+                let data_ty = f.value_type_opt(data)?;
+                let raw = f.int_const_u128(data)?;
                 Some(Abs::Const(self.reshape(raw, data_ty, load_ty)?))
             }
         }
@@ -199,7 +192,7 @@ impl<'a> Evaluator<'a> {
             && load_ty.is_integer()
             && load_ty.byte_size() < data_ty.byte_size()
         {
-            let shifted = match self.endianness {
+            let shifted = match self.function.endianness() {
                 Endianness::Little => v,
                 Endianness::Big => {
                     let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u32) * 8;

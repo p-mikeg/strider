@@ -134,11 +134,10 @@ pub(crate) fn try_fold_const_load_at(
     // SSoT: fold this Load via the shared const-eval utility (constant address
     // → ROM decode), so the decode logic is not duplicated in the jump-table
     // evaluator.
-    let endianness = ctx.function().endianness();
     let [data_value] = ctx.node_outputs_exact::<1>(node_id)?;
     let resolve = |v| ctx.function().int_const_u128(v);
     let Some(masked) =
-        crate::const_eval::eval_node_const(ctx.function(), data_value, &resolve, Some(rom), endianness)
+        crate::const_eval::eval_node_const(ctx.function(), data_value, &resolve, Some(rom))
     else {
         return Ok(false);
     };

@@ -196,7 +196,6 @@ impl<'m> SpAliasCfg<'m> {
         if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
             return None;
         }
-        let data = function.store_data(clobber);
         // Resolve the store's own SP offset (side-table SSoT, else decompose); it
         // must share `base` to be comparable to the probed location.
         let store_offset = match function.stack_offset(clobber) {
@@ -210,30 +209,37 @@ impl<'m> SpAliasCfg<'m> {
                 _ => return None,
             },
         };
-        // Route through the shared helper so this path enforces the same
-        // "Store DATA is value-typed" invariant as every other alias check
-        // (it `expect`s on malformed IR rather than fabricating a width-0
-        // store that would map a real arg onto zero slots downstream).
-        let size = store_value_byte_size(function.graph(), data);
-        Some(ReachingSpStore {
-            data,
-            store_offset,
-            size,
-        })
+        Some(ReachingSpStore { node: clobber, store_offset })
     }
 }
 
 /// The nearest non-clobbered `Store` to an SP-relative location, found via the
 /// shared memory-SSA walker.  Returned by [`SpAliasCfg::reaching_store`].
+///
+/// Carries the store NODE plus the one fact the query computed that the node
+/// alone doesn't give (`store_offset`, the SP-decomposition result).  The
+/// stored data and its width are derived from the node on demand
+/// ([`Self::data`] / [`Self::size`]) rather than stored, so the result holds
+/// no information twice.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReachingSpStore {
-    /// The stored data value (the candidate argument / table entry).
-    pub data: ValueId,
+    /// The reaching `Store` node.
+    pub node: NodeId,
     /// The store's SP-relative byte offset (from `base`).  Equals the probed
     /// `offset` exactly when the store is anchored at the probed location;
     /// callers that require anchoring compare the two.
     pub store_offset: i64,
+}
+
+impl ReachingSpStore {
+    /// The stored data value (the candidate argument / table entry).
+    pub fn data(&self, function: &Function) -> ValueId {
+        function.store_data(self.node)
+    }
+
     /// The store's data byte width.  Callers derive an argument's slot span
-    /// from this (`ceil(size / increment)`) without the query forcing one.
-    pub size: i64,
+    /// from this (`ceil(size / increment)`).
+    pub fn size(&self, function: &Function) -> i64 {
+        store_value_byte_size(function.graph(), self.data(function))
+    }
 }

@@ -51,42 +51,18 @@ impl SpExpr {
 /// Per-pass-call memo for `decompose_sp`.
 pub type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
 
-/// Stack-pointer expression decomposer: holds the `function`, the `stack_vn`
-/// to anchor on, and a per-pass-call `memo`.  Production callers construct it
-/// via [`SpDecomposer::new`] (which derives `stack_vn` from the function's
-/// calling convention); tests that decompose against a non-default stack
-/// varnode use [`SpDecomposer::with_stack_vn`].
+/// Stack-pointer expression decomposer: holds the `function` and a
+/// per-pass-call `memo`.  The stack varnode to anchor on is the function's own
+/// `default_cc().stack_vn`, read on demand — never stored, so it cannot drift
+/// from the function under analysis.
 pub(crate) struct SpDecomposer<'a> {
     function: &'a Function,
-    stack_vn: rsleigh::Vn,
     memo: &'a mut SpExprMemo,
 }
 
 impl<'a> SpDecomposer<'a> {
-    /// Derives `stack_vn` from the function's calling convention — the
-    /// production path (every pass decomposes against `default_cc().stack_vn`).
     pub(crate) fn new(function: &'a Function, memo: &'a mut SpExprMemo) -> Self {
-        let stack_vn = function.default_cc().stack_vn;
-        Self {
-            function,
-            stack_vn,
-            memo,
-        }
-    }
-
-    /// Explicit `stack_vn` — for tests (and any caller) that decompose
-    /// against a stack varnode not equal to `default_cc().stack_vn`.
-    #[cfg(test)]
-    pub(crate) fn with_stack_vn(
-        function: &'a Function,
-        stack_vn: rsleigh::Vn,
-        memo: &'a mut SpExprMemo,
-    ) -> Self {
-        Self {
-            function,
-            stack_vn,
-            memo,
-        }
+        Self { function, memo }
     }
 
     /// Decomposes `value` into `InitialVar(sp) + K` (or per-branch equivalent),
@@ -150,7 +126,7 @@ impl<'a> SpDecomposer<'a> {
     fn classify_sp_node(&self, node: NodeId, node_value: ValueId) -> Option<SpExpr> {
         let function = self.function;
         match *function.node_kind(node) {
-            NodeKind::InitialVar(vn) if vn == self.stack_vn => Some(SpExpr {
+            NodeKind::InitialVar(vn) if vn == function.default_cc().stack_vn => Some(SpExpr {
                 base: node_value,
                 offset: 0,
             }),
@@ -287,6 +263,7 @@ mod tests {
         let mut b = RegisterSet::new()
             .tracked(sp)
             .arg(sp)
+            .stack_vn(sp)
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         b.build_return(Some(sp_val), &[])?;
@@ -304,7 +281,7 @@ mod tests {
             .expect("return");
         let live_sp = fg.node_inputs(ret)[2];
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(live_sp);
+        let r = SpDecomposer::new(&fg, &mut memo).decompose(live_sp);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         let _ = sp_val;
         Ok(())
@@ -316,6 +293,7 @@ mod tests {
         let mut b = RegisterSet::new()
             .tracked(sp)
             .arg(sp)
+            .stack_vn(sp)
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let addr = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
@@ -324,7 +302,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(addr);
+        let r = SpDecomposer::new(&fg, &mut memo).decompose(addr);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
@@ -336,6 +314,7 @@ mod tests {
         let mut b = RegisterSet::new()
             .tracked(sp)
             .arg(sp)
+            .stack_vn(sp)
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let neg_four = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
@@ -346,7 +325,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(addr);
+        let r = SpDecomposer::new(&fg, &mut memo).decompose(addr);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
@@ -359,6 +338,7 @@ mod tests {
         let mut b = RegisterSet::new()
             .tracked(sp)
             .arg(sp)
+            .stack_vn(sp)
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let addr = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
@@ -367,10 +347,10 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r1 = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(addr);
+        let r1 = SpDecomposer::new(&fg, &mut memo).decompose(addr);
         // Memo should now be populated.
         assert!(memo.contains_key(&addr));
-        let r2 = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(addr);
+        let r2 = SpDecomposer::new(&fg, &mut memo).decompose(addr);
         assert!(matches!(
             (&r1, &r2),
             (
@@ -384,7 +364,6 @@ mod tests {
     #[test]
     fn decompose_sp_non_sp_returns_none() -> crate::Result<()> {
         // An IntConst is not SP-rooted.
-        let sp = sp();
         let mut b = strider_ir_test_utils::empty_builder()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
@@ -397,7 +376,7 @@ mod tests {
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         assert!(
-            SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+            SpDecomposer::new(&fg, &mut memo)
                 .decompose(c)
                 .is_none()
         );
@@ -416,6 +395,7 @@ mod tests {
         let mut b = RegisterSet::new()
             .tracked(sp)
             .arg(sp)
+            .stack_vn(sp)
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let s1 = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
@@ -427,7 +407,7 @@ mod tests {
         collapse_phis(&mut fg);
 
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(s3);
+        let r = SpDecomposer::new(&fg, &mut memo).decompose(s3);
         assert!(matches!(r, Some(SpExpr { offset: -24, .. })));
 
         // After one top-level walk, all three intermediate outputs must be
@@ -448,7 +428,6 @@ mod tests {
         // memo lives only against an immutable graph.  So a `None` verdict is
         // cached and reused, sparing the repeated cone walk for the common
         // non-SP (constant/global/heap) address case.
-        let sp = sp();
         let mut b = strider_ir_test_utils::empty_builder()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
@@ -460,7 +439,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(c);
+        let r = SpDecomposer::new(&fg, &mut memo).decompose(c);
         assert!(r.is_none());
         // The verdict is now cached: the key is present and maps to a `None`
         // verdict, so a repeat query short-circuits instead of re-walking.
@@ -483,7 +462,7 @@ mod tests {
     #[test]
     fn decompose_sp_cycle_classifies_identically_regardless_of_query_order() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn()?;
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).stack_vn(sp).build_fn()?;
         let entry = b.create_region()?;
         let loop_hdr = b.create_region()?;
         let exit = b.create_region()?;
@@ -516,7 +495,7 @@ mod tests {
         // ground-truth graph verdict for each value.
         let truth = |v: ValueId| -> Option<SpExpr> {
             let mut m = SpExprMemo::default();
-            SpDecomposer::with_stack_vn(&fg, sp, &mut m).decompose(v)
+            SpDecomposer::new(&fg, &mut m).decompose(v)
         };
         let t_phi = truth(sp_phi);
         let t_dec = truth(sp_dec);
@@ -541,7 +520,7 @@ mod tests {
         ] {
             let mut shared = SpExprMemo::default();
             for v in order {
-                let got = SpDecomposer::with_stack_vn(&fg, sp, &mut shared).decompose(v);
+                let got = SpDecomposer::new(&fg, &mut shared).decompose(v);
                 let want = if v == sp_phi {
                     t_phi
                 } else if v == sp_dec {
@@ -569,7 +548,7 @@ mod tests {
         // misclassify a non-SP-rooted phi as the first stack argument or
         // wrongly forward a load over it.
         let sp = sp();
-        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn()?;
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).stack_vn(sp).build_fn()?;
         let entry = b.create_region()?;
         let a = b.create_region()?;
         let bb = b.create_region()?;
@@ -606,7 +585,7 @@ mod tests {
         collapse_phis(&mut fg);
 
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(sp_at_c);
+        let r = SpDecomposer::new(&fg, &mut memo).decompose(sp_at_c);
         assert!(
             r.is_none(),
             "expected None for VarPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
@@ -628,6 +607,7 @@ mod tests {
         let mut b = RegisterSet::new()
             .tracked(sp)
             .arg(sp)
+            .stack_vn(sp)
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         // Simulate `and $0xfffffff8, %esp`.
@@ -639,7 +619,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(aligned);
+        let r = SpDecomposer::new(&fg, &mut memo).decompose(aligned);
         // The aligned output is a stable opaque base.  Offset = 0
         // because the alignment can shift the value by 0..7 bytes — we
         // can't pin a constant delta, but we *can* pin a stable
@@ -674,6 +654,7 @@ mod tests {
         let mut b = RegisterSet::new()
             .tracked(sp)
             .arg(sp)
+            .stack_vn(sp)
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
@@ -685,10 +666,10 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let aligned_dec = SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+        let aligned_dec = SpDecomposer::new(&fg, &mut memo)
             .decompose(aligned)
             .expect("aligned must decompose");
-        let post_sub_dec = SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+        let post_sub_dec = SpDecomposer::new(&fg, &mut memo)
             .decompose(post_sub)
             .expect("post_sub must decompose");
         let SpExpr {
@@ -718,6 +699,7 @@ mod tests {
         let mut b = RegisterSet::new()
             .tracked(sp)
             .arg(sp)
+            .stack_vn(sp)
             .build_fn_single_region()?;
         let mut current = b.read_variable(&sp)?;
         let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
@@ -733,7 +715,7 @@ mod tests {
         let mut memo = SpExprMemo::default();
         // Iterative rpo sweep: the deep And chain re-bases at each level and
         // resolves to an opaque base without recursion, so no stack overflow.
-        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(current);
+        let r = SpDecomposer::new(&fg, &mut memo).decompose(current);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         Ok(())
     }
@@ -749,6 +731,7 @@ mod tests {
         let mut b = RegisterSet::new()
             .tracked(sp)
             .arg(sp)
+            .stack_vn(sp)
             .build_fn_single_region()?;
         let mut current = b.read_variable(&sp)?;
         const N: usize = 5000;
@@ -762,7 +745,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let SpExpr { offset, .. } = SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+        let SpExpr { offset, .. } = SpDecomposer::new(&fg, &mut memo)
             .decompose(current)
             .expect("5000-node chain must decompose without stack-overflowing");
         assert_eq!(
