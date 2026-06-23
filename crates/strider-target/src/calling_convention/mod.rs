@@ -368,6 +368,10 @@ impl StackArgs {
     /// decoded from binary content, so `offset + size` is computed with a
     /// checked add: an overflowing (garbage) offset degrades to `None` rather
     /// than panicking in debug / wrapping in release.
+    ///
+    /// Superseded in prod by [`Self::slot_of`] + `slots_spanned`; retained
+    /// only for the strict within-one-slot tests.
+    #[cfg(test)]
     #[must_use]
     pub fn index_of(&self, offset: i64, size: i64) -> Option<usize> {
         // `increment > 0` is a type invariant (enforced by `try_new`); guard
@@ -394,7 +398,7 @@ impl StackArgs {
     /// at `offset` (from call-time SP): `floor((offset - base_offset) /
     /// increment)`, or `None` when `offset` is below `base_offset`.
     ///
-    /// Unlike [`Self::index_of`] this imposes **no upper bound on the access
+    /// Unlike the (test-only) `index_of` this imposes **no upper bound on the access
     /// size**: an argument wider than one slot (a 32-bit-ABI `double`, an
     /// x86-64 `long double`) is attributed to the slot its first byte lands
     /// in, and a sub-field read landing mid-slot is attributed to the slot it
@@ -930,7 +934,10 @@ macro_rules! cc_factory {
 impl CallingConvention {
     /// Returns `true` if calls under this convention preserve memory
     /// across the call (i.e. the IR's Call node should NOT advance the
-    /// memory chain).  See the `Self::preserves_memory` field docs.
+    /// memory chain).  See the `preserves_memory` field docs.  Prod reads
+    /// the resolved `BuiltCallingConvention::preserves_memory` field; this
+    /// accessor on the unbuilt convention is used only by tests.
+    #[cfg(test)]
     pub fn preserves_memory(&self) -> bool {
         self.preserves_memory
     }

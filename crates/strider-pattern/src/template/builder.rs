@@ -150,11 +150,6 @@ impl TemplateBuilder {
         self.add_built_output(node, TmplOutput::memory(slot))
     }
 
-    /// Adds a control output at `slot` to `node`.
-    pub fn control_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplValueRef {
-        self.add_built_output(node, TmplOutput::control(slot))
-    }
-
     // ── annotators ───────────────────────────────────────────────────
 
     /// Pins `out`'s value output to a fixed build type (so the

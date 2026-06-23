@@ -113,14 +113,6 @@ impl<'f> Matcher<'f> {
             .get_or_init(|| KindIndex::build(self.function))
     }
 
-    /// Function-entry [`NodeId`] of the wrapped function.
-    #[allow(clippy::expect_used)]
-    pub fn entry(&self) -> NodeId {
-        self.function
-            .entry()
-            .expect("Matcher wraps a built function with an entry node (try_new invariant)")
-    }
-
     /// Borrow of the [`Function`] this matcher operates over. The sole
     /// data-access point for closures (`when_match`, `predicate`,
     /// `PostMatchFn`) that need to inspect IR side-tables at match time.

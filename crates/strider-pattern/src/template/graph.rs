@@ -116,15 +116,6 @@ impl TmplOutput {
             ty: TemplateTy::InheritRoot,
         }
     }
-
-    /// A control output at `slot`.
-    pub fn control(slot: usize) -> Self {
-        Self {
-            slot,
-            kind: OutputKindSpec::Control,
-            ty: TemplateTy::InheritRoot,
-        }
-    }
 }
 
 /// A build-side template over the IR: a generic bipartite

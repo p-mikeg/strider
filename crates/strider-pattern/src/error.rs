@@ -43,7 +43,7 @@ pub fn is_skip(err: &anyhow::Error) -> bool {
 /// `"int_binary_op"`) so the site of the bug is obvious from the
 /// error message.
 #[derive(Debug)]
-pub struct MissingBinding(pub &'static str);
+pub struct MissingBinding(&'static str);
 
 impl fmt::Display for MissingBinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

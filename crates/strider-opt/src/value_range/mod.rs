@@ -56,7 +56,9 @@ impl Interval {
     }
 
     /// Exclusive upper bound — the "entry count" a table index may reach —
-    /// or `None` if this interval is top (unbounded).
+    /// or `None` if this interval is top (unbounded).  Prod reads `hi`/`lo`
+    /// directly in the table-dispatch classifier; used only by tests.
+    #[cfg(test)]
     pub fn upper_exclusive(&self, width_mask: u128) -> Option<u64> {
         if self.hi >= width_mask {
             None

@@ -44,16 +44,6 @@ pub struct LiftOutcome {
     pub unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
 }
 
-impl std::fmt::Display for LiftOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "LiftOutcome {{ unresolved_branches: {} }}",
-            self.unresolved_branches.len(),
-        )
-    }
-}
-
 /// The single options type for the whole binary → IR lift, re-exported
 /// from the crate root.  The CFG builder reads its CFG-shaping knobs
 /// (`fn_max_size`, `allow_code_before_start_addr`, `known_targets`); the
@@ -459,34 +449,6 @@ impl SpecialTerm {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
-    #[test]
-    fn display_summarises_unresolved_branches() {
-        // Standard x86_64 `ret` byte sequence.  No `BranchIndirect`, so
-        // `unresolved_branches.len() == 0`.
-        let arch = strider_target::SleighArch::x86_64();
-        let regs = arch.probe_regs().expect("probe regs");
-        let cc = strider_target::CallingConvention::x86_64_systemv()
-            .expect("x86_64_systemv preset must be registered")
-            .build(&regs)
-            .expect("build cc");
-        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
-        let mut sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let cfg = strider_cfg::Builder::for_arch(
-            &arch,
-            &mut sleigh,
-            0x1000,
-            &strider_cfg::CfgOptions::default(),
-        )
-        .build()
-        .expect("cfg");
-        // The Lifter owns the Sleigh; CC is a per-call argument.
-        let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
-        let outcome = lifter.build_ir(&cfg, &cc).expect("build_ir");
-        let s = format!("{outcome}");
-        assert!(s.contains("unresolved_branches: 0"));
-    }
 
     /// AArch64 `ret` (which Sleigh lifts via `BranchIndirect` on the link
     /// register `x30`) routes through `handle_return`, NOT the
