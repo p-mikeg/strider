@@ -23,6 +23,8 @@ rustc-hash = "2"
 smallvec.workspace = true
 
 [dev-dependencies]
+# Test-only IR helpers (build_sub_as_add_neg, count_kind, set_call_cc, …).
+strider-ir = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { workspace = true }
 object.workspace = true
 # Property-based testing for value-only IR invariants under the optimizer.

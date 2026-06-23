@@ -294,7 +294,10 @@ impl Function {
     /// Subsequent calls with an equal value return the same id — the
     /// dedup invariant the [`Graph::create_node`] cache relies on so
     /// two `IntConst(id)` nodes referencing the same logical value
-    /// share a single `NodeId`.
+    /// share a single `NodeId`.  Prod interning goes through the
+    /// width-checked `intern_int_const` / `intern_int_const_limbs`; this raw
+    /// entry is used only by tests.
+    #[cfg(test)]
     pub fn intern_const(
         &mut self,
         value: crate::const_value::ConstValue,
@@ -558,6 +561,7 @@ impl Function {
     /// filtered `var_table.values()` — same order as `all_vns` — by
     /// `!= stack_vn`).
     #[inline]
+    #[cfg(test)]
     pub fn call_other_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
         let stack_vn = self.default_cc.stack_vn;
         self.all_vns
@@ -612,8 +616,10 @@ impl Function {
 
     /// Returns the [`crate::CallDescriptor`] recorded for `node_id`, or
     /// `None` when no descriptor has been recorded (default Call or unmodeled
-    /// CallOther).
+    /// CallOther).  Prod reads the typed `call_cc` / `call_other_name` /
+    /// `call_stack_args_override` accessors; this raw getter is test-only.
     #[inline]
+    #[cfg(test)]
     pub fn call_descriptor(&self, node_id: NodeId) -> Option<&crate::CallDescriptor> {
         self.call_descriptor.get(&node_id)
     }
@@ -643,10 +649,10 @@ impl Function {
     /// any prior descriptor.  Subsumes the stack-arg layout override (read
     /// back via [`Self::call_stack_args_override`]).
     ///
-    /// Prefer [`Self::set_call_descriptor`] when the call site already has a
-    /// `CallDescriptor` value; this wrapper exists for call sites that only
-    /// deal with `BuiltCallingConvention`.
+    /// Prod uses [`Self::set_call_descriptor`] directly; this
+    /// `BuiltCallingConvention`-only wrapper is used only by tests.
     #[inline]
+    #[cfg(any(test, feature = "test-util"))]
     pub fn set_call_cc(&mut self, node_id: NodeId, cc: strider_target::BuiltCallingConvention) {
         self.call_descriptor
             .insert(node_id, crate::CallDescriptor::Call(cc));

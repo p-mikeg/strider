@@ -310,6 +310,7 @@ pub trait IRBuilderExt: IRBuilder {
     /// # Errors
     ///
     /// Returns an error if either operand is not a value edge.
+    #[cfg(any(test, feature = "test-util"))]
     fn build_sub_as_add_neg(
         &mut self,
         lhs_id: ValueId,

@@ -3,6 +3,12 @@ name = "strider-ir"
 version = "0.1.0"
 edition.workspace = true
 
+[features]
+# Exposes builder/inspection helpers used only by downstream crates' tests
+# (e.g. `build_sub_as_add_neg`, `count_kind`, `set_call_cc`). Dev-dep only, so
+# production builds never carry them. Mirrors strider-graph's `test-injectors`.
+test-util = []
+
 [dependencies]
 anyhow.workspace = true
 bitflags = "2"

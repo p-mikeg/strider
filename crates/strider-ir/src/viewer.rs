@@ -599,12 +599,16 @@ pub trait IRWalker: IRViewer {
     }
 
     /// Counts entry-reachable nodes whose [`NodeKind`] satisfies `pred`.
+    /// Test-assertion vocabulary; not used by production passes.
+    #[cfg(any(test, feature = "test-util"))]
     fn count_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> usize {
         self.walk().filter(|&n| pred(self.node_kind(n))).count()
     }
 
     /// Returns `true` when at least one entry-reachable node satisfies `pred`.
-    /// Short-circuits at the first match.
+    /// Short-circuits at the first match.  Test-assertion vocabulary; not used
+    /// by production passes.
+    #[cfg(any(test, feature = "test-util"))]
     fn has_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> bool {
         self.walk().any(|n| pred(self.node_kind(n)))
     }

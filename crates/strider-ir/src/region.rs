@@ -267,7 +267,9 @@ impl FunctionBuilder {
     }
 
     /// Returns the current control-output of `region` — i.e. the
-    /// `Control` `ValueId` consumed by the region's terminator.
+    /// `Control` `ValueId` consumed by the region's terminator.  Used only by
+    /// tests to wire up synthetic graphs.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn region_cur_ctrl(&self, region: RegionId) -> ValueId {
         self.regions[region].cur_ctrl
     }

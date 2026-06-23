@@ -398,19 +398,23 @@ impl FunctionBuilder {
     }
 
     /// Sets the function-default convention's stack-argument layout.
+    /// Prod sets stack args through the lift path; used only by tests.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn set_stack_args(&mut self, stack_args: Option<strider_target::StackArgs>) {
         self.function.default_cc.stack_args = stack_args;
     }
 
     /// Returns the currently-attributed asm address (or `None` if no insn
-    /// is active).
+    /// is active).  The setter `set_lift_addr` is prod; this read-back is
+    /// used only by tests.
     #[inline]
+    #[cfg(test)]
     pub fn lift_addr(&self) -> Option<u64> {
         self.lift_addr
     }
 
     /// Creates a node in the graph with the given kind, inputs, and
-    /// output kinds.  When [`Self::lift_addr`] is `Some(addr)`, also
+    /// output kinds.  When the attributed lift address is `Some(addr)`, also
     /// records `addr` in the resulting node's asm-fingerprint side-table
     /// entry; if `create_node` hits the dedup cache, the contributor is
     /// unioned into the existing entry.
@@ -438,7 +442,9 @@ impl FunctionBuilder {
         node_id
     }
 
-    /// Returns an iterator over all tracked varnodes.
+    /// Returns an iterator over all tracked varnodes.  Used only by tests to
+    /// assert builder canonicalisation.
+    #[cfg(test)]
     pub fn variables(&self) -> impl Iterator<Item = &rsleigh::Vn> {
         self.var_table.values()
     }
