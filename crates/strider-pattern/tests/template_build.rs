@@ -221,11 +221,16 @@ fn template_wires_multi_output_interior_memory_node() {
     let mem0_node = b.node(KindSpec::Exact(NodeKind::InitialMemory));
     let mem0 = b.memory_output(mem0_node, 0);
 
-    // addr / data leaves (value).
-    // ConstId::from_u32 is used as a struct-literal placeholder here;
-    // these raw-builder tests only check structural wiring, not constant values.
-    let addr = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(0x100))));
-    let data = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(42))));
+    // addr / data leaves (value). Built via FnIntConst so they intern real
+    // values into the target function at instantiation — a raw
+    // `Exact(IntConst(ConstId::from_u32(..)))` leaf would stamp a dangling
+    // ConstId into the fixture (passing only because this test never validates).
+    let addr = b.leaf(KindSpec::Any);
+    b.set_template_kind(addr, template::TemplateKind::FnIntConst(Box::new(|_| Ok(0x100u128))));
+    b.set_value_ty(addr, T::I64);
+    let data = b.leaf(KindSpec::Any);
+    b.set_template_kind(data, template::TemplateKind::FnIntConst(Box::new(|_| Ok(42u128))));
+    b.set_value_ty(data, T::I64);
 
     // store = Store(mem0, addr, data) — inputs [MEM, ADDR, DATA],
     // output [MEM]. The memory output is the multi-output interior edge.
