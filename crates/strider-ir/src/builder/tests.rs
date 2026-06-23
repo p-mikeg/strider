@@ -1740,9 +1740,9 @@ fn ret_val_vars_returns_declared_reg_verbatim() -> Result<()> {
         strider_target::Endianness::Little,
     )?;
     assert_eq!(
-        b.ret_val_vars(),
+        b.function().ret_val_regs(),
         &[f0_4byte],
-        "ret_val_vars returns the declared ret reg verbatim (no projection)"
+        "ret_val_regs returns the declared ret reg verbatim (no projection)"
     );
     Ok(())
 }

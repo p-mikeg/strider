@@ -76,6 +76,19 @@ pub trait IRViewer {
         self.function().graph().node_inputs_exact(node)
     }
 
+    /// Returns the exactly-`N` input value edges of the node that *produces*
+    /// `value` — the value-keyed form of [`Self::node_inputs_exact`], saving
+    /// the `node_inputs_exact(self.producer(value))` two-step at call sites.
+    ///
+    /// # Errors
+    /// Returns an error if the producing node does not have exactly `N` inputs.
+    fn producer_inputs_exact<const N: usize>(
+        &self,
+        value: ValueId,
+    ) -> crate::Result<[ValueId; N]> {
+        self.node_inputs_exact::<N>(self.producer(value))
+    }
+
     /// Returns the exactly-`N` output value edges of `node`.
     ///
     /// # Errors

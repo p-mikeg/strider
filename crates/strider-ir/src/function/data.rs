@@ -427,7 +427,7 @@ impl Function {
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> impl Fn(&rsleigh::Vn) -> bool + use<> {
-        let stack_vn = self.default_cc.stack_vn;
+        let stack_vn = cc.stack_vn;
         let callee_saved: FxHashSet<rsleigh::Vn> = cc
             .callee_saved_regs
             .iter()

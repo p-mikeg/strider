@@ -108,11 +108,7 @@ pub(crate) fn build_switch_if_ladder(
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    pub(super) fn handle_branch(
-        &mut self,
-        _region_id: strider_cfg::RegionId,
-        _region_map: &super::RegionMap,
-    ) -> Result<()> {
+    pub(super) fn handle_branch(&mut self) -> Result<()> {
         // Nothing to do per-region.  An unconditional pcode `Branch`
         // produces a single `Unconditional` CFG edge to its successor,
         // and EVERY unconditional successor — branch or plain
@@ -228,7 +224,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // Per-address CC override: when the call target matches a
         // user-supplied entry, build the Call with that CC instead of
         // the function-default.
-        let override_cc = self.per_address_ccs.and_then(|m| m.get(&target_addr));
+        let override_cc = self.per_address_ccs.get(&target_addr);
         // `build_call` records the override CC (and its stack-arg
         // offsets) on the Call when `override_cc` is `Some`.
         self.builder.build_call(call_address, override_cc)?;
@@ -253,7 +249,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let call_address =
             self.build_addr_const(default_code_space, target, "default code space")?;
         // Per-address CC override applies to lift-time tail calls too.
-        let override_cc = self.per_address_ccs.and_then(|m| m.get(&target));
+        let override_cc = self.per_address_ccs.get(&target);
         // `build_call` records the override CC (and its stack-arg
         // offsets) on the Call when `override_cc` is `Some`.
         self.builder.build_call(call_address, override_cc)?;

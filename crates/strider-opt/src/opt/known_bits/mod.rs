@@ -580,12 +580,7 @@ impl Optimizer for KnownBits {
             // Seed from the producer's INPUT cones (the producer itself is
             // absorbed by `replace_value` below).  Mirrors the previous walk's
             // seeding exactly, so the resulting fingerprint set is identical.
-            let input_producers: smallvec::SmallVec<[NodeId; 4]> = ctx
-                .node_inputs(folded_producer)
-                .iter()
-                .map(|input| ctx.producer(input))
-                .collect();
-            for p in input_producers {
+            for p in crate::peephole::input_producers(ctx, folded_producer) {
                 if let Some(addrs) = cone_fps.get(&p) {
                     ctx.function_mut()
                         .extend_asm_fingerprint(new_producer, addrs);

@@ -60,7 +60,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     .unwrap();
     let addr = b.build_int_const(0xdead_u64, ValueType::I64).unwrap();
     let _call_node = b.build_call(addr, Some(&override_cc)).unwrap();
-    let ret_vars: Vec<rsleigh::Vn> = b.ret_val_vars().to_vec();
+    let ret_vars: Vec<rsleigh::Vn> = b.function().ret_val_regs().to_vec();
     b.build_return(None, &ret_vars).unwrap();
     let function = b.build().unwrap();
 

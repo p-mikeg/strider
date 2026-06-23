@@ -533,7 +533,7 @@ fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueI
     // shifts bit k of `x` down to bit 0.
     let (pack, bit) = match *f.node_kind(f.producer(inner)) {
         NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => {
-            let [x, amt] = f.node_inputs_exact::<2>(f.producer(inner)).ok()?;
+            let [x, amt] = f.producer_inputs_exact::<2>(inner).ok()?;
             let k = u32::try_from(f.int_const_u128(amt)?).ok()?;
             (x, k)
         }
@@ -571,7 +571,7 @@ fn flatten_or(f: &impl IRViewer, value: ValueId, out: &mut Vec<ValueId>, depth: 
     const MAX_DEPTH: u32 = 4;
     if depth <= MAX_DEPTH
         && let NodeKind::IntBinaryOp(IntBinaryOp::Or) = f.node_kind(f.producer(value))
-        && let Ok([a, b]) = f.node_inputs_exact::<2>(f.producer(value))
+        && let Ok([a, b]) = f.producer_inputs_exact::<2>(value)
     {
         flatten_or(f, a, out, depth + 1);
         flatten_or(f, b, out, depth + 1);
@@ -597,7 +597,7 @@ fn single_bit_term(
     match *f.node_kind(f.producer(value)) {
         // `ShiftLeft(v, pos)` moves v's single bit up by `pos`.
         NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
-            let [v, amt] = f.node_inputs_exact::<2>(f.producer(value)).ok()?;
+            let [v, amt] = f.producer_inputs_exact::<2>(value).ok()?;
             let pos = u32::try_from(f.int_const_u128(amt)?).ok()?;
             let (q, cmp) = single_bit_term(f, v, depth + 1)?;
             Some((q.checked_add(pos)?, cmp))
@@ -605,7 +605,7 @@ fn single_bit_term(
         // `ZeroExtend` zero-fills above the source, so the set-bit position is
         // unchanged; a 1-bit (I1) source sets only bit 0.
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
-            let [src] = f.node_inputs_exact::<1>(f.producer(value)).ok()?;
+            let [src] = f.producer_inputs_exact::<1>(value).ok()?;
             match f.value_type_opt(src) {
                 Some(ValueType::I1) => Some((0, comparison_leaf(f, src))),
                 _ => single_bit_term(f, src, depth + 1),
@@ -613,7 +613,7 @@ fn single_bit_term(
         }
         // `And(v, single-bit const)` keeps only that bit (value unknown → no cmp).
         NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-            let [a, b] = f.node_inputs_exact::<2>(f.producer(value)).ok()?;
+            let [a, b] = f.producer_inputs_exact::<2>(value).ok()?;
             let mask = f.int_const_u128(a).or_else(|| f.int_const_u128(b))?;
             (mask.count_ones() == 1).then(|| (mask.trailing_zeros(), None))
         }

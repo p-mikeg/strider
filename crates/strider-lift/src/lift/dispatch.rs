@@ -204,7 +204,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
             // ── Control-flow / call / store opcodes ──────────────────────────
             Opcode::Nop => {}
-            Opcode::Branch => lifter.handle_branch(region_id, region_map)?,
+            Opcode::Branch => lifter.handle_branch()?,
             Opcode::CondBranch => lifter.handle_cond_branch(region_id, insn, region_map)?,
             Opcode::Store => lifter.handle_store(insn)?,
             // `Return` and `BranchIndirect` share a handler that emits a

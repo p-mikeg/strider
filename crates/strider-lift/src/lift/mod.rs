@@ -191,9 +191,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // set is always scanned fresh from it.
         let all_vns = self.find_all_unique_vns(cfg);
         // An empty override map behaves identically to "no overrides"
-        // (lookups are `and_then(|m| m.get(addr))`), so always pass the
-        // borrow.
-        let mut driver = FunctionLifter::new(self, cc, cfg, all_vns, Some(&opts.per_address_ccs))?;
+        // (the default is an empty map, so lookups are a plain `.get`).
+        let mut driver = FunctionLifter::new(self, cc, cfg, all_vns, &opts.per_address_ccs)?;
 
         // build_entry + one IR region per CFG region; returns the
         // CFG-region → IR-region map the per-insn loop resolves successors

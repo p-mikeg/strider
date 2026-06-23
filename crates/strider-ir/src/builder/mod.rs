@@ -443,14 +443,6 @@ impl FunctionBuilder {
         self.var_table.values()
     }
 
-    /// Returns the calling convention's return-value registers, in ABI order
-    /// (each upgraded to its tracked varnode).  Empty for synthetic test
-    /// builds that didn't supply a convention.  Derived from
-    /// [`crate::Function::ret_val_regs`].
-    pub fn ret_val_vars(&self) -> Vec<rsleigh::Vn> {
-        self.function.ret_val_regs()
-    }
-
     /// Finalises and returns the completed [`crate::Function`],
     /// after running structural validation.
     ///
