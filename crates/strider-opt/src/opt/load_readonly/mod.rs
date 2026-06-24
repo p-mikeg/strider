@@ -134,16 +134,13 @@ pub(crate) fn try_fold_const_load_at(
     // SSoT: fold this Load via the shared const-eval utility (constant address
     // → ROM decode), so the decode logic is not duplicated in the jump-table
     // evaluator.
-    let [data_value] = ctx.node_outputs_exact::<1>(node_id)?;
+    let (data_value, ty) = ctx.single_value_output(node_id)?;
     let resolve = |v| ctx.function().int_const_u128(v);
     let Some(masked) =
         crate::const_eval::eval_node_const(ctx.function(), data_value, &resolve, Some(rom))
     else {
         return Ok(false);
     };
-    let ty = ctx
-        .value_type_opt(data_value)
-        .expect("Load output is a value");
     let new_value = ctx.build_int_const(masked, ty)?;
     // The loaded constant is justified by the load ADDRESS — *which* byte run
     // got read depends entirely on the address cone, which is about to be
@@ -152,10 +149,7 @@ pub(crate) fn try_fold_const_load_at(
     // read) before the `replace_value` below removes it.  Over-tainting is
     // intentional — the fingerprint is a generous superset proof aid.
     let addr_value = ctx.load_addr(node_id);
-    let addr_producer = ctx.producer(addr_value);
-    let new_producer = ctx.producer(new_value);
-    ctx.function_mut()
-        .extend_asm_fingerprint_from(new_producer, addr_producer);
+    ctx.absorb_fingerprint(new_value, addr_value);
     // `replace_value` absorbs the rewritten Load's asm-fingerprint into the
     // new IntConst and redirects all uses (single SSoT for the pair).
     ctx.replace_value(data_value, new_value)

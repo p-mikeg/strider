@@ -66,12 +66,6 @@ impl std::ops::BitOr for OptimizationResult {
     }
 }
 
-impl std::ops::BitOrAssign for OptimizationResult {
-    fn bitor_assign(&mut self, rhs: Self) {
-        *self = *self | rhs;
-    }
-}
-
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
 /// call.  The shared home for configuration and caches that every pass in
 /// one pipeline run agrees on, so individual passes stop carrying their

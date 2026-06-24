@@ -157,7 +157,7 @@ impl<'f> RangeMap<'f> {
             Some(MemoSlot::Done(iv)) => return *iv,
             Some(MemoSlot::InProgress) => {
                 let ty = self.function.value_type_opt(value);
-                return Interval::top(ty.map_or(u128::MAX, |t| t.bit_mask_u128()));
+                return Interval::top(type_mask_or_top(ty));
             }
             None => {}
         }
@@ -209,7 +209,7 @@ impl<'f> RangeMap<'f> {
             return Interval::top(u128::MAX);
         };
         let ty = self.function.value_type_opt(phi_value);
-        let type_mask = ty.map_or(u128::MAX, |t| t.bit_mask_u128());
+        let type_mask = type_mask_or_top(ty);
 
         // A real (multi-input) phi at a control merge.  Single-input phis don't
         // reach here: `PhiCollapse` has already eliminated them in the converged
@@ -392,7 +392,7 @@ impl<'f> RangeMap<'f> {
     /// build time.
     fn resolve_leaf(&self, value: ValueId, region: NodeId) -> Interval {
         let ty = self.function.value_type_opt(value);
-        let type_mask = ty.map_or(u128::MAX, |t| t.bit_mask_u128());
+        let type_mask = type_mask_or_top(ty);
 
         // Collect the intersection of all guards that dominate `region`.
         let guard = self.dominating_guard(value, region);
@@ -409,6 +409,12 @@ impl<'f> RangeMap<'f> {
 }
 
 // ── Guard extraction helpers ──────────────────────────────────────────────────
+
+/// The full-width bit mask for an optional value type: the type's own mask, or
+/// `u128::MAX` (the unconstrained top) when the value carries no typed edge.
+fn type_mask_or_top(ty: Option<ValueType>) -> u128 {
+    ty.map_or(u128::MAX, |t| t.bit_mask_u128())
+}
 
 /// If `value`'s producer is `Add(X, IntConst(c))`, return `(X, interval')`
 /// where `interval'` is `interval` shifted by `-c` (mod the operand width) —

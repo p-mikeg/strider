@@ -88,8 +88,8 @@ impl PhiPat {
 /// Construct a fresh [`PhiPat`].
 pub fn phi() -> PhiPat {
     PhiPat {
-        // `Phi` is node-rooted with a value output at slot 0.
-        inner: NodePat::node(phi_kind(NodeKind::Phi)).with_anchor_value(0),
+        // `Phi` has a value output at slot 0 (captured/limited via it).
+        inner: NodePat::value(phi_kind(NodeKind::Phi), 0),
         var_filter: None,
     }
 }

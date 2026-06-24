@@ -104,20 +104,6 @@ impl<'g> EditFunction<'g> {
         self.function
     }
 
-    /// Pre-order graph walk starting at [`Self::entry`].
-    pub fn walk(&self) -> crate::walk::GraphWalk<'_> {
-        crate::walk::walk_graph(self.function.graph(), self.entry())
-    }
-
-    /// Kind-filtered pre-order walk.
-    pub fn walk_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
-    where
-        P: FnMut(&NodeKind) -> bool + 'a,
-    {
-        let g: &Graph = self.function.graph();
-        self.walk().filter(move |&n| pred(g.node_kind(n)))
-    }
-
     /// Post-order over the cached live def→use graph, seeded from the
     /// O(1)-maintained `roots` (no `compute_full` re-walk): every node is
     /// yielded after all of its consumers.  Roots are visited in ascending
@@ -663,6 +649,16 @@ impl<'g> EditFunction<'g> {
     /// delegates to [`Function::register_arg_value`].
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
         self.function.register_arg_value(index, value);
+    }
+
+    /// Absorb `from_value`'s producer asm-fingerprint into `into_value`'s
+    /// producer (superset-only union).  The single seam passes use when a
+    /// rewrite keeps `into_value` and drops `from_value` but must preserve the
+    /// dropped value's contributing-asm history on the survivor.
+    pub fn absorb_fingerprint(&mut self, into_value: ValueId, from_value: ValueId) {
+        let into = self.function().producer(into_value);
+        let from = self.function().producer(from_value);
+        self.function_mut().extend_asm_fingerprint_from(into, from);
     }
 
     // ── composite rewrites ───────────────────────────────────────────

@@ -30,6 +30,7 @@
 
 use strider_ir::EditFunction;
 use strider_ir::IRViewer;
+use strider_ir::IRWalker;
 use strider_ir::node::NodeId;
 use strider_ir::node::ValueId;
 
@@ -154,8 +155,7 @@ fn rewrite_rule_impl(
         };
 
         // 2. Fetch root's single value output and its type.
-        let [root_value] = ctx.function().node_outputs_exact::<1>(node)?;
-        let root_ty = ctx.function().value_kind(root_value).as_value_or_err()?;
+        let (root_value, root_ty) = ctx.function().single_value_output(node)?;
 
         // 3. Materialise the RHS THROUGH the editing context, threading the
         //    matched footprint as the proof-node set so that EVERY freshly

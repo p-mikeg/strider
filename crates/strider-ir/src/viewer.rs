@@ -97,6 +97,20 @@ pub trait IRViewer {
         self.function().graph().node_outputs_exact(node)
     }
 
+    /// Returns the single value output of `node` together with its
+    /// [`ValueType`] — the common "this node produces exactly one typed value"
+    /// shape, saving the `node_outputs_exact::<1>` + `value_type` two-step at
+    /// call sites.
+    ///
+    /// # Errors
+    /// Returns an error if the node does not have exactly one output, or that
+    /// output is not a typed value edge.
+    fn single_value_output(&self, node: NodeId) -> crate::Result<(ValueId, ValueType)> {
+        let [value] = self.node_outputs_exact::<1>(node)?;
+        let ty = self.value_type(value)?;
+        Ok((value, ty))
+    }
+
     /// Returns the [`crate::node::UseId`] of the input slot at position `idx`
     /// of `node`.
     ///

@@ -1226,23 +1226,15 @@ impl PyPartialMatch {
     /// Look up a capture by key (Python `m[c]`).
     fn __getitem__(&self, py: Python<'_>, key: CaptureKeyOwned) -> PyResult<PyObject> {
         let cap = self.capture_from_key(&key)?;
-        // Probe bool (an `I1`-typed IntConst) BEFORE the general uint path,
-        // mirroring `PyMatch::__getitem__`: `get_uint` also matches an `I1`
-        // value (returning 0/1), so probing it first would make a boolean
-        // capture surface as a plain `int` here while the post-match
-        // `PyMatch` returns `bool` for the same binding.  `get_bool` is
-        // `I1`-only, so wider ints still fall through to the uint path.
-        if let Some(Some(b)) = self.with_function(|f| self.bindings.get_bool(cap, f)) {
-            return Ok(b.into_py(py));
-        }
-        if let Some(Some(v)) = self.with_function(|f| self.bindings.get_uint(cap, f)) {
-            return Ok(v.into_py(py));
-        }
-        if let Some(Some(fl)) = self.with_function(|f| self.bindings.get_float_bits(cap, f.graph()))
-        {
-            return Ok(fl.into_py(py));
-        }
-        Ok(py.None())
+        // Resolve the three value Options (the `with_function` proxy returns
+        // `Option<Option<_>>`; flatten each), then defer to the shared
+        // precedence helper so this mirrors `PyMatch::__getitem__` exactly.
+        let b = self.with_function(|f| self.bindings.get_bool(cap, f)).flatten();
+        let v = self.with_function(|f| self.bindings.get_uint(cap, f)).flatten();
+        let fl = self
+            .with_function(|f| self.bindings.get_float_bits(cap, f.graph()))
+            .flatten();
+        Ok(crate::matcher::capture_value_to_py(py, b, v, fl))
     }
 
     /// Whether `c` is bound in this partial match (Python `c in m`).

@@ -1389,7 +1389,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitflags",
- "cranelift-bitset",
  "cranelift-entity",
  "dot",
  "entity-utils",
@@ -1437,7 +1436,6 @@ name = "strider-opt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bitflags",
  "cranelift-entity",
  "criterion 0.5.1",
  "entity-utils",
@@ -1487,18 +1485,15 @@ name = "strider-pattern"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cranelift-entity",
  "criterion 0.5.1",
  "expect-test",
  "petgraph",
  "rsleigh",
  "rustc-hash",
- "smallvec",
  "strider-graph",
  "strider-ir",
  "strider-ir-test-utils",
  "strider-target",
- "thiserror",
 ]
 
 [[package]]

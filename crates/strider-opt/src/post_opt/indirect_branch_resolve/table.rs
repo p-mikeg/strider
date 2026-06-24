@@ -53,7 +53,6 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::MAX_TABLE_ENTRIES;
-use super::eval::value_input_producers;
 use crate::AliasMode;
 use crate::ReadOnlyMemory;
 use strider_cfg::ResolvedTargets;
@@ -147,13 +146,11 @@ fn find_index_candidates(
     ranges: &mut crate::value_range::RangeMap<'_>,
 ) -> Vec<(ValueId, u128, u128)> {
     let mut out: Vec<(ValueId, u128, u128)> = Vec::new();
-    let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
     let mut load_memo: rustc_hash::FxHashMap<ValueId, bool> = rustc_hash::FxHashMap::default();
-    let mut stack = vec![anchor_value];
-    while let Some(v) = stack.pop() {
-        if !seen.insert(v) {
-            continue;
-        }
+    // Backward value-input cone from the anchor (producers before consumers,
+    // each value once; the `is_anchor` guard below skips the root). Reuses the
+    // shared post-order walk so a deep cone stays O(1) host stack.
+    for v in super::eval::cone_order(ctx, anchor_value) {
         if let Some(ty) = ctx.value_type_opt(v) {
             // Never enumerate the dispatch value ITSELF as the index.  A real
             // table dispatch reads/computes the target *from* a deeper index
@@ -191,9 +188,6 @@ fn find_index_candidates(
                     }
                 }
             }
-        }
-        for input in value_input_producers(ctx, ctx.producer(v)) {
-            stack.push(input);
         }
     }
     // Try the tightest-bounded candidates first: a wrong one fails fast, and the

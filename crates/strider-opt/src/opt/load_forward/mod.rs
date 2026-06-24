@@ -94,11 +94,8 @@ fn try_forward_load(
 ) -> Result<OptimizationResult> {
     // Load inputs: [memory, addr].
     let [mem, addr] = ctx.graph_ref().node_inputs_exact::<2>(load)?;
-    let [load_value] = ctx.node_outputs_exact::<1>(load)?;
-    // A `Load` always produces a value output (validated signature).
-    let load_ty = ctx
-        .value_type_opt(load_value)
-        .expect("Load output is a value");
+    // A `Load` always produces a single value output (validated signature).
+    let (load_value, load_ty) = ctx.single_value_output(load)?;
 
     let load_size = load_ty.byte_size() as i64;
     // load_forward stays conservative on distinct SP bases (a store at a
@@ -204,8 +201,7 @@ fn narrow(ctx: &mut crate::EditFunction<'_>, data: ValueId, load: NodeId) -> Res
     // already holds — each is an O(1) cached look-up — rather than threading
     // them in as redundant decomposed arguments.
     let data_ty = ctx.value_type(data)?;
-    let [load_value] = ctx.node_outputs_exact::<1>(load)?;
-    let load_ty = ctx.value_type(load_value)?;
+    let (_, load_ty) = ctx.single_value_output(load)?;
     // SSoT: the byte order is the function's own.
     let endianness = ctx.function().endianness();
     let shifted = match endianness {

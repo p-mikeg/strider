@@ -103,14 +103,6 @@ impl NodePat {
         self.with_anchor(AnchorKind::Memory(slot))
     }
 
-    /// Declare a value anchor output at `slot` on a node-rooted builder
-    /// (e.g. `Phi`: rooted on the node, captured/limited via its value
-    /// output). Distinct from [`NodePat::value`], which also makes the
-    /// builder a *value* root sealed on the output.
-    pub(crate) fn with_anchor_value(self, slot: usize) -> Self {
-        self.with_anchor(AnchorKind::Value(slot))
-    }
-
     /// Wire a value sub-pattern into raw input `slot`. The one boxing
     /// site for value operands.
     pub(crate) fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {

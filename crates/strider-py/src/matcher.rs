@@ -54,6 +54,36 @@ impl CaptureKey<'_> {
     }
 }
 
+/// Convert a capture's already-resolved value Options to a Python object
+/// per the `m[c]` precedence shared by `PyMatch::__getitem__` and
+/// `PyPartialMatch::__getitem__`.
+///
+/// Check bool (an `I1`-typed IntConst) BEFORE the general uint path:
+/// `get_uint` also matches an `I1` value (returning 0/1), so probing it
+/// first would make a boolean capture surface as a plain int, contradicting
+/// the "bool if it's a bool" contract.  `get_bool` is `I1`-only, so wider
+/// ints still fall through to uint.  Then uint (pass `u128` directly — PyO3
+/// handles the conversion; casting to `i128` first would silently
+/// sign-truncate any I128 value with bit 127 set), then raw float bits, then
+/// `None` for control-flow captures.
+pub(crate) fn capture_value_to_py(
+    py: Python<'_>,
+    bool_val: Option<bool>,
+    uint_val: Option<u128>,
+    float_bits: Option<u64>,
+) -> PyObject {
+    if let Some(b) = bool_val {
+        return b.into_py(py);
+    }
+    if let Some(v) = uint_val {
+        return v.into_py(py);
+    }
+    if let Some(f) = float_bits {
+        return f.into_py(py);
+    }
+    py.None()
+}
+
 impl PyMatch {
     /// Resolve `key` to a `Capture`, borrow the function for read, and run
     /// `f` against `(capture, &function)`.  Centralises the boilerplate that
@@ -108,26 +138,10 @@ impl PyMatch {
     /// output is an int, bool if it's a bool, raw bits otherwise.
     fn __getitem__(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<PyObject> {
         self.with_function(py, key, |cap, g| {
-            // Check bool (an `I1`-typed IntConst) BEFORE the general uint path:
-            // `get_uint` also matches an `I1` value (returning 0/1), so probing
-            // it first would make a boolean capture surface as a plain int,
-            // contradicting this method's "bool if it's a bool" contract.
-            // `get_bool` is `I1`-only, so wider ints still fall through to uint.
-            if let Some(b) = self.inner.bindings().get_bool(cap, g) {
-                return b.into_py(py);
-            }
-            if let Some(v) = self.inner.bindings().get_uint(cap, g) {
-                // Pass `u128` directly — PyO3 handles the conversion to a
-                // Python int.  Casting to `i128` first would silently sign-
-                // truncate any I128 value with bit 127 set (e.g. `u128::MAX`
-                // would surface as `-1` to Python).
-                return v.into_py(py);
-            }
-            if let Some(f) = self.inner.bindings().get_float_bits(cap, g.graph()) {
-                return f.into_py(py);
-            }
-            // Fall back to None for control-flow captures.
-            py.None()
+            let b = self.inner.bindings().get_bool(cap, g);
+            let v = self.inner.bindings().get_uint(cap, g);
+            let f = self.inner.bindings().get_float_bits(cap, g.graph());
+            capture_value_to_py(py, b, v, f)
         })
     }
 

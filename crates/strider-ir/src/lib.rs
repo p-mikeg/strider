@@ -47,8 +47,8 @@
 //!   are integer ops at `I1`)
 
 mod builder;
-pub mod control_flow_view;
-pub use control_flow_view::{ControlFlowView, control_dominators, dominates};
+mod control_flow_view;
+pub use control_flow_view::{control_dominators, dominates};
 pub use strider_target::CallDescriptor;
 pub mod error;
 mod function;

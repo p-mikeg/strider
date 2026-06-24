@@ -152,7 +152,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // through `region_map` (via `super::ir_region_of`).
         match insn.opcode {
             // ── Value-producing opcodes ──────────────────────────────────────
-            Opcode::Copy => lifter.handle_copy(insn)?,
+            // Cast: apply a data-type to the output varnode.  GHIDRA docs:
+            // "semantically equivalent to a COPY operation", so it shares the
+            // `Copy` handler verbatim (read input 0, write to the output vn).
+            Opcode::Copy | Opcode::Cast => lifter.handle_copy(insn)?,
             Opcode::IntSub => lifter.handle_int_sub(insn)?,
             Opcode::IntLessEqual => lifter.handle_int_less_equal(insn)?,
             Opcode::IntSlessEqual => lifter.handle_int_sless_equal(insn)?,
@@ -175,9 +178,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     insn.opcode
                 );
             }
-            // Cast: apply a data-type to the output varnode.  GHIDRA docs:
-            // "semantically equivalent to a COPY operation".
-            Opcode::Cast => lifter.handle_cast(insn)?,
             Opcode::FloatSub => lifter.handle_float_sub(insn)?,
             Opcode::FloatNotEqual => lifter.handle_float_not_equal(insn)?,
             Opcode::FloatLessEqual => lifter.handle_float_less_equal(insn)?,

@@ -271,8 +271,7 @@ mod tests {
             if !(self.match_kind)(&kind) {
                 return Ok(PeepholeRewrite::NoChange);
             }
-            let [root_value] = ctx.node_outputs_exact::<1>(root)?;
-            let ty = ctx.value_kind(root_value).as_value_or_err()?;
+            let (root_value, ty) = ctx.single_value_output(root)?;
             // When scripted to do so, the first rewrite builds a fresh
             // kind-matching node (a clone of the root `Add` reusing its two
             // value inputs) instead of folding to a constant.  The fresh

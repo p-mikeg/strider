@@ -18,7 +18,6 @@ graphwalk.workspace = true
 petgraph = { workspace = true }
 strider-graph.workspace = true
 read-only-memory.workspace = true
-cranelift-bitset.workspace = true
 cranelift-entity.workspace = true
 rsleigh.workspace = true
 strider-target.workspace = true

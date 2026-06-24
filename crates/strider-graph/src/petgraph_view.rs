@@ -18,7 +18,7 @@
 
 use petgraph::Direction;
 use petgraph::visit::{
-    GraphBase, IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, NodeCount, Visitable,
+    GraphBase, IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, Visitable,
 };
 use rustc_hash::FxHashSet;
 
@@ -101,12 +101,6 @@ impl<N, V, C: NodeCacheable<N, V>> IntoNodeIdentifiers for &Graph<N, V, C> {
             }
         }
         ids.into_iter()
-    }
-}
-
-impl<N, V, C: NodeCacheable<N, V>> NodeCount for &Graph<N, V, C> {
-    fn node_count(&self) -> usize {
-        self.store.nodes.len() + self.store.outputs.len()
     }
 }
 
