@@ -763,11 +763,7 @@ fn function_arg_node_label_includes_arg_index() {
     // Create an InitialVar (stand-in for a register arg carrier) and register
     // it as argument index 0.
     let init_var = f.graph_mut().create_node(
-        NodeKind::InitialVar(rsleigh::Vn {
-            addr_off: 0,
-            addr_space: rsleigh::VnSpace::REGISTER,
-            size: 8,
-        }),
+        NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );

@@ -207,7 +207,7 @@ mod tests {
         let node = f
             .graph()
             .all_node_ids()
-            .find(|&n| matches!(*f.node_kind(n), NodeKind::InitialVar(vn) if vn == sp))
+            .find(|&n| matches!(*f.node_kind(n), NodeKind::InitialVar(id) if f.initial_vn(id) == sp))
             .expect("InitialVar(sp) exists");
         f.node_outputs_exact::<1>(node)
             .expect("InitialVar has 1 output")[0]

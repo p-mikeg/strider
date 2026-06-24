@@ -378,7 +378,7 @@ impl FunctionArgHandle<'_> {
     /// Classify the carrier's source (register vs stack vs other).
     pub fn source(&self) -> ArgSource {
         match self.function.node_kind(self.node) {
-            NodeKind::InitialVar(vn) => ArgSource::Register(*vn),
+            NodeKind::InitialVar(id) => ArgSource::Register(self.function.initial_vn(*id)),
             NodeKind::Load(_) => ArgSource::Stack,
             _ => ArgSource::Other,
         }

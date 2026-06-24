@@ -111,7 +111,10 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 
         let label = match kind {
             // ── entry / structural ────────────────────────────────────────────
-            NodeKind::InitialVar(var) => format!("init\n{}", self.vn_to_name(var)?),
+            NodeKind::InitialVar(id) => match self.function.initial_vn_opt(*id) {
+                Some(vn) => format!("init\n{}", self.vn_to_name(&vn)?),
+                None => format!("init\n#{}", id.index()),
+            },
             NodeKind::MemPhi => "φ Mem".to_string(),
             NodeKind::Phi => match self
                 .function

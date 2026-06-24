@@ -57,13 +57,13 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     );
     let carrier = fg.producer(arg0_nodes[0]);
     assert!(
-        matches!(fg.node_kind(carrier), NodeKind::InitialVar(v) if *v == rdi),
+        matches!(fg.node_kind(carrier), NodeKind::InitialVar(v) if fg.initial_vn(*v) ==rdi),
         "carrier for arg 0 must be InitialVar(rdi)"
     );
 
     // The original InitialVar(rdi) must still be reachable — no consumer rewiring.
     let reachable_initial_rdi =
-        fg.count_kind(|k| matches!(k, NodeKind::InitialVar(v) if *v == rdi));
+        fg.count_kind(|k| matches!(k, NodeKind::InitialVar(v) if fg.initial_vn(*v) ==rdi));
     assert_eq!(
         reachable_initial_rdi, 1,
         "InitialVar(rdi) must remain reachable after the pass"
@@ -721,7 +721,7 @@ fn second_and_third_register_args_recorded_at_their_indices() -> Result<()> {
         let carriers = fg.arg_index_to_values(idx);
         assert_eq!(carriers.len(), 1, "exactly one carrier for arg {idx}");
         assert!(
-            matches!(fg.node_kind(fg.producer(carriers[0])), NodeKind::InitialVar(v) if *v == vn),
+            matches!(fg.node_kind(fg.producer(carriers[0])), NodeKind::InitialVar(v) if fg.initial_vn(*v) ==vn),
             "arg {idx} carrier must be InitialVar of its CC register"
         );
     }
@@ -779,7 +779,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     let arg0 = fg.arg_index_to_values(0);
     assert!(!arg0.is_empty(), "arg 0 (rdi) should be registered");
     assert!(
-        matches!(fg.node_kind(fg.producer(arg0[0])), NodeKind::InitialVar(v) if *v == rdi),
+        matches!(fg.node_kind(fg.producer(arg0[0])), NodeKind::InitialVar(v) if fg.initial_vn(*v) ==rdi),
         "arg 0 carrier must be InitialVar(rdi)"
     );
 
@@ -787,7 +787,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     let arg1 = fg.arg_index_to_values(1);
     assert!(!arg1.is_empty(), "arg 1 (rsi) should be registered");
     assert!(
-        matches!(fg.node_kind(fg.producer(arg1[0])), NodeKind::InitialVar(v) if *v == rsi),
+        matches!(fg.node_kind(fg.producer(arg1[0])), NodeKind::InitialVar(v) if fg.initial_vn(*v) ==rsi),
         "arg 1 carrier must be InitialVar(rsi)"
     );
 

@@ -1370,7 +1370,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // via decompose_sp, so the fast-path and slow-path stores agree on one
     // SP root (the per-store base-consistency check).
     let sp_base = fg
-        .walk_kind(|k| matches!(*k, NodeKind::InitialVar(vn) if vn == sp))
+        .walk_kind(|k| matches!(*k, NodeKind::InitialVar(id) if fg.initial_vn(id) == sp))
         .next()
         .map(|n| fg.node_outputs(n).iter().copied().next().unwrap())
         .expect("InitialVar(sp) node must exist");

@@ -334,16 +334,11 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
     };
     use cranelift_entity::EntityRef;
     let space = rsleigh::VnSpace::RAM;
-    let vn = rsleigh::Vn {
-        addr_off: 0,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
     vec![
         // initial state
         NodeKind::Entry,
         NodeKind::InitialMemory,
-        NodeKind::InitialVar(vn),
+        NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
         // region
         NodeKind::Region,
         // phis

@@ -389,6 +389,22 @@ impl Function {
         &self.all_vns
     }
 
+    /// Resolve an [`crate::node::InitialVnId`] (carried by an
+    /// `InitialVar` node) back to its varnode.  Panics on an
+    /// out-of-range id — every id in the graph is minted from this
+    /// function's `all_vns`, so a miss is a structural invariant break.
+    pub fn initial_vn(&self, id: crate::node::InitialVnId) -> rsleigh::Vn {
+        self.all_vns[id.index()]
+    }
+
+    /// Non-panicking [`Self::initial_vn`] — `None` if `id` is out of range.
+    /// For diagnostic consumers (the dot dumpers) that must tolerate a
+    /// partially-built graph; analysis code uses `initial_vn` and relies on
+    /// the invariant.
+    pub fn initial_vn_opt(&self, id: crate::node::InitialVnId) -> Option<rsleigh::Vn> {
+        self.all_vns.get(id.index()).copied()
+    }
+
     /// Resolve `vn` to its largest tracked container.
     ///
     /// Fast path: the precomputed `vn_to_container` map (covers
@@ -788,7 +804,8 @@ impl Function {
     pub fn initial_sp_value(&self) -> Option<ValueId> {
         let stack_vn = self.default_cc.stack_vn;
         for n in self.reverse_postorder_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
-            if matches!(*self.node_kind(n), NodeKind::InitialVar(vn) if vn == stack_vn) {
+            if matches!(*self.node_kind(n), NodeKind::InitialVar(id) if self.initial_vn(id) == stack_vn)
+            {
                 let [out] = self
                     .node_outputs_exact::<1>(n)
                     .expect("InitialVar has 1 output per node signature");
@@ -1197,13 +1214,8 @@ mod function_skeleton_tests {
         use crate::node::ValueType;
 
         let mut f = Function::default();
-        let arg_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x10,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
         let carrier = f.graph_mut().create_node(
-            NodeKind::InitialVar(arg_vn),
+            NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1554,13 +1566,8 @@ mod compact_tests {
         // reassigns the carrier's NodeId (the zombie's slot is dropped).
         let _zombie = int_const_node(&mut f, (0xDEAD_u64) as u128, crate::node::ValueType::I64);
         // The arg carrier: a register-arg-style InitialVar kept live by Return.
-        let arg_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x10,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
         let arg_node = f.graph_mut().create_node(
-            NodeKind::InitialVar(arg_vn),
+            NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1682,13 +1689,8 @@ mod compact_tests {
         let mem = f
             .graph_mut()
             .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-        let live_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x10,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
         let live_carrier = f.graph_mut().create_node(
-            NodeKind::InitialVar(live_vn),
+            NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1701,13 +1703,8 @@ mod compact_tests {
         f.set_entry(entry);
 
         // A pruned (unreachable) carrier for a different arg index.
-        let dead_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x18,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
         let dead_carrier = f.graph_mut().create_node(
-            NodeKind::InitialVar(dead_vn),
+            NodeKind::InitialVar(crate::node::InitialVnId::from_index(1)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );

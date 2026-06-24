@@ -157,7 +157,9 @@ fn link_register_return(
 ) -> Option<ResolvedTargets> {
     let lr = ctx.default_cc().link_register_vn?;
     match *ctx.node_kind(ctx.producer(anchor_value)) {
-        NodeKind::InitialVar(vn) if vn == lr => Some(ResolvedTargets::LinkRegister),
+        NodeKind::InitialVar(id) if ctx.initial_vn(id) == lr => {
+            Some(ResolvedTargets::LinkRegister)
+        }
         _ => None,
     }
 }

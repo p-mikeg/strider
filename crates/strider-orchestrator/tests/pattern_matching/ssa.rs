@@ -33,6 +33,23 @@ fn initial_var_for_wrong_vn_rejects() {
     a::none(&g, initial_var_for(other).into_pattern());
 }
 
+/// `InitialVar` carries a per-function `all_vns` index, not the varnode.
+/// With two tracked regs, `hi` sorts to `all_vns[1]` (not `[0]`), so a
+/// correct `initial_var_for` must resolve each candidate node's index back
+/// to its varnode and match by identity — never positionally.
+#[test]
+fn initial_var_for_resolves_nonzero_index() {
+    let lo = reg_vn(0x00, 8);
+    let hi = reg_vn(0x40, 8);
+    let mut t = Tb::with_vars(&[lo, hi]);
+    let lo_v = t.read_var(&lo);
+    let hi_v = t.read_var(&hi);
+    let sum = t.add(lo_v, hi_v); // keeps both InitialVars reachable
+    let g = t.ret_val(sum);
+    a::matches(&g, initial_var_for(hi).into_pattern(), 1);
+    a::matches(&g, initial_var_for(lo).into_pattern(), 1);
+}
+
 #[test]
 fn initial_var_capture_binds_value() {
     let (g, _reg) = shapes::single_initial_var();
@@ -161,7 +178,7 @@ fn function_arg_reg_registered_in_side_table() {
     );
     assert_eq!(carriers.len(), 1, "register arg has exactly one carrier");
     assert!(
-        matches!(g.node_kind(g.producer(carriers[0])), NodeKind::InitialVar(v) if *v == reg),
+        matches!(g.node_kind(g.producer(carriers[0])), NodeKind::InitialVar(v) if g.initial_vn(*v) == reg),
         "carrier for register arg 0 must be InitialVar(reg)"
     );
 }

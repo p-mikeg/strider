@@ -597,13 +597,6 @@ mod tests {
         assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Rhs);
     }
 
-    fn smoke_vn() -> rsleigh::Vn {
-        rsleigh::Vn {
-            addr_off: 0,
-            addr_space: rsleigh::VnSpace::REGISTER,
-            size: 8,
-        }
-    }
 
     /// Calling `expected_signature` on every NodeKind variant must succeed
     /// and return a self-consistent Signature.
@@ -618,11 +611,10 @@ mod tests {
             ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
         };
         let space = rsleigh::VnSpace::RAM;
-        let vn = smoke_vn();
         let kinds: Vec<NodeKind> = vec![
             NodeKind::Entry,
             NodeKind::InitialMemory,
-            NodeKind::InitialVar(vn),
+            NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
             NodeKind::Region,
             NodeKind::MemPhi,
             NodeKind::Phi,

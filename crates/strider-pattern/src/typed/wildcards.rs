@@ -153,14 +153,15 @@ pub struct InitialVar;
 
 impl MatchPat for InitialVar {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let sentinel = rsleigh::Vn {
-            size: 0,
-            addr_off: 0,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
-        let exemplar = strider_ir::node::NodeKind::InitialVar(sentinel);
-        b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)))
+        b.leaf(KindSpec::Variant(initial_var_discriminant()))
     }
+}
+
+/// The `NodeKind::InitialVar(..)` discriminant, for variant-only matching.
+fn initial_var_discriminant() -> std::mem::Discriminant<strider_ir::node::NodeKind> {
+    let exemplar =
+        strider_ir::node::NodeKind::InitialVar(strider_ir::node::InitialVnId::from_index(0));
+    std::mem::discriminant(&exemplar)
 }
 
 /// Match any `InitialVar(_)` node (any varnode).
@@ -175,9 +176,23 @@ pub struct InitialVarFor {
 
 impl MatchPat for InitialVarFor {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        b.leaf(KindSpec::Exact(strider_ir::node::NodeKind::InitialVar(
-            self.vn,
-        )))
+        // `InitialVar` now carries a *per-function* index, not the varnode
+        // itself, so a function-independent pattern can't encode an exact
+        // `NodeKind`.  Match any `InitialVar` by discriminant, then resolve
+        // the candidate's index against the function under test at match time.
+        let want = self.vn;
+        let out = b.leaf(KindSpec::Variant(initial_var_discriminant()));
+        b.set_node_predicate(
+            out,
+            Box::new(move |m, node| {
+                matches!(
+                    *m.function().node_kind(node),
+                    strider_ir::node::NodeKind::InitialVar(id)
+                        if m.function().initial_vn(id) == want
+                )
+            }),
+        );
+        out
     }
 }
 

@@ -21,6 +21,31 @@ pub enum FunctionArgSource {
     },
 }
 
+/// Index of a tracked varnode within [`crate::Function::all_vns`] — the
+/// per-function identity carried by an [`NodeKind::InitialVar`] node.
+///
+/// Stored instead of an inline `rsleigh::Vn` so the largest `NodeKind`
+/// payload is 8 bytes rather than 16 (`all_vns` is the deduped, stably
+/// ordered tracked-varnode SSoT; every `InitialVar` reads one of its
+/// members, so an index is always sufficient).  Resolve back to the
+/// varnode with [`crate::Function::initial_vn`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct InitialVnId(u32);
+
+impl InitialVnId {
+    /// Wraps an `all_vns` position.
+    #[inline]
+    pub fn from_index(index: usize) -> Self {
+        Self(index as u32)
+    }
+
+    /// The `all_vns` position this id refers to.
+    #[inline]
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 /// The operation or role of a node in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
@@ -29,9 +54,11 @@ pub enum NodeKind {
     Entry,
     /// Initial memory state.  Produces a single `Memory` output.
     InitialMemory,
-    /// Initial value of varnode `Vn` at the function entry.  Produces a
-    /// value output of the appropriate integer type.
-    InitialVar(rsleigh::Vn),
+    /// Initial value, at function entry, of the tracked varnode at this
+    /// [`InitialVnId`] (an index into [`crate::Function::all_vns`]).  Produces
+    /// a value output of the appropriate integer type.  Resolve the varnode
+    /// via [`crate::Function::initial_vn`].
+    InitialVar(InitialVnId),
 
     // ── Region / join nodes ────────────────────────────────────────────────────
     /// Region header.  Consumes incoming control edges (one per predecessor)
@@ -241,8 +268,8 @@ impl NodeKind {
     pub fn is_cacheable(&self) -> bool {
         match self {
             // Initial-state singletons: immutable post-construction; identity
-            // is fully determined by NodeKind fields (Vn for InitialVar;
-            // nothing for Entry/InitialMemory).  Dedup catches accidental
+            // is fully determined by NodeKind fields (the InitialVnId for
+            // InitialVar; nothing for Entry/InitialMemory).  Dedup catches accidental
             // double-construction and enforces the one-per-function invariant.
             Self::Entry
             | Self::InitialMemory
@@ -450,11 +477,12 @@ impl NodeKind {
     }
 }
 
-// Permanent compile-time size guard: the largest inline payload (rsleigh::Vn,
-// 16 bytes, align 8) keeps NodeKind at 24 bytes.
+// Permanent compile-time size guard: with `InitialVar` carrying a 4-byte
+// `InitialVnId` (not a 16-byte `rsleigh::Vn`), the largest inline payload is a
+// `u64` (FloatConst / CallOther / SegmentOp), keeping NodeKind at 16 bytes.
 const _: () = assert!(
-    std::mem::size_of::<NodeKind>() <= 24,
-    "NodeKind must stay <= 24 bytes (no inline payload may exceed rsleigh::Vn)"
+    std::mem::size_of::<NodeKind>() <= 16,
+    "NodeKind must stay <= 16 bytes (no inline payload may exceed 8 bytes)"
 );
 
 #[cfg(test)]
