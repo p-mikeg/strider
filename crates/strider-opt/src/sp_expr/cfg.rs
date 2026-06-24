@@ -8,7 +8,7 @@ use strider_ir::Function;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
-use super::alias::{AddrClass, AliasVerdict, classify_addr, store_alias_verdict};
+use super::alias::{AddrClass, AliasVerdict, alias_verdict, classify_addr, store_alias_verdict};
 use super::decompose::{SpDecomposer, SpExpr, SpExprMemo};
 use super::mem_ssa::MemorySSAWalker;
 use super::ranges::store_value_byte_size;
@@ -138,6 +138,44 @@ impl<'m> SpAliasCfg<'m> {
         classify_addr(function, addr, self.sp_memo)
     }
 
+    /// Decompose an address into an SP terminal through this config's shared
+    /// memo.  The single decompose entry for consumers, so they no longer
+    /// materialise a transient [`SpDecomposer`] at each call site.
+    pub(crate) fn decompose(&mut self, function: &Function, value: ValueId) -> Option<SpExpr> {
+        SpDecomposer::new(function, self.sp_memo).decompose(value)
+    }
+
+    /// Exact pairwise alias verdict between a `Load` and a `Store`, deriving
+    /// each side's address class + byte size from the node itself (O(1) cached
+    /// reads / decompose-memo hits) under this config's alias mode and
+    /// distinct-base knob.  The node-based counterpart of the class-based
+    /// [`alias_verdict`] primitive.
+    pub(crate) fn verdict(
+        &mut self,
+        function: &Function,
+        load_node: NodeId,
+        store_node: NodeId,
+    ) -> AliasVerdict {
+        let load_class = self.classify_addr(function, function.load_addr(load_node));
+        let [load_out] = function
+            .node_outputs_exact::<1>(load_node)
+            .expect("Load has 1 output per node signature");
+        let load_size = function
+            .value_type_opt(load_out)
+            .expect("Load output is a value")
+            .byte_size() as i64;
+        let store_class = self.classify_addr(function, function.store_addr(store_node));
+        let store_size = store_value_byte_size(function.graph(), function.store_data(store_node));
+        alias_verdict(
+            load_class,
+            load_size,
+            store_class,
+            store_size,
+            self.alias_mode,
+            self.mem.assume_distinct_sp_bases_disjoint,
+        )
+    }
+
     /// Read-only walk: the nearest clobber of `load` reachable backward from
     /// the def producing the `mem` memory token.  The load's address class,
     /// byte size, and space are derived from the `load` node itself — each an
@@ -195,15 +233,20 @@ impl<'m> SpAliasCfg<'m> {
     ) -> Option<ReachingSpStore> {
         // Stack memory lives in RAM, so a probed SP-rooted location only
         // matches RAM stores (a same-address store in another space is
-        // disjoint and is skipped, fail-closed for the caller).
-        let mut oracle = self.oracle(
-            AddrClass::SpRooted { base, offset },
-            probe_size,
-            rsleigh::VnSpace::RAM,
-        );
-        // `find_nearest_clobber` is the read-only walk (no narrowing); it resolves
-        // the nearest clobber backward from the def producing `mem_start`.
-        let clobber = oracle.find_nearest_clobber(function, function.producer(mem_start));
+        // disjoint and is skipped, fail-closed for the caller).  Scope the
+        // oracle to just the read-only walk so its `sp_memo` borrow ends before
+        // the `self.decompose` below reuses the same memo.
+        let clobber = {
+            let mut oracle = self.oracle(
+                AddrClass::SpRooted { base, offset },
+                probe_size,
+                rsleigh::VnSpace::RAM,
+            );
+            // `find_nearest_clobber` is the read-only walk (no narrowing); it
+            // resolves the nearest clobber backward from the def producing
+            // `mem_start`.
+            oracle.find_nearest_clobber(function, function.producer(mem_start))
+        };
         if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
             return None;
         }
@@ -212,7 +255,7 @@ impl<'m> SpAliasCfg<'m> {
         let store_offset = match function.stack_offset(clobber) {
             Some((b, off)) if b == base => off,
             Some(_) => return None,
-            None => match SpDecomposer::new(function, oracle.sp_memo).decompose(function.store_addr(clobber)) {
+            None => match self.decompose(function, function.store_addr(clobber)) {
                 Some(SpExpr {
                     base: b,
                     offset: off,

@@ -5,7 +5,7 @@ use crate::test_support::cf_rp_pipeline;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
 use strider_ir::IRWalker;
-use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::node::{NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::{
     RegisterSet, SENTINEL_LIFT_ADDR, reg_vn, stack_vn_aarch64, stack_vn_x86 as sp32_vn,

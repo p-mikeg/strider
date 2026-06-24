@@ -12,7 +12,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
 use crate::pipeline::PostOptimizer;
-use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
+use crate::sp_expr::{SpAliasCfg, SpExpr};
 
 #[cfg(test)]
 mod tests;
@@ -46,8 +46,7 @@ fn collect_stack_args(
     function: &strider_ir::Function,
     call_id: NodeId,
     stack_args: strider_target::StackArgs,
-    sp_memo: &mut SpExprMemo,
-    alias_mode: crate::AliasMode,
+    alias_cfg: &mut SpAliasCfg<'_>,
 ) -> Vec<ValueId> {
     // Call inputs: [control, memory, target, sp, ...args]; slots 1 (memory)
     // and 3 (sp) are guaranteed by the validated Call structural invariant.
@@ -60,18 +59,15 @@ fn collect_stack_args(
     // Origin: the call-time SP, decomposed to an entry-SP-relative offset so a
     // slot's absolute (entry-relative) probe offset is `call_sp_off +
     // offset_of(slot)`.  A non-decomposable SP input (e.g. a phi-SP) yields no
-    // args.
+    // args.  (`alias_cfg` is call-blocking: a `Call` on the chain clobbers the
+    // outgoing-args frame, distinct SP bases stay conservative.)
     let Some(SpExpr {
         base,
         offset: call_sp_off,
-    }) = SpDecomposer::new(function, sp_memo).decompose(sp_value)
+    }) = alias_cfg.decompose(function, sp_value)
     else {
         return Vec::new();
     };
-
-    // A Call on the chain clobbers the outgoing-args frame (`call_clobbers:
-    // true`); stay conservative on distinct SP bases.
-    let mut alias_cfg = SpAliasCfg::call_blocking(sp_memo, alias_mode);
 
     let mut args = Vec::new();
     let mut cursor = 0usize;
@@ -128,6 +124,9 @@ impl PostOptimizer for CallStackArgCollect {
         // dependency), so the owned `Vec` just lets the immutable walk borrow
         // end before the per-call mutation loop takes `ctx` mutably.
         let calls: Vec<NodeId> = ctx.walk_kind(|k| matches!(k, NodeKind::Call)).collect();
+        // Build the SP-alias context once for the whole pass: it owns the shared
+        // decompose memo and is reused across every call site.
+        let mut alias_cfg = SpAliasCfg::call_blocking(&mut opt_ctx.sp_memo, alias_mode);
         for call_id in calls {
             // Per-call override (e.g. a varargs call site) wins over the
             // convention default; when both are absent the call passes no
@@ -139,10 +138,9 @@ impl PostOptimizer for CallStackArgCollect {
             // Append each discovered stack-arg value as an extra Call input
             // (positional order); the loop is a no-op when the call passes none.
             // Single-shot post-pass, so we don't track a changed/unchanged result.
-            let args =
-                collect_stack_args(ctx.function(), call_id, stack_args, &mut opt_ctx.sp_memo, alias_mode);
-            for data in &args {
-                ctx.add_node_input(call_id, *data)?;
+            let args = collect_stack_args(ctx.function(), call_id, stack_args, &mut alias_cfg);
+            for store_data in &args {
+                ctx.add_node_input(call_id, *store_data)?;
             }
         }
         Ok(())
