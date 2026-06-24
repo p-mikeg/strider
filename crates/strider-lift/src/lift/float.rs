@@ -92,7 +92,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     /// Builds the `Xor(FloatEqual(lhs, rhs), IntConst(1)):I1` shape shared
-    /// by `FloatNan` and `FloatNotEqual` and writes it to `out_vn`.
+    /// by `FloatNan` and `FloatNotEqual` and returns the I1 result.
     ///
     /// Both operands are cast to a common float type
     /// (via [`Self::cast_float_cmp_operands`]), compared with
@@ -105,14 +105,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         &mut self,
         lhs: strider_ir::Value,
         rhs: strider_ir::Value,
-        out_vn: &rsleigh::Vn,
-    ) -> Result<()> {
+    ) -> Result<strider_ir::Value> {
         let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
         let eq = self
             .builder
             .build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
-        let result = self.build_logical_not(eq)?;
-        self.write_vn(out_vn, result)
+        self.build_logical_not(eq)
     }
 
     pub(super) fn handle_float_nan(&mut self, insn: &rsleigh::Insn) -> Result<()> {
@@ -122,7 +120,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // `FloatCmpOp::NotEqual` is no longer a primitive (lowered at
         // lift to `Xor(FloatEqual, 1)` at `I1`), build the lowered shape
         // directly: `Xor(FloatEqual(input, input), 1):I1`.
-        self.build_float_eq_negated(value, value, out_vn)
+        let result = self.build_float_eq_negated(value, value)?;
+        self.write_vn(out_vn, result)
     }
 
     /// Lowers `FloatSub(a, b)` to `FloatAdd(a, FloatUnaryOp::Neg(b))`.
@@ -158,7 +157,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
-        self.build_float_eq_negated(lhs, rhs, out_vn)
+        let result = self.build_float_eq_negated(lhs, rhs)?;
+        self.write_vn(out_vn, result)
     }
 
     /// Lowers `FloatLessEqual(a, b)` to `Or(FloatLess(a, b), FloatEqual(a, b))`.
