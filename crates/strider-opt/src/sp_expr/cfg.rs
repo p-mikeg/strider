@@ -30,7 +30,11 @@ use crate::{AliasMode, MemAliasOptions};
 ///
 /// `MemPhi` is handled structurally by the walk, so the oracle never
 /// sees one.
-struct SpAliasOracle<'a> {
+struct SpAliasOracle<'a, 'm> {
+    /// The owning config — the source of the shared `sp_memo` + alias knobs,
+    /// so the oracle holds only the per-query load facts below and reads the
+    /// rest through `cfg` instead of copying them.
+    cfg: &'a mut SpAliasCfg<'m>,
     /// The load's address class (`SpRooted` for a stack-arg load; any class
     /// for a general forwarded load).
     load_class: AddrClass,
@@ -39,16 +43,9 @@ struct SpAliasOracle<'a> {
     /// clobber (or be forwarded into) this load — distinct spaces never alias,
     /// even at the same numeric address.
     load_space: rsleigh::VnSpace,
-    sp_memo: &'a mut SpExprMemo,
-    alias_mode: AliasMode,
-    /// Memory-aliasing relaxation knobs (`calls_clobber`,
-    /// `assume_distinct_sp_bases_disjoint`).  `load_forward` /
-    /// `call_stack_args` use the call-blocking preset; `function_args` passes
-    /// the user's [`MemAliasOptions`].
-    mem: MemAliasOptions,
 }
 
-impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_> {
+impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_, '_> {
     fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool {
         match *function.node_kind(def) {
             // A store in a different address space than the load cannot clobber
@@ -64,12 +61,12 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_> {
                         def,
                         self.load_class,
                         self.load_size,
-                        self.sp_memo,
-                        self.alias_mode,
-                        self.mem.assume_distinct_sp_bases_disjoint,
+                        &mut *self.cfg.sp_memo,
+                        self.cfg.alias_mode,
+                        self.cfg.mem.assume_distinct_sp_bases_disjoint,
                     ) != AliasVerdict::Disjoint
             }
-            NodeKind::Call | NodeKind::CallOther { .. } => self.mem.calls_clobber,
+            NodeKind::Call | NodeKind::CallOther { .. } => self.cfg.mem.calls_clobber,
             // Any other (opaque) memory producer cannot be proven disjoint.
             _ => true,
         }
@@ -115,21 +112,19 @@ impl<'m> SpAliasCfg<'m> {
         )
     }
 
-    /// Build the per-query oracle from this config + the load's address class
-    /// and space.
+    /// Build the per-query oracle borrowing this config (the source of the
+    /// shared memo + knobs) plus the load's address class, size, and space.
     fn oracle(
         &mut self,
         load_class: AddrClass,
         load_size: i64,
         load_space: rsleigh::VnSpace,
-    ) -> SpAliasOracle<'_> {
+    ) -> SpAliasOracle<'_, 'm> {
         SpAliasOracle {
+            cfg: self,
             load_class,
             load_size,
             load_space,
-            sp_memo: &mut *self.sp_memo,
-            alias_mode: self.alias_mode,
-            mem: self.mem,
         }
     }
 

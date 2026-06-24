@@ -17,7 +17,7 @@ use strider_ir::{IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
 
 use crate::opt::constant_fold::eval_int::eval_int_binary;
-use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
+use crate::sp_expr::{SpAliasCfg, SpExpr, SpExprMemo};
 
 /// Returns an iterator over the value-typed inputs of `node` — i.e., inputs
 /// whose `value_type_opt` is `Some`.  Skips control, memory, and phi-token
@@ -102,12 +102,12 @@ impl<'a> Evaluator<'a> {
         let f = self.function;
         // An sp-rooted constant expression — InitialVar(sp), an alignment-masked
         // `(sp & mask)`, or either plus a constant `Add` chain — decomposes to
-        // its SP terminal + offset via the same decomposer the stores /
-        // `reaching_store` use, so the aligned base is recognized and matches
-        // the stores' base. Memoized in `sp_memo`, so the load's index-
+        // its SP terminal + offset via the same `SpAliasCfg.decompose` the
+        // stores / `reaching_store` use, so the aligned base is recognized and
+        // matches the stores' base. Memoized in `sp_memo`, so the load's index-
         // independent sp-spine is computed once and reused across indices.
         if let Some(SpExpr { base, offset }) =
-            SpDecomposer::new(f, &mut self.sp_memo).decompose(value)
+            SpAliasCfg::call_blocking(&mut self.sp_memo, self.alias_mode).decompose(f, value)
         {
             return Some(Abs::SpRel { base, offset });
         }
