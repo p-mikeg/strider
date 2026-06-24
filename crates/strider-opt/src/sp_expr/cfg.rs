@@ -28,7 +28,7 @@ use crate::{AliasMode, MemAliasOptions};
 ///   callee is opaque, so there is nothing to inspect).
 /// * any other (opaque) memory producer — conservatively clobbers.
 ///
-/// `MemPhi` is handled structurally by [`may_clobber`], so the oracle never
+/// `MemPhi` is handled structurally by the walk, so the oracle never
 /// sees one.
 struct SpAliasOracle<'a> {
     /// The load's address class (`SpRooted` for a stack-arg load; any class
@@ -79,7 +79,7 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_> {
 /// Pass-scoped SP-aliasing context: the shared `SpExprMemo` plus the alias
 /// knobs, built once per pass and reused for every query.  Bundles the data
 /// that used to be threaded through `reaching_sp_store`'s 9-arg signature and
-/// the inline `SpAliasOracle` builds at each `may_clobber` call site.
+/// the inline `SpAliasOracle` builds at each `nearest_clobber` call site.
 pub(crate) struct SpAliasCfg<'m> {
     sp_memo: &'m mut SpExprMemo,
     alias_mode: AliasMode,
@@ -138,26 +138,36 @@ impl<'m> SpAliasCfg<'m> {
         classify_addr(function, addr, self.sp_memo)
     }
 
-    /// Mutating walk: nearest clobber of the load at `(load_class, load_size)`
-    /// reachable backward from the def producing the `mem` memory token,
-    /// narrowing the load's memory edge.
+    /// Read-only walk: the nearest clobber of `load` reachable backward from
+    /// the def producing the `mem` memory token.  The load's address class,
+    /// byte size, and space are derived from the `load` node itself — each an
+    /// O(1) cached read (the SP decompose is a memo hit when the caller has
+    /// already classified the address), so a caller never threads them in.
+    /// Performs no narrowing; a caller that wants to shorten the load's memory
+    /// edge onto the returned clobber calls [`super::narrow_load_to`].
     pub(crate) fn nearest_clobber(
         &mut self,
-        ctx: &mut crate::EditFunction<'_>,
+        function: &Function,
         load: NodeId,
-        load_class: AddrClass,
-        load_size: i64,
         mem: ValueId,
     ) -> NodeId {
-        // The load's own space scopes which stores can clobber it.
-        // `load_forward` only ever passes a `Load`; RAM is a safe default.
-        let load_space = match ctx.node_kind(load) {
+        // The load's own space scopes which stores can clobber it.  Production
+        // callers only ever pass a `Load`; RAM is a safe default.
+        let load_space = match function.node_kind(load) {
             NodeKind::Load(s) => *s,
             _ => rsleigh::VnSpace::RAM,
         };
-        let mem_node = ctx.function().producer(mem);
+        let load_class = classify_addr(function, function.load_addr(load), self.sp_memo);
+        let [out] = function
+            .node_outputs_exact::<1>(load)
+            .expect("Load has 1 output per node signature");
+        let load_size = function
+            .value_type_opt(out)
+            .expect("Load output is a value")
+            .byte_size() as i64;
+        let mem_node = function.producer(mem);
         let mut oracle = self.oracle(load_class, load_size, load_space);
-        oracle.may_clobber(ctx, load, mem_node)
+        oracle.find_nearest_clobber(function, mem_node)
     }
 
     /// Finds the nearest `Store` reachable backward (memory-SSA, `MemPhi`-sound)

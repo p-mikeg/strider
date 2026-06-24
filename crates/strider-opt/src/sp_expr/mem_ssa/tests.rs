@@ -1,4 +1,6 @@
-//! White-box tests for [`may_clobber`].
+//! White-box tests for the read-only memory-SSA walk
+//! ([`MemorySSAWalker::find_nearest_clobber`]) and its caller-side
+//! [`narrow_load_to`] step.
 //!
 //! Construct synthetic memory chains (`InitialMemory`, `Store`,
 //! `MemPhi`) and drive the walker with stub [`MemorySSAWalker`] oracles
@@ -35,15 +37,13 @@ impl MemorySSAWalker for NeverAlias {
     }
 }
 
-/// Runs [`may_clobber`] from the def that produced `start_mem`.  The load
-/// handle is the start node itself — a `Store` / `MemPhi` / `InitialMemory`
-/// producer, never a `Load` — so the narrowing rewrite never fires and only
-/// the returned clobber node is exercised.  Returns the clobber node — or
-/// the `InitialMemory` root for a clean chain.
+/// Runs the read-only walk from the def that produced `start_mem`.  No
+/// narrowing — the read-only walk never mutates — so only the returned clobber
+/// node is exercised.  Returns the clobber node, or the `InitialMemory` root
+/// for a clean chain.
 fn run<W: MemorySSAWalker>(fg: &mut Function, oracle: &mut W, start_mem: ValueId) -> NodeId {
     let start = fg.producer(start_mem);
-    let mut ctx = crate::EditFunction::new(fg).unwrap();
-    oracle.may_clobber(&mut ctx, start, start)
+    oracle.find_nearest_clobber(fg, start)
 }
 
 /// Asserts the walk bottomed out cleanly at the `InitialMemory` root.
@@ -138,13 +138,16 @@ fn linear_chain_with_load(depth: usize) -> (Function, NodeId, ValueId, Vec<Value
     (fg, load, head, store_mems)
 }
 
-/// Runs [`may_clobber`] with a real `Load` node so the narrowing rewrite is
-/// exercised: `mem` is the load's own memory input.  Returns the clobber.
+/// Runs the read-only walk + the caller-side narrowing step with a real
+/// `Load` node so the narrowing rewrite is exercised: `mem` is the load's own
+/// memory input.  Returns the clobber.
 fn run_load<W: MemorySSAWalker>(fg: &mut Function, oracle: &mut W, load: NodeId) -> NodeId {
     let mem = fg.node_inputs(load)[0];
     let mem_node = fg.producer(mem);
+    let clobber = oracle.find_nearest_clobber(fg, mem_node);
     let mut ctx = crate::EditFunction::new(fg).unwrap();
-    oracle.may_clobber(&mut ctx, load, mem_node)
+    super::narrow_load_to(&mut ctx, load, clobber);
+    clobber
 }
 
 #[test]

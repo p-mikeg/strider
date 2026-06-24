@@ -46,7 +46,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
 use crate::pipeline::PostOptimizer;
-use crate::sp_expr::{AddrClass, SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
+use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 
 /// Detects stack-passed argument `Load` nodes and records their
 /// carrier nodes in
@@ -317,16 +317,15 @@ fn mem_chain_is_dirty(
         return cached;
     }
 
-    // The oracle uses the load only to narrow its memory edge onto the nearest
-    // clobber; the slot range comes from the probe.  The chain is dirty iff that
-    // nearest clobber is anything but the clean `InitialMemory` root.
-    let clobber = SpAliasCfg::new(sp_memo, alias_mode, mem_opts).nearest_clobber(
-        ctx,
-        load,
-        AddrClass::SpRooted { base, offset },
-        load_size,
-        mem_token,
-    );
+    // Read-only walk to the nearest clobber (the load's class/size are derived
+    // from the node — a memo hit, since the caller already decomposed it).  The
+    // chain is dirty iff that nearest clobber is anything but the clean
+    // `InitialMemory` root.
+    let clobber =
+        SpAliasCfg::new(sp_memo, alias_mode, mem_opts).nearest_clobber(ctx.function(), load, mem_token);
+    // Caller-side narrowing: shorten this candidate load's memory edge onto its
+    // nearest clobber (perf only — never changes which args are detected).
+    crate::sp_expr::narrow_load_to(ctx, load, clobber);
     let result = !matches!(ctx.node_kind(clobber), NodeKind::InitialMemory);
     memo.insert(probe, result);
     result

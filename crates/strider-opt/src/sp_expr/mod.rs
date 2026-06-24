@@ -28,6 +28,7 @@ mod ranges;
 
 pub(crate) use decompose::{SpExpr, SpExprMemo};
 
-pub(crate) use alias::{AddrClass, AliasVerdict, alias_verdict};
+pub(crate) use alias::{AliasVerdict, alias_verdict};
 pub(crate) use cfg::SpAliasCfg;
 pub(crate) use decompose::SpDecomposer;
+pub(crate) use mem_ssa::narrow_load_to;

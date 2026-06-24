@@ -108,7 +108,11 @@ fn try_forward_load(
     //    chain returns the `InitialMemory` node (handled by the Store
     //    check below) → nothing to forward.  A `Call` always blocks a
     //    forward (`call_clobbers: true`).
-    let clobber_node = alias_cfg.nearest_clobber(ctx, load, load_class, load_size, mem);
+    let clobber_node = alias_cfg.nearest_clobber(ctx.function(), load, mem);
+    // Narrowing is now a caller-side step: shorten this load's memory edge
+    // onto its nearest clobber so future walks skip the proven-disjoint run.
+    // (Harmless when the load goes on to forward — it's culled either way.)
+    crate::sp_expr::narrow_load_to(ctx, load, clobber_node);
 
     // 2. The clobber must be a `Store`.  A `MemPhi` boundary (disagreeing
     //    control merge), a `Call` / `CallOther`, `InitialMemory` (clean
