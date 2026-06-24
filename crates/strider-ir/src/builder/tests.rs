@@ -3642,11 +3642,11 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
     assert_eq!(arg1.len(), 1, "arg 1 carrier registered at entry");
     assert!(
         matches!(b.function().node_kind(b.function().producer(arg0[0])),
-        NodeKind::InitialVar(v) if *v == rdi)
+        NodeKind::InitialVar(v) if b.function().initial_vn(*v) == rdi)
     );
     assert!(
         matches!(b.function().node_kind(b.function().producer(arg1[0])),
-        NodeKind::InitialVar(v) if *v == rsi)
+        NodeKind::InitialVar(v) if b.function().initial_vn(*v) == rsi)
     );
     Ok(())
 }
@@ -3688,7 +3688,7 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
     );
     assert!(
         matches!(b.function().node_kind(b.function().producer(arg0[0])),
-        NodeKind::InitialVar(v) if *v == rdi)
+        NodeKind::InitialVar(v) if b.function().initial_vn(*v) == rdi)
     );
     Ok(())
 }

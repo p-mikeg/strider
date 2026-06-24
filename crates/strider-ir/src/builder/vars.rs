@@ -88,7 +88,13 @@ impl FunctionBuilder {
         for var_id in var_ids {
             let var = self.var_table[var_id];
             let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
-            let value = self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
+            // `VarId` allocation order is exactly `all_vns` order (both come
+            // from `var_table` in `new`), so the var's `all_vns` index is its
+            // `VarId` index — no lookup needed.
+            let vn_id = crate::node::InitialVnId::from_index(
+                cranelift_entity::EntityRef::index(var_id),
+            );
+            let value = self.build_single_output_pure(NodeKind::InitialVar(vn_id), [], output_type);
             initial_variables[var_id] = value;
             // `Function::all_vns` (the ordered tracked-varnode SSoT) is
             // populated eagerly in `new` from the same `var_table`

@@ -110,7 +110,7 @@ impl FunctionArgPat {
                 };
                 match (expected, f.node_kind(node)) {
                     (FunctionArgSource::Register(want), NodeKind::InitialVar(actual)) => {
-                        want == *actual
+                        want == f.initial_vn(*actual)
                     }
                     (
                         FunctionArgSource::Stack {

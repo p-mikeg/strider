@@ -368,10 +368,17 @@ fn test_vn() -> rsleigh::Vn {
 fn validate_flags_stale_initial_var_index_entry() {
     let mut s = spine();
     let vn = test_vn();
+    let other_vn = rsleigh::Vn {
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    // Two tracked varnodes so `InitialVnId` 0/1 resolve to vn/other_vn.
+    s.f.all_vns = vec![vn, other_vn];
     // A reachable InitialVar(vn): its value output is returned so the walk
     // keeps it in the reachable set.
     let iv = s.f.graph_mut().create_node(
-        NodeKind::InitialVar(vn),
+        NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
@@ -386,13 +393,9 @@ fn validate_flags_stale_initial_var_index_entry() {
     validate(&s.f).expect("a well-formed initial_var_index entry validates");
 
     // Rewrite the node's payload IN PLACE (NodeId survives) to a DIFFERENT
-    // InitialVar varnode, so the index entry for `vn` is now stale.
-    let other_vn = rsleigh::Vn {
-        addr_off: 0x40,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    *s.f.graph_mut().node_kind_mut(iv) = NodeKind::InitialVar(other_vn);
+    // InitialVar varnode (index 1 → other_vn), so the index entry for `vn` is
+    // now stale.
+    *s.f.graph_mut().node_kind_mut(iv) = NodeKind::InitialVar(crate::node::InitialVnId::from_index(1));
 
     assert_validation_err(&s.f, |e| {
         matches!(

@@ -533,7 +533,7 @@ fn function_arg_handle_resolves_register_carrier() {
     let carrier = function
         .graph()
         .all_node_ids()
-        .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if *vn == rax))
+        .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if function.initial_vn(*vn) == rax))
         .expect("InitialVar(rax) carrier");
     let carrier_value = function.node_outputs(carrier)[0];
     function.register_arg_value(0, carrier_value);
@@ -578,7 +578,7 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     let reg_carrier = function
         .graph()
         .all_node_ids()
-        .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if *vn == rax))
+        .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if function.initial_vn(*vn) == rax))
         .expect("InitialVar(rax) carrier");
     let stack_carrier = function
         .graph()

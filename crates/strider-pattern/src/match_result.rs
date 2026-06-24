@@ -106,7 +106,7 @@ impl Match {
         // [`Binding::Value`]) and inspect the kind.
         let node = self.bindings.get_node(c, function.graph())?;
         match function.node_kind(node) {
-            NodeKind::InitialVar(vn) => Some(*vn),
+            NodeKind::InitialVar(id) => Some(function.initial_vn(*id)),
             _ => None,
         }
     }

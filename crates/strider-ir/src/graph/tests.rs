@@ -305,35 +305,28 @@ fn initial_memory_dedupes_on_repeated_create() {
     assert_eq!(m1, m2, "InitialMemory must dedupe — only one per function");
 }
 
-/// `InitialVar` is now cacheable — the `Vn` is part of the node kind, so
-/// two calls with the **same** `Vn` dedup and two calls with **different**
-/// `Vn`s produce distinct nodes.
+/// `InitialVar` is cacheable — the `InitialVnId` is part of the node kind, so
+/// two calls with the **same** id dedup and two calls with **different** ids
+/// produce distinct nodes.
 #[test]
 fn initial_var_dedupes_per_vn() {
+    use crate::node::InitialVnId;
     let mut function = Function::default();
-    let vn_a = rsleigh::Vn {
-        addr_off: 0,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let vn_b = rsleigh::Vn {
-        addr_off: 8,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
+    let id_a = InitialVnId::from_index(0);
+    let id_b = InitialVnId::from_index(1);
     let value_kind = ValueKind::Typed(ValueType::I64);
     let v1 = function
         .graph_mut()
-        .create_node(NodeKind::InitialVar(vn_a), [], [value_kind]);
+        .create_node(NodeKind::InitialVar(id_a), [], [value_kind]);
     let v2 = function
         .graph_mut()
-        .create_node(NodeKind::InitialVar(vn_a), [], [value_kind]);
-    assert_eq!(v1, v2, "InitialVar with the same Vn must dedupe");
+        .create_node(NodeKind::InitialVar(id_a), [], [value_kind]);
+    assert_eq!(v1, v2, "InitialVar with the same id must dedupe");
 
     let v3 = function
         .graph_mut()
-        .create_node(NodeKind::InitialVar(vn_b), [], [value_kind]);
-    assert_ne!(v1, v3, "InitialVar with a different Vn must NOT dedupe");
+        .create_node(NodeKind::InitialVar(id_b), [], [value_kind]);
+    assert_ne!(v1, v3, "InitialVar with a different id must NOT dedupe");
 }
 
 /// Two adjacent `Call` nodes with identical target and argument outputs

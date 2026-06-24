@@ -47,11 +47,15 @@ impl<'a> RawFunctionDumper<'a> {
     fn node_label(&self, node: NodeId) -> String {
         let f = self.function;
         let kind = f.node_kind(node);
-        // `InitialVar` is the only kind embedding a `Vn`; render it compactly
-        // (`{space}{offset:#x}:{size}`) instead of the verbose `Vn { .. }`
-        // debug.  Every other kind's debug form is already terse.
+        // `InitialVar` carries an `all_vns` index; resolve it to the varnode
+        // and render compactly (`#idx {space}{offset:#x}:{size}`) instead of
+        // the verbose `Vn { .. }` debug.  Every other kind's debug form is
+        // already terse.
         let kind_str = match kind {
-            NodeKind::InitialVar(vn) => format!("InitialVar({})", fmt_vn(vn)),
+            NodeKind::InitialVar(id) => match f.initial_vn_opt(*id) {
+                Some(vn) => format!("InitialVar(#{} {})", id.index(), fmt_vn(&vn)),
+                None => format!("InitialVar(#{} ?)", id.index()),
+            },
             // Constants carry their value off-side in `const_interner`; show the
             // interner id compactly (`IntConst(#N)`) and the value below.
             NodeKind::IntConst(id) => format!("IntConst(#{})", id.as_u32()),

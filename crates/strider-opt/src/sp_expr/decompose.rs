@@ -126,10 +126,12 @@ impl<'a> SpDecomposer<'a> {
     fn classify_sp_node(&self, node: NodeId, node_value: ValueId) -> Option<SpExpr> {
         let function = self.function;
         match *function.node_kind(node) {
-            NodeKind::InitialVar(vn) if vn == function.default_cc().stack_vn => Some(SpExpr {
-                base: node_value,
-                offset: 0,
-            }),
+            NodeKind::InitialVar(id) if function.initial_vn(id) == function.default_cc().stack_vn => {
+                Some(SpExpr {
+                    base: node_value,
+                    offset: 0,
+                })
+            }
             NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
                 // IntBinaryOp has exactly 2 inputs (validated structural invariant).
                 let [l, r] = function
