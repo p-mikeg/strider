@@ -354,7 +354,9 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                 self.function.phi_data_inputs(node).collect()
             }
             NodeKind::InitialMemory => SmallVec::new(),
-            _ => self.prev_mem(node).into_iter().collect(),
+            // Linear node: its single memory predecessor (slot 0 for
+            // `Store` / `Load`; slot 1 for `Call` / `CallOther`).
+            _ => self.function.memory_input_of(node).into_iter().collect(),
         }
     }
 
@@ -374,14 +376,6 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
         }
     }
 
-    /// The memory-token input of a memory-chain node, if any.  Slot 0 for
-    /// `Store` / `Load`; the call's memory input (slot 1) for `Call` /
-    /// `CallOther`.  `None` for `MemPhi` (its variadic memory predecessors are
-    /// reached via [`Self::successors`], not here), `InitialMemory`, and
-    /// anything that does not carry an incoming memory edge.
-    fn prev_mem(&self, node: NodeId) -> Option<ValueId> {
-        self.function.memory_input_of(node)
-    }
 }
 
 #[cfg(test)]

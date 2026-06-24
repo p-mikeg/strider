@@ -80,10 +80,7 @@ impl PeepholePass for DeadBranchElimination {
         // `replace_value` below makes the live successor's control input).
         // Over-tainting is intentional — the fingerprint is a superset
         // proof-of-correctness aid, not a minimal value-determining set.
-        let surviving_ctrl = ctx.function().producer(ctrl_value);
-        let cond_producer = ctx.function().producer(cond_value);
-        ctx.function_mut()
-            .extend_asm_fingerprint_from(surviving_ctrl, cond_producer);
+        ctx.absorb_fingerprint(ctrl_value, cond_value);
 
         // Redirect the live successor past the If, then explicitly kill the
         // folded If — CfgDetach + validation (run only at pipeline

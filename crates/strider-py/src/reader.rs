@@ -448,6 +448,54 @@ impl PyMemReader {
     }
 }
 
+/// Shared `read`-callback prologue for both Python reader adapters.
+///
+/// Runs inside the caller's `Python::with_gil`.  Performs:
+/// 1. the PENDING_CONTROL_FLOW short-circuit (a prior call already stashed a
+///    control-flow exception — stop calling into Python so we don't trip
+///    CPython's "returned a result with an exception set" guard; the outer
+///    boundary drains the cell + surfaces the saved PyErr);
+/// 2. the `py_obj.read(*args)` call;
+/// 3. control-flow-exception classification: `KeyboardInterrupt` /
+///    `SystemExit` are stashed (NOT `PyErr::restore`, so the next invocation
+///    doesn't see a set error indicator) and bail; every other error bails
+///    with the caller-supplied message.
+///
+/// Returns the raw result object; each adapter keeps its own divergent tail
+/// (None handling, length checks, copy semantics).  `args` is the
+/// already-built argument tuple so per-adapter arg encoding stays at the call
+/// site.  `abort_label` prefixes the two abort messages (e.g. `"MemReader.read"`
+/// → `"MemReader.read aborted: …"`); `raise_msg` formats the non-control-flow
+/// error from the caught `PyErr`.
+///
+/// This stash logic is soundness-critical — it lives here in ONE place.
+fn call_py_read<A>(
+    py: Python<'_>,
+    py_obj: &Py<PyAny>,
+    args: A,
+    abort_label: &str,
+    raise_msg: impl FnOnce(PyErr) -> anyhow::Error,
+) -> anyhow::Result<Py<PyAny>>
+where
+    A: IntoPy<Py<pyo3::types::PyTuple>>,
+{
+    if crate::pattern::peek_pending_control_flow() {
+        anyhow::bail!("{abort_label} aborted: pending control-flow exception");
+    }
+    match py_obj.call_method1(py, "read", args) {
+        Ok(r) => Ok(r),
+        Err(e) => {
+            if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
+                || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
+            {
+                crate::pattern::stash_pending_control_flow(e);
+                anyhow::bail!("{abort_label} aborted: control-flow exception stashed");
+            }
+            Err(raise_msg(e))
+        }
+    }
+}
+
 /// Internal adapter: holds a `Py<PyAny>` (the user's Python subclass)
 /// and implements `rsleigh::MemReader` by `Python::with_gil` per call.
 pub struct PyMemReaderAdapter {
@@ -459,40 +507,13 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
         Python::with_gil(|py| -> anyhow::Result<usize> {
-            // Short-circuit: a prior `read` already raised a control-flow
-            // exception that we stashed in the PENDING_CONTROL_FLOW cell.
-            // Stop calling into Python so we don't trip CPython's
-            // "returned a result with an exception set" guard on the next
-            // invocation; the outer `strider.run` boundary drains the cell
-            // + surfaces the saved PyErr.  Mirrors
-            // `PyReadOnlyMemoryAdapter::read`.
-            if crate::pattern::peek_pending_control_flow() {
-                anyhow::bail!("MemReader.read aborted: pending control-flow exception");
-            }
-            // Stash control-flow exceptions (`KeyboardInterrupt`,
-            // `SystemExit`) so Ctrl-C / sys.exit during a long lift can
-            // interrupt rather than being silently absorbed into a
-            // `StriderError`.  Stash (NOT `PyErr::restore`) so the next
-            // invocation doesn't see a set error indicator and trip the
-            // CPython "exception already set" wrapper.  Mirrors the same
-            // guard in `PyReadOnlyMemoryAdapter::read`.
-            let result = match self
-                .py_obj
-                .call_method1(py, "read", (addr.off, out_buf.len()))
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
-                        || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
-                    {
-                        crate::pattern::stash_pending_control_flow(e);
-                        anyhow::bail!(
-                            "MemReader.read aborted: control-flow exception stashed"
-                        );
-                    }
-                    anyhow::bail!("PyMemReader.read raised: {e}");
-                }
-            };
+            let result = call_py_read(
+                py,
+                &self.py_obj,
+                (addr.off, out_buf.len()),
+                "MemReader.read",
+                |e| anyhow::anyhow!("PyMemReader.read raised: {e}"),
+            )?;
             // None → not mapped (return Err so the matcher falls through).
             if result.is_none(py) {
                 anyhow::bail!(
@@ -567,38 +588,18 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let size = buf.len();
         Python::with_gil(|py| -> anyhow::Result<()> {
-            // Short-circuit: a prior `read` already raised a control-
-            // flow exception that we stashed in the
-            // PENDING_CONTROL_FLOW cell.  Stop calling into Python so
-            // we don't trip CPython's "returned a result with an
-            // exception set" guard on the next invocation.  The outer
-            // `strider.run` boundary will drain the cell + surface the
-            // saved PyErr.
-            if crate::pattern::peek_pending_control_flow() {
-                anyhow::bail!("read aborted: pending control-flow exception");
-            }
             // The Python override returns the RAW `size` bytes at `addr`
             // (`bytes`) or `None` for unmapped.  Control-flow exceptions
             // (KeyboardInterrupt / SystemExit) are stashed so the outer
             // boundary surfaces them; every other failure errors here so
             // `LoadReadOnly` simply leaves the Load intact.
-            let result = match self.py_obj.call_method1(py, "read", (addr, size)) {
-                Ok(r) => r,
-                Err(e) => {
-                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
-                        || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
-                    {
-                        // Stash in the pending cell (NOT via
-                        // `PyErr::restore`) so the next invocation
-                        // doesn't see a set error indicator and trip
-                        // the CPython "returned a result with an
-                        // exception set" wrapper.
-                        crate::pattern::stash_pending_control_flow(e);
-                        anyhow::bail!("read aborted: control-flow exception stashed");
-                    }
-                    anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}");
-                }
-            };
+            let result = call_py_read(
+                py,
+                &self.py_obj,
+                (addr, size),
+                "read",
+                |e| anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}"),
+            )?;
             if result.is_none(py) {
                 anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) returned None (unmapped)");
             }

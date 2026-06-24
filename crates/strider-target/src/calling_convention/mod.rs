@@ -175,16 +175,6 @@ impl Default for BuiltCallingConvention {
 pub const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
 
 impl BuiltCallingConvention {
-    /// The convention's positional-argument layout: register slots in ABI
-    /// order plus the unbounded stack-arg formula.
-    #[must_use]
-    pub fn positional_arg_layout(&self) -> PositionalArgLayout {
-        PositionalArgLayout {
-            registers: self.arg_passing_regs.clone(),
-            stack: self.stack_args,
-        }
-    }
-
     /// Validating constructor.  Builds a
     /// `BuiltCallingConvention` from explicit fields and checks the
     /// canonical ABI invariants:
@@ -442,34 +432,6 @@ impl StackArgs {
         // saturate so a pathological `size` can't overflow the i64 add.
         let numerator = size.saturating_add(self.increment - 1);
         (numerator / self.increment) as usize
-    }
-}
-
-/// A convention's positional-argument layout: register slots first (indices
-/// `0..registers.len()`), then unbounded stack slots (indices
-/// `registers.len()..`) addressed by [`StackArgs`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PositionalArgLayout {
-    /// Argument-passing register varnodes, in ABI order.
-    pub registers: Vec<rsleigh::Vn>,
-    /// Stack-arg formula; `None` when no arguments are passed on the stack.
-    pub stack: Option<StackArgs>,
-}
-
-impl PositionalArgLayout {
-    /// The positional index of the first stack argument (= number of register args).
-    #[must_use]
-    pub fn first_stack_index(&self) -> usize {
-        self.registers.len()
-    }
-
-    /// Byte offset (from call-time SP) of the positional arg at `index`, or
-    /// `None` when `index` is a register slot or the CC has no stack args.
-    #[must_use]
-    pub fn stack_offset_of(&self, index: usize) -> Option<i64> {
-        let first = self.registers.len();
-        let stack = self.stack?;
-        (index >= first).then(|| stack.offset_of(index - first))
     }
 }
 

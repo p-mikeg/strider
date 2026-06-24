@@ -74,41 +74,6 @@ fn build_bit_field_insert(
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// Builds a small (`u64`-fitting) integer constant at `ty`, routing the
-    /// wide widths (I80 / I128 / I256 / I512) through the appropriate path so
-    /// an I256 / I512 type still lifts cleanly.
-    ///
-    /// Used for the SUBPIECE shift amount, which carries the *input*
-    /// varnode's width: a YMM (I256) / ZMM (I512) input with a nonzero
-    /// byte_offset would otherwise hard-abort the lift.  `value` is always a
-    /// small bit-count; for I256/I512 the limb array carries it in slot 0 with
-    /// the remaining limbs zero.
-    fn build_shift_const(
-        &mut self,
-        value: u64,
-        ty: ValueType,
-    ) -> Result<strider_ir::Value> {
-        if ty.byte_size() <= 16 {
-            // I1..I128 (including I80) — fits u128, mask applied by build_int_const.
-            self.builder.build_int_const(u128::from(value), ty)
-        } else if ty == ValueType::I256 {
-            self.builder.build_int_const_limbs(&[value, 0, 0, 0], ty)
-        } else {
-            // I512
-            self.builder
-                .build_int_const_limbs(&[value, 0, 0, 0, 0, 0, 0, 0], ty)
-        }
-    }
-
-    /// Translates a no-op `Cast` instruction.
-    ///
-    /// GHIDRA docs: "semantically equivalent to a COPY operation".
-    pub(super) fn handle_cast(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let value = self.read_input(insn, 0)?;
-        let out_vn = require_output_vn(insn)?;
-        self.write_vn(out_vn, value)
-    }
-
     /// `Subpiece(value, byte_offset, out_size)`: extracts `out_size` bytes
     /// starting at byte `byte_offset` from `value`.
     ///
@@ -150,11 +115,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 u64::from(input_vn.size) * 8,
             );
             let input_ty = input_vn.int_type()?;
-            // The shift constant carries the *input* width.  For a YMM
-            // (I256) / ZMM (I512) input `build_int_const` rejects the type
-            // outright, so route the (small) shift amount through the
-            // wide-const path; for ≤ I128 the plain const path applies.
-            let shift_const = self.build_shift_const(bit_shift, input_ty)?;
+            // The shift constant carries the *input* width.  `build_int_const`
+            // masks the (small) shift amount to `input_ty` — for the wide
+            // I256 / I512 case the mask is `u128::MAX`, so the interned node is
+            // byte-identical to the explicit-limb path.
+            let shift_const = self.builder.build_int_const(u128::from(bit_shift), input_ty)?;
             self.builder.build_int_binary_operation(
                 value,
                 shift_const,

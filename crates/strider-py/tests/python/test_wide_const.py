@@ -1,6 +1,6 @@
 """Wide (>64-bit) integer constants reaching Python.
 
-`IntConst(IntPayload::Wide(..))` nodes (I128 here) are minted when
+Wide (> I64) `IntConst` nodes (I128 here) are minted when
 `LoadReadOnly` folds a 16-byte constant-address load — hand-assembled
 `movdqa xmm0, [abs]` against a `BufferReader` that doubles as code and
 ROM.  These tests pin how the wide value surfaces through the pattern
@@ -35,9 +35,12 @@ def _wide_const_function():
 
 def test_wide_const_node_is_minted_by_load_readonly_fold():
     f = _wide_const_function()
-    wide_kinds = [f.node_kind(n) for n in f.node_ids() if "Wide" in f.node_kind(n)]
-    assert wide_kinds, "expected an IntConst(Wide(..)) node from the 16-byte fold"
-    assert all(k.startswith("IntConst") for k in wide_kinds)
+    # A wide const is identified by its declared type width (I80/I128/…),
+    # surfaced via `wide_const_bytes` — not by the node-kind Debug string,
+    # which is a plain `IntConst(constN)` for every interned constant.
+    wide_ids = [n for n in f.node_ids() if f.wide_const_bytes(n) is not None]
+    assert wide_ids, "expected a wide IntConst node from the 16-byte fold"
+    assert all(f.node_kind(n).startswith("IntConst") for n in wide_ids)
 
 
 def test_wide_const_match_uint_returns_full_u128():
@@ -73,7 +76,7 @@ def test_wide_const_node_const_int_returns_full_value():
     # IntConst surfaces its full interned value as a Python int, not
     # None.
     f = _wide_const_function()
-    wide_ids = [n for n in f.node_ids() if "Wide" in f.node_kind(n)]
+    wide_ids = [n for n in f.node_ids() if f.wide_const_bytes(n) is not None]
     assert wide_ids
     for nid in wide_ids:
         v = f.node(nid).const_int()
@@ -119,8 +122,8 @@ def test_i80_const_node_const_int_returns_full_value():
     # The 10-byte x87 load folds to an I80 wide IntConst; `const_int()`
     # decodes all 80 bits.
     f = _i80_const_function()
-    wide_ids = [n for n in f.node_ids() if "Wide" in f.node_kind(n)]
-    assert wide_ids, "expected an IntConst(Wide(..)) node from the 10-byte fold"
+    wide_ids = [n for n in f.node_ids() if f.wide_const_bytes(n) is not None]
+    assert wide_ids, "expected a wide IntConst node from the 10-byte fold"
     for nid in wide_ids:
         v = f.node(nid).const_int()
         assert isinstance(v, int)

@@ -213,20 +213,8 @@ impl<'f> Matcher<'f> {
     }
 
     fn try_at_node(&self, node: NodeId, pat: &Pattern, root: PatNodeId, out: &mut Vec<Match>) {
-        let outputs = self.function.node_outputs(node);
-        if outputs.is_empty() {
-            let mut bindings = Bindings::default();
-            if walk::try_match_node(self, pat, root, node, &mut bindings) {
-                out.push(Match::from_root(node, bindings));
-            }
-            return;
-        }
-        for &out_id in outputs {
-            let mut bindings = Bindings::default();
-            if walk::try_match(self, pat, root, out_id, &mut bindings) {
-                out.push(Match::from_root(node, bindings));
-                break;
-            }
+        if let Some(m) = self.try_match_at_node(node, pat, root) {
+            out.push(m);
         }
     }
 

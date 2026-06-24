@@ -22,13 +22,13 @@ use crate::node::NodeId;
 /// petgraph visitor traits on `&ControlFlowView<'_>` (a `Copy` reference, as
 /// petgraph's `GraphRef` requirement demands).
 #[derive(Clone, Copy)]
-pub struct ControlFlowView<'a> {
+pub(crate) struct ControlFlowView<'a> {
     function: &'a Function,
 }
 
 impl<'a> ControlFlowView<'a> {
     /// Creates a view over `function`'s control subgraph.
-    pub fn new(function: &'a Function) -> Self {
+    pub(crate) fn new(function: &'a Function) -> Self {
         Self { function }
     }
 

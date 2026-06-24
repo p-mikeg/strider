@@ -7,6 +7,7 @@
 //! inputs.
 
 use strider_ir::IRViewer;
+use strider_ir::IRWalker;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
@@ -140,7 +141,7 @@ impl PostOptimizer for CallStackArgCollect {
         // SSoT: derive the default stack-arg formula on-demand from the
         // function's own CC.  `None` means the convention passes no arguments
         // on the stack.
-        let default_stack_args = ctx.function().default_cc().positional_arg_layout().stack;
+        let default_stack_args = ctx.function().default_cc().stack_args;
         // Collect the reachable `Call` nodes via a plain pre-order walk.
         // Each call is processed independently below (no cross-call data
         // dependency), so the owned `Vec` just lets the immutable walk borrow

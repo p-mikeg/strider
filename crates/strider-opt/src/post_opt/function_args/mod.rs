@@ -77,9 +77,10 @@ impl PostOptimizer for FunctionArgDetect {
         // own CC.  `first_stack_arg` is the register-vs-stack boundary; the
         // ranged clear below preserves the register-arg carriers recorded at
         // builder entry.
-        let layout = ctx.function().default_cc().positional_arg_layout();
-        let first_stack_arg = layout.first_stack_index();
-        let Some(stack_args) = layout.stack else {
+        let cc = ctx.function().default_cc();
+        let first_stack_arg = cc.arg_passing_regs.len();
+        let maybe_stack_args = cc.stack_args;
+        let Some(stack_args) = maybe_stack_args else {
             // This convention passes no arguments on the stack.
             return Ok(());
         };

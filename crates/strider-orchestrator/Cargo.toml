@@ -11,16 +11,16 @@ strider-ir = { workspace = true }
 strider-cfg = { workspace = true }
 # strider-lift: the CFG -> IR lift (lift::Lifter, LiftOptions).
 strider-lift = { workspace = true }
-strider-pattern = { workspace = true }
 rsleigh.workspace = true
 strider-target.workspace = true
 anyhow.workspace = true
 rustc-hash = "2"
-# `dot` powers the neighborhood HTML emission (`dump_neighborhood`).
-dot.workspace = true
 
 [dev-dependencies]
 strider-reader = { workspace = true }
+# Used only by integration tests (pattern queries) and examples (HTML dumps).
+strider-pattern = { workspace = true }
+dot.workspace = true
 entity-utils = { workspace = true }
 cranelift-entity.workspace = true
 object.workspace = true

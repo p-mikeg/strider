@@ -266,20 +266,10 @@ impl MatchPat for AnyIntConst {
         b.set_node_predicate(
             o,
             Box::new(move |m, ir_node| {
-                let f = m.function();
-                // Guard: must be an IntConst node (the Variant prefilter
-                // already ensured this, but be explicit).
-                if !matches!(f.node_kind(ir_node), NodeKind::IntConst(_)) {
-                    return false;
-                }
-                // Accept only when the value fits in u128 (rejects I256/I512
-                // constants whose high limbs are nonzero).
-                let out = f
-                    .node_outputs(ir_node)
-                    .iter()
-                    .copied()
-                    .find(|&o| f.value_kind(o).as_value().is_some());
-                out.is_some_and(|o| f.int_const_u128(o).is_some())
+                // The Variant prefilter guarantees an `IntConst`; the helper
+                // returns `None` when the value can't be read as `u128`
+                // (rejects I256/I512 constants whose high limbs are nonzero).
+                first_int_const_value(m.function(), ir_node).is_some()
             }),
         );
         o
@@ -341,13 +331,8 @@ impl MatchPat for IntConstAnyOf {
         b.set_node_predicate(
             o,
             Box::new(move |m, ir_node| {
-                let f = m.function();
-                let out = f
-                    .node_outputs(ir_node)
-                    .iter()
-                    .copied()
-                    .find(|&o| f.value_kind(o).as_value().is_some());
-                out.is_some_and(|o| f.int_const_u128(o).is_some_and(|v| set.contains(&v)))
+                first_int_const_value(m.function(), ir_node)
+                    .is_some_and(|(v, _)| set.contains(&v))
             }),
         );
         o
