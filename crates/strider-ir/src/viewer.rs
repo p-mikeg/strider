@@ -22,7 +22,7 @@
 use anyhow::anyhow;
 
 use crate::function::Function;
-use crate::node::{NodeId, NodeKind, ValueId, ValueType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 /// The shared IR **point-read** vocabulary, available on every value that
 /// can hand out a `&Function` — [`Function`] itself and every [`IRBuilder`](crate::IRBuilder)
@@ -394,12 +394,7 @@ pub trait IRViewer {
     /// Returns an error when `value_id` is not a value edge.
     fn require_value_kind(&self, value_id: ValueId) -> crate::Result<()> {
         let kind = self.function().graph().value_kind(value_id);
-        if !kind.is_value() {
-            return Err(anyhow!(
-                "output {value_id:?} is not a value edge (got {kind:?})"
-            ));
-        }
-        Ok(())
+        ensure_value_kind(value_id, kind, kind.is_value(), "a value edge")
     }
 
     /// Errors unless `value_id` carries a bool value.
@@ -407,10 +402,8 @@ pub trait IRViewer {
     /// # Errors
     /// Returns an error when `value_id` is not a bool value.
     fn require_bool_value(&self, value_id: ValueId) -> crate::Result<()> {
-        if !self.function().graph().value_kind(value_id).is_bool() {
-            return Err(anyhow!("output {value_id:?} is not a bool value"));
-        }
-        Ok(())
+        let kind = self.function().graph().value_kind(value_id);
+        ensure_value_kind(value_id, kind, kind.is_bool(), "a bool value")
     }
 
     /// Errors unless `value_id` is a phi-token edge.
@@ -418,10 +411,8 @@ pub trait IRViewer {
     /// # Errors
     /// Returns an error when `value_id` is not a phi-token edge.
     fn require_phi_token_kind(&self, value_id: ValueId) -> crate::Result<()> {
-        if !self.function().graph().value_kind(value_id).is_phi_token() {
-            return Err(anyhow!("output {value_id:?} is not a phi-token edge"));
-        }
-        Ok(())
+        let kind = self.function().graph().value_kind(value_id);
+        ensure_value_kind(value_id, kind, kind.is_phi_token(), "a phi-token edge")
     }
 
     /// Errors unless `value_id` is a control edge.
@@ -430,12 +421,7 @@ pub trait IRViewer {
     /// Returns an error when `value_id` is not a control edge.
     fn require_control_kind(&self, value_id: ValueId) -> crate::Result<()> {
         let kind = self.function().graph().value_kind(value_id);
-        if !kind.is_control() {
-            return Err(anyhow!(
-                "output {value_id:?} is not a control edge (got {kind:?})"
-            ));
-        }
-        Ok(())
+        ensure_value_kind(value_id, kind, kind.is_control(), "a control edge")
     }
 
     /// Errors unless `value_id` is a memory edge.
@@ -444,12 +430,7 @@ pub trait IRViewer {
     /// Returns an error when `value_id` is not a memory edge.
     fn require_memory_kind(&self, value_id: ValueId) -> crate::Result<()> {
         let kind = self.function().graph().value_kind(value_id);
-        if !kind.is_memory() {
-            return Err(anyhow!(
-                "output {value_id:?} is not a memory edge (got {kind:?})"
-            ));
-        }
-        Ok(())
+        ensure_value_kind(value_id, kind, kind.is_memory(), "a memory edge")
     }
 
     /// Errors unless `value_id` carries an integer value.
@@ -457,10 +438,11 @@ pub trait IRViewer {
     /// # Errors
     /// Returns an error when `value_id` is not an integer value.
     fn require_integer_value(&self, value_id: ValueId) -> crate::Result<()> {
-        if !self.value_type(value_id)?.is_integer() {
-            return Err(anyhow!("output {value_id:?} is not an integer value"));
-        }
-        Ok(())
+        ensure_value_type(
+            value_id,
+            self.value_type(value_id)?.is_integer(),
+            "an integer value",
+        )
     }
 
     /// Errors unless `value_id` carries a float value.
@@ -468,10 +450,11 @@ pub trait IRViewer {
     /// # Errors
     /// Returns an error when `value_id` is not a float value.
     fn require_float_value(&self, value_id: ValueId) -> crate::Result<()> {
-        if !self.value_type(value_id)?.is_float() {
-            return Err(anyhow!("output {value_id:?} is not a float value"));
-        }
-        Ok(())
+        ensure_value_type(
+            value_id,
+            self.value_type(value_id)?.is_float(),
+            "a float value",
+        )
     }
 
     /// Errors unless `ty` is an integer type.
@@ -671,3 +654,27 @@ pub trait IRWalker: IRViewer {
 }
 
 impl<T: IRViewer + ?Sized> IRWalker for T {}
+
+/// Shared body for the `require_*_kind` checks: a uniform "is not `<noun>`"
+/// error (naming the observed `kind`) when `ok` is false.
+fn ensure_value_kind(
+    value_id: ValueId,
+    kind: ValueKind,
+    ok: bool,
+    noun: &str,
+) -> crate::Result<()> {
+    if ok {
+        Ok(())
+    } else {
+        Err(anyhow!("output {value_id:?} is not {noun} (got {kind:?})"))
+    }
+}
+
+/// Shared body for the `require_*_value` value-type checks (no kind to report).
+fn ensure_value_type(value_id: ValueId, ok: bool, noun: &str) -> crate::Result<()> {
+    if ok {
+        Ok(())
+    } else {
+        Err(anyhow!("output {value_id:?} is not {noun}"))
+    }
+}
