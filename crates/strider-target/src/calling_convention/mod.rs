@@ -172,7 +172,7 @@ impl Default for BuiltCallingConvention {
 /// REGISTER-space offset of the synthetic stack-pointer varnode minted by
 /// [`BuiltCallingConvention::default`].  Chosen far outside any real
 /// architecture's register file so it never aliases a tracked register.
-pub const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
+pub(crate) const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
 
 impl BuiltCallingConvention {
     /// Validating constructor.  Builds a

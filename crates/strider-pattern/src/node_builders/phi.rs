@@ -130,7 +130,7 @@ impl MemPhiPat {
 
 impl MemPat for MemPhiPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.lower(b).expect("memory-anchored NodePat has a memory output")
+        self.0.compile_mem(b)
     }
 }
 

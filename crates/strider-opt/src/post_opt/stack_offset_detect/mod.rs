@@ -9,11 +9,12 @@
 //! comparable against another access sharing the same `base`.
 
 use strider_ir::Function;
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
 use crate::pipeline::PostOptimizer;
-use crate::sp_expr::{SpDecomposer, SpExpr};
+use crate::sp_expr::{SpAliasCfg, SpExpr};
 
 /// Detects SP-relative Store / Load addresses and records each one's
 /// concrete offset in the `Function::stack_offsets` side-table.
@@ -30,7 +31,13 @@ impl PostOptimizer for StackOffsetDetect {
         edit: &mut crate::EditFunction<'_>,
         ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
-        let memo = &mut ctx.sp_memo;
+        // Build the SP-alias context once: decompose routes through the shared
+        // `SpAliasCfg` façade (same as every other SP-aware pass), so no
+        // transient `SpDecomposer` is materialised here.  The alias knobs are
+        // irrelevant to a pure decompose; `call_blocking` is an arbitrary
+        // choice.
+        let alias_mode = ctx.options.alias_mode;
+        let mut alias_cfg = SpAliasCfg::call_blocking(&mut ctx.sp_memo, alias_mode);
 
         // Snapshot the live Store/Load nodes.  Each access is decomposed and
         // stamped INDEPENDENTLY into the `stack_offsets` side-table (a pure
@@ -45,23 +52,20 @@ impl PostOptimizer for StackOffsetDetect {
 
         for node in candidates {
             let function: &Function = edit.function();
-            // `node` came from the `Store`/`Load`-seeded RPO filter, so it has
-            // ≥2 inputs (validated arity for both shapes, [mem, addr, data] /
-            // [mem, addr]); the address is slot 1 in either.
-            let addr = function
-                .graph()
-                .nth_input(node, 1)
-                .expect("Store/Load carries an address in input slot 1");
-            // `decompose_sp` returns a `Terminal` only for genuinely
-            // SP-rooted addresses: `InitialVar(sp)` OR an alignment-masked
-            // `sp & mask` (the And arm guards against `And(rax, mask)` and the
-            // like).  So any base it yields is a real stack base.  The offset
-            // is only comparable against another access that shares the same
-            // base (different SP bases, e.g. entry-SP vs an aligned SP, differ
-            // by the caller-dependent `sp mod align`).
-            let Some(SpExpr { base, offset }) =
-                SpDecomposer::new(function, memo).decompose(addr)
-            else {
+            // The address is slot 1 of either shape; `store_addr`/`load_addr`
+            // are the SSoT accessors for it.
+            let addr = match function.node_kind(node) {
+                NodeKind::Store(_) => function.store_addr(node),
+                _ => function.load_addr(node),
+            };
+            // `decompose` returns a `Terminal` only for genuinely SP-rooted
+            // addresses: `InitialVar(sp)` OR an alignment-masked `sp & mask`
+            // (the And arm guards against `And(rax, mask)` and the like).  So
+            // any base it yields is a real stack base.  The offset is only
+            // comparable against another access that shares the same base
+            // (different SP bases, e.g. entry-SP vs an aligned SP, differ by
+            // the caller-dependent `sp mod align`).
+            let Some(SpExpr { base, offset }) = alias_cfg.decompose(function, addr) else {
                 continue;
             };
             // The immutable `function` borrow ends here, freeing `edit` for

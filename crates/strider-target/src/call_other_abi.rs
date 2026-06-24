@@ -54,16 +54,12 @@ pub struct CallOtherAbi {
     /// Does this op clobber memory (i.e. advance the IR's memory
     /// edge)?  Set to `false` for pure compute (cpuid, rdtsc) and
     /// `true` for everything that touches memory — atomics, barriers,
-    /// port-I/O, syscalls, kernel entries, etc.
-    ///
-    /// Previous revisions of this field carried a per-alias-class
-    /// clobber set (`[]` / `[Unknown]` / `[Stack, Unknown]`); we no
-    /// longer model that distinction because mainstream compilers
-    /// don't (they use address-range / memory-dependence analysis at
-    /// the optimisation layer instead).  Any op that touches memory
-    /// is treated uniformly as "clobbers memory" in the IR; a future
-    /// load-store-forwarding pass can use range disjointness to
-    /// recover precision per query.
+    /// port-I/O, syscalls, kernel entries, etc.  Any op that touches
+    /// memory is treated uniformly as "clobbers memory" in the IR; the
+    /// field deliberately carries no per-alias-class (stack / heap /
+    /// unknown) partition, mirroring mainstream compilers that recover
+    /// per-query precision via address-range / memory-dependence
+    /// analysis at the optimisation layer instead.
     pub clobbers_memory: bool,
 }
 

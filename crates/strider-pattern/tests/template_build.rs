@@ -192,7 +192,7 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     // Match `add(int_const(5), var(c))` — `c` binds to the 7-operand.
     let lhs = add(int_const(5u128), var(c)).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-    let bound = bindings.get(c).unwrap();
+    let bound = bindings.get_value(c).unwrap();
 
     // Instantiating a bare `var(c)` returns the bound output unchanged.
     let pre_count = fx.walk().count();

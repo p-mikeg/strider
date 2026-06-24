@@ -135,10 +135,7 @@ impl<N, V> RawStore<N, V> {
     /// Always allocates a fresh [`NodeId`] — deduplication, if any, is the
     /// caching policy's job ([`crate::cache::NodeCacheable`]) and happens
     /// before this is called.
-    ///
-    /// Public because it is the primitive every [`crate::cache::NodeCacheable`]
-    /// impl calls once it decides to allocate (rather than reuse) a node.
-    pub fn alloc_node(
+    pub(crate) fn alloc_node(
         &mut self,
         kind: N,
         inputs: SmallVec<[ValueId; 4]>,
@@ -178,7 +175,7 @@ impl<N, V> RawStore<N, V> {
 
     /// Iterates over every node id in the arena, including unreachable ones.
     #[inline]
-    pub fn node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
+    pub(crate) fn node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.nodes.keys()
     }
 

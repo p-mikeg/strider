@@ -139,8 +139,8 @@ impl PostOptimizer for CallStackArgCollect {
             // (positional order); the loop is a no-op when the call passes none.
             // Single-shot post-pass, so we don't track a changed/unchanged result.
             let args = collect_stack_args(ctx.function(), call_id, stack_args, &mut alias_cfg);
-            for store_data in &args {
-                ctx.add_node_input(call_id, *store_data)?;
+            for arg_value in &args {
+                ctx.add_node_input(call_id, *arg_value)?;
             }
         }
         Ok(())

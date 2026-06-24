@@ -300,24 +300,24 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     //
     // The width-equality check uses `when_match` on the Bindings: the
     // captured `x`'s output type must equal the rule root's `ty`.
-    let zext_round_trip = {
-        let pat = truncate(zero_extend(var(x))).when_match(move |ctx, ty, bnd| {
-            bnd.get_type(x, ctx.function())
-                .is_some_and(|x_ty| x_ty == ty)
-        });
-        rewrite_rule(pat, var(x))
-    };
+    // Both extend round-trips share the identical width-equality guard and
+    // identity RHS, differing only in the extend builder; the macro removes
+    // the two-fold copy (mirrors the `const_on_right!` precedent above).
+    macro_rules! ext_round_trip {
+        ($ext:ident) => {{
+            let pat = truncate($ext(var(x))).when_match(move |ctx, ty, bnd| {
+                bnd.get_type(x, ctx.function())
+                    .is_some_and(|x_ty| x_ty == ty)
+            });
+            rewrite_rule(pat, var(x))
+        }};
+    }
+    let zext_round_trip = ext_round_trip!(zero_extend);
 
     // Truncate(SignExtend(x)) → x — same identity at the bit level when
     // widths match (sign-extension's added bits are sign replication; the
     // truncate cuts them off and recovers the original bits).
-    let sext_round_trip = {
-        let pat = truncate(sign_extend(var(x))).when_match(move |ctx, ty, bnd| {
-            bnd.get_type(x, ctx.function())
-                .is_some_and(|x_ty| x_ty == ty)
-        });
-        rewrite_rule(pat, var(x))
-    };
+    let sext_round_trip = ext_round_trip!(sign_extend);
 
     // Narrowing through binop: `Truncate_<W>(IntBinaryOp(op,
     // SignExt_<W→W'>(a), SignExt_<W→W'>(b)))` → `IntBinaryOp_<W>(op, a, b)`

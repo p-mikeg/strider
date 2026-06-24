@@ -240,7 +240,7 @@ where
                 self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
         }
 
-        // OR-3: the cap is the crate's core-invariant backstop — falling
+        // The cap is the crate's core-invariant backstop — falling
         // through it means the resolve/re-lift loop never reached a fixed
         // point, which is a bug (a pathological classifier/cfg oscillation),
         // not an unresolvable branch.  Surface it loudly in debug builds
@@ -253,7 +253,7 @@ where
         );
         let _ = converged;
 
-        // OR-1 / OR-2: report a site as unresolved only when its
+        // Report a site as unresolved only when its
         // `IndirectBranch` placeholder is still LIVE in the final function
         // AND the loop never folded a classification for it into
         // `known_targets`.  A placeholder the node-removing passes proved
@@ -355,7 +355,7 @@ const MAX_RESOLUTION_ITERATIONS: usize = 256;
 /// induced edge set grew (i.e. at least one new branch resolved) — the
 /// loop's progress signal.
 ///
-/// Convergence (OR-2): a site already present in `known_targets` is
+/// Convergence: a site already present in `known_targets` is
 /// **terminal** — its classification was folded in on an earlier
 /// iteration.  If its placeholder still reappears in `unresolved` (the cfg
 /// builder could not seat the terminator, e.g. an out-of-range `Multiple`
@@ -365,7 +365,7 @@ const MAX_RESOLUTION_ITERATIONS: usize = 256;
 /// range widening) from churning the edge set to the iteration cap: each
 /// stuck site contributes its classification exactly once.
 ///
-/// Collision (OR-4): two distinct `IndirectBranch` placeholders sharing one
+/// Collision: two distinct `IndirectBranch` placeholders sharing one
 /// `PcodeInsnAddr` (overlapping/duplicated code terminating two regions at
 /// the same machine address) both fold onto the same `known_targets` entry.
 /// Rather than let the last write silently win, their target sets are
@@ -390,7 +390,7 @@ fn apply_resolutions(
     let prev_edge_set = edge_set_of(known_targets);
 
     // Stage this iteration's new classifications per-address first, merging
-    // same-address collisions (OR-4) before touching `known_targets`.
+    // same-address collisions before touching `known_targets`.
     let mut staged: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     for (node, resolved) in resolutions {
         let Some(targets) = resolved else { continue };
@@ -407,7 +407,7 @@ fn apply_resolutions(
             }
         }
     }
-    // OR-2 convergence without dropping improvements: re-deriving the SAME
+    // Convergence without dropping improvements: re-deriving the SAME
     // classification for an already-present site is a no-op (so an unchanged
     // cone converges instead of churning to the iteration cap), but a
     // genuinely DIFFERENT classification — e.g. a previously-unseatable target
@@ -422,7 +422,7 @@ fn apply_resolutions(
 }
 
 /// Merge two `ResolvedTargets` classifications for the same pcode address
-/// (OR-4 same-address collision) into one whose target set is the union of
+/// (same-address collision) into one whose target set is the union of
 /// both.  Two `LinkRegister`s stay `LinkRegister`; otherwise every concrete
 /// successor address is unioned and the result widens to `Single` (one
 /// distinct target) or `Multiple` (more than one).  Order-independent.
@@ -599,7 +599,7 @@ mod tests {
         assert_eq!(edge_set_of(&map).len(), 1);
     }
 
-    // ── live-unresolved filtering (OR-1 / OR-2) ───────────────────────────
+    // ── live-unresolved filtering ─────────────────────────────────────────
 
     use strider_ir::node::NodeId;
 
@@ -637,7 +637,7 @@ mod tests {
 
     #[test]
     fn live_unresolved_excludes_dead_branch() {
-        // OR-1: a lift-time anchor whose `NodeId` is NOT a live
+        // A lift-time anchor whose `NodeId` is NOT a live
         // `IndirectBranch` in the final graph (e.g. the optimizer culled it,
         // here simulated by pairing the address with a non-IndirectBranch
         // live node — the function's entry node) must NOT be reported.
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn live_unresolved_excludes_already_classified_branch() {
-        // OR-2: a site whose address is already in `known_targets` (it was
+        // A site whose address is already in `known_targets` (it was
         // classified, even if the cfg layer re-emitted its placeholder) is
         // treated as resolved-but-unseatable, not unresolved.
         let (function, node) = fn_with_live_indirect_branch();
@@ -672,11 +672,11 @@ mod tests {
         );
     }
 
-    // ── apply_resolutions convergence (OR-2) ──────────────────────────────
+    // ── apply_resolutions convergence ─────────────────────────────────────
 
     #[test]
     fn apply_resolutions_skips_identical_reclassification_but_applies_improved() {
-        // OR-2 convergence WITHOUT dropping improvements: re-deriving the SAME
+        // Convergence WITHOUT dropping improvements: re-deriving the SAME
         // classification for an already-present site is a no-op (so a site whose
         // cone is unchanged converges instead of churning), but a genuinely
         // DIFFERENT classification — e.g. a previously-unseatable set that
@@ -716,7 +716,7 @@ mod tests {
         assert_eq!(known[&addr], ResolvedTargets::Single(0x2000));
     }
 
-    // ── same-address collision merge (OR-4) ───────────────────────────────
+    // ── same-address collision merge ──────────────────────────────────────
 
     #[test]
     fn merge_resolved_unions_multiple_targets() {
@@ -748,7 +748,7 @@ mod tests {
 
     #[test]
     fn apply_resolutions_merges_two_anchors_at_same_addr() {
-        // OR-4: two DISTINCT placeholder `NodeId`s mapped to one shared
+        // Two DISTINCT placeholder `NodeId`s mapped to one shared
         // `PcodeInsnAddr` classify independently; `apply_resolutions` merges
         // (unions) their target sets into the single `known_targets` entry
         // rather than letting the second insert silently overwrite the first.

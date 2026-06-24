@@ -321,7 +321,7 @@ impl StorePat {
 
 impl MemPat for StorePat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().lower(b).expect("memory-anchored NodePat has a memory output")
+        self.configured().compile_mem(b)
     }
 }
 

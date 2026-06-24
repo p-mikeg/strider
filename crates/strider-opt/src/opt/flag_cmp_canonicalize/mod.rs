@@ -58,8 +58,8 @@ use strider_ir::IRViewer;
 use strider_ir::node::{ExtendOp, IntBinaryOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_pattern::template;
 use strider_pattern::{
-    Capture, CaptureExt, add, any_int_const, bool_and, bool_not, bool_or, int_const, int_eq,
-    int_lt, int_sborrow, int_slt, neg, var, zero_extend,
+    Bindings, Capture, CaptureExt, add, any_int_const, bool_and, bool_not, bool_or, int_const,
+    int_eq, int_lt, int_sborrow, int_slt, neg, var, zero_extend,
 };
 
 use crate::error::Result;
@@ -143,6 +143,52 @@ impl PeepholePass for FlagCmpCanonicalize {
 // Each entry is `rewrite_rule(lhs, rhs)`: pattern crate matches the LHS,
 // builds the RHS template, and rewires uses with full asm-fingerprint
 // absorption into every fresh interior node.
+
+/// Shared `when_match` guard for the constant-folded-ZF rules whose Equal
+/// offset is the two's-complement negation of the compare constant
+/// (`M ≡ -N`, rules 14/16).  `width_src` is the capture whose output type
+/// supplies the operand width.  Returns `false` unless all three bindings
+/// resolve.
+fn neg_relation(
+    binds: &Bindings,
+    func: &strider_ir::Function,
+    m: Capture,
+    n: Capture,
+    width_src: Capture,
+) -> bool {
+    let (Some(m_val), Some(n_val), Some(width)) = (
+        binds.get_uint(m, func),
+        binds.get_uint(n, func),
+        binds.get_type(width_src, func).map(|t| t.bit_mask_u128()),
+    ) else {
+        return false;
+    };
+    (m_val & width) == (n_val.wrapping_neg() & width)
+}
+
+/// Shared `when_match` guard for the offset-base constant-folded-ZF rules
+/// whose Equal offset is the compare-base offset minus the compare constant
+/// (`C2 ≡ C1 - N`, rules 15/17).  `width_src` is the capture whose output
+/// type supplies the operand width.  Returns `false` unless all four
+/// bindings resolve.
+fn sub_relation(
+    binds: &Bindings,
+    func: &strider_ir::Function,
+    m: Capture,
+    n: Capture,
+    c1: Capture,
+    width_src: Capture,
+) -> bool {
+    let (Some(m_val), Some(n_val), Some(c1_val), Some(width)) = (
+        binds.get_uint(m, func),
+        binds.get_uint(n, func),
+        binds.get_uint(c1, func),
+        binds.get_type(width_src, func).map(|t| t.bit_mask_u128()),
+    ) else {
+        return false;
+    };
+    (m_val & width) == (c1_val.wrapping_sub(n_val) & width)
+}
 
 fn build_rules() -> Vec<BoxedRule> {
     // Captures are shared across rules: each rule is matched as an independent
@@ -313,21 +359,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 int_lt(var(a), any_int_const().capture(n)),
                 int_eq(add(var(a), any_int_const().capture(m)), int_const(0u128)),
             )
-            .when_match(move |ctx, _ty, binds| {
-                let (Some(n_val), Some(m_val)) = (
-                    binds.get_uint(n, ctx.function()),
-                    binds.get_uint(m, ctx.function()),
-                ) else {
-                    return false;
-                };
-                // The compare operand width is `a`'s type (the Add / Less input).
-                let Some(width) = binds.get_type(a, ctx.function()).map(|t| t.bit_mask_u128())
-                else {
-                    return false;
-                };
-                // M must be the two's-complement negation of N at that width.
-                (m_val & width) == (n_val.wrapping_neg() & width)
-            }),
+            .when_match(move |ctx, _ty, binds| neg_relation(binds, ctx.function(), m, n, a)),
             template::bool_not(template::int_lt(var(n), var(a))),
         ),
         // 15. LS (unsigned), offset-base + constant-folded ZF term:
@@ -355,23 +387,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 ),
                 int_eq(add(var(b), any_int_const().capture(m)), int_const(0u128)),
             )
-            .when_match(move |ctx, _ty, binds| {
-                let (Some(c1_val), Some(n_val), Some(m_val)) = (
-                    binds.get_uint(c1, ctx.function()),
-                    binds.get_uint(n, ctx.function()),
-                    binds.get_uint(m, ctx.function()),
-                ) else {
-                    return false;
-                };
-                // The compare operand width is the shared base `b`'s type.
-                let Some(width) = binds.get_type(b, ctx.function()).map(|t| t.bit_mask_u128())
-                else {
-                    return false;
-                };
-                // C2 must equal C1 - N (mod width): the ZF term tests X == N
-                // where X = Add(b, C1).
-                (m_val & width) == (c1_val.wrapping_sub(n_val) & width)
-            }),
+            .when_match(move |ctx, _ty, binds| sub_relation(binds, ctx.function(), m, n, c1, b)),
             template::bool_not(template::int_lt(var(n), var(x))),
         ),
         // 16. HI (unsigned), constant-folded ZF term — the dual of rule 14:
@@ -391,19 +407,7 @@ fn build_rules() -> Vec<BoxedRule> {
                     int_const(0u128),
                 )),
             )
-            .when_match(move |ctx, _ty, binds| {
-                let (Some(n_val), Some(m_val)) = (
-                    binds.get_uint(n, ctx.function()),
-                    binds.get_uint(m, ctx.function()),
-                ) else {
-                    return false;
-                };
-                let Some(width) = binds.get_type(a, ctx.function()).map(|t| t.bit_mask_u128())
-                else {
-                    return false;
-                };
-                (m_val & width) == (n_val.wrapping_neg() & width)
-            }),
+            .when_match(move |ctx, _ty, binds| neg_relation(binds, ctx.function(), m, n, a)),
             template::int_lt(var(n), var(a)),
         ),
         // 17. HI (unsigned), offset-base + constant-folded ZF term — the dual of
@@ -428,20 +432,7 @@ fn build_rules() -> Vec<BoxedRule> {
                     int_const(0u128),
                 )),
             )
-            .when_match(move |ctx, _ty, binds| {
-                let (Some(c1_val), Some(n_val), Some(m_val)) = (
-                    binds.get_uint(c1, ctx.function()),
-                    binds.get_uint(n, ctx.function()),
-                    binds.get_uint(m, ctx.function()),
-                ) else {
-                    return false;
-                };
-                let Some(width) = binds.get_type(b, ctx.function()).map(|t| t.bit_mask_u128())
-                else {
-                    return false;
-                };
-                (m_val & width) == (c1_val.wrapping_sub(n_val) & width)
-            }),
+            .when_match(move |ctx, _ty, binds| sub_relation(binds, ctx.function(), m, n, c1, b)),
             template::int_lt(var(n), var(x)),
         ),
     ]
@@ -564,12 +555,14 @@ fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueI
 
 /// Flattens the CR-field `Or` tree into its leaf terms.  A single CR field is
 /// 4 bits (LT/GT/EQ/SO), so the pack is at most 4 terms — at most 3 binary
-/// `Or` nodes, depth ≤ 3.  The cap rejects anything wider (a misrouted full-CR
-/// `mfcr` pack never reaches this single-field shape): an over-deep `Or` is
-/// pushed as an opaque leaf, which `single_bit_term` then rejects → no fold.
+/// `Or` nodes.  The recursion cap is set to `MAX_OR_DEPTH = 4` (one level of
+/// slack over the structurally-needed depth of 3) and rejects anything wider:
+/// a misrouted full-CR `mfcr` pack never reaches this single-field shape, and
+/// any over-deep `Or` is pushed as an opaque leaf, which `single_bit_term`
+/// then rejects → no fold.
 fn flatten_or(f: &impl IRViewer, value: ValueId, out: &mut Vec<ValueId>, depth: u32) {
-    const MAX_DEPTH: u32 = 4;
-    if depth <= MAX_DEPTH
+    const MAX_OR_DEPTH: u32 = 4;
+    if depth <= MAX_OR_DEPTH
         && let NodeKind::IntBinaryOp(IntBinaryOp::Or) = f.node_kind(f.producer(value))
         && let Ok([a, b]) = f.producer_inputs_exact::<2>(value)
     {

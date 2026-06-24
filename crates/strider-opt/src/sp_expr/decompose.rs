@@ -114,9 +114,9 @@ impl<'a> SpDecomposer<'a> {
         // The sweep only inserts entries for single-output producers, so a
         // queried `value` whose producer has ≠1 output (never an SP terminal)
         // would otherwise stay absent and force a full re-walk on every repeat
-        // query.  Memoise its `None` so the second query is a hit.
-        self.memo.entry(value).or_insert(None);
-        self.memo.get(&value).copied().flatten()
+        // query.  Memoise its `None` so the second query is a hit; `or_insert`
+        // hands back the now-present entry, so no second lookup is needed.
+        *self.memo.entry(value).or_insert(None)
     }
 
     /// Classifies a single node in the address cone given that all of its
@@ -134,16 +134,18 @@ impl<'a> SpDecomposer<'a> {
             }
             NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
                 // IntBinaryOp has exactly 2 inputs (validated structural invariant).
-                let [l, r] = function
+                let [lhs, rhs] = function
                     .node_inputs_exact::<2>(node)
                     .expect("IntBinaryOp(Add) has 2 inputs (validated)");
-                if let Some(c) = function.int_const_i64(r) {
-                    return self.memo.get(&l).copied().flatten().and_then(|e| e.shifted(c));
-                }
-                if let Some(c) = function.int_const_i64(l) {
-                    return self.memo.get(&r).copied().flatten().and_then(|e| e.shifted(c));
-                }
-                None
+                // SP + const in either operand order; the constant shifts the
+                // other operand's decomposed offset.  Right operand checked
+                // first (post-ConstantFold an Add never carries two constants).
+                let (sp_operand, c) = match (function.int_const_i64(rhs), function.int_const_i64(lhs)) {
+                    (Some(c), _) => (lhs, c),
+                    (None, Some(c)) => (rhs, c),
+                    _ => return None,
+                };
+                self.memo.get(&sp_operand).copied().flatten().and_then(|e| e.shifted(c))
             }
             // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
             // `0xfffffff0` for SSE-aligned frames).  The And's output is

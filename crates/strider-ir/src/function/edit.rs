@@ -9,7 +9,7 @@
 //! nodes are stamped via [`EditFunction::create_node_attributed`]; composite
 //! rewrites inline `extend_asm_fingerprint_from` directly.
 //!
-//! The rewrite *rules* (`rewrite_rule`, `GraphRewriter`, the template
+//! The rewrite *rules* (`rewrite_rule`, `apply_rules_count`, the template
 //! interpreter) live in the downstream optimizer crate; this module owns only
 //! the function-editing primitives they build on.
 

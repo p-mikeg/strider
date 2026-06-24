@@ -3,7 +3,6 @@
 //! `PtrAdd`, `PtrSub`, and the no-op `Cast`.
 
 use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
 use strider_ir::IntBinaryOp;
 use strider_ir::VnTypeExt;
 use strider_ir::node::ValueType;
@@ -296,13 +295,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             );
         }
 
-        let dest_ty = self.builder.value_type(dest)?.to_natural_int_type();
-        let dest_int = self.builder.convert_to_int_if_needed(dest, dest_ty)?;
-        let src_ty = self.builder.value_type(src)?.to_natural_int_type();
-        let src_int = self.builder.convert_to_int_if_needed(src, src_ty)?;
-
-        let dest_wide = self.builder.convert_to_int_if_needed(dest_int, out_ty)?;
-        let src_wide = self.builder.convert_to_int_if_needed(src_int, out_ty)?;
+        // Convert `dest` / `src` straight to the output width.  Register reads
+        // are already integer-typed and `convert_to_int_if_needed` handles the
+        // width directly (and rejects float inputs either way), so the prior
+        // natural-width intermediate conversion was a redundant round-trip.
+        let dest_wide = self.builder.convert_to_int_if_needed(dest, out_ty)?;
+        let src_wide = self.builder.convert_to_int_if_needed(src, out_ty)?;
 
         let result =
             build_bit_field_insert(&mut self.builder, dest_wide, src_wide, lsb, len, out_ty)?;

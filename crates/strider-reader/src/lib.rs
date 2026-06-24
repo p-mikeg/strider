@@ -175,6 +175,22 @@ impl MemRegion {
         let available = self.data.len().checked_sub(offset)?;
         (available != 0).then_some((offset, available))
     }
+
+    /// Returns `true` when this region fully covers the request
+    /// `[addr, addr + len)` — `addr` is mapped and the request doesn't
+    /// straddle past [`end_addr`](Self::end_addr).  An `addr + len` that
+    /// would overflow `u64` is treated as not covered.
+    ///
+    /// This is the single source of truth for the "highest-start-down,
+    /// must-fully-cover" coverage rule shared by
+    /// [`MemRegionsLookupTable::read`]'s full-coverage fast path and the
+    /// relocation patcher's covering-region lookup.
+    pub fn fully_covers(&self, addr: u64, len: usize) -> bool {
+        match addr.checked_add(len as u64) {
+            Some(end) => self.contains(addr) && end <= self.end_addr(),
+            None => false,
+        }
+    }
 }
 
 // ── MemRegionsLookupTable ─────────────────────────────────────────────────────
@@ -246,15 +262,15 @@ impl MemRegionsLookupTable {
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let mut best: Option<(&MemRegion, usize)> = None;
         for (_, region) in self.regions.range(..=addr).rev() {
+            // A region that covers the whole request wins outright; iterating
+            // highest-start-first means the latest-starting such region wins.
+            if region.fully_covers(addr, out.len()) {
+                return region.read(addr, out);
+            }
             let Some((_, available)) = region.available_at(addr) else {
                 continue;
             };
             let n = available.min(out.len());
-            // A region that covers the whole request wins outright; iterating
-            // highest-start-first means the latest-starting such region wins.
-            if n == out.len() {
-                return region.read(addr, out);
-            }
             if best.is_none_or(|(_, best_n)| n > best_n) {
                 best = Some((region, n));
             }

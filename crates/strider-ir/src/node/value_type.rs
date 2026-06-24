@@ -289,7 +289,7 @@ impl ValueType {
     /// Sign-extends `val` (treated as the type's bit-width-narrow
     /// representation) to a full 128-bit signed integer, or returns `None`
     /// if this type is not an integer or its width exceeds 128 bits
-    /// (`I256` — unreachable in `IntConst` land today).
+    /// (`I256`/`I512` don't fit the `i128` carrier, so the query fails loudly).
     pub fn get_signed_int(self, val: u128) -> Option<i128> {
         if !self.is_integer() {
             return None;
@@ -343,7 +343,7 @@ impl ValueType {
     /// Maps a varnode byte size to the corresponding **float** output type:
     /// `4 → F32`, `8 → F64`, `10 → F80` (x87 extended precision).
     ///
-    /// Mirrors `TryFrom<u32>` for the integer side; kept as a dedicated
+    /// Mirrors [`Self::int_for_byte_size`] for the integer side; kept as a dedicated
     /// helper because the float subset is open to fewer sizes and the
     /// caller's error message references "float varnode size".
     ///

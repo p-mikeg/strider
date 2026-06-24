@@ -26,21 +26,7 @@ pub struct Pattern {
     pub(crate) cast_mask: CastMask,
 }
 
-impl Default for Pattern {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Pattern {
-    /// An empty pattern with no root and no cast walk-through.
-    pub fn new() -> Self {
-        Self {
-            graph: Graph::new(),
-            cast_mask: CastMask::empty(),
-        }
-    }
-
     /// Build a pattern from an already-materialised generic graph (the seal
     /// point of [`MatcherBuilder`]).
     pub(crate) fn from_graph(graph: PatGraph) -> Self {

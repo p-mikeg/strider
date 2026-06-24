@@ -180,6 +180,35 @@ impl PyFunction {
             }
         })
     }
+
+    /// Run `pipeline` over this graph in place, bumping the generation
+    /// first so any stale handle is invalidated even if a pass errors
+    /// mid-run and leaves the arena partially rewritten.  `label` names
+    /// the operation in the surfaced error (`"optimize"` / `"reoptimize"`).
+    fn run_pipeline_in_place(
+        &self,
+        pipeline: strider_orchestrator::opt::OptimizerPipeline,
+        label: &str,
+    ) -> PyResult<()> {
+        let mut function = self
+            .try_write_inner()
+            .map_err(crate::errors::into_strider_err)?;
+        // Bump the generation BEFORE running: the pipeline mutates the
+        // arena in place, and a pass that errors mid-run can leave the
+        // graph partially rewritten.  Invalidating outstanding handles
+        // unconditionally means a stale handle can never silently read
+        // that partially-optimized graph after the error is surfaced.
+        function.graph_mut().bump_generation();
+        pipeline
+            .run(
+                &mut function,
+                &mut strider_orchestrator::opt::OptCtx::new(None),
+            )
+            .map_err(|e| {
+                crate::errors::into_strider_err(anyhow::anyhow!("{label} failed: {e:?}"))
+            })?;
+        Ok(())
+    }
 }
 
 #[pymethods]
@@ -382,24 +411,7 @@ impl PyFunction {
     /// through `strider.run(..., rom=mem)` instead.
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
         let real_pipeline = pipeline.drain_into_pipeline()?;
-        let mut function = self
-            .try_write_inner()
-            .map_err(crate::errors::into_strider_err)?;
-        // Bump the generation BEFORE running: the pipeline mutates the
-        // arena in place, and a pass that errors mid-run can leave the
-        // graph partially rewritten.  Invalidating outstanding handles
-        // unconditionally means a stale handle can never silently read
-        // that partially-optimized graph after the error is surfaced.
-        function.graph_mut().bump_generation();
-        real_pipeline
-            .run(
-                &mut function,
-                &mut strider_orchestrator::opt::OptCtx::new(None),
-            )
-            .map_err(|e| {
-                crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}"))
-            })?;
-        Ok(())
+        self.run_pipeline_in_place(real_pipeline, "optimize")
     }
 
     /// Convenience: re-run the default optimizer pipeline on this graph.
@@ -407,21 +419,7 @@ impl PyFunction {
     /// re-converge the graph.
     fn reoptimize(&self) -> PyResult<()> {
         let pipe = strider_orchestrator::opt::default_pipeline();
-        let mut function = self
-            .try_write_inner()
-            .map_err(crate::errors::into_strider_err)?;
-        // Bump BEFORE running (see `optimize`): a mid-run failure can
-        // leave the arena partially rewritten, and invalidating handles
-        // unconditionally prevents a stale read of that state.
-        function.graph_mut().bump_generation();
-        pipe.run(
-            &mut function,
-            &mut strider_orchestrator::opt::OptCtx::new(None),
-        )
-        .map_err(|e| {
-            crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
-        })?;
-        Ok(())
+        self.run_pipeline_in_place(pipe, "reoptimize")
     }
 
     /// Find every site where `pat` matches.  `pat` accepts any

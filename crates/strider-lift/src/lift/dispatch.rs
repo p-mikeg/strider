@@ -115,14 +115,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     ) -> Result<()> {
         // Funnel: every IR node born from this pcode insn picks up the
         // parent machine-instruction address in its asm-fingerprint
-        // side-table.  The set_lift_addr(Some)/set_lift_addr(None)
-        // bracket is the funnel.  A closure API would force a `&mut
-        // self` plus a `&mut self.builder` split the borrow checker
-        // rejects, so we use open-call brackets instead.
+        // side-table (see `with_lift_addr`).
         let machine_addr = addr.machine_addr.addr;
-        self.builder.set_lift_addr(Some(machine_addr));
-        let res = self.process_insn_inner(region_id, insn, region_map);
-        self.builder.set_lift_addr(None);
+        let res = self.with_lift_addr(Some(machine_addr), |s| {
+            s.process_insn_inner(region_id, insn, region_map)
+        });
         // Attach the offending machine instruction's address + opcode to any
         // lift failure.  Width / shape errors raised deep in the IR builders
         // (e.g. an unsupported odd-byte varnode width via `int_for_byte_size`)

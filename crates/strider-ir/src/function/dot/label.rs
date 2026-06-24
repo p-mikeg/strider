@@ -54,9 +54,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// or `None` if it has no value output.
     fn out_type(&self, node: NodeId) -> Option<ValueType> {
         self.function
-            .node_outputs(node)
-            .iter()
-            .find_map(|&o| self.function.value_kind(o).as_value())
+            .first_value_output_of(node)
+            .and_then(|o| self.function.value_type_opt(o))
     }
 
     /// Returns the [`ValueType`] of the `ValueId` at input index
@@ -66,7 +65,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             .node_inputs(node)
             .into_iter()
             .nth(idx)
-            .and_then(|o| self.function.value_kind(o).as_value())
+            .and_then(|o| self.function.value_type_opt(o))
     }
 
     /// Type name of the first value output of `node`, or `"?"` if absent.
@@ -160,9 +159,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                         // the interned payload directly.
                         let v = self
                             .function
-                            .node_outputs(node)
-                            .iter()
-                            .find_map(|&o| self.function.int_const_u128(o))
+                            .first_value_output_of(node)
+                            .and_then(|o| self.function.int_const_u128(o))
                             .unwrap_or(0);
                         format!("const {v:#x}{ty}")
                     }

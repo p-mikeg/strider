@@ -420,22 +420,6 @@ impl Function {
         largest_container_in(&self.all_vns, vn)
     }
 
-    /// Derive the ret-val varnode list for a `Call` built under calling
-    /// convention `cc`.  Returns only those tracked, clobbered varnodes
-    /// that appear in the convention's combined return-register list
-    /// (`ret_val_regs` then `ret_val_regs_float`), in ABI order.
-    ///
-    /// This is the first group of Call output slots past `[Control,
-    /// Memory]`.  Together with [`Self::call_clobbered_for`] it partitions
-    /// what was formerly a single clobber tail into two labeled groups —
-    /// the slot ORDER is unchanged; only the conceptual split is new.
-    ///
-    /// Each CC register (ret-val, float-ret, callee-saved) is resolved to
-    /// its tracked container via [`Self::container_of`] before membership
-    /// is tested, and the resolved CONTAINER is emitted.  This keeps a
-    /// sub-register ABI ret reg (e.g. `eax`) classified as the return
-    /// value when the function tracks the wider container (`rax`) instead
-    /// of silently dropping it.  Identity on full-width preset regs.
     /// The shared call-clobber predicate: a register (resolved to its tracked
     /// container) is clobbered iff it is neither callee-saved under `cc` nor the
     /// stack pointer.  The callee-saved set is hashed once so the predicate is
@@ -455,6 +439,20 @@ impl Function {
         move |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn
     }
 
+    /// The convention's combined return-register list (integer ++ float), at
+    /// each register's declared width.  Single place that owns the
+    /// `ret_val_regs ++ ret_val_regs_float` chain order, shared by
+    /// [`Self::ret_val_regs`] (declared widths) and [`Self::combined_ret_containers`]
+    /// (container projection).
+    fn combined_ret_regs_raw(
+        cc: &strider_target::BuiltCallingConvention,
+    ) -> impl Iterator<Item = rsleigh::Vn> + '_ {
+        cc.ret_val_regs
+            .iter()
+            .chain(cc.ret_val_regs_float.iter())
+            .copied()
+    }
+
     /// The convention's combined return-register list (integer ++ float),
     /// each resolved to its tracked container via [`Self::container_of`].
     ///
@@ -466,20 +464,35 @@ impl Function {
         &'a self,
         cc: &'a strider_target::BuiltCallingConvention,
     ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
-        cc.ret_val_regs
-            .iter()
-            .chain(cc.ret_val_regs_float.iter())
-            .map(|v| self.container_of(v))
+        Self::combined_ret_regs_raw(cc).map(|v| self.container_of(&v))
     }
 
+    /// Derive the ret-val varnode list for a `Call` built under calling
+    /// convention `cc`.  Returns only those tracked, clobbered varnodes
+    /// that appear in the convention's combined return-register list
+    /// (`ret_val_regs` then `ret_val_regs_float`), in ABI order.
+    ///
+    /// This is the first group of Call output slots past `[Control,
+    /// Memory]`.  Together with [`Self::call_clobbered_for`] it partitions
+    /// what was formerly a single clobber tail into two labeled groups —
+    /// the slot ORDER is unchanged; only the conceptual split is new.
+    ///
+    /// Each CC register (ret-val, float-ret, callee-saved) is resolved to
+    /// its tracked container via [`Self::container_of`] before membership
+    /// is tested, and the resolved CONTAINER is emitted.  This keeps a
+    /// sub-register ABI ret reg (e.g. `eax`) classified as the return
+    /// value when the function tracks the wider container (`rax`) instead
+    /// of silently dropping it.  Identity on full-width preset regs.
     pub fn call_ret_vals_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
         let is_clobbered = self.clobber_oracle(cc);
-        let tracked: FxHashSet<rsleigh::Vn> = self.all_vns.iter().copied().collect();
+        // The combined ret list is tiny (1-2 regs), so a linear probe against
+        // `all_vns` is cheaper (and allocation-free) than hashing the whole
+        // tracked register file to test 1-2 items.
         self.combined_ret_containers(cc)
-            .filter(|c| tracked.contains(c) && is_clobbered(c))
+            .filter(|c| self.all_vns.contains(c) && is_clobbered(c))
             .collect()
     }
 
@@ -554,12 +567,7 @@ impl Function {
     /// width rather than being narrowed to a tracked sub-register.
     #[inline]
     pub fn ret_val_regs(&self) -> Vec<rsleigh::Vn> {
-        self.default_cc
-            .ret_val_regs
-            .iter()
-            .chain(self.default_cc.ret_val_regs_float.iter())
-            .copied()
-            .collect()
+        Self::combined_ret_regs_raw(&self.default_cc).collect()
     }
 
     /// Calling convention's stack-pointer varnode.  On the trivial CC

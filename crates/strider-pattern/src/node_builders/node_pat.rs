@@ -219,6 +219,15 @@ impl NodePat {
         self.lower(b)
             .expect("value-rooted NodePat has a value output")
     }
+
+    /// Lower and return the memory anchor output (for the [`MemPat`]
+    /// impls of memory-rooted wrappers — `Call` / `CallOther` / `Store` /
+    /// `MemPhi` — that nest as a memory operand).
+    #[allow(clippy::expect_used)]
+    pub(crate) fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.lower(b)
+            .expect("memory-anchored NodePat has a memory output")
+    }
 }
 
 /// A [`SubCompiler`] that compiles a value-pattern then relaxes its root

@@ -238,6 +238,23 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         )
     }
 
+    /// Classifies a direct-branch target as tail-call vs intra-function and
+    /// enforces the well-formedness rule that a tail call may only target the
+    /// first pcode instruction of a machine instruction.
+    ///
+    /// Returns `true` when the target is a tail call. Bails when the target is
+    /// out of bounds but does not land on a machine-instruction boundary
+    /// (`insn_index != 0`), which the well-formed CFG invariant forbids. This
+    /// is the single source of truth for the `Branch` / `CondBranch` arms,
+    /// which both decode a target and then apply the identical guard.
+    fn classify_branch_target(&self, branch_target_addr: PcodeInsnAddr) -> Result<bool> {
+        let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
+        if is_tail_call && branch_target_addr.insn_index != 0 {
+            bail!("invalid tail call at opcode {branch_target_addr:?}");
+        }
+        Ok(is_tail_call)
+    }
+
     /// Processes `insn` as a fresh instruction (not already in any region).
     ///
     /// Appends the instruction to the current region, then dispatches on the
@@ -279,10 +296,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ) -> Result<InsnOutcome> {
         let target_var = branch_target_operand(insn, addr)?;
         let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
-        let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
-        if is_tail_call && branch_target_addr.insn_index != 0 {
-            bail!("invalid tail call at opcode {branch_target_addr:?}");
-        }
+        let is_tail_call = self.classify_branch_target(branch_target_addr)?;
         let terminator = if is_tail_call {
             RegionTerminator::TailCall {
                 target: branch_target_addr.machine_addr.addr,
@@ -327,10 +341,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         // bytes happen to be zero-pcode-op insns (e.g. NOP padding)
         // the inner lift loop never appends to `self.insns`, so the
         // upper-bound truncation in `build()` never fires.
-        let true_oob = self.is_branch_tail_call_nocheck(target_addr);
-        if true_oob && target_addr.insn_index != 0 {
-            bail!("invalid tail call at opcode {target_addr:?}");
-        }
+        let true_oob = self.classify_branch_target(target_addr)?;
         let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
 
         // The conditional always survives: record the taken successor's

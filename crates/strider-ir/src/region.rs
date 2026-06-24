@@ -19,7 +19,7 @@ entity_impl!(RegionId);
 /// - A `MemPhi` node (and its output) that selects the memory token at the join.
 /// - A current variable map (`variables`) that is updated by writes.
 /// - An initial variable map (`initial_variables`) recording the
-///   `VarPhi` outputs; these receive incoming values as predecessor
+///   `Phi` outputs; these receive incoming values as predecessor
 ///   regions are linked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Region {
@@ -35,7 +35,7 @@ pub(crate) struct Region {
     cur_memory: ValueId,
     /// Current SSA value of each variable in this region.
     variables: SecondaryMap<VarId, ValueId>,
-    /// `VarPhi` outputs — one per variable — that gather incoming values
+    /// `Phi` outputs — one per variable — that gather incoming values
     /// from predecessor regions (filled in as predecessors are linked).
     initial_variables: SecondaryMap<VarId, ValueId>,
 }
@@ -143,7 +143,7 @@ impl FunctionBuilder {
         self.cur_region = Some(region);
     }
 
-    /// Adds incoming variable values from `variables` to the `VarPhi`
+    /// Adds incoming variable values from `variables` to the `Phi`
     /// nodes of `region`.
     pub(crate) fn link_region_variables(
         &mut self,

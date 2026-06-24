@@ -193,10 +193,8 @@ pub fn instantiate<B: IRBuilder>(
                 f(&ctx)?
             }
             TmplNodeKind::Build(TemplateKind::FnIntConst(f)) => {
-                // Compute the u128 value via the closure, then intern it.
-                // For ≤128-bit types (I1..I128 and I80) use intern_int_const
-                // which masks to width and stores as Bits. For I256/I512 build
-                // the little-endian limb array and use intern_int_const_limbs.
+                // Compute the u128 value via the closure, then intern it
+                // (see `intern_fn_int_const` for the per-width interning).
                 let value_ty = node_value_ty(template, vtx, root_ty);
                 let ctx = TemplateCtx {
                     function: builder.function(),
@@ -205,70 +203,11 @@ pub fn instantiate<B: IRBuilder>(
                     root_ty: value_ty,
                 };
                 let v = f(&ctx)?;
-                let id = match value_ty {
-                    strider_ir::node::ValueType::I256 => {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let low64 = v as u64;
-                        #[allow(clippy::cast_possible_truncation)]
-                        let high64 = (v >> 64) as u64;
-                        builder
-                            .function_mut()
-                            .intern_int_const_limbs(&[low64, high64, 0, 0], value_ty)
-                    }
-                    strider_ir::node::ValueType::I512 => {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let low64 = v as u64;
-                        #[allow(clippy::cast_possible_truncation)]
-                        let high64 = (v >> 64) as u64;
-                        builder
-                            .function_mut()
-                            .intern_int_const_limbs(&[low64, high64, 0, 0, 0, 0, 0, 0], value_ty)
-                    }
-                    _ => builder.function_mut().intern_int_const(v, value_ty),
-                };
-                strider_ir::node::NodeKind::IntConst(id)
+                intern_fn_int_const(builder, value_ty, v)
             }
         };
 
-        // Collect inputs in slot order: each `Consumes` edge names the
-        // producer output vertex feeding this node's slot; read its
-        // already-materialised IR output.
-        //
-        // The raw `TemplateBuilder` verbs do not enforce contiguous,
-        // single-occupancy slots; a gap (slots 0 and 2 but not 1) would be
-        // silently CLOSED by `into_values()` and a duplicate slot would
-        // silently overwrite the earlier edge — both producing wrong IR with
-        // no diagnostic on the validate-skipping rewrite path. Reject both
-        // here (the typed builders always wire `0..n` once, so they never
-        // trip this).
-        let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
-        for (slot, producer_out_vtx) in template.graph.consumed_inputs(vtx) {
-            let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {
-                anyhow!("producer output not materialised before consumer — topo order bug")
-            })?;
-            if inputs_by_slot.insert(slot, producer_value).is_some() {
-                return Err(anyhow!(
-                    "template node wires two producers into input slot {slot} \
-                     (raw-builder mis-wire)"
-                ));
-            }
-        }
-        // Reject a gap: the keys must be exactly the contiguous range
-        // `0..len`, else the dense `into_values()` would shift later slots
-        // down onto the wrong IR input index.
-        if inputs_by_slot
-            .keys()
-            .enumerate()
-            .any(|(i, &slot)| i != slot)
-        {
-            let slots: Vec<usize> = inputs_by_slot.keys().copied().collect();
-            return Err(anyhow!(
-                "template node has non-contiguous input slots {slots:?} \
-                 (expected 0..{}) — raw-builder mis-wire",
-                inputs_by_slot.len()
-            ));
-        }
-        let inputs: Vec<ValueId> = inputs_by_slot.into_values().collect();
+        let inputs = collect_inputs(template, vtx, &materialised)?;
 
         // Declare the node's output signature from its template output
         // vertices. The common path is a single value output; a
@@ -316,6 +255,74 @@ fn resolve_ty(ty: TemplateTy, root_ty: ValueType) -> ValueType {
         TemplateTy::Fixed(t) => t,
         TemplateTy::InheritRoot => root_ty,
     }
+}
+
+/// Intern a dynamic-`FnIntConst` value `v` as an `IntConst` of `value_ty`.
+///
+/// For ≤128-bit types (I1..I128 and I80) `intern_int_const` masks to width
+/// and stores as Bits. For I256/I512 the little-endian limb array is built
+/// and interned via `intern_int_const_limbs`.
+fn intern_fn_int_const<B: IRBuilder>(builder: &mut B, value_ty: ValueType, v: u128) -> NodeKind {
+    #[allow(clippy::cast_possible_truncation)]
+    let low64 = v as u64;
+    #[allow(clippy::cast_possible_truncation)]
+    let high64 = (v >> 64) as u64;
+    let id = match value_ty {
+        ValueType::I256 => builder
+            .function_mut()
+            .intern_int_const_limbs(&[low64, high64, 0, 0], value_ty),
+        ValueType::I512 => builder
+            .function_mut()
+            .intern_int_const_limbs(&[low64, high64, 0, 0, 0, 0, 0, 0], value_ty),
+        _ => builder.function_mut().intern_int_const(v, value_ty),
+    };
+    NodeKind::IntConst(id)
+}
+
+/// Collect a template node's inputs in slot order: each `Consumes` edge names
+/// the producer output vertex feeding this node's slot; its already-materialised
+/// IR output is read from `materialised`.
+///
+/// The raw `TemplateBuilder` verbs do not enforce contiguous,
+/// single-occupancy slots; a gap (slots 0 and 2 but not 1) would be
+/// silently CLOSED by `into_values()` and a duplicate slot would
+/// silently overwrite the earlier edge — both producing wrong IR with
+/// no diagnostic on the validate-skipping rewrite path. Reject both
+/// here (the typed builders always wire `0..n` once, so they never
+/// trip this).
+fn collect_inputs(
+    template: &Template,
+    node_vtx: NodeId,
+    materialised: &FxHashMap<TmplValueId, ValueId>,
+) -> anyhow::Result<Vec<ValueId>> {
+    let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
+    for (slot, producer_out_vtx) in template.graph.consumed_inputs(node_vtx) {
+        let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {
+            anyhow!("producer output not materialised before consumer — topo order bug")
+        })?;
+        if inputs_by_slot.insert(slot, producer_value).is_some() {
+            return Err(anyhow!(
+                "template node wires two producers into input slot {slot} \
+                 (raw-builder mis-wire)"
+            ));
+        }
+    }
+    // Reject a gap: the keys must be exactly the contiguous range
+    // `0..len`, else the dense `into_values()` would shift later slots
+    // down onto the wrong IR input index.
+    if inputs_by_slot
+        .keys()
+        .enumerate()
+        .any(|(i, &slot)| i != slot)
+    {
+        let slots: Vec<usize> = inputs_by_slot.keys().copied().collect();
+        return Err(anyhow!(
+            "template node has non-contiguous input slots {slots:?} \
+             (expected 0..{}) — raw-builder mis-wire",
+            inputs_by_slot.len()
+        ));
+    }
+    Ok(inputs_by_slot.into_values().collect())
 }
 
 /// The resolved value-output type a template node declares: the

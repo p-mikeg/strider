@@ -140,6 +140,22 @@ impl<'m> SpAliasCfg<'m> {
         SpDecomposer::new(function, self.sp_memo).decompose(value)
     }
 
+    /// Class + byte size of a `Load`'s address, both derived from the node
+    /// itself (O(1) cached reads; the SP decompose is a memo hit when the
+    /// address was already classified).  The shared load-side derivation for
+    /// [`verdict`](Self::verdict) and [`nearest_clobber`](Self::nearest_clobber).
+    fn load_class_and_size(&mut self, function: &Function, load: NodeId) -> (AddrClass, i64) {
+        let class = self.classify_addr(function, function.load_addr(load));
+        let [out] = function
+            .node_outputs_exact::<1>(load)
+            .expect("Load has 1 output per node signature");
+        let size = function
+            .value_type_opt(out)
+            .expect("Load output is a value")
+            .byte_size() as i64;
+        (class, size)
+    }
+
     /// Exact pairwise alias verdict between a `Load` and a `Store`, deriving
     /// each side's address class + byte size from the node itself (O(1) cached
     /// reads / decompose-memo hits) under this config's alias mode and
@@ -151,14 +167,7 @@ impl<'m> SpAliasCfg<'m> {
         load_node: NodeId,
         store_node: NodeId,
     ) -> AliasVerdict {
-        let load_class = self.classify_addr(function, function.load_addr(load_node));
-        let [load_out] = function
-            .node_outputs_exact::<1>(load_node)
-            .expect("Load has 1 output per node signature");
-        let load_size = function
-            .value_type_opt(load_out)
-            .expect("Load output is a value")
-            .byte_size() as i64;
+        let (load_class, load_size) = self.load_class_and_size(function, load_node);
         let store_class = self.classify_addr(function, function.store_addr(store_node));
         let store_size = store_value_byte_size(function.graph(), function.store_data(store_node));
         alias_verdict(
@@ -184,20 +193,12 @@ impl<'m> SpAliasCfg<'m> {
         load: NodeId,
         mem: ValueId,
     ) -> NodeId {
-        // The load's own space scopes which stores can clobber it.  Production
-        // callers only ever pass a `Load`; RAM is a safe default.
-        let load_space = match function.node_kind(load) {
-            NodeKind::Load(s) => *s,
-            _ => rsleigh::VnSpace::RAM,
+        // The load's own space scopes which stores can clobber it.  Every caller
+        // passes a `Load` (the class/size derivation below already assumes it).
+        let NodeKind::Load(load_space) = *function.node_kind(load) else {
+            unreachable!("nearest_clobber is only called on Load nodes");
         };
-        let load_class = classify_addr(function, function.load_addr(load), self.sp_memo);
-        let [out] = function
-            .node_outputs_exact::<1>(load)
-            .expect("Load has 1 output per node signature");
-        let load_size = function
-            .value_type_opt(out)
-            .expect("Load output is a value")
-            .byte_size() as i64;
+        let (load_class, load_size) = self.load_class_and_size(function, load);
         let mem_node = function.producer(mem);
         let mut oracle = self.oracle(load_class, load_size, load_space);
         oracle.find_nearest_clobber(function, mem_node)

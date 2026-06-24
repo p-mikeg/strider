@@ -333,7 +333,8 @@ pub(crate) fn dot_node_count(dot: &str) -> usize {
     dot.matches("[label=").count()
 }
 
-/// Wraps a [`GraphDotDumper`] and produces DOT / SVG / HTML output.
+/// Wraps a [`GraphDotDumper`] and produces DOT / HTML output (the HTML
+/// renders to SVG client-side via viz.js).
 pub struct GraphDot<G: GraphDotDumper> {
     dumper: G,
     style: DotStyle,

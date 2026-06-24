@@ -183,55 +183,59 @@ pub fn apply_elf_relocations(
     // (BTreeMap last-insert-wins), matching `MemRegionsLookupTable`'s rule.
     let region_index = build_region_index(regions);
 
+    for_each_reloc_site(obj, |site_addr, reloc| {
+        apply_one_relocation(obj, regions, &region_index, site_addr, reloc, &mut stats);
+        Ok(())
+    })?;
+
+    Ok(stats)
+}
+
+/// Iterates every relocation site in `obj`, invoking `f(site_addr, reloc)`
+/// for each, where `site_addr` is the *absolute* virtual address of the
+/// site in the same coordinate system the loaded regions live in.
+///
+/// Owns the ET_REL-vs-dynamic kind dispatch and the site-address
+/// derivation so the patching ([`apply_elf_relocations`]) and autoload
+/// staging ([`apply_elf_relocations_with_extender`]) paths can't drift
+/// apart on the address contract:
+///
+/// * ET_REL (`Relocatable`): relocations live on per-section tables.
+///   Each section's `relocations()` iterator yields `(r_offset,
+///   Relocation)` pairs where `r_offset` is relative to the section the
+///   relocations apply *to* (the "info" section pointed at by `sh_info`
+///   on the SHT_REL/RELA table).  In practice for ET_REL `sh_addr == 0`,
+///   so the absolute site address equals `r_offset` for non-overlapping
+///   VMAs; but to stay correct for any future ET_REL shape that does set
+///   `sh_addr`, we add `sec.address()` explicitly.
+/// * ET_EXEC / ET_DYN / Core / Unknown: use the dynamic table.
+///   `dynamic_relocations()` returns `None` for ET_REL and any
+///   ET_EXEC/ET_DYN binary that doesn't ship a dynamic table
+///   (statically-linked, fully-resolved ELF); both short-circuit to
+///   iterating nothing.
+fn for_each_reloc_site<F>(obj: &object::File<'_>, mut f: F) -> Result<()>
+where
+    F: FnMut(u64, &object::Relocation) -> Result<()>,
+{
     match obj.kind() {
-        // ET_REL: relocations live on per-section tables.  Each
-        // section's `relocations()` iterator yields `(r_offset,
-        // Relocation)` pairs where `r_offset` is relative to the
-        // section the relocations apply *to* (the "info" section
-        // pointed at by `sh_info` on the SHT_REL/RELA table).  In
-        // practice for ET_REL `sh_addr == 0`, so the absolute site
-        // address equals `r_offset` for non-overlapping VMAs; but to
-        // stay correct for any future ET_REL shape that does set
-        // `sh_addr`, we add `sec.address()` explicitly.
         object::ObjectKind::Relocatable => {
             for sec in obj.sections() {
                 let sec_base = sec.address();
                 for (offset, reloc) in sec.relocations() {
-                    let site_addr = sec_base.wrapping_add(offset);
-                    apply_one_relocation(
-                        obj,
-                        regions,
-                        &region_index,
-                        site_addr,
-                        &reloc,
-                        &mut stats,
-                    );
+                    f(sec_base.wrapping_add(offset), &reloc)?;
                 }
             }
         }
-        // ET_EXEC / ET_DYN / Core / Unknown: use the dynamic table.
-        // `dynamic_relocations()` returns `None` for ET_REL and any
-        // ET_EXEC/ET_DYN binary that doesn't ship a dynamic table
-        // (statically-linked, fully-resolved ELF); both are handled
-        // by the `Option::None` arm returning the empty stats.
         _ => {
             let Some(dyn_relocs) = obj.dynamic_relocations() else {
-                return Ok(stats);
+                return Ok(());
             };
             for (site_addr, reloc) in dyn_relocs {
-                apply_one_relocation(
-                    obj,
-                    regions,
-                    &region_index,
-                    site_addr,
-                    &reloc,
-                    &mut stats,
-                );
+                f(site_addr, &reloc)?;
             }
         }
     }
-
-    Ok(stats)
+    Ok(())
 }
 
 /// Applies one relocation entry to `regions`, updating `stats` to
@@ -521,11 +525,7 @@ where
     // `.any(contains)` predicate, including the overlap case.
     let mut coverage = CoverageIndex::from_regions(regions.iter());
     let mut staged: Vec<MemRegion> = Vec::new();
-    let consider = |site_addr: u64,
-                    coverage: &mut CoverageIndex,
-                    staged: &mut Vec<MemRegion>,
-                    extender: &mut F|
-     -> Result<()> {
+    for_each_reloc_site(obj, |site_addr, _reloc| {
         if coverage.covers(site_addr) {
             return Ok(());
         }
@@ -534,35 +534,7 @@ where
             staged.push(region);
         }
         Ok(())
-    };
-    match obj.kind() {
-        // ET_REL: per-section relocation iteration mirrors
-        // `apply_elf_relocations`'s ET_REL arm.
-        object::ObjectKind::Relocatable => {
-            for sec in obj.sections() {
-                let sec_base = sec.address();
-                for (offset, _reloc) in sec.relocations() {
-                    consider(
-                        sec_base.wrapping_add(offset),
-                        &mut coverage,
-                        &mut staged,
-                        &mut extender,
-                    )?;
-                }
-            }
-        }
-        // ET_EXEC / ET_DYN / Core / Unknown: dynamic table only.  An
-        // empty `dynamic_relocations()` short-circuits with no
-        // staging, mirroring the original behaviour.
-        _ => {
-            let Some(dyn_relocs) = obj.dynamic_relocations() else {
-                return Ok(RelocationStats::default());
-            };
-            for (site_addr, _reloc) in dyn_relocs {
-                consider(site_addr, &mut coverage, &mut staged, &mut extender)?;
-            }
-        }
-    }
+    })?;
     let base_len = regions.len();
     regions.extend(staged);
 
@@ -990,14 +962,11 @@ fn find_covering_region(
     site_addr: u64,
     size_bytes: usize,
 ) -> Option<usize> {
-    let end = site_addr.checked_add(size_bytes as u64)?;
-    for (_, &i) in region_index.range(..=site_addr).rev() {
-        let r = &regions[i];
-        if r.contains(site_addr) && end <= r.end_addr() {
-            return Some(i);
-        }
-    }
-    None
+    region_index
+        .range(..=site_addr)
+        .rev()
+        .map(|(_, &i)| i)
+        .find(|&i| regions[i].fully_covers(site_addr, size_bytes))
 }
 
 /// Returns `true` when `site_addr`'s *first byte* falls inside some

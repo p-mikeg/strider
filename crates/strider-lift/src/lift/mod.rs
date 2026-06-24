@@ -16,7 +16,7 @@ mod function_lifter;
 mod integer;
 mod memory;
 mod misc;
-pub mod pcode_util;
+pub(crate) mod pcode_util;
 mod vn_io;
 
 #[cfg(test)]
@@ -307,25 +307,22 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                         .max()
                 });
             // Per-terminator funnel: same asm-fingerprint attribution
-            // pattern as `process_insn`.
-            self.builder.set_lift_addr(term_addr);
-            let term_res = (|| -> Result<()> {
+            // pattern as `process_insn` (see `with_lift_addr`).
+            self.with_lift_addr(term_addr, |s| {
                 match special_terminator {
                     Some(SpecialTerm::UnresolvedIndirect { target_vn, addr }) => {
-                        self.handle_unresolved_indirect_branch(&target_vn, addr)?;
+                        s.handle_unresolved_indirect_branch(&target_vn, addr)?;
                     }
                     Some(SpecialTerm::Switch(target_vn, targets)) => {
-                        self.handle_switch(cfg_rid, &target_vn, &targets, region_map)?;
+                        s.handle_switch(cfg_rid, &target_vn, &targets, region_map)?;
                     }
                     Some(SpecialTerm::TailCall(target)) => {
-                        self.handle_tail_call(target)?;
+                        s.handle_tail_call(target)?;
                     }
                     None => {}
                 }
                 Ok(())
-            })();
-            self.builder.set_lift_addr(None);
-            term_res?;
+            })?;
         }
         Ok(())
     }

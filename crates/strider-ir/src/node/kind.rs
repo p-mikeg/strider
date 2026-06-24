@@ -143,7 +143,7 @@ pub enum NodeKind {
     /// A compile-time IEEE 754 floating-point constant.  The value is stored
     /// as its raw bit pattern in a `u64` (upper 32 bits are zero for `F32`).
     FloatConst(u64),
-    /// Floating-point binary operation (add, sub, mul, div).
+    /// Floating-point binary operation (add, mul, div).
     FloatBinaryOp(crate::node::FloatBinaryOp),
     /// Floating-point unary operation (neg, abs, sqrt, ceil, floor, round).
     FloatUnaryOp(crate::node::FloatUnaryOp),

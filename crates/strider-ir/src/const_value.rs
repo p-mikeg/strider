@@ -59,14 +59,10 @@ impl ConstValue {
                 out[..n].copy_from_slice(&b[..n]);
             }
             Self::Wide(limbs) => {
-                for (i, byte) in limbs
-                    .iter()
-                    .flat_map(|limb| limb.to_le_bytes())
-                    .take(byte_size)
-                    .enumerate()
-                {
-                    out[i] = byte;
-                }
+                let bytes: Vec<u8> =
+                    limbs.iter().flat_map(|limb| limb.to_le_bytes()).collect();
+                let n = byte_size.min(bytes.len());
+                out[..n].copy_from_slice(&bytes[..n]);
             }
         }
         out

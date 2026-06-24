@@ -1612,13 +1612,39 @@ pub fn predicate(f: PyObject) -> PyPat {
 }
 
 // ── Op-name parsing helpers ──────────────────────────────────────────────
+//
+// The canonical (`"Add"`, `"Sless"`, …) spelling each parser accepts is the
+// `Debug` output of the op variant — the same string `crate::matcher::op_name`
+// emits — so the `find_all → recover op → reconstruct pattern` round-trip
+// stays in lockstep with a single source of truth.  Rather than re-typing
+// every variant name as a string literal (which would silently desync when a
+// new variant is added to one of these enums in `strider-ir`), each parser
+// derives its canonical names from an exhaustive `match` over the variant
+// list: adding a variant forces a new `match` arm, so the table can't go
+// stale without a compile error.  The short lowercase aliases (`eq`, `shl`,
+// …) are py-only sugar and stay listed explicitly.
 
-fn lookup_op<Op: Copy>(table: &[(&str, Op)], name: &str, op_kind: &str) -> PyResult<Op> {
-    if let Some(&(_, op)) = table.iter().find(|(n, _)| *n == name) {
+/// Resolve `name` against `variants` (exact, then case-insensitive on the
+/// canonical name) and the explicit `aliases`, or error.  `variants` is an
+/// exhaustively-`match`ed slice so a newly added enum variant fails to
+/// compile until it is listed here.
+fn lookup_op<Op: Copy>(
+    variants: &[Op],
+    canonical: impl Fn(Op) -> &'static str,
+    aliases: &[(&str, Op)],
+    name: &str,
+    op_kind: &str,
+) -> PyResult<Op> {
+    if let Some(&op) = variants.iter().find(|&&op| canonical(op) == name) {
         return Ok(op);
     }
-    let lowered = name.to_ascii_lowercase();
-    if let Some(&(_, op)) = table.iter().find(|(n, _)| n.eq_ignore_ascii_case(&lowered)) {
+    if let Some(&(_, op)) = aliases.iter().find(|(n, _)| *n == name) {
+        return Ok(op);
+    }
+    if let Some(&op) = variants.iter().find(|&&op| canonical(op).eq_ignore_ascii_case(name)) {
+        return Ok(op);
+    }
+    if let Some(&(_, op)) = aliases.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
         return Ok(op);
     }
     Err(into_strider_err(anyhow::anyhow!(
@@ -1627,54 +1653,85 @@ fn lookup_op<Op: Copy>(table: &[(&str, Op)], name: &str, op_kind: &str) -> PyRes
 }
 
 fn parse_int_cmp_op(name: &str) -> PyResult<strider_ir::IntCmpOp> {
-    use strider_ir::IntCmpOp::*;
-    static TABLE: &[(&str, strider_ir::IntCmpOp)] = &[
-        ("Equal", Equal),
-        ("Less", Less),
-        ("Sless", Sless),
-        ("Carry", Carry),
-        ("Scarry", Scarry),
-        ("Sborrow", Sborrow),
-        ("eq", Equal),
-        ("lt", Less),
-        ("slt", Sless),
-    ];
-    lookup_op(TABLE, name, "IntCmpOp")
+    use strider_ir::IntCmpOp::{self, *};
+    static VARIANTS: &[IntCmpOp] = &[Equal, Less, Sless, Carry, Scarry, Sborrow];
+    // Exhaustive: a new `IntCmpOp` variant fails to compile here until both
+    // the arm below and the `VARIANTS` list above are extended.
+    fn canonical(op: IntCmpOp) -> &'static str {
+        use strider_ir::IntCmpOp::*;
+        match op {
+            Equal => "Equal",
+            Less => "Less",
+            Sless => "Sless",
+            Carry => "Carry",
+            Scarry => "Scarry",
+            Sborrow => "Sborrow",
+        }
+    }
+    static ALIASES: &[(&str, IntCmpOp)] = &[("eq", Equal), ("lt", Less), ("slt", Sless)];
+    lookup_op(VARIANTS, canonical, ALIASES, name, "IntCmpOp")
 }
 
 fn parse_int_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
-    use strider_ir::IntBinaryOp::*;
-    static TABLE: &[(&str, strider_ir::IntBinaryOp)] = &[
-        ("Add", Add),
-        ("Mul", Mul),
-        ("Div", Div),
-        ("Sdiv", Sdiv),
-        ("Rem", Rem),
-        ("Srem", Srem),
-        ("And", And),
-        ("Or", Or),
-        ("Xor", Xor),
-        ("ShiftLeft", ShiftLeft),
-        ("ShiftRight", ShiftRight),
-        ("SShiftRight", SShiftRight),
-        ("shl", ShiftLeft),
-        ("shr", ShiftRight),
-        ("sshr", SShiftRight),
+    use strider_ir::IntBinaryOp::{self, *};
+    static VARIANTS: &[IntBinaryOp] = &[
+        Add, And, Or, Xor, Div, Sdiv, Rem, Srem, ShiftRight, SShiftRight, ShiftLeft, Mul,
     ];
-    lookup_op(TABLE, name, "IntBinaryOp")
+    // Exhaustive: a new `IntBinaryOp` variant fails to compile here.
+    fn canonical(op: IntBinaryOp) -> &'static str {
+        use strider_ir::IntBinaryOp::*;
+        match op {
+            Add => "Add",
+            And => "And",
+            Or => "Or",
+            Xor => "Xor",
+            Div => "Div",
+            Sdiv => "Sdiv",
+            Rem => "Rem",
+            Srem => "Srem",
+            ShiftRight => "ShiftRight",
+            SShiftRight => "SShiftRight",
+            ShiftLeft => "ShiftLeft",
+            Mul => "Mul",
+        }
+    }
+    static ALIASES: &[(&str, IntBinaryOp)] =
+        &[("shl", ShiftLeft), ("shr", ShiftRight), ("sshr", SShiftRight)];
+    lookup_op(VARIANTS, canonical, ALIASES, name, "IntBinaryOp")
 }
 
 fn parse_bool_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
-    use strider_ir::IntBinaryOp::*;
-    static TABLE: &[(&str, strider_ir::IntBinaryOp)] = &[("And", And), ("Or", Or), ("Xor", Xor)];
-    lookup_op(TABLE, name, "boolean binary op")
+    use strider_ir::IntBinaryOp::{And, Or, Xor};
+    static VARIANTS: &[strider_ir::IntBinaryOp] = &[And, Or, Xor];
+    fn canonical(op: strider_ir::IntBinaryOp) -> &'static str {
+        use strider_ir::IntBinaryOp::{And, Or, Xor};
+        // Bool ops are a curated subset of IntBinaryOp; the full canonical
+        // SSoT lives in `parse_int_binary_op`.  Unreachable for the others.
+        match op {
+            And => "And",
+            Or => "Or",
+            Xor => "Xor",
+            other => unreachable!("non-boolean IntBinaryOp in bool table: {other:?}"),
+        }
+    }
+    static ALIASES: &[(&str, strider_ir::IntBinaryOp)] = &[];
+    lookup_op(VARIANTS, canonical, ALIASES, name, "boolean binary op")
 }
 
 fn parse_float_binary_op(name: &str) -> PyResult<strider_ir::FloatBinaryOp> {
-    use strider_ir::FloatBinaryOp::*;
-    static TABLE: &[(&str, strider_ir::FloatBinaryOp)] =
-        &[("Add", Add), ("Mul", Mul), ("Div", Div)];
-    lookup_op(TABLE, name, "FloatBinaryOp")
+    use strider_ir::FloatBinaryOp::{self, *};
+    static VARIANTS: &[FloatBinaryOp] = &[Add, Mul, Div];
+    // Exhaustive: a new `FloatBinaryOp` variant fails to compile here.
+    fn canonical(op: FloatBinaryOp) -> &'static str {
+        use strider_ir::FloatBinaryOp::*;
+        match op {
+            Add => "Add",
+            Mul => "Mul",
+            Div => "Div",
+        }
+    }
+    static ALIASES: &[(&str, FloatBinaryOp)] = &[];
+    lookup_op(VARIANTS, canonical, ALIASES, name, "FloatBinaryOp")
 }
 
 // ── Integer binary ops ───────────────────────────────────────────────────
@@ -2359,7 +2416,7 @@ macro_rules! node_builder {
     };
 
     // ── per-flavor: the nestable-compile + build_pattern_py methods ─────
-    (@flavor value $core:path) => {
+    (@flavor value $py_name:literal $core:path) => {
         /// Compile as a value operand (`MatchPat`), honouring `.when()`.
         fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
             let b = self.core_builder(py)?;
@@ -2374,7 +2431,7 @@ macro_rules! node_builder {
             Ok(self.compile_value(py)?.into_pattern())
         }
     };
-    (@flavor mem $core:path) => {
+    (@flavor mem $py_name:literal $core:path) => {
         /// Compile as a memory-token producer for a `mem_in` slot.
         fn compile_mem(&self, py: Python<'_>) -> PyResult<DynMem> {
             let b = self.core_builder(py)?;
@@ -2386,7 +2443,7 @@ macro_rules! node_builder {
             Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
         }
     };
-    (@flavor node $core:path) => {
+    (@flavor node $py_name:literal $core:path) => {
         fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
             let pat = self.core_builder(py)?.build();
             Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
@@ -2394,14 +2451,15 @@ macro_rules! node_builder {
     };
     // `value_err` — node-rooted build, but exposes a `compile_value` that
     // rejects value nesting (the core `*Pat` only offers `.build()`).
-    (@flavor value_err $core:path) => {
+    (@flavor value_err $py_name:literal $core:path) => {
         /// Value nesting isn't supported for this builder (the core `*Pat`
         /// only offers a node-rooted `.build()`).
         fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
             let _ = py;
-            Err(into_strider_err(anyhow::anyhow!(
-                "phi() cannot be nested as a value operand"
-            )))
+            Err(into_strider_err(anyhow::anyhow!(concat!(
+                $py_name,
+                " cannot be nested as a value operand"
+            ))))
         }
 
         fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
@@ -2450,7 +2508,7 @@ macro_rules! node_builder {
                 Ok(b)
             }
 
-            node_builder!(@flavor $root $core);
+            node_builder!(@flavor $root $py_name $core);
         }
 
         node_builder!(@setters $ty [] $($field)*);
