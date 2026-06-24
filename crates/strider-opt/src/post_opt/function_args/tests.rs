@@ -1384,7 +1384,7 @@ fn callother_on_chain_gated_only_by_calls_clobber() -> Result<()> {
     let mut octx_conservative = crate::OptCtx::new(None);
     octx_conservative
         .options
-        .mem_alias
+        .arg_alias
         .calls_clobber = true;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
@@ -1463,7 +1463,7 @@ fn calls_clobber_toggle_gates_arg_across_call() -> Result<()> {
     let mut octx_conservative = crate::OptCtx::new(None);
     octx_conservative
         .options
-        .mem_alias
+        .arg_alias
         .calls_clobber = true;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(

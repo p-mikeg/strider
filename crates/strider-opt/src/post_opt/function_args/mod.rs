@@ -95,7 +95,7 @@ impl PostOptimizer for FunctionArgDetect {
             stack_args,
             first_stack_arg,
             opt_ctx.options.alias_mode,
-            opt_ctx.options.mem_alias,
+            opt_ctx.options.arg_alias,
             &mut opt_ctx.sp_memo,
         )?;
         // Arg detection only populates the arg_index_to_values side-table,

@@ -287,7 +287,7 @@ impl PyStriderRun {
         );
         let opt_opts = strider_orchestrator::opt::OptOptions {
             alias_mode,
-            mem_alias: strider_orchestrator::opt::MemAliasOptions {
+            arg_alias: strider_orchestrator::opt::MemAliasOptions {
                 calls_clobber,
                 assume_distinct_sp_bases_disjoint,
             },

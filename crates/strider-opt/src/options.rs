@@ -55,7 +55,7 @@ pub enum AliasMode {
 /// named struct to set rather than scattered loose fields.  `alias_mode` is
 /// shared by every SP-aware pass; the relaxation knobs that currently apply
 /// only to incoming function-argument detection are grouped under
-/// [`mem_alias`](Self::mem_alias).
+/// [`arg_alias`](Self::arg_alias).
 ///
 /// (Post-run arena compaction is not an optimiser knob — it lives on
 /// `strider_lift::LiftOptions::compact`, consumed by the analyze/run
@@ -67,18 +67,20 @@ pub struct OptOptions {
     /// [`crate::CallStackArgCollect`]).  Default is
     /// [`AliasMode::StackGlobalDisjoint`] (`AliasMode`'s own `Default`).
     pub alias_mode: AliasMode,
-    /// Memory-aliasing relaxation knobs.  Conceptually general (they describe
-    /// how aggressively the SP memory-walk may assume non-aliasing), but for
-    /// now only [`crate::FunctionArgDetect`] applies them — incoming arguments
-    /// are, by ABI, written before the function body and are not normally
-    /// clobbered by later calls or other-SP-base stores.  Conservative
-    /// (`false` / `false`) by default.
-    pub mem_alias: MemAliasOptions,
+    /// Memory-aliasing relaxation knobs for incoming function-argument
+    /// detection.  Only [`crate::FunctionArgDetect`] reads them — incoming
+    /// arguments are, by ABI, written before the function body and are not
+    /// normally clobbered by later calls or other-SP-base stores, so these
+    /// knobs let the arg-detect SP-walk assume that.  The type is
+    /// [`MemAliasOptions`] (also used internally by the call-blocking SP
+    /// walkers), but as an `OptOptions` knob it is arg-detect-only.
+    /// Conservative (`false` / `false`) by default.
+    pub arg_alias: MemAliasOptions,
 }
 
 /// Memory-aliasing relaxation knobs for the SP memory-walk.  Conservative by
 /// default; currently fed only into incoming-argument detection (see
-/// [`OptOptions::mem_alias`]).
+/// [`OptOptions::arg_alias`]).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MemAliasOptions {
     /// Whether a `Call` / `CallOther` on the probed location's memory chain
