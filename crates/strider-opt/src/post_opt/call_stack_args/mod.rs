@@ -11,7 +11,7 @@ use strider_ir::IRWalker;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, PostOptimizer};
+use crate::pipeline::PostOptimizer;
 use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 
 #[cfg(test)]
@@ -98,25 +98,6 @@ fn collect_stack_args(
     args
 }
 
-/// Collects stack-passed arguments for one Call node and appends the
-/// discovered data values as additional Call inputs (in positional order).
-fn try_collect_stack_args(
-    ctx: &mut crate::EditFunction<'_>,
-    call_id: NodeId,
-    stack_args: strider_target::StackArgs,
-    sp_memo: &mut SpExprMemo,
-    alias_mode: crate::AliasMode,
-) -> Result<OptimizationResult> {
-    let args = collect_stack_args(ctx.function(), call_id, stack_args, sp_memo, alias_mode);
-    if args.is_empty() {
-        return Ok(OptimizationResult::NoChange);
-    }
-    for data in &args {
-        ctx.add_node_input(call_id, *data)?;
-    }
-    Ok(OptimizationResult::Changed)
-}
-
 /// Walks backward from each `Call`'s memory input (via the shared memory-SSA
 /// walker) to reconstruct stack-passed arguments and appends them as extra
 /// `Call` inputs in positional order.  Intended to run *once*, as an
@@ -155,11 +136,14 @@ impl PostOptimizer for CallStackArgCollect {
             let Some(stack_args) = override_stack_args.or(default_stack_args) else {
                 continue;
             };
-            // The per-call collector reports whether it appended inputs; as a
-            // single-shot post-pass we don't feed that back into a loop, so the
-            // result is discarded.
-            let _ =
-                try_collect_stack_args(ctx, call_id, stack_args, &mut opt_ctx.sp_memo, alias_mode)?;
+            // Append each discovered stack-arg value as an extra Call input
+            // (positional order); the loop is a no-op when the call passes none.
+            // Single-shot post-pass, so we don't track a changed/unchanged result.
+            let args =
+                collect_stack_args(ctx.function(), call_id, stack_args, &mut opt_ctx.sp_memo, alias_mode);
+            for data in &args {
+                ctx.add_node_input(call_id, *data)?;
+            }
         }
         Ok(())
     }

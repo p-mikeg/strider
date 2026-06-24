@@ -82,7 +82,7 @@ pub(super) fn classify_addr(
 /// `SpRooted`/`SpRooted` and `Constant`/`Constant` arms of
 /// [`alias_verdict`] (the `Anchor`/`Anchor` arm uses `ValueId` equality
 /// and has no offset/range shape).
-fn cmp_same_class_offsets(
+fn offset_range_verdict(
     load_off: i64,
     load_size: i64,
     store_off: i64,
@@ -128,7 +128,7 @@ pub(crate) fn alias_verdict(
             },
         ) => {
             if lb == sb {
-                cmp_same_class_offsets(lo, load_size, so, store_size)
+                offset_range_verdict(lo, load_size, so, store_size)
             } else if distinct_sp_bases_disjoint {
                 AliasVerdict::Disjoint
             } else {
@@ -136,7 +136,7 @@ pub(crate) fn alias_verdict(
             }
         }
         (Constant { addr: lo }, Constant { addr: so }) => {
-            cmp_same_class_offsets(lo, load_size, so, store_size)
+            offset_range_verdict(lo, load_size, so, store_size)
         }
         (Anchor { value: lout }, Anchor { value: sout }) => {
             if lout == sout {
