@@ -20,7 +20,7 @@
 //! handlers live in [`super::cast`] (they manipulate bit positions
 //! rather than computing arithmetic).
 
-use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp, VnTypeExt};
+use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType, VnTypeExt};
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
@@ -134,7 +134,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// all-ones value.  For I256/I512 `build_int_const_limbs` fills every
     /// limb with `u64::MAX`.
     fn build_all_ones(&mut self, ty: strider_ir::ValueType) -> Result<strider_ir::Value> {
-        use strider_ir::ValueType;
         if ty.byte_size() <= 16 {
             // I1..I128 (including I80): build_int_const masks u128::MAX to the width.
             self.builder.build_int_const(u128::MAX, ty)

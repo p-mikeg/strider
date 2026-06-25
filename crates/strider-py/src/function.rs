@@ -7,9 +7,10 @@
 //! reachable through `strider_cfg::Cfg::sleigh`.
 
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, TryLockError};
 
 use pyo3::prelude::*;
+use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
 
 use crate::cfg::PyCfg;
@@ -97,7 +98,6 @@ impl PyFunction {
     pub(crate) fn try_write_inner(
         &self,
     ) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
-        use std::sync::TryLockError;
         self.inner.try_write().map_err(|e| match e {
             TryLockError::Poisoned(_) => anyhow::anyhow!("Function lock poisoned"),
             TryLockError::WouldBlock => anyhow::anyhow!(
@@ -298,7 +298,6 @@ impl PyFunction {
     /// so it satisfies the "use entity-set bookkeeping" memory
     /// directive by routing through the canonical IR traversal helper.
     fn count_regions(&self) -> PyResult<usize> {
-        use strider_ir::node::NodeKind;
         self.with_read_value(|function| {
             function
                 .walk_kind(|k| matches!(k, NodeKind::Region))

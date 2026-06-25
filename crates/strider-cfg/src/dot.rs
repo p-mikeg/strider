@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use dot::GraphDotDumper;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -43,8 +45,6 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         out: &mut dot::DotEmitter,
         _state: &mut Self::State,
     ) -> Result<()> {
-        use std::fmt::Write;
-
         let dot_id = node_id.index().to_string();
         let node = self
             .cfg

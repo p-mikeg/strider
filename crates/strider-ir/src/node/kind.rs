@@ -1,5 +1,7 @@
 //! `NodeKind` — the closed enum of every operation/role a node can take.
 
+use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+
 /// Where a function argument originates in the calling convention.
 ///
 /// Used by the `strider-orchestrator` pattern builder `FunctionArgPat` to
@@ -457,7 +459,6 @@ impl NodeKind {
     /// helpers that previously lived under `pattern::matcher::commutativity`.
     #[inline]
     pub fn is_commutative(&self) -> bool {
-        use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
         match self {
             Self::IntBinaryOp(op) => matches!(
                 op,

@@ -19,8 +19,8 @@
 
 use anyhow::Context as _;
 use object::{
-    Object, ObjectSection, ObjectSymbol, ObjectSymbolTable, RelocationFlags, RelocationKind,
-    RelocationTarget,
+    Architecture as A, Object, ObjectSection, ObjectSymbol, ObjectSymbolTable, RelocationFlags,
+    RelocationKind, RelocationTarget,
 };
 
 use crate::{MemRegion, Result};
@@ -655,7 +655,6 @@ fn image_relative_reloc(
     let RelocationFlags::Elf { r_type } = reloc.flags() else {
         return None;
     };
-    use object::Architecture as A;
     let size_bytes = match arch {
         A::X86_64
             if r_type == object::elf::R_X86_64_RELATIVE
@@ -751,7 +750,6 @@ fn got_or_plt_slot_reloc_size(
     let RelocationFlags::Elf { r_type } = reloc.flags() else {
         return None;
     };
-    use object::Architecture as A;
     match arch {
         A::X86_64
             if r_type == object::elf::R_X86_64_GLOB_DAT
@@ -816,7 +814,6 @@ fn mips_rel32_symbol_reloc_size(
     let RelocationFlags::Elf { r_type } = reloc.flags() else {
         return None;
     };
-    use object::Architecture as A;
     if matches!(arch, A::Mips | A::Mips64)
         && r_type == object::elf::R_MIPS_REL32
         && matches!(reloc.target(), RelocationTarget::Symbol(_))

@@ -35,9 +35,13 @@ use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
 #[allow(unused_imports)]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use strider_ir::node::ValueType as T;
+use strider_pattern as sp;
 use strider_pattern::matcher::{MatcherBuilder, PatValueRef};
 use strider_pattern::template::{TemplateBuilder, TmplValueRef};
-use strider_pattern::{Capture, CaptureExt, MatchPat, MemPat, Pattern, Template, TemplatePat};
+use strider_pattern::{
+    Capture, CaptureExt, MatchPat, MemPat, Pattern, Template, TemplatePat, template as tpl,
+};
 
 use crate::errors::into_strider_err;
 
@@ -456,7 +460,6 @@ fn rhs_error(kind: &str) -> PyErr {
 /// Parse a `ValueType` from its (case-insensitive) name, e.g.
 /// `"i1"` / `"I64"` / `"f32"`. Used by `Pat.value_ty(...)`.
 fn parse_value_ty(name: &str) -> PyResult<strider_ir::node::ValueType> {
-    use strider_ir::node::ValueType as T;
     let ty = match name.to_ascii_lowercase().as_str() {
         "i1" => T::I1,
         "i8" => T::I8,
@@ -555,7 +558,6 @@ fn op_match(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynMatch> {
 
 #[allow(clippy::too_many_lines)]
 fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
-    use strider_pattern as sp;
     let _depth = DepthGuard::enter()?;
     Ok(match repr {
         PatRepr::Any => DynMatch(Box::new(|b| mc(sp::any(), b))),
@@ -791,7 +793,6 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
 }
 
 fn cast_match(kind: CastKind, x: DynMatch, b: &mut MatcherBuilder) -> PatValueRef {
-    use strider_pattern as sp;
     match kind {
         CastKind::Truncate => mc(sp::truncate(x), b),
         CastKind::ZeroExtend => mc(sp::zero_extend(x), b),
@@ -812,12 +813,10 @@ fn op_tpl(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynTemplate> {
 
 #[allow(clippy::too_many_lines)]
 fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate> {
-    use strider_pattern as sp;
     // Composite RHS ops build through the TemplatePat-bounded `template::`
     // twins (a `DynTemplate` operand is `TemplatePat`, not `MatchPat`, so it
     // can't feed the bare match-side factories). Leaves (`int_const`,
     // `var`, …) stay on the dual-trait bare builders.
-    use strider_pattern::template as tpl;
     let _depth = DepthGuard::enter()?;
     Ok(match repr {
         PatRepr::Var(c) => {
@@ -957,7 +956,6 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
 }
 
 fn cast_tpl(kind: CastKind, x: DynTemplate, b: &mut TemplateBuilder) -> TmplValueRef {
-    use strider_pattern::template as tpl;
     match kind {
         CastKind::Truncate => tc(tpl::truncate(x), b),
         CastKind::ZeroExtend => tc(tpl::zero_extend(x), b),

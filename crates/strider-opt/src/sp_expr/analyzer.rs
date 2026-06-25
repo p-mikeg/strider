@@ -29,6 +29,7 @@ use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp};
 
 use super::ranges::{ranges_disjoint, store_value_byte_size};
 use crate::AliasMode;
+use AddrClass::*;
 
 /// Decomposed stack-pointer expression: `base + offset`, where `base` is an
 /// SP-rooted node (`InitialVar(sp)` or an alignment-masked SP `And` output).
@@ -349,7 +350,6 @@ pub(crate) fn alias_verdict(
     mode: AliasMode,
     distinct_sp_bases_disjoint: bool,
 ) -> AliasVerdict {
-    use AddrClass::*;
     match (load_class, store_class) {
         // Diagonal: in-class equality + range-disjoint.  Two SP-rooted
         // addresses are only comparable when they share the same base node;

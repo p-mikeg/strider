@@ -19,7 +19,7 @@
 //!
 //! [`@viz-js/viz`]: https://github.com/mdaines/viz-js
 
-use std::fmt::Debug;
+use std::fmt::{Debug, Write};
 use std::path::Path;
 
 /// Crate-level `Result` alias.  Every fallible function in `dot` returns
@@ -184,7 +184,6 @@ fn json_quote(s: &str) -> String {
             // in `as_html_from_dot`'s output.
             '<' => out.push_str("\\u003c"),
             c if (c as u32) < 0x20 => {
-                use std::fmt::Write;
                 // writing to a `String` via `Write` is infallible
                 // (`String::write_str` returns `Ok(())` unconditionally),
                 // but clippy::expect_used flags the literal `.expect`.

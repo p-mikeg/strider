@@ -14,6 +14,8 @@
 //! `Match.node(key)` without duplicating the validation / generation
 //! plumbing.
 
+use std::hash::{Hash, Hasher};
+
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 
@@ -240,7 +242,6 @@ impl PyNode {
 
     /// Hash on `(function identity, id)` — consistent with `__eq__`.
     fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         (self.function.as_ptr() as usize).hash(&mut hasher);
         self.id.hash(&mut hasher);

@@ -13,6 +13,7 @@
 //! optimisation".
 
 use pyo3::prelude::*;
+use strider_orchestrator::opt::AliasMode;
 
 use crate::arch::PySleighArch;
 use crate::cc::PyCallingConvention;
@@ -79,7 +80,6 @@ pub(crate) fn reject_zero_max_size(function_max_size: Option<u64>) -> PyResult<(
 /// stack and global/constant memory never overlap; `"strict"` is the
 /// always-sound floor.  Any other value is a typed `ValueError`.
 pub(crate) fn parse_alias_mode(s: &str) -> PyResult<strider_orchestrator::opt::AliasMode> {
-    use strider_orchestrator::opt::AliasMode;
     match s {
         "stack_global_disjoint" => Ok(AliasMode::StackGlobalDisjoint),
         "strict" => Ok(AliasMode::Strict),
