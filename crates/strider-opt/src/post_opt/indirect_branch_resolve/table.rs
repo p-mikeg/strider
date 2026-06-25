@@ -53,8 +53,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::MAX_TABLE_ENTRIES;
-use crate::AliasMode;
-use crate::ReadOnlyMemory;
+use crate::{AliasMode, ReadOnlyMemory};
 use strider_cfg::ResolvedTargets;
 use strider_ir::IRViewer;
 use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId};
@@ -105,9 +104,9 @@ pub fn classify_table_dispatch(
     // a non-seeded runtime value and fails to collapse → rejected.
     let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
     for (idx_value, lo, hi) in candidates {
-        if let Some(targets) =
-            enumerate_targets(lo, hi, |v| ev.eval_target(&order, anchor_value, idx_value, v))
-        {
+        if let Some(targets) = enumerate_targets(lo, hi, |v| {
+            ev.eval_target(&order, anchor_value, idx_value, v)
+        }) {
             return Some(ResolvedTargets::Multiple(targets));
         }
     }

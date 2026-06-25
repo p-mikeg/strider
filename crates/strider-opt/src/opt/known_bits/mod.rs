@@ -1,9 +1,8 @@
 use cranelift_entity::SecondaryMap;
 use entity_utils::Worklist;
 
-use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{ExtendOp, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};

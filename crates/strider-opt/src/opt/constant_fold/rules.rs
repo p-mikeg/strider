@@ -6,12 +6,12 @@ use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 use super::eval_int::{eval_int_binary, eval_int_cmp};
 
 use crate::{BoxedRule, rewrite_rule};
-use strider_pattern::template;
 use strider_pattern::{
     Capture, CaptureExt, add, and, any_float_const, any_int_const, bool_const_with, bool_not,
     float_binary_any, float_bits_to_int, float_cmp_any, float_const_with, float_unary_any,
     int_binary_any, int_bits_to_float, int_cmp_any, int_const, int_const_with, int_unary_any,
-    lzcount, mul, or, popcount, shl, shr, sign_extend, sshr, sub, truncate, var, xor, zero_extend,
+    lzcount, mul, or, popcount, shl, shr, sign_extend, sshr, sub, template, truncate, var, xor,
+    zero_extend,
 };
 
 /// The five constant-fold rule groups, built once and owned by a

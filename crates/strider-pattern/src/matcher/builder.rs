@@ -237,10 +237,8 @@ impl MatcherBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strider_ir::{
-        ConstId, IntBinaryOp,
-        node::NodeKind,
-    };
+    use strider_ir::node::NodeKind;
+    use strider_ir::{ConstId, IntBinaryOp};
 
     #[test]
     fn binary_builder_wires_two_inputs_and_one_output() {

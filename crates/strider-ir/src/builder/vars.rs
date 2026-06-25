@@ -91,9 +91,8 @@ impl FunctionBuilder {
             // `VarId` allocation order is exactly `all_vns` order (both come
             // from `var_table` in `new`), so the var's `all_vns` index is its
             // `VarId` index — no lookup needed.
-            let vn_id = crate::node::InitialVnId::from_index(
-                cranelift_entity::EntityRef::index(var_id),
-            );
+            let vn_id =
+                crate::node::InitialVnId::from_index(cranelift_entity::EntityRef::index(var_id));
             let value = self.build_single_output_pure(NodeKind::InitialVar(vn_id), [], output_type);
             initial_variables[var_id] = value;
             // `Function::all_vns` (the ordered tracked-varnode SSoT) is

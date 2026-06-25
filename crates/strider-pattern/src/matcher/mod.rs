@@ -29,10 +29,8 @@ use std::mem::Discriminant;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
-use strider_ir::Function;
-use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::{Function, Graph, IRViewer, IRWalker};
 
 use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;

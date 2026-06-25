@@ -5,8 +5,7 @@ use crate::ConstantFold;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
 use crate::test_support::{find_unique_if, run_to_fixed_point};
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
+use strider_ir::{IRBuilderExt, IRViewer};
 
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueId, ValueType};

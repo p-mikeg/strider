@@ -77,9 +77,8 @@
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use strider_ir::Function;
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{Function, IRViewer};
 
 /// Pluggable aliasing oracle for the memory-SSA walk.
 pub(crate) trait MemorySSAWalker {
@@ -129,11 +128,7 @@ pub(crate) trait MemorySSAWalker {
 /// single incoming memory edge is invisible to every other node.  Idempotent,
 /// and monotone-safe across fixed-point iterations (`MayAlias → Disjoint`
 /// only).  A non-`Load` handle is left untouched.
-pub(crate) fn narrow_load_to(
-    ctx: &mut crate::EditFunction<'_>,
-    load: NodeId,
-    clobber: NodeId,
-) {
+pub(crate) fn narrow_load_to(ctx: &mut crate::EditFunction<'_>, load: NodeId, clobber: NodeId) {
     let rewire = {
         let function = ctx.function();
         if matches!(function.node_kind(load), NodeKind::Load(_)) {
@@ -359,7 +354,6 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
             _ => succ_results.first().copied().flatten(),
         }
     }
-
 }
 
 #[cfg(test)]

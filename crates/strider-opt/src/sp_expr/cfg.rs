@@ -4,9 +4,8 @@
 //! [`super::mem_ssa`] memory-SSA walk.  The address-class verdict logic it
 //! consults lives in the sibling [`super::analyzer`] module.
 
-use strider_ir::Function;
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{Function, IRViewer};
 
 use super::analyzer::{AddrClass, AliasVerdict, SpAnalyzer, SpExpr, SpExprMemo, alias_verdict};
 use super::mem_ssa::MemorySSAWalker;
@@ -256,7 +255,10 @@ impl<'m> SpAliasCfg<'m> {
                 _ => return None,
             },
         };
-        Some(ReachingSpStore { node: clobber, store_offset })
+        Some(ReachingSpStore {
+            node: clobber,
+            store_offset,
+        })
     }
 }
 

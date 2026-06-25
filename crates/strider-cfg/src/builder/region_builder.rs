@@ -472,9 +472,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // unresolved rather than emit a Switch region with zero edges.
                 // Also defer if any target is a tail call (out of range).
                 if targets.is_empty()
-                    || targets
-                        .iter()
-                        .any(|t| self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t)))
+                    || targets.iter().any(|t| {
+                        self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t))
+                    })
                 {
                     self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
                         target_vn,

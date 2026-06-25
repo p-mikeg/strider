@@ -1,7 +1,6 @@
 use crate::lift::pcode_util::nth_input_or_err;
 use anyhow::{Result, anyhow, bail};
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
+use strider_ir::{IRBuilderExt, IRViewer};
 
 use super::FunctionLifter;
 
@@ -311,9 +310,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use strider_ir::FunctionBuilder;
-    use strider_ir::IRWalker;
     use strider_ir::node::NodeKind;
+    use strider_ir::{FunctionBuilder, IRWalker};
     use strider_ir_test_utils::RegisterSet;
 
     /// Build a 4-byte register VN to act as the `idx` source.

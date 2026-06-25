@@ -14,9 +14,8 @@ use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
-use crate::matcher::KindSpec;
 use crate::matcher::match_pat::{MatchPat, Pre};
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef};
 use crate::template::template_pat::TemplatePat;
 use crate::template::{TemplateBuilder, TmplValueRef};
 use crate::typed::builder_like::{

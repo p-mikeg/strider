@@ -22,8 +22,7 @@ use strider_ir::node::NodeKind;
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, NodePredicate, Pattern};
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
 
 use super::{IndexedInputs, MemPat, SubCompiler};
 
@@ -62,7 +61,6 @@ pub(crate) struct NodePat {
     /// compiled sub-pattern's output before it is wired into the slot.
     input_widths: Vec<(usize, u32)>,
 }
-
 
 impl NodePat {
     /// A node-rooted builder over `kind` with no anchor output.

@@ -184,9 +184,7 @@ impl Cfg {
             machine_addr: addr,
             insn_index: u64::MAX,
         };
-        let mut range = self
-            .start_addr_to_region_id
-            .range(lower..=upper);
+        let mut range = self.start_addr_to_region_id.range(lower..=upper);
         let (_, &rid) = range.next()?;
         Some(rid)
     }
@@ -210,9 +208,8 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
-    use crate::Builder;
-    use crate::CfgOptions;
     use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
+    use crate::{Builder, CfgOptions};
 
     // ── is_addr_tail_call: non-wrapping top-of-address-space window ───────
 

@@ -14,8 +14,7 @@
 //! CFG for the `tzcount` symbol.
 
 use object::{Object, ObjectSymbol};
-use strider_cfg::Builder;
-use strider_cfg::CfgOptions;
+use strider_cfg::{Builder, CfgOptions};
 use strider_target::SleighArch;
 
 #[test]

@@ -20,9 +20,7 @@
 //! handlers live in [`super::cast`] (they manipulate bit positions
 //! rather than computing arithmetic).
 
-use strider_ir::IRBuilderExt;
-use strider_ir::VnTypeExt;
-use strider_ir::{ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp, VnTypeExt};
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
@@ -313,10 +311,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// boolean negation is `x ^ 1`.  Shared by the boolean / integer-cmp /
     /// float-cmp negated lowerings so the canonical NOT shape lives in one
     /// place; `x` must already be `I1`.
-    pub(super) fn build_logical_not(
-        &mut self,
-        x: strider_ir::Value,
-    ) -> Result<strider_ir::Value> {
+    pub(super) fn build_logical_not(&mut self, x: strider_ir::Value) -> Result<strider_ir::Value> {
         let one = self.builder.build_boolean_const(true);
         self.builder
             .build_int_binary_operation(x, one, IntBinaryOp::Xor, strider_ir::ValueType::I1)

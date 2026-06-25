@@ -82,10 +82,7 @@ pub trait IRViewer {
     ///
     /// # Errors
     /// Returns an error if the producing node does not have exactly `N` inputs.
-    fn producer_inputs_exact<const N: usize>(
-        &self,
-        value: ValueId,
-    ) -> crate::Result<[ValueId; N]> {
+    fn producer_inputs_exact<const N: usize>(&self, value: ValueId) -> crate::Result<[ValueId; N]> {
         self.node_inputs_exact::<N>(self.producer(value))
     }
 

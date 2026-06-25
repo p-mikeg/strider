@@ -22,9 +22,8 @@
 use strider_ir::IntBinaryOp;
 use strider_ir::node::ValueType;
 
-use crate::matcher::KindSpec;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{MatcherBuilder, PatNodeRef, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, PatNodeRef, PatValueRef};
 use crate::template::template_pat::TemplatePat;
 use crate::template::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 

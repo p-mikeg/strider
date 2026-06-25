@@ -1,7 +1,5 @@
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
-use strider_ir::ReadOnlyMemory;
 use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{IRBuilderExt, IRViewer, ReadOnlyMemory};
 
 use crate::error::Result;
 use crate::pipeline::OptCtx;

@@ -96,7 +96,11 @@ impl PyLifter {
     /// register table.  Raises `StriderError` on Sleigh-construction or
     /// CC-resolution failure.
     #[new]
-    pub(crate) fn new(arch: PySleighArch, mem: MemInput, cc: PyCallingConvention) -> PyResult<Self> {
+    pub(crate) fn new(
+        arch: PySleighArch,
+        mem: MemInput,
+        cc: PyCallingConvention,
+    ) -> PyResult<Self> {
         let (inner, cc) = build_lift_driver(arch, mem, &cc)?;
         Ok(Self { inner, cc })
     }

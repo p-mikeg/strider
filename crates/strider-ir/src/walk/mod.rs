@@ -1,12 +1,11 @@
-use core::{iter, ops::ControlFlow};
+use core::iter;
+use core::ops::ControlFlow;
 
 use entity_utils::Worklist;
 pub use entity_utils::set::DenseEntitySet;
 
-use crate::{
-    graph::Graph,
-    node::{NodeId, ValueId},
-};
+use crate::graph::Graph;
+use crate::node::{NodeId, ValueId};
 
 mod cast;
 pub use cast::{CastMask, cast_mask_of};

@@ -89,15 +89,17 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // writes the result back to `output`, and records the
         // `CallDescriptor::CallOther` footprint.  The result writeback now
         // lives in the builder — the lifter no longer touches it.
-        self.builder.build_call_other(
-            user_op_id,
-            name,
-            None,
-            &explicit_args,
-            &built_abi,
-            output_vn,
-            false,
-        ).map(|_| ())
+        self.builder
+            .build_call_other(
+                user_op_id,
+                name,
+                None,
+                &explicit_args,
+                &built_abi,
+                output_vn,
+                false,
+            )
+            .map(|_| ())
     }
 }
 

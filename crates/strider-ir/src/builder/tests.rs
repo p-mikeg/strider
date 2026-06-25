@@ -3,8 +3,9 @@ use crate::IRViewer;
 use anyhow::anyhow;
 
 use crate::error::Result;
-use crate::node::{ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
-use crate::node::{NodeKind, ValueKind, ValueType};
+use crate::node::{
+    ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp, NodeKind, ValueKind, ValueType,
+};
 use cranelift_entity::EntityRef;
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 

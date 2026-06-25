@@ -9,9 +9,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRWalker;
 use strider_ir::node::{NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir_test_utils::make_empty_fn;
 
 /// Oracle that classifies a specific set of store memory outputs as

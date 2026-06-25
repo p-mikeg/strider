@@ -85,7 +85,6 @@ use anyhow::{Result, anyhow};
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
 
-
 /// Generic, per-binary analysis handle.
 ///
 /// Holds the reusable [`Lifter`] engine (which owns the target arch, the
@@ -466,7 +465,8 @@ fn live_unresolved_branches(
     unresolved: &UnresolvedAnchors,
     known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
 ) -> Vec<PcodeInsnAddr> {
-    use strider_ir::{IRViewer, IRWalker, node::NodeKind};
+    use strider_ir::node::NodeKind;
+    use strider_ir::{IRViewer, IRWalker};
 
     // The live `IndirectBranch` placeholder nodes still reachable from the
     // entry (one cheap reachability walk shared across every anchor).
@@ -642,7 +642,8 @@ mod tests {
         // here simulated by pairing the address with a non-IndirectBranch
         // live node — the function's entry node) must NOT be reported.
         let (function, _node) = fn_with_live_indirect_branch();
-        use strider_ir::{IRViewer, IRWalker, node::NodeKind};
+        use strider_ir::node::NodeKind;
+        use strider_ir::{IRViewer, IRWalker};
         let non_indirect = function
             .walk()
             .find(|&n| matches!(function.node_kind(n), NodeKind::Entry))
@@ -692,7 +693,10 @@ mod tests {
         same.insert(node, Some(ResolvedTargets::Multiple(vec![0x2000, 0x3000])));
         let grew = apply_resolutions(&mut known, &unresolved, same).expect("apply");
         assert!(!grew, "identical re-classification must not report growth");
-        assert_eq!(known[&addr], ResolvedTargets::Multiple(vec![0x2000, 0x3000]));
+        assert_eq!(
+            known[&addr],
+            ResolvedTargets::Multiple(vec![0x2000, 0x3000])
+        );
 
         // (b) an improved (different) classification IS applied, so an
         // unseatable-then-seatable site is not stranded unresolved.
@@ -700,7 +704,10 @@ mod tests {
         improved.insert(node, Some(ResolvedTargets::Multiple(vec![0x2000, 0x2004])));
         let grew = apply_resolutions(&mut known, &unresolved, improved).expect("apply");
         assert!(grew, "an improved classification must be applied");
-        assert_eq!(known[&addr], ResolvedTargets::Multiple(vec![0x2000, 0x2004]));
+        assert_eq!(
+            known[&addr],
+            ResolvedTargets::Multiple(vec![0x2000, 0x2004])
+        );
     }
 
     #[test]
@@ -733,7 +740,10 @@ mod tests {
     #[test]
     fn merge_resolved_two_link_registers_stay_link_register() {
         assert_eq!(
-            merge_resolved(&ResolvedTargets::LinkRegister, &ResolvedTargets::LinkRegister),
+            merge_resolved(
+                &ResolvedTargets::LinkRegister,
+                &ResolvedTargets::LinkRegister
+            ),
             ResolvedTargets::LinkRegister
         );
     }
@@ -741,7 +751,10 @@ mod tests {
     #[test]
     fn merge_resolved_single_plus_single_widens_to_multiple() {
         assert_eq!(
-            merge_resolved(&ResolvedTargets::Single(0x1000), &ResolvedTargets::Single(0x2000)),
+            merge_resolved(
+                &ResolvedTargets::Single(0x1000),
+                &ResolvedTargets::Single(0x2000)
+            ),
             ResolvedTargets::Multiple(vec![0x1000, 0x2000])
         );
     }
@@ -756,7 +769,8 @@ mod tests {
         // (the `IntConst` value node and the `IndirectBranch` placeholder) as
         // the two anchor keys — `apply_resolutions` keys purely off `NodeId`,
         // never node kind.
-        use strider_ir::{IRViewer, IRWalker, node::NodeKind};
+        use strider_ir::node::NodeKind;
+        use strider_ir::{IRViewer, IRWalker};
         let (function, indirect) = fn_with_live_indirect_branch();
         let other = function
             .walk()

@@ -19,10 +19,9 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::IRViewer;
-use crate::IRWalker;
 use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
 use crate::node::{NodeId, NodeKind, ValueId};
+use crate::{IRViewer, IRWalker};
 
 /// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
 /// inclusion) that fully contains `vn`, or `vn` itself when none does.

@@ -16,9 +16,7 @@ use anyhow::{anyhow, bail};
 use crate::Value;
 use crate::builder::IRBuilderExt;
 use crate::error::Result;
-use crate::node::ValueType;
-use crate::node::VnTypeExt;
-use crate::node::{ExtendOp, IntBinaryOp};
+use crate::node::{ExtendOp, IntBinaryOp, ValueType, VnTypeExt};
 
 use super::FunctionBuilder;
 

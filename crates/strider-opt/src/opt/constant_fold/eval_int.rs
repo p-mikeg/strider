@@ -207,7 +207,10 @@ mod eval_helper_tests {
 
     #[test]
     fn unary_neg_masks_to_width() {
-        assert_eq!(eval_int_unary(IntUnaryOp::Neg, 1, ValueType::I8), Some(0xFF));
+        assert_eq!(
+            eval_int_unary(IntUnaryOp::Neg, 1, ValueType::I8),
+            Some(0xFF)
+        );
     }
 
     #[test]

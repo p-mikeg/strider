@@ -12,10 +12,11 @@
 //! via `Tb::fb_mut`.
 
 use crate::RegisterSet;
-use strider_ir::IRBuilderExt;
 use strider_ir::node::{ValueId, ValueType};
-use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder};
-use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder, IRBuilderExt, IntBinaryOp,
+    IntCmpOp, IntUnaryOp,
+};
 
 // ── Tb ────────────────────────────────────────────────────────────────────────
 

@@ -52,15 +52,13 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-use strider_ir::IRViewer;
-use strider_ir::IRWalker;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{IRViewer, IRWalker};
 
 use strider_cfg::ResolvedTargets;
 
-use crate::EditFunction;
-use crate::ReadOnlyMemory;
 use crate::pipeline::{OptCtx, PostOptimizer};
+use crate::{EditFunction, ReadOnlyMemory};
 
 mod eval;
 pub mod table;
@@ -157,9 +155,7 @@ fn link_register_return(
 ) -> Option<ResolvedTargets> {
     let lr = ctx.default_cc().link_register_vn?;
     match *ctx.node_kind(ctx.producer(anchor_value)) {
-        NodeKind::InitialVar(id) if ctx.initial_vn(id) == lr => {
-            Some(ResolvedTargets::LinkRegister)
-        }
+        NodeKind::InitialVar(id) if ctx.initial_vn(id) == lr => Some(ResolvedTargets::LinkRegister),
         _ => None,
     }
 }
@@ -236,10 +232,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use strider_ir::FunctionBuilder;
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IRViewer;
     use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};
 
     /// Unit-test convenience: computes the range analysis and

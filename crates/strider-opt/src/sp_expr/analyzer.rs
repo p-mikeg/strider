@@ -25,8 +25,7 @@
 use rustc_hash::FxHashMap;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{Function, IntBinaryOp};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp};
 
 use super::ranges::{ranges_disjoint, store_value_byte_size};
 use crate::AliasMode;
@@ -178,7 +177,9 @@ impl<'a> SpAnalyzer<'a> {
     fn classify_sp_node(&self, node: NodeId, node_value: ValueId) -> Option<SpExpr> {
         let function = self.function;
         match *function.node_kind(node) {
-            NodeKind::InitialVar(id) if function.initial_vn(id) == function.default_cc().stack_vn => {
+            NodeKind::InitialVar(id)
+                if function.initial_vn(id) == function.default_cc().stack_vn =>
+            {
                 Some(SpExpr {
                     base: node_value,
                     offset: 0,
@@ -192,12 +193,17 @@ impl<'a> SpAnalyzer<'a> {
                 // SP + const in either operand order; the constant shifts the
                 // other operand's decomposed offset.  Right operand checked
                 // first (post-ConstantFold an Add never carries two constants).
-                let (sp_operand, c) = match (function.int_const_i64(rhs), function.int_const_i64(lhs)) {
-                    (Some(c), _) => (lhs, c),
-                    (None, Some(c)) => (rhs, c),
-                    _ => return None,
-                };
-                self.memo.get(&sp_operand).copied().flatten().and_then(|e| e.shifted(c))
+                let (sp_operand, c) =
+                    match (function.int_const_i64(rhs), function.int_const_i64(lhs)) {
+                        (Some(c), _) => (lhs, c),
+                        (None, Some(c)) => (rhs, c),
+                        _ => return None,
+                    };
+                self.memo
+                    .get(&sp_operand)
+                    .copied()
+                    .flatten()
+                    .and_then(|e| e.shifted(c))
             }
             // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
             // `0xfffffff0` for SSE-aligned frames).  The And's output is
@@ -223,15 +229,9 @@ impl<'a> SpAnalyzer<'a> {
                 // low-bit mask like `And(sp, 0xF)` is a bit-extraction (value
                 // in [0,15]), NOT a stack base; treating it as one would feed
                 // a bogus opaque base to `distinct_sp_bases_disjoint`.
-                let sp_value = if function
-                    .int_const_u128(r)
-                    .is_some_and(is_alignment_mask)
-                {
+                let sp_value = if function.int_const_u128(r).is_some_and(is_alignment_mask) {
                     l
-                } else if function
-                    .int_const_u128(l)
-                    .is_some_and(is_alignment_mask)
-                {
+                } else if function.int_const_u128(l).is_some_and(is_alignment_mask) {
                     r
                 } else {
                     return None;
@@ -404,9 +404,8 @@ pub(crate) fn alias_verdict(
 #[cfg(test)]
 mod decompose_tests {
     use super::*;
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
     fn sp() -> rsleigh::Vn {
@@ -560,11 +559,7 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        assert!(
-            SpAnalyzer::new(&fg, &mut memo)
-                .decompose(c)
-                .is_none()
-        );
+        assert!(SpAnalyzer::new(&fg, &mut memo).decompose(c).is_none());
         Ok(())
     }
 
@@ -647,7 +642,11 @@ mod decompose_tests {
     #[test]
     fn decompose_sp_cycle_classifies_identically_regardless_of_query_order() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new().tracked(sp).arg(sp).stack_vn(sp).build_fn()?;
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .arg(sp)
+            .stack_vn(sp)
+            .build_fn()?;
         let entry = b.create_region()?;
         let loop_hdr = b.create_region()?;
         let exit = b.create_region()?;
@@ -733,7 +732,11 @@ mod decompose_tests {
         // misclassify a non-SP-rooted phi as the first stack argument or
         // wrongly forward a load over it.
         let sp = sp();
-        let mut b = RegisterSet::new().tracked(sp).arg(sp).stack_vn(sp).build_fn()?;
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .arg(sp)
+            .stack_vn(sp)
+            .build_fn()?;
         let entry = b.create_region()?;
         let a = b.create_region()?;
         let bb = b.create_region()?;
@@ -944,9 +947,8 @@ mod decompose_tests {
 #[cfg(test)]
 mod alias_tests {
     use super::*;
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IntBinaryOp;
     use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{make_sp_fn, stack_vn_x86};
 
     /// The `InitialVar(sp)` output — the canonical entry-SP terminal base
@@ -955,7 +957,9 @@ mod alias_tests {
         let node = f
             .graph()
             .all_node_ids()
-            .find(|&n| matches!(*f.node_kind(n), NodeKind::InitialVar(id) if f.initial_vn(id) == sp))
+            .find(
+                |&n| matches!(*f.node_kind(n), NodeKind::InitialVar(id) if f.initial_vn(id) == sp),
+            )
             .expect("InitialVar(sp) exists");
         f.node_outputs_exact::<1>(node)
             .expect("InitialVar has 1 output")[0]

@@ -963,7 +963,10 @@ impl CallingConvention {
         // any `UnknownRegName` from `vn_for_name` so a typo in the preset
         // surfaces at build time rather than later in the indirect-branch
         // resolver.
-        let link_register_vn = self.link_register_reg_name.map(|name| vn_for_name(sleigh_regs, name)).transpose()?;
+        let link_register_vn = self
+            .link_register_reg_name
+            .map(|name| vn_for_name(sleigh_regs, name))
+            .transpose()?;
         // Route through `try_new` so the disjointness invariants
         // (SP not in any reg list, arg/callee-saved disjoint, no
         // duplicates within a list, link-reg in callee-saved when set,

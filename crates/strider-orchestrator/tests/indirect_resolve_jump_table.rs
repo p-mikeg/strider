@@ -31,10 +31,8 @@ mod common;
 use strider_cfg::ResolvedTargets;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::opt::AliasMode;
-use strider_orchestrator::opt::analyze_known_bits;
-use strider_orchestrator::opt::classify_anchor;
 use strider_orchestrator::opt::value_range::compute_value_ranges;
+use strider_orchestrator::opt::{AliasMode, analyze_known_bits, classify_anchor};
 
 /// Test helper: recomputes `analyze_known_bits`, dominators, and ranges, then
 /// calls `classify_anchor` on the fixture's sole `IndirectBranch` placeholder

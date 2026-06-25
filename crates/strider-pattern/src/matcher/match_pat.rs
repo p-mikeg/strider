@@ -16,8 +16,7 @@
 //! `.ordered()` / `.of_width(n)` / `.value_ty(ty)` / `.bool_valued()`
 //! fluent methods.
 
-use crate::matcher::Pattern;
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{MatcherBuilder, PatValueRef, Pattern};
 
 /// A compile-time-typed match-side pattern that lowers onto the
 /// imperative [`MatcherBuilder`].

@@ -8,9 +8,8 @@
 
 #![allow(dead_code)]
 
-use object::Endianness;
-use object::elf;
 use object::write::elf::{FileHeader, ProgramHeader, SectionHeader, Writer};
+use object::{Endianness, elf};
 
 /// One defined-symbol `R_MIPS_REL32` fixture: a big-endian MIPS32 ELF
 /// whose `.data.rel.ro` slot at `slot_addr` carries a `REL` relocation

@@ -17,11 +17,10 @@ use entity_utils::{DenseEntitySet, Worklist};
 
 use crate::function::state::{FunctionState, NodeFlags};
 
-use crate::IRViewer;
 use crate::builder::IRBuilder;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
-use crate::{Function, Graph};
+use crate::{Function, Graph, IRViewer};
 
 // ── EditFunction ─────────────────────────────────────────────────────
 
@@ -903,10 +902,9 @@ pub(crate) mod test_fixtures {
 mod tests {
     use super::EditFunction;
     use super::test_fixtures::single_region_builder;
-    use crate::IRViewer;
-    use crate::IntBinaryOp;
     use crate::builder::IRBuilderExt;
     use crate::node::{NodeKind, ValueKind, ValueType};
+    use crate::{IRViewer, IntBinaryOp};
     use cranelift_entity::EntityRef;
     use std::collections::BTreeSet;
 

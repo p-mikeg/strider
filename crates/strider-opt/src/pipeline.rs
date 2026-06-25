@@ -536,9 +536,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::OptCtx;
-    use strider_ir::IRBuilderExt;
     use strider_ir::node::ValueType;
-    use strider_ir::{IRViewer, IRWalker};
+    use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
     /// Build a tiny single-region function returning `IntConst(K)`.
@@ -671,8 +670,8 @@ mod tests {
             ConstantFold, DeadBranchElimination, KnownBits, LoadForward, OptimizerPipeline,
             PhiCollapse, RegionCollapse,
         };
-        use strider_ir::node::NodeKind;
         use strider_ir::IRViewer;
+        use strider_ir::node::NodeKind;
 
         let sp = rsleigh::Vn {
             addr_off: 0x20,
@@ -714,8 +713,7 @@ mod tests {
         let val = crate::test_support::return_value(function.graph())?;
         let kind = *function.kind_of_value(val);
         assert!(
-            matches!(kind, NodeKind::IntConst(_))
-                && function.int_const_val(val) == Some(0x42),
+            matches!(kind, NodeKind::IntConst(_)) && function.int_const_val(val) == Some(0x42),
             "load must forward to stored value, got {kind:?} (value={:?})",
             function.int_const_val(val)
         );

@@ -31,8 +31,7 @@
 )]
 
 use proptest::prelude::*;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRWalker;
+use strider_ir::{IRBuilderExt, IRWalker};
 
 use strider_ir::node::ValueType;
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};

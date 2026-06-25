@@ -86,7 +86,9 @@ fn dumper_error_propagates_wrapped() {
     // failure and the wrapping prefix so the error path stays observable.
     let gd = GraphDot::new(FailingDumper, DotStyle::dark());
 
-    let dot_err = gd.as_dot().expect_err("as_dot must surface the dumper error");
+    let dot_err = gd
+        .as_dot()
+        .expect_err("as_dot must surface the dumper error");
     let msg = format!("{dot_err}");
     assert!(
         msg.contains("dot dump error") && msg.contains("boom"),

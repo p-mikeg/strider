@@ -37,8 +37,7 @@ use strider_ir::node::{NodeId, NodeKind};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, Pattern};
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 use crate::typed::{int_const, int_const_any_of};
 
 use super::MemPat;

@@ -334,9 +334,8 @@ impl Bindings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strider_ir::IRBuilderExt;
     use strider_ir::node::ValueType;
-    use strider_ir::{IRViewer, IRWalker};
+    use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
     use strider_ir_test_utils::make_empty_fn;
 
     // ── Capture (unified node + output) ──────────────────────────────────

@@ -202,7 +202,14 @@ fn apply_one_relocation(
     // Without this branch every PIE binary's `dispatch_table[]` slot
     // reads zero post-load.
     if let Some((value, size_bytes)) = image_relative_reloc(reloc, obj.architecture()) {
-        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le);
+        locate_and_write(
+            regions,
+            region_index,
+            site_addr,
+            value,
+            size_bytes,
+            endian_le,
+        );
         return;
     }
 
@@ -219,7 +226,14 @@ fn apply_one_relocation(
             return;
         };
         let value = apply_addend(target_addr, reloc.addend());
-        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le);
+        locate_and_write(
+            regions,
+            region_index,
+            site_addr,
+            value,
+            size_bytes,
+            endian_le,
+        );
         return;
     }
 
@@ -239,7 +253,14 @@ fn apply_one_relocation(
             return;
         };
         let value = apply_addend(target_addr, reloc.addend());
-        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le);
+        locate_and_write(
+            regions,
+            region_index,
+            site_addr,
+            value,
+            size_bytes,
+            endian_le,
+        );
         return;
     }
 
@@ -305,7 +326,14 @@ fn apply_one_relocation(
     // size_bytes) range.  Linear scan inside `locate_and_write` is
     // fine — relocation counts are small relative to the
     // per-relocation work.
-    locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le);
+    locate_and_write(
+        regions,
+        region_index,
+        site_addr,
+        value,
+        size_bytes,
+        endian_le,
+    );
 }
 
 /// A sorted `[start, end)` interval index for O(log n) address-coverage
@@ -812,7 +840,11 @@ type RegionIndex = std::collections::BTreeMap<u64, usize>;
 
 /// Builds a [`RegionIndex`] over `regions` (start address → slice index).
 fn build_region_index(regions: &[MemRegion]) -> RegionIndex {
-    regions.iter().enumerate().map(|(i, r)| (r.start_addr(), i)).collect()
+    regions
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.start_addr(), i))
+        .collect()
 }
 
 /// Returns the index of the region that fully covers

@@ -144,7 +144,10 @@ impl<'a> Evaluator<'a> {
                 // Signed interpretation so a negative frame offset (stored as
                 // 0xFFFF..) subtracts correctly.
                 let delta = i64::try_from(ty.get_signed_int(c)?).ok()?;
-                Some(Abs::SpRel { base, offset: offset.wrapping_add(delta) })
+                Some(Abs::SpRel {
+                    base,
+                    offset: offset.wrapping_add(delta),
+                })
             }
             (Abs::SpRel { .. }, Abs::SpRel { .. }) => None,
         }
@@ -188,9 +191,7 @@ impl<'a> Evaluator<'a> {
         if data_ty == load_ty {
             return Some(v);
         }
-        if data_ty.is_integer()
-            && load_ty.is_integer()
-            && load_ty.byte_size() < data_ty.byte_size()
+        if data_ty.is_integer() && load_ty.is_integer() && load_ty.byte_size() < data_ty.byte_size()
         {
             let shifted = match self.function.endianness() {
                 Endianness::Little => v,
@@ -206,8 +207,7 @@ impl<'a> Evaluator<'a> {
 
     /// All-arms-agree: every value arm must resolve to the same `Abs`.
     fn eval_phi(&mut self, node: NodeId) -> Option<Abs> {
-        let arms: SmallVec<[ValueId; 4]> =
-            value_input_producers(self.function, node).collect();
+        let arms: SmallVec<[ValueId; 4]> = value_input_producers(self.function, node).collect();
         let mut agreed: Option<Abs> = None;
         for arm in arms {
             let v = self.get(arm)?;
@@ -254,9 +254,8 @@ pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::{Evaluator, cone_order};
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     // Build `Add(idx, 100):I64` where `idx` is a tracked register read
@@ -274,7 +273,9 @@ mod tests {
             .build_fn_single_region()
             .expect("build_fn_single_region");
         let idx = b.read_variable(&vn).expect("read_variable");
-        let c100 = b.build_int_const(100u64, ValueType::I64).expect("build_int_const");
+        let c100 = b
+            .build_int_const(100u64, ValueType::I64)
+            .expect("build_int_const");
         let sum = b
             .build_int_binary_operation(idx, c100, IntBinaryOp::Add, ValueType::I64)
             .expect("build_int_binary_operation");

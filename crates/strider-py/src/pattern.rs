@@ -35,12 +35,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
 #[allow(unused_imports)]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
-use strider_pattern::MemPat;
-use strider_pattern::TemplatePat;
 use strider_pattern::matcher::{MatcherBuilder, PatValueRef};
 use strider_pattern::template::{TemplateBuilder, TmplValueRef};
-use strider_pattern::{Capture, Pattern, Template};
-use strider_pattern::{CaptureExt, MatchPat};
+use strider_pattern::{Capture, CaptureExt, MatchPat, MemPat, Pattern, Template, TemplatePat};
 
 use crate::errors::into_strider_err;
 
@@ -1229,8 +1226,12 @@ impl PyPartialMatch {
         // Resolve the three value Options (the `with_function` proxy returns
         // `Option<Option<_>>`; flatten each), then defer to the shared
         // precedence helper so this mirrors `PyMatch::__getitem__` exactly.
-        let b = self.with_function(|f| self.bindings.get_bool(cap, f)).flatten();
-        let v = self.with_function(|f| self.bindings.get_uint(cap, f)).flatten();
+        let b = self
+            .with_function(|f| self.bindings.get_bool(cap, f))
+            .flatten();
+        let v = self
+            .with_function(|f| self.bindings.get_uint(cap, f))
+            .flatten();
         let fl = self
             .with_function(|f| self.bindings.get_float_bits(cap, f.graph()))
             .flatten();
@@ -1346,9 +1347,9 @@ macro_rules! forall_castmask {
         #[pymethods]
         impl PyCastMask {
             #[doc = concat!(
-                        "Mask selecting the `", stringify!($value),
-                        "` value-passthrough cast for the matcher to walk through."
-                    )]
+                                        "Mask selecting the `", stringify!($value),
+                                        "` value-passthrough cast for the matcher to walk through."
+                                    )]
             #[classmethod]
             fn $name(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
                 Self {
@@ -1361,9 +1362,9 @@ macro_rules! forall_castmask {
         #[pymethods]
         impl PyCastMask {
             #[doc = concat!(
-                        "`CastMask::", stringify!($value), "()` — ",
-                        "the all-casts (`all`) / no-casts (`empty`) mask."
-                    )]
+                                        "`CastMask::", stringify!($value), "()` — ",
+                                        "the all-casts (`all`) / no-casts (`empty`) mask."
+                                    )]
             #[classmethod]
             fn $name(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
                 Self {
@@ -1641,7 +1642,10 @@ fn lookup_op<Op: Copy>(
     if let Some(&(_, op)) = aliases.iter().find(|(n, _)| *n == name) {
         return Ok(op);
     }
-    if let Some(&op) = variants.iter().find(|&&op| canonical(op).eq_ignore_ascii_case(name)) {
+    if let Some(&op) = variants
+        .iter()
+        .find(|&&op| canonical(op).eq_ignore_ascii_case(name))
+    {
         return Ok(op);
     }
     if let Some(&(_, op)) = aliases.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
@@ -1675,7 +1679,18 @@ fn parse_int_cmp_op(name: &str) -> PyResult<strider_ir::IntCmpOp> {
 fn parse_int_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
     use strider_ir::IntBinaryOp::{self, *};
     static VARIANTS: &[IntBinaryOp] = &[
-        Add, And, Or, Xor, Div, Sdiv, Rem, Srem, ShiftRight, SShiftRight, ShiftLeft, Mul,
+        Add,
+        And,
+        Or,
+        Xor,
+        Div,
+        Sdiv,
+        Rem,
+        Srem,
+        ShiftRight,
+        SShiftRight,
+        ShiftLeft,
+        Mul,
     ];
     // Exhaustive: a new `IntBinaryOp` variant fails to compile here.
     fn canonical(op: IntBinaryOp) -> &'static str {
@@ -1695,8 +1710,11 @@ fn parse_int_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
             Mul => "Mul",
         }
     }
-    static ALIASES: &[(&str, IntBinaryOp)] =
-        &[("shl", ShiftLeft), ("shr", ShiftRight), ("sshr", SShiftRight)];
+    static ALIASES: &[(&str, IntBinaryOp)] = &[
+        ("shl", ShiftLeft),
+        ("shr", ShiftRight),
+        ("sshr", SShiftRight),
+    ];
     lookup_op(VARIANTS, canonical, ALIASES, name, "IntBinaryOp")
 }
 

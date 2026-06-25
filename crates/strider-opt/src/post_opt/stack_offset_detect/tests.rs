@@ -7,11 +7,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use strider_ir::Function;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
-use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{Function, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
 use crate::StackOffsetDetect;

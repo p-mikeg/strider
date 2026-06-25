@@ -116,7 +116,8 @@ fn apply_elf_relocations_autoload_field_straddling_section_end_is_not_patched() 
     // FIRST byte is covered by the staged region, but the full field
     // straddles the region's end, so the patch can't land — the slot must
     // remain at its zeroed initial value.
-    let fx = common::elf_fixture::build_x86_64_pc32_rela_elf(/* slot_len */ 6, /* off */ 4, 0);
+    let fx =
+        common::elf_fixture::build_x86_64_pc32_rela_elf(/* slot_len */ 6, /* off */ 4, 0);
     let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
     // Code-and-readonly only: excludes the writable `.data.rel.ro`.
@@ -133,7 +134,8 @@ fn apply_elf_relocations_autoload_field_straddling_section_end_is_not_patched() 
         .expect("autoload must stage the section covering the site's first byte");
     let off = (fx.site_addr - staged.start_addr()) as usize;
     assert_eq!(
-        staged.data()[off], 0,
+        staged.data()[off],
+        0,
         "a field straddling the staged region's end must NOT be patched"
     );
 }
@@ -147,7 +149,9 @@ fn apply_elf_relocations_negative_addend_pc_relative() {
     // This guards against a future "fix" to a checked/saturating add that
     // would silently break negative-addend relocations.
     let addend: i64 = -0x40;
-    let fx = common::elf_fixture::build_x86_64_pc32_rela_elf(/* slot_len */ 4, /* off */ 0, addend);
+    let fx = common::elf_fixture::build_x86_64_pc32_rela_elf(
+        /* slot_len */ 4, /* off */ 0, addend,
+    );
     let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
     let mut regions =

@@ -2,10 +2,8 @@
 //! `Subpiece`, `Popcount`, `Lzcount`, `Piece`, `Extract`, `Insert`,
 //! `PtrAdd`, `PtrSub`, and the no-op `Cast`.
 
-use strider_ir::IRBuilderExt;
-use strider_ir::IntBinaryOp;
-use strider_ir::VnTypeExt;
 use strider_ir::node::ValueType;
+use strider_ir::{IRBuilderExt, IntBinaryOp, VnTypeExt};
 
 use anyhow::bail;
 
@@ -118,7 +116,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             // masks the (small) shift amount to `input_ty` — for the wide
             // I256 / I512 case the mask is `u128::MAX`, so the interned node is
             // byte-identical to the explicit-limb path.
-            let shift_const = self.builder.build_int_const(u128::from(bit_shift), input_ty)?;
+            let shift_const = self
+                .builder
+                .build_int_const(u128::from(bit_shift), input_ty)?;
             self.builder.build_int_binary_operation(
                 value,
                 shift_const,
@@ -126,7 +126,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 input_ty,
             )?
         };
-        let result = self.builder.truncate_if_needed(shifted, out_vn.int_type()?)?;
+        let result = self
+            .builder
+            .truncate_if_needed(shifted, out_vn.int_type()?)?;
         self.write_vn(out_vn, result)
     }
 

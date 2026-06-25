@@ -467,8 +467,7 @@ mod tests {
             .build(&regs)
             .expect("build cc");
         // AArch64 `ret` = 0xD65F03C0, little-endian byte sequence.
-        let reader =
-            rsleigh::mem_readers::BufMemReader::new(vec![0xc0, 0x03, 0x5f, 0xd6], 0x1000);
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc0, 0x03, 0x5f, 0xd6], 0x1000);
         let mut sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
         let cfg = strider_cfg::Builder::for_arch(

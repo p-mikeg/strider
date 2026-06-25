@@ -219,9 +219,8 @@ mod tests {
 
     use super::*;
     use std::cell::RefCell;
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IntBinaryOp;
     use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::make_empty_fn;
 
     use crate::error::Result;

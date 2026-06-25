@@ -5,9 +5,7 @@ use super::FunctionBuilder;
 use crate::IRViewer;
 use crate::builder::IRBuilderExt;
 use crate::error::Result;
-use crate::node::IntBinaryOp;
-use crate::node::VnTypeExt;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
+use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, VnTypeExt};
 
 use super::require_reg_or_unique;
 

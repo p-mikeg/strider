@@ -445,8 +445,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
         // Single pass: partition the existing use ids into survivors (reindexed)
         // and victims (unlinked from their value's use-list).
-        let old_uses: SmallVec<[UseId; 4]> =
-            self.store.node_input_uses(node_id).into();
+        let old_uses: SmallVec<[UseId; 4]> = self.store.node_input_uses(node_id).into();
         let mut survivors: SmallVec<[UseId; 4]> = SmallVec::with_capacity(old_uses.len());
         for (slot, use_id) in old_uses.into_iter().enumerate() {
             if drop_slot[slot] {

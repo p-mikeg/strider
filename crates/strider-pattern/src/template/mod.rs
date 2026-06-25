@@ -35,9 +35,8 @@ use std::collections::BTreeMap;
 use anyhow::anyhow;
 use rustc_hash::FxHashMap;
 use strider_graph::ValueId as TmplValueId;
-use strider_ir::IRBuilder;
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::{IRBuilder, IRViewer};
 
 use crate::bindings::Bindings;
 use crate::graph_ext::{PatGraphRead, reachable_topo};

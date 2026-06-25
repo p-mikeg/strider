@@ -8,11 +8,8 @@
     clippy::unreachable
 )]
 
-use strider_ir::EditFunction;
-use strider_ir::IRBuilderExt;
-use strider_ir::IntBinaryOp;
-use strider_ir::{ConstId, node::{NodeKind, ValueKind, ValueType as T}};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::node::{NodeKind, ValueKind, ValueType as T};
+use strider_ir::{ConstId, EditFunction, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::make_empty_fn;
 
 use strider_ir::Function;
@@ -226,10 +223,16 @@ fn template_wires_multi_output_interior_memory_node() {
     // `Exact(IntConst(ConstId::from_u32(..)))` leaf would stamp a dangling
     // ConstId into the fixture (passing only because this test never validates).
     let addr = b.leaf(KindSpec::Any);
-    b.set_template_kind(addr, template::TemplateKind::FnIntConst(Box::new(|_| Ok(0x100u128))));
+    b.set_template_kind(
+        addr,
+        template::TemplateKind::FnIntConst(Box::new(|_| Ok(0x100u128))),
+    );
     b.set_value_ty(addr, T::I64);
     let data = b.leaf(KindSpec::Any);
-    b.set_template_kind(data, template::TemplateKind::FnIntConst(Box::new(|_| Ok(42u128))));
+    b.set_template_kind(
+        data,
+        template::TemplateKind::FnIntConst(Box::new(|_| Ok(42u128))),
+    );
     b.set_value_ty(data, T::I64);
 
     // store = Store(mem0, addr, data) — inputs [MEM, ADDR, DATA],

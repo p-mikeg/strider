@@ -3,23 +3,23 @@ use crate::error::Result;
 use crate::pipeline::PostOptimizerTestExt;
 use crate::test_support::cf_rp_pipeline;
 use anyhow::anyhow;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
-use strider_ir::IRWalker;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{Graph, IntBinaryOp};
+use strider_ir::{Graph, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, stack_vn_x86 as stack_vn};
 
 /// Returns `true` when `v` is an `IntConst` whose value equals `expected`.
 fn is_const(fg: &strider_ir::Function, v: ValueId, expected: u64) -> bool {
-    matches!(fg.kind_of_value(v), NodeKind::IntConst(_))
-        && fg.int_const_val(v) == Some(expected)
+    matches!(fg.kind_of_value(v), NodeKind::IntConst(_)) && fg.int_const_val(v) == Some(expected)
 }
 
 /// Extracts the u64 value from an IntConst value, panicking with context on failure.
 fn const_val(fg: &strider_ir::Function, v: ValueId, ctx: &str) -> u64 {
-    fg.int_const_val(v)
-        .unwrap_or_else(|| panic!("collected arg should be an IntConst, got {:?} — {ctx}", fg.kind_of_value(v)))
+    fg.int_const_val(v).unwrap_or_else(|| {
+        panic!(
+            "collected arg should be an IntConst, got {:?} — {ctx}",
+            fg.kind_of_value(v)
+        )
+    })
 }
 
 /// Prologue local-variable zero-init writes (and a `push ebx` save) land at
@@ -166,11 +166,13 @@ fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
     );
     assert!(
         is_const(&fg, inputs[4], 0xDEAD_BEEF_CAFE_BABE),
-        "arg0 should be the 8-byte double value, got {:?}", fg.kind_of_value(inputs[4])
+        "arg0 should be the 8-byte double value, got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     assert!(
         is_const(&fg, inputs[5], 7),
-        "arg1 should be the int 7, got {:?}", fg.kind_of_value(inputs[5])
+        "arg1 should be the int 7, got {:?}",
+        fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -196,7 +198,9 @@ fn outgoing_span_four_wide_arg_store_collected_as_one_arg() -> Result<()> {
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // a = (16-byte) stored as I128 at sp+0 — covers slots 0,1,2,3.
-    let const_id_a = b.function_mut().intern_int_const(0xABCD_u128, ValueType::I128);
+    let const_id_a = b
+        .function_mut()
+        .intern_int_const(0xABCD_u128, ValueType::I128);
     let a = strider_ir_test_utils::sentinel_node(
         b.function_mut(),
         NodeKind::IntConst(const_id_a),
@@ -235,11 +239,13 @@ fn outgoing_span_four_wide_arg_store_collected_as_one_arg() -> Result<()> {
     );
     assert!(
         is_const(&fg, inputs[4], 0xABCD),
-        "arg0 should be the 16-byte I128 value, got {:?}", fg.kind_of_value(inputs[4])
+        "arg0 should be the 16-byte I128 value, got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     assert!(
         is_const(&fg, inputs[5], 7),
-        "arg1 should be the int 7, got {:?}", fg.kind_of_value(inputs[5])
+        "arg1 should be the int 7, got {:?}",
+        fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -264,7 +270,9 @@ fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // a = 10-byte value stored as I80 at sp+0 — covers slots 0,1,2.
-    let const_id_a = b.function_mut().intern_int_const(0xABCD_u128, ValueType::I80);
+    let const_id_a = b
+        .function_mut()
+        .intern_int_const(0xABCD_u128, ValueType::I80);
     let a = strider_ir_test_utils::sentinel_node(
         b.function_mut(),
         NodeKind::IntConst(const_id_a),
@@ -303,11 +311,13 @@ fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
     );
     assert!(
         is_const(&fg, inputs[4], 0xABCD),
-        "arg0 should be the 10-byte I80 value, got {:?}", fg.kind_of_value(inputs[4])
+        "arg0 should be the 10-byte I80 value, got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     assert!(
         is_const(&fg, inputs[5], 7),
-        "arg1 should be the int 7, got {:?}", fg.kind_of_value(inputs[5])
+        "arg1 should be the int 7, got {:?}",
+        fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -372,11 +382,13 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 
     assert!(
         is_const(&fg, inputs[4], 11),
-        "arg0 should be 11, got {:?}", fg.kind_of_value(inputs[4])
+        "arg0 should be 11, got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     assert!(
         is_const(&fg, inputs[5], 22),
-        "arg1 should be 22, got {:?}", fg.kind_of_value(inputs[5])
+        "arg1 should be 22, got {:?}",
+        fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -487,7 +499,8 @@ fn slot_hole_truncates_collection_to_dense_prefix() -> Result<()> {
     );
     assert!(
         is_const(&fg, inputs[4], 0xA0),
-        "the collected arg must be slot 0's 0xA0, got {:?}", fg.kind_of_value(inputs[4])
+        "the collected arg must be slot 0's 0xA0, got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     Ok(())
 }
@@ -762,7 +775,8 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     );
     assert!(
         is_const(&fg, inputs[4], 11),
-        "arg0 should be 11, got {:?}", fg.kind_of_value(inputs[4])
+        "arg0 should be 11, got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     Ok(())
 }
@@ -902,11 +916,13 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     );
     assert!(
         is_const(&fg, inputs[4], 11),
-        "arg0 should be 11, got {:?}", fg.kind_of_value(inputs[4])
+        "arg0 should be 11, got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     assert!(
         is_const(&fg, inputs[5], 22),
-        "arg1 should be 22, got {:?}", fg.kind_of_value(inputs[5])
+        "arg1 should be 22, got {:?}",
+        fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -974,7 +990,8 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     for (slot_idx, expected) in [11u64, 22, 33].iter().enumerate() {
         assert!(
             is_const(&fg, inputs[4 + slot_idx], *expected),
-            "arg{slot_idx} should be {expected}, got {:?}", fg.kind_of_value(inputs[4 + slot_idx])
+            "arg{slot_idx} should be {expected}, got {:?}",
+            fg.kind_of_value(inputs[4 + slot_idx])
         );
     }
     Ok(())
@@ -1039,7 +1056,8 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     );
     assert!(
         is_const(&fg, inputs[4], 11),
-        "arg0 must be the most-recent write (11), not the stale 0xBAD; got {:?}", fg.kind_of_value(inputs[4])
+        "arg0 must be the most-recent write (11), not the stale 0xBAD; got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     Ok(())
 }
@@ -1129,11 +1147,13 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     );
     assert!(
         is_const(&fg, inputs[4], 11),
-        "arg0 should be 11, got {:?}", fg.kind_of_value(inputs[4])
+        "arg0 should be 11, got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     assert!(
         is_const(&fg, inputs[5], 22),
-        "arg1 should be 22, got {:?}", fg.kind_of_value(inputs[5])
+        "arg1 should be 22, got {:?}",
+        fg.kind_of_value(inputs[5])
     );
     Ok(())
 }
@@ -1190,7 +1210,8 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
     );
     assert!(
         is_const(&fg, inputs[4], 77),
-        "arg0 should be IntConst(77), got {:?}", fg.kind_of_value(inputs[4])
+        "arg0 should be IntConst(77), got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     Ok(())
 }
@@ -1276,7 +1297,8 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     );
     assert!(
         is_const(&fg, inputs[4], 66),
-        "arg0 should be IntConst(66) from override table, got {:?}", fg.kind_of_value(inputs[4])
+        "arg0 should be IntConst(66) from override table, got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     Ok(())
 }
@@ -1390,7 +1412,8 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     );
     assert!(
         is_const(&fg, inputs[4], 77),
-        "arg0 should be IntConst(77), got {:?}", fg.kind_of_value(inputs[4])
+        "arg0 should be IntConst(77), got {:?}",
+        fg.kind_of_value(inputs[4])
     );
     Ok(())
 }

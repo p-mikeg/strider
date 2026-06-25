@@ -128,7 +128,11 @@ fn canonicalize_reinserts_unique_mutated_node_then_dedups() {
     assert_eq!(g.nth_input(add, 1), Some(z));
 
     // No twin exists for Add(x, z): canonicalize returns None AND re-inserts it.
-    assert_eq!(g.canonicalize_node(add), None, "unique mutated node: no twin");
+    assert_eq!(
+        g.canonicalize_node(add),
+        None,
+        "unique mutated node: no twin"
+    );
 
     // The re-insert must be observable: an identical create now dedups to `add`.
     let dedup = g.create_node(TestKind::Add, [x, z], [TestVal::Int]);
@@ -746,7 +750,10 @@ fn add_self_loop_input_then_canonicalize() {
     // Re-creating the same self-referential shape must now dedup to `add`,
     // proving the re-insert re-established the cache entry.
     let again = g.create_node(TestKind::Add, [x, x, add_val], [TestVal::Int]);
-    assert_eq!(again, add, "re-created self-loop shape dedups to the survivor");
+    assert_eq!(
+        again, add,
+        "re-created self-loop shape dedups to the survivor"
+    );
     assert_use_list_consistent(&g);
 }
 

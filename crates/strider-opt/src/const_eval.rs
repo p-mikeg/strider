@@ -4,10 +4,8 @@
 //! shares the leaf arithmetic (`eval_int_*`) directly and does not route
 //! through here.
 
-use strider_ir::Function;
-use strider_ir::IRViewer;
-use strider_ir::ReadOnlyMemory;
 use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
+use strider_ir::{Function, IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
 
 use crate::opt::constant_fold::eval_int::{
@@ -51,9 +49,12 @@ pub(crate) fn eval_node_const(
     let ins = function.node_inputs(node);
     match kind {
         NodeKind::IntConst(_) => function.int_const_u128(value),
-        NodeKind::IntBinaryOp(op) => {
-            eval_int_binary(op, resolve(ins.get(0).copied()?)?, resolve(ins.get(1).copied()?)?, out_ty?)
-        }
+        NodeKind::IntBinaryOp(op) => eval_int_binary(
+            op,
+            resolve(ins.get(0).copied()?)?,
+            resolve(ins.get(1).copied()?)?,
+            out_ty?,
+        ),
         NodeKind::IntUnaryOp(op) => eval_int_unary(op, resolve(ins.get(0).copied()?)?, out_ty?),
         NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
             out_ty?.get_unsigned_int(resolve(ins.get(0).copied()?)?)
@@ -88,9 +89,8 @@ pub(crate) fn eval_node_const(
 #[cfg(test)]
 mod tests {
     use super::eval_node_const;
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IRViewer;
     use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IRViewer};
 
     // Build `Add(IntConst(5), IntConst(100)):I64`; eval_node_const with an
     // int-const resolver folds it to 105. Copy the builder pattern from
@@ -108,8 +108,12 @@ mod tests {
         use strider_ir_test_utils::make_empty_fn;
         let mut sum_val = None;
         let function = make_empty_fn(|b| {
-            let c5 = b.build_int_const(5u64, ValueType::I64).expect("build_int_const");
-            let c100 = b.build_int_const(100u64, ValueType::I64).expect("build_int_const");
+            let c5 = b
+                .build_int_const(5u64, ValueType::I64)
+                .expect("build_int_const");
+            let c100 = b
+                .build_int_const(100u64, ValueType::I64)
+                .expect("build_int_const");
             let sum = b
                 .build_int_binary_operation(c5, c100, IntBinaryOp::Add, ValueType::I64)
                 .expect("build_int_binary_operation");

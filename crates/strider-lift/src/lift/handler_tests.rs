@@ -13,10 +13,8 @@
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Insn, Opcode, Vn, VnSpace};
 
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::lift::{FunctionLifter, Lifter};
 
@@ -450,33 +448,29 @@ fn find_first_node(builder: &FunctionBuilder, target: NodeKind) -> Option<NodeId
 /// pin a specific small-integer constant value without depending on the opaque
 /// `ConstId` internals.
 fn graph_has_int_const_value(builder: &FunctionBuilder, expected: u64) -> bool {
-    builder
-        .function()
-        .graph()
-        .all_node_ids()
-        .any(|id| {
-            if !matches!(builder.function().node_kind(id), NodeKind::IntConst(_)) {
-                return false;
-            }
-            let outputs = builder.function().node_outputs(id);
-            outputs.iter().any(|&v| builder.function().int_const_val(v) == Some(expected))
-        })
+    builder.function().graph().all_node_ids().any(|id| {
+        if !matches!(builder.function().node_kind(id), NodeKind::IntConst(_)) {
+            return false;
+        }
+        let outputs = builder.function().node_outputs(id);
+        outputs
+            .iter()
+            .any(|&v| builder.function().int_const_val(v) == Some(expected))
+    })
 }
 
 /// Returns the first `IntConst` node-id whose output value equals `expected`,
 /// or `None` if no such node is present.
 fn find_int_const_node(builder: &FunctionBuilder, expected: u64) -> Option<NodeId> {
-    builder
-        .function()
-        .graph()
-        .all_node_ids()
-        .find(|&id| {
-            if !matches!(builder.function().node_kind(id), NodeKind::IntConst(_)) {
-                return false;
-            }
-            let outputs = builder.function().node_outputs(id);
-            outputs.iter().any(|&v| builder.function().int_const_val(v) == Some(expected))
-        })
+    builder.function().graph().all_node_ids().find(|&id| {
+        if !matches!(builder.function().node_kind(id), NodeKind::IntConst(_)) {
+            return false;
+        }
+        let outputs = builder.function().node_outputs(id);
+        outputs
+            .iter()
+            .any(|&v| builder.function().int_const_val(v) == Some(expected))
+    })
 }
 
 #[test]
@@ -564,10 +558,8 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
         let fp = d.builder.function().asm_fingerprint(add_node);
         assert_eq!(fp, &[0x4242], "Add node fingerprint should record 0x4242");
         // The two IntConst inputs should also carry the address.
-        let const3 = find_int_const_node(&d.builder, 3)
-            .expect("IntConst(3) must be present");
-        let const4 = find_int_const_node(&d.builder, 4)
-            .expect("IntConst(4) must be present");
+        let const3 = find_int_const_node(&d.builder, 3).expect("IntConst(3) must be present");
+        let const4 = find_int_const_node(&d.builder, 4).expect("IntConst(4) must be present");
         assert_eq!(d.builder.function().asm_fingerprint(const3), &[0x4242]);
         assert_eq!(d.builder.function().asm_fingerprint(const4), &[0x4242]);
     });
@@ -1064,7 +1056,10 @@ fn write_vn_then_read_vn_round_trip() {
         let value = d.read_vn(&reg(0)).expect("read_vn");
         let producer = d.builder.function().producer(value);
         assert!(
-            matches!(d.builder.function().node_kind(producer), NodeKind::IntConst(_)),
+            matches!(
+                d.builder.function().node_kind(producer),
+                NodeKind::IntConst(_)
+            ),
             "expected IntConst node, got {:?}",
             d.builder.function().node_kind(producer)
         );

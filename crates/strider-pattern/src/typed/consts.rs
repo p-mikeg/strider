@@ -11,12 +11,11 @@ use std::mem::{Discriminant, discriminant};
 
 use rustc_hash::FxHashSet;
 
-use strider_ir::IRViewer;
-use strider_ir::{ConstId, node::{NodeId, NodeKind, ValueType}};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
+use strider_ir::{ConstId, IRViewer};
 
-use crate::matcher::KindSpec;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef};
 use crate::template::template_pat::TemplatePat;
 use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef};
 use crate::typed::builder_like::BuilderLike;
@@ -202,8 +201,7 @@ impl MatchPat for BoolConst {
         builder.set_node_predicate(
             o,
             Box::new(move |m, node| {
-                first_int_const_value(m.function(), node)
-                    .is_some_and(|(v, _ty)| v == expected)
+                first_int_const_value(m.function(), node).is_some_and(|(v, _ty)| v == expected)
             }),
         );
         o
@@ -331,8 +329,7 @@ impl MatchPat for IntConstAnyOf {
         b.set_node_predicate(
             o,
             Box::new(move |m, ir_node| {
-                first_int_const_value(m.function(), ir_node)
-                    .is_some_and(|(v, _)| set.contains(&v))
+                first_int_const_value(m.function(), ir_node).is_some_and(|(v, _)| set.contains(&v))
             }),
         );
         o

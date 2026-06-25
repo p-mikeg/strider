@@ -395,7 +395,8 @@ fn validate_flags_stale_initial_var_index_entry() {
     // Rewrite the node's payload IN PLACE (NodeId survives) to a DIFFERENT
     // InitialVar varnode (index 1 → other_vn), so the index entry for `vn` is
     // now stale.
-    *s.f.graph_mut().node_kind_mut(iv) = NodeKind::InitialVar(crate::node::InitialVnId::from_index(1));
+    *s.f.graph_mut().node_kind_mut(iv) =
+        NodeKind::InitialVar(crate::node::InitialVnId::from_index(1));
 
     assert_validation_err(&s.f, |e| {
         matches!(

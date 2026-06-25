@@ -16,14 +16,10 @@ use crate::{
 };
 use rsleigh::VnSpace;
 use std::sync::Mutex;
-use strider_ir::ExtendOp;
-use strider_ir::Function;
-use strider_ir::FunctionBuilder;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
-use strider_ir::IRWalker;
-use strider_ir::IntBinaryOp;
 use strider_ir::node::ValueType;
+use strider_ir::{
+    ExtendOp, Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
+};
 use strider_ir_test_utils::{
     MockRom, RegisterSet, stack_vn_aarch64 as sp64, stack_vn_x86 as sp32_vn,
 };

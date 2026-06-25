@@ -8,7 +8,8 @@ mod common;
 use std::io::Write as _;
 
 use common::elf_fixture::simple_text_elf;
-use object::{Endianness, Object, read::ObjectSection};
+use object::read::ObjectSection;
+use object::{Endianness, Object};
 use tempfile::NamedTempFile;
 
 /// Happy path: `load_elf` on a valid ELF tempfile returns a parsed

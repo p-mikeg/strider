@@ -4,9 +4,10 @@
 //! the matched node to a [`Capture`].  The op variant is recovered after
 //! the match via the matching `Match::get_*_op(c, &graph)` helper.
 
-use strider_ir::IRViewer;
 use strider_ir::node::ValueType;
-use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{
+    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
+};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a};

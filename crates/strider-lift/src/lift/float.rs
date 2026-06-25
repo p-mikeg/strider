@@ -7,11 +7,8 @@
 //! float ↔ integer conversions (`FloatInt2Float`, `FloatFloat2Float`,
 //! `FloatTrunc`).
 
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
-use strider_ir::VnTypeExt;
 use strider_ir::node::ValueType;
-use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, VnTypeExt};
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};

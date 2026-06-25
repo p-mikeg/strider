@@ -14,10 +14,8 @@
     clippy::unreachable
 )]
 
-use strider_ir::IRBuilderExt;
-use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType as T};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
 use strider_opt::{EditFunction, apply_rules_count, rewrite_rule, rewrite_rule_runtime};

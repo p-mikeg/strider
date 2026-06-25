@@ -590,13 +590,9 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
             // (KeyboardInterrupt / SystemExit) are stashed so the outer
             // boundary surfaces them; every other failure errors here so
             // `LoadReadOnly` simply leaves the Load intact.
-            let result = call_py_read(
-                py,
-                &self.py_obj,
-                (addr, size),
-                "read",
-                |e| anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}"),
-            )?;
+            let result = call_py_read(py, &self.py_obj, (addr, size), "read", |e| {
+                anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}")
+            })?;
             if result.is_none(py) {
                 anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) returned None (unmapped)");
             }

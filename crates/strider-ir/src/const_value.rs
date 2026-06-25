@@ -59,8 +59,7 @@ impl ConstValue {
                 out[..n].copy_from_slice(&b[..n]);
             }
             Self::Wide(limbs) => {
-                let bytes: Vec<u8> =
-                    limbs.iter().flat_map(|limb| limb.to_le_bytes()).collect();
+                let bytes: Vec<u8> = limbs.iter().flat_map(|limb| limb.to_le_bytes()).collect();
                 let n = byte_size.min(bytes.len());
                 out[..n].copy_from_slice(&bytes[..n]);
             }

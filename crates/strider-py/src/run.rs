@@ -463,8 +463,10 @@ fn run_with_custom_pipeline(
     // same table the function-default CC was built against — mirroring
     // the orchestrator's `LoopState::new` behaviour so both pipeline
     // paths honour `per_address_ccs` identically.
-    let per_address_built_ccs =
-        build_per_address_ccs(per_address_ccs_py, lifter_obj.borrow(py).inner.sleigh_regs())?;
+    let per_address_built_ccs = build_per_address_ccs(
+        per_address_ccs_py,
+        lifter_obj.borrow(py).inner.sleigh_regs(),
+    )?;
 
     let lifter_borrow = lifter_obj.borrow(py);
     let cfg_borrow = cfg_obj.borrow(py);

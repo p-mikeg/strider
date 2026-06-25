@@ -382,7 +382,8 @@ pub(super) fn check_graph_invariants_side_indices(
             continue;
         }
         let kind = graph.node_kind(node);
-        let matches = matches!(kind, NodeKind::InitialVar(found) if function.initial_vn(*found) == vn);
+        let matches =
+            matches!(kind, NodeKind::InitialVar(found) if function.initial_vn(*found) == vn);
         if !matches {
             errs.push(ValidationError::StaleInitialVarIndex {
                 node,

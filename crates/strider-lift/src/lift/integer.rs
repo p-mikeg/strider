@@ -5,9 +5,7 @@
 //! [`super::arithmetic`].  Slice/extract/insert/popcount/etc. live in
 //! [`super::cast`].
 
-use strider_ir::ExtendOp;
-use strider_ir::IRBuilderExt;
-use strider_ir::VnTypeExt;
+use strider_ir::{ExtendOp, IRBuilderExt, VnTypeExt};
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};

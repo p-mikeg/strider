@@ -8,9 +8,8 @@
 //! else (Phi-of-offsets, non-SP-rooted addresses).  The offset `K` is only
 //! comparable against another access sharing the same `base`.
 
-use strider_ir::Function;
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{Function, IRViewer};
 
 use crate::error::Result;
 use crate::pipeline::PostOptimizer;
@@ -26,11 +25,7 @@ use crate::sp_expr::{SpAliasCfg, SpExpr};
 pub struct StackOffsetDetect;
 
 impl PostOptimizer for StackOffsetDetect {
-    fn apply(
-        &self,
-        edit: &mut crate::EditFunction<'_>,
-        ctx: &mut crate::OptCtx<'_>,
-    ) -> Result<()> {
+    fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &mut crate::OptCtx<'_>) -> Result<()> {
         // Build the SP-alias context once: decompose routes through the shared
         // `SpAliasCfg` façade (same as every other SP-aware pass), so no
         // transient `SpDecomposer` is materialised here.  The alias knobs are

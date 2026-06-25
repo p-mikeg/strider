@@ -142,7 +142,8 @@ impl Pattern {
 #[cfg(test)]
 mod tests {
     use crate::matcher::MatcherBuilder;
-    use strider_ir::{ConstId, node::NodeKind};
+    use strider_ir::ConstId;
+    use strider_ir::node::NodeKind;
 
     #[test]
     fn builds_bipartite_add_shape() {

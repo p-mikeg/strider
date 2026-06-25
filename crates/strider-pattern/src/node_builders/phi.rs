@@ -22,8 +22,7 @@ use strider_ir::node::NodeKind;
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, NodePredicate, Pattern};
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
 
 use super::MemPat;
 use super::node_pat::NodePat;
