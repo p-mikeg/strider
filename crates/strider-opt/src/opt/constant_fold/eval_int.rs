@@ -154,12 +154,12 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Res
         IntCmpOp::Sless => signed(l)? < signed(r)?,
         IntCmpOp::Carry => {
             // Unsigned add overflow: l + r > type's max unsigned value.
-            // For ty < I128 we can promote to u128 safely.  For I128, detect
-            // overflow via wrapping-add semantics: sum < l (a wrapped result
-            // is always smaller than its addends).
             if bits >= 128 {
-                l.wrapping_add(r) < l
+                // Host u128 width == type width, so stdlib's carry flag is exact.
+                l.overflowing_add(r).1
             } else {
+                // For ty < I128 the masked sum can't overflow u128, so a plain
+                // range check against the type's max is the carry.
                 let max = unsigned_max()?;
                 l.wrapping_add(r) > max
             }
@@ -169,13 +169,9 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Res
             let sl = signed(l)?;
             let sr = signed(r)?;
             if bits >= 128 {
-                // At i128: detect signed overflow via sign-bit logic
-                // (same-sign inputs but different-sign output).
-                let result = sl.wrapping_add(sr);
-                let sign_l = sl < 0;
-                let sign_r = sr < 0;
-                let sign_res = result < 0;
-                sign_l == sign_r && sign_l != sign_res
+                // Host i128 width == type width, so stdlib's signed-overflow
+                // flag is exact (same-sign inputs, different-sign output).
+                sl.overflowing_add(sr).1
             } else {
                 // SAFETY: at `bits < 128`, both `sl` and `sr` are sign-extended
                 // from a narrower type into `i128`, so each lies in
@@ -201,11 +197,9 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Res
             let sl = signed(l)?;
             let sr = signed(r)?;
             if bits >= 128 {
-                let result = sl.wrapping_sub(sr);
-                let sign_l = sl < 0;
-                let sign_r = sr < 0;
-                let sign_res = result < 0;
-                sign_l != sign_r && sign_l != sign_res
+                // Host i128 width == type width, so stdlib's signed-overflow
+                // flag is exact.
+                sl.overflowing_sub(sr).1
             } else {
                 // SAFETY: identical reasoning to `Scarry` above — at
                 // `bits < 128` both operands sign-extend into

@@ -7,7 +7,6 @@
 //! inputs.
 
 use strider_ir::IRViewer;
-use strider_ir::IRWalker;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
@@ -119,11 +118,12 @@ impl PostOptimizer for CallStackArgCollect {
         // function's own CC.  `None` means the convention passes no arguments
         // on the stack.
         let default_stack_args = ctx.function().default_cc().stack_args;
-        // Collect the reachable `Call` nodes via a plain pre-order walk.
         // Each call is processed independently below (no cross-call data
-        // dependency), so the owned `Vec` just lets the immutable walk borrow
-        // end before the per-call mutation loop takes `ctx` mutably.
-        let calls: Vec<NodeId> = ctx.walk_kind(|k| matches!(k, NodeKind::Call)).collect();
+        // dependency, detection order irrelevant), so iterate the cached live
+        // set directly — no graph walk — like the sibling post-passes. The
+        // owned `Vec` lets the immutable borrow end before the per-call
+        // mutation loop takes `ctx` mutably.
+        let calls: Vec<NodeId> = ctx.live_of_kind(|k| matches!(k, NodeKind::Call)).collect();
         // Build the SP-alias context once for the whole pass: it owns the shared
         // decompose memo and is reused across every call site.
         let mut alias_cfg = SpAliasCfg::call_blocking(&mut opt_ctx.sp_memo, alias_mode);

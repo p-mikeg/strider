@@ -165,13 +165,10 @@ impl PyBufferReader {
 fn elf_regions(
     obj: &object::File<'static>,
     apply_relocations: bool,
-    with_relocs: impl FnOnce(
-        &object::File<'static>,
-    ) -> anyhow::Result<(Vec<MemRegion>, strider_reader::elf::RelocationStats)>,
+    with_relocs: impl FnOnce(&object::File<'static>) -> anyhow::Result<Vec<MemRegion>>,
 ) -> PyResult<Vec<MemRegion>> {
     if apply_relocations {
-        let (regions, _stats) = with_relocs(obj).map_err(into_strider_err)?;
-        Ok(regions)
+        with_relocs(obj).map_err(into_strider_err)
     } else {
         strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
     }

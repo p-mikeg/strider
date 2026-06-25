@@ -2,14 +2,13 @@
 //! SP-expression memo and the alias knobs, built once per pass and reused for
 //! every query; per query it builds the [`SpAliasOracle`] that drives the
 //! [`super::mem_ssa`] memory-SSA walk.  The address-class verdict logic it
-//! consults lives in the sibling [`super::alias`] module.
+//! consults lives in the sibling [`super::analyzer`] module.
 
 use strider_ir::Function;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
-use super::alias::{AddrClass, AliasVerdict, alias_verdict, classify_addr, store_alias_verdict};
-use super::decompose::{SpDecomposer, SpExpr, SpExprMemo};
+use super::analyzer::{AddrClass, AliasVerdict, SpAnalyzer, SpExpr, SpExprMemo, alias_verdict};
 use super::mem_ssa::MemorySSAWalker;
 use super::ranges::store_value_byte_size;
 use crate::{AliasMode, MemAliasOptions};
@@ -56,12 +55,10 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_, '_> {
             // the load — a miscompile).
             NodeKind::Store(store_space) => {
                 store_space == self.load_space
-                    && store_alias_verdict(
-                        function,
+                    && SpAnalyzer::new(function, &mut *self.cfg.sp_memo).store_alias_verdict(
                         def,
                         self.load_class,
                         self.load_size,
-                        &mut *self.cfg.sp_memo,
                         self.cfg.alias_mode,
                         self.cfg.mem.assume_distinct_sp_bases_disjoint,
                     ) != AliasVerdict::Disjoint
@@ -130,14 +127,14 @@ impl<'m> SpAliasCfg<'m> {
 
     /// Classify a load/store address under this config's memo.
     pub(crate) fn classify_addr(&mut self, function: &Function, addr: ValueId) -> AddrClass {
-        classify_addr(function, addr, self.sp_memo)
+        SpAnalyzer::new(function, self.sp_memo).classify_addr(addr)
     }
 
     /// Decompose an address into an SP terminal through this config's shared
     /// memo.  The single decompose entry for consumers, so they no longer
-    /// materialise a transient [`SpDecomposer`] at each call site.
+    /// materialise a transient [`SpAnalyzer`] at each call site.
     pub(crate) fn decompose(&mut self, function: &Function, value: ValueId) -> Option<SpExpr> {
-        SpDecomposer::new(function, self.sp_memo).decompose(value)
+        SpAnalyzer::new(function, self.sp_memo).decompose(value)
     }
 
     /// Class + byte size of a `Load`'s address, both derived from the node

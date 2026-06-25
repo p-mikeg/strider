@@ -206,10 +206,7 @@ impl PostOptimizer for IndirectBranchClassify {
         let mut ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
 
         let mut resolutions: rustc_hash::FxHashMap<_, _> = rustc_hash::FxHashMap::default();
-        for node in function.walk() {
-            if !matches!(function.node_kind(node), NodeKind::IndirectBranch) {
-                continue;
-            }
+        for node in function.walk_kind(|k| matches!(k, NodeKind::IndirectBranch)) {
             // The classifier reads the placeholder's slot-2 dispatch value off
             // `node` and scopes its range query to THIS branch.  The walk visits
             // each node once, so every key is unique.

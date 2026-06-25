@@ -1,6 +1,7 @@
-//! Stack-pointer expression decomposer.
+//! Stack-pointer analyzer: SP decomposition + address classification + alias
+//! verdict, merged into one [`SpAnalyzer`] type.
 //!
-//! `decompose_sp` is the workhorse: given an output that is `InitialVar(sp)`
+//! `decompose` is the workhorse: given an output that is `InitialVar(sp)`
 //! transformed by `Add` of constants (subtraction appears as `Add(_, Neg(K))`)
 //! or anchored at an alignment-masked `sp & mask`, it returns a single
 //! `SpExpr { base, offset }` terminal (or `None`).
@@ -10,11 +11,16 @@
 //! The decomposer does **not** look through `Phi` nodes — a stack-tagged
 //! `Phi(sp)` (loop-header join, or the single-predecessor phi the lifter wraps
 //! around `read_variable(sp)`) decomposes to `None`.  By the time any SP-aware
-//! pass runs `decompose_sp`, `PhiCollapse` / `RedundantPhis` have already
+//! pass runs `decompose`, `PhiCollapse` / `RedundantPhis` have already
 //! collapsed those single-predecessor phis to their `InitialVar(sp)` input, so
 //! the decomposer only ever meets real terminals.  A `None` reads as "not a
 //! provable SP terminal", which every caller already treats conservatively
 //! (may-alias / opaque base).
+//!
+//! On top of the decomposition, [`SpAnalyzer`] also classifies a load / store
+//! address into a coarse [`AddrClass`] (`classify_addr`) and answers whether a
+//! `Store` aliases a precomputed load class (`store_alias_verdict`); the pure,
+//! class-on-class verdict table is the free [`alias_verdict`].
 
 use rustc_hash::FxHashMap;
 
@@ -22,10 +28,13 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IntBinaryOp};
 use strider_ir::{IRViewer, IRWalker};
 
+use super::ranges::{ranges_disjoint, store_value_byte_size};
+use crate::AliasMode;
+
 /// Decomposed stack-pointer expression: `base + offset`, where `base` is an
 /// SP-rooted node (`InitialVar(sp)` or an alignment-masked SP `And` output).
 ///
-/// `decompose_sp` returns `Option<SpExpr>`; `None` carries the
+/// `decompose` returns `Option<SpExpr>`; `None` carries the
 /// "not a provable SP terminal" case, so there is no separate variant for it.
 #[derive(Clone, Copy, Debug)]
 pub struct SpExpr {
@@ -48,19 +57,62 @@ impl SpExpr {
     }
 }
 
-/// Per-pass-call memo for `decompose_sp`.
+/// Per-pass-call memo for `decompose`.
 pub type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
 
-/// Stack-pointer expression decomposer: holds the `function` and a
-/// per-pass-call `memo`.  The stack varnode to anchor on is the function's own
+/// Coarse classification of a Load / Store address.  The verdict table in
+/// [`alias_verdict`] is keyed on the `(load_class, store_class)` pair:
+/// matching addresses use the diagonal of the table, disjointness uses the
+/// off-diagonal.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum AddrClass {
+    /// `decompose` returned a terminal `{ base, offset }`.  Two
+    /// `SpRooted` addresses refer to the same byte range only when they
+    /// share the same `base` (the SP-derived terminal node) AND offset;
+    /// disjoint offsets on the SAME base are proven non-overlapping via
+    /// [`ranges_disjoint`].  Different bases — e.g. `InitialVar(sp)` vs an
+    /// alignment-masked `sp & -16` — differ by an unknown amount (the
+    /// caller-dependent `sp mod align`), so their offsets are in different
+    /// coordinate systems and are treated as may-alias.
+    SpRooted { base: ValueId, offset: i64 },
+    /// `NodeKind::IntConst(_)` address — a literal `.data`/`.rodata`/
+    /// `.bss`/MMIO pointer.  Two `Constant` addresses with equal values
+    /// refer to the same byte range; disjoint values are proven
+    /// non-overlapping via [`ranges_disjoint`].
+    Constant { addr: i64 },
+    /// Anything else (`Load`-of-pointer, `Add` of opaque values, a
+    /// non-collapsing `Phi`-of-offsets, …).  Two `Anchor` addresses are
+    /// proven equal only by `ValueId` equality; different ids can compute
+    /// to the same address at runtime, so we treat them as
+    /// possibly-aliasing.
+    Anchor { value: ValueId },
+}
+
+/// Pairwise verdict between a Load's address class + size and an
+/// intervening Store's address class + size.  Implements the table
+/// described in the [`AliasMode`] module docs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AliasVerdict {
+    /// Same byte range — a `load_forward` caller treats this Store as the
+    /// forwarding source.
+    Match,
+    /// Provably non-overlapping byte range — caller steps through.
+    Disjoint,
+    /// Cannot prove either; caller bails (shadow / no-forward).
+    MayAlias,
+}
+
+/// Stack-pointer analyzer: holds the `function` and a per-pass-call `memo`,
+/// and merges SP decomposition, address classification, and the store-alias
+/// verdict.  The stack varnode to anchor on is the function's own
 /// `default_cc().stack_vn`, read on demand — never stored, so it cannot drift
 /// from the function under analysis.
-pub(crate) struct SpDecomposer<'a> {
+pub(crate) struct SpAnalyzer<'a> {
     function: &'a Function,
     memo: &'a mut SpExprMemo,
 }
 
-impl<'a> SpDecomposer<'a> {
+impl<'a> SpAnalyzer<'a> {
     pub(crate) fn new(function: &'a Function, memo: &'a mut SpExprMemo) -> Self {
         Self { function, memo }
     }
@@ -195,6 +247,58 @@ impl<'a> SpDecomposer<'a> {
             _ => None,
         }
     }
+
+    /// Classifies a load / store address.  Cheap: `decompose` is memoised
+    /// across the function, the `IntConst` peek is a single match.
+    pub(super) fn classify_addr(&mut self, addr: ValueId) -> AddrClass {
+        match self.decompose(addr) {
+            Some(SpExpr { base, offset }) => AddrClass::SpRooted { base, offset },
+            None => {
+                if let Some(c) = self.function.int_const_u128(addr) {
+                    AddrClass::Constant { addr: c as i64 }
+                } else {
+                    AddrClass::Anchor { value: addr }
+                }
+            }
+        }
+    }
+
+    /// Classifies a raw `NodeKind::Store` against a precomputed load address
+    /// class + size, returning the [`AliasVerdict`].  This is the single
+    /// store-aliasing entry shared by the `function_args` shadow walk (which
+    /// treats anything but `Disjoint` as a clobber) and the `load_forward`
+    /// oracle (which additionally forwards on `Match`).
+    pub(crate) fn store_alias_verdict(
+        &mut self,
+        store_node: NodeId,
+        load_class: AddrClass,
+        load_size: i64,
+        mode: AliasMode,
+        distinct_sp_bases_disjoint: bool,
+    ) -> AliasVerdict {
+        let function = self.function;
+        let store_size = store_value_byte_size(function.graph(), function.store_data(store_node));
+        // `Function::stack_offsets` (populated by `StackOffsetDetect`) is the SSoT
+        // for a store's SP-relative offset: it survives address rewrites that leave
+        // `decompose` unable to re-derive the offset (an earlier pass folding the
+        // address into an opaque shape).  Consult it before falling back to
+        // `decompose`.
+        let store_class = match function.stack_offset(store_node) {
+            Some((base, offset)) => AddrClass::SpRooted { base, offset },
+            None => {
+                let addr = self.function.store_addr(store_node);
+                self.classify_addr(addr)
+            }
+        };
+        alias_verdict(
+            load_class,
+            load_size,
+            store_class,
+            store_size,
+            mode,
+            distinct_sp_bases_disjoint,
+        )
+    }
 }
 
 /// Is `m` a stack-*alignment* mask — a contiguous run of high 1-bits with at
@@ -215,8 +319,90 @@ fn is_alignment_mask(m: u128) -> bool {
     shifted != 0 && shifted & shifted.wrapping_add(1) == 0
 }
 
+/// Diagonal verdict for two in-class offsets: equal → `Match`,
+/// range-disjoint → `Disjoint`, otherwise `MayAlias`.  Shared by the
+/// `SpRooted`/`SpRooted` and `Constant`/`Constant` arms of
+/// [`alias_verdict`] (the `Anchor`/`Anchor` arm uses `ValueId` equality
+/// and has no offset/range shape).
+fn offset_range_verdict(
+    load_off: i64,
+    load_size: i64,
+    store_off: i64,
+    store_size: i64,
+) -> AliasVerdict {
+    if load_off == store_off {
+        AliasVerdict::Match
+    } else if ranges_disjoint(load_off, load_size, store_off, store_size) {
+        AliasVerdict::Disjoint
+    } else {
+        AliasVerdict::MayAlias
+    }
+}
+
+/// Pairwise alias verdict between a load's class + size and a store's
+/// class + size under the given [`AliasMode`].
+pub(crate) fn alias_verdict(
+    load_class: AddrClass,
+    load_size: i64,
+    store_class: AddrClass,
+    store_size: i64,
+    mode: AliasMode,
+    distinct_sp_bases_disjoint: bool,
+) -> AliasVerdict {
+    use AddrClass::*;
+    match (load_class, store_class) {
+        // Diagonal: in-class equality + range-disjoint.  Two SP-rooted
+        // addresses are only comparable when they share the same base node;
+        // different SP bases (initial SP vs an alignment-masked SP) differ
+        // by an unknown amount, so their offsets can't be related → normally
+        // may-alias.  `distinct_sp_bases_disjoint` opts into the optimistic
+        // assumption that distinct SP bases address disjoint regions (used by
+        // stack-arg detection, where incoming-arg slots above the entry SP do
+        // not overlap frame locals rooted at an alignment-masked SP).
+        (
+            SpRooted {
+                base: lb,
+                offset: lo,
+            },
+            SpRooted {
+                base: sb,
+                offset: so,
+            },
+        ) => {
+            if lb == sb {
+                offset_range_verdict(lo, load_size, so, store_size)
+            } else if distinct_sp_bases_disjoint {
+                AliasVerdict::Disjoint
+            } else {
+                AliasVerdict::MayAlias
+            }
+        }
+        (Constant { addr: lo }, Constant { addr: so }) => {
+            offset_range_verdict(lo, load_size, so, store_size)
+        }
+        (Anchor { value: lout }, Anchor { value: sout }) => {
+            if lout == sout {
+                AliasVerdict::Match
+            } else {
+                // Different ids can compute to the same address at runtime;
+                // no disjointness proof available.
+                AliasVerdict::MayAlias
+            }
+        }
+        // Off-diagonal: cross-class.  Strict cannot prove disjoint;
+        // StackGlobalDisjoint admits SP↔Constant pairs.
+        (SpRooted { .. }, Constant { .. }) | (Constant { .. }, SpRooted { .. }) => match mode {
+            AliasMode::Strict => AliasVerdict::MayAlias,
+            AliasMode::StackGlobalDisjoint => AliasVerdict::Disjoint,
+        },
+        // Every other cross-class pair (Anchor vs anything) still bails
+        // under both modes; closing this requires escape analysis.
+        _ => AliasVerdict::MayAlias,
+    }
+}
+
 #[cfg(test)]
-mod tests {
+mod decompose_tests {
     use super::*;
     use strider_ir::IRBuilderExt;
     use strider_ir::IntBinaryOp;
@@ -233,7 +419,7 @@ mod tests {
 
     /// Collapses the single-predecessor `read_variable(sp)` phi so an SP
     /// address becomes a bare `InitialVar(sp) + k` terminal — the shape
-    /// `decompose_sp` sees in production (it no longer looks through phis;
+    /// `decompose` sees in production (it no longer looks through phis;
     /// the pipeline's `PhiCollapse` has run by then).  ConstantFold is
     /// intentionally NOT run here: these tests build the canonical
     /// `Add(_, IntConst(-K))` offset shape directly (via [`sub_off`]) and the
@@ -280,7 +466,7 @@ mod tests {
         collapse_phis(&mut fg);
         let live_sp = crate::test_support::return_value(fg.graph())?;
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::new(&fg, &mut memo).decompose(live_sp);
+        let r = SpAnalyzer::new(&fg, &mut memo).decompose(live_sp);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         let _ = sp_val;
         Ok(())
@@ -301,7 +487,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::new(&fg, &mut memo).decompose(addr);
+        let r = SpAnalyzer::new(&fg, &mut memo).decompose(addr);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
@@ -324,14 +510,14 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::new(&fg, &mut memo).decompose(addr);
+        let r = SpAnalyzer::new(&fg, &mut memo).decompose(addr);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
 
     #[test]
     fn decompose_sp_memo_hit_returns_same_result() -> crate::Result<()> {
-        // Calling decompose_sp twice on the same out should populate the memo
+        // Calling decompose twice on the same out should populate the memo
         // and return the same answer.
         let sp = sp();
         let mut b = RegisterSet::new()
@@ -346,10 +532,10 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r1 = SpDecomposer::new(&fg, &mut memo).decompose(addr);
+        let r1 = SpAnalyzer::new(&fg, &mut memo).decompose(addr);
         // Memo should now be populated.
         assert!(memo.contains_key(&addr));
-        let r2 = SpDecomposer::new(&fg, &mut memo).decompose(addr);
+        let r2 = SpAnalyzer::new(&fg, &mut memo).decompose(addr);
         assert!(matches!(
             (&r1, &r2),
             (
@@ -375,7 +561,7 @@ mod tests {
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         assert!(
-            SpDecomposer::new(&fg, &mut memo)
+            SpAnalyzer::new(&fg, &mut memo)
                 .decompose(c)
                 .is_none()
         );
@@ -406,7 +592,7 @@ mod tests {
         collapse_phis(&mut fg);
 
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::new(&fg, &mut memo).decompose(s3);
+        let r = SpAnalyzer::new(&fg, &mut memo).decompose(s3);
         assert!(matches!(r, Some(SpExpr { offset: -24, .. })));
 
         // After one top-level walk, all three intermediate outputs must be
@@ -438,13 +624,13 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::new(&fg, &mut memo).decompose(c);
+        let r = SpAnalyzer::new(&fg, &mut memo).decompose(c);
         assert!(r.is_none());
         // The verdict is now cached: the key is present and maps to a `None`
         // verdict, so a repeat query short-circuits instead of re-walking.
         let cached = memo
             .get(&c)
-            .expect("decompose_sp must cache the None verdict so the cone is not re-walked");
+            .expect("decompose must cache the None verdict so the cone is not re-walked");
         assert!(
             cached.is_none(),
             "cached verdict for a non-SP address is None"
@@ -494,7 +680,7 @@ mod tests {
         // ground-truth graph verdict for each value.
         let truth = |v: ValueId| -> Option<SpExpr> {
             let mut m = SpExprMemo::default();
-            SpDecomposer::new(&fg, &mut m).decompose(v)
+            SpAnalyzer::new(&fg, &mut m).decompose(v)
         };
         let t_phi = truth(sp_phi);
         let t_dec = truth(sp_dec);
@@ -519,7 +705,7 @@ mod tests {
         ] {
             let mut shared = SpExprMemo::default();
             for v in order {
-                let got = SpDecomposer::new(&fg, &mut shared).decompose(v);
+                let got = SpAnalyzer::new(&fg, &mut shared).decompose(v);
                 let want = if v == sp_phi {
                     t_phi
                 } else if v == sp_dec {
@@ -574,7 +760,7 @@ mod tests {
         b.build_branch(c)?;
 
         // c: read sp.  The phi at c has two predecessor values: the SP-rooted
-        // one from `a` and the bogus const from `bb`.  decompose_sp must
+        // one from `a` and the bogus const from `bb`.  decompose must
         // refuse to claim "this is sp + K" for that phi.
         b.set_region(c);
         let sp_at_c = b.read_variable(&sp)?;
@@ -584,7 +770,7 @@ mod tests {
         collapse_phis(&mut fg);
 
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::new(&fg, &mut memo).decompose(sp_at_c);
+        let r = SpAnalyzer::new(&fg, &mut memo).decompose(sp_at_c);
         assert!(
             r.is_none(),
             "expected None for VarPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
@@ -595,7 +781,7 @@ mod tests {
     /// FreeBSD i386 10.0 prologue: `and $0xfffffff8, %esp` aligns the
     /// stack to 8 bytes after the saved-register pushes.  All subsequent
     /// stack arithmetic is anchored at the And's output, not at
-    /// `InitialVar(sp)`, so `decompose_sp` must recognise the And and
+    /// `InitialVar(sp)`, so `decompose` must recognise the And and
     /// treat its output as a stable opaque base (offset 0) — otherwise
     /// every store after the alignment dance is a non-decomposable
     /// `Store(_)`, and `CallStackArgCollect` walks past the call's args
@@ -618,7 +804,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = SpDecomposer::new(&fg, &mut memo).decompose(aligned);
+        let r = SpAnalyzer::new(&fg, &mut memo).decompose(aligned);
         // The aligned output is a stable opaque base.  Offset = 0
         // because the alignment can shift the value by 0..7 bytes — we
         // can't pin a constant delta, but we *can* pin a stable
@@ -645,7 +831,7 @@ mod tests {
     /// SP must decompose to the *same* opaque base (the And output),
     /// just with a non-zero offset.  Without this, every cdecl call
     /// site after the alignment dance has args at addresses that
-    /// `decompose_sp` cannot relate to each other, breaking
+    /// `decompose` cannot relate to each other, breaking
     /// `CallStackArgCollect`.
     #[test]
     fn decompose_sp_sub_after_and_chains_offset_through_opaque_base() -> crate::Result<()> {
@@ -665,10 +851,10 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let aligned_dec = SpDecomposer::new(&fg, &mut memo)
+        let aligned_dec = SpAnalyzer::new(&fg, &mut memo)
             .decompose(aligned)
             .expect("aligned must decompose");
-        let post_sub_dec = SpDecomposer::new(&fg, &mut memo)
+        let post_sub_dec = SpAnalyzer::new(&fg, &mut memo)
             .decompose(post_sub)
             .expect("post_sub must decompose");
         let SpExpr {
@@ -714,12 +900,12 @@ mod tests {
         let mut memo = SpExprMemo::default();
         // Iterative rpo sweep: the deep And chain re-bases at each level and
         // resolves to an opaque base without recursion, so no stack overflow.
-        let r = SpDecomposer::new(&fg, &mut memo).decompose(current);
+        let r = SpAnalyzer::new(&fg, &mut memo).decompose(current);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         Ok(())
     }
 
-    /// Regression: `decompose_sp`
+    /// Regression: `decompose`
     /// must not blow the thread stack on a deep `sp + K1 + K2 + ... + KN`
     /// chain.  The recursive form overflowed at ~4-8k nodes; the
     /// iterative form must walk a 5000-node chain without panic AND
@@ -744,7 +930,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let SpExpr { offset, .. } = SpDecomposer::new(&fg, &mut memo)
+        let SpExpr { offset, .. } = SpAnalyzer::new(&fg, &mut memo)
             .decompose(current)
             .expect("5000-node chain must decompose without stack-overflowing");
         assert_eq!(
@@ -752,5 +938,210 @@ mod tests {
             "cumulative offset must equal N adds of +1"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+    use strider_ir::IRBuilderExt;
+    use strider_ir::IntBinaryOp;
+    use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir_test_utils::{make_sp_fn, stack_vn_x86};
+
+    /// The `InitialVar(sp)` output — the canonical entry-SP terminal base
+    /// that `decompose` returns for any clean `sp + k` address.
+    fn entry_sp_value(f: &Function, sp: rsleigh::Vn) -> ValueId {
+        let node = f
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(*f.node_kind(n), NodeKind::InitialVar(id) if f.initial_vn(id) == sp))
+            .expect("InitialVar(sp) exists");
+        f.node_outputs_exact::<1>(node)
+            .expect("InitialVar has 1 output")[0]
+    }
+
+    fn only_store(f: &Function) -> NodeId {
+        f.graph()
+            .all_node_ids()
+            .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
+            .expect("one store")
+    }
+
+    /// Collapse the single-predecessor `read_variable(sp)` phi so SP
+    /// addresses are bare `InitialVar(sp) + k` terminals — the shape these
+    /// alias helpers see in production (the decomposer no longer looks
+    /// through phis).
+    fn collapse(f: &mut Function) {
+        let mut p = crate::OptimizerPipeline::new();
+        p.add(crate::PhiCollapse);
+        p.add(crate::RegionCollapse);
+        p.run(f, &mut crate::OptCtx::new(None))
+            .expect("phi collapse");
+    }
+
+    /// Regression for the two-terminal base bug: a `Store` whose address is
+    /// an *alignment-masked* SP base (`(sp & mask) + 8`) must NOT be proven
+    /// disjoint from a query slot rooted at the *entry* SP just because
+    /// their offsets don't overlap.  The two bases differ by the runtime
+    /// alignment delta `sp mod align`, so the offset comparison is
+    /// meaningless and the verdict must be may-alias (not `Disjoint`).
+    #[test]
+    fn different_base_terminal_store_may_alias() {
+        let sp = stack_vn_x86();
+        let mut f = make_sp_fn(sp, |b, sp_val| {
+            // aligned = sp & 0xFFFF_FFF8  (a distinct SP base)
+            let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
+            let aligned =
+                b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
+            // store at aligned + 8
+            let eight = b.build_int_const(8u64, ValueType::I32)?;
+            let store_addr =
+                b.build_int_binary_operation(aligned, eight, IntBinaryOp::Add, ValueType::I32)?;
+            let data = b.build_int_const(0xAAu64, ValueType::I32)?;
+            b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+            // Load + return so the store (and its SP-address phi) are reachable
+            // and PhiCollapse collapses the read_variable phi.
+            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_return(Some(loaded), &[])?;
+            Ok(())
+        })
+        .unwrap();
+        collapse(&mut f);
+
+        let store = only_store(&f);
+        let query_base = entry_sp_value(&f, sp);
+        let mut memo = SpExprMemo::default();
+        let verdict = SpAnalyzer::new(&f, &mut memo).store_alias_verdict(
+            store,
+            AddrClass::SpRooted {
+                base: query_base,
+                offset: 0,
+            },
+            4,
+            AliasMode::StackGlobalDisjoint,
+            false,
+        );
+        assert_eq!(
+            verdict,
+            AliasVerdict::MayAlias,
+            "store at an alignment-masked base must may-alias an entry-SP query \
+             (different bases are not offset-comparable)"
+        );
+    }
+
+    /// With the `distinct_sp_bases_disjoint` opt-in (used by stack-arg
+    /// detection), the SAME different-base store is instead treated as
+    /// `Disjoint`: incoming-arg slots above the entry SP are assumed not to
+    /// overlap frame locals rooted at an alignment-masked SP.
+    #[test]
+    fn different_base_terminal_store_disjoint_when_opted_in() {
+        let sp = stack_vn_x86();
+        let mut f = make_sp_fn(sp, |b, sp_val| {
+            let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
+            let aligned =
+                b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
+            let eight = b.build_int_const(8u64, ValueType::I32)?;
+            let store_addr =
+                b.build_int_binary_operation(aligned, eight, IntBinaryOp::Add, ValueType::I32)?;
+            let data = b.build_int_const(0xAAu64, ValueType::I32)?;
+            b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_return(Some(loaded), &[])?;
+            Ok(())
+        })
+        .unwrap();
+        collapse(&mut f);
+
+        let store = only_store(&f);
+        let query_base = entry_sp_value(&f, sp);
+        let mut memo = SpExprMemo::default();
+        let verdict = SpAnalyzer::new(&f, &mut memo).store_alias_verdict(
+            store,
+            AddrClass::SpRooted {
+                base: query_base,
+                offset: 0,
+            },
+            4,
+            AliasMode::StackGlobalDisjoint,
+            true,
+        );
+        assert_eq!(
+            verdict,
+            AliasVerdict::Disjoint,
+            "with distinct_sp_bases_disjoint, a different-base store is assumed disjoint"
+        );
+    }
+
+    /// Sanity: same base, non-overlapping offsets are provably disjoint.
+    #[test]
+    fn same_base_disjoint_offsets_is_disjoint() {
+        let sp = stack_vn_x86();
+        let mut f = make_sp_fn(sp, |b, sp_val| {
+            let eight = b.build_int_const(8u64, ValueType::I32)?;
+            let store_addr =
+                b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+            let data = b.build_int_const(0xAAu64, ValueType::I32)?;
+            b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+            // Load + return so the store (and its SP-address phi) are reachable
+            // and PhiCollapse collapses the read_variable phi.
+            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_return(Some(loaded), &[])?;
+            Ok(())
+        })
+        .unwrap();
+        collapse(&mut f);
+
+        let store = only_store(&f);
+        let query_base = entry_sp_value(&f, sp);
+        let mut memo = SpExprMemo::default();
+        // store at sp+8 (size 4) vs query at sp+0 (size 4): disjoint.
+        let verdict = SpAnalyzer::new(&f, &mut memo).store_alias_verdict(
+            store,
+            AddrClass::SpRooted {
+                base: query_base,
+                offset: 0,
+            },
+            4,
+            AliasMode::StackGlobalDisjoint,
+            false,
+        );
+        assert_eq!(verdict, AliasVerdict::Disjoint);
+    }
+
+    /// Sanity: same base, same offset is an exact `Match`.
+    #[test]
+    fn same_base_same_offset_is_match() {
+        let sp = stack_vn_x86();
+        let mut f = make_sp_fn(sp, |b, sp_val| {
+            let eight = b.build_int_const(8u64, ValueType::I32)?;
+            let store_addr =
+                b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+            let data = b.build_int_const(0xAAu64, ValueType::I32)?;
+            b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+            // Load + return so the store (and its SP-address phi) are reachable
+            // and PhiCollapse collapses the read_variable phi.
+            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_return(Some(loaded), &[])?;
+            Ok(())
+        })
+        .unwrap();
+        collapse(&mut f);
+
+        let store = only_store(&f);
+        let query_base = entry_sp_value(&f, sp);
+        let mut memo = SpExprMemo::default();
+        // store at sp+8 (size 4) vs query at sp+8 (size 4): exact match.
+        let verdict = SpAnalyzer::new(&f, &mut memo).store_alias_verdict(
+            store,
+            AddrClass::SpRooted {
+                base: query_base,
+                offset: 8,
+            },
+            4,
+            AliasMode::StackGlobalDisjoint,
+            false,
+        );
+        assert_eq!(verdict, AliasVerdict::Match);
     }
 }

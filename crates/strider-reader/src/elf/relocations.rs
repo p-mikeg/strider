@@ -40,66 +40,6 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
     base.wrapping_add(addend as u64)
 }
 
-/// Result counts from [`apply_elf_relocations`].  Returned as a
-/// breakdown rather than a single integer so callers can surface
-/// "this binary had 1234 relocations, we applied 1000 of them" to
-/// the user when something looks off.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RelocationStats {
-    /// Total relocations seen across every iterated table.
-    pub seen: usize,
-    /// Relocations the applier patched into the loaded regions.
-    pub applied: usize,
-    /// Relocations skipped because the target symbol resolved cleanly
-    /// but is *legitimately* unresolvable at static-analysis time —
-    /// typically: undefined externs, weak symbols referencing absent
-    /// libraries.  Patching with an arbitrary value would produce
-    /// wrong control flow.
-    pub skipped_unresolved_target: usize,
-    /// Relocations skipped because the target symbol/section index
-    /// failed to resolve at all — i.e. the ELF is malformed (the
-    /// relocation references an index `symbol_by_index` rejects, or
-    /// the relocation target is neither Symbol nor Section).  Distinct
-    /// from `skipped_unresolved_target` (which is the legitimate
-    /// weak-extern case): a non-zero count here means the input ELF
-    /// is structurally suspect.
-    pub skipped_malformed_target: usize,
-    /// Relocations skipped because their kind / size / encoding
-    /// isn't one the applier knows how to write — e.g. ARM Thumb-
-    /// branch encodings or platform-specific TLS variants.
-    pub skipped_unsupported_kind: usize,
-    /// Relocations whose site address didn't fall inside any of the
-    /// `regions` passed in (e.g. .data / .bss relocations when the
-    /// caller only loaded code-and-readonly sections).
-    pub skipped_no_region: usize,
-    /// Relocations whose site's *first byte* IS covered by a region, but
-    /// whose full field width `[site, site + size)` straddles past that
-    /// region's end so the patch can't land.  Distinct from
-    /// `skipped_no_region` (where not even the first byte is mapped): a
-    /// non-zero count here flags a field running off the end of its
-    /// backing section — a malformed / synthesised ELF, or an autoload
-    /// staging that materialised only `data().len()` bytes while the
-    /// relocation field needs more.  Surfaced as its own counter so the
-    /// drop is observable rather than silently merged into the benign
-    /// `skipped_no_region` bucket.
-    pub skipped_straddles_region: usize,
-    /// Sorted+deduped list of raw ELF `r_type` codes the applier
-    /// classified as unsupported (i.e. that incremented
-    /// `skipped_unsupported_kind`).  Surfaces *which* kinds the
-    /// binary actually uses that we don't model; pair with
-    /// `obj.architecture()` and the System V ABI per-arch
-    /// relocation tables to identify each.  Empty when
-    /// `skipped_unsupported_kind == 0`.
-    pub unsupported_r_types: Vec<u32>,
-    /// Number of times the autoload region-extender encountered a
-    /// section whose `data()` parse failed.  These appeared in the
-    /// pre-fix path only on stderr; surfacing the count programmatically
-    /// lets callers detect malformed-ELF cases that would otherwise
-    /// look like clean `skipped_no_region` entries.  Zero in healthy
-    /// ELFs.
-    pub autoload_section_parse_failures: usize,
-}
-
 /// Patches relocations in `regions` in-place.
 ///
 /// Walks the relocation table appropriate for `obj.kind()`:
@@ -154,8 +94,8 @@ pub struct RelocationStats {
 ///   simple `value_low_bytes_at_offset` write (Thumb branches,
 ///   AArch64 ADR_PREL_PG_HI21 + ADD_ABS_LO12_NC pairs, MIPS
 ///   HI16/LO16 splits, PPC TOC relocations).  These come back as
-///   `RelocationKind::Unknown` with `size = 0` and are counted
-///   under `skipped_unsupported_kind`.
+///   `RelocationKind::Unknown` with `size = 0` and are silently
+///   skipped.
 /// * MIPS / PowerPC kernel/userland binaries' specialised
 ///   relocation types — none of strider's current users hit them,
 ///   so they're left as a future-work item.
@@ -166,14 +106,8 @@ pub struct RelocationStats {
 /// target symbol or section index doesn't resolve).  A bad symbol
 /// resolution that arises legitimately (e.g. `STN_UNDEF` for an
 /// external lib) is *not* an error — the relocation is simply
-/// counted under `skipped_unresolved_target` and the caller can
-/// log/inspect the result.
-pub fn apply_elf_relocations(
-    regions: &mut [MemRegion],
-    obj: &object::File<'_>,
-) -> Result<RelocationStats> {
-    let mut stats = RelocationStats::default();
-
+/// skipped.
+pub fn apply_elf_relocations(regions: &mut [MemRegion], obj: &object::File<'_>) -> Result<()> {
     // Build a sorted `start_addr -> index` map once so the per-relocation
     // region lookup in `locate_and_write` is an O(log N) BTree query
     // instead of an O(N) `regions.iter().find` linear scan.  With R
@@ -184,11 +118,9 @@ pub fn apply_elf_relocations(
     let region_index = build_region_index(regions);
 
     for_each_reloc_site(obj, |site_addr, reloc| {
-        apply_one_relocation(obj, regions, &region_index, site_addr, reloc, &mut stats);
+        apply_one_relocation(obj, regions, &region_index, site_addr, reloc);
         Ok(())
-    })?;
-
-    Ok(stats)
+    })
 }
 
 /// Iterates every relocation site in `obj`, invoking `f(site_addr, reloc)`
@@ -238,26 +170,25 @@ where
     Ok(())
 }
 
-/// Applies one relocation entry to `regions`, updating `stats` to
-/// reflect the outcome.  Shared body between the ET_DYN
-/// (`dynamic_relocations()`) and ET_REL (per-section `relocations()`)
-/// iteration paths in [`apply_elf_relocations`].
+/// Applies one relocation entry to `regions`.  Shared body between the
+/// ET_DYN (`dynamic_relocations()`) and ET_REL (per-section
+/// `relocations()`) iteration paths in [`apply_elf_relocations`].
 ///
 /// `site_addr` is the *absolute* virtual address of the relocation
 /// site, already resolved to the same coordinate system the loaded
-/// `regions` live in.
+/// `regions` live in.  Relocations that can't be resolved or patched
+/// (legitimate weak externs, malformed targets, unsupported kinds,
+/// sites with no backing region) are silently skipped.
 fn apply_one_relocation(
     obj: &object::File<'_>,
     regions: &mut [MemRegion],
     region_index: &RegionIndex,
     site_addr: u64,
     reloc: &object::Relocation,
-    stats: &mut RelocationStats,
 ) {
     // Endianness of the patched field, derived from `obj` (its sole source)
     // rather than threaded in alongside it.
     let endian_le = matches!(obj.endianness(), object::Endianness::Little);
-    stats.seen += 1;
 
     // Image-relative relocations (`R_X86_64_RELATIVE` /
     // `R_AARCH64_RELATIVE` / `R_386_RELATIVE` / `R_ARM_RELATIVE`)
@@ -271,7 +202,7 @@ fn apply_one_relocation(
     // Without this branch every PIE binary's `dispatch_table[]` slot
     // reads zero post-load.
     if let Some((value, size_bytes)) = image_relative_reloc(reloc, obj.architecture()) {
-        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le, stats);
+        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le);
         return;
     }
 
@@ -282,15 +213,13 @@ fn apply_one_relocation(
     // analysis-time `Load(GOT[...])` reads the real target without
     // having to model a PLT.
     if let Some(size_bytes) = got_or_plt_slot_reloc_size(reloc, obj.architecture()) {
-        // Need the target symbol for these (no symbol → skip).  The
-        // GOT/PLT path classifies non-Symbol targets as
-        // `malformed_target` (consistent with the bad-symbol-index
-        // bucket); pass `require_symbol_target = true`.
-        let Some(target_addr) = resolve_symbol_target(obj, reloc, true, stats) else {
+        // Need the target symbol for these (no symbol → skip); pass
+        // `require_symbol_target = true`.
+        let Some(target_addr) = resolve_symbol_target(obj, reloc) else {
             return;
         };
         let value = apply_addend(target_addr, reloc.addend());
-        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le, stats);
+        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le);
         return;
     }
 
@@ -306,11 +235,11 @@ fn apply_one_relocation(
     // `mips_rel32_symbol_reloc_size` guarantees the target is a
     // `Symbol`, so this only ever takes the resolve-or-skip arms.
     if let Some(size_bytes) = mips_rel32_symbol_reloc_size(reloc, obj.architecture()) {
-        let Some(target_addr) = resolve_symbol_target(obj, reloc, true, stats) else {
+        let Some(target_addr) = resolve_symbol_target(obj, reloc) else {
             return;
         };
         let value = apply_addend(target_addr, reloc.addend());
-        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le, stats);
+        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le);
         return;
     }
 
@@ -325,34 +254,24 @@ fn apply_one_relocation(
     // fallback path is the right one for ET_REL.  The general path
     // also handles `RelocationTarget::Section` (the GOT/PLT path
     // doesn't see those); pass `require_symbol_target = false` so
-    // `Absolute` and unknown future variants bucket as
-    // `skipped_unsupported_kind` via `record_unsupported`.
+    // `Absolute` and unknown future variants are skipped as
+    // unsupported.
     let target_addr = match reloc.target() {
         RelocationTarget::Symbol(_) => {
-            let Some(addr) = resolve_symbol_target(obj, reloc, false, stats) else {
+            let Some(addr) = resolve_symbol_target(obj, reloc) else {
                 return;
             };
             addr
         }
         RelocationTarget::Section(idx) => match obj.section_by_index(idx) {
             Ok(sec) => sec.address(),
-            Err(_) => {
-                // Bad section index — structurally malformed, NOT a
-                // legitimate weak-extern.  Matches the GOT/PLT path's
-                // malformed bucket so callers inspecting
-                // RelocationStats see a consistent error class
-                // regardless of which arm fired.
-                stats.skipped_malformed_target += 1;
-                return;
-            }
+            // Bad section index — structurally malformed; skip.
+            Err(_) => return,
         },
         // `Absolute` (sentinel for immediate-value relocations with
-        // no symbol/section) and any future variants get bucketed as
+        // no symbol/section) and any future variants are skipped as
         // unsupported.
-        _ => {
-            record_unsupported(reloc, stats);
-            return;
-        }
+        _ => return,
     };
 
     let addend = reloc.addend();
@@ -367,10 +286,8 @@ fn apply_one_relocation(
         RelocationKind::Relative | RelocationKind::PltRelative => {
             apply_addend(target_addr, addend).wrapping_sub(site_addr)
         }
-        _ => {
-            record_unsupported(reloc, stats);
-            return;
-        }
+        // Unsupported kind — skip.
+        _ => return,
     };
 
     // The `size` field is in bits; `size == 0` means "use the kind's
@@ -380,7 +297,6 @@ fn apply_one_relocation(
     // ARM Thumb branch) we don't model.
     let size_bits = reloc.size();
     if size_bits == 0 || !size_bits.is_multiple_of(8) || size_bits > 64 {
-        stats.skipped_unsupported_kind += 1;
         return;
     }
     let size_bytes = (size_bits / 8) as usize;
@@ -389,7 +305,7 @@ fn apply_one_relocation(
     // size_bytes) range.  Linear scan inside `locate_and_write` is
     // fine — relocation counts are small relative to the
     // per-relocation work.
-    locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le, stats);
+    locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le);
 }
 
 /// A sorted `[start, end)` interval index for O(log n) address-coverage
@@ -476,10 +392,10 @@ impl CoverageIndex {
 /// [`MemRegion`] to `regions`, then delegates to the patch loop.
 ///
 /// The non-autoload variant passes an extender that always returns
-/// `Ok(None)` (so `regions` is never grown and uncovered sites
-/// increment `skipped_no_region` inside the patch loop); the autoload
-/// variant passes an extender that returns the `SHF_ALLOC`
-/// file-backed section containing the site, if any.
+/// `Ok(None)` (so `regions` is never grown and uncovered sites are
+/// simply skipped inside the patch loop); the autoload variant passes
+/// an extender that returns the `SHF_ALLOC` file-backed section
+/// containing the site, if any.
 ///
 /// Sections are appended in iteration order of `obj.dynamic_relocations()`,
 /// and the per-site dedup check covers both the pre-existing `regions`
@@ -506,7 +422,7 @@ pub(crate) fn apply_elf_relocations_with_extender<F>(
     regions: &mut Vec<MemRegion>,
     obj: &object::File<'_>,
     mut extender: F,
-) -> Result<RelocationStats>
+) -> Result<()>
 where
     F: FnMut(u64, &object::File<'_>) -> Result<Option<MemRegion>>,
 {
@@ -548,7 +464,7 @@ where
     // produces a region we then fail to patch).  Callers that need
     // strict atomicity should re-load the binary from disk on `Err`.
     match apply_elf_relocations(regions, obj) {
-        Ok(stats) => Ok(stats),
+        Ok(()) => Ok(()),
         Err(e) => {
             regions.truncate(base_len);
             Err(e)
@@ -567,16 +483,15 @@ where
 /// application to "just work" without needing to know upfront
 /// which writable sections (`.got.plt`, `.data.rel.ro`, …) the
 /// dynamic relocs target.  Avoids the silent-failure mode of
-/// the pure variant where every relocation is counted as
-/// `skipped_no_region` because the caller didn't pre-load the
-/// right sections.
+/// the pure variant where every relocation is silently skipped
+/// because the caller didn't pre-load the right sections.
 ///
 /// Sections are added in iteration order of `obj.sections()`,
 /// each appended once even when multiple relocs target the same
 /// section.  An ELF section that has no file-backed bytes
 /// (`SHT_NOBITS`, e.g. `.bss`) is *not* added — there's nothing
-/// to patch — and the corresponding relocs still increment
-/// `skipped_no_region` from inside the inner call.
+/// to patch — and the corresponding relocs are simply skipped
+/// from inside the inner call.
 ///
 /// The dedup check is per-site (does any region cover this exact
 /// `site_addr`), not per-section.  On a well-formed ELF every
@@ -595,11 +510,9 @@ where
 pub fn apply_elf_relocations_autoload(
     regions: &mut Vec<MemRegion>,
     obj: &object::File<'_>,
-) -> Result<RelocationStats> {
-    let mut parse_failures: usize = 0;
-    let mut stats = apply_elf_relocations_with_extender(regions, obj, |site_addr, obj| {
-        let Some(sec) = find_loadable_section_containing(obj, site_addr, &mut parse_failures)
-        else {
+) -> Result<()> {
+    apply_elf_relocations_with_extender(regions, obj, |site_addr, obj| {
+        let Some(sec) = find_loadable_section_containing(obj, site_addr) else {
             return Ok(None);
         };
         let data = sec.data().context("failed to parse ELF")?;
@@ -607,23 +520,16 @@ pub fn apply_elf_relocations_autoload(
             return Ok(None);
         }
         Ok(Some(MemRegion::new(sec.address(), data.to_vec())?))
-    })?;
-    // Surface autoload section-parse failures on `stats` so
-    // programmatic callers can detect malformed-ELF without inspecting
-    // log output.
-    stats.autoload_section_parse_failures = parse_failures;
-    Ok(stats)
+    })
 }
 
 /// Returns the first section in `obj` that contains `addr` and is
 /// safe to materialise as a `MemRegion`: `SHF_ALLOC` set, file-
 /// backed (i.e. *not* `SHT_NOBITS`).  Returns `None` when no
-/// section matches — caller treats that as "leave the reloc as
-/// skipped_no_region".
+/// section matches — caller treats that as "skip this relocation".
 fn find_loadable_section_containing<'data, 'a>(
     obj: &'a object::File<'data>,
     addr: u64,
-    parse_failure_count: &mut usize,
 ) -> Option<object::read::Section<'data, 'a>> {
     obj.sections().find(|sec| {
         let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
@@ -634,11 +540,7 @@ fn find_loadable_section_containing<'data, 'a>(
         }
         // SHT_NOBITS sections (BSS) and sections whose data fails to
         // parse both yield no usable bytes — treat them identically as
-        // "skip this section for site-coverage", but distinguish the
-        // parse-failure case via the
-        // `RelocationStats::autoload_section_parse_failures` counter
-        // the caller surfaces, so programmatic callers can detect
-        // malformed-ELF without scraping stderr.  No `eprintln!`: this
+        // "skip this section for site-coverage".  No `eprintln!`: this
         // is library code, and stderr writes from a deep helper are
         // un-suppressable noise for embedders.
         let data_len = match sec.data() {
@@ -648,10 +550,7 @@ fn find_loadable_section_containing<'data, 'a>(
                 }
                 d.len() as u64
             }
-            Err(_) => {
-                *parse_failure_count += 1;
-                return false;
-            }
+            Err(_) => return false,
         };
         // Bound coverage by the actual staged byte count (`data().len()`),
         // not `sh_size`: the staged `MemRegion` spans only `data().len()`
@@ -666,68 +565,37 @@ fn find_loadable_section_containing<'data, 'a>(
 /// Look up the address of `reloc`'s `RelocationTarget::Symbol` index,
 /// preferring the dynamic symbol table (`obj.dynamic_symbol_table()`)
 /// over the static `.symtab` per `Object::dynamic_relocations`'s
-/// doc-comment.  Buckets failures into `stats` and returns `None`
-/// when the caller should `continue` past this relocation:
+/// doc-comment.  Returns `None` (the caller skips the relocation)
+/// when:
 ///
-/// - Returns `None` and increments `skipped_malformed_target` when
-///   the symbol index doesn't resolve at all (malformed ELF), or
-///   when the relocation target is not a `Symbol` and
-///   `require_symbol_target` is `true` (GOT/PLT path).
-/// - Returns `None` and increments `skipped_unresolved_target` when
-///   the symbol resolves cleanly but is the legitimate weak / undef
-///   case (`address == 0 && is_undefined`).
-/// - Returns `None` and calls `record_unsupported` when the target
-///   isn't a `Symbol` and `require_symbol_target` is `false` (the
-///   general path).
-/// - Otherwise returns `Some(address)`.
-fn resolve_symbol_target(
-    obj: &object::File<'_>,
-    reloc: &object::Relocation,
-    require_symbol_target: bool,
-    stats: &mut RelocationStats,
-) -> Option<u64> {
+/// - the symbol index doesn't resolve at all (malformed ELF),
+/// - the symbol resolves cleanly but is the legitimate weak / undef
+///   case (`address == 0 && is_undefined`),
+/// - the target isn't a `Symbol` (an immediate `Absolute` or a
+///   `Section` the caller routes here only on the symbol-required
+///   GOT/PLT and MIPS-REL32 paths).
+///
+/// Otherwise returns `Some(address)`.
+fn resolve_symbol_target(obj: &object::File<'_>, reloc: &object::Relocation) -> Option<u64> {
     match reloc.target() {
         RelocationTarget::Symbol(idx) => {
-            let resolved = obj.dynamic_symbol_table().map_or_else(|| obj.symbol_by_index(idx), |t| t.symbol_by_index(idx)).map(|s| (s.address(), s.is_undefined())).ok();
-            let Some((addr, undef)) = resolved else {
-                // symbol_by_index returned Err — the index is invalid
-                // (malformed ELF), distinct from the legitimate
-                // weak-extern case below.
-                stats.skipped_malformed_target += 1;
-                return None;
-            };
+            let resolved = obj
+                .dynamic_symbol_table()
+                .map_or_else(|| obj.symbol_by_index(idx), |t| t.symbol_by_index(idx))
+                .map(|s| (s.address(), s.is_undefined()))
+                .ok();
+            // None: symbol_by_index returned Err (invalid index,
+            // malformed ELF).  Some((0, true)): legitimate undefined /
+            // weak extern.  Either way, skip.
+            let (addr, undef) = resolved?;
             if addr == 0 && undef {
-                // Legitimate undefined / weak extern.
-                stats.skipped_unresolved_target += 1;
                 return None;
             }
             Some(addr)
         }
-        _ if require_symbol_target => {
-            // Non-Symbol relocation target (e.g. SectionIndex
-            // we don't model) — bucket as malformed-from-our-
-            // perspective rather than as a legitimate weak-extern.
-            stats.skipped_malformed_target += 1;
-            None
-        }
-        _ => {
-            record_unsupported(reloc, stats);
-            None
-        }
-    }
-}
-
-/// Increment `stats.skipped_unsupported_kind` and record the raw
-/// ELF `r_type` of `reloc` (deduped, sorted) onto
-/// `stats.unsupported_r_types` so callers can self-diagnose which
-/// kinds their binary uses that we don't model.  No-op when the
-/// reloc isn't ELF-flavoured.
-fn record_unsupported(reloc: &object::Relocation, stats: &mut RelocationStats) {
-    stats.skipped_unsupported_kind += 1;
-    if let RelocationFlags::Elf { r_type } = reloc.flags()
-        && let Err(idx) = stats.unsupported_r_types.binary_search(&r_type)
-    {
-        stats.unsupported_r_types.insert(idx, r_type);
+        // Non-Symbol relocation target (e.g. a SectionIndex we don't
+        // model, or an immediate-value `Absolute`) — skip.
+        _ => None,
     }
 }
 
@@ -787,8 +655,8 @@ fn image_relative_reloc(
         // the ELF spec (`R_PPC64_RELATIVE = R_PPC_RELATIVE = 22`).
         // PPC64 ET_DYN binaries (Linux distributions) commonly use this
         // for function-pointer tables; without this arm those relocs
-        // fall through to `skipped_unsupported_kind` and the resulting
-        // pointer reads as zero.
+        // are skipped as unsupported and the resulting pointer reads as
+        // zero.
         A::PowerPc64
             if r_type == object::elf::R_PPC64_RELATIVE
                 || r_type == object::elf::R_PPC64_IRELATIVE =>
@@ -969,35 +837,17 @@ fn find_covering_region(
         .find(|&i| regions[i].fully_covers(site_addr, size_bytes))
 }
 
-/// Returns `true` when `site_addr`'s *first byte* falls inside some
-/// region — regardless of whether the full field width fits.  Used to
-/// tell a "field straddles a region's end" drop (first byte covered,
-/// rest runs off the end) apart from a plain "no region covers this site
-/// at all" drop.
-fn site_first_byte_covered(
-    regions: &[MemRegion],
-    region_index: &RegionIndex,
-    site_addr: u64,
-) -> bool {
-    region_index
-        .range(..=site_addr)
-        .rev()
-        .any(|(_, &i)| regions[i].contains(site_addr))
-}
-
 /// Locates the region in `regions` whose `[start, end)` covers
 /// `[site_addr, site_addr + size_bytes)` (via the precomputed
 /// `region_index`), computes the in-region offset, and writes the low
-/// `size_bytes` of `value` there using `endian_le`.  Increments
-/// `stats.applied` on success; on failure increments
-/// `stats.skipped_straddles_region` when the site's first byte is mapped
-/// but the field runs past the region's end, or `stats.skipped_no_region`
-/// when the site isn't mapped at all.
+/// `size_bytes` of `value` there using `endian_le`.  When no region
+/// fully covers the field (the site is unmapped, or its field width runs
+/// past the end of the region its first byte lands in) the relocation is
+/// silently skipped.
 ///
 /// Consolidates the three identical "find region / compute offset /
-/// write_at / increment counter" blocks in [`apply_elf_relocations`]
-/// (image-relative, GOT/PLT-slot, generic Absolute/Relative paths)
-/// into a single helper.
+/// write_at" blocks in [`apply_elf_relocations`] (image-relative,
+/// GOT/PLT-slot, generic Absolute/Relative paths) into a single helper.
 fn locate_and_write(
     regions: &mut [MemRegion],
     region_index: &RegionIndex,
@@ -1005,20 +855,11 @@ fn locate_and_write(
     value: u64,
     size_bytes: usize,
     endian_le: bool,
-    stats: &mut RelocationStats,
 ) {
     if let Some(i) = find_covering_region(regions, region_index, site_addr, size_bytes) {
         let region = &mut regions[i];
         let off = (site_addr - region.start_addr()) as usize;
         write_at(region.data_mut(), off, value, size_bytes, endian_le);
-        stats.applied += 1;
-    } else if site_first_byte_covered(regions, region_index, site_addr) {
-        // The site's first byte IS mapped, but the field width runs past
-        // the region's end — record the straddle distinctly so the drop
-        // is observable instead of looking like a benign no-region skip.
-        stats.skipped_straddles_region += 1;
-    } else {
-        stats.skipped_no_region += 1;
     }
 }
 
