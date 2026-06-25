@@ -54,16 +54,12 @@ pub struct CallOtherAbi {
     /// Does this op clobber memory (i.e. advance the IR's memory
     /// edge)?  Set to `false` for pure compute (cpuid, rdtsc) and
     /// `true` for everything that touches memory — atomics, barriers,
-    /// port-I/O, syscalls, kernel entries, etc.
-    ///
-    /// Previous revisions of this field carried a per-alias-class
-    /// clobber set (`[]` / `[Unknown]` / `[Stack, Unknown]`); we no
-    /// longer model that distinction because mainstream compilers
-    /// don't (they use address-range / memory-dependence analysis at
-    /// the optimisation layer instead).  Any op that touches memory
-    /// is treated uniformly as "clobbers memory" in the IR; a future
-    /// load-store-forwarding pass can use range disjointness to
-    /// recover precision per query.
+    /// port-I/O, syscalls, kernel entries, etc.  Any op that touches
+    /// memory is treated uniformly as "clobbers memory" in the IR; the
+    /// field deliberately carries no per-alias-class (stack / heap /
+    /// unknown) partition, mirroring mainstream compilers that recover
+    /// per-query precision via address-range / memory-dependence
+    /// analysis at the optimisation layer instead.
     pub clobbers_memory: bool,
 }
 
@@ -446,50 +442,39 @@ const AARCH64_BOTH: &[crate::ArchPreset] =
 /// `classify_arch_specific` instead.  Memory-edge alone is allowed
 /// here (it's purely an IR concept, not arch-specific).  Enforced by
 /// the `arch_independent_call_entries_have_empty_register_channels`
-/// test — using the `Pure` / `MemClobber` table marker exclusively here
+/// test — using the `PURE` / `MEM_CLOBBER` shared consts exclusively here
 /// makes the invariant trivially true at the syntactic level.
 ///
-/// The table is grouped by classification (NoOp / NoReturn / Pure /
-/// MemClobber) and ASCII-sorted within each group for diffability — one
+/// The table is grouped by classification (NoOp / NoReturn / PURE /
+/// MEM_CLOBBER) and ASCII-sorted within each group for diffability — one
 /// entry per line, identical shape, easy to compare across patches.
 /// Lookup is a linear scan; the table is small (~46 entries) and
 /// classification fires once per CallOther at lift time, so a hash
 /// map's setup cost isn't justified.
 fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
-    use TableClass::{MemClobber, NoOp, NoReturn, Pure};
-    /// Per-table marker for one of the four pre-canned classifications
-    /// — `NoOp` (decoder-context only), `NoReturn` (trap), `Pure`
-    /// (visible marker / pure compute, no memory clobber), `MemClobber`
-    /// (memory-chain marker / external-state effect — barriers,
-    /// LOCK/UNLOCK, port I/O, SYSCALL, etc.).  Resolved to a
-    /// `CallOtherClass` by `TableClass::resolve`.
-    #[derive(Clone, Copy)]
-    enum TableClass {
-        NoOp,
-        NoReturn,
-        Pure,
-        MemClobber,
-    }
-    impl TableClass {
-        fn resolve(self) -> CallOtherClass {
-            match self {
-                Self::NoOp => CallOtherClass::NoOp,
-                Self::NoReturn => CallOtherClass::NoReturn,
-                Self::Pure => CallOtherClass::Call(CallOtherAbi {
-                    implicit_reads: &[],
-                    implicit_writes: &[],
-                    clobbers_memory: false,
-                }),
-                Self::MemClobber => CallOtherClass::Call(CallOtherAbi {
-                    implicit_reads: &[],
-                    implicit_writes: &[],
-                    clobbers_memory: true,
-                }),
-            }
-        }
-    }
+    use CallOtherClass::{NoOp, NoReturn};
 
-    static TABLE: &[(&str, TableClass)] = &[
+    // The two pre-canned `Call` classifications used throughout the
+    // arch-independent table.  Hardcoding empty register channels here makes
+    // the "arch-independent entries have empty implicit_reads/writes"
+    // invariant trivially true at the syntactic level (no named register can
+    // sneak in), and the only per-entry choice is the memory edge:
+    //   * `PURE` — visible marker / pure compute, no memory clobber
+    //     (cpuid, NEON/SVE compute, exclusive-monitor primitives, …).
+    //   * `MEM_CLOBBER` — memory-chain marker / external-state effect
+    //     (barriers, LOCK/UNLOCK, port I/O, SYSCALL, …).
+    const PURE: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &[],
+        implicit_writes: &[],
+        clobbers_memory: false,
+    });
+    const MEM_CLOBBER: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &[],
+        implicit_writes: &[],
+        clobbers_memory: true,
+    });
+
+    static TABLE: &[(&str, CallOtherClass)] = &[
         // ─── Truly invisible (Sleigh decoder context only) ────────
         ("setEndianState", NoOp),
         ("setISAMode", NoOp),
@@ -505,56 +490,56 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // ARM exclusive-monitor primitives — pair with LDREX/STREX
         // which already emit pcode loads/stores.  The monitor flag is
         // synthetic.
-        ("ExclusiveMonitorPass", Pure),
-        ("ExclusiveMonitorsStatus", Pure),
+        ("ExclusiveMonitorPass", PURE),
+        ("ExclusiveMonitorsStatus", PURE),
         // CPU hints — non-paired, no memory effect.
-        ("Hint_Prefetch", Pure),
-        ("Yield", Pure),
+        ("Hint_Prefetch", PURE),
+        ("Yield", PURE),
         // x86 CPUID family — Sleigh's lift returns a tmpptr; the
         // EAX/EBX/ECX/EDX writes appear as ordinary Loads from
         // tmpptr+{0,4,8,12} in subsequent pcode.  The CallOther itself
         // doesn't touch RAM, so memory edge stays put — opt passes can
         // forward through it.
-        ("cpuid", Pure),
-        ("cpuid_Architectural_Performance_Monitoring_info", Pure),
-        ("cpuid_Deterministic_Cache_Parameters_info", Pure),
-        ("cpuid_Direct_Cache_Access_info", Pure),
-        ("cpuid_Extended_Feature_Enumeration_info", Pure),
-        ("cpuid_Extended_Topology_info", Pure),
-        ("cpuid_MONITOR_MWAIT_Features_info", Pure),
-        ("cpuid_Processor_Extended_States_info", Pure),
-        ("cpuid_Quality_of_Service_info", Pure),
-        ("cpuid_Thermal_Power_Management_info", Pure),
-        ("cpuid_Version_info", Pure),
-        ("cpuid_basic_info", Pure),
-        ("cpuid_brand_part1_info", Pure),
-        ("cpuid_brand_part2_info", Pure),
-        ("cpuid_brand_part3_info", Pure),
-        ("cpuid_cache_tlb_info", Pure),
-        ("cpuid_serial_info", Pure),
+        ("cpuid", PURE),
+        ("cpuid_Architectural_Performance_Monitoring_info", PURE),
+        ("cpuid_Deterministic_Cache_Parameters_info", PURE),
+        ("cpuid_Direct_Cache_Access_info", PURE),
+        ("cpuid_Extended_Feature_Enumeration_info", PURE),
+        ("cpuid_Extended_Topology_info", PURE),
+        ("cpuid_MONITOR_MWAIT_Features_info", PURE),
+        ("cpuid_Processor_Extended_States_info", PURE),
+        ("cpuid_Quality_of_Service_info", PURE),
+        ("cpuid_Thermal_Power_Management_info", PURE),
+        ("cpuid_Version_info", PURE),
+        ("cpuid_basic_info", PURE),
+        ("cpuid_brand_part1_info", PURE),
+        ("cpuid_brand_part2_info", PURE),
+        ("cpuid_brand_part3_info", PURE),
+        ("cpuid_cache_tlb_info", PURE),
+        ("cpuid_serial_info", PURE),
         // NEON / SVE / multi-precision — Sleigh's pcode carries
         // operand regs; the user-op itself is pure compute.
-        ("MP_INT_ABS", Pure),
-        ("NEON_rev64", Pure),
-        ("NEON_sqshl", Pure),
-        ("NEON_uaddlv", Pure),
-        ("SVE_fnmla", Pure),
+        ("MP_INT_ABS", PURE),
+        ("NEON_rev64", PURE),
+        ("NEON_sqshl", PURE),
+        ("NEON_uaddlv", PURE),
+        ("SVE_fnmla", PURE),
         // ARM unmodelled sysreg read — pcode-explicit encoding
         // constant and destination; opaque value, no RAM effect.
-        ("UnkSytemRegRead", Pure),
+        ("UnkSytemRegRead", PURE),
         // x86 `swapgs` lives in classify_arch_specific so a non-x86
         // user-op of the same name cannot silently inherit MemClobber.
 
         // ARM permanently-undefined instruction — Sleigh emits
         // CALLOTHER + a branch to the trap handler; the user-op
         // itself doesn't touch state.
-        ("software_udf", Pure),
+        ("software_udf", PURE),
         // ─── MemClobber: memory-chain markers + side-effecting ───────
 
         // x86 port I/O — port + value pcode-explicit; the user-op
         // itself affects external (port) state.
-        ("in", MemClobber),
-        ("out", MemClobber),
+        ("in", MEM_CLOBBER),
+        ("out", MEM_CLOBBER),
         // ─── MemClobber: memory / ordering barriers ──────────────
         //
         // All of these act as serialization or visibility barriers
@@ -576,8 +561,8 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // latest value from ALL CPUs).  Stack + Unknown are both
         // observable by other CPUs in the presence of shared-stack
         // scenarios, so clobber both.
-        ("LOCK", MemClobber),
-        ("UNLOCK", MemClobber),
+        ("LOCK", MEM_CLOBBER),
+        ("UNLOCK", MEM_CLOBBER),
         // ARM standalone memory / cache barriers.  DSB / DMB are data
         // memory barriers; ISB flushes the instruction pipeline and,
         // conservatively, both instruction and data stream.  On a
@@ -587,19 +572,19 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // DC_CVAC (Data Cache operation to Point of Coherency) interacts
         // with the cache subsystem, not with register-side data; it is
         // kept at MemClobber (heap+unknown only).
-        ("DC_CVAC", MemClobber),
-        ("DataMemoryBarrier", MemClobber),
-        ("DataSynchronizationBarrier", MemClobber),
-        ("InstructionSynchronizationBarrier", MemClobber),
+        ("DC_CVAC", MEM_CLOBBER),
+        ("DataMemoryBarrier", MEM_CLOBBER),
+        ("DataSynchronizationBarrier", MEM_CLOBBER),
+        ("InstructionSynchronizationBarrier", MEM_CLOBBER),
         // x86/x86_64 standalone memory fences.  Emitted by Sleigh's x86
         // spec as lowercase mnemonics.  All three are ordering barriers:
         // MFENCE serialises all prior / subsequent loads and stores;
         // SFENCE serialises prior stores; LFENCE serialises prior loads.
         // Like LOCK, these can make a remote core's prior writes visible,
         // so Stack + Unknown are both reachable.
-        ("lfence", MemClobber),
-        ("mfence", MemClobber),
-        ("sfence", MemClobber),
+        ("lfence", MEM_CLOBBER),
+        ("mfence", MEM_CLOBBER),
+        ("sfence", MEM_CLOBBER),
         // PowerPC memory barriers.
         // `sync` (SYNC / lwsync / hwsync — the `L` field selects the
         // variant but Sleigh folds all three to the same user-op name).
@@ -609,9 +594,9 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // treated conservatively as MemClobber for data).
         // Without these entries any PowerPC binary containing a fence
         // would fail with UnknownCallOtherError at the IR layer.
-        ("enforceInOrderExecutionIO", MemClobber),
-        ("instructionSynchronize", MemClobber),
-        ("sync", MemClobber),
+        ("enforceInOrderExecutionIO", MEM_CLOBBER),
+        ("instructionSynchronize", MEM_CLOBBER),
+        ("sync", MEM_CLOBBER),
         // MIPS memory barriers.
         // `SYNC` — GHIDRA's MIPS32 spec emits this for the SYNC
         //   instruction (instruction-stream sync / data-memory barrier).
@@ -619,17 +604,14 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         //   the same SYNC mnemonic in the common include.
         // Without these entries any MIPS binary containing SYNC would
         // fail with UnknownCallOtherError at the IR layer.
-        ("SYNC", MemClobber),
-        ("synch", MemClobber),
+        ("SYNC", MEM_CLOBBER),
+        ("synch", MEM_CLOBBER),
         // ARM SVC / SWI raised by an immediate — possible syscall
         // path, kernel can do anything to memory including the user
         // stack frame.  Use the full-clobber marker.
-        ("software_interrupt", MemClobber),
+        ("software_interrupt", MEM_CLOBBER),
     ];
-    TABLE
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, c)| c.resolve())
+    TABLE.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
 }
 
 #[cfg(test)]

@@ -125,20 +125,7 @@ pub struct Template {
     pub(crate) graph: Graph<TmplNode, TmplValue, NeverCacheable>,
 }
 
-impl Default for Template {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Template {
-    /// An empty template with no root.
-    pub fn new() -> Self {
-        Self {
-            graph: Graph::new(),
-        }
-    }
-
     /// Wraps an already-materialised bipartite graph as a [`Template`].
     /// Used by `TemplateBuilder::finish` after the staging core seals the
     /// staged DAG.

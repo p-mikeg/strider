@@ -184,8 +184,7 @@ fn cacheable_int_const_with_different_type_does_not_dedup() {
 /// structurally equal and dedup.
 #[test]
 fn int_const_payload_is_normalised_to_output_type_width() {
-    use crate::IRBuilderExt;
-    use crate::IRViewer;
+    use crate::{IRBuilderExt, IRViewer};
     let mut function = Function::default();
     // -4 as I8: value with bits above bit 7 vs the 8-bit-masked form.
     // 0x1FC = 0b1_1111_1100 — only low 8 bits (0xFC) matter for I8.

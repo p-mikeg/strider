@@ -1,9 +1,8 @@
 use cranelift_entity::SecondaryMap;
 use entity_utils::Worklist;
 
-use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{ExtendOp, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
@@ -115,6 +114,67 @@ fn classify_const_shift(rhs_kb: KnownBitsFacts, rhs_mask: u64, bit_width: u64) -
     ConstShift::InRange(rhs_kb.ones as u32)
 }
 
+/// Direction of a logical shift, selecting the per-direction `InRange` bit-math
+/// in [`shift_known_bits`].
+#[derive(Clone, Copy)]
+enum ShiftDir {
+    Left,
+    Right,
+}
+
+/// Known-bits transfer for the `ShiftLeft` / `ShiftRight` arms.
+///
+/// Reads the RHS mask, classifies the (constant) shift against the output
+/// width, and — for an in-range shift — applies the direction-specific
+/// bit-math (left: low bits become known-zero, surviving bits move up; right:
+/// upper bits become known-zero, surviving bits move down).  Returns `None`
+/// for an unknown shift amount (caller defers to "fully unknown"); an
+/// over-width shift yields all-zeros.  Shared scaffolding for both arms — only
+/// the per-direction math differs.
+fn shift_known_bits(
+    ctx: &strider_ir::Function,
+    l: KnownBitsFacts,
+    rhs: ValueId,
+    rhs_kb: KnownBitsFacts,
+    ty: ValueType,
+    type_mask: u64,
+    dir: ShiftDir,
+) -> Option<KnownBitsFacts> {
+    let rhs_mask = ctx
+        .value_type_opt(rhs)
+        .and_then(u64_type_mask)
+        .unwrap_or(u64::MAX);
+    match classify_const_shift(rhs_kb, rhs_mask, ty.bit_width() as u64) {
+        ConstShift::Unknown => None,
+        ConstShift::OverWidth => Some(KnownBitsFacts {
+            ones: 0,
+            zeros: type_mask,
+        }),
+        ConstShift::InRange(shift) => {
+            let (shifted_ones, shifted_zeros) = match dir {
+                ShiftDir::Left => {
+                    let lower_mask = (1u64 << shift).wrapping_sub(1) & type_mask;
+                    (
+                        (l.ones << shift) & type_mask,
+                        ((l.zeros << shift) & type_mask) | lower_mask,
+                    )
+                }
+                ShiftDir::Right => {
+                    let upper_mask = !(type_mask >> shift) & type_mask;
+                    (
+                        (l.ones & type_mask) >> shift,
+                        ((l.zeros & type_mask) >> shift) | upper_mask,
+                    )
+                }
+            };
+            Some(KnownBitsFacts {
+                ones: shifted_ones,
+                zeros: shifted_zeros & !shifted_ones,
+            })
+        }
+    }
+}
+
 // ── Per-node known-bits computation ───────────────────────────────────────────
 
 /// Computes the known bits contributed by `node_id` toward its single integer
@@ -193,33 +253,9 @@ pub(crate) fn node_known_bits(
                     // wrapped large literal shifts back into range,
                     // producing the wrong known-bits result for any
                     // literal shift at-or-past the type width.
-                    let rhs_mask = ctx
-                        .value_type_opt(rhs)
-                        .and_then(u64_type_mask)
-                        .unwrap_or(u64::MAX);
-                    match classify_const_shift(known[rhs], rhs_mask, ty.bit_width() as u64) {
-                        ConstShift::Unknown => return Ok(None),
-                        ConstShift::OverWidth => {
-                            return Ok(Some((
-                                out,
-                                KnownBitsFacts {
-                                    ones: 0,
-                                    zeros: type_mask,
-                                },
-                            )));
-                        }
-                        ConstShift::InRange(shift) => {
-                            let lower_mask = (1u64 << shift).wrapping_sub(1) & type_mask;
-                            let shifted_ones = (l.ones << shift) & type_mask;
-                            let shifted_zeros = ((l.zeros << shift) & type_mask) | lower_mask;
-                            return Ok(Some((
-                                out,
-                                KnownBitsFacts {
-                                    ones: shifted_ones,
-                                    zeros: shifted_zeros & !shifted_ones,
-                                },
-                            )));
-                        }
+                    match shift_known_bits(ctx, l, rhs, r, ty, type_mask, ShiftDir::Left) {
+                        Some(facts) => return Ok(Some((out, facts))),
+                        None => return Ok(None),
                     }
                 }
                 IntBinaryOp::ShiftRight => {
@@ -231,33 +267,9 @@ pub(crate) fn node_known_bits(
                     // `>= bit_width` returns 0 (sleigh/src/opbehavior.cc:432).
                     // Mirror that here — see the ShiftLeft arm for the
                     // pre-fix bug rationale.
-                    let rhs_mask = ctx
-                        .value_type_opt(rhs)
-                        .and_then(u64_type_mask)
-                        .unwrap_or(u64::MAX);
-                    match classify_const_shift(known[rhs], rhs_mask, ty.bit_width() as u64) {
-                        ConstShift::Unknown => return Ok(None),
-                        ConstShift::OverWidth => {
-                            return Ok(Some((
-                                out,
-                                KnownBitsFacts {
-                                    ones: 0,
-                                    zeros: type_mask,
-                                },
-                            )));
-                        }
-                        ConstShift::InRange(shift) => {
-                            let upper_mask = !(type_mask >> shift) & type_mask;
-                            let shifted_ones = (l.ones & type_mask) >> shift;
-                            let shifted_zeros = ((l.zeros & type_mask) >> shift) | upper_mask;
-                            return Ok(Some((
-                                out,
-                                KnownBitsFacts {
-                                    ones: shifted_ones,
-                                    zeros: shifted_zeros & !shifted_ones,
-                                },
-                            )));
-                        }
+                    match shift_known_bits(ctx, l, rhs, r, ty, type_mask, ShiftDir::Right) {
+                        Some(facts) => return Ok(Some((out, facts))),
+                        None => return Ok(None),
                     }
                 }
                 _ => return Ok(None),
@@ -629,7 +641,7 @@ fn build_cone_fingerprint_memo(
     let mut stack: Vec<(NodeId, bool)> = Vec::new();
     let seed_inputs = to_fold
         .iter()
-        .flat_map(|&(value, _, _)| crate::peephole::input_producers(ctx, ctx.producer(value)));
+        .flat_map(|&(value, _, _)| crate::peephole::input_producers_iter(ctx, ctx.producer(value)));
     for n in seed_inputs {
         stack.push((n, false));
     }
@@ -638,7 +650,7 @@ fn build_cone_fingerprint_memo(
             // Children resolved — assemble this node's set.
             let mut addrs: ConeFps = ctx.function().asm_fingerprint(n).iter().copied().collect();
             if propagates_known_bits(ctx.node_kind(n)) {
-                for p in crate::peephole::input_producers(ctx, n) {
+                for p in crate::peephole::input_producers_iter(ctx, n) {
                     if let Some(child) = memo.get(&p) {
                         addrs.extend_from_slice(child);
                     }
@@ -654,7 +666,7 @@ fn build_cone_fingerprint_memo(
         }
         stack.push((n, true));
         if propagates_known_bits(ctx.node_kind(n)) {
-            for p in crate::peephole::input_producers(ctx, n) {
+            for p in crate::peephole::input_producers_iter(ctx, n) {
                 if !memo.contains_key(&p) {
                     stack.push((p, false));
                 }

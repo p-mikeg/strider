@@ -13,9 +13,9 @@
 //! dead edge's producer stays reachable and this pass leaves it alone.
 
 use rustc_hash::FxHashMap;
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::walk::cfg_reachable;
-use strider_ir::IRViewer;
 
 use crate::error::Result;
 use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
@@ -61,8 +61,9 @@ impl Optimizer for CfgDetach {
         // Visit every live `Region` in cached reverse-post-order.  The cached
         // live-set covers the same reachable set as a fresh walk; using the
         // cached RPO avoids a re-walk of the graph.
-        let regions: Vec<NodeId> =
-            edit.reverse_postorder_filter(|k| matches!(k, NodeKind::Region)).collect();
+        let regions: Vec<NodeId> = edit
+            .reverse_postorder_filter(|k| matches!(k, NodeKind::Region))
+            .collect();
         for region in regions {
             for (idx, input) in edit.node_inputs(region).into_iter().enumerate() {
                 let producer = edit.value_definition(input).0;

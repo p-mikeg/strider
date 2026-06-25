@@ -13,7 +13,7 @@ pub enum ValueKind {
     /// predecessor and every branch node produces one per successor.
     Control,
     /// Synchronisation edge produced by `Region` and consumed by
-    /// every `VarPhi`/`MemPhi` in the same join.
+    /// every `Phi`/`MemPhi` in the same join.
     /// Carries no data — it says "fire your phi for this region."
     PhiToken,
     /// Memory token tracking the current state of memory through the graph.
@@ -66,7 +66,8 @@ impl ValueKind {
         self == Self::Memory
     }
 
-    /// Returns `true` if this is a value output carrying a `Bool` type.
+    /// Returns `true` if this is a value output carrying the 1-bit boolean
+    /// integer `I1`.
     #[inline]
     pub fn is_bool(self) -> bool {
         self.as_value().is_some_and(ValueType::is_bool)

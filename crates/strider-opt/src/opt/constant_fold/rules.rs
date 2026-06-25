@@ -5,13 +5,13 @@ use crate::error::Result;
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 use super::eval_int::{eval_int_binary, eval_int_cmp};
 
-use crate::{BoxedRule, rewrite_rule};
-use strider_pattern::template;
+use crate::{BoxedRule, apply_rules_in_order, rewrite_rule};
 use strider_pattern::{
     Capture, CaptureExt, add, and, any_float_const, any_int_const, bool_const_with, bool_not,
     float_binary_any, float_bits_to_int, float_cmp_any, float_const_with, float_unary_any,
     int_binary_any, int_bits_to_float, int_cmp_any, int_const, int_const_with, int_unary_any,
-    lzcount, mul, or, popcount, shl, shr, sign_extend, sshr, sub, truncate, var, xor, zero_extend,
+    lzcount, mul, or, popcount, shl, shr, sign_extend, sshr, sub, template, truncate, var, xor,
+    zero_extend,
 };
 
 /// The five constant-fold rule groups, built once and owned by a
@@ -58,7 +58,6 @@ impl ConstFoldRules {
         ctx: &mut crate::EditFunction<'_>,
         node: NodeId,
     ) -> Result<Option<ValueId>> {
-        use crate::apply_rules_in_order;
         let mut last: Option<ValueId> = None;
         for group in [
             &self.identity,
@@ -300,24 +299,24 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     //
     // The width-equality check uses `when_match` on the Bindings: the
     // captured `x`'s output type must equal the rule root's `ty`.
-    let zext_round_trip = {
-        let pat = truncate(zero_extend(var(x))).when_match(move |ctx, ty, bnd| {
-            bnd.get_type(x, ctx.function())
-                .is_some_and(|x_ty| x_ty == ty)
-        });
-        rewrite_rule(pat, var(x))
-    };
+    // Both extend round-trips share the identical width-equality guard and
+    // identity RHS, differing only in the extend builder; the macro removes
+    // the two-fold copy (mirrors the `const_on_right!` precedent above).
+    macro_rules! ext_round_trip {
+        ($ext:ident) => {{
+            let pat = truncate($ext(var(x))).when_match(move |ctx, ty, bnd| {
+                bnd.get_type(x, ctx.function())
+                    .is_some_and(|x_ty| x_ty == ty)
+            });
+            rewrite_rule(pat, var(x))
+        }};
+    }
+    let zext_round_trip = ext_round_trip!(zero_extend);
 
     // Truncate(SignExtend(x)) → x — same identity at the bit level when
     // widths match (sign-extension's added bits are sign replication; the
     // truncate cuts them off and recovers the original bits).
-    let sext_round_trip = {
-        let pat = truncate(sign_extend(var(x))).when_match(move |ctx, ty, bnd| {
-            bnd.get_type(x, ctx.function())
-                .is_some_and(|x_ty| x_ty == ty)
-        });
-        rewrite_rule(pat, var(x))
-    };
+    let sext_round_trip = ext_round_trip!(sign_extend);
 
     // Narrowing through binop: `Truncate_<W>(IntBinaryOp(op,
     // SignExt_<W→W'>(a), SignExt_<W→W'>(b)))` → `IntBinaryOp_<W>(op, a, b)`
@@ -378,10 +377,28 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // And's own operand order below.  Regression-guarded by
     // `test_narrow_widths::x64` in the orchestrator's `calling_convention`
     // tests — it fails the moment either swap is dropped.
-    let mk_drop_high_half = |swap: bool| -> BoxedRule {
-        let guard = move |ctx: &strider_pattern::Matcher,
-                          ty: strider_ir::node::ValueType,
-                          bnd: &strider_pattern::Bindings| {
+    // Both rules below are `|swap: bool| -> BoxedRule` builders with the
+    // identical swap-scaffold: gate `truncate(<inner>)` on a `truncate_low_mask`
+    // guard over `c`, then pick the inner-pattern orientation by `swap`.  The
+    // two guard bodies and the matched inner shapes differ, so the macro takes
+    // the guard expression, the two orientations, and the shared RHS template;
+    // the `if swap { … } else { … }` scaffold lives in one place.
+    macro_rules! swap_rule {
+        ($guard:expr, $unswapped:expr, $swapped:expr, $rhs:expr $(,)?) => {
+            |swap: bool| -> BoxedRule {
+                let guard = $guard;
+                if swap {
+                    rewrite_rule(($swapped).when_match(guard), $rhs)
+                } else {
+                    rewrite_rule(($unswapped).when_match(guard), $rhs)
+                }
+            }
+        };
+    }
+    let mk_drop_high_half = swap_rule!(
+        move |ctx: &strider_pattern::Matcher,
+              ty: strider_ir::node::ValueType,
+              bnd: &strider_pattern::Bindings| {
             let Some(c_val) = bnd.get_uint(c, ctx.function()) else {
                 return false;
             };
@@ -389,26 +406,20 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
                 return false;
             };
             c_val & low_mask == 0
-        };
-        if swap {
-            let pat =
-                truncate(or(and(any_int_const().capture(c), var(b)), var(a))).when_match(guard);
-            rewrite_rule(pat, template::truncate(var(a)))
-        } else {
-            let pat =
-                truncate(or(var(a), and(any_int_const().capture(c), var(b)))).when_match(guard);
-            rewrite_rule(pat, template::truncate(var(a)))
-        }
-    };
+        },
+        truncate(or(var(a), and(any_int_const().capture(c), var(b)))),
+        truncate(or(and(any_int_const().capture(c), var(b)), var(a))),
+        template::truncate(var(a)),
+    );
 
     // `Truncate_<W>(And(low_W_mask, x)) → Truncate_<W>(x)` — the AND's
     // effect of zeroing all bits above W is redundant when the truncate
     // is going to discard those bits anyway.  Two orientations for the same
     // first-success/no-backtrack reason as above.
-    let mk_drop_low_mask_under_truncate = |swap: bool| -> BoxedRule {
-        let guard = move |ctx: &strider_pattern::Matcher,
-                          ty: strider_ir::node::ValueType,
-                          bnd: &strider_pattern::Bindings| {
+    let mk_drop_low_mask_under_truncate = swap_rule!(
+        move |ctx: &strider_pattern::Matcher,
+              ty: strider_ir::node::ValueType,
+              bnd: &strider_pattern::Bindings| {
             let Some(c_val) = bnd.get_uint(c, ctx.function()) else {
                 return false;
             };
@@ -418,15 +429,11 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             // The mask must cover at least the low W bits — anything beyond
             // that is fine since the truncate will drop those bits.
             c_val & low_mask == low_mask
-        };
-        if swap {
-            let pat = truncate(and(var(x), any_int_const().capture(c))).when_match(guard);
-            rewrite_rule(pat, template::truncate(var(x)))
-        } else {
-            let pat = truncate(and(any_int_const().capture(c), var(x))).when_match(guard);
-            rewrite_rule(pat, template::truncate(var(x)))
-        }
-    };
+        },
+        truncate(and(any_int_const().capture(c), var(x))),
+        truncate(and(var(x), any_int_const().capture(c))),
+        template::truncate(var(x)),
+    );
 
     // Nested SAME-kind extends/truncates collapse to one at the outer width —
     // each of these casts is transitive, so the intermediate width drops out:
@@ -468,31 +475,35 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
 /// Builds the algebraic-identity rule vec for integer binary operations.
 fn build_identity_rules() -> Vec<crate::BoxedRule> {
     let (x, c) = (Capture::new(), Capture::new());
-    // x & all_ones → x  (commutative). The all-ones mask depends on the
-    // output width, so we use `.when_match()` to compare the captured
-    // constant against the node's output-type all-ones value.
-    let all_ones_rule = {
-        let pat = and(var(x), any_int_const().capture(c));
-        let pat = pat.when_match(move |ctx, ty, b| {
+    // Both all-ones rules below share the identical "the captured constant `c`
+    // equals the node's output-width all-ones value" guard; the only difference
+    // is the matched op (`and`/`or`) and the surviving operand (`x`/`c`).  The
+    // guard depends on `c` and the per-match output type, so spell it once and
+    // reuse it (mirrors the `const_on_right!` / `ext_round_trip!` factoring).
+    let is_all_ones =
+        move |ctx: &strider_pattern::Matcher,
+              ty: strider_ir::node::ValueType,
+              b: &strider_pattern::Bindings| {
             b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
-        });
-        rewrite_rule(pat, var(x))
-    };
+        };
+    // x & all_ones → x  (commutative). The all-ones mask depends on the
+    // output width, so the shared guard compares the captured constant against
+    // the node's output-type all-ones value.
+    let all_ones_rule = rewrite_rule(
+        and(var(x), any_int_const().capture(c)).when_match(is_all_ones),
+        var(x),
+    );
     // (No `x ^ all_ones → ~x` rule: `~x` IS `Xor(x, all_ones)` — the
     // canonical form — since the former BitNot unary-op was removed in favour
     // of the Xor shape.  Both compiler lowerings (`nor` and `xor a, -1`)
     // now lift to the same Xor shape directly at lift time.)
-    // x | all_ones → all_ones  (commutative; absorbing element).  The
-    // all-ones value depends on the output width, so match the captured
-    // constant against the node's all-ones mask and rewrite to that same
-    // constant.  At `I1` this subsumes the boolean `x | true → true`.
-    let or_all_ones_rule = {
-        let pat = or(var(x), any_int_const().capture(c));
-        let pat = pat.when_match(move |ctx, ty, b| {
-            b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
-        });
-        rewrite_rule(pat, var(c))
-    };
+    // x | all_ones → all_ones  (commutative; absorbing element).  Same shared
+    // all-ones guard; rewrite to that same constant.  At `I1` this subsumes the
+    // boolean `x | true → true`.
+    let or_all_ones_rule = rewrite_rule(
+        or(var(x), any_int_const().capture(c)).when_match(is_all_ones),
+        var(c),
+    );
 
     let rules: Vec<BoxedRule> = vec![
         // x + 0 → x  (commutative: also covers 0 + x)

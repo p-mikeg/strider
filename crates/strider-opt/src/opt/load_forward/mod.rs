@@ -27,14 +27,13 @@
 //! function under analysis (`Function::default_cc` / `Function::endianness`),
 //! so the pass takes no convention configuration.
 
-use strider_ir::IRViewer;
-use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
+use strider_ir::{IRBuilderExt, IRViewer};
 use strider_target::Endianness;
 
 use crate::error::Result;
 use crate::pipeline::OptimizationResult;
-use crate::sp_expr::{AliasVerdict, SpAliasCfg, SpExprMemo, alias_verdict};
+use crate::sp_expr::{AliasVerdict, SpAliasCfg, SpExprMemo};
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///
@@ -92,23 +91,29 @@ fn try_forward_load(
     memo: &mut SpExprMemo,
     alias_mode: crate::AliasMode,
 ) -> Result<OptimizationResult> {
-    // Load inputs: [memory, addr].
-    let [mem, addr] = ctx.graph_ref().node_inputs_exact::<2>(load)?;
+    // Load inputs: [memory, addr]; only the memory token is needed here — the
+    // load's address class / byte size are re-derived from the node by the
+    // cfg's `nearest_clobber` / `verdict` helpers (each an O(1) cached read).
+    let mem = ctx
+        .memory_input_of(load)
+        .expect("a Load has a memory input (slot 0)");
     // A `Load` always produces a single value output (validated signature).
     let (load_value, load_ty) = ctx.single_value_output(load)?;
 
-    let load_size = load_ty.byte_size() as i64;
     // load_forward stays conservative on distinct SP bases (a store at a
     // different SP base may still alias the forwarded load); a `Call` always
     // blocks a forward (`call_clobbers: true`).
     let mut alias_cfg = SpAliasCfg::call_blocking(memo, alias_mode);
-    let load_class = alias_cfg.classify_addr(ctx.function(), addr);
 
     // 1. Find the nearest definition that may alias the load.  A clean
     //    chain returns the `InitialMemory` node (handled by the Store
     //    check below) → nothing to forward.  A `Call` always blocks a
     //    forward (`call_clobbers: true`).
-    let clobber_node = alias_cfg.nearest_clobber(ctx, load, load_class, load_size, mem);
+    let clobber_node = alias_cfg.nearest_clobber(ctx.function(), load, mem);
+    // Narrowing is now a caller-side step: shorten this load's memory edge
+    // onto its nearest clobber so future walks skip the proven-disjoint run.
+    // (Harmless when the load goes on to forward — it's culled either way.)
+    crate::sp_expr::narrow_load_to(ctx, load, clobber_node);
 
     // 2. The clobber must be a `Store`.  A `MemPhi` boundary (disagreeing
     //    control merge), a `Call` / `CallOther`, `InitialMemory` (clean
@@ -117,47 +122,36 @@ fn try_forward_load(
         return Ok(OptimizationResult::NoChange);
     }
 
-    // 3. Exact-match check: the store must write the SAME location
-    //    (address class + base + offset) and its value must cover the
-    //    load's byte range.  An overlapping-but-not-exact store bails.
-    let store_addr = ctx.store_addr(clobber_node);
-    let data = ctx.store_data(clobber_node);
-    // A `Store`'s data input is an `AnyInt` value slot (validated), so its
-    // source output is always a value.
-    let data_ty = ctx
-        .value_type_opt(data)
-        .expect("Store data input is a value");
-    let store_size = data_ty.byte_size() as i64;
-    let store_class = alias_cfg.classify_addr(ctx.function(), store_addr);
-    if alias_verdict(
-        load_class,
-        load_size,
-        store_class,
-        store_size,
-        alias_mode,
-        false,
-    ) != AliasVerdict::Match
-    {
-        // Same-location offsets must coincide exactly; an
-        // overlapping-but-shifted store is not forwardable.
+    // 3. Exact-match check: the store must write the SAME location (address
+    //    class + base + offset) and its value must cover the load's byte
+    //    range.  `cfg.verdict` derives both sides' class + size from the nodes;
+    //    an overlapping-but-shifted store is not forwardable.
+    if alias_cfg.verdict(ctx.function(), load, clobber_node) != AliasVerdict::Match {
         return Ok(OptimizationResult::NoChange);
     }
 
     // 4. Forward the stored value, reshaping a wider store down to the
     //    load width when needed.  These are value-reshaping nodes
     //    (`Truncate` / `ShiftRight`), never a `Phi`.
-    let forwarded = if data_ty == load_ty {
-        data
-    } else if data_ty.is_integer()
+    let store_data = ctx.store_data(clobber_node);
+    // A `Store`'s data input is an `AnyInt` value slot (validated), so its
+    // source output is always a value.
+    let store_data_ty = ctx
+        .value_type_opt(store_data)
+        .expect("Store data input is a value");
+    let forwarded = if store_data_ty == load_ty {
+        store_data
+    } else if store_data_ty.is_integer()
         && load_ty.is_integer()
-        && load_ty.byte_size() < data_ty.byte_size()
-        // The BE reshape mints a shift const at `data_ty` via `build_int_const`,
-        // which only materialises types up to I128 (I256/I512 route through the
-        // wide interner separately).  Bail (NoChange) on a wider store rather
-        // than fail the pass — such a wide-store→narrow-load forward is exotic.
-        && data_ty.byte_size() <= 16
+        && load_ty.byte_size() < store_data_ty.byte_size()
+        // The BE reshape mints a shift const at `store_data_ty` via
+        // `build_int_const`, which only materialises types up to I128
+        // (I256/I512 route through the wide interner separately).  Bail
+        // (NoChange) on a wider store rather than fail the pass — such a
+        // wide-store→narrow-load forward is exotic.
+        && store_data_ty.byte_size() <= 16
     {
-        narrow(ctx, data, load)?
+        narrow(ctx, store_data, load)?
     } else {
         // Same offset but the stored bytes do not fully back the load
         // (narrower store, or a non-integer reshape) → cannot forward.
@@ -195,24 +189,27 @@ fn try_forward_load(
 /// holds at every intermediate node, not just the outermost — the
 /// BE-path `ShiftRight` / `IntConst` would otherwise be reachable with an
 /// empty fingerprint.
-fn narrow(ctx: &mut crate::EditFunction<'_>, data: ValueId, load: NodeId) -> Result<ValueId> {
-    // Both `data_ty` (the `Store` data input) and `load_ty` (the `Load`
+fn narrow(ctx: &mut crate::EditFunction<'_>, store_data: ValueId, load: NodeId) -> Result<ValueId> {
+    // Both `store_data_ty` (the `Store` data input) and `load_ty` (the `Load`
     // output) are value-edge types, so derive them from the nodes the caller
     // already holds — each is an O(1) cached look-up — rather than threading
     // them in as redundant decomposed arguments.
-    let data_ty = ctx.value_type(data)?;
+    let store_data_ty = ctx.value_type(store_data)?;
     let (_, load_ty) = ctx.single_value_output(load)?;
     // SSoT: the byte order is the function's own.
     let endianness = ctx.function().endianness();
     let shifted = match endianness {
-        Endianness::Little => data,
+        Endianness::Little => store_data,
         Endianness::Big => {
-            let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
-            // shift_bits is a byte-offset * 8 — always fits in u64.  Route it
-            // through `build_int_const` so a wide `data_ty` (I80 / I128) mints
-            // the interned const via `build_int_const` so it dedups correctly
-            // against any other node with the same value and type.
-            let shift_const = ctx.build_int_const(u128::from(shift_bits), data_ty)?;
+            // SSoT for the endianness-aware byte-slice shift (shared with the
+            // jump-table evaluator's symbolic `reshape`).
+            let shift_bits =
+                crate::sp_expr::high_low_shift_bits(store_data_ty, load_ty, endianness);
+            // shift_bits is a byte-offset * 8 — always fits in u128.  Route it
+            // through `build_int_const` so a wide `store_data_ty` (I80 / I128)
+            // mints the interned const so it dedups correctly against any other
+            // node with the same value and type.
+            let shift_const = ctx.build_int_const(u128::from(shift_bits), store_data_ty)?;
             // `build_int_const` does not carry the `&[load]` contributor stamp
             // that `create_node_attributed` would, so attribute the fresh const
             // to the load explicitly — every reachable node must carry ≥1
@@ -222,8 +219,8 @@ fn narrow(ctx: &mut crate::EditFunction<'_>, data: ValueId, load: NodeId) -> Res
                 .extend_asm_fingerprint_from(shift_const_node, load);
             let shr = ctx.create_node_attributed(
                 NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
-                [data, shift_const],
-                [ValueKind::Typed(data_ty)],
+                [store_data, shift_const],
+                [ValueKind::Typed(store_data_ty)],
                 &[load],
             );
             let [value] = ctx.node_outputs_exact::<1>(shr)?;

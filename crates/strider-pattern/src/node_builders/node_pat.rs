@@ -22,8 +22,7 @@ use strider_ir::node::NodeKind;
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, NodePredicate, Pattern};
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
 
 use super::{IndexedInputs, MemPat, SubCompiler};
 
@@ -62,7 +61,6 @@ pub(crate) struct NodePat {
     /// compiled sub-pattern's output before it is wired into the slot.
     input_widths: Vec<(usize, u32)>,
 }
-
 
 impl NodePat {
     /// A node-rooted builder over `kind` with no anchor output.
@@ -218,6 +216,15 @@ impl NodePat {
     pub(crate) fn compile_value(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.lower(b)
             .expect("value-rooted NodePat has a value output")
+    }
+
+    /// Lower and return the memory anchor output (for the [`MemPat`]
+    /// impls of memory-rooted wrappers — `Call` / `CallOther` / `Store` /
+    /// `MemPhi` — that nest as a memory operand).
+    #[allow(clippy::expect_used)]
+    pub(crate) fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.lower(b)
+            .expect("memory-anchored NodePat has a memory output")
     }
 }
 

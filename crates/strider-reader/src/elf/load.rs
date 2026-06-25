@@ -5,13 +5,13 @@
 //!   backing bytes; suitable for tests and short-lived CLI tools).
 //! - [`elf_load_with_relocations`] — load every allocatable file-backed
 //!   section and apply dynamic relocations in one call, returning the
-//!   patched regions and the [`super::relocations::RelocationStats`].
+//!   patched regions.
 
 use anyhow::Context as _;
 
 use crate::{MemRegion, Result};
 
-use super::relocations::{RelocationStats, apply_elf_relocations, apply_elf_relocations_autoload};
+use super::relocations::{apply_elf_relocations, apply_elf_relocations_autoload};
 use super::sections::{elf_get_loadable_regions, elf_get_loadable_regions_including_writable};
 
 /// Convenience: load every code + read-only + writable-allocatable
@@ -27,9 +27,7 @@ use super::sections::{elf_get_loadable_regions, elf_get_loadable_regions_includi
 ///
 /// Propagates any error from the inner helpers; relocation
 /// resolution itself only errors on a malformed ELF.
-pub fn elf_load_with_relocations(
-    obj: &object::File<'_>,
-) -> Result<(Vec<MemRegion>, RelocationStats)> {
+pub fn elf_load_with_relocations(obj: &object::File<'_>) -> Result<Vec<MemRegion>> {
     let mut regions = elf_get_loadable_regions_including_writable(obj)?;
     // Use the autoload variant so this bundled path is consistent with
     // the standalone `add_region_from_elf(path)` + `apply_elf_relocations(path)`
@@ -38,8 +36,8 @@ pub fn elf_load_with_relocations(
     // every relocation-targeted section, so the autoload step is a
     // no-op; the symmetry just guards against future ELF shapes that
     // emit relocation sites against sections the upfront loader misses.
-    let stats = apply_elf_relocations_autoload(&mut regions, obj)?;
-    Ok((regions, stats))
+    apply_elf_relocations_autoload(&mut regions, obj)?;
+    Ok(regions)
 }
 
 /// Convenience: load only the code + read-only mappings (via
@@ -58,9 +56,8 @@ pub fn elf_load_with_relocations(
 /// Relocations are applied with the non-autoload
 /// [`apply_elf_relocations`] so the writable sections are not pulled
 /// back in: relocations whose site lands in an absent (writable) region
-/// are counted under [`RelocationStats::skipped_no_region`] and simply
-/// not applied.  Relocations into `.rodata` (e.g. PC-relative jump
-/// tables) ARE applied.
+/// are simply not applied.  Relocations into `.rodata` (e.g. PC-relative
+/// jump tables) ARE applied.
 ///
 /// Capability tradeoff: RELRO sections (`.data.rel.ro`, `.got`) are
 /// runtime-immutable only post-RELRO yet carry SHF_WRITE statically, so
@@ -71,12 +68,10 @@ pub fn elf_load_with_relocations(
 ///
 /// Propagates any error from the inner helpers; relocation resolution
 /// itself only errors on a malformed ELF.
-pub fn elf_load_readonly_with_relocations(
-    obj: &object::File<'_>,
-) -> Result<(Vec<MemRegion>, RelocationStats)> {
+pub fn elf_load_readonly_with_relocations(obj: &object::File<'_>) -> Result<Vec<MemRegion>> {
     let mut regions = elf_get_loadable_regions(obj)?;
-    let stats = apply_elf_relocations(&mut regions, obj)?;
-    Ok((regions, stats))
+    apply_elf_relocations(&mut regions, obj)?;
+    Ok(regions)
 }
 
 /// Loads and parses an ELF file from `path`, returning a `'static` reference.

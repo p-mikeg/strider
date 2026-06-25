@@ -20,9 +20,7 @@
 //! handlers live in [`super::cast`] (they manipulate bit positions
 //! rather than computing arithmetic).
 
-use strider_ir::IRBuilderExt;
-use strider_ir::VnTypeExt;
-use strider_ir::{ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType, VnTypeExt};
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
@@ -69,6 +67,28 @@ pub(super) fn require_equal_input_output_width(
     Ok(())
 }
 
+/// Materialises the all-ones (every bit set) integer constant for `ty`.
+///
+/// For I1..I128 (including I80) `build_int_const(u128::MAX, ty)` masks
+/// `u128::MAX` down to `(2^bit_width) - 1`, which gives the correct
+/// all-ones value.  For I256/I512 `build_int_const_limbs` fills every
+/// limb with `u64::MAX`.  Used by [`FunctionLifter::handle_int_neg_as_xor`]
+/// to lower `IntNeg` (bitwise complement) to `Xor(x, all_ones)`.
+fn build_all_ones(
+    builder: &mut strider_ir::FunctionBuilder,
+    ty: strider_ir::ValueType,
+) -> Result<strider_ir::Value> {
+    if ty.byte_size() <= 16 {
+        // I1..I128 (including I80): build_int_const masks u128::MAX to the width.
+        builder.build_int_const(u128::MAX, ty)
+    } else if ty == ValueType::I256 {
+        builder.build_int_const_limbs(&[u64::MAX; 4], ty)
+    } else {
+        // I512
+        builder.build_int_const_limbs(&[u64::MAX; 8], ty)
+    }
+}
+
 /// Errors when a sign-extended operand is WIDER than the output width.
 ///
 /// A signed table op (`Sdiv` / `Srem` / `SShiftRight`) routes its value
@@ -96,13 +116,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: IntUnaryOp,
     ) -> Result<()> {
-        let out_vn = require_output_vn(insn)?;
-        require_equal_input_output_width(nth_input_or_err(insn, 0)?, out_vn)?;
-        let value = self.read_input(insn, 0)?;
-        let out_ty = out_vn.int_type()?;
-        let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
-        let result = self.builder.build_int_unary_operation(value, op, out_ty)?;
-        self.write_vn(out_vn, result)
+        self.lift_int_unary(insn, true, |b, v, t| b.build_int_unary_operation(v, op, t))
     }
 
     /// Translates a p-code `IntNeg` (Sleigh's bitwise complement `~x`) into
@@ -112,40 +126,15 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// The former BitNot unary-op was removed in favour of the canonical
     /// `Xor(x, all_ones)` shape, so the lifter materialises the all-ones
     /// constant of the operand's width and emits the xor inline.  The
-    /// all-ones operand is built by [`Self::build_all_ones`], which routes
+    /// all-ones operand is built by [`build_all_ones`], which routes
     /// the wide widths (I80 / I128 / I256 / I512) through the wide-const
     /// path so a SIMD register-wide bitwise complement (YMM → I256, ZMM →
     /// I512) lifts cleanly instead of erroring.
     pub(super) fn handle_int_neg_as_xor(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let out_vn = require_output_vn(insn)?;
-        require_equal_input_output_width(nth_input_or_err(insn, 0)?, out_vn)?;
-        let value = self.read_input(insn, 0)?;
-        let out_ty = out_vn.int_type()?;
-        let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
-        let all_ones = self.build_all_ones(out_ty)?;
-        let result =
-            self.builder
-                .build_int_binary_operation(value, all_ones, IntBinaryOp::Xor, out_ty)?;
-        self.write_vn(out_vn, result)
-    }
-
-    /// Materialises the all-ones (every bit set) integer constant for `ty`.
-    ///
-    /// For I1..I128 (including I80) `build_int_const(u128::MAX, ty)` masks
-    /// `u128::MAX` down to `(2^bit_width) - 1`, which gives the correct
-    /// all-ones value.  For I256/I512 `build_int_const_limbs` fills every
-    /// limb with `u64::MAX`.
-    fn build_all_ones(&mut self, ty: strider_ir::ValueType) -> Result<strider_ir::Value> {
-        use strider_ir::ValueType;
-        if ty.byte_size() <= 16 {
-            // I1..I128 (including I80): build_int_const masks u128::MAX to the width.
-            self.builder.build_int_const(u128::MAX, ty)
-        } else if ty == ValueType::I256 {
-            self.builder.build_int_const_limbs(&[u64::MAX; 4], ty)
-        } else {
-            // I512
-            self.builder.build_int_const_limbs(&[u64::MAX; 8], ty)
-        }
+        self.lift_int_unary(insn, true, |b, v, t| {
+            let all_ones = build_all_ones(b, t)?;
+            b.build_int_binary_operation(v, all_ones, IntBinaryOp::Xor, t)
+        })
     }
 
     /// Translates a p-code integer binary instruction into an IR binary node
@@ -313,13 +302,22 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// boolean negation is `x ^ 1`.  Shared by the boolean / integer-cmp /
     /// float-cmp negated lowerings so the canonical NOT shape lives in one
     /// place; `x` must already be `I1`.
-    pub(super) fn build_logical_not(
-        &mut self,
-        x: strider_ir::Value,
-    ) -> Result<strider_ir::Value> {
+    pub(super) fn build_logical_not(&mut self, x: strider_ir::Value) -> Result<strider_ir::Value> {
         let one = self.builder.build_boolean_const(true);
         self.builder
             .build_int_binary_operation(x, one, IntBinaryOp::Xor, strider_ir::ValueType::I1)
+    }
+
+    /// Builds the logical-OR of two 1-bit (`I1`) values: `Or(a, b):I1`.
+    /// Shared by the float `LessEqual` lowering (`a < b ∨ a == b`); both
+    /// operands must already be `I1`.
+    pub(super) fn build_or_i1(
+        &mut self,
+        a: strider_ir::Value,
+        b: strider_ir::Value,
+    ) -> Result<strider_ir::Value> {
+        self.builder
+            .build_int_binary_operation(a, b, IntBinaryOp::Or, strider_ir::ValueType::I1)
     }
 
     /// Lowers `IntNotEqual(a, b)` to `Xor(IntEqual(a, b), IntConst(1)):I1`.

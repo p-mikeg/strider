@@ -88,12 +88,10 @@ impl FunctionState {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::FunctionState;
-    use crate::IRViewer;
-    use crate::IntBinaryOp;
-    use crate::ValueType;
     use crate::builder::IRBuilderExt;
     use crate::function::edit::test_fixtures::single_region_builder;
     use crate::node::NodeKind;
+    use crate::{IRViewer, IntBinaryOp, ValueType};
 
     /// `populate` seeds `roots` with exactly the input-less reachable nodes
     /// (`Entry` + the two operand consts) and excludes a dangling

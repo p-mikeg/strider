@@ -518,10 +518,7 @@ pub fn compute_value_ranges<'f>(
     // dominance is checked at query time, not enumerated here.
     let mut guards: FxHashMap<ValueId, Vec<(NodeId, Interval)>> = FxHashMap::default();
 
-    for if_node in function
-        .walk()
-        .filter(|&n| matches!(function.node_kind(n), NodeKind::If))
-    {
+    for if_node in function.walk_kind(|k| matches!(k, NodeKind::If)) {
         // If's outputs: [true_ctrl, false_ctrl].  We model BOTH edges:
         // the condition implies an interval on the true edge and its negation
         // implies an interval on the false edge.

@@ -41,127 +41,24 @@ pub enum ValueType {
     F80,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NodeOutputTypeCategory {
-    Int,
-    Float,
-}
-
-struct TypeInfo {
-    name: &'static str,
-    byte_size: u8,
-    /// Width in bits.  Distinct from `byte_size * 8` only for `I1`, whose
-    /// byte_size is 1 but whose bit width is 1.
-    bit_width: u16,
-    category: NodeOutputTypeCategory,
-}
-
-// Order MUST match the `ValueType` enum declaration order
-// (asserted by `type_info_table_matches_variants` in the test module).
-const TYPE_INFO: &[TypeInfo] = &[
-    TypeInfo {
-        name: "i1",
-        byte_size: 1,
-        bit_width: 1,
-        category: NodeOutputTypeCategory::Int,
-    },
-    TypeInfo {
-        name: "i8",
-        byte_size: 1,
-        bit_width: 8,
-        category: NodeOutputTypeCategory::Int,
-    },
-    TypeInfo {
-        name: "i16",
-        byte_size: 2,
-        bit_width: 16,
-        category: NodeOutputTypeCategory::Int,
-    },
-    TypeInfo {
-        name: "i32",
-        byte_size: 4,
-        bit_width: 32,
-        category: NodeOutputTypeCategory::Int,
-    },
-    TypeInfo {
-        name: "i64",
-        byte_size: 8,
-        bit_width: 64,
-        category: NodeOutputTypeCategory::Int,
-    },
-    TypeInfo {
-        name: "i80",
-        byte_size: 10,
-        bit_width: 80,
-        category: NodeOutputTypeCategory::Int,
-    },
-    TypeInfo {
-        name: "i128",
-        byte_size: 16,
-        bit_width: 128,
-        category: NodeOutputTypeCategory::Int,
-    },
-    TypeInfo {
-        name: "i256",
-        byte_size: 32,
-        bit_width: 256,
-        category: NodeOutputTypeCategory::Int,
-    },
-    TypeInfo {
-        name: "i512",
-        byte_size: 64,
-        bit_width: 512,
-        category: NodeOutputTypeCategory::Int,
-    },
-    TypeInfo {
-        name: "f32",
-        byte_size: 4,
-        bit_width: 32,
-        category: NodeOutputTypeCategory::Float,
-    },
-    TypeInfo {
-        name: "f64",
-        byte_size: 8,
-        bit_width: 64,
-        category: NodeOutputTypeCategory::Float,
-    },
-    TypeInfo {
-        name: "f80",
-        byte_size: 10,
-        bit_width: 80,
-        category: NodeOutputTypeCategory::Float,
-    },
-];
-
 impl ValueType {
-    /// Returns the type's [`TypeInfo`] entry.  Implemented as an
-    /// exhaustive `match` rather than `&TYPE_INFO[self as usize]` so
-    /// adding a new variant is a compile-time error rather than a
-    /// runtime out-of-bounds index.  The `TYPE_INFO` table itself is
-    /// validated against the enum order by the
-    /// `type_info_table_matches_variants` test.
-    #[inline]
-    fn info(self) -> &'static TypeInfo {
-        match self {
-            Self::I1 => &TYPE_INFO[0],
-            Self::I8 => &TYPE_INFO[1],
-            Self::I16 => &TYPE_INFO[2],
-            Self::I32 => &TYPE_INFO[3],
-            Self::I64 => &TYPE_INFO[4],
-            Self::I80 => &TYPE_INFO[5],
-            Self::I128 => &TYPE_INFO[6],
-            Self::I256 => &TYPE_INFO[7],
-            Self::I512 => &TYPE_INFO[8],
-            Self::F32 => &TYPE_INFO[9],
-            Self::F64 => &TYPE_INFO[10],
-            Self::F80 => &TYPE_INFO[11],
-        }
-    }
-
     /// Returns the canonical name of this type as a static string.
     #[inline]
     pub fn as_str(self) -> &'static str {
-        self.info().name
+        match self {
+            Self::I1 => "i1",
+            Self::I8 => "i8",
+            Self::I16 => "i16",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::I80 => "i80",
+            Self::I128 => "i128",
+            Self::I256 => "i256",
+            Self::I512 => "i512",
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+            Self::F80 => "f80",
+        }
     }
 
     /// Returns the size of this type **in bytes**.
@@ -169,7 +66,16 @@ impl ValueType {
     /// Both `I1` and `I8` return 1.
     #[inline]
     pub fn byte_size(self) -> usize {
-        self.info().byte_size as usize
+        match self {
+            Self::I1 | Self::I8 => 1,
+            Self::I16 => 2,
+            Self::I32 | Self::F32 => 4,
+            Self::I64 | Self::F64 => 8,
+            Self::I80 | Self::F80 => 10,
+            Self::I128 => 16,
+            Self::I256 => 32,
+            Self::I512 => 64,
+        }
     }
 
     /// Returns the width of this type **in bits**.
@@ -178,7 +84,17 @@ impl ValueType {
     /// despite occupying 1 byte.
     #[inline]
     pub fn bit_width(self) -> usize {
-        self.info().bit_width as usize
+        match self {
+            Self::I1 => 1,
+            Self::I8 => 8,
+            Self::I16 => 16,
+            Self::I32 | Self::F32 => 32,
+            Self::I64 | Self::F64 => 64,
+            Self::I80 | Self::F80 => 80,
+            Self::I128 => 128,
+            Self::I256 => 256,
+            Self::I512 => 512,
+        }
     }
 
     /// Whether a constant of this type fits in a `u64` (i.e. `byte_size <= 8`).
@@ -204,14 +120,14 @@ impl ValueType {
     /// variants (I1, I8, I16, I32, I64, I80, I128, I256, I512).
     #[inline]
     pub fn is_integer(self) -> bool {
-        matches!(self.info().category, NodeOutputTypeCategory::Int)
+        !self.is_float()
     }
 
     /// Returns `true` if this type is one of the float variants
     /// (F32, F64, F80).
     #[inline]
     pub fn is_float(self) -> bool {
-        matches!(self.info().category, NodeOutputTypeCategory::Float)
+        matches!(self, Self::F32 | Self::F64 | Self::F80)
     }
 
     /// Returns `true` if this type is a WIDE integer — one that doesn't fit a
@@ -223,23 +139,6 @@ impl ValueType {
     #[inline]
     pub fn is_wide_int(self) -> bool {
         self.is_integer() && !self.fits_u64()
-    }
-
-    /// Returns the integer type with the same byte size.
-    /// (I1→I1, F32→I32, F64→I64, Ix→Ix)
-    #[inline]
-    pub fn to_natural_int_type(self) -> ValueType {
-        match self {
-            ValueType::I1 => ValueType::I1,
-            ValueType::I8 => ValueType::I8,
-            ValueType::I16 => ValueType::I16,
-            ValueType::I32 | ValueType::F32 => ValueType::I32,
-            ValueType::I64 | ValueType::F64 => ValueType::I64,
-            ValueType::I80 | ValueType::F80 => ValueType::I80,
-            ValueType::I128 => ValueType::I128,
-            ValueType::I256 => ValueType::I256,
-            ValueType::I512 => ValueType::I512,
-        }
     }
 
     /// Returns the all-ones bit mask for this integer type, as `u128`.
@@ -289,7 +188,7 @@ impl ValueType {
     /// Sign-extends `val` (treated as the type's bit-width-narrow
     /// representation) to a full 128-bit signed integer, or returns `None`
     /// if this type is not an integer or its width exceeds 128 bits
-    /// (`I256` — unreachable in `IntConst` land today).
+    /// (`I256`/`I512` don't fit the `i128` carrier, so the query fails loudly).
     pub fn get_signed_int(self, val: u128) -> Option<i128> {
         if !self.is_integer() {
             return None;
@@ -343,7 +242,7 @@ impl ValueType {
     /// Maps a varnode byte size to the corresponding **float** output type:
     /// `4 → F32`, `8 → F64`, `10 → F80` (x87 extended precision).
     ///
-    /// Mirrors `TryFrom<u32>` for the integer side; kept as a dedicated
+    /// Mirrors [`Self::int_for_byte_size`] for the integer side; kept as a dedicated
     /// helper because the float subset is open to fewer sizes and the
     /// caller's error message references "float varnode size".
     ///
@@ -475,16 +374,6 @@ mod tests {
         assert!(!ValueType::I80.is_float());
         assert!(ValueType::F80.is_float());
         assert!(!ValueType::F80.is_integer());
-    }
-
-    /// `to_natural_int_type` must map `F80 → I80` (mirrors `F64 → I64`)
-    /// and `I80 → I80` (identity).  This is the path the lifter's
-    /// `read_reg_vn` / `write_reg_vn` use when bridging between float
-    /// and integer views of the same SSA variable.
-    #[test]
-    fn to_natural_int_type_handles_u80_and_f80() {
-        assert_eq!(ValueType::I80.to_natural_int_type(), ValueType::I80);
-        assert_eq!(ValueType::F80.to_natural_int_type(), ValueType::I80);
     }
 
     /// `bit_mask_u128(I80)` must be `(1u128 << 80) - 1` — the 80-bit

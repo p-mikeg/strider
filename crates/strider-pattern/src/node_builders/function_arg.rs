@@ -24,8 +24,7 @@ use strider_ir::node::{FunctionArgSource, NodeKind};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, Pattern};
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 
 /// Builder for a function-argument-carrier pattern. Created by
 /// [`function_arg`] / [`function_arg_any`] / [`function_arg_reg`] /

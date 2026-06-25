@@ -22,8 +22,7 @@ use strider_ir::node::NodeKind;
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, NodePredicate, Pattern};
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
 
 use super::MemPat;
 use super::node_pat::NodePat;
@@ -130,7 +129,7 @@ impl MemPhiPat {
 
 impl MemPat for MemPhiPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.lower(b).expect("memory-anchored NodePat has a memory output")
+        self.0.compile_mem(b)
     }
 }
 

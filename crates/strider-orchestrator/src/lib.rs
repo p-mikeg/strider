@@ -85,7 +85,6 @@ use anyhow::{Result, anyhow};
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
 
-
 /// Generic, per-binary analysis handle.
 ///
 /// Holds the reusable [`Lifter`] engine (which owns the target arch, the
@@ -240,7 +239,7 @@ where
                 self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
         }
 
-        // OR-3: the cap is the crate's core-invariant backstop — falling
+        // The cap is the crate's core-invariant backstop — falling
         // through it means the resolve/re-lift loop never reached a fixed
         // point, which is a bug (a pathological classifier/cfg oscillation),
         // not an unresolvable branch.  Surface it loudly in debug builds
@@ -253,7 +252,7 @@ where
         );
         let _ = converged;
 
-        // OR-1 / OR-2: report a site as unresolved only when its
+        // Report a site as unresolved only when its
         // `IndirectBranch` placeholder is still LIVE in the final function
         // AND the loop never folded a classification for it into
         // `known_targets`.  A placeholder the node-removing passes proved
@@ -314,11 +313,8 @@ where
             ..
         } = lifter.build_ir_with(&cfg, cc, working)?;
 
-        let mut ctx = {
-            let mut ctx = OptCtx::new(rom_ref);
-            ctx.options = opt_opts.clone();
-            ctx
-        };
+        let mut ctx = OptCtx::new(rom_ref);
+        ctx.options = opt_opts.clone();
         pipeline.run(&mut function, &mut ctx)?;
         let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
 
@@ -355,7 +351,7 @@ const MAX_RESOLUTION_ITERATIONS: usize = 256;
 /// induced edge set grew (i.e. at least one new branch resolved) — the
 /// loop's progress signal.
 ///
-/// Convergence (OR-2): a site already present in `known_targets` is
+/// Convergence: a site already present in `known_targets` is
 /// **terminal** — its classification was folded in on an earlier
 /// iteration.  If its placeholder still reappears in `unresolved` (the cfg
 /// builder could not seat the terminator, e.g. an out-of-range `Multiple`
@@ -365,7 +361,7 @@ const MAX_RESOLUTION_ITERATIONS: usize = 256;
 /// range widening) from churning the edge set to the iteration cap: each
 /// stuck site contributes its classification exactly once.
 ///
-/// Collision (OR-4): two distinct `IndirectBranch` placeholders sharing one
+/// Collision: two distinct `IndirectBranch` placeholders sharing one
 /// `PcodeInsnAddr` (overlapping/duplicated code terminating two regions at
 /// the same machine address) both fold onto the same `known_targets` entry.
 /// Rather than let the last write silently win, their target sets are
@@ -390,7 +386,7 @@ fn apply_resolutions(
     let prev_edge_set = edge_set_of(known_targets);
 
     // Stage this iteration's new classifications per-address first, merging
-    // same-address collisions (OR-4) before touching `known_targets`.
+    // same-address collisions before touching `known_targets`.
     let mut staged: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     for (node, resolved) in resolutions {
         let Some(targets) = resolved else { continue };
@@ -407,22 +403,41 @@ fn apply_resolutions(
             }
         }
     }
-    // OR-2 convergence without dropping improvements: re-deriving the SAME
-    // classification for an already-present site is a no-op (so an unchanged
-    // cone converges instead of churning to the iteration cap), but a
-    // genuinely DIFFERENT classification — e.g. a previously-unseatable target
-    // set that narrows to a seatable one once other branches resolve — does
-    // overwrite the stale entry rather than being silently dropped.
+    // Convergence without dropping improvements: re-deriving the SAME
+    // classification for an already-present site re-inserts an equal value
+    // (a no-op for the edge set, so an unchanged cone converges instead of
+    // churning to the iteration cap), while a genuinely DIFFERENT
+    // classification — e.g. a previously-unseatable target set that narrows
+    // to a seatable one once other branches resolve — overwrites the stale
+    // entry.  The progress signal is the set-diff below, not the insert, so
+    // an unconditional insert is correct: only `edge_set_of` and the cfg
+    // builder read `known_targets`, and both are insensitive to re-inserting
+    // an equal value.
     for (addr, targets) in staged {
-        if known_targets.get(&addr) != Some(&targets) {
-            known_targets.insert(addr, targets);
-        }
+        known_targets.insert(addr, targets);
     }
     Ok(edge_set_of(known_targets) != prev_edge_set)
 }
 
+/// Expands a `ResolvedTargets` into its successor set as an iterator of
+/// `Option<u64>`: `LinkRegister → [None]` (no concrete successor address),
+/// `Single(k) → [Some(k)]`, `Multiple(ks) → Some(k)` for each `k`.  The
+/// single source of truth for the three-arm match that both
+/// [`merge_resolved`] and [`edge_set_of`] perform.
+fn targets_of(r: &ResolvedTargets) -> impl Iterator<Item = Option<u64>> + '_ {
+    // `head` yields 0-or-1 items (None/Single), `tail` yields the Multiple
+    // slice; their chain unifies the three arms into one return type with
+    // no allocation.
+    let (head, tail): (Option<Option<u64>>, &[u64]) = match r {
+        ResolvedTargets::LinkRegister => (Some(None), &[]),
+        ResolvedTargets::Single(k) => (Some(Some(*k)), &[]),
+        ResolvedTargets::Multiple(ks) => (None, ks.as_slice()),
+    };
+    head.into_iter().chain(tail.iter().map(|k| Some(*k)))
+}
+
 /// Merge two `ResolvedTargets` classifications for the same pcode address
-/// (OR-4 same-address collision) into one whose target set is the union of
+/// (same-address collision) into one whose target set is the union of
 /// both.  Two `LinkRegister`s stay `LinkRegister`; otherwise every concrete
 /// successor address is unioned and the result widens to `Single` (one
 /// distinct target) or `Multiple` (more than one).  Order-independent.
@@ -430,14 +445,9 @@ fn merge_resolved(a: &ResolvedTargets, b: &ResolvedTargets) -> ResolvedTargets {
     if matches!(a, ResolvedTargets::LinkRegister) && matches!(b, ResolvedTargets::LinkRegister) {
         return ResolvedTargets::LinkRegister;
     }
-    let mut targets: Vec<u64> = Vec::new();
-    for r in [a, b] {
-        match r {
-            ResolvedTargets::LinkRegister => {}
-            ResolvedTargets::Single(k) => targets.push(*k),
-            ResolvedTargets::Multiple(ks) => targets.extend(ks.iter().copied()),
-        }
-    }
+    // `flatten` drops the `None`s (LinkRegister contributes no concrete
+    // successor), keeping only the unioned target addresses.
+    let mut targets: Vec<u64> = targets_of(a).chain(targets_of(b)).flatten().collect();
     targets.sort_unstable();
     targets.dedup();
     match targets.as_slice() {
@@ -466,7 +476,8 @@ fn live_unresolved_branches(
     unresolved: &UnresolvedAnchors,
     known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
 ) -> Vec<PcodeInsnAddr> {
-    use strider_ir::{IRViewer, IRWalker, node::NodeKind};
+    use strider_ir::node::NodeKind;
+    use strider_ir::{IRViewer, IRWalker};
 
     // The live `IndirectBranch` placeholder nodes still reachable from the
     // entry (one cheap reachability walk shared across every anchor).
@@ -509,18 +520,8 @@ fn edge_set_of(
 ) -> BTreeSet<(PcodeInsnAddr, Option<u64>)> {
     let mut edges: BTreeSet<(PcodeInsnAddr, Option<u64>)> = BTreeSet::new();
     for (addr, resolved) in map {
-        match resolved {
-            ResolvedTargets::LinkRegister => {
-                edges.insert((*addr, None));
-            }
-            ResolvedTargets::Single(k) => {
-                edges.insert((*addr, Some(*k)));
-            }
-            ResolvedTargets::Multiple(targets) => {
-                for k in targets {
-                    edges.insert((*addr, Some(*k)));
-                }
-            }
+        for target in targets_of(resolved) {
+            edges.insert((*addr, target));
         }
     }
     edges
@@ -599,7 +600,7 @@ mod tests {
         assert_eq!(edge_set_of(&map).len(), 1);
     }
 
-    // ── live-unresolved filtering (OR-1 / OR-2) ───────────────────────────
+    // ── live-unresolved filtering ─────────────────────────────────────────
 
     use strider_ir::node::NodeId;
 
@@ -637,12 +638,13 @@ mod tests {
 
     #[test]
     fn live_unresolved_excludes_dead_branch() {
-        // OR-1: a lift-time anchor whose `NodeId` is NOT a live
+        // A lift-time anchor whose `NodeId` is NOT a live
         // `IndirectBranch` in the final graph (e.g. the optimizer culled it,
         // here simulated by pairing the address with a non-IndirectBranch
         // live node — the function's entry node) must NOT be reported.
         let (function, _node) = fn_with_live_indirect_branch();
-        use strider_ir::{IRViewer, IRWalker, node::NodeKind};
+        use strider_ir::node::NodeKind;
+        use strider_ir::{IRViewer, IRWalker};
         let non_indirect = function
             .walk()
             .find(|&n| matches!(function.node_kind(n), NodeKind::Entry))
@@ -658,7 +660,7 @@ mod tests {
 
     #[test]
     fn live_unresolved_excludes_already_classified_branch() {
-        // OR-2: a site whose address is already in `known_targets` (it was
+        // A site whose address is already in `known_targets` (it was
         // classified, even if the cfg layer re-emitted its placeholder) is
         // treated as resolved-but-unseatable, not unresolved.
         let (function, node) = fn_with_live_indirect_branch();
@@ -672,11 +674,11 @@ mod tests {
         );
     }
 
-    // ── apply_resolutions convergence (OR-2) ──────────────────────────────
+    // ── apply_resolutions convergence ─────────────────────────────────────
 
     #[test]
     fn apply_resolutions_skips_identical_reclassification_but_applies_improved() {
-        // OR-2 convergence WITHOUT dropping improvements: re-deriving the SAME
+        // Convergence WITHOUT dropping improvements: re-deriving the SAME
         // classification for an already-present site is a no-op (so a site whose
         // cone is unchanged converges instead of churning), but a genuinely
         // DIFFERENT classification — e.g. a previously-unseatable set that
@@ -692,7 +694,10 @@ mod tests {
         same.insert(node, Some(ResolvedTargets::Multiple(vec![0x2000, 0x3000])));
         let grew = apply_resolutions(&mut known, &unresolved, same).expect("apply");
         assert!(!grew, "identical re-classification must not report growth");
-        assert_eq!(known[&addr], ResolvedTargets::Multiple(vec![0x2000, 0x3000]));
+        assert_eq!(
+            known[&addr],
+            ResolvedTargets::Multiple(vec![0x2000, 0x3000])
+        );
 
         // (b) an improved (different) classification IS applied, so an
         // unseatable-then-seatable site is not stranded unresolved.
@@ -700,7 +705,10 @@ mod tests {
         improved.insert(node, Some(ResolvedTargets::Multiple(vec![0x2000, 0x2004])));
         let grew = apply_resolutions(&mut known, &unresolved, improved).expect("apply");
         assert!(grew, "an improved classification must be applied");
-        assert_eq!(known[&addr], ResolvedTargets::Multiple(vec![0x2000, 0x2004]));
+        assert_eq!(
+            known[&addr],
+            ResolvedTargets::Multiple(vec![0x2000, 0x2004])
+        );
     }
 
     #[test]
@@ -716,7 +724,7 @@ mod tests {
         assert_eq!(known[&addr], ResolvedTargets::Single(0x2000));
     }
 
-    // ── same-address collision merge (OR-4) ───────────────────────────────
+    // ── same-address collision merge ──────────────────────────────────────
 
     #[test]
     fn merge_resolved_unions_multiple_targets() {
@@ -733,7 +741,10 @@ mod tests {
     #[test]
     fn merge_resolved_two_link_registers_stay_link_register() {
         assert_eq!(
-            merge_resolved(&ResolvedTargets::LinkRegister, &ResolvedTargets::LinkRegister),
+            merge_resolved(
+                &ResolvedTargets::LinkRegister,
+                &ResolvedTargets::LinkRegister
+            ),
             ResolvedTargets::LinkRegister
         );
     }
@@ -741,14 +752,17 @@ mod tests {
     #[test]
     fn merge_resolved_single_plus_single_widens_to_multiple() {
         assert_eq!(
-            merge_resolved(&ResolvedTargets::Single(0x1000), &ResolvedTargets::Single(0x2000)),
+            merge_resolved(
+                &ResolvedTargets::Single(0x1000),
+                &ResolvedTargets::Single(0x2000)
+            ),
             ResolvedTargets::Multiple(vec![0x1000, 0x2000])
         );
     }
 
     #[test]
     fn apply_resolutions_merges_two_anchors_at_same_addr() {
-        // OR-4: two DISTINCT placeholder `NodeId`s mapped to one shared
+        // Two DISTINCT placeholder `NodeId`s mapped to one shared
         // `PcodeInsnAddr` classify independently; `apply_resolutions` merges
         // (unions) their target sets into the single `known_targets` entry
         // rather than letting the second insert silently overwrite the first.
@@ -756,7 +770,8 @@ mod tests {
         // (the `IntConst` value node and the `IndirectBranch` placeholder) as
         // the two anchor keys — `apply_resolutions` keys purely off `NodeId`,
         // never node kind.
-        use strider_ir::{IRViewer, IRWalker, node::NodeKind};
+        use strider_ir::node::NodeKind;
+        use strider_ir::{IRViewer, IRWalker};
         let (function, indirect) = fn_with_live_indirect_branch();
         let other = function
             .walk()

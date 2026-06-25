@@ -25,15 +25,13 @@
 //! [`PatValue`]: crate::matcher::PatValue
 //! [`PatNode`]: crate::matcher::PatNode
 
-use strider_graph::NodeId as PatNodeId;
-use strider_graph::ValueId as PatValueId;
+use strider_graph::{NodeId as PatNodeId, ValueId as PatValueId};
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId, ValueKind, ValueType};
 
 use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
-use crate::matcher::{Matcher, skip_casts};
-use crate::matcher::{OutputKindSpec, PatValue, Pattern};
+use crate::matcher::{Matcher, OutputKindSpec, PatValue, Pattern, skip_casts};
 
 /// Entry point for a value-rooted attempt: try `pat`'s root pat node
 /// against the IR node producing `root_value`, with `root_value` available
@@ -88,7 +86,7 @@ pub(crate) fn try_match_node(
 /// value output (a `Value` / `AnyValue` kind, or any `width` constraint).
 /// Such a root cannot match a zero-output IR node.
 fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
-    pat.graph.produced_outputs(root).into_iter().any(|ov| {
+    pat.graph.produced_outputs(root).iter().any(|&ov| {
         let o = pat.graph.output_weight(ov);
         o.width.is_some() || matches!(o.kind, OutputKindSpec::Value(_) | OutputKindSpec::AnyValue)
     })
@@ -130,7 +128,8 @@ fn root_output_vertex_for(
     // Multiple output vertices (the `If` control root): keep the per-slot
     // lookup so each control output's constraints land on the right slot.
     let (_node, ir_slot) = matcher.function().value_definition(root_value);
-    outs.into_iter()
+    outs.iter()
+        .copied()
         .find(|&out_vertex| pat.graph.output_weight(out_vertex).slot as u32 == ir_slot)
 }
 

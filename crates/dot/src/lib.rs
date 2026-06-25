@@ -19,7 +19,8 @@
 //!
 //! [`@viz-js/viz`]: https://github.com/mdaines/viz-js
 
-use std::{fmt::Debug, path::Path};
+use std::fmt::{Debug, Write};
+use std::path::Path;
 
 /// Crate-level `Result` alias.  Every fallible function in `dot` returns
 /// this type.
@@ -183,7 +184,6 @@ fn json_quote(s: &str) -> String {
             // in `as_html_from_dot`'s output.
             '<' => out.push_str("\\u003c"),
             c if (c as u32) < 0x20 => {
-                use std::fmt::Write;
                 // writing to a `String` via `Write` is infallible
                 // (`String::write_str` returns `Ok(())` unconditionally),
                 // but clippy::expect_used flags the literal `.expect`.
@@ -245,9 +245,7 @@ impl DotEmitter {
 
         for (k, v) in extra {
             self.out.push_str(", ");
-            self.out.push_str(k);
-            self.out.push('=');
-            self.out.push_str(v);
+            push_attr(&mut self.out, k, v);
         }
 
         self.out.push_str("];\n");
@@ -274,9 +272,7 @@ impl DotEmitter {
                 if i != 0 {
                     self.out.push_str(", ");
                 }
-                self.out.push_str(k);
-                self.out.push('=');
-                self.out.push_str(v);
+                push_attr(&mut self.out, k, v);
             }
             self.out.push(']');
         }
@@ -291,6 +287,17 @@ impl DotEmitter {
     }
 }
 
+/// Appends a single `key=value` DOT attribute to `out`.  The value is
+/// inserted verbatim (the caller owns any quoting/escaping); see
+/// [`DotEmitter::node`]'s contract.  Shared by every attribute emitter so
+/// the `key=value` shape lives in one place; callers supply their own
+/// framing (leading comma, separator, bracket block, trailing comma).
+fn push_attr(out: &mut String, k: &str, v: &str) {
+    out.push_str(k);
+    out.push('=');
+    out.push_str(v);
+}
+
 fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
     if attrs.is_empty() {
         return;
@@ -301,9 +308,7 @@ fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
     out.push_str(" [\n");
     for (k, v) in attrs {
         out.push_str("    ");
-        out.push_str(k);
-        out.push('=');
-        out.push_str(v);
+        push_attr(out, k, v);
         out.push_str(",\n");
     }
     out.push_str("  ];\n\n");
@@ -333,7 +338,8 @@ pub(crate) fn dot_node_count(dot: &str) -> usize {
     dot.matches("[label=").count()
 }
 
-/// Wraps a [`GraphDotDumper`] and produces DOT / SVG / HTML output.
+/// Wraps a [`GraphDotDumper`] and produces DOT / HTML output (the HTML
+/// renders to SVG client-side via viz.js).
 pub struct GraphDot<G: GraphDotDumper> {
     dumper: G,
     style: DotStyle,

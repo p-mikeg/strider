@@ -23,33 +23,43 @@ use super::ValidationError;
 /// [`ValidationError::MultipleInitialMemoryNodes`] (carrying the first two
 /// offenders) when a kind appears more than once.
 pub(super) fn check_graph_invariants_uniqueness(graph: &Graph, errs: &mut Vec<ValidationError>) {
-    let mut entries: Vec<NodeId> = Vec::new();
-    let mut initial_memories: Vec<NodeId> = Vec::new();
+    // Only the first two of each kind matter (missing vs single vs the first
+    // duplicate pair), so buffer two `Option` slots per kind instead of two
+    // heap `Vec`s.  The full-arena scan is intentional — it catches an extra
+    // Entry/InitialMemory even when the duplicate isn't reachable.
+    let mut entry: (Option<NodeId>, Option<NodeId>) = (None, None);
+    let mut initial_memory: (Option<NodeId>, Option<NodeId>) = (None, None);
+
+    let record = |slot: &mut (Option<NodeId>, Option<NodeId>), node: NodeId| {
+        if slot.0.is_none() {
+            slot.0 = Some(node);
+        } else if slot.1.is_none() {
+            slot.1 = Some(node);
+        }
+    };
 
     for node in graph.all_node_ids() {
         match graph.node_kind(node) {
-            NodeKind::Entry => entries.push(node),
-            NodeKind::InitialMemory => initial_memories.push(node),
+            NodeKind::Entry => record(&mut entry, node),
+            NodeKind::InitialMemory => record(&mut initial_memory, node),
             _ => {}
         }
     }
 
-    match entries.as_slice() {
-        [] => errs.push(ValidationError::MissingEntryNode),
-        [_] => {}
-        [first, second, ..] => errs.push(ValidationError::MultipleEntryNodes {
-            first: *first,
-            second: *second,
-        }),
+    match entry {
+        (None, _) => errs.push(ValidationError::MissingEntryNode),
+        (Some(_), None) => {}
+        (Some(first), Some(second)) => {
+            errs.push(ValidationError::MultipleEntryNodes { first, second });
+        }
     }
 
-    match initial_memories.as_slice() {
-        [] => errs.push(ValidationError::MissingInitialMemoryNode),
-        [_] => {}
-        [first, second, ..] => errs.push(ValidationError::MultipleInitialMemoryNodes {
-            first: *first,
-            second: *second,
-        }),
+    match initial_memory {
+        (None, _) => errs.push(ValidationError::MissingInitialMemoryNode),
+        (Some(_), None) => {}
+        (Some(first), Some(second)) => {
+            errs.push(ValidationError::MultipleInitialMemoryNodes { first, second });
+        }
     }
 }
 
@@ -94,10 +104,11 @@ pub(super) fn check_graph_invariants_region(
 /// For `Phi` and `MemPhi` (variadic phis), the number of value inputs
 /// must match the owning `Region`'s predecessor count.
 pub(super) fn check_graph_invariants_phis(
-    graph: &Graph,
+    function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
+    let graph = function.graph();
     // Iterate the reachable set directly (ascending NodeId order).
     // `PhiCollapse` and `DeadBranchElimination` leave zero-input phi
     // zombies in the arena; reaching one here would falsely trip
@@ -153,10 +164,9 @@ pub(super) fn check_graph_invariants_phis(
         // input is already reported by the local-typing check, so only
         // mismatched concrete value types are flagged here.)
         if matches!(kind, NodeKind::Phi) {
-            let phi_out_ty = graph
-                .node_outputs(node)
-                .iter()
-                .find_map(|&o| graph.value_kind(o).as_value());
+            let phi_out_ty = function
+                .first_value_output_of(node)
+                .and_then(|o| function.value_type_opt(o));
             if let Some(out_ty) = phi_out_ty {
                 for (i, inp) in inputs.iter().enumerate().skip(1) {
                     if let Some(in_ty) = graph.value_kind(inp).as_value()
@@ -382,7 +392,8 @@ pub(super) fn check_graph_invariants_side_indices(
             continue;
         }
         let kind = graph.node_kind(node);
-        let matches = matches!(kind, NodeKind::InitialVar(found) if function.initial_vn(*found) == vn);
+        let matches =
+            matches!(kind, NodeKind::InitialVar(found) if function.initial_vn(*found) == vn);
         if !matches {
             errs.push(ValidationError::StaleInitialVarIndex {
                 node,

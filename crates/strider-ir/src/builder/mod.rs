@@ -234,8 +234,8 @@ pub struct FunctionBuilder {
     /// produces while this is `Some`.  The lifter / strider region driver
     /// sets it to `Some(addr)` immediately before each pcode insn (see
     /// [`Self::set_lift_addr`]) and back to `None` between insns.
-    /// Region-setup helpers (`build_entry`, `build_function_args`,
-    /// region/phi creation) leave it `None`, so synthesised structural
+    /// Region-setup helpers (`build_entry`, region/phi creation) leave it
+    /// `None`, so synthesised structural
     /// nodes legitimately stay empty in the fingerprint side-table.
     pub(crate) lift_addr: Option<u64>,
 }

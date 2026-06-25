@@ -1,5 +1,7 @@
 //! `NodeKind` — the closed enum of every operation/role a node can take.
 
+use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+
 /// Where a function argument originates in the calling convention.
 ///
 /// Used by the `strider-orchestrator` pattern builder `FunctionArgPat` to
@@ -143,7 +145,7 @@ pub enum NodeKind {
     /// A compile-time IEEE 754 floating-point constant.  The value is stored
     /// as its raw bit pattern in a `u64` (upper 32 bits are zero for `F32`).
     FloatConst(u64),
-    /// Floating-point binary operation (add, sub, mul, div).
+    /// Floating-point binary operation (add, mul, div).
     FloatBinaryOp(crate::node::FloatBinaryOp),
     /// Floating-point unary operation (neg, abs, sqrt, ceil, floor, round).
     FloatUnaryOp(crate::node::FloatUnaryOp),
@@ -205,53 +207,14 @@ impl NodeKind {
     /// Returns `true` if this node represents a compile-time constant
     /// (`IntConst` or `FloatConst`).
     ///
-    /// Exhaustive (no `_` arm) so adding a new const-shape `NodeKind`
-    /// variant is a compile error here — see [`crate::walk::cast_mask_of`]
-    /// for the same pattern.  This forces an explicit decision at every
-    /// constant-handling site (constant folding, validator typing,
-    /// pattern matching, …) when the IR grows a new constant kind.
-    /// All non-const variants are listed explicitly under one `false`
-    /// arm to keep the compile-time exhaustiveness check while
-    /// satisfying clippy's `match_same_arms` lint.
+    /// A constant is the interned `IntConst` / `FloatConst` shape; every
+    /// other `NodeKind` is non-const by construction (constants only ever
+    /// enter the graph via the const interners), so this is a `matches!`
+    /// over the two const kinds rather than an exhaustive no-`_` match —
+    /// the same trade made for [`Self::has_side_effects`].
     #[inline]
     pub fn is_const(self) -> bool {
-        match self {
-            Self::IntConst(..) | Self::FloatConst(..) => true,
-
-            // Every other variant — explicitly named so adding a new
-            // `NodeKind` is a compile error here.
-            Self::Entry
-            | Self::InitialMemory
-            | Self::InitialVar(..)
-            | Self::Region
-            | Self::MemPhi
-            | Self::Phi
-            | Self::If
-            | Self::Call
-            | Self::Return
-            | Self::IndirectBranch
-            | Self::CallOther { .. }
-            | Self::Load(..)
-            | Self::Store(..)
-            | Self::IntUnaryOp(..)
-            | Self::IntBinaryOp(..)
-            | Self::IntCmpOp(..)
-            | Self::Truncate
-            | Self::Popcount
-            | Self::Lzcount
-            | Self::Extend(..)
-            | Self::FloatBinaryOp(..)
-            | Self::FloatUnaryOp(..)
-            | Self::FloatCmpOp(..)
-            | Self::IntToFloat
-            | Self::FloatToInt
-            | Self::FloatToFloat
-            | Self::IntBitsToFloat
-            | Self::FloatBitsToInt
-            | Self::SegmentOp { .. }
-            | Self::CPoolRef
-            | Self::New => false,
-        }
+        matches!(self, Self::IntConst(..) | Self::FloatConst(..))
     }
 
     /// Returns `true` if nodes of this kind may be deduplicated in the graph
@@ -457,7 +420,6 @@ impl NodeKind {
     /// helpers that previously lived under `pattern::matcher::commutativity`.
     #[inline]
     pub fn is_commutative(&self) -> bool {
-        use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
         match self {
             Self::IntBinaryOp(op) => matches!(
                 op,

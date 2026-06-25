@@ -172,13 +172,6 @@ impl Bindings {
         }
     }
 
-    /// Alias for [`Self::get_value`] — kept short because it is the
-    /// most-used accessor inside `*_const_with!` macro bodies and
-    /// post-match `when_match` closures.
-    pub fn get(&self, c: Capture) -> Option<ValueId> {
-        self.get_value(c)
-    }
-
     /// Whether `c` was bound in this match (either variant of
     /// `Binding`).  Graph-free — useful when the only question is
     /// "did this capture fire?" and a `&Graph` isn't already in scope.
@@ -341,9 +334,8 @@ impl Bindings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strider_ir::IRBuilderExt;
     use strider_ir::node::ValueType;
-    use strider_ir::{IRViewer, IRWalker};
+    use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
     use strider_ir_test_utils::make_empty_fn;
 
     // ── Capture (unified node + output) ──────────────────────────────────
@@ -367,19 +359,19 @@ mod tests {
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
-        assert_eq!(bindings.get(v), None);
+        assert_eq!(bindings.get_value(v), None);
         let ba = Binding::Value(a);
         let bb = Binding::Value(b);
         assert!(bindings.bind_capture(v, ba));
-        assert_eq!(bindings.get(v), Some(a));
+        assert_eq!(bindings.get_value(v), Some(a));
 
         // Idempotent with same output.
         assert!(bindings.bind_capture(v, ba));
-        assert_eq!(bindings.get(v), Some(a));
+        assert_eq!(bindings.get_value(v), Some(a));
 
         // Conflict preserves original.
         assert!(!bindings.bind_capture(v, bb));
-        assert_eq!(bindings.get(v), Some(a));
+        assert_eq!(bindings.get_value(v), Some(a));
     }
 
     #[test]
@@ -483,7 +475,7 @@ mod tests {
             make_empty_fn(|b| b.build_int_const(0u64, ValueType::I64)).expect("build graph");
         let bindings = Bindings::default();
         let v = Capture::new();
-        assert_eq!(bindings.get(v), None);
+        assert_eq!(bindings.get_value(v), None);
         assert_eq!(bindings.get_node(v, function.graph()), None);
         assert_eq!(bindings.get_uint(v, &function), None);
         assert_eq!(bindings.get_int(v, &function), None);

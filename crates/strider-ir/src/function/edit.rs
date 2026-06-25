@@ -9,7 +9,7 @@
 //! nodes are stamped via [`EditFunction::create_node_attributed`]; composite
 //! rewrites inline `extend_asm_fingerprint_from` directly.
 //!
-//! The rewrite *rules* (`rewrite_rule`, `GraphRewriter`, the template
+//! The rewrite *rules* (`rewrite_rule`, `apply_rules_count`, the template
 //! interpreter) live in the downstream optimizer crate; this module owns only
 //! the function-editing primitives they build on.
 
@@ -17,11 +17,11 @@ use entity_utils::{DenseEntitySet, Worklist};
 
 use crate::function::state::{FunctionState, NodeFlags};
 
-use crate::IRViewer;
 use crate::builder::IRBuilder;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
-use crate::{Function, Graph};
+use crate::walk::{DefUseSuccs, PostOrder, RawDefUseSuccs};
+use crate::{Function, Graph, IRViewer};
 
 // ── EditFunction ─────────────────────────────────────────────────────
 
@@ -65,7 +65,6 @@ impl<'g> EditFunction<'g> {
     /// initial cull invoke it themselves.  Callers grafting deliberate
     /// off-entry scaffolding (e.g. memory-SSA test shapes) simply skip it.
     pub fn cull_dead(&mut self) {
-        use crate::walk::{PostOrder, RawDefUseSuccs};
         let order: Vec<NodeId> = PostOrder::new(
             RawDefUseSuccs::new(self.function.graph()),
             self.state.roots.iter(),
@@ -118,7 +117,6 @@ impl<'g> EditFunction<'g> {
     /// [`reverse_postorder`](crate::IRWalker::reverse_postorder)) rather than
     /// reusing these.
     pub fn postorder(&self) -> Vec<NodeId> {
-        use crate::walk::{DefUseSuccs, PostOrder};
         PostOrder::new(
             DefUseSuccs::new(self.function.graph(), &self.state.live_nodes),
             self.state.roots.iter(),
@@ -903,10 +901,9 @@ pub(crate) mod test_fixtures {
 mod tests {
     use super::EditFunction;
     use super::test_fixtures::single_region_builder;
-    use crate::IRViewer;
-    use crate::IntBinaryOp;
     use crate::builder::IRBuilderExt;
     use crate::node::{NodeKind, ValueKind, ValueType};
+    use crate::{IRViewer, IntBinaryOp};
     use cranelift_entity::EntityRef;
     use std::collections::BTreeSet;
 

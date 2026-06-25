@@ -9,8 +9,7 @@
 //! already-`I1` operands (comparison / flag results), so no int→bool
 //! conversion is needed.
 
-use strider_ir::IRBuilderExt;
-use strider_ir::{IntBinaryOp, ValueType};
+use strider_ir::{IRBuilderExt, IntBinaryOp, ValueType};
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, require_output_vn};

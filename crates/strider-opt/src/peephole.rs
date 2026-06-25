@@ -27,14 +27,25 @@ use crate::pipeline::OptimizationResult;
 ///
 /// Collapses the recurring `node_inputs(n).iter().map(|i| producer(i))`
 /// micro-idiom (the input-producer cone walk) into one named helper.  Returns
-/// an owned `Vec` rather than a borrowing iterator so callers may push the
-/// producers onto a worklist while keeping `ctx` available for further reads —
-/// the input fan-out is small (≤ a node's arity), so the allocation is cheap.
+/// an owned `Vec` rather than a borrowing iterator so callers may **mutate**
+/// `ctx` while iterating the producers (e.g. extend a fingerprint per producer)
+/// — the borrow must end before the mutation.  Iterate-only callers that do not
+/// touch `ctx` in the loop body prefer the allocation-free
+/// [`input_producers_iter`].
 pub(crate) fn input_producers<V: IRViewer>(ctx: &V, node: NodeId) -> Vec<NodeId> {
-    ctx.node_inputs(node)
-        .into_iter()
-        .map(|v| ctx.producer(v))
-        .collect()
+    input_producers_iter(ctx, node).collect()
+}
+
+/// Borrowing-iterator counterpart of [`input_producers`]: yields each value
+/// input's producer node without an intermediate `Vec`.  Holds an immutable
+/// borrow of `ctx` for the iterator's lifetime, so use it only where the loop
+/// body does not also borrow `ctx` mutably (the worklist / fingerprint-extend
+/// callers keep the owned-`Vec` [`input_producers`] instead).
+pub(crate) fn input_producers_iter<V: IRViewer>(
+    ctx: &V,
+    node: NodeId,
+) -> impl Iterator<Item = NodeId> + '_ {
+    ctx.node_inputs(node).into_iter().map(|v| ctx.producer(v))
 }
 
 /// Outcome of a single [`PeepholePass::try_rewrite`] attempt at one root.
@@ -219,9 +230,8 @@ mod tests {
 
     use super::*;
     use std::cell::RefCell;
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IntBinaryOp;
     use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::make_empty_fn;
 
     use crate::error::Result;

@@ -17,8 +17,7 @@
 use dot::{DotStyle, GraphDot};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::CfgOptions;
-use strider_cfg::{Builder, Cfg};
+use strider_cfg::{Builder, Cfg, CfgOptions};
 use strider_target::SleighArch;
 
 type TestReader = BufMemReader<Vec<u8>>;

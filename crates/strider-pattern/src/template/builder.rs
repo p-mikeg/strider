@@ -27,8 +27,8 @@
 //! the incremental `node()` / `*_output()` / `input()` verbs cannot write
 //! straight through.
 
-use strider_ir::IntBinaryOp;
-use strider_ir::{ConstId, node::{NodeKind, ValueType}};
+use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{ConstId, IntBinaryOp};
 
 use crate::matcher::KindSpec;
 use crate::staging::{SealNode, StagedGraph};

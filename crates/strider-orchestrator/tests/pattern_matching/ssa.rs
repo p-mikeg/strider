@@ -5,9 +5,8 @@
 //! and the `Function::arg_index_to_values` side-table populated by
 //! `FunctionArgDetect`.
 
-use strider_ir::IRViewer;
-use strider_ir::IntCmpOp;
 use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{IRViewer, IntCmpOp};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes, stack_vn};

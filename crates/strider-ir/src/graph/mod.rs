@@ -72,9 +72,7 @@ pub type Inputs<'a> = strider_graph::Inputs<'a, NodeKind, ValueKind, IrCacheable
 /// instantiation of [`strider_graph::InputCursor`].
 pub type InputCursor<'a> = strider_graph::InputCursor<'a, NodeKind, ValueKind, IrCacheable>;
 
-/// Remap-in-place trait for `SecondaryMap<NodeId, _>`-shaped side-tables.
-///
-/// Implementors expose a single method that rebuilds the table under the
+/// Rebuilds a `SecondaryMap<NodeId, _>`-shaped side-table in place under the
 /// old→new translation, draining the source via `std::mem::take` so the
 /// post-remap source is left at `Default::default()` for every slot.
 /// Used by [`crate::Function::compact`] to fold every `NodeId`-keyed
@@ -83,16 +81,13 @@ pub type InputCursor<'a> = strider_graph::InputCursor<'a, NodeKind, ValueKind, I
 /// The Vn-keyed `initial_var_index` does **not** fit this shape (its
 /// key is `rsleigh::Vn`, not `NodeId`) and is remapped inline in
 /// `Function::compact`.
-pub(crate) trait SideTableRemap {
-    fn remap_node_keyed(&mut self, remap: &NodeIdRemap);
-}
-
-impl<T: Default + Clone> SideTableRemap for SecondaryMap<NodeId, T> {
-    fn remap_node_keyed(&mut self, remap: &NodeIdRemap) {
-        let mut dst: SecondaryMap<NodeId, T> = SecondaryMap::new();
-        for (old_id, new_id) in remap.surviving_node_pairs() {
-            dst[new_id] = std::mem::take(&mut self[old_id]);
-        }
-        *self = dst;
+pub(crate) fn remap_node_keyed<T: Default + Clone>(
+    map: &mut SecondaryMap<NodeId, T>,
+    remap: &NodeIdRemap,
+) {
+    let mut dst: SecondaryMap<NodeId, T> = SecondaryMap::new();
+    for (old_id, new_id) in remap.surviving_node_pairs() {
+        dst[new_id] = std::mem::take(&mut map[old_id]);
     }
+    *map = dst;
 }

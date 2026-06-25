@@ -2,14 +2,12 @@
 //! SP-expression memo and the alias knobs, built once per pass and reused for
 //! every query; per query it builds the [`SpAliasOracle`] that drives the
 //! [`super::mem_ssa`] memory-SSA walk.  The address-class verdict logic it
-//! consults lives in the sibling [`super::alias`] module.
+//! consults lives in the sibling [`super::analyzer`] module.
 
-use strider_ir::Function;
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{Function, IRViewer};
 
-use super::alias::{AddrClass, AliasVerdict, classify_addr, store_alias_verdict};
-use super::decompose::{SpDecomposer, SpExpr, SpExprMemo};
+use super::analyzer::{AddrClass, AliasVerdict, SpAnalyzer, SpExpr, SpExprMemo, alias_verdict};
 use super::mem_ssa::MemorySSAWalker;
 use super::ranges::store_value_byte_size;
 use crate::{AliasMode, MemAliasOptions};
@@ -20,7 +18,9 @@ use crate::{AliasMode, MemAliasOptions};
 /// `def_clobbers` answers "does this memory def overlap the load's byte
 /// range?" for a precomputed load address class:
 ///
-/// * `Store` — via [`store_alias_verdict`]: anything but `Disjoint`
+/// * `Store` — classify the store address via
+///   [`SpAnalyzer::classify_store_addr`] (stack-offset SSoT before
+///   `decompose`) and run the pure [`alias_verdict`]: anything but `Disjoint`
 ///   clobbers (a `load_forward` caller re-checks exact-`Match` afterward).
 /// * `Call` / `CallOther` — clobbers iff `mem.calls_clobber` is set.
 ///   `load_forward` sets it (a load can never forward across a call);
@@ -28,9 +28,13 @@ use crate::{AliasMode, MemAliasOptions};
 ///   callee is opaque, so there is nothing to inspect).
 /// * any other (opaque) memory producer — conservatively clobbers.
 ///
-/// `MemPhi` is handled structurally by [`may_clobber`], so the oracle never
+/// `MemPhi` is handled structurally by the walk, so the oracle never
 /// sees one.
-struct SpAliasOracle<'a> {
+struct SpAliasOracle<'a, 'm> {
+    /// The owning config — the source of the shared `sp_memo` + alias knobs,
+    /// so the oracle holds only the per-query load facts below and reads the
+    /// rest through `cfg` instead of copying them.
+    cfg: &'a mut SpAliasCfg<'m>,
     /// The load's address class (`SpRooted` for a stack-arg load; any class
     /// for a general forwarded load).
     load_class: AddrClass,
@@ -39,16 +43,9 @@ struct SpAliasOracle<'a> {
     /// clobber (or be forwarded into) this load — distinct spaces never alias,
     /// even at the same numeric address.
     load_space: rsleigh::VnSpace,
-    sp_memo: &'a mut SpExprMemo,
-    alias_mode: AliasMode,
-    /// Memory-aliasing relaxation knobs (`calls_clobber`,
-    /// `assume_distinct_sp_bases_disjoint`).  `load_forward` /
-    /// `call_stack_args` use the call-blocking preset; `function_args` passes
-    /// the user's [`MemAliasOptions`].
-    mem: MemAliasOptions,
 }
 
-impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_> {
+impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_, '_> {
     fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool {
         match *function.node_kind(def) {
             // A store in a different address space than the load cannot clobber
@@ -58,18 +55,27 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_> {
             // `load_forward`, forwarding a different-space store's value into
             // the load — a miscompile).
             NodeKind::Store(store_space) => {
-                store_space == self.load_space
-                    && store_alias_verdict(
-                        function,
-                        def,
-                        self.load_class,
-                        self.load_size,
-                        self.sp_memo,
-                        self.alias_mode,
-                        self.mem.assume_distinct_sp_bases_disjoint,
-                    ) != AliasVerdict::Disjoint
+                if store_space != self.load_space {
+                    return false;
+                }
+                // Classify the store address (stack-offset SSoT before
+                // `decompose`) and its size, then run the pure class-on-class
+                // verdict directly — anything but `Disjoint` clobbers (a
+                // `load_forward` caller re-checks exact-`Match` afterward).
+                let store_size =
+                    store_value_byte_size(function.graph(), function.store_data(def));
+                let store_class =
+                    SpAnalyzer::new(function, &mut *self.cfg.sp_memo).classify_store_addr(def);
+                alias_verdict(
+                    self.load_class,
+                    self.load_size,
+                    store_class,
+                    store_size,
+                    self.cfg.alias_mode,
+                    self.cfg.mem.assume_distinct_sp_bases_disjoint,
+                ) != AliasVerdict::Disjoint
             }
-            NodeKind::Call | NodeKind::CallOther { .. } => self.mem.calls_clobber,
+            NodeKind::Call | NodeKind::CallOther { .. } => self.cfg.mem.calls_clobber,
             // Any other (opaque) memory producer cannot be proven disjoint.
             _ => true,
         }
@@ -79,7 +85,7 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_> {
 /// Pass-scoped SP-aliasing context: the shared `SpExprMemo` plus the alias
 /// knobs, built once per pass and reused for every query.  Bundles the data
 /// that used to be threaded through `reaching_sp_store`'s 9-arg signature and
-/// the inline `SpAliasOracle` builds at each `may_clobber` call site.
+/// the inline `SpAliasOracle` builds at each `nearest_clobber` call site.
 pub(crate) struct SpAliasCfg<'m> {
     sp_memo: &'m mut SpExprMemo,
     alias_mode: AliasMode,
@@ -115,49 +121,96 @@ impl<'m> SpAliasCfg<'m> {
         )
     }
 
-    /// Build the per-query oracle from this config + the load's address class
-    /// and space.
+    /// Build the per-query oracle borrowing this config (the source of the
+    /// shared memo + knobs) plus the load's address class, size, and space.
     fn oracle(
         &mut self,
         load_class: AddrClass,
         load_size: i64,
         load_space: rsleigh::VnSpace,
-    ) -> SpAliasOracle<'_> {
+    ) -> SpAliasOracle<'_, 'm> {
         SpAliasOracle {
+            cfg: self,
             load_class,
             load_size,
             load_space,
-            sp_memo: &mut *self.sp_memo,
-            alias_mode: self.alias_mode,
-            mem: self.mem,
         }
     }
 
     /// Classify a load/store address under this config's memo.
     pub(crate) fn classify_addr(&mut self, function: &Function, addr: ValueId) -> AddrClass {
-        classify_addr(function, addr, self.sp_memo)
+        SpAnalyzer::new(function, self.sp_memo).classify_addr(addr)
     }
 
-    /// Mutating walk: nearest clobber of the load at `(load_class, load_size)`
-    /// reachable backward from the def producing the `mem` memory token,
-    /// narrowing the load's memory edge.
+    /// Decompose an address into an SP terminal through this config's shared
+    /// memo.  The single decompose entry for consumers, so they no longer
+    /// materialise a transient [`SpAnalyzer`] at each call site.
+    pub(crate) fn decompose(&mut self, function: &Function, value: ValueId) -> Option<SpExpr> {
+        SpAnalyzer::new(function, self.sp_memo).decompose(value)
+    }
+
+    /// Class + byte size of a `Load`'s address, both derived from the node
+    /// itself (O(1) cached reads; the SP decompose is a memo hit when the
+    /// address was already classified).  The shared load-side derivation for
+    /// [`verdict`](Self::verdict) and [`nearest_clobber`](Self::nearest_clobber).
+    fn load_class_and_size(&mut self, function: &Function, load: NodeId) -> (AddrClass, i64) {
+        let class = self.classify_addr(function, function.load_addr(load));
+        let [out] = function
+            .node_outputs_exact::<1>(load)
+            .expect("Load has 1 output per node signature");
+        let size = function
+            .value_type_opt(out)
+            .expect("Load output is a value")
+            .byte_size() as i64;
+        (class, size)
+    }
+
+    /// Exact pairwise alias verdict between a `Load` and a `Store`, deriving
+    /// each side's address class + byte size from the node itself (O(1) cached
+    /// reads / decompose-memo hits) under this config's alias mode and
+    /// distinct-base knob.  The node-based counterpart of the class-based
+    /// [`alias_verdict`] primitive.
+    pub(crate) fn verdict(
+        &mut self,
+        function: &Function,
+        load_node: NodeId,
+        store_node: NodeId,
+    ) -> AliasVerdict {
+        let (load_class, load_size) = self.load_class_and_size(function, load_node);
+        let store_class = self.classify_addr(function, function.store_addr(store_node));
+        let store_size = store_value_byte_size(function.graph(), function.store_data(store_node));
+        alias_verdict(
+            load_class,
+            load_size,
+            store_class,
+            store_size,
+            self.alias_mode,
+            self.mem.assume_distinct_sp_bases_disjoint,
+        )
+    }
+
+    /// Read-only walk: the nearest clobber of `load` reachable backward from
+    /// the def producing the `mem` memory token.  The load's address class,
+    /// byte size, and space are derived from the `load` node itself — each an
+    /// O(1) cached read (the SP decompose is a memo hit when the caller has
+    /// already classified the address), so a caller never threads them in.
+    /// Performs no narrowing; a caller that wants to shorten the load's memory
+    /// edge onto the returned clobber calls [`super::narrow_load_to`].
     pub(crate) fn nearest_clobber(
         &mut self,
-        ctx: &mut crate::EditFunction<'_>,
+        function: &Function,
         load: NodeId,
-        load_class: AddrClass,
-        load_size: i64,
         mem: ValueId,
     ) -> NodeId {
-        // The load's own space scopes which stores can clobber it.
-        // `load_forward` only ever passes a `Load`; RAM is a safe default.
-        let load_space = match ctx.node_kind(load) {
-            NodeKind::Load(s) => *s,
-            _ => rsleigh::VnSpace::RAM,
+        // The load's own space scopes which stores can clobber it.  Every caller
+        // passes a `Load` (the class/size derivation below already assumes it).
+        let NodeKind::Load(load_space) = *function.node_kind(load) else {
+            unreachable!("nearest_clobber is only called on Load nodes");
         };
-        let mem_node = ctx.function().producer(mem);
+        let (load_class, load_size) = self.load_class_and_size(function, load);
+        let mem_node = function.producer(mem);
         let mut oracle = self.oracle(load_class, load_size, load_space);
-        oracle.may_clobber(ctx, load, mem_node)
+        oracle.find_nearest_clobber(function, mem_node)
     }
 
     /// Finds the nearest `Store` reachable backward (memory-SSA, `MemPhi`-sound)
@@ -185,15 +238,20 @@ impl<'m> SpAliasCfg<'m> {
     ) -> Option<ReachingSpStore> {
         // Stack memory lives in RAM, so a probed SP-rooted location only
         // matches RAM stores (a same-address store in another space is
-        // disjoint and is skipped, fail-closed for the caller).
-        let mut oracle = self.oracle(
-            AddrClass::SpRooted { base, offset },
-            probe_size,
-            rsleigh::VnSpace::RAM,
-        );
-        // `find_nearest_clobber` is the read-only walk (no narrowing); it resolves
-        // the nearest clobber backward from the def producing `mem_start`.
-        let clobber = oracle.find_nearest_clobber(function, function.producer(mem_start));
+        // disjoint and is skipped, fail-closed for the caller).  Scope the
+        // oracle to just the read-only walk so its `sp_memo` borrow ends before
+        // the `self.decompose` below reuses the same memo.
+        let clobber = {
+            let mut oracle = self.oracle(
+                AddrClass::SpRooted { base, offset },
+                probe_size,
+                rsleigh::VnSpace::RAM,
+            );
+            // `find_nearest_clobber` is the read-only walk (no narrowing); it
+            // resolves the nearest clobber backward from the def producing
+            // `mem_start`.
+            oracle.find_nearest_clobber(function, function.producer(mem_start))
+        };
         if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
             return None;
         }
@@ -202,7 +260,7 @@ impl<'m> SpAliasCfg<'m> {
         let store_offset = match function.stack_offset(clobber) {
             Some((b, off)) if b == base => off,
             Some(_) => return None,
-            None => match SpDecomposer::new(function, oracle.sp_memo).decompose(function.store_addr(clobber)) {
+            None => match self.decompose(function, function.store_addr(clobber)) {
                 Some(SpExpr {
                     base: b,
                     offset: off,
@@ -210,7 +268,10 @@ impl<'m> SpAliasCfg<'m> {
                 _ => return None,
             },
         };
-        Some(ReachingSpStore { node: clobber, store_offset })
+        Some(ReachingSpStore {
+            node: clobber,
+            store_offset,
+        })
     }
 }
 

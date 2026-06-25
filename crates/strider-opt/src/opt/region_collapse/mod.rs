@@ -76,8 +76,11 @@ impl RegionCollapse {
         // Region outputs are [control, phi_token]; the control output is
         // index 0.
         let [ctrl_value, _phi_token] = ctx.node_outputs_exact::<2>(root)?;
+        // `replace_value` is the SSoT that absorbs `ctrl_value`'s producer
+        // fingerprint into `sole_ctrl_value`'s producer and redirects every
+        // use; map its `changed` bool to an `OptimizationResult`.
         let result =
-            OptimizationResult::NoChange.after_replace(ctx, ctrl_value, sole_ctrl_value)?;
+            OptimizationResult::from_changed(ctx.replace_value(ctrl_value, sole_ctrl_value)?);
 
         // After rewiring the control consumers, detach the now-dead Region's
         // own input edge — but ONLY once BOTH of its outputs (control AND

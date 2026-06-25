@@ -3,9 +3,8 @@
 //! [`Bindings`] journal; per-capture value reads go through
 //! [`Match::bindings`] (the typed accessors live on [`Bindings`]).
 
-use strider_ir::Graph;
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{Graph, IRViewer};
 
 use crate::bindings::{Binding, Bindings};
 use crate::capture::Capture;

@@ -77,6 +77,21 @@ impl NodeCache {
         if h == HASH_NONE { 0 } else { h }
     }
 
+    /// Records `node` in the dedup table under structural hash `h` and caches
+    /// `h` in `node_hashes`.  The shared miss-insert tail of `get_or_alloc`,
+    /// `canonicalize`, and `rebuild`.
+    ///
+    /// The rehash closure recovers an existing entry's hash from
+    /// `node_hashes` (every entry already in the table has a non-sentinel hash
+    /// there).  Disjoint-field borrow: `self.table` is `&mut` while the
+    /// closure borrows `self.node_hashes` — proven safe by the borrow checker.
+    #[inline]
+    fn insert_hashed(&mut self, node: NodeId, h: u64) {
+        self.table
+            .insert_unique(h, node, |&existing| self.node_hashes[existing]);
+        self.node_hashes[node] = h;
+    }
+
     /// Gate on `should_cache`, hash (sentinel-avoided), probe via `C::eq`,
     /// then either return the existing structurally-equal node or allocate a
     /// fresh one and insert it.
@@ -104,15 +119,9 @@ impl NodeCache {
             return cand;
         }
 
-        // Miss: allocate a fresh node and record it under its hash. The rehash
-        // closure recovers an existing entry's hash from `node_hashes`
-        // (every entry already in the table has a non-sentinel hash there).
-        // Disjoint-field borrow: `self.table` is `&mut` while the closure
-        // borrows `self.node_hashes` — proven safe by the borrow checker.
+        // Miss: allocate a fresh node and record it under its hash.
         let node = store.alloc_node(kind, inputs, outputs);
-        self.table
-            .insert_unique(h, node, |&existing| self.node_hashes[existing]);
-        self.node_hashes[node] = h;
+        self.insert_hashed(node, h);
         node
     }
 
@@ -164,9 +173,7 @@ impl NodeCache {
              (a mutation verb changed its structure without invalidating)"
         );
         if self.node_hashes[node] == HASH_NONE {
-            self.table
-                .insert_unique(h, node, |&existing| self.node_hashes[existing]);
-            self.node_hashes[node] = h;
+            self.insert_hashed(node, h);
         }
         None
     }
@@ -234,9 +241,7 @@ impl NodeCache {
             //     whichever the walk hits first, which is semantically identical
             //     since twins compute the same value. So single-key-uniqueness is
             //     NOT an invariant of the table itself.
-            self.table
-                .insert_unique(hash, node, |&existing| self.node_hashes[existing]);
-            self.node_hashes[node] = hash;
+            self.insert_hashed(node, hash);
         }
     }
 }

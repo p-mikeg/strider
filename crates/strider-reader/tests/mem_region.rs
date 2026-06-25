@@ -510,5 +510,8 @@ fn lookup_table_overlapping_regions_differing_bytes_partial_read_is_specified() 
     // Inside B's range and fully covered by B, B still wins.
     let mut small = [0u8; 4];
     assert_eq!(table.read(0x1014, &mut small), Some(4));
-    assert_eq!(&small, &[0xbb; 4], "B wins when it fully covers the request");
+    assert_eq!(
+        &small, &[0xbb; 4],
+        "B wins when it fully covers the request"
+    );
 }

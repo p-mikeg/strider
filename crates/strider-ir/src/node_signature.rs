@@ -597,7 +597,6 @@ mod tests {
         assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Rhs);
     }
 
-
     /// Calling `expected_signature` on every NodeKind variant must succeed
     /// and return a self-consistent Signature.
     ///

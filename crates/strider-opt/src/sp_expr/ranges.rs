@@ -1,7 +1,33 @@
 //! Range arithmetic shared by every SP-aware pass.
 
 use strider_ir::Graph;
-use strider_ir::node::ValueId;
+use strider_ir::node::{ValueId, ValueType};
+use strider_target::Endianness;
+
+/// Bit shift that aligns the load-width sub-word of a wider stored value into
+/// the low end before truncation, given the store/load types and byte order.
+///
+/// The single SSoT for the "extract the `load_ty`-width slice from a wider
+/// `store_ty` integer" rule, shared by the `LoadForward` node-building
+/// narrowing and the jump-table evaluator's symbolic `reshape`:
+///
+/// * Little-endian: the load bytes are the LOW bytes — no shift (`0`).
+/// * Big-endian: the load bytes are the HIGH bytes — shift right by
+///   `(store_bytes - load_bytes) * 8` so they land in the low end.
+///
+/// Returns the shift in bits.  Callers only invoke it when the load is
+/// narrower than the store, so the byte-size subtraction does not underflow.
+#[inline]
+pub(crate) fn high_low_shift_bits(
+    store_ty: ValueType,
+    load_ty: ValueType,
+    endianness: Endianness,
+) -> u32 {
+    match endianness {
+        Endianness::Little => 0,
+        Endianness::Big => (store_ty.byte_size() - load_ty.byte_size()) as u32 * 8,
+    }
+}
 
 /// True when `[a_off, a_off + a_size)` and `[b_off, b_off + b_size)` are
 /// disjoint.

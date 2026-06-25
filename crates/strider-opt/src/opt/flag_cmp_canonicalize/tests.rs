@@ -8,13 +8,10 @@
 use super::FlagCmpCanonicalize;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
+use strider_ir::{IRBuilderExt, IRViewer};
 
-use strider_ir::IRWalker;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{FunctionBuilder, Graph};
-use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{FunctionBuilder, Graph, IRWalker, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
 /// PowerPC `cmpwi` packs LT/GT/EQ/SO into a CR field; the branch extracts one
@@ -222,8 +219,7 @@ fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
         return false;
     };
     let is_one = |value: ValueId| {
-        fg.value_type_opt(value).is_some_and(|t| t.is_bool())
-            && fg.int_const_val(value) == Some(1)
+        fg.value_type_opt(value).is_some_and(|t| t.is_bool()) && fg.int_const_val(value) == Some(1)
     };
     is_one(lhs) || is_one(rhs)
 }

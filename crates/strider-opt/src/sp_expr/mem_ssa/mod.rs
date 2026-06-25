@@ -10,12 +10,12 @@
 //! store I can forward?) — share the traversal plumbing while supplying
 //! their own alias predicate.
 //!
-//! [`may_clobber`] returns the nearest clobbering definition NODE, or the
-//! function's `InitialMemory` node when the chain reaches it with no
-//! aliasing def on any path.  Callers distinguish "clean" by the returned
-//! node's kind.  As a side effect it **narrows** the originating `Load`'s
-//! memory edge onto that nearest clobber — see [`may_clobber`]'s
-//! "Narrowing side effect" docs.
+//! [`MemorySSAWalker::find_nearest_clobber`] returns the nearest clobbering
+//! definition NODE, or the function's `InitialMemory` node when the chain
+//! reaches it with no aliasing def on any path.  Callers distinguish "clean"
+//! by the returned node's kind.  The walk is **read-only**: a caller that
+//! wants to shorten a load's memory edge onto the returned clobber calls the
+//! separate [`narrow_load_to`] step afterward (see its docs).
 //!
 //! ## Semantics
 //!
@@ -23,7 +23,8 @@
 //! backward (input slot 0 of `Load` / `Store` / `MemPhi`, the call's
 //! memory input for `Call` / `CallOther`):
 //!
-//! * if a def `may_clobber` the load → return it (the nearest clobber);
+//! * if a def aliases the load (the oracle calls it a clobber) → return it
+//!   (the nearest clobber);
 //! * if it does NOT alias and is not a phi → advance the cursor to that
 //!   def's own memory input and continue;
 //! * at a `MemPhi` → resolve every predecessor independently, then JOIN
@@ -76,9 +77,8 @@
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use strider_ir::Function;
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{Function, IRViewer};
 
 /// Pluggable aliasing oracle for the memory-SSA walk.
 pub(crate) trait MemorySSAWalker {
@@ -114,61 +114,40 @@ pub(crate) trait MemorySSAWalker {
     {
         MemSsaWalk::new(function, self).nearest_clobber(mem)
     }
+}
 
-    /// Like [`find_nearest_clobber`](Self::find_nearest_clobber) but
-    /// **narrows** the originating load's memory edge onto the returned
-    /// clobber (Phase 2), so it takes `&mut EditFunction`.
-    ///
-    /// # Narrowing side effect
-    ///
-    /// When `load` is a `Load` node, its memory input is repointed onto the
-    /// returned clobber's memory output (skipping every proven-disjoint def
-    /// in between), shortening the chain for this load and every future walk
-    /// through it.  Only a `Load` is rewired — a pure consumer (no memory
-    /// output), so moving its single incoming memory edge is invisible to
-    /// every other node.  Idempotent, and monotone-safe across fixed-point
-    /// iterations (`MayAlias → Disjoint` only).  A non-`Load` handle gets the
-    /// clobber result with no rewrite.
-    fn may_clobber(
-        &mut self,
-        ctx: &mut crate::EditFunction<'_>,
-        load: NodeId,
-        mem: NodeId,
-    ) -> NodeId
-    where
-        Self: Sized,
-    {
-        // Phase 1 — analysis: walk backward to the nearest clobber via the
-        // read-only engine.  The shared borrow of `ctx.function()` ends with
-        // the walk, before the Phase-2 mutation below.
-        let clobber = MemSsaWalk::new(ctx.function(), self).nearest_clobber(mem);
-
-        // Phase 2 — narrowing: repoint the originating `Load`'s memory edge
-        // onto `clobber`'s memory output when the walk proved the intervening
-        // defs disjoint.  Scoped so the read-only borrow ends before the
-        // mutation.
-        let rewire = {
-            let function = ctx.function();
-            if matches!(function.node_kind(load), NodeKind::Load(_)) {
-                let target_mem = function
-                    .memory_output_of(clobber)
-                    .expect("a clobber node has a memory output");
-                let mem_use = function
-                    .node_input_id_at(load, 0)
-                    .expect("a Load has a memory input at slot 0");
-                let cur_mem = function.graph().value_of_use(mem_use);
-                // Skip the no-op move when the load already points at its
-                // nearest clobber (keeps the walk idempotent / convergent).
-                (cur_mem != target_mem).then_some((mem_use, target_mem))
-            } else {
-                None
-            }
-        };
-        if let Some((mem_use, target_mem)) = rewire {
-            ctx.update_input(mem_use, target_mem);
+/// Narrows a `Load`'s memory edge onto `clobber` (its nearest clobbering
+/// definition) — the perf side-step the read-only walk no longer performs
+/// itself, lifted out so the walk stays `&Function`-only and the mutation is
+/// an explicit caller step.
+///
+/// When `load` is a `Load` node, its memory input is repointed onto
+/// `clobber`'s memory output (skipping every proven-disjoint def in between),
+/// shortening the chain for this load and every future walk through it.  Only
+/// a `Load` is rewired — a pure consumer (no memory output), so moving its
+/// single incoming memory edge is invisible to every other node.  Idempotent,
+/// and monotone-safe across fixed-point iterations (`MayAlias → Disjoint`
+/// only).  A non-`Load` handle is left untouched.
+pub(crate) fn narrow_load_to(ctx: &mut crate::EditFunction<'_>, load: NodeId, clobber: NodeId) {
+    let rewire = {
+        let function = ctx.function();
+        if matches!(function.node_kind(load), NodeKind::Load(_)) {
+            let target_mem = function
+                .memory_output_of(clobber)
+                .expect("a clobber node has a memory output");
+            let mem_use = function
+                .node_input_id_at(load, 0)
+                .expect("a Load has a memory input at slot 0");
+            let cur_mem = function.graph().value_of_use(mem_use);
+            // Skip the no-op move when the load already points at its nearest
+            // clobber (keeps the narrowing idempotent / convergent).
+            (cur_mem != target_mem).then_some((mem_use, target_mem))
+        } else {
+            None
         }
-
-        clobber
+    };
+    if let Some((mem_use, target_mem)) = rewire {
+        ctx.update_input(mem_use, target_mem);
     }
 }
 
@@ -223,7 +202,7 @@ enum Frame {
 /// Backward memory-SSA walk bound to a `Function` + an aliasing oracle.
 /// The traversal reads `self.function` and consults `self.walker` instead
 /// of threading them through every helper.  Read-only: the narrowing
-/// rewrite is a separate mutating step (see [`MemorySSAWalker::may_clobber`]).
+/// rewrite is a separate caller-side mutating step (see [`narrow_load_to`]).
 struct MemSsaWalk<'f, 'w, W: MemorySSAWalker> {
     function: &'f Function,
     walker: &'w mut W,
@@ -304,8 +283,8 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                     let is_phi = matches!(node_kind, NodeKind::MemPhi);
                     let is_initial = matches!(node_kind, NodeKind::InitialMemory);
                     if is_initial {
-                        // Record the clean chain root so `may_clobber` can name
-                        // it when no def aliases on any path.
+                        // Record the clean chain root so a caller can name it
+                        // when no def aliases on any path.
                         *initial_memory = Some(node);
                     }
                     if !is_phi && !is_initial && self.walker.def_clobbers(self.function, node) {
@@ -375,7 +354,6 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
             _ => succ_results.first().copied().flatten(),
         }
     }
-
 }
 
 #[cfg(test)]

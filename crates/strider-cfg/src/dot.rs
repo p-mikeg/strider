@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use dot::GraphDotDumper;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -43,8 +45,6 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         out: &mut dot::DotEmitter,
         _state: &mut Self::State,
     ) -> Result<()> {
-        use std::fmt::Write;
-
         let dot_id = node_id.index().to_string();
         let node = self
             .cfg
@@ -76,17 +76,16 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
 
         // Incoming edges.  Edges are unweighted; the label + style are
         // derived from the SOURCE region's terminator.  For a `CondBranch`
-        // source, the taken side is the edge whose target (this node)
-        // *contains* the terminator's `true_target` (containment, not
-        // start-address equality — a region's `start_addr` can sit below
-        // its first instruction after a zero-pcode-op-hole split).
+        // source, the taken side is resolved through `Cfg::region_if` — the
+        // single source of truth for which successor is the if-true arm —
+        // so this renderer never re-implements the containment rule itself.
         //
         // Track which CondBranch sources have already had their (single)
         // if-true edge labelled.  In the degenerate `if (c) goto L else
         // goto L` case one source has two parallel edges to this node and
-        // both `contains_addr` — the first is the taken side, the second
-        // falls through to if-false, exactly as `Cfg::region_if` resolves
-        // it.  Without this both would render "if-true".
+        // `region_if` reports the same region for both arms — the first
+        // edge is the taken side, the second falls through to if-false.
+        // Without this guard both would render "if-true".
         let mut cond_true_labelled: std::collections::HashSet<NodeIndex> =
             std::collections::HashSet::new();
         for edge in self
@@ -102,11 +101,13 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
                 .node_weight(src)
                 .ok_or_else(|| anyhow!("dangling edge source {src:?}"))?;
             let (label, style) = match &src_region.terminator {
-                RegionTerminator::CondBranch { true_target } => {
-                    // The first matching edge from this source is the taken
-                    // side; a second matching parallel edge from the same
-                    // source is the fall-through (if-false).
-                    if node.contains_addr(*true_target) && cond_true_labelled.insert(src) {
+                RegionTerminator::CondBranch { .. } => {
+                    // `region_if` resolves the source's if-true / if-false
+                    // successors; this edge is the taken side when its
+                    // target (this node) is the if-true region and that
+                    // source has not yet labelled its taken edge.
+                    let succ = self.cfg.region_if(src)?;
+                    if succ.if_true_region == Some(node_id) && cond_true_labelled.insert(src) {
                         ("if-true", "dashed")
                     } else {
                         ("if-false", "dashed")

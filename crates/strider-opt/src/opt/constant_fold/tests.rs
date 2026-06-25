@@ -1,10 +1,11 @@
 use super::*;
 use crate::pipeline::OptimizerTestExt;
 use anyhow::anyhow;
-use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::{
+    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
+    IntCmpOp, IntUnaryOp,
+};
 
 use crate::test_support::{
     assert_return_kind, assert_returns_const, make_fn, make_fn_with_var, return_kind, return_value,
@@ -373,7 +374,8 @@ fn assert_sub_with_const(
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
     let const_match = |value: strider_ir::Value| {
         matches!(fg.kind_of_value(value), NodeKind::IntConst(_))
-            && ty.get_unsigned_int(fg.int_const_u128(value).unwrap_or(u128::MAX)) == Some(neg_masked)
+            && ty.get_unsigned_int(fg.int_const_u128(value).unwrap_or(u128::MAX))
+                == Some(neg_masked)
     };
     let ok = (l == expected_base && const_match(r)) || (r == expected_base && const_match(l));
     assert!(
@@ -823,9 +825,12 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     // i.e. the low byte of 0xFFFF — *masked* to I8. A pre-fix run would
     // store `0xFFFF` (the wider raw value) here.
     let val = return_value(fg.graph())?;
-    let raw = fg
-        .int_const_val(val)
-        .unwrap_or_else(|| panic!("expected IntConst producer for Return value, got {:?}", fg.kind_of_value(val)));
+    let raw = fg.int_const_val(val).unwrap_or_else(|| {
+        panic!(
+            "expected IntConst producer for Return value, got {:?}",
+            fg.kind_of_value(val)
+        )
+    });
     assert_eq!(
         raw & 0xFF,
         raw,

@@ -8,11 +8,8 @@
     clippy::unreachable
 )]
 
-use strider_ir::EditFunction;
-use strider_ir::IRBuilderExt;
-use strider_ir::IntBinaryOp;
-use strider_ir::{ConstId, node::{NodeKind, ValueKind, ValueType as T}};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::node::{NodeKind, ValueKind, ValueType as T};
+use strider_ir::{ConstId, EditFunction, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::make_empty_fn;
 
 use strider_ir::Function;
@@ -192,7 +189,7 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     // Match `add(int_const(5), var(c))` — `c` binds to the 7-operand.
     let lhs = add(int_const(5u128), var(c)).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-    let bound = bindings.get(c).unwrap();
+    let bound = bindings.get_value(c).unwrap();
 
     // Instantiating a bare `var(c)` returns the bound output unchanged.
     let pre_count = fx.walk().count();
@@ -226,10 +223,16 @@ fn template_wires_multi_output_interior_memory_node() {
     // `Exact(IntConst(ConstId::from_u32(..)))` leaf would stamp a dangling
     // ConstId into the fixture (passing only because this test never validates).
     let addr = b.leaf(KindSpec::Any);
-    b.set_template_kind(addr, template::TemplateKind::FnIntConst(Box::new(|_| Ok(0x100u128))));
+    b.set_template_kind(
+        addr,
+        template::TemplateKind::FnIntConst(Box::new(|_| Ok(0x100u128))),
+    );
     b.set_value_ty(addr, T::I64);
     let data = b.leaf(KindSpec::Any);
-    b.set_template_kind(data, template::TemplateKind::FnIntConst(Box::new(|_| Ok(42u128))));
+    b.set_template_kind(
+        data,
+        template::TemplateKind::FnIntConst(Box::new(|_| Ok(42u128))),
+    );
     b.set_value_ty(data, T::I64);
 
     // store = Store(mem0, addr, data) — inputs [MEM, ADDR, DATA],

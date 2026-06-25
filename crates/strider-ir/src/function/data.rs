@@ -19,10 +19,9 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::IRViewer;
-use crate::IRWalker;
-use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
+use crate::graph::{remap_node_keyed, Graph, NodeIdRemap};
 use crate::node::{NodeId, NodeKind, ValueId};
+use crate::{IRViewer, IRWalker};
 
 /// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
 /// inclusion) that fully contains `vn`, or `vn` itself when none does.
@@ -65,7 +64,7 @@ pub(crate) fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsl
 /// The Vn-keyed / `ValueId`-keyed / index-keyed overlay maps in
 /// [`Function::compact`] each remap a different facet (the key, the payload,
 /// or a payload `Vec`), so they don't fit the `NodeId`-keyed
-/// [`SideTableRemap`] shape — this folds their shared drain-rebuild loop
+/// [`remap_node_keyed`] shape — this folds their shared drain-rebuild loop
 /// behind a single closure.
 fn remap_hashmap<K, V, NK, NV>(
     map: &mut FxHashMap<K, V>,
@@ -420,22 +419,6 @@ impl Function {
         largest_container_in(&self.all_vns, vn)
     }
 
-    /// Derive the ret-val varnode list for a `Call` built under calling
-    /// convention `cc`.  Returns only those tracked, clobbered varnodes
-    /// that appear in the convention's combined return-register list
-    /// (`ret_val_regs` then `ret_val_regs_float`), in ABI order.
-    ///
-    /// This is the first group of Call output slots past `[Control,
-    /// Memory]`.  Together with [`Self::call_clobbered_for`] it partitions
-    /// what was formerly a single clobber tail into two labeled groups —
-    /// the slot ORDER is unchanged; only the conceptual split is new.
-    ///
-    /// Each CC register (ret-val, float-ret, callee-saved) is resolved to
-    /// its tracked container via [`Self::container_of`] before membership
-    /// is tested, and the resolved CONTAINER is emitted.  This keeps a
-    /// sub-register ABI ret reg (e.g. `eax`) classified as the return
-    /// value when the function tracks the wider container (`rax`) instead
-    /// of silently dropping it.  Identity on full-width preset regs.
     /// The shared call-clobber predicate: a register (resolved to its tracked
     /// container) is clobbered iff it is neither callee-saved under `cc` nor the
     /// stack pointer.  The callee-saved set is hashed once so the predicate is
@@ -472,14 +455,32 @@ impl Function {
             .map(|v| self.container_of(v))
     }
 
+    /// Derive the ret-val varnode list for a `Call` built under calling
+    /// convention `cc`.  Returns only those tracked, clobbered varnodes
+    /// that appear in the convention's combined return-register list
+    /// (`ret_val_regs` then `ret_val_regs_float`), in ABI order.
+    ///
+    /// This is the first group of Call output slots past `[Control,
+    /// Memory]`.  Together with [`Self::call_clobbered_for`] it partitions
+    /// what was formerly a single clobber tail into two labeled groups —
+    /// the slot ORDER is unchanged; only the conceptual split is new.
+    ///
+    /// Each CC register (ret-val, float-ret, callee-saved) is resolved to
+    /// its tracked container via [`Self::container_of`] before membership
+    /// is tested, and the resolved CONTAINER is emitted.  This keeps a
+    /// sub-register ABI ret reg (e.g. `eax`) classified as the return
+    /// value when the function tracks the wider container (`rax`) instead
+    /// of silently dropping it.  Identity on full-width preset regs.
     pub fn call_ret_vals_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
         let is_clobbered = self.clobber_oracle(cc);
-        let tracked: FxHashSet<rsleigh::Vn> = self.all_vns.iter().copied().collect();
+        // The combined ret list is tiny (1-2 regs), so a linear probe against
+        // `all_vns` is cheaper (and allocation-free) than hashing the whole
+        // tracked register file to test 1-2 items.
         self.combined_ret_containers(cc)
-            .filter(|c| tracked.contains(c) && is_clobbered(c))
+            .filter(|c| self.all_vns.contains(c) && is_clobbered(c))
             .collect()
     }
 
@@ -554,10 +555,10 @@ impl Function {
     /// width rather than being narrowed to a tracked sub-register.
     #[inline]
     pub fn ret_val_regs(&self) -> Vec<rsleigh::Vn> {
-        self.default_cc
-            .ret_val_regs
+        let cc = &self.default_cc;
+        cc.ret_val_regs
             .iter()
-            .chain(self.default_cc.ret_val_regs_float.iter())
+            .chain(cc.ret_val_regs_float.iter())
             .copied()
             .collect()
     }
@@ -941,8 +942,8 @@ impl Function {
         self.entry = Some(new_entry);
         // Remap the NodeId-keyed overlay tables through the
         // old→new translation table produced by `retain_reachable`.
-        self.call_other_names.remap_node_keyed(&remap);
-        self.asm_fingerprints.remap_node_keyed(&remap);
+        remap_node_keyed(&mut self.call_other_names, &remap);
+        remap_node_keyed(&mut self.asm_fingerprints, &remap);
         // `call_descriptor` is a sparse `FxHashMap<NodeId, _>` (calls are
         // rare and a descriptor payload can be large), so remap its KEYS
         // through the translation table, dropping entries whose Call /

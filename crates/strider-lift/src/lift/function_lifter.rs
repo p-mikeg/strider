@@ -53,4 +53,19 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             per_address_ccs,
         })
     }
+
+    /// Asm-fingerprint attribution funnel: set the lift address, run a
+    /// fallible body, then always clear the address — even on the error
+    /// path — so every IR node born inside `f` picks up `addr` in its
+    /// fingerprint side-table while no later node is mis-attributed.
+    pub(crate) fn with_lift_addr<T>(
+        &mut self,
+        addr: Option<u64>,
+        f: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        self.builder.set_lift_addr(addr);
+        let res = f(self);
+        self.builder.set_lift_addr(None);
+        res
+    }
 }

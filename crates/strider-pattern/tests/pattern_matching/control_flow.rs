@@ -4,8 +4,7 @@
 //! call return outputs, `.capture`, `ret().ret_val()` / `.preceded_by()`,
 //! `if_node().cond().true_branch().false_branch()`, `.at(addr)` convenience.
 
-use strider_ir::IRViewer;
-use strider_ir::IntCmpOp;
+use strider_ir::{IRViewer, IntCmpOp};
 use strider_pattern::matcher::{KindSpec, MatcherBuilder};
 use strider_pattern::*;
 

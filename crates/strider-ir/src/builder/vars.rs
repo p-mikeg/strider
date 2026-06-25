@@ -91,9 +91,8 @@ impl FunctionBuilder {
             // `VarId` allocation order is exactly `all_vns` order (both come
             // from `var_table` in `new`), so the var's `all_vns` index is its
             // `VarId` index — no lookup needed.
-            let vn_id = crate::node::InitialVnId::from_index(
-                cranelift_entity::EntityRef::index(var_id),
-            );
+            let vn_id =
+                crate::node::InitialVnId::from_index(cranelift_entity::EntityRef::index(var_id));
             let value = self.build_single_output_pure(NodeKind::InitialVar(vn_id), [], output_type);
             initial_variables[var_id] = value;
             // `Function::all_vns` (the ordered tracked-varnode SSoT) is
@@ -105,7 +104,7 @@ impl FunctionBuilder {
             // index so downstream consumers (the orchestrator's
             // `read_or_init_var` fallback) don't re-scan `preorder()`
             // to locate it.
-            let (node_id, _slot) = self.function().value_definition(value);
+            let node_id = self.function().producer(value);
             self.function_mut().register_initial_var(var, node_id);
         }
         // Record register-passed arguments unconditionally: each arg-passing
@@ -130,7 +129,7 @@ impl FunctionBuilder {
     }
 
     /// Creates a new region in the graph with fresh `Region`,
-    /// `MemPhi`, and per-variable `VarPhi` nodes.
+    /// `MemPhi`, and per-variable `Phi` nodes.
     ///
     /// # Errors
     ///
@@ -150,9 +149,9 @@ impl FunctionBuilder {
         let [control, phi_token] = self.function().node_outputs_exact(control_node)?;
 
         // Wire the PhiToken as MemPhi.inputs[0], mirroring how
-        // VarPhi nodes are linked.  This gives MemPhi a direct back-reference to
+        // Phi nodes are linked.  This gives MemPhi a direct back-reference to
         // its Region so that dead-branch elimination and redundant-phi removal
-        // can treat MemPhi and VarPhi identically (same positional logic, same
+        // can treat MemPhi and Phi identically (same positional logic, same
         // automatic discovery via value_uses(cs_phi_out)).
         self.function_mut()
             .graph_mut()

@@ -172,7 +172,28 @@ impl Default for BuiltCallingConvention {
 /// REGISTER-space offset of the synthetic stack-pointer varnode minted by
 /// [`BuiltCallingConvention::default`].  Chosen far outside any real
 /// architecture's register file so it never aliases a tracked register.
-pub const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
+pub(crate) const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
+
+/// Returns the first element of `a` that also appears in `b`, or `None`
+/// when the two lists are disjoint.  Shared "find first offending element"
+/// helper for [`BuiltCallingConvention::try_new`]'s pairwise
+/// disjointness checks; preserves first-offender reporting (the first
+/// element of `a` in iteration order).  O(|a|·|b|) over the ≤31-element ABI
+/// register lists.
+fn first_in_both<'a>(a: &'a [rsleigh::Vn], b: &[rsleigh::Vn]) -> Option<&'a rsleigh::Vn> {
+    a.iter().find(|vn| b.contains(vn))
+}
+
+/// Returns the first element of `list` that recurs later in the same list
+/// (the first duplicate), or `None` when every element is unique.  Shared
+/// within-list-uniqueness helper for [`BuiltCallingConvention::try_new`];
+/// O(n²) over the ≤31-element ABI register lists.
+fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
+    list.iter()
+        .enumerate()
+        .find(|(i, vn)| list[i + 1..].contains(vn))
+        .map(|(_, vn)| vn)
+}
 
 impl BuiltCallingConvention {
     /// Validating constructor.  Builds a
@@ -211,15 +232,13 @@ impl BuiltCallingConvention {
         preserves_memory: bool,
     ) -> std::result::Result<Self, anyhow::Error> {
         // Disjointness: arg-passing must not overlap callee-saved.
-        for vn in &arg_passing_regs {
-            if callee_saved_regs.contains(vn) {
-                return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: varnode {:?} appears in both \
-                     arg_passing_regs and callee_saved_regs (a single varnode \
-                     cannot be both caller-supplied and callee-preserved)",
-                    vn,
-                ));
-            }
+        if let Some(vn) = first_in_both(&arg_passing_regs, &callee_saved_regs) {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: varnode {:?} appears in both \
+                 arg_passing_regs and callee_saved_regs (a single varnode \
+                 cannot be both caller-supplied and callee-preserved)",
+                vn,
+            ));
         }
         // Ret-val regs must not overlap callee-saved (the callee writes
         // them to deliver results — they cannot be required-preserved).
@@ -236,15 +255,13 @@ impl BuiltCallingConvention {
         // files on every supported arch; the same varnode in both is a
         // CC-author bug.  (arg ∩ ret is deliberately *not* checked — x86_64
         // SysV RDX is legitimately both the 3rd arg and the 2nd int return.)
-        for vn in &ret_val_regs {
-            if ret_val_regs_float.contains(vn) {
-                return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: varnode {:?} appears in both \
-                     ret_val_regs and ret_val_regs_float (integer and float \
-                     return registers are physically distinct)",
-                    vn,
-                ));
-            }
+        if let Some(vn) = first_in_both(&ret_val_regs, &ret_val_regs_float) {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: varnode {:?} appears in both \
+                 ret_val_regs and ret_val_regs_float (integer and float \
+                 return registers are physically distinct)",
+                vn,
+            ));
         }
         // Per-list checks: SP-not-present + within-list uniqueness.
         // Walked in one pass over the four named lists.
@@ -262,14 +279,12 @@ impl BuiltCallingConvention {
                     list_name,
                 ));
             }
-            for (i, vn) in list.iter().enumerate() {
-                if list[i + 1..].contains(vn) {
-                    return Err(anyhow::anyhow!(
-                        "BuiltCallingConvention: duplicate varnode {:?} in {}",
-                        vn,
-                        list_name,
-                    ));
-                }
+            if let Some(vn) = first_dup(list) {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: duplicate varnode {:?} in {}",
+                    vn,
+                    list_name,
+                ));
             }
         }
         // Link-register-as-callee-saved invariant (CLAUDE.md note).
@@ -963,7 +978,10 @@ impl CallingConvention {
         // any `UnknownRegName` from `vn_for_name` so a typo in the preset
         // surfaces at build time rather than later in the indirect-branch
         // resolver.
-        let link_register_vn = self.link_register_reg_name.map(|name| vn_for_name(sleigh_regs, name)).transpose()?;
+        let link_register_vn = self
+            .link_register_reg_name
+            .map(|name| vn_for_name(sleigh_regs, name))
+            .transpose()?;
         // Route through `try_new` so the disjointness invariants
         // (SP not in any reg list, arg/callee-saved disjoint, no
         // duplicates within a list, link-reg in callee-saved when set,

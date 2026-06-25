@@ -14,10 +14,8 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
-use strider_target::Endianness;
 
-use crate::opt::constant_fold::eval_int::eval_int_binary;
-use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
+use crate::sp_expr::{SpAliasCfg, SpExpr, SpExprMemo};
 
 /// Returns an iterator over the value-typed inputs of `node` — i.e., inputs
 /// whose `value_type_opt` is `Some`.  Skips control, memory, and phi-token
@@ -102,12 +100,12 @@ impl<'a> Evaluator<'a> {
         let f = self.function;
         // An sp-rooted constant expression — InitialVar(sp), an alignment-masked
         // `(sp & mask)`, or either plus a constant `Add` chain — decomposes to
-        // its SP terminal + offset via the same decomposer the stores /
-        // `reaching_store` use, so the aligned base is recognized and matches
-        // the stores' base. Memoized in `sp_memo`, so the load's index-
+        // its SP terminal + offset via the same `SpAliasCfg.decompose` the
+        // stores / `reaching_store` use, so the aligned base is recognized and
+        // matches the stores' base. Memoized in `sp_memo`, so the load's index-
         // independent sp-spine is computed once and reused across indices.
         if let Some(SpExpr { base, offset }) =
-            SpDecomposer::new(f, &mut self.sp_memo).decompose(value)
+            SpAliasCfg::call_blocking(&mut self.sp_memo, self.alias_mode).decompose(f, value)
         {
             return Some(Abs::SpRel { base, offset });
         }
@@ -118,33 +116,42 @@ impl<'a> Evaluator<'a> {
         match kind {
             NodeKind::IntConst(_) => Some(Abs::Const(f.int_const_u128(value)?)),
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add) => {
-                self.eval_add(self.get(*ins.first()?)?, self.get(*ins.get(1)?)?, out_ty?)
+                self.eval_add(value, self.get(*ins.first()?)?, self.get(*ins.get(1)?)?, out_ty?)
             }
             NodeKind::Load(_) => self.eval_load(node, value),
             NodeKind::Phi => self.eval_phi(node),
-            _ => {
-                let resolve = |v| self.get(v).and_then(Abs::as_const);
-                crate::const_eval::eval_node_const(self.function, value, &resolve, self.rom)
-                    .map(Abs::Const)
-            }
+            _ => self.eval_const_node(value),
         }
     }
 
-    /// `Add` in the abstract domain: `Const+Const`, or `SpRel ± Const`.
-    fn eval_add(&self, l: Abs, r: Abs, ty: ValueType) -> Option<Abs> {
+    /// Route a pure-constant node through the shared
+    /// [`crate::const_eval::eval_node_const`] SSoT, resolving each input from
+    /// the abstract map's already-computed `Const` facts.  This is the single
+    /// const-domain fold for every kind the abstract evaluator does not layer
+    /// the `SpRel` domain on top of (and the `Const` arms of `eval_add` /
+    /// `eval_load`).
+    fn eval_const_node(&self, value: ValueId) -> Option<Abs> {
+        let resolve = |v| self.get(v).and_then(Abs::as_const);
+        crate::const_eval::eval_node_const(self.function, value, &resolve, self.rom).map(Abs::Const)
+    }
+
+    /// `Add` in the abstract domain: `Const+Const` (routed through the shared
+    /// `const_eval` resolver via [`Self::eval_const_node`]), or `SpRel ± Const`.
+    fn eval_add(&self, value: ValueId, l: Abs, r: Abs, ty: ValueType) -> Option<Abs> {
         match (l, r) {
-            (Abs::Const(a), Abs::Const(b)) => Some(Abs::Const(eval_int_binary(
-                strider_ir::IntBinaryOp::Add,
-                a,
-                b,
-                ty,
-            )?)),
+            // Const+Const is exactly what `eval_node_const`'s Add arm computes
+            // from the resolved inputs — route it through the SSoT rather than
+            // re-deriving `eval_int_binary` here.
+            (Abs::Const(_), Abs::Const(_)) => self.eval_const_node(value),
             (Abs::SpRel { base, offset }, Abs::Const(c))
             | (Abs::Const(c), Abs::SpRel { base, offset }) => {
                 // Signed interpretation so a negative frame offset (stored as
                 // 0xFFFF..) subtracts correctly.
                 let delta = i64::try_from(ty.get_signed_int(c)?).ok()?;
-                Some(Abs::SpRel { base, offset: offset.wrapping_add(delta) })
+                Some(Abs::SpRel {
+                    base,
+                    offset: offset.wrapping_add(delta),
+                })
             }
             (Abs::SpRel { .. }, Abs::SpRel { .. }) => None,
         }
@@ -155,12 +162,10 @@ impl<'a> Evaluator<'a> {
         let f = self.function;
         let load_ty = f.value_type_opt(value)?;
         match self.get(f.load_addr(node))? {
-            Abs::Const(c) => {
-                let rom = self.rom?;
-                let addr = u64::try_from(c).ok()?;
-                crate::const_eval::read_rom_const(rom, addr, load_ty, self.function.endianness())
-                    .map(Abs::Const)
-            }
+            // Const-address ROM read — exactly the `Load(RAM)` arm of
+            // `eval_node_const`, so route it through that SSoT (the resolver
+            // re-reads the already-`Const` address from the map).
+            Abs::Const(_) => self.eval_const_node(value),
             Abs::SpRel { base, offset } => {
                 let [mem, _addr] = f.node_inputs_exact::<2>(node).ok()?;
                 let load_size = load_ty.byte_size() as i64;
@@ -188,26 +193,20 @@ impl<'a> Evaluator<'a> {
         if data_ty == load_ty {
             return Some(v);
         }
-        if data_ty.is_integer()
-            && load_ty.is_integer()
-            && load_ty.byte_size() < data_ty.byte_size()
+        if data_ty.is_integer() && load_ty.is_integer() && load_ty.byte_size() < data_ty.byte_size()
         {
-            let shifted = match self.function.endianness() {
-                Endianness::Little => v,
-                Endianness::Big => {
-                    let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u32) * 8;
-                    v >> shift_bits
-                }
-            };
-            return load_ty.get_unsigned_int(shifted);
+            // SSoT for the endianness-aware byte-slice shift (shared with
+            // `LoadForward::narrow`); LE → 0, so the low bytes pass through.
+            let shift_bits =
+                crate::sp_expr::high_low_shift_bits(data_ty, load_ty, self.function.endianness());
+            return load_ty.get_unsigned_int(v >> shift_bits);
         }
         None
     }
 
     /// All-arms-agree: every value arm must resolve to the same `Abs`.
     fn eval_phi(&mut self, node: NodeId) -> Option<Abs> {
-        let arms: SmallVec<[ValueId; 4]> =
-            value_input_producers(self.function, node).collect();
+        let arms: SmallVec<[ValueId; 4]> = value_input_producers(self.function, node).collect();
         let mut agreed: Option<Abs> = None;
         for arm in arms {
             let v = self.get(arm)?;
@@ -254,9 +253,8 @@ pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::{Evaluator, cone_order};
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     // Build `Add(idx, 100):I64` where `idx` is a tracked register read
@@ -274,7 +272,9 @@ mod tests {
             .build_fn_single_region()
             .expect("build_fn_single_region");
         let idx = b.read_variable(&vn).expect("read_variable");
-        let c100 = b.build_int_const(100u64, ValueType::I64).expect("build_int_const");
+        let c100 = b
+            .build_int_const(100u64, ValueType::I64)
+            .expect("build_int_const");
         let sum = b
             .build_int_binary_operation(idx, c100, IntBinaryOp::Add, ValueType::I64)
             .expect("build_int_binary_operation");

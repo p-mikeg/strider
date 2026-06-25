@@ -1047,7 +1047,11 @@ fn stack_args_slots_spanned_ceils_by_increment() {
             increment: inc,
         };
         // Zero / one byte → one slot (never zero).
-        assert_eq!(s.slots_spanned(0), 1, "{label}: zero-size occupies one slot");
+        assert_eq!(
+            s.slots_spanned(0),
+            1,
+            "{label}: zero-size occupies one slot"
+        );
         assert_eq!(s.slots_spanned(1), 1, "{label}: one byte");
         // Exactly one slot wide.
         assert_eq!(s.slots_spanned(inc), 1, "{label}: exactly one slot");
@@ -1055,7 +1059,11 @@ fn stack_args_slots_spanned_ceils_by_increment() {
         assert_eq!(s.slots_spanned(inc + 1), 2, "{label}: spills into slot 2");
         // Exactly two slots, then a byte more is three.
         assert_eq!(s.slots_spanned(2 * inc), 2, "{label}: exactly two slots");
-        assert_eq!(s.slots_spanned(2 * inc + 1), 3, "{label}: spills into slot 3");
+        assert_eq!(
+            s.slots_spanned(2 * inc + 1),
+            3,
+            "{label}: spills into slot 3"
+        );
     }
 }
 

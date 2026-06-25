@@ -165,13 +165,10 @@ impl PyBufferReader {
 fn elf_regions(
     obj: &object::File<'static>,
     apply_relocations: bool,
-    with_relocs: impl FnOnce(
-        &object::File<'static>,
-    ) -> anyhow::Result<(Vec<MemRegion>, strider_reader::elf::RelocationStats)>,
+    with_relocs: impl FnOnce(&object::File<'static>) -> anyhow::Result<Vec<MemRegion>>,
 ) -> PyResult<Vec<MemRegion>> {
     if apply_relocations {
-        let (regions, _stats) = with_relocs(obj).map_err(into_strider_err)?;
-        Ok(regions)
+        with_relocs(obj).map_err(into_strider_err)
     } else {
         strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
     }
@@ -593,13 +590,9 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
             // (KeyboardInterrupt / SystemExit) are stashed so the outer
             // boundary surfaces them; every other failure errors here so
             // `LoadReadOnly` simply leaves the Load intact.
-            let result = call_py_read(
-                py,
-                &self.py_obj,
-                (addr, size),
-                "read",
-                |e| anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}"),
-            )?;
+            let result = call_py_read(py, &self.py_obj, (addr, size), "read", |e| {
+                anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}")
+            })?;
             if result.is_none(py) {
                 anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) returned None (unmapped)");
             }

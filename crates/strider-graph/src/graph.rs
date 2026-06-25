@@ -151,26 +151,20 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         Some(self.store.inputs[use_id].value_id)
     }
 
-    /// Returns the [`UseId`] of the input slot at position `idx` of `node`, or
-    /// `None` if out of bounds.  Internal helper backing the public fallible
-    /// [`Self::node_input_id_at`]; callers use that (or `.ok()`) instead.
-    #[inline]
-    pub(crate) fn node_input_id_at_opt(&self, node: NodeId, idx: usize) -> Option<UseId> {
-        self.store.node_input_uses(node).get(idx).copied()
-    }
-
     /// Returns the [`UseId`] of the input slot at position `idx` of `node`.
-    ///
-    /// The fallible companion to [`Self::node_input_id_at_opt`].
     ///
     /// # Errors
     ///
     /// Returns an error if `idx` is past the node's current input count.
     pub fn node_input_id_at(&self, node: NodeId, idx: usize) -> crate::Result<UseId> {
-        self.node_input_id_at_opt(node, idx).ok_or_else(|| {
-            let len = self.node_inputs(node).len();
-            anyhow!("input index {idx} out of bounds for node {node:?} (len={len})")
-        })
+        self.store
+            .node_input_uses(node)
+            .get(idx)
+            .copied()
+            .ok_or_else(|| {
+                let len = self.node_inputs(node).len();
+                anyhow!("input index {idx} out of bounds for node {node:?} (len={len})")
+            })
     }
 
     /// Returns exactly `M` input values for `node_id`.
@@ -451,8 +445,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
         // Single pass: partition the existing use ids into survivors (reindexed)
         // and victims (unlinked from their value's use-list).
-        let old_uses: SmallVec<[UseId; 4]> =
-            self.store.node_input_uses(node_id).into();
+        let old_uses: SmallVec<[UseId; 4]> = self.store.node_input_uses(node_id).into();
         let mut survivors: SmallVec<[UseId; 4]> = SmallVec::with_capacity(old_uses.len());
         for (slot, use_id) in old_uses.into_iter().enumerate() {
             if drop_slot[slot] {

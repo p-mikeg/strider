@@ -28,19 +28,12 @@
 //! interpreter detects it via [`strider_pattern::is_skip`] and returns
 //! `Ok(false)`.
 
-use strider_ir::EditFunction;
-use strider_ir::IRViewer;
-use strider_ir::IRWalker;
-use strider_ir::node::NodeId;
-use strider_ir::node::ValueId;
+use strider_ir::node::{NodeId, ValueId};
+use strider_ir::{EditFunction, IRViewer, IRWalker};
 
-use strider_pattern::Capture;
-use strider_pattern::MatchPat;
-use strider_pattern::Matcher;
-use strider_pattern::Pattern;
-use strider_pattern::TemplatePat;
-use strider_pattern::{Result, is_skip};
-use strider_pattern::{Template, instantiate};
+use strider_pattern::{
+    Capture, MatchPat, Matcher, Pattern, Result, Template, TemplatePat, instantiate, is_skip,
+};
 
 // ── rule constructors ────────────────────────────────────────────────
 
@@ -330,9 +323,8 @@ mod tests {
     //! [`EditFunction::remove_region_predecessors`]). Both build a *built*
     //! `Function` (entry set) so `EditFunction::new` succeeds.
 
-    use strider_ir::EditFunction;
     use strider_ir::node::{NodeKind, ValueType};
-    use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
+    use strider_ir::{EditFunction, FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     // ── replace_value ────────────────────────────────────────────────
@@ -867,8 +859,7 @@ mod tests {
     // compare SETS only.)
 
     use std::collections::BTreeSet;
-    use strider_pattern::template;
-    use strider_pattern::var;
+    use strider_pattern::{template, var};
 
     /// Assert the cached live/roots state equals a fresh entry-reachable
     /// walk, as SETS.  This is the reusable liveness invariant: every
