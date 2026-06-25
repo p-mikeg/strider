@@ -207,7 +207,28 @@ fn build_rules() -> Vec<BoxedRule> {
     let c1 = Capture::new();
     let x = Capture::new();
 
-    vec![
+    // Emits an LS rule and its De-Morgan HI dual (rules 14/16 and 15/17) as a
+    // `[BoxedRule; 2]`.  The `$less` / `$eq` / `$guard` / `$cmp` fragments are
+    // re-evaluated in each arm (the pattern builders are not `Clone`), so both
+    // rules bind the identical captures under the identical guard:
+    //   LS:  Or(less, eq).when_match(guard)            → BitNot(cmp)
+    //   HI:  And(BitNot(less), BitNot(eq)).when_match(guard) → cmp
+    macro_rules! ls_hi_pair {
+        ($less:expr, $eq:expr, $guard:expr, $cmp:expr $(,)?) => {
+            [
+                rewrite_rule(
+                    bool_or($less, $eq).when_match($guard),
+                    template::bool_not($cmp),
+                ),
+                rewrite_rule(
+                    bool_and(bool_not($less), bool_not($eq)).when_match($guard),
+                    $cmp,
+                ),
+            ]
+        };
+    }
+
+    let mut rules: Vec<BoxedRule> = vec![
         // 1. EQ / ZR identity:  Equal(Add(a, Neg(b)), 0) → Equal(a, b)
         rewrite_rule(
             int_eq(add(var(a), neg(var(b))), int_const(0u128)),
@@ -338,103 +359,60 @@ fn build_rules() -> Vec<BoxedRule> {
             bool_or(int_eq(var(a), var(b)), int_lt(var(a), var(b))),
             template::bool_not(template::int_lt(var(b), var(a))),
         ),
-        // 14. LS (unsigned), constant-folded ZF term:
-        //         Or(Less(a, IntConst(N)), Equal(Add(a, IntConst(M)), 0)) → BitNot(Less(N, a))
-        //     i.e. (a < N) ∨ (a == N)  ≡  a ≤ N  ≡  ¬(N < a).
-        //
-        //     This is the `ja`/`jbe` (`cmp a, N; ja`) flag tree with a CONSTANT
-        //     compare operand.  Rules 11/13 expect the ZF term as
-        //     `Equal(a, b)`, but `ConstantFold` has already collapsed the lifted
-        //     `Equal(Add(a, Neg(IntConst(N))), 0)` to `Equal(Add(a, IntConst(M)), 0)`
-        //     with `M = -N` (it folds `Neg(IntConst(N))` first), so neither rule
-        //     1 (`Equal(Add(a, Neg(b)), 0) → Equal(a, b)`) nor rule 13 can match.
-        //     This rule recognises the folded shape directly and REUSES the
-        //     captured `IntConst(N)` node — width-correct by construction — as
-        //     the rewritten comparison's operand, so no width-typed constant has
-        //     to be synthesised.  The `when_match` guard pins `M ≡ -N` (mod the
-        //     operand width) so the Equal genuinely tests `a == N`.
-        rewrite_rule(
-            bool_or(
-                int_lt(var(a), any_int_const().capture(n)),
-                int_eq(add(var(a), any_int_const().capture(m)), int_const(0u128)),
-            )
-            .when_match(move |ctx, _ty, binds| neg_relation(binds, ctx.function(), m, n, a)),
-            template::bool_not(template::int_lt(var(n), var(a))),
+    ];
+
+    // 14/16 and 15/17 are exact De-Morgan duals: the LS form is
+    //   Or(LessTerm, EqTerm) → BitNot(Cmp)
+    // and the HI form negates each leaf and flips the connective + the RHS:
+    //   And(BitNot(LessTerm), BitNot(EqTerm)) → Cmp
+    // binding the IDENTICAL captures under the IDENTICAL guard.  `ls_hi_pair!`
+    // takes the shared less-term / eq-term / guard / RHS-comparison fragments
+    // (re-evaluated in each arm, since the pattern builders are not `Clone`)
+    // and emits the LS rule followed by its HI dual — collapsing the former four
+    // hand-spelled `bool_or`/`bool_and`/`bool_not` trees into two invocations.
+    // Mirrors the `const_on_right!` / `ext_round_trip!` precedents in
+    // `constant_fold/rules.rs`.  Order (14, 16, 15, 17) is immaterial: the LS
+    // (`Or`-rooted) and HI (`And`-rooted) shapes are structurally disjoint, so
+    // any one node matches at most one rule.
+    //
+    // 14. LS:  Or(Less(a, IntConst(N)), Equal(Add(a, IntConst(M)), 0)) → BitNot(Less(N, a))
+    //     (a < N) ∨ (a == N) ≡ a ≤ N ≡ ¬(N < a).  The `cmp a, N; ja`/`jbe`
+    //     flag tree with a CONSTANT compare operand, after `ConstantFold`
+    //     collapsed the lifted `Equal(Add(a, Neg(N)), 0)` to
+    //     `Equal(Add(a, IntConst(M)), 0)` with `M = -N`.  The guard pins
+    //     `M ≡ -N` (mod width); the captured `IntConst(N)` is reused on the
+    //     RHS (width-correct by construction, no synthesised constant).
+    // 16. HI (the dual):  And(BitNot(Less(a, N)), BitNot(Equal(Add(a, M), 0))) → Less(N, a)
+    //     (a >= N) ∧ (a != N) ≡ a > N ≡ N < a.  The `cmp a, N; bhi`/`ja`
+    //     tree; same `M ≡ -N` guard.
+    rules.extend(ls_hi_pair!(
+        int_lt(var(a), any_int_const().capture(n)),
+        int_eq(add(var(a), any_int_const().capture(m)), int_const(0u128)),
+        move |ctx, _ty, binds| neg_relation(binds, ctx.function(), m, n, a),
+        template::int_lt(var(n), var(a)),
+    ));
+    // 15. LS, offset-base:  Or(Less(Add(b, C1), N), Equal(Add(b, C2), 0))
+    //     → BitNot(Less(N, Add(b, C1))).  With `X = Add(b, C1)`:
+    //     (X < N) ∨ (X == N) ≡ X ≤ N.  gcc emits `sub b, K; cmp (b-K), N; ja`,
+    //     so the compared value is the OFFSET index `X`; the ZF term folds to
+    //     `Equal(Add(b, C2), 0)` with `C2 = C1 - N`, so the Less operand and
+    //     the Equal base are DISTINCT nodes.  Keys on the shared base `b`,
+    //     reuses the captured `X` on the RHS; the guard pins `C2 ≡ C1 - N`.
+    // 17. HI (the dual + offset sibling of 16):
+    //     And(BitNot(Less(Add(b, C1), N)), BitNot(Equal(Add(b, C2), 0)))
+    //     → Less(N, Add(b, C1)).  With `X = Add(b, C1)`: (X >= N) ∧ (X != N) ≡
+    //     X > N.  A masked / offset switch (Thumb `and r0,#7; subs r0,#1;
+    //     cmp r0,#N-1; bhi`); same `C2 ≡ C1 - N` guard.
+    rules.extend(ls_hi_pair!(
+        int_lt(
+            add(var(b), any_int_const().capture(c1)).capture(x),
+            any_int_const().capture(n),
         ),
-        // 15. LS (unsigned), offset-base + constant-folded ZF term:
-        //         Or(Less(Add(b, C1), IntConst(N)), Equal(Add(b, C2), 0))
-        //         → BitNot(Less(N, Add(b, C1)))
-        //     i.e. with `X = Add(b, C1)`: `(X < N) ∨ (X == N)` ≡ `X ≤ N`.
-        //
-        //     The generalisation of rule 14 to a `switch` whose cases start at a
-        //     nonzero base: gcc emits `sub b, K; cmp (b-K), N; ja`, so the
-        //     compared value is the OFFSET index `X = Add(b, -K)`, not `b`
-        //     itself.  The ZF term `X == N` lifts to `Equal(Add(X, Neg(N)), 0)`,
-        //     which `ConstantFold` flattens to `Equal(Add(b, C2), 0)` with
-        //     `C2 = C1 - N` — so the Less operand `Add(b, C1)` and the Equal's
-        //     add base `b` are DISTINCT nodes (rule 14's shared `a` cannot bind
-        //     both).  This rule keys on the shared base `b` and reuses the
-        //     captured compared value `X` on the RHS, so the canonicalised
-        //     `X ≤ N` lands on the very value the jump-table index uses.  The
-        //     `when_match` guard pins `C2 ≡ C1 - N` (mod width) so the Equal
-        //     genuinely tests `X == N`.
-        rewrite_rule(
-            bool_or(
-                int_lt(
-                    add(var(b), any_int_const().capture(c1)).capture(x),
-                    any_int_const().capture(n),
-                ),
-                int_eq(add(var(b), any_int_const().capture(m)), int_const(0u128)),
-            )
-            .when_match(move |ctx, _ty, binds| sub_relation(binds, ctx.function(), m, n, c1, b)),
-            template::bool_not(template::int_lt(var(n), var(x))),
-        ),
-        // 16. HI (unsigned), constant-folded ZF term — the dual of rule 14:
-        //         And(BitNot(Less(a, IntConst(N))), BitNot(Equal(Add(a, IntConst(M)), 0)))
-        //         → Less(N, a)
-        //     i.e. `(a >= N) ∧ (a != N) ≡ a > N ≡ N < a`.  This is the
-        //     `cmp a, N; bhi`/`ja` flag tree (Thumb / decomposed) once
-        //     `ConstantFold` has collapsed the lifted `Equal(Add(a, Neg(N)), 0)`
-        //     to `Equal(Add(a, IntConst(M)), 0)` with `M = -N` — so neither the
-        //     raw HI rule 2 nor the decomposed HI rule 12 (both expecting the ZF
-        //     term as `Equal(a, b)`) can match.  Same `M ≡ -N` guard as rule 14.
-        rewrite_rule(
-            bool_and(
-                bool_not(int_lt(var(a), any_int_const().capture(n))),
-                bool_not(int_eq(
-                    add(var(a), any_int_const().capture(m)),
-                    int_const(0u128),
-                )),
-            )
-            .when_match(move |ctx, _ty, binds| neg_relation(binds, ctx.function(), m, n, a)),
-            template::int_lt(var(n), var(a)),
-        ),
-        // 17. HI (unsigned), offset-base + constant-folded ZF term — the dual of
-        //     rule 15 and the offset sibling of rule 16:
-        //         And(BitNot(Less(Add(b, C1), N)), BitNot(Equal(Add(b, C2), 0)))
-        //         → Less(N, Add(b, C1))
-        //     with `X = Add(b, C1)`: `(X >= N) ∧ (X != N) ≡ X > N`.  A masked /
-        //     offset switch (e.g. Thumb `and r0,#7; subs r0,#1; cmp r0,#N-1;
-        //     bhi`) compares the OFFSET index `X = Add(b, -K)`, and the ZF term
-        //     `X == N` folds to `Equal(Add(b, C2), 0)` with `C2 = C1 - N` — so
-        //     the `Less` operand and the `Equal` base are distinct nodes.  Keys
-        //     on the shared base `b` and reuses the captured `X` on the RHS, so
-        //     the canonical `X > N` lands on the value the jump-table index uses.
-        rewrite_rule(
-            bool_and(
-                bool_not(int_lt(
-                    add(var(b), any_int_const().capture(c1)).capture(x),
-                    any_int_const().capture(n),
-                )),
-                bool_not(int_eq(
-                    add(var(b), any_int_const().capture(m)),
-                    int_const(0u128),
-                )),
-            )
-            .when_match(move |ctx, _ty, binds| sub_relation(binds, ctx.function(), m, n, c1, b)),
-            template::int_lt(var(n), var(x)),
-        ),
-    ]
+        int_eq(add(var(b), any_int_const().capture(m)), int_const(0u128)),
+        move |ctx, _ty, binds| sub_relation(binds, ctx.function(), m, n, c1, b),
+        template::int_lt(var(n), var(x)),
+    ));
+    rules
 }
 
 // ── PowerPC condition-register bit test ──────────────────────────────────────
@@ -494,7 +472,7 @@ fn absorb_cr_pack_fingerprints(ctx: &mut crate::EditFunction<'_>, cond_out: Valu
         if matches!(ctx.node_kind(n), NodeKind::IntCmpOp(_)) {
             continue;
         }
-        stack.extend(crate::peephole::input_producers(ctx, n));
+        stack.extend(crate::peephole::input_producers_iter(ctx, n));
     }
     for n in interior {
         if n != into {

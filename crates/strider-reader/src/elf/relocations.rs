@@ -108,14 +108,14 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 /// external lib) is *not* an error — the relocation is simply
 /// skipped.
 pub fn apply_elf_relocations(regions: &mut [MemRegion], obj: &object::File<'_>) -> Result<()> {
-    // Build a sorted `start_addr -> index` map once so the per-relocation
-    // region lookup in `locate_and_write` is an O(log N) BTree query
-    // instead of an O(N) `regions.iter().find` linear scan.  With R
-    // relocations and N regions this turns the patch loop from O(R·N) to
-    // O(R·log N) — relevant for ET_REL `.o` files with many SHF_ALLOC
-    // sections (one region each).  Two regions at the same start collapse
-    // (BTreeMap last-insert-wins), matching `MemRegionsLookupTable`'s rule.
-    let region_index = build_region_index(regions);
+    // Build a sorted start-keyed index once so the per-relocation region
+    // lookup in `locate_and_write` is an O(log N) query instead of an O(N)
+    // `regions.iter().find` linear scan.  With R relocations and N regions
+    // this turns the patch loop from O(R·N) to O(R·log N) — relevant for
+    // ET_REL `.o` files with many SHF_ALLOC sections (one region each).
+    // Two regions at the same start collapse (last-insert-wins), matching
+    // `MemRegionsLookupTable`'s rule.
+    let region_index = RegionStartIndex::from_regions(regions);
 
     for_each_reloc_site(obj, |site_addr, reloc| {
         apply_one_relocation(obj, regions, &region_index, site_addr, reloc);
@@ -182,7 +182,7 @@ where
 fn apply_one_relocation(
     obj: &object::File<'_>,
     regions: &mut [MemRegion],
-    region_index: &RegionIndex,
+    region_index: &RegionStartIndex,
     site_addr: u64,
     reloc: &object::Relocation,
 ) {
@@ -336,80 +336,128 @@ fn apply_one_relocation(
     );
 }
 
-/// A sorted `[start, end)` interval index for O(log n) address-coverage
-/// queries during the relocation extender's pass 1.
+/// A single start-keyed index over a set of `MemRegion`s, serving both
+/// address-coverage lookups the relocation pass needs:
 ///
-/// Replaces the per-site `regions.iter().chain(staged.iter())
-/// .any(|r| r.contains(addr))` linear scan (quadratic in
-/// sites × regions) used to decide whether a relocation site already
-/// has a backing region.  Intervals are kept sorted by `start`
-/// alongside a prefix-maximum of `end`, so [`covers`](Self::covers) is
-/// a binary search plus one array read.
+/// * [`covers`](Self::covers) — point-membership-with-overlap, used in the
+///   extender's pass 1 to decide whether a relocation site already has a
+///   backing region (grows as sections are staged via [`insert`](Self::insert)).
+/// * [`covering_index`](Self::covering_index) — which region *fully covers*
+///   a `[site, site+len)` field, used by the patch loop's
+///   [`locate_and_write`] to find the slice index to write back into.
 ///
-/// [`covers`](Self::covers) reproduces the exact `.any(contains)`
-/// predicate, *including* the overlap case: a site is covered iff some
-/// interval with `start <= addr` also has `end > addr`, i.e. the
-/// maximum `end` among all `start <= addr` intervals exceeds `addr`.
-/// The prefix-max array answers that in O(1) after the O(log n)
-/// position search.
-struct CoverageIndex {
-    /// `(start, end)` intervals, sorted by `start`.
-    intervals: Vec<(u64, u64)>,
-    /// `max_end[i]` is the maximum `end` over `intervals[0..=i]`.  Lets
-    /// `covers` answer "any `start <= addr` interval reaches past
-    /// `addr`?" without scanning every candidate.  Empty when there are
-    /// no intervals.
+/// Both questions are answered from one list of `(start, end, index)`
+/// entries sorted by `start`, plus a prefix-maximum of `end` (so `covers`
+/// is a binary search plus one array read).  This replaces the two former
+/// parallel indices (a `Vec` + prefix-max for coverage and a
+/// `BTreeMap<u64, usize>` for the covering-region lookup) that each sorted
+/// the same regions by start.
+///
+/// Same-start collapse — to match the former `BTreeMap`'s last-insert-wins
+/// rule (mirroring [`crate::MemRegionsLookupTable`]) — applies only to
+/// `covering_index`: among entries sharing a `start`, the last-inserted one
+/// is the sole candidate (it is the first encountered in the descending
+/// walk).  `covers` keeps *every* interval so an overlap whose later
+/// interval starts lower still registers via the prefix-max.
+struct RegionStartIndex {
+    /// `(start, end, slice_index)` entries, sorted by `start`.  Equal-start
+    /// entries retain insertion order (stable), so the last-inserted is last
+    /// within its run.
+    entries: Vec<(u64, u64, usize)>,
+    /// `max_end[i]` is the maximum `end` over `entries[0..=i]`.  Lets
+    /// `covers` answer "any `start <= addr` interval reaches past `addr`?"
+    /// without scanning every candidate.  Empty when there are no entries.
     max_end: Vec<u64>,
 }
 
-impl CoverageIndex {
-    /// Seeds the index from a region iterator (one interval per region).
-    fn from_regions<'a, I>(regions: I) -> Self
-    where
-        I: IntoIterator<Item = &'a MemRegion>,
-    {
-        let mut intervals: Vec<(u64, u64)> = regions
-            .into_iter()
-            .map(|r| (r.start_addr(), r.end_addr()))
+impl RegionStartIndex {
+    /// Seeds the index from a region slice (one entry per region, carrying
+    /// its slice index).  Equal-start regions keep their slice order so the
+    /// later (higher-index) region is the `covering_index` winner, matching
+    /// a `BTreeMap<start, index>` built from `regions.iter().enumerate()`.
+    fn from_regions(regions: &[MemRegion]) -> Self {
+        let mut entries: Vec<(u64, u64, usize)> = regions
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (r.start_addr(), r.end_addr(), i))
             .collect();
-        intervals.sort_unstable_by_key(|&(start, _)| start);
+        entries.sort_by_key(|&(start, _, _)| start);
         let mut this = Self {
-            intervals,
+            entries,
             max_end: Vec::new(),
         };
         this.rebuild_max_end();
         this
     }
 
-    /// Recomputes the prefix-max-of-`end` array from `intervals`.
+    /// Recomputes the prefix-max-of-`end` array from `entries`.
     fn rebuild_max_end(&mut self) {
         self.max_end.clear();
-        self.max_end.reserve(self.intervals.len());
+        self.max_end.reserve(self.entries.len());
         let mut running = 0u64;
-        for &(_, end) in &self.intervals {
+        for &(_, end, _) in &self.entries {
             running = running.max(end);
             self.max_end.push(running);
         }
     }
 
-    /// Inserts `[start, end)`, preserving the sort by `start`.  Called
-    /// once per staged section (a small count), so the O(n) prefix-max
-    /// rebuild it triggers is cheap relative to the per-site queries.
+    /// Inserts `[start, end)` (with no meaningful slice index — staged
+    /// regions are only consulted via `covers` during pass 1), preserving
+    /// the sort by `start`.  Called once per staged section (a small count),
+    /// so the O(n) prefix-max rebuild it triggers is cheap relative to the
+    /// per-site queries.  The placeholder index is never read: `covers`
+    /// ignores it and pass 2 rebuilds a fresh index over the final slice.
     fn insert(&mut self, start: u64, end: u64) {
-        let pos = self.intervals.partition_point(|&(s, _)| s <= start);
-        self.intervals.insert(pos, (start, end));
+        let pos = self.entries.partition_point(|&(s, _, _)| s <= start);
+        self.entries.insert(pos, (start, end, usize::MAX));
         self.rebuild_max_end();
     }
 
     /// Returns `true` iff some interval satisfies `start <= addr < end`
     /// — the exact `.any(|r| r.contains(addr))` predicate.
     fn covers(&self, addr: u64) -> bool {
-        // `upper` = count of intervals with `start <= addr`; those are
-        // the only ones that could contain `addr`.  Among them the one
-        // reaching furthest is `max_end[upper - 1]`; the site is covered
-        // iff that maximum end is strictly past `addr`.
-        let upper = self.intervals.partition_point(|&(start, _)| start <= addr);
+        // `upper` = count of entries with `start <= addr`; those are the
+        // only ones that could contain `addr`.  Among them the one reaching
+        // furthest is `max_end[upper - 1]`; the site is covered iff that
+        // maximum end is strictly past `addr`.
+        let upper = self.entries.partition_point(|&(start, _, _)| start <= addr);
         upper > 0 && self.max_end[upper - 1] > addr
+    }
+
+    /// Returns the slice index of the region that fully covers
+    /// `[site_addr, site_addr + size_bytes)`, or `None` if no region does.
+    ///
+    /// Walks candidate entries from the highest `start <= site_addr`
+    /// downward (the same fall-through geometry as
+    /// [`crate::MemRegionsLookupTable::read`]) so a request straddling a
+    /// shorter higher-start region's end still resolves to a fully-covering
+    /// lower-start region.  Among entries sharing a `start`, only the
+    /// last-inserted (first encountered in the descending walk) is tested,
+    /// reproducing the former `BTreeMap<start, index>`'s last-insert-wins
+    /// collapse.  On disjoint regions (the well-formed-ELF case) the first
+    /// candidate matches, making this O(log N).
+    fn covering_index(
+        &self,
+        regions: &[MemRegion],
+        site_addr: u64,
+        size_bytes: usize,
+    ) -> Option<usize> {
+        let upper = self
+            .entries
+            .partition_point(|&(start, _, _)| start <= site_addr);
+        let mut prev_start: Option<u64> = None;
+        for &(start, _, index) in self.entries[..upper].iter().rev() {
+            // Skip all but the first (last-inserted) entry of each equal-start
+            // run, matching the BTreeMap collapse.
+            if prev_start == Some(start) {
+                continue;
+            }
+            prev_start = Some(start);
+            if regions[index].fully_covers(site_addr, size_bytes) {
+                return Some(index);
+            }
+        }
+        None
     }
 }
 
@@ -459,7 +507,7 @@ where
     // never mutate `regions` here so an extender error mid-pass leaves
     // it untouched.
     //
-    // Coverage is queried through a `CoverageIndex` (a sorted
+    // Coverage is queried through a `RegionStartIndex` (a sorted
     // `[start, end)` interval list) seeded from `regions` and grown as
     // sections are staged.  This replaces the per-site
     // `regions.iter().chain(staged.iter()).any(contains)` linear scan
@@ -467,7 +515,7 @@ where
     // relocs and many staged sections) with an O(sites · log regions)
     // query.  Behaviour is identical: `covers` matches the exact
     // `.any(contains)` predicate, including the overlap case.
-    let mut coverage = CoverageIndex::from_regions(regions.iter());
+    let mut coverage = RegionStartIndex::from_regions(regions);
     let mut staged: Vec<MemRegion> = Vec::new();
     for_each_reloc_site(obj, |site_addr, _reloc| {
         if coverage.covers(site_addr) {
@@ -824,48 +872,6 @@ fn mips_rel32_symbol_reloc_size(
     }
 }
 
-/// Sorted `start_addr -> index-into-regions` map, built once per
-/// [`apply_elf_relocations`] call so the per-relocation region lookup in
-/// [`locate_and_write`] is an O(log N) BTree query instead of the former
-/// O(N) `regions.iter().find` linear scan.
-///
-/// Mirrors the shape of [`crate::MemRegionsLookupTable`]'s own
-/// start-keyed `BTreeMap`: two regions sharing a start collapse with
-/// last-insert-wins, so the stored index points at the last region
-/// inserted at that start.
-type RegionIndex = std::collections::BTreeMap<u64, usize>;
-
-/// Builds a [`RegionIndex`] over `regions` (start address → slice index).
-fn build_region_index(regions: &[MemRegion]) -> RegionIndex {
-    regions
-        .iter()
-        .enumerate()
-        .map(|(i, r)| (r.start_addr(), i))
-        .collect()
-}
-
-/// Returns the index of the region that fully covers
-/// `[site_addr, site_addr + size_bytes)`, or `None` if no region does.
-///
-/// Walks candidate regions from the highest `start_addr <= site_addr`
-/// downward (the same fall-through geometry as
-/// [`crate::MemRegionsLookupTable::read`]) so a request straddling a
-/// shorter higher-start region's end still resolves to a fully-covering
-/// lower-start region.  On disjoint regions (the well-formed-ELF case)
-/// the first candidate matches, making this O(log N).
-fn find_covering_region(
-    regions: &[MemRegion],
-    region_index: &RegionIndex,
-    site_addr: u64,
-    size_bytes: usize,
-) -> Option<usize> {
-    region_index
-        .range(..=site_addr)
-        .rev()
-        .map(|(_, &i)| i)
-        .find(|&i| regions[i].fully_covers(site_addr, size_bytes))
-}
-
 /// Locates the region in `regions` whose `[start, end)` covers
 /// `[site_addr, site_addr + size_bytes)` (via the precomputed
 /// `region_index`), computes the in-region offset, and writes the low
@@ -879,13 +885,13 @@ fn find_covering_region(
 /// GOT/PLT-slot, generic Absolute/Relative paths) into a single helper.
 fn locate_and_write(
     regions: &mut [MemRegion],
-    region_index: &RegionIndex,
+    region_index: &RegionStartIndex,
     site_addr: u64,
     value: u64,
     size_bytes: usize,
     endian_le: bool,
 ) {
-    if let Some(i) = find_covering_region(regions, region_index, site_addr, size_bytes) {
+    if let Some(i) = region_index.covering_index(regions, site_addr, size_bytes) {
         let region = &mut regions[i];
         let off = (site_addr - region.start_addr()) as usize;
         write_at(region.data_mut(), off, value, size_bytes, endian_le);
@@ -946,7 +952,7 @@ fn write_at(bytes: &mut [u8], off: usize, value: u64, size_bytes: usize, endian_
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod coverage_index_tests {
-    use super::CoverageIndex;
+    use super::RegionStartIndex;
     use crate::MemRegion;
 
     fn region(start: u64, len: usize) -> MemRegion {
@@ -977,7 +983,7 @@ mod coverage_index_tests {
             .iter()
             .map(|r| (r.start_addr(), r.end_addr()))
             .collect();
-        let idx = CoverageIndex::from_regions(regions.iter());
+        let idx = RegionStartIndex::from_regions(&regions);
 
         // Probe boundaries, interiors, gaps, and the zero-length point.
         for addr in [
@@ -1011,7 +1017,7 @@ mod coverage_index_tests {
     fn insert_keeps_covers_correct_and_sorted() {
         // Mimics pass 1: start from one seed region, then stage more out
         // of start order; `covers` must reflect every inserted interval.
-        let mut idx = CoverageIndex::from_regions([region(0x2000, 0x100)].iter());
+        let mut idx = RegionStartIndex::from_regions(&[region(0x2000, 0x100)]);
         assert!(idx.covers(0x2050));
         assert!(!idx.covers(0x1050));
         assert!(!idx.covers(0x3050));
@@ -1026,7 +1032,7 @@ mod coverage_index_tests {
         assert!(!idx.covers(0x3100)); // exclusive end of staged interval
 
         // Intervals stay sorted by start after the out-of-order inserts.
-        let starts: Vec<u64> = idx.intervals.iter().map(|&(s, _)| s).collect();
+        let starts: Vec<u64> = idx.entries.iter().map(|&(s, _, _)| s).collect();
         let mut sorted = starts.clone();
         sorted.sort_unstable();
         assert_eq!(starts, sorted, "intervals must remain sorted by start");
@@ -1034,7 +1040,7 @@ mod coverage_index_tests {
 
     #[test]
     fn empty_index_covers_nothing() {
-        let idx = CoverageIndex::from_regions(std::iter::empty());
+        let idx = RegionStartIndex::from_regions(&[]);
         assert!(!idx.covers(0));
         assert!(!idx.covers(0x1000));
         assert!(!idx.covers(u64::MAX));

@@ -29,41 +29,6 @@ impl OptimizationResult {
             OptimizationResult::NoChange
         }
     }
-
-    /// Replaces every use of `old` with `new`, **absorbs** the producer
-    /// of `old`'s asm-fingerprint into `new`'s producer, and folds the
-    /// resulting `Changed`/`NoChange` into `self`.
-    ///
-    /// Delegates to [`crate::EditFunction::replace_value`], the single
-    /// source of truth for the fingerprint-absorb + use-redirect pair.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`crate::EditFunction::replace_value`]'s `Err` arm as
-    /// a typed error rather than panicking.
-    pub fn after_replace(
-        self,
-        function: &mut crate::EditFunction<'_>,
-        old: strider_ir::node::ValueId,
-        new: strider_ir::node::ValueId,
-    ) -> crate::Result<Self> {
-        // `replace_value` is the SSoT that absorbs `old`'s fingerprint into
-        // `new` and redirects all uses; it now lives on `EditFunction`.
-        let changed = function.replace_value(old, new)?;
-        Ok(self | OptimizationResult::from_changed(changed))
-    }
-}
-
-impl std::ops::BitOr for OptimizationResult {
-    type Output = Self;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        if self.changed() || rhs.changed() {
-            OptimizationResult::Changed
-        } else {
-            OptimizationResult::NoChange
-        }
-    }
 }
 
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
@@ -322,27 +287,38 @@ impl<T: PostOptimizer> PostOptimizerTestExt for T {
     }
 }
 
-/// Object-safe clone shim for [`Optimizer`].
+/// Defines an object-safe clone shim trait `$shim` for the trait object
+/// `dyn $obj`, plus its blanket impl for every concrete `$obj + Clone +
+/// 'static`.
 ///
-/// Enables external iteration over the canonical default pipelines:
-/// downstream crates (e.g. `strider-py`) snapshot the pass list via
-/// [`OptimizerPipeline::passes`] / [`OptimizerPipeline::post_passes`] and
-/// `clone_box` each entry into their own storage, rather than
-/// hand-mirroring the pass list and risking silent drift.
-///
-/// Every concrete `Optimizer + Clone + 'static` gets a blanket
-/// `OptimizerClone` impl for free, so pass authors never write
-/// `clone_box` by hand — `#[derive(Clone)]` on the pass type is
-/// sufficient.  ZST passes get `Clone` via `#[derive(Clone, Copy)]`.
-pub trait OptimizerClone {
-    /// Clone the pass behind a `Box<dyn Optimizer>`.
-    fn clone_box(&self) -> Box<dyn Optimizer>;
+/// The shim's single method `clone_box(&self) -> Box<dyn $obj>` lets the
+/// pipeline box-clone a type-erased pass.  Enables external iteration over
+/// the canonical default pipelines: downstream crates (e.g. `strider-py`)
+/// snapshot the pass list via [`OptimizerPipeline::passes`] /
+/// [`OptimizerPipeline::post_passes`] and `clone_box` each entry into their
+/// own storage, rather than hand-mirroring the pass list and risking silent
+/// drift.  Pass authors never write `clone_box` by hand — `#[derive(Clone)]`
+/// on the pass type is sufficient (ZST passes get it via
+/// `#[derive(Clone, Copy)]`).
+macro_rules! clone_box_shim {
+    ($(#[$attr:meta])* $shim:ident for dyn $obj:ident) => {
+        $(#[$attr])*
+        pub trait $shim {
+            /// Clone the pass behind a `Box<dyn $obj>`.
+            fn clone_box(&self) -> Box<dyn $obj>;
+        }
+
+        impl<T: $obj + Clone + 'static> $shim for T {
+            fn clone_box(&self) -> Box<dyn $obj> {
+                Box::new(self.clone())
+            }
+        }
+    };
 }
 
-impl<T: Optimizer + Clone + 'static> OptimizerClone for T {
-    fn clone_box(&self) -> Box<dyn Optimizer> {
-        Box::new(self.clone())
-    }
+clone_box_shim! {
+    /// Object-safe clone shim for [`Optimizer`].
+    OptimizerClone for dyn Optimizer
 }
 
 /// A post-optimization pass that runs **once** after the fixed-point loop
@@ -372,20 +348,9 @@ pub trait PostOptimizer: PostOptimizerClone {
     fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()>;
 }
 
-/// Object-safe clone shim for [`PostOptimizer`], mirroring [`OptimizerClone`].
-///
-/// Every concrete `PostOptimizer + Clone + 'static` gets this blanket impl
-/// for free, so pass authors never write `clone_box` by hand —
-/// `#[derive(Clone)]` on the pass type is sufficient.
-pub trait PostOptimizerClone {
-    /// Clone the pass behind a `Box<dyn PostOptimizer>`.
-    fn clone_box(&self) -> Box<dyn PostOptimizer>;
-}
-
-impl<T: PostOptimizer + Clone + 'static> PostOptimizerClone for T {
-    fn clone_box(&self) -> Box<dyn PostOptimizer> {
-        Box::new(self.clone())
-    }
+clone_box_shim! {
+    /// Object-safe clone shim for [`PostOptimizer`], mirroring [`OptimizerClone`].
+    PostOptimizerClone for dyn PostOptimizer
 }
 
 /// An ordered list of `Optimizer` passes that are run in a shared fixed-point

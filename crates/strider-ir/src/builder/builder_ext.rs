@@ -175,10 +175,10 @@ pub trait IRBuilderExt: IRBuilder {
     /// `false`→0).  Booleans are 1-bit integers; logical operations on them
     /// are ordinary `IntBinaryOp`/`IntUnaryOp` at `I1`.
     fn build_boolean_const(&mut self, val: bool) -> ValueId {
-        let id = self
-            .function_mut()
-            .intern_int_const(u128::from(val), ValueType::I1);
-        self.build_single_output_pure(NodeKind::IntConst(id), [], ValueType::I1)
+        // I1 is an integer type, so `build_int_const`'s `is_integer()` guard
+        // never fires here — keep this infallible by `expect`-ing that.
+        self.build_int_const(u128::from(val), ValueType::I1)
+            .expect("I1 is always an integer type")
     }
 
     /// Builds an integer constant of `output_type` from a ≤ 128-bit value.
@@ -279,8 +279,9 @@ pub trait IRBuilderExt: IRBuilder {
         if shift_bits == 0 {
             return Ok(value);
         }
-        let shift_const = self.build_int_const(shift_bits, ty)?;
-        self.build_int_binary_operation(value, shift_const, op, ty)
+        // `build_const_binop(k, x, op, ty)` emits `x <op> k`, exactly the
+        // value-first / shift-const-second shape a (non-commutative) shift wants.
+        self.build_const_binop(u128::from(shift_bits), value, op, ty)
     }
 
     /// Emits an integer unary operation node.  **Strict:** the operand must

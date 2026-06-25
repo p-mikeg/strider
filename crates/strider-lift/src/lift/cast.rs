@@ -30,6 +30,21 @@ fn extract_bit_pos_u8(
     })
 }
 
+/// Computes the low-`len`-bits mask `(1 << len) - 1` in `u128`, saturating
+/// to `u128::MAX` for `len >= 128`.
+///
+/// Shared by [`build_bit_field_insert`] (the raw field mask) and
+/// [`FunctionLifter::handle_extract`] (the upper-bits-zero AND mask): both
+/// need a width-aware low-bits mask wide enough to cover an I128 / I80
+/// `out_ty` field, so the `u128` computation is exact.
+fn low_bits_mask(len: u8) -> u128 {
+    if (len as usize) >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << len) - 1
+    }
+}
+
 /// Constructs the bit-field-insert IR: `Or(And(dest, !mask_shifted), ShiftLeft(And(src, mask_raw), lsb))`.
 ///
 /// Extracted from [`FunctionLifter::handle_insert`] to isolate the mask-and-position
@@ -44,11 +59,7 @@ fn build_bit_field_insert(
 ) -> Result<strider_ir::Value> {
     // Compute masks in u128 so a I128 (or I80) `out_ty` with
     // `lsb + len > 64` produces correct bits in slots 64..127.
-    let mask_raw: u128 = if (len as usize) >= 128 {
-        u128::MAX
-    } else {
-        (1u128 << len) - 1
-    };
+    let mask_raw: u128 = low_bits_mask(len);
     let mask_shifted = mask_raw.wrapping_shl(lsb as u32);
     let not_mask_shifted = !mask_shifted;
 
@@ -135,17 +146,30 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Shared envelope for single-input integer unary ops: read input 0,
     /// coerce it to the output width, run `build`, and write the result.
     /// Covers the character-identical `popcount` / `lzcount` handlers.
-    fn lift_int_unary(
+    ///
+    /// When `enforce_equal_io_width` is set the input and output varnodes
+    /// must share a byte-width (via [`super::arithmetic::require_equal_input_output_width`]),
+    /// surfacing a Sleigh spec mismatch as a precise lift-time error — used
+    /// by the `Int2Comp` / `IntNeg`-as-xor lowerings.  `popcount` / `lzcount`
+    /// legitimately narrow a wider input to the output, so they leave it off.
+    pub(super) fn lift_int_unary(
         &mut self,
         insn: &rsleigh::Insn,
+        enforce_equal_io_width: bool,
         build: impl FnOnce(
             &mut strider_ir::FunctionBuilder,
             strider_ir::Value,
             ValueType,
         ) -> Result<strider_ir::Value>,
     ) -> Result<()> {
-        let value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
+        if enforce_equal_io_width {
+            super::arithmetic::require_equal_input_output_width(
+                nth_input_or_err(insn, 0)?,
+                out_vn,
+            )?;
+        }
+        let value = self.read_input(insn, 0)?;
         let out_ty = out_vn.int_type()?;
         let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
         let result = build(&mut self.builder, value, out_ty)?;
@@ -153,11 +177,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     pub(super) fn handle_popcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        self.lift_int_unary(insn, |b, v, t| b.build_popcount(v, t))
+        self.lift_int_unary(insn, false, |b, v, t| b.build_popcount(v, t))
     }
 
     pub(super) fn handle_lzcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        self.lift_int_unary(insn, |b, v, t| b.build_lzcount(v, t))
+        self.lift_int_unary(insn, false, |b, v, t| b.build_lzcount(v, t))
     }
 
     pub(super) fn handle_piece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
@@ -261,12 +285,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             // 0xFFFF_FFFF_FFFF_FFFF, then `build_int_const` would
             // zero-extend to u128 and the result would zero bits
             // 64..127 of the narrowed value.
-            let mask_val: u128 = if (len as usize) >= 128 {
-                u128::MAX
-            } else {
-                (1u128 << len) - 1
-            };
-            let mask = self.builder.build_int_const(mask_val, narrow_ty)?;
+            let mask = self.builder.build_int_const(low_bits_mask(len), narrow_ty)?;
             self.builder
                 .build_int_binary_operation(narrowed, mask, IntBinaryOp::And, narrow_ty)?
         } else {

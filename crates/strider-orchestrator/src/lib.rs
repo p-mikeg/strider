@@ -313,11 +313,8 @@ where
             ..
         } = lifter.build_ir_with(&cfg, cc, working)?;
 
-        let mut ctx = {
-            let mut ctx = OptCtx::new(rom_ref);
-            ctx.options = opt_opts.clone();
-            ctx
-        };
+        let mut ctx = OptCtx::new(rom_ref);
+        ctx.options = opt_opts.clone();
         pipeline.run(&mut function, &mut ctx)?;
         let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
 
@@ -407,17 +404,36 @@ fn apply_resolutions(
         }
     }
     // Convergence without dropping improvements: re-deriving the SAME
-    // classification for an already-present site is a no-op (so an unchanged
-    // cone converges instead of churning to the iteration cap), but a
-    // genuinely DIFFERENT classification — e.g. a previously-unseatable target
-    // set that narrows to a seatable one once other branches resolve — does
-    // overwrite the stale entry rather than being silently dropped.
+    // classification for an already-present site re-inserts an equal value
+    // (a no-op for the edge set, so an unchanged cone converges instead of
+    // churning to the iteration cap), while a genuinely DIFFERENT
+    // classification — e.g. a previously-unseatable target set that narrows
+    // to a seatable one once other branches resolve — overwrites the stale
+    // entry.  The progress signal is the set-diff below, not the insert, so
+    // an unconditional insert is correct: only `edge_set_of` and the cfg
+    // builder read `known_targets`, and both are insensitive to re-inserting
+    // an equal value.
     for (addr, targets) in staged {
-        if known_targets.get(&addr) != Some(&targets) {
-            known_targets.insert(addr, targets);
-        }
+        known_targets.insert(addr, targets);
     }
     Ok(edge_set_of(known_targets) != prev_edge_set)
+}
+
+/// Expands a `ResolvedTargets` into its successor set as an iterator of
+/// `Option<u64>`: `LinkRegister → [None]` (no concrete successor address),
+/// `Single(k) → [Some(k)]`, `Multiple(ks) → Some(k)` for each `k`.  The
+/// single source of truth for the three-arm match that both
+/// [`merge_resolved`] and [`edge_set_of`] perform.
+fn targets_of(r: &ResolvedTargets) -> impl Iterator<Item = Option<u64>> + '_ {
+    // `head` yields 0-or-1 items (None/Single), `tail` yields the Multiple
+    // slice; their chain unifies the three arms into one return type with
+    // no allocation.
+    let (head, tail): (Option<Option<u64>>, &[u64]) = match r {
+        ResolvedTargets::LinkRegister => (Some(None), &[]),
+        ResolvedTargets::Single(k) => (Some(Some(*k)), &[]),
+        ResolvedTargets::Multiple(ks) => (None, ks.as_slice()),
+    };
+    head.into_iter().chain(tail.iter().map(|k| Some(*k)))
 }
 
 /// Merge two `ResolvedTargets` classifications for the same pcode address
@@ -429,14 +445,9 @@ fn merge_resolved(a: &ResolvedTargets, b: &ResolvedTargets) -> ResolvedTargets {
     if matches!(a, ResolvedTargets::LinkRegister) && matches!(b, ResolvedTargets::LinkRegister) {
         return ResolvedTargets::LinkRegister;
     }
-    let mut targets: Vec<u64> = Vec::new();
-    for r in [a, b] {
-        match r {
-            ResolvedTargets::LinkRegister => {}
-            ResolvedTargets::Single(k) => targets.push(*k),
-            ResolvedTargets::Multiple(ks) => targets.extend(ks.iter().copied()),
-        }
-    }
+    // `flatten` drops the `None`s (LinkRegister contributes no concrete
+    // successor), keeping only the unioned target addresses.
+    let mut targets: Vec<u64> = targets_of(a).chain(targets_of(b)).flatten().collect();
     targets.sort_unstable();
     targets.dedup();
     match targets.as_slice() {
@@ -509,18 +520,8 @@ fn edge_set_of(
 ) -> BTreeSet<(PcodeInsnAddr, Option<u64>)> {
     let mut edges: BTreeSet<(PcodeInsnAddr, Option<u64>)> = BTreeSet::new();
     for (addr, resolved) in map {
-        match resolved {
-            ResolvedTargets::LinkRegister => {
-                edges.insert((*addr, None));
-            }
-            ResolvedTargets::Single(k) => {
-                edges.insert((*addr, Some(*k)));
-            }
-            ResolvedTargets::Multiple(targets) => {
-                for k in targets {
-                    edges.insert((*addr, Some(*k)));
-                }
-            }
+        for target in targets_of(resolved) {
+            edges.insert((*addr, target));
         }
     }
     edges

@@ -18,7 +18,9 @@ use crate::{AliasMode, MemAliasOptions};
 /// `def_clobbers` answers "does this memory def overlap the load's byte
 /// range?" for a precomputed load address class:
 ///
-/// * `Store` — via [`store_alias_verdict`]: anything but `Disjoint`
+/// * `Store` — classify the store address via
+///   [`SpAnalyzer::classify_store_addr`] (stack-offset SSoT before
+///   `decompose`) and run the pure [`alias_verdict`]: anything but `Disjoint`
 ///   clobbers (a `load_forward` caller re-checks exact-`Match` afterward).
 /// * `Call` / `CallOther` — clobbers iff `mem.calls_clobber` is set.
 ///   `load_forward` sets it (a load can never forward across a call);
@@ -53,14 +55,25 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_, '_> {
             // `load_forward`, forwarding a different-space store's value into
             // the load — a miscompile).
             NodeKind::Store(store_space) => {
-                store_space == self.load_space
-                    && SpAnalyzer::new(function, &mut *self.cfg.sp_memo).store_alias_verdict(
-                        def,
-                        self.load_class,
-                        self.load_size,
-                        self.cfg.alias_mode,
-                        self.cfg.mem.assume_distinct_sp_bases_disjoint,
-                    ) != AliasVerdict::Disjoint
+                if store_space != self.load_space {
+                    return false;
+                }
+                // Classify the store address (stack-offset SSoT before
+                // `decompose`) and its size, then run the pure class-on-class
+                // verdict directly — anything but `Disjoint` clobbers (a
+                // `load_forward` caller re-checks exact-`Match` afterward).
+                let store_size =
+                    store_value_byte_size(function.graph(), function.store_data(def));
+                let store_class =
+                    SpAnalyzer::new(function, &mut *self.cfg.sp_memo).classify_store_addr(def);
+                alias_verdict(
+                    self.load_class,
+                    self.load_size,
+                    store_class,
+                    store_size,
+                    self.cfg.alias_mode,
+                    self.cfg.mem.assume_distinct_sp_bases_disjoint,
+                ) != AliasVerdict::Disjoint
             }
             NodeKind::Call | NodeKind::CallOther { .. } => self.cfg.mem.calls_clobber,
             // Any other (opaque) memory producer cannot be proven disjoint.

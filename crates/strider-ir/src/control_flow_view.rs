@@ -32,12 +32,6 @@ impl<'a> ControlFlowView<'a> {
         Self { function }
     }
 
-    /// Returns the forward control successors of `node`: every consumer of
-    /// each `Control`-typed output of `node`.
-    fn control_successors(&self, node: NodeId) -> Vec<NodeId> {
-        crate::walk::cfg_succs(self.function.graph(), node).collect()
-    }
-
     /// Iterates the `NodeId`s of every control node (the petgraph view's
     /// vertex set): every node whose kind `has_control_flow()`.
     fn control_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
@@ -59,7 +53,11 @@ impl<'a> IntoNeighbors for &'a ControlFlowView<'a> {
     type Neighbors = std::vec::IntoIter<NodeId>;
 
     fn neighbors(self, a: NodeId) -> Self::Neighbors {
-        self.control_successors(a).into_iter()
+        // Forward control successors of `a`: every consumer of each
+        // `Control`-typed output of `a`.
+        crate::walk::cfg_succs(self.function.graph(), a)
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 }
 

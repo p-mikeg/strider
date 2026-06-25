@@ -29,3 +29,4 @@ mod ranges;
 pub(crate) use analyzer::{AliasVerdict, SpExpr, SpExprMemo};
 pub(crate) use cfg::SpAliasCfg;
 pub(crate) use mem_ssa::narrow_load_to;
+pub(crate) use ranges::high_low_shift_bits;

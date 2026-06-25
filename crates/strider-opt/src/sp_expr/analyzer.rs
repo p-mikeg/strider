@@ -18,8 +18,8 @@
 //! (may-alias / opaque base).
 //!
 //! On top of the decomposition, [`SpAnalyzer`] also classifies a load / store
-//! address into a coarse [`AddrClass`] (`classify_addr`) and answers whether a
-//! `Store` aliases a precomputed load class (`store_alias_verdict`); the pure,
+//! address into a coarse [`AddrClass`] (`classify_addr` / `classify_store_addr`,
+//! the latter preferring the stack-offset side-table); the pure,
 //! class-on-class verdict table is the free [`alias_verdict`].
 
 use rustc_hash::FxHashMap;
@@ -27,7 +27,7 @@ use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp};
 
-use super::ranges::{ranges_disjoint, store_value_byte_size};
+use super::ranges::ranges_disjoint;
 use crate::AliasMode;
 use AddrClass::*;
 
@@ -264,41 +264,21 @@ impl<'a> SpAnalyzer<'a> {
         }
     }
 
-    /// Classifies a raw `NodeKind::Store` against a precomputed load address
-    /// class + size, returning the [`AliasVerdict`].  This is the single
-    /// store-aliasing entry shared by the `function_args` shadow walk (which
-    /// treats anything but `Disjoint` as a clobber) and the `load_forward`
-    /// oracle (which additionally forwards on `Match`).
-    pub(crate) fn store_alias_verdict(
-        &mut self,
-        store_node: NodeId,
-        load_class: AddrClass,
-        load_size: i64,
-        mode: AliasMode,
-        distinct_sp_bases_disjoint: bool,
-    ) -> AliasVerdict {
-        let function = self.function;
-        let store_size = store_value_byte_size(function.graph(), function.store_data(store_node));
-        // `Function::stack_offsets` (populated by `StackOffsetDetect`) is the SSoT
-        // for a store's SP-relative offset: it survives address rewrites that leave
-        // `decompose` unable to re-derive the offset (an earlier pass folding the
-        // address into an opaque shape).  Consult it before falling back to
-        // `decompose`.
-        let store_class = match function.stack_offset(store_node) {
+    /// Classifies a raw `NodeKind::Store`'s address into an [`AddrClass`],
+    /// preferring the `Function::stack_offsets` side-table (the SSoT populated
+    /// by `StackOffsetDetect`) over a fresh `decompose`.  The side-table offset
+    /// survives address rewrites that leave `decompose` unable to re-derive it
+    /// (an earlier pass folding the address into an opaque shape), so it is
+    /// consulted first.  The store-side counterpart of [`Self::classify_addr`];
+    /// callers feed the result straight into [`alias_verdict`].
+    pub(crate) fn classify_store_addr(&mut self, store_node: NodeId) -> AddrClass {
+        match self.function.stack_offset(store_node) {
             Some((base, offset)) => AddrClass::SpRooted { base, offset },
             None => {
                 let addr = self.function.store_addr(store_node);
                 self.classify_addr(addr)
             }
-        };
-        alias_verdict(
-            load_class,
-            load_size,
-            store_class,
-            store_size,
-            mode,
-            distinct_sp_bases_disjoint,
-        )
+        }
     }
 }
 
@@ -946,6 +926,7 @@ mod decompose_tests {
 
 #[cfg(test)]
 mod alias_tests {
+    use super::super::ranges::store_value_byte_size;
     use super::*;
     use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{IRBuilderExt, IntBinaryOp};
@@ -970,6 +951,32 @@ mod alias_tests {
             .all_node_ids()
             .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
             .expect("one store")
+    }
+
+    /// Test composition of the store→load alias verdict: classify the store
+    /// address (stack-offset SSoT before `decompose`), derive its size, then
+    /// run the pure class-on-class [`alias_verdict`] — exactly what the
+    /// production `SpAliasOracle` Store arm does now that the bespoke
+    /// `store_alias_verdict` method was dissolved into `classify_store_addr`.
+    fn store_alias_verdict(
+        f: &Function,
+        memo: &mut SpExprMemo,
+        store: NodeId,
+        load_class: AddrClass,
+        load_size: i64,
+        mode: AliasMode,
+        distinct_sp_bases_disjoint: bool,
+    ) -> AliasVerdict {
+        let store_size = store_value_byte_size(f.graph(), f.store_data(store));
+        let store_class = SpAnalyzer::new(f, memo).classify_store_addr(store);
+        alias_verdict(
+            load_class,
+            load_size,
+            store_class,
+            store_size,
+            mode,
+            distinct_sp_bases_disjoint,
+        )
     }
 
     /// Collapse the single-predecessor `read_variable(sp)` phi so SP
@@ -1016,7 +1023,9 @@ mod alias_tests {
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
         let mut memo = SpExprMemo::default();
-        let verdict = SpAnalyzer::new(&f, &mut memo).store_alias_verdict(
+        let verdict = store_alias_verdict(
+            &f,
+            &mut memo,
             store,
             AddrClass::SpRooted {
                 base: query_base,
@@ -1060,7 +1069,9 @@ mod alias_tests {
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
         let mut memo = SpExprMemo::default();
-        let verdict = SpAnalyzer::new(&f, &mut memo).store_alias_verdict(
+        let verdict = store_alias_verdict(
+            &f,
+            &mut memo,
             store,
             AddrClass::SpRooted {
                 base: query_base,
@@ -1100,7 +1111,9 @@ mod alias_tests {
         let query_base = entry_sp_value(&f, sp);
         let mut memo = SpExprMemo::default();
         // store at sp+8 (size 4) vs query at sp+0 (size 4): disjoint.
-        let verdict = SpAnalyzer::new(&f, &mut memo).store_alias_verdict(
+        let verdict = store_alias_verdict(
+            &f,
+            &mut memo,
             store,
             AddrClass::SpRooted {
                 base: query_base,
@@ -1136,7 +1149,9 @@ mod alias_tests {
         let query_base = entry_sp_value(&f, sp);
         let mut memo = SpExprMemo::default();
         // store at sp+8 (size 4) vs query at sp+8 (size 4): exact match.
-        let verdict = SpAnalyzer::new(&f, &mut memo).store_alias_verdict(
+        let verdict = store_alias_verdict(
+            &f,
+            &mut memo,
             store,
             AddrClass::SpRooted {
                 base: query_base,

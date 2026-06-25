@@ -137,20 +137,10 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                             .function
                             .int_const_wide_le_bytes(node)
                             .unwrap_or_default();
-                        let mut hex = String::new();
-                        for &b in bytes.iter().rev() {
-                            if hex.is_empty() {
-                                if b == 0 {
-                                    continue;
-                                }
-                                hex.push_str(&format!("{b:x}"));
-                            } else {
-                                hex.push_str(&format!("{b:02x}"));
-                            }
-                        }
-                        if hex.is_empty() {
-                            hex.push('0');
-                        }
+                        let raw: String =
+                            bytes.iter().rev().map(|b| format!("{b:02x}")).collect();
+                        let hex = raw.trim_start_matches('0');
+                        let hex = if hex.is_empty() { "0" } else { hex };
                         format!("const 0x{hex}:i{bits}")
                     }
                     Some(_) => {

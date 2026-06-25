@@ -201,8 +201,11 @@ fn narrow(ctx: &mut crate::EditFunction<'_>, store_data: ValueId, load: NodeId) 
     let shifted = match endianness {
         Endianness::Little => store_data,
         Endianness::Big => {
-            let shift_bits = ((store_data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
-            // shift_bits is a byte-offset * 8 — always fits in u64.  Route it
+            // SSoT for the endianness-aware byte-slice shift (shared with the
+            // jump-table evaluator's symbolic `reshape`).
+            let shift_bits =
+                crate::sp_expr::high_low_shift_bits(store_data_ty, load_ty, endianness);
+            // shift_bits is a byte-offset * 8 — always fits in u128.  Route it
             // through `build_int_const` so a wide `store_data_ty` (I80 / I128)
             // mints the interned const so it dedups correctly against any other
             // node with the same value and type.

@@ -19,7 +19,7 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
+use crate::graph::{remap_node_keyed, Graph, NodeIdRemap};
 use crate::node::{NodeId, NodeKind, ValueId};
 use crate::{IRViewer, IRWalker};
 
@@ -64,7 +64,7 @@ pub(crate) fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsl
 /// The Vn-keyed / `ValueId`-keyed / index-keyed overlay maps in
 /// [`Function::compact`] each remap a different facet (the key, the payload,
 /// or a payload `Vec`), so they don't fit the `NodeId`-keyed
-/// [`SideTableRemap`] shape — this folds their shared drain-rebuild loop
+/// [`remap_node_keyed`] shape — this folds their shared drain-rebuild loop
 /// behind a single closure.
 fn remap_hashmap<K, V, NK, NV>(
     map: &mut FxHashMap<K, V>,
@@ -438,20 +438,6 @@ impl Function {
         move |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn
     }
 
-    /// The convention's combined return-register list (integer ++ float), at
-    /// each register's declared width.  Single place that owns the
-    /// `ret_val_regs ++ ret_val_regs_float` chain order, shared by
-    /// [`Self::ret_val_regs`] (declared widths) and [`Self::combined_ret_containers`]
-    /// (container projection).
-    fn combined_ret_regs_raw(
-        cc: &strider_target::BuiltCallingConvention,
-    ) -> impl Iterator<Item = rsleigh::Vn> + '_ {
-        cc.ret_val_regs
-            .iter()
-            .chain(cc.ret_val_regs_float.iter())
-            .copied()
-    }
-
     /// The convention's combined return-register list (integer ++ float),
     /// each resolved to its tracked container via [`Self::container_of`].
     ///
@@ -463,7 +449,10 @@ impl Function {
         &'a self,
         cc: &'a strider_target::BuiltCallingConvention,
     ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
-        Self::combined_ret_regs_raw(cc).map(|v| self.container_of(&v))
+        cc.ret_val_regs
+            .iter()
+            .chain(cc.ret_val_regs_float.iter())
+            .map(|v| self.container_of(v))
     }
 
     /// Derive the ret-val varnode list for a `Call` built under calling
@@ -566,7 +555,12 @@ impl Function {
     /// width rather than being narrowed to a tracked sub-register.
     #[inline]
     pub fn ret_val_regs(&self) -> Vec<rsleigh::Vn> {
-        Self::combined_ret_regs_raw(&self.default_cc).collect()
+        let cc = &self.default_cc;
+        cc.ret_val_regs
+            .iter()
+            .chain(cc.ret_val_regs_float.iter())
+            .copied()
+            .collect()
     }
 
     /// Calling convention's stack-pointer varnode.  On the trivial CC
@@ -948,8 +942,8 @@ impl Function {
         self.entry = Some(new_entry);
         // Remap the NodeId-keyed overlay tables through the
         // old→new translation table produced by `retain_reachable`.
-        self.call_other_names.remap_node_keyed(&remap);
-        self.asm_fingerprints.remap_node_keyed(&remap);
+        remap_node_keyed(&mut self.call_other_names, &remap);
+        remap_node_keyed(&mut self.asm_fingerprints, &remap);
         // `call_descriptor` is a sparse `FxHashMap<NodeId, _>` (calls are
         // rare and a descriptor payload can be large), so remap its KEYS
         // through the translation table, dropping entries whose Call /

@@ -245,9 +245,7 @@ impl DotEmitter {
 
         for (k, v) in extra {
             self.out.push_str(", ");
-            self.out.push_str(k);
-            self.out.push('=');
-            self.out.push_str(v);
+            push_attr(&mut self.out, k, v);
         }
 
         self.out.push_str("];\n");
@@ -274,9 +272,7 @@ impl DotEmitter {
                 if i != 0 {
                     self.out.push_str(", ");
                 }
-                self.out.push_str(k);
-                self.out.push('=');
-                self.out.push_str(v);
+                push_attr(&mut self.out, k, v);
             }
             self.out.push(']');
         }
@@ -291,6 +287,17 @@ impl DotEmitter {
     }
 }
 
+/// Appends a single `key=value` DOT attribute to `out`.  The value is
+/// inserted verbatim (the caller owns any quoting/escaping); see
+/// [`DotEmitter::node`]'s contract.  Shared by every attribute emitter so
+/// the `key=value` shape lives in one place; callers supply their own
+/// framing (leading comma, separator, bracket block, trailing comma).
+fn push_attr(out: &mut String, k: &str, v: &str) {
+    out.push_str(k);
+    out.push('=');
+    out.push_str(v);
+}
+
 fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
     if attrs.is_empty() {
         return;
@@ -301,9 +308,7 @@ fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
     out.push_str(" [\n");
     for (k, v) in attrs {
         out.push_str("    ");
-        out.push_str(k);
-        out.push('=');
-        out.push_str(v);
+        push_attr(out, k, v);
         out.push_str(",\n");
     }
     out.push_str("  ];\n\n");

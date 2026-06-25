@@ -12,7 +12,7 @@
 //! vocabulary with no duplication.
 //!
 //! [`IRWalker`] layers the control-aware walks (`walk`, `walk_kind`,
-//! `reverse_postorder_filter`, `postorder` / `reverse_postorder`, …) on top of [`IRViewer`],
+//! `reverse_postorder_filter` / `reverse_postorder`, …) on top of [`IRViewer`],
 //! delegating to the crate's `walk` primitives over
 //! `self.function().graph()`.  It is the single source of truth for
 //! traversing a function's IR graph; [`crate::EditFunction`] shadows the
@@ -554,10 +554,10 @@ impl IRViewer for crate::EditFunction<'_> {
 /// the order-producing ones with inherent versions that reuse its cached
 /// live/roots bookkeeping instead of re-walking from entry.
 ///
-/// The "global" orders ([`Self::postorder`] / [`Self::reverse_postorder`])
-/// take a [`crate::walk::GraphWalkInfo`] — compute it once via
+/// The "global" order [`Self::reverse_postorder`] takes a
+/// [`crate::walk::GraphWalkInfo`] — compute it once via
 /// [`Self::walk_info`] and hand it to whichever orders you need without
-/// re-walking, e.g. `let info = walker.walk_info(None)?; walker.postorder(&info)`.
+/// re-walking, e.g. `let info = walker.walk_info(None)?; walker.reverse_postorder(&info)`.
 pub trait IRWalker: IRViewer {
     /// Resolves the seed (`None` ⇒ the function's entry, [`Function::entry`];
     /// `Some(n)` ⇒ `n`) and computes the [`crate::walk::GraphWalkInfo`] — the
@@ -607,12 +607,6 @@ pub trait IRWalker: IRViewer {
         self.walk().any(|n| pred(self.node_kind(n)))
     }
 
-    /// Post-order (consumers before operands; roots last) of the reachable set
-    /// captured by `info` — obtain `info` from [`Self::walk_info`].
-    fn postorder(&self, info: &crate::walk::GraphWalkInfo) -> Vec<NodeId> {
-        info.postorder(self.function().graph()).collect()
-    }
-
     /// Real reverse-post-order (every producer before its consumers, roots
     /// first) of the reachable set captured by `info` — obtain `info` from
     /// [`Self::walk_info`].
@@ -632,21 +626,6 @@ pub trait IRWalker: IRViewer {
             None => Vec::new(),
         };
         rpo.into_iter().filter(move |&n| pred(self.node_kind(n)))
-    }
-
-    /// Entry-reachable nodes in **global post-order** (consumers before
-    /// operands; entry last), filtered by `pred` — the post-order counterpart
-    /// of [`Self::reverse_postorder_filter`].  Yields an empty iterator when the entry has
-    /// not been set.
-    fn postorder_filter<'a>(
-        &'a self,
-        pred: impl Fn(&NodeKind) -> bool + 'a,
-    ) -> impl Iterator<Item = NodeId> + 'a {
-        let po = match self.walk_info(None) {
-            Some(info) => self.postorder(&info),
-            None => Vec::new(),
-        };
-        po.into_iter().filter(move |&n| pred(self.node_kind(n)))
     }
 }
 

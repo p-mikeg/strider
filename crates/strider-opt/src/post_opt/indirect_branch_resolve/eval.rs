@@ -14,9 +14,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
-use strider_target::Endianness;
 
-use crate::opt::constant_fold::eval_int::eval_int_binary;
 use crate::sp_expr::{SpAliasCfg, SpExpr, SpExprMemo};
 
 /// Returns an iterator over the value-typed inputs of `node` — i.e., inputs
@@ -118,27 +116,33 @@ impl<'a> Evaluator<'a> {
         match kind {
             NodeKind::IntConst(_) => Some(Abs::Const(f.int_const_u128(value)?)),
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add) => {
-                self.eval_add(self.get(*ins.first()?)?, self.get(*ins.get(1)?)?, out_ty?)
+                self.eval_add(value, self.get(*ins.first()?)?, self.get(*ins.get(1)?)?, out_ty?)
             }
             NodeKind::Load(_) => self.eval_load(node, value),
             NodeKind::Phi => self.eval_phi(node),
-            _ => {
-                let resolve = |v| self.get(v).and_then(Abs::as_const);
-                crate::const_eval::eval_node_const(self.function, value, &resolve, self.rom)
-                    .map(Abs::Const)
-            }
+            _ => self.eval_const_node(value),
         }
     }
 
-    /// `Add` in the abstract domain: `Const+Const`, or `SpRel ± Const`.
-    fn eval_add(&self, l: Abs, r: Abs, ty: ValueType) -> Option<Abs> {
+    /// Route a pure-constant node through the shared
+    /// [`crate::const_eval::eval_node_const`] SSoT, resolving each input from
+    /// the abstract map's already-computed `Const` facts.  This is the single
+    /// const-domain fold for every kind the abstract evaluator does not layer
+    /// the `SpRel` domain on top of (and the `Const` arms of `eval_add` /
+    /// `eval_load`).
+    fn eval_const_node(&self, value: ValueId) -> Option<Abs> {
+        let resolve = |v| self.get(v).and_then(Abs::as_const);
+        crate::const_eval::eval_node_const(self.function, value, &resolve, self.rom).map(Abs::Const)
+    }
+
+    /// `Add` in the abstract domain: `Const+Const` (routed through the shared
+    /// `const_eval` resolver via [`Self::eval_const_node`]), or `SpRel ± Const`.
+    fn eval_add(&self, value: ValueId, l: Abs, r: Abs, ty: ValueType) -> Option<Abs> {
         match (l, r) {
-            (Abs::Const(a), Abs::Const(b)) => Some(Abs::Const(eval_int_binary(
-                strider_ir::IntBinaryOp::Add,
-                a,
-                b,
-                ty,
-            )?)),
+            // Const+Const is exactly what `eval_node_const`'s Add arm computes
+            // from the resolved inputs — route it through the SSoT rather than
+            // re-deriving `eval_int_binary` here.
+            (Abs::Const(_), Abs::Const(_)) => self.eval_const_node(value),
             (Abs::SpRel { base, offset }, Abs::Const(c))
             | (Abs::Const(c), Abs::SpRel { base, offset }) => {
                 // Signed interpretation so a negative frame offset (stored as
@@ -158,12 +162,10 @@ impl<'a> Evaluator<'a> {
         let f = self.function;
         let load_ty = f.value_type_opt(value)?;
         match self.get(f.load_addr(node))? {
-            Abs::Const(c) => {
-                let rom = self.rom?;
-                let addr = u64::try_from(c).ok()?;
-                crate::const_eval::read_rom_const(rom, addr, load_ty, self.function.endianness())
-                    .map(Abs::Const)
-            }
+            // Const-address ROM read — exactly the `Load(RAM)` arm of
+            // `eval_node_const`, so route it through that SSoT (the resolver
+            // re-reads the already-`Const` address from the map).
+            Abs::Const(_) => self.eval_const_node(value),
             Abs::SpRel { base, offset } => {
                 let [mem, _addr] = f.node_inputs_exact::<2>(node).ok()?;
                 let load_size = load_ty.byte_size() as i64;
@@ -193,14 +195,11 @@ impl<'a> Evaluator<'a> {
         }
         if data_ty.is_integer() && load_ty.is_integer() && load_ty.byte_size() < data_ty.byte_size()
         {
-            let shifted = match self.function.endianness() {
-                Endianness::Little => v,
-                Endianness::Big => {
-                    let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u32) * 8;
-                    v >> shift_bits
-                }
-            };
-            return load_ty.get_unsigned_int(shifted);
+            // SSoT for the endianness-aware byte-slice shift (shared with
+            // `LoadForward::narrow`); LE → 0, so the low bytes pass through.
+            let shift_bits =
+                crate::sp_expr::high_low_shift_bits(data_ty, load_ty, self.function.endianness());
+            return load_ty.get_unsigned_int(v >> shift_bits);
         }
         None
     }

@@ -5,16 +5,16 @@ use anyhow::anyhow;
 
 use crate::error::Result;
 
-/// The signed minimum and maximum representable in `ty`'s bit width
-/// (`-2^(bits-1)` .. `2^(bits-1) - 1`, or `i128::MIN`/`MAX` at ≥128 bits).
-fn signed_min_max(ty: ValueType) -> (i128, i128) {
+/// The signed minimum representable in `ty`'s bit width (`-2^(bits-1)`, or
+/// `i128::MIN` at ≥128 bits).  The signed-overflow guards in `Sdiv` / `Srem`
+/// read only the minimum (the `INT_MIN / -1` undefined case), so the maximum
+/// is not derived.
+fn signed_min(ty: ValueType) -> i128 {
     let bits = ty.bit_width() as u32;
     if bits >= 128 {
-        (i128::MIN, i128::MAX)
+        i128::MIN
     } else {
-        let min = -(1i128 << (bits - 1));
-        let max = (1i128 << (bits - 1)) - 1;
-        (min, max)
+        -(1i128 << (bits - 1))
     }
 }
 
@@ -99,7 +99,7 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
             // well-defined" (e.g. -i32::MIN as i128 = 2^31 fits), but the
             // mask-back to ty would silently wrap to INT_MIN — not the
             // mathematical result.  Skip rather than emit a wraparound.
-            let (int_min, _) = signed_min_max(ty);
+            let int_min = signed_min(ty);
             if sl == int_min && sr == -1 {
                 return None;
             }
@@ -120,7 +120,7 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
             // Signed-overflow guard: INT_MIN % -1 is mathematically 0 but
             // hardware idiv raises #DE; treat it as undefined and skip,
             // matching the Sdiv case.
-            let (int_min, _) = signed_min_max(ty);
+            let int_min = signed_min(ty);
             if sl == int_min && sr == -1 {
                 return None;
             }

@@ -641,7 +641,7 @@ fn build_cone_fingerprint_memo(
     let mut stack: Vec<(NodeId, bool)> = Vec::new();
     let seed_inputs = to_fold
         .iter()
-        .flat_map(|&(value, _, _)| crate::peephole::input_producers(ctx, ctx.producer(value)));
+        .flat_map(|&(value, _, _)| crate::peephole::input_producers_iter(ctx, ctx.producer(value)));
     for n in seed_inputs {
         stack.push((n, false));
     }
@@ -650,7 +650,7 @@ fn build_cone_fingerprint_memo(
             // Children resolved — assemble this node's set.
             let mut addrs: ConeFps = ctx.function().asm_fingerprint(n).iter().copied().collect();
             if propagates_known_bits(ctx.node_kind(n)) {
-                for p in crate::peephole::input_producers(ctx, n) {
+                for p in crate::peephole::input_producers_iter(ctx, n) {
                     if let Some(child) = memo.get(&p) {
                         addrs.extend_from_slice(child);
                     }
@@ -666,7 +666,7 @@ fn build_cone_fingerprint_memo(
         }
         stack.push((n, true));
         if propagates_known_bits(ctx.node_kind(n)) {
-            for p in crate::peephole::input_producers(ctx, n) {
+            for p in crate::peephole::input_producers_iter(ctx, n) {
                 if !memo.contains_key(&p) {
                     stack.push((p, false));
                 }
