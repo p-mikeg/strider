@@ -24,20 +24,17 @@ pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
 pub use vertex::{KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn};
 
-use std::{cell::OnceCell, mem::Discriminant};
+use std::cell::OnceCell;
+use std::mem::Discriminant;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
-use strider_ir::{
-    Function, Graph, IRViewer, IRWalker,
-    node::{NodeId, NodeKind},
-};
+use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{Function, Graph, IRViewer, IRWalker};
 
-use crate::{
-    bindings::{Binding, Bindings},
-    graph_ext::PatGraphRead,
-    match_result::Match,
-};
+use crate::bindings::{Binding, Bindings};
+use crate::graph_ext::PatGraphRead;
+use crate::match_result::Match;
 
 /// Discriminant of the pat node at `root`, used by the `find_*` dispatch
 /// to pre-filter IR nodes by kind. Returns `None` for a kind-`Any` root

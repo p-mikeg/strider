@@ -2,11 +2,9 @@
 //! use-list bookkeeping, and typed accessors.
 
 use super::*;
-use crate::{
-    IRViewer,
-    function::Function,
-    node::{NodeId, NodeKind, ValueId, ValueKind, ValueType},
-};
+use crate::IRViewer;
+use crate::function::Function;
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use cranelift_entity::EntityRef;
 
 // ── helpers ───────────────────────────────────────────────────────────────

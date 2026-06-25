@@ -7,10 +7,8 @@
 //! populates in production.  We bypass `StackOffsetDetect` here so tests stay
 //! focused on the pattern-matcher behaviour rather than the optimizer.
 
-use strider_ir::{
-    IRViewer, IRWalker,
-    node::{NodeId, NodeKind, ValueType},
-};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
+use strider_ir::{IRViewer, IRWalker};
 use strider_pattern::{Capture, Matcher, load, store};
 
 use super::support::Tb;

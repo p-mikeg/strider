@@ -1,7 +1,8 @@
 //! `PyCallingConvention` — opaque wrapper over `strider_target::CallingConvention`
 //! with one Python classmethod per Rust preset.
 
-use pyo3::{prelude::*, types::PyType};
+use pyo3::prelude::*;
+use pyo3::types::PyType;
 
 use crate::macros::forall_preset;
 

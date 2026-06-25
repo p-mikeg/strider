@@ -13,12 +13,10 @@
 
 use anyhow::{anyhow, bail};
 
-use crate::{
-    Value,
-    builder::IRBuilderExt,
-    error::Result,
-    node::{ExtendOp, IntBinaryOp, ValueType, VnTypeExt},
-};
+use crate::Value;
+use crate::builder::IRBuilderExt;
+use crate::error::Result;
+use crate::node::{ExtendOp, IntBinaryOp, ValueType, VnTypeExt};
 
 use super::FunctionBuilder;
 

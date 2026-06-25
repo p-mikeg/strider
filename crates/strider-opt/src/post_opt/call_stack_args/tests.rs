@@ -1,10 +1,10 @@
 use super::*;
-use crate::{error::Result, pipeline::PostOptimizerTestExt, test_support::cf_rp_pipeline};
+use crate::error::Result;
+use crate::pipeline::PostOptimizerTestExt;
+use crate::test_support::cf_rp_pipeline;
 use anyhow::anyhow;
-use strider_ir::{
-    Graph, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
-    node::{NodeId, NodeKind, ValueId, ValueType},
-};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::{Graph, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, stack_vn_x86 as stack_vn};
 
 /// Returns `true` when `v` is an `IntConst` whose value equals `expected`.

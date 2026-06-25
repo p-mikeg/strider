@@ -4,7 +4,9 @@
 //! land in Python as `StriderError`.  Errors carry an informative message
 //! and (with `RUST_BACKTRACE=1`) a Rust backtrace.
 
-use pyo3::{create_exception, exceptions::PyException, prelude::*};
+use pyo3::create_exception;
+use pyo3::exceptions::PyException;
+use pyo3::prelude::*;
 
 create_exception!(
     strider.errors,

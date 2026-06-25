@@ -15,7 +15,8 @@
 //!   + operands), not the hand-rolled `<Opcode>, <Reg>` form.
 
 use dot::{DotStyle, GraphDot};
-use rsleigh::{Sleigh, mem_readers::BufMemReader};
+use rsleigh::Sleigh;
+use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{Builder, Cfg, CfgOptions};
 use strider_target::SleighArch;
 

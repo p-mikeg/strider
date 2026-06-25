@@ -7,14 +7,11 @@
 //! float ↔ integer conversions (`FloatInt2Float`, `FloatFloat2Float`,
 //! `FloatTrunc`).
 
-use strider_ir::{
-    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, VnTypeExt, node::ValueType,
-};
+use strider_ir::node::ValueType;
+use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, VnTypeExt};
 
-use crate::lift::{
-    FunctionLifter,
-    pcode_util::{Result, nth_input_or_err, require_output_vn},
-};
+use crate::lift::FunctionLifter;
+use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Bitcasts a float result back to an integer of the same width and writes

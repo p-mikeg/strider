@@ -34,7 +34,8 @@
 
 mod common;
 use common::*;
-use strider_ir::{IRViewer, node::NodeKind};
+use strider_ir::IRViewer;
+use strider_ir::node::NodeKind;
 
 // ── Assertion ────────────────────────────────────────────────────────────────
 

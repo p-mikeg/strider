@@ -536,7 +536,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::OptCtx;
-    use strider_ir::{IRBuilderExt, IRViewer, IRWalker, node::ValueType};
+    use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
     /// Build a tiny single-region function returning `IntConst(K)`.
@@ -669,7 +670,8 @@ mod tests {
             ConstantFold, DeadBranchElimination, KnownBits, LoadForward, OptimizerPipeline,
             PhiCollapse, RegionCollapse,
         };
-        use strider_ir::{IRViewer, node::NodeKind};
+        use strider_ir::IRViewer;
+        use strider_ir::node::NodeKind;
 
         let sp = rsleigh::Vn {
             addr_off: 0x20,

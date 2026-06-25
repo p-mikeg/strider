@@ -75,10 +75,8 @@ fn code_and_readonly_preset_skips_nobits() {
 /// the buffer, which makes `section.data()` return `Err`.
 #[test]
 fn code_and_readonly_preset_propagates_data_error() {
-    use object::{
-        Endianness, elf,
-        write::elf::{FileHeader, SectionHeader, Writer},
-    };
+    use object::write::elf::{FileHeader, SectionHeader, Writer};
+    use object::{Endianness, elf};
 
     let mut buf = Vec::new();
     {
@@ -151,10 +149,8 @@ fn code_and_readonly_preset_propagates_data_error() {
 /// so `MemRegion::new` must reject it.
 #[test]
 fn code_and_readonly_preset_propagates_region_overflow() {
-    use object::{
-        Endianness, elf,
-        write::elf::{FileHeader, SectionHeader, Writer},
-    };
+    use object::write::elf::{FileHeader, SectionHeader, Writer};
+    use object::{Endianness, elf};
 
     let payload = [0u8, 0, 0, 0]; // 4 bytes of data on disk
 
@@ -234,10 +230,8 @@ fn code_and_readonly_preset_propagates_region_overflow() {
 /// preset) at a bogus offset; the walker must skip it without reading.
 #[test]
 fn code_and_readonly_preset_skips_rejected_malformed_section() {
-    use object::{
-        Endianness, elf,
-        write::elf::{FileHeader, SectionHeader, Writer},
-    };
+    use object::write::elf::{FileHeader, SectionHeader, Writer};
+    use object::{Endianness, elf};
 
     let mut buf = Vec::new();
     {
@@ -407,10 +401,8 @@ fn allocatable_preset_skips_nobits() {
 /// return `Err`.
 #[test]
 fn allocatable_preset_propagates_data_error() {
-    use object::{
-        Endianness, elf,
-        write::elf::{FileHeader, SectionHeader, Writer},
-    };
+    use object::write::elf::{FileHeader, SectionHeader, Writer};
+    use object::{Endianness, elf};
 
     let mut buf = Vec::new();
     {
@@ -476,10 +468,8 @@ fn allocatable_preset_propagates_data_error() {
 /// pins the overflow arm via the allocatable preset's filter.
 #[test]
 fn allocatable_preset_propagates_region_overflow() {
-    use object::{
-        Endianness, elf,
-        write::elf::{FileHeader, SectionHeader, Writer},
-    };
+    use object::write::elf::{FileHeader, SectionHeader, Writer};
+    use object::{Endianness, elf};
 
     let payload = [0u8, 0, 0, 0]; // 4 bytes of data on disk
 

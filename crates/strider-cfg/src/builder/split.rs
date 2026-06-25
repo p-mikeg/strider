@@ -1,4 +1,5 @@
-use petgraph::{graph::NodeIndex, visit::EdgeRef};
+use petgraph::graph::NodeIndex;
+use petgraph::visit::EdgeRef;
 
 use super::Builder;
 use crate::types::{PcodeInsnAddr, Region, RegionTerminator};

@@ -3,15 +3,11 @@
 //! [`Bindings`] journal; per-capture value reads go through
 //! [`Match::bindings`] (the typed accessors live on [`Bindings`]).
 
-use strider_ir::{
-    Graph, IRViewer,
-    node::{NodeId, NodeKind, ValueId},
-};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{Graph, IRViewer};
 
-use crate::{
-    bindings::{Binding, Bindings},
-    capture::Capture,
-};
+use crate::bindings::{Binding, Bindings};
+use crate::capture::Capture;
 
 /// The result of a successful pattern match against a single root node.
 ///

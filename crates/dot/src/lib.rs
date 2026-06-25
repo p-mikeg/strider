@@ -19,10 +19,8 @@
 //!
 //! [`@viz-js/viz`]: https://github.com/mdaines/viz-js
 
-use std::{
-    fmt::{Debug, Write},
-    path::Path,
-};
+use std::fmt::{Debug, Write};
+use std::path::Path;
 
 /// Crate-level `Result` alias.  Every fallible function in `dot` returns
 /// this type.

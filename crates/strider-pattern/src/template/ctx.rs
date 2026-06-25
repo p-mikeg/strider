@@ -1,9 +1,7 @@
 //! Context struct threaded through template instantiation.
 
-use strider_ir::{
-    Function,
-    node::{NodeId, ValueType},
-};
+use strider_ir::Function;
+use strider_ir::node::{NodeId, ValueType};
 
 /// Per-rewrite context for template instantiation.
 ///

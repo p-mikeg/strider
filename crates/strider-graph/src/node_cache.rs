@@ -22,11 +22,9 @@ use cranelift_entity::SecondaryMap;
 use hashbrown::HashTable;
 use smallvec::SmallVec;
 
-use crate::{
-    cache::NodeCacheable,
-    ids::{NodeId, ValueId},
-    storage::RawStore,
-};
+use crate::cache::NodeCacheable;
+use crate::ids::{NodeId, ValueId};
+use crate::storage::RawStore;
 
 /// Sentinel `node_hashes` value meaning "this node is not in the dedup table".
 /// `u64::MAX` is used rather than `0` because `0` is a perfectly valid hash for

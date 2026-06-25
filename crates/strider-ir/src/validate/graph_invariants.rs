@@ -1,10 +1,8 @@
-use crate::{
-    IRViewer,
-    function::Function,
-    graph::Graph,
-    node::{NodeId, NodeKind, ValueKind},
-    walk::NodeIdSet,
-};
+use crate::IRViewer;
+use crate::function::Function;
+use crate::graph::Graph;
+use crate::node::{NodeId, NodeKind, ValueKind};
+use crate::walk::NodeIdSet;
 
 use super::ValidationError;
 

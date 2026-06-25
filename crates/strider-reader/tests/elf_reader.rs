@@ -7,13 +7,10 @@ mod common;
 
 use std::io::Write as _;
 
-use common::{
-    elf_fixture::simple_text_elf,
-    reader_contract::{
-        assert_mem_reader_partial_read_ok, assert_mem_reader_reads,
-        assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_errors,
-        assert_readonly_reads,
-    },
+use common::elf_fixture::simple_text_elf;
+use common::reader_contract::{
+    assert_mem_reader_partial_read_ok, assert_mem_reader_reads,
+    assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_errors, assert_readonly_reads,
 };
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::{ElfFileMemReader, ReadOnlyMemory};

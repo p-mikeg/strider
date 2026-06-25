@@ -21,15 +21,12 @@
 
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::{
-    capture::Capture,
-    matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern, match_pat::MatchPat},
-};
+use crate::capture::Capture;
+use crate::matcher::match_pat::MatchPat;
+use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 
-use super::{
-    MemPat,
-    node_pat::{KindCheck, NodePat, variant_kind},
-};
+use super::MemPat;
+use super::node_pat::{KindCheck, NodePat, variant_kind};
 
 // ── Stack-access filter (shared by LoadPat / StorePat) ───────────────────────
 

@@ -16,13 +16,15 @@
 //! petgraph's `GraphRef: Copy` requirement). Visited tracking uses an
 //! [`FxHashSet`] of vertices.
 
-use petgraph::{
-    Direction,
-    visit::{GraphBase, IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, Visitable},
+use petgraph::Direction;
+use petgraph::visit::{
+    GraphBase, IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, Visitable,
 };
 use rustc_hash::FxHashSet;
 
-use crate::{cache::NodeCacheable, graph::Graph, ids::Vertex};
+use crate::cache::NodeCacheable;
+use crate::graph::Graph;
+use crate::ids::Vertex;
 
 impl<N, V, C: NodeCacheable<N, V>> GraphBase for Graph<N, V, C> {
     type NodeId = Vertex;

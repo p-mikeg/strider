@@ -24,13 +24,11 @@
 //! aggregates every [`ValidationError`] it found during a single pass, so
 //! callers can see all problems at once rather than only the first.
 
-use crate::{
-    IRViewer,
-    function::Function,
-    node::{NodeId, UseId, ValueId, ValueKind, ValueType},
-    node_signature::ExpectedValueKind,
-    walk::NodeIdSet,
-};
+use crate::IRViewer;
+use crate::function::Function;
+use crate::node::{NodeId, UseId, ValueId, ValueKind, ValueType};
+use crate::node_signature::ExpectedValueKind;
+use crate::walk::NodeIdSet;
 
 mod graph_invariants;
 mod local_typing;

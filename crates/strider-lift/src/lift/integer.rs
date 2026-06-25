@@ -7,10 +7,8 @@
 
 use strider_ir::{ExtendOp, IRBuilderExt, VnTypeExt};
 
-use crate::lift::{
-    FunctionLifter,
-    pcode_util::{Result, nth_input_or_err, require_output_vn},
-};
+use crate::lift::FunctionLifter;
+use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Translates a p-code `Copy` instruction.

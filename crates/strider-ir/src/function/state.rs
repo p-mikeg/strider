@@ -10,7 +10,8 @@
 //! explicit [`EditFunction::cull_dead`](super::EditFunction::cull_dead), not
 //! here.
 
-use crate::{Function, node::NodeId};
+use crate::Function;
+use crate::node::NodeId;
 use cranelift_entity::SecondaryMap;
 use entity_utils::{DenseEntitySet, Worklist};
 
@@ -87,10 +88,10 @@ impl FunctionState {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::FunctionState;
-    use crate::{
-        IRViewer, IntBinaryOp, ValueType, builder::IRBuilderExt,
-        function::edit::test_fixtures::single_region_builder, node::NodeKind,
-    };
+    use crate::builder::IRBuilderExt;
+    use crate::function::edit::test_fixtures::single_region_builder;
+    use crate::node::NodeKind;
+    use crate::{IRViewer, IntBinaryOp, ValueType};
 
     /// `populate` seeds `roots` with exactly the input-less reachable nodes
     /// (`Entry` + the two operand consts) and excludes a dangling

@@ -442,10 +442,8 @@ fn asm_fingerprint_exempt_matches_legacy() {
 
 #[test]
 fn same_value_distinct_width_shares_const_id_distinct_node() {
-    use crate::{
-        IRBuilderExt, IRViewer,
-        node::{NodeKind, ValueType},
-    };
+    use crate::node::{NodeKind, ValueType};
+    use crate::{IRBuilderExt, IRViewer};
     let mut f = crate::Function::default();
     // build_int_const interns by value; I80 and I128 both hold 42.
     let v80 = f.build_int_const(42u128, ValueType::I80).unwrap();

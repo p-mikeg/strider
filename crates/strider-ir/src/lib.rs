@@ -65,10 +65,8 @@ pub mod validate;
 mod viewer;
 pub mod walk;
 
-pub use crate::{
-    const_value::{ConstId, ConstValue},
-    error::Result,
-};
+pub use crate::const_value::{ConstId, ConstValue};
+pub use crate::error::Result;
 pub use builder::{FunctionBuilder, IRBuilder, IRBuilderExt};
 pub use node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, VnTypeExt,

@@ -24,10 +24,8 @@
     clippy::unreachable
 )]
 
-use strider_ir::{
-    IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntUnaryOp,
-    node::{NodeId, NodeKind, ValueId, ValueType},
-};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
 use strider_opt::{

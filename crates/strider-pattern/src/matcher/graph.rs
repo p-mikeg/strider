@@ -12,10 +12,8 @@
 
 use strider_graph::{Graph, NeverCacheable, NodeId};
 
-use super::{
-    CastMask,
-    vertex::{PatNode, PatValue, PostMatchFn},
-};
+use super::CastMask;
+use super::vertex::{PatNode, PatValue, PostMatchFn};
 use crate::graph_ext::PatGraphRead;
 
 /// The generic graph backing a [`Pattern`] / the [`MatcherBuilder`].
@@ -144,7 +142,8 @@ impl Pattern {
 #[cfg(test)]
 mod tests {
     use crate::matcher::MatcherBuilder;
-    use strider_ir::{ConstId, node::NodeKind};
+    use strider_ir::ConstId;
+    use strider_ir::node::NodeKind;
 
     #[test]
     fn builds_bipartite_add_shape() {

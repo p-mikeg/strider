@@ -41,16 +41,12 @@
 //! registered into the side-table for that argument ordinal — the
 //! `Vec<ValueId>` per entry accommodates this.
 
-use strider_ir::{
-    IRViewer,
-    node::{NodeId, NodeKind},
-};
+use strider_ir::IRViewer;
+use strider_ir::node::{NodeId, NodeKind};
 
-use crate::{
-    error::Result,
-    pipeline::PostOptimizer,
-    sp_expr::{SpAliasCfg, SpExpr, narrow_load_to},
-};
+use crate::error::Result;
+use crate::pipeline::PostOptimizer;
+use crate::sp_expr::{SpAliasCfg, SpExpr, narrow_load_to};
 
 /// Detects stack-passed argument `Load` nodes and records their
 /// carrier nodes in

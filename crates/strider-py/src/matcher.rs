@@ -14,11 +14,9 @@
 
 use pyo3::prelude::*;
 
-use crate::{
-    errors::into_strider_err,
-    function::PyFunction,
-    pattern::{PyCapture, intern_str},
-};
+use crate::errors::into_strider_err;
+use crate::function::PyFunction;
+use crate::pattern::{PyCapture, intern_str};
 
 /// Result of a successful pattern match.
 ///

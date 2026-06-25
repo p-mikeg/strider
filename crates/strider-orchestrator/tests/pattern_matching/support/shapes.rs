@@ -2,7 +2,8 @@
 //! test modules need it; single-use shapes stay inline in the test for
 //! readability.
 
-use strider_ir::{FloatBinaryOp, Function, IntBinaryOp, IntCmpOp, IntUnaryOp, node::ValueType};
+use strider_ir::node::ValueType;
+use strider_ir::{FloatBinaryOp, Function, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use strider_ir_test_utils::{Tb, reg_vn, stack_vn_x86_64 as stack_vn};
 

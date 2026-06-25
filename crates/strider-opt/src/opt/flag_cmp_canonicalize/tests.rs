@@ -6,13 +6,12 @@
 //! `IntCmpOp` node consuming the original `(a, b)` pair.
 
 use super::FlagCmpCanonicalize;
-use crate::{error::Result, pipeline::OptimizerTestExt};
+use crate::error::Result;
+use crate::pipeline::OptimizerTestExt;
 use strider_ir::{IRBuilderExt, IRViewer};
 
-use strider_ir::{
-    FunctionBuilder, Graph, IRWalker, IntBinaryOp, IntCmpOp, IntUnaryOp,
-    node::{NodeId, NodeKind, ValueId, ValueType},
-};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::{FunctionBuilder, Graph, IRWalker, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
 /// PowerPC `cmpwi` packs LT/GT/EQ/SO into a CR field; the branch extracts one

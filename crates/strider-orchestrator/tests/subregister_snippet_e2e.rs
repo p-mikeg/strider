@@ -23,8 +23,10 @@ mod common;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::MachineInsnAddr;
-use strider_ir::{IRViewer, IRWalker, node::NodeKind};
-use strider_orchestrator::{LiftOptions, Strider, opt::OptOptions};
+use strider_ir::node::NodeKind;
+use strider_ir::{IRViewer, IRWalker};
+use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::{LiftOptions, Strider};
 
 const BASE: u64 = 0x1000;
 

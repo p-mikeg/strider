@@ -2,12 +2,10 @@ use anyhow::anyhow;
 use smallvec::SmallVec;
 
 use super::FunctionBuilder;
-use crate::{
-    IRViewer,
-    builder::IRBuilderExt,
-    error::Result,
-    node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, VnTypeExt},
-};
+use crate::IRViewer;
+use crate::builder::IRBuilderExt;
+use crate::error::Result;
+use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, VnTypeExt};
 
 use super::require_reg_or_unique;
 

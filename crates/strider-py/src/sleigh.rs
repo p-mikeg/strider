@@ -7,11 +7,9 @@
 
 use pyo3::prelude::*;
 
-use crate::{
-    arch::PySleighArch,
-    errors::into_strider_err,
-    reader::{AnyMemReader, MemInput},
-};
+use crate::arch::PySleighArch;
+use crate::errors::into_strider_err;
+use crate::reader::{AnyMemReader, MemInput};
 
 /// A `Sleigh` register-table handle keyed off a (SleighArch, reader)
 /// pair.

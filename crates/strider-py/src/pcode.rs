@@ -19,11 +19,9 @@
 
 use pyo3::prelude::*;
 
-use crate::{
-    arch::PySleighArch,
-    errors::into_strider_err,
-    reader::{PyBufferReader, PyBufferReaderView},
-};
+use crate::arch::PySleighArch;
+use crate::errors::into_strider_err;
+use crate::reader::{PyBufferReader, PyBufferReaderView};
 
 /// Build one `Sleigh` over the buffer reader's `Send + Sync` reader
 /// snapshot.  Returns a typed `StriderError` on a Sleigh-construction

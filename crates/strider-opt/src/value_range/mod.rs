@@ -20,10 +20,8 @@ use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
 use petgraph::algo::dominators::Dominators;
-use strider_ir::{
-    IRViewer, IRWalker, IntBinaryOp, IntCmpOp, dominates,
-    node::{NodeId, NodeKind, ValueId, ValueKind, ValueType},
-};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::{IRViewer, IRWalker, IntBinaryOp, IntCmpOp, dominates};
 
 use crate::opt::known_bits::{KnownBitsFacts, KnownBitsMap};
 

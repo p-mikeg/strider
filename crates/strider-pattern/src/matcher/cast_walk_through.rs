@@ -10,11 +10,9 @@
 //! value-passthrough casts lives in `strider_ir::walk::cast_mask_of`;
 //! this helper owns only the iterative "unwrap one cast, retry" tail-loop.
 
-use strider_ir::{
-    IRViewer,
-    node::{NodeId, ValueId},
-    walk::{CastMask, cast_mask_of},
-};
+use strider_ir::IRViewer;
+use strider_ir::node::{NodeId, ValueId};
+use strider_ir::walk::{CastMask, cast_mask_of};
 
 use crate::matcher::Matcher;
 

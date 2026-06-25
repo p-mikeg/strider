@@ -8,22 +8,16 @@
     clippy::unreachable
 )]
 
-use strider_ir::{
-    ConstId, EditFunction, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
-    node::{NodeKind, ValueKind, ValueType as T},
-};
+use strider_ir::node::{NodeKind, ValueKind, ValueType as T};
+use strider_ir::{ConstId, EditFunction, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::make_empty_fn;
 
-use strider_ir::{
-    Function,
-    node::{NodeId, ValueId, ValueType},
-};
+use strider_ir::Function;
+use strider_ir::node::{NodeId, ValueId, ValueType};
+use strider_pattern::matcher::{KindSpec, Pattern};
+use strider_pattern::template::{self, Template, TemplateBuilder, instantiate};
 use strider_pattern::{
-    Bindings, Capture, MatchPat, Matcher, TemplatePat, add, int_const,
-    matcher::{KindSpec, Pattern},
-    signed_int_const,
-    template::{self, Template, TemplateBuilder, instantiate},
-    var,
+    Bindings, Capture, MatchPat, Matcher, TemplatePat, add, int_const, signed_int_const, var,
 };
 
 // ── Shared match-then-instantiate scaffold ───────────────────────────────────

@@ -6,7 +6,8 @@
 use petgraph::visit::{GraphBase, IntoNeighbors, IntoNodeIdentifiers, Visitable};
 use rustc_hash::FxHashSet;
 
-use crate::{function::Function, node::NodeId};
+use crate::function::Function;
+use crate::node::NodeId;
 
 // ── ControlFlowView ───────────────────────────────────────────────────────────
 
@@ -119,7 +120,9 @@ pub fn dominates(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FunctionBuilder, IRViewer, builder::IRBuilderExt, node::NodeKind};
+    use crate::builder::IRBuilderExt;
+    use crate::node::NodeKind;
+    use crate::{FunctionBuilder, IRViewer};
     use cranelift_entity::EntityRef;
     use petgraph::visit::{IntoNeighbors, IntoNodeIdentifiers};
 

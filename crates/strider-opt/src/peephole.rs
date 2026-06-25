@@ -17,12 +17,11 @@
 //! with a per-pass memo, etc.) keep their hand-written `Optimizer` impl.
 
 use entity_utils::Worklist;
-use strider_ir::{
-    IRViewer,
-    node::{NodeId, NodeKind},
-};
+use strider_ir::IRViewer;
+use strider_ir::node::{NodeId, NodeKind};
 
-use crate::{error::Result, pipeline::OptimizationResult};
+use crate::error::Result;
+use crate::pipeline::OptimizationResult;
 
 /// The producer node of each value input of `node`, in input-slot order.
 ///
@@ -220,13 +219,12 @@ mod tests {
 
     use super::*;
     use std::cell::RefCell;
-    use strider_ir::{
-        IRBuilderExt, IntBinaryOp,
-        node::{NodeKind, ValueType},
-    };
+    use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::make_empty_fn;
 
-    use crate::{error::Result, pipeline::OptimizationResult};
+    use crate::error::Result;
+    use crate::pipeline::OptimizationResult;
 
     /// A scriptable pass: matches on a configured kind predicate, records
     /// every `try_rewrite` invocation, and on match rewires the root's

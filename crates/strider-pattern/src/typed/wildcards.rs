@@ -6,18 +6,12 @@
 //! `initial_var` / `initial_var_for` match the register-arg carrier
 //! kind.
 
-use strider_ir::{
-    IRViewer,
-    node::{NodeId, ValueType},
-};
+use strider_ir::IRViewer;
+use strider_ir::node::{NodeId, ValueType};
 
-use crate::{
-    capture::Capture,
-    matcher::{
-        KindSpec, MatcherBuilder, PatValueRef,
-        match_pat::{CaptureExt, MatchPat},
-    },
-};
+use crate::capture::Capture;
+use crate::matcher::match_pat::{CaptureExt, MatchPat};
+use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef};
 
 /// Match any node. Match-only (no template counterpart).
 pub struct Any;

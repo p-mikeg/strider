@@ -8,10 +8,8 @@
 //! mismatch.  Integration tests get the same compilation of `strider-ir`
 //! that downstream crates use, so there is no mismatch.
 
-use strider_ir::{
-    IRBuilder, IRViewer,
-    node::{NodeKind, ValueKind, ValueType},
-};
+use strider_ir::node::{NodeKind, ValueKind, ValueType};
+use strider_ir::{IRBuilder, IRViewer};
 use strider_ir_test_utils::empty_builder;
 
 /// `FunctionBuilder`'s `IRBuilder` impl stamps the active `lift_addr` into

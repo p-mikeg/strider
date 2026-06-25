@@ -1,13 +1,9 @@
 use super::*;
-use crate::{
-    error::Result,
-    pipeline::{OptCtx, OptimizerTestExt, PostOptimizerTestExt},
-    test_support::{assert_returns_const, make_fn},
-};
-use strider_ir::{
-    IRWalker,
-    node::{NodeKind, ValueType},
-};
+use crate::error::Result;
+use crate::pipeline::{OptCtx, OptimizerTestExt, PostOptimizerTestExt};
+use crate::test_support::{assert_returns_const, make_fn};
+use strider_ir::IRWalker;
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{MockRom, make_empty_fn_endian};
 use strider_target::Endianness;
 
@@ -380,7 +376,8 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
 /// `IntConst(42)` regardless.
 #[test]
 fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
-    use crate::{StackOffsetDetect, pipeline::OptimizerTestExt};
+    use crate::StackOffsetDetect;
+    use crate::pipeline::OptimizerTestExt;
     use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
     let sp = stack_vn_x86();

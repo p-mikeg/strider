@@ -55,10 +55,8 @@
 use super::MAX_TABLE_ENTRIES;
 use crate::{AliasMode, ReadOnlyMemory};
 use strider_cfg::ResolvedTargets;
-use strider_ir::{
-    IRViewer,
-    node::{IntBinaryOp, NodeId, NodeKind, ValueId},
-};
+use strider_ir::IRViewer;
+use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId};
 
 /// Top-level classifier hook for the table-dispatch arm.  Called by
 /// [`super::classify_anchor`] when the anchor's producer is a

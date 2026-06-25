@@ -9,12 +9,11 @@
     clippy::unreachable
 )]
 
-use strider_ir::{IRBuilderExt, IntBinaryOp, node::ValueType};
+use strider_ir::node::ValueType;
+use strider_ir::{IRBuilderExt, IntBinaryOp};
 use strider_ir_test_utils::make_empty_fn;
-use strider_pattern::{
-    MatchPat, Matcher, int_const,
-    matcher::{KindSpec, MatcherBuilder},
-};
+use strider_pattern::matcher::{KindSpec, MatcherBuilder};
+use strider_pattern::{MatchPat, Matcher, int_const};
 
 #[test]
 fn matches_add_const_via_builder() {

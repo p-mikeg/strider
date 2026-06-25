@@ -4,16 +4,12 @@
 //! [`super::mem_ssa`] memory-SSA walk.  The address-class verdict logic it
 //! consults lives in the sibling [`super::analyzer`] module.
 
-use strider_ir::{
-    Function, IRViewer,
-    node::{NodeId, NodeKind, ValueId},
-};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{Function, IRViewer};
 
-use super::{
-    analyzer::{AddrClass, AliasVerdict, SpAnalyzer, SpExpr, SpExprMemo, alias_verdict},
-    mem_ssa::MemorySSAWalker,
-    ranges::store_value_byte_size,
-};
+use super::analyzer::{AddrClass, AliasVerdict, SpAnalyzer, SpExpr, SpExprMemo, alias_verdict};
+use super::mem_ssa::MemorySSAWalker;
+use super::ranges::store_value_byte_size;
 use crate::{AliasMode, MemAliasOptions};
 
 /// The single SP-aware [`MemorySSAWalker`] oracle, shared by `load_forward`

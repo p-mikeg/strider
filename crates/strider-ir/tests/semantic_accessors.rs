@@ -5,10 +5,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use strider_ir::{
-    IRBuilderExt, IRViewer, IRWalker,
-    node::{NodeKind, ValueType},
-};
+use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
 /// `store_addr` / `store_data` return the Store's address (slot 1) and data

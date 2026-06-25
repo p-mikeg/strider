@@ -2,13 +2,11 @@ use anyhow::anyhow;
 use cranelift_entity::SecondaryMap;
 
 use super::FunctionBuilder;
-use crate::{
-    IRViewer,
-    builder::IRBuilderExt,
-    error::Result,
-    node::{NodeKind, ValueId, ValueKind},
-    region::RegionId,
-};
+use crate::IRViewer;
+use crate::builder::IRBuilderExt;
+use crate::error::Result;
+use crate::node::{NodeKind, ValueId, ValueKind};
+use crate::region::RegionId;
 
 impl FunctionBuilder {
     /// Returns the current `ValueId` for `var` in the active region, or

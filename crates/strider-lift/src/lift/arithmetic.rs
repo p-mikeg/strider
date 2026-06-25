@@ -22,10 +22,8 @@
 
 use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType, VnTypeExt};
 
-use crate::lift::{
-    FunctionLifter,
-    pcode_util::{Result, nth_input_or_err, require_output_vn},
-};
+use crate::lift::FunctionLifter;
+use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
 /// Verifies that two p-code input varnodes have equal byte-widths.
 ///

@@ -1,11 +1,10 @@
 use super::*;
-use strider_ir::{
-    IRBuilderExt, IRWalker,
-    node::{NodeKind, ValueKind, ValueType},
-};
+use strider_ir::node::{NodeKind, ValueKind, ValueType};
+use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
-use crate::{DeadBranchElimination, OptCtx, pipeline::OptimizerTestExt};
+use crate::pipeline::OptimizerTestExt;
+use crate::{DeadBranchElimination, OptCtx};
 
 // ── DBE-simulate helper ─────────────────────────────────────────────────────
 //

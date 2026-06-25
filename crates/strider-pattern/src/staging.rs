@@ -20,10 +20,8 @@
 //! unspecified.
 
 use anyhow::anyhow;
-use petgraph::{
-    algo::toposort,
-    graph::{DiGraph, NodeIndex},
-};
+use petgraph::algo::toposort;
+use petgraph::graph::{DiGraph, NodeIndex};
 use strider_graph::{Graph, NeverCacheable, ValueId};
 
 /// A node staged for materialisation: its payload, the output payloads it

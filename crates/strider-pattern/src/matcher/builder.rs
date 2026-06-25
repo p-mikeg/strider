@@ -21,15 +21,11 @@
 //! consumer slot of each input is recorded on the materialised [`PatNode`]'s
 //! `input_slots` via the [`SealNode`] bridge (see [`crate::graph_ext`]).
 
-use strider_ir::{
-    IntBinaryOp,
-    node::{NodeKind, ValueType},
-};
+use strider_ir::IntBinaryOp;
+use strider_ir::node::{NodeKind, ValueType};
 
-use crate::{
-    matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern},
-    staging::{SealNode, StagedGraph},
-};
+use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
+use crate::staging::{SealNode, StagedGraph};
 
 /// Handle to a pattern **value** vertex — a value/control output a
 /// downstream node can consume. Returned by [`MatcherBuilder`] while
@@ -241,7 +237,8 @@ impl MatcherBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strider_ir::{ConstId, IntBinaryOp, node::NodeKind};
+    use strider_ir::node::NodeKind;
+    use strider_ir::{ConstId, IntBinaryOp};
 
     #[test]
     fn binary_builder_wires_two_inputs_and_one_output() {

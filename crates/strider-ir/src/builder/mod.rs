@@ -1,12 +1,11 @@
-use cranelift_entity::{PrimaryMap, entity_impl, packed_option::ReservedValue};
+use cranelift_entity::packed_option::ReservedValue;
+use cranelift_entity::{PrimaryMap, entity_impl};
 use rustc_hash::FxHashMap;
 
-use crate::{
-    error::Result,
-    function::Function,
-    node::{NodeId, NodeKind, ValueId, ValueKind},
-    region::Region,
-};
+use crate::error::Result;
+use crate::function::Function;
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
+use crate::region::Region;
 
 mod build_trait;
 pub use build_trait::IRBuilder;

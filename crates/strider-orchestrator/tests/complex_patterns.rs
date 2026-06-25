@@ -38,10 +38,8 @@ use strider_pattern::{
     if_node, int_cmp, int_const, load, store, var,
 };
 
-use strider_ir::{
-    IntCmpOp,
-    node::{NodeId, NodeKind},
-};
+use strider_ir::IntCmpOp;
+use strider_ir::node::{NodeId, NodeKind};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Local helpers

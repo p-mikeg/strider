@@ -5,13 +5,12 @@
 //! node/value payloads `N`/`V`. Pure list navigation: it borrows the store's
 //! arenas and yields `ValueId`s, never touching the payloads.
 
-use core::{ops::Index, slice};
+use core::ops::Index;
+use core::slice;
 
-use crate::{
-    cache::NodeCacheable,
-    graph::Graph,
-    ids::{NodeId, UseId, ValueId},
-};
+use crate::cache::NodeCacheable;
+use crate::graph::Graph;
+use crate::ids::{NodeId, UseId, ValueId};
 
 /// An iterable view over the input values of a node.
 pub struct Inputs<'a, N, V, C: NodeCacheable<N, V>> {

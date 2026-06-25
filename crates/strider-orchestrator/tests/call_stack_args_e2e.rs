@@ -27,10 +27,8 @@
 mod common;
 use common::*;
 
-use strider_ir::{
-    IRViewer, IRWalker,
-    node::{NodeId, NodeKind},
-};
+use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{IRViewer, IRWalker};
 
 /// Base input count of a `Call` node: Control, Memory, Target, SP.  Any input
 /// past these four is a collected positional argument.

@@ -27,19 +27,13 @@
 //! the incremental `node()` / `*_output()` / `input()` verbs cannot write
 //! straight through.
 
-use strider_ir::{
-    ConstId, IntBinaryOp,
-    node::{NodeKind, ValueType},
-};
+use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{ConstId, IntBinaryOp};
 
-use crate::{
-    matcher::KindSpec,
-    staging::{SealNode, StagedGraph},
-    template::{
-        TemplateKind, TemplateTy,
-        graph::{Template, TmplNode, TmplNodeKind, TmplOutput, TmplValue},
-    },
-};
+use crate::matcher::KindSpec;
+use crate::staging::{SealNode, StagedGraph};
+use crate::template::graph::{Template, TmplNode, TmplNodeKind, TmplOutput, TmplValue};
+use crate::template::{TemplateKind, TemplateTy};
 
 /// Handle to a template **output** vertex (a staged node's output by
 /// position).
@@ -258,7 +252,8 @@ impl TemplateBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strider_ir::{IntBinaryOp, node::NodeKind};
+    use strider_ir::IntBinaryOp;
+    use strider_ir::node::NodeKind;
 
     #[test]
     fn binary_builder_wires_two_inputs_and_one_output() {

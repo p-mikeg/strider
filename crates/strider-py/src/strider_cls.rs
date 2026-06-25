@@ -20,18 +20,16 @@
 
 use pyo3::prelude::*;
 
-use crate::{
-    arch::PySleighArch,
-    cc::PyCallingConvention,
-    cfg::PyCfg,
-    errors::into_strider_err,
-    function::PyFunction,
-    reader::{AnyMemReader, MemInput},
-    run::{
-        build_cc, build_orch_sleigh, build_per_address_ccs, build_snapshot_cfg,
-        check_pending_control_flow, orch_lift_opts, parse_alias_mode, reject_zero_max_size,
-        unresolved_machine_addrs,
-    },
+use crate::arch::PySleighArch;
+use crate::cc::PyCallingConvention;
+use crate::cfg::PyCfg;
+use crate::errors::into_strider_err;
+use crate::function::PyFunction;
+use crate::reader::{AnyMemReader, MemInput};
+use crate::run::{
+    build_cc, build_orch_sleigh, build_per_address_ccs, build_snapshot_cfg,
+    check_pending_control_flow, orch_lift_opts, parse_alias_mode, reject_zero_max_size,
+    unresolved_machine_addrs,
 };
 
 /// Build a `Lifter<AnyMemReader>` (owning a fresh `Sleigh` built from

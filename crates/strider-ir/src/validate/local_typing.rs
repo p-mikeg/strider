@@ -1,8 +1,6 @@
-use crate::{
-    graph::Graph,
-    node::{NodeId, ValueId, ValueKind},
-    node_signature::expected_signature,
-};
+use crate::graph::Graph;
+use crate::node::{NodeId, ValueId, ValueKind};
+use crate::node_signature::expected_signature;
 
 use super::{ValidationError, kind_matches};
 

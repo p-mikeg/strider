@@ -47,12 +47,11 @@
 
 use std::rc::Rc;
 
-use strider_ir::{
-    IRViewer,
-    node::{NodeId, NodeKind, ValueId},
-};
+use strider_ir::IRViewer;
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
-use crate::{error::Result, peephole::PeepholeRewrite};
+use crate::error::Result;
+use crate::peephole::PeepholeRewrite;
 use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 
 /// Pass that rewrites `If(Xor(C, IntConst(1)):I1)` into `If(C)` with branches

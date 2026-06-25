@@ -4,10 +4,8 @@
 //! shares the leaf arithmetic (`eval_int_*`) directly and does not route
 //! through here.
 
-use strider_ir::{
-    Function, IRViewer, ReadOnlyMemory,
-    node::{ExtendOp, NodeKind, ValueId, ValueType},
-};
+use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
+use strider_ir::{Function, IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
 
 use crate::opt::constant_fold::eval_int::{
@@ -91,7 +89,8 @@ pub(crate) fn eval_node_const(
 #[cfg(test)]
 mod tests {
     use super::eval_node_const;
-    use strider_ir::{IRBuilderExt, IRViewer, node::ValueType};
+    use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IRViewer};
 
     // Build `Add(IntConst(5), IntConst(100)):I64`; eval_node_const with an
     // int-const resolver folds it to 105. Copy the builder pattern from

@@ -7,13 +7,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use strider_ir::{
-    Function, IRBuilderExt, IRViewer, IntBinaryOp,
-    node::{NodeKind, ValueType},
-};
+use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{Function, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
-use crate::{StackOffsetDetect, pipeline::PostOptimizerTestExt};
+use crate::StackOffsetDetect;
+use crate::pipeline::PostOptimizerTestExt;
 
 /// Count the nodes that currently carry a stamped stack offset.
 fn stamped_count(function: &Function) -> usize {

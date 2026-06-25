@@ -129,7 +129,8 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 fn known_single_oob_target_lifts_as_call_plus_return() {
     use rustc_hash::FxHashMap;
     use strider_cfg::{PcodeInsnAddr, ResolvedTargets};
-    use strider_ir::{IRWalker, node::NodeKind};
+    use strider_ir::IRWalker;
+    use strider_ir::node::NodeKind;
 
     let base = 0x1000u64;
     let oob_target = 0x9000u64;
@@ -237,7 +238,8 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
     use rustc_hash::FxHashMap;
     use strider_cfg::{PcodeInsnAddr, ResolvedTargets};
-    use strider_ir::{IRWalker, node::NodeKind};
+    use strider_ir::IRWalker;
+    use strider_ir::node::NodeKind;
 
     let base = 0x1000u64;
     let intra_target = 0x1002u64; // within [base, base + fn_max_size)

@@ -1,13 +1,11 @@
 use smallvec::SmallVec;
 
 use super::{FunctionBuilder, require_reg_or_unique};
-use crate::{
-    IRViewer,
-    builder::IRBuilderExt,
-    error::Result,
-    node::{NodeId, NodeKind, ValueId, ValueKind, ValueType},
-    region::RegionId,
-};
+use crate::IRViewer;
+use crate::builder::IRBuilderExt;
+use crate::error::Result;
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use crate::region::RegionId;
 
 impl FunctionBuilder {
     /// Resets the graph and emits the function `Entry` and `InitialMemory` nodes.

@@ -17,14 +17,15 @@
 //! [`MemPat`] so a `load` / `store` can chain off it. `Phi` produces a
 //! value output (slot 0).
 
-use strider_ir::{IRViewer, node::NodeKind};
+use strider_ir::IRViewer;
+use strider_ir::node::NodeKind;
 
-use crate::{
-    capture::Capture,
-    matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern, match_pat::MatchPat},
-};
+use crate::capture::Capture;
+use crate::matcher::match_pat::MatchPat;
+use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
 
-use super::{MemPat, node_pat::NodePat};
+use super::MemPat;
+use super::node_pat::NodePat;
 
 /// A node-limit pinning the matched `Phi`'s `value_vn` entry to `Some(vn)`.
 fn phi_var_limit(want: rsleigh::Vn) -> NodePredicate {

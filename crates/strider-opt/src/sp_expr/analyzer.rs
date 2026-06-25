@@ -24,10 +24,8 @@
 
 use rustc_hash::FxHashMap;
 
-use strider_ir::{
-    Function, IRViewer, IRWalker, IntBinaryOp,
-    node::{NodeId, NodeKind, ValueId},
-};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp};
 
 use super::ranges::{ranges_disjoint, store_value_byte_size};
 use crate::AliasMode;
@@ -406,7 +404,8 @@ pub(crate) fn alias_verdict(
 #[cfg(test)]
 mod decompose_tests {
     use super::*;
-    use strider_ir::{IRBuilderExt, IntBinaryOp, node::ValueType};
+    use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
     fn sp() -> rsleigh::Vn {
@@ -948,10 +947,8 @@ mod decompose_tests {
 #[cfg(test)]
 mod alias_tests {
     use super::*;
-    use strider_ir::{
-        IRBuilderExt, IntBinaryOp,
-        node::{NodeKind, ValueType},
-    };
+    use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{make_sp_fn, stack_vn_x86};
 
     /// The `InitialVar(sp)` output — the canonical entry-SP terminal base

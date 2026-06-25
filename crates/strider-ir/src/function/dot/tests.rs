@@ -1,11 +1,9 @@
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 use super::*;
-use crate::{
-    IRViewer, IRWalker,
-    function::Function,
-    node::{NodeKind, ValueKind, ValueType},
-};
+use crate::function::Function;
+use crate::node::{NodeKind, ValueKind, ValueType};
+use crate::{IRViewer, IRWalker};
 use ::dot::GraphDotDumper as _;
 
 // ── helpers ───────────────────────────────────────────────────────────────

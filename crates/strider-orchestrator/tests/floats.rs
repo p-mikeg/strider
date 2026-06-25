@@ -9,7 +9,8 @@
 
 mod common;
 use common::*;
-use strider_ir::{FloatBinaryOp, FloatCmpOp, node::NodeKind};
+use strider_ir::node::NodeKind;
+use strider_ir::{FloatBinaryOp, FloatCmpOp};
 
 // `arm_be` skips every float test: ARM8_BE Sleigh's VFP register file
 // uses descending offsets and `d0` does not overlap `s0`, so the

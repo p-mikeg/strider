@@ -25,10 +25,8 @@
 //! [`eq`]: NodeCacheable::eq
 //! [`should_cache`]: NodeCacheable::should_cache
 
-use crate::{
-    ids::{NodeId, ValueId},
-    storage::RawStore,
-};
+use crate::ids::{NodeId, ValueId};
+use crate::storage::RawStore;
 
 /// The node-creation policy: three stateless hooks (all with defaults) that the
 /// generic `NodeCache` consults to decide dedup-or-create.

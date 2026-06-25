@@ -20,10 +20,9 @@ use std::mem::Discriminant;
 
 use strider_ir::node::NodeKind;
 
-use crate::{
-    capture::Capture,
-    matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern, match_pat::MatchPat},
-};
+use crate::capture::Capture;
+use crate::matcher::match_pat::MatchPat;
+use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
 
 use super::{IndexedInputs, MemPat, SubCompiler};
 

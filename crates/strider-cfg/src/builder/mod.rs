@@ -7,11 +7,9 @@ use std::collections::BTreeMap;
 
 use petgraph::graph::NodeIndex;
 
-use crate::{
-    Cfg,
-    options::CfgOptions,
-    types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph},
-};
+use crate::Cfg;
+use crate::options::CfgOptions;
+use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
 use anyhow::{anyhow, bail};
 
 use crate::Result;
@@ -287,9 +285,9 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
-    use crate::{
-        CfgOptions,
-        types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator},
+    use crate::CfgOptions;
+    use crate::types::{
+        MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
     };
 
     type TestReader = BufMemReader<Vec<u8>>;

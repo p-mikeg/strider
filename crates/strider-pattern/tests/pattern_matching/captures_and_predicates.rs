@@ -267,7 +267,8 @@ fn match_root_is_the_matched_node() {
 /// rejects, the child's own filter must NOT fire even once.
 #[test]
 fn filter_short_circuits_before_child_recursion() {
-    use std::{cell::Cell, rc::Rc};
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     let function = shapes::add_consts(5, 7);
 
@@ -292,7 +293,8 @@ fn filter_short_circuits_before_child_recursion() {
 /// child filter is visited.
 #[test]
 fn filter_accepts_match_and_visits_child() {
-    use std::{cell::Cell, rc::Rc};
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     let function = shapes::add_consts(5, 7);
 

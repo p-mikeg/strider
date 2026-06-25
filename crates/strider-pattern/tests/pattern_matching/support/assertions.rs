@@ -9,11 +9,10 @@
 //! [`Pattern::ignore_casts`] / [`Pattern::ignore_casts_mask`]) before
 //! handing it over.
 
-use strider_ir::{
-    Function, IRViewer, IRWalker,
-    node::{NodeId, NodeKind},
-};
-use strider_pattern::{Capture, Match, Matcher, matcher::Pattern};
+use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{Function, IRViewer, IRWalker};
+use strider_pattern::matcher::Pattern;
+use strider_pattern::{Capture, Match, Matcher};
 
 // ── Core assertions ───────────────────────────────────────────────────────────
 

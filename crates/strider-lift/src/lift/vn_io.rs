@@ -11,7 +11,8 @@
 use anyhow::anyhow;
 use strider_ir::{IRBuilderExt, VnTypeExt};
 
-use super::{FunctionLifter, pcode_util::Result};
+use super::FunctionLifter;
+use super::pcode_util::Result;
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Builds an address-width integer constant for `off` in `space`.

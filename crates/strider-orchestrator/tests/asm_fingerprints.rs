@@ -12,7 +12,8 @@
 
 mod common;
 use common::*;
-use strider_ir::{IRViewer, IRWalker, validate::validate};
+use strider_ir::validate::validate;
+use strider_ir::{IRViewer, IRWalker};
 
 #[test]
 fn arithmetic_x86_add_validate_with_asm_fingerprint_check() {
@@ -95,7 +96,8 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
     // Valid contributor addresses are therefore exactly
     // {0x1000, 0x1003, 0x1006, 0x1009, 0x100c}.
     use rsleigh::mem_readers::BufMemReader;
-    use strider_orchestrator::{LiftOptions, Strider, opt::OptOptions};
+    use strider_orchestrator::opt::OptOptions;
+    use strider_orchestrator::{LiftOptions, Strider};
 
     let base = 0x1000u64;
     let bytes = vec![

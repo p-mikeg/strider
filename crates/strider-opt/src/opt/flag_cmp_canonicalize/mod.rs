@@ -54,19 +54,15 @@
 use std::rc::Rc;
 
 use crate::{BoxedRule, apply_rules_in_order, rewrite_rule};
-use strider_ir::{
-    IRViewer,
-    node::{ExtendOp, IntBinaryOp, NodeId, NodeKind, ValueId, ValueType},
-};
+use strider_ir::IRViewer;
+use strider_ir::node::{ExtendOp, IntBinaryOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_pattern::{
     Bindings, Capture, CaptureExt, add, any_int_const, bool_and, bool_not, bool_or, int_const,
     int_eq, int_lt, int_sborrow, int_slt, neg, template, var, zero_extend,
 };
 
-use crate::{
-    error::Result,
-    peephole::{PeepholePass, PeepholeRewrite, SeedOrder},
-};
+use crate::error::Result;
+use crate::peephole::{PeepholePass, PeepholeRewrite, SeedOrder};
 
 /// Pass that rewrites flag-tree `If` conds into single `IntCmpOp`s.
 ///

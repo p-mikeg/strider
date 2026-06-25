@@ -5,10 +5,8 @@
 
 use strider_ir::VnTypeExt;
 
-use crate::lift::{
-    FunctionLifter,
-    pcode_util::{Result, require_output_vn},
-};
+use crate::lift::FunctionLifter;
+use crate::lift::pcode_util::{Result, require_output_vn};
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     pub(super) fn handle_load(&mut self, insn: &rsleigh::Insn) -> Result<()> {

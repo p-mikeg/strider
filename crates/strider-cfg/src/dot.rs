@@ -1,9 +1,11 @@
 use std::fmt::Write;
 
 use dot::GraphDotDumper;
-use petgraph::{graph::NodeIndex, visit::EdgeRef};
+use petgraph::graph::NodeIndex;
+use petgraph::visit::EdgeRef;
 
-use super::{Cfg, types::RegionTerminator};
+use super::Cfg;
+use super::types::RegionTerminator;
 use anyhow::anyhow;
 
 use crate::Result;

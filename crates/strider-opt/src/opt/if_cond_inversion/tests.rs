@@ -1,18 +1,14 @@
 //! Unit tests for the [`IfCondInversion`] canonicalisation pass.
 
 use super::IfCondInversion;
-use crate::{
-    ConstantFold,
-    error::Result,
-    pipeline::OptimizerTestExt,
-    test_support::{find_unique_if, run_to_fixed_point},
-};
+use crate::ConstantFold;
+use crate::error::Result;
+use crate::pipeline::OptimizerTestExt;
+use crate::test_support::{find_unique_if, run_to_fixed_point};
 use strider_ir::{IRBuilderExt, IRViewer};
 
-use strider_ir::{
-    IntBinaryOp,
-    node::{NodeKind, ValueId, ValueType},
-};
+use strider_ir::IntBinaryOp;
+use strider_ir::node::{NodeKind, ValueId, ValueType};
 use strider_ir_test_utils::RegisterSet;
 
 /// Builds the canonical 1-bit logical NOT shape `Xor(operand, IntConst(1)):I1`

@@ -310,7 +310,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use strider_ir::{FunctionBuilder, IRWalker, node::NodeKind};
+    use strider_ir::node::NodeKind;
+    use strider_ir::{FunctionBuilder, IRWalker};
     use strider_ir_test_utils::RegisterSet;
 
     /// Build a 4-byte register VN to act as the `idx` source.

@@ -1,12 +1,8 @@
 use super::*;
-use crate::{
-    pipeline::OptimizerTestExt,
-    test_support::{assert_returns_const, make_fn, return_kind, run_to_fixed_point},
-};
-use strider_ir::{
-    ExtendOp, FunctionBuilder, IntBinaryOp,
-    node::{NodeKind, ValueType},
-};
+use crate::pipeline::OptimizerTestExt;
+use crate::test_support::{assert_returns_const, make_fn, return_kind, run_to_fixed_point};
+use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::RegisterSet;
 
 // ── Original tests ────────────────────────────────────────────────────────────

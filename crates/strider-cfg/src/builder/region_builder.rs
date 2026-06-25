@@ -695,7 +695,8 @@ mod tests {
 
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::cast_sign_loss)]
 
-    use rsleigh::{Vn, VnSpace, mem_readers::BufMemReader};
+    use rsleigh::mem_readers::BufMemReader;
+    use rsleigh::{Vn, VnSpace};
     use strider_target::SleighArch;
 
     use super::*;

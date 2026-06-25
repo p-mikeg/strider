@@ -8,7 +8,8 @@ use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::{LiftOptions, Strider, opt::OptOptions};
+use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::{LiftOptions, Strider};
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;

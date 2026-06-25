@@ -2,11 +2,9 @@ use rsleigh::MemReader;
 use rustc_hash::FxHashMap;
 
 use super::{FunctionDotDumper, FunctionDotDumperState, edge_style, node_fillcolor, node_shape};
-use crate::{
-    IRViewer,
-    graph::Graph,
-    node::{NodeId, NodeKind},
-};
+use crate::IRViewer;
+use crate::graph::Graph;
+use crate::node::{NodeId, NodeKind};
 
 /// Returns `true` when the node's single output has no uses.  In that case,
 /// drawing the standalone node leaves an edgeless island beside the graph.

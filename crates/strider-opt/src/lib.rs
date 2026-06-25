@@ -73,29 +73,25 @@ pub mod value_range;
 // pass types below.
 pub use post_opt::indirect_branch_resolve;
 
+pub use opt::cfg_detach::CfgDetach;
+pub use opt::constant_fold::ConstantFold;
+pub use opt::dead_branch::DeadBranchElimination;
+pub use opt::flag_cmp_canonicalize::FlagCmpCanonicalize;
+pub use opt::if_cond_inversion::IfCondInversion;
 #[cfg(test)]
 pub(crate) use opt::known_bits::KnownBitsMap;
-pub use opt::{
-    cfg_detach::CfgDetach,
-    constant_fold::ConstantFold,
-    dead_branch::DeadBranchElimination,
-    flag_cmp_canonicalize::FlagCmpCanonicalize,
-    if_cond_inversion::IfCondInversion,
-    known_bits::{KnownBits, analyze as analyze_known_bits},
-    load_forward::LoadForward,
-    load_readonly::LoadReadOnly,
-    phi_collapse::PhiCollapse,
-    region_collapse::RegionCollapse,
-};
+pub use opt::known_bits::{KnownBits, analyze as analyze_known_bits};
+pub use opt::load_forward::LoadForward;
+pub use opt::load_readonly::LoadReadOnly;
+pub use opt::phi_collapse::PhiCollapse;
+pub use opt::region_collapse::RegionCollapse;
 pub use pipeline::{
     OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, PostOptimizer, run_one, run_post,
 };
-pub use post_opt::{
-    call_stack_args::CallStackArgCollect,
-    function_args::FunctionArgDetect,
-    indirect_branch_resolve::{IndirectBranchClassify, classify_anchor},
-    stack_offset_detect::StackOffsetDetect,
-};
+pub use post_opt::call_stack_args::CallStackArgCollect;
+pub use post_opt::function_args::FunctionArgDetect;
+pub use post_opt::indirect_branch_resolve::{IndirectBranchClassify, classify_anchor};
+pub use post_opt::stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;
 
 /// Builds the default optimizer pipeline containing all built-in passes.

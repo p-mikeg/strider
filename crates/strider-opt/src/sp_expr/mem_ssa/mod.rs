@@ -77,10 +77,8 @@
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use strider_ir::{
-    Function, IRViewer,
-    node::{NodeId, NodeKind, ValueId},
-};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{Function, IRViewer};
 
 /// Pluggable aliasing oracle for the memory-SSA walk.
 pub(crate) trait MemorySSAWalker {

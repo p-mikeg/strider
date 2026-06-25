@@ -2,14 +2,13 @@
 //! `Subpiece`, `Popcount`, `Lzcount`, `Piece`, `Extract`, `Insert`,
 //! `PtrAdd`, `PtrSub`, and the no-op `Cast`.
 
-use strider_ir::{IRBuilderExt, IntBinaryOp, VnTypeExt, node::ValueType};
+use strider_ir::node::ValueType;
+use strider_ir::{IRBuilderExt, IntBinaryOp, VnTypeExt};
 
 use anyhow::bail;
 
-use crate::lift::{
-    FunctionLifter,
-    pcode_util::{Result, ensure_const_space, nth_input_or_err, require_output_vn},
-};
+use crate::lift::FunctionLifter;
+use crate::lift::pcode_util::{Result, ensure_const_space, nth_input_or_err, require_output_vn};
 
 /// Reads a bit-position constant from `vn.addr_off` and narrows it to `u8`.
 ///

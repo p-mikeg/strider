@@ -30,7 +30,8 @@
 //! `cargo build --workspace` triggering binary linkage) we don't
 //! want.
 
-use std::{fs, path::PathBuf};
+use std::fs;
+use std::path::PathBuf;
 
 use pyo3_stub_gen::Result;
 

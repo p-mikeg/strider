@@ -33,7 +33,8 @@
 use proptest::prelude::*;
 use strider_ir::{IRBuilderExt, IRWalker};
 
-use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp, node::ValueType};
+use strider_ir::node::ValueType;
+use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 /// Sentinel lift-address base; per-step `lift_off` is added on top.
 /// Mirrors `strider_ir_test_utils::SENTINEL_LIFT_ADDR`.
