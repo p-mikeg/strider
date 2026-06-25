@@ -10,8 +10,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use strider_target::ArchPreset;
-use strider_target::call_other_abi::{CallOtherAbi, CallOtherClass, classify};
+use strider_target::{
+    ArchPreset,
+    call_other_abi::{CallOtherAbi, CallOtherClass, classify},
+};
 
 fn expect_call(c: Option<CallOtherClass>) -> CallOtherAbi {
     match c {

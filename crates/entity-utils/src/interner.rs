@@ -1,7 +1,6 @@
 //! A bidirectional interning map over a `cranelift-entity` key.
 
-use core::hash::Hash;
-use core::ops::Index;
+use core::{hash::Hash, ops::Index};
 
 use cranelift_entity::{EntityRef, PrimaryMap};
 use rustc_hash::FxHashMap;

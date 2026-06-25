@@ -9,10 +9,9 @@
     clippy::unreachable
 )]
 
-use strider_ir::node::ValueType as T;
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IntBinaryOp,
-    IntCmpOp,
+    IntCmpOp, node::ValueType as T,
 };
 use strider_ir_test_utils::{make_empty_fn, reg_vn};
 

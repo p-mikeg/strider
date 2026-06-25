@@ -19,8 +19,7 @@ mod common;
 use common::*;
 use strider_ir::IRViewer;
 
-use strider_ir::IntCmpOp;
-use strider_ir::node::NodeKind;
+use strider_ir::{IntCmpOp, node::NodeKind};
 
 /// Each comparison branch and the `IntCmpOp` its condition must canonicalise
 /// to.  Signed comparisons fold to `Sless`, unsigned to `Less`, equality to

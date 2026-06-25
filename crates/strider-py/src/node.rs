@@ -16,13 +16,11 @@
 
 use std::hash::{Hash, Hasher};
 
-use pyo3::basic::CompareOp;
-use pyo3::prelude::*;
+use pyo3::{basic::CompareOp, prelude::*};
 
 use strider_ir::IRViewer;
 
-use crate::errors::into_strider_err;
-use crate::function::PyFunction;
+use crate::{errors::into_strider_err, function::PyFunction};
 
 /// A handle on a single node in the IR graph.
 ///

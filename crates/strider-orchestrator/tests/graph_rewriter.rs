@@ -26,8 +26,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{Function, IRBuilderExt, IRWalker, IntBinaryOp};
+use strider_ir::{
+    Function, IRBuilderExt, IRWalker, IntBinaryOp,
+    node::{NodeKind, ValueType},
+};
 use strider_opt::{EditFunction, apply_rules_count, rewrite_rule};
 use strider_pattern::{Capture, CaptureExt, add, int_const, var};
 

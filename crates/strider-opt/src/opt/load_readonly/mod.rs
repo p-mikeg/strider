@@ -1,8 +1,9 @@
-use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{IRBuilderExt, IRViewer, ReadOnlyMemory};
+use strider_ir::{
+    IRBuilderExt, IRViewer, ReadOnlyMemory,
+    node::{NodeId, NodeKind},
+};
 
-use crate::error::Result;
-use crate::pipeline::OptCtx;
+use crate::{error::Result, pipeline::OptCtx};
 
 // ── LoadReadOnly optimizer ────────────────────────────────────────────────────
 

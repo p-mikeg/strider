@@ -1,7 +1,6 @@
 //! Range arithmetic shared by every SP-aware pass.
 
-use strider_ir::Graph;
-use strider_ir::node::ValueId;
+use strider_ir::{Graph, node::ValueId};
 
 /// True when `[a_off, a_off + a_size)` and `[b_off, b_off + b_size)` are
 /// disjoint.

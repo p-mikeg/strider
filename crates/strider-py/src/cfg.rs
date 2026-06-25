@@ -11,10 +11,9 @@ use std::path::Path;
 
 use pyo3::prelude::*;
 
-use crate::dot::dot_style_for;
-use crate::errors::into_strider_err;
-use crate::reader::AnyMemReader;
-use crate::strider_cls::PyLifter;
+use crate::{
+    dot::dot_style_for, errors::into_strider_err, reader::AnyMemReader, strider_cls::PyLifter,
+};
 
 /// Control-flow graph of a single function, produced by `Lifter.build_cfg`.
 /// Renderable to Graphviz dot / dark-themed HTML for inspection.

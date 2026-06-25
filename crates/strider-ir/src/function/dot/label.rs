@@ -2,8 +2,10 @@ use rsleigh::MemReader;
 use std::io;
 
 use super::{FunctionDotDumper, node_fillcolor};
-use crate::IRViewer;
-use crate::node::{NodeId, NodeKind, ValueId, ValueType};
+use crate::{
+    IRViewer,
+    node::{NodeId, NodeKind, ValueId, ValueType},
+};
 
 /// Render a varnode to its display name by delegating to rsleigh's
 /// [`rsleigh::Vn::ctx_fmt`].  REGISTER

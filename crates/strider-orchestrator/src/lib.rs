@@ -465,8 +465,7 @@ fn live_unresolved_branches(
     unresolved: &UnresolvedAnchors,
     known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
 ) -> Vec<PcodeInsnAddr> {
-    use strider_ir::node::NodeKind;
-    use strider_ir::{IRViewer, IRWalker};
+    use strider_ir::{IRViewer, IRWalker, node::NodeKind};
 
     // The live `IndirectBranch` placeholder nodes still reachable from the
     // entry (one cheap reachability walk shared across every anchor).
@@ -642,8 +641,7 @@ mod tests {
         // here simulated by pairing the address with a non-IndirectBranch
         // live node — the function's entry node) must NOT be reported.
         let (function, _node) = fn_with_live_indirect_branch();
-        use strider_ir::node::NodeKind;
-        use strider_ir::{IRViewer, IRWalker};
+        use strider_ir::{IRViewer, IRWalker, node::NodeKind};
         let non_indirect = function
             .walk()
             .find(|&n| matches!(function.node_kind(n), NodeKind::Entry))
@@ -769,8 +767,7 @@ mod tests {
         // (the `IntConst` value node and the `IndirectBranch` placeholder) as
         // the two anchor keys — `apply_resolutions` keys purely off `NodeId`,
         // never node kind.
-        use strider_ir::node::NodeKind;
-        use strider_ir::{IRViewer, IRWalker};
+        use strider_ir::{IRViewer, IRWalker, node::NodeKind};
         let (function, indirect) = fn_with_live_indirect_branch();
         let other = function
             .walk()

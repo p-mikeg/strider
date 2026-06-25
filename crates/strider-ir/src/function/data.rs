@@ -19,9 +19,11 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
-use crate::node::{NodeId, NodeKind, ValueId};
-use crate::{IRViewer, IRWalker};
+use crate::{
+    IRViewer, IRWalker,
+    graph::{Graph, NodeIdRemap, SideTableRemap},
+    node::{NodeId, NodeKind, ValueId},
+};
 
 /// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
 /// inclusion) that fully contains `vn`, or `vn` itself when none does.
@@ -1040,8 +1042,7 @@ impl Function {
     /// surviving nodes, so the live-id scan correctly excludes zombie
     /// references.
     fn gc_consts(&mut self) -> bool {
-        use crate::const_value::ConstId;
-        use crate::node::NodeKind;
+        use crate::{const_value::ConstId, node::NodeKind};
 
         let mut live_old_ids: Vec<ConstId> = Vec::new();
         let mut const_nodes: Vec<NodeId> = Vec::new();
@@ -1132,8 +1133,10 @@ impl crate::IRBuilder for Function {
 #[cfg(test)]
 mod function_skeleton_tests {
     use super::Function;
-    use crate::IRViewer;
-    use crate::node::{NodeKind, ValueKind};
+    use crate::{
+        IRViewer,
+        node::{NodeKind, ValueKind},
+    };
 
     #[test]
     fn function_new_carries_an_empty_graph() {
@@ -1239,8 +1242,10 @@ mod compact_tests {
     #![allow(clippy::unwrap_used)]
 
     use super::Function;
-    use crate::IRViewer;
-    use crate::node::{NodeId, NodeKind, ValueKind, ValueType};
+    use crate::{
+        IRViewer,
+        node::{NodeId, NodeKind, ValueKind, ValueType},
+    };
 
     /// Interns `v` (masked to `ty`) and creates a single-output `IntConst`
     /// node, returning its `NodeId`.
@@ -1279,8 +1284,7 @@ mod compact_tests {
     /// payload rewrite the survivor would dangle or read the wrong constant.
     #[test]
     fn compact_gcs_and_remaps_surviving_wide_const() {
-        use crate::const_value::ConstValue;
-        use crate::node::ValueType;
+        use crate::{const_value::ConstValue, node::ValueType};
 
         // Genuinely-wide I256 value (high limb set ⇒ stays `Wide`).
         const LIVE_LIMBS: [u64; 4] = [

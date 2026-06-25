@@ -3,8 +3,10 @@
 //! context. Creation-only — liveness bookkeeping is the implementor's
 //! concern, never part of the contract.
 
-use crate::builder::FunctionBuilder;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
+use crate::{
+    builder::FunctionBuilder,
+    node::{NodeId, NodeKind, ValueId, ValueKind},
+};
 
 /// A node-creation seam. Implementors decide their own fingerprint
 /// attribution and bookkeeping policy; the trait also exposes mutable access
@@ -91,8 +93,7 @@ impl IRBuilder for FunctionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::IRViewer;
-    use crate::node::ValueType;
+    use crate::{IRViewer, node::ValueType};
     use cranelift_entity::EntityRef;
 
     /// Construct a minimal `FunctionBuilder` with no tracked variables.

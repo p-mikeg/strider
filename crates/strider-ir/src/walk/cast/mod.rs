@@ -11,8 +11,7 @@
 
 use bitflags::bitflags;
 
-use crate::ExtendOp;
-use crate::node::NodeKind;
+use crate::{ExtendOp, node::NodeKind};
 
 bitflags! {
     /// Bitset selecting which value-passthrough cast `NodeKind`s a

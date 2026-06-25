@@ -8,8 +8,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{EditFunction, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir::{
+    EditFunction, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
+    node::{NodeKind, ValueType},
+};
 use strider_ir_test_utils::{RegisterSet, reg_vn};
 
 fn reachable(fg: &strider_ir::Function, node: strider_ir::node::NodeId) -> bool {

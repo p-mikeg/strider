@@ -15,14 +15,16 @@
 use pyo3::prelude::*;
 use strider_orchestrator::opt::AliasMode;
 
-use crate::arch::PySleighArch;
-use crate::cc::PyCallingConvention;
-use crate::cfg::PyCfg;
-use crate::errors::into_strider_err;
-use crate::function::PyFunction;
-use crate::reader::{AnyMemReader, MemInput};
-use crate::sleigh::PySleigh;
-use crate::strider_cls::PyLifter;
+use crate::{
+    arch::PySleighArch,
+    cc::PyCallingConvention,
+    cfg::PyCfg,
+    errors::into_strider_err,
+    function::PyFunction,
+    reader::{AnyMemReader, MemInput},
+    sleigh::PySleigh,
+    strider_cls::PyLifter,
+};
 
 /// Resolve a `PyCallingConvention` against an already-fetched register
 /// table into a `BuiltCallingConvention` (preset → resolve; custom →

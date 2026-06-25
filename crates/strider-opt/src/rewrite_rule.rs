@@ -28,8 +28,10 @@
 //! interpreter detects it via [`strider_pattern::is_skip`] and returns
 //! `Ok(false)`.
 
-use strider_ir::node::{NodeId, ValueId};
-use strider_ir::{EditFunction, IRViewer, IRWalker};
+use strider_ir::{
+    EditFunction, IRViewer, IRWalker,
+    node::{NodeId, ValueId},
+};
 
 use strider_pattern::{
     Capture, MatchPat, Matcher, Pattern, Result, Template, TemplatePat, instantiate, is_skip,
@@ -323,8 +325,10 @@ mod tests {
     //! [`EditFunction::remove_region_predecessors`]). Both build a *built*
     //! `Function` (entry set) so `EditFunction::new` succeeds.
 
-    use strider_ir::node::{NodeKind, ValueType};
-    use strider_ir::{EditFunction, FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
+    use strider_ir::{
+        EditFunction, FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp,
+        node::{NodeKind, ValueType},
+    };
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     // ── replace_value ────────────────────────────────────────────────
@@ -1324,9 +1328,11 @@ mod tests {
     fn track_multi_output_template_interior() {
         use super::rewrite_rule_runtime;
         use strider_ir::node::ValueType as VT;
-        use strider_pattern::load;
-        use strider_pattern::matcher::KindSpec;
-        use strider_pattern::template::{TemplateBuilder, TemplateKind};
+        use strider_pattern::{
+            load,
+            matcher::KindSpec,
+            template::{TemplateBuilder, TemplateKind},
+        };
 
         // Build a function with a Load(addr) we will rewrite into
         // Load(addr, Store(addr, data, mem)) — forwarding nothing, just a

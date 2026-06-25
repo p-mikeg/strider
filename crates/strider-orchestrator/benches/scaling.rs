@@ -14,15 +14,16 @@
     clippy::useless_conversion
 )]
 
-use std::hint::black_box;
-use std::path::PathBuf;
+use std::{hint::black_box, path::PathBuf};
 use strider_ir::IRViewer;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use object::{Object, ObjectSymbol};
 
-use strider_ir::node::{ValueKind, ValueType};
-use strider_ir::{IRBuilder, IRBuilderExt, IntBinaryOp};
+use strider_ir::{
+    IRBuilder, IRBuilderExt, IntBinaryOp,
+    node::{ValueKind, ValueType},
+};
 use strider_ir_test_utils::{RegisterSet, stack_vn_aarch64};
 use strider_orchestrator::opt::{
     ConstantFold, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse,

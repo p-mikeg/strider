@@ -11,8 +11,10 @@
 use anyhow::bail;
 use strider_ir::{IRBuilderExt, VnTypeExt};
 
-use crate::lift::FunctionLifter;
-use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
+use crate::lift::{
+    FunctionLifter,
+    pcode_util::{Result, nth_input_or_err, require_output_vn},
+};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// SegmentOp: segmented-address lookup.

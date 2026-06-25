@@ -8,8 +8,7 @@
 //! into a fresh real pipeline via a small adapter that re-implements
 //! `Optimizer` as a forwarder.
 
-use pyo3::prelude::*;
-use pyo3::types::PyType;
+use pyo3::{prelude::*, types::PyType};
 use std::sync::{Mutex, MutexGuard};
 
 use crate::errors::into_strider_err;

@@ -52,13 +52,17 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::{
+    IRViewer, IRWalker,
+    node::{NodeId, NodeKind, ValueId},
+};
 
 use strider_cfg::ResolvedTargets;
 
-use crate::pipeline::{OptCtx, PostOptimizer};
-use crate::{EditFunction, ReadOnlyMemory};
+use crate::{
+    EditFunction, ReadOnlyMemory,
+    pipeline::{OptCtx, PostOptimizer},
+};
 
 mod eval;
 pub mod table;
@@ -232,8 +236,10 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use strider_ir::node::{NodeKind, ValueType};
-    use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
+    use strider_ir::{
+        FunctionBuilder, IRBuilderExt, IRViewer,
+        node::{NodeKind, ValueType},
+    };
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};
 
     /// Unit-test convenience: computes the range analysis and

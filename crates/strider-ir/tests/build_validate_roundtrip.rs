@@ -5,9 +5,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use strider_ir::node::ValueType;
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatUnaryOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    node::ValueType,
 };
 use strider_ir_test_utils::make_empty_fn;
 

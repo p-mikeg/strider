@@ -12,8 +12,7 @@
 
 use rustc_hash::FxHashMap;
 
-use rsleigh::Sleigh;
-use rsleigh::mem_readers::BufMemReader;
+use rsleigh::{Sleigh, mem_readers::BufMemReader};
 use strider_cfg::{Builder, Cfg, CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTargets};
 use strider_target::SleighArch;
 

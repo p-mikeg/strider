@@ -1,6 +1,8 @@
 use super::*;
-use strider_ir::IRBuilderExt;
-use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{
+    IRBuilderExt,
+    node::{NodeKind, ValueType},
+};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
 use crate::pipeline::OptimizerTestExt;

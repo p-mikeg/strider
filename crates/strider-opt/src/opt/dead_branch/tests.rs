@@ -1,10 +1,14 @@
 use super::*;
-use strider_ir::node::{NodeId, NodeKind, ValueType};
-use strider_ir::{IRBuilderExt, IRWalker};
+use strider_ir::{
+    IRBuilderExt, IRWalker,
+    node::{NodeId, NodeKind, ValueType},
+};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
-use crate::pipeline::OptimizerTestExt;
-use crate::{CfgDetach, ConstantFold, OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse};
+use crate::{
+    CfgDetach, ConstantFold, OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse,
+    pipeline::OptimizerTestExt,
+};
 
 // Helper: count Region nodes with N ctrl inputs.
 fn count_regions_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {

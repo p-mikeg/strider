@@ -1,5 +1,4 @@
-use strider_ir::node::ValueType;
-use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, node::ValueType};
 
 // ── float constant evaluation ─────────────────────────────────────────────────
 

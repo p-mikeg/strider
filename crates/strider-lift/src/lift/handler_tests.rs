@@ -10,11 +10,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use rsleigh::mem_readers::BufMemReader;
-use rsleigh::{Insn, Opcode, Vn, VnSpace};
+use rsleigh::{Insn, Opcode, Vn, VnSpace, mem_readers::BufMemReader};
 
-use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{
+    FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    node::{NodeId, NodeKind},
+};
 
 use crate::lift::{FunctionLifter, Lifter};
 

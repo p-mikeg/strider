@@ -9,19 +9,24 @@
 //! produces. Boolean ops pin the output to `I1`. Commutativity is
 //! data-driven (`NodeKind::is_commutative`), so no per-struct work.
 
-use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    node::{NodeKind, ValueType},
 };
 
-use crate::matcher::match_pat::{MatchPat, Pre};
-use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef};
-use crate::template::template_pat::TemplatePat;
-use crate::template::{TemplateBuilder, TmplValueRef};
-use crate::typed::builder_like::{
-    compile_bool_binary, compile_int_binary, compile_two_input, compile_unary_kind,
+use crate::{
+    matcher::{
+        KindSpec, MatcherBuilder, PatValueRef,
+        match_pat::{MatchPat, Pre},
+    },
+    template::{TemplateBuilder, TmplValueRef, template_pat::TemplatePat},
+    typed::{
+        builder_like::{
+            compile_bool_binary, compile_int_binary, compile_two_input, compile_unary_kind,
+        },
+        consts::{int_const, int_const_with_fn},
+    },
 };
-use crate::typed::consts::{int_const, int_const_with_fn};
 
 // ── DRY macros for the repetitive op families ─────────────────────────
 //
@@ -961,15 +966,20 @@ fn bool_one() -> impl MatchPat {
 // per-op macro invocations, so the match factories emit in this module's
 // scope and these twins are generated together inside one `mod template`.
 pub mod template {
-    use strider_ir::node::NodeKind;
-    use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp};
+    use strider_ir::{
+        ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, node::NodeKind,
+    };
 
-    use crate::template::template_pat::TemplatePat;
-    use crate::typed::consts::bool_const;
-    use crate::typed::value_ops::{
-        BitNot, BoolBinary, BoolBinaryFixed, BoolNot, Cast, FloatBinary, FloatBinaryFixed,
-        FloatCmp, FloatCmpFixed, FloatSub, FloatUnaryFixed, IntBinary, IntBinaryFixed, IntCmp,
-        IntCmpFixed, IntUnaryFixed, Sub,
+    use crate::{
+        template::template_pat::TemplatePat,
+        typed::{
+            consts::bool_const,
+            value_ops::{
+                BitNot, BoolBinary, BoolBinaryFixed, BoolNot, Cast, FloatBinary, FloatBinaryFixed,
+                FloatCmp, FloatCmpFixed, FloatSub, FloatUnaryFixed, IntBinary, IntBinaryFixed,
+                IntCmp, IntCmpFixed, IntUnaryFixed, Sub,
+            },
+        },
     };
 
     /// Build-side twin of an integer binary op (`IntBinaryFixed`).

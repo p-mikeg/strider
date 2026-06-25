@@ -12,14 +12,10 @@
 //! `Sleigh<AnyMemReader>` type without monomorphising the entire
 //! pipeline twice.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use object::{Object, ObjectSymbol};
-use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::{prelude::*, types::PyBytes};
 
 use crate::errors::into_strider_err;
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};

@@ -6,8 +6,7 @@
 //!
 //! Run: `cargo run -p strider --example dump_arch_cmps`
 
-use rsleigh::mem_readers::VecMemReader;
-use rsleigh::{Insn, MemReader, Sleigh, SleighRegs, Vn, VnSpace};
+use rsleigh::{Insn, MemReader, Sleigh, SleighRegs, Vn, VnSpace, mem_readers::VecMemReader};
 use strider_target::SleighArch;
 
 const BASE: u64 = 0x1000;

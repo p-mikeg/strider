@@ -16,11 +16,15 @@
 //! the trivial phis layered over any join.  Neither pass touches the
 //! other's node kinds, so they compose without ordering constraints.
 
-use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{
+    IRViewer,
+    node::{NodeId, NodeKind, ValueId},
+};
 
-use crate::error::Result;
-use crate::peephole::{PeepholePass, PeepholeRewrite};
+use crate::{
+    error::Result,
+    peephole::{PeepholePass, PeepholeRewrite},
+};
 
 #[cfg(test)]
 mod tests;

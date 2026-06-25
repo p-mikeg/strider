@@ -32,16 +32,21 @@
 //!   [`IfPat::with_false`] forward-walk from the matched If's control
 //!   output to its single consumer and match there.
 
-use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{
+    IRViewer,
+    node::{NodeId, NodeKind},
+};
 
-use crate::capture::Capture;
-use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
-use crate::typed::{int_const, int_const_any_of};
+use crate::{
+    capture::Capture,
+    matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern, match_pat::MatchPat},
+    typed::{int_const, int_const_any_of},
+};
 
-use super::MemPat;
-use super::node_pat::{NodePat, variant_kind};
+use super::{
+    MemPat,
+    node_pat::{NodePat, variant_kind},
+};
 
 /// A forward-branch-walk predicate for [`IfPat`]: given the matched If
 /// node, walk to a control output's single consumer and match a

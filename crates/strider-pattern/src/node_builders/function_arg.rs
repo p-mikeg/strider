@@ -19,12 +19,15 @@
 //! Enum-dispatch source distinction (register vs stack) is preserved via
 //! [`FunctionArgSource`].
 
-use strider_ir::IRViewer;
-use strider_ir::node::{FunctionArgSource, NodeKind};
+use strider_ir::{
+    IRViewer,
+    node::{FunctionArgSource, NodeKind},
+};
 
-use crate::capture::Capture;
-use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
+use crate::{
+    capture::Capture,
+    matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern, match_pat::MatchPat},
+};
 
 /// Builder for a function-argument-carrier pattern. Created by
 /// [`function_arg`] / [`function_arg_any`] / [`function_arg_reg`] /

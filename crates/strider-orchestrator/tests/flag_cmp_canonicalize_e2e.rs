@@ -14,8 +14,10 @@
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, MachineInsnAddr};
-use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{Function, IRViewer};
+use strider_ir::{
+    Function, IRViewer,
+    node::{NodeId, NodeKind},
+};
 use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 

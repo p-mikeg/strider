@@ -14,11 +14,15 @@
 //! fully-unreachable orphan is harmless — the validator and pattern
 //! queries only walk from entry).
 
-use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{
+    IRViewer,
+    node::{NodeId, NodeKind},
+};
 
-use crate::error::Result;
-use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
+use crate::{
+    error::Result,
+    pipeline::{OptCtx, OptimizationResult, Optimizer},
+};
 
 #[cfg(test)]
 mod tests;

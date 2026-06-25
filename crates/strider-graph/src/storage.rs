@@ -10,8 +10,7 @@
 //! caching policy that needs structural comparison lives in
 //! [`crate::cache`] and adds its own bounds there.
 
-use cranelift_entity::packed_option::PackedOption;
-use cranelift_entity::{ListPool, PrimaryMap};
+use cranelift_entity::{ListPool, PrimaryMap, packed_option::PackedOption};
 use smallvec::SmallVec;
 
 use crate::ids::{NodeId, UseId, UseIdList, ValueId, ValueIdList};

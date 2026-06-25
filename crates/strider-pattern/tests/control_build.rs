@@ -8,8 +8,7 @@
     clippy::unreachable
 )]
 
-use strider_ir::node::ValueType;
-use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
+use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, node::ValueType};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     Capture, MatchPat, Matcher, any, call, call_other, if_node, int_const, load, mem_phi, phi, ret,

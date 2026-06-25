@@ -27,20 +27,21 @@
 //! point the outermost pattern is compiled, so back-references
 //! (`add("x", "x")`) work. The intern table is global per process.
 
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::sync::Mutex;
+use std::{collections::HashMap, rc::Rc, sync::Mutex};
 
-use pyo3::prelude::*;
-use pyo3::types::{PyString, PyTuple};
+use pyo3::{
+    prelude::*,
+    types::{PyString, PyTuple},
+};
 #[allow(unused_imports)]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use strider_ir::node::ValueType as T;
 use strider_pattern as sp;
-use strider_pattern::matcher::{MatcherBuilder, PatValueRef};
-use strider_pattern::template::{TemplateBuilder, TmplValueRef};
 use strider_pattern::{
-    Capture, CaptureExt, MatchPat, MemPat, Pattern, Template, TemplatePat, template as tpl,
+    Capture, CaptureExt, MatchPat, MemPat, Pattern, Template, TemplatePat,
+    matcher::{MatcherBuilder, PatValueRef},
+    template as tpl,
+    template::{TemplateBuilder, TmplValueRef},
 };
 
 use crate::errors::into_strider_err;

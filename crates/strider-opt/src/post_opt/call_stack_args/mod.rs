@@ -6,12 +6,16 @@
 //! stack-arg slot and appends the stored data values as additional Call
 //! inputs.
 
-use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{
+    IRViewer,
+    node::{NodeId, NodeKind, ValueId},
+};
 
-use crate::error::Result;
-use crate::pipeline::PostOptimizer;
-use crate::sp_expr::{SpAliasCfg, SpExpr};
+use crate::{
+    error::Result,
+    pipeline::PostOptimizer,
+    sp_expr::{SpAliasCfg, SpExpr},
+};
 
 #[cfg(test)]
 mod tests;

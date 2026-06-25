@@ -21,8 +21,10 @@
 
 use anyhow::anyhow;
 
-use crate::function::Function;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use crate::{
+    function::Function,
+    node::{NodeId, NodeKind, ValueId, ValueKind, ValueType},
+};
 
 /// The shared IR **point-read** vocabulary, available on every value that
 /// can hand out a `&Function` — [`Function`] itself and every [`IRBuilder`](crate::IRBuilder)

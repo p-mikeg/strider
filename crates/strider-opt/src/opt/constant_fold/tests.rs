@@ -1,10 +1,10 @@
 use super::*;
 use crate::pipeline::OptimizerTestExt;
 use anyhow::anyhow;
-use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
+    node::{NodeKind, ValueType},
 };
 
 use crate::test_support::{
@@ -106,8 +106,7 @@ fn two_independent_instances_each_fold() -> Result<()> {
 /// wrong constant.
 #[test]
 fn int_binary_fold_skips_width_mismatched_operands() -> Result<()> {
-    use strider_ir::IRBuilder;
-    use strider_ir::node::ValueKind;
+    use strider_ir::{IRBuilder, node::ValueKind};
     // ShiftLeft where the shift-amount operand is wider than the output:
     // masking the amount to the output width changes shift semantics.
     let mut fg = make_fn(|b| {
@@ -144,8 +143,7 @@ fn int_binary_fold_skips_width_mismatched_operands() -> Result<()> {
 /// The guard must skip the fold on a width mismatch.
 #[test]
 fn int_cmp_fold_skips_width_mismatched_operands() -> Result<()> {
-    use strider_ir::IRBuilder;
-    use strider_ir::node::ValueKind;
+    use strider_ir::{IRBuilder, node::ValueKind};
     // Sless(IntConst:I8(0x80), IntConst:I32(200)) — LHS I8, RHS I32.
     let mut fg = make_fn(|b| {
         let lhs = b.build_int_const(0x80u64, ValueType::I8)?; // I8

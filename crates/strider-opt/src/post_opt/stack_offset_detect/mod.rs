@@ -8,12 +8,16 @@
 //! else (Phi-of-offsets, non-SP-rooted addresses).  The offset `K` is only
 //! comparable against another access sharing the same `base`.
 
-use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{Function, IRViewer};
+use strider_ir::{
+    Function, IRViewer,
+    node::{NodeId, NodeKind},
+};
 
-use crate::error::Result;
-use crate::pipeline::PostOptimizer;
-use crate::sp_expr::{SpAliasCfg, SpExpr};
+use crate::{
+    error::Result,
+    pipeline::PostOptimizer,
+    sp_expr::{SpAliasCfg, SpExpr},
+};
 
 /// Detects SP-relative Store / Load addresses and records each one's
 /// concrete offset in the `Function::stack_offsets` side-table.

@@ -17,11 +17,13 @@ use entity_utils::{DenseEntitySet, Worklist};
 
 use crate::function::state::{FunctionState, NodeFlags};
 
-use crate::builder::IRBuilder;
-use crate::error::Result;
-use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
-use crate::walk::{DefUseSuccs, PostOrder, RawDefUseSuccs};
-use crate::{Function, Graph, IRViewer};
+use crate::{
+    Function, Graph, IRViewer,
+    builder::IRBuilder,
+    error::Result,
+    node::{NodeId, NodeKind, UseId, ValueId, ValueKind},
+    walk::{DefUseSuccs, PostOrder, RawDefUseSuccs},
+};
 
 // ── EditFunction ─────────────────────────────────────────────────────
 
@@ -899,11 +901,12 @@ pub(crate) mod test_fixtures {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::EditFunction;
-    use super::test_fixtures::single_region_builder;
-    use crate::builder::IRBuilderExt;
-    use crate::node::{NodeKind, ValueKind, ValueType};
-    use crate::{IRViewer, IntBinaryOp};
+    use super::{EditFunction, test_fixtures::single_region_builder};
+    use crate::{
+        IRViewer, IntBinaryOp,
+        builder::IRBuilderExt,
+        node::{NodeKind, ValueKind, ValueType},
+    };
     use cranelift_entity::EntityRef;
     use std::collections::BTreeSet;
 

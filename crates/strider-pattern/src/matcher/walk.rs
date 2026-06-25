@@ -26,12 +26,16 @@
 //! [`PatNode`]: crate::matcher::PatNode
 
 use strider_graph::{NodeId as PatNodeId, ValueId as PatValueId};
-use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, ValueId, ValueKind, ValueType};
+use strider_ir::{
+    IRViewer,
+    node::{NodeId, ValueId, ValueKind, ValueType},
+};
 
-use crate::bindings::{Binding, Bindings};
-use crate::graph_ext::PatGraphRead;
-use crate::matcher::{Matcher, OutputKindSpec, PatValue, Pattern, skip_casts};
+use crate::{
+    bindings::{Binding, Bindings},
+    graph_ext::PatGraphRead,
+    matcher::{Matcher, OutputKindSpec, PatValue, Pattern, skip_casts},
+};
 
 /// Entry point for a value-rooted attempt: try `pat`'s root pat node
 /// against the IR node producing `root_value`, with `root_value` available

@@ -13,12 +13,16 @@
 //! dead edge's producer stays reachable and this pass leaves it alone.
 
 use rustc_hash::FxHashMap;
-use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::walk::cfg_reachable;
+use strider_ir::{
+    IRViewer,
+    node::{NodeId, NodeKind},
+    walk::cfg_reachable,
+};
 
-use crate::error::Result;
-use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
+use crate::{
+    error::Result,
+    pipeline::{OptCtx, OptimizationResult, Optimizer},
+};
 
 #[cfg(test)]
 mod tests;

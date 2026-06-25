@@ -27,12 +27,9 @@
 
 mod common;
 
-use rsleigh::Sleigh;
-use rsleigh::mem_readers::BufMemReader;
-use strider_ir::node::NodeKind;
-use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+use rsleigh::{Sleigh, mem_readers::BufMemReader};
+use strider_ir::{IRViewer, IRWalker, node::NodeKind};
+use strider_orchestrator::{LiftOptions, Strider, opt::OptOptions};
 use strider_target::{CallingConvention, SleighArch};
 
 const BASE: u64 = 0x1000;

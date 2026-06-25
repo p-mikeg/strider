@@ -1,8 +1,7 @@
 //! Width-aware `int_const` matching: `signed_int_const(-50)` matches an
 //! `IntConst` at any declared width without explicit per-arch pinning.
 
-use strider_ir::IRBuilderExt;
-use strider_ir::node::ValueType;
+use strider_ir::{IRBuilderExt, node::ValueType};
 use strider_pattern::{MatchPat, Matcher, int_const, signed_int_const};
 
 use super::support::Tb;

@@ -14,11 +14,13 @@ use anyhow::anyhow;
 use cranelift_entity::{EntityRef, ListPool, PrimaryMap, SecondaryMap};
 use smallvec::SmallVec;
 
-use crate::cache::NodeCacheable;
-use crate::ids::{NodeId, UseId, UseIdList, ValueId, ValueIdList};
-use crate::iter::{InputCursor, Inputs};
-use crate::node_cache::NodeCache;
-use crate::storage::{Node, RawStore, UseData, ValueData};
+use crate::{
+    cache::NodeCacheable,
+    ids::{NodeId, UseId, UseIdList, ValueId, ValueIdList},
+    iter::{InputCursor, Inputs},
+    node_cache::NodeCache,
+    storage::{Node, RawStore, UseData, ValueData},
+};
 
 /// The core generic graph structure.
 ///

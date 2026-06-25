@@ -14,12 +14,14 @@
 
 use anyhow::anyhow;
 
-use crate::IRViewer;
-use crate::builder::IRBuilder;
-use crate::error::Result;
-use crate::node::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeKind,
-    ValueId, ValueKind, ValueType,
+use crate::{
+    IRViewer,
+    builder::IRBuilder,
+    error::Result,
+    node::{
+        ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+        NodeKind, ValueId, ValueKind, ValueType,
+    },
 };
 
 /// The shared `build_*` construction vocabulary, available on every

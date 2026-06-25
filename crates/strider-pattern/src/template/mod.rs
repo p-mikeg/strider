@@ -35,12 +35,16 @@ use std::collections::BTreeMap;
 use anyhow::anyhow;
 use rustc_hash::FxHashMap;
 use strider_graph::ValueId as TmplValueId;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
-use strider_ir::{IRBuilder, IRViewer};
+use strider_ir::{
+    IRBuilder, IRViewer,
+    node::{NodeId, NodeKind, ValueId, ValueKind, ValueType},
+};
 
-use crate::bindings::Bindings;
-use crate::graph_ext::{PatGraphRead, reachable_topo};
-use crate::matcher::OutputKindSpec;
+use crate::{
+    bindings::Bindings,
+    graph_ext::{PatGraphRead, reachable_topo},
+    matcher::OutputKindSpec,
+};
 
 /// Type alias for the [`TemplateKind::Fn`] closure shape. Factored out
 /// to keep [`TemplateKind`] legible under clippy's `type_complexity`

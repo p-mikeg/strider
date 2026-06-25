@@ -11,14 +11,18 @@ use std::mem::{Discriminant, discriminant};
 
 use rustc_hash::FxHashSet;
 
-use strider_ir::node::{NodeId, NodeKind, ValueType};
-use strider_ir::{ConstId, IRViewer};
+use strider_ir::{
+    ConstId, IRViewer,
+    node::{NodeId, NodeKind, ValueType},
+};
 
-use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef};
-use crate::template::template_pat::TemplatePat;
-use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef};
-use crate::typed::builder_like::BuilderLike;
+use crate::{
+    matcher::{KindSpec, MatcherBuilder, PatValueRef, match_pat::MatchPat},
+    template::{
+        TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef, template_pat::TemplatePat,
+    },
+    typed::builder_like::BuilderLike,
+};
 
 /// Shared lowering for the fixed-shape constant leaves (`BoolConst`,
 /// `FloatConst`): one `leaf` node, optionally pinned to an exact value type.

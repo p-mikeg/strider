@@ -1,5 +1,4 @@
-use strider_ir::node::ValueType;
-use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp, node::ValueType};
 
 use anyhow::anyhow;
 

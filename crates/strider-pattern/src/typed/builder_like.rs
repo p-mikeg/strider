@@ -19,13 +19,12 @@
 //! factory free functions (`add` bounded `MatchPat`, `template::add`
 //! bounded `TemplatePat`) are untouched.
 
-use strider_ir::IntBinaryOp;
-use strider_ir::node::ValueType;
+use strider_ir::{IntBinaryOp, node::ValueType};
 
-use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, PatNodeRef, PatValueRef};
-use crate::template::template_pat::TemplatePat;
-use crate::template::{TemplateBuilder, TmplNodeRef, TmplValueRef};
+use crate::{
+    matcher::{KindSpec, MatcherBuilder, PatNodeRef, PatValueRef, match_pat::MatchPat},
+    template::{TemplateBuilder, TmplNodeRef, TmplValueRef, template_pat::TemplatePat},
+};
 
 /// The value-op construction verbs shared by both imperative builders.
 ///

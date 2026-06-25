@@ -16,10 +16,12 @@
 
 use strider_graph::{Graph, NeverCacheable, NodeId};
 
-use crate::capture::Capture;
-use crate::graph_ext::{HasInputSlots, PatGraphRead};
-use crate::matcher::OutputKindSpec;
-use crate::template::{TemplateKind, TemplateTy};
+use crate::{
+    capture::Capture,
+    graph_ext::{HasInputSlots, PatGraphRead},
+    matcher::OutputKindSpec,
+    template::{TemplateKind, TemplateTy},
+};
 
 /// A template **node** vertex.
 ///

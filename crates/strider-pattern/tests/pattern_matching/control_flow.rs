@@ -5,8 +5,10 @@
 //! `if_node().cond().true_branch().false_branch()`, `.at(addr)` convenience.
 
 use strider_ir::{IRViewer, IntCmpOp};
-use strider_pattern::matcher::{KindSpec, MatcherBuilder};
-use strider_pattern::*;
+use strider_pattern::{
+    matcher::{KindSpec, MatcherBuilder},
+    *,
+};
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};
 

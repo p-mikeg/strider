@@ -11,8 +11,10 @@
 
 use strider_ir::{IRBuilderExt, IntBinaryOp, ValueType};
 
-use crate::lift::FunctionLifter;
-use crate::lift::pcode_util::{Result, require_output_vn};
+use crate::lift::{
+    FunctionLifter,
+    pcode_util::{Result, require_output_vn},
+};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Translates a p-code boolean binary instruction into an `I1` integer

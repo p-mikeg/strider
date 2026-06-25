@@ -11,8 +11,10 @@
 //! Every optimization pass that forgets `extend_asm_fingerprint_from`
 //! would otherwise produce silently invalid output.
 
-use strider_ir::node::{NodeKind, ValueKind, ValueType};
-use strider_ir::{Function, IRViewer, IntBinaryOp};
+use strider_ir::{
+    Function, IRViewer, IntBinaryOp,
+    node::{NodeKind, ValueKind, ValueType},
+};
 
 #[test]
 fn default_validate_flags_missing_asm_fingerprint() {

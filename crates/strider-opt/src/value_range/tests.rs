@@ -2,8 +2,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp, control_dominators};
+use strider_ir::{
+    IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp, control_dominators,
+    node::{NodeId, NodeKind, ValueId, ValueType},
+};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
 use super::compute_value_ranges;
@@ -1898,8 +1900,7 @@ fn guard_on_edge_into_merge_is_top_below_merge() {
 // ---------------------------------------------------------------------------
 #[test]
 fn guard_survives_region_collapse_at_nonregion_consumer() {
-    use crate::RegionCollapse;
-    use crate::pipeline::OptimizerTestExt;
+    use crate::{RegionCollapse, pipeline::OptimizerTestExt};
 
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));

@@ -10,9 +10,9 @@
 //! the underlying `NodeKind`.
 
 use rustc_hash::FxHashMap;
-use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    node::{NodeId, NodeKind, ValueId},
 };
 
 use crate::capture::Capture;
@@ -334,8 +334,7 @@ impl Bindings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strider_ir::node::ValueType;
-    use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
+    use strider_ir::{IRBuilderExt, IRViewer, IRWalker, node::ValueType};
     use strider_ir_test_utils::make_empty_fn;
 
     // ── Capture (unified node + output) ──────────────────────────────────

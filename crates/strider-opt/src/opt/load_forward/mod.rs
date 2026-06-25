@@ -27,13 +27,17 @@
 //! function under analysis (`Function::default_cc` / `Function::endianness`),
 //! so the pass takes no convention configuration.
 
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
-use strider_ir::{IRBuilderExt, IRViewer};
+use strider_ir::{
+    IRBuilderExt, IRViewer,
+    node::{NodeId, NodeKind, ValueId, ValueKind},
+};
 use strider_target::Endianness;
 
-use crate::error::Result;
-use crate::pipeline::OptimizationResult;
-use crate::sp_expr::{AliasVerdict, SpAliasCfg, SpExprMemo};
+use crate::{
+    error::Result,
+    pipeline::OptimizationResult,
+    sp_expr::{AliasVerdict, SpAliasCfg, SpExprMemo},
+};
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///

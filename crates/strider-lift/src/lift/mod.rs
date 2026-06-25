@@ -454,8 +454,7 @@ mod tests {
     /// `unresolved_branches` stays empty.
     #[test]
     fn aarch64_bx_lr_lifts_to_cc_return_not_indirect() {
-        use strider_ir::IRWalker;
-        use strider_ir::node::NodeKind;
+        use strider_ir::{IRWalker, node::NodeKind};
 
         let arch = strider_target::SleighArch::aarch64();
         // `probe_regs` consumes the arch, so build a second copy for the lift.

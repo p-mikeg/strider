@@ -27,9 +27,9 @@ use std::collections::{BTreeSet, HashMap};
 
 use proptest::prelude::*;
 
-use strider_ir::node::{NodeId, ValueType};
 use strider_ir::{
     ExtendOp, Function, FunctionBuilder, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    node::{NodeId, ValueType},
 };
 use strider_orchestrator::opt::{OptimizerPipeline, default_pipeline};
 

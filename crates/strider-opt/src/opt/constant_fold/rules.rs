@@ -2,8 +2,10 @@ use strider_ir::node::{NodeId, ValueId};
 
 use crate::error::Result;
 
-use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
-use super::eval_int::{eval_int_binary, eval_int_cmp};
+use super::{
+    eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary},
+    eval_int::{eval_int_binary, eval_int_cmp},
+};
 
 use crate::{BoxedRule, apply_rules_in_order, rewrite_rule};
 use strider_pattern::{

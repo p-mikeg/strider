@@ -33,8 +33,10 @@ mod common;
 
 use common::ALL_ARCHES;
 use std::collections::BTreeMap;
-use strider_ir::node::{NodeKind, ValueKind};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::{
+    IRViewer, IRWalker,
+    node::{NodeKind, ValueKind},
+};
 
 /// Function selected for the cross-arch comparison.  See module doc.
 const FN_NAME: &str = "sum_to_n";

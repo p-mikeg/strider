@@ -1,11 +1,13 @@
 use rsleigh::MemReader;
 use rustc_hash::FxHashMap;
 
-use crate::IRViewer;
-use crate::function::Function;
-use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, ValueId};
-use crate::node_signature::{SlotRole, expected_signature};
+use crate::{
+    IRViewer,
+    function::Function,
+    graph::Graph,
+    node::{NodeId, NodeKind, ValueId},
+    node_signature::{SlotRole, expected_signature},
+};
 
 pub mod label;
 mod raw;

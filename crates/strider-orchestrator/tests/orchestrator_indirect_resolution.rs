@@ -11,11 +11,9 @@
 
 mod common;
 
-use rsleigh::Sleigh;
-use rsleigh::mem_readers::BufMemReader;
+use rsleigh::{Sleigh, mem_readers::BufMemReader};
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+use strider_orchestrator::{LiftOptions, Strider, opt::OptOptions};
 use strider_target::{CallingConvention, SleighArch};
 
 fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>> {

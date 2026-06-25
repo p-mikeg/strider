@@ -1,10 +1,12 @@
 use anyhow::anyhow;
 use cranelift_entity::{SecondaryMap, entity_impl};
 
-use crate::IRViewer;
-use crate::builder::{FunctionBuilder, VarId};
-use crate::error::Result;
-use crate::node::{NodeId, ValueId};
+use crate::{
+    IRViewer,
+    builder::{FunctionBuilder, VarId},
+    error::Result,
+    node::{NodeId, ValueId},
+};
 
 /// A unique identifier for a basic-block region in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

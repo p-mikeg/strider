@@ -23,11 +23,15 @@
 //! This pass no longer strips `Region` predecessor slots — that surgery is
 //! [`crate::CfgDetach`]'s sole responsibility now.
 
-use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{
+    IRViewer,
+    node::{NodeId, NodeKind},
+};
 
-use crate::error::Result;
-use crate::peephole::{PeepholePass, PeepholeRewrite};
+use crate::{
+    error::Result,
+    peephole::{PeepholePass, PeepholeRewrite},
+};
 
 #[cfg(test)]
 mod tests;

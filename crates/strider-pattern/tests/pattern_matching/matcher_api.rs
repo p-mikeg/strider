@@ -1,8 +1,10 @@
 //! `Matcher` API surface: `find_all`, `match_at`, `function_arg*`, walk-through
 //! options, and the kind-prefilter early-out.
 
-use strider_ir::node::{NodeId, NodeKind, ValueType};
-use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir::{
+    IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
+    node::{NodeId, NodeKind, ValueType},
+};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};

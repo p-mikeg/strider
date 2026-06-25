@@ -1,11 +1,15 @@
 use cranelift_entity::SecondaryMap;
 use entity_utils::Worklist;
 
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir::{
+    ExtendOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
+    node::{NodeId, NodeKind, ValueId, ValueType},
+};
 
-use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::{
+    error::Result,
+    pipeline::{OptimizationResult, Optimizer},
+};
 
 #[cfg(test)]
 mod tests;

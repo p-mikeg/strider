@@ -27,11 +27,9 @@
 
 mod common;
 
-use rsleigh::Sleigh;
-use rsleigh::mem_readers::BufMemReader;
+use rsleigh::{Sleigh, mem_readers::BufMemReader};
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+use strider_orchestrator::{LiftOptions, Strider, opt::OptOptions};
 use strider_target::{CallingConvention, SleighArch};
 
 /// Synthetic layout:

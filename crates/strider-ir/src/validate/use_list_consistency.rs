@@ -1,8 +1,6 @@
 use entity_utils::set::DenseEntitySet;
 
-use crate::graph::Graph;
-use crate::node::UseId;
-use crate::walk::NodeIdSet;
+use crate::{graph::Graph, node::UseId, walk::NodeIdSet};
 
 use super::ValidationError;
 

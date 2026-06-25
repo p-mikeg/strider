@@ -1,10 +1,8 @@
 use super::*;
-use strider_ir::node::NodeKind;
-use strider_ir::{IRBuilderExt, IRWalker};
+use strider_ir::{IRBuilderExt, IRWalker, node::NodeKind};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
-use crate::pipeline::OptimizerTestExt;
-use crate::{OptimizerPipeline, PhiCollapse};
+use crate::{OptimizerPipeline, PhiCollapse, pipeline::OptimizerTestExt};
 
 // ── single-input Region collapses ───────────────────────────────────────────
 

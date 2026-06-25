@@ -1,9 +1,12 @@
 use super::*;
-use crate::error::Result;
-use crate::pipeline::OptimizerTestExt;
-use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
-use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
+use crate::{
+    ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse, error::Result,
+    pipeline::OptimizerTestExt,
+};
+use strider_ir::{
+    IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
+    node::{NodeKind, ValueType},
+};
 use strider_ir_test_utils::{
     RegisterSet, SENTINEL_LIFT_ADDR, stack_vn_aarch64 as sp64_vn, stack_vn_x86 as sp32_vn,
 };

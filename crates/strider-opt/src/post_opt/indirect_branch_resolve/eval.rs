@@ -12,12 +12,16 @@
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{IRViewer, ReadOnlyMemory};
+use strider_ir::{
+    IRViewer, ReadOnlyMemory,
+    node::{NodeId, NodeKind, ValueId, ValueType},
+};
 use strider_target::Endianness;
 
-use crate::opt::constant_fold::eval_int::eval_int_binary;
-use crate::sp_expr::{SpAliasCfg, SpExpr, SpExprMemo};
+use crate::{
+    opt::constant_fold::eval_int::eval_int_binary,
+    sp_expr::{SpAliasCfg, SpExpr, SpExprMemo},
+};
 
 /// Returns an iterator over the value-typed inputs of `node` — i.e., inputs
 /// whose `value_type_opt` is `Some`.  Skips control, memory, and phi-token
@@ -254,8 +258,7 @@ pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::{Evaluator, cone_order};
-    use strider_ir::node::ValueType;
-    use strider_ir::{IRBuilderExt, IntBinaryOp};
+    use strider_ir::{IRBuilderExt, IntBinaryOp, node::ValueType};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     // Build `Add(idx, 100):I64` where `idx` is a tracked register read

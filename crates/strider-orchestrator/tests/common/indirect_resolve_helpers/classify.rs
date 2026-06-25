@@ -23,8 +23,7 @@
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::MachineInsnAddr;
-use strider_ir::node::NodeKind;
-use strider_ir::{Function, IRBuilderExt, IRViewer, IRWalker};
+use strider_ir::{Function, IRBuilderExt, IRViewer, IRWalker, node::NodeKind};
 use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 
@@ -318,8 +317,7 @@ pub fn build_jump_table_known_bits_scenario(
     stride: u64,
     idx_mask: u64,
 ) -> (Function, strider_ir::Value) {
-    use strider_ir::IntBinaryOp;
-    use strider_ir::node::ValueType;
+    use strider_ir::{IntBinaryOp, node::ValueType};
     use strider_ir_test_utils::RegisterSet;
     use strider_orchestrator::opt::{ConstantFold, OptimizerPipeline};
 
@@ -389,8 +387,7 @@ pub fn build_jump_table_predecessor_if_scenario(
     stride: u64,
     bound: u64,
 ) -> (Function, strider_ir::Value) {
-    use strider_ir::node::ValueType;
-    use strider_ir::{IntBinaryOp, IntCmpOp};
+    use strider_ir::{IntBinaryOp, IntCmpOp, node::ValueType};
     use strider_ir_test_utils::RegisterSet;
     use strider_orchestrator::opt::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
 
@@ -464,8 +461,7 @@ pub fn build_jump_table_unbounded_scenario(
     base: u64,
     stride: u64,
 ) -> (Function, strider_ir::Value) {
-    use strider_ir::IntBinaryOp;
-    use strider_ir::node::ValueType;
+    use strider_ir::{IntBinaryOp, node::ValueType};
     use strider_ir_test_utils::RegisterSet;
     use strider_orchestrator::opt::{ConstantFold, OptimizerPipeline};
 
@@ -572,8 +568,10 @@ pub fn build_stack_array_dispatch_scenario(
     base_offset: i64,
     stride: u64,
 ) -> (Function, strider_ir::node::ValueId, rsleigh::Vn) {
-    use strider_ir::node::{ValueId, ValueKind, ValueType};
-    use strider_ir::{ExtendOp, IntBinaryOp};
+    use strider_ir::{
+        ExtendOp, IntBinaryOp,
+        node::{ValueId, ValueKind, ValueType},
+    };
     use strider_ir_test_utils::RegisterSet;
     use strider_orchestrator::opt::{
         ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse,

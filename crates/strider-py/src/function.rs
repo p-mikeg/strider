@@ -6,15 +6,15 @@
 //! so the Sleigh stays alive for the graph's lifetime and is
 //! reachable through `strider_cfg::Cfg::sleigh`.
 
-use std::path::Path;
-use std::sync::{Arc, RwLock, TryLockError};
+use std::{
+    path::Path,
+    sync::{Arc, RwLock, TryLockError},
+};
 
 use pyo3::prelude::*;
-use strider_ir::node::NodeKind;
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::{IRViewer, IRWalker, node::NodeKind};
 
-use crate::cfg::PyCfg;
-use crate::dot::dot_style_for;
+use crate::{cfg::PyCfg, dot::dot_style_for};
 
 /// Opaque wrapper over `strider_ir::Function`.
 ///

@@ -8,8 +8,7 @@
 #![allow(clippy::unwrap_used)]
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+use strider_orchestrator::{LiftOptions, Strider, opt::OptOptions};
 use strider_target::{CallingConvention, SleighArch};
 
 mod common;

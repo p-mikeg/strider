@@ -1,8 +1,7 @@
 //! Memory-chain matchers — `LoadPat::mem_in`, `StorePat::mem_in` — exercise
 //! the backward walk along the per-region memory chain.
 
-use strider_ir::node::ValueType;
-use strider_ir::{FunctionBuilder, IRBuilderExt};
+use strider_ir::{FunctionBuilder, IRBuilderExt, node::ValueType};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{Matcher, int_const, load, store};
 

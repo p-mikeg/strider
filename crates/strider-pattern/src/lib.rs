@@ -38,17 +38,16 @@ pub use bindings::Bindings;
 pub use capture::Capture;
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
 pub use match_result::Match;
-pub use matcher::match_pat::{
-    CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, ValueTy,
+pub use matcher::{
+    CastMask, Matcher, Pattern, PostMatchFn,
+    match_pat::{CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, ValueTy},
 };
-pub use matcher::{CastMask, Matcher, Pattern, PostMatchFn};
 pub use node_builders::{
     CallOtherPat, CallPat, FunctionArgPat, IfPat, LoadPat, MemPat, MemPhiPat, PhiPat, RetPat,
     StorePat, call, call_other, function_arg, function_arg_any, function_arg_reg,
     function_arg_stack, if_node, load, mem_phi, phi, phi_for, ret, store,
 };
-pub use template::template_pat::TemplatePat;
-pub use template::{Template, TemplateCtx, instantiate};
+pub use template::{Template, TemplateCtx, instantiate, template_pat::TemplatePat};
 
 /// Returns the [`ValueType`](strider_ir::node::ValueType) of
 /// the matched root's first value input, or `None` if the root has no
@@ -59,8 +58,7 @@ pub use template::{Template, TemplateCtx, instantiate};
 /// input type (needed for signed / carry handling) differs from the
 /// root's output type (always `I1`).
 pub fn first_value_input_type(ctx: &TemplateCtx<'_>) -> Option<strider_ir::node::ValueType> {
-    use strider_ir::IRViewer;
-    use strider_ir::node::ValueKind;
+    use strider_ir::{IRViewer, node::ValueKind};
     let inputs = ctx.function.node_inputs(ctx.root);
     let inp = inputs.into_iter().next()?;
     match ctx.function.value_kind(inp) {

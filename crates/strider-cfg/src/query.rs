@@ -1,8 +1,9 @@
-use petgraph::graph::NodeIndex;
-use petgraph::visit::EdgeRef;
+use petgraph::{graph::NodeIndex, visit::EdgeRef};
 
-use super::types::{Region, RegionTerminator};
-use super::{Cfg, RegionId};
+use super::{
+    Cfg, RegionId,
+    types::{Region, RegionTerminator},
+};
 use anyhow::anyhow;
 
 use crate::Result;
@@ -208,8 +209,10 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
-    use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
-    use crate::{Builder, CfgOptions};
+    use crate::{
+        Builder, CfgOptions,
+        types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction},
+    };
 
     // ── is_addr_tail_call: non-wrapping top-of-address-space window ───────
 
