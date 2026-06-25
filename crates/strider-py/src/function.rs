@@ -211,6 +211,13 @@ impl PyFunction {
     }
 }
 
+/// Write `contents` to `path`, mapping any I/O error to a `StriderError`.
+/// Shared by the `to_raw_dot` / `to_raw_html` file-dump methods.
+fn write_to(path: &str, contents: String) -> PyResult<()> {
+    std::fs::write(path, contents)
+        .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
+}
+
 #[pymethods]
 impl PyFunction {
     /// The snapshot `Cfg` this function was lifted from — kept alive for
@@ -272,15 +279,13 @@ impl PyFunction {
     /// Write the raw (as-stored) Graphviz `.dot` rendering to `path`.
     /// See `raw_dot_str` for what "raw" means.
     fn to_raw_dot(&self, path: &str) -> PyResult<()> {
-        let dot = self.raw_dot_str()?;
-        std::fs::write(path, dot).map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
+        write_to(path, self.raw_dot_str()?)
     }
 
     /// Write the raw (as-stored) standalone HTML rendering to `path`.
     /// See `raw_dot_str` for what "raw" means.
     fn to_raw_html(&self, path: &str) -> PyResult<()> {
-        let html = self.raw_html_str()?;
-        std::fs::write(path, html).map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
+        write_to(path, self.raw_html_str()?)
     }
 
     /// Returns the number of node ids in the IR arena — every allocated

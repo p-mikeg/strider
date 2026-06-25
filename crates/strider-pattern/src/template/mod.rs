@@ -220,7 +220,7 @@ pub fn instantiate<B: IRBuilder>(
         // Map each template output vertex to the IR output at the
         // matching slot, so multi-output consumers wire the right edge.
         let ir_outputs = builder.function().node_outputs(node);
-        for out_vtx in template.graph.produced_outputs(vtx) {
+        for out_vtx in template.graph.produced_outputs(vtx).iter().copied() {
             // A built node's outputs are all `TmplOutput`; a `ValueCapture`
             // never hangs off a `Build` node.
             let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
@@ -324,6 +324,24 @@ fn collect_inputs(
     Ok(inputs_by_slot.into_values().collect())
 }
 
+/// Resolve one template output vertex's [`OutputKindSpec`] (+ its
+/// [`TemplateTy`]) into the concrete IR [`ValueKind`], against `root_ty`.
+/// Single source of truth for the `OutputKindSpec → ValueKind` mapping
+/// shared by [`node_value_ty`] and [`output_kinds_for`].
+fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType) -> ValueKind {
+    match o.kind {
+        OutputKindSpec::Memory => ValueKind::Memory,
+        OutputKindSpec::Control => ValueKind::Control,
+        OutputKindSpec::PhiToken => ValueKind::PhiToken,
+        // Value (typed or not) — use this output's own resolved type. The
+        // unconstrained `Any` wildcard is a match-only kind (no template
+        // builder emits it); resolve it defensively.
+        OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
+            ValueKind::Typed(resolve_ty(o.ty, root_ty))
+        }
+    }
+}
+
 /// The resolved value-output type a template node declares: the
 /// [`TemplateTy`] of its first value output vertex, resolved against
 /// `root_ty`. Falls back to `root_ty` when the node has no value output
@@ -332,16 +350,16 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> V
     template
         .graph
         .produced_outputs(node_vtx)
-        .into_iter()
+        .iter()
+        .copied()
         .find_map(|out_vtx| {
             let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
                 return None;
             };
-            matches!(
-                o.kind,
-                OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any
-            )
-            .then(|| resolve_ty(o.ty, root_ty))
+            match resolved_output_kind(o, root_ty) {
+                ValueKind::Typed(t) => Some(t),
+                _ => None,
+            }
         })
         .unwrap_or(root_ty)
 }
@@ -353,21 +371,9 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> V
 /// common value-expression case).
 fn output_kinds_for(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> Vec<ValueKind> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
-    for out_vtx in template.graph.produced_outputs(node_vtx) {
+    for out_vtx in template.graph.produced_outputs(node_vtx).iter().copied() {
         if let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) {
-            let kind = match o.kind {
-                OutputKindSpec::Memory => ValueKind::Memory,
-                OutputKindSpec::Control => ValueKind::Control,
-                OutputKindSpec::PhiToken => ValueKind::PhiToken,
-                // Value (typed or not) — use this output's own resolved
-                // type. The unconstrained `Any` wildcard is a match-only
-                // kind (no template builder emits it); resolve it
-                // defensively.
-                OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
-                    ValueKind::Typed(resolve_ty(o.ty, root_ty))
-                }
-            };
-            by_slot.insert(o.slot, kind);
+            by_slot.insert(o.slot, resolved_output_kind(o, root_ty));
         }
     }
     if by_slot.is_empty() {

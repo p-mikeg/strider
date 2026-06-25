@@ -86,7 +86,7 @@ pub(crate) fn try_match_node(
 /// value output (a `Value` / `AnyValue` kind, or any `width` constraint).
 /// Such a root cannot match a zero-output IR node.
 fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
-    pat.graph.produced_outputs(root).into_iter().any(|ov| {
+    pat.graph.produced_outputs(root).iter().any(|&ov| {
         let o = pat.graph.output_weight(ov);
         o.width.is_some() || matches!(o.kind, OutputKindSpec::Value(_) | OutputKindSpec::AnyValue)
     })
@@ -128,7 +128,8 @@ fn root_output_vertex_for(
     // Multiple output vertices (the `If` control root): keep the per-slot
     // lookup so each control output's constraints land on the right slot.
     let (_node, ir_slot) = matcher.function().value_definition(root_value);
-    outs.into_iter()
+    outs.iter()
+        .copied()
         .find(|&out_vertex| pat.graph.output_weight(out_vertex).slot as u32 == ir_slot)
 }
 

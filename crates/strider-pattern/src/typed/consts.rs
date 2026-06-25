@@ -70,24 +70,53 @@ fn first_int_const_value(f: &strider_ir::Function, node: NodeId) -> Option<(u128
     Some((stored, ty))
 }
 
+/// Build a match-side `IntConst`-variant leaf, optionally pinning its
+/// output type, then install `pred` as the node predicate. `pred` receives
+/// the matched node's stored value and output type (already located via
+/// [`first_int_const_value`], which the [`KindSpec::Variant`] prefilter
+/// guarantees succeeds for an `IntConst`); the predicate fails the match if
+/// the value can't be read or the test returns `false`. Shared by every
+/// `IntConst`-predicate leaf so the leaf+predicate scaffold lives once.
+fn int_const_leaf(
+    b: &mut MatcherBuilder,
+    pin: Option<ValueType>,
+    pred: impl Fn(u128, ValueType) -> bool + 'static,
+) -> PatValueRef {
+    let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
+    if let Some(t) = pin {
+        b.set_value_ty(o, t);
+    }
+    b.set_node_predicate(
+        o,
+        Box::new(move |m, node| {
+            first_int_const_value(m.function(), node).is_some_and(|(v, ty)| pred(v, ty))
+        }),
+    );
+    o
+}
+
 impl MatchPat for IntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let v = self.v;
-        // Declare the expected kind in the leaf so the kind index prefilters
-        // to IntConst nodes; the predicate then only compares the value.
-        let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
-        b.set_node_predicate(
-            o,
-            Box::new(move |m, node| {
-                let Some((stored, ty)) = first_int_const_value(m.function(), node) else {
-                    return false;
-                };
-                // Width-mask against the constant node's own output type.
-                let mask = ty.bit_mask_u128();
-                (stored & mask) == (v & mask)
-            }),
-        );
-        o
+        // The leaf's Variant prefilter declares the expected kind; the
+        // predicate width-masks against the constant node's own output type.
+        int_const_leaf(b, None, move |stored, ty| {
+            let mask = ty.bit_mask_u128();
+            (stored & mask) == (v & mask)
+        })
+    }
+}
+
+/// Build-side twin for a constant whose value is already known at
+/// pattern-build time: a [`ConstWith`] carrying the precomputed `v` via
+/// [`TemplateKind::FnIntConst`] (so the instantiator interns the full
+/// `u128` at the resolved output width — never truncating to `u64`) and the
+/// given output-type policy. Shared by every `*Const` build impl whose
+/// value is constant.
+fn const_template(v: u128, ty: TemplateTy) -> ConstWith {
+    ConstWith {
+        kind: TemplateKind::FnIntConst(Box::new(move |_ctx| Ok(v))),
+        ty,
     }
 }
 
@@ -97,8 +126,7 @@ impl crate::template::template_pat::TemplatePat for IntConst {
         // interns the value at the resolved output width without ever
         // truncating here (e.g. int_const(u128::MAX) on an I128 root must
         // produce a full-width all-ones, not a u64-truncated one).
-        let v = self.v;
-        int_const_with_fn(move |_ctx| Ok(v)).compile(b)
+        const_template(self.v, TemplateTy::InheritRoot).compile(b)
     }
 }
 
@@ -122,48 +150,41 @@ pub struct SignedIntConst {
 impl MatchPat for SignedIntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let v_unsigned: u128 = i128::from(self.v) as u128;
-        // Declare the expected kind in the leaf so the kind index prefilters
-        // to IntConst nodes; the predicate then only checks the value encoding.
-        let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
-        b.set_node_predicate(
-            o,
-            Box::new(move |m, node| {
-                let Some((stored, out_ty)) = first_int_const_value(m.function(), node) else {
-                    return false;
+        // The leaf's Variant prefilter declares the expected kind; the
+        // predicate checks the exact / sign-extended / zero-extended-narrow
+        // value encodings against the constant node's output type.
+        int_const_leaf(b, None, move |stored, out_ty| {
+            let output_width = out_ty.bit_width();
+            if output_width == 0 {
+                return false;
+            }
+            let output_mask = out_ty.bit_mask_u128();
+            for &w in &[8usize, 16, 32, 64, 128] {
+                if w > output_width {
+                    break;
+                }
+                let w_mask: u128 = if w >= 128 {
+                    u128::MAX
+                } else {
+                    (1u128 << w) - 1
                 };
-                let output_width = out_ty.bit_width();
-                if output_width == 0 {
-                    return false;
+                let low = stored & w_mask;
+                let v_low = v_unsigned & w_mask;
+                if low != v_low {
+                    continue;
                 }
-                let output_mask = out_ty.bit_mask_u128();
-                for &w in &[8usize, 16, 32, 64, 128] {
-                    if w > output_width {
-                        break;
-                    }
-                    let w_mask: u128 = if w >= 128 {
-                        u128::MAX
-                    } else {
-                        (1u128 << w) - 1
-                    };
-                    let low = stored & w_mask;
-                    let v_low = v_unsigned & w_mask;
-                    if low != v_low {
-                        continue;
-                    }
-                    let above_w_mask = output_mask & !w_mask;
-                    let above = stored & above_w_mask;
-                    if above == 0 {
-                        return true; // zero-extended form
-                    }
-                    let sign_bit_w = if w >= 128 { 0 } else { 1u128 << (w - 1) };
-                    if sign_bit_w != 0 && (low & sign_bit_w) != 0 && above == above_w_mask {
-                        return true; // sign-extended form
-                    }
+                let above_w_mask = output_mask & !w_mask;
+                let above = stored & above_w_mask;
+                if above == 0 {
+                    return true; // zero-extended form
                 }
-                false
-            }),
-        );
-        o
+                let sign_bit_w = if w >= 128 { 0 } else { 1u128 << (w - 1) };
+                if sign_bit_w != 0 && (low & sign_bit_w) != 0 && above == above_w_mask {
+                    return true; // sign-extended form
+                }
+            }
+            false
+        })
     }
 }
 
@@ -174,7 +195,7 @@ impl crate::template::template_pat::TemplatePat for SignedIntConst {
         // resolved output width.  A u64-truncated value would lose the upper
         // bits for I128+ roots.
         let v: u128 = i128::from(self.v) as u128; // full-width two's-complement
-        int_const_with_fn(move |_ctx| Ok(v)).compile(b)
+        const_template(v, TemplateTy::InheritRoot).compile(b)
     }
 }
 
@@ -190,21 +211,12 @@ pub struct BoolConst {
 
 impl MatchPat for BoolConst {
     fn compile(self, builder: &mut MatcherBuilder) -> PatValueRef {
-        let b = self.b;
-        let expected: u128 = u128::from(b);
-        // Use Variant prefilter + a value-reading predicate. KindSpec::Exact
-        // cannot be used here because NodeKind::IntConst(ConstId) stores an
-        // opaque interned id, not a value — the same value in two different
-        // Functions will have different ConstIds.
-        let o = builder.leaf(KindSpec::Variant(int_const_discriminant()));
-        builder.set_value_ty(o, ValueType::I1);
-        builder.set_node_predicate(
-            o,
-            Box::new(move |m, node| {
-                first_int_const_value(m.function(), node).is_some_and(|(v, _ty)| v == expected)
-            }),
-        );
-        o
+        let expected: u128 = u128::from(self.b);
+        // Use Variant prefilter (pinned to I1) + a value-reading predicate.
+        // KindSpec::Exact cannot be used here because NodeKind::IntConst(ConstId)
+        // stores an opaque interned id, not a value — the same value in two
+        // different Functions will have different ConstIds.
+        int_const_leaf(builder, Some(ValueType::I1), move |v, _ty| v == expected)
     }
 }
 
@@ -213,12 +225,7 @@ impl crate::template::template_pat::TemplatePat for BoolConst {
         // Route through FnIntConst (fixed to I1) so the instantiator interns
         // the value into the Function at rewrite time (ConstId is
         // function-specific and cannot be materialised at pattern-build time).
-        let v: u128 = u128::from(self.b);
-        ConstWith {
-            kind: TemplateKind::FnIntConst(Box::new(move |_ctx| Ok(v))),
-            ty: TemplateTy::Fixed(ValueType::I1),
-        }
-        .compile(b)
+        const_template(u128::from(self.b), TemplateTy::Fixed(ValueType::I1)).compile(b)
     }
 }
 
@@ -256,21 +263,12 @@ pub struct AnyIntConst;
 impl MatchPat for AnyIntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         // All integer constants are now `IntConst(ConstId)` — a single
-        // payload-uniform variant. Use KindSpec::Variant to prefilter by
-        // discriminant, then a predicate that accepts any constant whose
-        // value fits in u128 (I1..I128 always fit; I256/I512 are excluded
-        // when their high limbs are nonzero).
-        let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
-        b.set_node_predicate(
-            o,
-            Box::new(move |m, ir_node| {
-                // The Variant prefilter guarantees an `IntConst`; the helper
-                // returns `None` when the value can't be read as `u128`
-                // (rejects I256/I512 constants whose high limbs are nonzero).
-                first_int_const_value(m.function(), ir_node).is_some()
-            }),
-        );
-        o
+        // payload-uniform variant. The Variant prefilter selects them; the
+        // predicate accepts any whose value reads back as `u128` (I1..I128
+        // always fit; I256/I512 with nonzero high limbs are rejected because
+        // `first_int_const_value` returns `None`, so the predicate never runs
+        // for them).
+        int_const_leaf(b, None, move |_v, _ty| true)
     }
 }
 
@@ -320,19 +318,12 @@ impl MatchPat for IntConstAnyOf {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         // NodeKind::IntConst(ConstId) is payload-uniform — the value can only
         // be read through the Function's interner (not from the NodeKind
-        // directly). Use Variant prefilter + a node predicate that reads the
-        // value via int_const_u128. Only ≤u64 values are in the set
-        // (int_const_any_of accepts u64 inputs), so I256/I512 constants
-        // (whose value may not fit u128) never match.
+        // directly). Variant prefilter + a predicate that reads the value via
+        // int_const_u128. Only ≤u64 values are in the set (int_const_any_of
+        // accepts u64 inputs), so I256/I512 constants (whose value may not fit
+        // u128) never match.
         let set = self.set;
-        let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
-        b.set_node_predicate(
-            o,
-            Box::new(move |m, ir_node| {
-                first_int_const_value(m.function(), ir_node).is_some_and(|(v, _)| set.contains(&v))
-            }),
-        );
-        o
+        int_const_leaf(b, None, move |v, _ty| set.contains(&v))
     }
 }
 

@@ -81,17 +81,16 @@ def test_default_pipeline_mirrors_rust_default():
 
 
 def test_cc_aware_passes_construct(x86_memory_elf):
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).reader()
-    sleigh = strider.Sleigh(arch, mem)
+    del x86_memory_elf
 
-    # Construct each CC/arch-aware pass to confirm their constructors
-    # accept the (sleigh, cc[, arch]) triples.  `LoadReadOnly()` is a
-    # marker now — its rom flows via `strider.run(..., rom=mem)`.
-    b = strider.opt.LoadForward(sleigh, cc, arch)
-    c = strider.opt.FunctionArgDetect(sleigh, cc)
-    d = strider.opt.CallStackArgCollect(sleigh, cc)
+    # Construct each formerly-CC/arch-aware pass to confirm their
+    # zero-arg constructors work.  The calling convention is read from the
+    # function under analysis at run time, so these passes carry no
+    # per-instance state.  `LoadReadOnly()` is a marker too — its rom
+    # flows via `strider.run(..., rom=mem)`.
+    b = strider.opt.LoadForward()
+    c = strider.opt.FunctionArgDetect()
+    d = strider.opt.CallStackArgCollect()
     e = strider.opt.LoadReadOnly()
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(b)
