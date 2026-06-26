@@ -61,15 +61,8 @@ impl FunctionState {
     /// walk.  Pure read: the queue and flags start empty, and no node is
     /// culled (that needs `&mut` and is the explicit
     /// [`EditFunction::cull_dead`](super::EditFunction::cull_dead)).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `function` has not been built (no entry node).
-    #[allow(clippy::expect_used)]
     pub(crate) fn populate(function: &Function) -> Self {
-        let entry = function
-            .entry()
-            .expect("FunctionState::populate: built function has an entry");
+        let entry = function.entry();
         let info = crate::walk::GraphWalkInfo::compute_full(function.graph(), entry);
         let mut roots: DenseEntitySet<NodeId> = DenseEntitySet::new();
         for r in info.roots {
@@ -115,7 +108,7 @@ mod tests {
         let k1_node = function.producer(k1);
         let k2_node = function.producer(k2);
         let dangling_node = function.producer(dangling);
-        let entry = function.entry().unwrap();
+        let entry = function.entry();
 
         let state = FunctionState::populate(&function);
 

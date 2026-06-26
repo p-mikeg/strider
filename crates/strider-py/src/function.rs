@@ -377,13 +377,6 @@ impl PyFunction {
     /// non-exempt node must carry a non-empty contributor list.
     fn validate(&self) -> PyResult<Option<String>> {
         self.with_read(|function| {
-            // Presence guard: an unbuilt function raises an exception, distinct
-            // from the validation-failure-as-string path below.
-            if function.entry().is_none() {
-                return Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                    "Function.validate: function has not been built (entry is None)"
-                )));
-            }
             match strider_ir::validate::validate(function) {
                 Ok(()) => Ok(None),
                 Err(e) => Ok(Some(format!("{e}"))),
@@ -635,7 +628,7 @@ fn reject_conflicting_cast_flags(
 }
 
 /// Run a matcher query and snapshot the generation, collapsing the
-/// borrow → `read_inner` → `Matcher::try_new` → run → generation-snapshot
+/// borrow → `read_inner` → `Matcher::new` → run → generation-snapshot
 /// → drop-guards → pending-control-flow scaffold the three query entry
 /// points (`find_all` / `find_one` / `find_joined`) share.
 ///
@@ -652,8 +645,7 @@ fn run_query<T>(
     let function_guard = function_borrow
         .read_inner()
         .map_err(crate::errors::into_strider_err)?;
-    let matcher = strider_pattern::Matcher::try_new(&function_guard)
-        .map_err(crate::errors::into_strider_err)?;
+    let matcher = strider_pattern::Matcher::new(&function_guard);
     let raw = run(&matcher).map_err(crate::errors::into_strider_err)?;
     let generation = function_guard.graph().generation();
     drop(function_guard);
@@ -707,8 +699,7 @@ where
     ) -> anyhow::Result<Option<strider_ir::node::ValueId>>,
 {
     let count = {
-        let mut ctx =
-            strider_opt::EditFunction::new(function).map_err(crate::errors::into_strider_err)?;
+        let mut ctx = strider_opt::EditFunction::new(function);
         strider_opt::apply_rules_count(&mut ctx, rules).map_err(crate::errors::into_strider_err)?
     };
     function.graph_mut().bump_generation();

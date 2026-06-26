@@ -144,7 +144,7 @@ fn run_load<W: MemorySSAWalker>(fg: &mut Function, oracle: &mut W, load: NodeId)
     let mem = fg.node_inputs(load)[0];
     let mem_node = fg.producer(mem);
     let clobber = oracle.find_nearest_clobber(fg, mem_node);
-    let mut ctx = crate::EditFunction::new(fg).unwrap();
+    let mut ctx = crate::EditFunction::new(fg);
     super::narrow_load_to(&mut ctx, load, clobber);
     clobber
 }

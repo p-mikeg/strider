@@ -46,8 +46,7 @@ fn name_matches_only_target() {
     b.build_return(None, &[]).expect("return");
     let function = b.build().expect("build");
 
-    let matches = Matcher::try_new(&function)
-        .unwrap()
+    let matches = Matcher::new(&function)
         .find_all(&call_other().name("cpuid").build())
         .unwrap();
     assert_eq!(matches.len(), 1, "should match exactly the cpuid CallOther");

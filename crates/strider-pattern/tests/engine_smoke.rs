@@ -30,7 +30,7 @@ fn matches_add_const_via_builder() {
     let _sum = mb.binary(IntBinaryOp::Add, x, k);
     let pat = mb.finish();
 
-    let m = Matcher::try_new(&f).unwrap();
+    let m = Matcher::new(&f);
     // A single-rooted pattern resolves a unique root and matches: the
     // match entry is fallible (returns Result) even on the happy path.
     assert_eq!(m.find_all(&pat).unwrap().len(), 1);
@@ -56,7 +56,7 @@ fn multi_sink_pattern_is_buildable_but_match_returns_err() {
     let _b = mb.leaf(KindSpec::Any);
     let pat = mb.finish(); // seals the (valid) graph; root derived at match time
 
-    let m = Matcher::try_new(&f).unwrap();
+    let m = Matcher::new(&f);
     assert!(m.find_all(&pat).is_err());
 }
 
@@ -78,7 +78,7 @@ fn commutative_swap_matches_add_const_other_order() {
     let _sum = mb.binary(IntBinaryOp::Add, any, konst);
     let pat = mb.finish();
 
-    let m = Matcher::try_new(&f).unwrap();
+    let m = Matcher::new(&f);
     assert_eq!(m.find_all(&pat).unwrap().len(), 1);
 }
 
@@ -101,7 +101,7 @@ fn force_ordered_disables_commutative_swap() {
     mb.set_force_ordered(sum);
     let pat = mb.finish();
 
-    let m = Matcher::try_new(&f).unwrap();
+    let m = Matcher::new(&f);
     assert_eq!(m.find_all(&pat).unwrap().len(), 0);
 }
 
@@ -142,7 +142,7 @@ fn cast_walk_through_matches_under_extend() {
         }
     };
 
-    let m = Matcher::try_new(&f).unwrap();
+    let m = Matcher::new(&f);
     assert_eq!(m.find_all(&build_pat(false)).unwrap().len(), 0);
     assert_eq!(m.find_all(&build_pat(true)).unwrap().len(), 1);
 }

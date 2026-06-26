@@ -140,7 +140,7 @@ fn rewrite_rule_impl(
         //    This footprint is the rewrite's proof; the interior nodes get
         //    culled, so their asm-fingerprints must be carried onto the RHS.
         let (bindings, matched_nodes) = {
-            let matcher = Matcher::try_new(ctx.function())?;
+            let matcher = Matcher::new(ctx.function());
             match matcher.match_at(node, &lhs)? {
                 Some(m) => (m.bindings_clone(), m.matched_nodes().to_vec()),
                 None => return Ok(None),
@@ -355,7 +355,7 @@ mod tests {
         let new_node = function.producer(new_value);
         let sink_node = function.producer(sink);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         let changed = ctx.replace_value(old_value, new_value).unwrap();
         assert!(changed, "a live use existed → changed");
 
@@ -408,7 +408,7 @@ mod tests {
 
         let new_node = function.producer(new_value);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         let changed = ctx.replace_value(old_value, new_value).unwrap();
         assert!(!changed, "no uses of old → changed must be false");
 
@@ -494,7 +494,7 @@ mod tests {
         let pred1_val = pre_phi_inputs[2];
 
         // Act: remove predecessor 0 via the EditFunction.
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.remove_region_predecessors(region, &[0])
             .expect("remove_region_predecessors must succeed");
 
@@ -542,7 +542,7 @@ mod tests {
         let k2_node = function.producer(k2);
         let add_node = function.producer(add);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         ctx.kill_node(add_node);
@@ -579,7 +579,7 @@ mod tests {
         let k_node = function.producer(k);
         let add_node = function.producer(add);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         assert!(ctx.is_live(k_node), "k starts live (reachable via add)");
@@ -617,7 +617,7 @@ mod tests {
         let add1_node = function.producer(add1);
         let add2_node = function.producer(add2);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // `add1` was unreachable, so `new`'s initial cull already removed it,
@@ -648,7 +648,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // Input-less const → live + root.
@@ -677,7 +677,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // A fresh, input-less Region → root.
@@ -715,7 +715,7 @@ mod tests {
         let new_node = function.producer(new);
         let k_node = function.producer(k);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // Sanity: new starts dead (unreachable) — culled by the initial cull.
@@ -761,7 +761,7 @@ mod tests {
         let k1_node = function.producer(k1);
         let k2_node = function.producer(k2);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         use cranelift_entity::EntityRef;
@@ -803,7 +803,7 @@ mod tests {
         let mut function = b.build().unwrap();
 
         let add_root = {
-            let m = Matcher::try_new(&function).unwrap();
+            let m = Matcher::new(&function);
             let pat = add(any_int_const().capture(c1), any_int_const().capture(c2)).into_pattern();
             let hits = m.find_all(&pat).unwrap();
             assert!(!hits.is_empty(), "3 + 4 add must match");
@@ -817,7 +817,7 @@ mod tests {
 
         // Mirror the pipeline construction path: build the ctx and run the
         // explicit initial cull so the cached live/roots state matches the run.
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, add_root).unwrap();
@@ -891,7 +891,7 @@ mod tests {
     /// Find the single live root in the freshly built function (via the
     /// matcher).
     fn match_root<L: MatchPat + 'static>(function: &strider_ir::Function, lhs: L) -> super::NodeId {
-        let m = Matcher::try_new(function).unwrap();
+        let m = Matcher::new(function);
         let pat = lhs.into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert!(!hits.is_empty(), "LHS must match exactly once");
@@ -949,7 +949,7 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
@@ -1042,7 +1042,7 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
@@ -1097,7 +1097,7 @@ mod tests {
 
         let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
@@ -1149,7 +1149,7 @@ mod tests {
         let root = match_root(&function, add(var(x), int_const_match(0u64)));
         let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
         assert!(
             rule(&mut ctx, root).unwrap().is_some(),
@@ -1229,7 +1229,7 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
@@ -1297,7 +1297,7 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // Apply repeatedly to a fixed point (each call walks once).
@@ -1377,7 +1377,7 @@ mod tests {
 
         let rule = rewrite_rule_runtime(lhs, rhs).unwrap();
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, load_node).unwrap();
@@ -1455,7 +1455,7 @@ mod tests {
         let neg_node = function.producer(neg);
         let k_node = function.producer(k);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let new_v = ctx.build_int_const(9u64, ValueType::I64).unwrap();
@@ -1535,7 +1535,7 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // The dangling const was culled by the initial cull.

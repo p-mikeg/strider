@@ -24,8 +24,7 @@ fn any_matches_every_output() {
     // `any()` has no kind filter so it returns a match per reachable output.
     // The exact count depends on graph internals (Entry/Return produce control
     // edges, not value outputs) so we only require >= 3.
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(&any().into_pattern())
         .unwrap();
     assert!(

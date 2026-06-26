@@ -334,7 +334,7 @@ fn if_branch_slot_accepts_built_control_pattern() {
     // unoptimised IR is the join `Region`, so a `call()` pattern (node-
     // wise) does not match it — `any()` (which matches any node) does.
     let function = graph_if_with_call_in_false_branch();
-    let m = Matcher::try_new(&function).unwrap();
+    let m = Matcher::new(&function);
 
     // `any()` matches the false-branch consumer Region → the composition
     // matches the single If.

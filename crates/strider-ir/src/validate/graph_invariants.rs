@@ -98,6 +98,63 @@ pub(super) fn check_graph_invariants_region(
     }
 }
 
+/// Graph invariant: `Extend` must strictly widen its input and `Truncate`
+/// must strictly narrow it.
+///
+/// The two ops are direction-typed by name: `Extend` fills *new* high bits
+/// (zero or sign) and so only makes sense when the output is wider;
+/// `Truncate` drops high bits and only makes sense when the output is
+/// narrower. The low bits of a hypothetical non-widening `Extend` are
+/// identical to a `Truncate` (and vice versa), so allowing the wrong
+/// direction would give one value two legal node shapes — the redundant
+/// spelling the canonical IR exists to avoid. The builder never mints these
+/// (`extend_if_needed` / `truncate_to` dispatch on direction), so any that
+/// appear are a malformed surgical edit.
+///
+/// Skips a node whose single input/output isn't integer-typed — the
+/// local-typing check already reports that shape error, and reading a width
+/// off a non-`Typed` value is meaningless.
+pub(super) fn check_graph_invariants_extend_truncate(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph = function.graph();
+    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
+        let widening = match kind {
+            NodeKind::Extend(_) => true,
+            NodeKind::Truncate => false,
+            _ => continue,
+        };
+        // Single INT input, single INT output. Bail to the local-typing check
+        // if the arity/kind is off (missing slot or non-integer type).
+        let (Some(in_value), Some(&out_value)) =
+            (graph.node_inputs(node).into_iter().next(), graph.node_outputs(node).first())
+        else {
+            continue;
+        };
+        let (Some(in_ty), Some(out_ty)) =
+            (function.value_type_opt(in_value), function.value_type_opt(out_value))
+        else {
+            continue;
+        };
+        let (in_width, out_width) = (in_ty.bit_width(), out_ty.bit_width());
+        let ok = if widening {
+            out_width > in_width
+        } else {
+            out_width < in_width
+        };
+        if !ok {
+            errs.push(ValidationError::ExtendTruncateWidthDirection {
+                node,
+                kind: *kind,
+                in_width,
+                out_width,
+            });
+        }
+    }
+}
+
 /// Graph invariant: every phi node (`Phi`, `MemPhi`) must take its
 /// dispatch token (input[0]) from a `Region`'s `PhiToken` output.
 ///

@@ -148,7 +148,7 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
     // output is never read, so it is unreachable from entry.
     let phi_token = fg.node_outputs(body_region)[1];
     let val = {
-        let mut ef = strider_ir::EditFunction::new(&mut fg)?;
+        let mut ef = strider_ir::EditFunction::new(&mut fg);
         ef.build_int_const(0u64, ValueType::I64)?
     };
     let orphan_phi = strider_ir_test_utils::sentinel_node(

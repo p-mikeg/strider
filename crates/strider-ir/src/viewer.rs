@@ -557,25 +557,22 @@ impl IRViewer for crate::EditFunction<'_> {
 /// The "global" order [`Self::reverse_postorder`] takes a
 /// [`crate::walk::GraphWalkInfo`] — compute it once via
 /// [`Self::walk_info`] and hand it to whichever orders you need without
-/// re-walking, e.g. `let info = walker.walk_info(None)?; walker.reverse_postorder(&info)`.
+/// re-walking, e.g. `let info = walker.walk_info(None); walker.reverse_postorder(&info)`.
 pub trait IRWalker: IRViewer {
     /// Resolves the seed (`None` ⇒ the function's entry, [`Function::entry`];
     /// `Some(n)` ⇒ `n`) and computes the [`crate::walk::GraphWalkInfo`] — the
     /// reachable set + input-less roots the post-order family consumes.
-    /// Returns `None` when the seed resolves to no node (entry-less function,
-    /// `None` seed).
-    fn walk_info(&self, seed: Option<NodeId>) -> Option<crate::walk::GraphWalkInfo> {
+    fn walk_info(&self, seed: Option<NodeId>) -> crate::walk::GraphWalkInfo {
         let f = self.function();
-        seed.or_else(|| f.entry())
-            .map(|s| crate::walk::GraphWalkInfo::compute_full(f.graph(), s))
+        let s = seed.unwrap_or_else(|| f.entry());
+        crate::walk::GraphWalkInfo::compute_full(f.graph(), s)
     }
 
     /// Returns a pre-order walk over every node reachable from the function's
-    /// entry (control-out forward + data-in backward).  Yields an empty walk
-    /// when the entry has not been set.
+    /// entry (control-out forward + data-in backward).
     fn walk(&self) -> crate::walk::GraphWalk<'_> {
         let f = self.function();
-        crate::walk::walk_graph_opt(f.graph(), f.entry())
+        crate::walk::walk_graph(f.graph(), f.entry())
     }
 
     /// Pre-order walk seeded at `seed` (control-out forward + data-in
@@ -621,10 +618,8 @@ pub trait IRWalker: IRViewer {
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        let rpo = match self.walk_info(None) {
-            Some(info) => self.reverse_postorder(&info),
-            None => Vec::new(),
-        };
+        let info = self.walk_info(None);
+        let rpo = self.reverse_postorder(&info);
         rpo.into_iter().filter(move |&n| pred(self.node_kind(n)))
     }
 }

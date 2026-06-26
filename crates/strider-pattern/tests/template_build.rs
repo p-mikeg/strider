@@ -26,7 +26,7 @@ use strider_pattern::{
 /// node, the captured bindings, and the root's single value-output type.
 #[track_caller]
 fn match_lhs_once(fx: &Function, lhs: &Pattern) -> (NodeId, Bindings, ValueType) {
-    let m = Matcher::try_new(fx).unwrap();
+    let m = Matcher::new(fx);
     let hits = m.find_all(lhs).unwrap();
     assert_eq!(hits.len(), 1, "LHS must match exactly once");
     let root_node = hits[0].root();
@@ -46,7 +46,7 @@ fn instantiate_at_root(
     root: NodeId,
     root_ty: ValueType,
 ) -> ValueId {
-    let mut ef = EditFunction::new(fx).unwrap();
+    let mut ef = EditFunction::new(fx);
     instantiate(rhs, &mut ef, bindings, root, &[root], root_ty).unwrap()
 }
 
@@ -145,7 +145,7 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
     let rhs = template::add(var(x), int_const(2u128)).into_template();
     let proof_nodes = [proof_a, proof_b];
     let new_value = {
-        let mut ef = EditFunction::new(&mut fx).unwrap();
+        let mut ef = EditFunction::new(&mut fx);
         instantiate(&rhs, &mut ef, &bindings, root_node, &proof_nodes, root_ty).unwrap()
     };
 
@@ -259,7 +259,7 @@ fn template_wires_multi_output_interior_memory_node() {
     let bindings = Bindings::default();
 
     let root_value = {
-        let mut ef = EditFunction::new(&mut fx).unwrap();
+        let mut ef = EditFunction::new(&mut fx);
         instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64).unwrap()
     };
 
@@ -407,7 +407,7 @@ fn instantiate_noncontiguous_raw_template_slots_errors() {
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
 
-    let mut ef = EditFunction::new(&mut fx).unwrap();
+    let mut ef = EditFunction::new(&mut fx);
     let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
         .expect_err("non-contiguous slots must error");
     let msg = err.to_string();
@@ -434,7 +434,7 @@ fn instantiate_duplicate_raw_template_slot_errors() {
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
 
-    let mut ef = EditFunction::new(&mut fx).unwrap();
+    let mut ef = EditFunction::new(&mut fx);
     let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
         .expect_err("duplicate slot must error");
     let msg = err.to_string();
@@ -459,7 +459,7 @@ fn instantiate_with_unbound_template_capture_errors() {
     let unbound = Capture::new();
     let rhs = template::add(var(unbound), int_const(1u128)).into_template();
 
-    let mut ef = EditFunction::new(&mut fx).unwrap();
+    let mut ef = EditFunction::new(&mut fx);
     let err = instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty)
         .expect_err("unbound template capture must error");
     let msg = err.to_string();

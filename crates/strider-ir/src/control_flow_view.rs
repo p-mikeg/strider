@@ -3,7 +3,7 @@
 //! control edges only (no data, no Phi back-edges), so
 //! `petgraph::algo::dominators::simple_fast` can compute dominators directly.
 
-use petgraph::visit::{GraphBase, IntoNeighbors, IntoNodeIdentifiers, Visitable};
+use petgraph::visit::{GraphBase, IntoNeighbors, Visitable};
 use rustc_hash::FxHashSet;
 
 use crate::function::Function;
@@ -31,14 +31,6 @@ impl<'a> ControlFlowView<'a> {
     pub(crate) fn new(function: &'a Function) -> Self {
         Self { function }
     }
-
-    /// Iterates the `NodeId`s of every control node (the petgraph view's
-    /// vertex set): every node whose kind `has_control_flow()`.
-    fn control_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
-        let g = self.function.graph();
-        g.all_node_ids()
-            .filter(move |&n| g.node_kind(n).has_control_flow())
-    }
 }
 
 // ── petgraph trait impls ──────────────────────────────────────────────────────
@@ -61,15 +53,6 @@ impl<'a> IntoNeighbors for &'a ControlFlowView<'a> {
     }
 }
 
-impl<'a> IntoNodeIdentifiers for &'a ControlFlowView<'a> {
-    type NodeIdentifiers = std::vec::IntoIter<NodeId>;
-
-    fn node_identifiers(self) -> Self::NodeIdentifiers {
-        let ids: Vec<NodeId> = self.control_nodes().collect();
-        ids.into_iter()
-    }
-}
-
 /// The visit map for `ControlFlowView`: an `FxHashSet<NodeId>` (avoids the
 /// dense-array overhead; `NodeId` is `Hash + Eq`).
 impl Visitable for ControlFlowView<'_> {
@@ -87,14 +70,8 @@ impl Visitable for ControlFlowView<'_> {
 // ── public helpers ────────────────────────────────────────────────────────────
 
 /// Computes Cooper–Harvey–Kennedy dominators of the control subgraph.
-///
-/// # Panics
-///
-/// Panics if `function` has no entry node.
 pub fn control_dominators(function: &Function) -> petgraph::algo::dominators::Dominators<NodeId> {
-    let entry = function
-        .entry()
-        .expect("control_dominators: entry must be set");
+    let entry = function.entry();
     petgraph::algo::dominators::simple_fast(&ControlFlowView::new(function), entry)
 }
 
@@ -122,7 +99,7 @@ mod tests {
     use crate::node::NodeKind;
     use crate::{FunctionBuilder, IRViewer};
     use cranelift_entity::EntityRef;
-    use petgraph::visit::{IntoNeighbors, IntoNodeIdentifiers};
+    use petgraph::visit::IntoNeighbors;
 
     /// Build a minimal `FunctionBuilder` with no tracked variables and
     /// Little-endian, using the default calling convention.
@@ -191,30 +168,6 @@ mod tests {
         b.build()
     }
 
-    // ── control_view_lists_only_control_nodes ─────────────────────────────────
-
-    #[test]
-    fn control_view_lists_only_control_nodes() {
-        let f = diamond().expect("diamond() should build without errors");
-        let view = ControlFlowView::new(&f);
-        for n in view.node_identifiers() {
-            assert!(
-                matches!(
-                    f.node_kind(n),
-                    NodeKind::Entry
-                        | NodeKind::Region
-                        | NodeKind::If
-                        | NodeKind::Return
-                        | NodeKind::Call
-                        | NodeKind::CallOther { .. }
-                        | NodeKind::IndirectBranch
-                ),
-                "view node {n:?} is not a control node: {:?}",
-                f.node_kind(n)
-            );
-        }
-    }
-
     // ── control_view_neighbors_are_control_successors ─────────────────────────
 
     #[test]
@@ -242,7 +195,7 @@ mod tests {
         use petgraph::algo::dominators::simple_fast;
 
         let f = diamond().expect("diamond() should build without errors");
-        let entry = f.entry().expect("entry must be set after build");
+        let entry = f.entry();
 
         let doms = simple_fast(&ControlFlowView::new(&f), entry);
 

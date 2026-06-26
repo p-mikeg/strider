@@ -64,7 +64,7 @@ fn mac_pattern_finds_match(function: &strider_ir::Function) {
     // — the Mul is one hop deeper than the matcher's exact-walk would
     // see otherwise.  Other arches don't have intervening casts, so the
     // flag is a no-op there (direct match still tried first).
-    let m = Matcher::try_new(function).unwrap();
+    let m = Matcher::new(function);
     let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
     let hits = m.find_all(&pat).unwrap();
     assert!(
@@ -124,7 +124,7 @@ fn invariant_load_pattern_finds_load(function: &strider_ir::Function) {
     // the triangle-sum (e.g. x86_kernel collapses the loop entirely into
     // arithmetic on n and the invariant *p), which is a valid optimization
     // that strider faithfully represents as "no back-edge".
-    let m = Matcher::try_new(function).unwrap();
+    let m = Matcher::new(function);
     let pat = strider_pattern::load().build();
     let hits = m.find_all(&pat).unwrap();
     assert!(
@@ -135,7 +135,7 @@ fn invariant_load_pattern_finds_load(function: &strider_ir::Function) {
 
 fn recursive_pattern_finds_self_call(function: &strider_ir::Function) {
     // Pattern: any Call.
-    let m = Matcher::try_new(function).unwrap();
+    let m = Matcher::new(function);
     let pat = call().build();
     let hits = m.find_all(&pat).unwrap();
     assert!(

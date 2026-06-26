@@ -71,12 +71,7 @@ impl FunctionBuilder {
     /// `link_memory_regions` / `link_region_variables` also
     /// propagate.
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
-        // `build_entry()` (called unconditionally by `new()`) sets the
-        // entry, so this is an invariant — but return an error rather than
-        // panicking if it is ever violated.
-        let entry_node = self.function.entry().ok_or_else(|| {
-            anyhow!("set_entry_region: entry node is not set (build_entry must run in new)")
-        })?;
+        let entry_node = self.function.entry();
         let [entry_control] = self.function().node_outputs_exact(entry_node)?;
         let entry_memory = self.entry_memory;
         self.link_control_regions(region_id, entry_control)?;

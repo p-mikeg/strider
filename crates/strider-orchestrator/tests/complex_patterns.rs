@@ -64,7 +64,7 @@ fn masked(p: Pattern) -> Pattern {
 
 /// Plain matcher; cast-mask handling now lives on the pattern.
 fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
-    Matcher::try_new(function).unwrap()
+    Matcher::new(function)
 }
 
 /// Pattern that matches `IntConst` whose value is a single-bit mask

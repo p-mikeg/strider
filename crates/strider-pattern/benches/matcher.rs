@@ -35,15 +35,13 @@ fn matcher_benches(c: &mut Criterion) {
 
     // ~334 Add(_, IntConst) nodes in the chain match this 3-node pattern.
     let add_pat = add(any(), any_int_const()).into_pattern();
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(&add_pat)
         .unwrap();
     assert!(!hits.is_empty(), "add pattern must have matches");
     c.bench_function("matcher_find_all_add_const", |b| {
         b.iter(|| {
-            let hits = Matcher::try_new(black_box(&function))
-                .unwrap()
+            let hits = Matcher::new(black_box(&function))
                 .find_all(&add_pat)
                 .unwrap();
             black_box(hits)
@@ -53,15 +51,13 @@ fn matcher_benches(c: &mut Criterion) {
     // No ShiftLeft node exists in the chain, so this exercises the
     // never-matching prefilter path.
     let no_match_pat = shl(int_const(0xDEAD_BEEFu128), int_const(7u128)).into_pattern();
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(&no_match_pat)
         .unwrap();
     assert!(hits.is_empty(), "shl pattern must never match");
     c.bench_function("matcher_find_all_no_match", |b| {
         b.iter(|| {
-            let hits = Matcher::try_new(black_box(&function))
-                .unwrap()
+            let hits = Matcher::new(black_box(&function))
                 .find_all(&no_match_pat)
                 .unwrap();
             black_box(hits)

@@ -58,7 +58,7 @@ fn simulate_dbe_redirect_without_strip(
     // Scope the rewrite ctx so its borrow of `fg` ends here (a bare
     // `drop` of a non-`Drop` type trips `clippy::drop_non_drop`).
     {
-        let mut edit = crate::EditFunction::new(fg)?;
+        let mut edit = crate::EditFunction::new(fg);
         edit.replace_value(live_ctrl, ctrl_value)?; // redirect live successor past the If
         edit.kill_node(if_node); // remove the now-unreachable folded If
     }
@@ -593,7 +593,7 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<(
     // but it IS visited by the general walk (its VarPhi value still feeds the
     // join phi).  Confirm the control-only set excludes it but the general walk
     // includes it — the premise of the iteration-set choice.
-    let entry_node = fg.entry().unwrap();
+    let entry_node = fg.entry();
     let ctrl_reach = strider_ir::walk::cfg_reachable(fg.graph(), entry_node);
     let walk_set: Vec<NodeId> = fg.walk().collect();
     // Identify true_r: the Region whose sole producer (the If's ctrl_true) is

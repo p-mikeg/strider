@@ -452,7 +452,7 @@ fn bench_find_joined_shared_capture(c: &mut Criterion) {
         let pat2 = any_int_const().capture(x).into_pattern();
         group.bench_function(format!("n_{n}"), |bnch| {
             bnch.iter(|| {
-                let m = Matcher::try_new(&fg).expect("bench fixture is built");
+                let m = Matcher::new(&fg);
                 let pat_refs: Vec<&strider_pattern::Pattern> = vec![&pat1, &pat2];
                 let result = m
                     .find_joined(&pat_refs)

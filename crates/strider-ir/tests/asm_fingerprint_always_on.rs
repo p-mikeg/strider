@@ -16,12 +16,15 @@ use strider_ir::{Function, IRViewer, IntBinaryOp};
 
 #[test]
 fn default_validate_flags_missing_asm_fingerprint() {
-    let mut function = Function::default();
-    // Entry + InitialMemory are required by graph-invariants uniqueness checks.
-    let entry = function
-        .graph_mut()
-        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    function.set_entry(entry);
+    // `Function::new` builds the Entry + InitialMemory skeleton automatically.
+    let mut function = Function::new(
+        strider_target::BuiltCallingConvention::default(),
+        strider_target::Endianness::Little,
+        Vec::new(),
+        rustc_hash::FxHashMap::default(),
+    );
+    let entry = function.entry();
+    // Entry + InitialMemory are deduped from the auto-built skeleton.
     let mem = function
         .graph_mut()
         .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);

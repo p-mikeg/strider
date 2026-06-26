@@ -349,7 +349,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
@@ -368,7 +368,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
@@ -386,7 +386,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
@@ -421,7 +421,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         let _ = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         let log = pass.visit_log.borrow().clone();
@@ -446,7 +446,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
@@ -477,7 +477,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(true),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         // The id the next created node will take == the new `Add`'s id.
         let new_node_idx = ctx.graph_ref().next_node_id().index() as u32;
@@ -501,7 +501,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         let r = run_peephole(&pass, &mut ctx, &mut octx);
         assert!(r.is_err(), "errored pass must surface error");
