@@ -32,8 +32,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
         // Every node reachable from `entry`, in walk order.
-        let walk: Vec<_> = crate::walk::walk_graph(self.function.graph(), self.entry).collect();
-        walk
+        crate::walk::walk_graph(self.function.graph(), self.entry).collect::<Vec<_>>()
     }
 
     fn dump_as_dot(

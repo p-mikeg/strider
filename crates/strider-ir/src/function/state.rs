@@ -64,10 +64,7 @@ impl FunctionState {
     pub(crate) fn populate(function: &Function) -> Self {
         let entry = function.entry();
         let info = crate::walk::GraphWalkInfo::compute_full(function.graph(), entry);
-        let mut roots: DenseEntitySet<NodeId> = DenseEntitySet::new();
-        for r in info.roots {
-            roots.insert(r);
-        }
+        let roots: DenseEntitySet<NodeId> = info.roots.into_iter().collect();
         Self {
             live_nodes: info.live_nodes,
             roots,

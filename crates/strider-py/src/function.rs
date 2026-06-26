@@ -234,22 +234,22 @@ impl PyFunction {
     /// selects the dot theme (default `"dark"`).
     #[pyo3(signature = (path, style=None))]
     fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
-        self.dispatch_dot(py, Some(style.unwrap_or("dark")), DotOp::DumpHtml(path))
-            .map(|_| ())
+        // `dot_style_for(None)` already defaults to the dark theme, so the
+        // `Option` flows through untouched.
+        self.dispatch_dot(py, style, DotOp::DumpHtml(path)).map(|_| ())
     }
 
     /// Render the IR graph to a Graphviz `.dot` file at `path`.
     #[pyo3(signature = (path,))]
     fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
-        self.dispatch_dot(py, Some("dark"), DotOp::DumpDot(path))
-            .map(|_| ())
+        self.dispatch_dot(py, None, DotOp::DumpDot(path)).map(|_| ())
     }
 
     /// Return the IR graph rendered as an HTML string (default `"dark"`
     /// style) instead of writing it to a file.
     #[pyo3(signature = (style=None))]
     fn html_str(&self, py: Python<'_>, style: Option<&str>) -> PyResult<String> {
-        match self.dispatch_dot(py, Some(style.unwrap_or("dark")), DotOp::HtmlStr)? {
+        match self.dispatch_dot(py, style, DotOp::HtmlStr)? {
             DotResult::Html(s) => Ok(s),
             DotResult::Unit => Err(crate::errors::into_strider_err(anyhow::anyhow!(
                 "internal: DotOp::HtmlStr returned DotResult::Unit"

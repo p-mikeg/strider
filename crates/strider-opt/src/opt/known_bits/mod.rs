@@ -253,10 +253,8 @@ pub(crate) fn node_known_bits(
                     // wrapped large literal shifts back into range,
                     // producing the wrong known-bits result for any
                     // literal shift at-or-past the type width.
-                    match shift_known_bits(ctx, l, rhs, r, ty, type_mask, ShiftDir::Left) {
-                        Some(facts) => return Ok(Some((out, facts))),
-                        None => return Ok(None),
-                    }
+                    return Ok(shift_known_bits(ctx, l, rhs, r, ty, type_mask, ShiftDir::Left)
+                        .map(|facts| (out, facts)));
                 }
                 IntBinaryOp::ShiftRight => {
                     // Logical right-shift: upper bits become 0; lhs bits
@@ -267,10 +265,8 @@ pub(crate) fn node_known_bits(
                     // `>= bit_width` returns 0 (sleigh/src/opbehavior.cc:432).
                     // Mirror that here — see the ShiftLeft arm for the
                     // pre-fix bug rationale.
-                    match shift_known_bits(ctx, l, rhs, r, ty, type_mask, ShiftDir::Right) {
-                        Some(facts) => return Ok(Some((out, facts))),
-                        None => return Ok(None),
-                    }
+                    return Ok(shift_known_bits(ctx, l, rhs, r, ty, type_mask, ShiftDir::Right)
+                        .map(|facts| (out, facts)));
                 }
                 _ => return Ok(None),
             }
