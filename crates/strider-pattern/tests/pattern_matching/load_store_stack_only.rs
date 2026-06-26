@@ -104,7 +104,7 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
 #[test]
 fn stack_only_matches_only_stack_loads() {
     let (g, _stack_node, _heap_node) = two_loads_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
     let pat = load().stack_only().build();
     let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1, "stack_only() must reject the heap load");
@@ -114,7 +114,7 @@ fn stack_only_matches_only_stack_loads() {
 #[test]
 fn unconstrained_load_matches_both_loads() {
     let (g, _stack_node, _heap_node) = two_loads_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
     let pat = load().build();
     let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 2, "unconstrained load() must match both loads");
@@ -126,7 +126,7 @@ fn unconstrained_load_matches_both_loads() {
 #[test]
 fn stack_only_matches_only_stack_stores() {
     let (g, _stack_store, _heap_store) = two_stores_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
     let pat = store().stack_only().build();
     let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1, "stack_only() must reject the heap store");
@@ -138,7 +138,7 @@ fn stack_only_matches_only_stack_stores() {
 #[test]
 fn offset_exact_filter_store() {
     let (g, _stack_store, _heap_store) = two_stores_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
 
     let pat_match = store().stack_offset(0x10).build();
     let hits_match = matcher.find_all(&pat_match).unwrap();
@@ -165,7 +165,7 @@ fn offset_exact_filter_store() {
 #[test]
 fn capture_then_read_stack_offset_via_side_table() {
     let (g, stack_store, _heap_store) = two_stores_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
     let node_cap = Capture::new();
     let pat = store().stack_only().capture(node_cap).build();
     let hits = matcher.find_all(&pat).unwrap();
@@ -185,7 +185,7 @@ fn capture_then_read_stack_offset_via_side_table() {
 #[test]
 fn capture_then_read_stack_offset_via_side_table_load() {
     let (g, stack_load, _heap_load) = two_loads_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
     let node_cap = Capture::new();
     let pat = load().stack_only().capture(node_cap).build();
     let hits = matcher.find_all(&pat).unwrap();

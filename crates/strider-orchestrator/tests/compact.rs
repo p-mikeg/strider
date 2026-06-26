@@ -64,13 +64,11 @@ fn compact_preserves_reachable_pattern_matches() {
     let noncompact_function = run_with(false);
 
     let pat = ret().build();
-    let compact_matches = Matcher::try_new(&compact_function)
-        .unwrap()
+    let compact_matches = Matcher::new(&compact_function)
         .find_all(&pat)
         .unwrap()
         .len();
-    let noncompact_matches = Matcher::try_new(&noncompact_function)
-        .unwrap()
+    let noncompact_matches = Matcher::new(&noncompact_function)
         .find_all(&pat)
         .unwrap()
         .len();

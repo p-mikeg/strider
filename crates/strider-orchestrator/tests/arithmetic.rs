@@ -137,8 +137,7 @@ fn has_xor(function: &strider_ir::Function) {
 fn has_not(function: &strider_ir::Function) {
     use strider_pattern::{MatchPat, Matcher, any, bit_not};
     let pat = bit_not(any()).into_pattern();
-    let count = Matcher::try_new(function)
-        .expect("matcher")
+    let count = Matcher::new(function)
         .find_all(&pat)
         .unwrap()
         .len();

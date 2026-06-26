@@ -31,7 +31,7 @@ fn load_mem_in_matches_preceding_store() {
         .addr(int_const(0x200u128))
         .mem_in(store().addr(int_const(0x100u128)))
         .build();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
+    let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
         1,

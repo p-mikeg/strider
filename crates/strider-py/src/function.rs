@@ -628,7 +628,7 @@ fn reject_conflicting_cast_flags(
 }
 
 /// Run a matcher query and snapshot the generation, collapsing the
-/// borrow → `read_inner` → `Matcher::try_new` → run → generation-snapshot
+/// borrow → `read_inner` → `Matcher::new` → run → generation-snapshot
 /// → drop-guards → pending-control-flow scaffold the three query entry
 /// points (`find_all` / `find_one` / `find_joined`) share.
 ///
@@ -645,8 +645,7 @@ fn run_query<T>(
     let function_guard = function_borrow
         .read_inner()
         .map_err(crate::errors::into_strider_err)?;
-    let matcher = strider_pattern::Matcher::try_new(&function_guard)
-        .map_err(crate::errors::into_strider_err)?;
+    let matcher = strider_pattern::Matcher::new(&function_guard);
     let raw = run(&matcher).map_err(crate::errors::into_strider_err)?;
     let generation = function_guard.graph().generation();
     drop(function_guard);

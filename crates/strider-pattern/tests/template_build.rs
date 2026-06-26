@@ -26,7 +26,7 @@ use strider_pattern::{
 /// node, the captured bindings, and the root's single value-output type.
 #[track_caller]
 fn match_lhs_once(fx: &Function, lhs: &Pattern) -> (NodeId, Bindings, ValueType) {
-    let m = Matcher::try_new(fx).unwrap();
+    let m = Matcher::new(fx);
     let hits = m.find_all(lhs).unwrap();
     assert_eq!(hits.len(), 1, "LHS must match exactly once");
     let root_node = hits[0].root();

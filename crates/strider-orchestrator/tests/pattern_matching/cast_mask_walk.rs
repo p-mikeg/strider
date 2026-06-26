@@ -82,8 +82,7 @@ fn pat() -> Pattern {
 /// Run the pattern under `mask` and return the match count.
 fn count(function: &Function, mask: CastMask) -> usize {
     let p = pat().ignore_casts_mask(mask);
-    Matcher::try_new(function)
-        .unwrap()
+    Matcher::new(function)
         .find_all(&p)
         .unwrap()
         .len()
@@ -152,8 +151,7 @@ fn pat_u32_initial_var() -> Pattern {
 
 fn count_u32(function: &Function, mask: CastMask) -> usize {
     let p = pat_u32_initial_var().ignore_casts_mask(mask);
-    Matcher::try_new(function)
-        .unwrap()
+    Matcher::new(function)
         .find_all(&p)
         .unwrap()
         .len()
@@ -235,8 +233,7 @@ fn pat_u16_initial_var() -> Pattern {
 
 fn count_u16(function: &Function, mask: CastMask) -> usize {
     let p = pat_u16_initial_var().ignore_casts_mask(mask);
-    Matcher::try_new(function)
-        .unwrap()
+    Matcher::new(function)
         .find_all(&p)
         .unwrap()
         .len()
@@ -284,8 +281,7 @@ fn fixture_deep_cast_chain(levels: usize) -> Function {
 fn deep_cast_chain_walks_through_all_levels() {
     let function = fixture_deep_cast_chain(500);
     let p = pat().ignore_casts_mask(CastMask::TRUNCATE | CastMask::ZERO_EXTEND);
-    let count = Matcher::try_new(&function)
-        .unwrap()
+    let count = Matcher::new(&function)
         .find_all(&p)
         .unwrap()
         .len();
@@ -299,8 +295,7 @@ fn deep_cast_chain_walks_through_all_levels() {
 fn deep_cast_chain_with_partial_mask_does_not_match() {
     let function = fixture_deep_cast_chain(500);
     let p = pat().ignore_casts_mask(CastMask::TRUNCATE);
-    let count = Matcher::try_new(&function)
-        .unwrap()
+    let count = Matcher::new(&function)
         .find_all(&p)
         .unwrap()
         .len();

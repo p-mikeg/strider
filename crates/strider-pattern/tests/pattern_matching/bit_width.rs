@@ -30,7 +30,7 @@ fn bit_width_filters_load_by_value_width() {
     b.build_return(Some(l32), &[]).expect("ret");
     let function = b.build().expect("build");
 
-    let m = Matcher::try_new(&function).unwrap();
+    let m = Matcher::new(&function);
     let h32 = m
         .find_all(&load().addr(int_const(0x100u128)).bit_width(32).build())
         .unwrap();
@@ -59,7 +59,7 @@ fn bit_width_filters_store_by_data_width() {
     b.build_return(None, &[]).expect("ret");
     let function = b.build().expect("build");
 
-    let m = Matcher::try_new(&function).unwrap();
+    let m = Matcher::new(&function);
     let h32 = m
         .find_all(&store().addr(int_const(0x100u128)).bit_width(32).build())
         .unwrap();
@@ -111,7 +111,7 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
     b.build_return(Some(and), &[]).expect("ret");
     let function = b.build().expect("build");
 
-    let m = Matcher::try_new(&function).unwrap();
+    let m = Matcher::new(&function);
 
     // Output width 1 = "produces a bool": both comparisons + the AND.
     assert_eq!(
@@ -166,7 +166,7 @@ fn bool_ctors_require_i1_output() {
     b.build_return(Some(wide_and), &[]).expect("ret");
     let function = b.build().expect("build");
 
-    let m = Matcher::try_new(&function).unwrap();
+    let m = Matcher::new(&function);
     assert_eq!(
         m.find_all(&bool_and(any(), any()).into_pattern())
             .unwrap()

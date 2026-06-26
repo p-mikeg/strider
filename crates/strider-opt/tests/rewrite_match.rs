@@ -94,7 +94,7 @@ fn find_node<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F)
 /// Asserts `pat` matches exactly `expected` times and returns the hits.
 #[track_caller]
 fn match_count(function: &strider_ir::Function, pat: Pattern, expected: usize) -> Vec<Match> {
-    let hits = Matcher::try_new(function).unwrap().find_all(&pat).unwrap();
+    let hits = Matcher::new(function).find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
         expected,
@@ -483,7 +483,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     let x = Capture::new();
     // Locate the outer `Add(_, 0)` root (not the inner `Add(7, 1)`).
     let add_node = {
-        let m = Matcher::try_new(&function).unwrap();
+        let m = Matcher::new(&function);
         let pat = add(var(x), int_const(0u128)).into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert_eq!(hits.len(), 1);
@@ -524,7 +524,7 @@ fn apply_rules_in_order_or_composes_results() {
     let y = Capture::new();
     // The outer `Add(_, 0)` is the rule's target.
     let add_node = {
-        let m = Matcher::try_new(&function).unwrap();
+        let m = Matcher::new(&function);
         let pat = add(var(y), int_const(0u128)).into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert_eq!(hits.len(), 1);

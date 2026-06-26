@@ -140,7 +140,7 @@ fn rewrite_rule_impl(
         //    This footprint is the rewrite's proof; the interior nodes get
         //    culled, so their asm-fingerprints must be carried onto the RHS.
         let (bindings, matched_nodes) = {
-            let matcher = Matcher::try_new(ctx.function())?;
+            let matcher = Matcher::new(ctx.function());
             match matcher.match_at(node, &lhs)? {
                 Some(m) => (m.bindings_clone(), m.matched_nodes().to_vec()),
                 None => return Ok(None),
@@ -803,7 +803,7 @@ mod tests {
         let mut function = b.build().unwrap();
 
         let add_root = {
-            let m = Matcher::try_new(&function).unwrap();
+            let m = Matcher::new(&function);
             let pat = add(any_int_const().capture(c1), any_int_const().capture(c2)).into_pattern();
             let hits = m.find_all(&pat).unwrap();
             assert!(!hits.is_empty(), "3 + 4 add must match");
@@ -891,7 +891,7 @@ mod tests {
     /// Find the single live root in the freshly built function (via the
     /// matcher).
     fn match_root<L: MatchPat + 'static>(function: &strider_ir::Function, lhs: L) -> super::NodeId {
-        let m = Matcher::try_new(function).unwrap();
+        let m = Matcher::new(function);
         let pat = lhs.into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert!(!hits.is_empty(), "LHS must match exactly once");

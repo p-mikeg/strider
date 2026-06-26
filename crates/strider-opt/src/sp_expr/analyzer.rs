@@ -149,10 +149,8 @@ impl<'a> SpAnalyzer<'a> {
             return *cached;
         }
         let graph = self.function.graph();
-        let rpo = match self.function.walk_info(Some(graph.producer(value))) {
-            Some(info) => self.function.reverse_postorder(&info),
-            None => Vec::new(),
-        };
+        let info = self.function.walk_info(Some(graph.producer(value)));
+        let rpo = self.function.reverse_postorder(&info);
         for node in rpo {
             let Ok([node_out]) = self.function.node_outputs_exact::<1>(node) else {
                 continue;

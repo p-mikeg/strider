@@ -557,17 +557,15 @@ impl IRViewer for crate::EditFunction<'_> {
 /// The "global" order [`Self::reverse_postorder`] takes a
 /// [`crate::walk::GraphWalkInfo`] — compute it once via
 /// [`Self::walk_info`] and hand it to whichever orders you need without
-/// re-walking, e.g. `let info = walker.walk_info(None)?; walker.reverse_postorder(&info)`.
+/// re-walking, e.g. `let info = walker.walk_info(None); walker.reverse_postorder(&info)`.
 pub trait IRWalker: IRViewer {
     /// Resolves the seed (`None` ⇒ the function's entry, [`Function::entry`];
     /// `Some(n)` ⇒ `n`) and computes the [`crate::walk::GraphWalkInfo`] — the
-    /// reachable set + input-less roots the post-order family consumes.  Always
-    /// `Some` (every function has an entry); the `Option` is retained so callers
-    /// can keep their `let info = walk_info(seed)?;` ergonomics.
-    fn walk_info(&self, seed: Option<NodeId>) -> Option<crate::walk::GraphWalkInfo> {
+    /// reachable set + input-less roots the post-order family consumes.
+    fn walk_info(&self, seed: Option<NodeId>) -> crate::walk::GraphWalkInfo {
         let f = self.function();
         let s = seed.unwrap_or_else(|| f.entry());
-        Some(crate::walk::GraphWalkInfo::compute_full(f.graph(), s))
+        crate::walk::GraphWalkInfo::compute_full(f.graph(), s)
     }
 
     /// Returns a pre-order walk over every node reachable from the function's
@@ -620,10 +618,8 @@ pub trait IRWalker: IRViewer {
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        let rpo = match self.walk_info(None) {
-            Some(info) => self.reverse_postorder(&info),
-            None => Vec::new(),
-        };
+        let info = self.walk_info(None);
+        let rpo = self.reverse_postorder(&info);
         rpo.into_iter().filter(move |&n| pred(self.node_kind(n)))
     }
 }

@@ -28,8 +28,7 @@ fn load_unconstrained_matches() {
 
     let pat = load().build();
     assert_eq!(
-        Matcher::try_new(&function)
-            .unwrap()
+        Matcher::new(&function)
             .find_all(&pat)
             .unwrap()
             .len(),
@@ -46,7 +45,7 @@ fn load_space_matches_ram_and_rejects_unique() {
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
 
     let ram = load().space(rsleigh::VnSpace::RAM).build();
     assert_eq!(matcher.find_all(&ram).unwrap().len(), 1);
@@ -63,7 +62,7 @@ fn load_addr_matches_literal() {
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
 
     assert_eq!(
         matcher
@@ -95,7 +94,7 @@ fn load_with_patterned_addr() {
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
 
     assert_eq!(
         matcher
@@ -130,7 +129,7 @@ fn load_bit_width_filters_value_output() {
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
 
     assert_eq!(
         matcher
@@ -159,8 +158,7 @@ fn load_captures_value_slot() {
     let function = b.build().unwrap();
 
     let v = Capture::new();
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(&load().capture(v).build())
         .unwrap();
     assert_eq!(hits.len(), 1);
@@ -179,8 +177,7 @@ fn load_captures_value_slot() {
 fn store_unconstrained_matches() {
     let function = store_then_load(0x100, 42);
     assert_eq!(
-        Matcher::try_new(&function)
-            .unwrap()
+        Matcher::new(&function)
             .find_all(&store().build())
             .unwrap()
             .len(),
@@ -191,7 +188,7 @@ fn store_unconstrained_matches() {
 #[test]
 fn store_addr_and_data() {
     let function = store_then_load(0x200, 77);
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     assert_eq!(
         matcher
             .find_all(
@@ -222,7 +219,7 @@ fn store_addr_and_data() {
 #[test]
 fn store_space_matches() {
     let function = store_then_load(0x100, 42);
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     assert_eq!(
         matcher
             .find_all(&store().space(rsleigh::VnSpace::RAM).build())
@@ -243,8 +240,7 @@ fn store_space_matches() {
 fn store_captures_node() {
     let function = store_then_load(0x100, 42);
     let c = Capture::new();
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(&store().capture(c).build())
         .unwrap();
     assert_eq!(hits.len(), 1);
@@ -283,7 +279,7 @@ fn load_mem_in_matches_preceding_store() {
         .addr(int_const(0x999u128))
         .mem_in(store().addr(int_const(0x100u128)))
         .build();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
+    let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
         1,
@@ -301,8 +297,7 @@ fn load_mem_in_rejects_wrong_store() {
         .mem_in(store().addr(int_const(0xBEEFu128)))
         .build();
     assert_eq!(
-        Matcher::try_new(&function)
-            .unwrap()
+        Matcher::new(&function)
             .find_all(&pat)
             .unwrap()
             .len(),
@@ -324,7 +319,7 @@ fn load_mem_in_matches_region_mem_phi() {
     let function = b.build().unwrap();
 
     let pat = load().mem_in(mem_phi()).build();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
+    let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
         1,
@@ -337,6 +332,6 @@ fn store_mem_in_chains_off_region_mem_phi() {
     let function = store_then_load(0x100, 42);
     // The store's memory predecessor is the region's MemPhi.
     let pat = store().mem_in(mem_phi()).build();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
+    let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }

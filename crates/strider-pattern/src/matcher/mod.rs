@@ -1,7 +1,6 @@
 //! Pattern matcher over a lifted [`strider_ir::Function`].
 //!
-//! [`Matcher`] owns no per-match state; [`try_new`](Matcher::try_new)
-//! validates the function's post-build invariant once up front and
+//! [`Matcher`] owns no per-match state; [`new`](Matcher::new)
 //! caches a lazy `KindIndex` (built on first query) bucketing
 //! reachable IR nodes by `NodeKind` discriminant. A discriminant-rooted
 //! pattern iterates just the matching bucket; a kind-`Any` root falls
@@ -44,8 +43,7 @@ fn root_kind_discriminant(pat: &Pattern, root: PatNodeId) -> Option<Discriminant
     pat.graph.node_weight(root).kind.discriminant()
 }
 
-/// Top-level matcher. Owns no per-match state; [`try_new`](Self::try_new)
-/// validates the function once up-front.
+/// Top-level matcher. Owns no per-match state.
 ///
 /// Caches a lazy `KindIndex` (built on first [`find_all`](Self::find_all) /
 /// [`find_first`](Self::find_first) query) that buckets reachable IR nodes by
@@ -89,15 +87,11 @@ impl<'f> Matcher<'f> {
     /// orchestrator pipeline drives `validate::validate` separately and
     /// integration tests for in-place editors deliberately work with
     /// partially-built fixtures).
-    ///
-    /// # Errors
-    /// Currently infallible; the `Result` return is retained for API
-    /// stability across callers that propagate with `?`.
-    pub fn try_new(function: &'f Function) -> anyhow::Result<Self> {
-        Ok(Self {
+    pub fn new(function: &'f Function) -> Self {
+        Self {
             function,
             kind_index: OnceCell::new(),
-        })
+        }
     }
 
     /// Lazily build (or return the cached) `KindIndex` for the wrapped

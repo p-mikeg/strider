@@ -119,8 +119,7 @@ fn when_on_subpattern_filters() {
 #[test]
 fn predicate_true_matches_all_outputs() {
     let function = shapes::add_consts(5, 3);
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(&predicate(|_m, _ty| true).into_pattern())
         .unwrap();
     assert!(!hits.is_empty());
@@ -147,8 +146,7 @@ fn predicate_inspects_node_kind() {
     // matched node's output id we capture it and check via the bindings in
     // `when_match`.
     let c = Capture::new();
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(
             &any()
                 .capture(c)
@@ -171,8 +169,7 @@ fn capture_then_when_composes() {
     let function = shapes::add_consts(5, 3);
     let x = Capture::new();
     // Root matches; the predicate later inspects the capture and filters.
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(
             &add(int_const(5u128), int_const(3u128))
                 .capture(x)
