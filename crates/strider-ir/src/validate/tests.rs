@@ -1419,3 +1419,98 @@ fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
     validate(&s.f)
         .expect("a memory-preserving Call's unconsumed memory output must not be flagged");
 }
+
+#[test]
+fn graph_invariants_extend_must_strictly_widen() {
+    use crate::node::ExtendOp;
+
+    let mut s = spine();
+    let (c, c_value) = int_const(&mut s.f, 5, ValueType::I64);
+    stamp(&mut s.f, c);
+
+    // Extend from I64 *down* to I32 — degenerate. `Extend` is direction-typed
+    // (it fills new high bits); a non-widening Extend is a redundant spelling
+    // of `Truncate` and must be rejected.
+    let bad = s.f.graph_mut().create_node(
+        NodeKind::Extend(ExtendOp::ZeroExtend),
+        [c_value],
+        [ValueKind::Typed(ValueType::I32)],
+    );
+    stamp(&mut s.f, bad);
+    let [bad_value] = s.f.node_outputs_exact::<1>(bad).unwrap();
+    s.f.graph_mut()
+        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::ExtendTruncateWidthDirection {
+                in_width: 64,
+                out_width: 32,
+                ..
+            }
+        )
+    });
+}
+
+#[test]
+fn graph_invariants_truncate_must_strictly_narrow() {
+    let mut s = spine();
+    let (c, c_value) = int_const(&mut s.f, 5, ValueType::I32);
+    stamp(&mut s.f, c);
+
+    // Truncate from I32 *up* to I64 — degenerate. `Truncate` drops high bits;
+    // a non-narrowing Truncate is a redundant spelling of `Extend`.
+    let bad = s.f.graph_mut().create_node(
+        NodeKind::Truncate,
+        [c_value],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    stamp(&mut s.f, bad);
+    let [bad_value] = s.f.node_outputs_exact::<1>(bad).unwrap();
+    s.f.graph_mut()
+        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::ExtendTruncateWidthDirection {
+                in_width: 32,
+                out_width: 64,
+                ..
+            }
+        )
+    });
+}
+
+#[test]
+fn graph_invariants_equal_width_extend_is_rejected() {
+    use crate::node::ExtendOp;
+
+    let mut s = spine();
+    let (c, c_value) = int_const(&mut s.f, 5, ValueType::I32);
+    stamp(&mut s.f, c);
+
+    // Same-width Extend is a no-op miswiring — the builder emits the value
+    // unchanged rather than an Extend node, so any equal-width Extend is bad.
+    let bad = s.f.graph_mut().create_node(
+        NodeKind::Extend(ExtendOp::SignExtend),
+        [c_value],
+        [ValueKind::Typed(ValueType::I32)],
+    );
+    stamp(&mut s.f, bad);
+    let [bad_value] = s.f.node_outputs_exact::<1>(bad).unwrap();
+    s.f.graph_mut()
+        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::ExtendTruncateWidthDirection {
+                in_width: 32,
+                out_width: 32,
+                ..
+            }
+        )
+    });
+}

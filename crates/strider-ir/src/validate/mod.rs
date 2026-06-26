@@ -15,7 +15,9 @@
 //!     against the calling convention, honouring per-`Call` clobber
 //!     overrides), wide-const consistency (including that an
 //!     `IntConst(Wide(..))` declares an `I80`/`I128`/`I256`/`I512`
-//!     output type matching its interned byte size), non-empty
+//!     output type matching its interned byte size), `Extend`/`Truncate`
+//!     width direction (Extend strictly widens, Truncate strictly
+//!     narrows), non-empty
 //!     asm-fingerprints on every reachable non-exempt node, and that every
 //!     reachable `Store`'s Memory output stays consumed (anchored in the
 //!     live memory chain).
@@ -38,9 +40,10 @@ mod use_list_consistency;
 
 use graph_invariants::{
     check_graph_invariants_asm_fingerprints, check_graph_invariants_cc_arity,
-    check_graph_invariants_consts, check_graph_invariants_memory_chain,
-    check_graph_invariants_phis, check_graph_invariants_region,
-    check_graph_invariants_side_indices, check_graph_invariants_uniqueness,
+    check_graph_invariants_consts, check_graph_invariants_extend_truncate,
+    check_graph_invariants_memory_chain, check_graph_invariants_phis,
+    check_graph_invariants_region, check_graph_invariants_side_indices,
+    check_graph_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 use use_list_consistency::check_use_list_consistency;
@@ -89,6 +92,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_graph_invariants_phis(function, &reachable, &mut errs);
     check_graph_invariants_consts(function, &reachable, &mut errs);
     check_graph_invariants_cc_arity(function, &reachable, &mut errs);
+    check_graph_invariants_extend_truncate(function, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_graph_invariants_memory_chain(function, &reachable, &mut errs);
     check_graph_invariants_side_indices(function, &reachable, &mut errs);
@@ -297,6 +301,19 @@ pub enum ValidationError {
         vn: rsleigh::Vn,
         producer: NodeId,
         producer_kind: crate::node::NodeKind,
+    },
+
+    #[error(
+        "node {node:?} (kind {kind:?}) has input width {in_width} and output \
+         width {out_width}; `Extend` must strictly widen and `Truncate` must \
+         strictly narrow (same value, opposite-direction op is a redundant \
+         spelling)"
+    )]
+    ExtendTruncateWidthDirection {
+        node: NodeId,
+        kind: crate::node::NodeKind,
+        in_width: usize,
+        out_width: usize,
     },
 }
 
