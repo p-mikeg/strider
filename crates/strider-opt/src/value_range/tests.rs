@@ -324,7 +324,7 @@ fn known_bits_mask_bounds_index_everywhere() {
     let f = b.build().unwrap();
 
     let other_node = f.graph().producer(other_ctrl);
-    let entry_node = f.entry().unwrap();
+    let entry_node = f.entry();
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
@@ -688,7 +688,7 @@ fn no_constraint_is_top() {
 
     b.set_lift_addr(None);
     let f = b.build().unwrap();
-    let entry_node = f.entry().unwrap();
+    let entry_node = f.entry();
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();

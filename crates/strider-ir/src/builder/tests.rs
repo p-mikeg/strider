@@ -1953,7 +1953,7 @@ fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
     let f = b.build()?;
 
     // Find the Return node and inspect its value inputs (skip ctrl + mem).
-    let entry = f.entry().expect("built function has an entry");
+    let entry = f.entry();
     let ret = crate::walk::walk_graph(f.graph(), entry)
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
         .expect("function-return path emits a Return node");
@@ -2091,10 +2091,7 @@ fn entry_returns_recorded_entry_node_id() -> Result<()> {
     let entry_via_accessor = b.entry();
     // The builder delegates entry() to the underlying Function's entry,
     // which is set atomically in build_entry().
-    let entry_via_function = b
-        .function()
-        .entry()
-        .expect("entry is always set after new()");
+    let entry_via_function = b.function().entry();
     assert_eq!(
         entry_via_accessor, entry_via_function,
         "FunctionBuilder::entry() must match Function::entry()"

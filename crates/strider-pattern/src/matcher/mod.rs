@@ -83,21 +83,17 @@ impl KindIndex {
 }
 
 impl<'f> Matcher<'f> {
-    /// Validate the post-build invariant (`function.entry()` is set) and
-    /// return a matcher bound to the function.
+    /// Return a matcher bound to the function.
     ///
-    /// Only checks the entry-node post-build invariant up front, not
-    /// whole-graph validation — that's left to callers (the orchestrator
-    /// pipeline drives `validate::validate` separately and integration
-    /// tests for in-place editors deliberately work with partially-built
-    /// fixtures).
+    /// Performs no whole-graph validation — that's left to callers (the
+    /// orchestrator pipeline drives `validate::validate` separately and
+    /// integration tests for in-place editors deliberately work with
+    /// partially-built fixtures).
     ///
     /// # Errors
-    /// Returns an error if `function` has no entry node.
+    /// Currently infallible; the `Result` return is retained for API
+    /// stability across callers that propagate with `?`.
     pub fn try_new(function: &'f Function) -> anyhow::Result<Self> {
-        let _entry = function
-            .entry()
-            .ok_or_else(|| anyhow::anyhow!("Function has no entry"))?;
         Ok(Self {
             function,
             kind_index: OnceCell::new(),

@@ -30,9 +30,8 @@ use crate::{Function, Graph, IRViewer};
 /// destructive passes.
 ///
 /// The function's entry [`NodeId`] is derived on demand via
-/// [`Self::entry`]; the wrapped function is required to be in its built
-/// form (`function.entry()` is `Some(_)`), checked at construction time
-/// by [`Self::new`].
+/// [`Self::entry`]; every [`Function`] is built with an entry node (the
+/// `Function::new` skeleton), so this is always available.
 pub struct EditFunction<'g> {
     pub(crate) function: &'g mut Function,
     state: FunctionState,
@@ -43,15 +42,9 @@ impl<'g> EditFunction<'g> {
     /// populated [`FunctionState`]. Does NOT cull pre-existing dead nodes —
     /// call [`Self::cull_dead`] explicitly if you want that.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if `function` has not been built (no entry node).
-    pub fn new(function: &'g mut Function) -> Result<Self> {
-        function
-            .entry()
-            .ok_or_else(|| anyhow::anyhow!("EditFunction::new: entry node is not set"))?;
+    pub fn new(function: &'g mut Function) -> Self {
         let state = FunctionState::populate(function);
-        Ok(Self { function, state })
+        Self { function, state }
     }
 
     /// Cull every pre-existing dead node: walk the **raw** forward def→use
@@ -178,11 +171,8 @@ impl<'g> EditFunction<'g> {
     }
 
     /// Function-entry `NodeId` anchor.
-    #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
-        self.function
-            .entry()
-            .expect("EditFunction wraps a built Function with an entry node (new() invariant)")
+        self.function.entry()
     }
 
     // ── self-cleaning core ───────────────────────────────────────────
@@ -916,7 +906,7 @@ mod tests {
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
             NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
@@ -966,7 +956,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(!ctx.is_live(c_node), "C starts dead (orphaned)");
         assert!(ctx.is_live(a_node), "A starts live");
 
@@ -1024,7 +1014,7 @@ mod tests {
         let a_node = function.producer(a);
         let c_node = function.producer(c);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         // Rewire C's slot-1 (z) -> y so C becomes structurally Add(x, y) == A.
         // The ensuing `clean()` drives `canonicalize_node`, whose `expect`-
         // guarded merge must complete normally (no panic) and cull the twin.
@@ -1068,7 +1058,7 @@ mod tests {
         let c_node = function.producer(c);
         assert_ne!(a_node, c_node, "A and C start distinct");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         // Rewire C's input slot 1 (z) -> y so C becomes structurally Add(x, y) == A.
         let c_use_z = ctx.function().node_input_id_at(c_node, 1).unwrap();
         ctx.update_input(c_use_z, y);
@@ -1103,7 +1093,7 @@ mod tests {
 
         let add_node = function.producer(add);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // Locate the Add via the cached live-kind iterator.
@@ -1143,7 +1133,7 @@ mod tests {
         b.build_return(Some(root), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
             NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
@@ -1185,7 +1175,7 @@ mod tests {
         let mut function = b.build().unwrap();
         let dead_neg_node = function.producer(dead_neg);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(
             !ctx.is_live(dead_neg_node),
             "the unreachable Neg is excluded from the live set at populate"
@@ -1232,7 +1222,7 @@ mod tests {
         let orphan_node = function.producer(orphan);
         let c2_node = function.producer(c2);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(
             !ctx.is_live(orphan_node),
             "orphan starts outside the live set"
@@ -1308,7 +1298,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         for n in [k_node, inner_node, outer_node] {
             assert!(!ctx.is_live(n), "the whole orphan cone starts dead");
         }
@@ -1370,7 +1360,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(
             !ctx.is_live(orphan_node),
             "orphan starts outside the live set"
@@ -1413,7 +1403,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         let live_before = ctx.live_snapshot();
         let roots_before = ctx.roots_snapshot();
 
@@ -1463,7 +1453,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(
             !ctx.is_live(orphan_node),
             "orphan starts outside the live set"
@@ -1529,7 +1519,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.kill_node(if_node);
         assert!(!ctx.is_live(if_node), "the killed If leaves the live set");
 
@@ -1592,7 +1582,7 @@ mod tests {
         // EditFunction::new does NOT cull pre-existing dead nodes, so the
         // dead Store/Load chain is present-but-not-live (still wired together)
         // — exactly the state a pass would resurrect from.
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(!ctx.is_live(load_node), "Load starts dead");
         assert!(!ctx.is_live(store_node), "Store starts dead");
 
@@ -1649,7 +1639,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // Force-enqueue both as maybe-dead, then drain. `has_side_effects()`
@@ -1681,7 +1671,7 @@ mod tests {
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
 
         // A wide Region fan-in: one Control input per predecessor.  The entry
         // region's control output is reused verbatim for each slot (the batch

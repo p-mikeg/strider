@@ -87,14 +87,8 @@ impl Visitable for ControlFlowView<'_> {
 // ── public helpers ────────────────────────────────────────────────────────────
 
 /// Computes Cooper–Harvey–Kennedy dominators of the control subgraph.
-///
-/// # Panics
-///
-/// Panics if `function` has no entry node.
 pub fn control_dominators(function: &Function) -> petgraph::algo::dominators::Dominators<NodeId> {
-    let entry = function
-        .entry()
-        .expect("control_dominators: entry must be set");
+    let entry = function.entry();
     petgraph::algo::dominators::simple_fast(&ControlFlowView::new(function), entry)
 }
 
@@ -242,7 +236,7 @@ mod tests {
         use petgraph::algo::dominators::simple_fast;
 
         let f = diamond().expect("diamond() should build without errors");
-        let entry = f.entry().expect("entry must be set after build");
+        let entry = f.entry();
 
         let doms = simple_fast(&ControlFlowView::new(&f), entry);
 

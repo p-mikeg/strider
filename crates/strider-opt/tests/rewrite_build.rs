@@ -56,7 +56,7 @@ fn add_zero_identity_fires_and_redirects() {
         hits[0].root()
     };
 
-    let mut ctx = EditFunction::new(&mut fx).unwrap();
+    let mut ctx = EditFunction::new(&mut fx);
     let fired = rule(&mut ctx, add_root).unwrap().is_some();
     assert!(fired, "add-zero identity should fire");
 
@@ -108,7 +108,7 @@ fn const_fold_rule_via_macro() {
         hits[0].root()
     };
 
-    let mut ctx = EditFunction::new(&mut fx).unwrap();
+    let mut ctx = EditFunction::new(&mut fx);
     let fired = rule(&mut ctx, add_root).unwrap().is_some();
     assert!(fired);
 
@@ -163,7 +163,7 @@ fn reassoc_rule_nests_computed_const_in_add() {
         hits[0].root()
     };
 
-    let mut ctx = EditFunction::new(&mut fx).unwrap();
+    let mut ctx = EditFunction::new(&mut fx);
     let fired = rule(&mut ctx, outer_root).unwrap().is_some();
     assert!(fired, "reassoc rule should fire on (x + 1) + 2");
 
@@ -233,7 +233,7 @@ fn apply_rules_count_drives_rule_across_function() {
     .unwrap();
 
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
-    let mut ctx = EditFunction::new(&mut fx).unwrap();
+    let mut ctx = EditFunction::new(&mut fx);
     let fired = apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap() > 0;
     assert!(fired);
 }

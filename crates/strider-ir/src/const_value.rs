@@ -71,14 +71,14 @@ impl ConstValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Function;
+    use crate::function::test_function;
 
     /// The limb path masks a fits-`u128` value to the declared width, exactly
     /// like the scalar path — so no unmasked `Bits` can slip in via limbs.
     #[test]
     fn intern_int_const_limbs_masks_fits_u128_to_width() {
         use crate::node::ValueType;
-        let mut f = Function::default();
+        let mut f = test_function();
         // High limb mixes one bit inside I80's 80-bit width (bit 69) and one
         // above it (bit 84); only the in-width bit must survive.
         let hi: u64 = (1 << 5) | (1 << 20);
@@ -115,7 +115,7 @@ mod tests {
             ),
         ];
         for (label, v) in cases {
-            let mut g = Function::default();
+            let mut g = test_function();
             let id1 = g.intern_const(v.clone());
             let id2 = g.intern_const(v);
             assert_eq!(
@@ -137,7 +137,7 @@ mod tests {
             ),
         ];
         for (label, a, b) in cases {
-            let mut g = Function::default();
+            let mut g = test_function();
             let id_a = g.intern_const(a);
             let id_b = g.intern_const(b);
             assert_ne!(id_a, id_b, "{label}: distinct values must get distinct ids");
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn const_value_lookup_returns_stored_value() {
-        let mut g = Function::default();
+        let mut g = test_function();
         let v = ConstValue::Wide(vec![0x1234, 0x5678, 0x9abc, 0xdef0].into_boxed_slice());
         let id = g.intern_const(v.clone());
         assert_eq!(g.const_value(id), &v);

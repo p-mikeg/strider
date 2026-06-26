@@ -153,13 +153,13 @@ impl<'mem> OptCtx<'mem> {
 /// Passes that need the entry [`strider_ir::node::NodeId`] directly
 /// (for `edit.walk()` or
 /// `strider_ir::walk::cfg_reachable(edit.graph_ref(), edit.entry())`)
-/// derive it via `edit.entry()` — `EditFunction::new` enforces
-/// the post-build invariant, so the entry is guaranteed `Some(_)`.
+/// derive it via `edit.entry()`, which returns the entry
+/// [`strider_ir::node::NodeId`] directly.
 pub trait Optimizer: OptimizerClone {
     /// Real entry point: passes mutate the function through the shared
     /// `EditFunction` the pipeline built once for this run.
     ///
-    /// `edit` wraps the built function (entry is `Some(_)`); passes
+    /// `edit` wraps the built function (entry is a valid `NodeId`); passes
     /// mutate through `edit`'s curated mutation-façade methods
     /// (`create_node`, `update_input`, `set_stack_offset`, …) and read
     /// through `edit`'s deref to `Function` / `Graph`.
@@ -191,7 +191,7 @@ pub trait Optimizer: OptimizerClone {
 /// that hold a `&mut Function` use this; the pipeline shares one ctx across
 /// all passes and never calls it.
 ///
-/// `function` must be in its built form (`function.entry()` is `Some(_)`).
+/// `function` must be in its built form (`function.entry()` returns a valid `NodeId`).
 ///
 /// # Errors
 ///
@@ -203,7 +203,7 @@ pub fn run_one(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
-    let mut edit = crate::EditFunction::new(function)?;
+    let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     let result = pass.apply(&mut edit, octx)?;
     edit.clean();
@@ -242,7 +242,7 @@ impl<T: Optimizer> OptimizerTestExt for T {
 /// `crate::Result<()>`.  Test-only: the production driver is
 /// [`OptimizerPipeline::run`]'s post-pass loop.
 ///
-/// `function` must be in its built form (`function.entry()` is `Some(_)`).
+/// `function` must be in its built form (`function.entry()` returns a valid `NodeId`).
 ///
 /// # Errors
 ///
@@ -253,7 +253,7 @@ pub fn run_post(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<()> {
-    let mut edit = crate::EditFunction::new(function)?;
+    let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     pass.apply(&mut edit, octx)?;
     edit.clean();
@@ -417,9 +417,10 @@ impl OptimizerPipeline {
     /// Runs all registered passes in a fixed-point loop until convergence,
     /// then runs each post-pass exactly once in registration order.
     ///
-    /// `function` must be in its built form (i.e. `function.entry()` is
-    /// `Some(_)`); each pass derives the entry [`strider_ir::node::NodeId`]
-    /// internally as needed, and the final validation step requires it.
+    /// `function` must be in its built form (`function.entry()` returns a
+    /// valid `NodeId`); each pass derives the entry
+    /// [`strider_ir::node::NodeId`] internally as needed, and the final
+    /// validation step requires it.
     /// `ctx` carries per-run pass-agnostic state (currently the borrowed
     /// rom image); the orchestrator constructs one per pipeline run, ad-hoc
     /// callers use [`OptCtx::new`].
@@ -449,7 +450,7 @@ impl OptimizerPipeline {
             // explicit `cull_dead()` removes any pre-existing dead nodes.  The
             // borrow of `function` (via the ctx) is held for the duration of
             // this scope and released before the final validation step below.
-            let mut edit = crate::EditFunction::new(function)?;
+            let mut edit = crate::EditFunction::new(function);
             edit.cull_dead();
             let mut iters: u32 = 0;
             loop {

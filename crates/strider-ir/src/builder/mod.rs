@@ -271,11 +271,8 @@ impl FunctionBuilder {
     /// take `(function, entry)` get a stable handle here.  The entry node
     /// id never changes once the builder's first region is registered,
     /// so callers may cache it across iterations.
-    #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new()
     pub fn entry(&self) -> NodeId {
-        self.function
-            .entry()
-            .expect("entry is always set by build_entry(), which new() calls unconditionally")
+        self.function.entry()
     }
 
     /// Creates a new [`FunctionBuilder`] from a resolved calling convention.

@@ -49,9 +49,9 @@ use use_list_consistency::check_use_list_consistency;
 /// the function's own entry node.
 ///
 /// Returns `Ok(())` if every checked invariant holds, or a
-/// [`ValidationErrors`] bundle describing every violation otherwise. If the
-/// function has not been built (no entry node), returns a bundle containing a
-/// single [`ValidationError::NoEntry`].
+/// [`ValidationErrors`] bundle describing every violation otherwise.  Every
+/// `Function` is built with an entry node (the `Function::new` skeleton), so
+/// the walk always has a root.
 ///
 /// Local per-node checks (`check_local_typing`) are scoped to nodes
 /// reachable from the entry so that detached zombie nodes left behind by
@@ -69,9 +69,7 @@ use use_list_consistency::check_use_list_consistency;
 /// does not fail fast — every check runs to completion so the caller sees
 /// the full set of problems at once.
 pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
-    let Some(entry) = function.entry() else {
-        return Err(ValidationErrors(vec![ValidationError::NoEntry]));
-    };
+    let entry = function.entry();
     // Drive the walk to completion and reuse its internal DenseEntitySet
     // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
     // and one extra allocation per validate call.
@@ -134,9 +132,6 @@ pub struct ValidationErrors(pub Vec<ValidationError>);
 /// An individual IR validation failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
-    #[error("function has no entry node (not built)")]
-    NoEntry,
-
     #[error("node {node:?} has {actual} inputs, expected {expected}")]
     NodeInputCountMismatch {
         node: NodeId,
