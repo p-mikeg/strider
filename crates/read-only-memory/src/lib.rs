@@ -44,17 +44,10 @@ pub trait ReadOnlyMemory: Send + Sync {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()>;
 }
 
-// Blanket impls so any `Arc<T>` / `Box<T>` whose inner type implements
-// `ReadOnlyMemory` is itself a `ReadOnlyMemory`.  Lets callers wrap a
-// shared rom in an `Arc` (or own one in a `Box`) and feed it directly
-// to the optimizer's `LoadReadOnly` pass without inlining a custom
-// load-folder for each call site.
-impl<T: ?Sized + ReadOnlyMemory> ReadOnlyMemory for std::sync::Arc<T> {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        (**self).read(addr, buf)
-    }
-}
-
+// Blanket impl so any `Box<T>` whose inner type implements `ReadOnlyMemory`
+// is itself a `ReadOnlyMemory`.  Lets callers own a rom in a `Box` and feed
+// it directly to the optimizer's `LoadReadOnly` pass without inlining a
+// custom load-folder for each call site.
 impl<T: ?Sized + ReadOnlyMemory> ReadOnlyMemory for Box<T> {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         (**self).read(addr, buf)
