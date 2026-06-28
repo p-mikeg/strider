@@ -15,18 +15,26 @@ pub use state::FunctionState;
 
 /// The trivial-convention [`Function`] used throughout the in-crate tests.
 ///
-/// [`Function::new`] is the single SSoT constructor; it builds the
-/// Entry + InitialMemory skeleton (nodes 0 and 1) automatically, so this
-/// is a fully-formed (entry-bearing) starting point with no tracked
+/// [`Function::new`] builds the `Entry` node; this helper then mints the
+/// `InitialMemory` node (normally `FunctionBuilder::build_entry`'s job) so the
+/// result is a fully-formed (entry + memory) starting point with no tracked
 /// varnodes.
 #[cfg(test)]
 pub(crate) fn test_function() -> Function {
-    Function::new(
+    let mut f = Function::new(
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
         Vec::new(),
         rustc_hash::FxHashMap::default(),
-    )
+    );
+    // The builder owns the memory spine; this test helper bypasses the builder,
+    // so mint the `InitialMemory` node directly to mirror a built function.
+    f.graph_mut().create_node(
+        crate::node::NodeKind::InitialMemory,
+        [],
+        [crate::node::ValueKind::Memory],
+    );
+    f
 }
 
 /// The `InitialMemory` node of a [`test_function`]-shaped graph (the

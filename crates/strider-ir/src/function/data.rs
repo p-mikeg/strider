@@ -84,9 +84,11 @@ where
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
 ///
-/// [`Function::new`] is the single constructor: it builds the `Entry` +
-/// `InitialMemory` skeleton (nodes 0 and 1), so every `Function` always has an
-/// entry — the type carries that invariant (no `Option`).  Production functions
+/// [`Function::new`] is the single constructor: it builds the `Entry` node
+/// (node 0), so every `Function` always has an entry — the type carries that
+/// invariant (no `Option`).  The `InitialMemory` node is added by the
+/// `FunctionBuilder`'s [`build_entry`](crate::FunctionBuilder::build_entry).
+/// Production functions
 /// come from `FunctionBuilder::build`; synthetic / test graphs call
 /// [`Function::new`] with the trivial convention and add nodes via
 /// [`Function::graph_mut`] on top of the skeleton.
@@ -255,37 +257,33 @@ pub struct Function {
 }
 
 impl Function {
-    /// Creates a `Function` with the Entry + InitialMemory skeleton (nodes 0
-    /// and 1) already built, carrying the calling-convention SSoT
-    /// (`default_cc`, `endianness`, `all_vns`) at construction.  These three
-    /// are the non-derivable inputs every register-list projection a `Call` /
-    /// `Return` / `CallOther` needs is derived from, so requiring them here
-    /// guarantees a `Function` is never observed in a half-initialised state
-    /// (no build-then-assign window).  Because the skeleton is built here, the
-    /// entry is always present — [`Self::entry`] returns a `NodeId`, never an
-    /// `Option`.
+    /// Creates a `Function` with the `Entry` node (node 0) already built,
+    /// carrying the calling-convention SSoT (`default_cc`, `endianness`,
+    /// `all_vns`) at construction.  These three are the non-derivable inputs
+    /// every register-list projection a `Call` / `Return` / `CallOther` needs is
+    /// derived from, so requiring them here guarantees a `Function` is never
+    /// observed in a half-initialised state (no build-then-assign window).
+    /// Because the entry is built here, it is always present — [`Self::entry`]
+    /// returns a `NodeId`, never an `Option`.  The `InitialMemory` node is added
+    /// separately by the `FunctionBuilder`'s `build_entry`.
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
         all_vns: Vec<rsleigh::Vn>,
         vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
     ) -> Self {
-        // Build the Entry + InitialMemory skeleton directly on the empty graph
-        // (nodes 0 and 1).  Both are asm-fingerprint-exempt initial-state kinds,
-        // so they need no contributor attribution and are minted straight on the
-        // graph.  This is the SSoT for "a function always has an entry" — every
-        // construction path (FunctionBuilder, synthetic test graphs) goes
-        // through here, so `entry` is a `NodeId`, never an `Option`.
+        // Build the `Entry` node (node 0) directly on the empty graph.  It is an
+        // asm-fingerprint-exempt initial-state kind, so it needs no contributor
+        // attribution and is minted straight on the graph.  This is the SSoT for
+        // "a function always has an entry" — every construction path goes through
+        // here, so `entry` is a `NodeId`, never an `Option`.  The `InitialMemory`
+        // node is the `FunctionBuilder`'s responsibility (`build_entry`), which
+        // creates it and captures its memory token in one step.
         let mut graph = Graph::default();
         let entry = graph.create_node(
             crate::node::NodeKind::Entry,
             [],
             [crate::node::ValueKind::Control],
-        );
-        graph.create_node(
-            crate::node::NodeKind::InitialMemory,
-            [],
-            [crate::node::ValueKind::Memory],
         );
         Self {
             graph,

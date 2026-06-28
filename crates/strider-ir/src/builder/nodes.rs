@@ -8,24 +8,24 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::RegionId;
 
 impl FunctionBuilder {
-    /// Captures the function's starting memory token.
+    /// Builds the function's `InitialMemory` node and captures its starting
+    /// memory token as the builder's `entry_memory`.
     ///
-    /// [`Function::new`] already builds the `Entry` + `InitialMemory` skeleton
-    /// (nodes 0 and 1); this records the `InitialMemory` node's output as the
-    /// builder's `entry_memory`.
+    /// [`Function::new`] builds only the `Entry` node; the memory spine is the
+    /// builder's responsibility, so this creates the `InitialMemory` node
+    /// (an asm-fingerprint-exempt initial-state kind, minted straight on the
+    /// graph) and records its single `Memory` output — no graph search.
     ///
     /// # Errors
     ///
-    /// Returns `WrongOutputCount` if the `InitialMemory` node does not have its
-    /// expected single output (a graph-construction bug, not user error).
+    /// Returns `WrongOutputCount` if the freshly-built `InitialMemory` node does
+    /// not have its expected single output (a graph-construction bug).
     pub fn build_entry(&mut self) -> Result<()> {
-        let memory_node = {
-            let f = self.function();
-            f.graph()
-                .all_node_ids()
-                .find(|&n| matches!(f.node_kind(n), NodeKind::InitialMemory))
-                .expect("Function::new builds an InitialMemory node")
-        };
+        let memory_node = self.function_mut().graph_mut().create_node(
+            NodeKind::InitialMemory,
+            [],
+            [ValueKind::Memory],
+        );
         let [memory] = self.function().node_outputs_exact(memory_node)?;
         self.entry_memory = memory;
         Ok(())
