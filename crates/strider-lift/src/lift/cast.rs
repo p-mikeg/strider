@@ -71,12 +71,8 @@ fn build_bit_field_insert(
     let src_masked =
         builder.build_int_binary_operation(src, mask_const, IntBinaryOp::And, out_ty)?;
 
-    let src_positioned = if lsb == 0 {
-        src_masked
-    } else {
-        let lsb_const = builder.build_int_const(lsb as u64, out_ty)?;
-        builder.build_int_binary_operation(src_masked, lsb_const, IntBinaryOp::ShiftLeft, out_ty)?
-    };
+    let src_positioned =
+        builder.build_shift_by_const(src_masked, u64::from(lsb), IntBinaryOp::ShiftLeft, out_ty)?;
 
     builder.build_int_binary_operation(cleared, src_positioned, IntBinaryOp::Or, out_ty)
 }
@@ -106,37 +102,21 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         }
         let value = self.read_vn(input_vn)?;
         let out_vn = require_output_vn(insn)?;
-        let shifted = if byte_offset == 0 {
-            value
-        } else {
-            // safe: byte_offset < input.size <= u32::MAX, so byte_offset * 8 fits in u64
-            let bit_shift = byte_offset * 8;
-            // Defensive guard against future Subpiece-width extensions: the
-            // upstream `byte_offset < input_vn.size` check already pins
-            // `bit_shift <= (input_vn.size - 1) * 8` which today caps at
-            // 120 < 128 (max supported `u128` IR width).  If a future
-            // Subpiece variant ever widened past `u128` inputs, the shift
-            // would silently exceed the IR's representable bit-width.
-            debug_assert!(
-                bit_shift < u64::from(input_vn.size) * 8,
-                "Subpiece bit_shift {bit_shift} must be < input bit-width {}",
-                u64::from(input_vn.size) * 8,
-            );
-            let input_ty = input_vn.int_type()?;
-            // The shift constant carries the *input* width.  `build_int_const`
-            // masks the (small) shift amount to `input_ty` — for the wide
-            // I256 / I512 case the mask is `u128::MAX`, so the interned node is
-            // byte-identical to the explicit-limb path.
-            let shift_const = self
-                .builder
-                .build_int_const(u128::from(bit_shift), input_ty)?;
-            self.builder.build_int_binary_operation(
-                value,
-                shift_const,
-                IntBinaryOp::ShiftRight,
-                input_ty,
-            )?
-        };
+        // safe: byte_offset < input.size <= u32::MAX, so byte_offset * 8 fits in u64.
+        let bit_shift = byte_offset * 8;
+        // Defensive guard against future Subpiece-width extensions: the upstream
+        // `byte_offset < input_vn.size` check pins `bit_shift <= (size-1)*8`,
+        // today <= 120 < 128 (max supported `u128` IR width).
+        debug_assert!(
+            bit_shift < u64::from(input_vn.size) * 8,
+            "Subpiece bit_shift {bit_shift} must be < input bit-width {}",
+            u64::from(input_vn.size) * 8,
+        );
+        // Right-shift by `bit_shift` at the input width (a no-op when offset 0),
+        // then truncate to the output width.
+        let shifted =
+            self.builder
+                .build_shift_by_const(value, bit_shift, IntBinaryOp::ShiftRight, input_vn.int_type()?)?;
         let result = self
             .builder
             .truncate_if_needed(shifted, out_vn.int_type()?)?;
@@ -221,13 +201,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // flag register, whose `bit_width()` is 1, not 8); using the varnode
         // size keeps Piece faithful to the pcode geometry in that case.
         let lo_bits = u64::from(lo_vn.size) * 8;
-        let shift_amt = self.builder.build_int_const(lo_bits, out_ty)?;
-        let hi_shifted = self.builder.build_int_binary_operation(
-            hi_wide,
-            shift_amt,
-            IntBinaryOp::ShiftLeft,
-            out_ty,
-        )?;
+        let hi_shifted =
+            self.builder
+                .build_shift_by_const(hi_wide, lo_bits, IntBinaryOp::ShiftLeft, out_ty)?;
         let result = self.builder.build_int_binary_operation(
             hi_shifted,
             lo_wide,
@@ -266,17 +242,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             );
         }
         let x_int = self.builder.convert_to_int_if_needed(value, x_nat_ty)?;
-        let shifted = if lsb == 0 {
-            x_int
-        } else {
-            let lsb_const = self.builder.build_int_const(lsb as u64, x_nat_ty)?;
-            self.builder.build_int_binary_operation(
-                x_int,
-                lsb_const,
-                IntBinaryOp::ShiftRight,
-                x_nat_ty,
-            )?
-        };
+        let shifted =
+            self.builder
+                .build_shift_by_const(x_int, u64::from(lsb), IntBinaryOp::ShiftRight, x_nat_ty)?;
         let narrowed = self.builder.truncate_if_needed(shifted, narrow_ty)?;
         let result = if (len as usize) < narrow_ty.bit_width() {
             // Compute the AND-mask in u128 so a I128 narrow_ty with

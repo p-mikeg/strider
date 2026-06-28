@@ -129,10 +129,7 @@ fn single_const_target(
     ctx: &strider_ir::Function,
     anchor_value: ValueId,
 ) -> Option<ResolvedTargets> {
-    if !matches!(
-        ctx.node_kind(ctx.producer(anchor_value)),
-        NodeKind::IntConst(_)
-    ) {
+    if !matches!(ctx.kind_of_value(anchor_value), NodeKind::IntConst(_)) {
         return None;
     }
     let k = ctx.int_const_u128(anchor_value)?;
@@ -154,7 +151,7 @@ fn link_register_return(
     anchor_value: ValueId,
 ) -> Option<ResolvedTargets> {
     let lr = ctx.default_cc().link_register_vn?;
-    match *ctx.node_kind(ctx.producer(anchor_value)) {
+    match *ctx.kind_of_value(anchor_value) {
         NodeKind::InitialVar(id) if ctx.initial_vn(id) == lr => Some(ResolvedTargets::LinkRegister),
         _ => None,
     }

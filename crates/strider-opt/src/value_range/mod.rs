@@ -426,14 +426,13 @@ fn add_operand_shifted_interval(
     value: ValueId,
     interval: Interval,
 ) -> Option<(ValueId, Interval)> {
-    let node = function.producer(value);
     if !matches!(
-        function.node_kind(node),
+        function.kind_of_value(value),
         NodeKind::IntBinaryOp(IntBinaryOp::Add)
     ) {
         return None;
     }
-    let [a, b] = function.graph().node_inputs_exact::<2>(node).ok()?;
+    let [a, b] = function.producer_inputs_exact::<2>(value).ok()?;
     // Exactly one operand must be the constant addend.
     let (operand, c) = match (function.int_const_u128(a), function.int_const_u128(b)) {
         (None, Some(c)) => (a, c),
@@ -627,12 +626,11 @@ fn guard_from_compare(
     edge_taken: bool,
     known: &KnownBitsMap,
 ) -> Option<(ValueId, Interval)> {
-    let g = function.graph();
-    let producer = g.producer(cmp_value);
-    let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = *g.node_kind(producer) else {
+    let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = *function.kind_of_value(cmp_value)
+    else {
         return None;
     };
-    let [lhs, rhs] = g.node_inputs_exact::<2>(producer).ok()?;
+    let [lhs, rhs] = function.producer_inputs_exact::<2>(cmp_value).ok()?;
 
     // Identify which operand is the constant and which is the guarded value.
     // `Less(v, IntConst(N))`  → const on RHS, `v < N`.
