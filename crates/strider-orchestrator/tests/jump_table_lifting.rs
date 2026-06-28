@@ -40,7 +40,7 @@ fn count_int_consts_eq(function: &Function, want: u64) -> usize {
             }
             function
                 .first_value_output_of(nid)
-                .is_some_and(|v| function.int_const_val(v) == Some(want))
+                .is_some_and(|v| function.int_const_u128(v) == Some(u128::from(want)))
         })
         .count()
 }

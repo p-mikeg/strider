@@ -474,7 +474,7 @@ fn child_when_match_rejection_still_tries_swapped_order() {
         let Some(v) = b.get_value(c) else {
             return false;
         };
-        m.function().int_const_val(v) == Some(3)
+        m.function().int_const_u128(v) == Some(3)
     });
     let m = a::unique(&function, add(guarded, int_const(2u128)).into_pattern());
     assert_eq!(
@@ -501,7 +501,7 @@ fn root_when_match_rejection_does_not_redrive_swap() {
             let Some(v) = b.get_value(l) else {
                 return false;
             };
-            m.function().int_const_val(v) == Some(3)
+            m.function().int_const_u128(v) == Some(3)
         })
         .into_pattern();
     a::none(&function, pat);

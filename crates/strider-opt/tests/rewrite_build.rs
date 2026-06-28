@@ -70,7 +70,7 @@ fn add_zero_identity_fires_and_redirects() {
         .all(|n| {
             let f = ctx.function();
             matches!(f.node_kind(n), NodeKind::IntConst(_))
-                && f.int_const_val(f.node_outputs(n)[0]) == Some(7)
+                && f.int_const_u128(f.node_outputs(n)[0]) == Some(7)
         });
     assert!(or_reads_const, "Or should now read the redirected constant");
 }
@@ -116,7 +116,7 @@ fn const_fold_rule_via_macro() {
     let has_seven = ctx.function().walk().any(|n| {
         let f = ctx.function();
         matches!(f.node_kind(n), NodeKind::IntConst(_))
-            && f.int_const_val(f.node_outputs(n)[0]) == Some(7)
+            && f.int_const_u128(f.node_outputs(n)[0]) == Some(7)
     });
     assert!(has_seven, "3 + 4 should fold to IntConst(7)");
 }
@@ -171,7 +171,7 @@ fn reassoc_rule_nests_computed_const_in_add() {
     let has_three = ctx.function().walk().any(|n| {
         let f = ctx.function();
         matches!(f.node_kind(n), NodeKind::IntConst(_))
-            && f.int_const_val(f.node_outputs(n)[0]) == Some(3)
+            && f.int_const_u128(f.node_outputs(n)[0]) == Some(3)
     });
     assert!(has_three, "(x + 1) + 2 should reassociate to x + 3");
 }

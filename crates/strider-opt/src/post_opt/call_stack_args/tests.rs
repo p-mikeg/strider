@@ -9,12 +9,13 @@ use strider_ir_test_utils::{RegisterSet, stack_vn_x86 as stack_vn};
 
 /// Returns `true` when `v` is an `IntConst` whose value equals `expected`.
 fn is_const(fg: &strider_ir::Function, v: ValueId, expected: u64) -> bool {
-    matches!(fg.kind_of_value(v), NodeKind::IntConst(_)) && fg.int_const_val(v) == Some(expected)
+    matches!(fg.kind_of_value(v), NodeKind::IntConst(_))
+        && fg.int_const_u128(v) == Some(u128::from(expected))
 }
 
-/// Extracts the u64 value from an IntConst value, panicking with context on failure.
-fn const_val(fg: &strider_ir::Function, v: ValueId, ctx: &str) -> u64 {
-    fg.int_const_val(v).unwrap_or_else(|| {
+/// Extracts the value from an IntConst value, panicking with context on failure.
+fn const_val(fg: &strider_ir::Function, v: ValueId, ctx: &str) -> u128 {
+    fg.int_const_u128(v).unwrap_or_else(|| {
         panic!(
             "collected arg should be an IntConst, got {:?} — {ctx}",
             fg.kind_of_value(v)
@@ -103,7 +104,7 @@ fn local_inits_in_arg_window_are_collected_too() -> Result<()> {
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + sp + the whole contiguous window: arg0=42, arg1=1,
     // four buf-init zeros, and the saved EBX = 7 collected args (11 inputs).
-    let collected: Vec<u64> = inputs[4..]
+    let collected: Vec<u128> = inputs[4..]
         .iter()
         .map(|&v| const_val(&fg, v, "local_inits_in_arg_window_are_collected_too"))
         .collect();
@@ -694,7 +695,7 @@ fn disjoint_in_window_store_is_collected_not_a_terminator() -> Result<()> {
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + sp + 3 collected args (slots 0,1,2).
-    let collected: Vec<u64> = inputs[4..]
+    let collected: Vec<u128> = inputs[4..]
         .iter()
         .map(|&v| const_val(&fg, v, "trash_in_arg_window"))
         .collect();
@@ -1124,18 +1125,18 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    let collected: Vec<u64> = inputs[3..]
+    let collected: Vec<u128> = inputs[3..]
         .iter()
         .filter_map(|&out| {
             if matches!(fg.kind_of_value(out), NodeKind::IntConst(_)) {
-                fg.int_const_val(out)
+                fg.int_const_u128(out)
             } else {
                 None
             }
         })
         .collect();
     assert!(
-        !collected.contains(&0xDEAD_u64),
+        !collected.contains(&0xDEAD_u128),
         "OOW local 0xDEAD must not be collected as an arg; got {collected:?}"
     );
     // Both real args must still be collected — OOW termination only

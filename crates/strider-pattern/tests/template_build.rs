@@ -88,7 +88,7 @@ fn instantiate_add_const_builds_fresh_node() {
                 && fx
                     .node_outputs(n)
                     .iter()
-                    .any(|&o| fx.int_const_val(o) == Some(2))
+                    .any(|&o| fx.int_const_u128(o) == Some(2))
         });
     assert!(has_two, "RHS should materialise IntConst(2)");
 }
@@ -125,7 +125,7 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
                 && fx
                     .node_outputs(n)
                     .iter()
-                    .any(|&o| fx.int_const_val(o) == Some(5))
+                    .any(|&o| fx.int_const_u128(o) == Some(5))
         })
         .unwrap();
     let proof_b = fx
@@ -135,7 +135,7 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
                 && fx
                     .node_outputs(n)
                     .iter()
-                    .any(|&o| fx.int_const_val(o) == Some(1))
+                    .any(|&o| fx.int_const_u128(o) == Some(1))
         })
         .unwrap();
     assert!(fx.asm_fingerprint(proof_a).contains(&PROOF_A));
@@ -163,7 +163,7 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
                 && fx
                     .node_outputs(n)
                     .iter()
-                    .any(|&o| fx.int_const_val(o) == Some(2))
+                    .any(|&o| fx.int_const_u128(o) == Some(2))
         })
         .expect("RHS materialised IntConst(2)");
     let fp = fx.asm_fingerprint(new_const2);

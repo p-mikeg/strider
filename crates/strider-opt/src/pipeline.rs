@@ -679,9 +679,9 @@ mod tests {
         let val = crate::test_support::return_value(function.graph())?;
         let kind = *function.kind_of_value(val);
         assert!(
-            matches!(kind, NodeKind::IntConst(_)) && function.int_const_val(val) == Some(0x42),
+            matches!(kind, NodeKind::IntConst(_)) && function.int_const_u128(val) == Some(0x42),
             "load must forward to stored value, got {kind:?} (value={:?})",
-            function.int_const_val(val)
+            function.int_const_u128(val)
         );
         Ok(())
     }

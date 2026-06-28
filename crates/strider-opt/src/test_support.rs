@@ -57,10 +57,10 @@ pub(crate) fn assert_return_kind(graph: &Graph, expected: NodeKind) {
 #[track_caller]
 pub(crate) fn assert_returns_const(f: &strider_ir::Function, expected: u64) {
     let val = return_value(f.graph()).expect("function must return a value");
-    let got = f.int_const_val(val);
+    let got = f.int_const_u128(val);
     assert_eq!(
         got,
-        Some(expected),
+        Some(u128::from(expected)),
         "return-value must be IntConst({expected:#x})"
     );
 }

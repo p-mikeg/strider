@@ -42,7 +42,7 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     for &load_node in &loads {
         let inputs = function.node_inputs(load_node);
         let addr_value = inputs[1];
-        if let Some(v) = function.int_const_val(addr_value) {
+        if let Some(v) = function.int_const_u128(addr_value) {
             if v == 0x1000 {
                 stack_node = Some(load_node);
             } else {
@@ -83,7 +83,7 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     for &store_node in &stores {
         let inputs = function.node_inputs(store_node);
         let addr_value = inputs[1];
-        if let Some(v) = function.int_const_val(addr_value) {
+        if let Some(v) = function.int_const_u128(addr_value) {
             if v == 0x1000 {
                 stack_store = Some(store_node);
             } else {
@@ -178,7 +178,7 @@ fn capture_then_read_stack_offset_via_side_table() {
     let bound = m.node(node_cap, g.graph()).expect("captured node");
     assert_eq!(bound, stack_store, "capture must bind the stack store");
     let (_base, offset) = g.stack_offset(bound).expect("side-table entry");
-    assert_eq!(offset, 0x10_i64, "side-table offset must round-trip");
+    assert_eq!(offset, 0x10_i128, "side-table offset must round-trip");
 }
 
 /// The same recovery applies to loads.
@@ -194,5 +194,5 @@ fn capture_then_read_stack_offset_via_side_table_load() {
     let bound = m.node(node_cap, g.graph()).expect("captured node");
     assert_eq!(bound, stack_load);
     let (_base, offset) = g.stack_offset(bound).expect("side-table entry");
-    assert_eq!(offset, 0x10_i64);
+    assert_eq!(offset, 0x10_i128);
 }

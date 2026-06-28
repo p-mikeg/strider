@@ -228,11 +228,11 @@ fn fold_int_binary_two_consts_cases() -> Result<()> {
         {
             let ret_val = return_value(fg.graph())?;
             assert!(
-                fg.int_const_val(ret_val) == Some(c.expected),
+                fg.int_const_u128(ret_val) == Some(u128::from(c.expected)),
                 "{}: expected IntConst({:#x}), got {:?}",
                 c.case,
                 c.expected,
-                fg.int_const_val(ret_val),
+                fg.int_const_u128(ret_val),
             );
         }
     }
@@ -446,7 +446,7 @@ fn canonicalize_commutative_const_to_right() -> Result<()> {
     );
     assert!(
         matches!(fg.node_kind(fg.producer(inputs[1])), NodeKind::IntConst(_))
-            && fg.int_const_val(inputs[1]) == Some(5),
+            && fg.int_const_u128(inputs[1]) == Some(5),
         "operand 1 must be the const (canonicalised to the right)"
     );
     Ok(())
@@ -773,8 +773,8 @@ fn fold_truncate_const() -> Result<()> {
         b.truncate_if_needed(wide, ValueType::I8)
     })?;
     let val = return_value(fg.graph())?;
-    // Use int_const_val which masks to the declared type.
-    let semantic = fg.int_const_val(val);
+    // Use int_const_u128 which masks to the declared type.
+    let semantic = fg.int_const_u128(val);
     assert_eq!(semantic, Some(0), "0xFF00 truncated to I8 should be 0");
     // No Truncate nodes should exist.
     assert!(
@@ -825,7 +825,7 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     // i.e. the low byte of 0xFFFF — *masked* to I8. A pre-fix run would
     // store `0xFFFF` (the wider raw value) here.
     let val = return_value(fg.graph())?;
-    let raw = fg.int_const_val(val).unwrap_or_else(|| {
+    let raw = fg.int_const_u128(val).unwrap_or_else(|| {
         panic!(
             "expected IntConst producer for Return value, got {:?}",
             fg.kind_of_value(val)
@@ -1425,7 +1425,7 @@ fn fold_shift_by_width_minus_one_cases() -> Result<()> {
     #[rustfmt::skip]
     let cases = [
         // 1 << 31 = 0x8000_0000 (the existing boundary row, kept for symmetry).
-        ("shl_by_31", IntBinaryOp::ShiftLeft, 1u128, 0x8000_0000u64),
+        ("shl_by_31", IntBinaryOp::ShiftLeft, 1u128, 0x8000_0000u128),
         // 0xFFFF_FFFF >> 31 = 1.
         ("lshr_by_31", IntBinaryOp::ShiftRight, 0xFFFF_FFFF, 1),
         // 0x8000_0000 >>s 31 = all-ones (sign fill).
@@ -1448,9 +1448,9 @@ fn fold_shift_by_width_minus_one_cases() -> Result<()> {
         {
             let ret_val = return_value(fg.graph())?;
             assert!(
-                fg.int_const_val(ret_val) == Some(expected),
+                fg.int_const_u128(ret_val) == Some(expected),
                 "{case}: expected IntConst({expected:#x}), got {:?}",
-                fg.int_const_val(ret_val),
+                fg.int_const_u128(ret_val),
             );
         }
     }
@@ -1464,7 +1464,7 @@ fn fold_shift_by_width_minus_one_cases() -> Result<()> {
 fn fold_i1_arithmetic_cases() -> Result<()> {
     #[rustfmt::skip]
     let cases = [
-        ("add_1_1_wraps_to_0", IntBinaryOp::Add, 0u64),
+        ("add_1_1_wraps_to_0", IntBinaryOp::Add, 0u128),
         ("and_1_1_is_1", IntBinaryOp::And, 1),
         ("xor_1_1_is_0", IntBinaryOp::Xor, 0),
     ];
@@ -1486,9 +1486,9 @@ fn fold_i1_arithmetic_cases() -> Result<()> {
         {
             let ret_val = return_value(fg.graph())?;
             assert!(
-                fg.int_const_val(ret_val) == Some(expected),
+                fg.int_const_u128(ret_val) == Some(expected),
                 "{case}: expected IntConst({expected:#x}), got {:?}",
-                fg.int_const_val(ret_val),
+                fg.int_const_u128(ret_val),
             );
         }
     }
@@ -1581,11 +1581,11 @@ fn fold_count_op_const_cases() -> Result<()> {
         {
             let ret_val = return_value(fg.graph())?;
             assert!(
-                fg.int_const_val(ret_val) == Some(c.expected),
+                fg.int_const_u128(ret_val) == Some(u128::from(c.expected)),
                 "{}: expected IntConst({:#x}), got {:?}",
                 c.case,
                 c.expected,
-                fg.int_const_val(ret_val),
+                fg.int_const_u128(ret_val),
             );
         }
     }
@@ -1743,11 +1743,11 @@ fn fold_float_cmp_two_consts_cases() -> Result<()> {
         {
             let ret_val = return_value(fg.graph())?;
             assert!(
-                fg.int_const_val(ret_val) == Some(c.expected),
+                fg.int_const_u128(ret_val) == Some(u128::from(c.expected)),
                 "{}: expected IntConst({:#x}), got {:?}",
                 c.case,
                 c.expected,
-                fg.int_const_val(ret_val),
+                fg.int_const_u128(ret_val),
             );
         }
     }
@@ -1994,9 +1994,9 @@ fn single_pass_propagates_through_chain() -> Result<()> {
     {
         let ret_val = return_value(fg.graph())?;
         assert!(
-            fg.int_const_val(ret_val) == Some(10),
+            fg.int_const_u128(ret_val) == Some(10),
             "expected single-pass convergence to IntConst(10), got {:?}",
-            fg.int_const_val(ret_val)
+            fg.int_const_u128(ret_val)
         );
     }
     Ok(())
@@ -2203,10 +2203,10 @@ fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
     {
         let ret_val = return_value(fg.graph())?;
         assert!(
-            fg.int_const_val(ret_val) == Some(0xFFFF_FFCE),
+            fg.int_const_u128(ret_val) == Some(0xFFFF_FFCE),
             "IntUnaryOp::Neg(50) must fold to two's complement (=-50=0xFFFFFFCE), \
              not bitwise NOT (=~50=0xFFFFFFCD); got {:?}",
-            fg.int_const_val(ret_val)
+            fg.int_const_u128(ret_val)
         );
     }
     Ok(())

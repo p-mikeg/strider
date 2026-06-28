@@ -178,7 +178,7 @@ pub fn function_arg_reg(vn: rsleigh::Vn, idx: u32) -> FunctionArgPat {
 
 /// Match the carrier at side-table index `idx`, restricted to a
 /// stack-passed `Load` at `(space, offset)`.
-pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i64, idx: u32) -> FunctionArgPat {
+pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i128, idx: u32) -> FunctionArgPat {
     FunctionArgPat::default()
         .index(idx)
         .source(FunctionArgSource::Stack { space, offset })

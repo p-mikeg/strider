@@ -92,7 +92,7 @@ fn bounded_lift_handles_tail_call_terminator() {
                 // Call inputs: [ctrl, mem, target, sp, args...].  Slot 2 is the target.
                 let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
                 if let Some(&target_value) = inputs.get(2)
-                    && function.int_const_val(target_value) == Some(TAIL_TARGET)
+                    && function.int_const_u128(target_value) == Some(u128::from(TAIL_TARGET))
                 {
                     had_call_with_target = true;
                 }
@@ -124,7 +124,7 @@ fn graph_has_tail_call_to(function: &strider_ir::Function, target: u64) -> bool 
             NodeKind::Call => {
                 let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
                 if let Some(&target_value) = inputs.get(2)
-                    && function.int_const_val(target_value) == Some(target)
+                    && function.int_const_u128(target_value) == Some(u128::from(target))
                 {
                     had_call = true;
                 }
@@ -251,7 +251,7 @@ fn find_call_to(function: &strider_ir::Function, target: u64) -> Option<strider_
                 .node_inputs(nid)
                 .into_iter()
                 .nth(2)
-                .is_some_and(|target_value| function.int_const_val(target_value) == Some(target))
+                .is_some_and(|target_value| function.int_const_u128(target_value) == Some(u128::from(target)))
     })
 }
 

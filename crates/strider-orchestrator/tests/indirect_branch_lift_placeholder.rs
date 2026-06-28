@@ -214,7 +214,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
         matches!(function.node_kind(nid), NodeKind::IntConst(_))
             && function
                 .first_value_output_of(nid)
-                .is_some_and(|v| function.int_const_val(v) == Some(oob_target))
+                .is_some_and(|v| function.int_const_u128(v) == Some(u128::from(oob_target)))
     });
     assert!(
         has_oob_const,

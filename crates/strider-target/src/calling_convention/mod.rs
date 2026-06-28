@@ -346,22 +346,22 @@ impl BuiltCallingConvention {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StackArgs {
     /// Byte offset from call-time SP of the first stack-passed argument.
-    pub base_offset: i64,
+    pub base_offset: i128,
     /// Byte stride between consecutive stack-arg slots (the ABI word size);
     /// always `> 0`.
-    pub increment: i64,
+    pub increment: i128,
 }
 
 impl StackArgs {
     /// Byte offset (from call-time SP) of the `n`-th stack argument.
     ///
-    /// Saturates at `i64::MAX` for a runaway index rather than overflowing —
+    /// Saturates at `i128::MAX` for a runaway index rather than overflowing —
     /// a saturated offset matches no real stack store, so the over-collecting
     /// `call_stack_args` cursor walk terminates cleanly instead of panicking.
     #[must_use]
-    pub fn offset_of(&self, n: usize) -> i64 {
+    pub fn offset_of(&self, n: usize) -> i128 {
         self.base_offset
-            .saturating_add((n as i64).saturating_mul(self.increment))
+            .saturating_add((n as i128).saturating_mul(self.increment))
     }
 
     /// The stack-arg index whose slot fully contains a `size`-byte access
@@ -378,7 +378,7 @@ impl StackArgs {
     /// only for the strict within-one-slot tests.
     #[cfg(test)]
     #[must_use]
-    pub fn index_of(&self, offset: i64, size: i64) -> Option<usize> {
+    pub fn index_of(&self, offset: i128, size: i128) -> Option<usize> {
         // `increment > 0` is a type invariant (enforced by `try_new`); guard
         // it here too so a directly-constructed `increment == 0` surfaces as a
         // clear assertion in debug builds rather than an integer divide-by-zero.
@@ -393,7 +393,7 @@ impl StackArgs {
         let idx = (rel / self.increment) as usize;
         // `idx * increment <= rel`, so `slot_start <= offset` and cannot
         // overflow; the slot end and the access end can, so both are checked.
-        let slot_start = self.base_offset + (idx as i64) * self.increment;
+        let slot_start = self.base_offset + (idx as i128) * self.increment;
         let slot_end = slot_start.checked_add(self.increment)?;
         let access_end = offset.checked_add(size)?;
         (access_end <= slot_end).then_some(idx)
@@ -412,7 +412,7 @@ impl StackArgs {
     /// one while spanning several slots, so a caller wanting the positional
     /// ordinal walks these slot indices with a width-aware cursor.
     #[must_use]
-    pub fn slot_of(&self, offset: i64) -> Option<usize> {
+    pub fn slot_of(&self, offset: i128) -> Option<usize> {
         debug_assert!(
             self.increment > 0,
             "StackArgs::slot_of requires increment > 0"
@@ -435,9 +435,9 @@ impl StackArgs {
     /// Like [`Self::offset_of`] the arithmetic **saturates** rather than
     /// overflowing: a garbage decoded `size` (from arbitrary lifted
     /// arithmetic) degrades to a large-but-finite span instead of wrapping the
-    /// `i64` intermediate.
+    /// `i128` intermediate.
     #[must_use]
-    pub fn slots_spanned(&self, size: i64) -> usize {
+    pub fn slots_spanned(&self, size: i128) -> usize {
         debug_assert!(
             self.increment > 0,
             "StackArgs::slots_spanned requires increment > 0"

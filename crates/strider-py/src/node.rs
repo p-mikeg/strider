@@ -162,7 +162,7 @@ impl PyNode {
         // little-endian-bytes -> `int.from_bytes` path; narrow (<= I64)
         // constants take the plain `u64` route.
         enum ConstRepr {
-            Narrow(u64),
+            Narrow(u128),
             WideLe(Vec<u8>),
         }
         let repr = self.with_node(py, |function, nid| {
@@ -170,7 +170,7 @@ impl PyNode {
                 return Some(ConstRepr::WideLe(bytes));
             }
             Self::value_output(function, nid)
-                .and_then(|value| function.int_const_val(value))
+                .and_then(|value| function.int_const_u128(value))
                 .map(ConstRepr::Narrow)
         })?;
         match repr {

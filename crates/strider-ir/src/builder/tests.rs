@@ -71,8 +71,8 @@ fn producer_kind(b: &FunctionBuilder, value: ValueId) -> NodeKind {
 #[track_caller]
 fn assert_const_folded(b: &FunctionBuilder, value: ValueId, expected: u64) {
     assert_eq!(
-        b.int_const_val(value),
-        Some(expected),
+        b.int_const_u128(value),
+        Some(u128::from(expected)),
         "folded constant must read back as {expected:#x}"
     );
     assert!(
@@ -102,7 +102,7 @@ fn get_unsigned_int_truncates_to_declared_width() -> Result<()> {
     let value = b.build_int_const(u8::MAX as u64 + 1, ValueType::I8)?;
     // The node was created with kind IntConst(256) but the type is I8,
     // so get_as_unsigned_int must mask it.
-    let val = b.int_const_val(value);
+    let val = b.int_const_u128(value);
     assert_eq!(val, Some(0)); // 256 & 0xFF == 0
     Ok(())
 }
@@ -115,12 +115,12 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
     // Booleans are 1-bit integers: the single bit is the sign bit, so a
     // `true` (bit 1) sign-extends to -1, while its unsigned view is 1.
     assert_eq!(
-        b.int_const_val(bt).zip(b.int_const_i64(bt)),
-        Some((1u64, -1i64))
+        b.int_const_u128(bt).zip(b.int_const_i128(bt)),
+        Some((1u128, -1i128))
     );
     assert_eq!(
-        b.int_const_val(bf).zip(b.int_const_i64(bf)),
-        Some((0u64, 0i64))
+        b.int_const_u128(bf).zip(b.int_const_i128(bf)),
+        Some((0u128, 0i128))
     );
     Ok(())
 }
@@ -130,7 +130,7 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
 fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
     let add = non_const_add(&mut b, ValueType::I64)?;
-    assert_eq!(b.int_const_val(add), None);
+    assert_eq!(b.int_const_u128(add), None);
     Ok(())
 }
 
@@ -142,7 +142,7 @@ fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
 #[test]
 fn get_signed_int_sign_extension_cases() -> Result<()> {
     // Rows: (label = former test name, raw value, expected signed read-back).
-    let cases: [(&str, u64, i64); 2] = [
+    let cases: [(&str, u64, i128); 2] = [
         (
             "get_signed_int_sign_extends_negative_u8",
             u8::MAX as u64,
@@ -151,13 +151,13 @@ fn get_signed_int_sign_extension_cases() -> Result<()> {
         (
             "get_signed_int_positive_u8_stays_positive",
             i8::MAX as u64,
-            i8::MAX as i64,
+            i8::MAX as i128,
         ),
     ];
     let mut b = empty_builder()?;
     for (label, raw, expected) in cases {
         let value = b.build_int_const(raw, ValueType::I8)?;
-        assert_eq!(b.int_const_i64(value), Some(expected), "{label}");
+        assert_eq!(b.int_const_i128(value), Some(expected), "{label}");
     }
     Ok(())
 }
@@ -216,23 +216,23 @@ fn truncate_emits_truncate_node_for_non_const() -> Result<()> {
 #[test]
 fn extend_const_folds_to_wider_const() -> Result<()> {
     // Rows: (label = former test name, extend op, expected folded value).
-    let cases: [(&str, ExtendOp, u64); 2] = [
+    let cases: [(&str, ExtendOp, u128); 2] = [
         (
             "zero_extend_const_folds_to_wider_const",
             ExtendOp::ZeroExtend,
-            u8::MAX as u64,
+            u8::MAX as u128,
         ),
         (
             "sign_extend_const_folds_negative_value",
             ExtendOp::SignExtend,
-            u32::MAX as u64,
+            u32::MAX as u128,
         ),
     ];
     for (label, op, expected) in cases {
         let mut b = empty_builder()?;
         let value = b.build_int_const(u8::MAX as u64, ValueType::I8)?;
         let extended = b.extend_if_needed(value, ValueType::I32, op)?;
-        assert_eq!(b.int_const_val(extended), Some(expected), "{label}");
+        assert_eq!(b.int_const_u128(extended), Some(expected), "{label}");
         assert!(
             matches!(producer_kind(&b, extended), NodeKind::IntConst(_)),
             "{label}: const extend must fold to IntConst"
@@ -775,7 +775,7 @@ fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
     let wide = reg_vn(u64::MAX - 1, 8);
     let narrow = reg_vn(u64::MAX - 1, 4);
     // Must not panic; the wider varnode subsumes the narrower one.
-    let kept = dedup_overlapping_largest(&[wide, narrow]);
+    let kept = dedup_and_container_map(&[wide, narrow]).0;
     assert_eq!(
         kept,
         vec![wide],
@@ -2251,22 +2251,22 @@ fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
     Ok(())
 }
 
-/// `int_const_i64` reads a canonical `IntConst` sign-extended from its
+/// `int_const_i128` reads a canonical `IntConst` sign-extended from its
 /// declared width; it does NOT peel `Neg`/`Truncate`/`Extend` wrappers
 /// (`ConstantFold` collapses those upstream), and returns `None` for a
 /// non-constant value.
 #[test]
-fn int_const_i64_sign_extends_and_rejects_non_const() -> Result<()> {
+fn int_const_i128_sign_extends_and_rejects_non_const() -> Result<()> {
     let mut b = builder_with_region()?;
     // 0xFFFF_FFFC at I32 reads as -4 (sign-extended from its declared width).
     let neg = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
-    assert_eq!(b.function().int_const_i64(neg), Some(-4));
+    assert_eq!(b.function().int_const_i128(neg), Some(-4));
     // A plain positive constant.
     let pos = b.build_int_const(7u64, ValueType::I32)?;
-    assert_eq!(b.function().int_const_i64(pos), Some(7));
+    assert_eq!(b.function().int_const_i128(pos), Some(7));
     // A non-`IntConst` value (an Add of the two) yields `None`.
     let sum = b.build_int_binary_operation(neg, pos, IntBinaryOp::Add, ValueType::I32)?;
-    assert_eq!(b.function().int_const_i64(sum), None);
+    assert_eq!(b.function().int_const_i128(sum), None);
     Ok(())
 }
 
@@ -2869,7 +2869,7 @@ fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
         "all 64 bits must survive the width mask, got {:?}",
         b.function().const_value(id)
     );
-    assert_eq!(b.int_const_val(v), Some(u64::MAX));
+    assert_eq!(b.int_const_u128(v), Some(u128::from(u64::MAX)));
     Ok(())
 }
 
@@ -2914,7 +2914,7 @@ fn write_subregister_merge_preserves_container_high_bytes() -> Result<()> {
     // Both Or operands are And nodes; their constant operands are exactly
     // the keep-mask (!0xFF — high bytes preserved), the byte mask (0xFF),
     // and the written value (0xAB, zero-extend folded to a const).
-    let mut consts: Vec<u64> = Vec::new();
+    let mut consts: Vec<u128> = Vec::new();
     let mut saw_initial_container = false;
     for and_val in [lhs, rhs] {
         assert_eq!(
@@ -2923,7 +2923,7 @@ fn write_subregister_merge_preserves_container_high_bytes() -> Result<()> {
             "each Or operand is an And"
         );
         for input in b.function().node_inputs(b.function().producer(and_val)) {
-            if let Some(c) = b.function().int_const_val(input) {
+            if let Some(c) = b.function().int_const_u128(input) {
                 consts.push(c);
             }
             if input == initial_rax {
@@ -3081,11 +3081,11 @@ fn write_high_byte_subregister_positions_mask_and_shift() -> Result<()> {
 
     // Keep-mask preserves the low byte (bits 0..8) and high 6 bytes; only
     // bits 8..16 are cleared.  !0xFF00 in I64 coordinates.
-    let preserve_consts: Vec<u64> = b
+    let preserve_consts: Vec<u128> = b
         .function()
         .node_inputs(b.function().producer(preserve_arm))
         .into_iter()
-        .filter_map(|v| b.function().int_const_val(v))
+        .filter_map(|v| b.function().int_const_u128(v))
         .collect();
     assert_eq!(
         preserve_consts,
@@ -3099,13 +3099,13 @@ fn write_high_byte_subregister_positions_mask_and_shift() -> Result<()> {
     let [im_a, im_b] = b
         .function()
         .node_inputs_exact::<2>(b.function().producer(insert_arm))?;
-    let (reg_mask_val, shifted_val) = if b.function().int_const_val(im_a).is_some() {
+    let (reg_mask_val, shifted_val) = if b.function().int_const_u128(im_a).is_some() {
         (im_a, im_b)
     } else {
         (im_b, im_a)
     };
     assert_eq!(
-        b.function().int_const_val(reg_mask_val),
+        b.function().int_const_u128(reg_mask_val),
         Some(0xFF00),
         "byte mask must be positioned at bits 8..16"
     );
@@ -3118,12 +3118,12 @@ fn write_high_byte_subregister_positions_mask_and_shift() -> Result<()> {
         .function()
         .node_inputs_exact::<2>(b.function().producer(shifted_val))?;
     assert_eq!(
-        b.function().int_const_val(shl_amount),
+        b.function().int_const_u128(shl_amount),
         Some(8),
         "left-shift amount must be 8 (one byte)"
     );
     assert_eq!(
-        b.function().int_const_val(shl_value),
+        b.function().int_const_u128(shl_value),
         Some(0xAB),
         "the zero-extended written byte feeds the shift"
     );
@@ -3193,11 +3193,11 @@ fn write_high_byte_subregister_big_endian_positions_mask_and_shift() -> Result<(
     let insert_arm = insert_arm.expect("one And arm inserts the shifted value");
 
     // Keep-mask clears only bits 24..32 (the BE high byte): 0x00FF_FFFF.
-    let preserve_consts: Vec<u64> = b
+    let preserve_consts: Vec<u128> = b
         .function()
         .node_inputs(b.function().producer(preserve_arm))
         .into_iter()
-        .filter_map(|v| b.function().int_const_val(v))
+        .filter_map(|v| b.function().int_const_u128(v))
         .collect();
     assert_eq!(
         preserve_consts,
@@ -3209,13 +3209,13 @@ fn write_high_byte_subregister_big_endian_positions_mask_and_shift() -> Result<(
     let [im_a, im_b] = b
         .function()
         .node_inputs_exact::<2>(b.function().producer(insert_arm))?;
-    let (reg_mask_val, shifted_val) = if b.function().int_const_val(im_a).is_some() {
+    let (reg_mask_val, shifted_val) = if b.function().int_const_u128(im_a).is_some() {
         (im_a, im_b)
     } else {
         (im_b, im_a)
     };
     assert_eq!(
-        b.function().int_const_val(reg_mask_val),
+        b.function().int_const_u128(reg_mask_val),
         Some(0xFF00_0000),
         "BE byte mask must be positioned at bits 24..32"
     );
@@ -3228,7 +3228,7 @@ fn write_high_byte_subregister_big_endian_positions_mask_and_shift() -> Result<(
         .function()
         .node_inputs_exact::<2>(b.function().producer(shifted_val))?;
     assert_eq!(
-        b.function().int_const_val(shl_amount),
+        b.function().int_const_u128(shl_amount),
         Some(24),
         "BE left-shift amount must be 24 (high byte of a 4-byte container)"
     );
@@ -3271,7 +3271,7 @@ fn read_high_byte_subregister_big_endian_shifts_then_truncates() -> Result<()> {
         .function()
         .node_inputs_exact::<2>(b.function().producer(shifted))?;
     assert_eq!(
-        b.function().int_const_val(shr_amount),
+        b.function().int_const_u128(shr_amount),
         Some(24),
         "BE right-shift amount must be 24 (high byte of a 4-byte container)"
     );
@@ -3412,7 +3412,7 @@ fn subregister_access_within_wide_container_fails_closed() -> Result<()> {
 /// An empty tracked list stays empty.
 #[test]
 fn dedup_overlapping_largest_empty_input_yields_empty() {
-    assert!(dedup_overlapping_largest(&[]).is_empty());
+    assert!(dedup_and_container_map(&[]).0.is_empty());
 }
 
 /// Value-identical duplicates pass through the overlap filter UNCHANGED —
@@ -3423,7 +3423,7 @@ fn dedup_overlapping_largest_empty_input_yields_empty() {
 fn dedup_overlapping_largest_keeps_duplicate_identical_vns() -> Result<()> {
     let r = reg_vn(0x10, 8);
     assert_eq!(
-        dedup_overlapping_largest(&[r, r]),
+        dedup_and_container_map(&[r, r]).0,
         vec![r, r],
         "the overlap filter does not collapse value-equal duplicates"
     );
@@ -3452,7 +3452,7 @@ fn dedup_overlapping_largest_keeps_duplicate_identical_vns() -> Result<()> {
 fn dedup_overlapping_largest_keeps_partially_overlapping_vns() {
     let a = reg_vn(0x0, 4); // bytes [0, 4)
     let b = reg_vn(0x2, 4); // bytes [2, 6) — overlaps a, not nested
-    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
+    assert_eq!(dedup_and_container_map(&[a, b]).0, vec![a, b]);
 }
 
 /// Behaviour pin for the O(n log n) sweep (IR-1): on a large tracked set with
@@ -3485,7 +3485,7 @@ fn dedup_overlapping_largest_handles_many_aliasing_uniques() {
         input.push(uniq(base + 7, 1)); // nested 1-byte slice — dropped
         expected.push(container);
     }
-    let kept = dedup_overlapping_largest(&input);
+    let kept = dedup_and_container_map(&input).0;
     assert_eq!(
         kept, expected,
         "exactly each group's strict-largest 8-byte container survives, in order"
@@ -3501,7 +3501,40 @@ fn dedup_overlapping_largest_keeps_equal_size_aliases() {
     let a = reg_vn(0x10, 8);
     let b = reg_vn(0x10, 8); // value-equal duplicate
     // Value-equal duplicates are both kept (interning is the builder's job).
-    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
+    assert_eq!(dedup_and_container_map(&[a, b]).0, vec![a, b]);
+}
+
+/// Crossing partial-overlap enclosers: two same-space varnodes that each
+/// enclose a third but neither encloses the other.  The dropped inner view
+/// must map to the WIDER encloser, not merely the first-seen one — the case a
+/// naive first-open stack sweep returned too small.  Pins that the fused
+/// `dedup_and_container_map` records the MAX-size container at drop time.
+#[test]
+fn dedup_and_container_map_picks_widest_crossing_encloser() {
+    fn uniq(off: u64, size: u32) -> rsleigh::Vn {
+        rsleigh::Vn {
+            size,
+            addr_off: off,
+            addr_space: rsleigh::VnSpace::UNIQUE,
+        }
+    }
+    let a = uniq(0, 12); // [0,12): encloses [5,9); crosses b; survives.
+    let b = uniq(2, 18); // [2,20): encloses [5,9) and is wider; survives.
+    let inner = uniq(5, 4); // [5,9): enclosed by BOTH a and b -> dropped.
+
+    let (survivors, map) = dedup_and_container_map(&[a, b, inner]);
+
+    assert_eq!(
+        survivors,
+        vec![a, b],
+        "crossing enclosers both survive (neither encloses the other); inner dropped"
+    );
+    assert_eq!(
+        map[&inner], b,
+        "inner maps to the WIDER (size-18) encloser b, not the size-12 a"
+    );
+    assert_eq!(map[&a], a, "a is its own container");
+    assert_eq!(map[&b], b, "b is its own container");
 }
 
 // ── IR-6: symmetric sub-register write coercion ─────────────────────────────

@@ -2424,7 +2424,7 @@ node_builder! {
         { mem mem_in: mem_in
             = "Constrain the load's memory predecessor (a memory-producing sub-pattern)." },
         { scalar bit_width(u32 => u32): bit_width = "Filter loads by value width in bits." },
-        { scalar stack_offset(i64 => i64): stack_offset
+        { scalar stack_offset(i128 => i128): stack_offset
             = "Match only loads whose address decomposes to exactly `sp + k`." },
         { flag stack_only: stack_only
             = "Reject matches where the SP-relative offset is unknown." },
@@ -2459,7 +2459,7 @@ node_builder! {
             = "Restrict the match to a specific memory space." },
         { mem mem_in: mem_in = "Constrain the store's memory predecessor." },
         { scalar bit_width(u32 => u32): bit_width = "Filter stores by data width in bits." },
-        { scalar stack_offset(i64 => i64): stack_offset
+        { scalar stack_offset(i128 => i128): stack_offset
             = "Match only stores whose address decomposes to exactly `sp + k`." },
         { flag stack_only: stack_only
             = "Reject matches where the SP-relative offset is unknown." },
@@ -2860,7 +2860,7 @@ impl PyFunctionArgPat {
     fn source_stack(
         slf: PyRef<'_, Self>,
         space: crate::sleigh::PyVnSpace,
-        offset: i64,
+        offset: i128,
     ) -> PyRef<'_, Self> {
         slf.source
             .replace(Some(strider_ir::node::FunctionArgSource::Stack {
@@ -2903,7 +2903,7 @@ pub fn function_arg_reg(vn: crate::sleigh::PyVn) -> PyFunctionArgPat {
 
 /// Match a `FunctionArg` whose source is a specific stack slot.
 #[pyfunction]
-pub fn function_arg_stack(space: crate::sleigh::PyVnSpace, offset: i64) -> PyFunctionArgPat {
+pub fn function_arg_stack(space: crate::sleigh::PyVnSpace, offset: i128) -> PyFunctionArgPat {
     let b = PyFunctionArgPat::new();
     b.source
         .replace(Some(strider_ir::node::FunctionArgSource::Stack {

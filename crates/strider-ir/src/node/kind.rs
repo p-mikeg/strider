@@ -19,7 +19,7 @@ pub enum FunctionArgSource {
     /// space of the stack (typically the architecture's RAM space).
     Stack {
         space: rsleigh::VnSpace,
-        offset: i64,
+        offset: i128,
     },
 }
 

@@ -279,7 +279,7 @@ fn bindings_clone_outlives_match() {
                     && function
                         .node_outputs(n)
                         .iter()
-                        .any(|&o| function.int_const_val(o) == Some(5))
+                        .any(|&o| function.int_const_u128(o) == Some(5))
             })
             .unwrap();
         let pat = any_int_const().capture(v).into_pattern();

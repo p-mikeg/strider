@@ -444,10 +444,10 @@ fn find_first_node(builder: &FunctionBuilder, target: NodeKind) -> Option<NodeId
 }
 
 /// Returns true if the graph contains an `IntConst` node whose value (masked
-/// to width, read via `int_const_val`) equals `expected`.  Used in tests that
+/// to width, read via `int_const_u128`) equals `expected`.  Used in tests that
 /// pin a specific small-integer constant value without depending on the opaque
 /// `ConstId` internals.
-fn graph_has_int_const_value(builder: &FunctionBuilder, expected: u64) -> bool {
+fn graph_has_int_const_value(builder: &FunctionBuilder, expected: u128) -> bool {
     builder.function().graph().all_node_ids().any(|id| {
         if !matches!(builder.function().node_kind(id), NodeKind::IntConst(_)) {
             return false;
@@ -455,13 +455,13 @@ fn graph_has_int_const_value(builder: &FunctionBuilder, expected: u64) -> bool {
         let outputs = builder.function().node_outputs(id);
         outputs
             .iter()
-            .any(|&v| builder.function().int_const_val(v) == Some(expected))
+            .any(|&v| builder.function().int_const_u128(v) == Some(expected))
     })
 }
 
 /// Returns the first `IntConst` node-id whose output value equals `expected`,
 /// or `None` if no such node is present.
-fn find_int_const_node(builder: &FunctionBuilder, expected: u64) -> Option<NodeId> {
+fn find_int_const_node(builder: &FunctionBuilder, expected: u128) -> Option<NodeId> {
     builder.function().graph().all_node_ids().find(|&id| {
         if !matches!(builder.function().node_kind(id), NodeKind::IntConst(_)) {
             return false;
@@ -469,7 +469,7 @@ fn find_int_const_node(builder: &FunctionBuilder, expected: u64) -> Option<NodeI
         let outputs = builder.function().node_outputs(id);
         outputs
             .iter()
-            .any(|&v| builder.function().int_const_val(v) == Some(expected))
+            .any(|&v| builder.function().int_const_u128(v) == Some(expected))
     })
 }
 
@@ -1064,8 +1064,8 @@ fn write_vn_then_read_vn_round_trip() {
             d.builder.function().node_kind(producer)
         );
         assert_eq!(
-            d.builder.function().int_const_val(value),
-            Some(42u64),
+            d.builder.function().int_const_u128(value),
+            Some(42u128),
             "expected IntConst(42)"
         );
     });

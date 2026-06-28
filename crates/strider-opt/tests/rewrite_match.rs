@@ -243,7 +243,7 @@ fn sub_x_x_to_zero_rule() {
         let data_value = function.node_inputs(ret)[2];
         assert!(
             matches!(function.kind_of_value(data_value), NodeKind::IntConst(_))
-                && function.int_const_val(data_value) == Some(0),
+                && function.int_const_u128(data_value) == Some(0),
             "sub x x should fold to IntConst(0)"
         );
     }
