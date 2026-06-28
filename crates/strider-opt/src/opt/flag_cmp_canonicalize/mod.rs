@@ -499,7 +499,7 @@ fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueI
     let [inner] = f.node_inputs_exact::<1>(root).ok()?;
     // `Truncate(_):I1` exposes bit 0 of its input; a `ShiftRight(x, k)` input
     // shifts bit k of `x` down to bit 0.
-    let (pack, bit) = match *f.node_kind(f.producer(inner)) {
+    let (pack, bit) = match *f.kind_of_value(inner) {
         NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => {
             let [x, amt] = f.producer_inputs_exact::<2>(inner).ok()?;
             let k = u32::try_from(f.int_const_u128(amt)?).ok()?;
@@ -540,7 +540,7 @@ fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueI
 fn flatten_or(f: &impl IRViewer, value: ValueId, out: &mut Vec<ValueId>, depth: u32) {
     const MAX_OR_DEPTH: u32 = 4;
     if depth <= MAX_OR_DEPTH
-        && let NodeKind::IntBinaryOp(IntBinaryOp::Or) = f.node_kind(f.producer(value))
+        && let NodeKind::IntBinaryOp(IntBinaryOp::Or) = f.kind_of_value(value)
         && let Ok([a, b]) = f.producer_inputs_exact::<2>(value)
     {
         flatten_or(f, a, out, depth + 1);
@@ -564,7 +564,7 @@ fn single_bit_term(
     if depth > MAX_DEPTH {
         return None;
     }
-    match *f.node_kind(f.producer(value)) {
+    match *f.kind_of_value(value) {
         // `ShiftLeft(v, pos)` moves v's single bit up by `pos`.
         NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
             let [v, amt] = f.producer_inputs_exact::<2>(value).ok()?;
@@ -600,7 +600,7 @@ fn single_bit_term(
 
 /// Returns `value` if it is produced by an `IntCmpOp` (the comparison leaf).
 fn comparison_leaf(f: &impl IRViewer, value: ValueId) -> Option<ValueId> {
-    matches!(f.node_kind(f.producer(value)), NodeKind::IntCmpOp(_)).then_some(value)
+    matches!(f.kind_of_value(value), NodeKind::IntCmpOp(_)).then_some(value)
 }
 
 #[cfg(test)]
