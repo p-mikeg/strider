@@ -60,24 +60,35 @@ pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()
 /// without this filter the 4-byte and 8-byte unique varnodes look like
 /// independent SSA variables.  Keeping the wider varnode preserves the
 /// data dependency.
-fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
+/// also computing, in the SAME O(n log n) sweep, every aliasable input
+/// varnode's largest tracked container (the SP-relative `vn_to_container`
+/// SSoT). Returns `(survivors_in_input_order, vn_to_container)`:
+///
+/// * **survivors** — the deduped tracked set in INPUT order, so `VarId`
+///   assignment downstream stays the input-order-derived one the sort in
+///   [`FunctionBuilder::new`] then re-canonicalises. A varnode is dropped iff
+///   some STRICTLY larger same-space varnode encloses its byte range.
+/// * **vn_to_container** — aliasable-only: a survivor maps to itself; a
+///   dropped sub-register view maps to its largest strict encloser (always a
+///   survivor, since only survivors are pushed as open enclosures). Non-
+///   aliasable spaces (CONST / code) are kept verbatim and absent from the map
+///   — containment-by-offset is meaningless there.
+///
+/// Computing the container at drop time reuses the same per-space stack sweep
+/// the dedup needs, so it replaces the former separate `vn → container` build
+/// plus the O(V²) per-view `largest_container_in` rescan. Picking the
+/// MAX-size enclosing open (not merely the first) makes it correct even for
+/// crossing partial-overlap enclosers (`[0,12)` and `[2,20)` both enclosing
+/// `[5,9)` → the wider `[2,20)`), the case a naive first-open stack sweep got
+/// wrong.
+fn dedup_and_container_map(
+    all_used_variables: &[rsleigh::Vn],
+) -> (Vec<rsleigh::Vn>, FxHashMap<rsleigh::Vn, rsleigh::Vn>) {
     // Range end with saturating arithmetic (high-offset CR slices on ppc64 /
     // aarch64be can push `addr_off + size` past `u64::MAX`).
     fn end_of(v: &rsleigh::Vn) -> u64 {
         v.addr_off.saturating_add(u64::from(v.size))
     }
-
-    // O(n log n): per aliasable space, sort by `(addr_off asc, size desc)` and
-    // sweep an "open enclosures" stack.  A varnode is dropped iff some
-    // STRICTLY larger same-space varnode encloses its byte range — the exact
-    // predicate the former O(n²) `any` filter applied, just computed with one
-    // sorted pass instead of a nested scan.  Non-aliasable spaces (CONST /
-    // code) are kept verbatim (containment-by-offset is meaningless there).
-    //
-    // `dropped` records, per aliasable input index, whether that entry is
-    // strictly enclosed; the final pass re-emits survivors in INPUT order so
-    // `VarId` assignment downstream stays the input-order-derived one the
-    // sort in `FunctionBuilder::new` then re-canonicalises.
 
     // Bucket aliasable inputs by space, carrying each entry's original index.
     let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
@@ -88,16 +99,18 @@ fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh:
     }
 
     let mut dropped = vec![false; all_used_variables.len()];
+    let mut vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
+        FxHashMap::with_capacity_and_hasher(all_used_variables.len(), Default::default());
     for (_space, mut bucket) in by_space {
         // addr_off ascending, then size descending so a wider enclosure is
         // seen before the narrower slices it contains.
         bucket.sort_by_key(|(_, v)| (v.addr_off, std::cmp::Reverse(v.size)));
 
         // Open enclosures whose range still extends past the current start,
-        // kept as `(end, size)`.  Sorted-by-start arrival means any open entry
-        // has `off <= v.off`; one with `end >= v_end` AND `size > v.size`
-        // strictly encloses `v`.
-        let mut open: Vec<(u64, u32)> = Vec::new();
+        // kept as `(end, vn)` and holding only SURVIVORS. Sorted-by-start
+        // arrival means any open entry has `off <= v.off`; one with
+        // `end >= v_end` AND `size > v.size` strictly encloses `v`.
+        let mut open: Vec<(u64, rsleigh::Vn)> = Vec::new();
         for (idx, v) in bucket {
             let v_end = end_of(&v);
             // Drop opens whose range ends before this entry STARTS: by the
@@ -107,25 +120,35 @@ fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh:
             // surviving this prune may still enclose a later, even-narrower
             // entry that shares `v`'s start, so they stay live.
             open.retain(|&(end, _)| end >= v.addr_off);
-            // Strictly-larger enclosing open (`off ≤ v.off` by sort,
-            // `end ≥ v_end`, `size > v.size`) ⇒ this entry is subsumed.
-            if open
+            // Largest STRICTLY-larger enclosing open (`off ≤ v.off` by sort,
+            // `end ≥ v_end`, `size > v.size`): if present, `v` is a subsumed
+            // sub-register view whose container is that open; else `v` is the
+            // largest in its chain (its own container) and joins the opens.
+            let container = open
                 .iter()
-                .any(|&(end, size)| end >= v_end && size > v.size)
-            {
-                dropped[idx] = true;
-            } else {
-                open.push((v_end, v.size));
+                .filter(|&&(end, c)| end >= v_end && c.size > v.size)
+                .max_by_key(|&&(_, c)| c.size)
+                .map(|&(_, c)| c);
+            match container {
+                Some(c) => {
+                    dropped[idx] = true;
+                    vn_to_container.insert(v, c);
+                }
+                None => {
+                    vn_to_container.insert(v, v);
+                    open.push((v_end, v));
+                }
             }
         }
     }
 
-    all_used_variables
+    let survivors = all_used_variables
         .iter()
         .enumerate()
         .filter(|(i, _)| !dropped[*i])
         .map(|(_, v)| *v)
-        .collect()
+        .collect();
+    (survivors, vn_to_container)
 }
 
 /// Deterministic ordering key for a tracked varnode: `(space, offset,
@@ -135,68 +158,6 @@ fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh:
 /// builder owns this so the lifter need not pre-sort.
 fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
     (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
-}
-
-/// Computes, for every aliasable-space (REGISTER/UNIQUE) varnode in `vns`,
-/// its largest container within `vns` (itself when nothing wider encloses
-/// it).  Non-aliasable varnodes are skipped — the resulting map is
-/// reg/unique-only, matching the [`crate::Function::vn_to_container`]
-/// scoping.
-///
-/// O(V log V) stack-sweep (bucket by space, sort by `(addr_off asc, size
-/// desc)`, single-pass an "open enclosures" stack), driven off the passed
-/// slice.  `saturating_add` on the range endpoints so high-offset Sleigh
-/// varnodes (ppc64 / aarch64be CR slices) don't overflow.
-///
-/// REQUIRES a **deduped** input set (the output of
-/// [`dedup_overlapping_largest`], i.e. `all_vns`): on a deduped set no
-/// aliasable varnode is enclosed by another, so every entry is a self-entry.
-/// The stack-sweep is only equivalent to a full largest-container scan under
-/// that precondition — on a non-deduped slice it can prematurely pop a wider
-/// enclosure and return a too-small container.  The sole caller passes
-/// `all_vns`; do not reuse this on a raw (pre-dedup) vn list.
-fn build_largest_container_map(vns: &[rsleigh::Vn]) -> FxHashMap<rsleigh::Vn, rsleigh::Vn> {
-    let mut out: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
-        FxHashMap::with_capacity_and_hasher(vns.len(), Default::default());
-
-    // Bucket by addr_space; only aliasable spaces participate.
-    let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> = FxHashMap::default();
-    for v in vns {
-        if is_aliasable_space(v.addr_space) {
-            by_space.entry(v.addr_space).or_default().push(*v);
-        }
-    }
-
-    for (_space, mut bucket) in by_space {
-        // Sort: addr_off ascending, then size descending so that for equal
-        // starts the wider container precedes narrower ones (and pops
-        // correctly later).
-        bucket.sort_by_key(|v| (v.addr_off, std::cmp::Reverse(v.size)));
-
-        // `open` holds (end, vn) pairs for enclosures whose range still
-        // extends past the current start.  The bottom of the stack is the
-        // deepest / largest container thanks to the sort order.
-        let mut open: Vec<(u64, rsleigh::Vn)> = Vec::new();
-        for v in &bucket {
-            let v_start = v.addr_off;
-            let v_end = v_start.saturating_add(u64::from(v.size));
-            // Pop enclosures whose end is strictly to the left of `v`'s end.
-            while let Some(&(end, _)) = open.last() {
-                if end < v_end {
-                    open.pop();
-                } else {
-                    break;
-                }
-            }
-            let best = open.first().map(|(_, vn)| *vn).filter(|cand| {
-                cand.size > v.size || (cand.size == v.size && cand.addr_off < v.addr_off)
-            });
-            let chosen = best.unwrap_or(*v);
-            out.insert(*v, chosen);
-            open.push((v_end, *v));
-        }
-    }
-    out
 }
 
 /// Incrementally constructs a sea-of-nodes IR function graph.
@@ -317,7 +278,7 @@ impl FunctionBuilder {
         // forwards a call still has an `InitialVar` for each CC register the
         // Call must read.  A function that *does* touch a wider view of one
         // of these (e.g. reads `RDI` after `EDI` was seeded) is handled by
-        // `dedup_overlapping_largest` below, which keeps the widest
+        // `dedup_and_container_map` below, which keeps the widest
         // enclosing varnode.
         for v in cc
             .ret_val_regs
@@ -331,7 +292,12 @@ impl FunctionBuilder {
             }
         }
 
-        let mut all_variables = dedup_overlapping_largest(&all_used_variables);
+        // Single sweep: drop strictly-enclosed views AND record every
+        // aliasable input varnode's largest container (REGISTER/UNIQUE only;
+        // CONST is left to the graph's structural dedup cache and RAM
+        // load/store is deliberately not deduped).
+        let (mut all_variables, mut vn_to_container) =
+            dedup_and_container_map(&all_used_variables);
         // FunctionBuilder owns vn ordering: sort the deduped tracked set
         // by (space, offset, size) so VarId assignment is deterministic
         // independent of CFG-collection order.  The lifter no longer sorts.
@@ -349,18 +315,13 @@ impl FunctionBuilder {
         // stable for the function's lifetime.
         let all_vns: Vec<rsleigh::Vn> = var_table.values().copied().collect();
 
-        // Canonicalization is meaningful ONLY for REGISTER / UNIQUE space:
-        // those behave like fixed-offset registers where containment-by-
-        // offset applies. CONST is left to the graph's structural dedup
-        // cache, and RAM (load/store) is deliberately not deduped.
-        //
-        // Bulk O(V log V) sweep over the deduped tracked set, then resolve the
-        // few EXTRA domain keys (callee-saved + pre-dedup sub-register views the
-        // dedup folded away) against all_vns. Reg/unique only.
-        let mut vn_to_container = build_largest_container_map(&all_vns);
-        for vn in all_used_variables
+        // `dedup_and_container_map` already mapped every aliasable varnode
+        // in `all_used_variables`. The only keys it can't have seen are
+        // callee-saved registers a leaf function never touches (so they were
+        // never in the used set); resolve those few against `all_vns`.
+        for vn in cc
+            .callee_saved_regs
             .iter()
-            .chain(cc.callee_saved_regs.iter())
             .copied()
             .filter(|v| is_aliasable_space(v.addr_space))
         {

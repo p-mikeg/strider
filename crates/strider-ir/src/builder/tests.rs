@@ -775,7 +775,7 @@ fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
     let wide = reg_vn(u64::MAX - 1, 8);
     let narrow = reg_vn(u64::MAX - 1, 4);
     // Must not panic; the wider varnode subsumes the narrower one.
-    let kept = dedup_overlapping_largest(&[wide, narrow]);
+    let kept = dedup_and_container_map(&[wide, narrow]).0;
     assert_eq!(
         kept,
         vec![wide],
@@ -3412,7 +3412,7 @@ fn subregister_access_within_wide_container_fails_closed() -> Result<()> {
 /// An empty tracked list stays empty.
 #[test]
 fn dedup_overlapping_largest_empty_input_yields_empty() {
-    assert!(dedup_overlapping_largest(&[]).is_empty());
+    assert!(dedup_and_container_map(&[]).0.is_empty());
 }
 
 /// Value-identical duplicates pass through the overlap filter UNCHANGED —
@@ -3423,7 +3423,7 @@ fn dedup_overlapping_largest_empty_input_yields_empty() {
 fn dedup_overlapping_largest_keeps_duplicate_identical_vns() -> Result<()> {
     let r = reg_vn(0x10, 8);
     assert_eq!(
-        dedup_overlapping_largest(&[r, r]),
+        dedup_and_container_map(&[r, r]).0,
         vec![r, r],
         "the overlap filter does not collapse value-equal duplicates"
     );
@@ -3452,7 +3452,7 @@ fn dedup_overlapping_largest_keeps_duplicate_identical_vns() -> Result<()> {
 fn dedup_overlapping_largest_keeps_partially_overlapping_vns() {
     let a = reg_vn(0x0, 4); // bytes [0, 4)
     let b = reg_vn(0x2, 4); // bytes [2, 6) — overlaps a, not nested
-    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
+    assert_eq!(dedup_and_container_map(&[a, b]).0, vec![a, b]);
 }
 
 /// Behaviour pin for the O(n log n) sweep (IR-1): on a large tracked set with
@@ -3485,7 +3485,7 @@ fn dedup_overlapping_largest_handles_many_aliasing_uniques() {
         input.push(uniq(base + 7, 1)); // nested 1-byte slice — dropped
         expected.push(container);
     }
-    let kept = dedup_overlapping_largest(&input);
+    let kept = dedup_and_container_map(&input).0;
     assert_eq!(
         kept, expected,
         "exactly each group's strict-largest 8-byte container survives, in order"
@@ -3501,7 +3501,40 @@ fn dedup_overlapping_largest_keeps_equal_size_aliases() {
     let a = reg_vn(0x10, 8);
     let b = reg_vn(0x10, 8); // value-equal duplicate
     // Value-equal duplicates are both kept (interning is the builder's job).
-    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
+    assert_eq!(dedup_and_container_map(&[a, b]).0, vec![a, b]);
+}
+
+/// Crossing partial-overlap enclosers: two same-space varnodes that each
+/// enclose a third but neither encloses the other.  The dropped inner view
+/// must map to the WIDER encloser, not merely the first-seen one — the case a
+/// naive first-open stack sweep returned too small.  Pins that the fused
+/// `dedup_and_container_map` records the MAX-size container at drop time.
+#[test]
+fn dedup_and_container_map_picks_widest_crossing_encloser() {
+    fn uniq(off: u64, size: u32) -> rsleigh::Vn {
+        rsleigh::Vn {
+            size,
+            addr_off: off,
+            addr_space: rsleigh::VnSpace::UNIQUE,
+        }
+    }
+    let a = uniq(0, 12); // [0,12): encloses [5,9); crosses b; survives.
+    let b = uniq(2, 18); // [2,20): encloses [5,9) and is wider; survives.
+    let inner = uniq(5, 4); // [5,9): enclosed by BOTH a and b -> dropped.
+
+    let (survivors, map) = dedup_and_container_map(&[a, b, inner]);
+
+    assert_eq!(
+        survivors,
+        vec![a, b],
+        "crossing enclosers both survive (neither encloses the other); inner dropped"
+    );
+    assert_eq!(
+        map[&inner], b,
+        "inner maps to the WIDER (size-18) encloser b, not the size-12 a"
+    );
+    assert_eq!(map[&a], a, "a is its own container");
+    assert_eq!(map[&b], b, "b is its own container");
 }
 
 // ── IR-6: symmetric sub-register write coercion ─────────────────────────────
