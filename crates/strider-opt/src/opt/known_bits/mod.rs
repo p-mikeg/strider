@@ -20,15 +20,16 @@ pub type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
 
 // ── Known-bits representation ─────────────────────────────────────────────────
 
-/// Returns the all-ones bit mask for `ty` as a `u64`, or `None` if `ty` is not
-/// an integer type or its width exceeds 64 bits.  Used by [`KnownBits`] to gate
-/// out the wide integers (I80/I128/I256/I512) and the float types from the
-/// u64-bounded analysis; the narrow integers (including the 1-bit `I1`) pass.
-pub(crate) fn u64_type_mask(ty: ValueType) -> Option<u64> {
-    if !ty.is_integer() || !ty.fits_u64() {
+/// Returns the all-ones bit mask for `ty` as a `u128`, or `None` if `ty` is not
+/// an integer type or its width exceeds 128 bits.  Used by [`KnownBits`] to gate
+/// out the floats and the only integers that don't fit the `u128` lattice —
+/// `I256` / `I512`; every integer up to `I128` (including the 1-bit `I1` and the
+/// 80-bit `I80`) is tracked.
+pub(crate) fn type_mask_u128(ty: ValueType) -> Option<u128> {
+    if !ty.is_integer() || ty.bit_width() > 128 {
         return None;
     }
-    u64::try_from(ty.bit_mask_u128()).ok()
+    Some(ty.bit_mask_u128())
 }
 
 /// Known-bit information for a single output.
@@ -49,9 +50,9 @@ pub struct KnownBitsFacts {
     /// function — external struct-literal construction
     /// (`KnownBitsFacts { ones: 0xFF, zeros: 0xFF }`) would silently
     /// violate it.
-    pub(crate) ones: u64,
+    pub(crate) ones: u128,
     /// Bits that are definitely 0.  Same caveat as [`Self::ones`].
-    pub(crate) zeros: u64,
+    pub(crate) zeros: u128,
 }
 
 impl KnownBitsFacts {
@@ -63,17 +64,16 @@ impl KnownBitsFacts {
     /// all-ones-zeros (i.e. `ones=0, zeros=0`) silently — same effect
     /// as "unknown" but indistinguishable from a deliberate zero.
     fn from_const(val: u128, ty: ValueType) -> Option<Self> {
-        let type_mask = u64_type_mask(ty)?;
+        let type_mask = type_mask_u128(ty)?;
         let masked = ty.get_unsigned_int(val)?;
-        let masked_u64 = u64::try_from(masked).ok()?;
         Some(KnownBitsFacts {
-            ones: masked_u64,
-            zeros: type_mask ^ masked_u64,
+            ones: masked,
+            zeros: type_mask ^ masked,
         })
     }
 
     /// Returns `true` if all bits of `type_mask` are determined.
-    fn all_known(self, type_mask: u64) -> bool {
+    fn all_known(self, type_mask: u128) -> bool {
         (self.ones | self.zeros) & type_mask == type_mask
     }
 
@@ -83,7 +83,7 @@ impl KnownBitsFacts {
     /// be 1, so the runtime value is `<=` this number.  Used by analyses
     /// that need a single-number bound rather than separate ones/zeros
     /// (e.g. the jump-table classifier's index-bound check).
-    pub fn max_value(self, type_mask: u64) -> u64 {
+    pub fn max_value(self, type_mask: u128) -> u128 {
         (!self.zeros) & type_mask
     }
 }
@@ -104,11 +104,11 @@ enum ConstShift {
 ///
 /// Mirrors Sleigh's `OpBehaviorInt{Left,Right}::evaluateBinary`, which return 0
 /// for any shift amount `>= bit_width`.
-fn classify_const_shift(rhs_kb: KnownBitsFacts, rhs_mask: u64, bit_width: u64) -> ConstShift {
+fn classify_const_shift(rhs_kb: KnownBitsFacts, rhs_mask: u128, bit_width: u64) -> ConstShift {
     if !rhs_kb.all_known(rhs_mask) {
         return ConstShift::Unknown;
     }
-    if rhs_kb.ones >= bit_width {
+    if rhs_kb.ones >= u128::from(bit_width) {
         return ConstShift::OverWidth;
     }
     ConstShift::InRange(rhs_kb.ones as u32)
@@ -137,13 +137,13 @@ fn shift_known_bits(
     rhs: ValueId,
     rhs_kb: KnownBitsFacts,
     ty: ValueType,
-    type_mask: u64,
+    type_mask: u128,
     dir: ShiftDir,
 ) -> Option<KnownBitsFacts> {
     let rhs_mask = ctx
         .value_type_opt(rhs)
-        .and_then(u64_type_mask)
-        .unwrap_or(u64::MAX);
+        .and_then(type_mask_u128)
+        .unwrap_or(u128::MAX);
     match classify_const_shift(rhs_kb, rhs_mask, ty.bit_width() as u64) {
         ConstShift::Unknown => None,
         ConstShift::OverWidth => Some(KnownBitsFacts {
@@ -153,7 +153,7 @@ fn shift_known_bits(
         ConstShift::InRange(shift) => {
             let (shifted_ones, shifted_zeros) = match dir {
                 ShiftDir::Left => {
-                    let lower_mask = (1u64 << shift).wrapping_sub(1) & type_mask;
+                    let lower_mask = (1u128 << shift).wrapping_sub(1) & type_mask;
                     (
                         (l.ones << shift) & type_mask,
                         ((l.zeros << shift) & type_mask) | lower_mask,
@@ -199,7 +199,7 @@ pub(crate) fn node_known_bits(
     let ty = out_kind.as_value_or_err()?;
     // KnownBits tracks 64-bit masks only; types wider than I64 (I128/I256,
     // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
-    let Some(type_mask) = u64_type_mask(ty) else {
+    let Some(type_mask) = type_mask_u128(ty) else {
         return Ok(None);
     };
 
@@ -312,7 +312,7 @@ pub(crate) fn node_known_bits(
             // `unwrap_or(0)` here would have set `input_mask = 0` and
             // marked every bit as known-zero, silently corrupting
             // analysis on wide-to-wider ZeroExtends.
-            let Some(input_mask) = u64_type_mask(input_ty) else {
+            let Some(input_mask) = type_mask_u128(input_ty) else {
                 return Ok(None);
             };
             let kb = known[value];
@@ -333,7 +333,7 @@ pub(crate) fn node_known_bits(
                 .expect("Extend has 1 input per node signature");
             let input_kind = ctx.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
-            let Some(input_mask) = u64_type_mask(input_ty) else {
+            let Some(input_mask) = type_mask_u128(input_ty) else {
                 return Ok(None);
             };
             let kb = known[value];
@@ -376,10 +376,10 @@ pub(crate) fn node_known_bits(
             } else {
                 u64::BITS - max_val.leading_zeros()
             } as u64;
-            let result_mask = if bits_needed >= 64 {
-                u64::MAX
+            let result_mask = if bits_needed >= 128 {
+                u128::MAX
             } else {
-                (1u64 << bits_needed) - 1
+                (1u128 << bits_needed) - 1
             };
             let upper_zeros = type_mask & !result_mask;
             KnownBitsFacts {
@@ -530,7 +530,7 @@ impl Optimizer for KnownBits {
         //
         // Collect the targets first (releasing the read borrow on `known` /
         // `ctx`) before mutating, so the rewrite loop owns `&mut ctx`.
-        let to_fold: Vec<(ValueId, ValueType, u64)> = known
+        let to_fold: Vec<(ValueId, ValueType, u128)> = known
             .iter()
             .filter_map(|(value, &kb)| {
                 // Skip outputs whose kind is not an integer value
@@ -540,7 +540,7 @@ impl Optimizer for KnownBits {
                     return None;
                 }
                 // Skip types KnownBits doesn't track (I80/I128/I256/…).
-                let type_mask = u64_type_mask(ty)?;
+                let type_mask = type_mask_u128(ty)?;
                 // Skip outputs that are not fully determined.
                 if !kb.all_known(type_mask) {
                     return None;
@@ -628,7 +628,7 @@ type ConeFps = smallvec::SmallVec<[u64; 8]>;
 /// iterative postorder needs no cycle handling.
 fn build_cone_fingerprint_memo(
     ctx: &crate::EditFunction<'_>,
-    to_fold: &[(ValueId, ValueType, u64)],
+    to_fold: &[(ValueId, ValueType, u128)],
 ) -> rustc_hash::FxHashMap<NodeId, ConeFps> {
     let mut memo: rustc_hash::FxHashMap<NodeId, ConeFps> = rustc_hash::FxHashMap::default();
     // Iterative postorder: push (node, children_emitted). On first pop, push

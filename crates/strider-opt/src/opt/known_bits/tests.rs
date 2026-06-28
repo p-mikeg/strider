@@ -257,7 +257,7 @@ fn analyze_returns_populated_map_no_merge_error() -> Result<()> {
         let Some(ty) = fg.value_type_opt(out) else {
             return false;
         };
-        let Some(mask) = super::u64_type_mask(ty) else {
+        let Some(mask) = super::type_mask_u128(ty) else {
             return false;
         };
         kb.all_known(mask) && kb.ones == 4
@@ -305,6 +305,28 @@ fn known_bits_i1_folds_via_map() -> Result<()> {
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
     assert_returns_const(&fg, 1);
+    Ok(())
+}
+
+/// KnownBits tracks the full 128-bit lattice (previously gated out at the u64
+/// ceiling): `Or(1<<100, 0):I128` is fully known and must fold to
+/// `IntConst(1<<100):I128`.  Exercises a bit ABOVE the old u64 range — the old
+/// `u64`-masked lattice could not represent bit 100 and bailed on I128 entirely.
+#[test]
+fn known_bits_i128_high_bit_or_folds() -> Result<()> {
+    let hi: u128 = 1u128 << 100;
+    let mut fg = make_fn(|b| {
+        let a = b.build_int_const(hi, ValueType::I128).unwrap();
+        let zero = b.build_int_const(0u64, ValueType::I128).unwrap();
+        b.build_int_binary_operation(a, zero, IntBinaryOp::Or, ValueType::I128)
+    })?;
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    let val = return_value(fg.graph())?;
+    assert_eq!(
+        fg.int_const_u128(val),
+        Some(hi),
+        "KnownBits must track the full 128-bit Or and fold to IntConst(1<<100)",
+    );
     Ok(())
 }
 
@@ -865,7 +887,7 @@ fn kb_struct_literal_disjoint_ones_zeros() {
 /// `& type_mask`; if `KnownBitsFacts::default()` ever drifted to "all ones" or
 /// "all zeros" the Truncate would synthesise spurious known bits on
 /// any input whose KB analysis returned `None` (e.g. I80 / I128 /
-/// I256 chains where `u64_type_mask` gates out).
+/// I256 chains where `type_mask_u128` gates out).
 #[test]
 fn kb_default_is_fully_unknown_not_all_zero_or_all_one() {
     let kb = super::KnownBitsFacts::default();

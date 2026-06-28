@@ -457,7 +457,7 @@ fn is_sign_bit_known_zero(
     let Some(ty) = function.value_type_opt(value) else {
         return false;
     };
-    let Some(type_mask) = crate::opt::known_bits::u64_type_mask(ty) else {
+    let Some(type_mask) = crate::opt::known_bits::type_mask_u128(ty) else {
         return false;
     };
     let sign_bit = (type_mask >> 1) + 1;
@@ -498,13 +498,12 @@ pub fn compute_value_ranges<'f>(
         let Some(ty) = function.value_type_opt(value_id) else {
             continue;
         };
-        let Some(type_mask_u64) = crate::opt::known_bits::u64_type_mask(ty) else {
+        let Some(type_mask) = crate::opt::known_bits::type_mask_u128(ty) else {
             continue;
         };
-        let max_val = kb.max_value(type_mask_u64) as u128;
-        let type_mask_u128 = ty.bit_mask_u128();
+        let max_val = kb.max_value(type_mask);
         // Only record if strictly tighter than the full range.
-        if max_val < type_mask_u128 {
+        if max_val < type_mask {
             kb_bounds[value_id] = Some(Interval { lo: 0, hi: max_val });
         }
     }
