@@ -39,17 +39,17 @@ use AddrClass::*;
 #[derive(Clone, Copy, Debug)]
 pub struct SpExpr {
     pub base: ValueId,
-    pub offset: i64,
+    pub offset: i128,
 }
 
 impl SpExpr {
     /// Adds `delta` to the offset, returning `None` (fail-closed: opaque
-    /// base, no provable slot) on `i64` overflow rather than wrapping a deep
+    /// base, no provable slot) on `i128` overflow rather than wrapping a deep
     /// Add chain into a wrong concrete offset that the alias oracle would then
     /// reason about as a valid nearby slot.  Real frames have small offsets;
     /// the decomposer is fed arbitrary lifted arithmetic.
     #[must_use]
-    pub(crate) fn shifted(self, delta: i64) -> Option<Self> {
+    pub(crate) fn shifted(self, delta: i128) -> Option<Self> {
         Some(SpExpr {
             base: self.base,
             offset: self.offset.checked_add(delta)?,
@@ -74,12 +74,12 @@ pub(crate) enum AddrClass {
     /// alignment-masked `sp & -16` — differ by an unknown amount (the
     /// caller-dependent `sp mod align`), so their offsets are in different
     /// coordinate systems and are treated as may-alias.
-    SpRooted { base: ValueId, offset: i64 },
+    SpRooted { base: ValueId, offset: i128 },
     /// `NodeKind::IntConst(_)` address — a literal `.data`/`.rodata`/
     /// `.bss`/MMIO pointer.  Two `Constant` addresses with equal values
     /// refer to the same byte range; disjoint values are proven
     /// non-overlapping via [`ranges_disjoint`].
-    Constant { addr: i64 },
+    Constant { addr: i128 },
     /// Anything else (`Load`-of-pointer, `Add` of opaque values, a
     /// non-collapsing `Phi`-of-offsets, …).  Two `Anchor` addresses are
     /// proven equal only by `ValueId` equality; different ids can compute
@@ -193,7 +193,7 @@ impl<'a> SpAnalyzer<'a> {
                 // other operand's decomposed offset.  Right operand checked
                 // first (post-ConstantFold an Add never carries two constants).
                 let (sp_operand, c) =
-                    match (function.int_const_i64(rhs), function.int_const_i64(lhs)) {
+                    match (function.int_const_i128(rhs), function.int_const_i128(lhs)) {
                         (Some(c), _) => (lhs, c),
                         (None, Some(c)) => (rhs, c),
                         _ => return None,
@@ -254,7 +254,7 @@ impl<'a> SpAnalyzer<'a> {
             Some(SpExpr { base, offset }) => AddrClass::SpRooted { base, offset },
             None => {
                 if let Some(c) = self.function.int_const_u128(addr) {
-                    AddrClass::Constant { addr: c as i64 }
+                    AddrClass::Constant { addr: c as i128 }
                 } else {
                     AddrClass::Anchor { value: addr }
                 }
@@ -304,10 +304,10 @@ fn is_alignment_mask(m: u128) -> bool {
 /// [`alias_verdict`] (the `Anchor`/`Anchor` arm uses `ValueId` equality
 /// and has no offset/range shape).
 fn offset_range_verdict(
-    load_off: i64,
-    load_size: i64,
-    store_off: i64,
-    store_size: i64,
+    load_off: i128,
+    load_size: i128,
+    store_off: i128,
+    store_size: i128,
 ) -> AliasVerdict {
     if load_off == store_off {
         AliasVerdict::Match
@@ -322,9 +322,9 @@ fn offset_range_verdict(
 /// class + size under the given [`AliasMode`].
 pub(crate) fn alias_verdict(
     load_class: AddrClass,
-    load_size: i64,
+    load_size: i128,
     store_class: AddrClass,
-    store_size: i64,
+    store_size: i128,
     mode: AliasMode,
     distinct_sp_bases_disjoint: bool,
 ) -> AliasVerdict {
@@ -915,7 +915,7 @@ mod decompose_tests {
             .decompose(current)
             .expect("5000-node chain must decompose without stack-overflowing");
         assert_eq!(
-            offset, N as i64,
+            offset, N as i128,
             "cumulative offset must equal N adds of +1"
         );
         Ok(())
@@ -961,7 +961,7 @@ mod alias_tests {
         memo: &mut SpExprMemo,
         store: NodeId,
         load_class: AddrClass,
-        load_size: i64,
+        load_size: i128,
         mode: AliasMode,
         distinct_sp_bases_disjoint: bool,
     ) -> AliasVerdict {

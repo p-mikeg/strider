@@ -62,13 +62,13 @@ fn sp_relative_store_and_load_get_offset_stamped() {
 
     run(&mut f);
 
-    let store_offsets: Vec<i64> = f
+    let store_offsets: Vec<i128> = f
         .graph()
         .all_node_ids()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
         .filter_map(|n| f.stack_offset(n).map(|(_, off)| off))
         .collect();
-    let load_offsets: Vec<i64> = f
+    let load_offsets: Vec<i128> = f
         .graph()
         .all_node_ids()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::Load(_)))

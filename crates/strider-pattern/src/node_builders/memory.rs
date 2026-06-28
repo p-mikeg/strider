@@ -33,7 +33,7 @@ use super::node_pat::{KindCheck, NodePat, variant_kind};
 /// SP-relative match state shared by `LoadPat` and `StorePat`.
 #[derive(Default)]
 struct StackAccessSpec {
-    stack_offset_filter: Option<i64>,
+    stack_offset_filter: Option<i128>,
     /// When `true`, rejects matches where `Function::stack_offset` is `None`.
     stack_only: bool,
 }
@@ -172,7 +172,7 @@ impl LoadPat {
 
     /// Restrict the match to loads whose address decomposes to exactly
     /// `sp + k` (reads `Function::stack_offset` in O(1)).
-    pub fn stack_offset(mut self, k: i64) -> Self {
+    pub fn stack_offset(mut self, k: i128) -> Self {
         self.common.stack.stack_offset_filter = Some(k);
         self
     }
@@ -273,7 +273,7 @@ impl StorePat {
 
     /// Restrict the match to stores whose address decomposes to exactly
     /// `sp + k`.
-    pub fn stack_offset(mut self, k: i64) -> Self {
+    pub fn stack_offset(mut self, k: i128) -> Self {
         self.common.stack.stack_offset_filter = Some(k);
         self
     }

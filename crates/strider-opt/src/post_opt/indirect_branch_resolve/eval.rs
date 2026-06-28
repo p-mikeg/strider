@@ -34,7 +34,7 @@ pub(crate) fn value_input_producers(
 #[derive(Clone, Copy, PartialEq)]
 enum Abs {
     Const(u128),
-    SpRel { base: ValueId, offset: i64 },
+    SpRel { base: ValueId, offset: i128 },
 }
 
 impl Abs {
@@ -147,7 +147,7 @@ impl<'a> Evaluator<'a> {
             | (Abs::Const(c), Abs::SpRel { base, offset }) => {
                 // Signed interpretation so a negative frame offset (stored as
                 // 0xFFFF..) subtracts correctly.
-                let delta = i64::try_from(ty.get_signed_int(c)?).ok()?;
+                let delta = ty.get_signed_int(c)?;
                 Some(Abs::SpRel {
                     base,
                     offset: offset.wrapping_add(delta),
@@ -168,7 +168,7 @@ impl<'a> Evaluator<'a> {
             Abs::Const(_) => self.eval_const_node(value),
             Abs::SpRel { base, offset } => {
                 let [mem, _addr] = f.node_inputs_exact::<2>(node).ok()?;
-                let load_size = load_ty.byte_size() as i64;
+                let load_size = load_ty.byte_size() as i128;
                 let reaching = {
                     let mut cfg = SpAliasCfg::call_blocking(&mut self.sp_memo, self.alias_mode);
                     cfg.reaching_store(f, mem, base, offset, load_size)

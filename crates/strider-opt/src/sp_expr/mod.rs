@@ -6,7 +6,7 @@
 //! * `analyzer` — the merged `SpAnalyzer` (SP decomposition + address
 //!   classification + store-alias verdict), plus `SpExpr`, `SpExprMemo`, the
 //!   `AddrClass` taxonomy, and the pure class-on-class `alias_verdict` table.
-//!   Constant addends are read via the canonical `IRViewer::int_const_i64`;
+//!   Constant addends are read via the canonical `IRViewer::int_const_i128`;
 //!   `ConstantFold` has already collapsed any `Neg`/`Truncate`/`Extend` wrapper
 //!   by the time these passes run, so the decomposer never peels those shapes
 //!   itself.

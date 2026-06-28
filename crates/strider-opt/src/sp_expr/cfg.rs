@@ -38,7 +38,7 @@ struct SpAliasOracle<'a, 'm> {
     /// The load's address class (`SpRooted` for a stack-arg load; any class
     /// for a general forwarded load).
     load_class: AddrClass,
-    load_size: i64,
+    load_size: i128,
     /// The load's address space.  A store in a DIFFERENT `VnSpace` cannot
     /// clobber (or be forwarded into) this load — distinct spaces never alias,
     /// even at the same numeric address.
@@ -126,7 +126,7 @@ impl<'m> SpAliasCfg<'m> {
     fn oracle(
         &mut self,
         load_class: AddrClass,
-        load_size: i64,
+        load_size: i128,
         load_space: rsleigh::VnSpace,
     ) -> SpAliasOracle<'_, 'm> {
         SpAliasOracle {
@@ -153,16 +153,12 @@ impl<'m> SpAliasCfg<'m> {
     /// itself (O(1) cached reads; the SP decompose is a memo hit when the
     /// address was already classified).  The shared load-side derivation for
     /// [`verdict`](Self::verdict) and [`nearest_clobber`](Self::nearest_clobber).
-    fn load_class_and_size(&mut self, function: &Function, load: NodeId) -> (AddrClass, i64) {
+    fn load_class_and_size(&mut self, function: &Function, load: NodeId) -> (AddrClass, i128) {
         let class = self.classify_addr(function, function.load_addr(load));
-        let [out] = function
-            .node_outputs_exact::<1>(load)
-            .expect("Load has 1 output per node signature");
-        let size = function
-            .value_type_opt(out)
-            .expect("Load output is a value")
-            .byte_size() as i64;
-        (class, size)
+        let (_, ty) = function
+            .single_value_output(load)
+            .expect("Load has 1 typed output per node signature");
+        (class, ty.byte_size() as i128)
     }
 
     /// Exact pairwise alias verdict between a `Load` and a `Store`, deriving
@@ -233,8 +229,8 @@ impl<'m> SpAliasCfg<'m> {
         function: &Function,
         mem_start: ValueId,
         base: ValueId,
-        offset: i64,
-        probe_size: i64,
+        offset: i128,
+        probe_size: i128,
     ) -> Option<ReachingSpStore> {
         // Stack memory lives in RAM, so a probed SP-rooted location only
         // matches RAM stores (a same-address store in another space is
@@ -290,7 +286,7 @@ pub(crate) struct ReachingSpStore {
     /// The store's SP-relative byte offset (from `base`).  Equals the probed
     /// `offset` exactly when the store is anchored at the probed location;
     /// callers that require anchoring compare the two.
-    pub store_offset: i64,
+    pub store_offset: i128,
 }
 
 impl ReachingSpStore {
@@ -301,7 +297,7 @@ impl ReachingSpStore {
 
     /// The store's data byte width.  Callers derive an argument's slot span
     /// from this (`ceil(size / increment)`).
-    pub fn size(&self, function: &Function) -> i64 {
+    pub fn size(&self, function: &Function) -> i128 {
         store_value_byte_size(function.graph(), self.data(function))
     }
 }

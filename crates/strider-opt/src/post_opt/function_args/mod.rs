@@ -165,7 +165,7 @@ fn detect_stack_args(
         let Some(load_ty) = ctx.value_type_opt(load_value) else {
             continue;
         };
-        let load_size = load_ty.byte_size() as i64;
+        let load_size = load_ty.byte_size() as i128;
         // (a) decompose to initial_sp + K.
         let Some(SpExpr { base, offset }) = alias_cfg.decompose(ctx.function(), addr) else {
             continue;

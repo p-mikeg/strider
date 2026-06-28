@@ -878,7 +878,7 @@ fn stack_args_below_base_negative_offset_is_none() {
     };
     assert_eq!(s.index_of(-8, 8), None);
     assert_eq!(s.slot_of(-8), None);
-    assert_eq!(s.slot_of(i64::MIN), None);
+    assert_eq!(s.slot_of(i128::MIN), None);
 }
 
 /// Layout with no positional args at all: empty register list and no stack
@@ -1041,7 +1041,7 @@ fn stack_args_slot_of_floors_by_increment() {
 #[test]
 fn stack_args_slots_spanned_ceils_by_increment() {
     use crate::calling_convention::StackArgs;
-    for (label, inc) in [("x86 4/4", 4i64), ("x86_64 8/8", 8i64)] {
+    for (label, inc) in [("x86 4/4", 4i128), ("x86_64 8/8", 8i128)] {
         let s = StackArgs {
             base_offset: inc,
             increment: inc,
@@ -1067,7 +1067,7 @@ fn stack_args_slots_spanned_ceils_by_increment() {
     }
 }
 
-/// A garbage decoded size near `i64::MAX` must not overflow the
+/// A garbage decoded size near `i128::MAX` must not overflow the
 /// `size + increment - 1` numerator — the span saturates instead of
 /// wrapping (mirroring `offset_of`'s saturation contract).
 #[test]
@@ -1077,13 +1077,13 @@ fn stack_args_slots_spanned_saturates_on_overflow() {
         base_offset: 8,
         increment: 8,
     };
-    // `i64::MAX + 7` would overflow without the saturating add; the result is
+    // `i128::MAX + 7` would overflow without the saturating add; the result is
     // a large-but-finite slot count, computed without panicking.
-    let span = s.slots_spanned(i64::MAX);
-    assert_eq!(span, (i64::MAX as usize) / 8);
+    let span = s.slots_spanned(i128::MAX);
+    assert_eq!(span, (i128::MAX / 8) as usize);
 }
 
-/// Adversarial near-`i64::MAX` offsets (decoded from binary content, not a
+/// Adversarial near-`i128::MAX` offsets (decoded from binary content, not a
 /// trusted input) must degrade to `None`/saturation rather than panic in
 /// debug or wrap in release.  `index_of`'s `offset + size` is the overflow
 /// site; `offset_of`'s `base + n*increment` is the other.
@@ -1094,15 +1094,15 @@ fn stack_args_slot_math_degrades_on_overflow_not_panics() {
         base_offset: 8,
         increment: 8,
     };
-    // index_of: `offset + size` would overflow i64 → None, not a panic.
-    assert_eq!(s.index_of(i64::MAX, 8), None);
-    assert_eq!(s.index_of(i64::MAX - 1, 8), None);
+    // index_of: `offset + size` would overflow i128 → None, not a panic.
+    assert_eq!(s.index_of(i128::MAX, 8), None);
+    assert_eq!(s.index_of(i128::MAX - 1, 8), None);
     // slot_of with a max offset is well-defined (non-negative base) and must
     // not panic.
-    assert_eq!(s.slot_of(i64::MAX), Some((i64::MAX as usize - 8) / 8));
-    // offset_of with a runaway (large positive) index saturates instead of
-    // overflowing: (1<<62)*8 overflows i64 → i64::MAX.
-    assert_eq!(s.offset_of(1usize << 62), i64::MAX);
+    assert_eq!(s.slot_of(i128::MAX), Some(((i128::MAX - 8) / 8) as usize));
+    // offset_of computes `base + n*increment` saturatingly; with the wider
+    // i128 intermediate (1<<62)*8 no longer overflows, so it scales exactly.
+    assert_eq!(s.offset_of(1usize << 62), (1i128 << 62) * 8 + 8);
 }
 
 /// A negative `base_offset` is rejected at the construction boundary

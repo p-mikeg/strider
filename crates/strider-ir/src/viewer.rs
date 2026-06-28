@@ -150,8 +150,8 @@ pub trait IRViewer {
     /// The integer-constant value carried by `value`, masked to its declared
     /// type and widened to `u128`, or `None` if `value` is not an integer
     /// constant. Single read SSoT for constant values — every consumer reads
-    /// constants through this (or its signed `i64` projection
-    /// [`Self::int_const_i64`]) so the storage representation stays
+    /// constants through this (or its signed `i128` projection
+    /// [`Self::int_const_i128`]) so the storage representation stays
     /// encapsulated.
     ///
     /// Returns `None` for `IntConst` nodes whose interned value exceeds 128
@@ -175,19 +175,6 @@ pub trait IRViewer {
     fn int_const_i128(&self, value: ValueId) -> Option<i128> {
         let v = self.int_const_u128(value)?;
         self.value_kind(value).as_value()?.get_signed_int(v)
-    }
-
-    /// Signed projection narrowed to `i64`: the integer-constant value
-    /// sign-extended from its declared width, or `None` if `value` is not an
-    /// integer constant or the sign-extended value does not fit in `i64`. A
-    /// narrowing projection of [`Self::int_const_i128`] (the signed read SSoT).
-    ///
-    /// Reads only a canonical `IntConst`: callers run after `ConstantFold`,
-    /// which collapses `Neg(IntConst)` / `Truncate(IntConst)` /
-    /// `Extend(IntConst)` to a single `IntConst`, so consumers never peel those
-    /// wrappers themselves.
-    fn int_const_i64(&self, value: ValueId) -> Option<i64> {
-        i64::try_from(self.int_const_i128(value)?).ok()
     }
 
     /// Little-endian bytes of a WIDE-typed (`I80`/`I128`/`I256`/`I512`)

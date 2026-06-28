@@ -226,7 +226,7 @@ pub struct Function {
     /// Populated by the `StackOffsetDetect` classifier.  The phi-of-offsets
     /// case (address is a phi of different constants per branch) is not
     /// recorded — consumers can re-decompose via `decompose_sp` if needed.
-    stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i64)>>,
+    stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>>,
 
     /// O(1) varnode → `InitialVar(vn)` node-id accelerator for
     /// indirect-resolve sites and the lifter's lazy `read_or_init_var`
@@ -765,13 +765,13 @@ impl Function {
     /// relative to; the offset is only comparable against another access's
     /// offset when their bases match.
     #[inline]
-    pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i64)> {
+    pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i128)> {
         self.stack_offsets[id]
     }
 
     /// Records a concrete stack slot `(base, offset)` for a Store/Load node.
     #[inline]
-    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i64) {
+    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i128) {
         self.stack_offsets[id] = Some((base, offset));
     }
 
@@ -976,7 +976,7 @@ impl Function {
         // translation table.  An entry whose node or base didn't survive
         // compaction is dropped (the slot becomes "unknown", which is safe —
         // consumers treat a missing entry as non-stack).
-        let mut new_stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i64)>> =
+        let mut new_stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>> =
             SecondaryMap::new();
         for (old_id, slot) in self.stack_offsets.iter() {
             let Some((old_base, off)) = *slot else {

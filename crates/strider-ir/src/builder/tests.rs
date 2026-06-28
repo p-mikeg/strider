@@ -115,12 +115,12 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
     // Booleans are 1-bit integers: the single bit is the sign bit, so a
     // `true` (bit 1) sign-extends to -1, while its unsigned view is 1.
     assert_eq!(
-        b.int_const_u128(bt).zip(b.int_const_i64(bt)),
-        Some((1u128, -1i64))
+        b.int_const_u128(bt).zip(b.int_const_i128(bt)),
+        Some((1u128, -1i128))
     );
     assert_eq!(
-        b.int_const_u128(bf).zip(b.int_const_i64(bf)),
-        Some((0u128, 0i64))
+        b.int_const_u128(bf).zip(b.int_const_i128(bf)),
+        Some((0u128, 0i128))
     );
     Ok(())
 }
@@ -142,7 +142,7 @@ fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
 #[test]
 fn get_signed_int_sign_extension_cases() -> Result<()> {
     // Rows: (label = former test name, raw value, expected signed read-back).
-    let cases: [(&str, u64, i64); 2] = [
+    let cases: [(&str, u64, i128); 2] = [
         (
             "get_signed_int_sign_extends_negative_u8",
             u8::MAX as u64,
@@ -151,13 +151,13 @@ fn get_signed_int_sign_extension_cases() -> Result<()> {
         (
             "get_signed_int_positive_u8_stays_positive",
             i8::MAX as u64,
-            i8::MAX as i64,
+            i8::MAX as i128,
         ),
     ];
     let mut b = empty_builder()?;
     for (label, raw, expected) in cases {
         let value = b.build_int_const(raw, ValueType::I8)?;
-        assert_eq!(b.int_const_i64(value), Some(expected), "{label}");
+        assert_eq!(b.int_const_i128(value), Some(expected), "{label}");
     }
     Ok(())
 }
@@ -2251,22 +2251,22 @@ fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
     Ok(())
 }
 
-/// `int_const_i64` reads a canonical `IntConst` sign-extended from its
+/// `int_const_i128` reads a canonical `IntConst` sign-extended from its
 /// declared width; it does NOT peel `Neg`/`Truncate`/`Extend` wrappers
 /// (`ConstantFold` collapses those upstream), and returns `None` for a
 /// non-constant value.
 #[test]
-fn int_const_i64_sign_extends_and_rejects_non_const() -> Result<()> {
+fn int_const_i128_sign_extends_and_rejects_non_const() -> Result<()> {
     let mut b = builder_with_region()?;
     // 0xFFFF_FFFC at I32 reads as -4 (sign-extended from its declared width).
     let neg = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
-    assert_eq!(b.function().int_const_i64(neg), Some(-4));
+    assert_eq!(b.function().int_const_i128(neg), Some(-4));
     // A plain positive constant.
     let pos = b.build_int_const(7u64, ValueType::I32)?;
-    assert_eq!(b.function().int_const_i64(pos), Some(7));
+    assert_eq!(b.function().int_const_i128(pos), Some(7));
     // A non-`IntConst` value (an Add of the two) yields `None`.
     let sum = b.build_int_binary_operation(neg, pos, IntBinaryOp::Add, ValueType::I32)?;
-    assert_eq!(b.function().int_const_i64(sum), None);
+    assert_eq!(b.function().int_const_i128(sum), None);
     Ok(())
 }
 
