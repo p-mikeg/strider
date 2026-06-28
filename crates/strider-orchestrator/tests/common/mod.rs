@@ -567,7 +567,7 @@ pub fn has_constant(function: &strider_ir::Function, value: u64) -> bool {
         matches!(function.node_kind(nid), NodeKind::IntConst(_))
             && function
                 .first_value_output_of(nid)
-                .is_some_and(|v| function.int_const_val(v) == Some(value))
+                .is_some_and(|v| function.int_const_u128(v) == Some(u128::from(value)))
     })
 }
 

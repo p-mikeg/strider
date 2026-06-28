@@ -219,7 +219,7 @@ fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
         return false;
     };
     let is_one = |value: ValueId| {
-        fg.value_type_opt(value).is_some_and(|t| t.is_bool()) && fg.int_const_val(value) == Some(1)
+        fg.value_type_opt(value).is_some_and(|t| t.is_bool()) && fg.int_const_u128(value) == Some(1)
     };
     is_one(lhs) || is_one(rhs)
 }
@@ -349,7 +349,7 @@ fn assert_if_cond_is_neg_intcmp(
     // The non-constant operand is the cmp; the other is the I1
     // IntConst(1) (might be on either side due to dedup).
     let is_one_const = |value: ValueId| {
-        function.int_const_val(value) == Some(1)
+        function.int_const_u128(value) == Some(1)
             && function
                 .value_kind(value)
                 .as_value()

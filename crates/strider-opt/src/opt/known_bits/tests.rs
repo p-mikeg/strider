@@ -217,7 +217,7 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
     // the final state matches.
     run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
-    let semantic = fg.int_const_val(val);
+    let semantic = fg.int_const_u128(val);
     assert_eq!(semantic, Some(0xCD), "truncate must preserve low byte");
     Ok(())
 }
@@ -284,7 +284,7 @@ fn known_bits_and_with_zero_folds_via_map() -> Result<()> {
     run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     assert_eq!(
-        fg.int_const_val(val),
+        fg.int_const_u128(val),
         Some(0),
         "And(x, 0) is known-zero and must fold to IntConst(0) via the map rewrite",
     );
@@ -332,7 +332,7 @@ fn known_bits_shared_output_folds_once() -> Result<()> {
     run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     assert_eq!(
-        fg.int_const_val(val),
+        fg.int_const_u128(val),
         Some(8),
         "shared fully-known output must fold cleanly with no double-processing",
     );
@@ -379,7 +379,7 @@ fn known_bits_shift_right_propagates_lhs_ones() -> Result<()> {
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
-    assert_eq!(fg.int_const_val(val), Some(1));
+    assert_eq!(fg.int_const_u128(val), Some(1));
     Ok(())
 }
 
@@ -401,7 +401,7 @@ fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
-    assert_eq!(fg.int_const_val(val), Some(0x80));
+    assert_eq!(fg.int_const_u128(val), Some(0x80));
     Ok(())
 }
 
@@ -457,7 +457,7 @@ fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
     run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     assert_eq!(
-        fg.int_const_val(val),
+        fg.int_const_u128(val),
         Some(0),
         "Sleigh: 1u8 << 8 = 0 (shift >= bit_width returns 0).  Pre-fix \
          KnownBits computed `1u8 << (8 & 7) = 1` and left the value \
@@ -478,7 +478,7 @@ fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
     run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     assert_eq!(
-        fg.int_const_val(val),
+        fg.int_const_u128(val),
         Some(0),
         "Sleigh: 0xFFu32 >> 32 = 0.  Pre-fix KnownBits computed \
          `0xFF >> (32 & 31) = 0xFF` and the chain fell through to non-zero."
@@ -507,7 +507,7 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
-    let semantic = fg.int_const_val(val);
+    let semantic = fg.int_const_u128(val);
     assert_eq!(
         semantic,
         Some(1),
@@ -575,7 +575,7 @@ fn known_bits_zero_extend_upper_known_zero_enables_mask_drop() -> Result<()> {
     run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     assert_eq!(
-        fg.int_const_val(val),
+        fg.int_const_u128(val),
         Some(0),
         "And(ZeroExtend(I8→I64), 0xFF..00) must fold to 0 — upper 56 bits known zero",
     );
@@ -812,7 +812,7 @@ fn known_bits_shared_cone_both_folds_absorb_fingerprint() -> Result<()> {
         .collect();
     for node in int_consts {
         let out = fg.node_outputs(node)[0];
-        let Some(v) = fg.int_const_val(out) else {
+        let Some(v) = fg.int_const_u128(out) else {
             continue;
         };
         if v == 4 {

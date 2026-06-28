@@ -52,7 +52,7 @@ fn constant_fold_add_consts_preserves_fingerprints() {
             matches!(fg.node_kind(nid), NodeKind::IntConst(_))
                 && fg
                     .first_value_output_of(nid)
-                    .is_some_and(|v| fg.int_const_val(v) == Some(7))
+                    .is_some_and(|v| fg.int_const_u128(v) == Some(7))
         })
         .expect("IntConst(7)");
     let fp = fg.asm_fingerprint(const7);
@@ -90,7 +90,7 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
             matches!(fg.node_kind(nid), NodeKind::IntConst(_))
                 && fg
                     .first_value_output_of(nid)
-                    .is_some_and(|v| fg.int_const_val(v) == Some(0))
+                    .is_some_and(|v| fg.int_const_u128(v) == Some(0))
         })
         .expect("IntConst(0)");
     let fp = fg.asm_fingerprint(const0);

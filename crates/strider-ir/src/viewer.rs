@@ -150,8 +150,9 @@ pub trait IRViewer {
     /// The integer-constant value carried by `value`, masked to its declared
     /// type and widened to `u128`, or `None` if `value` is not an integer
     /// constant. Single read SSoT for constant values — every consumer reads
-    /// constants through this (or its `u64`/`i64` projections) so the storage
-    /// representation stays encapsulated.
+    /// constants through this (or its signed `i64` projection
+    /// [`Self::int_const_i64`]) so the storage representation stays
+    /// encapsulated.
     ///
     /// Returns `None` for `IntConst` nodes whose interned value exceeds 128
     /// bits (`I256`/`I512` values that don't fit `u128`); returns `Some` for
@@ -189,16 +190,6 @@ pub trait IRViewer {
         i64::try_from(self.int_const_i128(value)?).ok()
     }
 
-    /// Returns the integer constant value of `value` (masked to its declared
-    /// type) narrowed to `u64`, or `None` if it is not an integer-constant
-    /// value or its value does not fit in `u64`. A narrowing projection of
-    /// [`Self::int_const_u128`] (the read SSoT) that discards values wider
-    /// than `u64`.
-    fn int_const_val(&self, value: ValueId) -> Option<u64> {
-        self.int_const_u128(value)
-            .and_then(|v| u64::try_from(v).ok())
-    }
-
     /// Little-endian bytes of a WIDE-typed (`I80`/`I128`/`I256`/`I512`)
     /// integer-constant node — 10 / 16 / 32 / 64 bytes respectively.  The byte
     /// width is taken from the node's output type, so a small-valued wide
@@ -206,7 +197,7 @@ pub trait IRViewer {
     /// representation.
     ///
     /// Returns `None` for a narrow (≤ `I64`) constant — use
-    /// [`Self::int_const_val`] / [`Self::int_const_u128`] there — or for a
+    /// [`Self::int_const_u128`] there — or for a
     /// non-`IntConst` node / a node without a single value output.
     fn int_const_wide_le_bytes(&self, node: crate::node::NodeId) -> Option<Vec<u8>> {
         let [out] = self.node_outputs_exact::<1>(node).ok()?;
@@ -222,12 +213,12 @@ pub trait IRViewer {
 
     /// Returns the boolean constant value of `value`, or `None` if it is not an
     /// `I1`-typed `IntConst`. Booleans are 1-bit integers, so this derives from
-    /// [`Self::int_const_val`] (the read SSoT) under an `I1` guard.
+    /// [`Self::int_const_u128`] (the read SSoT) under an `I1` guard.
     fn bool_const_val(&self, value: ValueId) -> Option<bool> {
         if !self.value_kind(value).is_bool() {
             return None;
         }
-        self.int_const_val(value).map(|v| v != 0)
+        self.int_const_u128(value).map(|v| v != 0)
     }
 
     /// Returns the first [`ValueId`] of `node_id` whose kind is a value edge

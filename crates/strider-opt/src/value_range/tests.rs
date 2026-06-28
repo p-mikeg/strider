@@ -1140,7 +1140,7 @@ fn nested_guards_intersect_at_inner_region() {
             }
             let cmp = f.graph().producer(f.graph().nth_input(n, 1).unwrap());
             matches!(f.node_kind(cmp), NodeKind::IntCmpOp(_))
-                && f.int_const_val(f.graph().nth_input(cmp, 1).unwrap()) == Some(8)
+                && f.int_const_u128(f.graph().nth_input(cmp, 1).unwrap()) == Some(8)
         })
         .expect("inner guard If (bound 8)");
     let inner_true_ctrl = f.node_outputs(inner_if)[0];
@@ -1320,7 +1320,7 @@ fn two_sibling_guard_regions_give_independent_bounds() {
     // `if_edge_consumers` (sole-If helper) can't be used.  Find each guard If by
     // its `Less(idx, bound)` cond constant and take its true-edge consumer (bare
     // `Less` cond → no branch swap → dispatch is the true edge).
-    let true_edge_consumer_of_guard = |bound: u64| -> NodeId {
+    let true_edge_consumer_of_guard = |bound: u128| -> NodeId {
         let if_node = f
             .walk()
             .find(|&n| {
@@ -1333,7 +1333,7 @@ fn two_sibling_guard_regions_give_independent_bounds() {
                     return false;
                 }
                 let rhs = f.graph().nth_input(cmp, 1).expect("cmp rhs");
-                f.int_const_val(rhs) == Some(bound)
+                f.int_const_u128(rhs) == Some(bound)
             })
             .expect("guard If with matching bound");
         let true_ctrl = f.node_outputs(if_node)[0];

@@ -126,7 +126,7 @@ fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
     let ret_val = fg.node_inputs(ret)[2];
     assert!(
         matches!(fg.kind_of_value(ret_val), NodeKind::IntConst(_))
-            && fg.int_const_val(ret_val) == Some(3),
+            && fg.int_const_u128(ret_val) == Some(3),
         "ConstantFold must fold 1+2→3"
     );
     Ok(())
@@ -183,7 +183,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     let ret_val = fg.node_inputs(ret)[2];
     assert!(
         matches!(fg.kind_of_value(ret_val), NodeKind::IntConst(_))
-            && fg.int_const_val(ret_val) == Some(0x42),
+            && fg.int_const_u128(ret_val) == Some(0x42),
         "LoadForward must forward the stored value 0x42 to the load"
     );
     Ok(())
@@ -233,7 +233,7 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
     let ret_val = fg.node_inputs(ret)[2];
     assert!(
         matches!(fg.kind_of_value(ret_val), NodeKind::IntConst(_))
-            && fg.int_const_val(ret_val) == Some(1),
+            && fg.int_const_u128(ret_val) == Some(1),
         "surviving return must return 1 (true branch)"
     );
     Ok(())

@@ -829,7 +829,7 @@ mod tests {
         // the cache-based `live_of_kind` iterator (no graph walk).
         assert!(
             matches!(ctx.node_kind(new_node), NodeKind::IntConst(_))
-                && ctx.int_const_val(new_value) == Some(7),
+                && ctx.int_const_u128(new_value) == Some(7),
             "RHS built IntConst(7)"
         );
         assert!(

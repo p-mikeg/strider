@@ -33,7 +33,7 @@ fn is_i1_xor_with_one(fg: &strider_ir::Function, node: strider_ir::node::NodeId)
     };
     let is_one = |value: ValueId| {
         fg.value_kind(value).as_value().is_some_and(|t| t.is_bool())
-            && fg.int_const_val(value) == Some(1)
+            && fg.int_const_u128(value) == Some(1)
     };
     is_one(lhs) || is_one(rhs)
 }
@@ -302,7 +302,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let inner_producer_pre = {
         let pick = |value: ValueId| {
             !(matches!(fg.kind_of_value(value), NodeKind::IntConst(_))
-                && fg.int_const_val(value) == Some(1))
+                && fg.int_const_u128(value) == Some(1))
         };
         let chosen = if pick(lhs) { lhs } else { rhs };
         fg.producer(chosen)
@@ -390,7 +390,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     let inner_producer_pre = {
         let pick = |value: ValueId| {
             !(matches!(fg.kind_of_value(value), NodeKind::IntConst(_))
-                && fg.int_const_val(value) == Some(1))
+                && fg.int_const_u128(value) == Some(1))
         };
         let chosen = if pick(lhs) { lhs } else { rhs };
         fg.producer(chosen)

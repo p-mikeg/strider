@@ -27,8 +27,8 @@ use crate::node::{
 ///
 /// All methods are provided (default) — implementors gain them for free.
 /// Build-only: the pure point reads it relies on (`value_type`, the
-/// `require_*` family, `validate_value_inputs`, `int_const_val`,
-/// `int_const_i64`, `infer_float_type`) live on the [`IRViewer`] supertrait of
+/// `require_*` family, `validate_value_inputs`, `int_const_u128`,
+/// `int_const_i128`, `infer_float_type`) live on the [`IRViewer`] supertrait of
 /// [`IRBuilder`], so they resolve here for free.  The constructors only call
 /// `self.create_node(...)` / [`Self::build_single_output_pure`], so the whole
 /// vocabulary is pure with respect to any lift-time scratch the implementor
@@ -56,7 +56,7 @@ pub trait IRBuilderExt: IRBuilder {
     fn truncate_if_needed(&mut self, value_id: ValueId, output_type: ValueType) -> Result<ValueId> {
         let curr_output_type = self.value_type(value_id)?;
 
-        if let Some(val) = self.int_const_val(value_id) {
+        if let Some(val) = self.int_const_u128(value_id) {
             return self.build_int_const(val, output_type);
         }
 
@@ -82,12 +82,13 @@ pub trait IRBuilderExt: IRBuilder {
     ) -> Result<ValueId> {
         let curr_output_type = self.value_type(value_id)?;
 
-        if let Some(unsigned_val) = self.int_const_val(value_id)
-            && let Some(signed_val) = self.int_const_i64(value_id)
+        if let Some(unsigned_val) = self.int_const_u128(value_id)
+            && let Some(signed_val) = self.int_const_i128(value_id)
         {
-            // signed_val is i64; `i64 as u128` sign-extends to fill the
-            // high 64 bits, and build_int_const masks to output_type's
-            // width.
+            // `i128 as u128` reinterprets the sign-extended bits, and
+            // build_int_const masks to output_type's width.  Reading the
+            // const as the full u128 / i128 (rather than a u64 / i64
+            // projection) folds I80 / I128 const extends too.
             return match op {
                 ExtendOp::SignExtend => self.build_int_const(signed_val as u128, output_type),
                 ExtendOp::ZeroExtend => self.build_int_const(unsigned_val, output_type),

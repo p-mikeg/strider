@@ -27,7 +27,7 @@ fn simulate_dbe_redirect_without_strip(
     // Target the live If whose constant condition equals `cond`.  This
     // disambiguates nested Ifs (outer cond=false vs inner cond=true) and skips
     // any already-detached If (0 inputs) from a prior simulate.
-    let want_cond_val: u64 = u64::from(cond);
+    let want_cond_val: u128 = u128::from(cond);
     let if_node = fg
         .graph()
         .all_node_ids()
@@ -44,7 +44,7 @@ fn simulate_dbe_redirect_without_strip(
             matches!(fg.node_kind(cond_producer), NodeKind::IntConst(_))
                 && cond_out
                     .first()
-                    .is_some_and(|&v| fg.int_const_val(v) == Some(want_cond_val))
+                    .is_some_and(|&v| fg.int_const_u128(v) == Some(want_cond_val))
         })
         .expect("a live If with the requested constant condition must exist");
     let if_outputs = fg.node_outputs(if_node).to_vec();

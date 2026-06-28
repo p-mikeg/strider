@@ -42,7 +42,7 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     for &load_node in &loads {
         let inputs = function.node_inputs(load_node);
         let addr_value = inputs[1];
-        if let Some(v) = function.int_const_val(addr_value) {
+        if let Some(v) = function.int_const_u128(addr_value) {
             if v == 0x1000 {
                 stack_node = Some(load_node);
             } else {
@@ -83,7 +83,7 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     for &store_node in &stores {
         let inputs = function.node_inputs(store_node);
         let addr_value = inputs[1];
-        if let Some(v) = function.int_const_val(addr_value) {
+        if let Some(v) = function.int_const_u128(addr_value) {
             if v == 0x1000 {
                 stack_store = Some(store_node);
             } else {

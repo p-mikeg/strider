@@ -154,7 +154,7 @@ fn predicate_inspects_node_kind() {
                     let Some(o) = b.get_value(c) else {
                         return false;
                     };
-                    m.function().int_const_val(o) == Some(7)
+                    m.function().int_const_u128(o) == Some(7)
                 })
                 .into_pattern(),
         )

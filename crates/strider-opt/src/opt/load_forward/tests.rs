@@ -189,9 +189,9 @@ fn forward_takes_nearest_of_two_same_offset_stores() -> Result<()> {
     );
     let ret_val = crate::test_support::return_value(fg.graph())?;
     assert!(
-        fg.int_const_val(ret_val) == Some(0x22),
+        fg.int_const_u128(ret_val) == Some(0x22),
         "forwarded value must be the NEAREST store's 0x22, got {:?}",
-        fg.int_const_val(ret_val),
+        fg.int_const_u128(ret_val),
     );
     Ok(())
 }
@@ -469,9 +469,9 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
     );
     let ret_val = crate::test_support::return_value(fg.graph())?;
     assert!(
-        fg.int_const_val(ret_val) == Some(0xAA),
+        fg.int_const_u128(ret_val) == Some(0xAA),
         "forwarded value must be IntConst(0xAA), got {:?}",
-        fg.int_const_val(ret_val)
+        fg.int_const_u128(ret_val)
     );
     Ok(())
 }
@@ -545,9 +545,9 @@ fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
     );
     let ret_val = crate::test_support::return_value(fg.graph())?;
     assert!(
-        fg.int_const_val(ret_val) == Some(0xAA),
+        fg.int_const_u128(ret_val) == Some(0xAA),
         "forwarded value must be IntConst(0xAA), got {:?}",
-        fg.int_const_val(ret_val)
+        fg.int_const_u128(ret_val)
     );
     Ok(())
 }
@@ -583,9 +583,9 @@ fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
     );
     let ret_val = crate::test_support::return_value(fg.graph())?;
     assert!(
-        fg.int_const_val(ret_val) == Some(0xCC),
+        fg.int_const_u128(ret_val) == Some(0xCC),
         "forwarded value must be IntConst(0xCC), got {:?}",
-        fg.int_const_val(ret_val)
+        fg.int_const_u128(ret_val)
     );
     Ok(())
 }
@@ -876,9 +876,9 @@ fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()
     );
     let ret_val = crate::test_support::return_value(fg.graph())?;
     assert!(
-        fg.int_const_val(ret_val) == Some(0xAB),
+        fg.int_const_u128(ret_val) == Some(0xAB),
         "forwarded value must be the dominating store's 0xAB, got {:?}",
-        fg.int_const_val(ret_val),
+        fg.int_const_u128(ret_val),
     );
     let phis_after = reachable_anonymous_phi_count(&fg);
     assert_eq!(
@@ -1067,9 +1067,9 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     // Return inputs: [ctrl, mem, val_0, ...].
     let ret_val = ret_inputs[2];
     assert!(
-        fg.int_const_val(ret_val) == Some(0x4242),
+        fg.int_const_u128(ret_val) == Some(0x4242),
         "forwarded value must be the stored constant 0x4242 — got {:?}",
-        fg.int_const_val(ret_val),
+        fg.int_const_u128(ret_val),
     );
     Ok(())
 }
@@ -1109,13 +1109,13 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
     let ret_inputs = fg.node_inputs(ret);
-    // `int_const_val` applies the output type's mask, so for a I8 output it
+    // `int_const_u128` applies the output type's mask, so for a I8 output it
     // returns the low byte even when the backing `IntConst` node still
     // carries the full u32 bit-pattern internally.
     let val_ty = fg.value_type_opt(ret_inputs[2]);
     assert_eq!(val_ty, Some(ValueType::I8));
     assert_eq!(
-        fg.int_const_val(ret_inputs[2]),
+        fg.int_const_u128(ret_inputs[2]),
         Some(0xEF),
         "forwarded narrow load must fold to the low byte 0xEF",
     );
@@ -1153,7 +1153,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     let val_ty = fg.value_type_opt(ret_inputs[2]);
     assert_eq!(val_ty, Some(ValueType::I16));
     assert_eq!(
-        fg.int_const_val(ret_inputs[2]),
+        fg.int_const_u128(ret_inputs[2]),
         Some(0xBEEF),
         "forwarded u16 load must fold to low 16 bits 0xBEEF",
     );
@@ -1241,9 +1241,9 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     assert_eq!(shr_inputs.len(), 2, "ShiftRight has two inputs");
     let shift_val = shr_inputs[1];
     assert!(
-        fg.int_const_val(shift_val) == Some(24),
+        fg.int_const_u128(shift_val) == Some(24),
         "BE shift amount must be (store_size - load_size) * 8 = 24 — got {:?}",
-        fg.int_const_val(shift_val),
+        fg.int_const_u128(shift_val),
     );
     Ok(())
 }
