@@ -550,7 +550,7 @@ impl Function {
     /// Returns the [`crate::CallDescriptor`] recorded for `node_id`, or
     /// `None` when no descriptor has been recorded (default Call or unmodeled
     /// CallOther).  Prod reads the typed `call_cc` / `call_other_name` /
-    /// `call_stack_args_override` accessors; this raw getter is test-only.
+    /// `get_cc` accessor; this raw getter is test-only.
     #[inline]
     #[cfg(test)]
     pub fn call_descriptor(&self, node_id: NodeId) -> Option<&crate::CallDescriptor> {
@@ -580,7 +580,7 @@ impl Function {
     /// Records `cc` as the per-Call override calling convention for
     /// `node_id`, wrapping it in [`crate::CallDescriptor::Call`].  Replaces
     /// any prior descriptor.  Subsumes the stack-arg layout override (read
-    /// back via [`Self::call_stack_args_override`]).
+    /// back via [`Self::get_cc`]'s `stack_args`).
     ///
     /// Prod uses [`Self::set_call_descriptor`] directly; this
     /// `BuiltCallingConvention`-only wrapper is used only by tests.
@@ -591,15 +591,15 @@ impl Function {
             .insert(node_id, crate::CallDescriptor::Call(cc));
     }
 
-    /// The per-`Call` override convention's stack-arg layout, if this Call
-    /// node was built with a CC override; `None` for default calls or a
-    /// modeled `CallOther`.
+    /// The **effective** calling convention for `node_id`: the per-`Call`
+    /// override if one was recorded, else the function-default CC.  So
+    /// `get_cc(call).stack_args` is the call's effective stack-arg layout with
+    /// no override-vs-default branch at the call site.  A `CallOther` (whose
+    /// descriptor is an ABI, not a CC) and a default `Call` both resolve to the
+    /// function-default CC — only override `Call`s carry their own convention.
     #[inline]
-    pub fn call_stack_args_override(&self, node_id: NodeId) -> Option<strider_target::StackArgs> {
-        match self.side_tables.call_descriptor.get(&node_id)? {
-            crate::CallDescriptor::Call(cc) => cc.stack_args,
-            crate::CallDescriptor::CallOther(_) => None,
-        }
+    pub fn get_cc(&self, node_id: NodeId) -> &strider_target::BuiltCallingConvention {
+        self.call_cc(node_id).unwrap_or(&self.default_cc)
     }
 
     // ── arg_index_to_values accessors ────────────────────────────────────
@@ -1549,7 +1549,7 @@ mod compact_tests {
     }
 
     /// `call_cc` round-trips and its stack-arg offsets are what the derived
-    /// `call_stack_args_override` accessor returns; compact remaps
+    /// `get_cc().stack_args` returns; compact remaps
     /// both the per-Call `call_cc` and the per-output clobber `value_vn`.
     #[test]
     fn compact_remaps_call_cc_and_clobber_value_vn() {
@@ -1596,7 +1596,7 @@ mod compact_tests {
 
         // Pre-compact: round-trips.
         assert!(f.call_cc(call).is_some());
-        assert_eq!(f.call_stack_args_override(call), cc.stack_args,);
+        assert_eq!(f.get_cc(call).stack_args, cc.stack_args,);
         assert_eq!(f.get_vn_for_value(clob), Some(clob_vn));
 
         let remap = f.compact().expect("compact must succeed");
@@ -1609,7 +1609,7 @@ mod compact_tests {
 
         // call_cc survives the NodeId remap; stack-arg offsets still derive.
         assert!(f.call_cc(new_call).is_some());
-        assert_eq!(f.call_stack_args_override(new_call), cc.stack_args,);
+        assert_eq!(f.get_cc(new_call).stack_args, cc.stack_args,);
         // The clobber tag survives the ValueId remap.
         assert_eq!(f.get_vn_for_value(new_clob), Some(clob_vn));
     }

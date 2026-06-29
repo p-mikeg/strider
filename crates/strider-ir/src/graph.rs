@@ -1424,8 +1424,8 @@ fn call_cc_default_is_none() {
         [ValueKind::Typed(ValueType::I64)],
     );
     assert!(function.call_cc(nid).is_none());
-    // The derived stack-arg accessor follows the CC: absent → None.
-    assert!(function.call_stack_args_override(nid).is_none());
+    // get_cc falls back to the (trivial) default CC, which has no stack args.
+    assert!(function.get_cc(nid).stack_args.is_none());
 }
 
 #[test]
@@ -1445,8 +1445,8 @@ fn call_cc_round_trips_and_derives_stack_args() {
     );
     function.set_call_cc(nid, cc.clone());
     assert!(function.call_cc(nid).is_some());
-    // The stack-arg accessor derives from the stored CC.
-    assert_eq!(function.call_stack_args_override(nid), cc.stack_args,);
+    // get_cc returns the override CC, so its stack_args derive from it.
+    assert_eq!(function.get_cc(nid).stack_args, cc.stack_args,);
 }
 
 #[test]

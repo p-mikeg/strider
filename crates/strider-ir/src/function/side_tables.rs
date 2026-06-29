@@ -82,7 +82,7 @@ pub(crate) struct SideTables {
     /// Sparse: the default Call (function-default CC) and unmodeled
     /// `CallOther` nodes have no entry.  Stack-arg offsets for override
     /// `Call`s are derived from the stored CC via
-    /// [`crate::Function::call_stack_args_override`].  The convenience accessor
+    /// [`crate::Function::get_cc`].  The convenience accessor
     /// [`crate::Function::call_cc`] returns `Some` only for the `Call` arm.
     pub(crate) call_descriptor: FxHashMap<NodeId, crate::CallDescriptor>,
     /// Maps each calling-convention argument index to the [`ValueId`](s) of

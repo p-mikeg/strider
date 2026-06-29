@@ -114,10 +114,6 @@ impl PostOptimizer for CallStackArgCollect {
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
         let alias_mode = opt_ctx.options.alias_mode;
-        // SSoT: derive the default stack-arg formula on-demand from the
-        // function's own CC.  `None` means the convention passes no arguments
-        // on the stack.
-        let default_stack_args = ctx.function().default_cc().stack_args;
         // Each call is processed independently below (no cross-call data
         // dependency, detection order irrelevant), so iterate the cached live
         // set directly — no graph walk — like the sibling post-passes. The
@@ -128,11 +124,10 @@ impl PostOptimizer for CallStackArgCollect {
         // decompose memo and is reused across every call site.
         let mut alias_cfg = SpAliasCfg::call_blocking(&mut opt_ctx.sp_memo, alias_mode);
         for call_id in calls {
-            // Per-call override (e.g. a varargs call site) wins over the
-            // convention default; when both are absent the call passes no
-            // stack args and is skipped.
-            let override_stack_args = ctx.function().call_stack_args_override(call_id);
-            let Some(stack_args) = override_stack_args.or(default_stack_args) else {
+            // The call's effective stack-arg layout: a per-call CC override (a
+            // varargs site) if recorded, else the function-default CC.  `None`
+            // means the convention passes no stack args, so skip.
+            let Some(stack_args) = ctx.function().get_cc(call_id).stack_args else {
                 continue;
             };
             // Append each discovered stack-arg value as an extra Call input
