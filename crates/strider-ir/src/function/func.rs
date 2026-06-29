@@ -744,10 +744,9 @@ impl Function {
     /// side-tables stale, so [`Self::compact`] (which remaps them) is the only
     /// safe public entry point.
     pub(crate) fn retain_reachable(&mut self) -> crate::Result<NodeIdRemap> {
-        let entry = self.entry;
         // Collect the reachable set into a `Vec` first: that ends the
         // immutable borrow before the mutable `graph_mut()` borrow below.
-        let reachable: Vec<NodeId> = self.walk_from(entry).collect();
+        let reachable: Vec<NodeId> = self.walk().collect();
         Ok(self.graph_mut().retain_reachable_roots(reachable))
     }
 

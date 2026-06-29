@@ -267,15 +267,6 @@ impl GraphWalkInfo {
     }
 }
 
-/// Like [`walk_graph`] but accepts an optional entry: returns an
-/// empty walk when `entry` is `None`.  Used by [`Graph::preorder`] so
-/// pre-build graphs yield no nodes instead of panicking.
-///
-/// Crate-private: external callers must route through [`Graph::preorder`].
-pub(crate) fn walk_graph_opt(graph: &Graph, entry: Option<NodeId>) -> GraphWalk<'_> {
-    PreOrder::new(GraphWalkSuccs::new(graph), entry)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

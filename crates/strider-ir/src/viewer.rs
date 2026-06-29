@@ -556,12 +556,6 @@ pub trait IRWalker: IRViewer {
         crate::walk::walk_graph(f.graph(), f.entry())
     }
 
-    /// Pre-order walk seeded at `seed` (control-out forward + data-in
-    /// backward) — the explicit-seed counterpart to [`Self::walk`].
-    fn walk_from(&self, seed: NodeId) -> crate::walk::GraphWalk<'_> {
-        crate::walk::walk_graph_opt(self.function().graph(), Some(seed))
-    }
-
     /// [`Self::walk`] restricted to nodes whose [`NodeKind`] satisfies `pred`.
     fn walk_kind<'a>(
         &'a self,
