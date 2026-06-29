@@ -1118,15 +1118,11 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
     assert_ne!(mem_before, mem_after, "clobbers_memory → memory advances");
 
     // The vn-resolved ABI footprint is recorded on the node.
-    match b.function().call_descriptor(node) {
-        Some(crate::CallDescriptor::CallOther(recorded)) => {
-            assert_eq!(
-                *recorded, abi,
-                "recorded footprint must equal the input abi"
-            );
-        }
-        other => panic!("expected CallDescriptor::CallOther, got {other:?}"),
-    }
+    assert_eq!(
+        b.function().call_other_abi(node),
+        Some(&abi),
+        "recorded footprint must equal the input abi"
+    );
     assert_eq!(b.function().call_other_name(node), Some("syscall"));
     Ok(())
 }
@@ -2469,9 +2465,10 @@ mod build_call_with_cc {
             function.node_outputs(call_node).len() >= 2,
             "Control + Memory at minimum"
         );
-        assert!(
-            function.call_cc(call_node).is_none(),
-            "no override means no recorded call_cc"
+        assert_eq!(
+            function.get_cc(call_node),
+            function.default_cc(),
+            "no override → effective CC is the function default"
         );
     }
 
@@ -2535,9 +2532,10 @@ mod build_call_with_cc {
             4,
             "fentry-style Call takes no args (ctrl, mem, target, sp)"
         );
-        assert!(
-            function.call_cc(call_node).is_some(),
-            "override CC is recorded even when it clobbers nothing"
+        assert_eq!(
+            function.get_cc(call_node),
+            &override_cc,
+            "override CC is the effective CC even when it clobbers nothing"
         );
         // No clobber outputs → no value_vn clobber tags on this Call.
         assert!(

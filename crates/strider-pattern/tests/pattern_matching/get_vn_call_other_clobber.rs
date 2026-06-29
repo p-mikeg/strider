@@ -69,6 +69,6 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         .all_node_ids()
         .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
         .unwrap();
-    assert!(function.call_cc(call_id).is_some());
+    assert_eq!(function.get_cc(call_id), &override_cc);
     assert_eq!(function.node_outputs(call_id).len(), 2);
 }

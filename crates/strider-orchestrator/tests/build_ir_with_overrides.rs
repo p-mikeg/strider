@@ -72,9 +72,10 @@ fn build_ir_with_applies_per_address_override() {
         .all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("function lifts to one Call");
-    assert!(
-        bfg.call_cc(call_id).is_some(),
-        "override CC must be recorded on the Call"
+    assert_ne!(
+        bfg.get_cc(call_id),
+        bfg.default_cc(),
+        "override CC must be recorded on the Call (effective CC differs from default)"
     );
     let outs = bfg.node_outputs(call_id);
     let override_clobbers = outs.iter().skip(2).count();

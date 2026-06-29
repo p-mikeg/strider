@@ -1416,20 +1416,21 @@ fn asm_fingerprint_extend_from_self_is_noop() {
 }
 
 #[test]
-fn call_cc_default_is_none() {
+fn get_cc_default_falls_back_to_function_cc() {
     let mut function = test_function();
     let nid = function.graph_mut().create_node(
         NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    assert!(function.call_cc(nid).is_none());
-    // get_cc falls back to the (trivial) default CC, which has no stack args.
+    // No recorded descriptor: get_cc falls back to the (trivial) default CC,
+    // which has no stack args.
+    assert_eq!(function.get_cc(nid), function.default_cc());
     assert!(function.get_cc(nid).stack_args.is_none());
 }
 
 #[test]
-fn call_cc_round_trips_and_derives_stack_args() {
+fn get_cc_override_round_trips_and_derives_stack_args() {
     let arch = strider_target::SleighArch::x86_64();
     let regs = arch.probe_regs().unwrap();
     let cc = strider_target::CallingConvention::x86_64_systemv()
@@ -1444,8 +1445,9 @@ fn call_cc_round_trips_and_derives_stack_args() {
         [ValueKind::Control, ValueKind::Memory],
     );
     function.set_call_cc(nid, cc.clone());
-    assert!(function.call_cc(nid).is_some());
-    // get_cc returns the override CC, so its stack_args derive from it.
+    // The override differs from the trivial default, and get_cc returns it,
+    // so its stack_args derive from the override.
+    assert_ne!(function.get_cc(nid), function.default_cc());
     assert_eq!(function.get_cc(nid).stack_args, cc.stack_args,);
 }
 

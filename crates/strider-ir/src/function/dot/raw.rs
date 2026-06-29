@@ -7,7 +7,7 @@
 //! reordering, and no Sleigh register-name translation.  Each node also
 //! shows the per-node side-table state ([`Function::stack_offset`],
 //! the `value_vn` tag (via [`Function::get_vn_for_value`]), [`Function::asm_fingerprint`],
-//! [`Function::call_other_name`], [`Function::call_cc`], and
+//! [`Function::call_other_name`], a `Call`'s clobber-tag count, and
 //! its argument index).  It is purely a debugging aid for inspecting the
 //! real graph shape — pattern queries and the production pipeline use the
 //! pretty renderer / the structured accessors instead.
@@ -101,15 +101,15 @@ impl<'a> RawFunctionDumper<'a> {
         if let Some(name) = f.call_other_name(node) {
             s.push_str(&format!("\nop={name}"));
         }
-        if f.call_cc(node).is_some() {
-            // Override Call: show how many of its outputs carry a clobber
-            // varnode tag (slots past Control/Memory).
+        if matches!(f.node_kind(node), NodeKind::Call) {
+            // Call: show how many of its outputs carry a clobber varnode tag
+            // (slots past Control/Memory).
             let tagged = f
                 .node_outputs(node)
                 .iter()
                 .filter(|&&v| f.get_vn_for_value(v).is_some())
                 .count();
-            s.push_str(&format!("\ncall_cc(clobbers={tagged})"));
+            s.push_str(&format!("\nclobbers={tagged}"));
         }
         if let Some(indices) = self.arg_index.get(&node) {
             s.push_str(&format!("\narg{indices:?}"));

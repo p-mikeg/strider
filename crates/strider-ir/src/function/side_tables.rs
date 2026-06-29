@@ -80,10 +80,10 @@ pub(crate) struct SideTables {
     ///   [`crate::CallDescriptor::CallOther`] with the vn-resolved ABI.
     ///
     /// Sparse: the default Call (function-default CC) and unmodeled
-    /// `CallOther` nodes have no entry.  Stack-arg offsets for override
-    /// `Call`s are derived from the stored CC via
-    /// [`crate::Function::get_cc`].  The convenience accessor
-    /// [`crate::Function::call_cc`] returns `Some` only for the `Call` arm.
+    /// `CallOther` nodes have no entry.  Read only through the typed views
+    /// [`crate::Function::get_cc`] (a `Call`'s effective CC, from which override
+    /// stack-arg offsets derive) and [`crate::Function::call_other_abi`] (a
+    /// `CallOther`'s ABI) — never in its raw enum form.
     pub(crate) call_descriptor: FxHashMap<NodeId, crate::CallDescriptor>,
     /// Maps each calling-convention argument index to the [`ValueId`](s) of
     /// the underlying carrier nodes' outputs:

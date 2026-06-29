@@ -283,51 +283,37 @@ pub(super) fn check_graph_invariants_cc_arity(
     errs: &mut Vec<ValidationError>,
 ) {
     let ret_val_count = function.ret_val_regs().len();
-    let default_ret_val_count = function.call_ret_val_regs().len();
-    let default_clobber_count = function.call_clobbered_regs().len();
-    // No top-level early-return on empty defaults: an override Call
-    // (recorded via `call_cc`) is checked against its tagged output
-    // values even when the function defaults are empty.  The per-node
-    // escapes below preserve the synthetic / partially-built-fixture
-    // behaviour node by node.
     for (node, kind) in function.reachable_kind_iter(reachable) {
         match kind {
             NodeKind::Call => {
-                let outputs = function.node_outputs(node);
-                let actual = outputs.len();
-                if let Some(cc) = function.call_cc(node) {
-                    // Override Call: cross-check arity against the override CC's
-                    // ret-val + clobber lists (projected onto the function's
-                    // tracked set) — the SAME derivation the Call was built
-                    // from.  Deriving from the node's own `value_vn` tags would
-                    // be tautological: dropping a clobber output AND its tag
-                    // changes the tag count and the actual count in lockstep, so
-                    // a wrong-arity Call would pass silently.
-                    let expected = 2
-                        + function.call_ret_vals_for(cc).len()
-                        + function.call_clobbered_for(cc).len();
-                    if actual != expected {
-                        errs.push(ValidationError::NodeOutputCountMismatch {
-                            node,
-                            expected,
-                            actual,
-                        });
-                    }
-                } else {
-                    // Function-default Call: arity against the function's
-                    // default ret-val + clobber lists.  Synthetic-test escape:
-                    // skip when both defaults are empty (trivial CC).
-                    if default_ret_val_count == 0 && default_clobber_count == 0 {
-                        continue;
-                    }
-                    let expected = 2 + default_ret_val_count + default_clobber_count;
-                    if actual != expected {
-                        errs.push(ValidationError::NodeOutputCountMismatch {
-                            node,
-                            expected,
-                            actual,
-                        });
-                    }
+                // Cross-check arity against the Call's *effective* CC (its
+                // per-Call override if recorded, else the function default) —
+                // the SAME derivation the Call was built from.  Deriving from
+                // the node's own `value_vn` tags would be tautological: dropping
+                // a clobber output AND its tag changes the tag count and the
+                // actual count in lockstep, so a wrong-arity Call would pass
+                // silently.
+                let cc = function.get_cc(node);
+                let ret_vals = function.call_ret_vals_for(cc).len();
+                let clobbers = function.call_clobbered_for(cc).len();
+                // Synthetic-test escape: a *function-default* Call (effective CC
+                // equal to the default) whose default CC is trivial (no ret-vals,
+                // no clobbers) is the partially-built-fixture shape — skip arity.
+                // An override Call (effective CC differs from the default) is
+                // always checked, even when its projected lists are empty, to
+                // catch a spurious untagged output slot.
+                let is_override = cc != function.default_cc();
+                if !is_override && ret_vals == 0 && clobbers == 0 {
+                    continue;
+                }
+                let expected = 2 + ret_vals + clobbers;
+                let actual = function.node_outputs(node).len();
+                if actual != expected {
+                    errs.push(ValidationError::NodeOutputCountMismatch {
+                        node,
+                        expected,
+                        actual,
+                    });
                 }
             }
             NodeKind::Return => {
