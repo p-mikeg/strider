@@ -324,8 +324,8 @@ impl FunctionBuilder {
     /// errors (the reg/unique invariant is intended).
     ///
     /// When `terminate` is `true` (the `NoReturn` class), the region is
-    /// closed as part of this call — no separate
-    /// `mark_cur_region_terminated` call is needed.
+    /// closed as part of this call — no separate region-termination
+    /// call is needed.
     /// When `terminate` is `false` (the modeled `Call(abi)` class),
     /// the region's control advances to the CallOther's Control output
     /// and the region stays open.

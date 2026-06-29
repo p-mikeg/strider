@@ -30,8 +30,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 // A NoReturn trap (Linux `BUG_ON`-class) emits a
                 // CallOther with only ctrl + mem (no args / clobbers /
                 // value).  terminate=true closes the region as part of
-                // the build_call_other call — no separate
-                // mark_cur_region_terminated needed.  The empty footprint
+                // the build_call_other call — no separate region-termination
+                // call needed.  The empty footprint
                 // carries no implicit reads/writes and does not advance
                 // memory.
                 let empty_abi = strider_target::BuiltCallOtherAbi {

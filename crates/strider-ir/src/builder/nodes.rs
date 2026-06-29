@@ -39,8 +39,8 @@ impl FunctionBuilder {
     /// by the current SSA values of `ret_vars` in order.
     ///
     /// This method **terminates** the current region unconditionally —
-    /// callers must not call `mark_cur_region_terminated`
-    /// afterwards; doing so would be a double-termination error.
+    /// callers must not terminate it again afterwards; doing so would
+    /// be a double-termination error.
     ///
     /// # Errors
     ///
@@ -81,8 +81,8 @@ impl FunctionBuilder {
     /// resolved CC ([`crate::Function::ret_val_regs`]).
     ///
     /// Like [`Self::build_return`], this **terminates** the current
-    /// region unconditionally.  Callers must not call
-    /// `mark_cur_region_terminated` afterwards.
+    /// region unconditionally.  Callers must not terminate it again
+    /// afterwards.
     ///
     /// The synthetic single-value return path
     /// ([`Self::build_return`] with an explicit `Some(value)` and no

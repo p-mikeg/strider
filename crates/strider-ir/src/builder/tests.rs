@@ -1246,7 +1246,7 @@ fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
 #[test]
 fn build_return_self_terminates() -> Result<()> {
     // build_return owns its own region termination — no external
-    // mark_cur_region_terminated call is needed.  After build_return
+    // termination call is needed.  After build_return
     // returns, the region is already closed and cur_region_control() errors.
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
@@ -1263,7 +1263,7 @@ fn build_return_self_terminates() -> Result<()> {
 #[test]
 fn build_call_other_terminate_true_closes_region() -> Result<()> {
     // build_call_other with terminate=true (the NoReturn class) must
-    // close the region on its own — no external mark_cur_region_terminated.
+    // close the region on its own — no external termination call.
     let mut b = builder_with_region()?;
     b.build_call_other(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
     let ctrl = b.cur_region_control();
