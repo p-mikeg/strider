@@ -317,10 +317,17 @@ fn graph_invariants_region_bad_predecessor() {
         s.f.graph_mut()
             .create_node(NodeKind::Return, [bad_cs_ctrl, s.mem_value], []);
 
+    // A non-Control Region predecessor is caught by local typing (the Region
+    // signature's variadic CTRL tail), reported as a NodeInputKindMismatch on
+    // the Region's bad input slot.
     assert_validation_err(&s.f, |e| {
         matches!(
             e,
-            ValidationError::RegionNonControlPredecessor { input_idx: 1, .. }
+            ValidationError::NodeInputKindMismatch {
+                node,
+                input_idx: 1,
+                ..
+            } if *node == bad_cs
         )
     });
 }
@@ -897,11 +904,10 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
     );
 }
 
-/// regression: a non-reachable
-/// `Region` zombie with stale non-Control inputs must not
-/// produce a false-positive `RegionNonControlPredecessor`
-/// error.  Pre-fix, the empty-input branch was correctly
-/// reachability-gated but the non-empty-input branch was not.
+/// regression: a non-reachable `Region` zombie with stale non-Control inputs
+/// must not produce a false-positive error.  Both the relevant checks
+/// (`check_local_typing`'s input-kind check and the Region empty-predecessor
+/// check) are reachability-scoped, so an unreachable zombie is skipped.
 #[test]
 fn unreachable_region_with_non_control_input_does_not_fire() {
     let mut s = spine();
@@ -923,13 +929,39 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
     );
 
     // The unreachable zombie must be skipped by the reachability gate;
-    // the validator must not flag a `RegionNonControlPredecessor`
-    // error.  (Pre-fix this would have fired.)
+    // the validator must not flag a `NodeInputKindMismatch` on it.
     validate(&s.f).expect(
         "unreachable Region zombies must not produce \
-         RegionNonControlPredecessor errors",
+         NodeInputKindMismatch errors",
     );
 }
+
+/// A control edge must have exactly one successor: a Control output consumed
+/// by two nodes is a malformed fan-out (a real split must go through an `If`,
+/// a real merge through a `Region`).
+#[test]
+fn control_output_consumed_twice_is_flagged() {
+    let mut s = spine();
+    // Entry's single Control output feeds TWO Return terminators.
+    let r1 = s
+        .f
+        .graph_mut()
+        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    stamp(&mut s.f, r1);
+    let r2 = s
+        .f
+        .graph_mut()
+        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    stamp(&mut s.f, r2);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::ReusedControlOutput { node, .. } if *node == s.entry
+        )
+    });
+}
+
 
 #[test]
 fn indirect_branch_with_control_memory_and_value_validates() {

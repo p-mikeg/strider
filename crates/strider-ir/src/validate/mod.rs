@@ -40,10 +40,10 @@ mod use_list_consistency;
 
 use graph_invariants::{
     check_graph_invariants_asm_fingerprints, check_graph_invariants_cc_arity,
-    check_graph_invariants_consts, check_graph_invariants_extend_truncate,
-    check_graph_invariants_memory_chain, check_graph_invariants_phis,
-    check_graph_invariants_region, check_graph_invariants_side_indices,
-    check_graph_invariants_uniqueness,
+    check_graph_invariants_consts, check_graph_invariants_control_single_use,
+    check_graph_invariants_extend_truncate, check_graph_invariants_memory_chain,
+    check_graph_invariants_phis, check_graph_invariants_region,
+    check_graph_invariants_side_indices, check_graph_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 use use_list_consistency::check_use_list_consistency;
@@ -89,6 +89,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
 
     check_graph_invariants_uniqueness(function.graph(), &mut errs);
     check_graph_invariants_region(function.graph(), &reachable, &mut errs);
+    check_graph_invariants_control_single_use(function, &reachable, &mut errs);
     check_graph_invariants_phis(function, &reachable, &mut errs);
     check_graph_invariants_consts(function, &reachable, &mut errs);
     check_graph_invariants_cc_arity(function, &reachable, &mut errs);
@@ -194,19 +195,15 @@ pub enum ValidationError {
     #[error("missing InitialMemory node")]
     MissingInitialMemoryNode,
 
-    #[error(
-        "Region {region:?} input[{input_idx}] producer {producer:?} \
-         has kind {producer_kind:?}, expected Control"
-    )]
-    RegionNonControlPredecessor {
-        region: NodeId,
-        input_idx: usize,
-        producer: NodeId,
-        producer_kind: ValueKind,
-    },
-
     #[error("Region {region:?} has zero predecessors")]
     EmptyRegionPredecessors { region: NodeId },
+
+    #[error(
+        "node {node:?} produces a Control output {value:?} consumed by more than \
+         one node; a control edge has at most one successor (a split must be an \
+         `If`, a merge must go through a `Region`)"
+    )]
+    ReusedControlOutput { node: NodeId, value: ValueId },
 
     #[error(
         "phi node {phi:?} input[0] token producer {producer:?} has kind \

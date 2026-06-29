@@ -63,9 +63,10 @@ pub(super) fn check_graph_invariants_uniqueness(graph: &Graph, errs: &mut Vec<Va
     }
 }
 
-/// Graph invariant: every input of a `Region` node must be a
-/// `Control`-kinded output. Emits `RegionNonControlPredecessor`
-/// per offending input.
+/// Graph invariant: every reachable `Region` node must have at least one
+/// predecessor. Emits `EmptyRegionPredecessors`. (The "every predecessor is
+/// Control" rule is left to `check_local_typing` against the Region
+/// signature's variadic CTRL tail.)
 pub(super) fn check_graph_invariants_region(
     graph: &Graph,
     reachable: &NodeIdSet,
@@ -78,21 +79,44 @@ pub(super) fn check_graph_invariants_region(
         if !matches!(kind, NodeKind::Region) {
             continue;
         }
-        let inputs = graph.node_inputs(node);
-        if inputs.is_empty() {
+        // A Region with zero predecessors is malformed.  (The per-input
+        // "must be Control" rule is NOT checked here — it is already enforced
+        // by `check_local_typing` against the Region signature's variadic CTRL
+        // tail, reported as a `NodeInputKindMismatch`.  Empty-arity, on the
+        // other hand, local typing cannot express: the variadic tail permits
+        // zero inputs, so this check is the only thing pinning >= 1.)
+        if graph.node_inputs(node).is_empty() {
             errs.push(ValidationError::EmptyRegionPredecessors { region: node });
-            continue;
         }
-        for (idx, target) in inputs.into_iter().enumerate() {
-            let kind = graph.value_kind(target);
-            if kind != ValueKind::Control {
-                let (producer, _) = graph.value_definition(target);
-                errs.push(ValidationError::RegionNonControlPredecessor {
-                    region: node,
-                    input_idx: idx,
-                    producer,
-                    producer_kind: kind,
-                });
+    }
+}
+
+/// Graph invariant: no reachable node's `Control` output may be consumed by
+/// more than one node — a control edge has at most one successor. A fan-out
+/// (`ReusedControlOutput`) is a malformed split that must instead be produced
+/// by an `If`, or a merge that must go through a `Region`. Adapted from
+/// spidir's `verify_control_outputs`.
+///
+/// spidir additionally rejects a *zero*-use control output (its functions
+/// always terminate), but strider deliberately tolerates un-terminated control
+/// in minimal / partially-built synthetic graphs, so only the fan-out half of
+/// the invariant is enforced here.
+pub(super) fn check_graph_invariants_control_single_use(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph = function.graph();
+    for (node, _kind) in function.reachable_kind_iter(reachable) {
+        for &value in function.node_outputs(node).iter() {
+            if function.value_kind(value) != ValueKind::Control {
+                continue;
+            }
+            // O(1): a second use means fan-out. Zero or one use is fine.
+            let mut uses = graph.value_uses(value);
+            let _first = uses.next();
+            if uses.next().is_some() {
+                errs.push(ValidationError::ReusedControlOutput { node, value });
             }
         }
     }

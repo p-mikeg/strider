@@ -99,6 +99,42 @@ not deletions, offered for your call:
 
 ---
 
+## Implementation outcomes (follow-up)
+
+The user requested items 1, 3, and 4. Outcomes:
+
+- **#1 — Region control-kind check (DONE).** Removed `RegionNonControlPredecessor`
+  (the check and the error variant): a non-Control Region predecessor is already
+  flagged by `check_local_typing` against the Region signature's variadic `CTRL`
+  tail, reported as `NodeInputKindMismatch`. The `EmptyRegionPredecessors` check
+  stays — local typing's variadic-from-zero arity cannot express "≥ 1
+  predecessor". Verified by re-pointing the existing test at the surviving error
+  before deleting.
+
+- **#3 — control-output single-use (PARTIAL: fan-out half shipped).** Added
+  `check_graph_invariants_control_single_use` + `ReusedControlOutput`, porting
+  spidir's `verify_control_outputs`. Empirically, spidir's *zero*-use half
+  (`UnusedControl`) does **not** fit strider: it fires on minimal / partially
+  built synthetic fixtures (an `Entry` with no terminator), because strider —
+  unlike spidir, whose functions always terminate — tolerates un-terminated
+  control in synthetic graphs. Enforcing it would be a validator *contract*
+  change ("every function terminates") with workspace-wide fixture churn, so the
+  unused half is deferred for a decision. The fan-out half is unambiguous (no
+  valid graph has control fan-out): it caught **2 genuinely malformed test
+  fixtures** (a `Return` wired to `Entry`'s Control, fanning it out alongside the
+  entry Region), now fixed. Real lifted IR satisfies it — 870 pytest lifts
+  through `build()→validate()` stayed clean.
+
+- **#4 — data-flow domination (BLOCKED on a scheduler).** spidir's check pins
+  every floating sea-of-nodes data node to a dominator-tree location via a
+  *schedule*, then checks dominance (phi operands against their predecessor
+  block, not the phi's region). strider is **unscheduled** — pure data nodes
+  float and `control_dominators` only covers the control subgraph — so there is
+  no location to check a floating value's "definition point" against. A faithful
+  port needs a scheduler (a substantial new component); a restricted control-only
+  variant would largely duplicate the existing phi-token / phi-arity / region
+  checks. Recommend either building a scheduler as its own project or skipping.
+
 ## Conclusion
 
 strider-ir and strider-graph hold up against a hand-written expert reference:

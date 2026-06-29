@@ -2317,9 +2317,19 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
         b.build_int_const_limbs(&[0x1234_5678, 0, 0, 0x8000_0000_0000_0000], ValueType::I256)?;
     b.set_lift_addr(None);
     // Wire the wide const into the reachable spine via Return[ctrl, mem, value].
+    // Chain control off the entry Region (which already consumes Entry's
+    // Control) rather than Entry directly: feeding this Return from Entry's
+    // Control would fan it out to two consumers (the region AND the Return),
+    // which the single-successor control invariant rejects.
+    let region_node = b
+        .function()
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(b.function().node_kind(*n), NodeKind::Region))
+        .unwrap();
     let entry_ctrl = b
         .function()
-        .node_outputs(b.entry())
+        .node_outputs(region_node)
         .iter()
         .copied()
         .next()
@@ -2375,9 +2385,19 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         .copied()
         .next()
         .unwrap();
+    // Chain control off the entry Region (which already consumes Entry's
+    // Control) rather than Entry directly: feeding this Return from Entry's
+    // Control would fan it out to two consumers (the region AND the Return),
+    // which the single-successor control invariant rejects.
+    let region_node = b
+        .function()
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(b.function().node_kind(*n), NodeKind::Region))
+        .unwrap();
     let entry_ctrl = b
         .function()
-        .node_outputs(b.entry())
+        .node_outputs(region_node)
         .iter()
         .copied()
         .next()
