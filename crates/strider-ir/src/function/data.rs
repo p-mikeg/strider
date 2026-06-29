@@ -82,6 +82,140 @@ where
     dst
 }
 
+/// Per-function overlay tables keyed by arena ids (`NodeId`, or a node's output
+/// `ValueId`) or the CC arg index — data attached to the graph but not part of
+/// its structural identity.  Grouped into one struct so [`Function::new`]
+/// defaults them in a single line and [`Function::compact`] remaps them in a
+/// single [`SideTables::remap`] call; each is still surfaced through its own
+/// typed accessor on [`Function`].  All entries are remapped (or dropped) when
+/// the arena is compacted.
+#[derive(Default)]
+pub(crate) struct SideTables {
+    /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
+    /// nodes.
+    pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
+    /// Per-node sorted-deduplicated list of machine-instruction addresses
+    /// whose lifting or rewrite contributed to the node's value.
+    // `SmallVec<[u64; 2]>` because the common case is 1–2 contributor
+    // addresses per node.  Inlining those avoids a heap allocation per
+    // non-empty entry — on graphs with thousands of nodes this drops
+    // thousands of small allocations from the lift+optimize pipeline.
+    // The mutation API (`extend_asm_fingerprint`,
+    // `extend_asm_fingerprint_from`) keeps using `&[u64]` /
+    // `impl IntoIterator<Item = u64>` so callers are unaffected.
+    pub(crate) asm_fingerprints: SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
+    /// The varnode a value *represents*, keyed by [`ValueId`].  Two
+    /// disjoint populations share this one map:
+    ///
+    /// * A lift-time [`crate::node::NodeKind::Phi`]'s single output value →
+    ///   the source-level varnode the phi tracks.  Absent entries mark
+    ///   anonymous phis synthesised by opt passes (and every non-phi,
+    ///   non-clobber value).
+    /// * A [`crate::node::NodeKind::Call`] / [`crate::node::NodeKind::CallOther`]
+    ///   clobber output value → the register that call clobbers.  Set for
+    ///   every clobber output at build time (both the function-default and
+    ///   the override / implicit-write paths), so a clobber output's
+    ///   varnode is recovered with a single lookup, no slot arithmetic.
+    ///
+    /// Keyed by `ValueId` (not `NodeId`) so it remaps through the
+    /// `ValueId` translation that [`Function::compact`] applies.
+    pub(crate) value_vn: FxHashMap<ValueId, rsleigh::Vn>,
+    /// Per-[`crate::node::NodeKind::Call`] or
+    /// [`crate::node::NodeKind::CallOther`] descriptor, recorded at build
+    /// time for non-default calls:
+    ///
+    /// - `Call` nodes built with a per-address CC override store
+    ///   [`crate::CallDescriptor::Call`].
+    /// - Modeled `CallOther` nodes store
+    ///   [`crate::CallDescriptor::CallOther`] with the vn-resolved ABI.
+    ///
+    /// Sparse: the default Call (function-default CC) and unmodeled
+    /// `CallOther` nodes have no entry.  Stack-arg offsets for override
+    /// `Call`s are derived from the stored CC via
+    /// [`Function::call_stack_args_override`].  The convenience accessor
+    /// [`Function::call_cc`] returns `Some` only for the `Call` arm.
+    pub(crate) call_descriptor: FxHashMap<NodeId, crate::CallDescriptor>,
+    /// Maps each calling-convention argument index to the [`ValueId`](s) of
+    /// the underlying carrier nodes' outputs:
+    /// [`crate::node::NodeKind::InitialVar`] for register args,
+    /// [`crate::node::NodeKind::Load`] for stack args.  Each carrier node has
+    /// a single output, so the carrier node is recoverable losslessly via
+    /// [`Graph::producer`].
+    ///
+    /// `Vec<ValueId>` per index because a stack slot may have multiple `Load`
+    /// nodes at the same `sp+K` offset but different widths.  Register args
+    /// have a `Vec` of size 1.
+    ///
+    /// Populated by `FunctionArgDetect`; empty until that pass runs.
+    arg_index_to_values: FxHashMap<u32, Vec<ValueId>>,
+    /// Stack slot for Store/Load nodes whose address decomposes to
+    /// `base + K` for a single concrete `K`, where `base` is the SP-derived
+    /// terminal node (`InitialVar(sp)` or an alignment-masked `sp & -16`).
+    /// Stored as `(base, K)`: the offset `K` is only meaningful relative to
+    /// its `base`, and two accesses are the same slot iff they share both.
+    /// Populated by the `StackOffsetDetect` classifier.  The phi-of-offsets
+    /// case (address is a phi of different constants per branch) is not
+    /// recorded — consumers can re-decompose via `decompose_sp` if needed.
+    stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>>,
+    /// O(1) varnode → `InitialVar(vn)` node-id accelerator for
+    /// indirect-resolve sites and the lifter's lazy `read_or_init_var`
+    /// fallback.  Maintained at every canonical `InitialVar`
+    /// creation site (the lift-time path and the orchestrator
+    /// fallback) and remapped through [`NodeIdRemap`] by
+    /// [`Function::compact`].
+    initial_var_index: FxHashMap<rsleigh::Vn, NodeId>,
+}
+
+impl SideTables {
+    /// Remaps every arena-id key / value through `remap` after a
+    /// `retain_reachable` compaction; an entry whose node or value did not
+    /// survive is dropped.  Called once by [`Function::compact`].
+    fn remap(&mut self, remap: &NodeIdRemap) {
+        // NodeId-keyed tables: translate the key, drop pruned nodes.
+        remap_node_keyed(&mut self.call_other_names, remap);
+        remap_node_keyed(&mut self.asm_fingerprints, remap);
+        self.call_descriptor = remap_hashmap(&mut self.call_descriptor, |old, d| {
+            remap.node_old_to_new(old).map(|n| (n, d))
+        });
+        // `stack_offsets`: the only NodeId-keyed table whose VALUE also
+        // references a node (the slot `base`, a `ValueId`); remap both.
+        let mut new_stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>> =
+            SecondaryMap::new();
+        for (old_id, slot) in self.stack_offsets.iter() {
+            let Some((old_base, off)) = *slot else {
+                continue;
+            };
+            if let (Some(new_id), Some(new_base)) = (
+                remap.node_old_to_new(old_id),
+                remap.value_old_to_new(old_base),
+            ) {
+                new_stack_offsets[new_id] = Some((new_base, off));
+            }
+        }
+        self.stack_offsets = new_stack_offsets;
+        // `value_vn`: ValueId-keyed (a phi / clobber output); translate keys.
+        self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn| {
+            remap
+                .value_old_to_new(old_value)
+                .map(|new_value| (new_value, vn))
+        });
+        // `initial_var_index`: Vn-keyed with a NodeId payload; remap the value.
+        self.initial_var_index = remap_hashmap(&mut self.initial_var_index, |vn, old_id| {
+            remap.node_old_to_new(old_id).map(|new_id| (vn, new_id))
+        });
+        // `arg_index_to_values`: index-keyed with a `Vec<ValueId>` payload;
+        // filter-map the carriers, dropping an index whose carriers all vanish.
+        self.arg_index_to_values =
+            remap_hashmap(&mut self.arg_index_to_values, |index, old_values| {
+                let mapped: Vec<ValueId> = old_values
+                    .into_iter()
+                    .filter_map(|old_value| remap.value_old_to_new(old_value))
+                    .collect();
+                (!mapped.is_empty()).then_some((index, mapped))
+            });
+    }
+}
+
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
 ///
 /// [`Function::new`] is the single constructor: it builds the `Entry` node
@@ -157,86 +291,11 @@ pub struct Function {
 
     // ── overlay tables ─────────────────────────────────────────────────────
     //
-    // These side tables hold per-function data that is keyed by NodeId (or, for
-    // `value_vn`, by a node's output ValueId) but is not part of the
-    // structural graph identity.  They are remapped by [`Self::compact`]
-    // whenever the arena is compacted.
-    /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
-    /// nodes.
-    pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
-    /// Per-node sorted-deduplicated list of machine-instruction addresses
-    /// whose lifting or rewrite contributed to the node's value.
-    // `SmallVec<[u64; 2]>` because the common case is 1–2 contributor
-    // addresses per node.  Inlining those avoids a heap allocation per
-    // non-empty entry — on graphs with thousands of nodes this drops
-    // thousands of small allocations from the lift+optimize pipeline.
-    // The mutation API (`extend_asm_fingerprint`,
-    // `extend_asm_fingerprint_from`) keeps using `&[u64]` /
-    // `impl IntoIterator<Item = u64>` so callers are unaffected.
-    pub(crate) asm_fingerprints: SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
-    /// The varnode a value *represents*, keyed by [`ValueId`].  Two
-    /// disjoint populations share this one map:
-    ///
-    /// * A lift-time [`crate::node::NodeKind::Phi`]'s single output value →
-    ///   the source-level varnode the phi tracks.  Absent entries mark
-    ///   anonymous phis synthesised by opt passes (and every non-phi,
-    ///   non-clobber value).
-    /// * A [`crate::node::NodeKind::Call`] / [`crate::node::NodeKind::CallOther`]
-    ///   clobber output value → the register that call clobbers.  Set for
-    ///   every clobber output at build time (both the function-default and
-    ///   the override / implicit-write paths), so a clobber output's
-    ///   varnode is recovered with a single lookup, no slot arithmetic.
-    ///
-    /// Keyed by `ValueId` (not `NodeId`) so it remaps through the
-    /// `ValueId` translation that [`Self::compact`] applies.
-    pub(crate) value_vn: FxHashMap<ValueId, rsleigh::Vn>,
-    /// Per-[`crate::node::NodeKind::Call`] or
-    /// [`crate::node::NodeKind::CallOther`] descriptor, recorded at build
-    /// time for non-default calls:
-    ///
-    /// - `Call` nodes built with a per-address CC override store
-    ///   [`crate::CallDescriptor::Call`].
-    /// - Modeled `CallOther` nodes store
-    ///   [`crate::CallDescriptor::CallOther`] with the vn-resolved ABI.
-    ///
-    /// Sparse: the default Call (function-default CC) and unmodeled
-    /// `CallOther` nodes have no entry.  Stack-arg offsets for override
-    /// `Call`s are derived from the stored CC via
-    /// [`Self::call_stack_args_override`].  The convenience accessor
-    /// [`Self::call_cc`] returns `Some` only for the `Call` arm.
-    pub(crate) call_descriptor: FxHashMap<NodeId, crate::CallDescriptor>,
-
-    /// Maps each calling-convention argument index to the [`ValueId`](s) of
-    /// the underlying carrier nodes' outputs:
-    /// [`crate::node::NodeKind::InitialVar`] for register args,
-    /// [`crate::node::NodeKind::Load`] for stack args.  Each carrier node has
-    /// a single output, so the carrier node is recoverable losslessly via
-    /// [`Graph::producer`].
-    ///
-    /// `Vec<ValueId>` per index because a stack slot may have multiple `Load`
-    /// nodes at the same `sp+K` offset but different widths.  Register args
-    /// have a `Vec` of size 1.
-    ///
-    /// Populated by `FunctionArgDetect`; empty until that pass runs.
-    arg_index_to_values: FxHashMap<u32, Vec<ValueId>>,
-
-    /// Stack slot for Store/Load nodes whose address decomposes to
-    /// `base + K` for a single concrete `K`, where `base` is the SP-derived
-    /// terminal node (`InitialVar(sp)` or an alignment-masked `sp & -16`).
-    /// Stored as `(base, K)`: the offset `K` is only meaningful relative to
-    /// its `base`, and two accesses are the same slot iff they share both.
-    /// Populated by the `StackOffsetDetect` classifier.  The phi-of-offsets
-    /// case (address is a phi of different constants per branch) is not
-    /// recorded — consumers can re-decompose via `decompose_sp` if needed.
-    stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>>,
-
-    /// O(1) varnode → `InitialVar(vn)` node-id accelerator for
-    /// indirect-resolve sites and the lifter's lazy `read_or_init_var`
-    /// fallback.  Maintained at every canonical `InitialVar`
-    /// creation site (the lift-time path and the orchestrator
-    /// fallback) and remapped through [`NodeIdRemap`] by
-    /// [`Self::compact`].
-    initial_var_index: FxHashMap<rsleigh::Vn, NodeId>,
+    // Per-function data keyed by arena ids but not part of the structural graph
+    // identity, grouped into [`SideTables`]; defaulted in one line by
+    // [`Self::new`] and remapped in one [`SideTables::remap`] call by
+    // [`Self::compact`].  Surfaced through the typed accessors below.
+    pub(crate) side_tables: SideTables,
 
     /// Every integer-constant value referenced by an `IntConst(id)` node.
     ///
@@ -292,13 +351,7 @@ impl Function {
             endianness,
             all_vns,
             vn_to_container,
-            call_other_names: SecondaryMap::default(),
-            asm_fingerprints: SecondaryMap::default(),
-            value_vn: FxHashMap::default(),
-            call_descriptor: FxHashMap::default(),
-            arg_index_to_values: FxHashMap::default(),
-            stack_offsets: SecondaryMap::default(),
-            initial_var_index: FxHashMap::default(),
+            side_tables: SideTables::default(),
             const_interner: entity_utils::EntityInterner::default(),
         }
     }
@@ -616,14 +669,14 @@ impl Function {
     /// been recorded for that node.
     #[inline]
     pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
-        self.call_other_names[node_id].as_deref()
+        self.side_tables.call_other_names[node_id].as_deref()
     }
 
     /// Associates a user-op name with a [`crate::node::NodeKind::CallOther`]
     /// node.  Replaces any prior value.
     #[inline]
     pub fn set_call_other_name(&mut self, node_id: NodeId, name: String) {
-        self.call_other_names[node_id] = Some(name);
+        self.side_tables.call_other_names[node_id] = Some(name);
     }
 
     /// Returns the source varnode a value represents, or `None`. Single
@@ -633,7 +686,7 @@ impl Function {
     /// clobbered register.
     #[inline]
     pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
-        self.value_vn.get(&value).copied()
+        self.side_tables.value_vn.get(&value).copied()
     }
 
     /// Records that `value` represents varnode `vn`. Replaces any prior value.
@@ -649,7 +702,7 @@ impl Function {
     /// edges.
     #[inline]
     pub fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
-        self.value_vn.insert(value, vn);
+        self.side_tables.value_vn.insert(value, vn);
     }
 
     /// Returns the [`crate::CallDescriptor`] recorded for `node_id`, or
@@ -659,13 +712,13 @@ impl Function {
     #[inline]
     #[cfg(test)]
     pub fn call_descriptor(&self, node_id: NodeId) -> Option<&crate::CallDescriptor> {
-        self.call_descriptor.get(&node_id)
+        self.side_tables.call_descriptor.get(&node_id)
     }
 
     /// Records `descriptor` for `node_id`.  Replaces any prior value.
     #[inline]
     pub fn set_call_descriptor(&mut self, node_id: NodeId, descriptor: crate::CallDescriptor) {
-        self.call_descriptor.insert(node_id, descriptor);
+        self.side_tables.call_descriptor.insert(node_id, descriptor);
     }
 
     /// Convenience accessor: returns the override calling convention recorded
@@ -676,7 +729,7 @@ impl Function {
     /// "function-default" can use this without importing [`crate::CallDescriptor`].
     #[inline]
     pub fn call_cc(&self, node_id: NodeId) -> Option<&strider_target::BuiltCallingConvention> {
-        match self.call_descriptor.get(&node_id)? {
+        match self.side_tables.call_descriptor.get(&node_id)? {
             crate::CallDescriptor::Call(cc) => Some(cc),
             crate::CallDescriptor::CallOther(_) => None,
         }
@@ -692,7 +745,7 @@ impl Function {
     #[inline]
     #[cfg(any(test, feature = "test-util"))]
     pub fn set_call_cc(&mut self, node_id: NodeId, cc: strider_target::BuiltCallingConvention) {
-        self.call_descriptor
+        self.side_tables.call_descriptor
             .insert(node_id, crate::CallDescriptor::Call(cc));
     }
 
@@ -701,7 +754,7 @@ impl Function {
     /// modeled `CallOther`.
     #[inline]
     pub fn call_stack_args_override(&self, node_id: NodeId) -> Option<strider_target::StackArgs> {
-        match self.call_descriptor.get(&node_id)? {
+        match self.side_tables.call_descriptor.get(&node_id)? {
             crate::CallDescriptor::Call(cc) => cc.stack_args,
             crate::CallDescriptor::CallOther(_) => None,
         }
@@ -718,7 +771,7 @@ impl Function {
     /// [`Graph::producer`].
     #[inline]
     pub fn arg_index_to_values(&self, index: u32) -> &[ValueId] {
-        self.arg_index_to_values
+        self.side_tables.arg_index_to_values
             .get(&index)
             .map_or(&[], Vec::as_slice)
     }
@@ -731,7 +784,7 @@ impl Function {
     /// for the same offset).
     #[inline]
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
-        self.arg_index_to_values
+        self.side_tables.arg_index_to_values
             .entry(index)
             .or_default()
             .push(value);
@@ -740,7 +793,7 @@ impl Function {
     /// Iterate over all registered argument indices (unordered).
     #[inline]
     pub fn iter_arg_indices(&self) -> impl Iterator<Item = u32> + '_ {
-        self.arg_index_to_values.keys().copied()
+        self.side_tables.arg_index_to_values.keys().copied()
     }
 
     /// Drop registered argument carriers for every index `>= first`.
@@ -751,7 +804,7 @@ impl Function {
     /// (which occupy indices `0 .. first`).
     #[inline]
     pub fn clear_arg_values_from(&mut self, first: u32) {
-        self.arg_index_to_values.retain(|&index, _| index < first);
+        self.side_tables.arg_index_to_values.retain(|&index, _| index < first);
     }
 
     // ── stack_offsets accessors ───────────────────────────────────────────
@@ -764,13 +817,13 @@ impl Function {
     /// offset when their bases match.
     #[inline]
     pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i128)> {
-        self.stack_offsets[id]
+        self.side_tables.stack_offsets[id]
     }
 
     /// Records a concrete stack slot `(base, offset)` for a Store/Load node.
     #[inline]
     pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i128) {
-        self.stack_offsets[id] = Some((base, offset));
+        self.side_tables.stack_offsets[id] = Some((base, offset));
     }
 
     // ── initial_var_index accessors ───────────────────────────────────────
@@ -783,7 +836,7 @@ impl Function {
     /// single output's use-list is non-empty via [`Graph::value_uses`]).
     #[inline]
     pub fn initial_var_for(&self, vn: rsleigh::Vn) -> Option<NodeId> {
-        self.initial_var_index.get(&vn).copied()
+        self.side_tables.initial_var_index.get(&vn).copied()
     }
 
     /// Registers `(vn, node_id)` in the `InitialVar` index.  Replaces
@@ -792,7 +845,7 @@ impl Function {
     /// advisory and never re-checked.
     #[inline]
     pub fn register_initial_var(&mut self, vn: rsleigh::Vn, node_id: NodeId) {
-        self.initial_var_index.insert(vn, node_id);
+        self.side_tables.initial_var_index.insert(vn, node_id);
     }
 
     /// Iterates the `initial_var_index` as `(vn, node_id)` pairs.  Used by the
@@ -802,14 +855,14 @@ impl Function {
     pub(crate) fn initial_var_index_entries(
         &self,
     ) -> impl Iterator<Item = (rsleigh::Vn, NodeId)> + '_ {
-        self.initial_var_index.iter().map(|(&vn, &id)| (vn, id))
+        self.side_tables.initial_var_index.iter().map(|(&vn, &id)| (vn, id))
     }
 
     /// Iterates the `value_vn` map as `(value, vn)` pairs.  Used by the
     /// validator to enforce that every key is a live value output.
     #[inline]
     pub(crate) fn value_vn_entries(&self) -> impl Iterator<Item = (ValueId, rsleigh::Vn)> + '_ {
-        self.value_vn.iter().map(|(&value, &vn)| (value, vn))
+        self.side_tables.value_vn.iter().map(|(&value, &vn)| (value, vn))
     }
 
     /// Returns the entry stack-pointer value — the output of the
@@ -836,7 +889,7 @@ impl Function {
     /// contributors have been recorded.
     #[inline]
     pub fn asm_fingerprint(&self, id: NodeId) -> &[u64] {
-        self.asm_fingerprints[id].as_slice()
+        self.side_tables.asm_fingerprints[id].as_slice()
     }
 
     /// Unions `contributors` into `node_id`'s fingerprint.  Result is kept
@@ -850,7 +903,7 @@ impl Function {
         // and deduplicated.  Both `m` (existing) and `k` (contributors) are
         // tiny (a handful of addresses), so the standard extend + sort + dedup
         // is the right wheel — no hand-rolled two-pointer merge needed.
-        let fp = &mut self.asm_fingerprints[node_id];
+        let fp = &mut self.side_tables.asm_fingerprints[node_id];
         fp.extend_from_slice(contributors);
         fp.sort_unstable();
         fp.dedup();
@@ -863,7 +916,7 @@ impl Function {
             return;
         }
         let src_slice: smallvec::SmallVec<[u64; 4]> =
-            self.asm_fingerprints[src].iter().copied().collect();
+            self.side_tables.asm_fingerprints[src].iter().copied().collect();
         self.extend_asm_fingerprint(dst, &src_slice);
     }
 
@@ -951,75 +1004,11 @@ impl Function {
             )
         })?;
         self.entry = new_entry;
-        // Remap the NodeId-keyed overlay tables through the
-        // old→new translation table produced by `retain_reachable`.
-        remap_node_keyed(&mut self.call_other_names, &remap);
-        remap_node_keyed(&mut self.asm_fingerprints, &remap);
-        // `call_descriptor` is a sparse `FxHashMap<NodeId, _>` (calls are
-        // rare and a descriptor payload can be large), so remap its KEYS
-        // through the translation table, dropping entries whose Call /
-        // CallOther node was pruned.
-        self.call_descriptor = remap_hashmap(&mut self.call_descriptor, |old, d| {
-            remap.node_old_to_new(old).map(|n| (n, d))
-        });
-        // `stack_offsets` is the only NodeId-keyed side-table whose VALUE
-        // also references a node — the slot `base` (a `ValueId`).  So
-        // remap both the key (NodeId) and the value's base through the same
-        // translation table.  An entry whose node or base didn't survive
-        // compaction is dropped (the slot becomes "unknown", which is safe —
-        // consumers treat a missing entry as non-stack).
-        let mut new_stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>> =
-            SecondaryMap::new();
-        for (old_id, slot) in self.stack_offsets.iter() {
-            let Some((old_base, off)) = *slot else {
-                continue;
-            };
-            if let (Some(new_id), Some(new_base)) = (
-                remap.node_old_to_new(old_id),
-                remap.value_old_to_new(old_base),
-            ) {
-                new_stack_offsets[new_id] = Some((new_base, off));
-            }
-        }
-        self.stack_offsets = new_stack_offsets;
-        // `all_vns` is a `Vec<rsleigh::Vn>` with no node / value keys, and
-        // `default_cc` holds `rsleigh::Vn` values (not arena ids), so
-        // neither needs a remap.  (`default_cc` is always a real value —
-        // the trivial CC for synthetic functions — never `None`.)
-        // `vn_to_container` is likewise keyed and valued on plain
-        // `rsleigh::Vn`s (not arena ids), so it needs no remap either.
-        // `value_vn` is `FxHashMap<ValueId, Vn>` — keyed by a Phi's single
-        // output value or a Call/CallOther clobber output value.  Translate
-        // every key through the same `ValueId` remap; an entry whose value
-        // did not survive compaction is dropped (the phi / clobber output
-        // became unreachable).
-        self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn| {
-            remap
-                .value_old_to_new(old_value)
-                .map(|new_value| (new_value, vn))
-        });
-        // `initial_var_index` is `FxHashMap<Vn, NodeId>` — Vn-keyed, not
-        // NodeId-keyed, so the standard `SecondaryMap` remap helper
-        // doesn't fit.  Entries whose NodeId didn't survive compaction
-        // (the InitialVar became unreachable and was dropped) are
-        // silently elided — the orchestrator's `read_or_init_var`
-        // fallback will lazily re-create them as needed.
-        self.initial_var_index = remap_hashmap(&mut self.initial_var_index, |vn, old_id| {
-            remap.node_old_to_new(old_id).map(|new_id| (vn, new_id))
-        });
-        // `arg_index_to_values` is `FxHashMap<u32, Vec<ValueId>>` —
-        // index-keyed with `ValueId` payloads, so (like `initial_var_index`)
-        // it needs an inline remap.  Carrier values whose value didn't
-        // survive compaction are dropped; an index whose carriers all
-        // vanished is removed entirely.
-        self.arg_index_to_values =
-            remap_hashmap(&mut self.arg_index_to_values, |index, old_values| {
-                let mapped: Vec<ValueId> = old_values
-                    .into_iter()
-                    .filter_map(|old_value| remap.value_old_to_new(old_value))
-                    .collect();
-                (!mapped.is_empty()).then_some((index, mapped))
-            });
+        // Remap all the arena-id-keyed overlay tables through the old→new
+        // translation produced by `retain_reachable`.  `all_vns`, `default_cc`
+        // and `vn_to_container` hold plain `rsleigh::Vn`s (no arena ids), so
+        // they need no remap.
+        self.side_tables.remap(&remap);
         // GC the const interner over only the values referenced by surviving
         // `IntConst(id)` nodes, rewriting each survivor's id to the new dense
         // id, then re-key the graph's dedup cache over those rewritten ids.
