@@ -74,7 +74,7 @@ pub(crate) fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsl
 /// `Function`; every other [`Graph`] method is reached explicitly through
 /// [`Function::graph`] / [`Function::graph_mut`].
 pub struct Function {
-    pub(crate) graph: Graph,
+    graph: Graph,
     /// The `Entry` node — always present (built by [`Function::new`]).
     entry: NodeId,
 
@@ -218,7 +218,7 @@ impl Function {
     /// width-checked `intern_int_const` / `intern_int_const_limbs`; this raw
     /// entry is used only by tests.
     #[cfg(test)]
-    pub fn intern_const(
+    pub(crate) fn intern_const(
         &mut self,
         value: crate::const_value::ConstValue,
     ) -> crate::const_value::ConstId {
@@ -259,7 +259,7 @@ impl Function {
     /// Looks up a const value by id.  The id must have been produced by
     /// `intern_const` / `intern_int_const*` on this function; ids from other
     /// functions are not portable.
-    pub fn const_value(&self, id: crate::const_value::ConstId) -> &crate::const_value::ConstValue {
+    pub(crate) fn const_value(&self, id: crate::const_value::ConstId) -> &crate::const_value::ConstValue {
         &self.const_interner[id]
     }
 
@@ -267,7 +267,7 @@ impl Function {
     /// dangling id rather than panicking.  The debug renderers use this so
     /// they can label a malformed graph (e.g. one inspected mid-rewrite)
     /// instead of aborting.
-    pub fn const_value_opt(
+    pub(crate) fn const_value_opt(
         &self,
         id: crate::const_value::ConstId,
     ) -> Option<&crate::const_value::ConstValue> {
@@ -316,7 +316,7 @@ impl Function {
     /// For diagnostic consumers (the dot dumpers) that must tolerate a
     /// partially-built graph; analysis code uses `initial_vn` and relies on
     /// the invariant.
-    pub fn initial_vn_opt(&self, id: crate::node::InitialVnId) -> Option<rsleigh::Vn> {
+    pub(crate) fn initial_vn_opt(&self, id: crate::node::InitialVnId) -> Option<rsleigh::Vn> {
         self.all_vns.get(id.index()).copied()
     }
 
@@ -328,7 +328,7 @@ impl Function {
     /// REGISTER/UNIQUE vns not in the map. Returns `vn` unchanged when
     /// nothing tracked contains it, or when `vn` is not in an aliasable
     /// (REGISTER/UNIQUE) space.
-    pub fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
+    pub(crate) fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
         if let Some(c) = self.vn_to_container.get(vn) {
             return *c;
         }
@@ -387,7 +387,7 @@ impl Function {
     /// sub-register ABI ret reg (e.g. `eax`) classified as the return
     /// value when the function tracks the wider container (`rax`) instead
     /// of silently dropping it.  Identity on full-width preset regs.
-    pub fn call_ret_vals_for(
+    pub(crate) fn call_ret_vals_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
@@ -421,7 +421,7 @@ impl Function {
     /// To obtain the FULL combined set (ret-vals ++ clobbers) for callers
     /// that need the old single-list shape, chain the two accessors:
     /// `call_ret_vals_for(cc).into_iter().chain(call_clobbered_for(cc))`.
-    pub fn call_clobbered_for(
+    pub(crate) fn call_clobbered_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
@@ -495,7 +495,7 @@ impl Function {
     /// `!= stack_vn`).
     #[inline]
     #[cfg(test)]
-    pub fn call_other_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
+    pub(crate) fn call_other_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
         let stack_vn = self.default_cc.stack_vn;
         self.all_vns
             .iter()
@@ -514,46 +514,22 @@ impl Function {
         self.side_tables.call_other_names[node_id].as_deref()
     }
 
-    /// Associates a user-op name with a [`crate::node::NodeKind::CallOther`]
-    /// node.  Replaces any prior value.
-    #[inline]
-    pub fn set_call_other_name(&mut self, node_id: NodeId, name: String) {
-        self.side_tables.call_other_names[node_id] = Some(name);
-    }
-
     /// Returns the source varnode a value represents, or `None`. Single
     /// value-keyed view over `value_vn`, which tags three populations: a
     /// lift-time `Phi`'s tracked varnode, a `Call`/`CallOther` ret-val
     /// output's return register, and a `Call`/`CallOther` clobber output's
     /// clobbered register.
-    #[inline]
-    pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
-        self.side_tables.value_vn.get(&value).copied()
-    }
-
-    /// Records that `value` represents varnode `vn`. Replaces any prior value.
     ///
-    /// CONTRACT — this one map holds TWO disjoint facts, distinguished only by
+    /// CONTRACT — `value_vn` holds TWO disjoint facts, distinguished only by
     /// the producing node's kind (they never collide because `Phi` outputs and
     /// `Call`/`CallOther` outputs are distinct `ValueId`s): a lift-time `Phi`'s
     /// source-level varnode tag, and a `Call`/`CallOther` ret-val / clobber
     /// output's register.  A reader must therefore filter by `producer(value)`'s
     /// kind before interpreting the tag — e.g. the jump-table classifier's
-    /// Phi-of-IntConst arm must not mistake a clobber tag for a phi tag.  Valid
-    /// targets are exactly those populations; not control / memory / phi-token
-    /// edges.
+    /// Phi-of-IntConst arm must not mistake a clobber tag for a phi tag.
     #[inline]
-    pub fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
-        self.side_tables.value_vn.insert(value, vn);
-    }
-
-    /// Records a [`crate::CallDescriptor`] for `node_id`.  Replaces any prior
-    /// value.  The descriptor is never read back in its raw enum form — the
-    /// only typed views onto it are [`Self::get_cc`] (a `Call`'s effective CC)
-    /// and [`Self::call_other_abi`] (a `CallOther`'s ABI).
-    #[inline]
-    pub fn set_call_descriptor(&mut self, node_id: NodeId, descriptor: crate::CallDescriptor) {
-        self.side_tables.call_descriptor.insert(node_id, descriptor);
+    pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
+        self.side_tables.value_vn.get(&value).copied()
     }
 
     /// Returns the vn-resolved [`strider_target::BuiltCallOtherAbi`] recorded
@@ -573,7 +549,7 @@ impl Function {
     /// any prior descriptor.  Subsumes the stack-arg layout override (read
     /// back via [`Self::get_cc`]'s `stack_args`).
     ///
-    /// Prod uses [`Self::set_call_descriptor`] directly; this
+    /// Prod writes the `call_descriptor` side-table directly; this
     /// `BuiltCallingConvention`-only wrapper is used only by tests.
     #[inline]
     #[cfg(any(test, feature = "test-util"))]
@@ -664,26 +640,6 @@ impl Function {
 
     // ── initial_var_index accessors ───────────────────────────────────────
 
-    /// Returns the [`NodeId`] of the canonical `InitialVar(vn)` node for
-    /// `vn`, or `None` if none is registered.  O(1).
-    ///
-    /// Callers that want to skip detached zombie nodes must validate the
-    /// returned id themselves (typically by checking that the node's
-    /// single output's use-list is non-empty via [`Graph::value_uses`]).
-    #[inline]
-    pub fn initial_var_for(&self, vn: rsleigh::Vn) -> Option<NodeId> {
-        self.side_tables.initial_var_index.get(&vn).copied()
-    }
-
-    /// Registers `(vn, node_id)` in the `InitialVar` index.  Replaces
-    /// any prior entry for `vn`.  Callers must guarantee that
-    /// `node_id`'s kind is `NodeKind::InitialVar(vn)` — the index is
-    /// advisory and never re-checked.
-    #[inline]
-    pub fn register_initial_var(&mut self, vn: rsleigh::Vn, node_id: NodeId) {
-        self.side_tables.initial_var_index.insert(vn, node_id);
-    }
-
     /// Iterates the `initial_var_index` as `(vn, node_id)` pairs.  Used by the
     /// validator to enforce that every entry still resolves to a live
     /// `InitialVar(vn)` node with the matching varnode.
@@ -713,7 +669,11 @@ impl Function {
     /// runs in an [`crate::EditFunction`] that maintains one) — a culled
     /// `InitialVar(sp)` is never referenced by a live load anyway.
     pub fn initial_sp_value(&self) -> Option<ValueId> {
-        let node = self.initial_var_for(self.default_cc.stack_vn)?;
+        let node = self
+            .side_tables
+            .initial_var_index
+            .get(&self.default_cc.stack_vn)
+            .copied()?;
         let [out] = self
             .node_outputs_exact::<1>(node)
             .expect("InitialVar has 1 output per node signature");
@@ -1029,7 +989,7 @@ mod function_skeleton_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         assert_eq!(f.get_vn_for_value(phi_value), None);
-        f.set_vn_for_value(phi_value, vn);
+        f.side_tables.value_vn.insert(phi_value, vn);
         assert_eq!(f.get_vn_for_value(phi_value), Some(vn));
     }
 
@@ -1289,7 +1249,7 @@ mod compact_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         let zombie_phi_value = f.node_outputs(zombie_phi)[0];
-        f.set_vn_for_value(zombie_phi_value, dead_vn);
+        f.side_tables.value_vn.insert(zombie_phi_value, dead_vn);
         assert_eq!(
             f.get_vn_for_value(zombie_phi_value),
             Some(dead_vn),
@@ -1431,8 +1391,8 @@ mod compact_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         let dead_phi_value = f.node_outputs(dead_phi)[0];
-        f.set_vn_for_value(live_phi_value, live_vn);
-        f.set_vn_for_value(dead_phi_value, dead_vn);
+        f.side_tables.value_vn.insert(live_phi_value, live_vn);
+        f.side_tables.value_vn.insert(dead_phi_value, dead_vn);
 
         let remap = f.compact().expect("compact must succeed");
         let new_live_phi = remap
@@ -1534,7 +1494,7 @@ mod compact_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         assert_eq!(f.get_vn_for_value(clobber_value), None);
-        f.set_vn_for_value(clobber_value, vn);
+        f.side_tables.value_vn.insert(clobber_value, vn);
         // Recoverable per-output: the clobber output value carries its Vn.
         assert_eq!(f.get_vn_for_value(clobber_value), Some(vn));
         // Control / Memory outputs carry no clobber tag.
@@ -1582,7 +1542,7 @@ mod compact_tests {
             addr_off: 0x40,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
-        f.set_vn_for_value(clob, clob_vn);
+        f.side_tables.value_vn.insert(clob, clob_vn);
         f.set_call_cc(call, cc.clone());
         let _ret = f
             .graph_mut()

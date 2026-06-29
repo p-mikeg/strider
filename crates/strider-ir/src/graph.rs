@@ -541,11 +541,11 @@ fn call_other_name_round_trip() {
     );
     assert_ne!(id_a, id_b, "CallOther is non-cacheable");
     assert_eq!(function.call_other_name(id_a), None);
-    function.set_call_other_name(id_a, "setISAMode".to_string());
+    function.side_tables.call_other_names[id_a] = Some("setISAMode".to_string());
     assert_eq!(function.call_other_name(id_a), Some("setISAMode"));
     assert_eq!(function.call_other_name(id_b), None);
     // Replacement
-    function.set_call_other_name(id_a, "OtherName".to_string());
+    function.side_tables.call_other_names[id_a] = Some("OtherName".to_string());
     assert_eq!(function.call_other_name(id_a), Some("OtherName"));
 }
 
@@ -1471,7 +1471,7 @@ fn value_vn_clobber_tag_round_trips() {
         addr_space: rsleigh::VnSpace::REGISTER,
     };
     assert!(function.get_vn_for_value(clobber_value).is_none());
-    function.set_vn_for_value(clobber_value, vn);
+    function.side_tables.value_vn.insert(clobber_value, vn);
     assert_eq!(function.get_vn_for_value(clobber_value), Some(vn));
 }
 

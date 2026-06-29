@@ -113,6 +113,10 @@ pub(crate) struct SideTables {
     /// creation site (the lift-time path and the orchestrator
     /// fallback) and remapped through [`NodeIdRemap`] by
     /// [`crate::Function::compact`].
+    ///
+    /// Writers must guarantee the inserted `node_id`'s kind is
+    /// `NodeKind::InitialVar(vn)` for the key `vn` — the index is advisory and
+    /// never re-checked.
     pub(crate) initial_var_index: FxHashMap<rsleigh::Vn, NodeId>,
 }
 

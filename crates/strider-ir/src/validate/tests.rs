@@ -357,7 +357,7 @@ fn validate_flags_stale_initial_var_index_entry() {
     );
     stamp(&mut s.f, iv);
     let iv_value = s.f.node_outputs(iv)[0];
-    s.f.register_initial_var(vn, iv);
+    s.f.side_tables.initial_var_index.insert(vn, iv);
     let ret =
         s.f.graph_mut()
             .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, iv_value], []);
@@ -391,7 +391,7 @@ fn validate_flags_stale_value_vn_entry() {
     // population, so the producer-kind check must flag it.
     let (k, kv) = int_const(&mut s.f, 7, ValueType::I32);
     stamp(&mut s.f, k);
-    s.f.set_vn_for_value(kv, vn);
+    s.f.side_tables.value_vn.insert(kv, vn);
     // Make it reachable via the Return.
     let ret =
         s.f.graph_mut()
@@ -422,7 +422,7 @@ fn graph_invariants_phi_token_from_wrong_node() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let phi_value = s.f.node_outputs(phi)[0];
-    s.f.set_vn_for_value(phi_value, vn);
+    s.f.side_tables.value_vn.insert(phi_value, vn);
 
     assert_validation_err(&s.f, |e| {
         matches!(e, ValidationError::PhiTokenNotFromRegion { .. })
@@ -448,7 +448,7 @@ fn graph_invariants_phi_value_arity_mismatch() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let phi_value = s.f.node_outputs(phi)[0];
-    s.f.set_vn_for_value(phi_value, vn);
+    s.f.side_tables.value_vn.insert(phi_value, vn);
 
     // V-2: graph_invariants_phis is reachability-scoped, so the phi must be
     // attached to something reachable from the entry.  Wire its value
@@ -491,7 +491,7 @@ fn graph_invariants_phi_input_type_mismatch() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let phi_value = s.f.node_outputs(phi)[0];
-    s.f.set_vn_for_value(phi_value, test_vn());
+    s.f.side_tables.value_vn.insert(phi_value, test_vn());
 
     // Put the phi on the reachable spine (see the arity test above).
     let cs_ctrl_value = s.f.node_outputs(cs).iter().copied().next().unwrap();
@@ -535,7 +535,7 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
         s.f.graph_mut()
             .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
     let zombie_value = s.f.node_outputs(zombie)[0];
-    s.f.set_vn_for_value(zombie_value, vn);
+    s.f.side_tables.value_vn.insert(zombie_value, vn);
 
     validate(&s.f).expect("validator must skip unreachable zombie phis");
 }
@@ -1157,7 +1157,7 @@ fn cc_arity_passes_override_call_with_tagged_clobber_output() {
     stamp(&mut f, call);
     f.set_call_cc(call, cc);
     let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
-    f.set_vn_for_value(clob, clob0);
+    f.side_tables.value_vn.insert(clob, clob0);
     let ret = f
         .graph_mut()
         .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
@@ -1251,7 +1251,7 @@ fn cc_arity_catches_override_call_dropping_a_clobber_output() {
     stamp(&mut f, call);
     f.set_call_cc(call, cc);
     let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
-    f.set_vn_for_value(clob, clob0);
+    f.side_tables.value_vn.insert(clob, clob0);
     let ret = f
         .graph_mut()
         .create_node(NodeKind::Return, [call_ctrl, call_mem], []);

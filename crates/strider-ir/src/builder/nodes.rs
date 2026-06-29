@@ -249,7 +249,7 @@ impl FunctionBuilder {
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
             output_type,
         );
-        self.function_mut().set_vn_for_value(phi_value, var);
+        self.function_mut().side_tables.value_vn.insert(phi_value, var);
         Ok(phi_value)
     }
 }

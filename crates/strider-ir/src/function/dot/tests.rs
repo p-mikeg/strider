@@ -538,7 +538,7 @@ fn call_other_label_includes_resolved_name() {
         [entry_ctrl, mem],
         [ValueKind::Control, ValueKind::Memory],
     );
-    f.set_call_other_name(co, "setISAMode".to_string());
+    f.side_tables.call_other_names[co] = Some("setISAMode".to_string());
     let co_ctrl = f.node_outputs(co).iter().copied().next().unwrap();
     let co_mem = f.node_outputs(co).iter().copied().nth(1).unwrap();
     f.graph_mut()
@@ -840,7 +840,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
         [ValueKind::Typed(ValueType::I64)],
     );
     let [phi_value] = f.node_outputs_exact::<1>(phi).unwrap();
-    f.set_vn_for_value(
+    f.side_tables.value_vn.insert(
         phi_value,
         Vn {
             addr_off: 0x10,
