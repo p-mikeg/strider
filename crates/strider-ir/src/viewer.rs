@@ -24,6 +24,31 @@ use anyhow::anyhow;
 use crate::function::Function;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
+/// Generates the `require_*` edge-kind guards on [`IRViewer`]: each errors
+/// unless `value_id`'s [`ValueKind`] satisfies the named predicate.  Doc
+/// attributes are forwarded, so every generated method keeps its own docs.
+macro_rules! value_kind_requirements {
+    ($($(#[$m:meta])* $name:ident => $pred:ident, $noun:literal;)+) => { $(
+        $(#[$m])*
+        fn $name(&self, value_id: ValueId) -> crate::Result<()> {
+            let kind = self.function().graph().value_kind(value_id);
+            ensure_value_kind(value_id, kind, kind.$pred(), $noun)
+        }
+    )+ };
+}
+
+/// Generates the named operand reads on [`IRViewer`]: each returns the input
+/// `value` at a fixed slot of a node, panicking on the arity the validator
+/// already guarantees.  Doc attributes are forwarded per method.
+macro_rules! semantic_slot_accessors {
+    ($($(#[$m:meta])* $name:ident => $arity:literal [$slot:literal] $msg:literal;)+) => { $(
+        $(#[$m])*
+        fn $name(&self, node: NodeId) -> ValueId {
+            self.node_inputs_exact::<$arity>(node).expect($msg)[$slot]
+        }
+    )+ };
+}
+
 /// The shared IR **point-read** vocabulary, available on every value that
 /// can hand out a `&Function` — [`Function`] itself and every [`IRBuilder`](crate::IRBuilder)
 /// (the lift builder, the editing context).
@@ -263,57 +288,44 @@ pub trait IRViewer {
     // panics on the arity invariant the validator already guarantees for a
     // well-formed node of that kind.
 
-    /// The condition value of an `If` node — input slot 1 (`[control, cond]`).
-    ///
-    /// # Panics
-    /// Panics if `node` does not have the `If` input arity (2 inputs); a
-    /// validator-guaranteed invariant for a well-formed `If`.
-    fn if_cond(&self, node: NodeId) -> ValueId {
-        self.node_inputs_exact::<2>(node)
-            .expect("If node has [control, cond] inputs")[1]
-    }
+    semantic_slot_accessors! {
+        /// The condition value of an `If` node — input slot 1 (`[control, cond]`).
+        ///
+        /// # Panics
+        /// Panics if `node` does not have the `If` input arity (2 inputs); a
+        /// validator-guaranteed invariant for a well-formed `If`.
+        if_cond => 2[1] "If node has [control, cond] inputs";
 
-    /// The dispatch value of an `IndirectBranch` node — input slot 2
-    /// (`[control, memory, target]`).
-    ///
-    /// # Panics
-    /// Panics if `node` does not have the `IndirectBranch` input arity (3
-    /// inputs); a validator-guaranteed invariant for a well-formed node.
-    fn indirect_branch_target(&self, node: NodeId) -> ValueId {
-        self.node_inputs_exact::<3>(node)
-            .expect("IndirectBranch node has [control, memory, target] inputs")[2]
-    }
+        /// The dispatch value of an `IndirectBranch` node — input slot 2
+        /// (`[control, memory, target]`).
+        ///
+        /// # Panics
+        /// Panics if `node` does not have the `IndirectBranch` input arity (3
+        /// inputs); a validator-guaranteed invariant for a well-formed node.
+        indirect_branch_target => 3[2] "IndirectBranch node has [control, memory, target] inputs";
 
-    /// The address operand of a `Store` node — input slot 1
-    /// (`[memory, addr, data]`).
-    ///
-    /// # Panics
-    /// Panics if `node` does not have the `Store` input arity (3 inputs); a
-    /// validator-guaranteed invariant for a well-formed `Store`.
-    fn store_addr(&self, node: NodeId) -> ValueId {
-        self.node_inputs_exact::<3>(node)
-            .expect("Store node has [memory, addr, data] inputs")[1]
-    }
+        /// The address operand of a `Store` node — input slot 1
+        /// (`[memory, addr, data]`).
+        ///
+        /// # Panics
+        /// Panics if `node` does not have the `Store` input arity (3 inputs); a
+        /// validator-guaranteed invariant for a well-formed `Store`.
+        store_addr => 3[1] "Store node has [memory, addr, data] inputs";
 
-    /// The data operand of a `Store` node — input slot 2
-    /// (`[memory, addr, data]`).
-    ///
-    /// # Panics
-    /// Panics if `node` does not have the `Store` input arity (3 inputs); a
-    /// validator-guaranteed invariant for a well-formed `Store`.
-    fn store_data(&self, node: NodeId) -> ValueId {
-        self.node_inputs_exact::<3>(node)
-            .expect("Store node has [memory, addr, data] inputs")[2]
-    }
+        /// The data operand of a `Store` node — input slot 2
+        /// (`[memory, addr, data]`).
+        ///
+        /// # Panics
+        /// Panics if `node` does not have the `Store` input arity (3 inputs); a
+        /// validator-guaranteed invariant for a well-formed `Store`.
+        store_data => 3[2] "Store node has [memory, addr, data] inputs";
 
-    /// The address operand of a `Load` node — input slot 1 (`[memory, addr]`).
-    ///
-    /// # Panics
-    /// Panics if `node` does not have the `Load` input arity (2 inputs); a
-    /// validator-guaranteed invariant for a well-formed `Load`.
-    fn load_addr(&self, node: NodeId) -> ValueId {
-        self.node_inputs_exact::<2>(node)
-            .expect("Load node has [memory, addr] inputs")[1]
+        /// The address operand of a `Load` node — input slot 1 (`[memory, addr]`).
+        ///
+        /// # Panics
+        /// Panics if `node` does not have the `Load` input arity (2 inputs); a
+        /// validator-guaranteed invariant for a well-formed `Load`.
+        load_addr => 2[1] "Load node has [memory, addr] inputs";
     }
 
     /// Yields `(NodeId, &NodeKind)` for every node in the arena whose id is in
@@ -363,49 +375,36 @@ pub trait IRViewer {
         Ok(value_id)
     }
 
-    /// Errors unless `value_id` is a value edge.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a value edge.
-    fn require_value_kind(&self, value_id: ValueId) -> crate::Result<()> {
-        let kind = self.function().graph().value_kind(value_id);
-        ensure_value_kind(value_id, kind, kind.is_value(), "a value edge")
-    }
+    value_kind_requirements! {
+        /// Errors unless `value_id` is a value edge.
+        ///
+        /// # Errors
+        /// Returns an error when `value_id` is not a value edge.
+        require_value_kind => is_value, "a value edge";
 
-    /// Errors unless `value_id` carries a bool value.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a bool value.
-    fn require_bool_value(&self, value_id: ValueId) -> crate::Result<()> {
-        let kind = self.function().graph().value_kind(value_id);
-        ensure_value_kind(value_id, kind, kind.is_bool(), "a bool value")
-    }
+        /// Errors unless `value_id` carries a bool value.
+        ///
+        /// # Errors
+        /// Returns an error when `value_id` is not a bool value.
+        require_bool_value => is_bool, "a bool value";
 
-    /// Errors unless `value_id` is a phi-token edge.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a phi-token edge.
-    fn require_phi_token_kind(&self, value_id: ValueId) -> crate::Result<()> {
-        let kind = self.function().graph().value_kind(value_id);
-        ensure_value_kind(value_id, kind, kind.is_phi_token(), "a phi-token edge")
-    }
+        /// Errors unless `value_id` is a phi-token edge.
+        ///
+        /// # Errors
+        /// Returns an error when `value_id` is not a phi-token edge.
+        require_phi_token_kind => is_phi_token, "a phi-token edge";
 
-    /// Errors unless `value_id` is a control edge.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a control edge.
-    fn require_control_kind(&self, value_id: ValueId) -> crate::Result<()> {
-        let kind = self.function().graph().value_kind(value_id);
-        ensure_value_kind(value_id, kind, kind.is_control(), "a control edge")
-    }
+        /// Errors unless `value_id` is a control edge.
+        ///
+        /// # Errors
+        /// Returns an error when `value_id` is not a control edge.
+        require_control_kind => is_control, "a control edge";
 
-    /// Errors unless `value_id` is a memory edge.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a memory edge.
-    fn require_memory_kind(&self, value_id: ValueId) -> crate::Result<()> {
-        let kind = self.function().graph().value_kind(value_id);
-        ensure_value_kind(value_id, kind, kind.is_memory(), "a memory edge")
+        /// Errors unless `value_id` is a memory edge.
+        ///
+        /// # Errors
+        /// Returns an error when `value_id` is not a memory edge.
+        require_memory_kind => is_memory, "a memory edge";
     }
 
     /// Errors unless `value_id` carries an integer value.
