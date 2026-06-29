@@ -3,15 +3,15 @@
 //! and its [`FunctionState`] bookkeeping ([`state`]), and the IR-specific dot
 //! rendering ([`dot`]).
 
-mod data;
+mod func;
+mod side_tables;
 pub(crate) mod dot;
 mod edit;
-mod state;
 
-pub use data::Function;
-pub(crate) use data::largest_container_in;
+pub use func::Function;
+pub(crate) use func::largest_container_in;
 pub use edit::EditFunction;
-pub use state::FunctionState;
+pub use edit::FunctionState;
 
 /// The trivial-convention [`Function`] used throughout the in-crate tests.
 ///
