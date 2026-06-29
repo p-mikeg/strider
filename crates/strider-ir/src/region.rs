@@ -109,19 +109,6 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Marks the active region as terminated without emitting a
-    /// separate terminator node.  Called internally by
-    /// [`crate::builder::call::FunctionBuilder::build_call_kind`] when
-    /// `terminate = true` (the `NoReturn`-class `CallOther` path) so
-    /// that the CallOther node itself acts as the region exit.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion` when no region is active.
-    pub(crate) fn mark_cur_region_terminated(&mut self) -> Result<()> {
-        self.terminate_cur_region().map(|_| ())
-    }
-
     /// Marks the active region as terminated and returns its final control
     /// and memory tokens.
     pub(crate) fn terminate_cur_region(&mut self) -> Result<TerminatedRegion> {

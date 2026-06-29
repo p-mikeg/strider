@@ -814,27 +814,21 @@ impl Function {
 
     /// Returns the entry stack-pointer value — the output of the
     /// `InitialVar(stack_vn)` node, where `stack_vn` is the calling
-    /// convention's stack pointer — or `None` when the function never
-    /// reads it.
+    /// convention's stack pointer — or `None` when the function tracks no such
+    /// node (`stack_vn` deduped into a wider container).
     ///
-    /// Walks the **entry-reachable** graph (not the `initial_var_index`,
-    /// which can hold a node culled-but-not-yet-compacted mid-pipeline)
-    /// so a detached-zombie `InitialVar(sp)` is skipped.  Exactly one
-    /// `InitialVar(stack_vn)` exists (builder invariant), so the search is
-    /// order-independent.  Consumers (e.g. stack-arg detection) require
-    /// every candidate's terminal SP base to equal this value.
+    /// O(1) via the `initial_var_index` accelerator.  This does **not** filter
+    /// by liveness: the map can transiently hold a node culled-but-not-yet-
+    /// compacted mid-pipeline, so a caller that cares whether the SP is actually
+    /// read checks the producer against its own live-set (every optimization
+    /// runs in an [`crate::EditFunction`] that maintains one) — a culled
+    /// `InitialVar(sp)` is never referenced by a live load anyway.
     pub fn initial_sp_value(&self) -> Option<ValueId> {
-        let stack_vn = self.default_cc.stack_vn;
-        for n in self.reverse_postorder_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
-            if matches!(*self.node_kind(n), NodeKind::InitialVar(id) if self.initial_vn(id) == stack_vn)
-            {
-                let [out] = self
-                    .node_outputs_exact::<1>(n)
-                    .expect("InitialVar has 1 output per node signature");
-                return Some(out);
-            }
-        }
-        None
+        let node = self.initial_var_for(self.default_cc.stack_vn)?;
+        let [out] = self
+            .node_outputs_exact::<1>(node)
+            .expect("InitialVar has 1 output per node signature");
+        Some(out)
     }
 
     /// Returns the asm-instruction-address fingerprint of `node_id` as a

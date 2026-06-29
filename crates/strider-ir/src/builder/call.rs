@@ -109,7 +109,7 @@ impl FunctionBuilder {
         // pass `advance_memory = false` (the only such caller, the NoReturn
         // CallOther path in `build_call_other`, does exactly this).
         if terminate {
-            self.mark_cur_region_terminated()?;
+            self.terminate_cur_region().map(|_| ())?;
         } else {
             self.advance_cur_region_ctrl(outputs[0])?;
         }

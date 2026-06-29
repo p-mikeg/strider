@@ -134,6 +134,13 @@ fn detect_stack_args(
     let Some(initial_sp) = ctx.function().initial_sp_value() else {
         return Ok(());
     };
+    // `initial_sp_value` is a raw O(1) lookup that does not filter liveness, so
+    // skip a culled-but-not-compacted `InitialVar(sp)` (the function never reads
+    // SP) via the optimization's live-set — no live load is rooted at a dead SP,
+    // so there can be no stack args.
+    if !ctx.is_live(ctx.producer(initial_sp)) {
+        return Ok(());
+    }
     // Group qualifying loads by the *byte-position* slot their first byte
     // lands in (`StackArgs::slot_of` — a plain floor, no upper size bound).  A
     // load qualifies when:
