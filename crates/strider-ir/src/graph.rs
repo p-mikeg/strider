@@ -1,3 +1,148 @@
+//! The IR sea-of-nodes [`Graph`] — a type alias over the generic
+//! [`strider_graph::Graph`] parameterised with the IR payloads
+//! ([`crate::node::NodeKind`] / [`crate::node::ValueKind`]) and the IR's
+//! dedup policy ([`IrCacheable`]).
+//!
+//! The structural machinery (node arena, use-lists, compaction, structural
+//! walks, `Inputs` / `InputCursor` navigation) lives in `strider-graph`. This
+//! module supplies only the strider-specific overlay:
+//!
+//! - [`IrCacheable`] — the `(NodeKind, inputs, output_kinds)` dedup
+//!   policy (`should_cache` / `hash` / `eq`).  It is purely mechanical: it
+//!   embeds no domain normalisation.  Integer-constant canonicalisation
+//!   (masking + small→wide promotion) happens at construction in
+//!   `Function::create_node_attributed`, before a node reaches the cache.
+//! - The `Inputs` / `InputCursor` IR-payload aliases and the `VarTable`
+//!   build-time interner.
+//!
+//! The typed / fallible structural accessors (`node_outputs_exact` /
+//! `node_inputs_exact` / `node_input_id_at`) are inherent on the generic
+//! [`strider_graph::Graph`]; the function-overlay reads and the control-aware
+//! walks live on [`crate::IRViewer`] / [`crate::IRWalker`].
+
+use std::hash::{Hash, Hasher};
+
+use cranelift_entity::SecondaryMap;
+use rustc_hash::FxHasher;
+use strider_graph::{NodeCacheable, RawStore, ValueId};
+
+use crate::node::{NodeId, NodeKind, ValueKind};
+
+/// The IR's deduplication policy: a stateless ZST supplying the three
+/// [`NodeCacheable`] hooks. It owns no state — the generic
+/// `strider_graph::Graph` owns the dedup table and per-node hashes.
+///
+/// Cacheable node kinds (see [`NodeKind::is_cacheable`]) are deduplicated by
+/// their `(NodeKind, inputs, output_kinds)` structure; non-cacheable kinds
+/// (`Region`, `Phi`, `MemPhi`, `Call`, …) always allocate a fresh node.
+pub struct IrCacheable;
+
+impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
+    /// Gates dedup on [`NodeKind::is_cacheable`].
+    fn should_cache(kind: &NodeKind) -> bool {
+        kind.is_cacheable()
+    }
+
+    /// Hashes a `(kind, inputs, output_kinds)` structural key into a `u64`.
+    ///
+    /// The fields are hashed in declaration order (`kind`, then the input-value
+    /// slice, then the output-kind slice). `[T]: Hash` hashes the length
+    /// followed by each element, so hashing a borrowed query slice and hashing
+    /// a node's re-read `SmallVec` of the same contents agree element-for-
+    /// element — which is what lets a query probe land in the same bucket the
+    /// node was inserted under.
+    ///
+    /// Returns a RAW `FxHash` with no sentinel handling: the generic cache
+    /// remaps the lone `u64::MAX` value itself.
+    fn hash(kind: &NodeKind, inputs: &[ValueId], outputs: &[ValueKind]) -> u64 {
+        let mut h = FxHasher::default();
+        kind.hash(&mut h);
+        inputs.hash(&mut h);
+        outputs.hash(&mut h);
+        h.finish()
+    }
+
+    /// Re-reads candidate node `cand` from the store and reports whether its
+    /// stored `(kind, inputs, output_kinds)` structure equals the query. This
+    /// is the equality half of the hash-on-demand probe: no owned key payloads
+    /// are kept, so structural identity is recomputed from the live store.
+    fn eq(
+        store: &RawStore<NodeKind, ValueKind>,
+        cand: NodeId,
+        kind: &NodeKind,
+        inputs: &[ValueId],
+        outputs: &[ValueKind],
+    ) -> bool {
+        store.kind_of(cand) == kind
+            && store.input_values(cand).as_slice() == inputs
+            && store.output_kinds(cand).as_slice() == outputs
+    }
+}
+
+// The id translation table is structural — it comes from `strider-graph`.
+pub use strider_graph::NodeIdRemap;
+
+
+/// Bidirectional tracked-variable table (`VarId ↔ Vn`): the forward
+/// `VarId → Vn` map plus its `Vn → VarId` reverse index, kept consistent by
+/// construction.  An [`entity_utils::EntityInterner`] — `intern` is the sole
+/// mutator (writes both halves), `key_of`/`get` resolve either direction in
+/// O(1), and `keys()`/`values()` iterate in insertion (`VarId`) order for
+/// the consumers that need ABI slot order.
+///
+/// This is a **build-time-only** type: it lives on the
+/// [`crate::FunctionBuilder`] for SSA bookkeeping while the function is
+/// being constructed.  It is **not** stored on the finished
+/// [`crate::Function`] — the post-build varnode record is the ordered
+/// `crate::Function::all_vns` list (snapshotted from this table in
+/// `new`, one entry per tracked variable) instead.
+pub(crate) type VarTable = entity_utils::EntityInterner<crate::builder::VarId, rsleigh::Vn>;
+
+/// The IR sea-of-nodes graph.
+///
+/// A [`strider_graph::Graph`] over the IR node payload ([`NodeKind`]), the IR
+/// value payload ([`ValueKind`]), and the IR dedup policy ([`IrCacheable`]).
+/// Cacheable node kinds (see [`NodeKind::is_cacheable`]) are deduplicated by
+/// `(NodeKind, inputs, output_kinds)`; non-cacheable kinds always allocate a
+/// fresh [`NodeId`].
+///
+/// All structural verbs (`create_node`, `add_node_input`, `update_input`,
+/// `replace_all_uses`, the read accessors, the typed `node_outputs_exact` /
+/// `node_inputs_exact` / `node_input_id_at`, …) are inherited from the generic
+/// graph. The function-overlay reads and control-aware walks live on
+/// [`crate::IRViewer`] / [`crate::IRWalker`].
+pub type Graph = strider_graph::Graph<NodeKind, ValueKind, IrCacheable>;
+
+/// An iterable view over the input values of a node — the IR-payload
+/// instantiation of [`strider_graph::Inputs`].
+pub type Inputs<'a> = strider_graph::Inputs<'a, NodeKind, ValueKind, IrCacheable>;
+
+/// A cursor over the use-list of a single value — the IR-payload
+/// instantiation of [`strider_graph::InputCursor`].
+pub type InputCursor<'a> = strider_graph::InputCursor<'a, NodeKind, ValueKind, IrCacheable>;
+
+/// Rebuilds a `SecondaryMap<NodeId, _>`-shaped side-table in place under the
+/// old→new translation, draining the source via `std::mem::take` so the
+/// post-remap source is left at `Default::default()` for every slot.
+/// Used by [`crate::Function::compact`] to fold every `NodeId`-keyed
+/// overlay table through one iteration site.
+///
+/// The Vn-keyed `initial_var_index` does **not** fit this shape (its
+/// key is `rsleigh::Vn`, not `NodeId`) and is remapped inline in
+/// `Function::compact`.
+pub(crate) fn remap_node_keyed<T: Default + Clone>(
+    map: &mut SecondaryMap<NodeId, T>,
+    remap: &NodeIdRemap,
+) {
+    let mut dst: SecondaryMap<NodeId, T> = SecondaryMap::new();
+    for (old_id, new_id) in remap.surviving_node_pairs() {
+        dst[new_id] = std::mem::take(&mut map[old_id]);
+    }
+    *map = dst;
+}
+
+#[cfg(test)]
+mod tests {
 //! White-box tests for the graph submodules — arena, dedup cache,
 //! use-list bookkeeping, and typed accessors.
 
@@ -1349,4 +1494,5 @@ fn asm_fingerprint_dedup_cache_hit_unions_via_extend() {
     assert_eq!(a, b, "cacheable nodes should dedup");
     function.extend_asm_fingerprint(b, &[0x3000]);
     assert_eq!(function.asm_fingerprint(a), &[0x2000, 0x3000]);
+}
 }
