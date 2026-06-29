@@ -780,27 +780,27 @@ impl Function {
         // `IntConst(id)` nodes, rewriting each survivor's id to the new dense
         // id, then re-key the graph's dedup cache over those rewritten ids.
         // The dedup cache keys on `NodeKind` (which carries the `ConstId`), so
-        // the rewrite must precede the cache rebuild.
-        if self.gc_consts() {
-            self.graph.rebuild_cache();
-        }
+        // the rewrite must precede the cache rebuild.  The rebuild is
+        // unconditional: `retain_reachable` has already reassigned every
+        // surviving node's id, so the cache (keyed on those ids) is stale
+        // regardless of whether any constants were rewritten.
+        self.gc_consts();
+        self.graph.rebuild_cache();
         Ok(remap)
     }
 
     /// Rebuilds [`Self::const_interner`] over only the values referenced by
     /// surviving `IntConst(id)` nodes, rewriting each such node's id in place
-    /// to the new id assigned by the rebuilt interner.  Returns `true` iff at
-    /// least one node's id was rewritten (so the caller knows whether the dedup
-    /// cache must be re-keyed).  Returns `false` when there are no surviving
-    /// constant nodes — including the case where the graph previously had
-    /// constants that were all pruned by `retain_reachable`; in that case any
-    /// stale interner entries are dropped and the cache needs no rebuild.
+    /// to the new id assigned by the rebuilt interner.  When no constant nodes
+    /// survive — including the case where every constant was pruned by
+    /// `retain_reachable` — the interner is simply reset to empty (a valid
+    /// post-optimization state).
     ///
     /// Only safe to call after [`Graph::retain_reachable`] has settled
     /// the arena — at that point `self.graph.nodes.keys()` iterates only
     /// surviving nodes, so the live-id scan correctly excludes zombie
     /// references.
-    fn gc_consts(&mut self) -> bool {
+    fn gc_consts(&mut self) {
         use crate::const_value::ConstId;
         use crate::node::NodeKind;
 
@@ -811,10 +811,6 @@ impl Function {
                 const_nodes.push(node);
                 live_old_ids.push(id);
             }
-        }
-        if live_old_ids.is_empty() {
-            self.const_interner = Default::default();
-            return false;
         }
         let mut new_interner: entity_utils::EntityInterner<
             ConstId,
@@ -837,7 +833,6 @@ impl Function {
                 *id = new_id;
             }
         }
-        true
     }
 
     /// Returns a dot dumper for rendering this function's graph to HTML / DOT.
