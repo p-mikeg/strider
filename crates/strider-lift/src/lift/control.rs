@@ -312,7 +312,7 @@ mod tests {
     use super::*;
     use strider_ir::node::NodeKind;
     use strider_ir::{FunctionBuilder, IRWalker};
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::{IrWalkerEx, RegisterSet};
 
     /// Build a 4-byte register VN to act as the `idx` source.
     fn idx_vn() -> rsleigh::Vn {

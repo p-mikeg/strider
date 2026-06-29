@@ -3,6 +3,7 @@ use crate::error::Result;
 use crate::pipeline::{OptCtx, OptimizerTestExt, PostOptimizerTestExt};
 use crate::test_support::{assert_returns_const, make_fn};
 use strider_ir::IRWalker;
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{MockRom, make_empty_fn_endian};
 use strider_target::Endianness;

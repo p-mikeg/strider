@@ -2,6 +2,7 @@ use super::*;
 use crate::pipeline::OptimizerTestExt;
 use anyhow::anyhow;
 use strider_ir::node::{NodeKind, ValueType};
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
     IntCmpOp, IntUnaryOp,

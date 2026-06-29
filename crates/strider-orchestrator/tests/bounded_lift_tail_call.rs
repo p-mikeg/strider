@@ -30,6 +30,7 @@ mod common;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{IRViewer, IRWalker};
 use strider_orchestrator::opt::OptOptions;
 use strider_orchestrator::{LiftOptions, Strider};

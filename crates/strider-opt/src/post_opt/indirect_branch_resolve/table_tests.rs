@@ -17,6 +17,7 @@ use crate::{
 use rsleigh::VnSpace;
 use std::sync::Mutex;
 use strider_ir::node::ValueType;
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{
     ExtendOp, Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
 };

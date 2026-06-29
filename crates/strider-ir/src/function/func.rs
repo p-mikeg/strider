@@ -20,7 +20,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::graph::{Graph, NodeIdRemap};
 use crate::node::{NodeId, NodeKind, ValueId};
-use crate::{IRViewer, IRWalker};
+use crate::IRWalker;
 use crate::function::side_tables::SideTables;
 
 /// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
@@ -146,8 +146,8 @@ pub struct Function {
     /// 128 bits as `ConstValue::Wide` (boxed little-endian limbs).  The
     /// constant's WIDTH is carried by the node's output `ValueKind`, not by the
     /// stored value, so `IntConst(42):I80` and `IntConst(42):I128` share one
-    /// `ConstId`.  Interning (via [`Self::intern_const`] /
-    /// [`Self::intern_int_const`]) dedups by value so two `IntConst(id)` nodes
+    /// `ConstId`.  Interning (via [`Self::intern_int_const`] /
+    /// [`Self::intern_int_const_limbs`]) dedups by value so two `IntConst(id)` nodes
     /// referencing the same logical value are structurally equal under
     /// [`Graph::create_node`]'s dedup cache.  An
     /// [`entity_utils::EntityInterner`] owns both the forward `ConstId → value`
@@ -210,21 +210,6 @@ impl Function {
         &mut self.graph
     }
 
-    /// Interns `value` and returns its `crate::const_value::ConstId`.
-    /// Subsequent calls with an equal value return the same id — the
-    /// dedup invariant the [`Graph::create_node`] cache relies on so
-    /// two `IntConst(id)` nodes referencing the same logical value
-    /// share a single `NodeId`.  Prod interning goes through the
-    /// width-checked `intern_int_const` / `intern_int_const_limbs`; this raw
-    /// entry is used only by tests.
-    #[cfg(test)]
-    pub(crate) fn intern_const(
-        &mut self,
-        value: crate::const_value::ConstValue,
-    ) -> crate::const_value::ConstId {
-        self.const_interner.intern(value)
-    }
-
     /// Interns the integer value `value`, masked to `ty`'s width, returning its
     /// `ConstId`. The single canonicalisation point for ≤ u128 constants: equal
     /// (masked) values share one id regardless of declared type.
@@ -256,22 +241,14 @@ impl Function {
         }
     }
 
-    /// Looks up a const value by id.  The id must have been produced by
-    /// `intern_const` / `intern_int_const*` on this function; ids from other
-    /// functions are not portable.
+    /// Looks up a const value by id.  Panics on a dangling id — a node's
+    /// `ConstId` is always valid by construction (the interner only grows until
+    /// `compact`, which remaps), so the few defensive readers that tolerate a
+    /// malformed graph (the validator's `DanglingConstId` guard, the debug
+    /// renderers) probe `const_interner.get` directly.  Ids produced on a
+    /// different function are not portable.
     pub(crate) fn const_value(&self, id: crate::const_value::ConstId) -> &crate::const_value::ConstValue {
         &self.const_interner[id]
-    }
-
-    /// Non-panicking variant of [`Self::const_value`]: returns `None` for a
-    /// dangling id rather than panicking.  The debug renderers use this so
-    /// they can label a malformed graph (e.g. one inspected mid-rewrite)
-    /// instead of aborting.
-    pub(crate) fn const_value_opt(
-        &self,
-        id: crate::const_value::ConstId,
-    ) -> Option<&crate::const_value::ConstValue> {
-        self.const_interner.get(id)
     }
 
     /// Returns the function's entry node (always present — built by
@@ -657,27 +634,22 @@ impl Function {
         self.side_tables.value_vn.iter().map(|(&value, &vn)| (value, vn))
     }
 
-    /// Returns the entry stack-pointer value — the output of the
-    /// `InitialVar(stack_vn)` node, where `stack_vn` is the calling
-    /// convention's stack pointer — or `None` when the function tracks no such
-    /// node (`stack_vn` deduped into a wider container).
+    /// Returns the entry-stack-pointer node — the `InitialVar(stack_vn)` node,
+    /// where `stack_vn` is the calling convention's stack pointer — or `None`
+    /// when the function tracks no such node (`stack_vn` deduped into a wider
+    /// container).  Its output value is the entry SP.
     ///
     /// O(1) via the `initial_var_index` accelerator.  This does **not** filter
     /// by liveness: the map can transiently hold a node culled-but-not-yet-
     /// compacted mid-pipeline, so a caller that cares whether the SP is actually
-    /// read checks the producer against its own live-set (every optimization
-    /// runs in an [`crate::EditFunction`] that maintains one) — a culled
-    /// `InitialVar(sp)` is never referenced by a live load anyway.
-    pub fn initial_sp_value(&self) -> Option<ValueId> {
-        let node = self
-            .side_tables
+    /// read checks the node against its own live-set (every optimization runs in
+    /// an [`crate::EditFunction`] that maintains one) — a culled `InitialVar(sp)`
+    /// is never referenced by a live load anyway.
+    pub fn initial_sp(&self) -> Option<NodeId> {
+        self.side_tables
             .initial_var_index
             .get(&self.default_cc.stack_vn)
-            .copied()?;
-        let [out] = self
-            .node_outputs_exact::<1>(node)
-            .expect("InitialVar has 1 output per node signature");
-        Some(out)
+            .copied()
     }
 
     /// Returns the asm-instruction-address fingerprint of `node_id` as a
@@ -1100,8 +1072,8 @@ mod compact_tests {
             panic!("expected IntConst(_), got {:?}", f.node_kind(new_wide));
         };
         assert_eq!(
-            f.const_value_opt(new_id),
-            Some(&ConstValue::Wide(LIVE_LIMBS.to_vec().into_boxed_slice())),
+            f.const_value(new_id),
+            &ConstValue::Wide(LIVE_LIMBS.to_vec().into_boxed_slice()),
             "GC'd + remapped const id must still resolve to its value",
         );
     }

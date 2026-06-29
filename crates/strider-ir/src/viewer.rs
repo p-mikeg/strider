@@ -22,7 +22,7 @@
 use anyhow::anyhow;
 
 use crate::function::Function;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
 /// Generates the `require_*` edge-kind guards on [`IRViewer`]: each errors
 /// unless `value_id`'s [`ValueKind`] satisfies the named predicate.  Doc
@@ -32,7 +32,11 @@ macro_rules! value_kind_requirements {
         $(#[$m])*
         fn $name(&self, value_id: ValueId) -> crate::Result<()> {
             let kind = self.function().graph().value_kind(value_id);
-            ensure_value_kind(value_id, kind, kind.$pred(), $noun)
+            if kind.$pred() {
+                Ok(())
+            } else {
+                Err(anyhow!("output {value_id:?} is not {} (got {kind:?})", $noun))
+            }
         }
     )+ };
 }
@@ -190,7 +194,7 @@ pub trait IRViewer {
         let NodeKind::IntConst(id) = *self.kind_of_value(value) else {
             return None;
         };
-        let v = self.function().const_value_opt(id)?.fits_u128()?;
+        let v = self.function().const_value(id).fits_u128()?;
         Some(v & ty.bit_mask_u128())
     }
 
@@ -566,21 +570,6 @@ pub trait IRWalker: IRViewer {
         self.walk().filter(move |&n| pred(self.node_kind(n)))
     }
 
-    /// Counts entry-reachable nodes whose [`NodeKind`] satisfies `pred`.
-    /// Test-assertion vocabulary; not used by production passes.
-    #[cfg(any(test, feature = "test-util"))]
-    fn count_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> usize {
-        self.walk().filter(|&n| pred(self.node_kind(n))).count()
-    }
-
-    /// Returns `true` when at least one entry-reachable node satisfies `pred`.
-    /// Short-circuits at the first match.  Test-assertion vocabulary; not used
-    /// by production passes.
-    #[cfg(any(test, feature = "test-util"))]
-    fn has_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> bool {
-        self.walk().any(|n| pred(self.node_kind(n)))
-    }
-
     /// Real reverse-post-order (every producer before its consumers, roots
     /// first) of the reachable set captured by `info` — obtain `info` from
     /// [`Self::walk_info`].
@@ -602,21 +591,6 @@ pub trait IRWalker: IRViewer {
 }
 
 impl<T: IRViewer + ?Sized> IRWalker for T {}
-
-/// Shared body for the `require_*_kind` checks: a uniform "is not `<noun>`"
-/// error (naming the observed `kind`) when `ok` is false.
-fn ensure_value_kind(
-    value_id: ValueId,
-    kind: ValueKind,
-    ok: bool,
-    noun: &str,
-) -> crate::Result<()> {
-    if ok {
-        Ok(())
-    } else {
-        Err(anyhow!("output {value_id:?} is not {noun} (got {kind:?})"))
-    }
-}
 
 /// Shared body for the `require_*_value` value-type checks (no kind to report).
 fn ensure_value_type(value_id: ValueId, ok: bool, noun: &str) -> crate::Result<()> {

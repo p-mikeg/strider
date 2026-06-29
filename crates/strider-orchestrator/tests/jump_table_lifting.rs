@@ -23,6 +23,7 @@ use rsleigh::mem_readers::BufMemReader;
 use rustc_hash::FxHashMap;
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::NodeKind;
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{Function, IRViewer, IRWalker};
 
 mod common;

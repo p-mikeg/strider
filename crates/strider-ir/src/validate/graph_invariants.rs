@@ -415,7 +415,7 @@ pub(super) fn check_graph_invariants_memory_chain(
 /// * Every `initial_var_index` entry whose node is REACHABLE must resolve to an
 ///   `InitialVar(vn)` node with the SAME varnode.  A culled-but-not-yet-
 ///   compacted entry (node not reachable) is tolerated — that is the documented
-///   mid-pipeline state `initial_sp_value` defensively re-walks around — but a
+///   mid-pipeline state `initial_sp` tolerates (it does not filter liveness) — but a
 ///   reachable node whose payload was rewritten away from `InitialVar(vn)` is a
 ///   genuine desync (the NodeId survived, so `compact` won't drop the entry).
 /// * Every `value_vn` key whose PRODUCER is reachable must be produced by a
@@ -486,7 +486,7 @@ pub(super) fn check_graph_invariants_consts(
         let NodeKind::IntConst(id) = *kind else {
             continue;
         };
-        let Some(value) = function.const_value_opt(id) else {
+        let Some(value) = function.const_interner.get(id) else {
             errs.push(ValidationError::DanglingConstId { node, id });
             continue;
         };

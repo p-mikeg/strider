@@ -976,7 +976,7 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
     // Intern a genuinely-wide (> u128, 4 limbs) value but assign it to a
     // narrower (I64) output — bits set above the declared width.
     let id =
-        s.f.intern_const(ConstValue::Wide(vec![0, 0, 0, 1].into_boxed_slice()));
+        s.f.const_interner.intern(ConstValue::Wide(vec![0, 0, 0, 1].into_boxed_slice()));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
@@ -998,7 +998,7 @@ fn graph_invariants_const_bits_above_declared_width_detected() {
     let mut s = spine();
     // A `Bits` value with bits set above the declared I8 width (un-masked) is
     // non-canonical: the validator flags it as a width mismatch.
-    let id = s.f.intern_const(ConstValue::Bits(0x1FF));
+    let id = s.f.const_interner.intern(ConstValue::Bits(0x1FF));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],

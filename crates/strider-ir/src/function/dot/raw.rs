@@ -66,7 +66,7 @@ impl<'a> RawFunctionDumper<'a> {
         // Constants carry their value off-side in `const_interner`; show the
         // raw `ConstValue` debug (dangling ids labelled, not panicked).
         if let NodeKind::IntConst(id) = kind {
-            let value = match f.const_value_opt(*id) {
+            let value = match f.const_interner.get(*id) {
                 Some(cv) => format!("{cv:?}"),
                 None => format!("<dangling const {id:?}>"),
             };

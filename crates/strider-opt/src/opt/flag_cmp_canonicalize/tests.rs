@@ -719,7 +719,7 @@ fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
 /// `IntCmpOp` node materialises.
 #[test]
 fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
-    use strider_ir::IRWalker;
+    use strider_ir_test_utils::IrWalkerEx;
     let a_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
     let b_vn = strider_ir_test_utils::reg_vn(0x1008, 4);
     let c_vn = strider_ir_test_utils::reg_vn(0x1010, 4);

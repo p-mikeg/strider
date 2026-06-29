@@ -131,16 +131,19 @@ fn detect_stack_args(
     // e.g. an alignment-masked `sp & mask`, which addresses a frame local —
     // is rejected even when its offset coincides with a convention slot.
     // With no entry-SP read there can be no stack args.
-    let Some(initial_sp) = ctx.function().initial_sp_value() else {
+    let Some(sp_node) = ctx.function().initial_sp() else {
         return Ok(());
     };
-    // `initial_sp_value` is a raw O(1) lookup that does not filter liveness, so
-    // skip a culled-but-not-compacted `InitialVar(sp)` (the function never reads
-    // SP) via the optimization's live-set — no live load is rooted at a dead SP,
-    // so there can be no stack args.
-    if !ctx.is_live(ctx.producer(initial_sp)) {
+    // `initial_sp` is a raw O(1) lookup that does not filter liveness, so skip a
+    // culled-but-not-compacted `InitialVar(sp)` (the function never reads SP) via
+    // the optimization's live-set — no live load is rooted at a dead SP, so there
+    // can be no stack args.
+    if !ctx.is_live(sp_node) {
         return Ok(());
     }
+    let [initial_sp] = ctx
+        .node_outputs_exact::<1>(sp_node)
+        .expect("InitialVar has 1 output per node signature");
     // Group qualifying loads by the *byte-position* slot their first byte
     // lands in (`StackArgs::slot_of` — a plain floor, no upper size bound).  A
     // load qualifies when:
