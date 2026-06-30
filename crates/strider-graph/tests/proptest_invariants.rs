@@ -79,6 +79,27 @@ fn add_node(g: &mut TestGraph, a: ValueId, b: ValueId) -> ValueId {
     g.node_outputs(n)[0]
 }
 
+/// Backward-input closure of `roots`: every node reachable by following inputs
+/// to their producers. A valid (backward-input-closed) argument to
+/// `Graph::retain_reachable`. The graph no longer offers this — reachability is
+/// the caller's concern — so the tests compute it themselves.
+fn reachable_from<N, V, C: NodeCacheable<N, V>>(
+    g: &Graph<N, V, C>,
+    roots: impl IntoIterator<Item = NodeId>,
+) -> HashSet<NodeId> {
+    let mut seen: HashSet<NodeId> = HashSet::new();
+    let mut stack: Vec<NodeId> = roots.into_iter().collect();
+    while let Some(n) = stack.pop() {
+        if !seen.insert(n) {
+            continue;
+        }
+        for input in g.node_inputs(n) {
+            stack.push(g.producer(input));
+        }
+    }
+    seen
+}
+
 fn region_node(g: &mut TestGraph) -> NodeId {
     g.create_node(TestKind::Region, [], [TestVal::Ctrl])
 }
@@ -331,21 +352,9 @@ proptest! {
         let _zombie = const_node(&mut g, 1234);
 
         // Expected reachable set (by inputs) from `root`.
-        let expected: HashSet<NodeId> = {
-            let mut seen: HashSet<NodeId> = HashSet::new();
-            let mut stack = vec![root];
-            while let Some(n) = stack.pop() {
-                if !seen.insert(n) {
-                    continue;
-                }
-                for input in g.node_inputs(n) {
-                    stack.push(g.producer(input));
-                }
-            }
-            seen
-        };
+        let expected = reachable_from(&g, [root]);
 
-        let remap = g.retain_reachable(g.reachable_by_inputs([root]));
+        let remap = g.retain_reachable(expected.iter().copied());
 
         // Survivors: exactly the expected set remapped to Some.
         let mut survivor_news: Vec<NodeId> = Vec::new();
@@ -404,7 +413,7 @@ fn value_with_zero_uses() {
 #[test]
 fn empty_graph_retain_reachable_no_op() {
     let mut g = TestGraph::new();
-    let remap = g.retain_reachable(g.reachable_by_inputs([]));
+    let remap = g.retain_reachable(reachable_from(&g, []));
     assert_eq!(g.all_node_ids().count(), 0);
     // No survivors to query; just ensure it doesn't panic and bumps gen.
     assert_eq!(g.generation(), 1);
@@ -485,7 +494,7 @@ fn compaction_rebuilds_cache() {
 
     // Compact: ids are renumbered, so the pre-compaction cache is stale; the
     // rebuild hook must re-key the cache over the survivors.
-    let remap = g.retain_reachable(g.reachable_by_inputs([root]));
+    let remap = g.retain_reachable(reachable_from(&g, [root]));
     let add_new = remap.node_old_to_new(add).expect("Add survives");
     let x_new = remap.value_old_to_new(x).expect("x survives");
     let y_new = remap.value_old_to_new(y).expect("y survives");
@@ -776,7 +785,7 @@ fn reachable_by_inputs_high_fanin_traversal_unchanged() {
     let _zombie = const_node(&mut g, 9999);
 
     let before = g.all_node_ids().count();
-    let remap = g.retain_reachable(g.reachable_by_inputs(roots.clone()));
+    let remap = g.retain_reachable(reachable_from(&g, roots.clone()));
     // Every root + shared + each `other` const survives; the zombie does not.
     for r in &roots {
         assert!(remap.node_old_to_new(*r).is_some(), "root survives");
@@ -939,7 +948,7 @@ mod node_cache_hooks {
 
         // A non-caching-shaped root keeps `n` reachable. (Every kind caches here,
         // so we just keep `n` itself as the root.)
-        let remap = g.retain_reachable(g.reachable_by_inputs([n]));
+        let remap = g.retain_reachable(reachable_from(&g, [n]));
         let n_new = remap.node_old_to_new(n).expect("n survives");
         let x_new = remap.value_old_to_new(xv).expect("x survives");
         let _ = nv;

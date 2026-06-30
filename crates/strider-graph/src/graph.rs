@@ -654,40 +654,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         remap
     }
 
-    /// Backward closure over input-producer edges from `roots`.
-    ///
-    /// Marks each node visited at PUSH time (not pop), so a high-fan-in
-    /// producer (a shared constant / memory token consumed by thousands of
-    /// nodes) is enqueued at most once. This bounds the worklist peak to O(V)
-    /// instead of O(E) while keeping total work O(V+E).
-    /// Backward-input closure of `roots`: every node reachable from a root by
-    /// following input edges to producers (def→use closure), in preorder. The
-    /// result is backward-input-closed by construction, so it is a valid
-    /// argument to [`Self::retain_reachable`] when that is the reachability you
-    /// want. Payloads with richer edge semantics (e.g. forward control) should
-    /// compute their own reachable set instead.
-    pub fn reachable_by_inputs(&self, roots: impl IntoIterator<Item = NodeId>) -> Vec<NodeId> {
-        let mut visited: SecondaryMap<NodeId, bool> = SecondaryMap::new();
-        let mut order: Vec<NodeId> = Vec::new();
-        let mut stack: Vec<NodeId> = Vec::new();
-        for root in roots {
-            if !visited[root] {
-                visited[root] = true;
-                stack.push(root);
-            }
-        }
-        while let Some(node) = stack.pop() {
-            order.push(node);
-            for input in self.node_inputs(node) {
-                let producer = self.producer(input);
-                if !visited[producer] {
-                    visited[producer] = true;
-                    stack.push(producer);
-                }
-            }
-        }
-        order
-    }
 }
 
 /// Old→new id translation table produced by [`Graph::retain_reachable`].
