@@ -420,6 +420,36 @@ impl FunctionBuilder {
         Ok((node, result))
     }
 
+    /// Test-only convenience: build a `Call` from a calling convention, the way
+    /// the lifter does in prod.  Delegates to [`Self::build_call`] (which still
+    /// owns the CC orchestration at this checkpoint).  Keeps test call sites off
+    /// the prod constructor while it is inverted to the dumb Vn-list API.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn build_call_cc(
+        &mut self,
+        call_address: ValueId,
+        override_cc: Option<&strider_target::BuiltCallingConvention>,
+    ) -> Result<NodeId> {
+        self.build_call(call_address, override_cc)
+    }
+
+    /// Test-only convenience: build a `CallOther` from a vn-resolved ABI, the
+    /// way the lifter does in prod.  Delegates to [`Self::build_call_other`].
+    #[cfg(any(test, feature = "test-util"))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_call_other_abi(
+        &mut self,
+        user_op_id: u64,
+        name: &str,
+        target: Option<ValueId>,
+        explicit_args: &[ValueId],
+        abi: &strider_target::BuiltCallOtherAbi,
+        output: Option<rsleigh::Vn>,
+        terminate: bool,
+    ) -> Result<(NodeId, Option<ValueId>)> {
+        self.build_call_other(user_op_id, name, target, explicit_args, abi, output, terminate)
+    }
+
     /// `apply_post_call_sp_adjust` helper: model the caller-visible
     /// effect of the callee's `ret` on SP — on stack-push ISAs `ret`
     /// pops the return-address word, so the caller's post-call SP is

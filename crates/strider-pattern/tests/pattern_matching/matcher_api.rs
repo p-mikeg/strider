@@ -455,7 +455,7 @@ fn graph_ret_via_region_after_call() -> strider_ir::Function {
         .fb_mut()
         .build_int_const(0xCAFEu64, ValueType::I64)
         .unwrap();
-    t.fb_mut().build_call(target, None).expect("call");
+    t.fb_mut().build_call_cc(target, None).expect("call");
 
     let tail = t.fb_mut().create_region().expect("tail");
     t.fb_mut().build_branch(tail).expect("branch to tail");

@@ -287,7 +287,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     b.set_region(true_r);
     let v_t = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_t)?;
-    let (call_t, _) = b.build_call_other(
+    let (call_t, _) = b.build_call_other_abi(
         0,
         "cpuid",
         None,
@@ -308,7 +308,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     b.set_region(false_r);
     let v_f = b.build_int_const(2u64, ValueType::I64)?;
     b.write_variable(&var, v_f)?;
-    let (call_f, _) = b.build_call_other(
+    let (call_f, _) = b.build_call_other_abi(
         0,
         "cpuid",
         None,
@@ -401,7 +401,7 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     b.build_if(cond, true_r, false_r)?;
 
     b.set_region(true_r);
-    let (call_t, _) = b.build_call_other(
+    let (call_t, _) = b.build_call_other_abi(
         0,
         "cpuid",
         None,
@@ -419,7 +419,7 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let (call_f, _) = b.build_call_other(
+    let (call_f, _) = b.build_call_other_abi(
         0,
         "cpuid",
         None,

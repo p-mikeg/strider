@@ -649,7 +649,7 @@ fn bail_on_call_between() -> Result<()> {
     let data = b.build_int_const(0x11u64, ValueType::I32)?;
     b.build_store(addr4, data, rsleigh::VnSpace::RAM)?;
     let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call(target, None)?;
+    b.build_call_cc(target, None)?;
     // SP did not shift (ret_stack_pop=0), so sp+4 is still the same slot.
     let sp_val2 = b.read_variable(&sp)?;
     let addr4b = b.build_int_binary_operation(sp_val2, four, IntBinaryOp::Add, ValueType::I64)?;

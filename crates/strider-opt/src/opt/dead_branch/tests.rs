@@ -380,7 +380,7 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
         b.set_region(true_r);
         // Advance memory through a modeled CallOther so the join's MemPhi
         // has a non-trivial mem-input from the (dead) true branch.
-        let (call_node, _) = b.build_call_other(
+        let (call_node, _) = b.build_call_other_abi(
             0,
             "cpuid",
             None,

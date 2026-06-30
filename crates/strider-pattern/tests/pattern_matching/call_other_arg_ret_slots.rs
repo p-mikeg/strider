@@ -23,7 +23,7 @@ fn build_cpuid_graph() -> Function {
     // CPUID per the ABI table is empty-channel + memory_edge=true.
     // Pass no pcode-explicit args, no implicit reads, no implicit writes.
     let _ = b
-        .build_call_other(
+        .build_call_other_abi(
             7,
             "cpuid",
             None,
@@ -81,7 +81,7 @@ fn arg_constrains_pcode_explicit_value_argument() {
     // A modeled CallOther with one pcode-explicit value arg.  Its inputs
     // are `[ctrl(0), mem(1), arg0(2)]`.
     let _ = b
-        .build_call_other(
+        .build_call_other_abi(
             9,
             "rdmsr",
             None,

@@ -1328,7 +1328,7 @@ fn callother_on_chain_gated_only_by_calls_clobber() -> Result<()> {
         // Take the address of stack-arg slot 0 (i.e. sp + 0 = sp itself).
         let sp_val = b.read_variable(&sp)?;
         // CallOther whose sole value-arg is &arg0 (= sp_val).
-        let (call_node, _result) = b.build_call_other(
+        let (call_node, _result) = b.build_call_other_abi(
             42,
             "escape_helper",
             None,
@@ -1404,7 +1404,7 @@ fn calls_clobber_toggle_gates_arg_across_call() -> Result<()> {
     // verdict is governed purely by the toggle.
     let build = |b: &mut FunctionBuilder, sp_val: ValueId| -> Result<()> {
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target, None)?;
+        b.build_call_cc(target, None)?;
         let four = b.build_int_const(4u64, ValueType::I32)?;
         let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
         let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;

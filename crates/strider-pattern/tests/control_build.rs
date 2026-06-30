@@ -22,7 +22,7 @@ use strider_pattern::{
 fn call_at(addr: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let tgt = b.build_int_const(addr, ValueType::I64).unwrap();
-    b.build_call(tgt, None).unwrap();
+    b.build_call_cc(tgt, None).unwrap();
     // `build_call` advances the current region's control to the call's
     // output, leaving the same region active — return in place.
     b.build_return(None, &[]).unwrap();
@@ -120,7 +120,7 @@ fn call_arg_by_index() {
     let c = b.build_int_const(42u64, ValueType::I64).unwrap();
     b.write_variable(&arg, c).unwrap();
     let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
-    b.build_call(tgt, None).unwrap();
+    b.build_call_cc(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
     let matcher = Matcher::new(&function);
@@ -166,7 +166,7 @@ fn call_arg_nests_value_builder_load() {
         .unwrap();
     b.write_variable(&arg, loaded).unwrap();
     let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
-    b.build_call(tgt, None).unwrap();
+    b.build_call_cc(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
     let matcher = Matcher::new(&function);
@@ -194,7 +194,7 @@ fn call_arg_nests_value_builder_load() {
 fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let (_node, _result) = b
-        .build_call_other(
+        .build_call_other_abi(
             op,
             name,
             None,
@@ -724,7 +724,7 @@ fn call_with_clobber_retval() -> strider_ir::Function {
         .build_fn_single_region()
         .unwrap();
     let tgt = b.build_int_const(0x1234u64, ValueType::I64).unwrap();
-    b.build_call(tgt, None).unwrap();
+    b.build_call_cc(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()
 }

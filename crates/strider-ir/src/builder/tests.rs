@@ -583,7 +583,7 @@ fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
     let ctrl_before = b.cur_region_control()?;
     let mem_before = b.cur_region_memory()?;
 
-    let (node, result) = b.build_call_other(
+    let (node, result) = b.build_call_other_abi(
         7,
         "NEON_rev64",
         None,
@@ -614,7 +614,7 @@ fn build_call_other_with_result_returns_typed_value() -> Result<()> {
     // container.
     let mut b = builder_with_region_tracking(vec![out_vn])?;
     let arg = b.build_int_const(0x42u64, ValueType::I64)?;
-    let (node, result) = b.build_call_other(
+    let (node, result) = b.build_call_other_abi(
         3,
         "cpuid",
         None,
@@ -641,7 +641,7 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
     // for what handle_call_other previously read as `node_outputs[1]`.
     let out_vn = reg_vn(0x20, 4); // 4-byte reg → I32 output
     let mut b = builder_with_region_tracking(vec![out_vn])?;
-    let (node, _) = b.build_call_other(
+    let (node, _) = b.build_call_other_abi(
         4,
         "cpuid",
         None,
@@ -718,7 +718,7 @@ fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
 
     // Call: memory token is input slot 1.
     let target = b.build_int_const(0x2000u64, ValueType::I64)?;
-    let call = b.build_call(target, None)?;
+    let call = b.build_call_cc(target, None)?;
     assert_eq!(
         b.function().memory_input_of(call),
         b.function().node_inputs(call).into_iter().nth(1),
@@ -736,7 +736,7 @@ fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
 fn build_call_other_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
-    let res = b.build_call_other(
+    let res = b.build_call_other_abi(
         0,
         "cpuid",
         None,
@@ -1043,7 +1043,7 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
 
     let mem_before = b.cur_region_memory()?;
     let (node, result) =
-        b.build_call_other(5, "syscall", None, &[explicit], &abi, Some(out_vn), false)?;
+        b.build_call_other_abi(5, "syscall", None, &[explicit], &abi, Some(out_vn), false)?;
 
     // Inputs: [ctrl, mem] ++ explicit_args ++ [read(RCX)].  No target.
     let inputs: Vec<ValueId> = b.function().node_inputs(node).into_iter().collect();
@@ -1136,7 +1136,7 @@ fn build_call_other_rejects_untracked_implicit_write() -> Result<()> {
         implicit_writes: vec![untracked],
         clobbers_memory: false,
     };
-    let res = b.build_call_other(11, "bogus", None, &[], &abi, None, false);
+    let res = b.build_call_other_abi(11, "bogus", None, &[], &abi, None, false);
     assert!(res.is_err(), "untracked implicit-write register must error");
     Ok(())
 }
@@ -1215,7 +1215,7 @@ fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
     // the no-return classification.
     let mut b = builder_with_region()?;
     let (node, result) =
-        b.build_call_other(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
+        b.build_call_other_abi(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
     assert!(result.is_none(), "no output vn -> no ret-val output");
     let outs: Vec<_> = b.function().node_outputs(node).to_vec();
     assert_eq!(
@@ -1257,7 +1257,7 @@ fn build_call_other_terminate_true_closes_region() -> Result<()> {
     // build_call_other with terminate=true (the NoReturn class) must
     // close the region on its own — no external termination call.
     let mut b = builder_with_region()?;
-    b.build_call_other(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
+    b.build_call_other_abi(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_err(),
@@ -1272,7 +1272,7 @@ fn build_call_other_terminate_false_keeps_region_open() -> Result<()> {
     // leave the region open — control advances to the CallOther's Control
     // output, but the region is still live.
     let mut b = builder_with_region()?;
-    b.build_call_other(0, "cpuid", None, &[], &empty_call_other_abi(), None, false)?;
+    b.build_call_other_abi(0, "cpuid", None, &[], &empty_call_other_abi(), None, false)?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_ok(),
@@ -1490,7 +1490,7 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
 
     let pre_sp = b.read_variable(&sp)?;
     let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call(target, None)?;
+    b.build_call_cc(target, None)?;
 
     let post_sp = b.read_variable(&sp)?;
     assert_ne!(
@@ -1543,7 +1543,7 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
 
     let pre_sp = b.read_variable(&sp)?;
     let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call(target, None)?;
+    b.build_call_cc(target, None)?;
 
     let post_sp = b.read_variable(&sp)?;
     // No Add node was emitted — SP is unchanged.
@@ -2468,7 +2468,7 @@ mod build_call_with_cc {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
-        b.build_call(addr, None).unwrap();
+        b.build_call_cc(addr, None).unwrap();
         // The Call output kinds match `build_call(addr, None)` exactly: Control,
         // Memory, then one slot per `call_clobbered_variables` entry.
         let function = b.function();
@@ -2527,7 +2527,7 @@ mod build_call_with_cc {
         };
 
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
-        b.build_call(addr, Some(&override_cc)).unwrap();
+        b.build_call_cc(addr, Some(&override_cc)).unwrap();
         let function = b.function();
         let call_node = function
             .graph()
@@ -2590,7 +2590,7 @@ mod build_call_with_cc {
         let arg0_value = b.read_variable(&rdi).unwrap();
 
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
-        b.build_call(addr, None).unwrap();
+        b.build_call_cc(addr, None).unwrap();
 
         let function = b.function();
         let call_node = function
@@ -2742,7 +2742,7 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let addr = b.build_int_const(0x1234_u64, ValueType::I64)?;
-    b.build_call(addr, None)?;
+    b.build_call_cc(addr, None)?;
     b.set_lift_addr(None);
 
     let f = b.function();

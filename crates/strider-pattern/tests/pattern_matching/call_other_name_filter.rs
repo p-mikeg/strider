@@ -14,7 +14,7 @@ fn name_matches_only_target() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let _ = b
-        .build_call_other(
+        .build_call_other_abi(
             1,
             "cpuid",
             None,
@@ -29,7 +29,7 @@ fn name_matches_only_target() {
         )
         .expect("cpuid");
     let _ = b
-        .build_call_other(
+        .build_call_other_abi(
             2,
             "rdtsc",
             None,

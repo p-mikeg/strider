@@ -4,7 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-strider-ir = { workspace = true }
+# `test-util` exposes the build_call_cc / build_call_other_abi convenience
+# constructors this crate's `tb.rs` builders use. strider-ir-test-utils is only
+# ever a dev-dependency, so this never reaches a production build.
+strider-ir = { workspace = true, features = ["test-util"] }
 strider-target = { workspace = true }
 rsleigh.workspace = true
 anyhow.workspace = true
