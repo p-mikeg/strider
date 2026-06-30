@@ -72,7 +72,6 @@ fn narrow_alias_write_folds_to_zero_in_ret_val_register() {
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let regs = sleigh.regs().expect("regs");
     let cc = strider_target::CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");

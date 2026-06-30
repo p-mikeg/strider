@@ -1590,101 +1590,51 @@ fn lookup_op<Op: Copy>(
     )))
 }
 
-fn parse_int_cmp_op(name: &str) -> PyResult<strider_ir::IntCmpOp> {
-    use strider_ir::IntCmpOp::{self, *};
-    static VARIANTS: &[IntCmpOp] = &[Equal, Less, Sless, Carry, Scarry, Sborrow];
-    // Exhaustive: a new `IntCmpOp` variant fails to compile here until both
-    // the arm below and the `VARIANTS` list above are extended.
-    fn canonical(op: IntCmpOp) -> &'static str {
-        use strider_ir::IntCmpOp::*;
-        match op {
-            Equal => "Equal",
-            Less => "Less",
-            Sless => "Sless",
-            Carry => "Carry",
-            Scarry => "Scarry",
-            Sborrow => "Sborrow",
+// Each `op_parser!` invocation emits a `fn $fn(name) -> PyResult<$ty>` that
+// derives its canonical-name table from an exhaustive `match` over the listed
+// variants — so adding an enum variant in `strider-ir` forces a new arm here
+// (or a compile error) rather than silently desyncing the round-trip.  The
+// optional `_ => unreachable` arm lets a curated subset (the boolean ops) list
+// only the variants it accepts while still matching exhaustively.
+macro_rules! op_parser {
+    (
+        $fn:ident, $ty:ty, $op_kind:literal,
+        variants = [$($variant:ident),+ $(,)?],
+        $(rest_unreachable = $msg:literal,)?
+        aliases = [$(($alias:literal, $aop:ident)),* $(,)?] $(,)?
+    ) => {
+        fn $fn(name: &str) -> PyResult<$ty> {
+            use $ty as Op;
+            static VARIANTS: &[$ty] = &[$(Op::$variant),+];
+            fn canonical(op: $ty) -> &'static str {
+                match op {
+                    $(Op::$variant => stringify!($variant),)+
+                    $(_ => unreachable!($msg, ),)?
+                }
+            }
+            static ALIASES: &[(&str, $ty)] = &[$(($alias, Op::$aop)),*];
+            lookup_op(VARIANTS, canonical, ALIASES, name, $op_kind)
         }
-    }
-    static ALIASES: &[(&str, IntCmpOp)] = &[("eq", Equal), ("lt", Less), ("slt", Sless)];
-    lookup_op(VARIANTS, canonical, ALIASES, name, "IntCmpOp")
+    };
 }
 
-fn parse_int_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
-    use strider_ir::IntBinaryOp::{self, *};
-    static VARIANTS: &[IntBinaryOp] = &[
-        Add,
-        And,
-        Or,
-        Xor,
-        Div,
-        Sdiv,
-        Rem,
-        Srem,
-        ShiftRight,
-        SShiftRight,
-        ShiftLeft,
-        Mul,
-    ];
-    // Exhaustive: a new `IntBinaryOp` variant fails to compile here.
-    fn canonical(op: IntBinaryOp) -> &'static str {
-        use strider_ir::IntBinaryOp::*;
-        match op {
-            Add => "Add",
-            And => "And",
-            Or => "Or",
-            Xor => "Xor",
-            Div => "Div",
-            Sdiv => "Sdiv",
-            Rem => "Rem",
-            Srem => "Srem",
-            ShiftRight => "ShiftRight",
-            SShiftRight => "SShiftRight",
-            ShiftLeft => "ShiftLeft",
-            Mul => "Mul",
-        }
-    }
-    static ALIASES: &[(&str, IntBinaryOp)] = &[
-        ("shl", ShiftLeft),
-        ("shr", ShiftRight),
-        ("sshr", SShiftRight),
-    ];
-    lookup_op(VARIANTS, canonical, ALIASES, name, "IntBinaryOp")
-}
+op_parser!(parse_int_cmp_op, strider_ir::IntCmpOp, "IntCmpOp",
+    variants = [Equal, Less, Sless, Carry, Scarry, Sborrow],
+    aliases = [("eq", Equal), ("lt", Less), ("slt", Sless)]);
 
-fn parse_bool_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
-    use strider_ir::IntBinaryOp::{And, Or, Xor};
-    static VARIANTS: &[strider_ir::IntBinaryOp] = &[And, Or, Xor];
-    fn canonical(op: strider_ir::IntBinaryOp) -> &'static str {
-        use strider_ir::IntBinaryOp::{And, Or, Xor};
-        // Bool ops are a curated subset of IntBinaryOp; the full canonical
-        // SSoT lives in `parse_int_binary_op`.  Unreachable for the others.
-        match op {
-            And => "And",
-            Or => "Or",
-            Xor => "Xor",
-            other => unreachable!("non-boolean IntBinaryOp in bool table: {other:?}"),
-        }
-    }
-    static ALIASES: &[(&str, strider_ir::IntBinaryOp)] = &[];
-    lookup_op(VARIANTS, canonical, ALIASES, name, "boolean binary op")
-}
+op_parser!(parse_int_binary_op, strider_ir::IntBinaryOp, "IntBinaryOp",
+    variants = [Add, And, Or, Xor, Div, Sdiv, Rem, Srem,
+                ShiftRight, SShiftRight, ShiftLeft, Mul],
+    aliases = [("shl", ShiftLeft), ("shr", ShiftRight), ("sshr", SShiftRight)]);
 
-fn parse_float_binary_op(name: &str) -> PyResult<strider_ir::FloatBinaryOp> {
-    use strider_ir::FloatBinaryOp::{self, *};
-    static VARIANTS: &[FloatBinaryOp] = &[Add, Mul, Div];
-    // Exhaustive: a new `FloatBinaryOp` variant fails to compile here.
-    fn canonical(op: FloatBinaryOp) -> &'static str {
-        use strider_ir::FloatBinaryOp::*;
-        match op {
-            Add => "Add",
-            Mul => "Mul",
-            Div => "Div",
-        }
-    }
-    static ALIASES: &[(&str, FloatBinaryOp)] = &[];
-    lookup_op(VARIANTS, canonical, ALIASES, name, "FloatBinaryOp")
-}
+op_parser!(parse_bool_binary_op, strider_ir::IntBinaryOp, "boolean binary op",
+    variants = [And, Or, Xor],
+    rest_unreachable = "non-boolean IntBinaryOp in bool table",
+    aliases = []);
+
+op_parser!(parse_float_binary_op, strider_ir::FloatBinaryOp, "FloatBinaryOp",
+    variants = [Add, Mul, Div],
+    aliases = []);
 
 // ── pat-fn thunk macro ───────────────────────────────────────────────────
 //
@@ -2951,10 +2901,15 @@ macro_rules! binary_op_builder {
                 let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
                 Ok(DynMatch(Box::new(move |mb| {
                     let pat = strider_pattern::$core(op, l, r);
-                    // Build the chained combinators, then compile. We branch
-                    // on the option combinations to keep the static types
-                    // monomorphic per arm.
-                    compile_binary_chain(mb, pat, ordered, capture, when)
+                    // Apply `.ordered()` first (it pins commutativity on the
+                    // root), then capture / when via `apply_cap_when`.  The
+                    // branch keeps the per-arm `pat` type monomorphic
+                    // (`pat.ordered()` is a distinct type).
+                    if ordered {
+                        apply_cap_when(mb, pat.ordered(), capture, when)
+                    } else {
+                        apply_cap_when(mb, pat, capture, when)
+                    }
                 })))
             }
 
@@ -2982,26 +2937,6 @@ macro_rules! binary_op_builder {
         // pyo3 allows several per class).
         builder_common_methods!($ty);
     };
-}
-
-/// Compile a binary-op core pattern with the optional `.ordered()` /
-/// `.capture()` / `.when()` combinators applied, returning the root output.
-fn compile_binary_chain<P: MatchPat + 'static>(
-    mb: &mut MatcherBuilder,
-    pat: P,
-    ordered: bool,
-    capture: Option<Capture>,
-    when: Option<PyObject>,
-) -> PatValueRef {
-    // Apply `.ordered()` first (it pins commutativity on the root), then
-    // capture, then when. Each combinator wraps the previous, so the order
-    // mirrors `pat.ordered().capture(c).when_match(f)`.
-    if ordered {
-        let pat = pat.ordered();
-        apply_cap_when(mb, pat, capture, when)
-    } else {
-        apply_cap_when(mb, pat, capture, when)
-    }
 }
 
 fn apply_cap_when<P: MatchPat + 'static>(

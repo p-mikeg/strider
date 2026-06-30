@@ -39,7 +39,7 @@ where
 /// single [`SideTables::remap`] call; each is still surfaced through its own
 /// typed accessor on [`crate::Function`].  All entries are remapped (or dropped) when
 /// the arena is compacted.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct SideTables {
     /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
     /// nodes.

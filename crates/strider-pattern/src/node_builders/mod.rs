@@ -58,10 +58,6 @@ use crate::matcher::{MatcherBuilder, PatValueRef};
 /// exists).
 pub(crate) type SubCompiler = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>;
 
-/// Sparse indexed sub-pattern constraints (raw input slot → compiler).
-/// Shared by the control [`flow`] and [`phi`] builders.
-pub(crate) type IndexedInputs = Vec<(usize, SubCompiler)>;
-
 /// A memory-producing sub-pattern that can be chained into a consumer's
 /// memory input slot.
 ///

@@ -216,7 +216,7 @@ impl LoadPat {
 
 impl MatchPat for LoadPat {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().compile_value(b)
+        self.configured().compile_anchored(b)
     }
 }
 
@@ -329,7 +329,7 @@ impl StorePat {
 
 impl MemPat for StorePat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().compile_mem(b)
+        self.configured().compile_anchored(b)
     }
 }
 

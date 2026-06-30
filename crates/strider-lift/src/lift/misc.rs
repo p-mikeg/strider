@@ -8,7 +8,6 @@
 //! strider owns; `MultiEqual` because we currently raise it as an error
 //! and that's a strider-level concern.
 
-use anyhow::bail;
 use strider_ir::{IRBuilderExt, VnTypeExt};
 
 use crate::lift::FunctionLifter;
@@ -18,13 +17,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// SegmentOp: segmented-address lookup.
     /// inputs[0] = CONST op id, inputs[1] = segment, inputs[2] = offset.
     pub(super) fn handle_segment_op(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        if insn.inputs.len() < 3 {
-            bail!(
-                "opcode {:?} has too few inputs: expected at least 3, got {}",
-                insn.opcode,
-                insn.inputs.len()
-            );
-        }
+        // No arity pre-check: each `nth_input_or_err` / `read_input` below
+        // already errors per-slot when its input is missing.
         let id_vn = nth_input_or_err(insn, 0)?;
         crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
         let op_id = id_vn.addr_off;

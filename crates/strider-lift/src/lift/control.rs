@@ -208,8 +208,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// return slot, so we discard the lifted input here and let the IR resolve
     /// the real return values from the calling convention's resolved register
     /// list.
-    pub(super) fn handle_return(&mut self, _insn: &rsleigh::Insn) -> Result<()> {
-        // build_function_return terminates the region unconditionally.
+    pub(super) fn handle_return(&mut self) -> Result<()> {
+        // The p-code `Return` input is discarded (see above); nothing from the
+        // insn is needed. build_function_return terminates the region.
         self.builder.build_function_return()
     }
 

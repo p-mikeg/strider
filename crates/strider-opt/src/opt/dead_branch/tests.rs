@@ -4,7 +4,6 @@ use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
-use crate::pipeline::OptimizerTestExt;
 use crate::{CfgDetach, ConstantFold, OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse};
 
 // Helper: count Region nodes with N ctrl inputs.
@@ -31,8 +30,8 @@ fn reachable_regions(fg: &strider_ir::Function) -> Vec<NodeId> {
 /// with no downstream join) keeps its inputs but is simply unreachable
 /// from entry — orphans don't affect correctness, so they are not swept.
 fn destructive_teardown(fg: &mut strider_ir::Function) -> Result<()> {
-    DeadBranchElimination.run_one(fg, &mut OptCtx::new(None))?;
-    CfgDetach.run_one(fg, &mut OptCtx::new(None))?;
+    crate::pipeline::run_one(&DeadBranchElimination, fg, &mut OptCtx::new(None))?;
+    crate::pipeline::run_one(&CfgDetach, fg, &mut OptCtx::new(None))?;
     Ok(())
 }
 
@@ -105,7 +104,7 @@ fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
         "precondition: the control source must not already carry the condition's addr"
     );
 
-    DeadBranchElimination.run_one(&mut fg, &mut OptCtx::new(None))?;
+    crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
 
     assert!(
         fg.asm_fingerprint(survivor).contains(&COND_ADDR),
@@ -147,10 +146,10 @@ fn dead_branch_false() -> Result<()> {
     let dead_region = dead_branch_region(&fg, 0);
 
     // DBE alone reports Changed (it folds the constant If).
-    let result = DeadBranchElimination.run_one(&mut fg, &mut OptCtx::new(None))?;
+    let result = crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
     assert!(result.changed());
     // CfgDetach severs the dead predecessor slot of any data-reachable join.
-    CfgDetach.run_one(&mut fg, &mut OptCtx::new(None))?;
+    crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
 
     // The meaningful outcome: the dead branch Region is no longer reachable
     // from entry (the live branch was redirected past the folded If).  Its
@@ -181,9 +180,9 @@ fn dead_branch_true() -> Result<()> {
     // cond = true → the false branch (If output index 1) is dead.
     let dead_region = dead_branch_region(&fg, 1);
 
-    let result = DeadBranchElimination.run_one(&mut fg, &mut OptCtx::new(None))?;
+    let result = crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
     assert!(result.changed());
-    CfgDetach.run_one(&mut fg, &mut OptCtx::new(None))?;
+    crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
 
     assert!(
         !reachable_regions(&fg).contains(&dead_region),
@@ -234,8 +233,7 @@ fn dead_branch_non_const_no_change() -> Result<()> {
     // DeadBranchElimination alone should not fire because the condition
     // is a BoolBinaryOp node, not a BoolConst.
     assert!(
-        !DeadBranchElimination
-            .run_one(&mut fg, &mut OptCtx::new(None))?
+        !crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?
             .changed()
     );
     Ok(())
@@ -410,9 +408,9 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
     // DBE detaches the folded If; CfgDetach severs the live↔dead edge;
     // PhiCollapse collapses the now single-pred MemPhi; the final state
     // must be structurally valid.
-    DeadBranchElimination.run_one(&mut fg, &mut OptCtx::new(None))?;
-    CfgDetach.run_one(&mut fg, &mut OptCtx::new(None))?;
-    PhiCollapse.run_one(&mut fg, &mut OptCtx::new(None))?;
+    crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
+    crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
+    crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut OptCtx::new(None))?;
 
     strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;

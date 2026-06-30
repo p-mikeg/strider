@@ -97,16 +97,6 @@ impl ValueType {
         }
     }
 
-    /// Whether a constant of this type fits in a `u64` (i.e. `byte_size <= 8`).
-    ///
-    /// Returns `true` for `I1`, `I8`, `I16`, `I32`, `I64`, `F32`, and `F64`.
-    /// Returns `false` for `I80` (10 bytes), `I128`, `I256`, `I512`, and `F80`
-    /// (10 bytes).
-    #[inline]
-    pub fn fits_u64(self) -> bool {
-        self.byte_size() <= 8
-    }
-
     /// Returns `true` if this type is the 1-bit boolean integer `I1`.
     ///
     /// Sugar over `bit_width() == 1`, used by the pattern DSL to query
@@ -138,7 +128,7 @@ impl ValueType {
     /// likewise excluded.  Call [`Self::byte_size`] for the width once gated.
     #[inline]
     pub fn is_wide_int(self) -> bool {
-        self.is_integer() && !self.fits_u64()
+        self.is_integer() && self.byte_size() > 8
     }
 
     /// Returns the all-ones bit mask for this integer type, as `u128`.

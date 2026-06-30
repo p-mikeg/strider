@@ -315,7 +315,6 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
     // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
     let cc = CallingConvention::aarch64_aapcs64()
-        .unwrap()
         .build(strider.sleigh_regs())
         .expect("build cc");
     let lr_vn = cc

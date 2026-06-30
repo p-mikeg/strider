@@ -164,12 +164,6 @@ impl TemplateBuilder {
         *self.core.kind_mut(out.node) = TmplNodeKind::Build(kind);
     }
 
-    /// Records `out`'s value output as inheriting the rewrite root's
-    /// output type at instantiation time (the default).
-    pub fn set_inherit_root_ty(&mut self, out: TmplValueRef) {
-        self.out_data_of(out).ty = TemplateTy::InheritRoot;
-    }
-
     /// Adds a fresh capture leaf — a payload-less [`TmplNodeKind::Capture`]
     /// marker node producing a [`TmplValue::ValueCapture`] — and
     /// returns its value handle. At instantiation the value capture resolves
@@ -262,8 +256,8 @@ mod tests {
         let k = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(1))));
         let _sum = b.binary(IntBinaryOp::Add, x, k);
         let t = b.finish();
-        assert_eq!(t.node_count(), 3);
-        assert_eq!(t.output_count(), 3);
+        assert_eq!(t.graph.all_node_ids().count(), 3);
+        assert_eq!(t.graph.all_value_ids().count(), 3);
         assert!(t.root().is_ok());
     }
 

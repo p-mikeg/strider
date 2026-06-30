@@ -1434,7 +1434,6 @@ fn get_cc_override_round_trips_and_derives_stack_args() {
     let arch = strider_target::SleighArch::x86_64();
     let regs = arch.probe_regs().unwrap();
     let cc = strider_target::CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .unwrap();
 

@@ -110,18 +110,6 @@ impl Pattern {
         self.ignore_casts_mask(CastMask::all())
     }
 
-    /// Number of node vertices. Test-only structural accessor.
-    #[cfg(test)]
-    pub(crate) fn node_count(&self) -> usize {
-        self.graph.all_node_ids().count()
-    }
-
-    /// Number of output vertices. Test-only structural accessor.
-    #[cfg(test)]
-    pub(crate) fn output_count(&self) -> usize {
-        self.graph.all_value_ids().count()
-    }
-
     /// Number of control-output vertices. Used to assert the `If`
     /// representation invariant (two control outputs: true + false).
     /// Test-only structural accessor.
@@ -154,8 +142,8 @@ mod tests {
         )));
         let _sum = b.binary(strider_ir::IntBinaryOp::Add, x, k);
         let p = b.finish();
-        assert_eq!(p.node_count(), 3);
-        assert_eq!(p.output_count(), 3);
+        assert_eq!(p.graph.all_node_ids().count(), 3);
+        assert_eq!(p.graph.all_value_ids().count(), 3);
         // The root is derived as the unique sink (`add`).
         assert!(p.root().is_ok());
     }

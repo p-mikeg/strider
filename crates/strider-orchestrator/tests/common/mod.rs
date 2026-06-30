@@ -130,7 +130,7 @@ impl Arch {
         }
     }
     pub fn cc(self) -> strider_target::CallingConvention {
-        let preset = match self {
+        match self {
             Arch::X86 => strider_target::CallingConvention::x86_cdecl(),
             Arch::X86Kernel => strider_target::CallingConvention::x86_linux_kernel(),
             Arch::X64 => strider_target::CallingConvention::x86_64_systemv(),
@@ -152,8 +152,7 @@ impl Arch {
             // the v1 preset only for explicit gcc-built ELFv1 binaries
             // (function-descriptor handling is a future strider feature).
             Arch::Ppc64be | Arch::Ppc64le => strider_target::CallingConvention::powerpc64_elf_v2(),
-        };
-        preset.expect("CC preset must be registered for this arch")
+        }
     }
 }
 

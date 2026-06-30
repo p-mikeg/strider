@@ -577,7 +577,12 @@ fn single_bit_term(
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
             let [src] = f.producer_inputs_exact::<1>(value).ok()?;
             match f.value_type_opt(src) {
-                Some(ValueType::I1) => Some((0, comparison_leaf(f, src))),
+                // A 1-bit source sets bit 0; carry the comparison leaf only
+                // when the source is itself an `IntCmpOp`.
+                Some(ValueType::I1) => Some((
+                    0,
+                    matches!(f.kind_of_value(src), NodeKind::IntCmpOp(_)).then_some(src),
+                )),
                 _ => single_bit_term(f, src, depth + 1),
             }
         }
@@ -596,11 +601,6 @@ fn single_bit_term(
         }
         _ => None,
     }
-}
-
-/// Returns `value` if it is produced by an `IntCmpOp` (the comparison leaf).
-fn comparison_leaf(f: &impl IRViewer, value: ValueId) -> Option<ValueId> {
-    matches!(f.kind_of_value(value), NodeKind::IntCmpOp(_)).then_some(value)
 }
 
 #[cfg(test)]

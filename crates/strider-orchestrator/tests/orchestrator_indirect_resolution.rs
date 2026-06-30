@@ -32,7 +32,6 @@ fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_orchestrator::Ana
     let sleigh = make_sleigh_value(bytes, base);
     let regs = sleigh.regs().expect("regs");
     let cc = CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None)?;
@@ -133,7 +132,6 @@ fn analyze_ignores_pre_seeded_known_targets_in_lift_options() {
     let sleigh = make_sleigh_value(bytes, 0x1000);
     let regs = sleigh.regs().expect("regs");
     let cc = CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
@@ -287,7 +285,6 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
     let sleigh = make_sleigh_value(bytes.clone(), 0x1000);
     let regs = sleigh.regs().expect("regs");
     let cc = CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .expect("cc");
     let mut lifter = Lifter::new(arch, sleigh).expect("lifter");
@@ -338,7 +335,6 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
         let sleigh = make_sleigh_value(b2, 0x1000);
         let regs = sleigh.regs().expect("regs");
         let cc = CallingConvention::x86_64_systemv()
-            .unwrap()
             .build(&regs)
             .expect("cc");
         let mut strider = Strider::new(arch, sleigh, None).expect("strider");

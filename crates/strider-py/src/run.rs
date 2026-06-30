@@ -495,11 +495,7 @@ fn run_with_custom_pipeline(
     drop(lifter_borrow);
     let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
 
-    let actual_pipeline = if rom_box.is_some() {
-        pipeline.drain_into_pipeline_with_load_read_only()?
-    } else {
-        pipeline.drain_into_pipeline()?
-    };
+    let actual_pipeline = pipeline.drain_into_pipeline(rom_box.is_some())?;
     {
         let py_function_borrow = py_function.borrow(py);
         let mut function = py_function_borrow.write_inner().map_err(into_strider_err)?;

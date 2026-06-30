@@ -1,6 +1,5 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::PostOptimizerTestExt;
 use crate::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeKind, ValueId, ValueType};
 use strider_ir_test_utils::IrWalkerEx;
@@ -40,7 +39,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let mut fg = b.build()?;
 
     let pass = FunctionArgDetect;
-    pass.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
 
     // Side-table must have arg 0.
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -91,10 +90,10 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
     let mut fg = b.build()?;
 
     let pass = FunctionArgDetect;
-    pass.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
     let after_first = fg.arg_index_to_values(0).to_vec();
     // Re-run on the same function (simulating a second StableOnly iteration).
-    pass.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
     let after_second = fg.arg_index_to_values(0).to_vec();
 
     assert_eq!(
@@ -713,7 +712,7 @@ fn second_and_third_register_args_recorded_at_their_indices() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    FunctionArgDetect.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_post(&FunctionArgDetect, &mut fg, &mut crate::OptCtx::new(None))?;
 
     for (idx, vn) in [(0u32, r0), (1, r1), (2, r2)] {
         let carriers = fg.arg_index_to_values(idx);

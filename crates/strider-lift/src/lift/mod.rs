@@ -463,7 +463,6 @@ mod tests {
             .probe_regs()
             .expect("probe regs");
         let cc = strider_target::CallingConvention::aarch64_aapcs64()
-            .expect("aarch64_aapcs64 preset must be registered")
             .build(&regs)
             .expect("build cc");
         // AArch64 `ret` = 0xD65F03C0, little-endian byte sequence.

@@ -22,7 +22,6 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     let rsp = regs.name_to_vn("RSP").unwrap();
 
     let cc = CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .unwrap();
     let mut b =

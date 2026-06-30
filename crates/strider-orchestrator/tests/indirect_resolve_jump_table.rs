@@ -343,7 +343,6 @@ fn analyze_x64_snippet_with_rom(
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let regs = sleigh.regs().expect("regs");
     let cc = strider_target::CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .expect("build cc");
     let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(Box::new(rom)))

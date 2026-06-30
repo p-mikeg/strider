@@ -50,7 +50,6 @@ fn run_at(
     let arch = SleighArch::x86_64();
     let regs = sleigh.regs().expect("regs");
     let cc = CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None)?;

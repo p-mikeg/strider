@@ -156,18 +156,6 @@ impl Template {
                 TmplValue::TmplOutput(_) => None,
             })
     }
-
-    /// Number of node vertices. Test-only structural accessor.
-    #[cfg(test)]
-    pub(crate) fn node_count(&self) -> usize {
-        self.graph.all_node_ids().count()
-    }
-
-    /// Number of output vertices. Test-only structural accessor.
-    #[cfg(test)]
-    pub(crate) fn output_count(&self) -> usize {
-        self.graph.all_value_ids().count()
-    }
 }
 
 #[cfg(test)]
@@ -192,6 +180,6 @@ mod tests {
         let c = Capture::new();
         let tpl = crate::template::bool_not(var(c)).into_template();
         assert!(tpl.root().is_ok(), "sealed template must have a root");
-        assert_eq!(tpl.node_count(), 3);
+        assert_eq!(tpl.graph.all_node_ids().count(), 3);
     }
 }

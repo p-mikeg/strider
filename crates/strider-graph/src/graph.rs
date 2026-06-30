@@ -14,10 +14,9 @@ use anyhow::anyhow;
 use cranelift_entity::{EntityRef, ListPool, PrimaryMap, SecondaryMap};
 use smallvec::SmallVec;
 
-use crate::cache::NodeCacheable;
+use crate::cache::{NodeCache, NodeCacheable};
 use crate::ids::{NodeId, UseId, UseIdList, ValueId, ValueIdList};
 use crate::iter::{InputCursor, Inputs};
-use crate::node_cache::NodeCache;
 use crate::storage::{Node, RawStore, UseData, ValueData};
 
 /// The core generic graph structure.
@@ -47,6 +46,21 @@ pub struct Graph<N, V, C: NodeCacheable<N, V>> {
 impl<N, V, C: NodeCacheable<N, V>> Default for Graph<N, V, C> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// Manual `Clone` (not derived) so the bound is `N: Clone, V: Clone` only — the
+// policy `C` is a `PhantomData` ZST, so requiring `C: Clone` (as the derive
+// would) is spurious. A cloned graph is a deep, independent copy: `RawStore` and
+// `NodeCache` both clone their owned state.
+impl<N: Clone, V: Clone, C: NodeCacheable<N, V>> Clone for Graph<N, V, C> {
+    fn clone(&self) -> Self {
+        Graph {
+            store: self.store.clone(),
+            cache: self.cache.clone(),
+            _policy: PhantomData,
+            generation: self.generation,
+        }
     }
 }
 

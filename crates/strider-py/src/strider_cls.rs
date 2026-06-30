@@ -32,25 +32,6 @@ use crate::run::{
     unresolved_machine_addrs,
 };
 
-/// Build a `Lifter<AnyMemReader>` (owning a fresh `Sleigh` built from
-/// `mem`) plus the resolved calling convention for `cc`.  Shared by the
-/// `#[new]` constructor and the internal snapshot path.
-fn build_lift_driver(
-    arch: PySleighArch,
-    mem: MemInput,
-    cc: &PyCallingConvention,
-) -> PyResult<(
-    strider_orchestrator::Lifter<AnyMemReader>,
-    strider_target::BuiltCallingConvention,
-)> {
-    let reader = mem.into_any();
-    let sleigh = build_orch_sleigh(&arch, reader)?;
-    let driver = strider_orchestrator::Lifter::new(arch.inner, sleigh).map_err(into_strider_err)?;
-    // Resolve the CC against the driver's (the lifter's) register table.
-    let cc_built = build_cc(cc, driver.sleigh_regs())?;
-    Ok((driver, cc_built))
-}
-
 /// Low-level lift handle bound to a `(SleighArch, mem, CallingConvention)`
 /// triple.  Builds a `Cfg` via `build_cfg`, converts it into the IR graph
 /// via `analyze_cfg`, and produces the canned optimizer pipelines.  No
@@ -101,7 +82,12 @@ impl PyLifter {
         mem: MemInput,
         cc: PyCallingConvention,
     ) -> PyResult<Self> {
-        let (inner, cc) = build_lift_driver(arch, mem, &cc)?;
+        let reader = mem.into_any();
+        let sleigh = build_orch_sleigh(&arch, reader)?;
+        let inner =
+            strider_orchestrator::Lifter::new(arch.inner, sleigh).map_err(into_strider_err)?;
+        // Resolve the CC against the inner engine's register table.
+        let cc = build_cc(&cc, inner.sleigh_regs())?;
         Ok(Self { inner, cc })
     }
 

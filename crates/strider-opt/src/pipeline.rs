@@ -210,32 +210,6 @@ pub fn run_one(
     Ok(result)
 }
 
-/// Test-only ergonomic shim mirroring the removed `Optimizer::optimize`:
-/// `pass.run_one(&mut fg, &mut octx)` delegates to the free [`run_one`].
-#[cfg(test)]
-pub(crate) trait OptimizerTestExt {
-    /// Build a throwaway self-cleaning ctx, apply `self`, drain, and return.
-    ///
-    /// # Errors
-    /// Propagates the first error returned by [`Optimizer::apply`].
-    fn run_one(
-        &self,
-        function: &mut strider_ir::Function,
-        octx: &mut OptCtx<'_>,
-    ) -> crate::Result<OptimizationResult>;
-}
-
-#[cfg(test)]
-impl<T: Optimizer> OptimizerTestExt for T {
-    fn run_one(
-        &self,
-        function: &mut strider_ir::Function,
-        octx: &mut OptCtx<'_>,
-    ) -> crate::Result<OptimizationResult> {
-        run_one(self, function, octx)
-    }
-}
-
 /// Run a single [`PostOptimizer`] against `function` through a throwaway
 /// self-cleaning [`crate::EditFunction`] — the post-pass sibling of
 /// [`run_one`].  Post-passes return no `Change`/`NoChange`, so this yields
@@ -258,33 +232,6 @@ pub fn run_post(
     pass.apply(&mut edit, octx)?;
     edit.clean();
     Ok(())
-}
-
-/// Test-only ergonomic shim for [`PostOptimizer`], mirroring
-/// [`OptimizerTestExt`]: `pass.run_one(&mut fg, &mut octx)` delegates to the
-/// free [`run_post`].
-#[cfg(test)]
-pub(crate) trait PostOptimizerTestExt {
-    /// Build a throwaway self-cleaning ctx, apply `self`, drain, and return.
-    ///
-    /// # Errors
-    /// Propagates the first error returned by [`PostOptimizer::apply`].
-    fn run_one(
-        &self,
-        function: &mut strider_ir::Function,
-        octx: &mut OptCtx<'_>,
-    ) -> crate::Result<()>;
-}
-
-#[cfg(test)]
-impl<T: PostOptimizer> PostOptimizerTestExt for T {
-    fn run_one(
-        &self,
-        function: &mut strider_ir::Function,
-        octx: &mut OptCtx<'_>,
-    ) -> crate::Result<()> {
-        run_post(self, function, octx)
-    }
 }
 
 /// Defines an object-safe clone shim trait `$shim` for the trait object

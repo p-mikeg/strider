@@ -132,7 +132,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // terminators (`Switch`, `UnresolvedIndirectBranch`) that the
             // cfg builder seats from the orchestrator's `known_targets`
             // feedback, both handled in the special-terminator post-pass.
-            Opcode::Return | Opcode::BranchIndirect => lifter.handle_return(insn)?,
+            Opcode::Return | Opcode::BranchIndirect => lifter.handle_return()?,
             Opcode::Call => lifter.handle_call(insn)?,
             Opcode::CallIndirect => lifter.handle_call_indirect(insn)?,
             // GHIDRA's MULTIEQUAL is a decompiler-internal phi that

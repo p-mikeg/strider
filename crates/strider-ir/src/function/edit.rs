@@ -630,31 +630,6 @@ impl<'g> EditFunction<'g> {
         Ok(())
     }
 
-    /// Remove the input at `index` from a (non-cacheable) node —
-    /// delegates to [`Graph::remove_node_input`].
-    ///
-    /// Maintains the maybe-dead queue: the value at `index` loses a use, so its
-    /// producer is enqueued (via `will_detach_value`) when this was its
-    /// last use.
-    ///
-    /// # Errors
-    /// Never — always `Ok(())`; the `Result` keeps the edit-verb surface
-    /// uniform.
-    pub fn remove_node_input(&mut self, node: NodeId, index: u32) -> crate::error::Result<()> {
-        // Snapshot the displaced value BEFORE removal so its remaining-use
-        // count still includes the edge we're about to drop.
-        let displaced = self
-            .function
-            .node_inputs(node)
-            .into_iter()
-            .nth(index as usize);
-        if let Some(value) = displaced {
-            self.will_detach_value(value);
-        }
-        self.function.graph_mut().remove_node_input(node, index);
-        Ok(())
-    }
-
     /// Redirect every use of `old` to `new` — delegates to
     /// [`Graph::replace_all_uses`].
     ///
@@ -841,7 +816,7 @@ impl<'g> EditFunction<'g> {
     }
 
     /// Remove a batch of input slots from a (non-cacheable) node in a single
-    /// linear pass — the batched counterpart of [`Self::remove_node_input`].
+    /// linear pass — the batched counterpart of [`Graph::remove_node_input`].
     ///
     /// Maintains the maybe-dead queue: every value at a removed (in-range)
     /// slot loses a use, so its producer is enqueued (via `will_detach_value`)

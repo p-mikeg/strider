@@ -718,7 +718,6 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
     let cc = CallingConvention::aarch64_aapcs64()
-        .unwrap()
         .build(strider.sleigh_regs())
         .expect("build cc");
     let lr_vn = cc

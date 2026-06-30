@@ -110,7 +110,6 @@ fn try_new_accepts_clean_layout() {
 fn build_routes_through_validator_no_false_positives() {
     let regs = SleighArch::x86_64().probe_regs().expect("probe regs");
     CallingConvention::x86_64_systemv()
-        .expect("x86_64_systemv preset must be registered")
         .build(&regs)
         .expect("x86_64_systemv must build cleanly (build routes through try_new)");
 }

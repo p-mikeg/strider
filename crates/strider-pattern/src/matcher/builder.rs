@@ -249,7 +249,7 @@ mod tests {
         )));
         let _sum = b.binary(IntBinaryOp::Add, x, k);
         let p = b.finish();
-        assert_eq!(p.node_count(), 3);
-        assert_eq!(p.output_count(), 3);
+        assert_eq!(p.graph.all_node_ids().count(), 3);
+        assert_eq!(p.graph.all_value_ids().count(), 3);
     }
 }

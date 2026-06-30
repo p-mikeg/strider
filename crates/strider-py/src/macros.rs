@@ -10,17 +10,19 @@
 //! feature so `#[pyclass]` can carry more than one `#[pymethods]`
 //! block.
 //!
-//! Two arms cover the inner-factory return-type split:
+//! Two arms cover the differing inner storage of the two wrappers:
 //!
-//! - default arm — inner ctor returns `Self` (used by `SleighArch`).
-//! - `try` arm — inner ctor returns `Result<_, _>`; the wrapper lifts
-//!   the error through `errors::into_strider_err` (used by
+//! - default arm — stores the inner preset directly (used by
+//!   `SleighArch`).
+//! - `cc` arm — wraps the inner preset in `CcImpl::Preset(...)` (used by
 //!   `CallingConvention`).
+//!
+//! Both inner factories are infallible (every named preset has a
+//! registered row), so each classmethod returns `Self` directly.
 
 macro_rules! forall_preset {
-    // Fallible: inner ctor returns Result; lift the error.  The CC
-    // wrapper stores the result in `CcImpl::Preset(...)`.
-    (try $self_ty:ty, $inner_ty:ty, [$($name:ident),* $(,)?]) => {
+    // CC wrapper: stores the inner preset in `CcImpl::Preset(...)`.
+    (cc $self_ty:ty, $inner_ty:ty, [$($name:ident),* $(,)?]) => {
         #[pymethods]
         impl $self_ty {
             $(
@@ -30,13 +32,11 @@ macro_rules! forall_preset {
                      register table at consumption time)."
                 )]
                 #[classmethod]
-                fn $name(_cls: &Bound<'_, PyType>) -> PyResult<Self> {
-                    let inner = <$inner_ty>::$name()
-                        .map_err(|e| crate::errors::into_strider_err(e.into()))?;
-                    Ok(Self {
-                        inner: crate::cc::CcImpl::Preset(inner),
+                fn $name(_cls: &Bound<'_, PyType>) -> Self {
+                    Self {
+                        inner: crate::cc::CcImpl::Preset(<$inner_ty>::$name()),
                         preset_name: stringify!($name),
-                    })
+                    }
                 }
             )*
         }

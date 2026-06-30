@@ -25,7 +25,6 @@ mod cache;
 mod graph;
 mod ids;
 mod iter;
-mod node_cache;
 mod petgraph_view;
 mod storage;
 

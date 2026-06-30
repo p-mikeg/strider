@@ -258,24 +258,12 @@ fn resolve_ty(ty: TemplateTy, root_ty: ValueType) -> ValueType {
 
 /// Intern a dynamic-`FnIntConst` value `v` as an `IntConst` of `value_ty`.
 ///
-/// For ≤128-bit types (I1..I128 and I80) `intern_int_const` masks to width
-/// and stores as Bits. For I256/I512 the little-endian limb array is built
-/// and interned via `intern_int_const_limbs`.
+/// The closure value is a `u128`, so it always fits within 128 bits — even for
+/// I256/I512 the high limbs are zero, so the limb path would canonicalise back
+/// through `intern_int_const` anyway. `intern_int_const` masks `v` to
+/// `value_ty`'s width and stores it as `Bits`.
 fn intern_fn_int_const<B: IRBuilder>(builder: &mut B, value_ty: ValueType, v: u128) -> NodeKind {
-    #[allow(clippy::cast_possible_truncation)]
-    let low64 = v as u64;
-    #[allow(clippy::cast_possible_truncation)]
-    let high64 = (v >> 64) as u64;
-    let id = match value_ty {
-        ValueType::I256 => builder
-            .function_mut()
-            .intern_int_const_limbs(&[low64, high64, 0, 0], value_ty),
-        ValueType::I512 => builder
-            .function_mut()
-            .intern_int_const_limbs(&[low64, high64, 0, 0, 0, 0, 0, 0], value_ty),
-        _ => builder.function_mut().intern_int_const(v, value_ty),
-    };
-    NodeKind::IntConst(id)
+    NodeKind::IntConst(builder.function_mut().intern_int_const(v, value_ty))
 }
 
 /// Collect a template node's inputs in slot order: each `Consumes` edge names

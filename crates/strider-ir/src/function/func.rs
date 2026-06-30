@@ -73,6 +73,11 @@ pub(crate) fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsl
 /// `node_outputs`, `value_kind`) are forwarded as inherent methods on
 /// `Function`; every other [`Graph`] method is reached explicitly through
 /// [`Function::graph`] / [`Function::graph_mut`].
+///
+/// `Clone` produces a deep, independent copy (the graph, side-tables, and
+/// interners all clone their owned state) — used by the Python binding's
+/// `Function.clone()` so a caller can rewrite a copy non-destructively.
+#[derive(Clone)]
 pub struct Function {
     graph: Graph,
     /// The `Entry` node — always present (built by [`Function::new`]).
@@ -472,22 +477,6 @@ impl Function {
     #[inline]
     pub(crate) fn stack_vn(&self) -> rsleigh::Vn {
         self.default_cc.stack_vn
-    }
-
-    /// The function-default `CallOther` clobber list: every tracked
-    /// varnode except the stack pointer, in `all_vns` order.
-    /// Reproduces the old build-time `call_other_clobbered` (`build()`
-    /// filtered `var_table.values()` — same order as `all_vns` — by
-    /// `!= stack_vn`).
-    #[inline]
-    #[cfg(test)]
-    pub(crate) fn call_other_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
-        let stack_vn = self.default_cc.stack_vn;
-        self.all_vns
-            .iter()
-            .copied()
-            .filter(|v| *v != stack_vn)
-            .collect()
     }
 
     // ── NodeId-keyed overlay accessors ────────────────────────────────────
@@ -1466,7 +1455,6 @@ mod compact_tests {
         let arch = strider_target::SleighArch::x86_64();
         let regs = arch.probe_regs().unwrap();
         let cc = strider_target::CallingConvention::x86_64_systemv()
-            .unwrap()
             .build(&regs)
             .unwrap();
 

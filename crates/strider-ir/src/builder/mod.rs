@@ -362,15 +362,6 @@ impl FunctionBuilder {
         self.function.default_cc.stack_args = stack_args;
     }
 
-    /// Returns the currently-attributed asm address (or `None` if no insn
-    /// is active).  The setter `set_lift_addr` is prod; this read-back is
-    /// used only by tests.
-    #[inline]
-    #[cfg(test)]
-    pub fn lift_addr(&self) -> Option<u64> {
-        self.lift_addr
-    }
-
     /// Creates a node in the graph with the given kind, inputs, and
     /// output kinds.  When the attributed lift address is `Some(addr)`, also
     /// records `addr` in the resulting node's asm-fingerprint side-table
@@ -400,13 +391,6 @@ impl FunctionBuilder {
         node_id
     }
 
-    /// Returns an iterator over all tracked varnodes.  Used only by tests to
-    /// assert builder canonicalisation.
-    #[cfg(test)]
-    pub fn variables(&self) -> impl Iterator<Item = &rsleigh::Vn> {
-        self.var_table.values()
-    }
-
     /// Finalises and returns the completed [`crate::Function`],
     /// after running structural validation.
     ///
@@ -420,9 +404,8 @@ impl FunctionBuilder {
     pub fn build(self) -> crate::Result<crate::Function> {
         // The conservative CallOther clobber default (every tracked
         // variable except the stack pointer) is no longer stored — it is
-        // derived on demand from `all_vns` + `default_cc.stack_vn` by
-        // [`crate::Function::call_other_clobbered_regs`], in the same
-        // `all_vns` (allocation) order the CallOther builders consume.
+        // derived on demand from `all_vns` + `default_cc.stack_vn`, in the
+        // same `all_vns` (allocation) order the CallOther builders consume.
         crate::validate::validate(&self.function)?;
         Ok(self.function)
     }

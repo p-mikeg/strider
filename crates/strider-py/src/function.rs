@@ -407,7 +407,7 @@ impl PyFunction {
     /// silently.  Callers that need rom-driven folding should route
     /// through `strider.run(..., rom=mem)` instead.
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
-        let real_pipeline = pipeline.drain_into_pipeline()?;
+        let real_pipeline = pipeline.drain_into_pipeline(false)?;
         self.run_pipeline_in_place(real_pipeline, "optimize")
     }
 
@@ -417,6 +417,25 @@ impl PyFunction {
     fn reoptimize(&self) -> PyResult<()> {
         let pipe = strider_orchestrator::opt::default_pipeline();
         self.run_pipeline_in_place(pipe, "reoptimize")
+    }
+
+    /// Deep-copy this function into a fully independent `Function`.
+    ///
+    /// The clone owns a fresh graph + side-tables (its own generation
+    /// counter), so mutating it via `rewrite(...)` / `reoptimize()` leaves the
+    /// original untouched — the idiom for a non-destructive rewrite is
+    /// `g2 = fn.clone(); g2.rewrite(find, replace)`.  The parent `Cfg` (Sleigh
+    /// for dot rendering) is shared by handle.
+    #[pyo3(name = "clone")]
+    fn py_clone(&self, py: Python<'_>) -> PyResult<PyFunction> {
+        let cloned = self
+            .read_inner()
+            .map_err(crate::errors::into_strider_err)?
+            .clone();
+        Ok(PyFunction {
+            inner: Arc::new(RwLock::new(cloned)),
+            cfg: self.cfg.clone_ref(py),
+        })
     }
 
     /// Find every site where `pat` matches.  `pat` accepts any

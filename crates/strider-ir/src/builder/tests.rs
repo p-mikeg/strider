@@ -1605,7 +1605,7 @@ fn new_raw_filters_contained_unique_varnodes() -> Result<()> {
             0,
             strider_target::Endianness::Little,
         )?;
-        let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
+        let tracked: Vec<rsleigh::Vn> = b.var_table.values().copied().collect();
         assert!(
             tracked.contains(&outer),
             "{label}: wider UNIQUE varnode must remain tracked; got {tracked:?}"
@@ -1634,7 +1634,7 @@ fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
         0,
         strider_target::Endianness::Little,
     )?;
-    let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
+    let tracked: Vec<rsleigh::Vn> = b.var_table.values().copied().collect();
     assert!(tracked.contains(&a));
     assert!(tracked.contains(&b_vn));
     Ok(())
@@ -1813,7 +1813,13 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
     let f = b.build()?;
 
     // call_other_clobbered: every tracked var except SP.
-    let mut coc: Vec<_> = f.call_other_clobbered_regs().to_vec();
+    let sp_vn = f.stack_vn();
+    let mut coc: Vec<_> = f
+        .all_vns()
+        .iter()
+        .copied()
+        .filter(|v| *v != sp_vn)
+        .collect::<Vec<_>>();
     coc.sort_by_key(|v| v.addr_off);
     assert_eq!(
         coc,
@@ -2162,22 +2168,22 @@ fn set_lift_addr_pair_scopes_attribution_and_restores_on_exit() -> Result<()> {
     // while set, and after clearing the lift_addr returns to whatever
     // it was before.
     let mut b = builder_with_region()?;
-    assert_eq!(b.lift_addr(), None);
+    assert_eq!(b.lift_addr, None);
     b.set_lift_addr(Some(0x100));
-    assert_eq!(b.lift_addr(), Some(0x100));
+    assert_eq!(b.lift_addr, Some(0x100));
     b.set_lift_addr(None);
-    assert_eq!(b.lift_addr(), None, "manual restore returns to prior addr");
+    assert_eq!(b.lift_addr, None, "manual restore returns to prior addr");
 
     // Nested: outer 0x200, transiently override to 0xA then 0xB then
     // back up to 0xA, finally back to 0x200.
     b.set_lift_addr(Some(0x200));
     b.set_lift_addr(Some(0xA));
     b.set_lift_addr(Some(0xB));
-    assert_eq!(b.lift_addr(), Some(0xB));
+    assert_eq!(b.lift_addr, Some(0xB));
     b.set_lift_addr(Some(0xA));
-    assert_eq!(b.lift_addr(), Some(0xA));
+    assert_eq!(b.lift_addr, Some(0xA));
     b.set_lift_addr(Some(0x200));
-    assert_eq!(b.lift_addr(), Some(0x200));
+    assert_eq!(b.lift_addr, Some(0x200));
     Ok(())
 }
 
@@ -2433,7 +2439,6 @@ mod build_call_with_cc {
 
     fn x86_64_built_cc() -> BuiltCallingConvention {
         CallingConvention::x86_64_systemv()
-            .unwrap()
             .build(&x86_64_regs())
             .unwrap()
     }

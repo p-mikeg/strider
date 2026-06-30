@@ -18,7 +18,6 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider_h = strider_orchestrator::Lifter::new(arch, sleigh).expect("strider");
     let cc = strider_target::CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(strider_h.sleigh_regs())
         .expect("build cc");
     let cfg = strider_h
@@ -91,7 +90,6 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider_h = strider_orchestrator::Lifter::new(arch, sleigh).expect("strider");
     let cc = strider_target::CallingConvention::aarch64_aapcs64()
-        .unwrap()
         .build(strider_h.sleigh_regs())
         .expect("build cc");
     let cfg = strider_h

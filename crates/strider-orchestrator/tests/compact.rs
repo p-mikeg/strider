@@ -30,7 +30,6 @@ fn run_with(compact: bool) -> strider_ir::Function {
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
     let regs = sleigh.regs().unwrap();
     let cc = CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .unwrap();
     let lift_opts = LiftOptions {

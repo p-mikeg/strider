@@ -1,5 +1,4 @@
 use super::*;
-use crate::pipeline::OptimizerTestExt;
 use anyhow::anyhow;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::IrWalkerEx;
@@ -45,7 +44,7 @@ fn const_eval_absorbs_operand_fingerprints() -> Result<()> {
         b.build_int_binary_operation(c3, c4, IntBinaryOp::Add, ValueType::I64)
     })?;
 
-    ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
 
     let folded = return_value(fg.graph())?;
     let fp = fg.asm_fingerprint(fg.producer(folded));
@@ -63,8 +62,7 @@ fn const_eval_absorbs_operand_fingerprints() -> Result<()> {
 fn new_builds_pass_that_folds() -> Result<()> {
     let mut fg = add_consts_fixture()?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     assert_returns_const(&fg, 7);
@@ -82,16 +80,14 @@ fn two_independent_instances_each_fold() -> Result<()> {
 
     let mut fg_a = add_consts_fixture()?;
     assert!(
-        pass_a
-            .run_one(&mut fg_a, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&pass_a, &mut fg_a, &mut crate::OptCtx::new(None))?
             .changed()
     );
     assert_returns_const(&fg_a, 7);
 
     let mut fg_b = add_consts_fixture()?;
     assert!(
-        pass_b
-            .run_one(&mut fg_b, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&pass_b, &mut fg_b, &mut crate::OptCtx::new(None))?
             .changed()
     );
     assert_returns_const(&fg_b, 7);
@@ -124,7 +120,7 @@ fn int_binary_fold_skips_width_mismatched_operands() -> Result<()> {
             .expect("binary op has 1 output");
         Ok(out)
     })?;
-    let outcome = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    let outcome = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     assert!(
         !outcome.changed(),
         "width-mismatched binary fold must skip, not fold"
@@ -161,7 +157,7 @@ fn int_cmp_fold_skips_width_mismatched_operands() -> Result<()> {
             .expect("cmp op has 1 output");
         Ok(out)
     })?;
-    let outcome = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    let outcome = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     assert!(
         !outcome.changed(),
         "width-mismatched cmp fold must skip, not fold"
@@ -219,8 +215,7 @@ fn fold_int_binary_two_consts_cases() -> Result<()> {
             b.build_int_binary_operation(lhs, rhs, c.op, c.ty)
         })?;
         assert!(
-            ConstantFold::new()
-                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
             "{}: ConstantFold must fold the two-const {:?}",
             c.case,
@@ -247,8 +242,7 @@ fn fold_int_xor_self() -> Result<()> {
         b.build_int_binary_operation(x, x, IntBinaryOp::Xor, ValueType::I64)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     assert_returns_const(&fg, 0);
@@ -262,8 +256,7 @@ fn fold_int_sub_self() -> Result<()> {
         b.build_sub_as_add_neg(x, x, ValueType::I64)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     assert_returns_const(&fg, 0);
@@ -408,7 +401,7 @@ fn unary_fold_skips_wide_const_cleanly() -> Result<()> {
         b.build_int_unary_operation(c, IntUnaryOp::Neg, ValueType::I256)
     })?;
     // Must not error (the bug surfaced here as `Err(missing binding …)`).
-    let outcome = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    let outcome = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     // The wide const can't fold, so nothing should change.
     assert!(
         !outcome.changed(),
@@ -598,7 +591,7 @@ fn reassoc_no_fold_without_const() -> Result<()> {
     let mut fg = b.build()?;
     let before = return_value(fg.graph())?;
     // Should not change: no constants anywhere.
-    let res = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    let res = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     assert!(!res.changed(), "no-const chain should not reassociate");
     assert_eq!(return_value(fg.graph())?, before);
     Ok(())
@@ -644,16 +637,14 @@ fn reachable_or_nodes(fg: &strider_ir::Function) -> usize {
 fn distribution_rewrite_simplifies_when_a_product_is_zero() -> Result<()> {
     let mut fg = build_and_dist_fn(0xFFFF_0000, 0x0000_FFFF, 0x0000_FFFF)?;
     assert_eq!(reachable_or_nodes(&fg), 1, "test setup expects one Or node");
-    let changed = ConstantFold::new()
-        .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+    let changed = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
         .changed();
     assert!(changed, "distribution rule should fire and simplify");
     // Drive ConstantFold to a true fixed point (each `run_one` only
     // re-seeds the directly-rewritten node, so the cascade
     // `(a & 0) → 0` → `Or(0, …) → …` settles over a couple of passes).
     for _ in 0..8 {
-        if !ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        if !crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
         {
             break;
@@ -698,13 +689,11 @@ fn align_or_removal_drops_or_when_set_bits_are_masked_off() -> Result<()> {
     let mut fg = b.build()?;
     assert_eq!(reachable_or_nodes(&fg), 1, "test setup expects one Or node");
 
-    let changed = ConstantFold::new()
-        .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+    let changed = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
         .changed();
     assert!(changed, "alignment-OR-removal rule should fire");
     for _ in 0..8 {
-        if !ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        if !crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
         {
             break;
@@ -740,7 +729,7 @@ fn distribution_does_not_churn_when_both_products_nonzero() -> Result<()> {
     assert_eq!(reachable_or_nodes(&fg), 1, "test setup expects one Or node");
 
     // First run reaches the pass's internal fixed point without hanging.
-    ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
 
     // The factored shape is preserved — the Or is still there (the rule
     // did not distribute it away into churn).
@@ -751,8 +740,7 @@ fn distribution_does_not_churn_when_both_products_nonzero() -> Result<()> {
     );
 
     // Re-running converges immediately: the result is a stable fixed point.
-    let second = ConstantFold::new()
-        .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+    let second = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
         .changed();
     assert!(
         !second,
@@ -817,8 +805,7 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     );
 
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
 
@@ -1196,8 +1183,7 @@ fn fold_bool_neg_const() -> Result<()> {
         b.build_int_binary_operation(t, one, IntBinaryOp::Xor, ValueType::I1)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     assert_returns_const(&fg, 0);
@@ -1214,8 +1200,7 @@ fn fold_bool_and_consts() -> Result<()> {
         b.build_int_binary_operation(t, f, IntBinaryOp::And, ValueType::I1)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     assert_returns_const(&fg, 0);
@@ -1239,7 +1224,7 @@ fn fold_bool_xor_true_to_not() -> Result<()> {
     })?;
     // The const-fold pipeline may or may not "change" — the Xor shape
     // is already canonical for logical-NOT.  Assert the final shape.
-    let _ = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    let _ = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     assert_return_kind(fg.graph(), NodeKind::IntBinaryOp(IntBinaryOp::Xor));
     Ok(())
 }
@@ -1255,7 +1240,7 @@ fn fold_bool_true_xor_x_to_not_commutative() -> Result<()> {
         // Operands flipped relative to the previous test.
         b.build_int_binary_operation(t, cmp, IntBinaryOp::Xor, ValueType::I1)
     })?;
-    let _ = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    let _ = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     assert_return_kind(fg.graph(), NodeKind::IntBinaryOp(IntBinaryOp::Xor));
     Ok(())
 }
@@ -1273,8 +1258,7 @@ fn no_fold_bool_xor_false() -> Result<()> {
         b.build_int_binary_operation(cmp, f, IntBinaryOp::Xor, ValueType::I1)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     // `x ^ 0 → x`: the Xor collapses to the cmp, not to a BitNot.
@@ -1296,8 +1280,7 @@ fn fold_bool_or_true_to_true() -> Result<()> {
         b.build_int_binary_operation(cmp, t, IntBinaryOp::Or, ValueType::I1)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     // `x | true → true`: folds to the constant 1 (true at I1), not the cmp.
@@ -1318,8 +1301,7 @@ fn fold_int_or_all_ones_to_all_ones() -> Result<()> {
         b.build_int_binary_operation(x32, all_ones, IntBinaryOp::Or, ValueType::I32)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     // Folds to the all-ones constant.
@@ -1342,8 +1324,7 @@ fn fold_bool_double_not_to_x() -> Result<()> {
         b.build_int_binary_operation(n1, one, IntBinaryOp::Xor, ValueType::I1)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     // After fold the function returns the cmp directly.
@@ -1380,8 +1361,7 @@ fn no_fold_div_by_zero() -> Result<()> {
     })?;
     // Should not fold (division by zero is undefined).
     assert!(
-        !ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        !crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     assert!(matches!(
@@ -1409,8 +1389,7 @@ fn no_fold_divide_family_by_zero_i32_cases() -> Result<()> {
             b.build_int_binary_operation(x, zero, op, ValueType::I32)
         })?;
         assert!(
-            !ConstantFold::new()
-                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            !crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
             "{op:?} by const 0 must not fold (undefined)",
         );
@@ -1446,8 +1425,7 @@ fn fold_shift_by_width_minus_one_cases() -> Result<()> {
             b.build_int_binary_operation(l, s, op, ValueType::I32)
         })?;
         assert!(
-            ConstantFold::new()
-                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
             "{case}: shift by width-1 must fold",
         );
@@ -1484,8 +1462,7 @@ fn fold_i1_arithmetic_cases() -> Result<()> {
         // two-const eval; either way the run must report a change and
         // land on the masked constant.
         assert!(
-            ConstantFold::new()
-                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
             "{case}: I1 two-const op must fold",
         );
@@ -1509,8 +1486,7 @@ fn fold_int_cmp_equal_consts() -> Result<()> {
         b.build_int_cmp_operation(c5, c5b, IntCmpOp::Equal, ValueType::I64)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     assert_returns_const(&fg, 1);
@@ -1525,8 +1501,7 @@ fn fold_int_cmp_less_consts() -> Result<()> {
         b.build_int_cmp_operation(c3, c5, IntCmpOp::Less, ValueType::I64)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     assert_returns_const(&fg, 1);
@@ -1578,8 +1553,7 @@ fn fold_count_op_const_cases() -> Result<()> {
             }
         })?;
         assert!(
-            ConstantFold::new()
-                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
             "{}: ConstantFold must fold",
             c.case,
@@ -1652,7 +1626,7 @@ fn fold_count_op_wide_const_input_skips_cleanly_cases() -> Result<()> {
     ];
     for (case, kind, wide_ty) in cases {
         let mut fg = build_unary_with_wide_const_input(kind, wide_ty, ValueType::I64)?;
-        let result = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None));
+        let result = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None));
         assert!(
             result.is_ok(),
             "{case}: ConstantFold must not error on {kind:?}({wide_ty:?} const), got {:?}",
@@ -1696,8 +1670,7 @@ fn fold_float_binary_two_consts_cases() -> Result<()> {
             b.build_float_binary_op(lhs, rhs, c.op, c.ty)
         })?;
         assert!(
-            ConstantFold::new()
-                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
             "{}: ConstantFold must fold the two-const {:?}",
             c.case,
@@ -1739,8 +1712,7 @@ fn fold_float_cmp_two_consts_cases() -> Result<()> {
             b.build_float_cmp_op(lhs, rhs, c.op)
         })?;
         assert!(
-            ConstantFold::new()
-                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
             "{}: ConstantFold must fold the two-const {:?}",
             c.case,
@@ -1783,8 +1755,7 @@ fn fold_float_unary_const_cases() -> Result<()> {
             b.build_float_unary_op(v, c.op, c.ty)
         })?;
         assert!(
-            ConstantFold::new()
-                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
             "{}: ConstantFold must fold {:?}",
             c.case,
@@ -1821,8 +1792,7 @@ fn fold_f64_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
             b.build_float_unary_op(v, FloatUnaryOp::Round, ValueType::F64)
         })?;
         assert!(
-            ConstantFold::new()
-                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
             "Round({input}) did not fold"
         );
@@ -1850,8 +1820,7 @@ fn fold_f32_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
             b.build_float_unary_op(v, FloatUnaryOp::Round, ValueType::F32)
         })?;
         assert!(
-            ConstantFold::new()
-                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
             "Round({input}) did not fold"
         );
@@ -1879,8 +1848,7 @@ fn fold_bitcast_identity_int_bits_to_float_of_float_bits_to_int() -> Result<()> 
         Ok(back_to_float)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     // Float binary fold: sum → FloatConst(3.0).
@@ -1909,8 +1877,7 @@ fn fold_f64_nan_plus_one_is_not_folded() -> Result<()> {
     })?;
     // Nothing folds: the only op is the NaN-producing Add.
     assert!(
-        !ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        !crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     let val = return_value(fg.graph())?;
@@ -1940,8 +1907,7 @@ fn fold_f64_inf_minus_inf_add_is_not_folded() -> Result<()> {
     // `Neg(inf)` folds to the `-inf` constant, so the pass reports a change,
     // but the NaN-producing Add survives as the returned value's producer.
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     let val = return_value(fg.graph())?;
@@ -1968,8 +1934,7 @@ fn fold_bitcast_roundtrip_f32() -> Result<()> {
         b.build_int_bits_to_float(as_int, ValueType::F32)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     // After folding: float Add → FloatConst(2.5), then bitcast roundtrip
@@ -1995,7 +1960,7 @@ fn single_pass_propagates_through_chain() -> Result<()> {
     })?;
 
     // Single optimize() call — must converge without the outer pipeline loop.
-    ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
 
     {
         let ret_val = return_value(fg.graph())?;
@@ -2202,8 +2167,7 @@ fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
         b.build_int_unary_operation(c, IntUnaryOp::Neg, ValueType::I32)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     {
@@ -2226,8 +2190,7 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
         b.build_int_unary_operation(c, IntUnaryOp::Neg, ValueType::I64)
     })?;
     assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     assert_returns_const(&fg, 0);
@@ -2312,8 +2275,7 @@ fn fold_i128_interner_backed_add_round_trip() -> Result<()> {
     })?;
 
     // Fold should fire: both operands are I128 int constants.
-    let changed = ConstantFold::new()
-        .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+    let changed = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
         .changed();
     assert!(
         changed,
