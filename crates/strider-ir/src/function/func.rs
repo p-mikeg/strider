@@ -722,13 +722,12 @@ impl Function {
     /// callers holding any such id MUST rewrite it through the returned
     /// [`NodeIdRemap`].
     ///
-    /// The generic `retain_reachable_roots` keeps the backward-input closure
-    /// of its `roots`.  The IR's reachability also follows forward-control
-    /// edges (so a `Region` reached only via control survives), so this seeds
-    /// the generic compaction with the FULL control-aware reachable set: that
-    /// set is already closed under data inputs, so its backward-input closure
-    /// is itself — the generic pass then retains exactly the IR reachable set,
-    /// and its cacher rebuild re-keys the dedup cache over the survivors.
+    /// `Graph::retain_reachable` retains exactly the set it is handed; the IR's
+    /// reachability follows forward-control + backward-data edges (so a `Region`
+    /// reached only via control survives), so this passes the FULL control-aware
+    /// walk.  That set is already closed under data inputs, satisfying the
+    /// generic pass's backward-input precondition; its cacher rebuild re-keys the
+    /// dedup cache over the survivors.
     ///
     /// "Reachable" is from [`Self::entry`] — the receiver owns the anchor, so it
     /// is read internally rather than passed (a non-entry root would be a misuse:
@@ -747,7 +746,7 @@ impl Function {
         // Collect the reachable set into a `Vec` first: that ends the
         // immutable borrow before the mutable `graph_mut()` borrow below.
         let reachable: Vec<NodeId> = self.walk().collect();
-        Ok(self.graph_mut().retain_reachable_roots(reachable))
+        Ok(self.graph_mut().retain_reachable(reachable))
     }
 
     /// Rebuilds the function's graph to retain only nodes reachable from

@@ -345,7 +345,7 @@ proptest! {
             seen
         };
 
-        let remap = g.retain_reachable_roots([root]);
+        let remap = g.retain_reachable(g.reachable_by_inputs([root]));
 
         // Survivors: exactly the expected set remapped to Some.
         let mut survivor_news: Vec<NodeId> = Vec::new();
@@ -404,7 +404,7 @@ fn value_with_zero_uses() {
 #[test]
 fn empty_graph_retain_reachable_no_op() {
     let mut g = TestGraph::new();
-    let remap = g.retain_reachable_roots([]);
+    let remap = g.retain_reachable(g.reachable_by_inputs([]));
     assert_eq!(g.all_node_ids().count(), 0);
     // No survivors to query; just ensure it doesn't panic and bumps gen.
     assert_eq!(g.generation(), 1);
@@ -485,7 +485,7 @@ fn compaction_rebuilds_cache() {
 
     // Compact: ids are renumbered, so the pre-compaction cache is stale; the
     // rebuild hook must re-key the cache over the survivors.
-    let remap = g.retain_reachable_roots([root]);
+    let remap = g.retain_reachable(g.reachable_by_inputs([root]));
     let add_new = remap.node_old_to_new(add).expect("Add survives");
     let x_new = remap.value_old_to_new(x).expect("x survives");
     let y_new = remap.value_old_to_new(y).expect("y survives");
@@ -761,7 +761,7 @@ fn add_self_loop_input_then_canonicalize() {
 fn reachable_by_inputs_high_fanin_traversal_unchanged() {
     // GR-3: a single high-fan-in value consumed by many nodes. With
     // mark-on-push the producer is enqueued once, but the reachable set (and
-    // hence the survivors of retain_reachable_roots) must be identical.
+    // hence the survivors of retain_reachable) must be identical.
     let mut g = TestGraph::new();
     let shared = const_node(&mut g, 7);
     // 200 Add nodes all consuming `shared` twice (Add(shared, shared) dedups,
@@ -776,7 +776,7 @@ fn reachable_by_inputs_high_fanin_traversal_unchanged() {
     let _zombie = const_node(&mut g, 9999);
 
     let before = g.all_node_ids().count();
-    let remap = g.retain_reachable_roots(roots.clone());
+    let remap = g.retain_reachable(g.reachable_by_inputs(roots.clone()));
     // Every root + shared + each `other` const survives; the zombie does not.
     for r in &roots {
         assert!(remap.node_old_to_new(*r).is_some(), "root survives");
@@ -939,7 +939,7 @@ mod node_cache_hooks {
 
         // A non-caching-shaped root keeps `n` reachable. (Every kind caches here,
         // so we just keep `n` itself as the root.)
-        let remap = g.retain_reachable_roots([n]);
+        let remap = g.retain_reachable(g.reachable_by_inputs([n]));
         let n_new = remap.node_old_to_new(n).expect("n survives");
         let x_new = remap.value_old_to_new(xv).expect("x survives");
         let _ = nv;
