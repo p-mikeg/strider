@@ -158,9 +158,7 @@ impl FunctionBuilder {
         self.require_value_kind(call_address)?;
         self.validate_call_output_vns(output_vns)?;
         let sp_vn = self.function.stack_vn();
-        let sp_value = self.read_variable_optional(&sp_vn)?.ok_or_else(|| {
-            anyhow!("build_call: stack-pointer varnode {sp_vn:?} is not tracked")
-        })?;
+        let sp_value = self.read_variable(&sp_vn)?;
         self.build_call_kind(
             NodeKind::Call,
             Some(call_address),
@@ -306,9 +304,7 @@ impl FunctionBuilder {
         // Snapshot the pre-call SP (preserved across the call) for the
         // post-call adjust; `build_call` reads SP itself for the node's anchor.
         let sp_vn = self.function.stack_vn();
-        let sp_value = self.read_variable_optional(&sp_vn)?.ok_or_else(|| {
-            anyhow!("build_call_cc: stack-pointer varnode {sp_vn:?} is not tracked")
-        })?;
+        let sp_value = self.read_variable(&sp_vn)?;
 
         let mut output_vns: SmallVec<[rsleigh::Vn; 8]> = ret_val_vars.iter().copied().collect();
         output_vns.extend(clobber_vars.iter().copied());

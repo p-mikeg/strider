@@ -9,24 +9,6 @@ use crate::node::{NodeKind, ValueId, ValueKind};
 use crate::region::RegionId;
 
 impl FunctionBuilder {
-    /// Returns the current `ValueId` for `var` in the active region, or
-    /// `None` if the variable is not known.
-    ///
-    /// only consumer is sibling `builder/call.rs`; no
-    /// external crate uses it.  Demoted to `pub(super)`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion` when no region is active. (Does
-    /// not error when the variable is not tracked — that returns `Ok(None)`.)
-    pub(super) fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<ValueId>> {
-        if let Some(variable_id) = self.var_table.key_of(var) {
-            Ok(Some(self.read_variable_from_id(variable_id)?))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Returns the current `ValueId` for `variable` in the active region.
     ///
     /// Returns an error if the variable is not tracked or no region is active.
