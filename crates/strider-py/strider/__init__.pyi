@@ -337,6 +337,16 @@ class Function:
         ...
     def rewrite(self, find: Any, replace: Any) -> int: ...
     def rewrite_all(self, pairs: List[Tuple[Any, Any]]) -> int: ...
+    def clone(self) -> "Function":
+        """Return a deep, fully independent copy of this function.
+
+        The clone shares no mutable state with the original (IR graph,
+        calling-convention overlay, side-tables, and constant interner are
+        all duplicated), so mutating the clone — e.g.
+        `g2 = fn.clone(); g2.rewrite(lhs, rhs)` — never affects the
+        original.  The parent `Cfg` handle is shared by reference (it is
+        read-only, kept alive only for dot rendering)."""
+        ...
 
 class Match:
     @property
