@@ -57,18 +57,16 @@ impl FunctionBuilder {
     // Many resolved-ingredient channels plus two toggle flags is the
     // natural shape; a builder struct would add boilerplate without
     // simplifying the call sites.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn build_call_kind(
         &mut self,
         kind: NodeKind,
         target: Option<ValueId>,
         sp_value: Option<ValueId>,
         arg_values: &[ValueId],
-        ret_val_vns: &[rsleigh::Vn],
-        clobber_vns: &[rsleigh::Vn],
+        output_vns: &[rsleigh::Vn],
         advance_memory: bool,
         terminate: bool,
-    ) -> Result<(NodeId, Vec<ValueId>, Vec<ValueId>)> {
+    ) -> Result<(NodeId, Vec<ValueId>)> {
         self.validate_value_inputs(arg_values)?;
         if let Some(t) = target {
             self.validate_value_inputs(std::slice::from_ref(&t))?;
@@ -82,14 +80,15 @@ impl FunctionBuilder {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
 
-        // Outputs: [Control, Memory] ++ ret-val slots ++ clobber slots.
-        // Each ret-val / clobber slot's kind is a pure function of the
-        // varnode's byte width — a tracked register always holds an int
-        // value of its width, so the kind is `Typed(int_for_byte_size)`.
+        // Outputs: [Control, Memory] ++ one slot per output vn (ret-vals then
+        // clobbers, in the caller's order).  Each slot's kind is a pure
+        // function of the varnode's byte width — a tracked register always
+        // holds an int value of its width, so the kind is
+        // `Typed(int_for_byte_size)`.
         let mut output_kinds: SmallVec<[ValueKind; 8]> = SmallVec::new();
         output_kinds.push(ValueKind::Control);
         output_kinds.push(ValueKind::Memory);
-        for vn in ret_val_vns.iter().chain(clobber_vns) {
+        for vn in output_vns {
             output_kinds.push(ValueKind::Typed(vn.int_type()?));
         }
 
@@ -122,24 +121,14 @@ impl FunctionBuilder {
             self.advance_cur_region_memory(outputs[1])?;
         }
 
-        let ret_val_start = 2usize;
-        let clobber_start = ret_val_start + ret_val_vns.len();
-        let ret_val_values: Vec<ValueId> = outputs[ret_val_start..clobber_start].to_vec();
-        let clobber_values: Vec<ValueId> = outputs[clobber_start..].to_vec();
-
-        // Tag each ret-val output value with the register it returns via
-        // `value_vn` so pattern queries can recover the ret-val varnode.
-        for (value, vn) in core::iter::zip(&ret_val_values, ret_val_vns) {
-            self.function_mut().side_tables.value_vn.insert(*value, *vn);
-        }
-        // Tag each clobber output value with the register it clobbers
-        // (via `value_vn`) so pattern queries can recover the clobber
-        // varnode for each slot.
-        for (value, vn) in core::iter::zip(&clobber_values, clobber_vns) {
+        // Tag each output value with the register it represents (via
+        // `value_vn`) so pattern queries can recover the varnode for each slot.
+        let output_values: Vec<ValueId> = outputs[2..].to_vec();
+        for (value, vn) in core::iter::zip(&output_values, output_vns) {
             self.function_mut().side_tables.value_vn.insert(*value, *vn);
         }
 
-        Ok((node, ret_val_values, clobber_values))
+        Ok((node, output_values))
     }
 
     /// Emits a `Call` node into the current region.
@@ -252,16 +241,19 @@ impl FunctionBuilder {
         // advances; memory advances unless the CC preserves it (so
         // subsequent loads see the pre-call memory edge — the Memory
         // output is still present but left dangling).
-        let (call, ret_val_values, clobber_values) = self.build_call_kind(
+        let mut output_vns: SmallVec<[rsleigh::Vn; 8]> =
+            ret_val_vars.iter().copied().collect();
+        output_vns.extend(clobber_vars.iter().copied());
+        let (call, output_values) = self.build_call_kind(
             NodeKind::Call,
             Some(call_address),
             Some(sp_value),
             &arg_passing,
-            &ret_val_vars,
-            &clobber_vars,
+            &output_vns,
             !preserves_memory,
             false,
         )?;
+        let (ret_val_values, clobber_values) = output_values.split_at(ret_val_vars.len());
 
         // Post-call write-back, in this ORDER: first the clobbers, then the
         // ret-vals.  The clobber set legitimately includes CONST / RAM
@@ -271,10 +263,10 @@ impl FunctionBuilder {
         // Writing the ret-vals AFTER the clobbers guarantees a clobber that
         // aliases a ret-val register cannot re-clobber the return value.  The
         // `value_vn` tags are applied by `build_call_kind`.
-        for (vn, new_val) in core::iter::zip(&clobber_vars, &clobber_values) {
+        for (vn, new_val) in core::iter::zip(&clobber_vars, clobber_values) {
             self.write_variable(vn, *new_val)?;
         }
-        for (vn, new_val) in core::iter::zip(&ret_val_vars, &ret_val_values) {
+        for (vn, new_val) in core::iter::zip(&ret_val_vars, ret_val_values) {
             self.write_reg_vn(vn, *new_val)?;
         }
 
@@ -386,22 +378,24 @@ impl FunctionBuilder {
             arg_values.push(value);
         }
 
-        // Derive the ret-val group from the output varnode (if any): a
-        // 0-or-1-element vn list.  Both the ret-val and clobber slot kinds
-        // are derived from each vn's byte width inside `build_call_kind`.
+        // Output vns: the 0-or-1 ret-val (the result `output`, if any) then one
+        // per implicit-write clobber.  The slot kinds derive from each vn's
+        // byte width inside `build_call_kind`.
         let ret_val_vns: SmallVec<[rsleigh::Vn; 1]> = output.into_iter().collect();
         let clobber_vns: &[rsleigh::Vn] = &abi.implicit_writes;
+        let mut output_vns: SmallVec<[rsleigh::Vn; 8]> = ret_val_vns.iter().copied().collect();
+        output_vns.extend(clobber_vns.iter().copied());
 
-        let (node, ret_val_values, clobber_values) = self.build_call_kind(
+        let (node, output_values) = self.build_call_kind(
             NodeKind::CallOther { user_op_id },
             target,
             None,
             &arg_values,
-            &ret_val_vns,
-            clobber_vns,
+            &output_vns,
             abi.clobbers_memory,
             terminate,
         )?;
+        let (ret_val_values, clobber_values) = output_values.split_at(ret_val_vns.len());
 
         // Writeback ORDER (matching `build_call`): the implicit-write
         // clobbers first via `write_variable` (a full-register write is
@@ -409,10 +403,10 @@ impl FunctionBuilder {
         // handling with `Call`), THEN the result to `output` via
         // `write_reg_vn` AFTER the clobbers — so an aliased clobber cannot
         // re-clobber the result.
-        for (vn, value) in core::iter::zip(clobber_vns, &clobber_values) {
+        for (vn, value) in core::iter::zip(clobber_vns, clobber_values) {
             self.write_variable(vn, *value)?;
         }
-        let result = ret_val_values.into_iter().next();
+        let result = ret_val_values.first().copied();
         if let (Some(out_vn), Some(value)) = (output.as_ref(), result) {
             self.write_reg_vn(out_vn, value)?;
         }
