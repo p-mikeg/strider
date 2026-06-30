@@ -141,10 +141,6 @@ impl Tb {
     pub fn f64(&mut self, v: f64) -> ValueId {
         self.fb.build_float_const(v.to_bits(), ValueType::F64)
     }
-    pub fn f32(&mut self, v: f32) -> ValueId {
-        self.fb
-            .build_float_const(v.to_bits() as u64, ValueType::F32)
-    }
     pub fn float_bits(&mut self, bits: u64, ty: ValueType) -> ValueId {
         self.fb.build_float_const(bits, ty)
     }
@@ -169,9 +165,6 @@ impl Tb {
     pub fn bor(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Or)
     }
-    pub fn shl(&mut self, l: ValueId, r: ValueId) -> ValueId {
-        self.int_bin(l, r, IntBinaryOp::ShiftLeft)
-    }
     pub fn int_bin(&mut self, l: ValueId, r: ValueId, op: IntBinaryOp) -> ValueId {
         self.int_bin_at(l, r, op, ValueType::I64)
     }
@@ -185,11 +178,6 @@ impl Tb {
         self.fb
             .build_int_binary_operation(l, r, op, ty)
             .expect("int_binary_operation")
-    }
-    /// Bitwise complement (`~v`) at `I64`.  Since the former BitNot unary-op was
-    /// removed in favour of `Xor(v, all_ones)`, this builds the Xor shape.
-    pub fn bit_not(&mut self, v: ValueId) -> ValueId {
-        self.bit_not_at(v, ValueType::I64)
     }
     /// Bitwise complement (`~v`) at the given integer width.  Builds
     /// `Xor(v, IntConst(all_ones)):ty` since the former BitNot unary-op was
@@ -386,13 +374,6 @@ impl Tb {
     /// Emits `Return()` with no data value and finalises the graph.
     pub fn ret_nothing(mut self) -> strider_ir::Function {
         self.fb.build_return(None, &[]).expect("build_return");
-        self.fb.build().expect("FunctionBuilder::build (validator)")
-    }
-
-    /// Emits `Return()` in the current region, plus return registers, and
-    /// finalises the graph.
-    pub fn ret_regs(mut self, regs: &[rsleigh::Vn]) -> strider_ir::Function {
-        self.fb.build_return(None, regs).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
 
