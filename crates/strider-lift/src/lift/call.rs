@@ -103,10 +103,21 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
         args.extend_from_slice(explicit_args);
 
-        // Output vns: the 0-or-1 result, then one per implicit-write clobber.
-        let ret_vns: Vec<rsleigh::Vn> = output.iter().copied().collect();
-        let clobber_vns = abi.implicit_writes.clone();
-        let mut output_vns = ret_vns.clone();
+        // Output vns: the 0-or-1 result, then one per implicit-write clobber —
+        // each canonicalized to its largest tracked container (read_reg /
+        // write_reg operate on containers, and the builder validates output vns
+        // are containers) and deduplicated, since sub-registers of one container
+        // collapse to a single slot and the result wins ties over a clobber.
+        let result_vn = output.map(|vn| self.builder.function().container_of(&vn));
+        let mut clobber_vns: Vec<rsleigh::Vn> = Vec::new();
+        for vn in &abi.implicit_writes {
+            let c = self.builder.function().container_of(vn);
+            if Some(c) == result_vn || clobber_vns.contains(&c) {
+                continue;
+            }
+            clobber_vns.push(c);
+        }
+        let mut output_vns: Vec<rsleigh::Vn> = result_vn.into_iter().collect();
         output_vns.extend_from_slice(&clobber_vns);
 
         let (_node, outputs) = self.builder.build_call_other(
@@ -118,17 +129,17 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             abi.clobbers_memory,
             terminate,
         )?;
-        let (ret_vals, clobbers) = outputs.split_at(ret_vns.len());
+        let (ret_vals, clobbers) = outputs.split_at(result_vn.iter().count());
 
-        // Writeback: clobbers first (via `write_variable` — may include CONST /
-        // RAM Sleigh temps), then the result (a REGISTER, via `write_vn`); an
-        // aliased clobber must not re-clobber the result.
+        // Writeback: clobbers then the result — both full-container writes via
+        // `write_variable` (an opaque intrinsic defines the whole container; an
+        // aliased clobber must not re-clobber the result, hence result last).
         for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
             self.builder.write_variable(vn, *v)?;
         }
         let result = ret_vals.first().copied();
-        if let (Some(out_vn), Some(v)) = (output.as_ref(), result) {
-            self.write_vn(out_vn, v)?;
+        if let (Some(c), Some(v)) = (result_vn, result) {
+            self.builder.write_variable(&c, v)?;
         }
         Ok(result)
     }

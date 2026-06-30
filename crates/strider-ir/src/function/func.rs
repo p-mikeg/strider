@@ -305,7 +305,7 @@ impl Function {
     /// REGISTER/UNIQUE vns not in the map. Returns `vn` unchanged when
     /// nothing tracked contains it, or when `vn` is not in an aliasable
     /// (REGISTER/UNIQUE) space.
-    pub(crate) fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
+    pub fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
         if let Some(c) = self.vn_to_container.get(vn) {
             return *c;
         }
@@ -410,10 +410,19 @@ impl Function {
         // ret-val group is emitted separately by `call_ret_vals_for`, so
         // exclude its containers here.
         let ret_vars: FxHashSet<rsleigh::Vn> = self.combined_ret_containers(cc).collect();
+        // Only REGISTER / UNIQUE varnodes can be clobbered: clobbering a CONST /
+        // RAM tracked temp is meaningless (and the dumb `build_call` rejects a
+        // non-reg output vn).
         self.all_vns
             .iter()
             .copied()
-            .filter(|v| is_clobbered(v) && !ret_vars.contains(v))
+            .filter(|v| {
+                matches!(
+                    v.addr_space,
+                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
+                ) && is_clobbered(v)
+                    && !ret_vars.contains(v)
+            })
             .collect()
     }
 

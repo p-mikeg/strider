@@ -227,7 +227,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ) -> Result<()> {
         // Snapshot the CC-derived ingredients (owned) so the immutable borrow of
         // the function ends before the &mut read / build / write path below.
-        let (ret_vns, clobber_vns, arg_vns, sp_vn, ret_stack_pop, advance_memory) = {
+        let (ret_vns, clobber_vns, arg_vns, sp_vn, ret_stack_pop) = {
             let cc = override_cc.unwrap_or_else(|| self.builder.function().default_cc());
             (
                 self.builder.function().call_ret_vals_for(cc),
@@ -235,18 +235,17 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 cc.arg_passing_regs.clone(),
                 cc.stack_vn,
                 cc.ret_stack_pop,
-                !cc.preserves_memory,
             )
         };
 
         let args = self.read_vns(&arg_vns)?;
+        // Snapshot the pre-call SP (preserved across the call) for the post-call
+        // adjust; `build_call` reads SP itself for the node's anchor.
         let sp_value = self.read_vn(&sp_vn)?;
 
         let mut output_vns = ret_vns.clone();
         output_vns.extend_from_slice(&clobber_vns);
-        let (call, outputs) =
-            self.builder
-                .build_call(call_address, sp_value, &args, &output_vns, advance_memory)?;
+        let (call, outputs) = self.builder.build_call(call_address, &args, &output_vns)?;
         let (ret_vals, clobbers) = outputs.split_at(ret_vns.len());
 
         // Writeback: clobbers first, then ret-vals (an aliased clobber must not
