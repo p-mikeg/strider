@@ -515,9 +515,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Either finishes the current region with `RegionTerminator::TailCall`
     /// (when `is_tail_call`) or with `RegionTerminator::Unconditional` plus an
     /// outgoing edge to `target_addr` enqueued for further exploration.
-    /// Shared between the `Branch` opcode arm and
-    /// `process_branch_indirect`'s `Single` path — both classify a single
-    /// jump target the same way (intra-function vs OOB).
+    /// Used by `process_branch_indirect`'s `Single` path — it classifies a
+    /// single resolved jump target (intra-function vs OOB).
     fn finish_branch_or_tail_call(
         &mut self,
         target_addr: PcodeInsnAddr,
