@@ -1466,7 +1466,6 @@ mod compact_tests {
         let arch = strider_target::SleighArch::x86_64();
         let regs = arch.probe_regs().unwrap();
         let cc = strider_target::CallingConvention::x86_64_systemv()
-            .unwrap()
             .build(&regs)
             .unwrap();
 

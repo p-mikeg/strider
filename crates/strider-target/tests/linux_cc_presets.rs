@@ -29,7 +29,6 @@ fn regs_for(arch: SleighArch) -> rsleigh::SleighRegs {
 fn x86_linux_kernel_passes_first_three_args_in_eax_edx_ecx() {
     let regs = regs_for(SleighArch::x86());
     let names: Vec<String> = CallingConvention::x86_linux_kernel()
-        .unwrap()
         .build(&regs)
         .expect("build")
         .arg_passing_regs

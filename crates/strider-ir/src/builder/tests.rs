@@ -2433,7 +2433,6 @@ mod build_call_with_cc {
 
     fn x86_64_built_cc() -> BuiltCallingConvention {
         CallingConvention::x86_64_systemv()
-            .unwrap()
             .build(&x86_64_regs())
             .unwrap()
     }

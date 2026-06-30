@@ -81,7 +81,7 @@ fn if_cond_kind(function: &Function, if_node: NodeId) -> NodeKind {
 fn aarch64_b_eq_after_pipeline_has_direct_int_cmp_cond() {
     let function = lift(
         SleighArch::aarch64(),
-        CallingConvention::aarch64_aapcs64().unwrap(),
+        CallingConvention::aarch64_aapcs64(),
         aarch64_cmp_eq_branch_bytes(),
     );
     let if_node = common::find_unique_if(&function);
@@ -108,7 +108,7 @@ fn x86_64_cmp_je_branch_bytes() -> Vec<u8> {
 fn x86_64_je_after_pipeline_has_direct_int_cmp_cond() {
     let function = lift(
         SleighArch::x86_64(),
-        CallingConvention::x86_64_systemv().unwrap(),
+        CallingConvention::x86_64_systemv(),
         x86_64_cmp_je_branch_bytes(),
     );
     let if_node = common::find_unique_if(&function);
@@ -135,7 +135,7 @@ fn thumb_cmp_beq_branch_bytes() -> Vec<u8> {
 fn arm_thumb_beq_after_pipeline_has_direct_int_cmp_cond() {
     let function = lift(
         SleighArch::arm_thumb(),
-        CallingConvention::arm_aapcs().unwrap(),
+        CallingConvention::arm_aapcs(),
         thumb_cmp_beq_branch_bytes(),
     );
     let if_node = common::find_unique_if(&function);

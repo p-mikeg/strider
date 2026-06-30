@@ -866,30 +866,23 @@ pub(crate) fn lookup_preset(name: &str) -> Option<&'static CcPresetRow> {
     CC_PRESETS.iter().find(|row| row.name == name)
 }
 
-/// Error returned by [`CallingConvention`]'s named factory wrappers
-/// when their lookup key is missing from the `CC_PRESETS` table.
-///
-/// Indicates an internal inconsistency in this source file: every named
-/// factory must have a matching row in `CC_PRESETS`.  Surfaced as a
-/// typed error rather than a panic / silent fallback so callers can
-/// propagate the failure into their own error chain (every factory's
-/// `Err` is automatically convertible into `anyhow::Error`).
-#[derive(Debug, thiserror::Error)]
-#[error("calling-convention preset not registered: {0}")]
-pub struct MissingPresetError(pub &'static str);
-
 /// Internal helper used by every named factory wrapper below — looks
-/// up the row and returns its `CallingConvention`, or a typed
-/// [`MissingPresetError`] if no row matches `name`.
-fn cc_from_table(name: &'static str) -> std::result::Result<CallingConvention, MissingPresetError> {
-    lookup_preset(name)
-        .map(|row| row.cc)
-        .ok_or(MissingPresetError(name))
+/// up the row and returns its `CallingConvention`.
+///
+/// Panics if no row matches `name`: every named factory passes its own
+/// `stringify!`'d name, which always has a matching `CC_PRESETS` row, so
+/// a miss is an internal-consistency failure in this source file rather
+/// than a caller error.
+fn cc_from_table(name: &'static str) -> CallingConvention {
+    match lookup_preset(name) {
+        Some(row) => row.cc,
+        None => panic!("calling-convention preset not registered: {name}"),
+    }
 }
 
-/// Emits a named factory wrapper around [`cc_from_table`] with the
-/// canonical `# Errors` doc block.  `$desc` is the per-preset
-/// description that becomes the first paragraph of the rustdoc.
+/// Emits a named factory wrapper around [`cc_from_table`].  `$desc` is
+/// the per-preset description that becomes the first paragraph of the
+/// rustdoc.
 ///
 /// `#[doc = concat!(...)]` is used because rustdoc's `///` form
 /// doesn't accept macro variables — the macro emits `#[doc = "..."]`
@@ -897,12 +890,7 @@ fn cc_from_table(name: &'static str) -> std::result::Result<CallingConvention, M
 macro_rules! cc_factory {
     ($name:ident, $desc:expr) => {
         #[doc = concat!($desc, "  See `CC_PRESETS` for the full field table.")]
-        ///
-        /// # Errors
-        ///
-        /// Returns [`MissingPresetError`] if this factory's preset name is
-        /// not registered in `CC_PRESETS` (an internal-consistency failure).
-        pub fn $name() -> std::result::Result<CallingConvention, MissingPresetError> {
+        pub fn $name() -> CallingConvention {
             cc_from_table(stringify!($name))
         }
     };

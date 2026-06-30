@@ -35,14 +35,13 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
     let regs = sleigh.regs().unwrap();
-    let cc = TargetCC::x86_64_systemv().unwrap().build(&regs).unwrap();
+    let cc = TargetCC::x86_64_systemv().build(&regs).unwrap();
 
     let mut overrides: FxHashMap<u64, strider_target::BuiltCallingConvention> =
         FxHashMap::default();
     overrides.insert(
         call_target,
         TargetCC::x86_64_all_preserving()
-            .unwrap()
             .build(&regs)
             .unwrap(),
     );
@@ -111,7 +110,7 @@ fn call_without_override_uses_function_default_clobber_set() {
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
     let regs = sleigh.regs().unwrap();
-    let cc = TargetCC::x86_64_systemv().unwrap().build(&regs).unwrap();
+    let cc = TargetCC::x86_64_systemv().build(&regs).unwrap();
 
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     let bfg = strider

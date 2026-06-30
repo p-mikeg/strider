@@ -25,7 +25,7 @@ fn run_at(
 ) -> strider_ir::Function {
     let arch = SleighArch::x86_64();
     let regs = sleigh.regs().unwrap();
-    let cc = TargetCC::x86_64_systemv().unwrap().build(&regs).unwrap();
+    let cc = TargetCC::x86_64_systemv().build(&regs).unwrap();
     let per_address_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> = overrides
         .into_iter()
         .map(|(addr, preset)| (addr, preset.build(&regs).unwrap()))
@@ -100,7 +100,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
-    overrides.insert(call_target, TargetCC::x86_64_all_preserving().unwrap());
+    overrides.insert(call_target, TargetCC::x86_64_all_preserving());
 
     // 9 bytes covers `mov rax, imm` + `jmp rax` exactly; any further
     // memory access is via the orchestrator's resolver.
@@ -170,7 +170,7 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
     // all_preserving differs from SystemV in its (empty) clobber set; it keeps
     // the same ret-val regs, so the spliced Call's clobber group shrinks while
     // the Return's ret-val arity stays at the function default.
-    overrides.insert(call_target, TargetCC::x86_64_all_preserving().unwrap());
+    overrides.insert(call_target, TargetCC::x86_64_all_preserving());
 
     let bfg = run_at(sleigh, entry, 9, overrides);
 
@@ -263,7 +263,7 @@ fn indirect_override_with_ret_regs_does_not_double_count_them() {
     // regs (RAX + XMM0) — unlike the all-preserving override above, whose
     // ret/clobber lists are near-empty and can't expose a double-count.
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
-    overrides.insert(_call_target, TargetCC::x86_64_systemv().unwrap());
+    overrides.insert(_call_target, TargetCC::x86_64_systemv());
 
     let bfg = run_at(sleigh, entry, 9, overrides);
 
@@ -297,7 +297,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
-    overrides.insert(call_target, TargetCC::x86_64_all_preserving().unwrap());
+    overrides.insert(call_target, TargetCC::x86_64_all_preserving());
 
     let bfg = run_at(sleigh, entry, 10, overrides);
 

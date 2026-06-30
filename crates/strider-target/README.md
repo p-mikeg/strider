@@ -51,8 +51,6 @@ names the same types.
   `stack_arg_offsets`.  Construct via
   `PositionalArgLayout::from_convention(&cc)`.  Single source of truth
   so every pass sees the same slot order.
-- `MissingPresetError` — error returned when a `CallingConvention`
-  preset constructor fails to look up its static register names.
 - `call_other_abi::CallOtherAbi` — describes the *implicit* (ISA-fixed,
   not pcode-explicit) channel of a CallOther beyond Sleigh's pcode
   operands.  Fields: `implicit_reads: &'static [&'static str]`,

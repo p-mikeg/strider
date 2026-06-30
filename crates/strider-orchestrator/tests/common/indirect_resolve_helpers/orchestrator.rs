@@ -63,7 +63,6 @@ pub fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Opti
     // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
     let cc = CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(strider.sleigh_regs())
         .expect("build cc");
     let lr_vn = cc.link_register_vn;

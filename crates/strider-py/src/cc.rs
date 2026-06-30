@@ -38,7 +38,7 @@ pub struct PyCallingConvention {
 // userland preset, and syscalls are `CallOther` (not calling
 // conventions), so neither has a preset here.
 forall_preset!(
-    try PyCallingConvention,
+    cc PyCallingConvention,
     strider_target::CallingConvention,
     [
         // Userland presets
@@ -63,13 +63,11 @@ impl PyCallingConvention {
     /// per-address CC override for sites that observe no caller state
     /// changes (e.g. Linux-kernel `__fentry__` / `mcount`).
     #[classmethod]
-    fn x86_64_all_preserving(_cls: &Bound<'_, PyType>) -> PyResult<Self> {
-        let inner = strider_target::CallingConvention::x86_64_all_preserving()
-            .map_err(|e| crate::errors::into_strider_err(e.into()))?;
-        Ok(Self {
-            inner: CcImpl::Preset(inner),
+    fn x86_64_all_preserving(_cls: &Bound<'_, PyType>) -> Self {
+        Self {
+            inner: CcImpl::Preset(strider_target::CallingConvention::x86_64_all_preserving()),
             preset_name: "x86_64_all_preserving",
-        })
+        }
     }
 
     /// Build a custom calling convention from explicit register-name

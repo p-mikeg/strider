@@ -114,7 +114,6 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let regs = sleigh.regs().expect("regs");
     let cc = strider_target::CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");

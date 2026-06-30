@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
     // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider = strider_orchestrator::Lifter::new(arch, sleigh)?;
-    let cc = strider_target::CallingConvention::x86_cdecl()?.build(strider.sleigh_regs())?;
+    let cc = strider_target::CallingConvention::x86_cdecl().build(strider.sleigh_regs())?;
 
     let cfg_options = strider_cfg::CfgOptions {
         allow_code_before_start_addr: true,

@@ -6,7 +6,6 @@ edition.workspace = true
 [dependencies]
 rsleigh.workspace = true
 anyhow.workspace = true
-thiserror.workspace = true
 
 [lints]
 workspace = true

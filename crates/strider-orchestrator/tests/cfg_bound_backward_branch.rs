@@ -88,7 +88,6 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
     let sleigh = make_sleigh();
     let regs = sleigh.regs().expect("regs");
     let cc = CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .expect("build cc");
     let lift_opts = LiftOptions {

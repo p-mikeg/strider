@@ -44,14 +44,12 @@ fn build_ir_with_applies_per_address_override() {
     built.insert(
         call_target,
         TargetCC::x86_64_all_preserving()
-            .unwrap()
             .build(strider.sleigh_regs())
             .unwrap(),
     );
 
     // Function-default CC (resolved against the driver's regs).
     let cc = TargetCC::x86_64_systemv()
-        .unwrap()
         .build(strider.sleigh_regs())
         .unwrap();
 

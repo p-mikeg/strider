@@ -19,7 +19,6 @@ fn ppc_float_return_is_f1_only() {
         CallingConvention::powerpc64_elf_v1(),
         CallingConvention::powerpc64_elf_v2(),
     ] {
-        let cc = cc.expect("PPC preset exists");
         assert_eq!(
             cc.ret_val_regs_float,
             &["f1"],
@@ -33,7 +32,7 @@ fn ppc_float_return_is_f1_only() {
 /// adding one entry here — every invariant test picks it up.
 struct Case {
     name: &'static str,
-    cc: fn() -> std::result::Result<CallingConvention, MissingPresetError>,
+    cc: fn() -> CallingConvention,
     arch: fn() -> crate::arch::SleighArch,
     arg_count: usize,
     callee_saved_count: usize,
@@ -300,7 +299,6 @@ fn cases() -> Vec<Case> {
 fn build_case(case: &Case) -> (BuiltCallingConvention, rsleigh::SleighRegs) {
     let regs = regs_for((case.arch)());
     let built = (case.cc)()
-        .unwrap()
         .build(&regs)
         .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", case.name));
     (built, regs)
@@ -500,7 +498,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
 /// and every test picks it up.
 struct LinkRegCase {
     name: &'static str,
-    cc: fn() -> std::result::Result<CallingConvention, MissingPresetError>,
+    cc: fn() -> CallingConvention,
     arch: fn() -> crate::arch::SleighArch,
     expected_lr_name: Option<&'static str>,
 }
@@ -613,7 +611,6 @@ fn link_register_vn_set_for_link_register_presets() {
         };
         let regs = regs_for((c.arch)());
         let built = (c.cc)()
-            .unwrap()
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         let expected_vn = regs.name_to_vn(expected_name).unwrap_or_else(|| {
@@ -643,7 +640,6 @@ fn link_register_vn_none_for_stack_push_presets() {
         }
         let regs = regs_for((c.arch)());
         let built = (c.cc)()
-            .unwrap()
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         assert!(
@@ -675,7 +671,6 @@ fn link_register_vn_resolves_to_callee_saved_lr() {
         };
         let regs = regs_for((c.arch)());
         let built = (c.cc)()
-            .unwrap()
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         let lr_vn = built
@@ -728,7 +723,6 @@ fn x86_64_all_preserving_has_preserves_memory_true() {
     // can forward across these calls.
     assert!(
         CallingConvention::x86_64_all_preserving()
-            .unwrap()
             .preserves_memory(),
         "x86_64_all_preserving must declare preserves_memory = true"
     );
@@ -742,27 +736,27 @@ fn standard_presets_have_preserves_memory_false() {
     let presets: &[(&str, CallingConvention)] = &[
         (
             "x86_64_systemv",
-            CallingConvention::x86_64_systemv().unwrap(),
+            CallingConvention::x86_64_systemv(),
         ),
-        ("x86_cdecl", CallingConvention::x86_cdecl().unwrap()),
+        ("x86_cdecl", CallingConvention::x86_cdecl()),
         (
             "aarch64_aapcs64",
-            CallingConvention::aarch64_aapcs64().unwrap(),
+            CallingConvention::aarch64_aapcs64(),
         ),
-        ("arm_aapcs", CallingConvention::arm_aapcs().unwrap()),
-        ("mips_o32", CallingConvention::mips_o32().unwrap()),
-        ("mips_n64", CallingConvention::mips_n64().unwrap()),
+        ("arm_aapcs", CallingConvention::arm_aapcs()),
+        ("mips_o32", CallingConvention::mips_o32()),
+        ("mips_n64", CallingConvention::mips_n64()),
         (
             "powerpc_sysv32",
-            CallingConvention::powerpc_sysv32().unwrap(),
+            CallingConvention::powerpc_sysv32(),
         ),
         (
             "powerpc64_elf_v1",
-            CallingConvention::powerpc64_elf_v1().unwrap(),
+            CallingConvention::powerpc64_elf_v1(),
         ),
         (
             "powerpc64_elf_v2",
-            CallingConvention::powerpc64_elf_v2().unwrap(),
+            CallingConvention::powerpc64_elf_v2(),
         ),
     ];
     for (name, cc) in presets {
@@ -782,7 +776,7 @@ fn every_preset_factory_resolves() {
     // panic at `cc_from_table` fires.
     let factories: &[(
         &str,
-        fn() -> std::result::Result<CallingConvention, MissingPresetError>,
+        fn() -> CallingConvention,
     )] = &[
         ("x86_64_systemv", CallingConvention::x86_64_systemv),
         (
@@ -804,7 +798,7 @@ fn every_preset_factory_resolves() {
             .unwrap_or_else(|| panic!("preset {name:?} missing from CC_PRESETS"));
         assert_eq!(
             row.cc,
-            factory().unwrap(),
+            factory(),
             "preset {name:?}: CC_PRESETS row does not match factory output",
         );
     }
@@ -827,7 +821,6 @@ fn every_preset_factory_resolves() {
 fn positional_arg_layout_x86_64_systemv() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
     let cc = CallingConvention::x86_64_systemv()
-        .unwrap()
         .build(&regs)
         .unwrap();
     assert_eq!(cc.arg_passing_regs.len(), 6);
@@ -842,7 +835,6 @@ fn positional_arg_layout_x86_64_systemv() {
 fn positional_arg_layout_x86_cdecl_stack_only() {
     let regs = regs_for(crate::arch::SleighArch::x86());
     let cc = CallingConvention::x86_cdecl()
-        .unwrap()
         .build(&regs)
         .unwrap();
 
@@ -860,7 +852,7 @@ fn positional_arg_layout_x86_cdecl_stack_only() {
 #[test]
 fn positional_arg_layout_mips_o32_first_stack_arg_at_sp_plus_16() {
     let regs = regs_for(crate::arch::SleighArch::mipsbe32());
-    let cc = CallingConvention::mips_o32().unwrap().build(&regs).unwrap();
+    let cc = CallingConvention::mips_o32().build(&regs).unwrap();
     assert_eq!(cc.arg_passing_regs.len(), 4);
     let stack = cc.stack_args.unwrap();
     assert_eq!(stack.offset_of(0), 16);
@@ -887,7 +879,6 @@ fn stack_args_below_base_negative_offset_is_none() {
 fn positional_arg_layout_empty_has_no_stack() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
     let cc = CallingConvention::x86_64_all_preserving()
-        .unwrap()
         .build(&regs)
         .unwrap();
     assert!(cc.arg_passing_regs.is_empty());
