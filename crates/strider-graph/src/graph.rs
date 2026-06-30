@@ -14,10 +14,9 @@ use anyhow::anyhow;
 use cranelift_entity::{EntityRef, ListPool, PrimaryMap, SecondaryMap};
 use smallvec::SmallVec;
 
-use crate::cache::NodeCacheable;
+use crate::cache::{NodeCache, NodeCacheable};
 use crate::ids::{NodeId, UseId, UseIdList, ValueId, ValueIdList};
 use crate::iter::{InputCursor, Inputs};
-use crate::node_cache::NodeCache;
 use crate::storage::{Node, RawStore, UseData, ValueData};
 
 /// The core generic graph structure.
