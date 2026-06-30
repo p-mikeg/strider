@@ -1,6 +1,5 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::PostOptimizerTestExt;
 use crate::test_support::cf_rp_pipeline;
 use anyhow::anyhow;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
@@ -1401,7 +1400,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
 
     // Run CallStackArgCollect with slot table [4, 8] (offset 0 = anchor).
     let pass = CallStackArgCollect;
-    pass.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();

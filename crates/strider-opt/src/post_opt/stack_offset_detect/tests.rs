@@ -12,7 +12,6 @@ use strider_ir::{Function, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
 use crate::StackOffsetDetect;
-use crate::pipeline::PostOptimizerTestExt;
 
 /// Count the nodes that currently carry a stamped stack offset.
 fn stamped_count(function: &Function) -> usize {
@@ -35,8 +34,7 @@ fn run(function: &mut Function) {
     crate::test_support::cf_rp_pipeline()
         .run(function, &mut crate::OptCtx::new(None))
         .expect("canonicalize must not error");
-    StackOffsetDetect
-        .run_one(function, &mut crate::OptCtx::new(None))
+    crate::pipeline::run_post(&StackOffsetDetect, function, &mut crate::OptCtx::new(None))
         .expect("must not error");
 }
 

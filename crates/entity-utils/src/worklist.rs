@@ -34,16 +34,6 @@ impl<E: EntityRef> Worklist<E> {
         self.worklist.len()
     }
 
-    /// Returns `true` if `entity` is currently queued.
-    ///
-    /// Currently exercised only by this crate's own tests, so it is
-    /// `#[cfg(test)]`-gated to keep the public surface to what production
-    /// consumers actually call; ungate it the moment a real caller needs it.
-    #[cfg(test)]
-    pub fn contains(&self, entity: E) -> bool {
-        self.workset.contains(entity)
-    }
-
     /// Removes every queued entity.
     pub fn clear(&mut self) {
         self.worklist.clear();
@@ -139,11 +129,11 @@ mod tests {
         wl.enqueue(Id(0));
         assert!(!wl.is_empty());
         assert_eq!(wl.len(), 1);
-        assert!(wl.contains(Id(0)));
+        assert!(wl.workset.contains(Id(0)));
 
         assert_eq!(wl.dequeue(), Some(Id(0)));
         assert!(wl.is_empty());
-        assert!(!wl.contains(Id(0)));
+        assert!(!wl.workset.contains(Id(0)));
         assert_eq!(wl.dequeue(), None);
     }
 
@@ -188,7 +178,7 @@ mod tests {
         wl.clear();
         assert!(wl.is_empty());
         assert_eq!(wl.len(), 0);
-        assert!(!wl.contains(Id(1)));
+        assert!(!wl.workset.contains(Id(1)));
 
         // After clear, re-enqueue still works (workset must really be empty,
         // not just have stale entries).
@@ -200,9 +190,9 @@ mod tests {
     fn contains_only_while_queued() {
         let mut wl: Worklist<Id> = Worklist::new();
         wl.enqueue(Id(5));
-        assert!(wl.contains(Id(5)));
+        assert!(wl.workset.contains(Id(5)));
         let _ = wl.dequeue();
-        assert!(!wl.contains(Id(5)));
+        assert!(!wl.workset.contains(Id(5)));
     }
 
     #[test]

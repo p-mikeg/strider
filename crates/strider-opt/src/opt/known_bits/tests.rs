@@ -1,5 +1,4 @@
 use super::*;
-use crate::pipeline::OptimizerTestExt;
 use crate::test_support::{assert_returns_const, make_fn, return_kind, run_to_fixed_point};
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
@@ -44,8 +43,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
 fn known_bits_const_no_change() -> Result<()> {
     let mut fg = make_fn(|b| Ok(b.build_int_const(42u64, ValueType::I64).unwrap()))?;
     assert!(
-        !KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        !crate::pipeline::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     Ok(())

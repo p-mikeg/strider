@@ -112,7 +112,7 @@ mod tests {
         // the expected kind. Fingerprint stamping is tested in the
         // integration test `builder_trait.rs` where test-utils are available.
         let mut b = empty_builder().unwrap();
-        assert_eq!(b.lift_addr(), None);
+        assert_eq!(b.lift_addr, None);
         let const_id = crate::const_value::ConstId::new(3);
         let n = <FunctionBuilder as IRBuilder>::create_node(
             &mut b,

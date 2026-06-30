@@ -474,22 +474,6 @@ impl Function {
         self.default_cc.stack_vn
     }
 
-    /// The function-default `CallOther` clobber list: every tracked
-    /// varnode except the stack pointer, in `all_vns` order.
-    /// Reproduces the old build-time `call_other_clobbered` (`build()`
-    /// filtered `var_table.values()` — same order as `all_vns` — by
-    /// `!= stack_vn`).
-    #[inline]
-    #[cfg(test)]
-    pub(crate) fn call_other_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
-        let stack_vn = self.default_cc.stack_vn;
-        self.all_vns
-            .iter()
-            .copied()
-            .filter(|v| *v != stack_vn)
-            .collect()
-    }
-
     // ── NodeId-keyed overlay accessors ────────────────────────────────────
 
     /// Returns the user-op name associated with a

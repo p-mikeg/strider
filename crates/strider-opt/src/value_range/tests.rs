@@ -1899,7 +1899,6 @@ fn guard_on_edge_into_merge_is_top_below_merge() {
 #[test]
 fn guard_survives_region_collapse_at_nonregion_consumer() {
     use crate::RegionCollapse;
-    use crate::pipeline::OptimizerTestExt;
 
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -1941,8 +1940,7 @@ fn guard_survives_region_collapse_at_nonregion_consumer() {
     let true_ctrl = f.node_outputs(if_node)[0];
 
     // Collapse the single-predecessor dispatch Region.
-    let changed = RegionCollapse
-        .run_one(&mut f, &mut crate::OptCtx::new(None))
+    let changed = crate::pipeline::run_one(&RegionCollapse, &mut f, &mut crate::OptCtx::new(None))
         .unwrap()
         .changed();
     assert!(changed, "dispatch Region must collapse");

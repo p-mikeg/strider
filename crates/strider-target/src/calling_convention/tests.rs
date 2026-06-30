@@ -722,8 +722,7 @@ fn x86_64_all_preserving_has_preserves_memory_true() {
     // be suppressible at IR-build time so LoadReadOnly / LoadForward
     // can forward across these calls.
     assert!(
-        CallingConvention::x86_64_all_preserving()
-            .preserves_memory(),
+        CallingConvention::x86_64_all_preserving().preserves_memory,
         "x86_64_all_preserving must declare preserves_memory = true"
     );
 }
@@ -761,7 +760,7 @@ fn standard_presets_have_preserves_memory_false() {
     ];
     for (name, cc) in presets {
         assert!(
-            !cc.preserves_memory(),
+            !cc.preserves_memory,
             "{name}: standard presets must have preserves_memory = false"
         );
     }

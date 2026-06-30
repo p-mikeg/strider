@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::{OptCtx, OptimizerTestExt, PostOptimizerTestExt};
+use crate::pipeline::OptCtx;
 use crate::test_support::{assert_returns_const, make_fn};
 use strider_ir::IRWalker;
 use strider_ir_test_utils::IrWalkerEx;
@@ -52,8 +52,7 @@ fn load_from_rom_const_addr() -> Result<()> {
     })?;
     let rom = test_rom();
     assert!(
-        LoadReadOnly
-            .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
+        crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     assert_returns_const(&fg, 42);
@@ -83,8 +82,7 @@ fn load_fold_absorbs_address_fingerprint() -> Result<()> {
 
     let rom = test_rom();
     assert!(
-        LoadReadOnly
-            .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
+        crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     assert_returns_const(&fg, 42);
@@ -107,8 +105,7 @@ fn load_non_rom_addr_no_change() -> Result<()> {
     })?;
     let rom = test_rom();
     assert!(
-        !LoadReadOnly
-            .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
+        !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     // Load node should still be present.
@@ -134,8 +131,7 @@ fn load_non_const_addr_no_change() -> Result<()> {
     // addr is an Add node, not a const → LoadReadOnly must not fire.
     let rom = test_rom();
     assert!(
-        !LoadReadOnly
-            .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
+        !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     Ok(())
@@ -165,16 +161,14 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
 
     let mut le = build(Endianness::Little)?;
     assert!(
-        LoadReadOnly
-            .run_one(&mut le, &mut OptCtx::new(Some(&rom)))?
+        crate::pipeline::run_one(&LoadReadOnly, &mut le, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     assert_returns_const(&le, 0x0403_0201);
 
     let mut be = build(Endianness::Big)?;
     assert!(
-        LoadReadOnly
-            .run_one(&mut be, &mut OptCtx::new(Some(&rom)))?
+        crate::pipeline::run_one(&LoadReadOnly, &mut be, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     assert_returns_const(&be, 0x0102_0304);
@@ -210,8 +204,7 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
 
     let mut le = build(Endianness::Little)?;
     assert!(
-        LoadReadOnly
-            .run_one(&mut le, &mut OptCtx::new(Some(&rom)))?
+        crate::pipeline::run_one(&LoadReadOnly, &mut le, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     // I128 constants use ConstId interning; read the value
@@ -229,8 +222,7 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
 
     let mut be = build(Endianness::Big)?;
     assert!(
-        LoadReadOnly
-            .run_one(&mut be, &mut OptCtx::new(Some(&rom)))?
+        crate::pipeline::run_one(&LoadReadOnly, &mut be, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     {
@@ -272,8 +264,7 @@ fn const_load_wider_than_16_bytes_does_not_fold() -> Result<()> {
             b.build_load(addr, rsleigh::VnSpace::RAM, ty)
         })?;
         assert!(
-            !LoadReadOnly
-                .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
+            !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?
                 .changed(),
             "{ty:?}: wider-than-16-byte load must not fold",
         );
@@ -301,8 +292,7 @@ fn load_oversize_read_no_change() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
     })?;
     assert!(
-        !LoadReadOnly
-            .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
+        !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     Ok(())
@@ -319,8 +309,7 @@ fn load_other_space_no_change() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::REGISTER, ValueType::I64)
     })?;
     assert!(
-        !LoadReadOnly
-            .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
+        !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     Ok(())
@@ -336,8 +325,7 @@ fn load_u8_masks_to_byte() -> Result<()> {
     })?;
     let rom = test_rom();
     assert!(
-        LoadReadOnly
-            .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
+        crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     assert_returns_const(&fg, 0xFF);
@@ -356,8 +344,7 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
     })?;
     let rom = test_rom();
     assert!(
-        LoadReadOnly
-            .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
+        crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
     // Both loads must have folded out of the reachable subgraph.
@@ -378,7 +365,6 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
 #[test]
 fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
     use crate::StackOffsetDetect;
-    use crate::pipeline::OptimizerTestExt;
     use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
     let sp = stack_vn_x86();
@@ -408,7 +394,7 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
     // — the shape the SP-aware post-pass sees in production.
     crate::test_support::cf_rp_pipeline().run(&mut fg, &mut OptCtx::new(None))?;
 
-    StackOffsetDetect.run_one(&mut fg, &mut OptCtx::new(None))?;
+    crate::pipeline::run_post(&StackOffsetDetect, &mut fg, &mut OptCtx::new(None))?;
     assert!(
         fg.graph()
             .all_node_ids()
@@ -423,7 +409,7 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
 
     // LoadReadOnly folds the constant-address Load to IntConst(42).
     let rom = test_rom();
-    let fold_result = LoadReadOnly.run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?;
+    let fold_result = crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?;
     assert!(fold_result.changed(), "LoadReadOnly must fold the ROM Load");
 
     // No Load nodes remain after folding.

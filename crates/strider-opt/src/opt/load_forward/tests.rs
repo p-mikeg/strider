@@ -1,6 +1,5 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::OptimizerTestExt;
 use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::IrWalkerEx;
@@ -1321,7 +1320,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     // Run LoadForward in isolation so the leak attributable to it is
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
-    LoadForward.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(&LoadForward, &mut fg, &mut crate::OptCtx::new(None))?;
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.
@@ -1413,7 +1412,7 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
         .count();
 
-    LoadForward.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(&LoadForward, &mut fg, &mut crate::OptCtx::new(None))?;
 
     let total_phis_after = fg
         .graph()

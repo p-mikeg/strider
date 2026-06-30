@@ -897,16 +897,6 @@ macro_rules! cc_factory {
 }
 
 impl CallingConvention {
-    /// Returns `true` if calls under this convention preserve memory
-    /// across the call (i.e. the IR's Call node should NOT advance the
-    /// memory chain).  See the `preserves_memory` field docs.  Prod reads
-    /// the resolved `BuiltCallingConvention::preserves_memory` field; this
-    /// accessor on the unbuilt convention is used only by tests.
-    #[cfg(test)]
-    pub fn preserves_memory(&self) -> bool {
-        self.preserves_memory
-    }
-
     cc_factory!(
         x86_64_systemv,
         "Returns the x86-64 System V ABI calling convention."

@@ -256,8 +256,8 @@ mod tests {
         let k = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(1))));
         let _sum = b.binary(IntBinaryOp::Add, x, k);
         let t = b.finish();
-        assert_eq!(t.node_count(), 3);
-        assert_eq!(t.output_count(), 3);
+        assert_eq!(t.graph.all_node_ids().count(), 3);
+        assert_eq!(t.graph.all_value_ids().count(), 3);
         assert!(t.root().is_ok());
     }
 
