@@ -137,9 +137,12 @@ fn shift_known_bits(
     rhs: ValueId,
     rhs_kb: KnownBitsFacts,
     ty: ValueType,
-    type_mask: u128,
     dir: ShiftDir,
 ) -> Option<KnownBitsFacts> {
+    // `ty` is always a tracked integer here (callers gate on
+    // `type_mask_u128(ty)` before reaching the shift arms), so this is a
+    // pure O(1) re-derivation of a value the caller already proved present.
+    let type_mask = type_mask_u128(ty)?;
     let rhs_mask = ctx
         .value_type_opt(rhs)
         .and_then(type_mask_u128)
@@ -253,7 +256,7 @@ pub(crate) fn node_known_bits(
                     // wrapped large literal shifts back into range,
                     // producing the wrong known-bits result for any
                     // literal shift at-or-past the type width.
-                    return Ok(shift_known_bits(ctx, l, rhs, r, ty, type_mask, ShiftDir::Left)
+                    return Ok(shift_known_bits(ctx, l, rhs, r, ty, ShiftDir::Left)
                         .map(|facts| (out, facts)));
                 }
                 IntBinaryOp::ShiftRight => {
@@ -265,7 +268,7 @@ pub(crate) fn node_known_bits(
                     // `>= bit_width` returns 0 (sleigh/src/opbehavior.cc:432).
                     // Mirror that here — see the ShiftLeft arm for the
                     // pre-fix bug rationale.
-                    return Ok(shift_known_bits(ctx, l, rhs, r, ty, type_mask, ShiftDir::Right)
+                    return Ok(shift_known_bits(ctx, l, rhs, r, ty, ShiftDir::Right)
                         .map(|facts| (out, facts)));
                 }
                 _ => return Ok(None),
