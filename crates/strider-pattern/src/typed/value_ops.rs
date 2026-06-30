@@ -436,7 +436,7 @@ impl<L: MatchPat, R: MatchPat> MatchPat for FloatLe<L, R> {
             rhs: Pre(r),
         }
         .compile(b);
-        bool_binary_out(b, IntBinaryOp::Or, less, equal)
+        compile_bool_binary(b, IntBinaryOp::Or, Pre(less), Pre(equal))
     }
 }
 
@@ -464,8 +464,12 @@ impl<I: MatchPat> MatchPat for FloatIsNan<I> {
             rhs: Pre(x),
         }
         .compile(b);
-        let one = bool_one().compile(b);
-        bool_binary_out(b, IntBinaryOp::Xor, eq, one)
+        compile_bool_binary(
+            b,
+            IntBinaryOp::Xor,
+            Pre(eq),
+            crate::typed::consts::bool_const(true),
+        )
     }
 }
 
@@ -537,26 +541,6 @@ where
     )
 }
 
-// ── Shared helpers ────────────────────────────────────────────────────
-
-/// Wire a binary `IntBinaryOp` consuming `l` / `r`, pinning the output to
-/// `I1` (the boolean shape).
-fn bool_binary_out(
-    b: &mut MatcherBuilder,
-    op: IntBinaryOp,
-    l: PatValueRef,
-    r: PatValueRef,
-) -> PatValueRef {
-    let out = b.binary(op, l, r);
-    b.set_value_ty(out, ValueType::I1);
-    out
-}
-
-/// A `bool_one` operand re-presented as a [`MatchPat`].
-fn bool_one() -> impl MatchPat {
-    crate::typed::consts::bool_const(true)
-}
-
 // ── Two-scopes-one-list factory functions ─────────────────────────────
 //
 // Every fixed-op / runtime-op / composite-lowered-shape factory free
@@ -579,10 +563,9 @@ macro_rules! value_op_factories {
         bound = $bound:path,
         // The doc-string verb ("Match" or "Build").
         verb = $verb:literal,
-        // The build-side helpers this scope needs in scope (the template
-        // side needs `bool_const` for the lowered `int_ne`/`int_le`/… and
-        // a `xor`/`int_eq`/`int_lt`/`int_slt`/`float_eq` it re-uses; the
-        // match side reuses its own crate-scope `xor`/`bool_one`).
+        // The `1` operand for the lowered `int_ne`/`int_le`/… `xor` shapes:
+        // `bool_const(true)`, supplied per scope so it carries the right
+        // (`MatchPat` / `TemplatePat`) trait bound.
         ne_one = $ne_one:expr,
     ) => {
         // ── Integer binary fixed-op factories ─────────────────────────
@@ -823,11 +806,11 @@ macro_rules! float_unary_factory {
 }
 
 // Match-side factories (crate scope, `MatchPat` bound). The lowered-shape
-// `int_ne`/`int_le`/`float_ne` reuse this scope's own `bool_one()`.
+// `int_ne`/`int_le`/`float_ne` use `bool_const(true)` for the xor's `1`.
 value_op_factories! {
     bound = MatchPat,
     verb = "Match",
-    ne_one = bool_one(),
+    ne_one = crate::typed::consts::bool_const(true),
 }
 
 // ── Template-side (build) factory twins ───────────────────────────────

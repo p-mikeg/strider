@@ -129,7 +129,7 @@ impl MemPhiPat {
 
 impl MemPat for MemPhiPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_mem(b)
+        self.0.compile_anchored(b)
     }
 }
 

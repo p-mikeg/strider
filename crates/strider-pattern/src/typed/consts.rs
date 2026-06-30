@@ -283,9 +283,7 @@ pub struct AnyBoolConst;
 
 impl MatchPat for AnyBoolConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
-        b.set_value_ty(o, ValueType::I1);
-        o
+        int_const_leaf(b, Some(ValueType::I1), |_v, _ty| true)
     }
 }
 
@@ -362,9 +360,10 @@ impl TemplatePat for ConstWith {
         // never used.
         let o = b.leaf(KindSpec::Any);
         b.set_template_kind(o, self.kind);
-        match self.ty {
-            TemplateTy::Fixed(t) => b.set_value_ty(o, t),
-            TemplateTy::InheritRoot => b.set_inherit_root_ty(o),
+        // `InheritRoot` is the leaf's default (stamped by `TmplOutput::value`),
+        // so only a `Fixed` type needs an explicit override.
+        if let TemplateTy::Fixed(t) = self.ty {
+            b.set_value_ty(o, t);
         }
         o
     }

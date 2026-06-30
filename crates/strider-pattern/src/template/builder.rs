@@ -164,12 +164,6 @@ impl TemplateBuilder {
         *self.core.kind_mut(out.node) = TmplNodeKind::Build(kind);
     }
 
-    /// Records `out`'s value output as inheriting the rewrite root's
-    /// output type at instantiation time (the default).
-    pub fn set_inherit_root_ty(&mut self, out: TmplValueRef) {
-        self.out_data_of(out).ty = TemplateTy::InheritRoot;
-    }
-
     /// Adds a fresh capture leaf — a payload-less [`TmplNodeKind::Capture`]
     /// marker node producing a [`TmplValue::ValueCapture`] — and
     /// returns its value handle. At instantiation the value capture resolves

@@ -125,12 +125,16 @@ impl<'f> Matcher<'f> {
         match root_kind_discriminant(pat, root) {
             Some(d) => {
                 for &node in self.kind_index().nodes_of_kind(d) {
-                    self.try_at_node(node, pat, root, &mut out);
+                    if let Some(m) = self.try_match_at_node(node, pat, root) {
+                        out.push(m);
+                    }
                 }
             }
             None => {
                 for node in self.function.walk() {
-                    self.try_at_node(node, pat, root, &mut out);
+                    if let Some(m) = self.try_match_at_node(node, pat, root) {
+                        out.push(m);
+                    }
                 }
             }
         }
@@ -198,12 +202,6 @@ impl<'f> Matcher<'f> {
     pub fn match_at(&self, node: NodeId, pat: &Pattern) -> anyhow::Result<Option<Match>> {
         let root = pat.root()?;
         Ok(self.try_match_at_node(node, pat, root))
-    }
-
-    fn try_at_node(&self, node: NodeId, pat: &Pattern, root: PatNodeId, out: &mut Vec<Match>) {
-        if let Some(m) = self.try_match_at_node(node, pat, root) {
-            out.push(m);
-        }
     }
 
     /// Run several patterns over the graph and return only the joined

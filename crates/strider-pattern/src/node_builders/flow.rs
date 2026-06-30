@@ -111,7 +111,7 @@ impl CallPat {
 
 impl MemPat for CallPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_mem(b)
+        self.0.compile_anchored(b)
     }
 }
 
@@ -204,7 +204,7 @@ impl CallOtherPat {
 
 impl MemPat for CallOtherPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().compile_mem(b)
+        self.configured().compile_anchored(b)
     }
 }
 
