@@ -73,6 +73,11 @@ pub(crate) fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsl
 /// `node_outputs`, `value_kind`) are forwarded as inherent methods on
 /// `Function`; every other [`Graph`] method is reached explicitly through
 /// [`Function::graph`] / [`Function::graph_mut`].
+///
+/// `Clone` produces a deep, independent copy (the graph, side-tables, and
+/// interners all clone their owned state) — used by the Python binding's
+/// `Function.clone()` so a caller can rewrite a copy non-destructively.
+#[derive(Clone)]
 pub struct Function {
     graph: Graph,
     /// The `Entry` node — always present (built by [`Function::new`]).

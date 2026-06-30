@@ -49,6 +49,21 @@ impl<N, V, C: NodeCacheable<N, V>> Default for Graph<N, V, C> {
     }
 }
 
+// Manual `Clone` (not derived) so the bound is `N: Clone, V: Clone` only — the
+// policy `C` is a `PhantomData` ZST, so requiring `C: Clone` (as the derive
+// would) is spurious. A cloned graph is a deep, independent copy: `RawStore` and
+// `NodeCache` both clone their owned state.
+impl<N: Clone, V: Clone, C: NodeCacheable<N, V>> Clone for Graph<N, V, C> {
+    fn clone(&self) -> Self {
+        Graph {
+            store: self.store.clone(),
+            cache: self.cache.clone(),
+            _policy: PhantomData,
+            generation: self.generation,
+        }
+    }
+}
+
 impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Creates an empty graph.
     ///
