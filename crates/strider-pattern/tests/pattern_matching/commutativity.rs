@@ -534,6 +534,40 @@ fn ordered_root_when_match_rejection_does_not_redrive_swap() {
     a::none(&function, pat);
 }
 
+/// A guard on a UNARY parent (which has no operands of its own to swap) must
+/// still re-drive a COMMUTATIVE child's operand order: the backtracking
+/// propagates DOWN past the unary node. This is the `const(a) + const(b)` under
+/// a width-narrowing/extending parent case — the guard picks the operand, and
+/// the matcher must try the child's other ordering to satisfy it.
+#[test]
+fn unary_parent_guard_redrives_commutative_child() {
+    use strider_ir::IRViewer;
+    use strider_ir::node::ValueType;
+
+    // zext(add(2, 3)): the natural order binds x←2 (guard wants 3); the re-drive
+    // must reach down through the unary zext to swap the add so x←3.
+    let function = {
+        let mut t = Tb::empty();
+        let two = t.u64(2);
+        let three = t.u64(3);
+        let sum = t.add(two, three);
+        let z = t.zext_to(sum, ValueType::I128);
+        t.ret_val(z)
+    };
+    let x = Capture::new();
+    let pat = zero_extend(add(any().capture(x), any()))
+        .when_match(move |m, _ty, b| {
+            b.get_value(x).and_then(|v| m.function().int_const_u128(v)) == Some(3)
+        })
+        .into_pattern();
+    let m = a::unique(&function, pat);
+    assert_eq!(
+        m.bindings().get_uint(x, &function),
+        Some(3),
+        "unary-parent guard must re-drive the commutative child's operand order",
+    );
+}
+
 // ── float_cmp commutativity ──────────────────────────────────────────────────
 
 /// Builds a graph that asserts a float comparison `a OP b` and returns

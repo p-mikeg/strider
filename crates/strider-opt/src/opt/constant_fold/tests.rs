@@ -1113,9 +1113,12 @@ fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
 }
 
 /// Covers the And-term-on-left Or orientation of `drop_high_half_in_or_truncate`
-/// (`Or(And(high_mask, junk), low_part)`) — the dedicated swap rule for it.
-/// (The two-`And` form `Or(And, And)` that needs both swaps is exercised by
-/// `test_narrow_widths::x64` in the orchestrator's calling_convention tests.)
+/// (`Or(And(high_mask, junk), low_part)`). A single rule orientation handles it:
+/// `low_part` fails the `and(...)` subpattern structurally, so the `Or`'s
+/// commutative retry binds it regardless of side. (The two-`And` form
+/// `Or(And, And)`, disambiguated only by the value guard on the unary truncate
+/// ancestor, is exercised by `test_narrow_widths::x64` and relies on the
+/// matcher's continuation-passing guard re-drive.)
 #[test]
 fn fold_drop_high_half_in_or_truncate_and_term_on_left() -> Result<()> {
     let mut fg = make_fn(|b| {

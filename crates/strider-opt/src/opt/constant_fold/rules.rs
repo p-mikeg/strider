@@ -361,41 +361,16 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // We pin the high-mask check via `when_match`: the captured constant
     // `c`'s low-`W` bits must all be zero, where `W` is the truncate's
     // output bit width.
-    // Two orientations are REQUIRED — a single pattern + commutative matching
-    // is not enough.  The real x86-64 register-merge truncate is
-    //   Truncate(Or( And(high_mask, rax_old), And(low_mask, zext(eax)) ))
-    // i.e. BOTH `Or` operands are `And`s.  This rule wants the high-mask And
-    // (its low W bits are zero, so it contributes nothing under the truncate).
-    // With only the const-on-right-of-Or pattern, the matcher's commutative
-    // `attempt(false)` greedily binds the `and(...)` subpattern to the FIRST
-    // matching `Or` operand — the low-mask And — and the `low-bits-zero` guard
-    // then rejects it.  Crucially, a `when_match` guard failure unwinds the
-    // match WITHOUT re-driving the swapped operand order (matcher/walk.rs), so
-    // the matcher never tries binding the subpattern to the high-mask And on
-    // the other side.  The explicit swap rule puts `and(...)` on the other `Or`
-    // operand, matching the high-mask And directly.  Same reasoning for the
-    // And's own operand order below.  Regression-guarded by
-    // `test_narrow_widths::x64` in the orchestrator's `calling_convention`
-    // tests — it fails the moment either swap is dropped.
-    // Both rules below are `|swap: bool| -> BoxedRule` builders with the
-    // identical swap-scaffold: gate `truncate(<inner>)` on a `truncate_low_mask`
-    // guard over `c`, then pick the inner-pattern orientation by `swap`.  The
-    // two guard bodies and the matched inner shapes differ, so the macro takes
-    // the guard expression, the two orientations, and the shared RHS template;
-    // the `if swap { … } else { … }` scaffold lives in one place.
-    // Two orientations are REQUIRED here — unlike the single-`And` folds, this
-    // rule's disambiguation is purely VALUE-based, not structural. The real
-    // x86-64 register-merge truncate is
+    // The real x86-64 register-merge truncate is
     //   Truncate(Or( And(high_mask, rax_old), And(low_mask, zext(eax)) ))
     // i.e. BOTH `Or` operands are `And`s, so the `and(...)` subpattern matches
     // EITHER operand structurally; only the `low-bits-zero` guard picks the
     // high-mask And. That guard sits on the unary `truncate` root, above the
-    // commutative `Or`. The matcher re-drives a node's OWN operand order on its
-    // OWN guard failure (matcher/walk.rs), but a unary truncate has no operands
-    // to swap, so it cannot re-drive the `Or` underneath it — the explicit swap
-    // rule supplies the other `Or` orientation directly. Regression-guarded by
-    // `test_narrow_widths::x64` (it fails the moment either orientation drops).
-    let mk_drop_high_half = |swap: bool| -> BoxedRule {
+    // commutative `Or`. A SINGLE orientation suffices: the matcher is
+    // continuation-passing (matcher/walk.rs), so the guard failure re-drives the
+    // `Or`'s operand order even though the guard is on the truncate ANCESTOR.
+    // Regression-guarded by `test_narrow_widths::x64`.
+    let mk_drop_high_half = {
         let guard = move |ctx: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
@@ -407,18 +382,10 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             };
             c_val & low_mask == 0
         };
-        let rhs = template::truncate(var(a));
-        if swap {
-            rewrite_rule(
-                truncate(or(and(any_int_const().capture(c), var(b)), var(a))).when_match(guard),
-                rhs,
-            )
-        } else {
-            rewrite_rule(
-                truncate(or(var(a), and(any_int_const().capture(c), var(b)))).when_match(guard),
-                rhs,
-            )
-        }
+        rewrite_rule(
+            truncate(or(var(a), and(any_int_const().capture(c), var(b)))).when_match(guard),
+            template::truncate(var(a)),
+        )
     };
 
     // `Truncate_<W>(And(low_W_mask, x)) → Truncate_<W>(x)` — the AND's
@@ -476,8 +443,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         sext_sext,
         trunc_trunc,
         narrow_mul_through_sext,
-        mk_drop_high_half(false),
-        mk_drop_high_half(true),
+        mk_drop_high_half,
         mk_drop_low_mask_under_truncate,
     ];
     rules
