@@ -62,11 +62,6 @@ fn assert_validation_err(f: &Function, pred: impl Fn(&ValidationError) -> bool) 
     );
 }
 
-#[test]
-fn empty_graph_with_entry_only() {
-    let function = crate::function::test_function();
-    assert!(validate(&function).is_ok());
-}
 
 #[test]
 fn local_typing_wrong_input_kind_on_int_unary_op() {
@@ -281,6 +276,11 @@ fn graph_invariants_entry_dedupes_on_repeated_create() {
         s.f.graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     assert_eq!(s.entry, entry2, "Entry must dedup");
+    let u = s
+        .f
+        .graph_mut()
+        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    stamp(&mut s.f, u);
     validate(&s.f).expect("graph with single deduped Entry must validate");
 }
 
@@ -291,6 +291,11 @@ fn graph_invariants_initial_memory_dedupes_on_repeated_create() {
         s.f.graph_mut()
             .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     assert_eq!(s.mem, mem2, "InitialMemory must dedup");
+    let u = s
+        .f
+        .graph_mut()
+        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    stamp(&mut s.f, u);
     validate(&s.f).expect("graph with single deduped InitialMemory must validate");
 }
 
@@ -814,6 +819,11 @@ fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
     let mut s = spine();
     let _const_node = int_const(&mut s.f, 7, ValueType::I64);
     // The IntConst is unreachable from entry; default validate ignores it.
+    let u = s
+        .f
+        .graph_mut()
+        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    stamp(&mut s.f, u);
     validate(&s.f).expect("default validate is unaffected");
 }
 
@@ -960,6 +970,42 @@ fn control_output_consumed_twice_is_flagged() {
             ValidationError::ReusedControlOutput { node, .. } if *node == s.entry
         )
     });
+}
+
+/// A control edge must reach a terminator: a reachable node whose Control
+/// output is consumed by nobody is a dangling control path.
+#[test]
+fn unused_control_output_is_flagged() {
+    let mut s = spine();
+    // A Region reachable from entry (consumes entry's Control) but whose own
+    // Control output goes nowhere.
+    let region = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [s.entry_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    stamp(&mut s.f, region);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::UnusedControlOutput { node, .. } if *node == region
+        )
+    });
+}
+
+/// The minimal valid terminated graph: Entry's control sunk into an
+/// `Unreachable`. Confirms `Unreachable` satisfies the single-successor control
+/// invariant (entry's control is consumed; the Unreachable produces none).
+#[test]
+fn entry_into_unreachable_validates() {
+    let mut s = spine();
+    let unreachable = s
+        .f
+        .graph_mut()
+        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    stamp(&mut s.f, unreachable);
+    validate(&s.f).expect("Entry -> Unreachable is a valid terminated graph");
 }
 
 

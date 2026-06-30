@@ -110,6 +110,13 @@ pub enum NodeKind {
     /// can wire a real `Return` (or `Call`+`Return`) at the same program
     /// point without re-walking the CFG to find the live memory token.
     IndirectBranch,
+    /// Control sink for a no-return trap (`break`, `ud2`, `int3`, `abort`,
+    /// `BUG_ON`-class).  Consumes the single dangling `Control` edge a
+    /// NoReturn `CallOther` leaves behind and produces nothing — control flow
+    /// ends here.  Inputs: `[control]`.  Outputs: `[]`.  Mirrors spidir's
+    /// `Unreachable`; it makes "every control edge reaches a terminator" hold
+    /// so the validator can enforce the single-successor control invariant.
+    Unreachable,
 
     // ── Memory operations ──────────────────────────────────────────────────────
     /// Load from the given address space.
@@ -269,6 +276,7 @@ impl NodeKind {
             // a distinct event).
             | Self::Return
             | Self::IndirectBranch
+            | Self::Unreachable
             | Self::Call
             | Self::CallOther { .. }
             // Sleigh user-ops with opaque per-occurrence identity.
@@ -324,6 +332,7 @@ impl NodeKind {
             | Self::SegmentOp { .. }
             | Self::Return
             | Self::IndirectBranch
+            | Self::Unreachable
             | Self::Call
             | Self::CallOther { .. }
             | Self::CPoolRef
@@ -348,7 +357,8 @@ impl NodeKind {
             | Self::Return
             | Self::Call
             | Self::CallOther { .. }
-            | Self::IndirectBranch => true,
+            | Self::IndirectBranch
+            | Self::Unreachable => true,
 
             // Every other variant — explicitly named so adding a new
             // `NodeKind` is a compile error here.

@@ -111,19 +111,19 @@ The user requested items 1, 3, and 4. Outcomes:
   predecessor". Verified by re-pointing the existing test at the surviving error
   before deleting.
 
-- **#3 — control-output single-use (PARTIAL: fan-out half shipped).** Added
-  `check_graph_invariants_control_single_use` + `ReusedControlOutput`, porting
-  spidir's `verify_control_outputs`. Empirically, spidir's *zero*-use half
-  (`UnusedControl`) does **not** fit strider: it fires on minimal / partially
-  built synthetic fixtures (an `Entry` with no terminator), because strider —
-  unlike spidir, whose functions always terminate — tolerates un-terminated
-  control in synthetic graphs. Enforcing it would be a validator *contract*
-  change ("every function terminates") with workspace-wide fixture churn, so the
-  unused half is deferred for a decision. The fan-out half is unambiguous (no
-  valid graph has control fan-out): it caught **2 genuinely malformed test
-  fixtures** (a `Return` wired to `Entry`'s Control, fanning it out alongside the
-  entry Region), now fixed. Real lifted IR satisfies it — 870 pytest lifts
-  through `build()→validate()` stayed clean.
+- **#3 — control-output single-use (DONE, full invariant).** Added
+  `check_graph_invariants_control_single_use` porting spidir's
+  `verify_control_outputs`: both `ReusedControlOutput` (fan-out — caught 2
+  genuinely malformed fixtures, now fixed) and `UnusedControlOutput` (dangling
+  control) are enforced. Enforcing the unused half surfaced that real MIPS32
+  div/mod IR fails it — the compiler's div-by-zero `break` guard lifts to a
+  NoReturn-trap `CallOther` whose control **deliberately dangled** ("control
+  ends here"), and strider had no control-sink node. Fixed at the root by adding
+  **`NodeKind::Unreachable`** (a `[CTRL] → []` terminator mirroring spidir's
+  `Unreachable`); the lifter now sinks every NoReturn trap's control into it, so
+  every control edge reaches a terminator. ~6 minimal synthetic fixtures gained
+  an explicit terminator. Verified: full workspace `--no-fail-fast` 0 failures +
+  pytest 870 (MIPS32 div/mod now green) + clippy clean.
 
 - **#4 — data-flow domination (BLOCKED on a scheduler).** spidir's check pins
   every floating sea-of-nodes data node to a dominator-tree location via a

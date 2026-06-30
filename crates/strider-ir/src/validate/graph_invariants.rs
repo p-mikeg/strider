@@ -91,16 +91,14 @@ pub(super) fn check_graph_invariants_region(
     }
 }
 
-/// Graph invariant: no reachable node's `Control` output may be consumed by
-/// more than one node — a control edge has at most one successor. A fan-out
-/// (`ReusedControlOutput`) is a malformed split that must instead be produced
-/// by an `If`, or a merge that must go through a `Region`. Adapted from
-/// spidir's `verify_control_outputs`.
-///
-/// spidir additionally rejects a *zero*-use control output (its functions
-/// always terminate), but strider deliberately tolerates un-terminated control
-/// in minimal / partially-built synthetic graphs, so only the fan-out half of
-/// the invariant is enforced here.
+/// Graph invariant: every reachable node's `Control` output must be consumed by
+/// exactly one node — a control edge has exactly one successor. Zero consumers
+/// is a dangling control path (`UnusedControlOutput`) — every control edge must
+/// reach a terminator (`Return` / `IndirectBranch` / `Unreachable`); two or more
+/// is a malformed fan-out (`ReusedControlOutput`) that must instead be produced
+/// by an `If` (split) or go through a `Region` (merge). Ported from spidir's
+/// `verify_control_outputs`. No-return traps reach a terminator because the
+/// lifter sinks their control into an `Unreachable`.
 pub(super) fn check_graph_invariants_control_single_use(
     function: &Function,
     reachable: &NodeIdSet,
@@ -112,11 +110,14 @@ pub(super) fn check_graph_invariants_control_single_use(
             if function.value_kind(value) != ValueKind::Control {
                 continue;
             }
-            // O(1): a second use means fan-out. Zero or one use is fine.
+            // O(1): peek at most the first two uses to classify 0 / 1 / many.
             let mut uses = graph.value_uses(value);
-            let _first = uses.next();
-            if uses.next().is_some() {
-                errs.push(ValidationError::ReusedControlOutput { node, value });
+            match (uses.next(), uses.next()) {
+                (None, _) => errs.push(ValidationError::UnusedControlOutput { node, value }),
+                (Some(_), Some(_)) => {
+                    errs.push(ValidationError::ReusedControlOutput { node, value });
+                }
+                (Some(_), None) => {}
             }
         }
     }

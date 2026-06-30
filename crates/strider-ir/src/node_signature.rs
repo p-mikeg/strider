@@ -332,6 +332,9 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // anchored so the resolver can wire the replacement at the same
         // program point.
         NodeKind::IndirectBranch => sig!(inputs: [CTRL, MEM, TARGET], outputs: []),
+        // Unreachable: control sink for a no-return trap.  Consumes the single
+        // dangling Control edge; produces nothing.
+        NodeKind::Unreachable => sig!(inputs: [CTRL], outputs: []),
 
         // ── Memory operations ───────────────────────────────────────────────
         NodeKind::Load(_) => sig!(inputs: [MEM, ADDR], outputs: [INT_VAL]),

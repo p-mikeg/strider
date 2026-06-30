@@ -62,6 +62,7 @@ fn node_kind_name(k: &NodeKind) -> &'static str {
         NodeKind::Call => "Call",
         NodeKind::Return => "Return",
         NodeKind::IndirectBranch => "IndirectBranch",
+        NodeKind::Unreachable => "Unreachable",
         NodeKind::Load(_) => "Load",
         NodeKind::Store(_) => "Store",
         NodeKind::IntConst(_) => "IntConst",

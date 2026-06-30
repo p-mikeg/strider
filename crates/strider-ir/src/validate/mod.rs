@@ -199,8 +199,15 @@ pub enum ValidationError {
     EmptyRegionPredecessors { region: NodeId },
 
     #[error(
+        "node {node:?} produces a Control output {value:?} that no reachable node \
+         consumes; every control edge must reach a terminator (`Return` / \
+         `IndirectBranch` / `Unreachable`)"
+    )]
+    UnusedControlOutput { node: NodeId, value: ValueId },
+
+    #[error(
         "node {node:?} produces a Control output {value:?} consumed by more than \
-         one node; a control edge has at most one successor (a split must be an \
+         one node; a control edge has exactly one successor (a split must be an \
          `If`, a merge must go through a `Region`)"
     )]
     ReusedControlOutput { node: NodeId, value: ValueId },

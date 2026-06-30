@@ -643,11 +643,14 @@ mod tests {
     /// creating a node with inputs marks it live but NOT a root.
     #[test]
     fn create_node_marks_live_and_tracks_root() {
-        let mut function = RegisterSet::new()
-            .build_fn_single_region()
-            .unwrap()
-            .build()
-            .unwrap();
+        let mut function = {
+            // Terminate the entry region so the built function satisfies the
+            // single-successor control invariant (every control edge reaches a
+            // terminator).
+            let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+            b.build_return(None, &[]).unwrap();
+            b.build().unwrap()
+        };
         let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
@@ -672,11 +675,14 @@ mod tests {
     /// `add_node_input` on a previously input-less node drops it from `roots`.
     #[test]
     fn add_node_input_drops_root_when_node_gains_input() {
-        let mut function = RegisterSet::new()
-            .build_fn_single_region()
-            .unwrap()
-            .build()
-            .unwrap();
+        let mut function = {
+            // Terminate the entry region so the built function satisfies the
+            // single-successor control invariant (every control edge reaches a
+            // terminator).
+            let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+            b.build_return(None, &[]).unwrap();
+            b.build().unwrap()
+        };
         let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 

@@ -109,6 +109,11 @@ impl FunctionBuilder {
         // pass `advance_memory = false` (the only such caller, the NoReturn
         // CallOther path in `build_call_other`, does exactly this).
         if terminate {
+            // Sink the trap's control edge into an `Unreachable` terminator so
+            // "every control edge reaches a terminator" holds (the memory edge
+            // is intentionally left dangling — a NoReturn trap advances no
+            // memory). Stamped with the current lift address via `create_node`.
+            self.create_node(NodeKind::Unreachable, [outputs[0]], []);
             self.terminate_cur_region().map(|_| ())?;
         } else {
             self.advance_cur_region_ctrl(outputs[0])?;
