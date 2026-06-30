@@ -6,27 +6,28 @@ use crate::walk::NodeIdSet;
 
 use super::ValidationError;
 
-/// Shape check: enforce that the graph has exactly one
-/// [`NodeKind::Entry`] node and exactly one [`NodeKind::InitialMemory`] node.
+/// Shape check: at most one LIVE [`NodeKind::Entry`] and at most one LIVE
+/// [`NodeKind::InitialMemory`] node.
 ///
-/// This intentionally scans every node in the arena (including detached
-/// zombies left by unsound rewrites) so that an extra Entry/InitialMemory
-/// is reported even when the second one isn't reachable from `entry`.
-/// `MissingInitialMemoryNode` likewise fires if no InitialMemory exists at
-/// all - the InitialMemory node is allocated by `FunctionBuilder::build_entry`
-/// without a wire to Entry so a reachability-scoped check would miss it
-/// for graphs that haven't yet linked memory to a consumer.
+/// Scoped to the entry-reachable set like every other graph-invariant check —
+/// a detached/zombie root left by a rewrite (or a stale node a `compact` bug
+/// failed to drop) is unreachable garbage and is ignored. Neither root is
+/// required to be present: `Entry` is the walk root so it always is, and
+/// `InitialMemory` is OPTIONAL — a function performing no memory operations has
+/// no reachable `InitialMemory`, which is valid (the eagerly-built one is just
+/// unreachable and culled by `compact`). Only a *duplicate* live root is a
+/// malformation.
 ///
-/// Emits [`ValidationError::MissingEntryNode`] /
-/// [`ValidationError::MissingInitialMemoryNode`] when a kind is absent, and
-/// [`ValidationError::MultipleEntryNodes`] /
+/// Emits [`ValidationError::MultipleEntryNodes`] /
 /// [`ValidationError::MultipleInitialMemoryNodes`] (carrying the first two
-/// offenders) when a kind appears more than once.
-pub(super) fn check_graph_invariants_uniqueness(graph: &Graph, errs: &mut Vec<ValidationError>) {
-    // Only the first two of each kind matter (missing vs single vs the first
-    // duplicate pair), so buffer two `Option` slots per kind instead of two
-    // heap `Vec`s.  The full-arena scan is intentional — it catches an extra
-    // Entry/InitialMemory even when the duplicate isn't reachable.
+/// offenders) when a kind appears more than once in the live graph.
+pub(super) fn check_graph_invariants_uniqueness(
+    graph: &Graph,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    // Only the first two of each kind matter (single vs the first duplicate
+    // pair), so buffer two `Option` slots per kind instead of two heap `Vec`s.
     let mut entry: (Option<NodeId>, Option<NodeId>) = (None, None);
     let mut initial_memory: (Option<NodeId>, Option<NodeId>) = (None, None);
 
@@ -38,28 +39,19 @@ pub(super) fn check_graph_invariants_uniqueness(graph: &Graph, errs: &mut Vec<Va
         }
     };
 
-    for node in graph.all_node_ids() {
-        match graph.node_kind(node) {
+    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
+        match kind {
             NodeKind::Entry => record(&mut entry, node),
             NodeKind::InitialMemory => record(&mut initial_memory, node),
             _ => {}
         }
     }
 
-    match entry {
-        (None, _) => errs.push(ValidationError::MissingEntryNode),
-        (Some(_), None) => {}
-        (Some(first), Some(second)) => {
-            errs.push(ValidationError::MultipleEntryNodes { first, second });
-        }
+    if let (Some(first), Some(second)) = entry {
+        errs.push(ValidationError::MultipleEntryNodes { first, second });
     }
-
-    match initial_memory {
-        (None, _) => errs.push(ValidationError::MissingInitialMemoryNode),
-        (Some(_), None) => {}
-        (Some(first), Some(second)) => {
-            errs.push(ValidationError::MultipleInitialMemoryNodes { first, second });
-        }
+    if let (Some(first), Some(second)) = initial_memory {
+        errs.push(ValidationError::MultipleInitialMemoryNodes { first, second });
     }
 }
 
