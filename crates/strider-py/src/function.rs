@@ -407,7 +407,7 @@ impl PyFunction {
     /// silently.  Callers that need rom-driven folding should route
     /// through `strider.run(..., rom=mem)` instead.
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
-        let real_pipeline = pipeline.drain_into_pipeline()?;
+        let real_pipeline = pipeline.drain_into_pipeline(false)?;
         self.run_pipeline_in_place(real_pipeline, "optimize")
     }
 

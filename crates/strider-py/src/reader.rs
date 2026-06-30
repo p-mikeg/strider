@@ -156,24 +156,6 @@ impl PyBufferReader {
 
 // ── _LoadedElf (ELF parse + symbols, built by load_elf) ──────────────────
 
-/// Shared helper: load ELF regions into a `Vec<MemRegion>`.
-///
-/// When `apply_relocations` is `false` every call site returns the same
-/// set of loadable sections; when `true` the caller supplies the
-/// appropriate relocation loader (mem-inclusive vs read-only-only) as
-/// `with_relocs`.
-fn elf_regions(
-    obj: &object::File<'static>,
-    apply_relocations: bool,
-    with_relocs: impl FnOnce(&object::File<'static>) -> anyhow::Result<Vec<MemRegion>>,
-) -> PyResult<Vec<MemRegion>> {
-    if apply_relocations {
-        with_relocs(obj).map_err(into_strider_err)
-    } else {
-        strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
-    }
-}
-
 /// Load an ELF's code + read-only (and, when `apply_relocations`, the
 /// relocated-data) sections into the instruction-fetch / raw-read `mem`
 /// region list, applying every understood relocation in-place when
@@ -182,9 +164,11 @@ fn elf_to_mem_regions(
     obj: &object::File<'static>,
     apply_relocations: bool,
 ) -> PyResult<Vec<MemRegion>> {
-    elf_regions(obj, apply_relocations, |o| {
-        strider_reader::elf::elf_load_with_relocations(o)
-    })
+    if apply_relocations {
+        strider_reader::elf::elf_load_with_relocations(obj).map_err(into_strider_err)
+    } else {
+        strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
+    }
 }
 
 /// Load an ELF's **runtime-immutable** code + read-only sections into a
@@ -203,9 +187,11 @@ fn elf_to_rom_regions(
     obj: &object::File<'static>,
     apply_relocations: bool,
 ) -> PyResult<Vec<MemRegion>> {
-    elf_regions(obj, apply_relocations, |o| {
-        strider_reader::elf::elf_load_readonly_with_relocations(o)
-    })
+    if apply_relocations {
+        strider_reader::elf::elf_load_readonly_with_relocations(obj).map_err(into_strider_err)
+    } else {
+        strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
+    }
 }
 
 /// Parsed ELF binary: the friendly face is the Python `Program`

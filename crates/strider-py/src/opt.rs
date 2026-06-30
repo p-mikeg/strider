@@ -137,10 +137,6 @@ impl PipelineState {
         }
         s
     }
-
-    fn from_default() -> Self {
-        Self::snapshot_from(&strider_orchestrator::opt::default_pipeline())
-    }
 }
 
 /// Builder for an optimizer pipeline.  Construct via `empty()` or
@@ -200,31 +196,18 @@ impl PyOptimizerPipeline {
     /// silently run an empty pipeline and report success — masking
     /// caller bugs where the same wrapper is reused after a previous
     /// `optimize` / `strider.run` consumed it.
-    pub(crate) fn drain_into_pipeline(
-        &self,
-    ) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
-        self.drain_into_pipeline_inner(false)
-    }
-
-    /// Like [`drain_into_pipeline`](Self::drain_into_pipeline) but
-    /// prepends a unit `LoadReadOnly` pass to the materialised pipeline
-    /// so a caller-supplied `rom` is consumed even when the user's
-    /// hand-built pipeline didn't add `LoadReadOnly` explicitly (the rom
-    /// itself flows via the [`strider_orchestrator::opt::OptCtx`] passed
-    /// to `OptimizerPipeline::run`).
     ///
-    /// The prepend happens on the *materialised* pipeline, NOT on the
-    /// wrapper's own `state`, so the caller's `PyOptimizerPipeline`
-    /// object is only drained (its documented "consumed on use"
-    /// behaviour) — never silently grown with an extra pass that would
-    /// double up on a second `run`.
-    pub(crate) fn drain_into_pipeline_with_load_read_only(
-        &self,
-    ) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
-        self.drain_into_pipeline_inner(true)
-    }
-
-    fn drain_into_pipeline_inner(
+    /// When `prepend_load_read_only` is set, a unit `LoadReadOnly` pass is
+    /// prepended to the materialised pipeline so a caller-supplied `rom`
+    /// is consumed even when the user's hand-built pipeline didn't add
+    /// `LoadReadOnly` explicitly (the rom itself flows via the
+    /// [`strider_orchestrator::opt::OptCtx`] passed to
+    /// `OptimizerPipeline::run`).  The prepend happens on the *materialised*
+    /// pipeline, NOT on the wrapper's own `state`, so the caller's
+    /// `PyOptimizerPipeline` object is only drained (its documented
+    /// "consumed on use" behaviour) — never silently grown with an extra
+    /// pass that would double up on a second `run`.
+    pub(crate) fn drain_into_pipeline(
         &self,
         prepend_load_read_only: bool,
     ) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
@@ -263,7 +246,7 @@ impl PyOptimizerPipeline {
     /// mirroring `strider_orchestrator::opt::default_pipeline`.
     #[classmethod]
     fn default(_cls: &Bound<'_, PyType>) -> Self {
-        Self::new_with(PipelineState::from_default())
+        Self::new_full_default()
     }
 
     /// Append a pass to the fixed-point pass list (any fixed-point
@@ -376,25 +359,12 @@ pure_pass_class!("CallStackArgCollect" => PyCallStackArgCollect,
     "Post-pass that wires positional stack arguments into `Call` nodes per \
      the calling convention's stack-arg layout.");
 
-/// `LoadReadOnly()` — folds constant-address loads against the rom
-/// supplied via `strider.run(..., rom=mem)`.  The rom flows through
-/// the orchestrator's `Strider::rom` → `OptCtx` plumbing rather
-/// than being attached to the pass; an instance constructed here is
-/// a marker, and the pass short-circuits to no-change when no rom is
-/// available.
-#[pyclass(name = "LoadReadOnly", module = "strider.opt")]
-#[derive(Clone)]
-pub struct PyLoadReadOnly;
-#[pymethods]
-impl PyLoadReadOnly {
-    /// `LoadReadOnly()` — the rom is no longer attached to the pass;
-    /// supply it via `strider.run(..., rom=mem)` (orchestrator path) or
-    /// the analogous custom-pipeline plumbing.
-    #[new]
-    fn new() -> Self {
-        Self
-    }
-}
+pure_pass_class!("LoadReadOnly" => PyLoadReadOnly,
+    "`LoadReadOnly()` — folds constant-address loads against the rom \
+     supplied via `strider.run(..., rom=mem)`.  The rom flows through the \
+     orchestrator's `Strider::rom` → `OptCtx` plumbing rather than being \
+     attached to the pass; an instance constructed here is a marker, and \
+     the pass short-circuits to no-change when no rom is available.");
 
 // ── Polymorphic enum used by add/add_post ──────────────────────────────────
 
