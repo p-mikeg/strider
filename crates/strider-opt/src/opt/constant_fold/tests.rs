@@ -1092,7 +1092,9 @@ fn fold_drop_low_mask_under_truncate() -> Result<()> {
 }
 
 /// Covers the const-on-right And orientation of `drop_low_mask_under_truncate`
-/// (`Truncate(And(x, low_mask))`) — the dedicated swap rule for it.
+/// (`Truncate(And(x, low_mask))`). A single rule orientation handles it: the
+/// non-const operand `x` fails `any_int_const` structurally, so the `And`'s own
+/// commutative retry binds the const regardless of side.
 #[test]
 fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
     let mut fg = make_fn(|b| {

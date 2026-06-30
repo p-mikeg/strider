@@ -383,22 +383,22 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // two guard bodies and the matched inner shapes differ, so the macro takes
     // the guard expression, the two orientations, and the shared RHS template;
     // the `if swap { … } else { … }` scaffold lives in one place.
-    macro_rules! swap_rule {
-        ($guard:expr, $unswapped:expr, $swapped:expr, $rhs:expr $(,)?) => {
-            |swap: bool| -> BoxedRule {
-                let guard = $guard;
-                if swap {
-                    rewrite_rule(($swapped).when_match(guard), $rhs)
-                } else {
-                    rewrite_rule(($unswapped).when_match(guard), $rhs)
-                }
-            }
-        };
-    }
-    let mk_drop_high_half = swap_rule!(
-        move |ctx: &strider_pattern::Matcher,
-              ty: strider_ir::node::ValueType,
-              bnd: &strider_pattern::Bindings| {
+    // Two orientations are REQUIRED here — unlike the single-`And` folds, this
+    // rule's disambiguation is purely VALUE-based, not structural. The real
+    // x86-64 register-merge truncate is
+    //   Truncate(Or( And(high_mask, rax_old), And(low_mask, zext(eax)) ))
+    // i.e. BOTH `Or` operands are `And`s, so the `and(...)` subpattern matches
+    // EITHER operand structurally; only the `low-bits-zero` guard picks the
+    // high-mask And. That guard sits on the unary `truncate` root, above the
+    // commutative `Or`. The matcher re-drives a node's OWN operand order on its
+    // OWN guard failure (matcher/walk.rs), but a unary truncate has no operands
+    // to swap, so it cannot re-drive the `Or` underneath it — the explicit swap
+    // rule supplies the other `Or` orientation directly. Regression-guarded by
+    // `test_narrow_widths::x64` (it fails the moment either orientation drops).
+    let mk_drop_high_half = |swap: bool| -> BoxedRule {
+        let guard = move |ctx: &strider_pattern::Matcher,
+                          ty: strider_ir::node::ValueType,
+                          bnd: &strider_pattern::Bindings| {
             let Some(c_val) = bnd.get_uint(c, ctx.function()) else {
                 return false;
             };
@@ -406,20 +406,31 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
                 return false;
             };
             c_val & low_mask == 0
-        },
-        truncate(or(var(a), and(any_int_const().capture(c), var(b)))),
-        truncate(or(and(any_int_const().capture(c), var(b)), var(a))),
-        template::truncate(var(a)),
-    );
+        };
+        let rhs = template::truncate(var(a));
+        if swap {
+            rewrite_rule(
+                truncate(or(and(any_int_const().capture(c), var(b)), var(a))).when_match(guard),
+                rhs,
+            )
+        } else {
+            rewrite_rule(
+                truncate(or(var(a), and(any_int_const().capture(c), var(b)))).when_match(guard),
+                rhs,
+            )
+        }
+    };
 
     // `Truncate_<W>(And(low_W_mask, x)) → Truncate_<W>(x)` — the AND's
     // effect of zeroing all bits above W is redundant when the truncate
-    // is going to discard those bits anyway.  Two orientations for the same
-    // first-success/no-backtrack reason as above.
-    let mk_drop_low_mask_under_truncate = swap_rule!(
-        move |ctx: &strider_pattern::Matcher,
-              ty: strider_ir::node::ValueType,
-              bnd: &strider_pattern::Bindings| {
+    // is going to discard those bits anyway. A SINGLE orientation suffices:
+    // the lone non-const operand fails `any_int_const` STRUCTURALLY, so the
+    // `And`'s own commutative retry binds `c` to the const regardless of side
+    // (and a two-const `And` is const-folded before this rule sees it).
+    let mk_drop_low_mask_under_truncate = {
+        let guard = move |ctx: &strider_pattern::Matcher,
+                          ty: strider_ir::node::ValueType,
+                          bnd: &strider_pattern::Bindings| {
             let Some(c_val) = bnd.get_uint(c, ctx.function()) else {
                 return false;
             };
@@ -429,11 +440,12 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             // The mask must cover at least the low W bits — anything beyond
             // that is fine since the truncate will drop those bits.
             c_val & low_mask == low_mask
-        },
-        truncate(and(any_int_const().capture(c), var(x))),
-        truncate(and(var(x), any_int_const().capture(c))),
-        template::truncate(var(x)),
-    );
+        };
+        rewrite_rule(
+            truncate(and(any_int_const().capture(c), var(x))).when_match(guard),
+            template::truncate(var(x)),
+        )
+    };
 
     // Nested SAME-kind extends/truncates collapse to one at the outer width —
     // each of these casts is transitive, so the intermediate width drops out:
@@ -466,8 +478,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         narrow_mul_through_sext,
         mk_drop_high_half(false),
         mk_drop_high_half(true),
-        mk_drop_low_mask_under_truncate(false),
-        mk_drop_low_mask_under_truncate(true),
+        mk_drop_low_mask_under_truncate,
     ];
     rules
 }

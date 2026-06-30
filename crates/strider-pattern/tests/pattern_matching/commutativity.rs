@@ -484,19 +484,46 @@ fn child_when_match_rejection_still_tries_swapped_order() {
     );
 }
 
-/// A `when_match` guard on the ROOT runs after the inputs already
-/// resolved in SOME order; if it rejects, the match unwinds entirely —
-/// the matcher does NOT re-drive the swapped operand order to satisfy a
-/// root guard (pins the documented post-match contract).
+/// A `when_match` guard on the ROOT runs after the inputs resolved in
+/// SOME order; if it rejects on a commutative node, the matcher re-drives
+/// the SWAPPED operand order before giving up — so an operand-order-
+/// sensitive root guard still finds a valid ordering (e.g. `const(a) +
+/// const(b)` with a guard pinning the narrow operand).
 #[test]
-fn root_when_match_rejection_does_not_redrive_swap() {
+fn root_when_match_rejection_redrives_swap() {
     use strider_ir::IRViewer;
 
     let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
     let l = Capture::new();
-    // Inputs match in the natural order (l ← 2); the root guard then
-    // demands l == 3, which only the swapped order would satisfy.
+    // Inputs match in the natural order (l ← 2); the root guard demands
+    // l == 3, which only the swapped order satisfies — the commutative
+    // swap retry re-drives the inputs so l ← 3 and the guard passes.
     let pat = add(any().capture(l), any())
+        .when_match(move |m, _ty, b| {
+            let Some(v) = b.get_value(l) else {
+                return false;
+            };
+            m.function().int_const_u128(v) == Some(3)
+        })
+        .into_pattern();
+    let m = a::unique(&function, pat);
+    assert_eq!(
+        m.bindings().get_uint(l, &function),
+        Some(3),
+        "root guard rejection must re-drive the swapped operand order",
+    );
+}
+
+/// `.ordered()` still disables the swap re-drive even when a root guard
+/// rejects: a non-commutative (forced-ordered) node fails outright.
+#[test]
+fn ordered_root_when_match_rejection_does_not_redrive_swap() {
+    use strider_ir::IRViewer;
+
+    let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
+    let l = Capture::new();
+    let pat = add(any().capture(l), any())
+        .ordered()
         .when_match(move |m, _ty, b| {
             let Some(v) = b.get_value(l) else {
                 return false;

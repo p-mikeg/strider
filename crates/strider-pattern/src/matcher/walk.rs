@@ -197,6 +197,20 @@ fn try_match_at(
     let mark = bindings.mark();
     let cast_mask = pat.cast_mask;
 
+    // Capture to bind for THIS node, independent of operand ordering: an
+    // output-vertex capture (value positions) binds the matched VALUE; a
+    // node-declared capture (control nodes like `If`) binds the matched NODE.
+    // Picking the kind from `root_value` alone used to mis-bind a node capture
+    // on `If` as `Binding::Value`. Bound INSIDE `attempt` (after inputs) so a
+    // commutative re-drive re-binds it against the swapped sub-bindings.
+    let ov_capture = out_vertex
+        .map(|ov| pat.graph.output_weight(ov))
+        .and_then(|ov| ov.capture);
+    let cap_binding = match ov_capture {
+        Some(cap) => root_value.map(|value| (cap, Binding::Value(value))),
+        None => nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
+    };
+
     let attempt = |swap: bool, b: &mut Bindings| -> bool {
         for edge in &inputs {
             let ir_slot = if swap {
@@ -243,61 +257,44 @@ fn try_match_at(
                 return false;
             }
         }
-        true
-    };
 
-    let inputs_ok = if attempt(false, bindings) {
-        true
-    } else if commutative {
-        bindings.restore(mark);
-        attempt(true, bindings)
-    } else {
-        false
-    };
-    if !inputs_ok {
-        bindings.restore(mark);
-        return false;
-    }
-
-    // Capture: bound after children matched, so shared captures bound
-    // deeper are already recorded — `bind_capture` rejects a re-bind to a
-    // different binding here, enforcing capture-equality.
-    //
-    // Choose the binding KIND by where the capture was DECLARED, not by
-    // whether the matched node happens to have a value output.  An
-    // output-vertex capture (`capture_output`, used for value positions) binds
-    // the matched VALUE; a node-declared capture (`capture_node`, used for
-    // control nodes like `If` via `if_node().capture(c)`) binds the matched
-    // NODE — even though `If` carries Control value outputs that would make
-    // `root_value` `Some`.  Picking the kind from `root_value` alone used to
-    // mis-bind a node capture on `If` as `Binding::Value(control_value)`,
-    // contradicting the `Binding::Node` contract.
-    let ov_capture = out_vertex
-        .map(|ov| pat.graph.output_weight(ov))
-        .and_then(|ov| ov.capture);
-    let cap_binding = match ov_capture {
-        Some(cap) => root_value.map(|value| (cap, Binding::Value(value))),
-        None => nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
-    };
-    if let Some((cap, binding)) = cap_binding
-        && !bindings.bind_capture(cap, binding)
-    {
-        bindings.restore(mark);
-        return false;
-    }
-
-    // Post-match hook: runs after all inputs are already resolved.
-    // Returning `false` here unwinds the entire match attempt (restores
-    // bindings and fails); it does not re-drive the swapped-operand order.
-    if let Some(pm) = &nd.post_match {
-        let ty = root_value
-            .and_then(|value| matcher.function().value_kind(value).as_value())
-            .unwrap_or(ValueType::I1);
-        if !pm(matcher, ir_node, ty, bindings) {
-            bindings.restore(mark);
+        // Capture-equality: bound after children matched, so shared captures
+        // bound deeper are already recorded — `bind_capture` rejects a re-bind
+        // to a different binding, enforcing capture-equality.
+        if let Some((cap, binding)) = cap_binding
+            && !b.bind_capture(cap, binding)
+        {
             return false;
         }
+
+        // Post-match hook: runs after this ordering's inputs + capture are
+        // resolved. Returning `false` fails THIS ordering; on a commutative
+        // node the caller then re-drives the swapped order, so an operand-
+        // order-sensitive guard (e.g. one pinning the narrow operand of
+        // `const(a) + const(b)`) still finds a valid ordering.
+        if let Some(pm) = &nd.post_match {
+            let ty = root_value
+                .and_then(|value| matcher.function().value_kind(value).as_value())
+                .unwrap_or(ValueType::I1);
+            if !pm(matcher, ir_node, ty, b) {
+                return false;
+            }
+        }
+        true
+    };
+
+    // Try the natural operand order; on failure (inputs, capture-equality, OR
+    // the post-match guard) re-drive the swapped order for a commutative node.
+    let matched = attempt(false, bindings)
+        || (commutative && {
+            bindings.restore(mark);
+            attempt(true, bindings)
+        });
+    if !matched {
+        bindings.restore(mark);
+        return false;
     }
+
     // This pat node fully matched `ir_node` — commit it to the match
     // footprint.  Recorded only here, after every failure path above has
     // returned, so a partially-matched-then-failed attempt records nothing
