@@ -79,6 +79,27 @@ fn add_node(g: &mut TestGraph, a: ValueId, b: ValueId) -> ValueId {
     g.node_outputs(n)[0]
 }
 
+/// Backward-input closure of `roots`: every node reachable by following inputs
+/// to their producers. A valid (backward-input-closed) argument to
+/// `Graph::retain_reachable`. The graph no longer offers this — reachability is
+/// the caller's concern — so the tests compute it themselves.
+fn reachable_from<N, V, C: NodeCacheable<N, V>>(
+    g: &Graph<N, V, C>,
+    roots: impl IntoIterator<Item = NodeId>,
+) -> HashSet<NodeId> {
+    let mut seen: HashSet<NodeId> = HashSet::new();
+    let mut stack: Vec<NodeId> = roots.into_iter().collect();
+    while let Some(n) = stack.pop() {
+        if !seen.insert(n) {
+            continue;
+        }
+        for input in g.node_inputs(n) {
+            stack.push(g.producer(input));
+        }
+    }
+    seen
+}
+
 fn region_node(g: &mut TestGraph) -> NodeId {
     g.create_node(TestKind::Region, [], [TestVal::Ctrl])
 }
@@ -128,7 +149,11 @@ fn canonicalize_reinserts_unique_mutated_node_then_dedups() {
     assert_eq!(g.nth_input(add, 1), Some(z));
 
     // No twin exists for Add(x, z): canonicalize returns None AND re-inserts it.
-    assert_eq!(g.canonicalize_node(add), None, "unique mutated node: no twin");
+    assert_eq!(
+        g.canonicalize_node(add),
+        None,
+        "unique mutated node: no twin"
+    );
 
     // The re-insert must be observable: an identical create now dedups to `add`.
     let dedup = g.create_node(TestKind::Add, [x, z], [TestVal::Int]);
@@ -327,21 +352,9 @@ proptest! {
         let _zombie = const_node(&mut g, 1234);
 
         // Expected reachable set (by inputs) from `root`.
-        let expected: HashSet<NodeId> = {
-            let mut seen: HashSet<NodeId> = HashSet::new();
-            let mut stack = vec![root];
-            while let Some(n) = stack.pop() {
-                if !seen.insert(n) {
-                    continue;
-                }
-                for input in g.node_inputs(n) {
-                    stack.push(g.producer(input));
-                }
-            }
-            seen
-        };
+        let expected = reachable_from(&g, [root]);
 
-        let remap = g.retain_reachable_roots([root]);
+        let remap = g.retain_reachable(expected.iter().copied());
 
         // Survivors: exactly the expected set remapped to Some.
         let mut survivor_news: Vec<NodeId> = Vec::new();
@@ -400,7 +413,7 @@ fn value_with_zero_uses() {
 #[test]
 fn empty_graph_retain_reachable_no_op() {
     let mut g = TestGraph::new();
-    let remap = g.retain_reachable_roots([]);
+    let remap = g.retain_reachable(reachable_from(&g, []));
     assert_eq!(g.all_node_ids().count(), 0);
     // No survivors to query; just ensure it doesn't panic and bumps gen.
     assert_eq!(g.generation(), 1);
@@ -448,7 +461,7 @@ fn mutating_cached_node_evicts_it() {
 
     // Mutate the cached node's first input x -> z via update_input. This must
     // invalidate the stale (Add, [x, y], _) cache entry BEFORE the change.
-    let slot0 = g.node_input_id_at_opt(add, 0).unwrap();
+    let slot0 = g.node_input_id_at(add, 0).ok().unwrap();
     g.update_input(slot0, z);
     assert_eq!(g.nth_input(add, 0), Some(z), "input was rewritten");
 
@@ -481,7 +494,7 @@ fn compaction_rebuilds_cache() {
 
     // Compact: ids are renumbered, so the pre-compaction cache is stale; the
     // rebuild hook must re-key the cache over the survivors.
-    let remap = g.retain_reachable_roots([root]);
+    let remap = g.retain_reachable(reachable_from(&g, [root]));
     let add_new = remap.node_old_to_new(add).expect("Add survives");
     let x_new = remap.value_old_to_new(x).expect("x survives");
     let y_new = remap.value_old_to_new(y).expect("y survives");
@@ -746,7 +759,10 @@ fn add_self_loop_input_then_canonicalize() {
     // Re-creating the same self-referential shape must now dedup to `add`,
     // proving the re-insert re-established the cache entry.
     let again = g.create_node(TestKind::Add, [x, x, add_val], [TestVal::Int]);
-    assert_eq!(again, add, "re-created self-loop shape dedups to the survivor");
+    assert_eq!(
+        again, add,
+        "re-created self-loop shape dedups to the survivor"
+    );
     assert_use_list_consistent(&g);
 }
 
@@ -754,7 +770,7 @@ fn add_self_loop_input_then_canonicalize() {
 fn reachable_by_inputs_high_fanin_traversal_unchanged() {
     // GR-3: a single high-fan-in value consumed by many nodes. With
     // mark-on-push the producer is enqueued once, but the reachable set (and
-    // hence the survivors of retain_reachable_roots) must be identical.
+    // hence the survivors of retain_reachable) must be identical.
     let mut g = TestGraph::new();
     let shared = const_node(&mut g, 7);
     // 200 Add nodes all consuming `shared` twice (Add(shared, shared) dedups,
@@ -769,7 +785,7 @@ fn reachable_by_inputs_high_fanin_traversal_unchanged() {
     let _zombie = const_node(&mut g, 9999);
 
     let before = g.all_node_ids().count();
-    let remap = g.retain_reachable_roots(roots.clone());
+    let remap = g.retain_reachable(reachable_from(&g, roots.clone()));
     // Every root + shared + each `other` const survives; the zombie does not.
     for r in &roots {
         assert!(remap.node_old_to_new(*r).is_some(), "root survives");
@@ -932,7 +948,7 @@ mod node_cache_hooks {
 
         // A non-caching-shaped root keeps `n` reachable. (Every kind caches here,
         // so we just keep `n` itself as the root.)
-        let remap = g.retain_reachable_roots([n]);
+        let remap = g.retain_reachable(reachable_from(&g, [n]));
         let n_new = remap.node_old_to_new(n).expect("n survives");
         let x_new = remap.value_old_to_new(xv).expect("x survives");
         let _ = nv;
@@ -996,7 +1012,7 @@ mod node_cache_hooks {
         // Mutate `mutate` so its shape is 8u8,[yv] — still collides on hash with
         // `keep` (8u8,[xv]) but is structurally different from BOTH. The kind
         // differs from `keep`, so there must be no twin.
-        let slot0 = g.node_input_id_at_opt(mutate, 0).unwrap();
+        let slot0 = g.node_input_id_at(mutate, 0).ok().unwrap();
         g.update_input(slot0, yv);
         assert_eq!(
             g.canonicalize_node(mutate),

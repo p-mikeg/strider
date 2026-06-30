@@ -97,6 +97,7 @@ impl crate::peephole::PeepholePass for IfCondInversion {
     fn try_rewrite(
         &self,
         ctx: &mut crate::EditFunction<'_>,
+        _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         let Some(inner_value) =
@@ -142,7 +143,7 @@ fn is_inverted_cond_match(
     let cond_node = function.producer(cond_value);
     // `match_at` is the single-node entry point: try the pattern at
     // exactly the cond's producer node (not a full graph walk).
-    let m = Matcher::try_new(function).ok()?;
+    let m = Matcher::new(function);
     let hit = m
         .match_at(cond_node, inner_pat)
         .expect("classifier pattern is single-rooted")?;

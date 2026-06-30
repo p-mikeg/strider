@@ -8,9 +8,8 @@ use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::Strider;
 use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::{LiftOptions, Strider};
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -114,8 +113,9 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
         .all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("orchestrator must splice a Call after resolving jmp rax to Single(0x9000)");
-    assert!(
-        bfg.call_cc(call_id).is_some(),
+    assert_ne!(
+        bfg.get_cc(call_id),
+        bfg.default_cc(),
         "orchestrator must record the per-address override CC on the spliced Call"
     );
     let outs = bfg.node_outputs(call_id);
@@ -309,8 +309,9 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     // Override CC is recorded; every clobber output carries its varnode
     // tag and the clobber count is strictly smaller than the function-
     // default clobber set.
-    assert!(
-        bfg.call_cc(call_id).is_some(),
+    assert_ne!(
+        bfg.get_cc(call_id),
+        bfg.default_cc(),
         "in-place tail-call edit must record the per-Call override CC"
     );
     let outs = bfg.node_outputs(call_id);

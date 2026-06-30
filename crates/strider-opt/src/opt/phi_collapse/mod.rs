@@ -41,6 +41,7 @@ impl PeepholePass for PhiCollapse {
     fn try_rewrite(
         &self,
         ctx: &mut crate::EditFunction<'_>,
+        _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         // `run_peephole` only hands us nodes matching `matches_kind`

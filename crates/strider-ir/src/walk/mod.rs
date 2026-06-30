@@ -1,12 +1,11 @@
-use core::{iter, ops::ControlFlow};
+use core::iter;
+use core::ops::ControlFlow;
 
 use entity_utils::Worklist;
 pub use entity_utils::set::DenseEntitySet;
 
-use crate::{
-    graph::Graph,
-    node::{NodeId, ValueId},
-};
+use crate::graph::Graph;
+use crate::node::{NodeId, ValueId};
 
 mod cast;
 pub use cast::{CastMask, cast_mask_of};
@@ -126,31 +125,6 @@ impl graphwalk::GraphRef for GraphWalkSuccs<'_> {
 /// The concrete pre-order walk type used by [`crate::IRWalker::walk`].
 pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 
-/// A [`graphwalk::GraphRef`] whose successors are a node's **data-input
-/// producers only** (no forward control edges).  Driving a post-order walk
-/// with this relation yields every producer before the node that consumes
-/// it — the defs-before-uses order used by value-cone analyses such as
-/// `decompose_sp`.
-#[derive(Clone, Copy)]
-pub struct InputSuccs<'a>(&'a Graph);
-
-impl graphwalk::GraphRef for InputSuccs<'_> {
-    type NodeId = NodeId;
-
-    fn try_successors(
-        &self,
-        node: NodeId,
-        f: impl FnMut(NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        self.0
-            .node_inputs(node)
-            .into_iter()
-            .filter(|&value| !self.0.value_kind(value).is_control())
-            .map(|value| self.0.value_definition(value).0)
-            .try_for_each(f)
-    }
-}
-
 /// Walks all nodes reachable in `graph` from `entry` in an unspecified order.
 ///
 /// Note that "reachable" nodes here include dead CFG inputs.
@@ -167,26 +141,6 @@ pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
 /// The forward def→use post-order walk backing the real reverse-post-order
 /// ([`GraphWalkInfo::reverse_postorder`]).
 pub type DefUsePostorder<'a> = PostOrder<DefUseSuccs<'a>>;
-
-/// Every `(consumer, input_slot)` that consumes one of `node`'s outputs —
-/// the raw forward def→use successor relation, unfiltered by liveness.
-pub fn raw_def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = (NodeId, u32)> + '_ {
-    graph
-        .node_outputs(node)
-        .iter()
-        .flat_map(move |output| graph.value_uses(*output))
-}
-
-/// [`raw_def_use_succs`] restricted to consumers in `live_nodes` — the
-/// successor relation a forward walk follows so it never steps outside the
-/// reachable set computed by [`GraphWalkInfo::compute_full`].
-pub fn def_use_succs<'a>(
-    graph: &'a Graph,
-    live_nodes: &'a DenseEntitySet<NodeId>,
-    node: NodeId,
-) -> impl Iterator<Item = (NodeId, u32)> + 'a {
-    raw_def_use_succs(graph, node).filter(move |&(succ, _use_idx)| live_nodes.contains(succ))
-}
 
 /// A [`graphwalk::GraphRef`] over the forward def→use edges, **unrestricted**
 /// by liveness — the raw counterpart of [`DefUseSuccs`].
@@ -216,7 +170,11 @@ impl graphwalk::GraphRef for RawDefUseSuccs<'_> {
         node: NodeId,
         mut f: impl FnMut(NodeId) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
-        raw_def_use_succs(self.0, node).try_for_each(|(succ, _input_idx)| f(succ))
+        self.0
+            .node_outputs(node)
+            .iter()
+            .flat_map(move |output| self.0.value_uses(*output))
+            .try_for_each(|(succ, _input_idx)| f(succ))
     }
 }
 
@@ -246,7 +204,12 @@ impl graphwalk::GraphRef for DefUseSuccs<'_> {
         node: NodeId,
         mut f: impl FnMut(NodeId) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
-        def_use_succs(self.graph, self.live_nodes, node).try_for_each(|(succ, _input_idx)| f(succ))
+        self.graph
+            .node_outputs(node)
+            .iter()
+            .flat_map(move |output| self.graph.value_uses(*output))
+            .filter(move |&(succ, _use_idx)| self.live_nodes.contains(succ))
+            .try_for_each(|(succ, _input_idx)| f(succ))
     }
 }
 
@@ -304,19 +267,11 @@ impl GraphWalkInfo {
     }
 }
 
-/// Like [`walk_graph`] but accepts an optional entry: returns an
-/// empty walk when `entry` is `None`.  Used by [`Graph::preorder`] so
-/// pre-build graphs yield no nodes instead of panicking.
-///
-/// Crate-private: external callers must route through [`Graph::preorder`].
-pub(crate) fn walk_graph_opt(graph: &Graph, entry: Option<NodeId>) -> GraphWalk<'_> {
-    PreOrder::new(GraphWalkSuccs::new(graph), entry)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
+    use crate::node::{NodeKind, ValueKind, ValueType};
+    use cranelift_entity::EntityRef;
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -446,7 +401,7 @@ mod tests {
         let mut graph = Graph::new();
         // A pure data source (no control outputs).
         let src = graph.create_node(
-            NodeKind::IntConst(IntPayload::Small(42)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -489,7 +444,7 @@ mod tests {
     fn cfg_succs_no_control_outputs_is_empty() {
         let mut graph = Graph::new();
         let node = graph.create_node(
-            NodeKind::IntConst(IntPayload::Small(0)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -597,7 +552,7 @@ mod tests {
     fn cfg_outputs_empty_when_all_outputs_are_data() {
         let mut graph = Graph::new();
         let node = graph.create_node(
-            NodeKind::IntConst(IntPayload::Small(5)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(5_usize)),
             [],
             [ValueKind::Typed(ValueType::I32)],
         );
@@ -613,13 +568,13 @@ mod tests {
     fn rpo_emits_operands_before_consumer() {
         let mut graph = Graph::new();
         let a = graph.create_node(
-            NodeKind::IntConst(IntPayload::Small(5)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(5_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
         let [a_value] = graph.node_outputs_exact::<1>(a).unwrap();
         let c = graph.create_node(
-            NodeKind::IntConst(IntPayload::Small(4)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(4_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -650,7 +605,7 @@ mod tests {
     fn rpo_visits_shared_operand_once() {
         let mut graph = Graph::new();
         let c = graph.create_node(
-            NodeKind::IntConst(IntPayload::Small(7)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -676,7 +631,7 @@ mod tests {
     /// Builds an `IntConst` and returns `(node, value)`.
     fn int_const(graph: &mut Graph, v: u64) -> (NodeId, ValueId) {
         let n = graph.create_node(
-            NodeKind::IntConst(IntPayload::Small(v)),
+            NodeKind::IntConst(crate::const_value::ConstId::new((v) as usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -839,7 +794,7 @@ mod tests {
         let (a, c1) = make_ctrl_node(&mut graph, c0);
         // Data const consumed by the terminator so it is reachable.
         let data = graph.create_node(
-            NodeKind::IntConst(IntPayload::Small(7)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -915,13 +870,13 @@ mod tests {
         let mut graph = Graph::new();
         let (entry, e_ctrl) = make_entry(&mut graph);
         let a = graph.create_node(
-            NodeKind::IntConst(IntPayload::Small(5)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(5_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
         let [a_value] = graph.node_outputs_exact::<1>(a).unwrap();
         let c = graph.create_node(
-            NodeKind::IntConst(IntPayload::Small(4)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(4_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -968,7 +923,7 @@ mod tests {
         let (b, b_ctrl) = make_ctrl_node(&mut graph, a_ctrl);
         // Pure data node referenced as Return's value input.
         let data = graph.create_node(
-            NodeKind::IntConst(IntPayload::Small(0)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );

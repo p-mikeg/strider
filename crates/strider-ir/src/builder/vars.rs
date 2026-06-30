@@ -71,12 +71,7 @@ impl FunctionBuilder {
     /// `link_memory_regions` / `link_region_variables` also
     /// propagate.
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
-        // `build_entry()` (called unconditionally by `new()`) sets the
-        // entry, so this is an invariant — but return an error rather than
-        // panicking if it is ever violated.
-        let entry_node = self.function.entry().ok_or_else(|| {
-            anyhow!("set_entry_region: entry node is not set (build_entry must run in new)")
-        })?;
+        let entry_node = self.function.entry();
         let [entry_control] = self.function().node_outputs_exact(entry_node)?;
         let entry_memory = self.entry_memory;
         self.link_control_regions(region_id, entry_control)?;
@@ -88,7 +83,12 @@ impl FunctionBuilder {
         for var_id in var_ids {
             let var = self.var_table[var_id];
             let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
-            let value = self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
+            // `VarId` allocation order is exactly `all_vns` order (both come
+            // from `var_table` in `new`), so the var's `all_vns` index is its
+            // `VarId` index — no lookup needed.
+            let vn_id =
+                crate::node::InitialVnId::from_index(cranelift_entity::EntityRef::index(var_id));
+            let value = self.build_single_output_pure(NodeKind::InitialVar(vn_id), [], output_type);
             initial_variables[var_id] = value;
             // `Function::all_vns` (the ordered tracked-varnode SSoT) is
             // populated eagerly in `new` from the same `var_table`
@@ -99,8 +99,8 @@ impl FunctionBuilder {
             // index so downstream consumers (the orchestrator's
             // `read_or_init_var` fallback) don't re-scan `preorder()`
             // to locate it.
-            let (node_id, _slot) = self.function().value_definition(value);
-            self.function_mut().register_initial_var(var, node_id);
+            let node_id = self.function().producer(value);
+            self.function_mut().side_tables.initial_var_index.insert(var, node_id);
         }
         // Record register-passed arguments unconditionally: each arg-passing
         // register's (largest-container) InitialVar is the carrier for its
@@ -124,7 +124,7 @@ impl FunctionBuilder {
     }
 
     /// Creates a new region in the graph with fresh `Region`,
-    /// `MemPhi`, and per-variable `VarPhi` nodes.
+    /// `MemPhi`, and per-variable `Phi` nodes.
     ///
     /// # Errors
     ///
@@ -144,9 +144,9 @@ impl FunctionBuilder {
         let [control, phi_token] = self.function().node_outputs_exact(control_node)?;
 
         // Wire the PhiToken as MemPhi.inputs[0], mirroring how
-        // VarPhi nodes are linked.  This gives MemPhi a direct back-reference to
+        // Phi nodes are linked.  This gives MemPhi a direct back-reference to
         // its Region so that dead-branch elimination and redundant-phi removal
-        // can treat MemPhi and VarPhi identically (same positional logic, same
+        // can treat MemPhi and Phi identically (same positional logic, same
         // automatic discovery via value_uses(cs_phi_out)).
         self.function_mut()
             .graph_mut()

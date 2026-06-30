@@ -14,8 +14,8 @@ use rustc_hash::FxHashMap;
 /// present, otherwise it allocates the next dense key and records *both*
 /// directions in lockstep — so the forward and reverse halves can never
 /// drift. This is the recurring "dedup by value, dense id by allocation"
-/// pattern: SSA variable tables (`Vn → VarId`), wide-constant interning
-/// (`WideConstStorage → WideConstId`), and similar.
+/// pattern: SSA variable tables (`Vn → VarId`), integer-constant interning
+/// (`ConstValue → ConstId`), and similar.
 ///
 /// `V` must be `Clone` (one clone per genuinely-new value, to record both
 /// directions) plus `Eq + Hash` (it keys the reverse map). For `Copy`

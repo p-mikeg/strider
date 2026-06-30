@@ -54,6 +54,36 @@ impl CaptureKey<'_> {
     }
 }
 
+/// Convert a capture's already-resolved value Options to a Python object
+/// per the `m[c]` precedence shared by `PyMatch::__getitem__` and
+/// `PyPartialMatch::__getitem__`.
+///
+/// Check bool (an `I1`-typed IntConst) BEFORE the general uint path:
+/// `get_uint` also matches an `I1` value (returning 0/1), so probing it
+/// first would make a boolean capture surface as a plain int, contradicting
+/// the "bool if it's a bool" contract.  `get_bool` is `I1`-only, so wider
+/// ints still fall through to uint.  Then uint (pass `u128` directly — PyO3
+/// handles the conversion; casting to `i128` first would silently
+/// sign-truncate any I128 value with bit 127 set), then raw float bits, then
+/// `None` for control-flow captures.
+pub(crate) fn capture_value_to_py(
+    py: Python<'_>,
+    bool_val: Option<bool>,
+    uint_val: Option<u128>,
+    float_bits: Option<u64>,
+) -> PyObject {
+    if let Some(b) = bool_val {
+        return b.into_py(py);
+    }
+    if let Some(v) = uint_val {
+        return v.into_py(py);
+    }
+    if let Some(f) = float_bits {
+        return f.into_py(py);
+    }
+    py.None()
+}
+
 impl PyMatch {
     /// Resolve `key` to a `Capture`, borrow the function for read, and run
     /// `f` against `(capture, &function)`.  Centralises the boilerplate that
@@ -92,6 +122,58 @@ impl PyMatch {
     }
 }
 
+/// Emits the op-variant accessors as their own `#[pymethods] impl PyMatch`
+/// block (one fn per `(name => getter)` pair).  Each recovers the matched op
+/// variant for an `*_any` capture as its canonical Sleigh-style string, or
+/// `None` when the capture isn't bound or the bound node isn't of the
+/// matching kind family.  The seven accessors are byte-identical bar the
+/// binding getter, so they share one body here.  (pyo3 forbids a bare
+/// `macro_rules!` invocation *inside* a `#[pymethods]` block, so the macro
+/// emits the whole block instead; pyo3 permits multiple such blocks.)
+macro_rules! op_accessors {
+    ($($name:ident => $getter:ident, $doc:literal;)+) => {
+        #[pymethods]
+        impl PyMatch {
+            $(
+                #[doc = $doc]
+                fn $name(
+                    &self,
+                    py: Python<'_>,
+                    key: CaptureKey<'_>,
+                ) -> PyResult<Option<String>> {
+                    self.with_function(py, key, |c, g| {
+                        self.inner.bindings().$getter(c, g.graph()).map(op_name)
+                    })
+                }
+            )+
+        }
+    };
+}
+
+op_accessors! {
+    int_binary_op => get_int_binary_op,
+        "Recover the matched `IntBinaryOp` variant name from `c`, \
+         e.g. `\"Add\"`, `\"Sub\"`, `\"And\"`.";
+    int_unary_op => get_int_unary_op,
+        "Recover the matched `IntUnaryOp` variant name from `c`.";
+    int_cmp_op => get_int_cmp_op,
+        "Recover the matched `IntCmpOp` variant name from `c`, \
+         e.g. `\"Less\"`, `\"Equal\"`, `\"Sless\"`.";
+    bool_binary_op => get_bool_binary_op,
+        "Recover the matched boolean binary op's variant name (an \
+         `IntBinaryOp` — `And` / `Or` / `Xor` — at `I1`) from `c`.";
+    // Note: there is no `bool_unary_op` accessor.  A boolean logical NOT
+    // is `Xor(x, IntConst(1)):I1` since the former BitNot unary-op was
+    // removed in favour of `Xor(_, all_ones)`, so the matching op variant
+    // is recovered via `bool_binary_op` (which returns `"Xor"`).
+    float_binary_op => get_float_binary_op,
+        "Recover the matched `FloatBinaryOp` variant name from `c`.";
+    float_unary_op => get_float_unary_op,
+        "Recover the matched `FloatUnaryOp` variant name from `c`.";
+    float_cmp_op => get_float_cmp_op,
+        "Recover the matched `FloatCmpOp` variant name from `c`.";
+}
+
 #[pymethods]
 impl PyMatch {
     /// The root node where the top-level pattern matched, as a `u32`
@@ -108,26 +190,10 @@ impl PyMatch {
     /// output is an int, bool if it's a bool, raw bits otherwise.
     fn __getitem__(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<PyObject> {
         self.with_function(py, key, |cap, g| {
-            // Check bool (an `I1`-typed IntConst) BEFORE the general uint path:
-            // `get_uint` also matches an `I1` value (returning 0/1), so probing
-            // it first would make a boolean capture surface as a plain int,
-            // contradicting this method's "bool if it's a bool" contract.
-            // `get_bool` is `I1`-only, so wider ints still fall through to uint.
-            if let Some(b) = self.inner.bindings().get_bool(cap, g) {
-                return b.into_py(py);
-            }
-            if let Some(v) = self.inner.bindings().get_uint(cap, g) {
-                // Pass `u128` directly — PyO3 handles the conversion to a
-                // Python int.  Casting to `i128` first would silently sign-
-                // truncate any I128 value with bit 127 set (e.g. `u128::MAX`
-                // would surface as `-1` to Python).
-                return v.into_py(py);
-            }
-            if let Some(f) = self.inner.bindings().get_float_bits(cap, g.graph()) {
-                return f.into_py(py);
-            }
-            // Fall back to None for control-flow captures.
-            py.None()
+            let b = self.inner.bindings().get_bool(cap, g);
+            let v = self.inner.bindings().get_uint(cap, g);
+            let f = self.inner.bindings().get_float_bits(cap, g.graph());
+            capture_value_to_py(py, b, v, f)
         })
     }
 
@@ -181,83 +247,6 @@ impl PyMatch {
     // when the capture isn't bound or the bound node isn't of the
     // matching kind family.
 
-    /// Recover the matched `IntBinaryOp` variant name from `c`,
-    /// e.g. `"Add"`, `"Sub"`, `"And"`.
-    fn int_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| {
-            self.inner
-                .bindings()
-                .get_int_binary_op(c, g.graph())
-                .map(op_name)
-        })
-    }
-
-    /// Recover the matched `IntUnaryOp` variant name from `c`.
-    fn int_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| {
-            self.inner
-                .bindings()
-                .get_int_unary_op(c, g.graph())
-                .map(op_name)
-        })
-    }
-
-    /// Recover the matched `IntCmpOp` variant name from `c`,
-    /// e.g. `"Less"`, `"Equal"`, `"Sless"`.
-    fn int_cmp_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| {
-            self.inner
-                .bindings()
-                .get_int_cmp_op(c, g.graph())
-                .map(op_name)
-        })
-    }
-
-    /// Recover the matched boolean binary op's variant name (an `IntBinaryOp`
-    /// — `And` / `Or` / `Xor` — at `I1`) from `c`.
-    fn bool_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| {
-            self.inner
-                .bindings()
-                .get_bool_binary_op(c, g.graph())
-                .map(op_name)
-        })
-    }
-
-    // Note: there is no `bool_unary_op` accessor.  A boolean logical NOT
-    // is `Xor(x, IntConst(1)):I1` since the former BitNot unary-op was removed
-    // in favour of `Xor(_, all_ones)`, so the matching op variant is
-    // recovered via `bool_binary_op` (which returns `"Xor"`).
-
-    /// Recover the matched `FloatBinaryOp` variant name from `c`.
-    fn float_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| {
-            self.inner
-                .bindings()
-                .get_float_binary_op(c, g.graph())
-                .map(op_name)
-        })
-    }
-
-    /// Recover the matched `FloatUnaryOp` variant name from `c`.
-    fn float_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| {
-            self.inner
-                .bindings()
-                .get_float_unary_op(c, g.graph())
-                .map(op_name)
-        })
-    }
-
-    /// Recover the matched `FloatCmpOp` variant name from `c`.
-    fn float_cmp_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| {
-            self.inner
-                .bindings()
-                .get_float_cmp_op(c, g.graph())
-                .map(op_name)
-        })
-    }
 
     /// Recover the matched varnode from `c`.  Returns the `Vn`
     /// associated with the captured `InitialVar` / tagged `Phi`

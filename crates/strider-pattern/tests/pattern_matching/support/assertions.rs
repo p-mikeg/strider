@@ -9,9 +9,8 @@
 //! [`Pattern::ignore_casts`] / [`Pattern::ignore_casts_mask`]) before
 //! handing it over.
 
-use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::{Function, IRViewer, IRWalker};
 use strider_pattern::matcher::Pattern;
 use strider_pattern::{Capture, Match, Matcher};
 
@@ -21,7 +20,7 @@ use strider_pattern::{Capture, Match, Matcher};
 /// a descriptive message if the count differs from `expected`.
 #[track_caller]
 pub fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec<Match> {
-    let hits = Matcher::try_new(function).unwrap().find_all(&pat).unwrap();
+    let hits = Matcher::new(function).find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
         expected,
@@ -51,7 +50,7 @@ pub fn none(function: &Function, pat: Pattern) {
 /// success, not exactly one.
 #[track_caller]
 pub fn first(function: &Function, pat: Pattern) -> Match {
-    let mut hits = Matcher::try_new(function).unwrap().find_all(&pat).unwrap();
+    let mut hits = Matcher::new(function).find_all(&pat).unwrap();
     assert!(!hits.is_empty(), "expected at least one match, got 0");
     hits.swap_remove(0)
 }

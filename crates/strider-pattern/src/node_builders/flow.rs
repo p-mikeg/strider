@@ -37,8 +37,7 @@ use strider_ir::node::{NodeId, NodeKind};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, Pattern};
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 use crate::typed::{int_const, int_const_any_of};
 
 use super::MemPat;
@@ -112,7 +111,7 @@ impl CallPat {
 
 impl MemPat for CallPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.lower(b).mem_value()
+        self.0.compile_mem(b)
     }
 }
 
@@ -205,7 +204,7 @@ impl CallOtherPat {
 
 impl MemPat for CallOtherPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().lower(b).mem_value()
+        self.configured().compile_mem(b)
     }
 }
 
@@ -310,12 +309,8 @@ impl IfPat {
     /// matcher can handle). The malformed case used to be swallowed into a
     /// silent "branch did not match" via `.ok()`; it is now surfaced eagerly
     /// at build time (matching the eager `check_capture_coverage` policy).
-    pub fn with_true(mut self, pat: Pattern) -> Self {
-        validate_branch_pattern(&pat);
-        self.true_branch = Some(Box::new(move |m, if_node| {
-            match_branch_consumer(m, if_node, 0, &pat)
-        }));
-        self
+    pub fn with_true(self, pat: Pattern) -> Self {
+        self.with_branch(0, pat)
     }
 
     /// Match `pat` against the single consumer of the If's false-branch
@@ -326,11 +321,23 @@ impl IfPat {
     ///
     /// Panics on a malformed `pat` — see [`with_true`](Self::with_true)
     /// (which also documents branch-capture isolation).
-    pub fn with_false(mut self, pat: Pattern) -> Self {
+    pub fn with_false(self, pat: Pattern) -> Self {
+        self.with_branch(1, pat)
+    }
+
+    /// Shared body of [`with_true`](Self::with_true) /
+    /// [`with_false`](Self::with_false): validate `pat`, then store a branch
+    /// walk against the If's control-output `slot` (0 = true, 1 = false).
+    fn with_branch(mut self, slot: usize, pat: Pattern) -> Self {
         validate_branch_pattern(&pat);
-        self.false_branch = Some(Box::new(move |m, if_node| {
-            match_branch_consumer(m, if_node, 1, &pat)
-        }));
+        let walk = Box::new(move |m: &crate::Matcher, if_node| {
+            match_branch_consumer(m, if_node, slot, &pat)
+        });
+        if slot == 0 {
+            self.true_branch = Some(walk);
+        } else {
+            self.false_branch = Some(walk);
+        }
         self
     }
 

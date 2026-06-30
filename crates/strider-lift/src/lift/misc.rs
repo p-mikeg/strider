@@ -9,8 +9,7 @@
 //! and that's a strider-level concern.
 
 use anyhow::bail;
-use strider_ir::IRBuilderExt;
-use strider_ir::VnTypeExt;
+use strider_ir::{IRBuilderExt, VnTypeExt};
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};

@@ -2,10 +2,9 @@ use super::*;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
 use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
-use strider_ir::IRBuilderExt;
-use strider_ir::IRWalker;
-use strider_ir::IntBinaryOp;
-use strider_ir::node::{IntPayload, NodeKind, ValueType};
+use strider_ir::node::{NodeKind, ValueType};
+use strider_ir_test_utils::IrWalkerEx;
+use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::{
     RegisterSet, SENTINEL_LIFT_ADDR, stack_vn_aarch64 as sp64_vn, stack_vn_x86 as sp32_vn,
 };
@@ -189,10 +188,11 @@ fn forward_takes_nearest_of_two_same_offset_stores() -> Result<()> {
         reachable_loads, 0,
         "Load[sp+8] must forward the nearest store"
     );
-    let ret_kind = crate::test_support::return_kind(fg.graph())?;
+    let ret_val = crate::test_support::return_value(fg.graph())?;
     assert!(
-        matches!(ret_kind, NodeKind::IntConst(IntPayload::Small(0x22))),
-        "forwarded value must be the NEAREST store's 0x22, got {ret_kind:?}",
+        fg.int_const_u128(ret_val) == Some(0x22),
+        "forwarded value must be the NEAREST store's 0x22, got {:?}",
+        fg.int_const_u128(ret_val),
     );
     Ok(())
 }
@@ -468,10 +468,11 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
         "Permissive mode: the IntConst-addressed Store cannot alias \
          sp+4, so the Load[sp+4] must forward to 0xAA"
     );
-    let ret_kind = crate::test_support::return_kind(fg.graph())?;
+    let ret_val = crate::test_support::return_value(fg.graph())?;
     assert!(
-        matches!(ret_kind, NodeKind::IntConst(IntPayload::Small(0xAA))),
-        "forwarded value must be IntConst(0xAA), got {ret_kind:?}"
+        fg.int_const_u128(ret_val) == Some(0xAA),
+        "forwarded value must be IntConst(0xAA), got {:?}",
+        fg.int_const_u128(ret_val)
     );
     Ok(())
 }
@@ -543,10 +544,11 @@ fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
         "Constant-address Load must forward across a disjoint constant-address \
          intervening Store; the matching store provides 0xAA"
     );
-    let ret_kind = crate::test_support::return_kind(fg.graph())?;
+    let ret_val = crate::test_support::return_value(fg.graph())?;
     assert!(
-        matches!(ret_kind, NodeKind::IntConst(IntPayload::Small(0xAA))),
-        "forwarded value must be IntConst(0xAA), got {ret_kind:?}"
+        fg.int_const_u128(ret_val) == Some(0xAA),
+        "forwarded value must be IntConst(0xAA), got {:?}",
+        fg.int_const_u128(ret_val)
     );
     Ok(())
 }
@@ -580,10 +582,11 @@ fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
         "Anchor-address Load with same-ValueId Store and no interferer \
          must forward; only the address-producer Load(IntConst(0x100)) survives"
     );
-    let ret_kind = crate::test_support::return_kind(fg.graph())?;
+    let ret_val = crate::test_support::return_value(fg.graph())?;
     assert!(
-        matches!(ret_kind, NodeKind::IntConst(IntPayload::Small(0xCC))),
-        "forwarded value must be IntConst(0xCC), got {ret_kind:?}"
+        fg.int_const_u128(ret_val) == Some(0xCC),
+        "forwarded value must be IntConst(0xCC), got {:?}",
+        fg.int_const_u128(ret_val)
     );
     Ok(())
 }
@@ -646,7 +649,7 @@ fn bail_on_call_between() -> Result<()> {
     let data = b.build_int_const(0x11u64, ValueType::I32)?;
     b.build_store(addr4, data, rsleigh::VnSpace::RAM)?;
     let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call(target, None)?;
+    b.build_call_cc(target, None)?;
     // SP did not shift (ret_stack_pop=0), so sp+4 is still the same slot.
     let sp_val2 = b.read_variable(&sp)?;
     let addr4b = b.build_int_binary_operation(sp_val2, four, IntBinaryOp::Add, ValueType::I64)?;
@@ -872,10 +875,11 @@ fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()
         reachable_loads, 0,
         "dominating store across a collapsible merge must still forward",
     );
-    let ret_kind = crate::test_support::return_kind(fg.graph())?;
+    let ret_val = crate::test_support::return_value(fg.graph())?;
     assert!(
-        matches!(ret_kind, NodeKind::IntConst(IntPayload::Small(0xAB))),
-        "forwarded value must be the dominating store's 0xAB, got {ret_kind:?}",
+        fg.int_const_u128(ret_val) == Some(0xAB),
+        "forwarded value must be the dominating store's 0xAB, got {:?}",
+        fg.int_const_u128(ret_val),
     );
     let phis_after = reachable_anonymous_phi_count(&fg);
     assert_eq!(
@@ -1062,10 +1066,11 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
         .expect("return node exists");
     let ret_inputs = fg.node_inputs(ret);
     // Return inputs: [ctrl, mem, val_0, ...].
-    let val_kind = fg.kind_of_value(ret_inputs[2]);
+    let ret_val = ret_inputs[2];
     assert!(
-        matches!(val_kind, NodeKind::IntConst(IntPayload::Small(0x4242))),
-        "forwarded value must be the stored constant 0x4242 — got {val_kind:?}",
+        fg.int_const_u128(ret_val) == Some(0x4242),
+        "forwarded value must be the stored constant 0x4242 — got {:?}",
+        fg.int_const_u128(ret_val),
     );
     Ok(())
 }
@@ -1105,13 +1110,13 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
     let ret_inputs = fg.node_inputs(ret);
-    // `int_const_val` applies the output type's mask, so for a I8 output it
+    // `int_const_u128` applies the output type's mask, so for a I8 output it
     // returns the low byte even when the backing `IntConst` node still
     // carries the full u32 bit-pattern internally.
     let val_ty = fg.value_type_opt(ret_inputs[2]);
     assert_eq!(val_ty, Some(ValueType::I8));
     assert_eq!(
-        fg.int_const_val(ret_inputs[2]),
+        fg.int_const_u128(ret_inputs[2]),
         Some(0xEF),
         "forwarded narrow load must fold to the low byte 0xEF",
     );
@@ -1149,7 +1154,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     let val_ty = fg.value_type_opt(ret_inputs[2]);
     assert_eq!(val_ty, Some(ValueType::I16));
     assert_eq!(
-        fg.int_const_val(ret_inputs[2]),
+        fg.int_const_u128(ret_inputs[2]),
         Some(0xBEEF),
         "forwarded u16 load must fold to low 16 bits 0xBEEF",
     );
@@ -1235,10 +1240,11 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     // ShiftRight inputs: [data, shift_const]; shift_const = (4 - 1) * 8 = 24.
     let shr_inputs = fg.node_inputs(inner);
     assert_eq!(shr_inputs.len(), 2, "ShiftRight has two inputs");
-    let shift_kind = fg.kind_of_value(shr_inputs[1]);
+    let shift_val = shr_inputs[1];
     assert!(
-        matches!(shift_kind, NodeKind::IntConst(IntPayload::Small(24))),
-        "BE shift amount must be (store_size - load_size) * 8 = 24 — got {shift_kind:?}",
+        fg.int_const_u128(shift_val) == Some(24),
+        "BE shift amount must be (store_size - load_size) * 8 = 24 — got {:?}",
+        fg.int_const_u128(shift_val),
     );
     Ok(())
 }

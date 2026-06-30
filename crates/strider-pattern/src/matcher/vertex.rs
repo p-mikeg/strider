@@ -99,11 +99,6 @@ impl crate::graph_ext::HasInputSlots for PatNode {
 }
 
 impl PatNode {
-    /// A node matching any IR node kind.
-    pub fn wildcard() -> Self {
-        Self::from_kind(KindSpec::Any)
-    }
-
     /// A node matching a single exact `NodeKind`.
     pub fn exact(k: NodeKind) -> Self {
         Self::from_kind(KindSpec::Exact(k))

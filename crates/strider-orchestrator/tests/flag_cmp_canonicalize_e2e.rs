@@ -13,11 +13,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::CfgOptions;
-use strider_cfg::MachineInsnAddr;
-use strider_ir::Function;
-use strider_ir::IRViewer;
+use strider_cfg::{CfgOptions, MachineInsnAddr};
 use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{Function, IRViewer};
 use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 

@@ -56,7 +56,9 @@ impl Interval {
     }
 
     /// Exclusive upper bound — the "entry count" a table index may reach —
-    /// or `None` if this interval is top (unbounded).
+    /// or `None` if this interval is top (unbounded).  Prod reads `hi`/`lo`
+    /// directly in the table-dispatch classifier; used only by tests.
+    #[cfg(test)]
     pub fn upper_exclusive(&self, width_mask: u128) -> Option<u64> {
         if self.hi >= width_mask {
             None
@@ -155,7 +157,7 @@ impl<'f> RangeMap<'f> {
             Some(MemoSlot::Done(iv)) => return *iv,
             Some(MemoSlot::InProgress) => {
                 let ty = self.function.value_type_opt(value);
-                return Interval::top(ty.map_or(u128::MAX, |t| t.bit_mask_u128()));
+                return Interval::top(type_mask_or_top(ty));
             }
             None => {}
         }
@@ -207,7 +209,7 @@ impl<'f> RangeMap<'f> {
             return Interval::top(u128::MAX);
         };
         let ty = self.function.value_type_opt(phi_value);
-        let type_mask = ty.map_or(u128::MAX, |t| t.bit_mask_u128());
+        let type_mask = type_mask_or_top(ty);
 
         // A real (multi-input) phi at a control merge.  Single-input phis don't
         // reach here: `PhiCollapse` has already eliminated them in the converged
@@ -268,7 +270,7 @@ impl<'f> RangeMap<'f> {
             });
         }
 
-        let union = result.unwrap_or_else(|| Interval::top(type_mask));
+        let union = result.expect("union has >= 1 arm by the guards above");
         // Intersect any dominating guard recorded on the phi output itself.  A
         // guard holding at the query point is valid for every arm, so it
         // refines the arm union (and recovers a bound the union alone loses).
@@ -390,7 +392,7 @@ impl<'f> RangeMap<'f> {
     /// build time.
     fn resolve_leaf(&self, value: ValueId, region: NodeId) -> Interval {
         let ty = self.function.value_type_opt(value);
-        let type_mask = ty.map_or(u128::MAX, |t| t.bit_mask_u128());
+        let type_mask = type_mask_or_top(ty);
 
         // Collect the intersection of all guards that dominate `region`.
         let guard = self.dominating_guard(value, region);
@@ -408,6 +410,12 @@ impl<'f> RangeMap<'f> {
 
 // ── Guard extraction helpers ──────────────────────────────────────────────────
 
+/// The full-width bit mask for an optional value type: the type's own mask, or
+/// `u128::MAX` (the unconstrained top) when the value carries no typed edge.
+fn type_mask_or_top(ty: Option<ValueType>) -> u128 {
+    ty.map_or(u128::MAX, |t| t.bit_mask_u128())
+}
+
 /// If `value`'s producer is `Add(X, IntConst(c))`, return `(X, interval')`
 /// where `interval'` is `interval` shifted by `-c` (mod the operand width) —
 /// the bound that `X` inherits from a guard on `X + c`.  Returns `None` when
@@ -418,14 +426,13 @@ fn add_operand_shifted_interval(
     value: ValueId,
     interval: Interval,
 ) -> Option<(ValueId, Interval)> {
-    let node = function.producer(value);
     if !matches!(
-        function.node_kind(node),
+        function.kind_of_value(value),
         NodeKind::IntBinaryOp(IntBinaryOp::Add)
     ) {
         return None;
     }
-    let [a, b] = function.graph().node_inputs_exact::<2>(node).ok()?;
+    let [a, b] = function.producer_inputs_exact::<2>(value).ok()?;
     // Exactly one operand must be the constant addend.
     let (operand, c) = match (function.int_const_u128(a), function.int_const_u128(b)) {
         (None, Some(c)) => (a, c),
@@ -450,7 +457,7 @@ fn is_sign_bit_known_zero(
     let Some(ty) = function.value_type_opt(value) else {
         return false;
     };
-    let Some(type_mask) = crate::opt::known_bits::u64_type_mask(ty) else {
+    let Some(type_mask) = crate::opt::known_bits::type_mask_u128(ty) else {
         return false;
     };
     let sign_bit = (type_mask >> 1) + 1;
@@ -491,13 +498,12 @@ pub fn compute_value_ranges<'f>(
         let Some(ty) = function.value_type_opt(value_id) else {
             continue;
         };
-        let Some(type_mask_u64) = crate::opt::known_bits::u64_type_mask(ty) else {
+        let Some(type_mask) = crate::opt::known_bits::type_mask_u128(ty) else {
             continue;
         };
-        let max_val = kb.max_value(type_mask_u64) as u128;
-        let type_mask_u128 = ty.bit_mask_u128();
+        let max_val = kb.max_value(type_mask);
         // Only record if strictly tighter than the full range.
-        if max_val < type_mask_u128 {
+        if max_val < type_mask {
             kb_bounds[value_id] = Some(Interval { lo: 0, hi: max_val });
         }
     }
@@ -510,10 +516,7 @@ pub fn compute_value_ranges<'f>(
     // dominance is checked at query time, not enumerated here.
     let mut guards: FxHashMap<ValueId, Vec<(NodeId, Interval)>> = FxHashMap::default();
 
-    for if_node in function
-        .walk()
-        .filter(|&n| matches!(function.node_kind(n), NodeKind::If))
-    {
+    for if_node in function.walk_kind(|k| matches!(k, NodeKind::If)) {
         // If's outputs: [true_ctrl, false_ctrl].  We model BOTH edges:
         // the condition implies an interval on the true edge and its negation
         // implies an interval on the false edge.
@@ -622,12 +625,11 @@ fn guard_from_compare(
     edge_taken: bool,
     known: &KnownBitsMap,
 ) -> Option<(ValueId, Interval)> {
-    let g = function.graph();
-    let producer = g.producer(cmp_value);
-    let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = *g.node_kind(producer) else {
+    let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = *function.kind_of_value(cmp_value)
+    else {
         return None;
     };
-    let [lhs, rhs] = g.node_inputs_exact::<2>(producer).ok()?;
+    let [lhs, rhs] = function.producer_inputs_exact::<2>(cmp_value).ok()?;
 
     // Identify which operand is the constant and which is the guarded value.
     // `Less(v, IntConst(N))`  → const on RHS, `v < N`.

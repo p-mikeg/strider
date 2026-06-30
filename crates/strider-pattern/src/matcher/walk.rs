@@ -13,9 +13,19 @@
 //!
 //! For arity-2 pat nodes whose IR kind is commutative (per
 //! `NodeKind::is_commutative()`) the matcher tries the natural operand
-//! order first; on failure it rolls back via [`Bindings::mark`] /
-//! [`Bindings::restore`] and retries with the operand slots swapped (a
-//! node may opt out via `force_ordered`).
+//! order first, then the swapped order (a node may opt out via
+//! `force_ordered`), rolling back via [`Bindings::mark`] /
+//! [`Bindings::restore`] between attempts.
+//!
+//! The engine is continuation-passing: [`try_match_at`] ENUMERATES a pat
+//! node's matches (each operand ordering × every descendant configuration)
+//! and calls a continuation `k` per configuration instead of returning the
+//! first hit. So when a guard ANYWHERE above rejects a configuration (its
+//! `k` returns `false`), a commutative node BELOW it re-drives its operand
+//! order to find one the ancestor accepts — e.g. a `when_match` guard on a
+//! unary parent picks which operand of a commutative child binds. The root
+//! continuation is `|_| true`, so the first fully guard-satisfying
+//! configuration in DFS order wins.
 //!
 //! On a sub-pattern mismatch at a producer output, if the pattern's
 //! [`CastMask`](crate::matcher::CastMask) is non-empty the matcher
@@ -25,15 +35,13 @@
 //! [`PatValue`]: crate::matcher::PatValue
 //! [`PatNode`]: crate::matcher::PatNode
 
-use strider_graph::NodeId as PatNodeId;
-use strider_graph::ValueId as PatValueId;
+use strider_graph::{NodeId as PatNodeId, ValueId as PatValueId};
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId, ValueKind, ValueType};
 
 use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
-use crate::matcher::{Matcher, skip_casts};
-use crate::matcher::{OutputKindSpec, PatValue, Pattern};
+use crate::matcher::{Matcher, OutputKindSpec, PatValue, Pattern, skip_casts};
 
 /// Entry point for a value-rooted attempt: try `pat`'s root pat node
 /// against the IR node producing `root_value`, with `root_value` available
@@ -51,6 +59,9 @@ pub(crate) fn try_match(
     // output is currently being matched (`root_value`), regardless of slot.
     let root_out_vertex = root_output_vertex_for(pat, root, matcher, root_value);
     let root_node = matcher.function().producer(root_value);
+    // The root accepts the first full solution whose every guard (root +
+    // descendants) passed — `try_match_at` enumerates configurations and the
+    // `|_| true` continuation stops at the first that reaches the root.
     try_match_at(
         matcher,
         pat,
@@ -59,6 +70,7 @@ pub(crate) fn try_match(
         Some(root_value),
         root_out_vertex,
         bindings,
+        &mut |_| true,
     )
 }
 
@@ -81,14 +93,14 @@ pub(crate) fn try_match_node(
     if root_requires_value_output(pat, root) {
         return false;
     }
-    try_match_at(matcher, pat, root, node, None, None, bindings)
+    try_match_at(matcher, pat, root, node, None, None, bindings, &mut |_| true)
 }
 
 /// Whether the root pat node declares an output vertex that demands a
 /// value output (a `Value` / `AnyValue` kind, or any `width` constraint).
 /// Such a root cannot match a zero-output IR node.
 fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
-    pat.graph.produced_outputs(root).into_iter().any(|ov| {
+    pat.graph.produced_outputs(root).iter().any(|&ov| {
         let o = pat.graph.output_weight(ov);
         o.width.is_some() || matches!(o.kind, OutputKindSpec::Value(_) | OutputKindSpec::AnyValue)
     })
@@ -130,7 +142,8 @@ fn root_output_vertex_for(
     // Multiple output vertices (the `If` control root): keep the per-slot
     // lookup so each control output's constraints land on the right slot.
     let (_node, ir_slot) = matcher.function().value_definition(root_value);
-    outs.into_iter()
+    outs.iter()
+        .copied()
         .find(|&out_vertex| pat.graph.output_weight(out_vertex).slot as u32 == ir_slot)
 }
 
@@ -138,6 +151,18 @@ fn root_output_vertex_for(
 /// `ir_node` is the IR node being matched; `root_value` / `out_vertex` are
 /// the IR output and its pat-output vertex when this pat node sits at a
 /// value-producing position (used for the output constraints + capture).
+/// Recursive worker, continuation-passing so a guard failure ANYWHERE above can
+/// re-drive a commutative operand order BELOW it.
+///
+/// Rather than return the first sub-match, `try_match_at` ENUMERATES every way
+/// `pat_node` matches `ir_node` (each operand ordering × every descendant
+/// configuration); for each it extends `bindings` with that configuration's
+/// captures + footprint and calls `k`. When `k` returns `true` the whole match
+/// is accepted and `bindings` keeps the accepted state; when `k` returns
+/// `false` (an ancestor guard rejected this configuration) the next one is
+/// tried. With no configuration accepted, `bindings` is restored to entry and
+/// `false` is returned. The root passes `k = |_| true`, so the FIRST fully
+/// guard-satisfying configuration in DFS order wins.
 #[allow(clippy::too_many_arguments)]
 fn try_match_at(
     matcher: &Matcher,
@@ -147,6 +172,7 @@ fn try_match_at(
     root_value: Option<ValueId>,
     out_vertex: Option<PatValueId>,
     bindings: &mut Bindings,
+    k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
     let nd = pat.graph.node_weight(pat_node);
     if !nd.kind.matches(matcher.function().node_kind(ir_node)) {
@@ -195,84 +221,11 @@ fn try_match_at(
         && inputs.len() == 2
         && matcher.function().node_kind(ir_node).is_commutative();
 
-    let mark = bindings.mark();
-    let cast_mask = pat.cast_mask;
-
-    let attempt = |swap: bool, b: &mut Bindings| -> bool {
-        for edge in &inputs {
-            let ir_slot = if swap {
-                match edge.consumer_slot {
-                    0 => 1,
-                    1 => 0,
-                    other => other,
-                }
-            } else {
-                edge.consumer_slot
-            };
-            let Ok(use_id) = matcher
-                .function()
-                .graph()
-                .node_input_id_at(ir_node, ir_slot)
-            else {
-                return false;
-            };
-            let producer_value = matcher.function().graph().value_of_use(use_id);
-            let sub_mark = b.mark();
-            if match_subpattern(matcher, pat, edge, producer_value, b) {
-                continue;
-            }
-            // Cast walk-through fallback.
-            b.restore(sub_mark);
-            if cast_mask.is_empty() {
-                return false;
-            }
-            let mut skipped = Vec::new();
-            let unwrapped = skip_casts(matcher, producer_value, cast_mask, &mut skipped);
-            if unwrapped == producer_value {
-                // Producer wasn't a registered cast — no further fallback.
-                return false;
-            }
-            // Record the skipped casts into the footprint BEFORE the
-            // sub-match: they are journaled like every other footprint
-            // entry, so a subsequent failure here is rolled back by the
-            // caller's `restore(mark)`. On success they stay, keeping the
-            // asm-fingerprint superset contract intact.
-            for &cast in &skipped {
-                b.record_matched(cast);
-            }
-            if !match_subpattern(matcher, pat, edge, unwrapped, b) {
-                return false;
-            }
-        }
-        true
-    };
-
-    let inputs_ok = if attempt(false, bindings) {
-        true
-    } else if commutative {
-        bindings.restore(mark);
-        attempt(true, bindings)
-    } else {
-        false
-    };
-    if !inputs_ok {
-        bindings.restore(mark);
-        return false;
-    }
-
-    // Capture: bound after children matched, so shared captures bound
-    // deeper are already recorded — `bind_capture` rejects a re-bind to a
-    // different binding here, enforcing capture-equality.
-    //
-    // Choose the binding KIND by where the capture was DECLARED, not by
-    // whether the matched node happens to have a value output.  An
-    // output-vertex capture (`capture_output`, used for value positions) binds
-    // the matched VALUE; a node-declared capture (`capture_node`, used for
-    // control nodes like `If` via `if_node().capture(c)`) binds the matched
-    // NODE — even though `If` carries Control value outputs that would make
-    // `root_value` `Some`.  Picking the kind from `root_value` alone used to
-    // mis-bind a node capture on `If` as `Binding::Value(control_value)`,
-    // contradicting the `Binding::Node` contract.
+    // Capture to bind for THIS node, independent of operand ordering: an
+    // output-vertex capture (value positions) binds the matched VALUE; a
+    // node-declared capture (control nodes like `If`) binds the matched NODE.
+    // Picking the kind from `root_value` alone used to mis-bind a node capture
+    // on `If` as `Binding::Value`.
     let ov_capture = out_vertex
         .map(|ov| pat.graph.output_weight(ov))
         .and_then(|ov| ov.capture);
@@ -280,32 +233,49 @@ fn try_match_at(
         Some(cap) => root_value.map(|value| (cap, Binding::Value(value))),
         None => nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
     };
-    if let Some((cap, binding)) = cap_binding
-        && !bindings.bind_capture(cap, binding)
-    {
-        bindings.restore(mark);
-        return false;
-    }
 
-    // Post-match hook: runs after all inputs are already resolved.
-    // Returning `false` here unwinds the entire match attempt (restores
-    // bindings and fails); it does not re-drive the swapped-operand order.
-    if let Some(pm) = &nd.post_match {
-        let ty = root_value
-            .and_then(|value| matcher.function().value_kind(value).as_value())
-            .unwrap_or(ValueType::I1);
-        if !pm(matcher, ir_node, ty, bindings) {
-            bindings.restore(mark);
-            return false;
+    let mark = bindings.mark();
+    let orders: &[bool] = if commutative { &[false, true] } else { &[false] };
+
+    for &swap in orders {
+        // `done` finishes THIS node once an operand ordering has fully matched
+        // its inputs: bind the node's capture (capture-equality is enforced
+        // here against deeper bindings), run its guard, record it into the
+        // footprint, then hand off to the parent continuation `k`. Returning
+        // `false` makes the input enumeration try its next configuration (a
+        // deeper commutative swap), and exhausting those makes the ordering
+        // loop try the swap — so an ANCESTOR guard failure surfaced through `k`
+        // re-drives the operand order of this node and everything beneath it.
+        let mut done = |b: &mut Bindings| -> bool {
+            let inner = b.mark();
+            if let Some((cap, binding)) = cap_binding
+                && !b.bind_capture(cap, binding)
+            {
+                b.restore(inner);
+                return false;
+            }
+            if let Some(pm) = &nd.post_match {
+                let ty = root_value
+                    .and_then(|value| matcher.function().value_kind(value).as_value())
+                    .unwrap_or(ValueType::I1);
+                if !pm(matcher, ir_node, ty, b) {
+                    b.restore(inner);
+                    return false;
+                }
+            }
+            b.record_matched(ir_node);
+            if k(b) {
+                return true;
+            }
+            b.restore(inner);
+            false
+        };
+        if match_inputs(matcher, pat, &inputs, swap, ir_node, 0, bindings, &mut done) {
+            return true;
         }
+        bindings.restore(mark);
     }
-    // This pat node fully matched `ir_node` — commit it to the match
-    // footprint.  Recorded only here, after every failure path above has
-    // returned, so a partially-matched-then-failed attempt records nothing
-    // (and any footprint entries from its sub-matches were rolled back by the
-    // `restore(mark)` failure paths).
-    bindings.record_matched(ir_node);
-    true
+    false
 }
 
 /// One incoming input of a consumer pat node.
@@ -315,19 +285,49 @@ struct InputEdge {
     producer: PatNodeId,
 }
 
-/// Attempt the sub-pattern feeding one input against the IR producer
-/// output `producer_value`: check the pat output's constraints, then
-/// recurse into the producer pat node at the IR node producing
-/// `producer_value`.
-fn match_subpattern(
+/// Continuation-passing match of a consumer's inputs: match `inputs[i..]` (in
+/// operand order `swap`) against `ir_node`'s slots, then invoke `done`. Each
+/// input's sub-match recurses with a continuation that matches the REMAINING
+/// inputs, so when a later stage rejects (`done`, or a deeper continuation,
+/// returns `false`) an earlier input's sub-match is asked for its next
+/// configuration before this call fails — the backtracking that lets a parent
+/// guard re-drive a child's commutative ordering.
+#[allow(clippy::too_many_arguments)]
+fn match_inputs(
     matcher: &Matcher,
     pat: &Pattern,
-    edge: &InputEdge,
-    producer_value: ValueId,
+    inputs: &[InputEdge],
+    swap: bool,
+    ir_node: NodeId,
+    i: usize,
     bindings: &mut Bindings,
+    done: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
+    let Some(edge) = inputs.get(i) else {
+        return done(bindings);
+    };
+    let ir_slot = if swap {
+        match edge.consumer_slot {
+            0 => 1,
+            1 => 0,
+            other => other,
+        }
+    } else {
+        edge.consumer_slot
+    };
+    let Ok(use_id) = matcher
+        .function()
+        .graph()
+        .node_input_id_at(ir_node, ir_slot)
+    else {
+        return false;
+    };
+    let producer_value = matcher.function().graph().value_of_use(use_id);
+
+    let mark = bindings.mark();
+    // Direct sub-match, continuing into the remaining inputs.
     let producer_ir = matcher.function().producer(producer_value);
-    try_match_at(
+    if try_match_at(
         matcher,
         pat,
         edge.producer,
@@ -335,7 +335,45 @@ fn match_subpattern(
         Some(producer_value),
         Some(edge.out_vertex),
         bindings,
-    )
+        &mut |b| match_inputs(matcher, pat, inputs, swap, ir_node, i + 1, b, done),
+    ) {
+        return true;
+    }
+    bindings.restore(mark);
+
+    // Cast walk-through fallback.
+    let cast_mask = pat.cast_mask;
+    if cast_mask.is_empty() {
+        return false;
+    }
+    let mut skipped = Vec::new();
+    let unwrapped = skip_casts(matcher, producer_value, cast_mask, &mut skipped);
+    if unwrapped == producer_value {
+        // Producer wasn't a registered cast — no further fallback.
+        return false;
+    }
+    // Record the skipped casts into the footprint BEFORE the sub-match: they are
+    // journaled like every other footprint entry, so a failure here is rolled
+    // back by the `restore(mark)` below. On success they stay, keeping the
+    // asm-fingerprint superset contract intact.
+    for &cast in &skipped {
+        bindings.record_matched(cast);
+    }
+    let unwrapped_ir = matcher.function().producer(unwrapped);
+    if try_match_at(
+        matcher,
+        pat,
+        edge.producer,
+        unwrapped_ir,
+        Some(unwrapped),
+        Some(edge.out_vertex),
+        bindings,
+        &mut |b| match_inputs(matcher, pat, inputs, swap, ir_node, i + 1, b, done),
+    ) {
+        return true;
+    }
+    bindings.restore(mark);
+    false
 }
 
 /// Whether the IR output `value` satisfies the pat output's declarative

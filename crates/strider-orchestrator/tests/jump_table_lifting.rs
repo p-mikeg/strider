@@ -22,9 +22,9 @@
 use rsleigh::mem_readers::BufMemReader;
 use rustc_hash::FxHashMap;
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
-use strider_ir::Function;
-use strider_ir::node::{IntPayload, NodeKind};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::node::NodeKind;
+use strider_ir_test_utils::IrWalkerEx;
+use strider_ir::{Function, IRViewer, IRWalker};
 
 mod common;
 
@@ -33,7 +33,17 @@ fn count_eq_cmps(function: &Function) -> usize {
 }
 
 fn count_int_consts_eq(function: &Function, want: u64) -> usize {
-    function.count_kind(|k| matches!(k, NodeKind::IntConst(IntPayload::Small(c)) if *c == want))
+    function
+        .walk()
+        .filter(|&nid| {
+            if !matches!(function.node_kind(nid), NodeKind::IntConst(_)) {
+                return false;
+            }
+            function
+                .first_value_output_of(nid)
+                .is_some_and(|v| function.int_const_u128(v) == Some(u128::from(want)))
+        })
+        .count()
 }
 
 #[test]

@@ -27,8 +27,8 @@ use crate::node::{
 ///
 /// All methods are provided (default) — implementors gain them for free.
 /// Build-only: the pure point reads it relies on (`value_type`, the
-/// `require_*` family, `validate_value_inputs`, `get_as_*`, `const_value`,
-/// `infer_float_type`) live on the [`IRViewer`] supertrait of
+/// `require_*` family, `validate_value_inputs`, `int_const_u128`,
+/// `int_const_i128`, `infer_float_type`) live on the [`IRViewer`] supertrait of
 /// [`IRBuilder`], so they resolve here for free.  The constructors only call
 /// `self.create_node(...)` / [`Self::build_single_output_pure`], so the whole
 /// vocabulary is pure with respect to any lift-time scratch the implementor
@@ -56,7 +56,7 @@ pub trait IRBuilderExt: IRBuilder {
     fn truncate_if_needed(&mut self, value_id: ValueId, output_type: ValueType) -> Result<ValueId> {
         let curr_output_type = self.value_type(value_id)?;
 
-        if let Some(val) = self.get_as_unsigned_int(value_id)? {
+        if let Some(val) = self.int_const_u128(value_id) {
             return self.build_int_const(val, output_type);
         }
 
@@ -82,10 +82,13 @@ pub trait IRBuilderExt: IRBuilder {
     ) -> Result<ValueId> {
         let curr_output_type = self.value_type(value_id)?;
 
-        if let Some((unsigned_val, signed_val)) = self.get_as_int(value_id)? {
-            // signed_val is i64; `i64 as u128` sign-extends to fill the
-            // high 64 bits, and build_int_const masks to output_type's
-            // width.
+        if let Some(unsigned_val) = self.int_const_u128(value_id)
+            && let Some(signed_val) = self.int_const_i128(value_id)
+        {
+            // `i128 as u128` reinterprets the sign-extended bits, and
+            // build_int_const masks to output_type's width.  Reading the
+            // const as the full u128 / i128 (rather than a u64 / i64
+            // projection) folds I80 / I128 const extends too.
             return match op {
                 ExtendOp::SignExtend => self.build_int_const(signed_val as u128, output_type),
                 ExtendOp::ZeroExtend => self.build_int_const(unsigned_val, output_type),
@@ -173,121 +176,49 @@ pub trait IRBuilderExt: IRBuilder {
     /// `false`→0).  Booleans are 1-bit integers; logical operations on them
     /// are ordinary `IntBinaryOp`/`IntUnaryOp` at `I1`.
     fn build_boolean_const(&mut self, val: bool) -> ValueId {
-        self.build_single_output_pure(
-            NodeKind::IntConst(crate::node::IntPayload::Small(u64::from(val))),
-            [],
-            ValueType::I1,
-        )
+        // I1 is an integer type, so `build_int_const`'s `is_integer()` guard
+        // never fires here — keep this infallible by `expect`-ing that.
+        self.build_int_const(u128::from(val), ValueType::I1)
+            .expect("I1 is always an integer type")
     }
 
-    /// Emits an integer constant node.
-    ///
-    /// `val` is masked to `output_type`'s bit width before storage so the
-    /// dedup-cache key sees the same payload for semantically-equal constants —
-    /// `build_int_const(0x1FF, I8)` and `build_int_const(0xFF, I8)` dedup to
-    /// the same node.  Accepts any value convertible to `u128` — most callers
-    /// pass a `u64` literal.
-    ///
-    /// Payload choice is by VALUE, not type: a value that fits `u64` is stored
-    /// inline as `IntConst(Small)` regardless of the declared width (the output
-    /// type carries the width); only `I80` / `I128` values that exceed `u64`
-    /// are routed through the wide-const interner as `IntConst(Wide)`.
+    /// Builds an integer constant of `output_type` from a ≤ 128-bit value.
+    /// The value is masked to the type's width and interned; equal (value,
+    /// width) constants dedup. Covers I1..I512 (any value that fits `u128`).
     ///
     /// # Errors
     ///
-    /// Returns an error when `output_type` is not an integer type, or when it
-    /// is `I256` / `I512` (use `Self::build_int_const_wide` for those).
+    /// Returns an error when `output_type` is not an integer type.
     fn build_int_const(&mut self, val: impl Into<u128>, output_type: ValueType) -> Result<ValueId> {
         if !output_type.is_integer() {
             return Err(anyhow!(
                 "build_int_const called with non-integer type {output_type:?}"
             ));
         }
-        if matches!(output_type, ValueType::I256 | ValueType::I512) {
-            return Err(anyhow!(
-                "build_int_const({output_type:?}) not supported; \
-                 use Self::build_int_const_wide for I256/I512"
-            ));
-        }
-        // Mask `val` to the declared output type's bit width so equal values
-        // always produce the same dedup-cache key.
-        let masked = val.into() & output_type.bit_mask_u128();
-        // I80 and I128 go through the interner so inline IntConst payloads
-        // stay ≤ 64 bits.
-        match output_type {
-            ValueType::I80 => {
-                return self.build_int_const_wide(
-                    crate::wide_const::WideConstStorage::I80(masked),
-                    output_type,
-                );
-            }
-            ValueType::I128 => {
-                return self.build_int_const_wide(
-                    crate::wide_const::WideConstStorage::I128(masked),
-                    output_type,
-                );
-            }
-            _ => {}
-        }
-        // The type bound (I1..I64) guarantees masked fits in u64.
-        #[allow(clippy::cast_possible_truncation)]
-        Ok(self.build_single_output_pure(
-            NodeKind::IntConst(crate::node::IntPayload::Small(masked as u64)),
-            [],
-            output_type,
-        ))
+        let id = self
+            .function_mut()
+            .intern_int_const(val.into(), output_type);
+        Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 
-    /// Builds a wide integer constant — `I80` (10 bytes), `I128` (16 bytes),
-    /// `I256` (32 bytes), or `I512` (64 bytes) — interning `value` so equal
-    /// values share a `WideConstId` (and hence a `NodeId` under the dedup
-    /// cache).
+    /// Builds a wide integer constant (I256/I512) from little-endian limbs.
+    /// Canonicalises to the inline form when the limbs fit `u128`.
     ///
     /// # Errors
     ///
-    /// Returns an error when `output_type` is not one of the wide integer
-    /// types, or when `value.byte_size()` doesn't match `output_type`'s byte
-    /// size.
-    fn build_int_const_wide(
-        &mut self,
-        value: crate::wide_const::WideConstStorage,
-        output_type: ValueType,
-    ) -> Result<ValueId> {
+    /// Returns an error when `output_type` is not a wide integer type
+    /// (I80/I128/I256/I512); use `build_int_const` for ≤ I64.
+    fn build_int_const_limbs(&mut self, limbs: &[u64], output_type: ValueType) -> Result<ValueId> {
         if !output_type.is_wide_int() {
             return Err(anyhow!(
-                "build_int_const_wide called with non-wide output type {output_type:?}; \
-                 use build_int_const for ≤ I64"
+                "build_int_const_limbs called with non-wide output type {output_type:?}; \
+                 use build_int_const for ≤ I128"
             ));
         }
-        let expected = output_type.byte_size();
-        if value.byte_size() != expected {
-            return Err(anyhow!(
-                "WideConstStorage byte_size {} does not match output type {output_type:?} \
-                 (expected {expected})",
-                value.byte_size()
-            ));
-        }
-        // Value-based payload choice: the wide interner exists only for values
-        // that don't fit `u64`.  A wide-TYPED constant whose value fits `u64`
-        // is stored inline as `Small` — the width lives in the output
-        // `ValueKind`, so the reader still recovers the declared type.  This is
-        // the single wide-construction choke point (`build_int_const` routes
-        // I80/I128 here, and I256/I512 callers come here directly), so applying
-        // the rule here keeps every constant canonical: a given (value, type)
-        // always produces the same `Small`-or-`Wide` node, preserving dedup.
-        if let Some(v) = value.as_u64() {
-            return Ok(self.build_single_output_pure(
-                NodeKind::IntConst(crate::node::IntPayload::Small(v)),
-                [],
-                output_type,
-            ));
-        }
-        let id = self.function_mut().intern_wide_const(value);
-        Ok(self.build_single_output_pure(
-            NodeKind::IntConst(crate::node::IntPayload::Wide(id)),
-            [],
-            output_type,
-        ))
+        let id = self
+            .function_mut()
+            .intern_int_const_limbs(limbs, output_type);
+        Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 
     /// Emits an integer binary operation node.  **Strict:** both operands
@@ -349,8 +280,9 @@ pub trait IRBuilderExt: IRBuilder {
         if shift_bits == 0 {
             return Ok(value);
         }
-        let shift_const = self.build_int_const(shift_bits, ty)?;
-        self.build_int_binary_operation(value, shift_const, op, ty)
+        // `build_const_binop(k, x, op, ty)` emits `x <op> k`, exactly the
+        // value-first / shift-const-second shape a (non-commutative) shift wants.
+        self.build_const_binop(u128::from(shift_bits), value, op, ty)
     }
 
     /// Emits an integer unary operation node.  **Strict:** the operand must
@@ -380,6 +312,7 @@ pub trait IRBuilderExt: IRBuilder {
     /// # Errors
     ///
     /// Returns an error if either operand is not a value edge.
+    #[cfg(any(test, feature = "test-util"))]
     fn build_sub_as_add_neg(
         &mut self,
         lhs_id: ValueId,

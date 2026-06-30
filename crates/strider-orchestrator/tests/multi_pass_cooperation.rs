@@ -13,10 +13,8 @@
     clippy::unreachable
 )]
 
-use strider_ir::IRBuilderExt;
-use strider_ir::IntBinaryOp;
-use strider_ir::node::{IntPayload, NodeKind, ValueType};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, stack_vn_x86_64};
 use strider_orchestrator::opt::{
     CfgDetach, ConstantFold, DeadBranchElimination, LoadForward, OptimizerPipeline, PhiCollapse,
@@ -126,9 +124,9 @@ fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return node");
     let ret_val = fg.node_inputs(ret)[2];
-    assert_eq!(
-        *fg.kind_of_value(ret_val),
-        NodeKind::IntConst(IntPayload::Small(3)),
+    assert!(
+        matches!(fg.kind_of_value(ret_val), NodeKind::IntConst(_))
+            && fg.int_const_u128(ret_val) == Some(3),
         "ConstantFold must fold 1+2→3"
     );
     Ok(())
@@ -183,9 +181,9 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return node");
     let ret_val = fg.node_inputs(ret)[2];
-    assert_eq!(
-        *fg.kind_of_value(ret_val),
-        NodeKind::IntConst(IntPayload::Small(0x42)),
+    assert!(
+        matches!(fg.kind_of_value(ret_val), NodeKind::IntConst(_))
+            && fg.int_const_u128(ret_val) == Some(0x42),
         "LoadForward must forward the stored value 0x42 to the load"
     );
     Ok(())
@@ -233,9 +231,9 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return node");
     let ret_val = fg.node_inputs(ret)[2];
-    assert_eq!(
-        *fg.kind_of_value(ret_val),
-        NodeKind::IntConst(IntPayload::Small(1)),
+    assert!(
+        matches!(fg.kind_of_value(ret_val), NodeKind::IntConst(_))
+            && fg.int_const_u128(ret_val) == Some(1),
         "surviving return must return 1 (true branch)"
     );
     Ok(())

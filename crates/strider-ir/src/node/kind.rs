@@ -1,19 +1,6 @@
 //! `NodeKind` — the closed enum of every operation/role a node can take.
 
-/// The payload of [`NodeKind::IntConst`]: a ≤64-bit value held inline, or a
-/// `WideConstId` into the function's wide-const interner for wider values
-/// (I80/I128/I256/I512). Keyed on the constant's TYPE (I1..I64 ⇒ `Small`,
-/// I80+ ⇒ `Wide`), so a given typed value has exactly one representation and
-/// the dedup cache stays sound. Read values through
-/// [`crate::IRViewer::int_const_u128`], never by matching this directly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum IntPayload {
-    /// A constant of type I1..I64, masked to its width.
-    Small(u64),
-    /// A constant of type I80/I128/I256/I512, interned in
-    /// [`crate::Function`]'s wide-const table.
-    Wide(crate::wide_const::WideConstId),
-}
+use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 
 /// Where a function argument originates in the calling convention.
 ///
@@ -32,8 +19,33 @@ pub enum FunctionArgSource {
     /// space of the stack (typically the architecture's RAM space).
     Stack {
         space: rsleigh::VnSpace,
-        offset: i64,
+        offset: i128,
     },
+}
+
+/// Index of a tracked varnode within [`crate::Function::all_vns`] — the
+/// per-function identity carried by an [`NodeKind::InitialVar`] node.
+///
+/// Stored instead of an inline `rsleigh::Vn` so the largest `NodeKind`
+/// payload is 8 bytes rather than 16 (`all_vns` is the deduped, stably
+/// ordered tracked-varnode SSoT; every `InitialVar` reads one of its
+/// members, so an index is always sufficient).  Resolve back to the
+/// varnode with [`crate::Function::initial_vn`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct InitialVnId(u32);
+
+impl InitialVnId {
+    /// Wraps an `all_vns` position.
+    #[inline]
+    pub fn from_index(index: usize) -> Self {
+        Self(index as u32)
+    }
+
+    /// The `all_vns` position this id refers to.
+    #[inline]
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
 }
 
 /// The operation or role of a node in the IR graph.
@@ -44,9 +56,11 @@ pub enum NodeKind {
     Entry,
     /// Initial memory state.  Produces a single `Memory` output.
     InitialMemory,
-    /// Initial value of varnode `Vn` at the function entry.  Produces a
-    /// value output of the appropriate integer type.
-    InitialVar(rsleigh::Vn),
+    /// Initial value, at function entry, of the tracked varnode at this
+    /// [`InitialVnId`] (an index into [`crate::Function::all_vns`]).  Produces
+    /// a value output of the appropriate integer type.  Resolve the varnode
+    /// via [`crate::Function::initial_vn`].
+    InitialVar(InitialVnId),
 
     // ── Region / join nodes ────────────────────────────────────────────────────
     /// Region header.  Consumes incoming control edges (one per predecessor)
@@ -96,6 +110,13 @@ pub enum NodeKind {
     /// can wire a real `Return` (or `Call`+`Return`) at the same program
     /// point without re-walking the CFG to find the live memory token.
     IndirectBranch,
+    /// Control sink for a no-return trap (`break`, `ud2`, `int3`, `abort`,
+    /// `BUG_ON`-class).  Consumes the single dangling `Control` edge a
+    /// NoReturn `CallOther` leaves behind and produces nothing — control flow
+    /// ends here.  Inputs: `[control]`.  Outputs: `[]`.  Mirrors spidir's
+    /// `Unreachable`; it makes "every control edge reaches a terminator" hold
+    /// so the validator can enforce the single-successor control invariant.
+    Unreachable,
 
     // ── Memory operations ──────────────────────────────────────────────────────
     /// Load from the given address space.
@@ -104,15 +125,9 @@ pub enum NodeKind {
     Store(rsleigh::VnSpace),
 
     // ── Integer constants and operations ──────────────────────────────────────
-    /// A compile-time integer constant. ≤64-bit values (I1..I64) are held
-    /// inline via `IntPayload::Small`; wider values (I80/I128/I256/I512)
-    /// carry a `WideConstId` via `IntPayload::Wide` into the function's
-    /// wide-const interner.  The split is keyed on the constant's declared
-    /// output type; `Function::create_node_attributed` ensures every `Small`
-    /// payload is masked to its declared integer width at construction time.
-    /// Read values through [`crate::IRViewer::int_const_u128`], never by
-    /// matching this directly.
-    IntConst(IntPayload),
+    /// An integer constant; the value is interned in
+    /// `Function::const_interner`, read via `IRViewer::int_const_u128`.
+    IntConst(crate::const_value::ConstId),
     /// Integer unary operation — two's-complement negate (`-x`).  Bitwise
     /// complement (`~x`) is no longer a unary op; it is `Xor(x, all_ones)`
     /// at lift time and beyond.
@@ -137,7 +152,7 @@ pub enum NodeKind {
     /// A compile-time IEEE 754 floating-point constant.  The value is stored
     /// as its raw bit pattern in a `u64` (upper 32 bits are zero for `F32`).
     FloatConst(u64),
-    /// Floating-point binary operation (add, sub, mul, div).
+    /// Floating-point binary operation (add, mul, div).
     FloatBinaryOp(crate::node::FloatBinaryOp),
     /// Floating-point unary operation (neg, abs, sqrt, ceil, floor, round).
     FloatUnaryOp(crate::node::FloatUnaryOp),
@@ -199,53 +214,14 @@ impl NodeKind {
     /// Returns `true` if this node represents a compile-time constant
     /// (`IntConst` or `FloatConst`).
     ///
-    /// Exhaustive (no `_` arm) so adding a new const-shape `NodeKind`
-    /// variant is a compile error here — see [`crate::walk::cast_mask_of`]
-    /// for the same pattern.  This forces an explicit decision at every
-    /// constant-handling site (constant folding, validator typing,
-    /// pattern matching, …) when the IR grows a new constant kind.
-    /// All non-const variants are listed explicitly under one `false`
-    /// arm to keep the compile-time exhaustiveness check while
-    /// satisfying clippy's `match_same_arms` lint.
+    /// A constant is the interned `IntConst` / `FloatConst` shape; every
+    /// other `NodeKind` is non-const by construction (constants only ever
+    /// enter the graph via the const interners), so this is a `matches!`
+    /// over the two const kinds rather than an exhaustive no-`_` match —
+    /// the same trade made for [`Self::has_side_effects`].
     #[inline]
     pub fn is_const(self) -> bool {
-        match self {
-            Self::IntConst(..) | Self::FloatConst(..) => true,
-
-            // Every other variant — explicitly named so adding a new
-            // `NodeKind` is a compile error here.
-            Self::Entry
-            | Self::InitialMemory
-            | Self::InitialVar(..)
-            | Self::Region
-            | Self::MemPhi
-            | Self::Phi
-            | Self::If
-            | Self::Call
-            | Self::Return
-            | Self::IndirectBranch
-            | Self::CallOther { .. }
-            | Self::Load(..)
-            | Self::Store(..)
-            | Self::IntUnaryOp(..)
-            | Self::IntBinaryOp(..)
-            | Self::IntCmpOp(..)
-            | Self::Truncate
-            | Self::Popcount
-            | Self::Lzcount
-            | Self::Extend(..)
-            | Self::FloatBinaryOp(..)
-            | Self::FloatUnaryOp(..)
-            | Self::FloatCmpOp(..)
-            | Self::IntToFloat
-            | Self::FloatToInt
-            | Self::FloatToFloat
-            | Self::IntBitsToFloat
-            | Self::FloatBitsToInt
-            | Self::SegmentOp { .. }
-            | Self::CPoolRef
-            | Self::New => false,
-        }
+        matches!(self, Self::IntConst(..) | Self::FloatConst(..))
     }
 
     /// Returns `true` if nodes of this kind may be deduplicated in the graph
@@ -262,8 +238,8 @@ impl NodeKind {
     pub fn is_cacheable(&self) -> bool {
         match self {
             // Initial-state singletons: immutable post-construction; identity
-            // is fully determined by NodeKind fields (Vn for InitialVar;
-            // nothing for Entry/InitialMemory).  Dedup catches accidental
+            // is fully determined by NodeKind fields (the InitialVnId for
+            // InitialVar; nothing for Entry/InitialMemory).  Dedup catches accidental
             // double-construction and enforces the one-per-function invariant.
             Self::Entry
             | Self::InitialMemory
@@ -300,6 +276,7 @@ impl NodeKind {
             // a distinct event).
             | Self::Return
             | Self::IndirectBranch
+            | Self::Unreachable
             | Self::Call
             | Self::CallOther { .. }
             // Sleigh user-ops with opaque per-occurrence identity.
@@ -355,6 +332,7 @@ impl NodeKind {
             | Self::SegmentOp { .. }
             | Self::Return
             | Self::IndirectBranch
+            | Self::Unreachable
             | Self::Call
             | Self::CallOther { .. }
             | Self::CPoolRef
@@ -379,7 +357,8 @@ impl NodeKind {
             | Self::Return
             | Self::Call
             | Self::CallOther { .. }
-            | Self::IndirectBranch => true,
+            | Self::IndirectBranch
+            | Self::Unreachable => true,
 
             // Every other variant — explicitly named so adding a new
             // `NodeKind` is a compile error here.
@@ -451,7 +430,6 @@ impl NodeKind {
     /// helpers that previously lived under `pattern::matcher::commutativity`.
     #[inline]
     pub fn is_commutative(&self) -> bool {
-        use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
         match self {
             Self::IntBinaryOp(op) => matches!(
                 op,
@@ -471,16 +449,19 @@ impl NodeKind {
     }
 }
 
-// Permanent compile-time size guard: IntConst's inline payload must not exceed
-// rsleigh::Vn (16 bytes, align 8), keeping NodeKind at 24 bytes.
+// Permanent compile-time size guard: with `InitialVar` carrying a 4-byte
+// `InitialVnId` (not a 16-byte `rsleigh::Vn`), the largest inline payload is a
+// `u64` (FloatConst / CallOther / SegmentOp), keeping NodeKind at 16 bytes.
 const _: () = assert!(
-    std::mem::size_of::<NodeKind>() <= 24,
-    "NodeKind must stay <= 24 bytes (IntConst payload must not exceed rsleigh::Vn)"
+    std::mem::size_of::<NodeKind>() <= 16,
+    "NodeKind must stay <= 16 bytes (no inline payload may exceed 8 bytes)"
 );
 
 #[cfg(test)]
 mod tests {
-    use super::{IntPayload, NodeKind};
+    use super::NodeKind;
+    use crate::const_value::ConstId;
+    use cranelift_entity::EntityRef;
 
     #[test]
     fn has_side_effects_is_control_flow_plus_memory_writes_and_opaque() {
@@ -508,7 +489,7 @@ mod tests {
         }
         // Pure value / read nodes: killable when unused (incl. a memory READ).
         for k in [
-            NodeKind::IntConst(IntPayload::Small(0)),
+            NodeKind::IntConst(ConstId::new(0)),
             NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add),
             NodeKind::Load(rsleigh::VnSpace::RAM),
         ] {

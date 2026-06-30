@@ -49,7 +49,7 @@ pub mod rewrite_rule;
 // `ranges_disjoint`, so the whole module stays `pub(crate)`.
 pub(crate) mod sp_expr;
 pub use error::Result;
-pub use options::{AliasMode, FunctionArgsOptions, OptOptions};
+pub use options::{AliasMode, MemAliasOptions, OptOptions};
 pub use rewrite_rule::{
     BoxedRule, apply_rules_count, apply_rules_in_order, rewrite_rule, rewrite_rule_runtime,
 };
@@ -90,9 +90,7 @@ pub use pipeline::{
 };
 pub use post_opt::call_stack_args::CallStackArgCollect;
 pub use post_opt::function_args::FunctionArgDetect;
-pub use post_opt::indirect_branch_resolve::{
-    IndirectBranchClassify, classify_anchor, classify_table_dispatch,
-};
+pub use post_opt::indirect_branch_resolve::{IndirectBranchClassify, classify_anchor};
 pub use post_opt::stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;
 

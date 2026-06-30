@@ -8,10 +8,8 @@
     clippy::unreachable
 )]
 
-use strider_ir::FunctionBuilder;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
 use strider_ir::node::ValueType;
+use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     Capture, MatchPat, Matcher, any, call, call_other, if_node, int_const, load, mem_phi, phi, ret,
@@ -24,7 +22,7 @@ use strider_pattern::{
 fn call_at(addr: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let tgt = b.build_int_const(addr, ValueType::I64).unwrap();
-    b.build_call(tgt, None).unwrap();
+    b.build_call_cc(tgt, None).unwrap();
     // `build_call` advances the current region's control to the call's
     // output, leaving the same region active — return in place.
     b.build_return(None, &[]).unwrap();
@@ -35,8 +33,7 @@ fn call_at(addr: u64) -> strider_ir::Function {
 fn call_unconstrained_matches() {
     let function = call_at(0x1234);
     assert_eq!(
-        Matcher::try_new(&function)
-            .unwrap()
+        Matcher::new(&function)
             .find_all(&call().build())
             .unwrap()
             .len(),
@@ -47,7 +44,7 @@ fn call_unconstrained_matches() {
 #[test]
 fn call_at_addr_matches_and_rejects() {
     let function = call_at(0x1234);
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     assert_eq!(
         matcher.find_all(&call().at(0x1234).build()).unwrap().len(),
         1
@@ -61,7 +58,7 @@ fn call_at_addr_matches_and_rejects() {
 #[test]
 fn call_at_any() {
     let function = call_at(0x1234);
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     assert_eq!(
         matcher
             .find_all(&call().at_any([0x1000u64, 0x1234, 0x9999]).build())
@@ -90,8 +87,7 @@ fn call_at_any() {
 fn call_target_pattern_captures() {
     let function = call_at(0x1234);
     let c = Capture::new();
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(&call().target(var(c)).build())
         .unwrap();
     assert_eq!(hits.len(), 1);
@@ -102,8 +98,7 @@ fn call_target_pattern_captures() {
 fn call_captures_node() {
     let function = call_at(0x1234);
     let n = Capture::new();
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(&call().at(0x1234).capture(n).build())
         .unwrap();
     assert_eq!(hits.len(), 1);
@@ -125,10 +120,10 @@ fn call_arg_by_index() {
     let c = b.build_int_const(42u64, ValueType::I64).unwrap();
     b.write_variable(&arg, c).unwrap();
     let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
-    b.build_call(tgt, None).unwrap();
+    b.build_call_cc(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
 
     assert_eq!(
         matcher
@@ -171,10 +166,10 @@ fn call_arg_nests_value_builder_load() {
         .unwrap();
     b.write_variable(&arg, loaded).unwrap();
     let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
-    b.build_call(tgt, None).unwrap();
+    b.build_call_cc(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
 
     // load() nested in arg(0) matches; a mismatched address load rejects.
     assert_eq!(
@@ -199,7 +194,7 @@ fn call_arg_nests_value_builder_load() {
 fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let (_node, _result) = b
-        .build_call_other(
+        .build_call_other_abi(
             op,
             name,
             None,
@@ -221,8 +216,7 @@ fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
 fn call_other_unconstrained_matches() {
     let function = call_other_named("rdtsc", 7);
     assert_eq!(
-        Matcher::try_new(&function)
-            .unwrap()
+        Matcher::new(&function)
             .find_all(&call_other().build())
             .unwrap()
             .len(),
@@ -233,7 +227,7 @@ fn call_other_unconstrained_matches() {
 #[test]
 fn call_other_name_filter() {
     let function = call_other_named("rdtsc", 7);
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     assert_eq!(
         matcher
             .find_all(&call_other().name("rdtsc").build())
@@ -253,7 +247,7 @@ fn call_other_name_filter() {
 #[test]
 fn call_other_user_op_id_filter() {
     let function = call_other_named("rdtsc", 7);
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     assert_eq!(
         matcher
             .find_all(&call_other().user_op_id(7).build())
@@ -283,8 +277,7 @@ fn return_const(v: u64) -> strider_ir::Function {
 fn ret_unconstrained_matches() {
     let function = return_const(7);
     assert_eq!(
-        Matcher::try_new(&function)
-            .unwrap()
+        Matcher::new(&function)
             .find_all(&ret().build())
             .unwrap()
             .len(),
@@ -295,7 +288,7 @@ fn ret_unconstrained_matches() {
 #[test]
 fn ret_val_matches_and_captures() {
     let function = return_const(7);
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     assert_eq!(
         matcher
             .find_all(&ret().ret_val(0, int_const(7u128)).build())
@@ -320,7 +313,7 @@ fn ret_val_matches_and_captures() {
 #[test]
 fn ret_without_value_rejects_ret_val() {
     let function = call_at(0x1234); // Return with no value.
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     assert_eq!(matcher.find_all(&ret().build()).unwrap().len(), 1);
     assert_eq!(
         matcher
@@ -336,8 +329,7 @@ fn ret_preceded_by_smoke() {
     let function = return_const(7);
     // The Return's ctrl predecessor is a Region; `any()` matches it.
     assert_eq!(
-        Matcher::try_new(&function)
-            .unwrap()
+        Matcher::new(&function)
             .find_all(&ret().preceded_by(any()).build())
             .unwrap()
             .len(),
@@ -349,8 +341,7 @@ fn ret_preceded_by_smoke() {
 fn ret_captures_node() {
     let function = return_const(7);
     let n = Capture::new();
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(&ret().capture(n).build())
         .unwrap();
     assert_eq!(hits.len(), 1);
@@ -377,8 +368,7 @@ fn if_then_else() -> (strider_ir::Function, strider_ir::node::NodeId) {
 fn if_unconstrained_matches() {
     let (function, _) = if_then_else();
     assert_eq!(
-        Matcher::try_new(&function)
-            .unwrap()
+        Matcher::new(&function)
             .find_all(&if_node().build())
             .unwrap()
             .len(),
@@ -390,8 +380,7 @@ fn if_unconstrained_matches() {
 fn if_cond_captures() {
     let (function, _) = if_then_else();
     let c = Capture::new();
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(&if_node().cond(var(c)).build())
         .unwrap();
     assert_eq!(hits.len(), 1);
@@ -404,8 +393,7 @@ fn if_with_true_and_false_branches() {
     // The single consumer of each control output is the branch Region;
     // `any()` matches a real node.
     assert_eq!(
-        Matcher::try_new(&function)
-            .unwrap()
+        Matcher::new(&function)
             .find_all(
                 &if_node()
                     .with_true(any().into_pattern())
@@ -422,8 +410,7 @@ fn if_with_true_and_false_branches() {
 fn if_captures_node() {
     let (function, if_id) = if_then_else();
     let n = Capture::new();
-    let hits = Matcher::try_new(&function)
-        .unwrap()
+    let hits = Matcher::new(&function)
         .find_all(&if_node().capture(n).build())
         .unwrap();
     assert_eq!(hits.len(), 1);
@@ -440,8 +427,7 @@ fn mem_phi_matches_region_head() {
     // A freshly created region carries one MemPhi at its head.
     let function = return_const(0);
     assert_eq!(
-        Matcher::try_new(&function)
-            .unwrap()
+        Matcher::new(&function)
             .find_all(&mem_phi().build())
             .unwrap()
             .len(),
@@ -460,8 +446,7 @@ fn phi_matches_tagged_phi() {
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
     assert_eq!(
-        Matcher::try_new(&function)
-            .unwrap()
+        Matcher::new(&function)
             .find_all(&phi().build())
             .unwrap()
             .len(),
@@ -479,7 +464,7 @@ fn phi_capture_binds_value_output() {
     let v = b.read_variable(&rax).unwrap();
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     let c = Capture::new();
     let hits = matcher.find_all(&phi().capture(c).build()).unwrap();
     assert_eq!(hits.len(), 1);
@@ -500,7 +485,7 @@ fn phi_for_vn_filters() {
     let v = b.read_variable(&rax).unwrap();
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     assert_eq!(
         matcher.find_all(&phi().for_vn(rax).build()).unwrap().len(),
         1
@@ -533,12 +518,12 @@ fn function_arg_handle_resolves_register_carrier() {
     let carrier = function
         .graph()
         .all_node_ids()
-        .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if *vn == rax))
+        .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if function.initial_vn(*vn) == rax))
         .expect("InitialVar(rax) carrier");
     let carrier_value = function.node_outputs(carrier)[0];
     function.register_arg_value(0, carrier_value);
 
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     let handle = matcher.function_arg(0).expect("arg 0 carrier");
     assert!(matches!(
         function.node_kind(handle.node()),
@@ -578,7 +563,7 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     let reg_carrier = function
         .graph()
         .all_node_ids()
-        .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if *vn == rax))
+        .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if function.initial_vn(*vn) == rax))
         .expect("InitialVar(rax) carrier");
     let stack_carrier = function
         .graph()
@@ -602,7 +587,7 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
 fn function_arg_index_matches_carrier() {
     use strider_pattern::function_arg;
     let (function, _rax) = two_arg_carriers();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     // Each index matches exactly its one registered carrier.
     assert_eq!(matcher.find_all(&function_arg(0).build()).unwrap().len(), 1);
     assert_eq!(matcher.find_all(&function_arg(1).build()).unwrap().len(), 1);
@@ -614,7 +599,7 @@ fn function_arg_index_matches_carrier() {
 fn function_arg_any_matches_every_carrier() {
     use strider_pattern::function_arg_any;
     let (function, _rax) = two_arg_carriers();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     // Both the register and stack carriers are matched.
     assert_eq!(
         matcher.find_all(&function_arg_any().build()).unwrap().len(),
@@ -626,7 +611,7 @@ fn function_arg_any_matches_every_carrier() {
 fn function_arg_reg_matches_only_register_carrier() {
     use strider_pattern::{function_arg, function_arg_reg};
     let (function, rax) = two_arg_carriers();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     // Register source at index 0 matches the InitialVar(rax) carrier.
     assert_eq!(
         matcher
@@ -660,7 +645,7 @@ fn function_arg_reg_matches_only_register_carrier() {
 fn function_arg_stack_matches_only_stack_carrier() {
     use strider_pattern::function_arg_stack;
     let (function, _rax) = two_arg_carriers();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     // Stack source at index 1 matches the Load carrier.
     assert_eq!(
         matcher
@@ -683,7 +668,7 @@ fn function_arg_stack_matches_only_stack_carrier() {
 fn function_arg_stack_rejects_wrong_offset() {
     use strider_pattern::function_arg_stack;
     let (function, _rax) = two_arg_carriers();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     // The stack carrier at index 1 has recorded offset 0x40. A pattern
     // with the correct space + index but a DIFFERENT offset must not
     // match — the offset is enforced against `Function::stack_offset`.
@@ -719,7 +704,7 @@ fn function_arg_does_not_match_non_carrier() {
     let v = b.read_variable(&rax).unwrap();
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
     // No carrier registered → no match, even though an InitialVar exists.
     assert_eq!(matcher.find_all(&function_arg(0).build()).unwrap().len(), 0);
 }
@@ -739,7 +724,7 @@ fn call_with_clobber_retval() -> strider_ir::Function {
         .build_fn_single_region()
         .unwrap();
     let tgt = b.build_int_const(0x1234u64, ValueType::I64).unwrap();
-    b.build_call(tgt, None).unwrap();
+    b.build_call_cc(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()
 }
@@ -750,7 +735,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
     use strider_pattern::{CaptureExt, bool_value};
 
     let function = call_with_clobber_retval();
-    let m = Matcher::try_new(&function).unwrap();
+    let m = Matcher::new(&function);
 
     // The `Call` node and its non-slot-0 (clobber) value output.
     let call = function

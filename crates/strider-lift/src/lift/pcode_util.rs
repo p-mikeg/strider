@@ -22,7 +22,7 @@ pub(crate) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
 ///
 /// # Errors
 /// Returns an error when `insn.inputs` has `<= n` elements.
-pub fn nth_input_or_err(insn: &rsleigh::Insn, n: usize) -> Result<&rsleigh::Vn> {
+pub(crate) fn nth_input_or_err(insn: &rsleigh::Insn, n: usize) -> Result<&rsleigh::Vn> {
     insn.inputs.get(n).ok_or_else(|| {
         anyhow::anyhow!(
             "opcode {:?} has too few inputs: expected at least {}, got {}",

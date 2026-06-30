@@ -171,7 +171,7 @@ fn chained_single_pred_phis_cascade_to_base_value() -> crate::Result<()> {
     let ret_val = fg.node_inputs(find_return(&fg))[2];
     let producer = fg.producer(ret_val);
     assert!(
-        matches!(fg.node_kind(producer), NodeKind::InitialVar(v) if *v == var),
+        matches!(fg.node_kind(producer), NodeKind::InitialVar(v) if fg.initial_vn(*v) == var),
         "cascade must land on the base InitialVar, got {:?}",
         fg.node_kind(producer)
     );

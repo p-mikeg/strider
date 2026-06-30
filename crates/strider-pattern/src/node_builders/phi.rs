@@ -22,8 +22,7 @@ use strider_ir::node::NodeKind;
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, NodePredicate, Pattern};
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
 
 use super::MemPat;
 use super::node_pat::NodePat;
@@ -88,8 +87,8 @@ impl PhiPat {
 /// Construct a fresh [`PhiPat`].
 pub fn phi() -> PhiPat {
     PhiPat {
-        // `Phi` is node-rooted with a value output at slot 0.
-        inner: NodePat::node(phi_kind(NodeKind::Phi)).with_anchor_value(0),
+        // `Phi` has a value output at slot 0 (captured/limited via it).
+        inner: NodePat::value(phi_kind(NodeKind::Phi), 0),
         var_filter: None,
     }
 }
@@ -130,7 +129,7 @@ impl MemPhiPat {
 
 impl MemPat for MemPhiPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.lower(b).mem_value()
+        self.0.compile_mem(b)
     }
 }
 

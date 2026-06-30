@@ -35,9 +35,8 @@ use std::collections::BTreeMap;
 use anyhow::anyhow;
 use rustc_hash::FxHashMap;
 use strider_graph::ValueId as TmplValueId;
-use strider_ir::IRBuilder;
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::{IRBuilder, IRViewer};
 
 use crate::bindings::Bindings;
 use crate::graph_ext::{PatGraphRead, reachable_topo};
@@ -50,8 +49,8 @@ use crate::matcher::OutputKindSpec;
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
 
 /// Type alias for the [`TemplateKind::FnIntConst`] closure shape.
-/// Returns a `u128` value; the instantiator routes it to the correct
-/// `IntPayload` form (Small or Wide) based on the output type.
+/// Returns a `u128` value; the instantiator interns it as a `ConstId` via
+/// `intern_int_const` (≤I128) or `intern_int_const_limbs` (I256/I512).
 ///
 /// The `u128` return caps the expressible range: for an I256/I512 output
 /// type only the low 128 bits are materialised (the high limbs are zero).
@@ -71,9 +70,9 @@ pub enum TemplateKind {
     /// value is computed from captured operand values at rewrite time.
     Fn(TemplateKindFn),
     /// Dynamic `IntConst` variant: the closure computes a `u128` value
-    /// at rewrite time, and the instantiator routes it to
-    /// `IntPayload::Small` (≤I64) or the wide interner (I80/I128/I256/I512)
-    /// based on the node's resolved output type — without ever truncating
+    /// at rewrite time, and the instantiator interns it via the unified
+    /// `ConstId` interner — `intern_int_const` for ≤128-bit types,
+    /// `intern_int_const_limbs` for I256/I512 — without ever truncating
     /// to `u64` prematurely.  Used by [`int_const_with_fn`](crate::int_const_with_fn)
     /// so that I128 rewrites preserve values wider than 64 bits.
     FnIntConst(TemplateKindFnIntConst),
@@ -193,9 +192,8 @@ pub fn instantiate<B: IRBuilder>(
                 f(&ctx)?
             }
             TmplNodeKind::Build(TemplateKind::FnIntConst(f)) => {
-                // Compute the u128 value via the closure, then route it to
-                // the correct IntPayload form based on the output type.
-                // wide types use the interner; ≤I64 truncate safely to u64.
+                // Compute the u128 value via the closure, then intern it
+                // (see `intern_fn_int_const` for the per-width interning).
                 let value_ty = node_value_ty(template, vtx, root_ty);
                 let ctx = TemplateCtx {
                     function: builder.function(),
@@ -204,100 +202,11 @@ pub fn instantiate<B: IRBuilder>(
                     root_ty: value_ty,
                 };
                 let v = f(&ctx)?;
-                use strider_ir::node::IntPayload;
-                use strider_ir::wide_const::WideConstStorage;
-                match value_ty {
-                    strider_ir::node::ValueType::I80 => {
-                        let id = builder
-                            .function_mut()
-                            .intern_wide_const(WideConstStorage::I80(
-                                v & strider_ir::node::ValueType::I80.bit_mask_u128(),
-                            ));
-                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
-                    }
-                    strider_ir::node::ValueType::I128 => {
-                        let id = builder
-                            .function_mut()
-                            .intern_wide_const(WideConstStorage::I128(v));
-                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
-                    }
-                    strider_ir::node::ValueType::I256 => {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let low64 = v as u64;
-                        #[allow(clippy::cast_possible_truncation)]
-                        let high64 = (v >> 64) as u64;
-                        let id = builder
-                            .function_mut()
-                            .intern_wide_const(WideConstStorage::I256([low64, high64, 0, 0]));
-                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
-                    }
-                    strider_ir::node::ValueType::I512 => {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let low64 = v as u64;
-                        #[allow(clippy::cast_possible_truncation)]
-                        let high64 = (v >> 64) as u64;
-                        let id = builder
-                            .function_mut()
-                            .intern_wide_const(WideConstStorage::I512([
-                                low64, high64, 0, 0, 0, 0, 0, 0,
-                            ]));
-                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
-                    }
-                    _ => {
-                        // For ≤I64 output types the mask is at most u64::MAX,
-                        // so the cast to u64 is lossless after masking.
-                        let mask = value_ty.bit_mask_u128();
-                        debug_assert!(
-                            mask <= u128::from(u64::MAX),
-                            "non-wide output type must have a ≤u64 bit mask; \
-                             got mask {mask:#x} for {value_ty:?}"
-                        );
-                        #[allow(clippy::cast_possible_truncation)]
-                        strider_ir::node::NodeKind::IntConst(IntPayload::Small((v & mask) as u64))
-                    }
-                }
+                intern_fn_int_const(builder, value_ty, v)
             }
         };
 
-        // Collect inputs in slot order: each `Consumes` edge names the
-        // producer output vertex feeding this node's slot; read its
-        // already-materialised IR output.
-        //
-        // The raw `TemplateBuilder` verbs do not enforce contiguous,
-        // single-occupancy slots; a gap (slots 0 and 2 but not 1) would be
-        // silently CLOSED by `into_values()` and a duplicate slot would
-        // silently overwrite the earlier edge — both producing wrong IR with
-        // no diagnostic on the validate-skipping rewrite path. Reject both
-        // here (the typed builders always wire `0..n` once, so they never
-        // trip this).
-        let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
-        for (slot, producer_out_vtx) in template.graph.consumed_inputs(vtx) {
-            let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {
-                anyhow!("producer output not materialised before consumer — topo order bug")
-            })?;
-            if inputs_by_slot.insert(slot, producer_value).is_some() {
-                return Err(anyhow!(
-                    "template node wires two producers into input slot {slot} \
-                     (raw-builder mis-wire)"
-                ));
-            }
-        }
-        // Reject a gap: the keys must be exactly the contiguous range
-        // `0..len`, else the dense `into_values()` would shift later slots
-        // down onto the wrong IR input index.
-        if inputs_by_slot
-            .keys()
-            .enumerate()
-            .any(|(i, &slot)| i != slot)
-        {
-            let slots: Vec<usize> = inputs_by_slot.keys().copied().collect();
-            return Err(anyhow!(
-                "template node has non-contiguous input slots {slots:?} \
-                 (expected 0..{}) — raw-builder mis-wire",
-                inputs_by_slot.len()
-            ));
-        }
-        let inputs: Vec<ValueId> = inputs_by_slot.into_values().collect();
+        let inputs = collect_inputs(template, vtx, &materialised)?;
 
         // Declare the node's output signature from its template output
         // vertices. The common path is a single value output; a
@@ -311,7 +220,7 @@ pub fn instantiate<B: IRBuilder>(
         // Map each template output vertex to the IR output at the
         // matching slot, so multi-output consumers wire the right edge.
         let ir_outputs = builder.function().node_outputs(node);
-        for out_vtx in template.graph.produced_outputs(vtx) {
+        for out_vtx in template.graph.produced_outputs(vtx).iter().copied() {
             // A built node's outputs are all `TmplOutput`; a `ValueCapture`
             // never hangs off a `Build` node.
             let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
@@ -347,6 +256,92 @@ fn resolve_ty(ty: TemplateTy, root_ty: ValueType) -> ValueType {
     }
 }
 
+/// Intern a dynamic-`FnIntConst` value `v` as an `IntConst` of `value_ty`.
+///
+/// For ≤128-bit types (I1..I128 and I80) `intern_int_const` masks to width
+/// and stores as Bits. For I256/I512 the little-endian limb array is built
+/// and interned via `intern_int_const_limbs`.
+fn intern_fn_int_const<B: IRBuilder>(builder: &mut B, value_ty: ValueType, v: u128) -> NodeKind {
+    #[allow(clippy::cast_possible_truncation)]
+    let low64 = v as u64;
+    #[allow(clippy::cast_possible_truncation)]
+    let high64 = (v >> 64) as u64;
+    let id = match value_ty {
+        ValueType::I256 => builder
+            .function_mut()
+            .intern_int_const_limbs(&[low64, high64, 0, 0], value_ty),
+        ValueType::I512 => builder
+            .function_mut()
+            .intern_int_const_limbs(&[low64, high64, 0, 0, 0, 0, 0, 0], value_ty),
+        _ => builder.function_mut().intern_int_const(v, value_ty),
+    };
+    NodeKind::IntConst(id)
+}
+
+/// Collect a template node's inputs in slot order: each `Consumes` edge names
+/// the producer output vertex feeding this node's slot; its already-materialised
+/// IR output is read from `materialised`.
+///
+/// The raw `TemplateBuilder` verbs do not enforce contiguous,
+/// single-occupancy slots; a gap (slots 0 and 2 but not 1) would be
+/// silently CLOSED by `into_values()` and a duplicate slot would
+/// silently overwrite the earlier edge — both producing wrong IR with
+/// no diagnostic on the validate-skipping rewrite path. Reject both
+/// here (the typed builders always wire `0..n` once, so they never
+/// trip this).
+fn collect_inputs(
+    template: &Template,
+    node_vtx: NodeId,
+    materialised: &FxHashMap<TmplValueId, ValueId>,
+) -> anyhow::Result<Vec<ValueId>> {
+    let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
+    for (slot, producer_out_vtx) in template.graph.consumed_inputs(node_vtx) {
+        let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {
+            anyhow!("producer output not materialised before consumer — topo order bug")
+        })?;
+        if inputs_by_slot.insert(slot, producer_value).is_some() {
+            return Err(anyhow!(
+                "template node wires two producers into input slot {slot} \
+                 (raw-builder mis-wire)"
+            ));
+        }
+    }
+    // Reject a gap: the keys must be exactly the contiguous range
+    // `0..len`, else the dense `into_values()` would shift later slots
+    // down onto the wrong IR input index.
+    if inputs_by_slot
+        .keys()
+        .enumerate()
+        .any(|(i, &slot)| i != slot)
+    {
+        let slots: Vec<usize> = inputs_by_slot.keys().copied().collect();
+        return Err(anyhow!(
+            "template node has non-contiguous input slots {slots:?} \
+             (expected 0..{}) — raw-builder mis-wire",
+            inputs_by_slot.len()
+        ));
+    }
+    Ok(inputs_by_slot.into_values().collect())
+}
+
+/// Resolve one template output vertex's [`OutputKindSpec`] (+ its
+/// [`TemplateTy`]) into the concrete IR [`ValueKind`], against `root_ty`.
+/// Single source of truth for the `OutputKindSpec → ValueKind` mapping
+/// shared by [`node_value_ty`] and [`output_kinds_for`].
+fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType) -> ValueKind {
+    match o.kind {
+        OutputKindSpec::Memory => ValueKind::Memory,
+        OutputKindSpec::Control => ValueKind::Control,
+        OutputKindSpec::PhiToken => ValueKind::PhiToken,
+        // Value (typed or not) — use this output's own resolved type. The
+        // unconstrained `Any` wildcard is a match-only kind (no template
+        // builder emits it); resolve it defensively.
+        OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
+            ValueKind::Typed(resolve_ty(o.ty, root_ty))
+        }
+    }
+}
+
 /// The resolved value-output type a template node declares: the
 /// [`TemplateTy`] of its first value output vertex, resolved against
 /// `root_ty`. Falls back to `root_ty` when the node has no value output
@@ -355,16 +350,16 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> V
     template
         .graph
         .produced_outputs(node_vtx)
-        .into_iter()
+        .iter()
+        .copied()
         .find_map(|out_vtx| {
             let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
                 return None;
             };
-            matches!(
-                o.kind,
-                OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any
-            )
-            .then(|| resolve_ty(o.ty, root_ty))
+            match resolved_output_kind(o, root_ty) {
+                ValueKind::Typed(t) => Some(t),
+                _ => None,
+            }
         })
         .unwrap_or(root_ty)
 }
@@ -376,21 +371,9 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> V
 /// common value-expression case).
 fn output_kinds_for(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> Vec<ValueKind> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
-    for out_vtx in template.graph.produced_outputs(node_vtx) {
+    for out_vtx in template.graph.produced_outputs(node_vtx).iter().copied() {
         if let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) {
-            let kind = match o.kind {
-                OutputKindSpec::Memory => ValueKind::Memory,
-                OutputKindSpec::Control => ValueKind::Control,
-                OutputKindSpec::PhiToken => ValueKind::PhiToken,
-                // Value (typed or not) — use this output's own resolved
-                // type. The unconstrained `Any` wildcard is a match-only
-                // kind (no template builder emits it); resolve it
-                // defensively.
-                OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
-                    ValueKind::Typed(resolve_ty(o.ty, root_ty))
-                }
-            };
-            by_slot.insert(o.slot, kind);
+            by_slot.insert(o.slot, resolved_output_kind(o, root_ty));
         }
     }
     if by_slot.is_empty() {

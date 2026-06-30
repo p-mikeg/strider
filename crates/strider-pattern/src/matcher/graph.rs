@@ -26,21 +26,7 @@ pub struct Pattern {
     pub(crate) cast_mask: CastMask,
 }
 
-impl Default for Pattern {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Pattern {
-    /// An empty pattern with no root and no cast walk-through.
-    pub fn new() -> Self {
-        Self {
-            graph: Graph::new(),
-            cast_mask: CastMask::empty(),
-        }
-    }
-
     /// Build a pattern from an already-materialised generic graph (the seal
     /// point of [`MatcherBuilder`]).
     pub(crate) fn from_graph(graph: PatGraph) -> Self {
@@ -156,14 +142,15 @@ impl Pattern {
 #[cfg(test)]
 mod tests {
     use crate::matcher::MatcherBuilder;
-    use strider_ir::node::{IntPayload, NodeKind};
+    use strider_ir::ConstId;
+    use strider_ir::node::NodeKind;
 
     #[test]
     fn builds_bipartite_add_shape() {
         let mut b = MatcherBuilder::new();
         let x = b.leaf(crate::matcher::KindSpec::Any);
         let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(
-            IntPayload::Small(1),
+            ConstId::from_u32(1),
         )));
         let _sum = b.binary(strider_ir::IntBinaryOp::Add, x, k);
         let p = b.finish();

@@ -14,9 +14,8 @@ mod common;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::Strider;
 use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::{LiftOptions, Strider};
 use strider_target::{CallingConvention, SleighArch};
 
 fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>> {
@@ -344,7 +343,13 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
             .expect("cc");
         let mut strider = Strider::new(arch, sleigh, None).expect("strider");
         strider
-            .analyze(0x1000, &cc, &LiftOptions::default(), &OptOptions::default(), None)
+            .analyze(
+                0x1000,
+                &cc,
+                &LiftOptions::default(),
+                &OptOptions::default(),
+                None,
+            )
             .expect("analyze")
             .unresolved_indirect_branches
     };
@@ -360,4 +365,3 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
 fn _ensure_make_sleigh_used() {
     let _ = make_sleigh_value(vec![0xc3], 0);
 }
-

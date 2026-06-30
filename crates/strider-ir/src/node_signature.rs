@@ -332,6 +332,9 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // anchored so the resolver can wire the replacement at the same
         // program point.
         NodeKind::IndirectBranch => sig!(inputs: [CTRL, MEM, TARGET], outputs: []),
+        // Unreachable: control sink for a no-return trap.  Consumes the single
+        // dangling Control edge; produces nothing.
+        NodeKind::Unreachable => sig!(inputs: [CTRL], outputs: []),
 
         // ── Memory operations ───────────────────────────────────────────────
         NodeKind::Load(_) => sig!(inputs: [MEM, ADDR], outputs: [INT_VAL]),
@@ -385,6 +388,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
 mod tests {
     use super::*;
     use crate::node::NodeKind;
+    use cranelift_entity::EntityRef;
 
     /// Convenience: projects the head slot kinds of a signature into the
     /// `(Vec<Kind>, Vec<Kind>)` shape used by the pre-refactor assertions.
@@ -398,7 +402,9 @@ mod tests {
 
     #[test]
     fn expected_signature_int_const() {
-        let (inputs, outputs) = kinds(&NodeKind::IntConst(crate::node::IntPayload::Small(42)));
+        let (inputs, outputs) = kinds(&NodeKind::IntConst(crate::const_value::ConstId::new(
+            42_usize,
+        )));
         assert_eq!(inputs, vec![]);
         assert_eq!(outputs, vec![ExpectedValueKind::AnyInt]);
     }
@@ -594,14 +600,6 @@ mod tests {
         assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Rhs);
     }
 
-    fn smoke_vn() -> rsleigh::Vn {
-        rsleigh::Vn {
-            addr_off: 0,
-            addr_space: rsleigh::VnSpace::REGISTER,
-            size: 8,
-        }
-    }
-
     /// Calling `expected_signature` on every NodeKind variant must succeed
     /// and return a self-consistent Signature.
     ///
@@ -615,11 +613,10 @@ mod tests {
             ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
         };
         let space = rsleigh::VnSpace::RAM;
-        let vn = smoke_vn();
         let kinds: Vec<NodeKind> = vec![
             NodeKind::Entry,
             NodeKind::InitialMemory,
-            NodeKind::InitialVar(vn),
+            NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
             NodeKind::Region,
             NodeKind::MemPhi,
             NodeKind::Phi,
@@ -629,7 +626,7 @@ mod tests {
             NodeKind::IndirectBranch,
             NodeKind::Load(space),
             NodeKind::Store(space),
-            NodeKind::IntConst(crate::node::IntPayload::Small(0)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
             NodeKind::IntUnaryOp(IntUnaryOp::Neg),
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             NodeKind::IntCmpOp(IntCmpOp::Equal),

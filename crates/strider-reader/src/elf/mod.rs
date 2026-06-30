@@ -22,9 +22,9 @@
 //!   its regions.
 //! - [`relocations`] — the relocation applier family
 //!   ([`apply_elf_relocations`], [`apply_elf_relocations_autoload`],
-//!   [`RelocationStats`], and the per-arch `R_*_RELATIVE` /
-//!   `R_*_GLOB_DAT` / `R_*_JUMP_SLOT` tables).  ET_DYN uses the
-//!   dynamic-relocations table; ET_REL uses per-section relocations.
+//!   and the per-arch `R_*_RELATIVE` / `R_*_GLOB_DAT` /
+//!   `R_*_JUMP_SLOT` tables).  ET_DYN uses the dynamic-relocations
+//!   table; ET_REL uses per-section relocations.
 //! - [`load`] — the top-level convenience entries
 //!   ([`load_elf`] for `'static`-lifetime ELF parsing,
 //!   [`elf_load_with_relocations`] for an all-in-one regions + relocs
@@ -37,5 +37,5 @@ pub mod sections;
 
 pub use load::{elf_load_readonly_with_relocations, elf_load_with_relocations, load_elf};
 pub use reader::ElfFileMemReader;
-pub use relocations::{RelocationStats, apply_elf_relocations, apply_elf_relocations_autoload};
+pub use relocations::{apply_elf_relocations, apply_elf_relocations_autoload};
 pub use sections::{elf_get_loadable_regions, elf_get_loadable_regions_including_writable};

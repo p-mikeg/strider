@@ -8,9 +8,8 @@
 //! on `FunctionBuilder`, tests use those helpers to create the target nodes
 //! and then match against them with the corresponding pattern constructor.
 
-use strider_ir::ExtendOp;
-use strider_ir::IRViewer;
 use strider_ir::node::ValueType;
+use strider_ir::{ExtendOp, IRViewer};
 use strider_pattern::matcher::CastMask;
 use strider_pattern::*;
 

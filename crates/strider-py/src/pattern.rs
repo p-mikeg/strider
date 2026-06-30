@@ -35,12 +35,13 @@ use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
 #[allow(unused_imports)]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
-use strider_pattern::MemPat;
-use strider_pattern::TemplatePat;
+use strider_ir::node::ValueType as T;
+use strider_pattern as sp;
 use strider_pattern::matcher::{MatcherBuilder, PatValueRef};
 use strider_pattern::template::{TemplateBuilder, TmplValueRef};
-use strider_pattern::{Capture, Pattern, Template};
-use strider_pattern::{CaptureExt, MatchPat};
+use strider_pattern::{
+    Capture, CaptureExt, MatchPat, MemPat, Pattern, Template, TemplatePat, template as tpl,
+};
 
 use crate::errors::into_strider_err;
 
@@ -459,7 +460,6 @@ fn rhs_error(kind: &str) -> PyErr {
 /// Parse a `ValueType` from its (case-insensitive) name, e.g.
 /// `"i1"` / `"I64"` / `"f32"`. Used by `Pat.value_ty(...)`.
 fn parse_value_ty(name: &str) -> PyResult<strider_ir::node::ValueType> {
-    use strider_ir::node::ValueType as T;
     let ty = match name.to_ascii_lowercase().as_str() {
         "i1" => T::I1,
         "i8" => T::I8,
@@ -558,7 +558,55 @@ fn op_match(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynMatch> {
 
 #[allow(clippy::too_many_lines)]
 fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
-    use strider_pattern as sp;
+    // Each buildable op repeats the same skeleton: pre-compile the operand(s)
+    // via `op_match`, then box a closure that feeds them to one `sp::` factory
+    // through `mc`.  These local macros capture that skeleton so each arm is a
+    // single line.  `m_binop` / `m_unop` carry a leading op value (`*$op`);
+    // `m_bin` / `m_un` are the op-less twins; the `*_any` pair appends the
+    // `.capture(c)` tail.
+    macro_rules! m_binop {
+        ($f:path, $op:ident, $l:ident, $r:ident) => {{
+            let op = *$op;
+            let l = op_match(py, $l)?;
+            let r = op_match(py, $r)?;
+            DynMatch(Box::new(move |b| mc($f(op, l, r), b)))
+        }};
+    }
+    macro_rules! m_unop {
+        ($f:path, $op:ident, $x:ident) => {{
+            let op = *$op;
+            let x = op_match(py, $x)?;
+            DynMatch(Box::new(move |b| mc($f(op, x), b)))
+        }};
+    }
+    macro_rules! m_bin {
+        ($f:path, $l:ident, $r:ident) => {{
+            let l = op_match(py, $l)?;
+            let r = op_match(py, $r)?;
+            DynMatch(Box::new(move |b| mc($f(l, r), b)))
+        }};
+    }
+    macro_rules! m_un {
+        ($f:path, $x:ident) => {{
+            let x = op_match(py, $x)?;
+            DynMatch(Box::new(move |b| mc($f(x), b)))
+        }};
+    }
+    macro_rules! m_bin_any {
+        ($f:path, $c:ident, $l:ident, $r:ident) => {{
+            let c = *$c;
+            let l = op_match(py, $l)?;
+            let r = op_match(py, $r)?;
+            DynMatch(Box::new(move |b| mc($f(l, r).capture(c), b)))
+        }};
+    }
+    macro_rules! m_un_any {
+        ($f:path, $c:ident, $x:ident) => {{
+            let c = *$c;
+            let x = op_match(py, $x)?;
+            DynMatch(Box::new(move |b| mc($f(x).capture(c), b)))
+        }};
+    }
     let _depth = DepthGuard::enter()?;
     Ok(match repr {
         PatRepr::Any => DynMatch(Box::new(|b| mc(sp::any(), b))),
@@ -612,21 +660,9 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let vn = *vn;
             DynMatch(Box::new(move |b| mc(sp::initial_var_for(vn), b)))
         }
-        PatRepr::IntBinary(op, l, r) => {
-            let op = *op;
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::int_binary(op, l, r), b)))
-        }
-        PatRepr::Sub(l, r) => {
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::sub(l, r), b)))
-        }
-        PatRepr::BitNot(x) => {
-            let x = op_match(py, x)?;
-            DynMatch(Box::new(move |b| mc(sp::bit_not(x), b)))
-        }
+        PatRepr::IntBinary(op, l, r) => m_binop!(sp::int_binary, op, l, r),
+        PatRepr::Sub(l, r) => m_bin!(sp::sub, l, r),
+        PatRepr::BitNot(x) => m_un!(sp::bit_not, x),
         PatRepr::IntUnary(kind, x) => {
             let kind = *kind;
             let x = op_match(py, x)?;
@@ -641,43 +677,13 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let x = op_match(py, x)?;
             DynMatch(Box::new(move |b| cast_match(kind, x, b)))
         }
-        PatRepr::Extend(op, x) => {
-            let op = *op;
-            let x = op_match(py, x)?;
-            DynMatch(Box::new(move |b| mc(sp::extend(op, x), b)))
-        }
-        PatRepr::IntCmp(op, l, r) => {
-            let op = *op;
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::int_cmp(op, l, r), b)))
-        }
-        PatRepr::IntNe(l, r) => {
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::int_ne(l, r), b)))
-        }
-        PatRepr::IntLe(l, r) => {
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::int_le(l, r), b)))
-        }
-        PatRepr::IntSle(l, r) => {
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::int_sle(l, r), b)))
-        }
-        PatRepr::FloatBinary(op, l, r) => {
-            let op = *op;
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::float_binary(op, l, r), b)))
-        }
-        PatRepr::FloatSub(l, r) => {
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::float_sub(l, r), b)))
-        }
+        PatRepr::Extend(op, x) => m_unop!(sp::extend, op, x),
+        PatRepr::IntCmp(op, l, r) => m_binop!(sp::int_cmp, op, l, r),
+        PatRepr::IntNe(l, r) => m_bin!(sp::int_ne, l, r),
+        PatRepr::IntLe(l, r) => m_bin!(sp::int_le, l, r),
+        PatRepr::IntSle(l, r) => m_bin!(sp::int_sle, l, r),
+        PatRepr::FloatBinary(op, l, r) => m_binop!(sp::float_binary, op, l, r),
+        PatRepr::FloatSub(l, r) => m_bin!(sp::float_sub, l, r),
         PatRepr::FloatUnary(kind, x) => {
             let kind = *kind;
             let x = op_match(py, x)?;
@@ -690,80 +696,19 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
                 FloatUnaryKind::Round => mc(sp::float_round(x), b),
             }))
         }
-        PatRepr::FloatCmp(op, l, r) => {
-            let op = *op;
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::float_cmp(op, l, r), b)))
-        }
-        PatRepr::FloatNe(l, r) => {
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::float_ne(l, r), b)))
-        }
-        PatRepr::FloatLe(l, r) => {
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::float_le(l, r), b)))
-        }
-        PatRepr::FloatIsNan(x) => {
-            let x = op_match(py, x)?;
-            DynMatch(Box::new(move |b| mc(sp::float_is_nan(x), b)))
-        }
-        PatRepr::BoolBinary(op, l, r) => {
-            let op = *op;
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::bool_binary(op, l, r), b)))
-        }
-        PatRepr::BoolNot(x) => {
-            let x = op_match(py, x)?;
-            DynMatch(Box::new(move |b| mc(sp::bool_not(x), b)))
-        }
-        PatRepr::IntBinAny(c, l, r) => {
-            let c = *c;
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| {
-                mc(sp::int_binary_any(l, r).capture(c), b)
-            }))
-        }
-        PatRepr::IntUnAny(c, x) => {
-            let c = *c;
-            let x = op_match(py, x)?;
-            DynMatch(Box::new(move |b| mc(sp::int_unary_any(x).capture(c), b)))
-        }
-        PatRepr::IntCmpAny(c, l, r) => {
-            let c = *c;
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::int_cmp_any(l, r).capture(c), b)))
-        }
-        PatRepr::BoolBinAny(c, l, r) => {
-            let c = *c;
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::bool_bin_any(l, r).capture(c), b)))
-        }
-        PatRepr::FloatBinAny(c, l, r) => {
-            let c = *c;
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| {
-                mc(sp::float_binary_any(l, r).capture(c), b)
-            }))
-        }
-        PatRepr::FloatUnAny(c, x) => {
-            let c = *c;
-            let x = op_match(py, x)?;
-            DynMatch(Box::new(move |b| mc(sp::float_unary_any(x).capture(c), b)))
-        }
-        PatRepr::FloatCmpAny(c, l, r) => {
-            let c = *c;
-            let l = op_match(py, l)?;
-            let r = op_match(py, r)?;
-            DynMatch(Box::new(move |b| mc(sp::float_cmp_any(l, r).capture(c), b)))
-        }
+        PatRepr::FloatCmp(op, l, r) => m_binop!(sp::float_cmp, op, l, r),
+        PatRepr::FloatNe(l, r) => m_bin!(sp::float_ne, l, r),
+        PatRepr::FloatLe(l, r) => m_bin!(sp::float_le, l, r),
+        PatRepr::FloatIsNan(x) => m_un!(sp::float_is_nan, x),
+        PatRepr::BoolBinary(op, l, r) => m_binop!(sp::bool_binary, op, l, r),
+        PatRepr::BoolNot(x) => m_un!(sp::bool_not, x),
+        PatRepr::IntBinAny(c, l, r) => m_bin_any!(sp::int_binary_any, c, l, r),
+        PatRepr::IntUnAny(c, x) => m_un_any!(sp::int_unary_any, c, x),
+        PatRepr::IntCmpAny(c, l, r) => m_bin_any!(sp::int_cmp_any, c, l, r),
+        PatRepr::BoolBinAny(c, l, r) => m_bin_any!(sp::bool_bin_any, c, l, r),
+        PatRepr::FloatBinAny(c, l, r) => m_bin_any!(sp::float_binary_any, c, l, r),
+        PatRepr::FloatUnAny(c, x) => m_un_any!(sp::float_unary_any, c, x),
+        PatRepr::FloatCmpAny(c, l, r) => m_bin_any!(sp::float_cmp_any, c, l, r),
         PatRepr::Captured(inner, c) => {
             let c = *c;
             let inner = compile_repr_match(inner, py)?;
@@ -794,7 +739,6 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
 }
 
 fn cast_match(kind: CastKind, x: DynMatch, b: &mut MatcherBuilder) -> PatValueRef {
-    use strider_pattern as sp;
     match kind {
         CastKind::Truncate => mc(sp::truncate(x), b),
         CastKind::ZeroExtend => mc(sp::zero_extend(x), b),
@@ -815,12 +759,43 @@ fn op_tpl(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynTemplate> {
 
 #[allow(clippy::too_many_lines)]
 fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate> {
-    use strider_pattern as sp;
     // Composite RHS ops build through the TemplatePat-bounded `template::`
     // twins (a `DynTemplate` operand is `TemplatePat`, not `MatchPat`, so it
     // can't feed the bare match-side factories). Leaves (`int_const`,
     // `var`, …) stay on the dual-trait bare builders.
-    use strider_pattern::template as tpl;
+    //
+    // Local macros mirror the match-side ones: pre-compile operand(s) via
+    // `op_tpl`, then box a closure feeding them to one `tpl::` factory through
+    // `tc`.  `t_binop` / `t_unop` carry a leading op value; `t_bin` / `t_un`
+    // are the op-less twins.
+    macro_rules! t_binop {
+        ($f:path, $op:ident, $l:ident, $r:ident) => {{
+            let op = *$op;
+            let l = op_tpl(py, $l)?;
+            let r = op_tpl(py, $r)?;
+            DynTemplate(Box::new(move |b| tc($f(op, l, r), b)))
+        }};
+    }
+    macro_rules! t_unop {
+        ($f:path, $op:ident, $x:ident) => {{
+            let op = *$op;
+            let x = op_tpl(py, $x)?;
+            DynTemplate(Box::new(move |b| tc($f(op, x), b)))
+        }};
+    }
+    macro_rules! t_bin {
+        ($f:path, $l:ident, $r:ident) => {{
+            let l = op_tpl(py, $l)?;
+            let r = op_tpl(py, $r)?;
+            DynTemplate(Box::new(move |b| tc($f(l, r), b)))
+        }};
+    }
+    macro_rules! t_un {
+        ($f:path, $x:ident) => {{
+            let x = op_tpl(py, $x)?;
+            DynTemplate(Box::new(move |b| tc($f(x), b)))
+        }};
+    }
     let _depth = DepthGuard::enter()?;
     Ok(match repr {
         PatRepr::Var(c) => {
@@ -843,21 +818,9 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
             let bits = *bits;
             DynTemplate(Box::new(move |b| tc(sp::float_const(bits), b)))
         }
-        PatRepr::IntBinary(op, l, r) => {
-            let op = *op;
-            let l = op_tpl(py, l)?;
-            let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(tpl::int_binary(op, l, r), b)))
-        }
-        PatRepr::Sub(l, r) => {
-            let l = op_tpl(py, l)?;
-            let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(tpl::sub(l, r), b)))
-        }
-        PatRepr::BitNot(x) => {
-            let x = op_tpl(py, x)?;
-            DynTemplate(Box::new(move |b| tc(tpl::bit_not(x), b)))
-        }
+        PatRepr::IntBinary(op, l, r) => t_binop!(tpl::int_binary, op, l, r),
+        PatRepr::Sub(l, r) => t_bin!(tpl::sub, l, r),
+        PatRepr::BitNot(x) => t_un!(tpl::bit_not, x),
         PatRepr::IntUnary(kind, x) => {
             let kind = *kind;
             let x = op_tpl(py, x)?;
@@ -872,28 +835,10 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
             let x = op_tpl(py, x)?;
             DynTemplate(Box::new(move |b| cast_tpl(kind, x, b)))
         }
-        PatRepr::Extend(op, x) => {
-            let op = *op;
-            let x = op_tpl(py, x)?;
-            DynTemplate(Box::new(move |b| tc(tpl::extend(op, x), b)))
-        }
-        PatRepr::IntCmp(op, l, r) => {
-            let op = *op;
-            let l = op_tpl(py, l)?;
-            let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(tpl::int_cmp(op, l, r), b)))
-        }
-        PatRepr::FloatBinary(op, l, r) => {
-            let op = *op;
-            let l = op_tpl(py, l)?;
-            let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(tpl::float_binary(op, l, r), b)))
-        }
-        PatRepr::FloatSub(l, r) => {
-            let l = op_tpl(py, l)?;
-            let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(tpl::float_sub(l, r), b)))
-        }
+        PatRepr::Extend(op, x) => t_unop!(tpl::extend, op, x),
+        PatRepr::IntCmp(op, l, r) => t_binop!(tpl::int_cmp, op, l, r),
+        PatRepr::FloatBinary(op, l, r) => t_binop!(tpl::float_binary, op, l, r),
+        PatRepr::FloatSub(l, r) => t_bin!(tpl::float_sub, l, r),
         PatRepr::FloatUnary(kind, x) => {
             let kind = *kind;
             let x = op_tpl(py, x)?;
@@ -906,22 +851,9 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
                 FloatUnaryKind::Round => tc(tpl::float_round(x), b),
             }))
         }
-        PatRepr::FloatCmp(op, l, r) => {
-            let op = *op;
-            let l = op_tpl(py, l)?;
-            let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(tpl::float_cmp(op, l, r), b)))
-        }
-        PatRepr::BoolBinary(op, l, r) => {
-            let op = *op;
-            let l = op_tpl(py, l)?;
-            let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(tpl::bool_binary(op, l, r), b)))
-        }
-        PatRepr::BoolNot(x) => {
-            let x = op_tpl(py, x)?;
-            DynTemplate(Box::new(move |b| tc(tpl::bool_not(x), b)))
-        }
+        PatRepr::FloatCmp(op, l, r) => t_binop!(tpl::float_cmp, op, l, r),
+        PatRepr::BoolBinary(op, l, r) => t_binop!(tpl::bool_binary, op, l, r),
+        PatRepr::BoolNot(x) => t_un!(tpl::bool_not, x),
         PatRepr::Captured(_inner, c) => {
             // On a template RHS a capture resolves to the matched LHS
             // value, *replacing* whatever it wrapped — so `inner` is not
@@ -960,7 +892,6 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
 }
 
 fn cast_tpl(kind: CastKind, x: DynTemplate, b: &mut TemplateBuilder) -> TmplValueRef {
-    use strider_pattern::template as tpl;
     match kind {
         CastKind::Truncate => tc(tpl::truncate(x), b),
         CastKind::ZeroExtend => tc(tpl::zero_extend(x), b),
@@ -1226,23 +1157,19 @@ impl PyPartialMatch {
     /// Look up a capture by key (Python `m[c]`).
     fn __getitem__(&self, py: Python<'_>, key: CaptureKeyOwned) -> PyResult<PyObject> {
         let cap = self.capture_from_key(&key)?;
-        // Probe bool (an `I1`-typed IntConst) BEFORE the general uint path,
-        // mirroring `PyMatch::__getitem__`: `get_uint` also matches an `I1`
-        // value (returning 0/1), so probing it first would make a boolean
-        // capture surface as a plain `int` here while the post-match
-        // `PyMatch` returns `bool` for the same binding.  `get_bool` is
-        // `I1`-only, so wider ints still fall through to the uint path.
-        if let Some(Some(b)) = self.with_function(|f| self.bindings.get_bool(cap, f)) {
-            return Ok(b.into_py(py));
-        }
-        if let Some(Some(v)) = self.with_function(|f| self.bindings.get_uint(cap, f)) {
-            return Ok(v.into_py(py));
-        }
-        if let Some(Some(fl)) = self.with_function(|f| self.bindings.get_float_bits(cap, f.graph()))
-        {
-            return Ok(fl.into_py(py));
-        }
-        Ok(py.None())
+        // Resolve the three value Options (the `with_function` proxy returns
+        // `Option<Option<_>>`; flatten each), then defer to the shared
+        // precedence helper so this mirrors `PyMatch::__getitem__` exactly.
+        let b = self
+            .with_function(|f| self.bindings.get_bool(cap, f))
+            .flatten();
+        let v = self
+            .with_function(|f| self.bindings.get_uint(cap, f))
+            .flatten();
+        let fl = self
+            .with_function(|f| self.bindings.get_float_bits(cap, f.graph()))
+            .flatten();
+        Ok(crate::matcher::capture_value_to_py(py, b, v, fl))
     }
 
     /// Whether `c` is bound in this partial match (Python `c in m`).
@@ -1354,9 +1281,9 @@ macro_rules! forall_castmask {
         #[pymethods]
         impl PyCastMask {
             #[doc = concat!(
-                        "Mask selecting the `", stringify!($value),
-                        "` value-passthrough cast for the matcher to walk through."
-                    )]
+                                        "Mask selecting the `", stringify!($value),
+                                        "` value-passthrough cast for the matcher to walk through."
+                                    )]
             #[classmethod]
             fn $name(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
                 Self {
@@ -1369,9 +1296,9 @@ macro_rules! forall_castmask {
         #[pymethods]
         impl PyCastMask {
             #[doc = concat!(
-                        "`CastMask::", stringify!($value), "()` — ",
-                        "the all-casts (`all`) / no-casts (`empty`) mask."
-                    )]
+                                        "`CastMask::", stringify!($value), "()` — ",
+                                        "the all-casts (`all`) / no-casts (`empty`) mask."
+                                    )]
             #[classmethod]
             fn $name(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
                 Self {
@@ -1620,13 +1547,42 @@ pub fn predicate(f: PyObject) -> PyPat {
 }
 
 // ── Op-name parsing helpers ──────────────────────────────────────────────
+//
+// The canonical (`"Add"`, `"Sless"`, …) spelling each parser accepts is the
+// `Debug` output of the op variant — the same string `crate::matcher::op_name`
+// emits — so the `find_all → recover op → reconstruct pattern` round-trip
+// stays in lockstep with a single source of truth.  Rather than re-typing
+// every variant name as a string literal (which would silently desync when a
+// new variant is added to one of these enums in `strider-ir`), each parser
+// derives its canonical names from an exhaustive `match` over the variant
+// list: adding a variant forces a new `match` arm, so the table can't go
+// stale without a compile error.  The short lowercase aliases (`eq`, `shl`,
+// …) are py-only sugar and stay listed explicitly.
 
-fn lookup_op<Op: Copy>(table: &[(&str, Op)], name: &str, op_kind: &str) -> PyResult<Op> {
-    if let Some(&(_, op)) = table.iter().find(|(n, _)| *n == name) {
+/// Resolve `name` against `variants` (exact, then case-insensitive on the
+/// canonical name) and the explicit `aliases`, or error.  `variants` is an
+/// exhaustively-`match`ed slice so a newly added enum variant fails to
+/// compile until it is listed here.
+fn lookup_op<Op: Copy>(
+    variants: &[Op],
+    canonical: impl Fn(Op) -> &'static str,
+    aliases: &[(&str, Op)],
+    name: &str,
+    op_kind: &str,
+) -> PyResult<Op> {
+    if let Some(&op) = variants.iter().find(|&&op| canonical(op) == name) {
         return Ok(op);
     }
-    let lowered = name.to_ascii_lowercase();
-    if let Some(&(_, op)) = table.iter().find(|(n, _)| n.eq_ignore_ascii_case(&lowered)) {
+    if let Some(&(_, op)) = aliases.iter().find(|(n, _)| *n == name) {
+        return Ok(op);
+    }
+    if let Some(&op) = variants
+        .iter()
+        .find(|&&op| canonical(op).eq_ignore_ascii_case(name))
+    {
+        return Ok(op);
+    }
+    if let Some(&(_, op)) = aliases.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
         return Ok(op);
     }
     Err(into_strider_err(anyhow::anyhow!(
@@ -1635,119 +1591,174 @@ fn lookup_op<Op: Copy>(table: &[(&str, Op)], name: &str, op_kind: &str) -> PyRes
 }
 
 fn parse_int_cmp_op(name: &str) -> PyResult<strider_ir::IntCmpOp> {
-    use strider_ir::IntCmpOp::*;
-    static TABLE: &[(&str, strider_ir::IntCmpOp)] = &[
-        ("Equal", Equal),
-        ("Less", Less),
-        ("Sless", Sless),
-        ("Carry", Carry),
-        ("Scarry", Scarry),
-        ("Sborrow", Sborrow),
-        ("eq", Equal),
-        ("lt", Less),
-        ("slt", Sless),
-    ];
-    lookup_op(TABLE, name, "IntCmpOp")
+    use strider_ir::IntCmpOp::{self, *};
+    static VARIANTS: &[IntCmpOp] = &[Equal, Less, Sless, Carry, Scarry, Sborrow];
+    // Exhaustive: a new `IntCmpOp` variant fails to compile here until both
+    // the arm below and the `VARIANTS` list above are extended.
+    fn canonical(op: IntCmpOp) -> &'static str {
+        use strider_ir::IntCmpOp::*;
+        match op {
+            Equal => "Equal",
+            Less => "Less",
+            Sless => "Sless",
+            Carry => "Carry",
+            Scarry => "Scarry",
+            Sborrow => "Sborrow",
+        }
+    }
+    static ALIASES: &[(&str, IntCmpOp)] = &[("eq", Equal), ("lt", Less), ("slt", Sless)];
+    lookup_op(VARIANTS, canonical, ALIASES, name, "IntCmpOp")
 }
 
 fn parse_int_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
-    use strider_ir::IntBinaryOp::*;
-    static TABLE: &[(&str, strider_ir::IntBinaryOp)] = &[
-        ("Add", Add),
-        ("Mul", Mul),
-        ("Div", Div),
-        ("Sdiv", Sdiv),
-        ("Rem", Rem),
-        ("Srem", Srem),
-        ("And", And),
-        ("Or", Or),
-        ("Xor", Xor),
-        ("ShiftLeft", ShiftLeft),
-        ("ShiftRight", ShiftRight),
-        ("SShiftRight", SShiftRight),
+    use strider_ir::IntBinaryOp::{self, *};
+    static VARIANTS: &[IntBinaryOp] = &[
+        Add,
+        And,
+        Or,
+        Xor,
+        Div,
+        Sdiv,
+        Rem,
+        Srem,
+        ShiftRight,
+        SShiftRight,
+        ShiftLeft,
+        Mul,
+    ];
+    // Exhaustive: a new `IntBinaryOp` variant fails to compile here.
+    fn canonical(op: IntBinaryOp) -> &'static str {
+        use strider_ir::IntBinaryOp::*;
+        match op {
+            Add => "Add",
+            And => "And",
+            Or => "Or",
+            Xor => "Xor",
+            Div => "Div",
+            Sdiv => "Sdiv",
+            Rem => "Rem",
+            Srem => "Srem",
+            ShiftRight => "ShiftRight",
+            SShiftRight => "SShiftRight",
+            ShiftLeft => "ShiftLeft",
+            Mul => "Mul",
+        }
+    }
+    static ALIASES: &[(&str, IntBinaryOp)] = &[
         ("shl", ShiftLeft),
         ("shr", ShiftRight),
         ("sshr", SShiftRight),
     ];
-    lookup_op(TABLE, name, "IntBinaryOp")
+    lookup_op(VARIANTS, canonical, ALIASES, name, "IntBinaryOp")
 }
 
 fn parse_bool_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
-    use strider_ir::IntBinaryOp::*;
-    static TABLE: &[(&str, strider_ir::IntBinaryOp)] = &[("And", And), ("Or", Or), ("Xor", Xor)];
-    lookup_op(TABLE, name, "boolean binary op")
+    use strider_ir::IntBinaryOp::{And, Or, Xor};
+    static VARIANTS: &[strider_ir::IntBinaryOp] = &[And, Or, Xor];
+    fn canonical(op: strider_ir::IntBinaryOp) -> &'static str {
+        use strider_ir::IntBinaryOp::{And, Or, Xor};
+        // Bool ops are a curated subset of IntBinaryOp; the full canonical
+        // SSoT lives in `parse_int_binary_op`.  Unreachable for the others.
+        match op {
+            And => "And",
+            Or => "Or",
+            Xor => "Xor",
+            other => unreachable!("non-boolean IntBinaryOp in bool table: {other:?}"),
+        }
+    }
+    static ALIASES: &[(&str, strider_ir::IntBinaryOp)] = &[];
+    lookup_op(VARIANTS, canonical, ALIASES, name, "boolean binary op")
 }
 
 fn parse_float_binary_op(name: &str) -> PyResult<strider_ir::FloatBinaryOp> {
-    use strider_ir::FloatBinaryOp::*;
-    static TABLE: &[(&str, strider_ir::FloatBinaryOp)] =
-        &[("Add", Add), ("Mul", Mul), ("Div", Div)];
-    lookup_op(TABLE, name, "FloatBinaryOp")
+    use strider_ir::FloatBinaryOp::{self, *};
+    static VARIANTS: &[FloatBinaryOp] = &[Add, Mul, Div];
+    // Exhaustive: a new `FloatBinaryOp` variant fails to compile here.
+    fn canonical(op: FloatBinaryOp) -> &'static str {
+        use strider_ir::FloatBinaryOp::*;
+        match op {
+            Add => "Add",
+            Mul => "Mul",
+            Div => "Div",
+        }
+    }
+    static ALIASES: &[(&str, FloatBinaryOp)] = &[];
+    lookup_op(VARIANTS, canonical, ALIASES, name, "FloatBinaryOp")
+}
+
+// ── pat-fn thunk macro ───────────────────────────────────────────────────
+//
+// Every `add`/`int_eq`/`bool_and`/`float_add`/`float_neg`/`truncate`-style
+// builder is a one-line thunk: a `#[pyfunction]` that wraps its operands in
+// one `PatRepr` variant.  The only per-builder variation is the operand
+// arity (binary `(l, r)` vs unary `(operand)`), the `PatRepr` variant
+// constructor, the embedded op value, and (for `and_` / `or_`) an explicit
+// Python name.  `pat_fn!` collapses all six former per-family macros into a
+// single arity-parameterised arm set.
+macro_rules! pat_fn {
+    (binary $name:ident, $repr:ident, $op:expr, $doc:literal) => {
+        #[doc = $doc]
+        #[pyfunction]
+        pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
+            PyPat::from_repr(PatRepr::$repr($op, l, r))
+        }
+    };
+    (binary $name:ident = $py:literal, $repr:ident, $op:expr, $doc:literal) => {
+        #[doc = $doc]
+        #[pyfunction(name = $py)]
+        pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
+            PyPat::from_repr(PatRepr::$repr($op, l, r))
+        }
+    };
+    (unary $name:ident, $repr:ident, $op:expr, $doc:literal) => {
+        #[doc = $doc]
+        #[pyfunction]
+        pub fn $name(operand: Py<PyAny>) -> PyPat {
+            PyPat::from_repr(PatRepr::$repr($op, operand))
+        }
+    };
 }
 
 // ── Integer binary ops ───────────────────────────────────────────────────
 
-macro_rules! int_binop {
-    ($name:ident, $py:literal, $variant:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[pyfunction(name = $py)]
-        pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-            PyPat::from_repr(PatRepr::IntBinary(strider_ir::IntBinaryOp::$variant, l, r))
-        }
-    };
-    ($name:ident, $variant:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[pyfunction]
-        pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-            PyPat::from_repr(PatRepr::IntBinary(strider_ir::IntBinaryOp::$variant, l, r))
-        }
-    };
-}
-
-int_binop!(
-    add,
-    Add,
+pat_fn!(binary
+    add, IntBinary, strider_ir::IntBinaryOp::Add,
     "Pattern: `IntBinaryOp::Add` (`a + b`). Commutative."
 );
-int_binop!(
-    mul,
-    Mul,
+pat_fn!(binary
+    mul, IntBinary, strider_ir::IntBinaryOp::Mul,
     "Pattern: `IntBinaryOp::Mul` (`a * b`). Commutative."
 );
-int_binop!(div, Div, "Pattern: `IntBinaryOp::Div` (unsigned `a / b`).");
-int_binop!(sdiv, Sdiv, "Pattern: `IntBinaryOp::Sdiv` (signed `a / b`).");
-int_binop!(rem, Rem, "Pattern: `IntBinaryOp::Rem` (unsigned `a % b`).");
-int_binop!(srem, Srem, "Pattern: `IntBinaryOp::Srem` (signed `a % b`).");
-int_binop!(
-    shl,
-    ShiftLeft,
+pat_fn!(binary div, IntBinary, strider_ir::IntBinaryOp::Div,
+    "Pattern: `IntBinaryOp::Div` (unsigned `a / b`).");
+pat_fn!(binary sdiv, IntBinary, strider_ir::IntBinaryOp::Sdiv,
+    "Pattern: `IntBinaryOp::Sdiv` (signed `a / b`).");
+pat_fn!(binary rem, IntBinary, strider_ir::IntBinaryOp::Rem,
+    "Pattern: `IntBinaryOp::Rem` (unsigned `a % b`).");
+pat_fn!(binary srem, IntBinary, strider_ir::IntBinaryOp::Srem,
+    "Pattern: `IntBinaryOp::Srem` (signed `a % b`).");
+pat_fn!(binary
+    shl, IntBinary, strider_ir::IntBinaryOp::ShiftLeft,
     "Pattern: `IntBinaryOp::ShiftLeft` (`a << b`)."
 );
-int_binop!(
-    shr,
-    ShiftRight,
+pat_fn!(binary
+    shr, IntBinary, strider_ir::IntBinaryOp::ShiftRight,
     "Pattern: `IntBinaryOp::ShiftRight` (`a >> b`)."
 );
-int_binop!(
-    sshr,
-    SShiftRight,
+pat_fn!(binary
+    sshr, IntBinary, strider_ir::IntBinaryOp::SShiftRight,
     "Pattern: `IntBinaryOp::SShiftRight` (arithmetic `a >> b`)."
 );
-int_binop!(
-    and_,
-    "and_",
-    And,
+pat_fn!(binary
+    and_ = "and_", IntBinary, strider_ir::IntBinaryOp::And,
     "Pattern: `IntBinaryOp::And` (`a & b`). Commutative."
 );
-int_binop!(
-    or_,
-    "or_",
-    Or,
+pat_fn!(binary
+    or_ = "or_", IntBinary, strider_ir::IntBinaryOp::Or,
     "Pattern: `IntBinaryOp::Or` (`a | b`). Commutative."
 );
-int_binop!(
-    xor,
-    Xor,
+pat_fn!(binary
+    xor, IntBinary, strider_ir::IntBinaryOp::Xor,
     "Pattern: `IntBinaryOp::Xor` (`a ^ b`). Commutative."
 );
 
@@ -1759,44 +1770,28 @@ pub fn sub(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
 
 // ── Integer comparisons ──────────────────────────────────────────────────
 
-macro_rules! int_cmpop {
-    ($name:ident, $variant:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[pyfunction]
-        pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-            PyPat::from_repr(PatRepr::IntCmp(strider_ir::IntCmpOp::$variant, l, r))
-        }
-    };
-}
-
-int_cmpop!(
-    int_eq,
-    Equal,
+pat_fn!(binary
+    int_eq, IntCmp, strider_ir::IntCmpOp::Equal,
     "Pattern: `IntCmpOp::Equal` (`a == b`). Commutative."
 );
-int_cmpop!(
-    int_lt,
-    Less,
+pat_fn!(binary
+    int_lt, IntCmp, strider_ir::IntCmpOp::Less,
     "Pattern: `IntCmpOp::Less` (unsigned `a < b`)."
 );
-int_cmpop!(
-    int_slt,
-    Sless,
+pat_fn!(binary
+    int_slt, IntCmp, strider_ir::IntCmpOp::Sless,
     "Pattern: `IntCmpOp::Sless` (signed `a < b`)."
 );
-int_cmpop!(
-    int_carry,
-    Carry,
+pat_fn!(binary
+    int_carry, IntCmp, strider_ir::IntCmpOp::Carry,
     "Pattern: `IntCmpOp::Carry` (unsigned add carry-out). Commutative."
 );
-int_cmpop!(
-    int_scarry,
-    Scarry,
+pat_fn!(binary
+    int_scarry, IntCmp, strider_ir::IntCmpOp::Scarry,
     "Pattern: `IntCmpOp::Scarry` (signed add overflow). Commutative."
 );
-int_cmpop!(
-    int_sborrow,
-    Sborrow,
+pat_fn!(binary
+    int_sborrow, IntCmp, strider_ir::IntCmpOp::Sborrow,
     "Pattern: `IntCmpOp::Sborrow` (signed subtract overflow)."
 );
 
@@ -1859,29 +1854,16 @@ pub fn lzcount(operand: Py<PyAny>) -> PyPat {
 
 // ── Bool ops ─────────────────────────────────────────────────────────────
 
-macro_rules! bool_binop {
-    ($name:ident, $variant:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[pyfunction]
-        pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-            PyPat::from_repr(PatRepr::BoolBinary(strider_ir::IntBinaryOp::$variant, l, r))
-        }
-    };
-}
-
-bool_binop!(
-    bool_and,
-    And,
+pat_fn!(binary
+    bool_and, BoolBinary, strider_ir::IntBinaryOp::And,
     "Pattern: boolean `a && b` (`IntBinaryOp::And` at `I1`). Commutative."
 );
-bool_binop!(
-    bool_or,
-    Or,
+pat_fn!(binary
+    bool_or, BoolBinary, strider_ir::IntBinaryOp::Or,
     "Pattern: boolean `a || b` (`IntBinaryOp::Or` at `I1`). Commutative."
 );
-bool_binop!(
-    bool_xor,
-    Xor,
+pat_fn!(binary
+    bool_xor, BoolBinary, strider_ir::IntBinaryOp::Xor,
     "Pattern: boolean `a ^ b` (`IntBinaryOp::Xor` at `I1`). Commutative."
 );
 
@@ -1893,31 +1875,16 @@ pub fn bool_not(operand: Py<PyAny>) -> PyPat {
 
 // ── Float binary / unary / cmp ───────────────────────────────────────────
 
-macro_rules! float_binop {
-    ($name:ident, $variant:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[pyfunction]
-        pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-            PyPat::from_repr(PatRepr::FloatBinary(
-                strider_ir::FloatBinaryOp::$variant,
-                l,
-                r,
-            ))
-        }
-    };
-}
-
-float_binop!(
-    float_add,
-    Add,
+pat_fn!(binary
+    float_add, FloatBinary, strider_ir::FloatBinaryOp::Add,
     "Pattern: `FloatBinaryOp::Add` (`a + b`). Commutative."
 );
-float_binop!(
-    float_mul,
-    Mul,
+pat_fn!(binary
+    float_mul, FloatBinary, strider_ir::FloatBinaryOp::Mul,
     "Pattern: `FloatBinaryOp::Mul` (`a * b`). Commutative."
 );
-float_binop!(float_div, Div, "Pattern: `FloatBinaryOp::Div` (`a / b`).");
+pat_fn!(binary float_div, FloatBinary, strider_ir::FloatBinaryOp::Div,
+    "Pattern: `FloatBinaryOp::Div` (`a / b`).");
 
 /// Pattern: float subtraction `a - b` (lifter-canonical `FloatAdd(a, Neg(b))`).
 #[pyfunction]
@@ -1925,36 +1892,24 @@ pub fn float_sub(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
     PyPat::from_repr(PatRepr::FloatSub(l, r))
 }
 
-macro_rules! float_unop {
-    ($name:ident, $variant:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[pyfunction]
-        pub fn $name(operand: Py<PyAny>) -> PyPat {
-            PyPat::from_repr(PatRepr::FloatUnary(FloatUnaryKind::$variant, operand))
-        }
-    };
-}
-
-float_unop!(float_neg, Neg, "Pattern: `FloatUnaryOp::Neg` (`-x`).");
-float_unop!(float_abs, Abs, "Pattern: `FloatUnaryOp::Abs` (`fabs(x)`).");
-float_unop!(
-    float_sqrt,
-    Sqrt,
+pat_fn!(unary float_neg, FloatUnary, FloatUnaryKind::Neg,
+    "Pattern: `FloatUnaryOp::Neg` (`-x`).");
+pat_fn!(unary float_abs, FloatUnary, FloatUnaryKind::Abs,
+    "Pattern: `FloatUnaryOp::Abs` (`fabs(x)`).");
+pat_fn!(unary
+    float_sqrt, FloatUnary, FloatUnaryKind::Sqrt,
     "Pattern: `FloatUnaryOp::Sqrt` (`sqrt(x)`)."
 );
-float_unop!(
-    float_ceil,
-    Ceil,
+pat_fn!(unary
+    float_ceil, FloatUnary, FloatUnaryKind::Ceil,
     "Pattern: `FloatUnaryOp::Ceil` (`ceil(x)`)."
 );
-float_unop!(
-    float_floor,
-    Floor,
+pat_fn!(unary
+    float_floor, FloatUnary, FloatUnaryKind::Floor,
     "Pattern: `FloatUnaryOp::Floor` (`floor(x)`)."
 );
-float_unop!(
-    float_round,
-    Round,
+pat_fn!(unary
+    float_round, FloatUnary, FloatUnaryKind::Round,
     "Pattern: `FloatUnaryOp::Round` (round-to-nearest-even)."
 );
 
@@ -1990,48 +1945,32 @@ pub fn float_le(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
 
 // ── Conversions / casts ──────────────────────────────────────────────────
 
-macro_rules! cast_fn {
-    ($name:ident, $variant:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[pyfunction]
-        pub fn $name(operand: Py<PyAny>) -> PyPat {
-            PyPat::from_repr(PatRepr::Cast(CastKind::$variant, operand))
-        }
-    };
-}
-
-cast_fn!(
-    int_to_float,
-    IntToFloat,
+pat_fn!(unary
+    int_to_float, Cast, CastKind::IntToFloat,
     "Pattern: `IntToFloat` — int→float conversion."
 );
-cast_fn!(
-    float_to_int,
-    FloatToInt,
+pat_fn!(unary
+    float_to_int, Cast, CastKind::FloatToInt,
     "Pattern: `FloatToInt` — float→int conversion."
 );
-cast_fn!(
-    float_to_float,
-    FloatToFloat,
+pat_fn!(unary
+    float_to_float, Cast, CastKind::FloatToFloat,
     "Pattern: `FloatToFloat` — float→float re-width."
 );
-cast_fn!(
-    int_bits_to_float,
-    IntBitsToFloat,
+pat_fn!(unary
+    int_bits_to_float, Cast, CastKind::IntBitsToFloat,
     "Pattern: `IntBitsToFloat` — reinterpret int bits."
 );
-cast_fn!(
-    float_bits_to_int,
-    FloatBitsToInt,
+pat_fn!(unary
+    float_bits_to_int, Cast, CastKind::FloatBitsToInt,
     "Pattern: `FloatBitsToInt` — reinterpret float bits."
 );
-cast_fn!(
-    truncate,
-    Truncate,
+pat_fn!(unary
+    truncate, Cast, CastKind::Truncate,
     "Pattern: `Truncate` — narrow an integer."
 );
-cast_fn!(zero_extend, ZeroExtend, "Pattern: `Extend(ZeroExtend)`.");
-cast_fn!(sign_extend, SignExtend, "Pattern: `Extend(SignExtend)`.");
+pat_fn!(unary zero_extend, Cast, CastKind::ZeroExtend, "Pattern: `Extend(ZeroExtend)`.");
+pat_fn!(unary sign_extend, Cast, CastKind::SignExtend, "Pattern: `Extend(SignExtend)`.");
 
 /// `extend(op, operand)` where `op` is "zero" / "zero_extend" / "sign" /
 /// "sign_extend".
@@ -2367,7 +2306,7 @@ macro_rules! node_builder {
     };
 
     // ── per-flavor: the nestable-compile + build_pattern_py methods ─────
-    (@flavor value $core:path) => {
+    (@flavor value $py_name:literal $core:path) => {
         /// Compile as a value operand (`MatchPat`), honouring `.when()`.
         fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
             let b = self.core_builder(py)?;
@@ -2382,7 +2321,7 @@ macro_rules! node_builder {
             Ok(self.compile_value(py)?.into_pattern())
         }
     };
-    (@flavor mem $core:path) => {
+    (@flavor mem $py_name:literal $core:path) => {
         /// Compile as a memory-token producer for a `mem_in` slot.
         fn compile_mem(&self, py: Python<'_>) -> PyResult<DynMem> {
             let b = self.core_builder(py)?;
@@ -2394,7 +2333,7 @@ macro_rules! node_builder {
             Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
         }
     };
-    (@flavor node $core:path) => {
+    (@flavor node $py_name:literal $core:path) => {
         fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
             let pat = self.core_builder(py)?.build();
             Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
@@ -2402,14 +2341,15 @@ macro_rules! node_builder {
     };
     // `value_err` — node-rooted build, but exposes a `compile_value` that
     // rejects value nesting (the core `*Pat` only offers `.build()`).
-    (@flavor value_err $core:path) => {
+    (@flavor value_err $py_name:literal $core:path) => {
         /// Value nesting isn't supported for this builder (the core `*Pat`
         /// only offers a node-rooted `.build()`).
         fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
             let _ = py;
-            Err(into_strider_err(anyhow::anyhow!(
-                "phi() cannot be nested as a value operand"
-            )))
+            Err(into_strider_err(anyhow::anyhow!(concat!(
+                $py_name,
+                " cannot be nested as a value operand"
+            ))))
         }
 
         fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
@@ -2458,7 +2398,7 @@ macro_rules! node_builder {
                 Ok(b)
             }
 
-            node_builder!(@flavor $root $core);
+            node_builder!(@flavor $root $py_name $core);
         }
 
         node_builder!(@setters $ty [] $($field)*);
@@ -2484,7 +2424,7 @@ node_builder! {
         { mem mem_in: mem_in
             = "Constrain the load's memory predecessor (a memory-producing sub-pattern)." },
         { scalar bit_width(u32 => u32): bit_width = "Filter loads by value width in bits." },
-        { scalar stack_offset(i64 => i64): stack_offset
+        { scalar stack_offset(i128 => i128): stack_offset
             = "Match only loads whose address decomposes to exactly `sp + k`." },
         { flag stack_only: stack_only
             = "Reject matches where the SP-relative offset is unknown." },
@@ -2519,7 +2459,7 @@ node_builder! {
             = "Restrict the match to a specific memory space." },
         { mem mem_in: mem_in = "Constrain the store's memory predecessor." },
         { scalar bit_width(u32 => u32): bit_width = "Filter stores by data width in bits." },
-        { scalar stack_offset(i64 => i64): stack_offset
+        { scalar stack_offset(i128 => i128): stack_offset
             = "Match only stores whose address decomposes to exactly `sp + k`." },
         { flag stack_only: stack_only
             = "Reject matches where the SP-relative offset is unknown." },
@@ -2920,7 +2860,7 @@ impl PyFunctionArgPat {
     fn source_stack(
         slf: PyRef<'_, Self>,
         space: crate::sleigh::PyVnSpace,
-        offset: i64,
+        offset: i128,
     ) -> PyRef<'_, Self> {
         slf.source
             .replace(Some(strider_ir::node::FunctionArgSource::Stack {
@@ -2963,7 +2903,7 @@ pub fn function_arg_reg(vn: crate::sleigh::PyVn) -> PyFunctionArgPat {
 
 /// Match a `FunctionArg` whose source is a specific stack slot.
 #[pyfunction]
-pub fn function_arg_stack(space: crate::sleigh::PyVnSpace, offset: i64) -> PyFunctionArgPat {
+pub fn function_arg_stack(space: crate::sleigh::PyVnSpace, offset: i128) -> PyFunctionArgPat {
     let b = PyFunctionArgPat::new();
     b.source
         .replace(Some(strider_ir::node::FunctionArgSource::Stack {

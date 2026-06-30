@@ -47,9 +47,8 @@
 //!   are integer ops at `I1`)
 
 mod builder;
-pub mod control_flow_view;
-pub use control_flow_view::{ControlFlowView, control_dominators, dominates};
-pub use strider_target::CallDescriptor;
+mod control_flow_view;
+pub use control_flow_view::{control_dominators, dominates};
 pub mod error;
 mod function;
 pub use function::{EditFunction, Function, FunctionState};
@@ -60,21 +59,19 @@ pub use graph::Inputs;
 mod node_signature;
 mod region;
 pub use ::read_only_memory::ReadOnlyMemory;
+pub mod const_value;
 pub mod validate;
 mod viewer;
 pub mod walk;
-pub mod wide_const;
 
+pub use crate::const_value::{ConstId, ConstValue};
 pub use crate::error::Result;
-pub use builder::FunctionBuilder;
-pub use builder::IRBuilder;
-pub use builder::IRBuilderExt;
+pub use builder::{FunctionBuilder, IRBuilder, IRBuilderExt};
 pub use node::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntPayload,
-    IntUnaryOp, VnTypeExt,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, VnTypeExt,
 };
 pub use region::RegionId;
-pub use viewer::{ConstValue, IRViewer, IRWalker};
+pub use viewer::{IRViewer, IRWalker};
 
 pub type Value = node::ValueId;
 pub type ValueType = node::ValueType;

@@ -10,8 +10,8 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, PostOptimizer};
-use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
+use crate::pipeline::PostOptimizer;
+use crate::sp_expr::{SpAliasCfg, SpExpr};
 
 #[cfg(test)]
 mod tests;
@@ -45,8 +45,7 @@ fn collect_stack_args(
     function: &strider_ir::Function,
     call_id: NodeId,
     stack_args: strider_target::StackArgs,
-    sp_memo: &mut SpExprMemo,
-    alias_mode: crate::AliasMode,
+    alias_cfg: &mut SpAliasCfg<'_>,
 ) -> Vec<ValueId> {
     // Call inputs: [control, memory, target, sp, ...args]; slots 1 (memory)
     // and 3 (sp) are guaranteed by the validated Call structural invariant.
@@ -59,18 +58,15 @@ fn collect_stack_args(
     // Origin: the call-time SP, decomposed to an entry-SP-relative offset so a
     // slot's absolute (entry-relative) probe offset is `call_sp_off +
     // offset_of(slot)`.  A non-decomposable SP input (e.g. a phi-SP) yields no
-    // args.
+    // args.  (`alias_cfg` is call-blocking: a `Call` on the chain clobbers the
+    // outgoing-args frame, distinct SP bases stay conservative.)
     let Some(SpExpr {
         base,
         offset: call_sp_off,
-    }) = SpDecomposer::new(function, sp_memo).decompose(sp_value)
+    }) = alias_cfg.decompose(function, sp_value)
     else {
         return Vec::new();
     };
-
-    // A Call on the chain clobbers the outgoing-args frame (`call_clobbers:
-    // true`); stay conservative on distinct SP bases.
-    let mut alias_cfg = SpAliasCfg::call_blocking(sp_memo, alias_mode);
 
     let mut args = Vec::new();
     let mut cursor = 0usize;
@@ -89,31 +85,12 @@ fn collect_stack_args(
         if store.store_offset != slot_off {
             break;
         }
-        args.push(store.data);
+        args.push(store.data(function));
         // A store wider than one slot is one argument spanning several slots;
         // advance the cursor past every slot it covers.
-        cursor += stack_args.slots_spanned(store.size);
+        cursor += stack_args.slots_spanned(store.size(function));
     }
     args
-}
-
-/// Collects stack-passed arguments for one Call node and appends the
-/// discovered data values as additional Call inputs (in positional order).
-fn try_collect_stack_args(
-    ctx: &mut crate::EditFunction<'_>,
-    call_id: NodeId,
-    stack_args: strider_target::StackArgs,
-    sp_memo: &mut SpExprMemo,
-    alias_mode: crate::AliasMode,
-) -> Result<OptimizationResult> {
-    let args = collect_stack_args(ctx.function(), call_id, stack_args, sp_memo, alias_mode);
-    if args.is_empty() {
-        return Ok(OptimizationResult::NoChange);
-    }
-    for data in &args {
-        ctx.add_node_input(call_id, *data)?;
-    }
-    Ok(OptimizationResult::Changed)
 }
 
 /// Walks backward from each `Call`'s memory input (via the shared memory-SSA
@@ -137,28 +114,29 @@ impl PostOptimizer for CallStackArgCollect {
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
         let alias_mode = opt_ctx.options.alias_mode;
-        // SSoT: derive the default stack-arg formula on-demand from the
-        // function's own CC.  `None` means the convention passes no arguments
-        // on the stack.
-        let default_stack_args = ctx.function().default_cc().positional_arg_layout().stack;
-        // Collect the reachable `Call` nodes via a plain pre-order walk.
         // Each call is processed independently below (no cross-call data
-        // dependency), so the owned `Vec` just lets the immutable walk borrow
-        // end before the per-call mutation loop takes `ctx` mutably.
-        let calls: Vec<NodeId> = ctx.walk_kind(|k| matches!(k, NodeKind::Call)).collect();
+        // dependency, detection order irrelevant), so iterate the cached live
+        // set directly — no graph walk — like the sibling post-passes. The
+        // owned `Vec` lets the immutable borrow end before the per-call
+        // mutation loop takes `ctx` mutably.
+        let calls: Vec<NodeId> = ctx.live_of_kind(|k| matches!(k, NodeKind::Call)).collect();
+        // Build the SP-alias context once for the whole pass: it owns the shared
+        // decompose memo and is reused across every call site.
+        let mut alias_cfg = SpAliasCfg::call_blocking(&mut opt_ctx.sp_memo, alias_mode);
         for call_id in calls {
-            // Per-call override (e.g. a varargs call site) wins over the
-            // convention default; when both are absent the call passes no
-            // stack args and is skipped.
-            let override_stack_args = ctx.function().call_stack_args_override(call_id);
-            let Some(stack_args) = override_stack_args.or(default_stack_args) else {
+            // The call's effective stack-arg layout: a per-call CC override (a
+            // varargs site) if recorded, else the function-default CC.  `None`
+            // means the convention passes no stack args, so skip.
+            let Some(stack_args) = ctx.function().get_cc(call_id).stack_args else {
                 continue;
             };
-            // The per-call collector reports whether it appended inputs; as a
-            // single-shot post-pass we don't feed that back into a loop, so the
-            // result is discarded.
-            let _ =
-                try_collect_stack_args(ctx, call_id, stack_args, &mut opt_ctx.sp_memo, alias_mode)?;
+            // Append each discovered stack-arg value as an extra Call input
+            // (positional order); the loop is a no-op when the call passes none.
+            // Single-shot post-pass, so we don't track a changed/unchanged result.
+            let args = collect_stack_args(ctx.function(), call_id, stack_args, &mut alias_cfg);
+            for arg_value in &args {
+                ctx.add_node_input(call_id, *arg_value)?;
+            }
         }
         Ok(())
     }

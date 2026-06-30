@@ -21,7 +21,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let space = crate::lift::pcode_util::decode_space_id(insn)?;
         let addr = self.read_input(insn, 1)?;
         let data = self.read_input(insn, 2)?;
-        self.builder.build_store(addr, data, space)?;
-        Ok(())
+        self.builder.build_store(addr, data, space)
     }
 }

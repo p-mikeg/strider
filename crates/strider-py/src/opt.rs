@@ -273,7 +273,7 @@ impl PyOptimizerPipeline {
     /// `FunctionArgDetect`, `CallStackArgCollect`) are rejected here — register
     /// them with `add_post` instead.  (`IndirectBranchClassify` is also a
     /// post-pass but is appended by the orchestrator, not user-registerable.)
-    fn add(&self, pass_obj: PyOptPass<'_>) -> PyResult<()> {
+    fn add(&self, pass_obj: PyOptPass) -> PyResult<()> {
         let erased = pass_obj.into_erased()?;
         let mut state = self.lock_state()?;
         state.passes.push(erased);
@@ -281,7 +281,7 @@ impl PyOptimizerPipeline {
     }
 
     /// Append a post-pass — run once after the fixed-point loop converges.
-    fn add_post(&self, pass_obj: PyOptPass<'_>) -> PyResult<()> {
+    fn add_post(&self, pass_obj: PyOptPass) -> PyResult<()> {
         let mut state = self.lock_state()?;
         state.post_passes.push(pass_obj.into_erased_post());
         Ok(())
@@ -354,93 +354,27 @@ pure_pass_class!("IfCondInversion" => PyIfCondInversion,
     "Rewrites `If(BitNot(C)){A}{B}` → `If(C){B}{A}` so patterns match the \
      canonical, un-negated condition shape.");
 
-// ── CC/arch-aware passes ──────────────────────────────────────────────────
+// ── Formerly CC/arch-aware passes ─────────────────────────────────────────
 //
-// Each takes (sleigh, cc) — or (sleigh, cc, arch) — at construction
-// time, builds a strider_target::BuiltCallingConvention against the
-// Sleigh's register table, and stores the concrete pre-configured
-// pass.
-//
-// `cc_aware_pass_class!` collapses the 17-line boilerplate that the
-// (sleigh, cc) construction shape would otherwise repeat verbatim for
-// every CC-aware pass.  The sibling `pure_pass_class!`
-// macro above covers the zero-arg pass shape.  A second arm handles
-// CC + extra-arg passes (e.g. LoadForward's `arch` param): the extra
-// ctor parameters are accepted (so the Python-visible signature is
-// preserved) but ignored, exactly like `(sleigh, cc)`.
+// These four passes once took `(sleigh, cc[, arch])` at construction, but
+// every argument was discarded: the calling convention is read from the
+// function under analysis (`Function.default_cc`) at run time, so the
+// passes carry no per-instance state.  They are now zero-sized, no-arg
+// classes exactly like the pure passes above.
 
-macro_rules! cc_aware_pass_class {
-    // Base shape: `(sleigh, cc)` only.
-    ($pyname:literal => $rust:ident, $analyze:path, $doc:literal) => {
-        cc_aware_pass_class!($pyname => $rust, $analyze, $doc, );
-    };
-    // Extended shape: `(sleigh, cc, <extra ignored args…>)`.  Each
-    // `$extra: $ety` is accepted to preserve the Python ctor signature
-    // and then `let _`-discarded alongside `(py, sleigh, cc)`.
-    ($pyname:literal => $rust:ident, $analyze:path, $doc:literal,
-     $($extra:ident: $ety:ty),* $(,)?) => {
-        #[doc = $doc]
-        #[pyclass(name = $pyname, module = "strider.opt")]
-        pub struct $rust {
-            pub(crate) inner: $analyze,
-        }
-        #[pymethods]
-        impl $rust {
-            #[doc = concat!(
-                "`", $pyname, "(sleigh, cc)` — constructs the pass.  The \
-                 calling convention is read from the function under analysis \
-                 (`Function.default_cc`); the `(sleigh, cc)` arguments are \
-                 retained for backward compatibility but no longer configure \
-                 the pass."
-            )]
-            #[new]
-            fn new(
-                py: Python<'_>,
-                sleigh: Py<crate::sleigh::PySleigh>,
-                cc: crate::cc::PyCallingConvention,
-                $($extra: $ety,)*
-            ) -> PyResult<Self> {
-                let _ = (py, sleigh, cc);
-                $(let _ = $extra;)*
-                Ok(Self {
-                    // `$analyze` is a `:path`, so the path doubles as the
-                    // unit-struct value — these passes carry no data.
-                    inner: $analyze,
-                })
-            }
-        }
-    };
-}
-
-cc_aware_pass_class!(
-    "LoadForward" => PyLoadForward,
-    strider_orchestrator::opt::LoadForward,
-    "`LoadForward(sleigh, cc, arch)` — forwards values from stack-tagged \
-     `Store` nodes to subsequent same-offset `Load` nodes.",
-    arch: crate::arch::PySleighArch
-);
-
-cc_aware_pass_class!(
-    "StackOffsetDetect" => PyStackOffsetDetect,
-    strider_orchestrator::opt::StackOffsetDetect,
-    "`StackOffsetDetect(sleigh, cc)` — stamps every SP-relative \
-     Store/Load's concrete offset in `Function::stack_offsets`."
-);
-
-cc_aware_pass_class!(
-    "FunctionArgDetect" => PyFunctionArgDetect,
-    strider_orchestrator::opt::FunctionArgDetect,
-    "Post-pass that canonicalises register / stack argument reads into \
-     the `Function.arg_index_to_values` side-table (carrier `InitialVar` \
-     for register args, `Load` for stack args)."
-);
-
-cc_aware_pass_class!(
-    "CallStackArgCollect" => PyCallStackArgCollect,
-    strider_orchestrator::opt::CallStackArgCollect,
-    "Post-pass that wires positional stack arguments into `Call` nodes \
-     per the calling convention's stack-arg layout."
-);
+pure_pass_class!("LoadForward" => PyLoadForward,
+    "`LoadForward()` — forwards values from stack-tagged `Store` nodes to \
+     subsequent same-offset `Load` nodes.");
+pure_pass_class!("StackOffsetDetect" => PyStackOffsetDetect,
+    "`StackOffsetDetect()` — stamps every SP-relative Store/Load's concrete \
+     offset in `Function::stack_offsets`.");
+pure_pass_class!("FunctionArgDetect" => PyFunctionArgDetect,
+    "Post-pass that canonicalises register / stack argument reads into the \
+     `Function.arg_index_to_values` side-table (carrier `InitialVar` for \
+     register args, `Load` for stack args).");
+pure_pass_class!("CallStackArgCollect" => PyCallStackArgCollect,
+    "Post-pass that wires positional stack arguments into `Call` nodes per \
+     the calling convention's stack-arg layout.");
 
 /// `LoadReadOnly()` — folds constant-address loads against the rom
 /// supplied via `strider.run(..., rom=mem)`.  The rom flows through
@@ -474,7 +408,7 @@ impl PyLoadReadOnly {
 /// The stateful passes carry a `Bound<'py, _>` so `into_erased`
 /// can borrow and clone their inner state.
 #[derive(FromPyObject)]
-pub enum PyOptPass<'py> {
+pub enum PyOptPass {
     ConstantFold(PyConstantFold),
     KnownBits(PyKnownBits),
     PhiCollapse(PyPhiCollapse),
@@ -483,14 +417,14 @@ pub enum PyOptPass<'py> {
     CfgDetach(PyCfgDetach),
     FlagCmpCanonicalize(PyFlagCmpCanonicalize),
     IfCondInversion(PyIfCondInversion),
-    LoadForward(Bound<'py, PyLoadForward>),
-    FunctionArgDetect(Bound<'py, PyFunctionArgDetect>),
-    CallStackArgCollect(Bound<'py, PyCallStackArgCollect>),
+    LoadForward(PyLoadForward),
+    FunctionArgDetect(PyFunctionArgDetect),
+    CallStackArgCollect(PyCallStackArgCollect),
     LoadReadOnly(PyLoadReadOnly),
-    StackOffsetDetect(Bound<'py, PyStackOffsetDetect>),
+    StackOffsetDetect(PyStackOffsetDetect),
 }
 
-impl PyOptPass<'_> {
+impl PyOptPass {
     /// Erase a **fixed-point** pass into a `Box<dyn Optimizer>` for the
     /// fixed-point pass list.  The single-shot post-passes
     /// (`StackOffsetDetect`, `FunctionArgDetect`, `CallStackArgCollect`) are
@@ -512,7 +446,7 @@ impl PyOptPass<'_> {
             PyOptPass::IfCondInversion(_) => {
                 Box::new(strider_orchestrator::opt::IfCondInversion::new())
             }
-            PyOptPass::LoadForward(b) => Box::new(b.borrow().inner.clone()),
+            PyOptPass::LoadForward(_) => Box::new(strider_orchestrator::opt::LoadForward),
             PyOptPass::LoadReadOnly(_) => Box::new(strider_orchestrator::opt::LoadReadOnly),
             PyOptPass::FunctionArgDetect(_)
             | PyOptPass::CallStackArgCollect(_)
@@ -532,9 +466,15 @@ impl PyOptPass<'_> {
     /// [`OptAsPostPass`] so it runs once after convergence.
     fn into_erased_post(self) -> ErasedPostPass {
         match self {
-            PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
-            PyOptPass::CallStackArgCollect(b) => Box::new(b.borrow().inner.clone()),
-            PyOptPass::StackOffsetDetect(b) => Box::new(b.borrow().inner.clone()),
+            PyOptPass::FunctionArgDetect(_) => {
+                Box::new(strider_orchestrator::opt::FunctionArgDetect)
+            }
+            PyOptPass::CallStackArgCollect(_) => {
+                Box::new(strider_orchestrator::opt::CallStackArgCollect)
+            }
+            PyOptPass::StackOffsetDetect(_) => {
+                Box::new(strider_orchestrator::opt::StackOffsetDetect)
+            }
             // Any ordinary fixed-point pass added as a post-pass runs once and
             // discards its Change/NoChange (via the OptAsPostPass bridge).
             other => Box::new(OptAsPostPass(

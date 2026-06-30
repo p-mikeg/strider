@@ -1,7 +1,6 @@
 //! Pattern matcher over a lifted [`strider_ir::Function`].
 //!
-//! [`Matcher`] owns no per-match state; [`try_new`](Matcher::try_new)
-//! validates the function's post-build invariant once up front and
+//! [`Matcher`] owns no per-match state; [`new`](Matcher::new)
 //! caches a lazy `KindIndex` (built on first query) bucketing
 //! reachable IR nodes by `NodeKind` discriminant. A discriminant-rooted
 //! pattern iterates just the matching bucket; a kind-`Any` root falls
@@ -29,10 +28,8 @@ use std::mem::Discriminant;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
-use strider_ir::Function;
-use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::{Function, Graph, IRViewer, IRWalker};
 
 use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
@@ -46,8 +43,7 @@ fn root_kind_discriminant(pat: &Pattern, root: PatNodeId) -> Option<Discriminant
     pat.graph.node_weight(root).kind.discriminant()
 }
 
-/// Top-level matcher. Owns no per-match state; [`try_new`](Self::try_new)
-/// validates the function once up-front.
+/// Top-level matcher. Owns no per-match state.
 ///
 /// Caches a lazy `KindIndex` (built on first [`find_all`](Self::find_all) /
 /// [`find_first`](Self::find_first) query) that buckets reachable IR nodes by
@@ -85,25 +81,17 @@ impl KindIndex {
 }
 
 impl<'f> Matcher<'f> {
-    /// Validate the post-build invariant (`function.entry()` is set) and
-    /// return a matcher bound to the function.
+    /// Return a matcher bound to the function.
     ///
-    /// Only checks the entry-node post-build invariant up front, not
-    /// whole-graph validation — that's left to callers (the orchestrator
-    /// pipeline drives `validate::validate` separately and integration
-    /// tests for in-place editors deliberately work with partially-built
-    /// fixtures).
-    ///
-    /// # Errors
-    /// Returns an error if `function` has no entry node.
-    pub fn try_new(function: &'f Function) -> anyhow::Result<Self> {
-        let _entry = function
-            .entry()
-            .ok_or_else(|| anyhow::anyhow!("Function has no entry"))?;
-        Ok(Self {
+    /// Performs no whole-graph validation — that's left to callers (the
+    /// orchestrator pipeline drives `validate::validate` separately and
+    /// integration tests for in-place editors deliberately work with
+    /// partially-built fixtures).
+    pub fn new(function: &'f Function) -> Self {
+        Self {
             function,
             kind_index: OnceCell::new(),
-        })
+        }
     }
 
     /// Lazily build (or return the cached) `KindIndex` for the wrapped
@@ -111,14 +99,6 @@ impl<'f> Matcher<'f> {
     fn kind_index(&self) -> &KindIndex {
         self.kind_index
             .get_or_init(|| KindIndex::build(self.function))
-    }
-
-    /// Function-entry [`NodeId`] of the wrapped function.
-    #[allow(clippy::expect_used)]
-    pub fn entry(&self) -> NodeId {
-        self.function
-            .entry()
-            .expect("Matcher wraps a built function with an entry node (try_new invariant)")
     }
 
     /// Borrow of the [`Function`] this matcher operates over. The sole
@@ -221,20 +201,8 @@ impl<'f> Matcher<'f> {
     }
 
     fn try_at_node(&self, node: NodeId, pat: &Pattern, root: PatNodeId, out: &mut Vec<Match>) {
-        let outputs = self.function.node_outputs(node);
-        if outputs.is_empty() {
-            let mut bindings = Bindings::default();
-            if walk::try_match_node(self, pat, root, node, &mut bindings) {
-                out.push(Match::from_root(node, bindings));
-            }
-            return;
-        }
-        for &out_id in outputs {
-            let mut bindings = Bindings::default();
-            if walk::try_match(self, pat, root, out_id, &mut bindings) {
-                out.push(Match::from_root(node, bindings));
-                break;
-            }
+        if let Some(m) = self.try_match_at_node(node, pat, root) {
+            out.push(m);
         }
     }
 
@@ -398,22 +366,13 @@ impl FunctionArgHandle<'_> {
     /// Classify the carrier's source (register vs stack vs other).
     pub fn source(&self) -> ArgSource {
         match self.function.node_kind(self.node) {
-            NodeKind::InitialVar(vn) => ArgSource::Register(*vn),
+            NodeKind::InitialVar(id) => ArgSource::Register(self.function.initial_vn(*id)),
             NodeKind::Load(_) => ArgSource::Stack,
             _ => ArgSource::Other,
         }
     }
 }
 
-/// True when every capture in `m`'s bindings that also appears in any
-/// previously-collected match in `prefix` agrees with it.
-///
-/// Agreement is at the resolved-NODE level (the join's documented contract is
-/// "the same node"), so the same IR node captured as `Value(v)` by one pattern
-/// and `Node(producer(v))` by another still agrees — a raw `Binding`-variant
-/// compare would treat them as different and silently drop a valid tuple.  Two
-/// *value* captures are still compared at value granularity so distinct outputs
-/// of one multi-output node don't falsely agree.
 /// Deduplicate joined tuples by their capture binding signature.
 ///
 /// The signature is every capture bound anywhere in the tuple, resolved
@@ -449,6 +408,15 @@ fn dedup_on_shared_captures(acc: &mut Vec<Vec<Match>>, graph: &Graph) {
     });
 }
 
+/// True when every capture in `m`'s bindings that also appears in any
+/// previously-collected match in `prefix` agrees with it.
+///
+/// Agreement is at the resolved-NODE level (the join's documented contract is
+/// "the same node"), so the same IR node captured as `Value(v)` by one pattern
+/// and `Node(producer(v))` by another still agrees — a raw `Binding`-variant
+/// compare would treat them as different and silently drop a valid tuple.  Two
+/// *value* captures are still compared at value granularity so distinct outputs
+/// of one multi-output node don't falsely agree.
 fn prefix_agrees(prefix: &[Match], m: &Match, graph: &Graph) -> bool {
     for prev in prefix {
         for (cap, prev_binding) in prev.bindings.iter() {

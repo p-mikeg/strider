@@ -5,8 +5,9 @@
 //! store — to the appropriate per-opcode-family handler.  The handlers
 //! themselves live in the sibling by-family modules (`arithmetic`,
 //! `boolean`, `cast`, `float`, `integer`, `memory`, `misc`, `control`,
-//! `call`).  This module also holds the `OPCODE_TO_*` dispatch tables and
-//! the `lookup` helper for the trivial table-driven arms.
+//! `call`).  Every opcode hits exactly one direct `match` arm; the trivial
+//! integer / bool / float binary, comparison, unary, and extend families
+//! forward to a `process_*_op` builder call with the corresponding IR op.
 
 use anyhow::{Result, bail};
 use rsleigh::Opcode;
@@ -15,87 +16,6 @@ use strider_ir::{
 };
 
 use crate::lift::FunctionLifter;
-
-/// (Opcode, IntBinaryOp) dispatch table for the trivial arms that just
-/// forward to `process_int_binary_op`.
-static OPCODE_TO_INT_BINARY: &[(Opcode, IntBinaryOp)] = &[
-    (Opcode::IntAdd, IntBinaryOp::Add),
-    (Opcode::IntAnd, IntBinaryOp::And),
-    (Opcode::IntXor, IntBinaryOp::Xor),
-    (Opcode::IntOr, IntBinaryOp::Or),
-    (Opcode::IntDiv, IntBinaryOp::Div),
-    (Opcode::IntSdiv, IntBinaryOp::Sdiv),
-    (Opcode::IntMul, IntBinaryOp::Mul),
-    (Opcode::IntRight, IntBinaryOp::ShiftRight),
-    (Opcode::IntSright, IntBinaryOp::SShiftRight),
-    (Opcode::IntLeft, IntBinaryOp::ShiftLeft),
-    (Opcode::IntRem, IntBinaryOp::Rem),
-    (Opcode::IntSrem, IntBinaryOp::Srem),
-];
-
-/// (Opcode, IntCmpOp) dispatch table for the trivial arms that just
-/// forward to `process_int_cmp_op`.
-static OPCODE_TO_INT_CMP: &[(Opcode, IntCmpOp)] = &[
-    (Opcode::IntCarry, IntCmpOp::Carry),
-    (Opcode::IntEqual, IntCmpOp::Equal),
-    (Opcode::IntLess, IntCmpOp::Less),
-    (Opcode::IntSless, IntCmpOp::Sless),
-    (Opcode::IntScarry, IntCmpOp::Scarry),
-    (Opcode::IntSborrow, IntCmpOp::Sborrow),
-];
-
-/// (Opcode, IntUnaryOp) dispatch table.  Only `Int2Comp` (two's-complement
-/// negate, `-x`) remains here — rsleigh's `IntNeg` (bitwise complement
-/// `~x`) is lowered out-of-table to `Xor(x, all_ones)` via
-/// [`FunctionLifter::handle_int_neg_as_xor`] since the former BitNot unary-op was
-/// removed.  See `IntUnaryOp` doc-comment.
-static OPCODE_TO_INT_UNARY: &[(Opcode, IntUnaryOp)] = &[(Opcode::Int2Comp, IntUnaryOp::Neg)];
-
-/// (Opcode, ExtendOp) dispatch table for the trivial extend arms.
-static OPCODE_TO_EXTEND: &[(Opcode, ExtendOp)] = &[
-    (Opcode::IntZext, ExtendOp::ZeroExtend),
-    (Opcode::IntSext, ExtendOp::SignExtend),
-];
-
-/// (Opcode, IntBinaryOp) dispatch table for the boolean binary opcodes.
-/// Booleans are `I1`, so logical and/or/xor are integer and/or/xor at `I1`.
-static OPCODE_TO_BOOL_BINARY: &[(Opcode, IntBinaryOp)] = &[
-    (Opcode::BoolAnd, IntBinaryOp::And),
-    (Opcode::BoolOr, IntBinaryOp::Or),
-    (Opcode::BoolXor, IntBinaryOp::Xor),
-];
-
-// Note: `BoolNeg` (logical NOT of a 1-bit value) is handled out-of-table
-// by [`FunctionLifter::process_bool_unary_op`], which lowers it to
-// `Xor(x, IntConst(1)):I1` — the former BitNot unary-op no longer exists, so
-// a bool not is `Xor(_, all_ones)` at `I1`.
-
-/// (Opcode, FloatBinaryOp) dispatch table.
-static OPCODE_TO_FLOAT_BINARY: &[(Opcode, FloatBinaryOp)] = &[
-    (Opcode::FloatAdd, FloatBinaryOp::Add),
-    (Opcode::FloatMul, FloatBinaryOp::Mul),
-    (Opcode::FloatDiv, FloatBinaryOp::Div),
-];
-
-/// (Opcode, FloatUnaryOp) dispatch table.
-static OPCODE_TO_FLOAT_UNARY: &[(Opcode, FloatUnaryOp)] = &[
-    (Opcode::FloatNeg, FloatUnaryOp::Neg),
-    (Opcode::FloatAbs, FloatUnaryOp::Abs),
-    (Opcode::FloatSqrt, FloatUnaryOp::Sqrt),
-    (Opcode::FloatCeil, FloatUnaryOp::Ceil),
-    (Opcode::FloatFloor, FloatUnaryOp::Floor),
-    (Opcode::FloatRound, FloatUnaryOp::Round),
-];
-
-/// (Opcode, FloatCmpOp) dispatch table.
-static OPCODE_TO_FLOAT_CMP: &[(Opcode, FloatCmpOp)] = &[
-    (Opcode::FloatEqual, FloatCmpOp::Equal),
-    (Opcode::FloatLess, FloatCmpOp::Less),
-];
-
-fn lookup<T: Copy>(table: &[(Opcode, T)], op: Opcode) -> Option<T> {
-    table.iter().find(|(o, _)| *o == op).map(|(_, t)| *t)
-}
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// Translates a single p-code instruction `insn` from `region_id` into
@@ -115,14 +35,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     ) -> Result<()> {
         // Funnel: every IR node born from this pcode insn picks up the
         // parent machine-instruction address in its asm-fingerprint
-        // side-table.  The set_lift_addr(Some)/set_lift_addr(None)
-        // bracket is the funnel.  A closure API would force a `&mut
-        // self` plus a `&mut self.builder` split the borrow checker
-        // rejects, so we use open-call brackets instead.
+        // side-table (see `with_lift_addr`).
         let machine_addr = addr.machine_addr.addr;
-        self.builder.set_lift_addr(Some(machine_addr));
-        let res = self.process_insn_inner(region_id, insn, region_map);
-        self.builder.set_lift_addr(None);
+        let res = self.with_lift_addr(Some(machine_addr), |s| {
+            s.process_insn_inner(region_id, insn, region_map)
+        });
         // Attach the offending machine instruction's address + opcode to any
         // lift failure.  Width / shape errors raised deep in the IR builders
         // (e.g. an unsupported odd-byte varnode width via `int_for_byte_size`)
@@ -138,9 +55,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
     /// Single opcode-keyed dispatch.  Every p-code opcode hits exactly one
     /// arm: value-producing opcodes call their family handler, control /
-    /// call / store opcodes call theirs, and the trivial table-driven
-    /// families fall through the `other` arm.  An opcode the lifter does
-    /// not model bails.
+    /// call / store opcodes call theirs, and the trivial integer / bool /
+    /// float binary / comparison / unary / extend families forward to a
+    /// `process_*_op` builder call with the corresponding IR op.  An opcode
+    /// the lifter does not model bails.
     fn process_insn_inner(
         &mut self,
         region_id: strider_cfg::RegionId,
@@ -152,7 +70,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // through `region_map` (via `super::ir_region_of`).
         match insn.opcode {
             // ── Value-producing opcodes ──────────────────────────────────────
-            Opcode::Copy => lifter.handle_copy(insn)?,
+            // Cast: apply a data-type to the output varnode.  GHIDRA docs:
+            // "semantically equivalent to a COPY operation", so it shares the
+            // `Copy` handler verbatim (read input 0, write to the output vn).
+            Opcode::Copy | Opcode::Cast => lifter.handle_copy(insn)?,
             Opcode::IntSub => lifter.handle_int_sub(insn)?,
             Opcode::IntLessEqual => lifter.handle_int_less_equal(insn)?,
             Opcode::IntSlessEqual => lifter.handle_int_sless_equal(insn)?,
@@ -175,9 +96,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     insn.opcode
                 );
             }
-            // Cast: apply a data-type to the output varnode.  GHIDRA docs:
-            // "semantically equivalent to a COPY operation".
-            Opcode::Cast => lifter.handle_cast(insn)?,
             Opcode::FloatSub => lifter.handle_float_sub(insn)?,
             Opcode::FloatNotEqual => lifter.handle_float_not_equal(insn)?,
             Opcode::FloatLessEqual => lifter.handle_float_less_equal(insn)?,
@@ -204,7 +122,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
             // ── Control-flow / call / store opcodes ──────────────────────────
             Opcode::Nop => {}
-            Opcode::Branch => lifter.handle_branch(region_id, region_map)?,
+            Opcode::Branch => lifter.handle_branch()?,
             Opcode::CondBranch => lifter.handle_cond_branch(region_id, insn, region_map)?,
             Opcode::Store => lifter.handle_store(insn)?,
             // `Return` and `BranchIndirect` share a handler that emits a
@@ -233,33 +151,61 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // receives the intrinsic's result value.
             Opcode::CallOther => lifter.handle_call_other(insn)?,
 
-            // ── Trivial table-driven arms ────────────────────────────────────
+            // ── Trivial forwarding arms ──────────────────────────────────────
             // Integer / bool / float binary, comparison, unary, and extend
-            // ops that simply forward to a `process_*_op` builder call.
-            // Adding a new opcode in this family is a one-row edit to the
-            // corresponding table above.  An opcode matching none of the
-            // tables is genuinely unmodelled and bails.
-            other => {
-                if let Some(op) = lookup(OPCODE_TO_INT_BINARY, other) {
-                    lifter.process_int_binary_op(insn, op)?;
-                } else if let Some(op) = lookup(OPCODE_TO_INT_CMP, other) {
-                    lifter.process_int_cmp_op(insn, op)?;
-                } else if let Some(op) = lookup(OPCODE_TO_INT_UNARY, other) {
-                    lifter.process_int_unary_op(insn, op)?;
-                } else if let Some(op) = lookup(OPCODE_TO_EXTEND, other) {
-                    lifter.process_extend(insn, op)?;
-                } else if let Some(op) = lookup(OPCODE_TO_BOOL_BINARY, other) {
-                    lifter.process_bool_binary_op(insn, op)?;
-                } else if let Some(op) = lookup(OPCODE_TO_FLOAT_BINARY, other) {
-                    lifter.process_float_binary_op(insn, op)?;
-                } else if let Some(op) = lookup(OPCODE_TO_FLOAT_UNARY, other) {
-                    lifter.process_float_unary_op(insn, op)?;
-                } else if let Some(op) = lookup(OPCODE_TO_FLOAT_CMP, other) {
-                    lifter.process_float_cmp_op(insn, op)?;
-                } else {
-                    bail!("unimplemented p-code opcode {:?}", insn.opcode);
-                }
-            }
+            // ops that simply forward to a `process_*_op` builder call with
+            // the corresponding IR op.  Adding a new opcode in this family is
+            // a one-line match-arm edit.
+            //
+            // Integer binary:
+            Opcode::IntAdd => lifter.process_int_binary_op(insn, IntBinaryOp::Add)?,
+            Opcode::IntAnd => lifter.process_int_binary_op(insn, IntBinaryOp::And)?,
+            Opcode::IntXor => lifter.process_int_binary_op(insn, IntBinaryOp::Xor)?,
+            Opcode::IntOr => lifter.process_int_binary_op(insn, IntBinaryOp::Or)?,
+            Opcode::IntDiv => lifter.process_int_binary_op(insn, IntBinaryOp::Div)?,
+            Opcode::IntSdiv => lifter.process_int_binary_op(insn, IntBinaryOp::Sdiv)?,
+            Opcode::IntMul => lifter.process_int_binary_op(insn, IntBinaryOp::Mul)?,
+            Opcode::IntRight => lifter.process_int_binary_op(insn, IntBinaryOp::ShiftRight)?,
+            Opcode::IntSright => lifter.process_int_binary_op(insn, IntBinaryOp::SShiftRight)?,
+            Opcode::IntLeft => lifter.process_int_binary_op(insn, IntBinaryOp::ShiftLeft)?,
+            Opcode::IntRem => lifter.process_int_binary_op(insn, IntBinaryOp::Rem)?,
+            Opcode::IntSrem => lifter.process_int_binary_op(insn, IntBinaryOp::Srem)?,
+            // Integer comparison:
+            Opcode::IntCarry => lifter.process_int_cmp_op(insn, IntCmpOp::Carry)?,
+            Opcode::IntEqual => lifter.process_int_cmp_op(insn, IntCmpOp::Equal)?,
+            Opcode::IntLess => lifter.process_int_cmp_op(insn, IntCmpOp::Less)?,
+            Opcode::IntSless => lifter.process_int_cmp_op(insn, IntCmpOp::Sless)?,
+            Opcode::IntScarry => lifter.process_int_cmp_op(insn, IntCmpOp::Scarry)?,
+            Opcode::IntSborrow => lifter.process_int_cmp_op(insn, IntCmpOp::Sborrow)?,
+            // Integer unary: only `Int2Comp` (two's-complement negate, `-x`)
+            // — `IntNeg` (bitwise complement `~x`) is lowered above to
+            // `Xor(x, all_ones)` via `handle_int_neg_as_xor`.
+            Opcode::Int2Comp => lifter.process_int_unary_op(insn, IntUnaryOp::Neg)?,
+            // Integer extend:
+            Opcode::IntZext => lifter.process_extend(insn, ExtendOp::ZeroExtend)?,
+            Opcode::IntSext => lifter.process_extend(insn, ExtendOp::SignExtend)?,
+            // Boolean binary: booleans are `I1`, so logical and/or/xor are
+            // integer and/or/xor at `I1`.
+            Opcode::BoolAnd => lifter.process_bool_binary_op(insn, IntBinaryOp::And)?,
+            Opcode::BoolOr => lifter.process_bool_binary_op(insn, IntBinaryOp::Or)?,
+            Opcode::BoolXor => lifter.process_bool_binary_op(insn, IntBinaryOp::Xor)?,
+            // Float binary:
+            Opcode::FloatAdd => lifter.process_float_binary_op(insn, FloatBinaryOp::Add)?,
+            Opcode::FloatMul => lifter.process_float_binary_op(insn, FloatBinaryOp::Mul)?,
+            Opcode::FloatDiv => lifter.process_float_binary_op(insn, FloatBinaryOp::Div)?,
+            // Float unary:
+            Opcode::FloatNeg => lifter.process_float_unary_op(insn, FloatUnaryOp::Neg)?,
+            Opcode::FloatAbs => lifter.process_float_unary_op(insn, FloatUnaryOp::Abs)?,
+            Opcode::FloatSqrt => lifter.process_float_unary_op(insn, FloatUnaryOp::Sqrt)?,
+            Opcode::FloatCeil => lifter.process_float_unary_op(insn, FloatUnaryOp::Ceil)?,
+            Opcode::FloatFloor => lifter.process_float_unary_op(insn, FloatUnaryOp::Floor)?,
+            Opcode::FloatRound => lifter.process_float_unary_op(insn, FloatUnaryOp::Round)?,
+            // Float comparison:
+            Opcode::FloatEqual => lifter.process_float_cmp_op(insn, FloatCmpOp::Equal)?,
+            Opcode::FloatLess => lifter.process_float_cmp_op(insn, FloatCmpOp::Less)?,
+
+            // An opcode the lifter does not model bails.
+            _ => bail!("unimplemented p-code opcode {:?}", insn.opcode),
         }
         Ok(())
     }

@@ -7,11 +7,8 @@
 //! float ↔ integer conversions (`FloatInt2Float`, `FloatFloat2Float`,
 //! `FloatTrunc`).
 
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
-use strider_ir::VnTypeExt;
 use strider_ir::node::ValueType;
-use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, VnTypeExt};
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
@@ -29,6 +26,51 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.write_vn(vn, int_val)
     }
 
+    /// Shared envelope for two-input float ops: read inputs 0 and 1, take
+    /// the output varnode's float type, cast both operands to it, run
+    /// `build`, and bitcast-write the float result.  Mirrors the integer
+    /// `lift_int_unary` envelope; the float operand casts insert the
+    /// int→float bitcast (`IntBitsToFloat`) the strict builders require.
+    fn lift_float_binary(
+        &mut self,
+        insn: &rsleigh::Insn,
+        build: impl FnOnce(
+            &mut strider_ir::FunctionBuilder,
+            strider_ir::Value,
+            strider_ir::Value,
+            ValueType,
+        ) -> Result<strider_ir::Value>,
+    ) -> Result<()> {
+        let lhs = self.read_input(insn, 0)?;
+        let rhs = self.read_input(insn, 1)?;
+        let out_vn = require_output_vn(insn)?;
+        let float_ty = out_vn.float_type()?;
+        let lhs = self.builder.cast_to_float_if_needed(lhs, float_ty)?;
+        let rhs = self.builder.cast_to_float_if_needed(rhs, float_ty)?;
+        let result = build(&mut self.builder, lhs, rhs, float_ty)?;
+        self.write_float_to_vn(out_vn, result)
+    }
+
+    /// Shared envelope for single-input float ops: read input 0, take the
+    /// output varnode's float type, cast the operand to it, run `build`,
+    /// and bitcast-write the float result.
+    fn lift_float_unary(
+        &mut self,
+        insn: &rsleigh::Insn,
+        build: impl FnOnce(
+            &mut strider_ir::FunctionBuilder,
+            strider_ir::Value,
+            ValueType,
+        ) -> Result<strider_ir::Value>,
+    ) -> Result<()> {
+        let value = self.read_input(insn, 0)?;
+        let out_vn = require_output_vn(insn)?;
+        let float_ty = out_vn.float_type()?;
+        let value = self.builder.cast_to_float_if_needed(value, float_ty)?;
+        let result = build(&mut self.builder, value, float_ty)?;
+        self.write_float_to_vn(out_vn, result)
+    }
+
     /// Translates a float binary p-code instruction into an IR float binary node.
     ///
     /// Reads inputs via `read_vn` (may produce int or float values); the builder
@@ -38,14 +80,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: FloatBinaryOp,
     ) -> Result<()> {
-        let lhs = self.read_input(insn, 0)?;
-        let rhs = self.read_input(insn, 1)?;
-        let out_vn = require_output_vn(insn)?;
-        let float_ty = out_vn.float_type()?;
-        let lhs = self.builder.cast_to_float_if_needed(lhs, float_ty)?;
-        let rhs = self.builder.cast_to_float_if_needed(rhs, float_ty)?;
-        let result = self.builder.build_float_binary_op(lhs, rhs, op, float_ty)?;
-        self.write_float_to_vn(out_vn, result)
+        self.lift_float_binary(insn, |b, l, r, t| b.build_float_binary_op(l, r, op, t))
     }
 
     /// Translates a float unary p-code instruction into an IR float unary node.
@@ -54,12 +89,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: FloatUnaryOp,
     ) -> Result<()> {
-        let value = self.read_input(insn, 0)?;
-        let out_vn = require_output_vn(insn)?;
-        let float_ty = out_vn.float_type()?;
-        let value = self.builder.cast_to_float_if_needed(value, float_ty)?;
-        let result = self.builder.build_float_unary_op(value, op, float_ty)?;
-        self.write_float_to_vn(out_vn, result)
+        self.lift_float_unary(insn, |b, v, t| b.build_float_unary_op(v, op, t))
     }
 
     /// Translates a float comparison p-code instruction into an IR float cmp node.
@@ -92,7 +122,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     /// Builds the `Xor(FloatEqual(lhs, rhs), IntConst(1)):I1` shape shared
-    /// by `FloatNan` and `FloatNotEqual` and writes it to `out_vn`.
+    /// by `FloatNan` and `FloatNotEqual` and returns the I1 result.
     ///
     /// Both operands are cast to a common float type
     /// (via [`Self::cast_float_cmp_operands`]), compared with
@@ -105,14 +135,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         &mut self,
         lhs: strider_ir::Value,
         rhs: strider_ir::Value,
-        out_vn: &rsleigh::Vn,
-    ) -> Result<()> {
+    ) -> Result<strider_ir::Value> {
         let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
         let eq = self
             .builder
             .build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
-        let result = self.build_logical_not(eq)?;
-        self.write_vn(out_vn, result)
+        self.build_logical_not(eq)
     }
 
     pub(super) fn handle_float_nan(&mut self, insn: &rsleigh::Insn) -> Result<()> {
@@ -122,7 +150,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // `FloatCmpOp::NotEqual` is no longer a primitive (lowered at
         // lift to `Xor(FloatEqual, 1)` at `I1`), build the lowered shape
         // directly: `Xor(FloatEqual(input, input), 1):I1`.
-        self.build_float_eq_negated(value, value, out_vn)
+        let result = self.build_float_eq_negated(value, value)?;
+        self.write_vn(out_vn, result)
     }
 
     /// Lowers `FloatSub(a, b)` to `FloatAdd(a, FloatUnaryOp::Neg(b))`.
@@ -133,19 +162,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// `FloatSub` exactly.  Removes the `FloatBinaryOp::Sub` variant
     /// and unifies subtraction with addition for downstream patterns.
     pub(super) fn handle_float_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let lhs = self.read_input(insn, 0)?;
-        let rhs = self.read_input(insn, 1)?;
-        let out_vn = require_output_vn(insn)?;
-        let float_ty = out_vn.float_type()?;
-        let lhs = self.builder.cast_to_float_if_needed(lhs, float_ty)?;
-        let rhs = self.builder.cast_to_float_if_needed(rhs, float_ty)?;
-        let neg_rhs = self
-            .builder
-            .build_float_unary_op(rhs, FloatUnaryOp::Neg, float_ty)?;
-        let result =
-            self.builder
-                .build_float_binary_op(lhs, neg_rhs, FloatBinaryOp::Add, float_ty)?;
-        self.write_float_to_vn(out_vn, result)
+        self.lift_float_binary(insn, |b, l, r, t| {
+            let neg_r = b.build_float_unary_op(r, FloatUnaryOp::Neg, t)?;
+            b.build_float_binary_op(l, neg_r, FloatBinaryOp::Add, t)
+        })
     }
 
     /// Lowers `FloatNotEqual(a, b)` to `Xor(FloatEqual(a, b), IntConst(1)):I1`.
@@ -158,7 +178,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
-        self.build_float_eq_negated(lhs, rhs, out_vn)
+        let result = self.build_float_eq_negated(lhs, rhs)?;
+        self.write_vn(out_vn, result)
     }
 
     /// Lowers `FloatLessEqual(a, b)` to `Or(FloatLess(a, b), FloatEqual(a, b))`.
@@ -180,12 +201,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let eq = self
             .builder
             .build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
-        let result = self.builder.build_int_binary_operation(
-            lt,
-            eq,
-            strider_ir::IntBinaryOp::Or,
-            strider_ir::ValueType::I1,
-        )?;
+        let result = self.build_or_i1(lt, eq)?;
         self.write_vn(out_vn, result)
     }
 

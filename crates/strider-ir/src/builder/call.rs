@@ -5,9 +5,7 @@ use super::FunctionBuilder;
 use crate::IRViewer;
 use crate::builder::IRBuilderExt;
 use crate::error::Result;
-use crate::node::IntBinaryOp;
-use crate::node::VnTypeExt;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
+use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, VnTypeExt};
 
 use super::require_reg_or_unique;
 
@@ -19,9 +17,8 @@ impl FunctionBuilder {
     ///
     /// - Snapshots the region's live control + memory edges.
     /// - Outputs are ALWAYS `[Control, Memory]`, then one output per
-    ///   `ret_val_vns` entry (the return-value group), then one output per
-    ///   `clobber_vns` entry (the havoc'd caller-saved group).  Each such
-    ///   output's kind is derived purely from the varnode's byte width:
+    ///   `output_vns` entry (ret-vals then clobbers, in the caller's order).
+    ///   Each such output's kind is derived purely from the varnode's byte width:
     ///   `Typed(int_for_byte_size(vn.size))` — a tracked register always
     ///   holds an int value of its byte width, so no read is needed.  The
     ///   Memory output is always present even for a memory-preserving call
@@ -41,19 +38,16 @@ impl FunctionBuilder {
     /// - Advances the region's memory to the node's Memory output IFF
     ///   `advance_memory` is set (the caller decides whether memory is
     ///   preserved).
-    /// - Tags `Function::value_vn[output] = ret_val_vns[i]` for each
-    ///   ret-val output, and `Function::value_vn[output] = clobber_vns[i]`
-    ///   for each clobber output.
+    /// - Tags `Function::value_vn[output] = output_vns[i]` for each output.
     ///
-    /// Returns `(node, ret_val_values, clobber_values)` where
-    /// `ret_val_values.len() == ret_val_vns.len()` and
-    /// `clobber_values.len() == clobber_vns.len()`.
+    /// Returns `(node, output_values)` where
+    /// `output_values.len() == output_vns.len()`.
     ///
     /// # Errors
     ///
     /// Returns `NoCurrentRegion` when no region is active; an error when
-    /// any `arg_values` entry is not a value edge, or when a ret-val /
-    /// clobber varnode's byte size has no matching [`ValueType`] (the
+    /// any `arg_values` entry is not a value edge, or when an
+    /// `output_vns` varnode's byte size has no matching [`ValueType`] (the
     /// only failure mode of deriving the slot kind via
     /// `int_for_byte_size`).
     // Many resolved-ingredient channels plus two toggle flags is the
@@ -66,11 +60,10 @@ impl FunctionBuilder {
         target: Option<ValueId>,
         sp_value: Option<ValueId>,
         arg_values: &[ValueId],
-        ret_val_vns: &[rsleigh::Vn],
-        clobber_vns: &[rsleigh::Vn],
+        output_vns: &[rsleigh::Vn],
         advance_memory: bool,
         terminate: bool,
-    ) -> Result<(NodeId, Vec<ValueId>, Vec<ValueId>)> {
+    ) -> Result<(NodeId, Vec<ValueId>)> {
         self.validate_value_inputs(arg_values)?;
         if let Some(t) = target {
             self.validate_value_inputs(std::slice::from_ref(&t))?;
@@ -84,14 +77,15 @@ impl FunctionBuilder {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
 
-        // Outputs: [Control, Memory] ++ ret-val slots ++ clobber slots.
-        // Each ret-val / clobber slot's kind is a pure function of the
-        // varnode's byte width — a tracked register always holds an int
-        // value of its width, so the kind is `Typed(int_for_byte_size)`.
+        // Outputs: [Control, Memory] ++ one slot per output vn (ret-vals then
+        // clobbers, in the caller's order).  Each slot's kind is a pure
+        // function of the varnode's byte width — a tracked register always
+        // holds an int value of its width, so the kind is
+        // `Typed(int_for_byte_size)`.
         let mut output_kinds: SmallVec<[ValueKind; 8]> = SmallVec::new();
         output_kinds.push(ValueKind::Control);
         output_kinds.push(ValueKind::Memory);
-        for vn in ret_val_vns.iter().chain(clobber_vns) {
+        for vn in output_vns {
             output_kinds.push(ValueKind::Typed(vn.int_type()?));
         }
 
@@ -111,7 +105,12 @@ impl FunctionBuilder {
         // pass `advance_memory = false` (the only such caller, the NoReturn
         // CallOther path in `build_call_other`, does exactly this).
         if terminate {
-            self.mark_cur_region_terminated()?;
+            // Sink the trap's control edge into an `Unreachable` terminator so
+            // "every control edge reaches a terminator" holds (the memory edge
+            // is intentionally left dangling — a NoReturn trap advances no
+            // memory). Stamped with the current lift address via `create_node`.
+            self.create_node(NodeKind::Unreachable, [outputs[0]], []);
+            self.terminate_cur_region().map(|_| ())?;
         } else {
             self.advance_cur_region_ctrl(outputs[0])?;
         }
@@ -119,176 +118,79 @@ impl FunctionBuilder {
             self.advance_cur_region_memory(outputs[1])?;
         }
 
-        let ret_val_start = 2usize;
-        let clobber_start = ret_val_start + ret_val_vns.len();
-        let ret_val_values: Vec<ValueId> = outputs[ret_val_start..clobber_start].to_vec();
-        let clobber_values: Vec<ValueId> = outputs[clobber_start..].to_vec();
-
-        // Tag each ret-val output value with the register it returns via
-        // `value_vn` so pattern queries can recover the ret-val varnode.
-        for (value, vn) in core::iter::zip(&ret_val_values, ret_val_vns) {
-            self.function_mut().set_vn_for_value(*value, *vn);
-        }
-        // Tag each clobber output value with the register it clobbers
-        // (via `value_vn`) so pattern queries can recover the clobber
-        // varnode for each slot.
-        for (value, vn) in core::iter::zip(&clobber_values, clobber_vns) {
-            self.function_mut().set_vn_for_value(*value, *vn);
+        // Tag each output value with the register it represents (via
+        // `value_vn`) so pattern queries can recover the varnode for each slot.
+        let output_values: Vec<ValueId> = outputs[2..].to_vec();
+        for (value, vn) in core::iter::zip(&output_values, output_vns) {
+            self.function_mut().side_tables.value_vn.insert(*value, *vn);
         }
 
-        Ok((node, ret_val_values, clobber_values))
+        Ok((node, output_values))
     }
 
-    /// Emits a `Call` node into the current region.
+    /// Emits a dumb `Call` node into the current region from already-resolved
+    /// ingredients: the `call_address` target, the `args` value inputs, and the
+    /// combined `output_vns` (ret-vals then clobbers) — each producing one
+    /// output slot tagged with its varnode on `value_vn`.  Reads the current
+    /// stack-pointer value itself (a `Call` always anchors on SP, and SP is the
+    /// CC's stack vn — no caller need pass it).  A `Call` always advances both
+    /// control and memory.  Returns `(NodeId, output_values)` (one value per
+    /// `output_vns` entry, ret-vals first) so the caller can write them back.
     ///
-    /// When `override_cc` is `None`, the Call is built with the
-    /// function-default arg-passing / clobber / ret-stack-pop set from
-    /// `FunctionBuilder::new`; the ret-val + clobber lists are derived on
-    /// demand from the function-default CC via [`crate::Function::call_ret_vals_for`]
-    /// / [`crate::Function::call_clobbered_for`].  When
-    /// `override_cc` is `Some(cc)`, `cc` fully replaces the function-default
-    /// for this single Call: the RAW `cc.arg_passing_regs` are read at the
-    /// call site via the aliasing-aware [`Self::read_reg_vn`] (which resolves
-    /// each declared register to its tracked container and errors when none
-    /// exists); `cc.callee_saved_regs` define a fresh `is_clobbered =
-    /// !callee_saved.contains(v) && v != stack_ptr` filter that produces this
-    /// Call's clobber list; `cc.ret_stack_pop` drives the post-call SP-add.
-    /// Each ret-val / clobber output value is tagged with the register it
-    /// represents on `Function::value_vn` so pattern queries can recover the
-    /// right varnode for each slot.
-    ///
-    /// The stack pointer is read through the variable table at the call
-    /// site; a Call requires a pre-seeded SP and **errors** when it is not
-    /// tracked (no SP anchor is minted).  Write-back order is clobbers (via
-    /// [`Self::write_variable`]) then ret-vals (via [`Self::write_reg_vn`]),
-    /// so an aliased clobber cannot re-clobber the return value.
-    ///
-    /// Does **not** terminate the region — the Call sits inline in the
-    /// region's control/memory chain.  Like [`Self::build_call_other`],
-    /// the node itself is emitted by the shared `build_call_kind`
-    /// low-level builder.
-    ///
-    /// Returns the freshly-created Call's [`NodeId`].
+    /// Knows NOTHING about calling conventions: the caller (the lifter) derives
+    /// the vns from a CC, reads the args, and writes the outputs back.
+    /// `output_vns` are validated by [`Self::validate_call_output_vns`].
     ///
     /// # Errors
     ///
-    /// Returns `NoCurrentRegion` when there is no active region to advance,
-    /// `ExpectedValue` when `call_address` is not a value edge, an error when
-    /// any arg-passing / ret-val varnode is not REGISTER / UNIQUE or has no
-    /// enclosing tracked container, an error when the stack pointer is not
-    /// tracked, and `UnsupportedOutputSize` when the stack-pointer varnode's
-    /// byte size has no matching [`ValueType`] (only applicable on stack-push
-    /// ISAs).
+    /// `NoCurrentRegion` when there is no active region; `ExpectedValue` when
+    /// `call_address` is not a value edge; an error when an output varnode is
+    /// not its own REGISTER/UNIQUE largest container or the list has a
+    /// duplicate; `UnsupportedOutputSize` when an output varnode's byte size
+    /// has no matching `ValueType`; an error when the stack-pointer varnode is
+    /// not tracked.
     pub fn build_call(
         &mut self,
         call_address: ValueId,
-        override_cc: Option<&strider_target::BuiltCallingConvention>,
-    ) -> Result<NodeId> {
-        // The effective CC is the override when present, else the
-        // function-default snapshot stamped at builder construction.  Every
-        // derived list — ret-vals, clobbers, args, `ret_stack_pop`,
-        // `preserves_memory` — comes from this one CC, so there is a single
-        // source of truth.
-        let cc = override_cc.unwrap_or_else(|| self.function.default_cc());
-        let ret_stack_pop = cc.ret_stack_pop;
-        let preserves_memory = cc.preserves_memory;
-
-        // Ret-val + clobber vns, derived from the effective CC over the
-        // function's tracked varnodes.  The hashed-membership derivations
-        // are O(V) in the tracked-varnode count (bounded by the register
-        // file), run once per Call site — Calls are sparse relative to the
-        // node count, so this stays linear in graph size overall.
-        let ret_val_vars: SmallVec<[rsleigh::Vn; 4]> =
-            self.function.call_ret_vals_for(cc).into_iter().collect();
-        let clobber_vars: SmallVec<[rsleigh::Vn; 4]> =
-            self.function.call_clobbered_for(cc).into_iter().collect();
-
-        // Ret-val vns must be REGISTER / UNIQUE: they are written back via
-        // the aliasing-aware `write_reg_vn`, so a RAM / CONST ret-val has
-        // no container to slice.  Gate them explicitly before emitting.
-        for vn in &ret_val_vars {
-            require_reg_or_unique(vn)?;
-        }
-
-        // Args: the RAW `cc.arg_passing_regs`, read through the aliasing-
-        // aware `read_reg_vn`.  No `upgrade_vn` pre-mapping — `read_reg_vn`
-        // resolves each declared register to its tracked container (slicing
-        // a sub-register down to the arg's width) and errors when a CC arg
-        // register has no tracked footprint (the intended "CC reg must
-        // exist" invariant).  Snapshot the vns first so the read loop is
-        // free to borrow `self` mutably.  Each arg is also gated through
-        // `require_reg_or_unique` so a malformed CC arg surfaces cleanly.
-        let arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc.arg_passing_regs.iter().copied().collect();
-        let mut arg_passing: SmallVec<[ValueId; 4]> = SmallVec::new();
-        for vn in &arg_vns {
-            require_reg_or_unique(vn)?;
-            arg_passing.push(self.read_reg_vn(vn)?);
-        }
-        self.validate_value_inputs(&arg_passing)?;
+        args: &[ValueId],
+        output_vns: &[rsleigh::Vn],
+    ) -> Result<(NodeId, Vec<ValueId>)> {
         self.require_value_kind(call_address)?;
-
-        // Read the stack pointer ONCE: it is both the Call's SP input
-        // anchor (always wired, ahead of the args) and — on stack-push
-        // ISAs (`ret_stack_pop != 0`) — the base for the post-call SP
-        // adjust.  A Call requires a real, pre-seeded SP: every CC register
-        // (SP included) already exists as a tracked `InitialVar` from
-        // `build_entry`, so a missing SP is a genuine error, never minted.
+        self.validate_call_output_vns(output_vns)?;
         let sp_vn = self.function.stack_vn();
         let sp_value = self.read_variable_optional(&sp_vn)?.ok_or_else(|| {
-            anyhow!(
-                "build_call: stack-pointer varnode {sp_vn:?} is not tracked; \
-                 a Call requires a pre-seeded SP (CC registers are tracked at \
-                 build_entry — no SP anchor is minted at the call site)"
-            )
+            anyhow!("build_call: stack-pointer varnode {sp_vn:?} is not tracked")
         })?;
-
-        // Emit the Call node via the shared emitter.  The Call's value
-        // inputs after `call_address` are the SP anchor, then exactly its
-        // args — the ret-val and clobbered vars are NOT inputs (they were
-        // read only to recover their output-slot kinds).  Control always
-        // advances; memory advances unless the CC preserves it (so
-        // subsequent loads see the pre-call memory edge — the Memory
-        // output is still present but left dangling).
-        let (call, ret_val_values, clobber_values) = self.build_call_kind(
+        self.build_call_kind(
             NodeKind::Call,
             Some(call_address),
             Some(sp_value),
-            &arg_passing,
-            &ret_val_vars,
-            &clobber_vars,
-            !preserves_memory,
+            args,
+            output_vns,
+            true,
             false,
-        )?;
+        )
+    }
 
-        // Post-call write-back, in this ORDER: first the clobbers, then the
-        // ret-vals.  The clobber set legitimately includes CONST / RAM
-        // temporaries Sleigh leaves in the touched-varnode set, so clobbers
-        // go through `write_variable`.  Ret-vals are REGISTER / UNIQUE (gated
-        // above), so they go through the aliasing-aware `write_reg_vn`.
-        // Writing the ret-vals AFTER the clobbers guarantees a clobber that
-        // aliases a ret-val register cannot re-clobber the return value.  The
-        // `value_vn` tags are applied by `build_call_kind`.
-        for (vn, new_val) in core::iter::zip(&clobber_vars, &clobber_values) {
-            self.write_variable(vn, *new_val)?;
+    /// Validates a Call / CallOther `output_vns` list: every varnode must be in
+    /// REGISTER / UNIQUE space and be its own largest tracked container (a
+    /// register is returned / clobbered at container granularity), and no
+    /// varnode may appear in two slots.  Callers canonicalize sub-register ABI
+    /// footprints to their container before reaching here (the lifter's CC /
+    /// ABI projection does this).
+    fn validate_call_output_vns(&self, output_vns: &[rsleigh::Vn]) -> Result<()> {
+        for (i, vn) in output_vns.iter().enumerate() {
+            require_reg_or_unique(vn)?;
+            if self.function().container_of(vn) != *vn {
+                return Err(anyhow!(
+                    "call output varnode {vn:?} is not its own largest tracked container"
+                ));
+            }
+            if output_vns[..i].contains(vn) {
+                return Err(anyhow!("duplicate call output varnode {vn:?}"));
+            }
         }
-        for (vn, new_val) in core::iter::zip(&ret_val_vars, &ret_val_values) {
-            self.write_reg_vn(vn, *new_val)?;
-        }
-
-        // Record the override CC on the Call (subsuming its stack-arg
-        // offsets) so per-address-CC consumers — the stack-arg collector
-        // and pattern queries — can recover it.
-        if let Some(cc) = override_cc {
-            self.function_mut()
-                .set_call_descriptor(call, crate::CallDescriptor::Call(cc.clone()));
-        }
-
-        // Apply the post-call SP adjust on stack-push ISAs, reusing the
-        // single SP value read above.  On link-register ISAs
-        // (`ret_stack_pop == 0`) this is a no-op.
-        self.apply_post_call_sp_adjust(&sp_vn, sp_value, ret_stack_pop)?;
-
-        Ok(call)
+        Ok(())
     }
 
     /// Emits a `CallOther` node into the current region, resolving the
@@ -318,7 +220,7 @@ impl FunctionBuilder {
     ///   AFTER the clobbers, so an aliased clobber cannot re-clobber the
     ///   result.  The builder now owns the result writeback (it used to be
     ///   the lifter's job).
-    /// - Records `CallDescriptor::CallOther(abi.clone())` on the node and
+    /// - Records the user-op name on the node and
     ///   stamps `name` on `Graph::call_other_names`.
     ///
     /// `abi.implicit_reads`, `abi.implicit_writes`, and `output` must all
@@ -326,8 +228,8 @@ impl FunctionBuilder {
     /// errors (the reg/unique invariant is intended).
     ///
     /// When `terminate` is `true` (the `NoReturn` class), the region is
-    /// closed as part of this call — no separate
-    /// `mark_cur_region_terminated` call is needed.
+    /// closed as part of this call — no separate region-termination
+    /// call is needed.
     /// When `terminate` is `false` (the modeled `Call(abi)` class),
     /// the region's control advances to the CallOther's Control output
     /// and the region stays open.
@@ -356,71 +258,136 @@ impl FunctionBuilder {
         user_op_id: u64,
         name: &str,
         target: Option<ValueId>,
+        args: &[ValueId],
+        output_vns: &[rsleigh::Vn],
+        advance_memory: bool,
+        terminate: bool,
+    ) -> Result<(NodeId, Vec<ValueId>)> {
+        self.validate_call_output_vns(output_vns)?;
+        let (node, output_values) = self.build_call_kind(
+            NodeKind::CallOther { user_op_id },
+            target,
+            None,
+            args,
+            output_vns,
+            advance_memory,
+            terminate,
+        )?;
+        self.function_mut().side_tables.call_other_names[node] = Some(name.to_string());
+        Ok((node, output_values))
+    }
+
+    /// Test-only convenience: build a `Call` from a calling convention, the way
+    /// the lifter does in prod (derive the ret-val/clobber/arg vns from the CC,
+    /// read the args + SP, emit via the dumb [`Self::build_call`], write the
+    /// clobbers then ret-vals back, record the override CC, apply the post-call
+    /// SP adjust).  Keeps test call sites off the dumb prod constructor.
+    #[allow(clippy::missing_errors_doc)]
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn build_call_cc(
+        &mut self,
+        call_address: ValueId,
+        override_cc: Option<&strider_target::BuiltCallingConvention>,
+    ) -> Result<NodeId> {
+        let cc = override_cc.unwrap_or_else(|| self.function.default_cc());
+        let ret_stack_pop = cc.ret_stack_pop;
+
+        let ret_val_vars: SmallVec<[rsleigh::Vn; 4]> =
+            self.function.call_ret_vals_for(cc).into_iter().collect();
+        let clobber_vars: SmallVec<[rsleigh::Vn; 4]> =
+            self.function.call_clobbered_for(cc).into_iter().collect();
+
+        let arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc.arg_passing_regs.iter().copied().collect();
+        let mut arg_passing: SmallVec<[ValueId; 4]> = SmallVec::new();
+        for vn in &arg_vns {
+            arg_passing.push(self.read_reg_vn(vn)?);
+        }
+
+        // Snapshot the pre-call SP (preserved across the call) for the
+        // post-call adjust; `build_call` reads SP itself for the node's anchor.
+        let sp_vn = self.function.stack_vn();
+        let sp_value = self.read_variable_optional(&sp_vn)?.ok_or_else(|| {
+            anyhow!("build_call_cc: stack-pointer varnode {sp_vn:?} is not tracked")
+        })?;
+
+        let mut output_vns: SmallVec<[rsleigh::Vn; 8]> = ret_val_vars.iter().copied().collect();
+        output_vns.extend(clobber_vars.iter().copied());
+        let (call, output_values) = self.build_call(call_address, &arg_passing, &output_vns)?;
+        let (ret_val_values, clobber_values) = output_values.split_at(ret_val_vars.len());
+
+        for (vn, new_val) in core::iter::zip(&clobber_vars, clobber_values) {
+            self.write_variable(vn, *new_val)?;
+        }
+        for (vn, new_val) in core::iter::zip(&ret_val_vars, ret_val_values) {
+            self.write_reg_vn(vn, *new_val)?;
+        }
+
+        if let Some(cc) = override_cc {
+            self.function_mut().set_call_cc(call, cc.clone());
+        }
+        self.apply_post_call_sp_adjust(&sp_vn, sp_value, ret_stack_pop)?;
+        Ok(call)
+    }
+
+    /// Test-only convenience: build a `CallOther` from a vn-resolved ABI, the
+    /// way the lifter does in prod.  Delegates to [`Self::build_call_other`].
+    #[allow(clippy::missing_errors_doc, clippy::too_many_arguments)]
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn build_call_other_abi(
+        &mut self,
+        user_op_id: u64,
+        name: &str,
+        target: Option<ValueId>,
         explicit_args: &[ValueId],
         abi: &strider_target::BuiltCallOtherAbi,
         output: Option<rsleigh::Vn>,
         terminate: bool,
     ) -> Result<(NodeId, Option<ValueId>)> {
-        // Gate the implicit reads / writes and the output through the
-        // reg/unique invariant before doing anything: every footprint
-        // register (and the result destination) must be REGISTER / UNIQUE,
-        // because they all flow through the aliasing-aware read/write path.
         for vn in &abi.implicit_reads {
             require_reg_or_unique(vn)?;
         }
+        // Args: implicit-read register values FIRST, then the explicit pcode
+        // operands.
+        let mut args: SmallVec<[ValueId; 4]> = SmallVec::new();
+        for vn in &abi.implicit_reads {
+            args.push(self.read_reg_vn(vn)?);
+        }
+        args.extend_from_slice(explicit_args);
+
+        // Output vns: result then implicit-write clobbers, each canonicalized to
+        // its largest tracked container and deduplicated (the result wins ties).
+        let result_vn = output.map(|vn| self.function().container_of(&vn));
+        let mut clobber_vns: SmallVec<[rsleigh::Vn; 4]> = SmallVec::new();
         for vn in &abi.implicit_writes {
-            require_reg_or_unique(vn)?;
+            let c = self.function().container_of(vn);
+            if Some(c) == result_vn || clobber_vns.contains(&c) {
+                continue;
+            }
+            clobber_vns.push(c);
         }
-        if let Some(out_vn) = output.as_ref() {
-            require_reg_or_unique(out_vn)?;
-        }
+        let mut output_vns: SmallVec<[rsleigh::Vn; 8]> = result_vn.into_iter().collect();
+        output_vns.extend(clobber_vns.iter().copied());
 
-        // Read each implicit-read register and append after the explicit
-        // pcode operands, preserving the layout
-        // `[ctrl, mem] ++ explicit_args ++ implicit_reads`.
-        let mut arg_values: SmallVec<[ValueId; 4]> = explicit_args.iter().copied().collect();
-        for vn in &abi.implicit_reads {
-            let value = self.read_reg_vn(vn)?;
-            arg_values.push(value);
-        }
-
-        // Derive the ret-val group from the output varnode (if any): a
-        // 0-or-1-element vn list.  Both the ret-val and clobber slot kinds
-        // are derived from each vn's byte width inside `build_call_kind`.
-        let ret_val_vns: SmallVec<[rsleigh::Vn; 1]> = output.into_iter().collect();
-        let clobber_vns: &[rsleigh::Vn] = &abi.implicit_writes;
-
-        let (node, ret_val_values, clobber_values) = self.build_call_kind(
-            NodeKind::CallOther { user_op_id },
+        let (node, output_values) = self.build_call_other(
+            user_op_id,
+            name,
             target,
-            None,
-            &arg_values,
-            &ret_val_vns,
-            clobber_vns,
+            &args,
+            &output_vns,
             abi.clobbers_memory,
             terminate,
         )?;
+        let (ret_val_values, clobber_values) = output_values.split_at(result_vn.iter().count());
 
-        // Writeback ORDER (matching `build_call`): the implicit-write
-        // clobbers first via `write_variable` (a full-register write is
-        // identical to `write_reg_vn` here, and this unifies clobber
-        // handling with `Call`), THEN the result to `output` via
-        // `write_reg_vn` AFTER the clobbers — so an aliased clobber cannot
-        // re-clobber the result.
-        for (vn, value) in core::iter::zip(clobber_vns, &clobber_values) {
+        // Writeback: clobbers then the result — both full-container writes via
+        // `write_variable` (an aliased clobber must not re-clobber the result).
+        for (vn, value) in core::iter::zip(&clobber_vns, clobber_values) {
             self.write_variable(vn, *value)?;
         }
-        let result = ret_val_values.into_iter().next();
-        if let (Some(out_vn), Some(value)) = (output.as_ref(), result) {
-            self.write_reg_vn(out_vn, value)?;
+        let result = ret_val_values.first().copied();
+        if let (Some(c), Some(value)) = (result_vn, result) {
+            self.write_variable(&c, value)?;
         }
-
-        // Record the vn-resolved footprint + the user-op name on the node.
-        self.function_mut()
-            .set_call_descriptor(node, crate::CallDescriptor::CallOther(abi.clone()));
-        self.function_mut()
-            .set_call_other_name(node, name.to_string());
-
         Ok((node, result))
     }
 
@@ -431,7 +398,10 @@ impl FunctionBuilder {
     /// `ret_stack_pop == 0`, so this is a no-op.  `sp_pre_call` is the
     /// single pre-call SP value [`Self::build_call`] read from the variable
     /// table.
-    fn apply_post_call_sp_adjust(
+    /// # Errors
+    ///
+    /// Propagates SP read / const-build / write failures.
+    pub fn apply_post_call_sp_adjust(
         &mut self,
         sp: &rsleigh::Vn,
         sp_pre_call: ValueId,

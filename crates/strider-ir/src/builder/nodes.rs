@@ -8,29 +8,24 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::RegionId;
 
 impl FunctionBuilder {
-    /// Resets the graph and emits the function `Entry` and `InitialMemory` nodes.
+    /// Builds the function's `InitialMemory` node and captures its starting
+    /// memory token as the builder's `entry_memory`.
+    ///
+    /// [`Function::new`] builds only the `Entry` node; the memory spine is the
+    /// builder's responsibility, so this creates the `InitialMemory` node
+    /// (an asm-fingerprint-exempt initial-state kind, minted straight on the
+    /// graph) and records its single `Memory` output — no graph search.
     ///
     /// # Errors
     ///
-    /// Returns `WrongOutputCount` if the freshly created `Entry`
-    /// or `InitialMemory` nodes do not have their expected single output
-    /// (this would indicate a graph-construction bug, not user error).
+    /// Returns `WrongOutputCount` if the freshly-built `InitialMemory` node does
+    /// not have its expected single output (a graph-construction bug).
     pub fn build_entry(&mut self) -> Result<()> {
-        // Reset the function to a fresh empty graph while preserving the
-        // calling-convention SSoT (`default_cc` / `all_vns` / `endianness`)
-        // that `FunctionBuilder::new` populated.  Resetting in-place keeps
-        // the entry/InitialMemory pair as nodes 0/1.
-        let default_cc = std::mem::take(&mut self.function.default_cc);
-        let all_vns = std::mem::take(&mut self.function.all_vns);
-        let vn_to_container = std::mem::take(&mut self.function.vn_to_container);
-        let endianness = self.function.endianness;
-        self.function =
-            crate::function::Function::new(default_cc, endianness, all_vns, vn_to_container);
-
-        let entry_node = self.create_node(NodeKind::Entry, [], vec![ValueKind::Control]);
-        self.function.set_entry(entry_node);
-
-        let memory_node = self.create_node(NodeKind::InitialMemory, [], vec![ValueKind::Memory]);
+        let memory_node = self.function_mut().graph_mut().create_node(
+            NodeKind::InitialMemory,
+            [],
+            [ValueKind::Memory],
+        );
         let [memory] = self.function().node_outputs_exact(memory_node)?;
         self.entry_memory = memory;
         Ok(())
@@ -44,8 +39,8 @@ impl FunctionBuilder {
     /// by the current SSA values of `ret_vars` in order.
     ///
     /// This method **terminates** the current region unconditionally —
-    /// callers must not call `mark_cur_region_terminated`
-    /// afterwards; doing so would be a double-termination error.
+    /// callers must not terminate it again afterwards; doing so would
+    /// be a double-termination error.
     ///
     /// # Errors
     ///
@@ -86,8 +81,8 @@ impl FunctionBuilder {
     /// resolved CC ([`crate::Function::ret_val_regs`]).
     ///
     /// Like [`Self::build_return`], this **terminates** the current
-    /// region unconditionally.  Callers must not call
-    /// `mark_cur_region_terminated` afterwards.
+    /// region unconditionally.  Callers must not terminate it again
+    /// afterwards.
     ///
     /// The synthetic single-value return path
     /// ([`Self::build_return`] with an explicit `Some(value)` and no
@@ -254,7 +249,7 @@ impl FunctionBuilder {
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
             output_type,
         );
-        self.function_mut().set_vn_for_value(phi_value, var);
+        self.function_mut().side_tables.value_vn.insert(phi_value, var);
         Ok(phi_value)
     }
 }

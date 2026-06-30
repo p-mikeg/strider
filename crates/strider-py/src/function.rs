@@ -7,9 +7,10 @@
 //! reachable through `strider_cfg::Cfg::sleigh`.
 
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, TryLockError};
 
 use pyo3::prelude::*;
+use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
 
 use crate::cfg::PyCfg;
@@ -97,7 +98,6 @@ impl PyFunction {
     pub(crate) fn try_write_inner(
         &self,
     ) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
-        use std::sync::TryLockError;
         self.inner.try_write().map_err(|e| match e {
             TryLockError::Poisoned(_) => anyhow::anyhow!("Function lock poisoned"),
             TryLockError::WouldBlock => anyhow::anyhow!(
@@ -180,6 +180,42 @@ impl PyFunction {
             }
         })
     }
+
+    /// Run `pipeline` over this graph in place, bumping the generation
+    /// first so any stale handle is invalidated even if a pass errors
+    /// mid-run and leaves the arena partially rewritten.  `label` names
+    /// the operation in the surfaced error (`"optimize"` / `"reoptimize"`).
+    fn run_pipeline_in_place(
+        &self,
+        pipeline: strider_orchestrator::opt::OptimizerPipeline,
+        label: &str,
+    ) -> PyResult<()> {
+        let mut function = self
+            .try_write_inner()
+            .map_err(crate::errors::into_strider_err)?;
+        // Bump the generation BEFORE running: the pipeline mutates the
+        // arena in place, and a pass that errors mid-run can leave the
+        // graph partially rewritten.  Invalidating outstanding handles
+        // unconditionally means a stale handle can never silently read
+        // that partially-optimized graph after the error is surfaced.
+        function.graph_mut().bump_generation();
+        pipeline
+            .run(
+                &mut function,
+                &mut strider_orchestrator::opt::OptCtx::new(None),
+            )
+            .map_err(|e| {
+                crate::errors::into_strider_err(anyhow::anyhow!("{label} failed: {e:?}"))
+            })?;
+        Ok(())
+    }
+}
+
+/// Write `contents` to `path`, mapping any I/O error to a `StriderError`.
+/// Shared by the `to_raw_dot` / `to_raw_html` file-dump methods.
+fn write_to(path: &str, contents: String) -> PyResult<()> {
+    std::fs::write(path, contents)
+        .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
 }
 
 #[pymethods]
@@ -198,22 +234,22 @@ impl PyFunction {
     /// selects the dot theme (default `"dark"`).
     #[pyo3(signature = (path, style=None))]
     fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
-        self.dispatch_dot(py, Some(style.unwrap_or("dark")), DotOp::DumpHtml(path))
-            .map(|_| ())
+        // `dot_style_for(None)` already defaults to the dark theme, so the
+        // `Option` flows through untouched.
+        self.dispatch_dot(py, style, DotOp::DumpHtml(path)).map(|_| ())
     }
 
     /// Render the IR graph to a Graphviz `.dot` file at `path`.
     #[pyo3(signature = (path,))]
     fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
-        self.dispatch_dot(py, Some("dark"), DotOp::DumpDot(path))
-            .map(|_| ())
+        self.dispatch_dot(py, None, DotOp::DumpDot(path)).map(|_| ())
     }
 
     /// Return the IR graph rendered as an HTML string (default `"dark"`
     /// style) instead of writing it to a file.
     #[pyo3(signature = (style=None))]
     fn html_str(&self, py: Python<'_>, style: Option<&str>) -> PyResult<String> {
-        match self.dispatch_dot(py, Some(style.unwrap_or("dark")), DotOp::HtmlStr)? {
+        match self.dispatch_dot(py, style, DotOp::HtmlStr)? {
             DotResult::Html(s) => Ok(s),
             DotResult::Unit => Err(crate::errors::into_strider_err(anyhow::anyhow!(
                 "internal: DotOp::HtmlStr returned DotResult::Unit"
@@ -243,15 +279,13 @@ impl PyFunction {
     /// Write the raw (as-stored) Graphviz `.dot` rendering to `path`.
     /// See `raw_dot_str` for what "raw" means.
     fn to_raw_dot(&self, path: &str) -> PyResult<()> {
-        let dot = self.raw_dot_str()?;
-        std::fs::write(path, dot).map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
+        write_to(path, self.raw_dot_str()?)
     }
 
     /// Write the raw (as-stored) standalone HTML rendering to `path`.
     /// See `raw_dot_str` for what "raw" means.
     fn to_raw_html(&self, path: &str) -> PyResult<()> {
-        let html = self.raw_html_str()?;
-        std::fs::write(path, html).map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
+        write_to(path, self.raw_html_str()?)
     }
 
     /// Returns the number of node ids in the IR arena — every allocated
@@ -269,7 +303,6 @@ impl PyFunction {
     /// so it satisfies the "use entity-set bookkeeping" memory
     /// directive by routing through the canonical IR traversal helper.
     fn count_regions(&self) -> PyResult<usize> {
-        use strider_ir::node::NodeKind;
         self.with_read_value(|function| {
             function
                 .walk_kind(|k| matches!(k, NodeKind::Region))
@@ -344,13 +377,6 @@ impl PyFunction {
     /// non-exempt node must carry a non-empty contributor list.
     fn validate(&self) -> PyResult<Option<String>> {
         self.with_read(|function| {
-            // Presence guard: an unbuilt function raises an exception, distinct
-            // from the validation-failure-as-string path below.
-            if function.entry().is_none() {
-                return Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                    "Function.validate: function has not been built (entry is None)"
-                )));
-            }
             match strider_ir::validate::validate(function) {
                 Ok(()) => Ok(None),
                 Err(e) => Ok(Some(format!("{e}"))),
@@ -382,24 +408,7 @@ impl PyFunction {
     /// through `strider.run(..., rom=mem)` instead.
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
         let real_pipeline = pipeline.drain_into_pipeline()?;
-        let mut function = self
-            .try_write_inner()
-            .map_err(crate::errors::into_strider_err)?;
-        // Bump the generation BEFORE running: the pipeline mutates the
-        // arena in place, and a pass that errors mid-run can leave the
-        // graph partially rewritten.  Invalidating outstanding handles
-        // unconditionally means a stale handle can never silently read
-        // that partially-optimized graph after the error is surfaced.
-        function.graph_mut().bump_generation();
-        real_pipeline
-            .run(
-                &mut function,
-                &mut strider_orchestrator::opt::OptCtx::new(None),
-            )
-            .map_err(|e| {
-                crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}"))
-            })?;
-        Ok(())
+        self.run_pipeline_in_place(real_pipeline, "optimize")
     }
 
     /// Convenience: re-run the default optimizer pipeline on this graph.
@@ -407,21 +416,7 @@ impl PyFunction {
     /// re-converge the graph.
     fn reoptimize(&self) -> PyResult<()> {
         let pipe = strider_orchestrator::opt::default_pipeline();
-        let mut function = self
-            .try_write_inner()
-            .map_err(crate::errors::into_strider_err)?;
-        // Bump BEFORE running (see `optimize`): a mid-run failure can
-        // leave the arena partially rewritten, and invalidating handles
-        // unconditionally prevents a stale read of that state.
-        function.graph_mut().bump_generation();
-        pipe.run(
-            &mut function,
-            &mut strider_orchestrator::opt::OptCtx::new(None),
-        )
-        .map_err(|e| {
-            crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
-        })?;
-        Ok(())
+        self.run_pipeline_in_place(pipe, "reoptimize")
     }
 
     /// Find every site where `pat` matches.  `pat` accepts any
@@ -633,7 +628,7 @@ fn reject_conflicting_cast_flags(
 }
 
 /// Run a matcher query and snapshot the generation, collapsing the
-/// borrow → `read_inner` → `Matcher::try_new` → run → generation-snapshot
+/// borrow → `read_inner` → `Matcher::new` → run → generation-snapshot
 /// → drop-guards → pending-control-flow scaffold the three query entry
 /// points (`find_all` / `find_one` / `find_joined`) share.
 ///
@@ -650,8 +645,7 @@ fn run_query<T>(
     let function_guard = function_borrow
         .read_inner()
         .map_err(crate::errors::into_strider_err)?;
-    let matcher = strider_pattern::Matcher::try_new(&function_guard)
-        .map_err(crate::errors::into_strider_err)?;
+    let matcher = strider_pattern::Matcher::new(&function_guard);
     let raw = run(&matcher).map_err(crate::errors::into_strider_err)?;
     let generation = function_guard.graph().generation();
     drop(function_guard);
@@ -705,8 +699,7 @@ where
     ) -> anyhow::Result<Option<strider_ir::node::ValueId>>,
 {
     let count = {
-        let mut ctx =
-            strider_opt::EditFunction::new(function).map_err(crate::errors::into_strider_err)?;
+        let mut ctx = strider_opt::EditFunction::new(function);
         strider_opt::apply_rules_count(&mut ctx, rules).map_err(crate::errors::into_strider_err)?
     };
     function.graph_mut().bump_generation();

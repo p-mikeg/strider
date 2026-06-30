@@ -2,11 +2,8 @@
 //! `Subpiece`, `Popcount`, `Lzcount`, `Piece`, `Extract`, `Insert`,
 //! `PtrAdd`, `PtrSub`, and the no-op `Cast`.
 
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
-use strider_ir::IntBinaryOp;
-use strider_ir::VnTypeExt;
 use strider_ir::node::ValueType;
+use strider_ir::{IRBuilderExt, IntBinaryOp, VnTypeExt};
 
 use anyhow::bail;
 
@@ -33,6 +30,21 @@ fn extract_bit_pos_u8(
     })
 }
 
+/// Computes the low-`len`-bits mask `(1 << len) - 1` in `u128`, saturating
+/// to `u128::MAX` for `len >= 128`.
+///
+/// Shared by [`build_bit_field_insert`] (the raw field mask) and
+/// [`FunctionLifter::handle_extract`] (the upper-bits-zero AND mask): both
+/// need a width-aware low-bits mask wide enough to cover an I128 / I80
+/// `out_ty` field, so the `u128` computation is exact.
+fn low_bits_mask(len: u8) -> u128 {
+    if (len as usize) >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << len) - 1
+    }
+}
+
 /// Constructs the bit-field-insert IR: `Or(And(dest, !mask_shifted), ShiftLeft(And(src, mask_raw), lsb))`.
 ///
 /// Extracted from [`FunctionLifter::handle_insert`] to isolate the mask-and-position
@@ -47,11 +59,7 @@ fn build_bit_field_insert(
 ) -> Result<strider_ir::Value> {
     // Compute masks in u128 so a I128 (or I80) `out_ty` with
     // `lsb + len > 64` produces correct bits in slots 64..127.
-    let mask_raw: u128 = if (len as usize) >= 128 {
-        u128::MAX
-    } else {
-        (1u128 << len) - 1
-    };
+    let mask_raw: u128 = low_bits_mask(len);
     let mask_shifted = mask_raw.wrapping_shl(lsb as u32);
     let not_mask_shifted = !mask_shifted;
 
@@ -63,52 +71,13 @@ fn build_bit_field_insert(
     let src_masked =
         builder.build_int_binary_operation(src, mask_const, IntBinaryOp::And, out_ty)?;
 
-    let src_positioned = if lsb == 0 {
-        src_masked
-    } else {
-        let lsb_const = builder.build_int_const(lsb as u64, out_ty)?;
-        builder.build_int_binary_operation(src_masked, lsb_const, IntBinaryOp::ShiftLeft, out_ty)?
-    };
+    let src_positioned =
+        builder.build_shift_by_const(src_masked, u64::from(lsb), IntBinaryOp::ShiftLeft, out_ty)?;
 
     builder.build_int_binary_operation(cleared, src_positioned, IntBinaryOp::Or, out_ty)
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// Builds a small (`u64`-fitting) integer constant at `ty`, routing the
-    /// wide widths (I80 / I128 / I256 / I512) through the wide-const path so
-    /// an I256 / I512 type (rejected by `build_int_const`) still lifts.
-    ///
-    /// Used for the SUBPIECE shift amount, which carries the *input*
-    /// varnode's width: a YMM (I256) / ZMM (I512) input with a nonzero
-    /// byte_offset would otherwise hard-abort the lift.  `value` is always a
-    /// small bit-count, so the wide path stores it inline as `Small` (the
-    /// width lives in the output type) — no actual wide payload is interned.
-    fn build_shift_const(
-        &mut self,
-        value: u64,
-        ty: ValueType,
-    ) -> Result<strider_ir::Value> {
-        use strider_ir::wide_const::WideConstStorage;
-        let storage = match ty {
-            ValueType::I80 => WideConstStorage::I80(u128::from(value)),
-            ValueType::I128 => WideConstStorage::I128(u128::from(value)),
-            ValueType::I256 => WideConstStorage::I256([value, 0, 0, 0]),
-            ValueType::I512 => WideConstStorage::I512([value, 0, 0, 0, 0, 0, 0, 0]),
-            // I1..I64 — the plain const path masks to the width.
-            _ => return self.builder.build_int_const(value, ty),
-        };
-        self.builder.build_int_const_wide(storage, ty)
-    }
-
-    /// Translates a no-op `Cast` instruction.
-    ///
-    /// GHIDRA docs: "semantically equivalent to a COPY operation".
-    pub(super) fn handle_cast(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let value = self.read_input(insn, 0)?;
-        let out_vn = require_output_vn(insn)?;
-        self.write_vn(out_vn, value)
-    }
-
     /// `Subpiece(value, byte_offset, out_size)`: extracts `out_size` bytes
     /// starting at byte `byte_offset` from `value`.
     ///
@@ -133,53 +102,54 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         }
         let value = self.read_vn(input_vn)?;
         let out_vn = require_output_vn(insn)?;
-        let shifted = if byte_offset == 0 {
-            value
-        } else {
-            // safe: byte_offset < input.size <= u32::MAX, so byte_offset * 8 fits in u64
-            let bit_shift = byte_offset * 8;
-            // Defensive guard against future Subpiece-width extensions: the
-            // upstream `byte_offset < input_vn.size` check already pins
-            // `bit_shift <= (input_vn.size - 1) * 8` which today caps at
-            // 120 < 128 (max supported `u128` IR width).  If a future
-            // Subpiece variant ever widened past `u128` inputs, the shift
-            // would silently exceed the IR's representable bit-width.
-            debug_assert!(
-                bit_shift < u64::from(input_vn.size) * 8,
-                "Subpiece bit_shift {bit_shift} must be < input bit-width {}",
-                u64::from(input_vn.size) * 8,
-            );
-            let input_ty = input_vn.int_type()?;
-            // The shift constant carries the *input* width.  For a YMM
-            // (I256) / ZMM (I512) input `build_int_const` rejects the type
-            // outright, so route the (small) shift amount through the
-            // wide-const path; for ≤ I128 the plain const path applies.
-            let shift_const = self.build_shift_const(bit_shift, input_ty)?;
-            self.builder.build_int_binary_operation(
-                value,
-                shift_const,
-                IntBinaryOp::ShiftRight,
-                input_ty,
-            )?
-        };
-        let result = self.builder.truncate_if_needed(shifted, out_vn.int_type()?)?;
+        // safe: byte_offset < input.size <= u32::MAX, so byte_offset * 8 fits in u64.
+        let bit_shift = byte_offset * 8;
+        // Defensive guard against future Subpiece-width extensions: the upstream
+        // `byte_offset < input_vn.size` check pins `bit_shift <= (size-1)*8`,
+        // today <= 120 < 128 (max supported `u128` IR width).
+        debug_assert!(
+            bit_shift < u64::from(input_vn.size) * 8,
+            "Subpiece bit_shift {bit_shift} must be < input bit-width {}",
+            u64::from(input_vn.size) * 8,
+        );
+        // Right-shift by `bit_shift` at the input width (a no-op when offset 0),
+        // then truncate to the output width.
+        let shifted =
+            self.builder
+                .build_shift_by_const(value, bit_shift, IntBinaryOp::ShiftRight, input_vn.int_type()?)?;
+        let result = self
+            .builder
+            .truncate_if_needed(shifted, out_vn.int_type()?)?;
         self.write_vn(out_vn, result)
     }
 
     /// Shared envelope for single-input integer unary ops: read input 0,
     /// coerce it to the output width, run `build`, and write the result.
     /// Covers the character-identical `popcount` / `lzcount` handlers.
-    fn lift_int_unary(
+    ///
+    /// When `enforce_equal_io_width` is set the input and output varnodes
+    /// must share a byte-width (via [`super::arithmetic::require_equal_input_output_width`]),
+    /// surfacing a Sleigh spec mismatch as a precise lift-time error — used
+    /// by the `Int2Comp` / `IntNeg`-as-xor lowerings.  `popcount` / `lzcount`
+    /// legitimately narrow a wider input to the output, so they leave it off.
+    pub(super) fn lift_int_unary(
         &mut self,
         insn: &rsleigh::Insn,
+        enforce_equal_io_width: bool,
         build: impl FnOnce(
             &mut strider_ir::FunctionBuilder,
             strider_ir::Value,
             ValueType,
         ) -> Result<strider_ir::Value>,
     ) -> Result<()> {
-        let value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
+        if enforce_equal_io_width {
+            super::arithmetic::require_equal_input_output_width(
+                nth_input_or_err(insn, 0)?,
+                out_vn,
+            )?;
+        }
+        let value = self.read_input(insn, 0)?;
         let out_ty = out_vn.int_type()?;
         let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
         let result = build(&mut self.builder, value, out_ty)?;
@@ -187,11 +157,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     pub(super) fn handle_popcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        self.lift_int_unary(insn, |b, v, t| b.build_popcount(v, t))
+        self.lift_int_unary(insn, false, |b, v, t| b.build_popcount(v, t))
     }
 
     pub(super) fn handle_lzcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        self.lift_int_unary(insn, |b, v, t| b.build_lzcount(v, t))
+        self.lift_int_unary(insn, false, |b, v, t| b.build_lzcount(v, t))
     }
 
     pub(super) fn handle_piece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
@@ -231,13 +201,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // flag register, whose `bit_width()` is 1, not 8); using the varnode
         // size keeps Piece faithful to the pcode geometry in that case.
         let lo_bits = u64::from(lo_vn.size) * 8;
-        let shift_amt = self.builder.build_int_const(lo_bits, out_ty)?;
-        let hi_shifted = self.builder.build_int_binary_operation(
-            hi_wide,
-            shift_amt,
-            IntBinaryOp::ShiftLeft,
-            out_ty,
-        )?;
+        let hi_shifted =
+            self.builder
+                .build_shift_by_const(hi_wide, lo_bits, IntBinaryOp::ShiftLeft, out_ty)?;
         let result = self.builder.build_int_binary_operation(
             hi_shifted,
             lo_wide,
@@ -276,17 +242,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             );
         }
         let x_int = self.builder.convert_to_int_if_needed(value, x_nat_ty)?;
-        let shifted = if lsb == 0 {
-            x_int
-        } else {
-            let lsb_const = self.builder.build_int_const(lsb as u64, x_nat_ty)?;
-            self.builder.build_int_binary_operation(
-                x_int,
-                lsb_const,
-                IntBinaryOp::ShiftRight,
-                x_nat_ty,
-            )?
-        };
+        let shifted =
+            self.builder
+                .build_shift_by_const(x_int, u64::from(lsb), IntBinaryOp::ShiftRight, x_nat_ty)?;
         let narrowed = self.builder.truncate_if_needed(shifted, narrow_ty)?;
         let result = if (len as usize) < narrow_ty.bit_width() {
             // Compute the AND-mask in u128 so a I128 narrow_ty with
@@ -295,12 +253,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             // 0xFFFF_FFFF_FFFF_FFFF, then `build_int_const` would
             // zero-extend to u128 and the result would zero bits
             // 64..127 of the narrowed value.
-            let mask_val: u128 = if (len as usize) >= 128 {
-                u128::MAX
-            } else {
-                (1u128 << len) - 1
-            };
-            let mask = self.builder.build_int_const(mask_val, narrow_ty)?;
+            let mask = self.builder.build_int_const(low_bits_mask(len), narrow_ty)?;
             self.builder
                 .build_int_binary_operation(narrowed, mask, IntBinaryOp::And, narrow_ty)?
         } else {
@@ -331,13 +284,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             );
         }
 
-        let dest_ty = self.builder.value_type(dest)?.to_natural_int_type();
-        let dest_int = self.builder.convert_to_int_if_needed(dest, dest_ty)?;
-        let src_ty = self.builder.value_type(src)?.to_natural_int_type();
-        let src_int = self.builder.convert_to_int_if_needed(src, src_ty)?;
-
-        let dest_wide = self.builder.convert_to_int_if_needed(dest_int, out_ty)?;
-        let src_wide = self.builder.convert_to_int_if_needed(src_int, out_ty)?;
+        // Convert `dest` / `src` straight to the output width.  Register reads
+        // are already integer-typed and `convert_to_int_if_needed` handles the
+        // width directly (and rejects float inputs either way), so the prior
+        // natural-width intermediate conversion was a redundant round-trip.
+        let dest_wide = self.builder.convert_to_int_if_needed(dest, out_ty)?;
+        let src_wide = self.builder.convert_to_int_if_needed(src, out_ty)?;
 
         let result =
             build_bit_field_insert(&mut self.builder, dest_wide, src_wide, lsb, len, out_ty)?;

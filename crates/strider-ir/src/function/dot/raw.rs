@@ -7,7 +7,7 @@
 //! reordering, and no Sleigh register-name translation.  Each node also
 //! shows the per-node side-table state ([`Function::stack_offset`],
 //! the `value_vn` tag (via [`Function::get_vn_for_value`]), [`Function::asm_fingerprint`],
-//! [`Function::call_other_name`], [`Function::call_cc`], and
+//! [`Function::call_other_name`], a `Call`'s clobber-tag count, and
 //! its argument index).  It is purely a debugging aid for inspecting the
 //! real graph shape — pattern queries and the production pipeline use the
 //! pretty renderer / the structured accessors instead.
@@ -47,35 +47,28 @@ impl<'a> RawFunctionDumper<'a> {
     fn node_label(&self, node: NodeId) -> String {
         let f = self.function;
         let kind = f.node_kind(node);
-        // `InitialVar` is the only kind embedding a `Vn`; render it compactly
-        // (`{space}{offset:#x}:{size}`) instead of the verbose `Vn { .. }`
-        // debug.  Every other kind's debug form is already terse.
+        // `InitialVar` carries an `all_vns` index; resolve it to the varnode
+        // and render compactly (`#idx {space}{offset:#x}:{size}`) instead of
+        // the verbose `Vn { .. }` debug.  Every other kind's debug form is
+        // already terse.
         let kind_str = match kind {
-            NodeKind::InitialVar(vn) => format!("InitialVar({})", fmt_vn(vn)),
+            NodeKind::InitialVar(id) => match f.initial_vn_opt(*id) {
+                Some(vn) => format!("InitialVar(#{} {})", id.index(), fmt_vn(&vn)),
+                None => format!("InitialVar(#{} ?)", id.index()),
+            },
+            // Constants carry their value off-side in `const_interner`; show the
+            // interner id compactly (`IntConst(#N)`) and the value below.
+            NodeKind::IntConst(id) => format!("IntConst(#{})", id.as_u32()),
             other => format!("{other:?}"),
         };
         let mut s = format!("n{}  {kind_str}", node.as_u32());
 
-        // Wide constants carry their value off-side in `wide_const_interner`; show it.
-        if let NodeKind::IntConst(crate::node::IntPayload::Wide(id)) = kind {
-            let value = match f.wide_const_opt(*id) {
-                Some(storage) => {
-                    if let Some(v) = storage.as_u128() {
-                        // I80 / I128: render the u128 directly.
-                        format!("0x{v:x}")
-                    } else {
-                        // I256 / I512: limbs are little-endian, walk high→low.
-                        let hex: String = storage
-                            .limbs()
-                            .iter()
-                            .rev()
-                            .map(|limb| format!("{limb:016x}"))
-                            .collect();
-                        let trimmed = hex.trim_start_matches('0');
-                        format!("0x{}", if trimmed.is_empty() { "0" } else { trimmed })
-                    }
-                }
-                None => format!("<dangling wide-const {id:?}>"),
+        // Constants carry their value off-side in `const_interner`; show the
+        // raw `ConstValue` debug (dangling ids labelled, not panicked).
+        if let NodeKind::IntConst(id) = kind {
+            let value = match f.const_interner.get(*id) {
+                Some(cv) => format!("{cv:?}"),
+                None => format!("<dangling const {id:?}>"),
             };
             s.push_str(&format!("\n= {value}"));
         }
@@ -108,15 +101,15 @@ impl<'a> RawFunctionDumper<'a> {
         if let Some(name) = f.call_other_name(node) {
             s.push_str(&format!("\nop={name}"));
         }
-        if f.call_cc(node).is_some() {
-            // Override Call: show how many of its outputs carry a clobber
-            // varnode tag (slots past Control/Memory).
+        if matches!(f.node_kind(node), NodeKind::Call) {
+            // Call: show how many of its outputs carry a clobber varnode tag
+            // (slots past Control/Memory).
             let tagged = f
                 .node_outputs(node)
                 .iter()
                 .filter(|&&v| f.get_vn_for_value(v).is_some())
                 .count();
-            s.push_str(&format!("\ncall_cc(clobbers={tagged})"));
+            s.push_str(&format!("\nclobbers={tagged}"));
         }
         if let Some(indices) = self.arg_index.get(&node) {
             s.push_str(&format!("\narg{indices:?}"));

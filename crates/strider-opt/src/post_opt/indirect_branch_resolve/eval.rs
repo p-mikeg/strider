@@ -10,20 +10,31 @@
 //! mutation, no clone, no pipeline. Any unresolved value, a non-`Const` dispatch
 //! result, or a cycle yields `None`, so the caller rejects the candidate.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
-use strider_target::Endianness;
 
-use crate::opt::constant_fold::eval_int::eval_int_binary;
-use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
+use crate::sp_expr::{SpAliasCfg, SpExpr, SpExprMemo};
+
+/// Returns an iterator over the value-typed inputs of `node` — i.e., inputs
+/// whose `value_type_opt` is `Some`.  Skips control, memory, and phi-token
+/// slots.  Used in both the evaluator and the cone-order traversal to avoid
+/// repeating the `value_type_opt(i).is_some()` filter inline.
+pub(crate) fn value_input_producers(
+    f: &strider_ir::Function,
+    node: NodeId,
+) -> impl Iterator<Item = ValueId> + '_ {
+    f.node_inputs(node)
+        .into_iter()
+        .filter(move |&i| f.value_type_opt(i).is_some())
+}
 
 /// Abstract value: a concrete number, or `sp_base + offset`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum Abs {
     Const(u128),
-    SpRel { base: ValueId, offset: i64 },
+    SpRel { base: ValueId, offset: i128 },
 }
 
 impl Abs {
@@ -33,23 +44,12 @@ impl Abs {
             Abs::SpRel { .. } => None,
         }
     }
-    fn same(self, other: Abs) -> bool {
-        match (self, other) {
-            (Abs::Const(a), Abs::Const(b)) => a == b,
-            (
-                Abs::SpRel { base: ba, offset: oa },
-                Abs::SpRel { base: bb, offset: ob },
-            ) => ba == bb && oa == ob,
-            _ => false,
-        }
-    }
 }
 
 pub(crate) struct Evaluator<'a> {
     function: &'a strider_ir::Function,
     rom: Option<&'a dyn ReadOnlyMemory>,
     alias_mode: crate::AliasMode,
-    endianness: Endianness,
     sp_memo: SpExprMemo,
     map: FxHashMap<ValueId, Abs>,
 }
@@ -64,7 +64,6 @@ impl<'a> Evaluator<'a> {
             function,
             rom,
             alias_mode,
-            endianness: function.endianness(),
             sp_memo: SpExprMemo::default(),
             map: FxHashMap::default(),
         }
@@ -101,59 +100,58 @@ impl<'a> Evaluator<'a> {
         let f = self.function;
         // An sp-rooted constant expression — InitialVar(sp), an alignment-masked
         // `(sp & mask)`, or either plus a constant `Add` chain — decomposes to
-        // its SP terminal + offset via the same decomposer the stores /
-        // `reaching_store` use, so the aligned base is recognized and matches
-        // the stores' base. Memoized in `sp_memo`, so the load's index-
+        // its SP terminal + offset via the same `SpAliasCfg.decompose` the
+        // stores / `reaching_store` use, so the aligned base is recognized and
+        // matches the stores' base. Memoized in `sp_memo`, so the load's index-
         // independent sp-spine is computed once and reused across indices.
         if let Some(SpExpr { base, offset }) =
-            SpDecomposer::new(f, &mut self.sp_memo).decompose(value)
+            SpAliasCfg::call_blocking(&mut self.sp_memo, self.alias_mode).decompose(f, value)
         {
             return Some(Abs::SpRel { base, offset });
         }
         let node = f.producer(value);
         let kind = *f.node_kind(node);
         let out_ty = f.value_type_opt(value);
-        let ins: SmallVec<[ValueId; 2]> = f
-            .node_inputs(node)
-            .into_iter()
-            .filter(|&i| f.value_type_opt(i).is_some())
-            .collect();
+        let ins: SmallVec<[ValueId; 2]> = value_input_producers(f, node).collect();
         match kind {
             NodeKind::IntConst(_) => Some(Abs::Const(f.int_const_u128(value)?)),
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add) => {
-                self.eval_add(self.get(*ins.first()?)?, self.get(*ins.get(1)?)?, out_ty?)
+                self.eval_add(value, self.get(*ins.first()?)?, self.get(*ins.get(1)?)?, out_ty?)
             }
             NodeKind::Load(_) => self.eval_load(node, value),
             NodeKind::Phi => self.eval_phi(node),
-            _ => {
-                let resolve = |v| self.get(v).and_then(Abs::as_const);
-                crate::const_eval::eval_node_const(
-                    self.function,
-                    value,
-                    &resolve,
-                    self.rom,
-                    self.endianness,
-                )
-                .map(Abs::Const)
-            }
+            _ => self.eval_const_node(value),
         }
     }
 
-    /// `Add` in the abstract domain: `Const+Const`, or `SpRel ± Const`.
-    fn eval_add(&self, l: Abs, r: Abs, ty: ValueType) -> Option<Abs> {
+    /// Route a pure-constant node through the shared
+    /// [`crate::const_eval::eval_node_const`] SSoT, resolving each input from
+    /// the abstract map's already-computed `Const` facts.  This is the single
+    /// const-domain fold for every kind the abstract evaluator does not layer
+    /// the `SpRel` domain on top of (and the `Const` arms of `eval_add` /
+    /// `eval_load`).
+    fn eval_const_node(&self, value: ValueId) -> Option<Abs> {
+        let resolve = |v| self.get(v).and_then(Abs::as_const);
+        crate::const_eval::eval_node_const(self.function, value, &resolve, self.rom).map(Abs::Const)
+    }
+
+    /// `Add` in the abstract domain: `Const+Const` (routed through the shared
+    /// `const_eval` resolver via [`Self::eval_const_node`]), or `SpRel ± Const`.
+    fn eval_add(&self, value: ValueId, l: Abs, r: Abs, ty: ValueType) -> Option<Abs> {
         match (l, r) {
-            (Abs::Const(a), Abs::Const(b)) => Some(Abs::Const(eval_int_binary(
-                strider_ir::IntBinaryOp::Add,
-                a,
-                b,
-                ty,
-            )?)),
+            // Const+Const is exactly what `eval_node_const`'s Add arm computes
+            // from the resolved inputs — route it through the SSoT rather than
+            // re-deriving `eval_int_binary` here.
+            (Abs::Const(_), Abs::Const(_)) => self.eval_const_node(value),
             (Abs::SpRel { base, offset }, Abs::Const(c))
             | (Abs::Const(c), Abs::SpRel { base, offset }) => {
                 // Signed interpretation so a negative frame offset (stored as
                 // 0xFFFF..) subtracts correctly.
-                let delta = i64::try_from(ty.get_signed_int(c)?).ok()?;
-                Some(Abs::SpRel { base, offset: offset.wrapping_add(delta) })
+                let delta = ty.get_signed_int(c)?;
+                Some(Abs::SpRel {
+                    base,
+                    offset: offset.wrapping_add(delta),
+                })
             }
             (Abs::SpRel { .. }, Abs::SpRel { .. }) => None,
         }
@@ -164,15 +162,13 @@ impl<'a> Evaluator<'a> {
         let f = self.function;
         let load_ty = f.value_type_opt(value)?;
         match self.get(f.load_addr(node))? {
-            Abs::Const(c) => {
-                let rom = self.rom?;
-                let addr = u64::try_from(c).ok()?;
-                crate::const_eval::read_rom_const(rom, addr, load_ty, self.endianness)
-                    .map(Abs::Const)
-            }
+            // Const-address ROM read — exactly the `Load(RAM)` arm of
+            // `eval_node_const`, so route it through that SSoT (the resolver
+            // re-reads the already-`Const` address from the map).
+            Abs::Const(_) => self.eval_const_node(value),
             Abs::SpRel { base, offset } => {
                 let [mem, _addr] = f.node_inputs_exact::<2>(node).ok()?;
-                let load_size = load_ty.byte_size() as i64;
+                let load_size = load_ty.byte_size() as i128;
                 let reaching = {
                     let mut cfg = SpAliasCfg::call_blocking(&mut self.sp_memo, self.alias_mode);
                     cfg.reaching_store(f, mem, base, offset, load_size)
@@ -182,8 +178,9 @@ impl<'a> Evaluator<'a> {
                     return None;
                 }
                 // Jump targets are constants on the converged graph.
-                let data_ty = f.value_type_opt(reaching.data)?;
-                let raw = f.int_const_u128(reaching.data)?;
+                let data = reaching.data(f);
+                let data_ty = f.value_type_opt(data)?;
+                let raw = f.int_const_u128(data)?;
                 Some(Abs::Const(self.reshape(raw, data_ty, load_ty)?))
             }
         }
@@ -196,36 +193,26 @@ impl<'a> Evaluator<'a> {
         if data_ty == load_ty {
             return Some(v);
         }
-        if data_ty.is_integer()
-            && load_ty.is_integer()
-            && load_ty.byte_size() < data_ty.byte_size()
+        if data_ty.is_integer() && load_ty.is_integer() && load_ty.byte_size() < data_ty.byte_size()
         {
-            let shifted = match self.endianness {
-                Endianness::Little => v,
-                Endianness::Big => {
-                    let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u32) * 8;
-                    v >> shift_bits
-                }
-            };
-            return load_ty.get_unsigned_int(shifted);
+            // SSoT for the endianness-aware byte-slice shift (shared with
+            // `LoadForward::narrow`); LE → 0, so the low bytes pass through.
+            let shift_bits =
+                crate::sp_expr::high_low_shift_bits(data_ty, load_ty, self.function.endianness());
+            return load_ty.get_unsigned_int(v >> shift_bits);
         }
         None
     }
 
     /// All-arms-agree: every value arm must resolve to the same `Abs`.
     fn eval_phi(&mut self, node: NodeId) -> Option<Abs> {
-        let arms: SmallVec<[ValueId; 4]> = self
-            .function
-            .node_inputs(node)
-            .into_iter()
-            .filter(|&i| self.function.value_type_opt(i).is_some())
-            .collect();
+        let arms: SmallVec<[ValueId; 4]> = value_input_producers(self.function, node).collect();
         let mut agreed: Option<Abs> = None;
         for arm in arms {
             let v = self.get(arm)?;
             match agreed {
                 None => agreed = Some(v),
-                Some(prev) if prev.same(v) => {}
+                Some(prev) if prev == v => {}
                 Some(_) => return None,
             }
         }
@@ -234,39 +221,40 @@ impl<'a> Evaluator<'a> {
     }
 }
 
-/// The dispatch cone in producers-before-consumers order: backward reachability
-/// from `root` over value edges only (the memory token is not followed — store
-/// data is resolved at eval time via `reaching_store`). Iterative postorder, so
-/// a deep cone costs O(1) host stack; cycles terminate via `seen` (a back-edge
-/// input is absent at eval time → `None`).
-pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<ValueId> {
-    let mut order: Vec<ValueId> = Vec::new();
-    let mut seen: FxHashSet<ValueId> = FxHashSet::default();
-    let mut stack: Vec<(ValueId, bool)> = vec![(root, false)];
-    while let Some((v, processed)) = stack.pop() {
-        if processed {
-            order.push(v);
-            continue;
-        }
-        if !seen.insert(v) {
-            continue;
-        }
-        stack.push((v, true));
-        for input in function.node_inputs(function.producer(v)) {
-            if function.value_type_opt(input).is_some() && !seen.contains(&input) {
-                stack.push((input, false));
-            }
-        }
+/// Successor relation for the dispatch-cone walk: a value's successors are its
+/// own value-input producers (the memory token is not followed — store data is
+/// resolved at eval time via `reaching_store`).  Feeding this backward relation
+/// to a post-order walk yields producers before consumers.
+struct ValueInputSuccs<'a> {
+    function: &'a strider_ir::Function,
+}
+
+impl graphwalk::GraphRef for ValueInputSuccs<'_> {
+    type NodeId = ValueId;
+
+    fn try_successors(
+        &self,
+        value: ValueId,
+        f: impl FnMut(ValueId) -> std::ops::ControlFlow<()>,
+    ) -> std::ops::ControlFlow<()> {
+        value_input_producers(self.function, self.function.producer(value)).try_for_each(f)
     }
-    order
+}
+
+/// The dispatch cone in producers-before-consumers order: backward reachability
+/// from `root` over value edges only (see [`ValueInputSuccs`]).  Reuses the
+/// shared iterative post-order walk (`graphwalk::PostOrder`), so a deep cone
+/// costs O(1) host stack and each value is yielded once; a cycle's back-edge
+/// input is simply absent at eval time → `None`.
+pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<ValueId> {
+    graphwalk::entity_postorder(ValueInputSuccs { function }, [root]).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Evaluator, cone_order};
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     // Build `Add(idx, 100):I64` where `idx` is a tracked register read
@@ -284,7 +272,9 @@ mod tests {
             .build_fn_single_region()
             .expect("build_fn_single_region");
         let idx = b.read_variable(&vn).expect("read_variable");
-        let c100 = b.build_int_const(100u64, ValueType::I64).expect("build_int_const");
+        let c100 = b
+            .build_int_const(100u64, ValueType::I64)
+            .expect("build_int_const");
         let sum = b
             .build_int_binary_operation(idx, c100, IntBinaryOp::Add, ValueType::I64)
             .expect("build_int_binary_operation");

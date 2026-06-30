@@ -54,9 +54,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// or `None` if it has no value output.
     fn out_type(&self, node: NodeId) -> Option<ValueType> {
         self.function
-            .node_outputs(node)
-            .iter()
-            .find_map(|&o| self.function.value_kind(o).as_value())
+            .first_value_output_of(node)
+            .and_then(|o| self.function.value_type_opt(o))
     }
 
     /// Returns the [`ValueType`] of the `ValueId` at input index
@@ -66,7 +65,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             .node_inputs(node)
             .into_iter()
             .nth(idx)
-            .and_then(|o| self.function.value_kind(o).as_value())
+            .and_then(|o| self.function.value_type_opt(o))
     }
 
     /// Type name of the first value output of `node`, or `"?"` if absent.
@@ -111,7 +110,10 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 
         let label = match kind {
             // ── entry / structural ────────────────────────────────────────────
-            NodeKind::InitialVar(var) => format!("init\n{}", self.vn_to_name(var)?),
+            NodeKind::InitialVar(id) => match self.function.initial_vn_opt(*id) {
+                Some(vn) => format!("init\n{}", self.vn_to_name(&vn)?),
+                None => format!("init\n#{}", id.index()),
+            },
             NodeKind::MemPhi => "φ Mem".to_string(),
             NodeKind::Phi => match self
                 .function
@@ -122,54 +124,35 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             },
 
             // ── constants ─────────────────────────────────────────────────────
-            NodeKind::IntConst(crate::node::IntPayload::Small(_)) => {
-                let ty = self.out_type_suffix(node, ":");
-                // Read value through the SSoT funnel rather than matching the
-                // node kind payload directly.
-                let v = self
-                    .function
-                    .node_outputs(node)
-                    .iter()
-                    .find_map(|&o| self.function.int_const_u128(o))
-                    .unwrap_or(0);
-                format!("const {v:#x}{ty}")
-            }
-            NodeKind::IntConst(crate::node::IntPayload::Wide(id)) => {
-                // I80 / I128 / I256 / I512 payload interned in
-                // `Function::wide_const_interner`.  Render the actual value
-                // rather than the Debug form of the interning id.
+            NodeKind::IntConst(id) => {
+                let out_ty = self.out_type(node);
                 // A dangling id (malformed graph) labels rather than panics.
-                match self.function.wide_const_opt(*id) {
-                    None => format!("const <dangling wide-const {id:?}>"),
-                    Some(storage) => {
-                        let bits = storage.byte_size() * 8;
-                        let hex = if let Some(v) = storage.as_u128() {
-                            // I80 / I128: render the u128 directly.
-                            if v == 0 {
-                                "0".to_string()
-                            } else {
-                                format!("{v:x}")
-                            }
-                        } else {
-                            // I256 / I512: limbs are little-endian, walk high→low.
-                            let limbs = storage.limbs();
-                            let mut hex = String::new();
-                            for &limb in limbs.iter().rev() {
-                                if hex.is_empty() {
-                                    if limb == 0 {
-                                        continue;
-                                    }
-                                    hex.push_str(&format!("{limb:x}"));
-                                } else {
-                                    hex.push_str(&format!("{limb:016x}"));
-                                }
-                            }
-                            if hex.is_empty() {
-                                hex.push('0');
-                            }
-                            hex
-                        };
+                match self.function.const_interner.get(*id) {
+                    None => format!("const <dangling const {id:?}>"),
+                    Some(_) if out_ty.is_some_and(|t| t.is_wide_int()) => {
+                        // Wide (I80 / I128 / I256 / I512): little-endian bytes,
+                        // rendered high→low.  Read through the SSoT accessor.
+                        let bits = out_ty.map_or(0, |t| t.byte_size() * 8);
+                        let bytes = self
+                            .function
+                            .int_const_wide_le_bytes(node)
+                            .unwrap_or_default();
+                        let raw: String =
+                            bytes.iter().rev().map(|b| format!("{b:02x}")).collect();
+                        let hex = raw.trim_start_matches('0');
+                        let hex = if hex.is_empty() { "0" } else { hex };
                         format!("const 0x{hex}:i{bits}")
+                    }
+                    Some(_) => {
+                        let ty = self.out_type_suffix(node, ":");
+                        // Read value through the SSoT funnel rather than matching
+                        // the interned payload directly.
+                        let v = self
+                            .function
+                            .first_value_output_of(node)
+                            .and_then(|o| self.function.int_const_u128(o))
+                            .unwrap_or(0);
+                        format!("const {v:#x}{ty}")
                     }
                 }
             }

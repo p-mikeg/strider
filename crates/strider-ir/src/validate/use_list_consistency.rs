@@ -60,10 +60,7 @@ pub(super) fn check_use_list_consistency(
     // the producer's use-list" failure mode (covered by the
     // `use_list_input_missing_from_use_list` test, which simulates a
     // corrupted graph via `corrupt_clear_first_use`).
-    for node in graph.all_node_ids() {
-        if !reachable.contains(node) {
-            continue;
-        }
+    for node in reachable.iter() {
         let input_count = graph.node_inputs(node).len();
         for idx in 0..input_count {
             // The index range is by construction valid (we just measured the

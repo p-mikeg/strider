@@ -24,10 +24,8 @@
     clippy::unreachable
 )]
 
-use strider_ir::IRBuilderExt;
-use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{IRViewer, IRWalker};
-use strider_ir::{IntBinaryOp, IntUnaryOp};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
 use strider_opt::{
@@ -96,7 +94,7 @@ fn find_node<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F)
 /// Asserts `pat` matches exactly `expected` times and returns the hits.
 #[track_caller]
 fn match_count(function: &strider_ir::Function, pat: Pattern, expected: usize) -> Vec<Match> {
-    let hits = Matcher::try_new(function).unwrap().find_all(&pat).unwrap();
+    let hits = Matcher::new(function).find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
         expected,
@@ -188,7 +186,7 @@ fn fire_anywhere<F>(function: &mut strider_ir::Function, rule: F) -> bool
 where
     F: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> strider_pattern::Result<Option<ValueId>>,
 {
-    let mut ctx = EditFunction::new(function).expect("test fixture is built");
+    let mut ctx = EditFunction::new(function);
     apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).expect("apply must not error") > 0
 }
 
@@ -215,7 +213,7 @@ fn rule_returns_false_when_lhs_does_not_match() {
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0u128));
     let add_node = find_add(&function);
     let fired = {
-        let mut ctx = EditFunction::new(&mut function).expect("test fixture is built");
+        let mut ctx = EditFunction::new(&mut function);
         rule(&mut ctx, add_node).unwrap().is_some()
     };
     assert!(!fired);
@@ -234,13 +232,21 @@ fn sub_x_x_to_zero_rule() {
 
     let sub_node = find_sub(&function);
     let fired = {
-        let mut ctx = EditFunction::new(&mut function).expect("test fixture is built");
+        let mut ctx = EditFunction::new(&mut function);
         rule(&mut ctx, sub_node).unwrap().is_some()
     };
     assert!(fired);
 
-    let kind = return_data_input_kind(&function);
-    assert!(matches!(kind, NodeKind::IntConst(IntPayload::Small(0))));
+    {
+        use strider_ir::IRViewer;
+        let ret = find_node(&function, |k| matches!(k, NodeKind::Return));
+        let data_value = function.node_inputs(ret)[2];
+        assert!(
+            matches!(function.kind_of_value(data_value), NodeKind::IntConst(_))
+                && function.int_const_u128(data_value) == Some(0),
+            "sub x x should fold to IntConst(0)"
+        );
+    }
 }
 
 // ── Error paths: multi-value-output LHS root ────────────────────────────────
@@ -263,7 +269,7 @@ fn rewrite_rule_on_call_root_returns_err() {
         .unwrap();
     fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let tgt = fb.build_int_const(0x1234u64, ValueType::I64).unwrap();
-    fb.build_call(tgt, None).unwrap();
+    fb.build_call_cc(tgt, None).unwrap();
     fb.build_return(None, &[]).unwrap();
     fb.set_lift_addr(None);
     let mut function = fb.build().unwrap();
@@ -274,7 +280,7 @@ fn rewrite_rule_on_call_root_returns_err() {
         .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
         .expect("Call node");
     let err = {
-        let mut ctx = EditFunction::new(&mut function).expect("test fixture is built");
+        let mut ctx = EditFunction::new(&mut function);
         match rule(&mut ctx, call_node) {
             Ok(_) => panic!("multi-output root must error"),
             Err(e) => e,
@@ -356,7 +362,7 @@ fn apply_count_with_no_match_returns_zero() {
     let mut function = t.ret_val(v);
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
-    let mut ctx = EditFunction::new(&mut function).unwrap();
+    let mut ctx = EditFunction::new(&mut function);
     let n = apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap();
     assert_eq!(n, 0, "rule must not fire on a graph without any Add node");
 }
@@ -379,7 +385,7 @@ fn apply_count_with_one_match_returns_one() {
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
     let n = {
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap()
     };
     assert_eq!(n, 1, "exactly one application expected");
@@ -416,7 +422,7 @@ fn apply_rules_count_round_robin_reaches_fixed_point() {
     let mut total: usize = 0;
     for _ in 0..16 {
         let n = {
-            let mut ctx = EditFunction::new(&mut function).unwrap();
+            let mut ctx = EditFunction::new(&mut function);
             apply_rules_count(&mut ctx, &rules).unwrap()
         };
         total += n;
@@ -447,7 +453,7 @@ fn apply_count_preserves_use_list_integrity() {
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
     {
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap();
     }
     strider_ir::validate::validate(&function).expect("validate must pass after rewrite");
@@ -477,7 +483,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     let x = Capture::new();
     // Locate the outer `Add(_, 0)` root (not the inner `Add(7, 1)`).
     let add_node = {
-        let m = Matcher::try_new(&function).unwrap();
+        let m = Matcher::new(&function);
         let pat = add(var(x), int_const(0u128)).into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert_eq!(hits.len(), 1);
@@ -488,7 +494,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     assert!(function.asm_fingerprint(add_node).contains(&SOURCE_ADDR));
 
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
-    let mut ctx = EditFunction::new(&mut function).unwrap();
+    let mut ctx = EditFunction::new(&mut function);
     let changed = rule(&mut ctx, add_node).unwrap().is_some();
     assert!(changed);
 
@@ -518,7 +524,7 @@ fn apply_rules_in_order_or_composes_results() {
     let y = Capture::new();
     // The outer `Add(_, 0)` is the rule's target.
     let add_node = {
-        let m = Matcher::try_new(&function).unwrap();
+        let m = Matcher::new(&function);
         let pat = add(var(y), int_const(0u128)).into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert_eq!(hits.len(), 1);
@@ -530,7 +536,7 @@ fn apply_rules_in_order_or_composes_results() {
         // Second rule matches the actual fixture (Add(_, 0)).
         rewrite_rule(add(var(y), int_const(0u128)), var(y)),
     ];
-    let mut ctx = EditFunction::new(&mut function).unwrap();
+    let mut ctx = EditFunction::new(&mut function);
     let fired = apply_rules_in_order(&rules)(&mut ctx, add_node)
         .unwrap()
         .is_some();

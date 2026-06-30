@@ -7,7 +7,7 @@
 //! populates in production.  We bypass `StackOffsetDetect` here so tests stay
 //! focused on the pattern-matcher behaviour rather than the optimizer.
 
-use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueType};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{IRViewer, IRWalker};
 use strider_pattern::{Capture, Matcher, load, store};
 
@@ -42,8 +42,8 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     for &load_node in &loads {
         let inputs = function.node_inputs(load_node);
         let addr_value = inputs[1];
-        if let NodeKind::IntConst(IntPayload::Small(v)) = function.kind_of_value(addr_value) {
-            if *v == 0x1000 {
+        if let Some(v) = function.int_const_u128(addr_value) {
+            if v == 0x1000 {
                 stack_node = Some(load_node);
             } else {
                 heap_node = Some(load_node);
@@ -83,8 +83,8 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     for &store_node in &stores {
         let inputs = function.node_inputs(store_node);
         let addr_value = inputs[1];
-        if let NodeKind::IntConst(IntPayload::Small(v)) = function.kind_of_value(addr_value) {
-            if *v == 0x1000 {
+        if let Some(v) = function.int_const_u128(addr_value) {
+            if v == 0x1000 {
                 stack_store = Some(store_node);
             } else {
                 heap_store = Some(store_node);
@@ -104,7 +104,7 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
 #[test]
 fn stack_only_matches_only_stack_loads() {
     let (g, _stack_node, _heap_node) = two_loads_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
     let pat = load().stack_only().build();
     let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1, "stack_only() must reject the heap load");
@@ -114,7 +114,7 @@ fn stack_only_matches_only_stack_loads() {
 #[test]
 fn unconstrained_load_matches_both_loads() {
     let (g, _stack_node, _heap_node) = two_loads_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
     let pat = load().build();
     let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 2, "unconstrained load() must match both loads");
@@ -126,7 +126,7 @@ fn unconstrained_load_matches_both_loads() {
 #[test]
 fn stack_only_matches_only_stack_stores() {
     let (g, _stack_store, _heap_store) = two_stores_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
     let pat = store().stack_only().build();
     let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1, "stack_only() must reject the heap store");
@@ -138,7 +138,7 @@ fn stack_only_matches_only_stack_stores() {
 #[test]
 fn offset_exact_filter_store() {
     let (g, _stack_store, _heap_store) = two_stores_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
 
     let pat_match = store().stack_offset(0x10).build();
     let hits_match = matcher.find_all(&pat_match).unwrap();
@@ -165,7 +165,7 @@ fn offset_exact_filter_store() {
 #[test]
 fn capture_then_read_stack_offset_via_side_table() {
     let (g, stack_store, _heap_store) = two_stores_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
     let node_cap = Capture::new();
     let pat = store().stack_only().capture(node_cap).build();
     let hits = matcher.find_all(&pat).unwrap();
@@ -178,14 +178,14 @@ fn capture_then_read_stack_offset_via_side_table() {
     let bound = m.node(node_cap, g.graph()).expect("captured node");
     assert_eq!(bound, stack_store, "capture must bind the stack store");
     let (_base, offset) = g.stack_offset(bound).expect("side-table entry");
-    assert_eq!(offset, 0x10_i64, "side-table offset must round-trip");
+    assert_eq!(offset, 0x10_i128, "side-table offset must round-trip");
 }
 
 /// The same recovery applies to loads.
 #[test]
 fn capture_then_read_stack_offset_via_side_table_load() {
     let (g, stack_load, _heap_load) = two_loads_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
+    let matcher = Matcher::new(&g);
     let node_cap = Capture::new();
     let pat = load().stack_only().capture(node_cap).build();
     let hits = matcher.find_all(&pat).unwrap();
@@ -194,5 +194,5 @@ fn capture_then_read_stack_offset_via_side_table_load() {
     let bound = m.node(node_cap, g.graph()).expect("captured node");
     assert_eq!(bound, stack_load);
     let (_base, offset) = g.stack_offset(bound).expect("side-table entry");
-    assert_eq!(offset, 0x10_i64);
+    assert_eq!(offset, 0x10_i128);
 }

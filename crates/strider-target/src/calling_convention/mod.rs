@@ -172,19 +172,30 @@ impl Default for BuiltCallingConvention {
 /// REGISTER-space offset of the synthetic stack-pointer varnode minted by
 /// [`BuiltCallingConvention::default`].  Chosen far outside any real
 /// architecture's register file so it never aliases a tracked register.
-pub const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
+pub(crate) const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
+
+/// Returns the first element of `a` that also appears in `b`, or `None`
+/// when the two lists are disjoint.  Shared "find first offending element"
+/// helper for [`BuiltCallingConvention::try_new`]'s pairwise
+/// disjointness checks; preserves first-offender reporting (the first
+/// element of `a` in iteration order).  O(|a|·|b|) over the ≤31-element ABI
+/// register lists.
+fn first_in_both<'a>(a: &'a [rsleigh::Vn], b: &[rsleigh::Vn]) -> Option<&'a rsleigh::Vn> {
+    a.iter().find(|vn| b.contains(vn))
+}
+
+/// Returns the first element of `list` that recurs later in the same list
+/// (the first duplicate), or `None` when every element is unique.  Shared
+/// within-list-uniqueness helper for [`BuiltCallingConvention::try_new`];
+/// O(n²) over the ≤31-element ABI register lists.
+fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
+    list.iter()
+        .enumerate()
+        .find(|(i, vn)| list[i + 1..].contains(vn))
+        .map(|(_, vn)| vn)
+}
 
 impl BuiltCallingConvention {
-    /// The convention's positional-argument layout: register slots in ABI
-    /// order plus the unbounded stack-arg formula.
-    #[must_use]
-    pub fn positional_arg_layout(&self) -> PositionalArgLayout {
-        PositionalArgLayout {
-            registers: self.arg_passing_regs.clone(),
-            stack: self.stack_args,
-        }
-    }
-
     /// Validating constructor.  Builds a
     /// `BuiltCallingConvention` from explicit fields and checks the
     /// canonical ABI invariants:
@@ -221,15 +232,13 @@ impl BuiltCallingConvention {
         preserves_memory: bool,
     ) -> std::result::Result<Self, anyhow::Error> {
         // Disjointness: arg-passing must not overlap callee-saved.
-        for vn in &arg_passing_regs {
-            if callee_saved_regs.contains(vn) {
-                return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: varnode {:?} appears in both \
-                     arg_passing_regs and callee_saved_regs (a single varnode \
-                     cannot be both caller-supplied and callee-preserved)",
-                    vn,
-                ));
-            }
+        if let Some(vn) = first_in_both(&arg_passing_regs, &callee_saved_regs) {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: varnode {:?} appears in both \
+                 arg_passing_regs and callee_saved_regs (a single varnode \
+                 cannot be both caller-supplied and callee-preserved)",
+                vn,
+            ));
         }
         // Ret-val regs must not overlap callee-saved (the callee writes
         // them to deliver results — they cannot be required-preserved).
@@ -246,15 +255,13 @@ impl BuiltCallingConvention {
         // files on every supported arch; the same varnode in both is a
         // CC-author bug.  (arg ∩ ret is deliberately *not* checked — x86_64
         // SysV RDX is legitimately both the 3rd arg and the 2nd int return.)
-        for vn in &ret_val_regs {
-            if ret_val_regs_float.contains(vn) {
-                return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: varnode {:?} appears in both \
-                     ret_val_regs and ret_val_regs_float (integer and float \
-                     return registers are physically distinct)",
-                    vn,
-                ));
-            }
+        if let Some(vn) = first_in_both(&ret_val_regs, &ret_val_regs_float) {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: varnode {:?} appears in both \
+                 ret_val_regs and ret_val_regs_float (integer and float \
+                 return registers are physically distinct)",
+                vn,
+            ));
         }
         // Per-list checks: SP-not-present + within-list uniqueness.
         // Walked in one pass over the four named lists.
@@ -272,14 +279,12 @@ impl BuiltCallingConvention {
                     list_name,
                 ));
             }
-            for (i, vn) in list.iter().enumerate() {
-                if list[i + 1..].contains(vn) {
-                    return Err(anyhow::anyhow!(
-                        "BuiltCallingConvention: duplicate varnode {:?} in {}",
-                        vn,
-                        list_name,
-                    ));
-                }
+            if let Some(vn) = first_dup(list) {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: duplicate varnode {:?} in {}",
+                    vn,
+                    list_name,
+                ));
             }
         }
         // Link-register-as-callee-saved invariant (CLAUDE.md note).
@@ -301,25 +306,23 @@ impl BuiltCallingConvention {
                 ret_stack_pop,
             ));
         }
-        if let Some(sa) = stack_args
-            && sa.increment <= 0
-        {
-            return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: stack-arg increment must be > 0, got {}",
-                sa.increment,
-            ));
-        }
-        // A negative base_offset would let `index_of` / `slot_of`'s
-        // `offset - base_offset` overflow on a garbage offset; reject it here
-        // (the construction boundary) so those hot-path subtractions stay
-        // overflow-free for any `offset >= base_offset`.
-        if let Some(sa) = stack_args
-            && sa.base_offset < 0
-        {
-            return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: stack-arg base_offset must be >= 0, got {}",
-                sa.base_offset,
-            ));
+        if let Some(sa) = stack_args {
+            if sa.increment <= 0 {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: stack-arg increment must be > 0, got {}",
+                    sa.increment,
+                ));
+            }
+            // A negative base_offset would let `index_of` / `slot_of`'s
+            // `offset - base_offset` overflow on a garbage offset; reject it here
+            // (the construction boundary) so those hot-path subtractions stay
+            // overflow-free for any `offset >= base_offset`.
+            if sa.base_offset < 0 {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: stack-arg base_offset must be >= 0, got {}",
+                    sa.base_offset,
+                ));
+            }
         }
         Ok(Self {
             arg_passing_regs,
@@ -343,22 +346,22 @@ impl BuiltCallingConvention {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StackArgs {
     /// Byte offset from call-time SP of the first stack-passed argument.
-    pub base_offset: i64,
+    pub base_offset: i128,
     /// Byte stride between consecutive stack-arg slots (the ABI word size);
     /// always `> 0`.
-    pub increment: i64,
+    pub increment: i128,
 }
 
 impl StackArgs {
     /// Byte offset (from call-time SP) of the `n`-th stack argument.
     ///
-    /// Saturates at `i64::MAX` for a runaway index rather than overflowing —
+    /// Saturates at `i128::MAX` for a runaway index rather than overflowing —
     /// a saturated offset matches no real stack store, so the over-collecting
     /// `call_stack_args` cursor walk terminates cleanly instead of panicking.
     #[must_use]
-    pub fn offset_of(&self, n: usize) -> i64 {
+    pub fn offset_of(&self, n: usize) -> i128 {
         self.base_offset
-            .saturating_add((n as i64).saturating_mul(self.increment))
+            .saturating_add((n as i128).saturating_mul(self.increment))
     }
 
     /// The stack-arg index whose slot fully contains a `size`-byte access
@@ -370,8 +373,12 @@ impl StackArgs {
     /// decoded from binary content, so `offset + size` is computed with a
     /// checked add: an overflowing (garbage) offset degrades to `None` rather
     /// than panicking in debug / wrapping in release.
+    ///
+    /// Superseded in prod by [`Self::slot_of`] + `slots_spanned`; retained
+    /// only for the strict within-one-slot tests.
+    #[cfg(test)]
     #[must_use]
-    pub fn index_of(&self, offset: i64, size: i64) -> Option<usize> {
+    pub fn index_of(&self, offset: i128, size: i128) -> Option<usize> {
         // `increment > 0` is a type invariant (enforced by `try_new`); guard
         // it here too so a directly-constructed `increment == 0` surfaces as a
         // clear assertion in debug builds rather than an integer divide-by-zero.
@@ -386,7 +393,7 @@ impl StackArgs {
         let idx = (rel / self.increment) as usize;
         // `idx * increment <= rel`, so `slot_start <= offset` and cannot
         // overflow; the slot end and the access end can, so both are checked.
-        let slot_start = self.base_offset + (idx as i64) * self.increment;
+        let slot_start = self.base_offset + (idx as i128) * self.increment;
         let slot_end = slot_start.checked_add(self.increment)?;
         let access_end = offset.checked_add(size)?;
         (access_end <= slot_end).then_some(idx)
@@ -396,7 +403,7 @@ impl StackArgs {
     /// at `offset` (from call-time SP): `floor((offset - base_offset) /
     /// increment)`, or `None` when `offset` is below `base_offset`.
     ///
-    /// Unlike [`Self::index_of`] this imposes **no upper bound on the access
+    /// Unlike the (test-only) `index_of` this imposes **no upper bound on the access
     /// size**: an argument wider than one slot (a 32-bit-ABI `double`, an
     /// x86-64 `long double`) is attributed to the slot its first byte lands
     /// in, and a sub-field read landing mid-slot is attributed to the slot it
@@ -405,7 +412,7 @@ impl StackArgs {
     /// one while spanning several slots, so a caller wanting the positional
     /// ordinal walks these slot indices with a width-aware cursor.
     #[must_use]
-    pub fn slot_of(&self, offset: i64) -> Option<usize> {
+    pub fn slot_of(&self, offset: i128) -> Option<usize> {
         debug_assert!(
             self.increment > 0,
             "StackArgs::slot_of requires increment > 0"
@@ -428,9 +435,9 @@ impl StackArgs {
     /// Like [`Self::offset_of`] the arithmetic **saturates** rather than
     /// overflowing: a garbage decoded `size` (from arbitrary lifted
     /// arithmetic) degrades to a large-but-finite span instead of wrapping the
-    /// `i64` intermediate.
+    /// `i128` intermediate.
     #[must_use]
-    pub fn slots_spanned(&self, size: i64) -> usize {
+    pub fn slots_spanned(&self, size: i128) -> usize {
         debug_assert!(
             self.increment > 0,
             "StackArgs::slots_spanned requires increment > 0"
@@ -440,34 +447,6 @@ impl StackArgs {
         // saturate so a pathological `size` can't overflow the i64 add.
         let numerator = size.saturating_add(self.increment - 1);
         (numerator / self.increment) as usize
-    }
-}
-
-/// A convention's positional-argument layout: register slots first (indices
-/// `0..registers.len()`), then unbounded stack slots (indices
-/// `registers.len()..`) addressed by [`StackArgs`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PositionalArgLayout {
-    /// Argument-passing register varnodes, in ABI order.
-    pub registers: Vec<rsleigh::Vn>,
-    /// Stack-arg formula; `None` when no arguments are passed on the stack.
-    pub stack: Option<StackArgs>,
-}
-
-impl PositionalArgLayout {
-    /// The positional index of the first stack argument (= number of register args).
-    #[must_use]
-    pub fn first_stack_index(&self) -> usize {
-        self.registers.len()
-    }
-
-    /// Byte offset (from call-time SP) of the positional arg at `index`, or
-    /// `None` when `index` is a register slot or the CC has no stack args.
-    #[must_use]
-    pub fn stack_offset_of(&self, index: usize) -> Option<i64> {
-        let first = self.registers.len();
-        let stack = self.stack?;
-        (index >= first).then(|| stack.offset_of(index - first))
     }
 }
 
@@ -932,7 +911,10 @@ macro_rules! cc_factory {
 impl CallingConvention {
     /// Returns `true` if calls under this convention preserve memory
     /// across the call (i.e. the IR's Call node should NOT advance the
-    /// memory chain).  See the `Self::preserves_memory` field docs.
+    /// memory chain).  See the `preserves_memory` field docs.  Prod reads
+    /// the resolved `BuiltCallingConvention::preserves_memory` field; this
+    /// accessor on the unbuilt convention is used only by tests.
+    #[cfg(test)]
     pub fn preserves_memory(&self) -> bool {
         self.preserves_memory
     }
@@ -996,10 +978,10 @@ impl CallingConvention {
         // any `UnknownRegName` from `vn_for_name` so a typo in the preset
         // surfaces at build time rather than later in the indirect-branch
         // resolver.
-        let link_register_vn = match self.link_register_reg_name {
-            Some(name) => Some(vn_for_name(sleigh_regs, name)?),
-            None => None,
-        };
+        let link_register_vn = self
+            .link_register_reg_name
+            .map(|name| vn_for_name(sleigh_regs, name))
+            .transpose()?;
         // Route through `try_new` so the disjointness invariants
         // (SP not in any reg list, arg/callee-saved disjoint, no
         // duplicates within a list, link-reg in callee-saved when set,

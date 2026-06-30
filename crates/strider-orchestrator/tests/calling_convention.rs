@@ -69,7 +69,7 @@ fn masked(p: Pattern) -> Pattern {
 
 /// Plain matcher; cast-mask handling now lives on the pattern.
 fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
-    Matcher::try_new(function).unwrap()
+    Matcher::new(function)
 }
 
 /// Returns the set of arg `index` values registered in
@@ -168,7 +168,8 @@ fn assert_some_call_arg_threads_through(function: &strider_ir::Function, n: u32,
         if matched_indices.last() != Some(&i) {
             for &carrier_value in carriers {
                 let carrier = function.producer(carrier_value);
-                if let NodeKind::InitialVar(vn) = *function.node_kind(carrier) {
+                if let NodeKind::InitialVar(vn_id) = *function.node_kind(carrier) {
+                    let vn = function.initial_vn(vn_id);
                     let pat2 = masked(call().arg(i as usize, initial_var_for(vn)).build());
                     if !m.find_all(&pat2).unwrap().is_empty() {
                         matched_indices.push(i);
@@ -333,7 +334,8 @@ fn narrow_widths_assertions(function: &strider_ir::Function) {
         for &v in carriers {
             let n = function.producer(v);
             match function.node_kind(n) {
-                NodeKind::InitialVar(vn) => {
+                NodeKind::InitialVar(vn_id) => {
+                    let vn = function.initial_vn(*vn_id);
                     assert!(
                         matches!(vn.size, 1 | 2 | 4 | 8),
                         "narrow_widths: arg {idx} InitialVar carrier has \

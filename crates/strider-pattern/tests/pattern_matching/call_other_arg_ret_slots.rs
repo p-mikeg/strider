@@ -8,9 +8,8 @@
 //! memory edge); `arg(idx, …)` stays value-typed for the pcode-explicit
 //! argument slots.
 
-use strider_ir::IRBuilderExt;
 use strider_ir::node::ValueType;
-use strider_ir::{Function, FunctionBuilder};
+use strider_ir::{Function, FunctionBuilder, IRBuilderExt};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{Capture, CaptureExt, Matcher, any, call_other, int_const, mem_phi};
 
@@ -24,7 +23,7 @@ fn build_cpuid_graph() -> Function {
     // CPUID per the ABI table is empty-channel + memory_edge=true.
     // Pass no pcode-explicit args, no implicit reads, no implicit writes.
     let _ = b
-        .build_call_other(
+        .build_call_other_abi(
             7,
             "cpuid",
             None,
@@ -50,7 +49,7 @@ fn ctrl_alias_binds_control_predecessor() {
     // edge so the wildcard binds it.
     let c = Capture::new();
     let pat = call_other().name("cpuid").ctrl(any().capture(c)).build();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
+    let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(
         hits[0].node(c, function.graph()).is_some(),
@@ -64,7 +63,7 @@ fn mem_alias_binds_memory_predecessor() {
     // The memory predecessor (inputs[1]) is the region's MemPhi token.
     let c = Capture::new();
     let pat = call_other().name("cpuid").mem(mem_phi().capture(c)).build();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
+    let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(
         hits[0].node(c, function.graph()).is_some(),
@@ -82,7 +81,7 @@ fn arg_constrains_pcode_explicit_value_argument() {
     // A modeled CallOther with one pcode-explicit value arg.  Its inputs
     // are `[ctrl(0), mem(1), arg0(2)]`.
     let _ = b
-        .build_call_other(
+        .build_call_other_abi(
             9,
             "rdmsr",
             None,
@@ -98,7 +97,7 @@ fn arg_constrains_pcode_explicit_value_argument() {
         .expect("rdmsr");
     b.build_return(None, &[]).expect("return");
     let function = b.build().expect("build");
-    let matcher = Matcher::try_new(&function).unwrap();
+    let matcher = Matcher::new(&function);
 
     // arg slot 2 holds the value argument IntConst(0x11).
     assert_eq!(

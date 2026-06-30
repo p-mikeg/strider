@@ -8,13 +8,10 @@
 use super::FlagCmpCanonicalize;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
+use strider_ir::{IRBuilderExt, IRViewer};
 
-use strider_ir::IRWalker;
-use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{FunctionBuilder, Graph};
-use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::{FunctionBuilder, Graph, IRWalker, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
 /// PowerPC `cmpwi` packs LT/GT/EQ/SO into a CR field; the branch extracts one
@@ -222,11 +219,7 @@ fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
         return false;
     };
     let is_one = |value: ValueId| {
-        fg.value_type_opt(value).is_some_and(|t| t.is_bool())
-            && matches!(
-                *fg.kind_of_value(value),
-                NodeKind::IntConst(IntPayload::Small(1))
-            )
+        fg.value_type_opt(value).is_some_and(|t| t.is_bool()) && fg.int_const_u128(value) == Some(1)
     };
     is_one(lhs) || is_one(rhs)
 }
@@ -356,13 +349,11 @@ fn assert_if_cond_is_neg_intcmp(
     // The non-constant operand is the cmp; the other is the I1
     // IntConst(1) (might be on either side due to dedup).
     let is_one_const = |value: ValueId| {
-        matches!(
-            *function.kind_of_value(value),
-            NodeKind::IntConst(IntPayload::Small(1))
-        ) && function
-            .value_kind(value)
-            .as_value()
-            .is_some_and(|t| t.is_bool())
+        function.int_const_u128(value) == Some(1)
+            && function
+                .value_kind(value)
+                .as_value()
+                .is_some_and(|t| t.is_bool())
     };
     let cmp_value = if is_one_const(rhs_value) {
         lhs_value
@@ -728,7 +719,7 @@ fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
 /// `IntCmpOp` node materialises.
 #[test]
 fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
-    use strider_ir::IRWalker;
+    use strider_ir_test_utils::IrWalkerEx;
     let a_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
     let b_vn = strider_ir_test_utils::reg_vn(0x1008, 4);
     let c_vn = strider_ir_test_utils::reg_vn(0x1010, 4);

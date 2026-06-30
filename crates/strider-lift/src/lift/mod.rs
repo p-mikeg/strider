@@ -16,7 +16,7 @@ mod function_lifter;
 mod integer;
 mod memory;
 mod misc;
-pub mod pcode_util;
+pub(crate) mod pcode_util;
 mod vn_io;
 
 #[cfg(test)]
@@ -42,16 +42,6 @@ pub struct LiftOutcome {
     /// node-keyed) back to the dispatch pcode address.  Empty in the
     /// common case (no deferred branches).
     pub unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
-}
-
-impl std::fmt::Display for LiftOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "LiftOutcome {{ unresolved_branches: {} }}",
-            self.unresolved_branches.len(),
-        )
-    }
 }
 
 /// The single options type for the whole binary → IR lift, re-exported
@@ -191,9 +181,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // set is always scanned fresh from it.
         let all_vns = self.find_all_unique_vns(cfg);
         // An empty override map behaves identically to "no overrides"
-        // (lookups are `and_then(|m| m.get(addr))`), so always pass the
-        // borrow.
-        let mut driver = FunctionLifter::new(self, cc, cfg, all_vns, Some(&opts.per_address_ccs))?;
+        // (the default is an empty map, so lookups are a plain `.get`).
+        let mut driver = FunctionLifter::new(self, cc, cfg, all_vns, &opts.per_address_ccs)?;
 
         // build_entry + one IR region per CFG region; returns the
         // CFG-region → IR-region map the per-insn loop resolves successors
@@ -318,25 +307,22 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                         .max()
                 });
             // Per-terminator funnel: same asm-fingerprint attribution
-            // pattern as `process_insn`.
-            self.builder.set_lift_addr(term_addr);
-            let term_res = (|| -> Result<()> {
+            // pattern as `process_insn` (see `with_lift_addr`).
+            self.with_lift_addr(term_addr, |s| {
                 match special_terminator {
                     Some(SpecialTerm::UnresolvedIndirect { target_vn, addr }) => {
-                        self.handle_unresolved_indirect_branch(&target_vn, addr)?;
+                        s.handle_unresolved_indirect_branch(&target_vn, addr)?;
                     }
                     Some(SpecialTerm::Switch(target_vn, targets)) => {
-                        self.handle_switch(cfg_rid, &target_vn, &targets, region_map)?;
+                        s.handle_switch(cfg_rid, &target_vn, &targets, region_map)?;
                     }
                     Some(SpecialTerm::TailCall(target)) => {
-                        self.handle_tail_call(target)?;
+                        s.handle_tail_call(target)?;
                     }
                     None => {}
                 }
                 Ok(())
-            })();
-            self.builder.set_lift_addr(None);
-            term_res?;
+            })?;
         }
         Ok(())
     }
@@ -461,34 +447,6 @@ impl SpecialTerm {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    #[test]
-    fn display_summarises_unresolved_branches() {
-        // Standard x86_64 `ret` byte sequence.  No `BranchIndirect`, so
-        // `unresolved_branches.len() == 0`.
-        let arch = strider_target::SleighArch::x86_64();
-        let regs = arch.probe_regs().expect("probe regs");
-        let cc = strider_target::CallingConvention::x86_64_systemv()
-            .expect("x86_64_systemv preset must be registered")
-            .build(&regs)
-            .expect("build cc");
-        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
-        let mut sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let cfg = strider_cfg::Builder::for_arch(
-            &arch,
-            &mut sleigh,
-            0x1000,
-            &strider_cfg::CfgOptions::default(),
-        )
-        .build()
-        .expect("cfg");
-        // The Lifter owns the Sleigh; CC is a per-call argument.
-        let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
-        let outcome = lifter.build_ir(&cfg, &cc).expect("build_ir");
-        let s = format!("{outcome}");
-        assert!(s.contains("unresolved_branches: 0"));
-    }
-
     /// AArch64 `ret` (which Sleigh lifts via `BranchIndirect` on the link
     /// register `x30`) routes through `handle_return`, NOT the
     /// `IndirectBranch` placeholder path: the cfg marks it
@@ -496,7 +454,7 @@ mod tests {
     /// `unresolved_branches` stays empty.
     #[test]
     fn aarch64_bx_lr_lifts_to_cc_return_not_indirect() {
-        use strider_ir::IRWalker;
+        use strider_ir_test_utils::IrWalkerEx;
         use strider_ir::node::NodeKind;
 
         let arch = strider_target::SleighArch::aarch64();
@@ -509,8 +467,7 @@ mod tests {
             .build(&regs)
             .expect("build cc");
         // AArch64 `ret` = 0xD65F03C0, little-endian byte sequence.
-        let reader =
-            rsleigh::mem_readers::BufMemReader::new(vec![0xc0, 0x03, 0x5f, 0xd6], 0x1000);
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc0, 0x03, 0x5f, 0xd6], 0x1000);
         let mut sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
         let cfg = strider_cfg::Builder::for_arch(

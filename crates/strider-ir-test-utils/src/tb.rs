@@ -12,10 +12,11 @@
 //! via `Tb::fb_mut`.
 
 use crate::RegisterSet;
-use strider_ir::IRBuilderExt;
 use strider_ir::node::{ValueId, ValueType};
-use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder};
-use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder, IRBuilderExt, IntBinaryOp,
+    IntCmpOp, IntUnaryOp,
+};
 
 // ── Tb ────────────────────────────────────────────────────────────────────────
 
@@ -317,7 +318,7 @@ impl Tb {
 
     pub fn call_at(&mut self, addr: u64) {
         let tgt = self.u64(addr);
-        self.fb.build_call(tgt, None).expect("call");
+        self.fb.build_call_cc(tgt, None).expect("call");
     }
     /// Emits a `CallOther(user_op_id)` node via the modeled API.
     /// Returns the ret-value output when `output_vn` is `Some`.  The
@@ -339,7 +340,7 @@ impl Tb {
         };
         let (_node, result) = self
             .fb
-            .build_call_other(user_op_id, name, None, args, &abi, output_vn, false)
+            .build_call_other_abi(user_op_id, name, None, args, &abi, output_vn, false)
             .expect("call_other");
         result
     }

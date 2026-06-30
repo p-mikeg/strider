@@ -8,6 +8,7 @@ strider-ir = { workspace = true }
 strider-pattern = { workspace = true }
 strider-target.workspace = true
 entity-utils = { workspace = true }
+graphwalk = { workspace = true }
 # strider-cfg forward dep: the `indirect_branch_resolve` classifiers
 # produce `strider_cfg::ResolvedTargets` to seed the CFG-rebuild feedback
 # loop (the type only — the resolver implementation lives in
@@ -16,12 +17,13 @@ strider-cfg = { workspace = true }
 rsleigh.workspace = true
 petgraph.workspace = true
 anyhow.workspace = true
-bitflags = "2"
 cranelift-entity.workspace = true
 rustc-hash = "2"
 smallvec.workspace = true
 
 [dev-dependencies]
+# Test-only IR helpers (build_sub_as_add_neg, count_kind, set_call_cc, …).
+strider-ir = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { workspace = true }
 object.workspace = true
 # Property-based testing for value-only IR invariants under the optimizer.

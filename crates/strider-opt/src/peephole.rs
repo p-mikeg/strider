@@ -27,14 +27,25 @@ use crate::pipeline::OptimizationResult;
 ///
 /// Collapses the recurring `node_inputs(n).iter().map(|i| producer(i))`
 /// micro-idiom (the input-producer cone walk) into one named helper.  Returns
-/// an owned `Vec` rather than a borrowing iterator so callers may push the
-/// producers onto a worklist while keeping `ctx` available for further reads —
-/// the input fan-out is small (≤ a node's arity), so the allocation is cheap.
+/// an owned `Vec` rather than a borrowing iterator so callers may **mutate**
+/// `ctx` while iterating the producers (e.g. extend a fingerprint per producer)
+/// — the borrow must end before the mutation.  Iterate-only callers that do not
+/// touch `ctx` in the loop body prefer the allocation-free
+/// [`input_producers_iter`].
 pub(crate) fn input_producers<V: IRViewer>(ctx: &V, node: NodeId) -> Vec<NodeId> {
-    ctx.node_inputs(node)
-        .into_iter()
-        .map(|v| ctx.producer(v))
-        .collect()
+    input_producers_iter(ctx, node).collect()
+}
+
+/// Borrowing-iterator counterpart of [`input_producers`]: yields each value
+/// input's producer node without an intermediate `Vec`.  Holds an immutable
+/// borrow of `ctx` for the iterator's lifetime, so use it only where the loop
+/// body does not also borrow `ctx` mutably (the worklist / fingerprint-extend
+/// callers keep the owned-`Vec` [`input_producers`] instead).
+pub(crate) fn input_producers_iter<V: IRViewer>(
+    ctx: &V,
+    node: NodeId,
+) -> impl Iterator<Item = NodeId> + '_ {
+    ctx.node_inputs(node).into_iter().map(|v| ctx.producer(v))
 }
 
 /// Outcome of a single [`PeepholePass::try_rewrite`] attempt at one root.
@@ -91,6 +102,7 @@ pub(crate) trait PeepholePass {
     fn try_rewrite(
         &self,
         ctx: &mut crate::EditFunction<'_>,
+        opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite>;
 
@@ -126,6 +138,7 @@ pub(crate) trait PeepholePass {
 pub(crate) fn run_peephole<P: PeepholePass>(
     pass: &P,
     ctx: &mut crate::EditFunction<'_>,
+    opt_ctx: &mut crate::pipeline::OptCtx<'_>,
 ) -> Result<OptimizationResult> {
     // Seed in the pass's chosen order, computed DIRECTLY for each variant —
     // no `reverse()` of an already-reversed sequence.  `ReversePostorder`
@@ -169,7 +182,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
                 }
             }
         }
-        let r = pass.try_rewrite(ctx, root)?;
+        let r = pass.try_rewrite(ctx, opt_ctx, root)?;
         if let PeepholeRewrite::Changed { new_node } = r {
             overall = OptimizationResult::Changed;
             // Re-examine the node the rewrite reports it freshly created
@@ -205,9 +218,9 @@ impl<P: PeepholePass + Clone + 'static> crate::pipeline::Optimizer for P {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        _ctx: &mut crate::pipeline::OptCtx<'_>,
+        ctx: &mut crate::pipeline::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        run_peephole(self, edit)
+        run_peephole(self, edit, ctx)
     }
 }
 
@@ -217,9 +230,8 @@ mod tests {
 
     use super::*;
     use std::cell::RefCell;
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IntBinaryOp;
     use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::make_empty_fn;
 
     use crate::error::Result;
@@ -254,6 +266,7 @@ mod tests {
         fn try_rewrite(
             &self,
             ctx: &mut crate::EditFunction<'_>,
+            _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
             root: NodeId,
         ) -> Result<PeepholeRewrite> {
             use cranelift_entity::EntityRef;
@@ -268,8 +281,7 @@ mod tests {
             if !(self.match_kind)(&kind) {
                 return Ok(PeepholeRewrite::NoChange);
             }
-            let [root_value] = ctx.node_outputs_exact::<1>(root)?;
-            let ty = ctx.value_kind(root_value).as_value_or_err()?;
+            let (root_value, ty) = ctx.single_value_output(root)?;
             // When scripted to do so, the first rewrite builds a fresh
             // kind-matching node (a clone of the root `Add` reusing its two
             // value inputs) instead of folding to a constant.  The fresh
@@ -337,8 +349,9 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let r = run_peephole(&pass, &mut ctx).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
     }
@@ -355,8 +368,9 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let r = run_peephole(&pass, &mut ctx).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
     }
@@ -372,18 +386,14 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let r = run_peephole(&pass, &mut ctx).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         assert!(!pass.visit_log.borrow().is_empty());
 
         // Return's value-input is now an IntConst (the rewrite replacement).
-        let ret = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-            .expect("Return must exist");
-        let value = fg.node_inputs(ret)[2];
+        let value = crate::test_support::return_value(fg.graph()).unwrap();
         let producer = fg.producer(value);
         assert!(
             matches!(fg.node_kind(producer), NodeKind::IntConst(_)),
@@ -411,8 +421,9 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let _ = run_peephole(&pass, &mut ctx).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let _ = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 2, "exactly two visits, no re-enqueue: {log:?}");
     }
@@ -435,8 +446,9 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let r = run_peephole(&pass, &mut ctx).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         // Each Add visited at least once; propagate-true allows extra
         // re-enqueue visits.  The exact count depends on worklist dedup
@@ -465,10 +477,11 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(true),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut octx = crate::pipeline::OptCtx::new(None);
         // The id the next created node will take == the new `Add`'s id.
         let new_node_idx = ctx.graph_ref().next_node_id().index() as u32;
-        let r = run_peephole(&pass, &mut ctx).unwrap();
+        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         let log = pass.visit_log.borrow().clone();
         assert!(
@@ -488,8 +501,9 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
-        let r = run_peephole(&pass, &mut ctx);
+        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut ctx, &mut octx);
         assert!(r.is_err(), "errored pass must surface error");
         let msg = format!("{:?}", r.unwrap_err());
         assert!(

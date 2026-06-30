@@ -17,8 +17,29 @@
 use std::collections::BTreeMap;
 
 use strider_ir::{
-    Function, FunctionBuilder, IRBuilderExt, IRViewer, ReadOnlyMemory, Result, Value,
+    Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, ReadOnlyMemory, Result, Value,
 };
+use strider_ir::node::NodeKind;
+
+/// Test-only extension over [`IRWalker`] supplying node-kind counting /
+/// existence assertions.  These are assertion vocabulary used only by tests, so
+/// they live here rather than on the production [`IRWalker`] trait.  Blanket-
+/// implemented for every `IRWalker`, so a test brings them into scope with
+/// `use strider_ir_test_utils::IrWalkerEx;`.
+pub trait IrWalkerEx: IRWalker {
+    /// Counts entry-reachable nodes whose [`NodeKind`] satisfies `pred`.
+    fn count_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> usize {
+        self.walk().filter(|&n| pred(self.node_kind(n))).count()
+    }
+
+    /// Returns `true` when at least one entry-reachable node satisfies `pred`.
+    /// Short-circuits at the first match.
+    fn has_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> bool {
+        self.walk().any(|n| pred(self.node_kind(n)))
+    }
+}
+
+impl<T: IRWalker + ?Sized> IrWalkerEx for T {}
 
 /// Sentinel asm-fingerprint address used by every helper in this
 /// module.  Distinct from any real machine address so debug output

@@ -3,9 +3,8 @@
 //! [`Bindings`] journal; per-capture value reads go through
 //! [`Match::bindings`] (the typed accessors live on [`Bindings`]).
 
-use strider_ir::Graph;
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{Graph, IRViewer};
 
 use crate::bindings::{Binding, Bindings};
 use crate::capture::Capture;
@@ -106,7 +105,7 @@ impl Match {
         // [`Binding::Value`]) and inspect the kind.
         let node = self.bindings.get_node(c, function.graph())?;
         match function.node_kind(node) {
-            NodeKind::InitialVar(vn) => Some(*vn),
+            NodeKind::InitialVar(id) => Some(function.initial_vn(*id)),
             _ => None,
         }
     }

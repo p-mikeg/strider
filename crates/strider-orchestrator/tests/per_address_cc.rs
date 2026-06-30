@@ -9,9 +9,8 @@ use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::Strider;
 use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::{LiftOptions, Strider};
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -73,9 +72,10 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     // callee_saved list can't reach.  The pinned invariant: the override
     // is recorded AND every clobber output is tagged AND the override
     // clobber count is strictly less than the function-default SystemV set.
-    assert!(
-        bfg.call_cc(call_id).is_some(),
-        "override CC must be recorded on the Call"
+    assert_ne!(
+        bfg.get_cc(call_id),
+        bfg.default_cc(),
+        "override CC must be recorded on the Call (effective CC differs from default)"
     );
     let tagged_outputs = outs.iter().skip(2).count();
     assert!(
@@ -130,9 +130,10 @@ fn call_without_override_uses_function_default_clobber_set() {
         .all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("function lifts to one Call");
-    assert!(
-        bfg.call_cc(call_id).is_none(),
-        "no override means no recorded call_cc"
+    assert_eq!(
+        bfg.get_cc(call_id),
+        bfg.default_cc(),
+        "no override → effective CC is the function default"
     );
     let outs = bfg.node_outputs(call_id);
     let expected = 2 + bfg.call_ret_val_regs().len() + bfg.call_clobbered_regs().len();

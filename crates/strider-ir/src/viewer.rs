@@ -12,7 +12,7 @@
 //! vocabulary with no duplication.
 //!
 //! [`IRWalker`] layers the control-aware walks (`walk`, `walk_kind`,
-//! `reverse_postorder_filter`, `postorder` / `reverse_postorder`, …) on top of [`IRViewer`],
+//! `reverse_postorder_filter` / `reverse_postorder`, …) on top of [`IRViewer`],
 //! delegating to the crate's `walk` primitives over
 //! `self.function().graph()`.  It is the single source of truth for
 //! traversing a function's IR graph; [`crate::EditFunction`] shadows the
@@ -24,18 +24,33 @@ use anyhow::anyhow;
 use crate::function::Function;
 use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
-/// Unified return shape for [`IRViewer::const_value`].
-///
-/// `Int { val, ty }` carries the raw `u128` payload of an `IntConst`
-/// node alongside its declared `ValueType` so callers can decide
-/// whether to view it unsigned / signed / mask / etc.  `Float` carries
-/// the raw bit pattern of a `FloatConst` — the analyzer never needs
-/// the float type for constant folding (`f32` vs `f64` is inferred
-/// from the surrounding op), so the type isn't carried here.
-#[derive(Debug, Clone, Copy)]
-pub enum ConstValue {
-    Int { val: u128, ty: ValueType },
-    Float { bits: u64 },
+/// Generates the `require_*` edge-kind guards on [`IRViewer`]: each errors
+/// unless `value_id`'s [`ValueKind`] satisfies the named predicate.  Doc
+/// attributes are forwarded, so every generated method keeps its own docs.
+macro_rules! value_kind_requirements {
+    ($($(#[$m:meta])* $name:ident => $pred:ident, $noun:literal;)+) => { $(
+        $(#[$m])*
+        fn $name(&self, value_id: ValueId) -> crate::Result<()> {
+            let kind = self.function().graph().value_kind(value_id);
+            if kind.$pred() {
+                Ok(())
+            } else {
+                Err(anyhow!("output {value_id:?} is not {} (got {kind:?})", $noun))
+            }
+        }
+    )+ };
+}
+
+/// Generates the named operand reads on [`IRViewer`]: each returns the input
+/// `value` at a fixed slot of a node, panicking on the arity the validator
+/// already guarantees.  Doc attributes are forwarded per method.
+macro_rules! semantic_slot_accessors {
+    ($($(#[$m:meta])* $name:ident => $arity:literal [$slot:literal] $msg:literal;)+) => { $(
+        $(#[$m])*
+        fn $name(&self, node: NodeId) -> ValueId {
+            self.node_inputs_exact::<$arity>(node).expect($msg)[$slot]
+        }
+    )+ };
 }
 
 /// The shared IR **point-read** vocabulary, available on every value that
@@ -90,12 +105,36 @@ pub trait IRViewer {
         self.function().graph().node_inputs_exact(node)
     }
 
+    /// Returns the exactly-`N` input value edges of the node that *produces*
+    /// `value` — the value-keyed form of [`Self::node_inputs_exact`], saving
+    /// the `node_inputs_exact(self.producer(value))` two-step at call sites.
+    ///
+    /// # Errors
+    /// Returns an error if the producing node does not have exactly `N` inputs.
+    fn producer_inputs_exact<const N: usize>(&self, value: ValueId) -> crate::Result<[ValueId; N]> {
+        self.node_inputs_exact::<N>(self.producer(value))
+    }
+
     /// Returns the exactly-`N` output value edges of `node`.
     ///
     /// # Errors
     /// Returns an error if the node does not have exactly `N` outputs.
     fn node_outputs_exact<const N: usize>(&self, node: NodeId) -> crate::Result<[ValueId; N]> {
         self.function().graph().node_outputs_exact(node)
+    }
+
+    /// Returns the single value output of `node` together with its
+    /// [`ValueType`] — the common "this node produces exactly one typed value"
+    /// shape, saving the `node_outputs_exact::<1>` + `value_type` two-step at
+    /// call sites.
+    ///
+    /// # Errors
+    /// Returns an error if the node does not have exactly one output, or that
+    /// output is not a typed value edge.
+    fn single_value_output(&self, node: NodeId) -> crate::Result<(ValueId, ValueType)> {
+        let [value] = self.node_outputs_exact::<1>(node)?;
+        let ty = self.value_type(value)?;
+        Ok((value, ty))
     }
 
     /// Returns the [`crate::node::UseId`] of the input slot at position `idx`
@@ -140,38 +179,23 @@ pub trait IRViewer {
     /// The integer-constant value carried by `value`, masked to its declared
     /// type and widened to `u128`, or `None` if `value` is not an integer
     /// constant. Single read SSoT for constant values — every consumer reads
-    /// constants through this (or its `u64`/`i64` projections) so the storage
-    /// representation stays encapsulated.
+    /// constants through this (or its signed `i128` projection
+    /// [`Self::int_const_i128`]) so the storage representation stays
+    /// encapsulated.
     ///
-    /// Returns `None` for `IntConst(Wide(id))` nodes backed by `I256`/`I512`
-    /// (their values don't fit in `u128`); returns `Some` for the
-    /// `I80`/`I128`-backed `Wide` variants and all `Small` variants.
+    /// Returns `None` for `IntConst` nodes whose interned value exceeds 128
+    /// bits (`I256`/`I512` values that don't fit `u128`); returns `Some` for
+    /// every value that fits `u128`, masked to the declared width.
     fn int_const_u128(&self, value: ValueId) -> Option<u128> {
-        use crate::node::IntPayload;
         let ty = self.value_kind(value).as_value()?;
         if !ty.is_integer() {
             return None;
         }
-        match *self.kind_of_value(value) {
-            // A `Small` payload always fits `u64`, so mask it to the declared
-            // width directly via `bit_mask_u128` — NOT `get_unsigned_int`, which
-            // (by design, mirroring `get_signed_int`) rejects > 128-bit types.
-            // A `Small`-payload value is always representable in `u128`, so this
-            // funnel surfaces it for the few callers that build narrow consts
-            // under a wide-typed slot; genuinely wide values use the `Wide` arm.
-            NodeKind::IntConst(IntPayload::Small(v)) => Some(u128::from(v) & ty.bit_mask_u128()),
-            // Wide: read the interner.  I80/I128 fit in u128 (as_u128
-            // returns Some); I256/I512 return None — too wide for this funnel.
-            // Mask to the declared width via `bit_mask_u128` (which approximates
-            // > 128-bit as `u128::MAX`, harmless here since those route through
-            // the `None` arm of `as_u128`).
-            NodeKind::IntConst(IntPayload::Wide(id)) => self
-                .function()
-                .wide_const_opt(id)
-                .and_then(|w| w.as_u128())
-                .map(|v| v & ty.bit_mask_u128()),
-            _ => None,
-        }
+        let NodeKind::IntConst(id) = *self.kind_of_value(value) else {
+            return None;
+        };
+        let v = self.function().const_value(id).fits_u128()?;
+        Some(v & ty.bit_mask_u128())
     }
 
     /// Signed projection of [`Self::int_const_u128`]: the value sign-extended
@@ -182,69 +206,35 @@ pub trait IRViewer {
         self.value_kind(value).as_value()?.get_signed_int(v)
     }
 
-    /// Signed projection narrowed to `i64`: the integer-constant value
-    /// sign-extended from its declared width, or `None` if `value` is not an
-    /// integer constant or the sign-extended value does not fit in `i64`. A
-    /// narrowing projection of [`Self::int_const_i128`] (the signed read SSoT).
-    ///
-    /// Reads only a canonical `IntConst`: callers run after `ConstantFold`,
-    /// which collapses `Neg(IntConst)` / `Truncate(IntConst)` /
-    /// `Extend(IntConst)` to a single `IntConst`, so consumers never peel those
-    /// wrappers themselves.
-    fn int_const_i64(&self, value: ValueId) -> Option<i64> {
-        i64::try_from(self.int_const_i128(value)?).ok()
-    }
-
-    /// Returns the integer constant value of `value` (masked to its declared
-    /// type) narrowed to `u64`, or `None` if it is not an integer-constant
-    /// value or its value does not fit in `u64`. A narrowing projection of
-    /// [`Self::int_const_u128`] (the read SSoT) that discards values wider
-    /// than `u64`.
-    fn int_const_val(&self, value: ValueId) -> Option<u64> {
-        self.int_const_u128(value)
-            .and_then(|v| u64::try_from(v).ok())
-    }
-
     /// Little-endian bytes of a WIDE-typed (`I80`/`I128`/`I256`/`I512`)
-    /// integer-constant node — 10 / 16 / 32 / 64 bytes respectively —
-    /// regardless of whether the payload is the inline `Small` form (a value
-    /// that fits `u64`) or the interned `Wide` form.  The byte width is taken
-    /// from the node's output type, so a small-valued wide constant
-    /// (e.g. `IntConst(Small(5)):I128`) still yields its full 16-byte
+    /// integer-constant node — 10 / 16 / 32 / 64 bytes respectively.  The byte
+    /// width is taken from the node's output type, so a small-valued wide
+    /// constant (e.g. `IntConst(5):I128`) still yields its full 16-byte
     /// representation.
     ///
     /// Returns `None` for a narrow (≤ `I64`) constant — use
-    /// [`Self::int_const_val`] / [`Self::int_const_u128`] there — or for a
+    /// [`Self::int_const_u128`] there — or for a
     /// non-`IntConst` node / a node without a single value output.
     fn int_const_wide_le_bytes(&self, node: crate::node::NodeId) -> Option<Vec<u8>> {
-        use crate::node::IntPayload;
         let [out] = self.node_outputs_exact::<1>(node).ok()?;
         let ty = self.value_kind(out).as_value()?;
         if !ty.is_wide_int() {
             return None;
         }
-        let byte_size = ty.byte_size();
-        match *self.node_kind(node) {
-            NodeKind::IntConst(IntPayload::Wide(id)) => {
-                Some(self.function().wide_const(id).to_le_bytes())
-            }
-            NodeKind::IntConst(IntPayload::Small(v)) => {
-                let mut bytes = vec![0u8; byte_size];
-                bytes[..8].copy_from_slice(&v.to_le_bytes());
-                Some(bytes)
-            }
-            _ => None,
-        }
+        let NodeKind::IntConst(id) = *self.node_kind(node) else {
+            return None;
+        };
+        Some(self.function().const_value(id).to_le_bytes(ty.byte_size()))
     }
 
     /// Returns the boolean constant value of `value`, or `None` if it is not an
     /// `I1`-typed `IntConst`. Booleans are 1-bit integers, so this derives from
-    /// [`Self::int_const_val`] (the read SSoT) under an `I1` guard.
+    /// [`Self::int_const_u128`] (the read SSoT) under an `I1` guard.
     fn bool_const_val(&self, value: ValueId) -> Option<bool> {
         if !self.value_kind(value).is_bool() {
             return None;
         }
-        self.int_const_val(value).map(|v| v != 0)
+        self.int_const_u128(value).map(|v| v != 0)
     }
 
     /// Returns the first [`ValueId`] of `node_id` whose kind is a value edge
@@ -302,57 +292,44 @@ pub trait IRViewer {
     // panics on the arity invariant the validator already guarantees for a
     // well-formed node of that kind.
 
-    /// The condition value of an `If` node — input slot 1 (`[control, cond]`).
-    ///
-    /// # Panics
-    /// Panics if `node` does not have the `If` input arity (2 inputs); a
-    /// validator-guaranteed invariant for a well-formed `If`.
-    fn if_cond(&self, node: NodeId) -> ValueId {
-        self.node_inputs_exact::<2>(node)
-            .expect("If node has [control, cond] inputs")[1]
-    }
+    semantic_slot_accessors! {
+        /// The condition value of an `If` node — input slot 1 (`[control, cond]`).
+        ///
+        /// # Panics
+        /// Panics if `node` does not have the `If` input arity (2 inputs); a
+        /// validator-guaranteed invariant for a well-formed `If`.
+        if_cond => 2[1] "If node has [control, cond] inputs";
 
-    /// The dispatch value of an `IndirectBranch` node — input slot 2
-    /// (`[control, memory, target]`).
-    ///
-    /// # Panics
-    /// Panics if `node` does not have the `IndirectBranch` input arity (3
-    /// inputs); a validator-guaranteed invariant for a well-formed node.
-    fn indirect_branch_target(&self, node: NodeId) -> ValueId {
-        self.node_inputs_exact::<3>(node)
-            .expect("IndirectBranch node has [control, memory, target] inputs")[2]
-    }
+        /// The dispatch value of an `IndirectBranch` node — input slot 2
+        /// (`[control, memory, target]`).
+        ///
+        /// # Panics
+        /// Panics if `node` does not have the `IndirectBranch` input arity (3
+        /// inputs); a validator-guaranteed invariant for a well-formed node.
+        indirect_branch_target => 3[2] "IndirectBranch node has [control, memory, target] inputs";
 
-    /// The address operand of a `Store` node — input slot 1
-    /// (`[memory, addr, data]`).
-    ///
-    /// # Panics
-    /// Panics if `node` does not have the `Store` input arity (3 inputs); a
-    /// validator-guaranteed invariant for a well-formed `Store`.
-    fn store_addr(&self, node: NodeId) -> ValueId {
-        self.node_inputs_exact::<3>(node)
-            .expect("Store node has [memory, addr, data] inputs")[1]
-    }
+        /// The address operand of a `Store` node — input slot 1
+        /// (`[memory, addr, data]`).
+        ///
+        /// # Panics
+        /// Panics if `node` does not have the `Store` input arity (3 inputs); a
+        /// validator-guaranteed invariant for a well-formed `Store`.
+        store_addr => 3[1] "Store node has [memory, addr, data] inputs";
 
-    /// The data operand of a `Store` node — input slot 2
-    /// (`[memory, addr, data]`).
-    ///
-    /// # Panics
-    /// Panics if `node` does not have the `Store` input arity (3 inputs); a
-    /// validator-guaranteed invariant for a well-formed `Store`.
-    fn store_data(&self, node: NodeId) -> ValueId {
-        self.node_inputs_exact::<3>(node)
-            .expect("Store node has [memory, addr, data] inputs")[2]
-    }
+        /// The data operand of a `Store` node — input slot 2
+        /// (`[memory, addr, data]`).
+        ///
+        /// # Panics
+        /// Panics if `node` does not have the `Store` input arity (3 inputs); a
+        /// validator-guaranteed invariant for a well-formed `Store`.
+        store_data => 3[2] "Store node has [memory, addr, data] inputs";
 
-    /// The address operand of a `Load` node — input slot 1 (`[memory, addr]`).
-    ///
-    /// # Panics
-    /// Panics if `node` does not have the `Load` input arity (2 inputs); a
-    /// validator-guaranteed invariant for a well-formed `Load`.
-    fn load_addr(&self, node: NodeId) -> ValueId {
-        self.node_inputs_exact::<2>(node)
-            .expect("Load node has [memory, addr] inputs")[1]
+        /// The address operand of a `Load` node — input slot 1 (`[memory, addr]`).
+        ///
+        /// # Panics
+        /// Panics if `node` does not have the `Load` input arity (2 inputs); a
+        /// validator-guaranteed invariant for a well-formed `Load`.
+        load_addr => 2[1] "Load node has [memory, addr] inputs";
     }
 
     /// Yields `(NodeId, &NodeKind)` for every node in the arena whose id is in
@@ -402,68 +379,36 @@ pub trait IRViewer {
         Ok(value_id)
     }
 
-    /// Errors unless `value_id` is a value edge.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a value edge.
-    fn require_value_kind(&self, value_id: ValueId) -> crate::Result<()> {
-        let kind = self.function().graph().value_kind(value_id);
-        if !kind.is_value() {
-            return Err(anyhow!(
-                "output {value_id:?} is not a value edge (got {kind:?})"
-            ));
-        }
-        Ok(())
-    }
+    value_kind_requirements! {
+        /// Errors unless `value_id` is a value edge.
+        ///
+        /// # Errors
+        /// Returns an error when `value_id` is not a value edge.
+        require_value_kind => is_value, "a value edge";
 
-    /// Errors unless `value_id` carries a bool value.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a bool value.
-    fn require_bool_value(&self, value_id: ValueId) -> crate::Result<()> {
-        if !self.function().graph().value_kind(value_id).is_bool() {
-            return Err(anyhow!("output {value_id:?} is not a bool value"));
-        }
-        Ok(())
-    }
+        /// Errors unless `value_id` carries a bool value.
+        ///
+        /// # Errors
+        /// Returns an error when `value_id` is not a bool value.
+        require_bool_value => is_bool, "a bool value";
 
-    /// Errors unless `value_id` is a phi-token edge.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a phi-token edge.
-    fn require_phi_token_kind(&self, value_id: ValueId) -> crate::Result<()> {
-        if !self.function().graph().value_kind(value_id).is_phi_token() {
-            return Err(anyhow!("output {value_id:?} is not a phi-token edge"));
-        }
-        Ok(())
-    }
+        /// Errors unless `value_id` is a phi-token edge.
+        ///
+        /// # Errors
+        /// Returns an error when `value_id` is not a phi-token edge.
+        require_phi_token_kind => is_phi_token, "a phi-token edge";
 
-    /// Errors unless `value_id` is a control edge.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a control edge.
-    fn require_control_kind(&self, value_id: ValueId) -> crate::Result<()> {
-        let kind = self.function().graph().value_kind(value_id);
-        if !kind.is_control() {
-            return Err(anyhow!(
-                "output {value_id:?} is not a control edge (got {kind:?})"
-            ));
-        }
-        Ok(())
-    }
+        /// Errors unless `value_id` is a control edge.
+        ///
+        /// # Errors
+        /// Returns an error when `value_id` is not a control edge.
+        require_control_kind => is_control, "a control edge";
 
-    /// Errors unless `value_id` is a memory edge.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a memory edge.
-    fn require_memory_kind(&self, value_id: ValueId) -> crate::Result<()> {
-        let kind = self.function().graph().value_kind(value_id);
-        if !kind.is_memory() {
-            return Err(anyhow!(
-                "output {value_id:?} is not a memory edge (got {kind:?})"
-            ));
-        }
-        Ok(())
+        /// Errors unless `value_id` is a memory edge.
+        ///
+        /// # Errors
+        /// Returns an error when `value_id` is not a memory edge.
+        require_memory_kind => is_memory, "a memory edge";
     }
 
     /// Errors unless `value_id` carries an integer value.
@@ -471,10 +416,11 @@ pub trait IRViewer {
     /// # Errors
     /// Returns an error when `value_id` is not an integer value.
     fn require_integer_value(&self, value_id: ValueId) -> crate::Result<()> {
-        if !self.value_type(value_id)?.is_integer() {
-            return Err(anyhow!("output {value_id:?} is not an integer value"));
-        }
-        Ok(())
+        ensure_value_type(
+            value_id,
+            self.value_type(value_id)?.is_integer(),
+            "an integer value",
+        )
     }
 
     /// Errors unless `value_id` carries a float value.
@@ -482,10 +428,11 @@ pub trait IRViewer {
     /// # Errors
     /// Returns an error when `value_id` is not a float value.
     fn require_float_value(&self, value_id: ValueId) -> crate::Result<()> {
-        if !self.value_type(value_id)?.is_float() {
-            return Err(anyhow!("output {value_id:?} is not a float value"));
-        }
-        Ok(())
+        ensure_value_type(
+            value_id,
+            self.value_type(value_id)?.is_float(),
+            "a float value",
+        )
     }
 
     /// Errors unless `ty` is an integer type.
@@ -519,72 +466,6 @@ pub trait IRViewer {
             self.require_value_kind(v)?;
         }
         Ok(())
-    }
-
-    // ── constant inspection ──────────────────────────────────────────────
-
-    /// Returns the constant value carried by `value_id` if its defining
-    /// node is `IntConst` or `FloatConst`; `Ok(None)` otherwise.  The
-    /// `get_as_*` helpers below are thin projections off this unified
-    /// shape.  Booleans are `IntConst` values typed `I1`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn const_value(&self, value_id: ValueId) -> crate::Result<Option<ConstValue>> {
-        let ty = self.value_type(value_id)?;
-        if ty.is_integer()
-            && let Some(val) = self.int_const_u128(value_id)
-        {
-            return Ok(Some(ConstValue::Int { val, ty }));
-        }
-        Ok(match self.kind_of_value(value_id) {
-            NodeKind::FloatConst(bits) if ty.is_float() => Some(ConstValue::Float { bits: *bits }),
-            _ => None,
-        })
-    }
-
-    /// If `value_id` is a constant node, returns its value truncated to the
-    /// declared [`ValueType`] as an unsigned 64-bit integer.
-    ///
-    /// Returns `Ok(None)` for non-constant nodes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn get_as_unsigned_int(&self, value_id: ValueId) -> crate::Result<Option<u64>> {
-        // Keep the value-edge type check (errors on a non-value edge), then
-        // reuse the narrowing `u64` projection of `int_const_u128`.
-        self.value_type(value_id)?;
-        Ok(self.int_const_val(value_id))
-    }
-
-    /// If `value_id` is an integer constant, returns its value
-    /// sign-extended to `i64` according to the declared [`ValueType`].
-    /// An `I1` boolean folds as `0` / `1` per [`Self::get_as_unsigned_int`].
-    ///
-    /// Returns `Ok(None)` for non-constant nodes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn get_as_signed_int(&self, value_id: ValueId) -> crate::Result<Option<i64>> {
-        self.value_type(value_id)?;
-        Ok(self
-            .int_const_i128(value_id)
-            .and_then(|v| i64::try_from(v).ok()))
-    }
-
-    /// Returns both the unsigned and signed interpretations of `value_id` if
-    /// it is an integer constant, or `None` otherwise.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn get_as_int(&self, value_id: ValueId) -> crate::Result<Option<(u64, i64)>> {
-        Ok(self
-            .get_as_unsigned_int(value_id)?
-            .zip(self.get_as_signed_int(value_id)?))
     }
 
     /// Infers the float type to use for a value that may be int or float.
@@ -654,34 +535,25 @@ impl IRViewer for crate::EditFunction<'_> {
 /// the order-producing ones with inherent versions that reuse its cached
 /// live/roots bookkeeping instead of re-walking from entry.
 ///
-/// The "global" orders ([`Self::postorder`] / [`Self::reverse_postorder`])
-/// take a [`crate::walk::GraphWalkInfo`] — compute it once via
+/// The "global" order [`Self::reverse_postorder`] takes a
+/// [`crate::walk::GraphWalkInfo`] — compute it once via
 /// [`Self::walk_info`] and hand it to whichever orders you need without
-/// re-walking, e.g. `let info = walker.walk_info(None)?; walker.postorder(&info)`.
+/// re-walking, e.g. `let info = walker.walk_info(None); walker.reverse_postorder(&info)`.
 pub trait IRWalker: IRViewer {
     /// Resolves the seed (`None` ⇒ the function's entry, [`Function::entry`];
     /// `Some(n)` ⇒ `n`) and computes the [`crate::walk::GraphWalkInfo`] — the
     /// reachable set + input-less roots the post-order family consumes.
-    /// Returns `None` when the seed resolves to no node (entry-less function,
-    /// `None` seed).
-    fn walk_info(&self, seed: Option<NodeId>) -> Option<crate::walk::GraphWalkInfo> {
+    fn walk_info(&self, seed: Option<NodeId>) -> crate::walk::GraphWalkInfo {
         let f = self.function();
-        seed.or_else(|| f.entry())
-            .map(|s| crate::walk::GraphWalkInfo::compute_full(f.graph(), s))
+        let s = seed.unwrap_or_else(|| f.entry());
+        crate::walk::GraphWalkInfo::compute_full(f.graph(), s)
     }
 
     /// Returns a pre-order walk over every node reachable from the function's
-    /// entry (control-out forward + data-in backward).  Yields an empty walk
-    /// when the entry has not been set.
+    /// entry (control-out forward + data-in backward).
     fn walk(&self) -> crate::walk::GraphWalk<'_> {
         let f = self.function();
-        crate::walk::walk_graph_opt(f.graph(), f.entry())
-    }
-
-    /// Pre-order walk seeded at `seed` (control-out forward + data-in
-    /// backward) — the explicit-seed counterpart to [`Self::walk`].
-    fn walk_from(&self, seed: NodeId) -> crate::walk::GraphWalk<'_> {
-        crate::walk::walk_graph_opt(self.function().graph(), Some(seed))
+        crate::walk::walk_graph(f.graph(), f.entry())
     }
 
     /// [`Self::walk`] restricted to nodes whose [`NodeKind`] satisfies `pred`.
@@ -690,23 +562,6 @@ pub trait IRWalker: IRViewer {
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
         self.walk().filter(move |&n| pred(self.node_kind(n)))
-    }
-
-    /// Counts entry-reachable nodes whose [`NodeKind`] satisfies `pred`.
-    fn count_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> usize {
-        self.walk().filter(|&n| pred(self.node_kind(n))).count()
-    }
-
-    /// Returns `true` when at least one entry-reachable node satisfies `pred`.
-    /// Short-circuits at the first match.
-    fn has_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> bool {
-        self.walk().any(|n| pred(self.node_kind(n)))
-    }
-
-    /// Post-order (consumers before operands; roots last) of the reachable set
-    /// captured by `info` — obtain `info` from [`Self::walk_info`].
-    fn postorder(&self, info: &crate::walk::GraphWalkInfo) -> Vec<NodeId> {
-        info.postorder(self.function().graph()).collect()
     }
 
     /// Real reverse-post-order (every producer before its consumers, roots
@@ -723,27 +578,19 @@ pub trait IRWalker: IRViewer {
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        let rpo = match self.walk_info(None) {
-            Some(info) => self.reverse_postorder(&info),
-            None => Vec::new(),
-        };
+        let info = self.walk_info(None);
+        let rpo = self.reverse_postorder(&info);
         rpo.into_iter().filter(move |&n| pred(self.node_kind(n)))
-    }
-
-    /// Entry-reachable nodes in **global post-order** (consumers before
-    /// operands; entry last), filtered by `pred` — the post-order counterpart
-    /// of [`Self::reverse_postorder_filter`].  Yields an empty iterator when the entry has
-    /// not been set.
-    fn postorder_filter<'a>(
-        &'a self,
-        pred: impl Fn(&NodeKind) -> bool + 'a,
-    ) -> impl Iterator<Item = NodeId> + 'a {
-        let po = match self.walk_info(None) {
-            Some(info) => self.postorder(&info),
-            None => Vec::new(),
-        };
-        po.into_iter().filter(move |&n| pred(self.node_kind(n)))
     }
 }
 
 impl<T: IRViewer + ?Sized> IRWalker for T {}
+
+/// Shared body for the `require_*_value` value-type checks (no kind to report).
+fn ensure_value_type(value_id: ValueId, ok: bool, noun: &str) -> crate::Result<()> {
+    if ok {
+        Ok(())
+    } else {
+        Err(anyhow!("output {value_id:?} is not {noun}"))
+    }
+}

@@ -1,7 +1,7 @@
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
+use crate::node::{NodeId, NodeKind, ValueKind};
 use crate::walk::NodeIdSet;
 
 use super::ValidationError;
@@ -23,39 +23,50 @@ use super::ValidationError;
 /// [`ValidationError::MultipleInitialMemoryNodes`] (carrying the first two
 /// offenders) when a kind appears more than once.
 pub(super) fn check_graph_invariants_uniqueness(graph: &Graph, errs: &mut Vec<ValidationError>) {
-    let mut entries: Vec<NodeId> = Vec::new();
-    let mut initial_memories: Vec<NodeId> = Vec::new();
+    // Only the first two of each kind matter (missing vs single vs the first
+    // duplicate pair), so buffer two `Option` slots per kind instead of two
+    // heap `Vec`s.  The full-arena scan is intentional — it catches an extra
+    // Entry/InitialMemory even when the duplicate isn't reachable.
+    let mut entry: (Option<NodeId>, Option<NodeId>) = (None, None);
+    let mut initial_memory: (Option<NodeId>, Option<NodeId>) = (None, None);
+
+    let record = |slot: &mut (Option<NodeId>, Option<NodeId>), node: NodeId| {
+        if slot.0.is_none() {
+            slot.0 = Some(node);
+        } else if slot.1.is_none() {
+            slot.1 = Some(node);
+        }
+    };
 
     for node in graph.all_node_ids() {
         match graph.node_kind(node) {
-            NodeKind::Entry => entries.push(node),
-            NodeKind::InitialMemory => initial_memories.push(node),
+            NodeKind::Entry => record(&mut entry, node),
+            NodeKind::InitialMemory => record(&mut initial_memory, node),
             _ => {}
         }
     }
 
-    match entries.as_slice() {
-        [] => errs.push(ValidationError::MissingEntryNode),
-        [_] => {}
-        [first, second, ..] => errs.push(ValidationError::MultipleEntryNodes {
-            first: *first,
-            second: *second,
-        }),
+    match entry {
+        (None, _) => errs.push(ValidationError::MissingEntryNode),
+        (Some(_), None) => {}
+        (Some(first), Some(second)) => {
+            errs.push(ValidationError::MultipleEntryNodes { first, second });
+        }
     }
 
-    match initial_memories.as_slice() {
-        [] => errs.push(ValidationError::MissingInitialMemoryNode),
-        [_] => {}
-        [first, second, ..] => errs.push(ValidationError::MultipleInitialMemoryNodes {
-            first: *first,
-            second: *second,
-        }),
+    match initial_memory {
+        (None, _) => errs.push(ValidationError::MissingInitialMemoryNode),
+        (Some(_), None) => {}
+        (Some(first), Some(second)) => {
+            errs.push(ValidationError::MultipleInitialMemoryNodes { first, second });
+        }
     }
 }
 
-/// Graph invariant: every input of a `Region` node must be a
-/// `Control`-kinded output. Emits `RegionNonControlPredecessor`
-/// per offending input.
+/// Graph invariant: every reachable `Region` node must have at least one
+/// predecessor. Emits `EmptyRegionPredecessors`. (The "every predecessor is
+/// Control" rule is left to `check_local_typing` against the Region
+/// signature's variadic CTRL tail.)
 pub(super) fn check_graph_invariants_region(
     graph: &Graph,
     reachable: &NodeIdSet,
@@ -68,22 +79,103 @@ pub(super) fn check_graph_invariants_region(
         if !matches!(kind, NodeKind::Region) {
             continue;
         }
-        let inputs = graph.node_inputs(node);
-        if inputs.is_empty() {
+        // A Region with zero predecessors is malformed.  (The per-input
+        // "must be Control" rule is NOT checked here — it is already enforced
+        // by `check_local_typing` against the Region signature's variadic CTRL
+        // tail, reported as a `NodeInputKindMismatch`.  Empty-arity, on the
+        // other hand, local typing cannot express: the variadic tail permits
+        // zero inputs, so this check is the only thing pinning >= 1.)
+        if graph.node_inputs(node).is_empty() {
             errs.push(ValidationError::EmptyRegionPredecessors { region: node });
-            continue;
         }
-        for (idx, target) in inputs.into_iter().enumerate() {
-            let kind = graph.value_kind(target);
-            if kind != ValueKind::Control {
-                let (producer, _) = graph.value_definition(target);
-                errs.push(ValidationError::RegionNonControlPredecessor {
-                    region: node,
-                    input_idx: idx,
-                    producer,
-                    producer_kind: kind,
-                });
+    }
+}
+
+/// Graph invariant: every reachable node's `Control` output must be consumed by
+/// exactly one node — a control edge has exactly one successor. Zero consumers
+/// is a dangling control path (`UnusedControlOutput`) — every control edge must
+/// reach a terminator (`Return` / `IndirectBranch` / `Unreachable`); two or more
+/// is a malformed fan-out (`ReusedControlOutput`) that must instead be produced
+/// by an `If` (split) or go through a `Region` (merge). Ported from spidir's
+/// `verify_control_outputs`. No-return traps reach a terminator because the
+/// lifter sinks their control into an `Unreachable`.
+pub(super) fn check_graph_invariants_control_single_use(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph = function.graph();
+    for (node, _kind) in function.reachable_kind_iter(reachable) {
+        for &value in function.node_outputs(node).iter() {
+            if function.value_kind(value) != ValueKind::Control {
+                continue;
             }
+            // O(1): peek at most the first two uses to classify 0 / 1 / many.
+            let mut uses = graph.value_uses(value);
+            match (uses.next(), uses.next()) {
+                (None, _) => errs.push(ValidationError::UnusedControlOutput { node, value }),
+                (Some(_), Some(_)) => {
+                    errs.push(ValidationError::ReusedControlOutput { node, value });
+                }
+                (Some(_), None) => {}
+            }
+        }
+    }
+}
+
+/// Graph invariant: `Extend` must strictly widen its input and `Truncate`
+/// must strictly narrow it.
+///
+/// The two ops are direction-typed by name: `Extend` fills *new* high bits
+/// (zero or sign) and so only makes sense when the output is wider;
+/// `Truncate` drops high bits and only makes sense when the output is
+/// narrower. The low bits of a hypothetical non-widening `Extend` are
+/// identical to a `Truncate` (and vice versa), so allowing the wrong
+/// direction would give one value two legal node shapes — the redundant
+/// spelling the canonical IR exists to avoid. The builder never mints these
+/// (`extend_if_needed` / `truncate_to` dispatch on direction), so any that
+/// appear are a malformed surgical edit.
+///
+/// Skips a node whose single input/output isn't integer-typed — the
+/// local-typing check already reports that shape error, and reading a width
+/// off a non-`Typed` value is meaningless.
+pub(super) fn check_graph_invariants_extend_truncate(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph = function.graph();
+    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
+        let widening = match kind {
+            NodeKind::Extend(_) => true,
+            NodeKind::Truncate => false,
+            _ => continue,
+        };
+        // Single INT input, single INT output. Bail to the local-typing check
+        // if the arity/kind is off (missing slot or non-integer type).
+        let (Some(in_value), Some(&out_value)) =
+            (graph.node_inputs(node).into_iter().next(), graph.node_outputs(node).first())
+        else {
+            continue;
+        };
+        let (Some(in_ty), Some(out_ty)) =
+            (function.value_type_opt(in_value), function.value_type_opt(out_value))
+        else {
+            continue;
+        };
+        let (in_width, out_width) = (in_ty.bit_width(), out_ty.bit_width());
+        let ok = if widening {
+            out_width > in_width
+        } else {
+            out_width < in_width
+        };
+        if !ok {
+            errs.push(ValidationError::ExtendTruncateWidthDirection {
+                node,
+                kind: *kind,
+                in_width,
+                out_width,
+            });
         }
     }
 }
@@ -94,10 +186,11 @@ pub(super) fn check_graph_invariants_region(
 /// For `Phi` and `MemPhi` (variadic phis), the number of value inputs
 /// must match the owning `Region`'s predecessor count.
 pub(super) fn check_graph_invariants_phis(
-    graph: &Graph,
+    function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
+    let graph = function.graph();
     // Iterate the reachable set directly (ascending NodeId order).
     // `PhiCollapse` and `DeadBranchElimination` leave zero-input phi
     // zombies in the arena; reaching one here would falsely trip
@@ -108,8 +201,7 @@ pub(super) fn check_graph_invariants_phis(
             continue;
         }
 
-        let inputs: smallvec::SmallVec<[ValueId; 4]> =
-            graph.node_inputs(node).into_iter().collect();
+        let inputs = graph.node_inputs(node);
         if inputs.is_empty() {
             // The local-typing check fires a count or kind mismatch for
             // empty-input phis; skip here.
@@ -154,12 +246,11 @@ pub(super) fn check_graph_invariants_phis(
         // input is already reported by the local-typing check, so only
         // mismatched concrete value types are flagged here.)
         if matches!(kind, NodeKind::Phi) {
-            let phi_out_ty = graph
-                .node_outputs(node)
-                .iter()
-                .find_map(|&o| graph.value_kind(o).as_value());
+            let phi_out_ty = function
+                .first_value_output_of(node)
+                .and_then(|o| function.value_type_opt(o));
             if let Some(out_ty) = phi_out_ty {
-                for (i, &inp) in inputs.iter().enumerate().skip(1) {
+                for (i, inp) in inputs.iter().enumerate().skip(1) {
                     if let Some(in_ty) = graph.value_kind(inp).as_value()
                         && in_ty != out_ty
                     {
@@ -217,51 +308,37 @@ pub(super) fn check_graph_invariants_cc_arity(
     errs: &mut Vec<ValidationError>,
 ) {
     let ret_val_count = function.ret_val_regs().len();
-    let default_ret_val_count = function.call_ret_val_regs().len();
-    let default_clobber_count = function.call_clobbered_regs().len();
-    // No top-level early-return on empty defaults: an override Call
-    // (recorded via `call_cc`) is checked against its tagged output
-    // values even when the function defaults are empty.  The per-node
-    // escapes below preserve the synthetic / partially-built-fixture
-    // behaviour node by node.
     for (node, kind) in function.reachable_kind_iter(reachable) {
         match kind {
             NodeKind::Call => {
-                let outputs = function.node_outputs(node);
-                let actual = outputs.len();
-                if let Some(cc) = function.call_cc(node) {
-                    // Override Call: cross-check arity against the override CC's
-                    // ret-val + clobber lists (projected onto the function's
-                    // tracked set) — the SAME derivation the Call was built
-                    // from.  Deriving from the node's own `value_vn` tags would
-                    // be tautological: dropping a clobber output AND its tag
-                    // changes the tag count and the actual count in lockstep, so
-                    // a wrong-arity Call would pass silently.
-                    let expected = 2
-                        + function.call_ret_vals_for(cc).len()
-                        + function.call_clobbered_for(cc).len();
-                    if actual != expected {
-                        errs.push(ValidationError::NodeOutputCountMismatch {
-                            node,
-                            expected,
-                            actual,
-                        });
-                    }
-                } else {
-                    // Function-default Call: arity against the function's
-                    // default ret-val + clobber lists.  Synthetic-test escape:
-                    // skip when both defaults are empty (trivial CC).
-                    if default_ret_val_count == 0 && default_clobber_count == 0 {
-                        continue;
-                    }
-                    let expected = 2 + default_ret_val_count + default_clobber_count;
-                    if actual != expected {
-                        errs.push(ValidationError::NodeOutputCountMismatch {
-                            node,
-                            expected,
-                            actual,
-                        });
-                    }
+                // Cross-check arity against the Call's *effective* CC (its
+                // per-Call override if recorded, else the function default) —
+                // the SAME derivation the Call was built from.  Deriving from
+                // the node's own `value_vn` tags would be tautological: dropping
+                // a clobber output AND its tag changes the tag count and the
+                // actual count in lockstep, so a wrong-arity Call would pass
+                // silently.
+                let cc = function.get_cc(node);
+                let ret_vals = function.call_ret_vals_for(cc).len();
+                let clobbers = function.call_clobbered_for(cc).len();
+                // Synthetic-test escape: a *function-default* Call (effective CC
+                // equal to the default) whose default CC is trivial (no ret-vals,
+                // no clobbers) is the partially-built-fixture shape — skip arity.
+                // An override Call (effective CC differs from the default) is
+                // always checked, even when its projected lists are empty, to
+                // catch a spurious untagged output slot.
+                let is_override = cc != function.default_cc();
+                if !is_override && ret_vals == 0 && clobbers == 0 {
+                    continue;
+                }
+                let expected = 2 + ret_vals + clobbers;
+                let actual = function.node_outputs(node).len();
+                if actual != expected {
+                    errs.push(ValidationError::NodeOutputCountMismatch {
+                        node,
+                        expected,
+                        actual,
+                    });
                 }
             }
             NodeKind::Return => {
@@ -363,7 +440,7 @@ pub(super) fn check_graph_invariants_memory_chain(
 /// * Every `initial_var_index` entry whose node is REACHABLE must resolve to an
 ///   `InitialVar(vn)` node with the SAME varnode.  A culled-but-not-yet-
 ///   compacted entry (node not reachable) is tolerated — that is the documented
-///   mid-pipeline state `initial_sp_value` defensively re-walks around — but a
+///   mid-pipeline state `initial_sp` tolerates (it does not filter liveness) — but a
 ///   reachable node whose payload was rewritten away from `InitialVar(vn)` is a
 ///   genuine desync (the NodeId survived, so `compact` won't drop the entry).
 /// * Every `value_vn` key whose PRODUCER is reachable must be produced by a
@@ -383,7 +460,8 @@ pub(super) fn check_graph_invariants_side_indices(
             continue;
         }
         let kind = graph.node_kind(node);
-        let matches = matches!(kind, NodeKind::InitialVar(found) if *found == vn);
+        let matches =
+            matches!(kind, NodeKind::InitialVar(found) if function.initial_vn(*found) == vn);
         if !matches {
             errs.push(ValidationError::StaleInitialVarIndex {
                 node,
@@ -414,72 +492,49 @@ pub(super) fn check_graph_invariants_side_indices(
     }
 }
 
-/// Returns the `(expected_byte_size, output_type)` pair that the
-/// declared `ValueType` of a wide-const node prescribes, or
-/// `None` when the node lacks a value-typed output (skip — let
-/// Layer A handle the structural error).
+/// Graph invariant: verify every reachable `IntConst(id)` node references a
+/// live entry in `Function::const_interner` and that the interned value does
+/// not exceed the node's declared output width.
 ///
-/// Emits [`ValidationError::WideConstInvalidOutputType`] when the declared
-/// output type isn't one of the valid wide-const storage types (I80, I128,
-/// I256, I512): `IntConst(Wide)`'s local-typing signature accepts any
-/// `INT_VAL` slot kind, but only these four are semantically valid.
-fn wide_const_expected_bytes(
-    graph: &Graph,
-    node: NodeId,
-) -> Result<Option<(usize, crate::node::ValueType)>, ValidationError> {
-    let outputs = graph.node_outputs(node);
-    let Some(&out) = outputs.first() else {
-        return Ok(None);
-    };
-    let ValueKind::Typed(ty) = graph.value_kind(out) else {
-        return Ok(None);
-    };
-    if ty.is_wide_int() {
-        Ok(Some((ty.byte_size(), ty)))
-    } else {
-        Err(ValidationError::WideConstInvalidOutputType {
-            node,
-            output_type: ty,
-        })
-    }
-}
-
-/// Graph invariant: verify every reachable `IntConst(Wide(id))` node
-/// references a live entry in `Function::wide_const_interner` and that the
-/// stored value's byte size matches the node's declared output type.
-///
-/// Emits [`ValidationError::DanglingWideConstId`] when the id is not
-/// present in the side-table (caller bypassed `intern_wide_const`),
-/// and [`ValidationError::WideConstWidthMismatch`] when the storage
-/// width contradicts the output type (e.g. I256 storage with I512
-/// declared output).
-pub(super) fn check_graph_invariants_wide_consts(
+/// Emits [`ValidationError::DanglingConstId`] when the id is not present in
+/// the interner (caller bypassed `intern_int_const*`), and
+/// [`ValidationError::ConstWidthMismatch`] when the stored value has bits set
+/// above the declared type's bit width (non-canonical masking).
+pub(super) fn check_graph_invariants_consts(
     function: &crate::Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    use crate::node::IntPayload;
+    use crate::node::NodeKind;
     let graph = function.graph();
     for (node, kind) in function.reachable_kind_iter(reachable) {
-        let NodeKind::IntConst(IntPayload::Wide(id)) = kind else {
+        let NodeKind::IntConst(id) = *kind else {
             continue;
         };
-        let Some(storage) = function.wide_const_opt(*id) else {
-            errs.push(ValidationError::DanglingWideConstId { node, id: *id });
+        let Some(value) = function.const_interner.get(id) else {
+            errs.push(ValidationError::DanglingConstId { node, id });
             continue;
         };
-        let actual = storage.byte_size();
-        match wide_const_expected_bytes(graph, node) {
-            Err(e) => errs.push(e),
-            Ok(Some((expected, ty))) if expected != actual => {
-                errs.push(ValidationError::WideConstWidthMismatch {
-                    node,
-                    output_type: ty,
-                    expected_bytes: expected,
-                    actual_bytes: actual,
-                });
+        let outputs = graph.node_outputs(node);
+        let Some(&out) = outputs.first() else {
+            continue; // arity reported elsewhere
+        };
+        let ValueKind::Typed(ty) = graph.value_kind(out) else {
+            continue;
+        };
+        // Every bit above the declared width must be zero (canonical masking).
+        let too_wide = match value {
+            crate::const_value::ConstValue::Bits(v) => v & !ty.bit_mask_u128() != 0,
+            crate::const_value::ConstValue::Wide(limbs) => {
+                limbs.len() * 64 > ty.bit_width()
+                    && limbs
+                        .iter()
+                        .enumerate()
+                        .any(|(i, &l)| (i + 1) * 64 > ty.bit_width() && l != 0)
             }
-            Ok(_) => {}
+        };
+        if too_wide {
+            errs.push(ValidationError::ConstWidthMismatch { node, id });
         }
     }
 }

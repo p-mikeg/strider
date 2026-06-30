@@ -26,9 +26,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use strider_ir::IRWalker;
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{Function, IRBuilderExt, IntBinaryOp};
+use strider_ir_test_utils::IrWalkerEx;
+use strider_ir::{Function, IRBuilderExt, IRWalker, IntBinaryOp};
 use strider_opt::{EditFunction, apply_rules_count, rewrite_rule};
 use strider_pattern::{Capture, CaptureExt, add, int_const, var};
 
@@ -99,7 +99,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
         strider_pattern::bool_const(true),
     );
     let n = {
-        let mut ctx = EditFunction::new(&mut g)?;
+        let mut ctx = EditFunction::new(&mut g);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule))?
     };
     assert!(
@@ -147,7 +147,7 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Resu
         strider_pattern::bool_const(false),
     );
     let fired = {
-        let mut ctx = EditFunction::new(&mut g)?;
+        let mut ctx = EditFunction::new(&mut g);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule_all_false))?
     };
     assert!(
@@ -199,7 +199,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
 
     // Edit 1: collapse the `Add(7, 0)`.  Returns 1 application.
     let n1 = {
-        let mut ctx = EditFunction::new(&mut function)?;
+        let mut ctx = EditFunction::new(&mut function);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule_x_plus_zero))?
     };
     assert_eq!(n1, 1, "first rewrite collapses Add(7,0)");
@@ -213,7 +213,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     // collapsed Add(7, 1) → IntConst(8), so the rewriter has nothing
     // left to do — but the call must still succeed (returns 0).
     let n2 = {
-        let mut ctx = EditFunction::new(&mut function)?;
+        let mut ctx = EditFunction::new(&mut function);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule_x_plus_zero))?
     };
     assert_eq!(
@@ -263,7 +263,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
 
     {
-        let mut ctx = EditFunction::new(&mut function)?;
+        let mut ctx = EditFunction::new(&mut function);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule))?;
     }
 
@@ -293,7 +293,7 @@ fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
     let fired = {
-        let mut ctx = EditFunction::new(&mut function)?;
+        let mut ctx = EditFunction::new(&mut function);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule))?
     };
     assert_eq!(fired, 1, "Capture-capture rule fires exactly once");

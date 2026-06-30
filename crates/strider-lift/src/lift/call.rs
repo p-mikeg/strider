@@ -30,8 +30,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 // A NoReturn trap (Linux `BUG_ON`-class) emits a
                 // CallOther with only ctrl + mem (no args / clobbers /
                 // value).  terminate=true closes the region as part of
-                // the build_call_other call — no separate
-                // mark_cur_region_terminated needed.  The empty footprint
+                // the build_call_other call — no separate region-termination
+                // call needed.  The empty footprint
                 // carries no implicit reads/writes and does not advance
                 // memory.
                 let empty_abi = strider_target::BuiltCallOtherAbi {
@@ -39,15 +39,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     implicit_writes: Vec::new(),
                     clobbers_memory: false,
                 };
-                let _ = self.builder.build_call_other(
-                    user_op_id,
-                    name,
-                    None,
-                    &[],
-                    &empty_abi,
-                    None,
-                    true,
-                )?;
+                self.build_abi_call_other(user_op_id, name, &[], &empty_abi, None, true)?;
                 Ok(())
             }
 
@@ -64,7 +56,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// (which owns the implicit-footprint resolution: reading implicit
     /// reads, emitting + tagging clobbers, advancing memory, writing the
     /// clobbers back, writing the result back to `output`, and recording
-    /// the `CallDescriptor`).
+    /// the per-Call CC override map).
     fn handle_call_other_modeled(
         &mut self,
         insn: &rsleigh::Insn,
@@ -76,37 +68,80 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // value lifter.  The result destination (if any) is now written by
         // the builder via `write_reg_vn`, so it must name a register /
         // unique varnode (the builder enforces this).
-        let explicit_args = self.read_call_other_args(insn)?;
+        // Slot 0 is the user-op id, not a real argument — skip it.
+        let explicit_args = self.read_vns(insn.inputs.get(1..).unwrap_or(&[]))?;
         let output_vn: Option<rsleigh::Vn> = insn.output.as_ref().copied();
 
         // Resolve the ABI register names → Vns exactly once, building the
         // vn-resolved footprint the builder consumes.
         let built_abi = abi.build(&self.lifter.sleigh_regs)?;
 
-        // The builder reads the implicit reads, emits + tags the clobbers,
-        // advances memory per `clobbers_memory`, writes each clobber back,
-        // writes the result back to `output`, and records the
-        // `CallDescriptor::CallOther` footprint.  The result writeback now
-        // lives in the builder — the lifter no longer touches it.
-        let _ = self.builder.build_call_other(
-            user_op_id,
-            name,
-            None,
-            &explicit_args,
-            &built_abi,
-            output_vn,
-            false,
-        )?;
-
+        self.build_abi_call_other(user_op_id, name, &explicit_args, &built_abi, output_vn, false)?;
         Ok(())
     }
 
-    /// Read every p-code-explicit input past slot 0 (the user-op id)
-    /// as a value via the aliasing-aware value lifter.  Slot 0 is
-    /// excluded because it carries the user-op id, not a real argument.
-    /// Called by [`Self::handle_call_other_modeled`].
-    fn read_call_other_args(&mut self, insn: &rsleigh::Insn) -> Result<Vec<strider_ir::Value>> {
-        self.read_vns(insn.inputs.get(1..).unwrap_or(&[]))
+    /// Build a `CallOther` from a vn-resolved ABI footprint — the prod
+    /// CallOther orchestration (strider-ir's `build_call_other` is a dumb
+    /// node emitter).  Reads the implicit-read registers FIRST (before the
+    /// explicit pcode operands), emits the node with the result + implicit-write
+    /// clobber output vns, then writes the clobbers and the result back through
+    /// the shared vn write path.  Returns the result value, if any.
+    fn build_abi_call_other(
+        &mut self,
+        user_op_id: u64,
+        name: &str,
+        explicit_args: &[strider_ir::Value],
+        abi: &strider_target::BuiltCallOtherAbi,
+        output: Option<rsleigh::Vn>,
+        terminate: bool,
+    ) -> Result<Option<strider_ir::Value>> {
+        // Args: implicit-read register values FIRST, then the explicit operands.
+        let mut args: Vec<strider_ir::Value> =
+            Vec::with_capacity(abi.implicit_reads.len() + explicit_args.len());
+        for vn in &abi.implicit_reads {
+            args.push(self.read_vn(vn)?);
+        }
+        args.extend_from_slice(explicit_args);
+
+        // Output vns: the 0-or-1 result, then one per implicit-write clobber —
+        // each canonicalized to its largest tracked container (read_reg /
+        // write_reg operate on containers, and the builder validates output vns
+        // are containers) and deduplicated, since sub-registers of one container
+        // collapse to a single slot and the result wins ties over a clobber.
+        let result_vn = output.map(|vn| self.builder.function().container_of(&vn));
+        let mut clobber_vns: Vec<rsleigh::Vn> = Vec::new();
+        for vn in &abi.implicit_writes {
+            let c = self.builder.function().container_of(vn);
+            if Some(c) == result_vn || clobber_vns.contains(&c) {
+                continue;
+            }
+            clobber_vns.push(c);
+        }
+        let mut output_vns: Vec<rsleigh::Vn> = result_vn.into_iter().collect();
+        output_vns.extend_from_slice(&clobber_vns);
+
+        let (_node, outputs) = self.builder.build_call_other(
+            user_op_id,
+            name,
+            None,
+            &args,
+            &output_vns,
+            abi.clobbers_memory,
+            terminate,
+        )?;
+        let (ret_vals, clobbers) = outputs.split_at(result_vn.iter().count());
+
+        // Writeback: clobbers then the result — both full-container writes via
+        // `write_variable` (an opaque intrinsic defines the whole container; an
+        // aliased clobber must not re-clobber the result, hence result last).
+        for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
+            self.builder.write_variable(vn, *v)?;
+        }
+        let result = ret_vals.first().copied();
+        if let (Some(c), Some(v)) = (result_vn, result) {
+            self.builder.write_variable(&c, v)?;
+        }
+        Ok(result)
     }
 }
 

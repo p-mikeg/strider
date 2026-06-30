@@ -44,8 +44,10 @@ pub(crate) trait PatGraphRead<N: HasInputSlots, V> {
     /// Every `(consumer_slot, producer_value)` input of `node`, recovering
     /// the sparse consumer slot from the node payload.
     fn consumed_inputs(&self, node: NodeId) -> Vec<(usize, ValueId)>;
-    /// The value (output) vertices `node` produces.
-    fn produced_outputs(&self, node: NodeId) -> Vec<ValueId>;
+    /// The value (output) vertices `node` produces. Borrows the generic
+    /// graph's contiguously-stored output slice directly (no per-node
+    /// allocation on the matcher / instantiate hot paths).
+    fn produced_outputs(&self, node: NodeId) -> &[ValueId];
     /// The unique **sink** node — a node none of whose produced outputs are
     /// consumed — recovered structurally rather than stored.
     ///
@@ -77,8 +79,8 @@ impl<N: HasInputSlots, V> PatGraphRead<N, V> for Graph<N, V, NeverCacheable> {
             .collect()
     }
 
-    fn produced_outputs(&self, node: NodeId) -> Vec<ValueId> {
-        self.node_outputs(node).to_vec()
+    fn produced_outputs(&self, node: NodeId) -> &[ValueId] {
+        self.node_outputs(node)
     }
 
     fn derive_root(&self) -> anyhow::Result<NodeId> {

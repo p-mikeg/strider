@@ -4,10 +4,8 @@
 //! output-constraint API was deleted), so the remaining test only
 //! exercises the side-table directly.
 
-use strider_ir::FunctionBuilder;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
 
@@ -59,8 +57,8 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     )
     .unwrap();
     let addr = b.build_int_const(0xdead_u64, ValueType::I64).unwrap();
-    let _call_node = b.build_call(addr, Some(&override_cc)).unwrap();
-    let ret_vars: Vec<rsleigh::Vn> = b.ret_val_vars().to_vec();
+    let _call_node = b.build_call_cc(addr, Some(&override_cc)).unwrap();
+    let ret_vars: Vec<rsleigh::Vn> = b.function().ret_val_regs().to_vec();
     b.build_return(None, &ret_vars).unwrap();
     let function = b.build().unwrap();
 
@@ -71,6 +69,6 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         .all_node_ids()
         .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
         .unwrap();
-    assert!(function.call_cc(call_id).is_some());
+    assert_eq!(function.get_cc(call_id), &override_cc);
     assert_eq!(function.node_outputs(call_id).len(), 2);
 }

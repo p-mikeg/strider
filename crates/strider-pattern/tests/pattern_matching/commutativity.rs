@@ -10,8 +10,7 @@
 //! cases in `arithmetic.rs` — are rechecked here with swapped operands to
 //! confirm they do NOT match.
 
-use strider_ir::IRBuilderExt;
-use strider_ir::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, IRBuilderExt, IntBinaryOp, IntCmpOp};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
@@ -465,7 +464,6 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
 #[test]
 fn child_when_match_rejection_still_tries_swapped_order() {
     use strider_ir::IRViewer;
-    use strider_ir::node::IntPayload;
 
     // add(2, 3): the guarded child sits on pattern slot 0, which the
     // natural order maps to operand 2 (guard fails) and the swap retry
@@ -476,10 +474,7 @@ fn child_when_match_rejection_still_tries_swapped_order() {
         let Some(v) = b.get_value(c) else {
             return false;
         };
-        matches!(
-            m.function().kind_of_value(v),
-            strider_ir::node::NodeKind::IntConst(IntPayload::Small(3))
-        )
+        m.function().int_const_u128(v) == Some(3)
     });
     let m = a::unique(&function, add(guarded, int_const(2u128)).into_pattern());
     assert_eq!(
@@ -489,31 +484,88 @@ fn child_when_match_rejection_still_tries_swapped_order() {
     );
 }
 
-/// A `when_match` guard on the ROOT runs after the inputs already
-/// resolved in SOME order; if it rejects, the match unwinds entirely —
-/// the matcher does NOT re-drive the swapped operand order to satisfy a
-/// root guard (pins the documented post-match contract).
+/// A `when_match` guard on the ROOT runs after the inputs resolved in
+/// SOME order; if it rejects on a commutative node, the matcher re-drives
+/// the SWAPPED operand order before giving up — so an operand-order-
+/// sensitive root guard still finds a valid ordering (e.g. `const(a) +
+/// const(b)` with a guard pinning the narrow operand).
 #[test]
-fn root_when_match_rejection_does_not_redrive_swap() {
+fn root_when_match_rejection_redrives_swap() {
     use strider_ir::IRViewer;
-    use strider_ir::node::IntPayload;
 
     let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
     let l = Capture::new();
-    // Inputs match in the natural order (l ← 2); the root guard then
-    // demands l == 3, which only the swapped order would satisfy.
+    // Inputs match in the natural order (l ← 2); the root guard demands
+    // l == 3, which only the swapped order satisfies — the commutative
+    // swap retry re-drives the inputs so l ← 3 and the guard passes.
     let pat = add(any().capture(l), any())
         .when_match(move |m, _ty, b| {
             let Some(v) = b.get_value(l) else {
                 return false;
             };
-            matches!(
-                m.function().kind_of_value(v),
-                strider_ir::node::NodeKind::IntConst(IntPayload::Small(3))
-            )
+            m.function().int_const_u128(v) == Some(3)
+        })
+        .into_pattern();
+    let m = a::unique(&function, pat);
+    assert_eq!(
+        m.bindings().get_uint(l, &function),
+        Some(3),
+        "root guard rejection must re-drive the swapped operand order",
+    );
+}
+
+/// `.ordered()` still disables the swap re-drive even when a root guard
+/// rejects: a non-commutative (forced-ordered) node fails outright.
+#[test]
+fn ordered_root_when_match_rejection_does_not_redrive_swap() {
+    use strider_ir::IRViewer;
+
+    let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
+    let l = Capture::new();
+    let pat = add(any().capture(l), any())
+        .ordered()
+        .when_match(move |m, _ty, b| {
+            let Some(v) = b.get_value(l) else {
+                return false;
+            };
+            m.function().int_const_u128(v) == Some(3)
         })
         .into_pattern();
     a::none(&function, pat);
+}
+
+/// A guard on a UNARY parent (which has no operands of its own to swap) must
+/// still re-drive a COMMUTATIVE child's operand order: the backtracking
+/// propagates DOWN past the unary node. This is the `const(a) + const(b)` under
+/// a width-narrowing/extending parent case — the guard picks the operand, and
+/// the matcher must try the child's other ordering to satisfy it.
+#[test]
+fn unary_parent_guard_redrives_commutative_child() {
+    use strider_ir::IRViewer;
+    use strider_ir::node::ValueType;
+
+    // zext(add(2, 3)): the natural order binds x←2 (guard wants 3); the re-drive
+    // must reach down through the unary zext to swap the add so x←3.
+    let function = {
+        let mut t = Tb::empty();
+        let two = t.u64(2);
+        let three = t.u64(3);
+        let sum = t.add(two, three);
+        let z = t.zext_to(sum, ValueType::I128);
+        t.ret_val(z)
+    };
+    let x = Capture::new();
+    let pat = zero_extend(add(any().capture(x), any()))
+        .when_match(move |m, _ty, b| {
+            b.get_value(x).and_then(|v| m.function().int_const_u128(v)) == Some(3)
+        })
+        .into_pattern();
+    let m = a::unique(&function, pat);
+    assert_eq!(
+        m.bindings().get_uint(x, &function),
+        Some(3),
+        "unary-parent guard must re-drive the commutative child's operand order",
+    );
 }
 
 // ── float_cmp commutativity ──────────────────────────────────────────────────

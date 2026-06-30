@@ -129,7 +129,7 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 fn known_single_oob_target_lifts_as_call_plus_return() {
     use rustc_hash::FxHashMap;
     use strider_cfg::{PcodeInsnAddr, ResolvedTargets};
-    use strider_ir::IRWalker;
+    use strider_ir_test_utils::IrWalkerEx;
     use strider_ir::node::NodeKind;
 
     let base = 0x1000u64;
@@ -210,9 +210,12 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     );
 
     // The Call's target must be IntConst(oob_target).
-    use strider_ir::node::IntPayload;
-    let has_oob_const = function
-        .has_kind(|k| matches!(k, NodeKind::IntConst(IntPayload::Small(c)) if *c == oob_target));
+    let has_oob_const = function.walk().any(|nid| {
+        matches!(function.node_kind(nid), NodeKind::IntConst(_))
+            && function
+                .first_value_output_of(nid)
+                .is_some_and(|v| function.int_const_u128(v) == Some(u128::from(oob_target)))
+    });
     assert!(
         has_oob_const,
         "lifted IR must contain IntConst({oob_target:#x}) as the Call target"
@@ -235,7 +238,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
     use rustc_hash::FxHashMap;
     use strider_cfg::{PcodeInsnAddr, ResolvedTargets};
-    use strider_ir::IRWalker;
+    use strider_ir_test_utils::IrWalkerEx;
     use strider_ir::node::NodeKind;
 
     let base = 0x1000u64;

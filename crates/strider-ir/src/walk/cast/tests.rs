@@ -1,8 +1,8 @@
 //! Semantics tests for [`CastMask`] and [`cast_mask_of`].
 
 use super::*;
-use crate::node::IntPayload;
 use crate::{ExtendOp, FloatBinaryOp, IntBinaryOp, IntUnaryOp};
+use cranelift_entity::EntityRef;
 
 // ── Bit-distinctness ────────────────────────────────────────────────────────
 
@@ -147,7 +147,7 @@ fn cast_mask_of_float_bits_to_int() {
 fn cast_mask_of_non_cast_kinds_is_empty() {
     let non_casts = [
         NodeKind::Entry,
-        NodeKind::IntConst(IntPayload::Small(0)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::FloatToFloat,
         NodeKind::Region,
@@ -187,7 +187,7 @@ fn cast_mask_of_returns_non_empty_for_all_cast_kinds() {
 fn cast_mask_of_returns_empty_for_non_cast_kinds() {
     let non_casts = [
         NodeKind::Entry,
-        NodeKind::IntConst(IntPayload::Small(0)),
+        NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::IntBinaryOp(IntBinaryOp::Mul),
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),

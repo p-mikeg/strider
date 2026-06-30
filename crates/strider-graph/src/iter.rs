@@ -5,7 +5,8 @@
 //! node/value payloads `N`/`V`. Pure list navigation: it borrows the store's
 //! arenas and yields `ValueId`s, never touching the payloads.
 
-use core::{ops::Index, slice};
+use core::ops::Index;
+use core::slice;
 
 use crate::cache::NodeCacheable;
 use crate::graph::Graph;

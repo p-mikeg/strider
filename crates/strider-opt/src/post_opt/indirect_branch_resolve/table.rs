@@ -53,8 +53,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::MAX_TABLE_ENTRIES;
-use crate::AliasMode;
-use crate::ReadOnlyMemory;
+use crate::{AliasMode, ReadOnlyMemory};
 use strider_cfg::ResolvedTargets;
 use strider_ir::IRViewer;
 use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId};
@@ -63,11 +62,10 @@ use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId};
 /// [`super::classify_anchor`] when the anchor's producer is a
 /// [`NodeKind::Load`] or an `IntBinaryOp(And)` dispatch-mask wrapper.
 ///
-/// `anchor_value` is the placeholder `IndirectBranch`'s dispatch-value
-/// input.  `rom` is the binary's read-only image (rodata/text); `None`
-/// disables the absolute (rodata) arm.  The stack-pointer varnode (for the
-/// SP-rooted arm) and the target endianness (for the rodata read) are read
-/// off `ctx` — `ctx.default_cc().stack_vn` and `ctx.endianness()`.
+/// `rom` is the binary's read-only image (rodata/text); `None` disables the
+/// absolute (rodata) arm.  The stack-pointer varnode (for the SP-rooted arm)
+/// and the target endianness (for the rodata read) are read off `ctx` —
+/// `ctx.default_cc().stack_vn` and `ctx.endianness()`.
 #[must_use]
 pub fn classify_table_dispatch(
     ctx: &strider_ir::Function,
@@ -83,6 +81,12 @@ pub fn classify_table_dispatch(
     // `IndirectBranch` that happens to share the dispatch value.
     let anchor_value = ctx.indirect_branch_target(branch);
 
+    // Evaluate the dispatch cone under each concrete index — no clone, no
+    // pipeline. The cone + its topological order are index-independent, so
+    // build them ONCE here and reuse for BOTH the candidate search and the
+    // per-index evaluation order (a single backward post-order walk).
+    let order = super::eval::cone_order(ctx, anchor_value);
+
     // The dispatch is `f(index)` for one bounded `index`.  We don't pattern-
     // match the addressing; instead we find candidate bounded values in the
     // dispatch cone, and for each, pin it to every value in its range and let
@@ -90,23 +94,19 @@ pub fn classify_table_dispatch(
     // its values IS the index, and the folded constants are the targets.  A
     // wrong candidate fails to fold (the dispatch still depends on the real
     // index) and is rejected after one or two tries.
-    let candidates = find_index_candidates(ctx, anchor_value, branch, ranges);
+    let candidates = find_index_candidates(ctx, &order, anchor_value, branch, ranges);
     if candidates.is_empty() {
         return None;
     }
 
-    // Evaluate the dispatch cone under each concrete index — no clone, no
-    // pipeline. The cone + its topological order are index-independent, so
-    // build them once and reuse across candidates and indices. The candidate
-    // whose whole range collapses to constants IS the index; the constants are
-    // the targets. A wrong candidate leaves the cone dependent on a non-seeded
-    // runtime value and fails to collapse → rejected.
-    let order = super::eval::cone_order(ctx, anchor_value);
+    // The candidate whose whole range collapses to constants IS the index; the
+    // constants are the targets. A wrong candidate leaves the cone dependent on
+    // a non-seeded runtime value and fails to collapse → rejected.
     let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
     for (idx_value, lo, hi) in candidates {
-        if let Some(targets) =
-            enumerate_targets(lo, hi, |v| ev.eval_target(&order, anchor_value, idx_value, v))
-        {
+        if let Some(targets) = enumerate_targets(lo, hi, |v| {
+            ev.eval_target(&order, anchor_value, idx_value, v)
+        }) {
             return Some(ResolvedTargets::Multiple(targets));
         }
     }
@@ -141,18 +141,18 @@ fn enumerate_targets(
 /// this cone walk reaches directly, not via the outer cast.)
 fn find_index_candidates(
     ctx: &strider_ir::Function,
+    order: &[ValueId],
     anchor_value: ValueId,
     branch: NodeId,
     ranges: &mut crate::value_range::RangeMap<'_>,
 ) -> Vec<(ValueId, u128, u128)> {
     let mut out: Vec<(ValueId, u128, u128)> = Vec::new();
-    let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
     let mut load_memo: rustc_hash::FxHashMap<ValueId, bool> = rustc_hash::FxHashMap::default();
-    let mut stack = vec![anchor_value];
-    while let Some(v) = stack.pop() {
-        if !seen.insert(v) {
-            continue;
-        }
+    // Backward value-input cone from the anchor (producers before consumers,
+    // each value once; the `is_anchor` guard below skips the root). Caller
+    // precomputed this post-order via `cone_order` and shares it with the
+    // per-index evaluation order, so the cone is walked once per branch.
+    for &v in order {
         if let Some(ty) = ctx.value_type_opt(v) {
             // Never enumerate the dispatch value ITSELF as the index.  A real
             // table dispatch reads/computes the target *from* a deeper index
@@ -189,11 +189,6 @@ fn find_index_candidates(
                         out.push((v, iv.lo, iv.hi));
                     }
                 }
-            }
-        }
-        for input in ctx.node_inputs(ctx.producer(v)) {
-            if ctx.value_type_opt(input).is_some() {
-                stack.push(input);
             }
         }
     }

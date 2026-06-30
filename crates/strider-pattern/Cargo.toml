@@ -6,17 +6,17 @@ edition = { workspace = true }
 [dependencies]
 strider-ir = { workspace = true }
 strider-graph = { workspace = true }
-strider-target = { workspace = true }
 rsleigh = { workspace = true }
 petgraph = { workspace = true }
-cranelift-entity = { workspace = true }
 anyhow = { workspace = true }
-thiserror = { workspace = true }
-smallvec = { workspace = true }
 rustc-hash = "2"
 
 [dev-dependencies]
+# Test-only IR helper (build_sub_as_add_neg) used in typed_match tests.
+strider-ir = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { path = "../strider-ir-test-utils" }
+# Used only by the integration tests (e.g. control_build, call_other slots).
+strider-target = { workspace = true }
 expect-test = { workspace = true }
 criterion = { workspace = true }
 

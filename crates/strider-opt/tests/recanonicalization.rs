@@ -53,7 +53,7 @@ fn clean_merges_structural_twin_left_by_a_rewrite() {
     );
 
     {
-        let mut ef = EditFunction::new(&mut fg).unwrap();
+        let mut ef = EditFunction::new(&mut fg);
         // Redirect c2 -> c1: add2 becomes Add(a, c1), a twin of add1.
         ef.replace_all_uses(c2, c1).unwrap();
         ef.clean(); // the incremental re-canonicalization merges the twin here
@@ -112,7 +112,7 @@ fn clean_does_not_merge_when_output_type_differs() {
     assert_eq!(truncs(&fg), 2, "fixture has two differently-typed truncs");
 
     {
-        let mut ef = EditFunction::new(&mut fg).unwrap();
+        let mut ef = EditFunction::new(&mut fg);
         // Redirect bb -> a: t16 becomes Truncate(a):I16 — same input as t32 but a
         // DIFFERENT output width, so canonicalization must keep them separate.
         ef.replace_all_uses(bb, a).unwrap();

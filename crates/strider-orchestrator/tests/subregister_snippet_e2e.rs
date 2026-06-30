@@ -100,9 +100,9 @@ fn narrow_alias_write_folds_to_zero_in_ret_val_register() {
         "SystemV Return must carry ret-val inputs; got {} inputs",
         inputs.len()
     );
-    let ret_vals: Vec<Option<u64>> = inputs[2..]
+    let ret_vals: Vec<Option<u128>> = inputs[2..]
         .iter()
-        .map(|&v| function.int_const_val(v))
+        .map(|&v| function.int_const_u128(v))
         .collect();
     // Pinned: the optimiser fully folds the chain — the first ret-val
     // slot (rax in the SystemV ret-val order) is IntConst(0); the

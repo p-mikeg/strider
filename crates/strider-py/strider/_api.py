@@ -416,8 +416,8 @@ class ElfStrider:
         allow_code_before_start_addr: bool = False,
         compact: bool = True,
         per_address_ccs: Optional[dict] = None,
-        calls_clobber_stack_arguments: bool = False,
-        args_assume_distinct_sp_bases_disjoint: bool = False,
+        calls_clobber: bool = False,
+        assume_distinct_sp_bases_disjoint: bool = False,
         alias_mode: str = "stack_global_disjoint",
     ) -> "Analysis":
         """Lift the function at `target` (symbol name or absolute
@@ -441,10 +441,10 @@ class ElfStrider:
           `True`).
         * `per_address_ccs` — per-target-address calling-convention
           overrides.
-        * `calls_clobber_stack_arguments` — treat a `Call` / `CallOther`
+        * `calls_clobber` — treat a `Call` / `CallOther`
           on a stack-arg load's memory chain as shadowing the slot
           (default `False`, i.e. aggressive stack-arg detection).
-        * `args_assume_distinct_sp_bases_disjoint` — assume a `Store`
+        * `assume_distinct_sp_bases_disjoint` — assume a `Store`
           rooted at a *different* SP base (e.g. an alignment-masked
           `sp & -16` frame local) is disjoint from the incoming-arg
           slots rather than conservatively may-aliasing them (default
@@ -490,8 +490,8 @@ class ElfStrider:
             allow_code_before_start_addr=allow_code_before_start_addr,
             compact=compact,
             per_address_ccs=per_address_ccs,
-            calls_clobber_stack_arguments=calls_clobber_stack_arguments,
-            args_assume_distinct_sp_bases_disjoint=args_assume_distinct_sp_bases_disjoint,
+            calls_clobber=calls_clobber,
+            assume_distinct_sp_bases_disjoint=assume_distinct_sp_bases_disjoint,
             alias_mode=alias_mode,
         )
         return Analysis(

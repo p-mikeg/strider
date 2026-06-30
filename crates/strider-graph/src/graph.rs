@@ -32,7 +32,7 @@ use crate::storage::{Node, RawStore, UseData, ValueData};
 ///
 /// `Graph` is the pure structural arena. Any payload-specific side-tables a
 /// consumer maintains (keyed by `NodeId` / `ValueId`) live on the consumer,
-/// not here; [`Graph::retain_reachable_roots`] returns the old→new remap so the
+/// not here; [`Graph::retain_reachable`] returns the old→new remap so the
 /// consumer can fix those up.
 ///
 /// The struct imposes NO `Hash`/`Eq` bound on `N`/`V`: deduplication, if any,
@@ -151,25 +151,20 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         Some(self.store.inputs[use_id].value_id)
     }
 
-    /// Returns the [`UseId`] of the input slot at position `idx` of `node`, or
-    /// `None` if out of bounds.
-    #[inline]
-    pub fn node_input_id_at_opt(&self, node: NodeId, idx: usize) -> Option<UseId> {
-        self.store.node_input_uses(node).get(idx).copied()
-    }
-
     /// Returns the [`UseId`] of the input slot at position `idx` of `node`.
-    ///
-    /// The fallible companion to [`Self::node_input_id_at_opt`].
     ///
     /// # Errors
     ///
     /// Returns an error if `idx` is past the node's current input count.
     pub fn node_input_id_at(&self, node: NodeId, idx: usize) -> crate::Result<UseId> {
-        self.node_input_id_at_opt(node, idx).ok_or_else(|| {
-            let len = self.node_inputs(node).len();
-            anyhow!("input index {idx} out of bounds for node {node:?} (len={len})")
-        })
+        self.store
+            .node_input_uses(node)
+            .get(idx)
+            .copied()
+            .ok_or_else(|| {
+                let len = self.node_inputs(node).len();
+                anyhow!("input index {idx} out of bounds for node {node:?} (len={len})")
+            })
     }
 
     /// Returns exactly `M` input values for `node_id`.
@@ -268,7 +263,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 
     /// Returns the current generation counter, bumped by every
-    /// arena-reshuffling operation ([`Self::retain_reachable_roots`]).
+    /// arena-reshuffling operation ([`Self::retain_reachable`]).
     #[inline]
     pub fn generation(&self) -> u64 {
         self.generation
@@ -276,7 +271,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
     /// Bump the generation counter without reshuffling the arena.
     ///
-    /// `retain_reachable_roots` bumps the counter implicitly because it
+    /// `retain_reachable` bumps the counter implicitly because it
     /// invalidates ids; an in-place mutation (a rewrite that replaces or
     /// detaches nodes without compacting) leaves ids valid but changes the
     /// graph a captured snapshot was taken against. Callers that perform
@@ -450,8 +445,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
         // Single pass: partition the existing use ids into survivors (reindexed)
         // and victims (unlinked from their value's use-list).
-        let old_uses: SmallVec<[UseId; 4]> =
-            self.store.node_input_uses(node_id).into();
+        let old_uses: SmallVec<[UseId; 4]> = self.store.node_input_uses(node_id).into();
         let mut survivors: SmallVec<[UseId; 4]> = SmallVec::with_capacity(old_uses.len());
         for (slot, use_id) in old_uses.into_iter().enumerate() {
             if drop_slot[slot] {
@@ -550,9 +544,17 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
     // ── compaction ──────────────────────────────────────────────────────────
 
-    /// Rebuilds the arena to retain only nodes reachable from `roots` by
-    /// following input edges backward (def→use closure). Returns the old→new
-    /// id translation table.
+    /// Rebuilds the arena to retain exactly the nodes in `reachable`, dropping
+    /// every other node. Returns the old→new id translation table.
+    ///
+    /// The graph does **not** traverse to compute reachability — it cannot know
+    /// the right reachability for the payload's edge semantics (e.g. the IR
+    /// follows forward-control + backward-data; a pure backward-input closure
+    /// would miss a `Region` reached only via control). The caller supplies the
+    /// set. It **must** be backward-input-closed: every input's producing node
+    /// must be present, or pass 2 panics on a dangling edge. Use
+    /// [`Self::reachable_by_inputs`] for the backward-input closure of some
+    /// roots when that is the reachability you want.
     ///
     /// Pre-compaction `NodeId` / `ValueId` / `UseId` values are invalidated by
     /// this call; callers holding any such ids MUST rewrite them through the
@@ -562,15 +564,18 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// The generic graph compacts only the structural arena (nodes, values,
     /// uses). Any consumer side-tables are the consumer's concern; they remap
     /// via the returned table.
-    pub fn retain_reachable_roots(&mut self, roots: impl IntoIterator<Item = NodeId>) -> NodeIdRemap
+    pub fn retain_reachable(
+        &mut self,
+        reachable: impl IntoIterator<Item = NodeId>,
+    ) -> NodeIdRemap
     where
         N: Clone,
         V: Clone,
     {
         self.generation = self.generation.wrapping_add(1);
 
-        // 1. Reachable set: backward closure over input producers.
-        let reachable = self.reachable_by_inputs(roots);
+        // The caller-supplied reachable set, retained verbatim.
+        let reachable: Vec<NodeId> = reachable.into_iter().collect();
 
         // 2. Build fresh arenas.
         let mut new_nodes: PrimaryMap<NodeId, Node<N>> = PrimaryMap::new();
@@ -625,7 +630,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
                 let input_index = old_input.input_index;
                 let new_use_id =
                     new_inputs.push(UseData::new(new_value_id, new_node_id, input_index));
-                remap.inputs[old_use_id] = Some(new_use_id);
                 new_use_ids.push(new_use_id);
             }
             new_nodes[new_node_id].inputs = UseIdList::from_iter(new_use_ids, &mut new_input_pool);
@@ -650,44 +654,15 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         remap
     }
 
-    /// Backward closure over input-producer edges from `roots`.
-    ///
-    /// Marks each node visited at PUSH time (not pop), so a high-fan-in
-    /// producer (a shared constant / memory token consumed by thousands of
-    /// nodes) is enqueued at most once. This bounds the worklist peak to O(V)
-    /// instead of O(E) while keeping total work O(V+E).
-    fn reachable_by_inputs(&self, roots: impl IntoIterator<Item = NodeId>) -> Vec<NodeId> {
-        let mut visited: SecondaryMap<NodeId, bool> = SecondaryMap::new();
-        let mut order: Vec<NodeId> = Vec::new();
-        let mut stack: Vec<NodeId> = Vec::new();
-        for root in roots {
-            if !visited[root] {
-                visited[root] = true;
-                stack.push(root);
-            }
-        }
-        while let Some(node) = stack.pop() {
-            order.push(node);
-            for input in self.node_inputs(node) {
-                let producer = self.producer(input);
-                if !visited[producer] {
-                    visited[producer] = true;
-                    stack.push(producer);
-                }
-            }
-        }
-        order
-    }
 }
 
-/// Old→new id translation table produced by [`Graph::retain_reachable_roots`].
+/// Old→new id translation table produced by [`Graph::retain_reachable`].
 ///
 /// Sparse: only surviving ids are populated; dropped ids return `None`.
 #[derive(Debug, Clone, Default)]
 pub struct NodeIdRemap {
     nodes: SecondaryMap<NodeId, Option<NodeId>>,
     outputs: SecondaryMap<ValueId, Option<ValueId>>,
-    inputs: SecondaryMap<UseId, Option<UseId>>,
 }
 
 impl NodeIdRemap {

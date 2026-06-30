@@ -15,7 +15,9 @@
 //!     against the calling convention, honouring per-`Call` clobber
 //!     overrides), wide-const consistency (including that an
 //!     `IntConst(Wide(..))` declares an `I80`/`I128`/`I256`/`I512`
-//!     output type matching its interned byte size), non-empty
+//!     output type matching its interned byte size), `Extend`/`Truncate`
+//!     width direction (Extend strictly widens, Truncate strictly
+//!     narrows), non-empty
 //!     asm-fingerprints on every reachable non-exempt node, and that every
 //!     reachable `Store`'s Memory output stays consumed (anchored in the
 //!     live memory chain).
@@ -38,9 +40,10 @@ mod use_list_consistency;
 
 use graph_invariants::{
     check_graph_invariants_asm_fingerprints, check_graph_invariants_cc_arity,
-    check_graph_invariants_memory_chain, check_graph_invariants_phis,
-    check_graph_invariants_region, check_graph_invariants_side_indices,
-    check_graph_invariants_uniqueness, check_graph_invariants_wide_consts,
+    check_graph_invariants_consts, check_graph_invariants_control_single_use,
+    check_graph_invariants_extend_truncate, check_graph_invariants_memory_chain,
+    check_graph_invariants_phis, check_graph_invariants_region,
+    check_graph_invariants_side_indices, check_graph_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 use use_list_consistency::check_use_list_consistency;
@@ -49,9 +52,9 @@ use use_list_consistency::check_use_list_consistency;
 /// the function's own entry node.
 ///
 /// Returns `Ok(())` if every checked invariant holds, or a
-/// [`ValidationErrors`] bundle describing every violation otherwise. If the
-/// function has not been built (no entry node), returns a bundle containing a
-/// single [`ValidationError::NoEntry`].
+/// [`ValidationErrors`] bundle describing every violation otherwise.  Every
+/// `Function` is built with an entry node (the `Function::new` skeleton), so
+/// the walk always has a root.
 ///
 /// Local per-node checks (`check_local_typing`) are scoped to nodes
 /// reachable from the entry so that detached zombie nodes left behind by
@@ -69,9 +72,7 @@ use use_list_consistency::check_use_list_consistency;
 /// does not fail fast — every check runs to completion so the caller sees
 /// the full set of problems at once.
 pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
-    let Some(entry) = function.entry() else {
-        return Err(ValidationErrors(vec![ValidationError::NoEntry]));
-    };
+    let entry = function.entry();
     // Drive the walk to completion and reuse its internal DenseEntitySet
     // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
     // and one extra allocation per validate call.
@@ -88,9 +89,11 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
 
     check_graph_invariants_uniqueness(function.graph(), &mut errs);
     check_graph_invariants_region(function.graph(), &reachable, &mut errs);
-    check_graph_invariants_phis(function.graph(), &reachable, &mut errs);
-    check_graph_invariants_wide_consts(function, &reachable, &mut errs);
+    check_graph_invariants_control_single_use(function, &reachable, &mut errs);
+    check_graph_invariants_phis(function, &reachable, &mut errs);
+    check_graph_invariants_consts(function, &reachable, &mut errs);
     check_graph_invariants_cc_arity(function, &reachable, &mut errs);
+    check_graph_invariants_extend_truncate(function, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_graph_invariants_memory_chain(function, &reachable, &mut errs);
     check_graph_invariants_side_indices(function, &reachable, &mut errs);
@@ -134,9 +137,6 @@ pub struct ValidationErrors(pub Vec<ValidationError>);
 /// An individual IR validation failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
-    #[error("function has no entry node (not built)")]
-    NoEntry,
-
     #[error("node {node:?} has {actual} inputs, expected {expected}")]
     NodeInputCountMismatch {
         node: NodeId,
@@ -195,19 +195,22 @@ pub enum ValidationError {
     #[error("missing InitialMemory node")]
     MissingInitialMemoryNode,
 
-    #[error(
-        "Region {region:?} input[{input_idx}] producer {producer:?} \
-         has kind {producer_kind:?}, expected Control"
-    )]
-    RegionNonControlPredecessor {
-        region: NodeId,
-        input_idx: usize,
-        producer: NodeId,
-        producer_kind: ValueKind,
-    },
-
     #[error("Region {region:?} has zero predecessors")]
     EmptyRegionPredecessors { region: NodeId },
+
+    #[error(
+        "node {node:?} produces a Control output {value:?} that no reachable node \
+         consumes; every control edge must reach a terminator (`Return` / \
+         `IndirectBranch` / `Unreachable`)"
+    )]
+    UnusedControlOutput { node: NodeId, value: ValueId },
+
+    #[error(
+        "node {node:?} produces a Control output {value:?} consumed by more than \
+         one node; a control edge has exactly one successor (a split must be an \
+         `If`, a merge must go through a `Region`)"
+    )]
+    ReusedControlOutput { node: NodeId, value: ValueId },
 
     #[error(
         "phi node {phi:?} input[0] token producer {producer:?} has kind \
@@ -253,32 +256,21 @@ pub enum ValidationError {
     },
 
     #[error(
-        "node {node:?} is `IntConst(Wide({id:?}))` but the wide-const \
-         side-table has no entry for that id"
+        "node {node:?} is `IntConst({id:?})` but the const \
+         interner has no entry for that id"
     )]
-    DanglingWideConstId {
+    DanglingConstId {
         node: NodeId,
-        id: crate::wide_const::WideConstId,
+        id: crate::const_value::ConstId,
     },
 
     #[error(
-        "node {node:?} (`IntConst(Wide(...))`) stores {actual_bytes}-byte value \
-         but its output type is {output_type:?} ({expected_bytes}-byte)"
+        "node {node:?} (`IntConst(...)`) has an interned value that exceeds its \
+         declared output width (bits set above the type's bit width)"
     )]
-    WideConstWidthMismatch {
+    ConstWidthMismatch {
         node: NodeId,
-        output_type: ValueType,
-        expected_bytes: usize,
-        actual_bytes: usize,
-    },
-
-    #[error(
-        "node {node:?} (`IntConst(Wide(...))`) declares non-wide output type \
-         {output_type:?}; only I80 / I128 / I256 / I512 are valid wide-const output types"
-    )]
-    WideConstInvalidOutputType {
-        node: NodeId,
-        output_type: ValueType,
+        id: crate::const_value::ConstId,
     },
 
     #[error(
@@ -313,6 +305,19 @@ pub enum ValidationError {
         vn: rsleigh::Vn,
         producer: NodeId,
         producer_kind: crate::node::NodeKind,
+    },
+
+    #[error(
+        "node {node:?} (kind {kind:?}) has input width {in_width} and output \
+         width {out_width}; `Extend` must strictly widen and `Truncate` must \
+         strictly narrow (same value, opposite-direction op is a redundant \
+         spelling)"
+    )]
+    ExtendTruncateWidthDirection {
+        node: NodeId,
+        kind: crate::node::NodeKind,
+        in_width: usize,
+        out_width: usize,
     },
 }
 

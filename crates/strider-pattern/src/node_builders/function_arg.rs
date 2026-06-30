@@ -24,8 +24,7 @@ use strider_ir::node::{FunctionArgSource, NodeKind};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, Pattern};
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 
 /// Builder for a function-argument-carrier pattern. Created by
 /// [`function_arg`] / [`function_arg_any`] / [`function_arg_reg`] /
@@ -110,7 +109,7 @@ impl FunctionArgPat {
                 };
                 match (expected, f.node_kind(node)) {
                     (FunctionArgSource::Register(want), NodeKind::InitialVar(actual)) => {
-                        want == *actual
+                        want == f.initial_vn(*actual)
                     }
                     (
                         FunctionArgSource::Stack {
@@ -179,7 +178,7 @@ pub fn function_arg_reg(vn: rsleigh::Vn, idx: u32) -> FunctionArgPat {
 
 /// Match the carrier at side-table index `idx`, restricted to a
 /// stack-passed `Load` at `(space, offset)`.
-pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i64, idx: u32) -> FunctionArgPat {
+pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i128, idx: u32) -> FunctionArgPat {
     FunctionArgPat::default()
         .index(idx)
         .source(FunctionArgSource::Stack { space, offset })

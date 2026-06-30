@@ -29,6 +29,7 @@
 use object::{Object, ObjectSymbol};
 use std::path::PathBuf;
 use strider_ir::{IRViewer, IRWalker};
+use strider_ir_test_utils::IrWalkerEx;
 
 // Sub-module containing fixture builders for the indirect-branch classifier
 // integration tests in `tests/indirect_resolve_classify.rs`.  Kept as a sub-module
@@ -382,7 +383,7 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
 // All counters walk the graph in pre-order and filter on the node kind.
 // Naming convention: `count_<thing>` returns a `usize`; `has_<thing>` returns a `bool`.
 
-use strider_ir::node::{IntPayload, NodeKind};
+use strider_ir::node::NodeKind;
 
 // Re-export the canonical `Function::count_kind` / `Function::has_kind` under
 // their bare names so existing test call-sites need no qualification.
@@ -563,10 +564,12 @@ pub fn count_stack_offsets(function: &strider_ir::Function) -> usize {
 }
 
 pub fn has_constant(function: &strider_ir::Function, value: u64) -> bool {
-    has_kind(
-        function,
-        |k| matches!(k, NodeKind::IntConst(IntPayload::Small(c)) if *c == value),
-    )
+    function.walk().any(|nid| {
+        matches!(function.node_kind(nid), NodeKind::IntConst(_))
+            && function
+                .first_value_output_of(nid)
+                .is_some_and(|v| function.int_const_u128(v) == Some(u128::from(value)))
+    })
 }
 
 /// Locates the unique `If` node in `g`.  Panics if zero or more than one

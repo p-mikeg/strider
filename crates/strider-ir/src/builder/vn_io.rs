@@ -16,9 +16,7 @@ use anyhow::{anyhow, bail};
 use crate::Value;
 use crate::builder::IRBuilderExt;
 use crate::error::Result;
-use crate::node::ValueType;
-use crate::node::VnTypeExt;
-use crate::node::{ExtendOp, IntBinaryOp};
+use crate::node::{ExtendOp, IntBinaryOp, ValueType, VnTypeExt};
 
 use super::FunctionBuilder;
 
@@ -200,11 +198,6 @@ impl FunctionBuilder {
             }
             SubRegOutcome::SubReg(ctx) => ctx,
         };
-        let container_ty = ctx.container_ty;
-        let container_reg_val = self.read_variable(&ctx.container_reg)?;
-        let reg_mask = vn_mask(reg)? << ctx.shift_bits;
-        let container_mask = vn_mask(&ctx.container_reg)? & !reg_mask;
-
         // Coerce `val` to the sub-register's integer width through the SAME
         // prelude the direct-container arm uses (`convert_to_int_if_needed`):
         // a 1-bit `I1` flag result is zero-extended to the sub-register width,
@@ -232,15 +225,7 @@ impl FunctionBuilder {
         // semantics with no per-arch policy needed: preserving within the
         // scalar op is right *because* the zeroing arrives as its own op.
         // (Verified by lifting these instructions and inspecting the pcode.)
-        let final_container_value = build_masked_insert(
-            self,
-            val,
-            container_reg_val,
-            ctx.shift_bits,
-            reg_mask,
-            container_mask,
-            container_ty,
-        )?;
+        let final_container_value = build_masked_insert(self, val, reg, &ctx)?;
         self.write_reg_vn(&ctx.container_reg, final_container_value)?;
         Ok(())
     }
@@ -332,16 +317,21 @@ struct SubRegContext {
 ///  3. AND `container_val` with `container_mask` to clear the slot.
 ///  4. OR the two halves together.
 ///
-/// Extracted from [`FunctionBuilder::write_reg_vn`] to reduce nesting.
+/// Extracted from [`FunctionBuilder::write_reg_vn`] to reduce nesting.  The
+/// positioning masks and the container's current value are all derived from
+/// `reg` + `ctx`, so the caller hands those over rather than recomputing them.
 fn build_masked_insert(
     builder: &mut FunctionBuilder,
     val: Value,
-    container_val: Value,
-    shift_bits: u64,
-    reg_mask: u128,
-    container_mask: u128,
-    ty: ValueType,
+    reg: &rsleigh::Vn,
+    ctx: &SubRegContext,
 ) -> Result<Value> {
+    let ty = ctx.container_ty;
+    let shift_bits = ctx.shift_bits;
+    let reg_mask = vn_mask(reg)? << shift_bits;
+    let container_mask = vn_mask(&ctx.container_reg)? & !reg_mask;
+    let container_val = builder.read_variable(&ctx.container_reg)?;
+
     // Extend `val` to container width, then shift into position.
     let val_extended = builder.extend_if_needed(val, ty, ExtendOp::ZeroExtend)?;
     let shifted_value =
@@ -352,7 +342,8 @@ fn build_masked_insert(
     // ANDs fold the const + binary-op via `build_const_binop` (And is
     // commutative, so the operand order matches the former explicit form).
     let reg_val = builder.build_const_binop(reg_mask, shifted_value, IntBinaryOp::And, ty)?;
-    let preserved = builder.build_const_binop(container_mask, container_val, IntBinaryOp::And, ty)?;
+    let preserved =
+        builder.build_const_binop(container_mask, container_val, IntBinaryOp::And, ty)?;
 
     builder.build_int_binary_operation(preserved, reg_val, IntBinaryOp::Or, ty)
 }

@@ -7,11 +7,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use strider_ir::Function;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
-use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{Function, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
 use crate::StackOffsetDetect;
@@ -65,13 +62,13 @@ fn sp_relative_store_and_load_get_offset_stamped() {
 
     run(&mut f);
 
-    let store_offsets: Vec<i64> = f
+    let store_offsets: Vec<i128> = f
         .graph()
         .all_node_ids()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
         .filter_map(|n| f.stack_offset(n).map(|(_, off)| off))
         .collect();
-    let load_offsets: Vec<i64> = f
+    let load_offsets: Vec<i128> = f
         .graph()
         .all_node_ids()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::Load(_)))

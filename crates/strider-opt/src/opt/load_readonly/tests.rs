@@ -3,6 +3,7 @@ use crate::error::Result;
 use crate::pipeline::{OptCtx, OptimizerTestExt, PostOptimizerTestExt};
 use crate::test_support::{assert_returns_const, make_fn};
 use strider_ir::IRWalker;
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{MockRom, make_empty_fn_endian};
 use strider_target::Endianness;
@@ -55,7 +56,7 @@ fn load_from_rom_const_addr() -> Result<()> {
             .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
-    assert_returns_const(fg.graph(), 42);
+    assert_returns_const(&fg, 42);
     Ok(())
 }
 
@@ -86,7 +87,7 @@ fn load_fold_absorbs_address_fingerprint() -> Result<()> {
             .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
-    assert_returns_const(fg.graph(), 42);
+    assert_returns_const(&fg, 42);
 
     let folded = fg.producer(crate::test_support::return_value(fg.graph())?);
     assert!(
@@ -168,7 +169,7 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
             .run_one(&mut le, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
-    assert_returns_const(le.graph(), 0x0403_0201);
+    assert_returns_const(&le, 0x0403_0201);
 
     let mut be = build(Endianness::Big)?;
     assert!(
@@ -176,7 +177,7 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
             .run_one(&mut be, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
-    assert_returns_const(be.graph(), 0x0102_0304);
+    assert_returns_const(&be, 0x0102_0304);
 
     Ok(())
 }
@@ -213,7 +214,7 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
             .run_one(&mut le, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
-    // I128 constants are interner-backed (IntPayload::Wide); read the value
+    // I128 constants use ConstId interning; read the value
     // through the int_const_u128 funnel rather than comparing NodeKind directly.
     {
         use crate::test_support::return_value;
@@ -339,7 +340,7 @@ fn load_u8_masks_to_byte() -> Result<()> {
             .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
-    assert_returns_const(fg.graph(), 0xFF);
+    assert_returns_const(&fg, 0xFF);
     Ok(())
 }
 
@@ -390,7 +391,7 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
         b.build_store(stack_addr, data, rsleigh::VnSpace::RAM)?;
 
         let call_tgt = b.build_int_const(0xCAFEu64, ValueType::I32)?;
-        b.build_call(call_tgt, None)?;
+        b.build_call_cc(call_tgt, None)?;
 
         // ROM load at constant address — non-SP-rooted, no side-table
         // entry stamped.  LoadReadOnly sees the constant address and

@@ -92,7 +92,8 @@ impl IRBuilder for FunctionBuilder {
 mod tests {
     use super::*;
     use crate::IRViewer;
-    use crate::node::{IntPayload, ValueType};
+    use crate::node::ValueType;
+    use cranelift_entity::EntityRef;
 
     /// Construct a minimal `FunctionBuilder` with no tracked variables.
     /// Mirrors the local `empty_builder` helper in `builder/tests.rs`:
@@ -112,15 +113,16 @@ mod tests {
         // integration test `builder_trait.rs` where test-utils are available.
         let mut b = empty_builder().unwrap();
         assert_eq!(b.lift_addr(), None);
+        let const_id = crate::const_value::ConstId::new(3);
         let n = <FunctionBuilder as IRBuilder>::create_node(
             &mut b,
-            NodeKind::IntConst(IntPayload::Small(3)),
+            NodeKind::IntConst(const_id),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
         assert!(matches!(
             IRViewer::function(&b).node_kind(n),
-            NodeKind::IntConst(IntPayload::Small(3))
+            NodeKind::IntConst(id) if *id == const_id
         ));
     }
 }

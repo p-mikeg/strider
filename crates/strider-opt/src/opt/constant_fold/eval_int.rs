@@ -5,16 +5,16 @@ use anyhow::anyhow;
 
 use crate::error::Result;
 
-/// The signed minimum and maximum representable in `ty`'s bit width
-/// (`-2^(bits-1)` .. `2^(bits-1) - 1`, or `i128::MIN`/`MAX` at ≥128 bits).
-fn signed_min_max(ty: ValueType) -> (i128, i128) {
+/// The signed minimum representable in `ty`'s bit width (`-2^(bits-1)`, or
+/// `i128::MIN` at ≥128 bits).  The signed-overflow guards in `Sdiv` / `Srem`
+/// read only the minimum (the `INT_MIN / -1` undefined case), so the maximum
+/// is not derived.
+fn signed_min(ty: ValueType) -> i128 {
     let bits = ty.bit_width() as u32;
     if bits >= 128 {
-        (i128::MIN, i128::MAX)
+        i128::MIN
     } else {
-        let min = -(1i128 << (bits - 1));
-        let max = (1i128 << (bits - 1)) - 1;
-        (min, max)
+        -(1i128 << (bits - 1))
     }
 }
 
@@ -99,7 +99,7 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
             // well-defined" (e.g. -i32::MIN as i128 = 2^31 fits), but the
             // mask-back to ty would silently wrap to INT_MIN — not the
             // mathematical result.  Skip rather than emit a wraparound.
-            let (int_min, _) = signed_min_max(ty);
+            let int_min = signed_min(ty);
             if sl == int_min && sr == -1 {
                 return None;
             }
@@ -120,7 +120,7 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
             // Signed-overflow guard: INT_MIN % -1 is mathematically 0 but
             // hardware idiv raises #DE; treat it as undefined and skip,
             // matching the Sdiv case.
-            let (int_min, _) = signed_min_max(ty);
+            let int_min = signed_min(ty);
             if sl == int_min && sr == -1 {
                 return None;
             }
@@ -142,87 +142,25 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Res
     let r = r & mask;
 
     let signed = |v: u128| -> Result<i128> { require_signed(ty, v) };
-    let unsigned_max = || -> Result<u128> {
-        ty.get_unsigned_int(u128::MAX)
-            .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))
-    };
     let bits = ty.bit_width() as u32;
+    // Carry / signed-overflow comparisons: shifting both operands to the TOP of
+    // the host width turns the type's width-`bits` overflow into host-width
+    // overflow, so stdlib's overflow flag is one SSoT across every width.
+    // `top == 0` at bits >= 128 reduces to a plain i128/u128 overflowing op
+    // (wider-than-128 types fold at 128 bits, like the rest of this module's
+    // u128-domain evaluation).
+    let top = 128u32.saturating_sub(bits);
 
     Ok(match op {
         IntCmpOp::Equal => l == r,
         IntCmpOp::Less => l < r,
         IntCmpOp::Sless => signed(l)? < signed(r)?,
-        IntCmpOp::Carry => {
-            // Unsigned add overflow: l + r > type's max unsigned value.
-            // For ty < I128 we can promote to u128 safely.  For I128, detect
-            // overflow via wrapping-add semantics: sum < l (a wrapped result
-            // is always smaller than its addends).
-            if bits >= 128 {
-                l.wrapping_add(r) < l
-            } else {
-                let max = unsigned_max()?;
-                l.wrapping_add(r) > max
-            }
-        }
-        IntCmpOp::Scarry => {
-            let (min, max) = signed_min_max(ty);
-            let sl = signed(l)?;
-            let sr = signed(r)?;
-            if bits >= 128 {
-                // At i128: detect signed overflow via sign-bit logic
-                // (same-sign inputs but different-sign output).
-                let result = sl.wrapping_add(sr);
-                let sign_l = sl < 0;
-                let sign_r = sr < 0;
-                let sign_res = result < 0;
-                sign_l == sign_r && sign_l != sign_res
-            } else {
-                // SAFETY: at `bits < 128`, both `sl` and `sr` are sign-extended
-                // from a narrower type into `i128`, so each lies in
-                // `[-2^(bits-1), 2^(bits-1) - 1]`.  Their sum therefore lies
-                // in `[-2^bits, 2^bits - 2]`, which fits well inside i128 for
-                // any `bits < 128` — no `+` overflow on the host i128.  The
-                // overflow we detect here is the source-type's overflow,
-                // captured by the `< min || > max` range check.  When the
-                // narrow-width invariant fails (e.g. a caller passes raw u128
-                // values that `signed()` could not represent), `signed(l)?` /
-                // `signed(r)?` short-circuit before reaching the `sl + sr`.
-                debug_assert!(
-                    bits < 128 && sl >= min && sl <= max && sr >= min && sr <= max,
-                    "Scarry narrow-width invariant violated: bits={bits} \
-                     sl={sl} sr={sr} min={min} max={max}"
-                );
-                let result = sl + sr;
-                result < min || result > max
-            }
-        }
-        IntCmpOp::Sborrow => {
-            let (min, max) = signed_min_max(ty);
-            let sl = signed(l)?;
-            let sr = signed(r)?;
-            if bits >= 128 {
-                let result = sl.wrapping_sub(sr);
-                let sign_l = sl < 0;
-                let sign_r = sr < 0;
-                let sign_res = result < 0;
-                sign_l != sign_r && sign_l != sign_res
-            } else {
-                // SAFETY: identical reasoning to `Scarry` above — at
-                // `bits < 128` both operands sign-extend into
-                // `[-2^(bits-1), 2^(bits-1) - 1]`, so `sl - sr` lies in
-                // `[-2^bits + 1, 2^bits - 1]`, comfortably inside i128 with
-                // no host-side `-` overflow.  The narrow-width signed
-                // overflow we want to detect is captured by the subsequent
-                // `< min || > max` range check.
-                debug_assert!(
-                    bits < 128 && sl >= min && sl <= max && sr >= min && sr <= max,
-                    "Sborrow narrow-width invariant violated: bits={bits} \
-                     sl={sl} sr={sr} min={min} max={max}"
-                );
-                let result = sl - sr;
-                result < min || result > max
-            }
-        }
+        // Unsigned add overflow at the type width.
+        IntCmpOp::Carry => (l << top).overflowing_add(r << top).1,
+        // Signed add overflow at the type width.
+        IntCmpOp::Scarry => (signed(l)? << top).overflowing_add(signed(r)? << top).1,
+        // Signed sub overflow at the type width.
+        IntCmpOp::Sborrow => (signed(l)? << top).overflowing_sub(signed(r)? << top).1,
     })
 }
 
@@ -269,7 +207,10 @@ mod eval_helper_tests {
 
     #[test]
     fn unary_neg_masks_to_width() {
-        assert_eq!(eval_int_unary(IntUnaryOp::Neg, 1, ValueType::I8), Some(0xFF));
+        assert_eq!(
+            eval_int_unary(IntUnaryOp::Neg, 1, ValueType::I8),
+            Some(0xFF)
+        );
     }
 
     #[test]

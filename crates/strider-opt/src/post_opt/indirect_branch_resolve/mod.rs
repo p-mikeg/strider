@@ -52,15 +52,13 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-use strider_ir::IRViewer;
-use strider_ir::IRWalker;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{IRViewer, IRWalker};
 
 use strider_cfg::ResolvedTargets;
 
-use crate::EditFunction;
-use crate::ReadOnlyMemory;
 use crate::pipeline::{OptCtx, PostOptimizer};
+use crate::{EditFunction, ReadOnlyMemory};
 
 mod eval;
 pub mod table;
@@ -131,10 +129,7 @@ fn single_const_target(
     ctx: &strider_ir::Function,
     anchor_value: ValueId,
 ) -> Option<ResolvedTargets> {
-    if !matches!(
-        ctx.node_kind(ctx.producer(anchor_value)),
-        NodeKind::IntConst(_)
-    ) {
+    if !matches!(ctx.kind_of_value(anchor_value), NodeKind::IntConst(_)) {
         return None;
     }
     let k = ctx.int_const_u128(anchor_value)?;
@@ -156,8 +151,8 @@ fn link_register_return(
     anchor_value: ValueId,
 ) -> Option<ResolvedTargets> {
     let lr = ctx.default_cc().link_register_vn?;
-    match *ctx.node_kind(ctx.producer(anchor_value)) {
-        NodeKind::InitialVar(vn) if vn == lr => Some(ResolvedTargets::LinkRegister),
+    match *ctx.kind_of_value(anchor_value) {
+        NodeKind::InitialVar(id) if ctx.initial_vn(id) == lr => Some(ResolvedTargets::LinkRegister),
         _ => None,
     }
 }
@@ -204,10 +199,7 @@ impl PostOptimizer for IndirectBranchClassify {
         let mut ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
 
         let mut resolutions: rustc_hash::FxHashMap<_, _> = rustc_hash::FxHashMap::default();
-        for node in function.walk() {
-            if !matches!(function.node_kind(node), NodeKind::IndirectBranch) {
-                continue;
-            }
+        for node in function.walk_kind(|k| matches!(k, NodeKind::IndirectBranch)) {
             // The classifier reads the placeholder's slot-2 dispatch value off
             // `node` and scopes its range query to THIS branch.  The walk visits
             // each node once, so every key is unique.
@@ -237,10 +229,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use strider_ir::FunctionBuilder;
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IRViewer;
     use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};
 
     /// Unit-test convenience: computes the range analysis and

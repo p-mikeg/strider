@@ -2,8 +2,7 @@ use anyhow::anyhow;
 use cranelift_entity::{SecondaryMap, entity_impl};
 
 use crate::IRViewer;
-use crate::builder::FunctionBuilder;
-use crate::builder::VarId;
+use crate::builder::{FunctionBuilder, VarId};
 use crate::error::Result;
 use crate::node::{NodeId, ValueId};
 
@@ -19,7 +18,7 @@ entity_impl!(RegionId);
 /// - A `MemPhi` node (and its output) that selects the memory token at the join.
 /// - A current variable map (`variables`) that is updated by writes.
 /// - An initial variable map (`initial_variables`) recording the
-///   `VarPhi` outputs; these receive incoming values as predecessor
+///   `Phi` outputs; these receive incoming values as predecessor
 ///   regions are linked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Region {
@@ -35,7 +34,7 @@ pub(crate) struct Region {
     cur_memory: ValueId,
     /// Current SSA value of each variable in this region.
     variables: SecondaryMap<VarId, ValueId>,
-    /// `VarPhi` outputs — one per variable — that gather incoming values
+    /// `Phi` outputs — one per variable — that gather incoming values
     /// from predecessor regions (filled in as predecessors are linked).
     initial_variables: SecondaryMap<VarId, ValueId>,
 }
@@ -110,19 +109,6 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Marks the active region as terminated without emitting a
-    /// separate terminator node.  Called internally by
-    /// [`crate::builder::call::FunctionBuilder::build_call_kind`] when
-    /// `terminate = true` (the `NoReturn`-class `CallOther` path) so
-    /// that the CallOther node itself acts as the region exit.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion` when no region is active.
-    pub(crate) fn mark_cur_region_terminated(&mut self) -> Result<()> {
-        self.terminate_cur_region().map(|_| ())
-    }
-
     /// Marks the active region as terminated and returns its final control
     /// and memory tokens.
     pub(crate) fn terminate_cur_region(&mut self) -> Result<TerminatedRegion> {
@@ -143,7 +129,7 @@ impl FunctionBuilder {
         self.cur_region = Some(region);
     }
 
-    /// Adds incoming variable values from `variables` to the `VarPhi`
+    /// Adds incoming variable values from `variables` to the `Phi`
     /// nodes of `region`.
     pub(crate) fn link_region_variables(
         &mut self,
@@ -267,7 +253,9 @@ impl FunctionBuilder {
     }
 
     /// Returns the current control-output of `region` — i.e. the
-    /// `Control` `ValueId` consumed by the region's terminator.
+    /// `Control` `ValueId` consumed by the region's terminator.  Used only by
+    /// tests to wire up synthetic graphs.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn region_cur_ctrl(&self, region: RegionId) -> ValueId {
         self.regions[region].cur_ctrl
     }

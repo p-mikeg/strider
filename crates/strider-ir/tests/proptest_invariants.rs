@@ -31,8 +31,7 @@
 )]
 
 use proptest::prelude::*;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRWalker;
+use strider_ir::{IRBuilderExt, IRWalker};
 
 use strider_ir::node::ValueType;
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
@@ -45,9 +44,9 @@ const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
 /// Integer widths the strategy emits.  We restrict to the four "common"
 /// widths (I8..I64) because:
-///   - they all fit in `u128` payloads (no wide-const interning required),
+///   - they all fit in `u128` (no `ConstValue::Wide` limbs required),
 ///   - they all admit binary ops directly without crossing the
-///     `IntPayload::Wide` boundary,
+///     `ConstValue::Wide` boundary,
 ///   - they exercise truncate / extend behaviour with `convert_to_int_if_needed`.
 fn int_ty() -> impl Strategy<Value = ValueType> {
     prop_oneof![
@@ -415,15 +414,18 @@ proptest! {
             return Ok(());
         };
         // IntConst(42 : I32) — cacheable, no input dependencies, so
-        // construction is independent of the graph's prior state.
-        use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType};
+        // construction is independent of the graph's prior state.  The value
+        // is interned (equal values share one ConstId), so two creations of
+        // the same logical constant dedup to one node.
+        use strider_ir::node::{NodeKind, ValueKind, ValueType};
+        let id = fg.intern_int_const(42, ValueType::I32);
         let a = fg.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(42)),
+            NodeKind::IntConst(id),
             [],
             [ValueKind::Typed(ValueType::I32)],
         );
         let b = fg.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(42)),
+            NodeKind::IntConst(id),
             [],
             [ValueKind::Typed(ValueType::I32)],
         );

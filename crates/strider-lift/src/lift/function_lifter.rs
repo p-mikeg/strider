@@ -21,10 +21,10 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// placeholder's live dispatch input from the node directly, so the
     /// correlation never goes stale under optimizer rewrites.
     pub(crate) unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
-    /// Per-target-address CC override map.  `None` when the caller has
-    /// no overrides; lookups become `and_then(|m| m.get(addr))`.
+    /// Per-target-address CC override map.  Empty when the caller has no
+    /// overrides (the `LiftOptions` default), so lookups are a plain `.get`.
     pub(crate) per_address_ccs:
-        Option<&'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
+        &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
@@ -35,16 +35,14 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// references); the deterministic ordering that gives stable `VarId`
     /// numbering is applied by [`strider_ir::FunctionBuilder::new`].  The
     /// Sleigh is reached through the `lifter` (which owns it).
-    /// `per_address_ccs` is the lift-time CC override map; pass `None`
+    /// `per_address_ccs` is the lift-time CC override map; pass an empty map
     /// when the caller has no overrides.
     pub(crate) fn new(
         lifter: &'a Lifter<R>,
         cc: &'a strider_target::BuiltCallingConvention,
         cfg: &'a strider_cfg::Cfg,
         all_vns: Vec<rsleigh::Vn>,
-        per_address_ccs: Option<
-            &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-        >,
+        per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<Self> {
         let builder = strider_ir::FunctionBuilder::new(all_vns, cc, lifter.arch.endianness())?;
         Ok(Self {
@@ -54,5 +52,20 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             unresolved_branches: Vec::new(),
             per_address_ccs,
         })
+    }
+
+    /// Asm-fingerprint attribution funnel: set the lift address, run a
+    /// fallible body, then always clear the address — even on the error
+    /// path — so every IR node born inside `f` picks up `addr` in its
+    /// fingerprint side-table while no later node is mis-attributed.
+    pub(crate) fn with_lift_addr<T>(
+        &mut self,
+        addr: Option<u64>,
+        f: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        self.builder.set_lift_addr(addr);
+        let res = f(self);
+        self.builder.set_lift_addr(None);
+        res
     }
 }

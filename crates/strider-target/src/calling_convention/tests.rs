@@ -818,10 +818,11 @@ fn every_preset_factory_resolves() {
     );
 }
 
-/// `BuiltCallingConvention::positional_arg_layout` exposes the register
-/// slots in ABI order plus the unbounded stack-arg formula.  Verify on
-/// x86_64 SysV (6 register args + stack args from +8) and x86 cdecl
-/// (stack-only, from +4) — between them they exercise every layout path.
+/// The convention's positional-argument layout is derived on-demand from
+/// `arg_passing_regs` (register slots) plus `stack_args` (the unbounded
+/// stack-arg formula).  Verify on x86_64 SysV (6 register args + stack args
+/// from +8) and x86 cdecl (stack-only, from +4) — between them they exercise
+/// every layout path.
 #[test]
 fn positional_arg_layout_x86_64_systemv() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
@@ -829,15 +830,12 @@ fn positional_arg_layout_x86_64_systemv() {
         .unwrap()
         .build(&regs)
         .unwrap();
-    let layout = cc.positional_arg_layout();
-    assert_eq!(layout.registers.len(), 6);
-    assert_eq!(layout.first_stack_index(), 6);
-    assert_eq!(layout.stack_offset_of(6), Some(8));
-    assert_eq!(layout.stack_offset_of(8), Some(24));
-    assert_eq!(layout.stack_offset_of(0), None);
-    assert_eq!(layout.registers[0], regs.name_to_vn("RDI").unwrap());
-    // Register slots reproduce arg_passing_regs in order.
-    assert_eq!(layout.registers, cc.arg_passing_regs);
+    assert_eq!(cc.arg_passing_regs.len(), 6);
+    let stack = cc.stack_args.unwrap();
+    // First stack positional sits at ordinal 6 (after the 6 register args).
+    assert_eq!(stack.offset_of(0), 8);
+    assert_eq!(stack.offset_of(2), 24);
+    assert_eq!(cc.arg_passing_regs[0], regs.name_to_vn("RDI").unwrap());
 }
 
 #[test]
@@ -847,14 +845,13 @@ fn positional_arg_layout_x86_cdecl_stack_only() {
         .unwrap()
         .build(&regs)
         .unwrap();
-    let layout = cc.positional_arg_layout();
 
     // No register args; stack slots start at index 0, offset +4 with a
     // 4-byte stride.
-    assert!(layout.registers.is_empty());
-    assert_eq!(layout.first_stack_index(), 0);
-    assert_eq!(layout.stack_offset_of(0), Some(4));
-    assert_eq!(layout.stack_offset_of(1), Some(8));
+    assert!(cc.arg_passing_regs.is_empty());
+    let stack = cc.stack_args.unwrap();
+    assert_eq!(stack.offset_of(0), 4);
+    assert_eq!(stack.offset_of(1), 8);
 }
 
 /// MIPS O32 reserves a 16-byte shadow space, so the first *stack* positional
@@ -864,11 +861,10 @@ fn positional_arg_layout_x86_cdecl_stack_only() {
 fn positional_arg_layout_mips_o32_first_stack_arg_at_sp_plus_16() {
     let regs = regs_for(crate::arch::SleighArch::mipsbe32());
     let cc = CallingConvention::mips_o32().unwrap().build(&regs).unwrap();
-    let layout = cc.positional_arg_layout();
-    assert_eq!(layout.registers.len(), 4);
-    assert_eq!(layout.first_stack_index(), 4);
-    assert_eq!(layout.stack_offset_of(4), Some(16));
-    assert_eq!(layout.stack_offset_of(5), Some(20));
+    assert_eq!(cc.arg_passing_regs.len(), 4);
+    let stack = cc.stack_args.unwrap();
+    assert_eq!(stack.offset_of(0), 16);
+    assert_eq!(stack.offset_of(1), 20);
 }
 
 /// Below-base offsets (a decoded negative SP delta) degrade to `None` rather
@@ -882,11 +878,11 @@ fn stack_args_below_base_negative_offset_is_none() {
     };
     assert_eq!(s.index_of(-8, 8), None);
     assert_eq!(s.slot_of(-8), None);
-    assert_eq!(s.slot_of(i64::MIN), None);
+    assert_eq!(s.slot_of(i128::MIN), None);
 }
 
-/// Layout with no positional args at all: empty register list, no stack
-/// formula, and `stack_offset_of` degrades to `None`.
+/// Layout with no positional args at all: empty register list and no stack
+/// formula.
 #[test]
 fn positional_arg_layout_empty_has_no_stack() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
@@ -894,10 +890,8 @@ fn positional_arg_layout_empty_has_no_stack() {
         .unwrap()
         .build(&regs)
         .unwrap();
-    let layout = cc.positional_arg_layout();
-    assert!(layout.registers.is_empty());
-    assert!(layout.stack.is_none());
-    assert_eq!(layout.stack_offset_of(0), None);
+    assert!(cc.arg_passing_regs.is_empty());
+    assert!(cc.stack_args.is_none());
 }
 
 #[test]
@@ -1022,32 +1016,6 @@ fn stack_args_index_and_slot_boundaries_per_increment() {
     }
 }
 
-/// Register-only layout (`stack: None`): `first_stack_index()` still
-/// reports the register count, and *every* `stack_offset_of` query —
-/// register slots, the would-be first stack slot, and far past it —
-/// degrades to `None` (no panic).
-#[test]
-fn positional_arg_layout_registers_only_no_stack() {
-    let vn = |off: u64| rsleigh::Vn {
-        addr_space: rsleigh::VnSpace::REGISTER,
-        addr_off: off,
-        size: 8,
-    };
-    let layout = PositionalArgLayout {
-        registers: vec![vn(0x10), vn(0x18)],
-        stack: None,
-    };
-    assert_eq!(layout.first_stack_index(), 2);
-    assert_eq!(layout.stack_offset_of(0), None, "register slot");
-    assert_eq!(layout.stack_offset_of(1), None, "register slot");
-    assert_eq!(
-        layout.stack_offset_of(2),
-        None,
-        "index at first_stack_index but no stack formula",
-    );
-    assert_eq!(layout.stack_offset_of(100), None, "far past the registers");
-}
-
 #[test]
 fn stack_args_slot_of_floors_by_increment() {
     use crate::calling_convention::StackArgs;
@@ -1073,13 +1041,17 @@ fn stack_args_slot_of_floors_by_increment() {
 #[test]
 fn stack_args_slots_spanned_ceils_by_increment() {
     use crate::calling_convention::StackArgs;
-    for (label, inc) in [("x86 4/4", 4i64), ("x86_64 8/8", 8i64)] {
+    for (label, inc) in [("x86 4/4", 4i128), ("x86_64 8/8", 8i128)] {
         let s = StackArgs {
             base_offset: inc,
             increment: inc,
         };
         // Zero / one byte → one slot (never zero).
-        assert_eq!(s.slots_spanned(0), 1, "{label}: zero-size occupies one slot");
+        assert_eq!(
+            s.slots_spanned(0),
+            1,
+            "{label}: zero-size occupies one slot"
+        );
         assert_eq!(s.slots_spanned(1), 1, "{label}: one byte");
         // Exactly one slot wide.
         assert_eq!(s.slots_spanned(inc), 1, "{label}: exactly one slot");
@@ -1087,11 +1059,15 @@ fn stack_args_slots_spanned_ceils_by_increment() {
         assert_eq!(s.slots_spanned(inc + 1), 2, "{label}: spills into slot 2");
         // Exactly two slots, then a byte more is three.
         assert_eq!(s.slots_spanned(2 * inc), 2, "{label}: exactly two slots");
-        assert_eq!(s.slots_spanned(2 * inc + 1), 3, "{label}: spills into slot 3");
+        assert_eq!(
+            s.slots_spanned(2 * inc + 1),
+            3,
+            "{label}: spills into slot 3"
+        );
     }
 }
 
-/// A garbage decoded size near `i64::MAX` must not overflow the
+/// A garbage decoded size near `i128::MAX` must not overflow the
 /// `size + increment - 1` numerator — the span saturates instead of
 /// wrapping (mirroring `offset_of`'s saturation contract).
 #[test]
@@ -1101,13 +1077,13 @@ fn stack_args_slots_spanned_saturates_on_overflow() {
         base_offset: 8,
         increment: 8,
     };
-    // `i64::MAX + 7` would overflow without the saturating add; the result is
+    // `i128::MAX + 7` would overflow without the saturating add; the result is
     // a large-but-finite slot count, computed without panicking.
-    let span = s.slots_spanned(i64::MAX);
-    assert_eq!(span, (i64::MAX as usize) / 8);
+    let span = s.slots_spanned(i128::MAX);
+    assert_eq!(span, (i128::MAX / 8) as usize);
 }
 
-/// Adversarial near-`i64::MAX` offsets (decoded from binary content, not a
+/// Adversarial near-`i128::MAX` offsets (decoded from binary content, not a
 /// trusted input) must degrade to `None`/saturation rather than panic in
 /// debug or wrap in release.  `index_of`'s `offset + size` is the overflow
 /// site; `offset_of`'s `base + n*increment` is the other.
@@ -1118,15 +1094,15 @@ fn stack_args_slot_math_degrades_on_overflow_not_panics() {
         base_offset: 8,
         increment: 8,
     };
-    // index_of: `offset + size` would overflow i64 → None, not a panic.
-    assert_eq!(s.index_of(i64::MAX, 8), None);
-    assert_eq!(s.index_of(i64::MAX - 1, 8), None);
+    // index_of: `offset + size` would overflow i128 → None, not a panic.
+    assert_eq!(s.index_of(i128::MAX, 8), None);
+    assert_eq!(s.index_of(i128::MAX - 1, 8), None);
     // slot_of with a max offset is well-defined (non-negative base) and must
     // not panic.
-    assert_eq!(s.slot_of(i64::MAX), Some((i64::MAX as usize - 8) / 8));
-    // offset_of with a runaway (large positive) index saturates instead of
-    // overflowing: (1<<62)*8 overflows i64 → i64::MAX.
-    assert_eq!(s.offset_of(1usize << 62), i64::MAX);
+    assert_eq!(s.slot_of(i128::MAX), Some(((i128::MAX - 8) / 8) as usize));
+    // offset_of computes `base + n*increment` saturatingly; with the wider
+    // i128 intermediate (1<<62)*8 no longer overflows, so it scales exactly.
+    assert_eq!(s.offset_of(1usize << 62), (1i128 << 62) * 8 + 8);
 }
 
 /// A negative `base_offset` is rejected at the construction boundary

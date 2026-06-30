@@ -16,8 +16,7 @@
 //! `.ordered()` / `.of_width(n)` / `.value_ty(ty)` / `.bool_valued()`
 //! fluent methods.
 
-use crate::matcher::Pattern;
-use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::{MatcherBuilder, PatValueRef, Pattern};
 
 /// A compile-time-typed match-side pattern that lowers onto the
 /// imperative [`MatcherBuilder`].
@@ -61,84 +60,88 @@ impl<P: MatchPat> MatchPat for Captured<P> {
     }
 }
 
-/// Attaches a node predicate to the inner pattern's root node.
-pub struct Limited<P, F> {
-    pub(crate) inner: P,
-    pub(crate) f: F,
-}
-impl<P: MatchPat, F> MatchPat for Limited<P, F>
-where
-    F: Fn(&crate::Matcher, strider_ir::node::NodeId) -> bool + 'static,
-{
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = self.inner.compile(b);
-        b.set_node_predicate(o, Box::new(self.f));
-        o
-    }
+/// Emit a single-purpose `MatchPat` decorator: a struct wrapping
+/// `inner: P` plus the listed payload fields, whose `compile` lowers the
+/// inner pattern and then runs `$body` (with `b` the builder, `o` the
+/// inner root output, and `self` bound) to annotate the root, returning
+/// `o`. Each of the five decorators below is exactly this shape — the
+/// only variation is the payload fields (none / closure / `u32` /
+/// `ValueType`) and the one annotator call — so one macro replaces five
+/// near-identical struct+impl pairs. The struct names / fields / generic
+/// shape are preserved verbatim (`OfWidth<P>` is named directly by
+/// `wildcards::value_of_width`, and all five are re-exported).
+macro_rules! decorator {
+    (
+        $(#[$smeta:meta])*
+        $struct:ident < P $(, $g:ident)? >
+        $([ where $($pred:tt)+ ])?
+        { $($(#[$fmeta:meta])* $field:ident : $fty:ty),* $(,)? }
+        |$b:ident, $o:ident, $me:ident| $body:block
+    ) => {
+        $(#[$smeta])*
+        pub struct $struct<P $(, $g)?> {
+            pub(crate) inner: P,
+            $($(#[$fmeta])* pub(crate) $field: $fty),*
+        }
+        impl<P: MatchPat $(, $g)?> MatchPat for $struct<P $(, $g)?>
+        $(where $($pred)+,)?
+        {
+            fn compile($me, $b: &mut MatcherBuilder) -> PatValueRef {
+                let $o = $me.inner.compile($b);
+                $body
+                $o
+            }
+        }
+    };
 }
 
-/// Attaches a post-match guard (with bindings visibility) to the inner
-/// pattern's root node.
-pub struct Guarded<P, F> {
-    pub(crate) inner: P,
-    pub(crate) f: F,
+decorator! {
+    /// Attaches a node predicate to the inner pattern's root node.
+    Limited<P, F>
+    [ where F: Fn(&crate::Matcher, strider_ir::node::NodeId) -> bool + 'static ]
+    { f: F }
+    |b, o, self| { b.set_node_predicate(o, Box::new(self.f)); }
 }
-impl<P: MatchPat, F> MatchPat for Guarded<P, F>
-where
-    F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool + 'static,
-{
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = self.inner.compile(b);
+
+decorator! {
+    /// Attaches a post-match guard (with bindings visibility) to the inner
+    /// pattern's root node.
+    Guarded<P, F>
+    [ where F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool + 'static ]
+    { f: F }
+    |b, o, self| {
         b.set_post_match(o, Box::new(move |m, _node, ty, bnd| (self.f)(m, ty, bnd)));
-        o
     }
 }
 
-/// Disables commutative operand reordering on the inner pattern's root
-/// node.
-pub struct Ordered<P> {
-    pub(crate) inner: P,
-}
-impl<P: MatchPat> MatchPat for Ordered<P> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = self.inner.compile(b);
-        b.set_force_ordered(o);
-        o
-    }
+decorator! {
+    /// Disables commutative operand reordering on the inner pattern's root
+    /// node.
+    Ordered<P>
+    {}
+    |b, o, self| { b.set_force_ordered(o); }
 }
 
-/// Constrains the inner pattern's value output to exactly `bits` wide.
-///
-/// Pins the declarative output-vertex width, which the matcher checks
-/// against the matched output both at the root (the root output vertex's
-/// constraint applies to whichever output is rooted, regardless of slot)
-/// and when the node is consumed nested.
-pub struct OfWidth<P> {
-    pub(crate) inner: P,
-    pub(crate) bits: u32,
-}
-impl<P: MatchPat> MatchPat for OfWidth<P> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = self.inner.compile(b);
-        b.set_value_width(o, self.bits);
-        o
-    }
+decorator! {
+    /// Constrains the inner pattern's value output to exactly `bits` wide.
+    ///
+    /// Pins the declarative output-vertex width, which the matcher checks
+    /// against the matched output both at the root (the root output
+    /// vertex's constraint applies to whichever output is rooted,
+    /// regardless of slot) and when the node is consumed nested.
+    OfWidth<P>
+    { bits: u32 }
+    |b, o, self| { b.set_value_width(o, self.bits); }
 }
 
-/// Constrains the inner pattern's value output to exactly `ty`.
-///
-/// Like [`OfWidth`] but pins the exact
-/// [`ValueType`](strider_ir::node::ValueType).
-pub struct ValueTy<P> {
-    pub(crate) inner: P,
-    pub(crate) ty: strider_ir::node::ValueType,
-}
-impl<P: MatchPat> MatchPat for ValueTy<P> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = self.inner.compile(b);
-        b.set_value_ty(o, self.ty);
-        o
-    }
+decorator! {
+    /// Constrains the inner pattern's value output to exactly `ty`.
+    ///
+    /// Like [`OfWidth`] but pins the exact
+    /// [`ValueType`](strider_ir::node::ValueType).
+    ValueTy<P>
+    { ty: strider_ir::node::ValueType }
+    |b, o, self| { b.set_value_ty(o, self.ty); }
 }
 
 /// Fluent combinator surface available on every [`MatchPat`].

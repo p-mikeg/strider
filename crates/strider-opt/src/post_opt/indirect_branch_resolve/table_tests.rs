@@ -16,14 +16,11 @@ use crate::{
 };
 use rsleigh::VnSpace;
 use std::sync::Mutex;
-use strider_ir::ExtendOp;
-use strider_ir::Function;
-use strider_ir::FunctionBuilder;
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
-use strider_ir::IRWalker;
-use strider_ir::IntBinaryOp;
 use strider_ir::node::ValueType;
+use strider_ir_test_utils::IrWalkerEx;
+use strider_ir::{
+    ExtendOp, Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
+};
 use strider_ir_test_utils::{
     MockRom, RegisterSet, stack_vn_aarch64 as sp64, stack_vn_x86 as sp32_vn,
 };
@@ -1226,7 +1223,7 @@ fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_lo
     // Intervening Call: clobbers memory (and potentially the stack slots
     // the callee can see through the stack pointer).
     let call_target_const = b.build_int_const(0x0040_1000u64, ValueType::I64).unwrap();
-    b.build_call(call_target_const, None).unwrap();
+    b.build_call_cc(call_target_const, None).unwrap();
     // Re-read sp AFTER the call (the call may have advanced the stack).
     let sp_val_after = b.read_variable(&sp).unwrap();
     // Dispatch: load from sp + base + idx*stride.  Mirrors the stack-array shape.
@@ -1554,7 +1551,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // Emit a LOCK CallOther.  LOCK is now FullClobber, so StackOffsetDetect
         // must break the Stack chain here.
-        let (lock_node, _result) = b.build_call_other(
+        let (lock_node, _result) = b.build_call_other_abi(
             0x1234,
             "LOCK",
             None,

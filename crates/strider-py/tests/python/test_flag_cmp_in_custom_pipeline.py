@@ -58,9 +58,9 @@ def _build_user_pipeline_with_fcc(sl, sleigh, cc, mem):
     pipe.add(opt.RegionCollapse())
     pipe.add(opt.DeadBranchElimination())
     pipe.add(opt.LoadReadOnly())
-    pipe.add(opt.LoadForward(sl, cc, sleigh))
-    pipe.add_post(opt.FunctionArgDetect(sl, cc))
-    pipe.add_post(opt.CallStackArgCollect(sl, cc))
+    pipe.add(opt.LoadForward())
+    pipe.add_post(opt.FunctionArgDetect())
+    pipe.add_post(opt.CallStackArgCollect())
     return pipe
 
 

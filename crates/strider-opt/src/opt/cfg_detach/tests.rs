@@ -1,6 +1,6 @@
 use super::*;
-use strider_ir::IRBuilderExt;
-use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType};
+use strider_ir::node::{NodeKind, ValueKind, ValueType};
+use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
 use crate::pipeline::OptimizerTestExt;
@@ -27,7 +27,7 @@ fn simulate_dbe_redirect_without_strip(
     // Target the live If whose constant condition equals `cond`.  This
     // disambiguates nested Ifs (outer cond=false vs inner cond=true) and skips
     // any already-detached If (0 inputs) from a prior simulate.
-    let want_cond_val: u64 = u64::from(cond);
+    let want_cond_val: u128 = u128::from(cond);
     let if_node = fg
         .graph()
         .all_node_ids()
@@ -40,10 +40,11 @@ fn simulate_dbe_redirect_without_strip(
                 return false;
             }
             let cond_producer = fg.value_definition(ins[1]).0;
-            matches!(
-                fg.node_kind(cond_producer),
-                NodeKind::IntConst(IntPayload::Small(v)) if *v == want_cond_val
-            )
+            let cond_out = fg.node_outputs(cond_producer);
+            matches!(fg.node_kind(cond_producer), NodeKind::IntConst(_))
+                && cond_out
+                    .first()
+                    .is_some_and(|&v| fg.int_const_u128(v) == Some(want_cond_val))
         })
         .expect("a live If with the requested constant condition must exist");
     let if_outputs = fg.node_outputs(if_node).to_vec();
@@ -57,7 +58,7 @@ fn simulate_dbe_redirect_without_strip(
     // Scope the rewrite ctx so its borrow of `fg` ends here (a bare
     // `drop` of a non-`Drop` type trips `clippy::drop_non_drop`).
     {
-        let mut edit = crate::EditFunction::new(fg)?;
+        let mut edit = crate::EditFunction::new(fg);
         edit.replace_value(live_ctrl, ctrl_value)?; // redirect live successor past the If
         edit.kill_node(if_node); // remove the now-unreachable folded If
     }
@@ -286,7 +287,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     b.set_region(true_r);
     let v_t = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_t)?;
-    let (call_t, _) = b.build_call_other(
+    let (call_t, _) = b.build_call_other_abi(
         0,
         "cpuid",
         None,
@@ -307,7 +308,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     b.set_region(false_r);
     let v_f = b.build_int_const(2u64, ValueType::I64)?;
     b.write_variable(&var, v_f)?;
-    let (call_f, _) = b.build_call_other(
+    let (call_f, _) = b.build_call_other_abi(
         0,
         "cpuid",
         None,
@@ -400,7 +401,7 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     b.build_if(cond, true_r, false_r)?;
 
     b.set_region(true_r);
-    let (call_t, _) = b.build_call_other(
+    let (call_t, _) = b.build_call_other_abi(
         0,
         "cpuid",
         None,
@@ -418,7 +419,7 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let (call_f, _) = b.build_call_other(
+    let (call_f, _) = b.build_call_other_abi(
         0,
         "cpuid",
         None,
@@ -592,7 +593,7 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<(
     // but it IS visited by the general walk (its VarPhi value still feeds the
     // join phi).  Confirm the control-only set excludes it but the general walk
     // includes it — the premise of the iteration-set choice.
-    let entry_node = fg.entry().unwrap();
+    let entry_node = fg.entry();
     let ctrl_reach = strider_ir::walk::cfg_reachable(fg.graph(), entry_node);
     let walk_set: Vec<NodeId> = fg.walk().collect();
     // Identify true_r: the Region whose sole producer (the If's ctrl_true) is

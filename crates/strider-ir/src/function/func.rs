@@ -4,7 +4,7 @@
 //! [`Graph`] holds structural state (nodes/edges, dedup cache).
 //! [`Function`] holds the overlay that gives those nodes their
 //! function-level meaning: which node is the entry, the calling convention
-//! metadata, asm fingerprint attribution, the wide-const interner, and the
+//! metadata, asm fingerprint attribution, the const interner, and the
 //! other `NodeId`-keyed side tables.
 //!
 //! Passes that only need structure take `&Graph`; passes that need the overlay
@@ -16,13 +16,12 @@
 //! other [`Graph`] method is reached explicitly through [`Function::graph`] /
 //! [`Function::graph_mut`].
 
-use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::IRViewer;
-use crate::IRWalker;
-use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
+use crate::graph::{Graph, NodeIdRemap};
 use crate::node::{NodeId, NodeKind, ValueId};
+use crate::IRWalker;
+use crate::function::side_tables::SideTables;
 
 /// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
 /// inclusion) that fully contains `vn`, or `vn` itself when none does.
@@ -59,44 +58,25 @@ pub(crate) fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsl
     best.unwrap_or(*vn)
 }
 
-/// Drains an `FxHashMap` and rebuilds it through a per-entry translation,
-/// keeping only entries `f` maps to `Some((new_key, new_payload))`.
-///
-/// The Vn-keyed / `ValueId`-keyed / index-keyed overlay maps in
-/// [`Function::compact`] each remap a different facet (the key, the payload,
-/// or a payload `Vec`), so they don't fit the `NodeId`-keyed
-/// [`SideTableRemap`] shape — this folds their shared drain-rebuild loop
-/// behind a single closure.
-fn remap_hashmap<K, V, NK, NV>(
-    map: &mut FxHashMap<K, V>,
-    mut f: impl FnMut(K, V) -> Option<(NK, NV)>,
-) -> FxHashMap<NK, NV>
-where
-    NK: std::hash::Hash + Eq,
-{
-    let mut dst = FxHashMap::with_capacity_and_hasher(map.len(), Default::default());
-    for (old_key, old_payload) in map.drain() {
-        if let Some((new_key, new_payload)) = f(old_key, old_payload) {
-            dst.insert(new_key, new_payload);
-        }
-    }
-    dst
-}
-
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
 ///
-/// `FunctionBuilder::build` is the canonical constructor.  For synthetic /
-/// test graphs, use [`Function::new`] and populate via [`Function::graph_mut`]
-/// and [`Function::set_entry`].
+/// [`Function::new`] is the single constructor: it builds the `Entry` node
+/// (node 0), so every `Function` always has an entry — the type carries that
+/// invariant (no `Option`).  The `InitialMemory` node is added by the
+/// `FunctionBuilder`'s [`build_entry`](crate::FunctionBuilder::build_entry).
+/// Production functions
+/// come from `FunctionBuilder::build`; synthetic / test graphs call
+/// [`Function::new`] with the trivial convention and add nodes via
+/// [`Function::graph_mut`] on top of the skeleton.
 ///
 /// A small set of read-only [`Graph`] accessors (e.g. `node_kind`,
 /// `node_outputs`, `value_kind`) are forwarded as inherent methods on
 /// `Function`; every other [`Graph`] method is reached explicitly through
 /// [`Function::graph`] / [`Function::graph_mut`].
-#[derive(Default)]
 pub struct Function {
-    pub(crate) graph: Graph,
-    entry: Option<NodeId>,
+    graph: Graph,
+    /// The `Entry` node — always present (built by [`Function::new`]).
+    entry: NodeId,
 
     // ── calling-convention overlay ─────────────────────────────────────────
     //
@@ -153,128 +133,68 @@ pub struct Function {
 
     // ── overlay tables ─────────────────────────────────────────────────────
     //
-    // These side tables hold per-function data that is keyed by NodeId (or, for
-    // `value_vn`, by a node's output ValueId) but is not part of the
-    // structural graph identity.  They are remapped by [`Self::compact`]
-    // whenever the arena is compacted.
-    /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
-    /// nodes.
-    pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
-    /// Per-node sorted-deduplicated list of machine-instruction addresses
-    /// whose lifting or rewrite contributed to the node's value.
-    // `SmallVec<[u64; 2]>` because the common case is 1–2 contributor
-    // addresses per node.  Inlining those avoids a heap allocation per
-    // non-empty entry — on graphs with thousands of nodes this drops
-    // thousands of small allocations from the lift+optimize pipeline.
-    // The mutation API (`extend_asm_fingerprint`,
-    // `extend_asm_fingerprint_from`) keeps using `&[u64]` /
-    // `impl IntoIterator<Item = u64>` so callers are unaffected.
-    pub(crate) asm_fingerprints: SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
-    /// The varnode a value *represents*, keyed by [`ValueId`].  Two
-    /// disjoint populations share this one map:
-    ///
-    /// * A lift-time [`crate::node::NodeKind::Phi`]'s single output value →
-    ///   the source-level varnode the phi tracks.  Absent entries mark
-    ///   anonymous phis synthesised by opt passes (and every non-phi,
-    ///   non-clobber value).
-    /// * A [`crate::node::NodeKind::Call`] / [`crate::node::NodeKind::CallOther`]
-    ///   clobber output value → the register that call clobbers.  Set for
-    ///   every clobber output at build time (both the function-default and
-    ///   the override / implicit-write paths), so a clobber output's
-    ///   varnode is recovered with a single lookup, no slot arithmetic.
-    ///
-    /// Keyed by `ValueId` (not `NodeId`) so it remaps through the
-    /// `ValueId` translation that [`Self::compact`] applies.
-    pub(crate) value_vn: FxHashMap<ValueId, rsleigh::Vn>,
-    /// Per-[`crate::node::NodeKind::Call`] or
-    /// [`crate::node::NodeKind::CallOther`] descriptor, recorded at build
-    /// time for non-default calls:
-    ///
-    /// - `Call` nodes built with a per-address CC override store
-    ///   [`crate::CallDescriptor::Call`].
-    /// - Modeled `CallOther` nodes store
-    ///   [`crate::CallDescriptor::CallOther`] with the vn-resolved ABI.
-    ///
-    /// Sparse: the default Call (function-default CC) and unmodeled
-    /// `CallOther` nodes have no entry.  Stack-arg offsets for override
-    /// `Call`s are derived from the stored CC via
-    /// [`Self::call_stack_args_override`].  The convenience accessor
-    /// [`Self::call_cc`] returns `Some` only for the `Call` arm.
-    pub(crate) call_descriptor: FxHashMap<NodeId, crate::CallDescriptor>,
+    // Per-function data keyed by arena ids but not part of the structural graph
+    // identity, grouped into [`SideTables`]; defaulted in one line by
+    // [`Self::new`] and remapped in one [`SideTables::remap`] call by
+    // [`Self::compact`].  Surfaced through the typed accessors below.
+    pub(crate) side_tables: SideTables,
 
-    /// Maps each calling-convention argument index to the [`ValueId`](s) of
-    /// the underlying carrier nodes' outputs:
-    /// [`crate::node::NodeKind::InitialVar`] for register args,
-    /// [`crate::node::NodeKind::Load`] for stack args.  Each carrier node has
-    /// a single output, so the carrier node is recoverable losslessly via
-    /// [`Graph::producer`].
+    /// Every integer-constant value referenced by an `IntConst(id)` node.
     ///
-    /// `Vec<ValueId>` per index because a stack slot may have multiple `Load`
-    /// nodes at the same `sp+K` offset but different widths.  Register args
-    /// have a `Vec` of size 1.
-    ///
-    /// Populated by `FunctionArgDetect`; empty until that pass runs.
-    arg_index_to_values: FxHashMap<u32, Vec<ValueId>>,
-
-    /// Stack slot for Store/Load nodes whose address decomposes to
-    /// `base + K` for a single concrete `K`, where `base` is the SP-derived
-    /// terminal node (`InitialVar(sp)` or an alignment-masked `sp & -16`).
-    /// Stored as `(base, K)`: the offset `K` is only meaningful relative to
-    /// its `base`, and two accesses are the same slot iff they share both.
-    /// Populated by the `StackOffsetDetect` classifier.  The phi-of-offsets
-    /// case (address is a phi of different constants per branch) is not
-    /// recorded — consumers can re-decompose via `decompose_sp` if needed.
-    stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i64)>>,
-
-    /// O(1) varnode → `InitialVar(vn)` node-id accelerator for
-    /// indirect-resolve sites and the lifter's lazy `read_or_init_var`
-    /// fallback.  Maintained at every canonical `InitialVar`
-    /// creation site (the lift-time path and the orchestrator
-    /// fallback) and remapped through [`NodeIdRemap`] by
+    /// The single interner for ALL integer constants (I1..I512): a value that
+    /// fits `u128` is held inline as `ConstValue::Bits`, a value that exceeds
+    /// 128 bits as `ConstValue::Wide` (boxed little-endian limbs).  The
+    /// constant's WIDTH is carried by the node's output `ValueKind`, not by the
+    /// stored value, so `IntConst(42):I80` and `IntConst(42):I128` share one
+    /// `ConstId`.  Interning (via [`Self::intern_int_const`] /
+    /// [`Self::intern_int_const_limbs`]) dedups by value so two `IntConst(id)` nodes
+    /// referencing the same logical value are structurally equal under
+    /// [`Graph::create_node`]'s dedup cache.  An
+    /// [`entity_utils::EntityInterner`] owns both the forward `ConstId → value`
+    /// map and the reverse value-dedup index.  Rebuilt over the live ids by
     /// [`Self::compact`].
-    initial_var_index: FxHashMap<rsleigh::Vn, NodeId>,
-
-    /// Wide-integer constant values (I80, I128, I256, I512) referenced by
-    /// `IntConst(IntPayload::Wide(id))` nodes.
-    ///
-    /// Values wider than 64 bits don't fit in `IntPayload::Small`; the IR
-    /// stores them off-side here and the node carries a
-    /// `crate::wide_const::WideConstId` index instead.  Interning
-    /// (via [`Self::intern_wide_const`]) dedups by value so two
-    /// `IntConst(Wide(id))` nodes referencing the same logical value are
-    /// structurally equal under [`Graph::create_node`]'s dedup cache.
-    /// An [`entity_utils::EntityInterner`] owns both the forward
-    /// `WideConstId → value` map and the reverse value-dedup index.
-    /// Rebuilt over the live ids by [`Self::compact`].
-    pub(crate) wide_const_interner: entity_utils::EntityInterner<
-        crate::wide_const::WideConstId,
-        crate::wide_const::WideConstStorage,
-    >,
+    pub(crate) const_interner:
+        entity_utils::EntityInterner<crate::const_value::ConstId, crate::const_value::ConstValue>,
 }
 
 impl Function {
-    /// Creates a `Function` with an empty graph and no entry node, carrying
-    /// the calling-convention SSoT (`default_cc`, `endianness`, `all_vns`)
-    /// at construction.  These three are the non-derivable inputs every
-    /// register-list projection a `Call` / `Return` / `CallOther` needs is
+    /// Creates a `Function` with the `Entry` node (node 0) already built,
+    /// carrying the calling-convention SSoT (`default_cc`, `endianness`,
+    /// `all_vns`) at construction.  These three are the non-derivable inputs
+    /// every register-list projection a `Call` / `Return` / `CallOther` needs is
     /// derived from, so requiring them here guarantees a `Function` is never
     /// observed in a half-initialised state (no build-then-assign window).
-    ///
-    /// Synthetic / test graphs that don't care about a convention use
-    /// [`Self::default`] (the trivial CC, little-endian, no tracked
-    /// varnodes) — an equally-complete but convention-free starting point.
+    /// Because the entry is built here, it is always present — [`Self::entry`]
+    /// returns a `NodeId`, never an `Option`.  The `InitialMemory` node is added
+    /// separately by the `FunctionBuilder`'s `build_entry`.
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
         all_vns: Vec<rsleigh::Vn>,
         vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
     ) -> Self {
+        // Build the `Entry` node (node 0) directly on the empty graph.  It is an
+        // asm-fingerprint-exempt initial-state kind, so it needs no contributor
+        // attribution and is minted straight on the graph.  This is the SSoT for
+        // "a function always has an entry" — every construction path goes through
+        // here, so `entry` is a `NodeId`, never an `Option`.  The `InitialMemory`
+        // node is the `FunctionBuilder`'s responsibility (`build_entry`), which
+        // creates it and captures its memory token in one step.
+        let mut graph = Graph::default();
+        let entry = graph.create_node(
+            crate::node::NodeKind::Entry,
+            [],
+            [crate::node::ValueKind::Control],
+        );
         Self {
+            graph,
+            entry,
             default_cc,
             endianness,
             all_vns,
             vn_to_container,
-            ..Self::default()
+            side_tables: SideTables::default(),
+            const_interner: entity_utils::EntityInterner::default(),
         }
     }
 
@@ -290,49 +210,52 @@ impl Function {
         &mut self.graph
     }
 
-    /// Interns `value` and returns its `crate::wide_const::WideConstId`.
-    /// Subsequent calls with an equal value return the same id — the
-    /// dedup invariant the [`Graph::create_node`] cache relies on so
-    /// two `IntConst(Wide(id))` nodes referencing the same logical value
-    /// share a single `NodeId`.
-    pub fn intern_wide_const(
+    /// Interns the integer value `value`, masked to `ty`'s width, returning its
+    /// `ConstId`. The single canonicalisation point for ≤ u128 constants: equal
+    /// (masked) values share one id regardless of declared type.
+    pub fn intern_int_const(
         &mut self,
-        value: crate::wide_const::WideConstStorage,
-    ) -> crate::wide_const::WideConstId {
-        self.wide_const_interner.intern(value)
+        value: u128,
+        ty: crate::node::ValueType,
+    ) -> crate::const_value::ConstId {
+        let masked = value & ty.bit_mask_u128();
+        self.const_interner
+            .intern(crate::const_value::ConstValue::Bits(masked))
     }
 
-    /// Looks up a wide-const value by id.  The id must have been
-    /// produced by `intern_wide_const` on this function; ids
-    /// from other functions are not portable.
-    pub fn wide_const(
-        &self,
-        id: crate::wide_const::WideConstId,
-    ) -> &crate::wide_const::WideConstStorage {
-        &self.wide_const_interner[id]
+    /// Interns a limbed integer value, canonicalising to `Bits` when the limbs
+    /// fit `u128`. `limbs` is little-endian. A fits-`u128` value routes through
+    /// [`Self::intern_int_const`] so it is masked to `ty`'s width — keeping the
+    /// two builders symmetric (no unmasked `Bits` can slip in via the limb
+    /// path). Genuinely-wide values (I256/I512) use the full declared width, so
+    /// the `Wide` arm needs no sub-width masking.
+    pub fn intern_int_const_limbs(
+        &mut self,
+        limbs: &[u64],
+        ty: crate::node::ValueType,
+    ) -> crate::const_value::ConstId {
+        let cv = crate::const_value::ConstValue::Wide(limbs.to_vec().into_boxed_slice());
+        match cv.fits_u128() {
+            Some(v) => self.intern_int_const(v, ty),
+            None => self.const_interner.intern(cv),
+        }
     }
 
-    /// Non-panicking variant of [`Self::wide_const`]: returns `None` for a
-    /// dangling id rather than panicking.  The debug renderers use this so
-    /// they can label a malformed graph (e.g. one inspected mid-rewrite)
-    /// instead of aborting.
-    pub fn wide_const_opt(
-        &self,
-        id: crate::wide_const::WideConstId,
-    ) -> Option<&crate::wide_const::WideConstStorage> {
-        self.wide_const_interner.get(id)
+    /// Looks up a const value by id.  Panics on a dangling id — a node's
+    /// `ConstId` is always valid by construction (the interner only grows until
+    /// `compact`, which remaps), so the few defensive readers that tolerate a
+    /// malformed graph (the validator's `DanglingConstId` guard, the debug
+    /// renderers) probe `const_interner.get` directly.  Ids produced on a
+    /// different function are not portable.
+    pub(crate) fn const_value(&self, id: crate::const_value::ConstId) -> &crate::const_value::ConstValue {
+        &self.const_interner[id]
     }
 
-    /// Returns the entry node, if one has been recorded.
+    /// Returns the function's entry node (always present — built by
+    /// [`Function::new`]).
     #[inline]
-    pub fn entry(&self) -> Option<NodeId> {
+    pub fn entry(&self) -> NodeId {
         self.entry
-    }
-
-    /// Records `entry` as the function's entry node.
-    #[inline]
-    pub fn set_entry(&mut self, entry: NodeId) {
-        self.entry = Some(entry);
     }
 
     /// Read-only access to the calling convention this function was built
@@ -358,6 +281,22 @@ impl Function {
         &self.all_vns
     }
 
+    /// Resolve an [`crate::node::InitialVnId`] (carried by an
+    /// `InitialVar` node) back to its varnode.  Panics on an
+    /// out-of-range id — every id in the graph is minted from this
+    /// function's `all_vns`, so a miss is a structural invariant break.
+    pub fn initial_vn(&self, id: crate::node::InitialVnId) -> rsleigh::Vn {
+        self.all_vns[id.index()]
+    }
+
+    /// Non-panicking [`Self::initial_vn`] — `None` if `id` is out of range.
+    /// For diagnostic consumers (the dot dumpers) that must tolerate a
+    /// partially-built graph; analysis code uses `initial_vn` and relies on
+    /// the invariant.
+    pub(crate) fn initial_vn_opt(&self, id: crate::node::InitialVnId) -> Option<rsleigh::Vn> {
+        self.all_vns.get(id.index()).copied()
+    }
+
     /// Resolve `vn` to its largest tracked container.
     ///
     /// Fast path: the precomputed `vn_to_container` map (covers
@@ -373,22 +312,6 @@ impl Function {
         largest_container_in(&self.all_vns, vn)
     }
 
-    /// Derive the ret-val varnode list for a `Call` built under calling
-    /// convention `cc`.  Returns only those tracked, clobbered varnodes
-    /// that appear in the convention's combined return-register list
-    /// (`ret_val_regs` then `ret_val_regs_float`), in ABI order.
-    ///
-    /// This is the first group of Call output slots past `[Control,
-    /// Memory]`.  Together with [`Self::call_clobbered_for`] it partitions
-    /// what was formerly a single clobber tail into two labeled groups —
-    /// the slot ORDER is unchanged; only the conceptual split is new.
-    ///
-    /// Each CC register (ret-val, float-ret, callee-saved) is resolved to
-    /// its tracked container via [`Self::container_of`] before membership
-    /// is tested, and the resolved CONTAINER is emitted.  This keeps a
-    /// sub-register ABI ret reg (e.g. `eax`) classified as the return
-    /// value when the function tracks the wider container (`rax`) instead
-    /// of silently dropping it.  Identity on full-width preset regs.
     /// The shared call-clobber predicate: a register (resolved to its tracked
     /// container) is clobbered iff it is neither callee-saved under `cc` nor the
     /// stack pointer.  The callee-saved set is hashed once so the predicate is
@@ -399,7 +322,7 @@ impl Function {
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> impl Fn(&rsleigh::Vn) -> bool + use<> {
-        let stack_vn = self.default_cc.stack_vn;
+        let stack_vn = cc.stack_vn;
         let callee_saved: FxHashSet<rsleigh::Vn> = cc
             .callee_saved_regs
             .iter()
@@ -425,14 +348,32 @@ impl Function {
             .map(|v| self.container_of(v))
     }
 
+    /// Derive the ret-val varnode list for a `Call` built under calling
+    /// convention `cc`.  Returns only those tracked, clobbered varnodes
+    /// that appear in the convention's combined return-register list
+    /// (`ret_val_regs` then `ret_val_regs_float`), in ABI order.
+    ///
+    /// This is the first group of Call output slots past `[Control,
+    /// Memory]`.  Together with [`Self::call_clobbered_for`] it partitions
+    /// what was formerly a single clobber tail into two labeled groups —
+    /// the slot ORDER is unchanged; only the conceptual split is new.
+    ///
+    /// Each CC register (ret-val, float-ret, callee-saved) is resolved to
+    /// its tracked container via [`Self::container_of`] before membership
+    /// is tested, and the resolved CONTAINER is emitted.  This keeps a
+    /// sub-register ABI ret reg (e.g. `eax`) classified as the return
+    /// value when the function tracks the wider container (`rax`) instead
+    /// of silently dropping it.  Identity on full-width preset regs.
     pub fn call_ret_vals_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
         let is_clobbered = self.clobber_oracle(cc);
-        let tracked: FxHashSet<rsleigh::Vn> = self.all_vns.iter().copied().collect();
+        // The combined ret list is tiny (1-2 regs), so a linear probe against
+        // `all_vns` is cheaper (and allocation-free) than hashing the whole
+        // tracked register file to test 1-2 items.
         self.combined_ret_containers(cc)
-            .filter(|c| tracked.contains(c) && is_clobbered(c))
+            .filter(|c| self.all_vns.contains(c) && is_clobbered(c))
             .collect()
     }
 
@@ -469,10 +410,19 @@ impl Function {
         // ret-val group is emitted separately by `call_ret_vals_for`, so
         // exclude its containers here.
         let ret_vars: FxHashSet<rsleigh::Vn> = self.combined_ret_containers(cc).collect();
+        // Only REGISTER / UNIQUE varnodes can be clobbered: clobbering a CONST /
+        // RAM tracked temp is meaningless (and the dumb `build_call` rejects a
+        // non-reg output vn).
         self.all_vns
             .iter()
             .copied()
-            .filter(|v| is_clobbered(v) && !ret_vars.contains(v))
+            .filter(|v| {
+                matches!(
+                    v.addr_space,
+                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
+                ) && is_clobbered(v)
+                    && !ret_vars.contains(v)
+            })
             .collect()
     }
 
@@ -507,10 +457,10 @@ impl Function {
     /// width rather than being narrowed to a tracked sub-register.
     #[inline]
     pub fn ret_val_regs(&self) -> Vec<rsleigh::Vn> {
-        self.default_cc
-            .ret_val_regs
+        let cc = &self.default_cc;
+        cc.ret_val_regs
             .iter()
-            .chain(self.default_cc.ret_val_regs_float.iter())
+            .chain(cc.ret_val_regs_float.iter())
             .copied()
             .collect()
     }
@@ -530,7 +480,8 @@ impl Function {
     /// filtered `var_table.values()` — same order as `all_vns` — by
     /// `!= stack_vn`).
     #[inline]
-    pub fn call_other_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
+    #[cfg(test)]
+    pub(crate) fn call_other_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
         let stack_vn = self.default_cc.stack_vn;
         self.all_vns
             .iter()
@@ -546,14 +497,7 @@ impl Function {
     /// been recorded for that node.
     #[inline]
     pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
-        self.call_other_names[node_id].as_deref()
-    }
-
-    /// Associates a user-op name with a [`crate::node::NodeKind::CallOther`]
-    /// node.  Replaces any prior value.
-    #[inline]
-    pub fn set_call_other_name(&mut self, node_id: NodeId, name: String) {
-        self.call_other_names[node_id] = Some(name);
+        self.side_tables.call_other_names[node_id].as_deref()
     }
 
     /// Returns the source varnode a value represents, or `None`. Single
@@ -561,78 +505,37 @@ impl Function {
     /// lift-time `Phi`'s tracked varnode, a `Call`/`CallOther` ret-val
     /// output's return register, and a `Call`/`CallOther` clobber output's
     /// clobbered register.
-    #[inline]
-    pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
-        self.value_vn.get(&value).copied()
-    }
-
-    /// Records that `value` represents varnode `vn`. Replaces any prior value.
     ///
-    /// CONTRACT — this one map holds TWO disjoint facts, distinguished only by
+    /// CONTRACT — `value_vn` holds TWO disjoint facts, distinguished only by
     /// the producing node's kind (they never collide because `Phi` outputs and
     /// `Call`/`CallOther` outputs are distinct `ValueId`s): a lift-time `Phi`'s
     /// source-level varnode tag, and a `Call`/`CallOther` ret-val / clobber
     /// output's register.  A reader must therefore filter by `producer(value)`'s
     /// kind before interpreting the tag — e.g. the jump-table classifier's
-    /// Phi-of-IntConst arm must not mistake a clobber tag for a phi tag.  Valid
-    /// targets are exactly those populations; not control / memory / phi-token
-    /// edges.
+    /// Phi-of-IntConst arm must not mistake a clobber tag for a phi tag.
     #[inline]
-    pub fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
-        self.value_vn.insert(value, vn);
+    pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
+        self.side_tables.value_vn.get(&value).copied()
     }
 
-    /// Returns the [`crate::CallDescriptor`] recorded for `node_id`, or
-    /// `None` when no descriptor has been recorded (default Call or unmodeled
-    /// CallOther).
-    #[inline]
-    pub fn call_descriptor(&self, node_id: NodeId) -> Option<&crate::CallDescriptor> {
-        self.call_descriptor.get(&node_id)
-    }
-
-    /// Records `descriptor` for `node_id`.  Replaces any prior value.
-    #[inline]
-    pub fn set_call_descriptor(&mut self, node_id: NodeId, descriptor: crate::CallDescriptor) {
-        self.call_descriptor.insert(node_id, descriptor);
-    }
-
-    /// Convenience accessor: returns the override calling convention recorded
-    /// for a `Call` node, or `None` when the Call uses the function-default CC
-    /// or the node has a `CallOther` descriptor.
-    ///
-    /// Consumers that only need to distinguish "override CC present" from
-    /// "function-default" can use this without importing [`crate::CallDescriptor`].
-    #[inline]
-    pub fn call_cc(&self, node_id: NodeId) -> Option<&strider_target::BuiltCallingConvention> {
-        match self.call_descriptor.get(&node_id)? {
-            crate::CallDescriptor::Call(cc) => Some(cc),
-            crate::CallDescriptor::CallOther(_) => None,
-        }
-    }
-
-    /// Records `cc` as the per-Call override calling convention for
-    /// `node_id`, wrapping it in [`crate::CallDescriptor::Call`].  Replaces
-    /// any prior descriptor.  Subsumes the stack-arg layout override (read
-    /// back via [`Self::call_stack_args_override`]).
-    ///
-    /// Prefer [`Self::set_call_descriptor`] when the call site already has a
-    /// `CallDescriptor` value; this wrapper exists for call sites that only
-    /// deal with `BuiltCallingConvention`.
+    /// Records `cc` as the per-`Call` override calling convention for
+    /// `node_id`.  Replaces any prior override.  Read back via [`Self::get_cc`]
+    /// (whose `stack_args` is the call's effective stack-arg layout).
     #[inline]
     pub fn set_call_cc(&mut self, node_id: NodeId, cc: strider_target::BuiltCallingConvention) {
-        self.call_descriptor
-            .insert(node_id, crate::CallDescriptor::Call(cc));
+        self.side_tables.call_cc.insert(node_id, cc);
     }
 
-    /// The per-`Call` override convention's stack-arg layout, if this Call
-    /// node was built with a CC override; `None` for default calls or a
-    /// modeled `CallOther`.
+    /// The **effective** calling convention for `node_id`: the per-`Call`
+    /// override if one was recorded, else the function-default CC.  So
+    /// `get_cc(call).stack_args` is the call's effective stack-arg layout with
+    /// no override-vs-default branch at the call site.
     #[inline]
-    pub fn call_stack_args_override(&self, node_id: NodeId) -> Option<strider_target::StackArgs> {
-        match self.call_descriptor.get(&node_id)? {
-            crate::CallDescriptor::Call(cc) => cc.stack_args,
-            crate::CallDescriptor::CallOther(_) => None,
-        }
+    pub fn get_cc(&self, node_id: NodeId) -> &strider_target::BuiltCallingConvention {
+        self.side_tables
+            .call_cc
+            .get(&node_id)
+            .unwrap_or(&self.default_cc)
     }
 
     // ── arg_index_to_values accessors ────────────────────────────────────
@@ -646,7 +549,7 @@ impl Function {
     /// [`Graph::producer`].
     #[inline]
     pub fn arg_index_to_values(&self, index: u32) -> &[ValueId] {
-        self.arg_index_to_values
+        self.side_tables.arg_index_to_values
             .get(&index)
             .map_or(&[], Vec::as_slice)
     }
@@ -659,7 +562,7 @@ impl Function {
     /// for the same offset).
     #[inline]
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
-        self.arg_index_to_values
+        self.side_tables.arg_index_to_values
             .entry(index)
             .or_default()
             .push(value);
@@ -668,7 +571,7 @@ impl Function {
     /// Iterate over all registered argument indices (unordered).
     #[inline]
     pub fn iter_arg_indices(&self) -> impl Iterator<Item = u32> + '_ {
-        self.arg_index_to_values.keys().copied()
+        self.side_tables.arg_index_to_values.keys().copied()
     }
 
     /// Drop registered argument carriers for every index `>= first`.
@@ -679,7 +582,7 @@ impl Function {
     /// (which occupy indices `0 .. first`).
     #[inline]
     pub fn clear_arg_values_from(&mut self, first: u32) {
-        self.arg_index_to_values.retain(|&index, _| index < first);
+        self.side_tables.arg_index_to_values.retain(|&index, _| index < first);
     }
 
     // ── stack_offsets accessors ───────────────────────────────────────────
@@ -691,37 +594,17 @@ impl Function {
     /// relative to; the offset is only comparable against another access's
     /// offset when their bases match.
     #[inline]
-    pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i64)> {
-        self.stack_offsets[id]
+    pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i128)> {
+        self.side_tables.stack_offsets[id]
     }
 
     /// Records a concrete stack slot `(base, offset)` for a Store/Load node.
     #[inline]
-    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i64) {
-        self.stack_offsets[id] = Some((base, offset));
+    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i128) {
+        self.side_tables.stack_offsets[id] = Some((base, offset));
     }
 
     // ── initial_var_index accessors ───────────────────────────────────────
-
-    /// Returns the [`NodeId`] of the canonical `InitialVar(vn)` node for
-    /// `vn`, or `None` if none is registered.  O(1).
-    ///
-    /// Callers that want to skip detached zombie nodes must validate the
-    /// returned id themselves (typically by checking that the node's
-    /// single output's use-list is non-empty via [`Graph::value_uses`]).
-    #[inline]
-    pub fn initial_var_for(&self, vn: rsleigh::Vn) -> Option<NodeId> {
-        self.initial_var_index.get(&vn).copied()
-    }
-
-    /// Registers `(vn, node_id)` in the `InitialVar` index.  Replaces
-    /// any prior entry for `vn`.  Callers must guarantee that
-    /// `node_id`'s kind is `NodeKind::InitialVar(vn)` — the index is
-    /// advisory and never re-checked.
-    #[inline]
-    pub fn register_initial_var(&mut self, vn: rsleigh::Vn, node_id: NodeId) {
-        self.initial_var_index.insert(vn, node_id);
-    }
 
     /// Iterates the `initial_var_index` as `(vn, node_id)` pairs.  Used by the
     /// validator to enforce that every entry still resolves to a live
@@ -730,38 +613,32 @@ impl Function {
     pub(crate) fn initial_var_index_entries(
         &self,
     ) -> impl Iterator<Item = (rsleigh::Vn, NodeId)> + '_ {
-        self.initial_var_index.iter().map(|(&vn, &id)| (vn, id))
+        self.side_tables.initial_var_index.iter().map(|(&vn, &id)| (vn, id))
     }
 
     /// Iterates the `value_vn` map as `(value, vn)` pairs.  Used by the
     /// validator to enforce that every key is a live value output.
     #[inline]
     pub(crate) fn value_vn_entries(&self) -> impl Iterator<Item = (ValueId, rsleigh::Vn)> + '_ {
-        self.value_vn.iter().map(|(&value, &vn)| (value, vn))
+        self.side_tables.value_vn.iter().map(|(&value, &vn)| (value, vn))
     }
 
-    /// Returns the entry stack-pointer value — the output of the
-    /// `InitialVar(stack_vn)` node, where `stack_vn` is the calling
-    /// convention's stack pointer — or `None` when the function never
-    /// reads it.
+    /// Returns the entry-stack-pointer node — the `InitialVar(stack_vn)` node,
+    /// where `stack_vn` is the calling convention's stack pointer — or `None`
+    /// when the function tracks no such node (`stack_vn` deduped into a wider
+    /// container).  Its output value is the entry SP.
     ///
-    /// Walks the **entry-reachable** graph (not the `initial_var_index`,
-    /// which can hold a node culled-but-not-yet-compacted mid-pipeline)
-    /// so a detached-zombie `InitialVar(sp)` is skipped.  Exactly one
-    /// `InitialVar(stack_vn)` exists (builder invariant), so the search is
-    /// order-independent.  Consumers (e.g. stack-arg detection) require
-    /// every candidate's terminal SP base to equal this value.
-    pub fn initial_sp_value(&self) -> Option<ValueId> {
-        let stack_vn = self.default_cc.stack_vn;
-        for n in self.reverse_postorder_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
-            if matches!(*self.node_kind(n), NodeKind::InitialVar(vn) if vn == stack_vn) {
-                let [out] = self
-                    .node_outputs_exact::<1>(n)
-                    .expect("InitialVar has 1 output per node signature");
-                return Some(out);
-            }
-        }
-        None
+    /// O(1) via the `initial_var_index` accelerator.  This does **not** filter
+    /// by liveness: the map can transiently hold a node culled-but-not-yet-
+    /// compacted mid-pipeline, so a caller that cares whether the SP is actually
+    /// read checks the node against its own live-set (every optimization runs in
+    /// an [`crate::EditFunction`] that maintains one) — a culled `InitialVar(sp)`
+    /// is never referenced by a live load anyway.
+    pub fn initial_sp(&self) -> Option<NodeId> {
+        self.side_tables
+            .initial_var_index
+            .get(&self.default_cc.stack_vn)
+            .copied()
     }
 
     /// Returns the asm-instruction-address fingerprint of `node_id` as a
@@ -769,7 +646,7 @@ impl Function {
     /// contributors have been recorded.
     #[inline]
     pub fn asm_fingerprint(&self, id: NodeId) -> &[u64] {
-        self.asm_fingerprints[id].as_slice()
+        self.side_tables.asm_fingerprints[id].as_slice()
     }
 
     /// Unions `contributors` into `node_id`'s fingerprint.  Result is kept
@@ -779,63 +656,14 @@ impl Function {
         if contributors.is_empty() {
             return;
         }
-        // Normalise the contributor list (callers may pass it unsorted / with
-        // duplicates) into a sorted-deduped small buffer.  `k` is tiny in
-        // practice (1–2 addresses), so this `sort_unstable` is cheap and lets
-        // the union below be a single linear merge against the already-sorted
-        // `existing` — O(k·log k + m + k) — instead of an append + full
-        // O((m+k)·log(m+k)) re-sort of the combined list.
-        let mut incoming: smallvec::SmallVec<[u64; 2]> = contributors.iter().copied().collect();
-        incoming.sort_unstable();
-        incoming.dedup();
-
-        let existing = &self.asm_fingerprints[node_id];
-        // Fast path: the very first contribution onto an empty entry — adopt
-        // the normalised contributor list wholesale, no merge needed.
-        if existing.is_empty() {
-            self.asm_fingerprints[node_id] = incoming;
-            return;
-        }
-        // Both `existing` and `incoming` are now sorted-deduped, so union them
-        // with a single linear merge (O(m + k)).
-        let mut merged: smallvec::SmallVec<[u64; 2]> =
-            smallvec::SmallVec::with_capacity(existing.len() + incoming.len());
-        let mut ai = existing.iter().copied().peekable();
-        let mut bi = incoming.iter().copied().peekable();
-        loop {
-            match (ai.peek().copied(), bi.peek().copied()) {
-                (Some(a), Some(b)) => {
-                    let next = if a < b {
-                        ai.next();
-                        a
-                    } else if b < a {
-                        bi.next();
-                        b
-                    } else {
-                        ai.next();
-                        bi.next();
-                        a
-                    };
-                    if merged.last() != Some(&next) {
-                        merged.push(next);
-                    }
-                }
-                (Some(a), None) => {
-                    ai.next();
-                    if merged.last() != Some(&a) {
-                        merged.push(a);
-                    }
-                }
-                (None, Some(b)) => {
-                    bi.next();
-                    if merged.last() != Some(&b) {
-                        merged.push(b);
-                    }
-                }
-                (None, None) => break,
-            }
-        }
-        self.asm_fingerprints[node_id] = merged;
+        // Union `contributors` into the node's fingerprint, keeping it sorted
+        // and deduplicated.  Both `m` (existing) and `k` (contributors) are
+        // tiny (a handful of addresses), so the standard extend + sort + dedup
+        // is the right wheel — no hand-rolled two-pointer merge needed.
+        let fp = &mut self.side_tables.asm_fingerprints[node_id];
+        fp.extend_from_slice(contributors);
+        fp.sort_unstable();
+        fp.dedup();
     }
 
     /// Unions the fingerprint of `src` into `dst`.  Self-extension
@@ -845,26 +673,22 @@ impl Function {
             return;
         }
         let src_slice: smallvec::SmallVec<[u64; 4]> =
-            self.asm_fingerprints[src].iter().copied().collect();
+            self.side_tables.asm_fingerprints[src].iter().copied().collect();
         self.extend_asm_fingerprint(dst, &src_slice);
     }
 
     /// Same as [`Graph::create_node`] plus unions the asm-fingerprint of
-    /// every node in `contributors` into the resulting node, and masks any
-    /// `IntConst(Small)` payload to its declared integer output width so
-    /// every creation path produces the same canonical form:
-    ///
-    /// * narrow (≤ I64): payload stays `Small`, masked to the declared width.
-    /// * wide (I80 / I128 / I256 / I512): promoted to `IntConst(Wide)` via
-    ///   the wide-const interner so no inline `Small` payload holds > 64 bits.
+    /// every node in `contributors` into the resulting node.
     ///
     /// This is the canonical node-creation funnel for ALL mutable paths:
     /// `FunctionBuilder::create_node` (the lift-time path),
     /// [`crate::EditFunction::create_node_attributed`] (the rewrite /
-    /// template-engine path), and any direct caller.  Routing every
-    /// creation through here is what makes the IntConst-masking invariant
-    /// hold workspace-wide without any knowledge of it in the generic
-    /// dedup-cache layer.
+    /// template-engine path), and any direct caller.
+    ///
+    /// `IntConst` no longer needs special-casing here: every `ConstId` is
+    /// minted through [`Self::intern_int_const`] / [`Self::intern_int_const_limbs`]
+    /// (which mask-to-width and canonicalise by value), so a constant arrives
+    /// pre-canonical and passes straight through to the dedup cache.
     pub fn create_node_attributed(
         &mut self,
         kind: crate::node::NodeKind,
@@ -872,48 +696,6 @@ impl Function {
         output_kinds: impl IntoIterator<Item = crate::node::ValueKind>,
         contributors: &[NodeId],
     ) -> NodeId {
-        // Collect output kinds so we can inspect the declared type for the
-        // IntConst normalisation below.
-        let output_kinds: smallvec::SmallVec<[crate::node::ValueKind; 4]> =
-            output_kinds.into_iter().collect();
-        // Canonicalise the `IntConst` payload by VALUE, not by declared type:
-        // the wide interner is reserved for values that genuinely exceed
-        // `u64`; everything else lives inline as `Small` with the width
-        // carried by the output `ValueKind`.
-        // Mask an inline `u64` to the declared integer width.  Masking only
-        // clears bits, so the result always fits `u64` for ANY declared type —
-        // an inline value therefore stays `Small` regardless of width
-        // (I80/I128/I256/I512 included).  Shared by the `Small` and the
-        // `Wide`-fits-`u64` arms so both produce an identical canonical payload.
-        let mask_inline = |v: u64| -> u64 {
-            match output_kinds.first().and_then(|vk| vk.as_value()) {
-                Some(ty) if ty.is_integer() => {
-                    #[allow(clippy::cast_possible_truncation)]
-                    {
-                        (u128::from(v) & ty.bit_mask_u128()) as u64
-                    }
-                }
-                _ => v,
-            }
-        };
-        let kind = match kind {
-            crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v)) => {
-                crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(mask_inline(v)))
-            }
-            // A `Wide` payload whose interned value fits `u64` is the inline
-            // `Small` form in disguise — canonicalise it down so a given
-            // (value, type) has exactly one representation (preserving dedup).
-            // Genuinely-wide values pass through unchanged.
-            crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id)) => {
-                match self.wide_const(id).as_u64() {
-                    Some(v) => crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(
-                        mask_inline(v),
-                    )),
-                    None => crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id)),
-                }
-            }
-            other => other,
-        };
         let node_id = self.graph.create_node(kind, inputs, output_kinds);
         for &src in contributors {
             self.extend_asm_fingerprint_from(node_id, src);
@@ -929,13 +711,12 @@ impl Function {
     /// callers holding any such id MUST rewrite it through the returned
     /// [`NodeIdRemap`].
     ///
-    /// The generic `retain_reachable_roots` keeps the backward-input closure
-    /// of its `roots`.  The IR's reachability also follows forward-control
-    /// edges (so a `Region` reached only via control survives), so this seeds
-    /// the generic compaction with the FULL control-aware reachable set: that
-    /// set is already closed under data inputs, so its backward-input closure
-    /// is itself — the generic pass then retains exactly the IR reachable set,
-    /// and its cacher rebuild re-keys the dedup cache over the survivors.
+    /// `Graph::retain_reachable` retains exactly the set it is handed; the IR's
+    /// reachability follows forward-control + backward-data edges (so a `Region`
+    /// reached only via control survives), so this passes the FULL control-aware
+    /// walk.  That set is already closed under data inputs, satisfying the
+    /// generic pass's backward-input precondition; its cacher rebuild re-keys the
+    /// dedup cache over the survivors.
     ///
     /// "Reachable" is from [`Self::entry`] — the receiver owns the anchor, so it
     /// is read internally rather than passed (a non-entry root would be a misuse:
@@ -951,13 +732,10 @@ impl Function {
     /// side-tables stale, so [`Self::compact`] (which remaps them) is the only
     /// safe public entry point.
     pub(crate) fn retain_reachable(&mut self) -> crate::Result<NodeIdRemap> {
-        let entry = self
-            .entry
-            .ok_or_else(|| anyhow::anyhow!("Function::retain_reachable: entry node is not set"))?;
         // Collect the reachable set into a `Vec` first: that ends the
         // immutable borrow before the mutable `graph_mut()` borrow below.
-        let reachable: Vec<NodeId> = self.walk_from(entry).collect();
-        Ok(self.graph_mut().retain_reachable_roots(reachable))
+        let reachable: Vec<NodeId> = self.walk().collect();
+        Ok(self.graph_mut().retain_reachable(reachable))
     }
 
     /// Rebuilds the function's graph to retain only nodes reachable from
@@ -969,12 +747,10 @@ impl Function {
     ///
     /// # Errors
     ///
-    /// Returns an error if [`Self::entry`] is `None`, or if the retain-
-    /// reachable remap doesn't include the entry (invariant violation).
+    /// Returns an error if the retain-reachable remap doesn't include the
+    /// entry (invariant violation).
     pub fn compact(&mut self) -> crate::Result<NodeIdRemap> {
-        let entry = self
-            .entry
-            .ok_or_else(|| anyhow::anyhow!("Function::compact: entry node is not set"))?;
+        let entry = self.entry;
         let remap = self.retain_reachable()?;
         let new_entry = remap.node_old_to_new(entry).ok_or_else(|| {
             anyhow::anyhow!(
@@ -982,155 +758,69 @@ impl Function {
                 entry
             )
         })?;
-        self.entry = Some(new_entry);
-        // Remap the NodeId-keyed overlay tables through the
-        // old→new translation table produced by `retain_reachable`.
-        self.call_other_names.remap_node_keyed(&remap);
-        self.asm_fingerprints.remap_node_keyed(&remap);
-        // `call_descriptor` is a sparse `FxHashMap<NodeId, _>` (calls are
-        // rare and a descriptor payload can be large), so remap its KEYS
-        // through the translation table, dropping entries whose Call /
-        // CallOther node was pruned.
-        let mut new_call_descriptor: FxHashMap<NodeId, crate::CallDescriptor> =
-            FxHashMap::with_capacity_and_hasher(self.call_descriptor.len(), Default::default());
-        for (old_node, descriptor) in self.call_descriptor.drain() {
-            if let Some(new_node) = remap.node_old_to_new(old_node) {
-                new_call_descriptor.insert(new_node, descriptor);
-            }
-        }
-        self.call_descriptor = new_call_descriptor;
-        // `stack_offsets` is the only NodeId-keyed side-table whose VALUE
-        // also references a node — the slot `base` (a `ValueId`).  So
-        // remap both the key (NodeId) and the value's base through the same
-        // translation table.  An entry whose node or base didn't survive
-        // compaction is dropped (the slot becomes "unknown", which is safe —
-        // consumers treat a missing entry as non-stack).
-        let mut new_stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i64)>> =
-            SecondaryMap::new();
-        for (old_id, slot) in self.stack_offsets.iter() {
-            let Some((old_base, off)) = *slot else {
-                continue;
-            };
-            if let (Some(new_id), Some(new_base)) = (
-                remap.node_old_to_new(old_id),
-                remap.value_old_to_new(old_base),
-            ) {
-                new_stack_offsets[new_id] = Some((new_base, off));
-            }
-        }
-        self.stack_offsets = new_stack_offsets;
-        // `all_vns` is a `Vec<rsleigh::Vn>` with no node / value keys, and
-        // `default_cc` holds `rsleigh::Vn` values (not arena ids), so
-        // neither needs a remap.  (`default_cc` is always a real value —
-        // the trivial CC for synthetic functions — never `None`.)
-        // `vn_to_container` is likewise keyed and valued on plain
-        // `rsleigh::Vn`s (not arena ids), so it needs no remap either.
-        // `value_vn` is `FxHashMap<ValueId, Vn>` — keyed by a Phi's single
-        // output value or a Call/CallOther clobber output value.  Translate
-        // every key through the same `ValueId` remap; an entry whose value
-        // did not survive compaction is dropped (the phi / clobber output
-        // became unreachable).
-        self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn| {
-            remap
-                .value_old_to_new(old_value)
-                .map(|new_value| (new_value, vn))
-        });
-        // `initial_var_index` is `FxHashMap<Vn, NodeId>` — Vn-keyed, not
-        // NodeId-keyed, so the standard `SecondaryMap` remap helper
-        // doesn't fit.  Entries whose NodeId didn't survive compaction
-        // (the InitialVar became unreachable and was dropped) are
-        // silently elided — the orchestrator's `read_or_init_var`
-        // fallback will lazily re-create them as needed.
-        self.initial_var_index = remap_hashmap(&mut self.initial_var_index, |vn, old_id| {
-            remap.node_old_to_new(old_id).map(|new_id| (vn, new_id))
-        });
-        // `arg_index_to_values` is `FxHashMap<u32, Vec<ValueId>>` —
-        // index-keyed with `ValueId` payloads, so (like `initial_var_index`)
-        // it needs an inline remap.  Carrier values whose value didn't
-        // survive compaction are dropped; an index whose carriers all
-        // vanished is removed entirely.
-        self.arg_index_to_values =
-            remap_hashmap(&mut self.arg_index_to_values, |index, old_values| {
-                let mapped: Vec<ValueId> = old_values
-                    .into_iter()
-                    .filter_map(|old_value| remap.value_old_to_new(old_value))
-                    .collect();
-                (!mapped.is_empty()).then_some((index, mapped))
-            });
-        // GC the wide-const interner over only the values referenced by
-        // surviving `IntConst(Wide(id))` nodes, rewriting each survivor's id
-        // to the new dense id, then re-key the graph's dedup cache over those
-        // rewritten ids.  The dedup cache keys on `NodeKind` (which carries
-        // the `WideConstId`), so the rewrite must precede the cache rebuild —
-        // exactly as it did when this GC lived inside `Graph::retain_reachable`
-        // before the cache-rebuild step.
-        if self.gc_wide_consts() {
-            self.graph.rebuild_cache();
-        }
+        self.entry = new_entry;
+        // Remap all the arena-id-keyed overlay tables through the old→new
+        // translation produced by `retain_reachable`.  `all_vns`, `default_cc`
+        // and `vn_to_container` hold plain `rsleigh::Vn`s (no arena ids), so
+        // they need no remap.
+        self.side_tables.remap(&remap);
+        // GC the const interner over only the values referenced by surviving
+        // `IntConst(id)` nodes, rewriting each survivor's id to the new dense
+        // id, then re-key the graph's dedup cache over those rewritten ids.
+        // The dedup cache keys on `NodeKind` (which carries the `ConstId`), so
+        // the rewrite must precede the cache rebuild.  The rebuild is
+        // unconditional: `retain_reachable` has already reassigned every
+        // surviving node's id, so the cache (keyed on those ids) is stale
+        // regardless of whether any constants were rewritten.
+        self.gc_consts();
+        self.graph.rebuild_cache();
         Ok(remap)
     }
 
-    /// Rebuilds [`Self::wide_const_interner`] over only the values
-    /// referenced by surviving `IntConst(Wide(id))` nodes, rewriting each
-    /// such node's id in place to the new id assigned by the rebuilt
-    /// interner.  Returns `true` iff at least one node's id was rewritten
-    /// (so the caller knows whether the dedup cache must be re-keyed).
-    /// Returns `false` when there are no surviving wide nodes — including
-    /// the case where the graph previously had wide nodes that were all
-    /// pruned by `retain_reachable`; in that case any stale interner
-    /// entries are dropped and the cache needs no rebuild.
+    /// Rebuilds [`Self::const_interner`] over only the values referenced by
+    /// surviving `IntConst(id)` nodes, rewriting each such node's id in place
+    /// to the new id assigned by the rebuilt interner.  When no constant nodes
+    /// survive — including the case where every constant was pruned by
+    /// `retain_reachable` — the interner is simply reset to empty (a valid
+    /// post-optimization state).
     ///
     /// Only safe to call after [`Graph::retain_reachable`] has settled
     /// the arena — at that point `self.graph.nodes.keys()` iterates only
     /// surviving nodes, so the live-id scan correctly excludes zombie
     /// references.
-    fn gc_wide_consts(&mut self) -> bool {
-        use crate::node::{IntPayload, NodeKind};
-        use crate::wide_const::WideConstId;
+    fn gc_consts(&mut self) {
+        use crate::const_value::ConstId;
+        use crate::node::NodeKind;
 
-        // Build the live-id set + collect every IntConst(Wide) node.
-        let mut live_old_ids: Vec<WideConstId> = Vec::new();
-        let mut wide_nodes: Vec<NodeId> = Vec::new();
+        let mut live_old_ids: Vec<ConstId> = Vec::new();
+        let mut const_nodes: Vec<NodeId> = Vec::new();
         for node in self.graph.all_node_ids() {
-            if let NodeKind::IntConst(IntPayload::Wide(id)) = *self.graph.node_kind(node) {
-                wide_nodes.push(node);
+            if let NodeKind::IntConst(id) = *self.graph.node_kind(node) {
+                const_nodes.push(node);
                 live_old_ids.push(id);
             }
         }
-        if live_old_ids.is_empty() {
-            // No surviving wide nodes — drop any stale interner entries
-            // (e.g. zombie ids left by retain_reachable) and report that
-            // no node id was rewritten, so the caller skips the rebuild.
-            self.wide_const_interner = Default::default();
-            return false;
-        }
-
-        // Rebuild the interner over only live values; `intern` dedups, so
-        // distinct old ids that aliased one value collapse to one new id.
         let mut new_interner: entity_utils::EntityInterner<
-            WideConstId,
-            crate::wide_const::WideConstStorage,
+            ConstId,
+            crate::const_value::ConstValue,
         > = entity_utils::EntityInterner::default();
-        let mut old_to_new: FxHashMap<WideConstId, WideConstId> = FxHashMap::default();
+        let mut old_to_new: FxHashMap<ConstId, ConstId> = FxHashMap::default();
         for old_id in live_old_ids {
             if old_to_new.contains_key(&old_id) {
                 continue;
             }
-            let value = self.wide_const_interner[old_id].clone();
+            let value = self.const_interner[old_id].clone();
             let new_id = new_interner.intern(value);
             old_to_new.insert(old_id, new_id);
         }
-        self.wide_const_interner = new_interner;
-
-        // Rewrite the surviving IntConst(Wide(old_id)) nodes' payloads.
-        for node in wide_nodes {
-            if let NodeKind::IntConst(IntPayload::Wide(id)) = self.graph.node_kind_mut(node)
+        self.const_interner = new_interner;
+        for node in const_nodes {
+            if let NodeKind::IntConst(id) = self.graph.node_kind_mut(node)
                 && let Some(&new_id) = old_to_new.get(id)
             {
                 *id = new_id;
             }
         }
-        true
     }
 
     /// Returns a dot dumper for rendering this function's graph to HTML / DOT.
@@ -1143,9 +833,7 @@ impl Function {
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,
     ) -> crate::Result<crate::function::dot::FunctionDotDumper<'a, R>> {
-        let entry = self
-            .entry
-            .ok_or_else(|| anyhow::anyhow!("Function::dot_dumper: entry node is not set"))?;
+        let entry = self.entry;
         let node_to_arg_indices = crate::function::dot::build_arg_reverse_map(self);
         Ok(crate::function::dot::FunctionDotDumper {
             entry,
@@ -1156,49 +844,67 @@ impl Function {
     }
 }
 
+/// `Function` is itself an [`crate::IRBuilder`]: it owns the canonical
+/// [`Self::create_node_attributed`] funnel, so the blanket
+/// [`crate::IRBuilderExt`] construction vocabulary (`build_int_const`,
+/// `build_int_const_limbs`, …) is available directly on a `Function` for
+/// synthetic / test construction.  Unlike [`crate::FunctionBuilder`] this
+/// applies no ambient `lift_addr` stamp — callers that need fingerprint
+/// attribution pass contributors explicitly.
+impl crate::IRBuilder for Function {
+    fn function_mut(&mut self) -> &mut Function {
+        self
+    }
+
+    fn create_node_attributed<I, O>(
+        &mut self,
+        kind: NodeKind,
+        inputs: I,
+        outputs: O,
+        contributors: &[NodeId],
+    ) -> NodeId
+    where
+        I: IntoIterator<Item = crate::node::ValueId>,
+        O: IntoIterator<Item = crate::node::ValueKind>,
+    {
+        Function::create_node_attributed(self, kind, inputs, outputs, contributors)
+    }
+}
+
 #[cfg(test)]
 mod function_skeleton_tests {
-    use super::Function;
     use crate::IRViewer;
+    use crate::function::test_function;
     use crate::node::{NodeKind, ValueKind};
 
     #[test]
-    fn function_new_carries_an_empty_graph() {
-        let f = Function::default();
-        assert_eq!(f.graph().all_node_ids().count(), 0);
-        assert!(f.entry().is_none());
-    }
-
-    #[test]
-    fn function_records_entry_via_set_entry() {
-        let mut f = Function::default();
-        let entry = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        f.set_entry(entry);
-        assert_eq!(f.entry(), Some(entry));
+    fn function_new_builds_entry_and_initial_memory_skeleton() {
+        let f = test_function();
+        let ids: Vec<_> = f.graph().all_node_ids().collect();
+        assert_eq!(ids.len(), 2, "new() builds exactly Entry + InitialMemory");
+        assert!(matches!(f.node_kind(ids[0]), NodeKind::Entry));
+        assert!(matches!(f.node_kind(ids[1]), NodeKind::InitialMemory));
+        assert_eq!(f.entry(), ids[0], "entry() points at the Entry node (node 0)");
     }
 
     #[test]
     fn function_asm_fingerprint_round_trips() {
-        let mut f = Function::default();
-        let n = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mut f = test_function();
+        let n = f.entry();
         f.extend_asm_fingerprint(n, &[0xDEAD_BEEF]);
         assert_eq!(f.asm_fingerprint(n), &[0xDEAD_BEEF]);
     }
 
     #[test]
     fn arg_index_to_values_returns_empty_for_unregistered() {
-        let f = Function::default();
+        let f = test_function();
         assert!(f.arg_index_to_values(0).is_empty());
         assert!(f.arg_index_to_values(99).is_empty());
     }
 
     #[test]
     fn register_arg_value_supports_multiple_values_per_index() {
-        let mut f = Function::default();
+        let mut f = test_function();
         let n1 = f
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
@@ -1226,7 +932,7 @@ mod function_skeleton_tests {
     fn get_vn_for_value_round_trips_via_value_key() {
         use crate::node::ValueType;
 
-        let mut f = Function::default();
+        let mut f = test_function();
         let phi = f
             .graph_mut()
             .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
@@ -1237,7 +943,7 @@ mod function_skeleton_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         assert_eq!(f.get_vn_for_value(phi_value), None);
-        f.set_vn_for_value(phi_value, vn);
+        f.side_tables.value_vn.insert(phi_value, vn);
         assert_eq!(f.get_vn_for_value(phi_value), Some(vn));
     }
 
@@ -1247,14 +953,9 @@ mod function_skeleton_tests {
     fn arg_index_to_values_recovers_carrier_node_via_producer() {
         use crate::node::ValueType;
 
-        let mut f = Function::default();
-        let arg_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x10,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
+        let mut f = test_function();
         let carrier = f.graph_mut().create_node(
-            NodeKind::InitialVar(arg_vn),
+            NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1272,20 +973,21 @@ mod compact_tests {
 
     use super::Function;
     use crate::IRViewer;
-    use crate::node::{IntPayload, NodeKind, ValueKind};
+    use crate::function::{test_function, test_initial_memory};
+    use crate::node::{NodeId, NodeKind, ValueKind, ValueType};
+
+    /// Interns `v` (masked to `ty`) and creates a single-output `IntConst`
+    /// node, returning its `NodeId`.
+    fn int_const_node(f: &mut Function, v: u128, ty: ValueType) -> NodeId {
+        let id = f.intern_int_const(v, ty);
+        f.graph_mut()
+            .create_node(NodeKind::IntConst(id), [], [ValueKind::Typed(ty)])
+    }
 
     #[test]
     fn compact_remaps_entry_and_drops_zombies() {
-        let mut f = Function::default();
-        let entry = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let _zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xdead)),
-            [],
-            [ValueKind::Typed(crate::node::ValueType::I64)],
-        );
-        f.set_entry(entry);
+        let mut f = test_function();
+        let _zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::I64);
         let pre_count = f.graph().all_node_ids().count();
 
         let _remap = f.compact().expect("compact succeeds on a valid function");
@@ -1293,7 +995,7 @@ mod compact_tests {
         let post_count = f.graph().all_node_ids().count();
         assert!(post_count < pre_count, "compact must shrink the graph");
         // entry was remapped; new entry id still has the Control output.
-        let entry_id = f.entry().unwrap();
+        let entry_id = f.entry();
         let outs: Vec<_> = f.node_outputs(entry_id).to_vec();
         assert_eq!(outs.len(), 1);
         assert!(f.value_kind(outs[0]).is_control());
@@ -1307,36 +1009,37 @@ mod compact_tests {
     /// payload rewrite the survivor would dangle or read the wrong constant.
     #[test]
     fn compact_gcs_and_remaps_surviving_wide_const() {
+        use crate::const_value::ConstValue;
         use crate::node::ValueType;
-        use crate::wide_const::WideConstStorage;
 
-        const LIVE: u128 = 0x1234_5678_9ABC_DEF0_1122_3344_5566_7788;
+        // Genuinely-wide I256 value (high limb set ⇒ stays `Wide`).
+        const LIVE_LIMBS: [u64; 4] = [
+            0x1122_3344_5566_7788,
+            0x99AA_BBCC_DDEE_FF00,
+            0,
+            0x8000_0000_0000_0000,
+        ];
 
-        let mut f = Function::default();
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
         // A wide const referenced only by a zombie (interned FIRST → id 0).
-        let dropped_id = f.intern_wide_const(WideConstStorage::I128(0xAAAA_BBBB));
+        let dropped_id = f.intern_int_const_limbs(&[0xAAAA_BBBB, 0, 0, 1], ValueType::I256);
         let _zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Wide(dropped_id)),
+            NodeKind::IntConst(dropped_id),
             [],
-            [ValueKind::Typed(ValueType::I128)],
+            [ValueKind::Typed(ValueType::I256)],
         );
 
-        let entry = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        f.set_entry(entry);
-        let mem = f
-            .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
 
         // The live wide const, referenced by a reachable Return.
-        let live_id = f.intern_wide_const(WideConstStorage::I128(LIVE));
+        let live_id = f.intern_int_const_limbs(&LIVE_LIMBS, ValueType::I256);
         let wide_node = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Wide(live_id)),
+            NodeKind::IntConst(live_id),
             [],
-            [ValueKind::Typed(ValueType::I128)],
+            [ValueKind::Typed(ValueType::I256)],
         );
         let [wide_value] = f.node_outputs_exact::<1>(wide_node).unwrap();
         f.graph_mut()
@@ -1347,16 +1050,14 @@ mod compact_tests {
         let new_wide = remap
             .node_old_to_new(wide_node)
             .expect("the referenced wide const survives");
-        match *f.node_kind(new_wide) {
-            NodeKind::IntConst(IntPayload::Wide(new_id)) => {
-                assert_eq!(
-                    f.wide_const_opt(new_id),
-                    Some(&WideConstStorage::I128(LIVE)),
-                    "GC'd + remapped wide-const id must still resolve to its value",
-                );
-            }
-            ref other => panic!("expected IntConst(Wide(_)), got {other:?}"),
-        }
+        let NodeKind::IntConst(new_id) = *f.node_kind(new_wide) else {
+            panic!("expected IntConst(_), got {:?}", f.node_kind(new_wide));
+        };
+        assert_eq!(
+            f.const_value(new_id),
+            &ConstValue::Wide(LIVE_LIMBS.to_vec().into_boxed_slice()),
+            "GC'd + remapped const id must still resolve to its value",
+        );
     }
 
     /// A SURVIVING `stack_offsets` entry is remapped through compaction on
@@ -1367,29 +1068,14 @@ mod compact_tests {
     /// `retain_reachable_drops_side_table_entry_for_dropped_node`.)
     #[test]
     fn compact_remaps_surviving_stack_offset_entry() {
-        use crate::node::ValueType;
-
-        let mut f = Function::default();
-        // Zombie FIRST so the surviving nodes' ids shift during compaction.
-        let zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xdead)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let entry = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        f.set_entry(entry);
-        let mem = f
-            .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
+        // Zombie before the surviving nodes so their ids shift during compaction.
+        let zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::I64);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-        let base = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0x7000)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let base = int_const_node(&mut f, 0x7000_u128, crate::node::ValueType::I64);
         let [base_value] = f.node_outputs_exact::<1>(base).unwrap();
         let ret =
             f.graph_mut()
@@ -1424,28 +1110,17 @@ mod compact_tests {
     /// surviving node whose id was remapped.
     #[test]
     fn retain_reachable_preserves_asm_fingerprint_on_surviving_node() {
-        use crate::node::ValueType;
-
-        let mut f = Function::default();
-        let entry = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f
-            .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         // Reachable IntConst whose Return-input consumer keeps it live.
-        let surviving = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xCAFE_u64)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let surviving = int_const_node(&mut f, (0xCAFE_u64) as u128, crate::node::ValueType::I64);
         let [surv_value] = f.node_outputs_exact::<1>(surviving).unwrap();
         let _ret =
             f.graph_mut()
                 .create_node(NodeKind::Return, [entry_ctrl, mem_value, surv_value], []);
-        f.set_entry(entry);
 
         // Stamp three asm addresses on the surviving IntConst before compact.
         f.extend_asm_fingerprint(surviving, &[0x1000, 0x1004, 0x1008]);
@@ -1467,29 +1142,19 @@ mod compact_tests {
     #[test]
     fn retain_reachable_drops_zombie_node() {
         use crate::graph::NodeIdRemap;
-        use crate::node::ValueType;
 
-        let mut f = Function::default();
-        // Entry + InitialMemory + a Return (minimal reachable graph).
-        let entry = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f
-            .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let mut f = test_function();
+        // Entry + InitialMemory (auto-built) + a Return (minimal reachable graph).
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         let _ret = f
             .graph_mut()
             .create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
-        f.set_entry(entry);
 
         // Zombie: a cacheable IntConst not connected to anything reachable.
-        let zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xC0FFEE_u64)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let zombie = int_const_node(&mut f, (0xC0FFEE_u64) as u128, crate::node::ValueType::I64);
 
         // Zombie must be in the arena before compact.
         let pre_ids: Vec<_> = f.graph().all_node_ids().collect();
@@ -1519,19 +1184,14 @@ mod compact_tests {
     fn retain_reachable_drops_side_table_entry_for_dropped_node() {
         use crate::node::ValueType;
 
-        let mut f = Function::default();
-        let entry = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f
-            .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         let _ret = f
             .graph_mut()
             .create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
-        f.set_entry(entry);
 
         // Zombie Phi node with a value_vn entry.
         let zombie_phi =
@@ -1543,7 +1203,7 @@ mod compact_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         let zombie_phi_value = f.node_outputs(zombie_phi)[0];
-        f.set_vn_for_value(zombie_phi_value, dead_vn);
+        f.side_tables.value_vn.insert(zombie_phi_value, dead_vn);
         assert_eq!(
             f.get_vn_for_value(zombie_phi_value),
             Some(dead_vn),
@@ -1551,11 +1211,8 @@ mod compact_tests {
         );
 
         // Zombie IntConst node with a stack_offsets entry.
-        let zombie_stack = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xBEEF_u64)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let zombie_stack =
+            int_const_node(&mut f, (0xBEEF_u64) as u128, crate::node::ValueType::I64);
         let zombie_value = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
         f.set_stack_offset(zombie_stack, zombie_value, -8);
         assert_eq!(
@@ -1610,28 +1267,15 @@ mod compact_tests {
     fn compact_remaps_arg_index_to_values() {
         use crate::node::ValueType;
 
-        let mut f = Function::default();
-        let entry = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f
-            .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
         // A zombie created *before* the arg carrier so that compaction
         // reassigns the carrier's NodeId (the zombie's slot is dropped).
-        let _zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xDEAD_u64)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let _zombie = int_const_node(&mut f, (0xDEAD_u64) as u128, crate::node::ValueType::I64);
         // The arg carrier: a register-arg-style InitialVar kept live by Return.
-        let arg_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x10,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
         let arg_node = f.graph_mut().create_node(
-            NodeKind::InitialVar(arg_vn),
+            NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1641,7 +1285,6 @@ mod compact_tests {
         let _ret =
             f.graph_mut()
                 .create_node(NodeKind::Return, [entry_ctrl, mem_value, arg_value], []);
-        f.set_entry(entry);
         f.register_arg_value(0, arg_value);
 
         let remap = f.compact().expect("compact must succeed");
@@ -1670,13 +1313,9 @@ mod compact_tests {
     fn compact_keeps_reachable_phi_tag_drops_unreachable() {
         use crate::node::ValueType;
 
-        let mut f = Function::default();
-        let entry = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f
-            .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
         // A reachable Phi kept live by Return.
         let live_phi =
             f.graph_mut()
@@ -1689,7 +1328,6 @@ mod compact_tests {
             [entry_ctrl, mem_value, live_phi_value],
             [],
         );
-        f.set_entry(entry);
 
         // Unreachable Phi (not wired to anything reachable).
         let dead_phi =
@@ -1707,8 +1345,8 @@ mod compact_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         let dead_phi_value = f.node_outputs(dead_phi)[0];
-        f.set_vn_for_value(live_phi_value, live_vn);
-        f.set_vn_for_value(dead_phi_value, dead_vn);
+        f.side_tables.value_vn.insert(live_phi_value, live_vn);
+        f.side_tables.value_vn.insert(dead_phi_value, dead_vn);
 
         let remap = f.compact().expect("compact must succeed");
         let new_live_phi = remap
@@ -1746,20 +1384,11 @@ mod compact_tests {
     fn compact_drops_pruned_arg_value_keeps_surviving() {
         use crate::node::ValueType;
 
-        let mut f = Function::default();
-        let entry = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f
-            .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-        let live_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x10,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
         let live_carrier = f.graph_mut().create_node(
-            NodeKind::InitialVar(live_vn),
+            NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1769,16 +1398,10 @@ mod compact_tests {
         let _ret =
             f.graph_mut()
                 .create_node(NodeKind::Return, [entry_ctrl, mem_value, live_value], []);
-        f.set_entry(entry);
 
         // A pruned (unreachable) carrier for a different arg index.
-        let dead_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x18,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
         let dead_carrier = f.graph_mut().create_node(
-            NodeKind::InitialVar(dead_vn),
+            NodeKind::InitialVar(crate::node::InitialVnId::from_index(1)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1807,7 +1430,7 @@ mod compact_tests {
     fn clobber_output_value_maps_to_vn_via_value_vn() {
         use crate::node::ValueType;
 
-        let mut f = Function::default();
+        let mut f = test_function();
         // A Call with one clobber output [Control, Memory, clobber].
         let call = f.graph_mut().create_node(
             NodeKind::Call,
@@ -1825,7 +1448,7 @@ mod compact_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         assert_eq!(f.get_vn_for_value(clobber_value), None);
-        f.set_vn_for_value(clobber_value, vn);
+        f.side_tables.value_vn.insert(clobber_value, vn);
         // Recoverable per-output: the clobber output value carries its Vn.
         assert_eq!(f.get_vn_for_value(clobber_value), Some(vn));
         // Control / Memory outputs carry no clobber tag.
@@ -1834,7 +1457,7 @@ mod compact_tests {
     }
 
     /// `call_cc` round-trips and its stack-arg offsets are what the derived
-    /// `call_stack_args_override` accessor returns; compact remaps
+    /// `get_cc().stack_args` returns; compact remaps
     /// both the per-Call `call_cc` and the per-output clobber `value_vn`.
     #[test]
     fn compact_remaps_call_cc_and_clobber_value_vn() {
@@ -1847,26 +1470,14 @@ mod compact_tests {
             .build(&regs)
             .unwrap();
 
-        let mut f = Function::default();
-        let entry = f
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let mem = f
-            .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
         // A zombie created before the Call so compaction reassigns ids.
-        let _zombie = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0xDEAD_u64)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let _zombie = int_const_node(&mut f, (0xDEAD_u64) as u128, crate::node::ValueType::I64);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-        let target = f.graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(0x1000)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
+        let target = int_const_node(&mut f, 0x1000_u128, crate::node::ValueType::I64);
         let [target_value] = f.node_outputs_exact::<1>(target).unwrap();
         // Call with one clobber output, kept live by Return consuming its
         // ctrl/mem outputs.
@@ -1885,16 +1496,16 @@ mod compact_tests {
             addr_off: 0x40,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
-        f.set_vn_for_value(clob, clob_vn);
+        f.side_tables.value_vn.insert(clob, clob_vn);
         f.set_call_cc(call, cc.clone());
         let _ret = f
             .graph_mut()
             .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
-        f.set_entry(entry);
 
-        // Pre-compact: round-trips.
-        assert!(f.call_cc(call).is_some());
-        assert_eq!(f.call_stack_args_override(call), cc.stack_args,);
+        // Pre-compact: round-trips.  The override differs from the trivial
+        // default, so get_cc returns it and its stack_args derive from it.
+        assert_ne!(f.get_cc(call), f.default_cc());
+        assert_eq!(f.get_cc(call).stack_args, cc.stack_args,);
         assert_eq!(f.get_vn_for_value(clob), Some(clob_vn));
 
         let remap = f.compact().expect("compact must succeed");
@@ -1905,9 +1516,9 @@ mod compact_tests {
             .value_old_to_new(clob)
             .expect("live clobber output value must survive compaction");
 
-        // call_cc survives the NodeId remap; stack-arg offsets still derive.
-        assert!(f.call_cc(new_call).is_some());
-        assert_eq!(f.call_stack_args_override(new_call), cc.stack_args,);
+        // The override CC survives the NodeId remap; stack-arg offsets derive.
+        assert_ne!(f.get_cc(new_call), f.default_cc());
+        assert_eq!(f.get_cc(new_call).stack_args, cc.stack_args,);
         // The clobber tag survives the ValueId remap.
         assert_eq!(f.get_vn_for_value(new_clob), Some(clob_vn));
     }

@@ -9,19 +9,79 @@
 //! nodes are stamped via [`EditFunction::create_node_attributed`]; composite
 //! rewrites inline `extend_asm_fingerprint_from` directly.
 //!
-//! The rewrite *rules* (`rewrite_rule`, `GraphRewriter`, the template
+//! The rewrite *rules* (`rewrite_rule`, `apply_rules_count`, the template
 //! interpreter) live in the downstream optimizer crate; this module owns only
 //! the function-editing primitives they build on.
 
 use entity_utils::{DenseEntitySet, Worklist};
 
-use crate::function::state::{FunctionState, NodeFlags};
+use cranelift_entity::SecondaryMap;
 
-use crate::IRViewer;
 use crate::builder::IRBuilder;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
-use crate::{Function, Graph};
+use crate::walk::{DefUseSuccs, PostOrder, RawDefUseSuccs};
+use crate::{Function, Graph, IRViewer};
+
+bitflags::bitflags! {
+    /// Per-node rewrite-state flags.
+    ///
+    /// * `ENQUEUED` — the node is currently sitting in the maybe-dead queue.
+    /// * `OUTPUT_KILLED` — a use of one of the node's outputs was detached
+    ///   while it was the last use, so the node *may* now be dead and must be
+    ///   re-examined when drained.
+    /// * `NEEDS_RECANON` — the node's inputs changed, so it may now be a
+    ///   structural twin of an existing node and must be re-canonicalized when
+    ///   drained. This is spidir's `CANONICAL` bit inverted: the graph starts
+    ///   fully canonical (every node was minted through the construction dedup
+    ///   cache), so the natural dual is a set-on-dirty flag needing no O(n)
+    ///   initialization.
+    #[derive(Clone, Copy, Default)]
+    pub(crate) struct NodeFlags: u8 {
+        const ENQUEUED = 0b01;
+        const OUTPUT_KILLED = 0b10;
+        const NEEDS_RECANON = 0b100;
+    }
+}
+
+/// Persistent edit bookkeeping owned by an [`EditFunction`](super::EditFunction):
+/// [`EditFunction::new`](super::EditFunction) builds one via
+/// `FunctionState::populate` and keeps it for the context's lifetime.
+///
+/// The type stays `pub` (it appears in the owning field's signature), but the
+/// fields are `pub(crate)` so the bookkeeping is an opaque handle outside this
+/// crate.
+pub struct FunctionState {
+    /// Every node currently considered live (entry-reachable, not culled).
+    pub(crate) live_nodes: DenseEntitySet<NodeId>,
+    /// Input-less source nodes — the seeds of the cached reverse-post-order.
+    /// Maintained in O(1) per edit (insert/remove/contains are O(1)); iterated
+    /// in ascending-`NodeId` order.
+    pub(crate) roots: DenseEntitySet<NodeId>,
+    /// Nodes whose liveness may have just dropped; drained by `clean`.
+    pub(crate) queue: Worklist<NodeId>,
+    /// Per-node rewrite-state flags.
+    pub(crate) flags: SecondaryMap<NodeId, NodeFlags>,
+}
+
+impl FunctionState {
+    /// Seed `live_nodes` + `roots` from a built [`Function`]'s entry-reachable
+    /// walk.  Pure read: the queue and flags start empty, and no node is
+    /// culled (that needs `&mut` and is the explicit
+    /// [`EditFunction::cull_dead`](super::EditFunction::cull_dead)).
+    pub(crate) fn populate(function: &Function) -> Self {
+        let entry = function.entry();
+        let info = crate::walk::GraphWalkInfo::compute_full(function.graph(), entry);
+        let roots: DenseEntitySet<NodeId> = info.roots.into_iter().collect();
+        Self {
+            live_nodes: info.live_nodes,
+            roots,
+            queue: Worklist::new(),
+            flags: SecondaryMap::new(),
+        }
+    }
+}
+
 
 // ── EditFunction ─────────────────────────────────────────────────────
 
@@ -30,9 +90,8 @@ use crate::{Function, Graph};
 /// destructive passes.
 ///
 /// The function's entry [`NodeId`] is derived on demand via
-/// [`Self::entry`]; the wrapped function is required to be in its built
-/// form (`function.entry()` is `Some(_)`), checked at construction time
-/// by [`Self::new`].
+/// [`Self::entry`]; every [`Function`] is built with an entry node (the
+/// `Function::new` skeleton), so this is always available.
 pub struct EditFunction<'g> {
     pub(crate) function: &'g mut Function,
     state: FunctionState,
@@ -43,15 +102,9 @@ impl<'g> EditFunction<'g> {
     /// populated [`FunctionState`]. Does NOT cull pre-existing dead nodes —
     /// call [`Self::cull_dead`] explicitly if you want that.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if `function` has not been built (no entry node).
-    pub fn new(function: &'g mut Function) -> Result<Self> {
-        function
-            .entry()
-            .ok_or_else(|| anyhow::anyhow!("EditFunction::new: entry node is not set"))?;
+    pub fn new(function: &'g mut Function) -> Self {
         let state = FunctionState::populate(function);
-        Ok(Self { function, state })
+        Self { function, state }
     }
 
     /// Cull every pre-existing dead node: walk the **raw** forward def→use
@@ -65,7 +118,6 @@ impl<'g> EditFunction<'g> {
     /// initial cull invoke it themselves.  Callers grafting deliberate
     /// off-entry scaffolding (e.g. memory-SSA test shapes) simply skip it.
     pub fn cull_dead(&mut self) {
-        use crate::walk::{PostOrder, RawDefUseSuccs};
         let order: Vec<NodeId> = PostOrder::new(
             RawDefUseSuccs::new(self.function.graph()),
             self.state.roots.iter(),
@@ -104,20 +156,6 @@ impl<'g> EditFunction<'g> {
         self.function
     }
 
-    /// Pre-order graph walk starting at [`Self::entry`].
-    pub fn walk(&self) -> crate::walk::GraphWalk<'_> {
-        crate::walk::walk_graph(self.function.graph(), self.entry())
-    }
-
-    /// Kind-filtered pre-order walk.
-    pub fn walk_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
-    where
-        P: FnMut(&NodeKind) -> bool + 'a,
-    {
-        let g: &Graph = self.function.graph();
-        self.walk().filter(move |&n| pred(g.node_kind(n)))
-    }
-
     /// Post-order over the cached live def→use graph, seeded from the
     /// O(1)-maintained `roots` (no `compute_full` re-walk): every node is
     /// yielded after all of its consumers.  Roots are visited in ascending
@@ -132,7 +170,6 @@ impl<'g> EditFunction<'g> {
     /// [`reverse_postorder`](crate::IRWalker::reverse_postorder)) rather than
     /// reusing these.
     pub fn postorder(&self) -> Vec<NodeId> {
-        use crate::walk::{DefUseSuccs, PostOrder};
         PostOrder::new(
             DefUseSuccs::new(self.function.graph(), &self.state.live_nodes),
             self.state.roots.iter(),
@@ -194,11 +231,8 @@ impl<'g> EditFunction<'g> {
     }
 
     /// Function-entry `NodeId` anchor.
-    #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
-        self.function
-            .entry()
-            .expect("EditFunction wraps a built Function with an entry node (new() invariant)")
+        self.function.entry()
     }
 
     // ── self-cleaning core ───────────────────────────────────────────
@@ -665,6 +699,16 @@ impl<'g> EditFunction<'g> {
         self.function.register_arg_value(index, value);
     }
 
+    /// Absorb `from_value`'s producer asm-fingerprint into `into_value`'s
+    /// producer (superset-only union).  The single seam passes use when a
+    /// rewrite keeps `into_value` and drops `from_value` but must preserve the
+    /// dropped value's contributing-asm history on the survivor.
+    pub fn absorb_fingerprint(&mut self, into_value: ValueId, from_value: ValueId) {
+        let into = self.function().producer(into_value);
+        let from = self.function().producer(from_value);
+        self.function_mut().extend_asm_fingerprint_from(into, from);
+    }
+
     // ── composite rewrites ───────────────────────────────────────────
     //
     // These compose the generic primitives above into the higher-level
@@ -907,10 +951,9 @@ pub(crate) mod test_fixtures {
 mod tests {
     use super::EditFunction;
     use super::test_fixtures::single_region_builder;
-    use crate::IRViewer;
-    use crate::IntBinaryOp;
     use crate::builder::IRBuilderExt;
-    use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
+    use crate::node::{NodeKind, ValueKind, ValueType};
+    use crate::{IRViewer, IntBinaryOp};
     use cranelift_entity::EntityRef;
     use std::collections::BTreeSet;
 
@@ -923,10 +966,10 @@ mod tests {
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
-            NodeKind::IntConst(IntPayload::Small(42)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -973,7 +1016,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(!ctx.is_live(c_node), "C starts dead (orphaned)");
         assert!(ctx.is_live(a_node), "A starts live");
 
@@ -1031,7 +1074,7 @@ mod tests {
         let a_node = function.producer(a);
         let c_node = function.producer(c);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         // Rewire C's slot-1 (z) -> y so C becomes structurally Add(x, y) == A.
         // The ensuing `clean()` drives `canonicalize_node`, whose `expect`-
         // guarded merge must complete normally (no panic) and cull the twin.
@@ -1075,7 +1118,7 @@ mod tests {
         let c_node = function.producer(c);
         assert_ne!(a_node, c_node, "A and C start distinct");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         // Rewire C's input slot 1 (z) -> y so C becomes structurally Add(x, y) == A.
         let c_use_z = ctx.function().node_input_id_at(c_node, 1).unwrap();
         ctx.update_input(c_use_z, y);
@@ -1110,7 +1153,7 @@ mod tests {
 
         let add_node = function.producer(add);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // Locate the Add via the cached live-kind iterator.
@@ -1150,10 +1193,10 @@ mod tests {
         b.build_return(Some(root), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
-            NodeKind::IntConst(IntPayload::Small(42)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1161,7 +1204,7 @@ mod tests {
         assert!(!ctx.is_live(node));
 
         let recreated = ctx.create_node(
-            NodeKind::IntConst(IntPayload::Small(42)),
+            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1192,7 +1235,7 @@ mod tests {
         let mut function = b.build().unwrap();
         let dead_neg_node = function.producer(dead_neg);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(
             !ctx.is_live(dead_neg_node),
             "the unreachable Neg is excluded from the live set at populate"
@@ -1239,7 +1282,7 @@ mod tests {
         let orphan_node = function.producer(orphan);
         let c2_node = function.producer(c2);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(
             !ctx.is_live(orphan_node),
             "orphan starts outside the live set"
@@ -1315,7 +1358,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         for n in [k_node, inner_node, outer_node] {
             assert!(!ctx.is_live(n), "the whole orphan cone starts dead");
         }
@@ -1377,7 +1420,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(
             !ctx.is_live(orphan_node),
             "orphan starts outside the live set"
@@ -1420,7 +1463,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         let live_before = ctx.live_snapshot();
         let roots_before = ctx.roots_snapshot();
 
@@ -1470,7 +1513,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(
             !ctx.is_live(orphan_node),
             "orphan starts outside the live set"
@@ -1536,7 +1579,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.kill_node(if_node);
         assert!(!ctx.is_live(if_node), "the killed If leaves the live set");
 
@@ -1599,7 +1642,7 @@ mod tests {
         // EditFunction::new does NOT cull pre-existing dead nodes, so the
         // dead Store/Load chain is present-but-not-live (still wired together)
         // — exactly the state a pass would resurrect from.
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         assert!(!ctx.is_live(load_node), "Load starts dead");
         assert!(!ctx.is_live(store_node), "Store starts dead");
 
@@ -1656,7 +1699,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // Force-enqueue both as maybe-dead, then drain. `has_side_effects()`
@@ -1681,14 +1724,14 @@ mod tests {
     /// ↔ Phi input `i + 1` correspondence is preserved.
     #[test]
     fn remove_region_predecessors_wide_fanin_is_linear() {
-        use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
+        use crate::node::{NodeKind, ValueKind, ValueType};
 
         let mut b = single_region_builder();
         b.build_return(None, &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
 
         // A wide Region fan-in: one Control input per predecessor.  The entry
         // region's control output is reused verbatim for each slot (the batch
@@ -1710,7 +1753,7 @@ mod tests {
         let mut consts = Vec::new();
         for i in 0..FANIN {
             let k = ctx.create_node(
-                NodeKind::IntConst(IntPayload::Small(0xC0 + i as u64)),
+                NodeKind::IntConst(crate::const_value::ConstId::new((0xC0 + i as u64) as usize)),
                 [],
                 [ValueKind::Typed(ValueType::I64)],
             );
@@ -1743,5 +1786,69 @@ mod tests {
             surviving, expected,
             "surviving Phi value inputs keep original order, contiguous, token first"
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod function_state_tests {
+    use super::FunctionState;
+    use crate::builder::IRBuilderExt;
+    use super::test_fixtures::single_region_builder;
+    use crate::node::NodeKind;
+    use crate::{IRViewer, IntBinaryOp, ValueType};
+
+    /// `populate` seeds `roots` with exactly the input-less reachable nodes
+    /// (`Entry` + the two operand consts) and excludes a dangling
+    /// unreachable const from the live set.
+    #[test]
+    fn populate_seeds_roots_and_live_set() {
+        let mut b = single_region_builder();
+
+        b.set_lift_addr(Some(0x10));
+        let k1 = b.build_int_const(7u64, ValueType::I64).unwrap();
+        let k2 = b.build_int_const(11u64, ValueType::I64).unwrap();
+        let sum = b
+            .build_int_binary_operation(k1, k2, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(sum), &[]).unwrap();
+        // Dangling, unreachable const: created but never wired into anything.
+        let dangling = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+        b.set_lift_addr(None);
+        let function = b.build().unwrap();
+
+        let k1_node = function.producer(k1);
+        let k2_node = function.producer(k2);
+        let dangling_node = function.producer(dangling);
+        let entry = function.entry();
+
+        let state = FunctionState::populate(&function);
+
+        // Every root is input-less.
+        for r in state.roots.iter() {
+            assert!(
+                function.graph().node_inputs(r).is_empty(),
+                "root {r:?} must be input-less"
+            );
+        }
+
+        // Entry and both operand consts are roots.
+        assert!(state.roots.contains(entry), "Entry must be a root");
+        assert!(state.roots.contains(k1_node), "k1 const must be a root");
+        assert!(state.roots.contains(k2_node), "k2 const must be a root");
+
+        // The dangling const is excluded from the live set.
+        assert!(
+            !state.live_nodes.contains(dangling_node),
+            "dangling unreachable const must not be live"
+        );
+        // Sanity: it's a distinct const node (not deduped with k1/k2).
+        assert!(
+            matches!(function.node_kind(dangling_node), NodeKind::IntConst(_)),
+            "dangling node is an IntConst"
+        );
+
+        // The queue and flags start empty.
+        assert!(state.queue.is_empty(), "queue starts empty");
     }
 }

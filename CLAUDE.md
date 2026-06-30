@@ -125,7 +125,7 @@ depends on the external `rsleigh`.
   strider-reader   → strider-ir, strider-target, read-only-memory
   strider-cfg      → strider-target, dot, graphwalk, petgraph
                      (IR-free — NO strider-ir)
-  strider-lift     → strider-cfg, strider-ir, strider-target, dot
+  strider-lift     → strider-cfg, strider-ir, strider-target
   strider-pattern      → strider-ir, strider-graph, strider-target,
                          entity-utils
   strider-opt          → strider-cfg, strider-ir, strider-pattern,

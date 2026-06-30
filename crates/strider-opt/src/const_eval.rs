@@ -4,11 +4,8 @@
 //! shares the leaf arithmetic (`eval_int_*`) directly and does not route
 //! through here.
 
-use smallvec::SmallVec;
-use strider_ir::Function;
-use strider_ir::IRViewer;
-use strider_ir::ReadOnlyMemory;
 use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
+use strider_ir::{Function, IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
 
 use crate::opt::constant_fold::eval_int::{
@@ -45,47 +42,45 @@ pub(crate) fn eval_node_const(
     value: ValueId,
     resolve: &dyn Fn(ValueId) -> Option<u128>,
     rom: Option<&dyn ReadOnlyMemory>,
-    endianness: Endianness,
 ) -> Option<u128> {
     let node = function.producer(value);
     let kind = *function.node_kind(node);
     let out_ty = function.value_type_opt(value);
-    let ins: SmallVec<[ValueId; 2]> = function
-        .node_inputs(node)
-        .into_iter()
-        .filter(|&i| function.value_type_opt(i).is_some())
-        .collect();
+    let ins = function.node_inputs(node);
     match kind {
         NodeKind::IntConst(_) => function.int_const_u128(value),
-        NodeKind::IntBinaryOp(op) => {
-            eval_int_binary(op, resolve(*ins.first()?)?, resolve(*ins.get(1)?)?, out_ty?)
-        }
-        NodeKind::IntUnaryOp(op) => eval_int_unary(op, resolve(*ins.first()?)?, out_ty?),
+        NodeKind::IntBinaryOp(op) => eval_int_binary(
+            op,
+            resolve(ins.get(0).copied()?)?,
+            resolve(ins.get(1).copied()?)?,
+            out_ty?,
+        ),
+        NodeKind::IntUnaryOp(op) => eval_int_unary(op, resolve(ins.get(0).copied()?)?, out_ty?),
         NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
-            out_ty?.get_unsigned_int(resolve(*ins.first()?)?)
+            out_ty?.get_unsigned_int(resolve(ins.get(0).copied()?)?)
         }
         NodeKind::Extend(ExtendOp::SignExtend) => {
-            let in_ty = function.value_type_opt(*ins.first()?)?;
+            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
             eval_sign_extend(resolve(ins[0])?, in_ty, out_ty?)
         }
         NodeKind::Popcount => {
-            let in_ty = function.value_type_opt(*ins.first()?)?;
+            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
             eval_popcount(resolve(ins[0])?, in_ty)
         }
         NodeKind::Lzcount => {
-            let in_ty = function.value_type_opt(*ins.first()?)?;
+            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
             eval_lzcount(resolve(ins[0])?, in_ty)
         }
         NodeKind::IntCmpOp(op) => {
-            let in_ty = function.value_type_opt(*ins.first()?)?;
+            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
             Some(u128::from(
-                eval_int_cmp(op, resolve(ins[0])?, resolve(*ins.get(1)?)?, in_ty).ok()?,
+                eval_int_cmp(op, resolve(ins[0])?, resolve(ins.get(1).copied()?)?, in_ty).ok()?,
             ))
         }
         NodeKind::Load(_) => {
             let rom = rom?;
             let addr = u64::try_from(resolve(function.load_addr(node))?).ok()?;
-            read_rom_const(rom, addr, out_ty?, endianness)
+            read_rom_const(rom, addr, out_ty?, function.endianness())
         }
         _ => None,
     }
@@ -94,9 +89,8 @@ pub(crate) fn eval_node_const(
 #[cfg(test)]
 mod tests {
     use super::eval_node_const;
-    use strider_ir::IRBuilderExt;
-    use strider_ir::IRViewer;
     use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IRViewer};
 
     // Build `Add(IntConst(5), IntConst(100)):I64`; eval_node_const with an
     // int-const resolver folds it to 105. Copy the builder pattern from
@@ -105,7 +99,7 @@ mod tests {
     fn folds_add_of_two_constants() {
         let (function, sum) = build_add_5_100();
         let resolve = |v| function.int_const_u128(v);
-        let got = eval_node_const(&function, sum, &resolve, None, function.endianness());
+        let got = eval_node_const(&function, sum, &resolve, None);
         assert_eq!(got, Some(105));
     }
 
@@ -114,8 +108,12 @@ mod tests {
         use strider_ir_test_utils::make_empty_fn;
         let mut sum_val = None;
         let function = make_empty_fn(|b| {
-            let c5 = b.build_int_const(5u64, ValueType::I64).expect("build_int_const");
-            let c100 = b.build_int_const(100u64, ValueType::I64).expect("build_int_const");
+            let c5 = b
+                .build_int_const(5u64, ValueType::I64)
+                .expect("build_int_const");
+            let c100 = b
+                .build_int_const(100u64, ValueType::I64)
+                .expect("build_int_const");
             let sum = b
                 .build_int_binary_operation(c5, c100, IntBinaryOp::Add, ValueType::I64)
                 .expect("build_int_binary_operation");

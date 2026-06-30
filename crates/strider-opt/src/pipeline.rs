@@ -29,47 +29,6 @@ impl OptimizationResult {
             OptimizationResult::NoChange
         }
     }
-
-    /// Replaces every use of `old` with `new`, **absorbs** the producer
-    /// of `old`'s asm-fingerprint into `new`'s producer, and folds the
-    /// resulting `Changed`/`NoChange` into `self`.
-    ///
-    /// Delegates to [`crate::EditFunction::replace_value`], the single
-    /// source of truth for the fingerprint-absorb + use-redirect pair.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`crate::EditFunction::replace_value`]'s `Err` arm as
-    /// a typed error rather than panicking.
-    pub fn after_replace(
-        self,
-        function: &mut crate::EditFunction<'_>,
-        old: strider_ir::node::ValueId,
-        new: strider_ir::node::ValueId,
-    ) -> crate::Result<Self> {
-        // `replace_value` is the SSoT that absorbs `old`'s fingerprint into
-        // `new` and redirects all uses; it now lives on `EditFunction`.
-        let changed = function.replace_value(old, new)?;
-        Ok(self | OptimizationResult::from_changed(changed))
-    }
-}
-
-impl std::ops::BitOr for OptimizationResult {
-    type Output = Self;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        if self.changed() || rhs.changed() {
-            OptimizationResult::Changed
-        } else {
-            OptimizationResult::NoChange
-        }
-    }
-}
-
-impl std::ops::BitOrAssign for OptimizationResult {
-    fn bitor_assign(&mut self, rhs: Self) {
-        *self = *self | rhs;
-    }
 }
 
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
@@ -80,7 +39,7 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// * `rom` — the optional borrowed read-only memory image consumed by
 ///   [`crate::LoadReadOnly`].
 /// * `options` — the [`crate::OptOptions`] struct holding all per-run tuning
-///   knobs (`alias_mode`, `calls_clobber_stack_arguments`).  The
+///   knobs (`alias_mode`, `calls_clobber`).  The
 ///   SP-aware passes ([`crate::LoadForward`], [`crate::FunctionArgDetect`],
 ///   [`crate::CallStackArgCollect`]) read from it; set fields on
 ///   `ctx.options` after constructing via [`OptCtx::new`].
@@ -194,13 +153,13 @@ impl<'mem> OptCtx<'mem> {
 /// Passes that need the entry [`strider_ir::node::NodeId`] directly
 /// (for `edit.walk()` or
 /// `strider_ir::walk::cfg_reachable(edit.graph_ref(), edit.entry())`)
-/// derive it via `edit.entry()` — `EditFunction::new` enforces
-/// the post-build invariant, so the entry is guaranteed `Some(_)`.
+/// derive it via `edit.entry()`, which returns the entry
+/// [`strider_ir::node::NodeId`] directly.
 pub trait Optimizer: OptimizerClone {
     /// Real entry point: passes mutate the function through the shared
     /// `EditFunction` the pipeline built once for this run.
     ///
-    /// `edit` wraps the built function (entry is `Some(_)`); passes
+    /// `edit` wraps the built function (entry is a valid `NodeId`); passes
     /// mutate through `edit`'s curated mutation-façade methods
     /// (`create_node`, `update_input`, `set_stack_offset`, …) and read
     /// through `edit`'s deref to `Function` / `Graph`.
@@ -232,7 +191,7 @@ pub trait Optimizer: OptimizerClone {
 /// that hold a `&mut Function` use this; the pipeline shares one ctx across
 /// all passes and never calls it.
 ///
-/// `function` must be in its built form (`function.entry()` is `Some(_)`).
+/// `function` must be in its built form (`function.entry()` returns a valid `NodeId`).
 ///
 /// # Errors
 ///
@@ -244,7 +203,7 @@ pub fn run_one(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
-    let mut edit = crate::EditFunction::new(function)?;
+    let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     let result = pass.apply(&mut edit, octx)?;
     edit.clean();
@@ -283,7 +242,7 @@ impl<T: Optimizer> OptimizerTestExt for T {
 /// `crate::Result<()>`.  Test-only: the production driver is
 /// [`OptimizerPipeline::run`]'s post-pass loop.
 ///
-/// `function` must be in its built form (`function.entry()` is `Some(_)`).
+/// `function` must be in its built form (`function.entry()` returns a valid `NodeId`).
 ///
 /// # Errors
 ///
@@ -294,7 +253,7 @@ pub fn run_post(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<()> {
-    let mut edit = crate::EditFunction::new(function)?;
+    let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     pass.apply(&mut edit, octx)?;
     edit.clean();
@@ -328,27 +287,38 @@ impl<T: PostOptimizer> PostOptimizerTestExt for T {
     }
 }
 
-/// Object-safe clone shim for [`Optimizer`].
+/// Defines an object-safe clone shim trait `$shim` for the trait object
+/// `dyn $obj`, plus its blanket impl for every concrete `$obj + Clone +
+/// 'static`.
 ///
-/// Enables external iteration over the canonical default pipelines:
-/// downstream crates (e.g. `strider-py`) snapshot the pass list via
-/// [`OptimizerPipeline::passes`] / [`OptimizerPipeline::post_passes`] and
-/// `clone_box` each entry into their own storage, rather than
-/// hand-mirroring the pass list and risking silent drift.
-///
-/// Every concrete `Optimizer + Clone + 'static` gets a blanket
-/// `OptimizerClone` impl for free, so pass authors never write
-/// `clone_box` by hand — `#[derive(Clone)]` on the pass type is
-/// sufficient.  ZST passes get `Clone` via `#[derive(Clone, Copy)]`.
-pub trait OptimizerClone {
-    /// Clone the pass behind a `Box<dyn Optimizer>`.
-    fn clone_box(&self) -> Box<dyn Optimizer>;
+/// The shim's single method `clone_box(&self) -> Box<dyn $obj>` lets the
+/// pipeline box-clone a type-erased pass.  Enables external iteration over
+/// the canonical default pipelines: downstream crates (e.g. `strider-py`)
+/// snapshot the pass list via [`OptimizerPipeline::passes`] /
+/// [`OptimizerPipeline::post_passes`] and `clone_box` each entry into their
+/// own storage, rather than hand-mirroring the pass list and risking silent
+/// drift.  Pass authors never write `clone_box` by hand — `#[derive(Clone)]`
+/// on the pass type is sufficient (ZST passes get it via
+/// `#[derive(Clone, Copy)]`).
+macro_rules! clone_box_shim {
+    ($(#[$attr:meta])* $shim:ident for dyn $obj:ident) => {
+        $(#[$attr])*
+        pub trait $shim {
+            /// Clone the pass behind a `Box<dyn $obj>`.
+            fn clone_box(&self) -> Box<dyn $obj>;
+        }
+
+        impl<T: $obj + Clone + 'static> $shim for T {
+            fn clone_box(&self) -> Box<dyn $obj> {
+                Box::new(self.clone())
+            }
+        }
+    };
 }
 
-impl<T: Optimizer + Clone + 'static> OptimizerClone for T {
-    fn clone_box(&self) -> Box<dyn Optimizer> {
-        Box::new(self.clone())
-    }
+clone_box_shim! {
+    /// Object-safe clone shim for [`Optimizer`].
+    OptimizerClone for dyn Optimizer
 }
 
 /// A post-optimization pass that runs **once** after the fixed-point loop
@@ -378,26 +348,9 @@ pub trait PostOptimizer: PostOptimizerClone {
     fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()>;
 }
 
-/// Object-safe clone shim for [`PostOptimizer`], mirroring [`OptimizerClone`].
-///
-/// Every concrete `PostOptimizer + Clone + 'static` gets this blanket impl
-/// for free, so pass authors never write `clone_box` by hand —
-/// `#[derive(Clone)]` on the pass type is sufficient.
-pub trait PostOptimizerClone {
-    /// Clone the pass behind a `Box<dyn PostOptimizer>`.
-    fn clone_box(&self) -> Box<dyn PostOptimizer>;
-}
-
-impl<T: PostOptimizer + Clone + 'static> PostOptimizerClone for T {
-    fn clone_box(&self) -> Box<dyn PostOptimizer> {
-        Box::new(self.clone())
-    }
-}
-
-impl Clone for Box<dyn PostOptimizer> {
-    fn clone(&self) -> Self {
-        self.clone_box()
-    }
+clone_box_shim! {
+    /// Object-safe clone shim for [`PostOptimizer`], mirroring [`OptimizerClone`].
+    PostOptimizerClone for dyn PostOptimizer
 }
 
 /// An ordered list of `Optimizer` passes that are run in a shared fixed-point
@@ -464,9 +417,10 @@ impl OptimizerPipeline {
     /// Runs all registered passes in a fixed-point loop until convergence,
     /// then runs each post-pass exactly once in registration order.
     ///
-    /// `function` must be in its built form (i.e. `function.entry()` is
-    /// `Some(_)`); each pass derives the entry [`strider_ir::node::NodeId`]
-    /// internally as needed, and the final validation step requires it.
+    /// `function` must be in its built form (`function.entry()` returns a
+    /// valid `NodeId`); each pass derives the entry
+    /// [`strider_ir::node::NodeId`] internally as needed, and the final
+    /// validation step requires it.
     /// `ctx` carries per-run pass-agnostic state (currently the borrowed
     /// rom image); the orchestrator constructs one per pipeline run, ad-hoc
     /// callers use [`OptCtx::new`].
@@ -496,7 +450,7 @@ impl OptimizerPipeline {
             // explicit `cull_dead()` removes any pre-existing dead nodes.  The
             // borrow of `function` (via the ctx) is held for the duration of
             // this scope and released before the final validation step below.
-            let mut edit = crate::EditFunction::new(function)?;
+            let mut edit = crate::EditFunction::new(function);
             edit.cull_dead();
             let mut iters: u32 = 0;
             loop {
@@ -548,9 +502,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::OptCtx;
-    use strider_ir::IRBuilderExt;
     use strider_ir::node::ValueType;
-    use strider_ir::{IRViewer, IRWalker};
+    use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
     /// Build a tiny single-region function returning `IntConst(K)`.
@@ -683,7 +636,8 @@ mod tests {
             ConstantFold, DeadBranchElimination, KnownBits, LoadForward, OptimizerPipeline,
             PhiCollapse, RegionCollapse,
         };
-        use strider_ir::node::{IntPayload, NodeKind};
+        use strider_ir::IRViewer;
+        use strider_ir::node::NodeKind;
 
         let sp = rsleigh::Vn {
             addr_off: 0x20,
@@ -722,16 +676,12 @@ mod tests {
         p.add(LoadForward);
         p.run(&mut function, &mut OptCtx::new(None))?;
 
-        let ret = function
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
-            .expect("Return present");
-        let val = function.node_inputs(ret)[2];
+        let val = crate::test_support::return_value(function.graph())?;
         let kind = *function.kind_of_value(val);
         assert!(
-            matches!(kind, NodeKind::IntConst(IntPayload::Small(0x42))),
-            "load must forward to stored value, got {kind:?}"
+            matches!(kind, NodeKind::IntConst(_)) && function.int_const_u128(val) == Some(0x42),
+            "load must forward to stored value, got {kind:?} (value={:?})",
+            function.int_const_u128(val)
         );
         Ok(())
     }
@@ -780,7 +730,7 @@ mod tests {
         let arg0 = b.build_int_const(11u64, ValueType::I32)?;
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target, None)?;
+        b.build_call_cc(target, None)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
         let mut function = b.build()?;

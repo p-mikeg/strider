@@ -14,10 +14,8 @@
     clippy::unreachable
 )]
 
-use strider_ir::IRBuilderExt;
-use strider_ir::IntBinaryOp;
-use strider_ir::node::{IntPayload, NodeKind, ValueType as T};
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::node::{NodeKind, ValueType as T};
+use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
 use strider_opt::{EditFunction, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
@@ -51,14 +49,14 @@ fn add_zero_identity_fires_and_redirects() {
 
     // Find the Add root.
     let add_root = {
-        let m = Matcher::try_new(&fx).unwrap();
+        let m = Matcher::new(&fx);
         let pat = add(var(x), int_const(0u128)).into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert_eq!(hits.len(), 1);
         hits[0].root()
     };
 
-    let mut ctx = EditFunction::new(&mut fx).unwrap();
+    let mut ctx = EditFunction::new(&mut fx);
     let fired = rule(&mut ctx, add_root).unwrap().is_some();
     assert!(fired, "add-zero identity should fire");
 
@@ -70,10 +68,9 @@ fn add_zero_identity_fires_and_redirects() {
         .into_iter()
         .map(|inp| ctx.function().producer(inp))
         .all(|n| {
-            matches!(
-                ctx.function().node_kind(n),
-                NodeKind::IntConst(IntPayload::Small(7))
-            )
+            let f = ctx.function();
+            matches!(f.node_kind(n), NodeKind::IntConst(_))
+                && f.int_const_u128(f.node_outputs(n)[0]) == Some(7)
         });
     assert!(or_reads_const, "Or should now read the redirected constant");
 }
@@ -104,23 +101,22 @@ fn const_fold_rule_via_macro() {
     );
 
     let add_root = {
-        let m = Matcher::try_new(&fx).unwrap();
+        let m = Matcher::new(&fx);
         let pat = add(any_int_const().capture(c1), any_int_const().capture(c2)).into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert!(!hits.is_empty());
         hits[0].root()
     };
 
-    let mut ctx = EditFunction::new(&mut fx).unwrap();
+    let mut ctx = EditFunction::new(&mut fx);
     let fired = rule(&mut ctx, add_root).unwrap().is_some();
     assert!(fired);
 
     // A fresh IntConst(7) now exists.
     let has_seven = ctx.function().walk().any(|n| {
-        matches!(
-            ctx.function().node_kind(n),
-            NodeKind::IntConst(IntPayload::Small(7))
-        )
+        let f = ctx.function();
+        matches!(f.node_kind(n), NodeKind::IntConst(_))
+            && f.int_const_u128(f.node_outputs(n)[0]) == Some(7)
     });
     assert!(has_seven, "3 + 4 should fold to IntConst(7)");
 }
@@ -156,7 +152,7 @@ fn reassoc_rule_nests_computed_const_in_add() {
     );
 
     let outer_root = {
-        let m = Matcher::try_new(&fx).unwrap();
+        let m = Matcher::new(&fx);
         let pat = add(
             add(var(x), any_int_const().capture(c1)),
             any_int_const().capture(c2),
@@ -167,16 +163,15 @@ fn reassoc_rule_nests_computed_const_in_add() {
         hits[0].root()
     };
 
-    let mut ctx = EditFunction::new(&mut fx).unwrap();
+    let mut ctx = EditFunction::new(&mut fx);
     let fired = rule(&mut ctx, outer_root).unwrap().is_some();
     assert!(fired, "reassoc rule should fire on (x + 1) + 2");
 
     // The folded constant 1 + 2 == 3 now exists in the graph.
     let has_three = ctx.function().walk().any(|n| {
-        matches!(
-            ctx.function().node_kind(n),
-            NodeKind::IntConst(IntPayload::Small(3))
-        )
+        let f = ctx.function();
+        matches!(f.node_kind(n), NodeKind::IntConst(_))
+            && f.int_const_u128(f.node_outputs(n)[0]) == Some(3)
     });
     assert!(has_three, "(x + 1) + 2 should reassociate to x + 3");
 }
@@ -238,7 +233,7 @@ fn apply_rules_count_drives_rule_across_function() {
     .unwrap();
 
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
-    let mut ctx = EditFunction::new(&mut fx).unwrap();
+    let mut ctx = EditFunction::new(&mut fx);
     let fired = apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap() > 0;
     assert!(fired);
 }

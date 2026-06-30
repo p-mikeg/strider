@@ -28,18 +28,12 @@
 //! interpreter detects it via [`strider_pattern::is_skip`] and returns
 //! `Ok(false)`.
 
-use strider_ir::EditFunction;
-use strider_ir::IRViewer;
-use strider_ir::node::NodeId;
-use strider_ir::node::ValueId;
+use strider_ir::node::{NodeId, ValueId};
+use strider_ir::{EditFunction, IRViewer, IRWalker};
 
-use strider_pattern::Capture;
-use strider_pattern::MatchPat;
-use strider_pattern::Matcher;
-use strider_pattern::Pattern;
-use strider_pattern::TemplatePat;
-use strider_pattern::{Result, is_skip};
-use strider_pattern::{Template, instantiate};
+use strider_pattern::{
+    Capture, MatchPat, Matcher, Pattern, Result, Template, TemplatePat, instantiate, is_skip,
+};
 
 // ── rule constructors ────────────────────────────────────────────────
 
@@ -146,7 +140,7 @@ fn rewrite_rule_impl(
         //    This footprint is the rewrite's proof; the interior nodes get
         //    culled, so their asm-fingerprints must be carried onto the RHS.
         let (bindings, matched_nodes) = {
-            let matcher = Matcher::try_new(ctx.function())?;
+            let matcher = Matcher::new(ctx.function());
             match matcher.match_at(node, &lhs)? {
                 Some(m) => (m.bindings_clone(), m.matched_nodes().to_vec()),
                 None => return Ok(None),
@@ -154,8 +148,7 @@ fn rewrite_rule_impl(
         };
 
         // 2. Fetch root's single value output and its type.
-        let [root_value] = ctx.function().node_outputs_exact::<1>(node)?;
-        let root_ty = ctx.function().value_kind(root_value).as_value_or_err()?;
+        let (root_value, root_ty) = ctx.function().single_value_output(node)?;
 
         // 3. Materialise the RHS THROUGH the editing context, threading the
         //    matched footprint as the proof-node set so that EVERY freshly
@@ -330,9 +323,8 @@ mod tests {
     //! [`EditFunction::remove_region_predecessors`]). Both build a *built*
     //! `Function` (entry set) so `EditFunction::new` succeeds.
 
-    use strider_ir::EditFunction;
-    use strider_ir::node::{IntPayload, NodeKind, ValueType};
-    use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
+    use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{EditFunction, FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     // ── replace_value ────────────────────────────────────────────────
@@ -363,7 +355,7 @@ mod tests {
         let new_node = function.producer(new_value);
         let sink_node = function.producer(sink);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         let changed = ctx.replace_value(old_value, new_value).unwrap();
         assert!(changed, "a live use existed → changed");
 
@@ -416,7 +408,7 @@ mod tests {
 
         let new_node = function.producer(new_value);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         let changed = ctx.replace_value(old_value, new_value).unwrap();
         assert!(!changed, "no uses of old → changed must be false");
 
@@ -502,7 +494,7 @@ mod tests {
         let pred1_val = pre_phi_inputs[2];
 
         // Act: remove predecessor 0 via the EditFunction.
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.remove_region_predecessors(region, &[0])
             .expect("remove_region_predecessors must succeed");
 
@@ -550,7 +542,7 @@ mod tests {
         let k2_node = function.producer(k2);
         let add_node = function.producer(add);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         ctx.kill_node(add_node);
@@ -587,7 +579,7 @@ mod tests {
         let k_node = function.producer(k);
         let add_node = function.producer(add);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         assert!(ctx.is_live(k_node), "k starts live (reachable via add)");
@@ -625,7 +617,7 @@ mod tests {
         let add1_node = function.producer(add1);
         let add2_node = function.producer(add2);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // `add1` was unreachable, so `new`'s initial cull already removed it,
@@ -651,31 +643,26 @@ mod tests {
     /// creating a node with inputs marks it live but NOT a root.
     #[test]
     fn create_node_marks_live_and_tracks_root() {
-        let mut function = RegisterSet::new()
-            .build_fn_single_region()
-            .unwrap()
-            .build()
-            .unwrap();
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut function = {
+            // Terminate the entry region so the built function satisfies the
+            // single-successor control invariant (every control edge reaches a
+            // terminator).
+            let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+            b.build_return(None, &[]).unwrap();
+            b.build().unwrap()
+        };
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // Input-less const → live + root.
-        let k = ctx.create_node(
-            NodeKind::IntConst(IntPayload::Small(5)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let kv = ctx.node_outputs(k)[0];
+        use strider_ir::IRBuilderExt;
+        let kv = ctx.build_int_const(5u64, ValueType::I64).unwrap();
+        let k = ctx.producer(kv);
         assert!(ctx.is_live(k), "fresh const is live");
         assert!(ctx.is_root(k), "input-less const is a root");
 
         // Another const + an Add over both → Add is live, NOT a root.
-        let k2 = ctx.create_node(
-            NodeKind::IntConst(IntPayload::Small(6)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let k2v = ctx.node_outputs(k2)[0];
+        let k2v = ctx.build_int_const(6u64, ValueType::I64).unwrap();
         let add = ctx.create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [kv, k2v],
@@ -688,12 +675,15 @@ mod tests {
     /// `add_node_input` on a previously input-less node drops it from `roots`.
     #[test]
     fn add_node_input_drops_root_when_node_gains_input() {
-        let mut function = RegisterSet::new()
-            .build_fn_single_region()
-            .unwrap()
-            .build()
-            .unwrap();
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut function = {
+            // Terminate the entry region so the built function satisfies the
+            // single-successor control invariant (every control edge reaches a
+            // terminator).
+            let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+            b.build_return(None, &[]).unwrap();
+            b.build().unwrap()
+        };
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // A fresh, input-less Region → root.
@@ -731,7 +721,7 @@ mod tests {
         let new_node = function.producer(new);
         let k_node = function.producer(k);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // Sanity: new starts dead (unreachable) — culled by the initial cull.
@@ -777,7 +767,7 @@ mod tests {
         let k1_node = function.producer(k1);
         let k2_node = function.producer(k2);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         use cranelift_entity::EntityRef;
@@ -819,7 +809,7 @@ mod tests {
         let mut function = b.build().unwrap();
 
         let add_root = {
-            let m = Matcher::try_new(&function).unwrap();
+            let m = Matcher::new(&function);
             let pat = add(any_int_const().capture(c1), any_int_const().capture(c2)).into_pattern();
             let hits = m.find_all(&pat).unwrap();
             assert!(!hits.is_empty(), "3 + 4 add must match");
@@ -833,7 +823,7 @@ mod tests {
 
         // Mirror the pipeline construction path: build the ctx and run the
         // explicit initial cull so the cached live/roots state matches the run.
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, add_root).unwrap();
@@ -844,10 +834,8 @@ mod tests {
         // The freshly-built IntConst(7) must be live and discoverable via
         // the cache-based `live_of_kind` iterator (no graph walk).
         assert!(
-            matches!(
-                ctx.node_kind(new_node),
-                NodeKind::IntConst(IntPayload::Small(7))
-            ),
+            matches!(ctx.node_kind(new_node), NodeKind::IntConst(_))
+                && ctx.int_const_u128(new_value) == Some(7),
             "RHS built IntConst(7)"
         );
         assert!(
@@ -855,7 +843,7 @@ mod tests {
             "freshly-instantiated RHS node must be registered live"
         );
         assert!(
-            ctx.live_of_kind(|k| matches!(k, NodeKind::IntConst(IntPayload::Small(7))))
+            ctx.live_of_kind(|k| matches!(k, NodeKind::IntConst(_)))
                 .any(|n| n == new_node),
             "live_of_kind must surface the fresh node"
         );
@@ -877,8 +865,7 @@ mod tests {
     // compare SETS only.)
 
     use std::collections::BTreeSet;
-    use strider_pattern::template;
-    use strider_pattern::var;
+    use strider_pattern::{template, var};
 
     /// Assert the cached live/roots state equals a fresh entry-reachable
     /// walk, as SETS.  This is the reusable liveness invariant: every
@@ -910,7 +897,7 @@ mod tests {
     /// Find the single live root in the freshly built function (via the
     /// matcher).
     fn match_root<L: MatchPat + 'static>(function: &strider_ir::Function, lhs: L) -> super::NodeId {
-        let m = Matcher::try_new(function).unwrap();
+        let m = Matcher::new(function);
         let pat = lhs.into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert!(!hits.is_empty(), "LHS must match exactly once");
@@ -968,7 +955,7 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
@@ -1061,7 +1048,7 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
@@ -1116,7 +1103,7 @@ mod tests {
 
         let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
@@ -1168,7 +1155,7 @@ mod tests {
         let root = match_root(&function, add(var(x), int_const_match(0u64)));
         let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
         assert!(
             rule(&mut ctx, root).unwrap().is_some(),
@@ -1248,7 +1235,7 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
@@ -1316,7 +1303,7 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // Apply repeatedly to a fixed point (each call walks once).
@@ -1345,7 +1332,7 @@ mod tests {
         use strider_ir::node::ValueType as VT;
         use strider_pattern::load;
         use strider_pattern::matcher::KindSpec;
-        use strider_pattern::template::TemplateBuilder;
+        use strider_pattern::template::{TemplateBuilder, TemplateKind};
 
         // Build a function with a Load(addr) we will rewrite into
         // Load(addr, Store(addr, data, mem)) — forwarding nothing, just a
@@ -1371,7 +1358,9 @@ mod tests {
         let rhs = {
             let mut tb = TemplateBuilder::new();
             let a = tb.capture(addr_cap);
-            let data = tb.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(7))));
+            let data = tb.leaf(KindSpec::Any);
+            tb.set_template_kind(data, TemplateKind::FnIntConst(Box::new(|_| Ok(7u128))));
+            tb.set_value_ty(data, VT::I64);
             // The store needs an incoming memory token; use a fresh
             // InitialMemory leaf (input-less, becomes a root).
             let init_mem_node = tb.node(KindSpec::Exact(NodeKind::InitialMemory));
@@ -1394,7 +1383,7 @@ mod tests {
 
         let rule = rewrite_rule_runtime(lhs, rhs).unwrap();
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let fired = rule(&mut ctx, load_node).unwrap();
@@ -1472,7 +1461,7 @@ mod tests {
         let neg_node = function.producer(neg);
         let k_node = function.producer(k);
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         let new_v = ctx.build_int_const(9u64, ValueType::I64).unwrap();
@@ -1552,7 +1541,7 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
         // The dangling const was culled by the initial cull.

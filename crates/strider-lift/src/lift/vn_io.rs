@@ -9,8 +9,7 @@
 //! varnode's address space and delegates the REGISTER / UNIQUE cases there.
 
 use anyhow::anyhow;
-use strider_ir::IRBuilderExt;
-use strider_ir::VnTypeExt;
+use strider_ir::{IRBuilderExt, VnTypeExt};
 
 use super::FunctionLifter;
 use super::pcode_util::Result;

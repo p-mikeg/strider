@@ -3,8 +3,10 @@ use crate::IRViewer;
 use anyhow::anyhow;
 
 use crate::error::Result;
-use crate::node::{ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
-use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
+use crate::node::{
+    ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp, NodeKind, ValueKind, ValueType,
+};
+use cranelift_entity::EntityRef;
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
 /// Local mock-construction helper mirroring the convention-from-parts
@@ -69,8 +71,8 @@ fn producer_kind(b: &FunctionBuilder, value: ValueId) -> NodeKind {
 #[track_caller]
 fn assert_const_folded(b: &FunctionBuilder, value: ValueId, expected: u64) {
     assert_eq!(
-        b.get_as_unsigned_int(value).unwrap(),
-        Some(expected),
+        b.int_const_u128(value),
+        Some(u128::from(expected)),
         "folded constant must read back as {expected:#x}"
     );
     assert!(
@@ -100,7 +102,7 @@ fn get_unsigned_int_truncates_to_declared_width() -> Result<()> {
     let value = b.build_int_const(u8::MAX as u64 + 1, ValueType::I8)?;
     // The node was created with kind IntConst(256) but the type is I8,
     // so get_as_unsigned_int must mask it.
-    let val = b.get_as_unsigned_int(value)?;
+    let val = b.int_const_u128(value);
     assert_eq!(val, Some(0)); // 256 & 0xFF == 0
     Ok(())
 }
@@ -112,8 +114,14 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
     let bf = b.build_boolean_const(false);
     // Booleans are 1-bit integers: the single bit is the sign bit, so a
     // `true` (bit 1) sign-extends to -1, while its unsigned view is 1.
-    assert_eq!(b.get_as_int(bt)?, Some((1u64, -1i64)));
-    assert_eq!(b.get_as_int(bf)?, Some((0u64, 0i64)));
+    assert_eq!(
+        b.int_const_u128(bt).zip(b.int_const_i128(bt)),
+        Some((1u128, -1i128))
+    );
+    assert_eq!(
+        b.int_const_u128(bf).zip(b.int_const_i128(bf)),
+        Some((0u128, 0i128))
+    );
     Ok(())
 }
 
@@ -122,7 +130,7 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
 fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
     let add = non_const_add(&mut b, ValueType::I64)?;
-    assert_eq!(b.get_as_unsigned_int(add)?, None);
+    assert_eq!(b.int_const_u128(add), None);
     Ok(())
 }
 
@@ -134,7 +142,7 @@ fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
 #[test]
 fn get_signed_int_sign_extension_cases() -> Result<()> {
     // Rows: (label = former test name, raw value, expected signed read-back).
-    let cases: [(&str, u64, i64); 2] = [
+    let cases: [(&str, u64, i128); 2] = [
         (
             "get_signed_int_sign_extends_negative_u8",
             u8::MAX as u64,
@@ -143,13 +151,13 @@ fn get_signed_int_sign_extension_cases() -> Result<()> {
         (
             "get_signed_int_positive_u8_stays_positive",
             i8::MAX as u64,
-            i8::MAX as i64,
+            i8::MAX as i128,
         ),
     ];
     let mut b = empty_builder()?;
     for (label, raw, expected) in cases {
         let value = b.build_int_const(raw, ValueType::I8)?;
-        assert_eq!(b.get_as_signed_int(value)?, Some(expected), "{label}");
+        assert_eq!(b.int_const_i128(value), Some(expected), "{label}");
     }
     Ok(())
 }
@@ -208,23 +216,23 @@ fn truncate_emits_truncate_node_for_non_const() -> Result<()> {
 #[test]
 fn extend_const_folds_to_wider_const() -> Result<()> {
     // Rows: (label = former test name, extend op, expected folded value).
-    let cases: [(&str, ExtendOp, u64); 2] = [
+    let cases: [(&str, ExtendOp, u128); 2] = [
         (
             "zero_extend_const_folds_to_wider_const",
             ExtendOp::ZeroExtend,
-            u8::MAX as u64,
+            u8::MAX as u128,
         ),
         (
             "sign_extend_const_folds_negative_value",
             ExtendOp::SignExtend,
-            u32::MAX as u64,
+            u32::MAX as u128,
         ),
     ];
     for (label, op, expected) in cases {
         let mut b = empty_builder()?;
         let value = b.build_int_const(u8::MAX as u64, ValueType::I8)?;
         let extended = b.extend_if_needed(value, ValueType::I32, op)?;
-        assert_eq!(b.get_as_unsigned_int(extended)?, Some(expected), "{label}");
+        assert_eq!(b.int_const_u128(extended), Some(expected), "{label}");
         assert!(
             matches!(producer_kind(&b, extended), NodeKind::IntConst(_)),
             "{label}: const extend must fold to IntConst"
@@ -407,7 +415,11 @@ fn float_bits_to_int_folds_float_const_immediately() -> Result<()> {
     let int_value = b.build_float_bits_to_int(float_value, ValueType::I64)?;
     // Should be an IntConst, not a FloatBitsToInt node
     let kind = *b.function().kind_of_value(int_value);
-    assert_eq!(kind, NodeKind::IntConst(IntPayload::Small(bits)));
+    assert!(matches!(kind, NodeKind::IntConst(_)));
+    assert_eq!(
+        b.function().int_const_u128(int_value),
+        Some(u128::from(bits))
+    );
     Ok(())
 }
 
@@ -571,7 +583,7 @@ fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
     let ctrl_before = b.cur_region_control()?;
     let mem_before = b.cur_region_memory()?;
 
-    let (node, result) = b.build_call_other(
+    let (node, result) = b.build_call_other_abi(
         7,
         "NEON_rev64",
         None,
@@ -602,7 +614,7 @@ fn build_call_other_with_result_returns_typed_value() -> Result<()> {
     // container.
     let mut b = builder_with_region_tracking(vec![out_vn])?;
     let arg = b.build_int_const(0x42u64, ValueType::I64)?;
-    let (node, result) = b.build_call_other(
+    let (node, result) = b.build_call_other_abi(
         3,
         "cpuid",
         None,
@@ -629,7 +641,7 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
     // for what handle_call_other previously read as `node_outputs[1]`.
     let out_vn = reg_vn(0x20, 4); // 4-byte reg → I32 output
     let mut b = builder_with_region_tracking(vec![out_vn])?;
-    let (node, _) = b.build_call_other(
+    let (node, _) = b.build_call_other_abi(
         4,
         "cpuid",
         None,
@@ -706,7 +718,7 @@ fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
 
     // Call: memory token is input slot 1.
     let target = b.build_int_const(0x2000u64, ValueType::I64)?;
-    let call = b.build_call(target, None)?;
+    let call = b.build_call_cc(target, None)?;
     assert_eq!(
         b.function().memory_input_of(call),
         b.function().node_inputs(call).into_iter().nth(1),
@@ -724,7 +736,7 @@ fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
 fn build_call_other_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
-    let res = b.build_call_other(
+    let res = b.build_call_other_abi(
         0,
         "cpuid",
         None,
@@ -763,7 +775,7 @@ fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
     let wide = reg_vn(u64::MAX - 1, 8);
     let narrow = reg_vn(u64::MAX - 1, 4);
     // Must not panic; the wider varnode subsumes the narrower one.
-    let kept = dedup_overlapping_largest(&[wide, narrow]);
+    let kept = dedup_and_container_map(&[wide, narrow]).0;
     assert_eq!(
         kept,
         vec![wide],
@@ -771,13 +783,14 @@ fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
     );
 }
 
-/// A wide-typed (`I128`) constant whose value fits in `u64` is stored
-/// inline as `IntPayload::Small` — the width lives in the output
-/// `ValueKind`, so the wide interner is used only when the value exceeds
-/// `u64`.  Both forms read back at the declared width, and the two
-/// construction paths canonicalize to one node (dedup).
+/// Every value that fits `u128` is interned as `ConstValue::Bits` regardless
+/// of the declared width — the width lives in the output `ValueKind`, not the
+/// stored value.  Both a small and a large-but-`u128`-fitting I128 value read
+/// back at the declared width, and `build_int_const` / `build_int_const_limbs`
+/// canonicalize to one node for the same value (dedup).
 #[test]
-fn small_valued_wide_const_uses_small_payload() -> Result<()> {
+fn fitting_values_intern_as_bits() -> Result<()> {
+    use crate::const_value::ConstValue;
     let sp = reg_vn(0x7000, 8);
     let mut b = raw_builder(
         vec![],
@@ -789,39 +802,36 @@ fn small_valued_wide_const_uses_small_payload() -> Result<()> {
         strider_target::Endianness::Little,
     )?;
 
-    // Small I128 value → inline Small payload, read back as I128.
+    // Small I128 value → `Bits`, read back as I128.
     let small = b.build_int_const(5u64, ValueType::I128)?;
     let small_node = b.function().producer(small);
-    assert!(
-        matches!(
-            b.function().node_kind(small_node),
-            NodeKind::IntConst(IntPayload::Small(5))
-        ),
-        "small-valued I128 const must use the inline Small payload",
-    );
+    let NodeKind::IntConst(small_id) = *b.function().node_kind(small_node) else {
+        panic!("expected IntConst");
+    };
+    assert_eq!(b.function().const_value(small_id), &ConstValue::Bits(5));
     assert_eq!(b.function().int_const_u128(small), Some(5u128));
     assert_eq!(b.function().value_type(small)?, ValueType::I128);
 
-    // Value exceeding u64 → interned Wide payload.
+    // A value that exceeds u64 but still fits u128 → still `Bits`.
     let big_val: u128 = 1u128 << 100;
     let big = b.build_int_const(big_val, ValueType::I128)?;
     let big_node = b.function().producer(big);
-    assert!(
-        matches!(
-            b.function().node_kind(big_node),
-            NodeKind::IntConst(IntPayload::Wide(_))
-        ),
-        "I128 value > u64::MAX must intern as Wide",
-    );
+    let NodeKind::IntConst(big_id) = *b.function().node_kind(big_node) else {
+        panic!("expected IntConst");
+    };
+    assert_eq!(b.function().const_value(big_id), &ConstValue::Bits(big_val));
     assert_eq!(b.function().int_const_u128(big), Some(big_val));
 
-    // Canonical: build_int_const and build_int_const_wide agree for the same
-    // small value → the same node.
-    let small2 = b.build_int_const_wide(
-        crate::wide_const::WideConstStorage::I128(5),
-        ValueType::I128,
-    )?;
-    assert_eq!(b.function().producer(small2), small_node);
+    // Canonical: build_int_const_limbs for the same small value (limbs that fit
+    // u128) collapses to `Bits` and dedups to the same node.
+    let small2 = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::I256)?;
+    // I256 vs I128 differ by output width, so they are distinct NODES but the
+    // value (5) is interned once: same ConstId.
+    let small2_node = b.function().producer(small2);
+    let NodeKind::IntConst(small2_id) = *b.function().node_kind(small2_node) else {
+        panic!("expected IntConst");
+    };
+    assert_eq!(small2_id, small_id, "value 5 must share one ConstId");
     Ok(())
 }
 
@@ -995,7 +1005,7 @@ fn read_subregister_routes_through_container_map() -> Result<()> {
 /// `abi.implicit_reads` register itself (via `read_reg_vn`), appends those
 /// reads after the explicit args, emits the result + per-implicit-write
 /// clobber outputs, writes each clobber back to its register, and records
-/// the `CallDescriptor::CallOther(abi)` on the node — reproducing the IR
+/// the CallOther footprint inline — reproducing the IR
 /// the lifter used to assemble by hand.
 #[test]
 fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
@@ -1033,11 +1043,12 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
 
     let mem_before = b.cur_region_memory()?;
     let (node, result) =
-        b.build_call_other(5, "syscall", None, &[explicit], &abi, Some(out_vn), false)?;
+        b.build_call_other_abi(5, "syscall", None, &[explicit], &abi, Some(out_vn), false)?;
 
-    // Inputs: [ctrl, mem] ++ explicit_args ++ [read(RCX)].  No target.
+    // Inputs: [ctrl, mem] ++ [read(RCX)] ++ explicit_args.  Implicit reads
+    // come FIRST, then the explicit pcode operands.  No target.
     let inputs: Vec<ValueId> = b.function().node_inputs(node).into_iter().collect();
-    assert_eq!(inputs.len(), 4, "ctrl + mem + explicit + 1 implicit read");
+    assert_eq!(inputs.len(), 4, "ctrl + mem + 1 implicit read + explicit");
     assert!(matches!(
         b.function().value_kind(inputs[0]),
         ValueKind::Control
@@ -1046,23 +1057,20 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
         b.function().value_kind(inputs[1]),
         ValueKind::Memory
     ));
+    // inputs[2] is the read of RCX (implicit read, FIRST): the builder reads
+    // it via read_reg_vn, so it equals the current SSA value of the RCX
+    // variable (an I64-typed value edge — RCX is an 8-byte container).
     assert_eq!(
-        inputs[2], explicit,
-        "explicit arg precedes the implicit read"
-    );
-    // inputs[3] is the read of RCX: the builder reads it via read_reg_vn,
-    // so it equals the current SSA value of the RCX variable (an I64-typed
-    // value edge — RCX is an 8-byte container).
-    assert_eq!(
-        inputs[3],
+        inputs[2],
         b.read_variable(&rcx)?,
-        "last input must be the implicit read of register RCX",
+        "implicit read of register RCX precedes the explicit arg",
     );
     assert_eq!(
-        b.function().value_kind(inputs[3]),
+        b.function().value_kind(inputs[2]),
         ValueKind::Typed(ValueType::I64),
         "RCX read is I64-typed (8-byte container)",
     );
+    assert_eq!(inputs[3], explicit, "explicit arg follows the implicit read");
 
     // Outputs: [ctrl, mem, result(tagged out_vn), RAX, RDX].
     let outs: Vec<ValueId> = b.function().node_outputs(node).to_vec();
@@ -1107,16 +1115,8 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
     let mem_after = b.cur_region_memory()?;
     assert_ne!(mem_before, mem_after, "clobbers_memory → memory advances");
 
-    // The vn-resolved ABI footprint is recorded on the node.
-    match b.function().call_descriptor(node) {
-        Some(crate::CallDescriptor::CallOther(recorded)) => {
-            assert_eq!(
-                *recorded, abi,
-                "recorded footprint must equal the input abi"
-            );
-        }
-        other => panic!("expected CallDescriptor::CallOther, got {other:?}"),
-    }
+    // The ABI footprint is consumed inline (clobbers/reads/memory checked
+    // above); it is not stored, so only the user-op name is recorded.
     assert_eq!(b.function().call_other_name(node), Some("syscall"));
     Ok(())
 }
@@ -1134,7 +1134,7 @@ fn build_call_other_rejects_untracked_implicit_write() -> Result<()> {
         implicit_writes: vec![untracked],
         clobbers_memory: false,
     };
-    let res = b.build_call_other(11, "bogus", None, &[], &abi, None, false);
+    let res = b.build_call_other_abi(11, "bogus", None, &[], &abi, None, false);
     assert!(res.is_err(), "untracked implicit-write register must error");
     Ok(())
 }
@@ -1213,7 +1213,7 @@ fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
     // the no-return classification.
     let mut b = builder_with_region()?;
     let (node, result) =
-        b.build_call_other(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
+        b.build_call_other_abi(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
     assert!(result.is_none(), "no output vn -> no ret-val output");
     let outs: Vec<_> = b.function().node_outputs(node).to_vec();
     assert_eq!(
@@ -1236,7 +1236,7 @@ fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
 #[test]
 fn build_return_self_terminates() -> Result<()> {
     // build_return owns its own region termination — no external
-    // mark_cur_region_terminated call is needed.  After build_return
+    // termination call is needed.  After build_return
     // returns, the region is already closed and cur_region_control() errors.
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
@@ -1253,9 +1253,9 @@ fn build_return_self_terminates() -> Result<()> {
 #[test]
 fn build_call_other_terminate_true_closes_region() -> Result<()> {
     // build_call_other with terminate=true (the NoReturn class) must
-    // close the region on its own — no external mark_cur_region_terminated.
+    // close the region on its own — no external termination call.
     let mut b = builder_with_region()?;
-    b.build_call_other(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
+    b.build_call_other_abi(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_err(),
@@ -1270,7 +1270,7 @@ fn build_call_other_terminate_false_keeps_region_open() -> Result<()> {
     // leave the region open — control advances to the CallOther's Control
     // output, but the region is still live.
     let mut b = builder_with_region()?;
-    b.build_call_other(0, "cpuid", None, &[], &empty_call_other_abi(), None, false)?;
+    b.build_call_other_abi(0, "cpuid", None, &[], &empty_call_other_abi(), None, false)?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_ok(),
@@ -1488,7 +1488,7 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
 
     let pre_sp = b.read_variable(&sp)?;
     let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call(target, None)?;
+    b.build_call_cc(target, None)?;
 
     let post_sp = b.read_variable(&sp)?;
     assert_ne!(
@@ -1510,9 +1510,10 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
     let (lhs, rhs) = (inputs[0], inputs[1]);
     assert_eq!(lhs, pre_sp, "Add consumes the pre-call SP output");
     let rhs_kind = *b.function().kind_of_value(rhs);
+    assert!(matches!(rhs_kind, NodeKind::IntConst(_)));
     assert_eq!(
-        rhs_kind,
-        NodeKind::IntConst(IntPayload::Small(8)),
+        b.function().int_const_u128(rhs),
+        Some(8),
         "rhs must be IntConst(ret_stack_pop) = 8"
     );
     Ok(())
@@ -1540,7 +1541,7 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
 
     let pre_sp = b.read_variable(&sp)?;
     let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call(target, None)?;
+    b.build_call_cc(target, None)?;
 
     let post_sp = b.read_variable(&sp)?;
     // No Add node was emitted — SP is unchanged.
@@ -1683,9 +1684,13 @@ fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
         "convert_to_int_if_needed must produce the requested int type"
     );
     let coerced_node = b.function().producer(coerced);
-    assert_eq!(
+    assert!(matches!(
         b.function().node_kind(coerced_node),
-        &NodeKind::IntConst(IntPayload::Small(1)),
+        NodeKind::IntConst(_)
+    ));
+    assert_eq!(
+        b.function().int_const_u128(coerced),
+        Some(1),
         "constant I1 → I8 must fold to IntConst(1) typed I8"
     );
     Ok(())
@@ -1726,9 +1731,9 @@ fn ret_val_vars_returns_declared_reg_verbatim() -> Result<()> {
         strider_target::Endianness::Little,
     )?;
     assert_eq!(
-        b.ret_val_vars(),
+        b.function().ret_val_regs(),
         &[f0_4byte],
-        "ret_val_vars returns the declared ret reg verbatim (no projection)"
+        "ret_val_regs returns the declared ret reg verbatim (no projection)"
     );
     Ok(())
 }
@@ -1938,7 +1943,7 @@ fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
     let f = b.build()?;
 
     // Find the Return node and inspect its value inputs (skip ctrl + mem).
-    let entry = f.entry().expect("built function has an entry");
+    let entry = f.entry();
     let ret = crate::walk::walk_graph(f.graph(), entry)
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
         .expect("function-return path emits a Return node");
@@ -2049,7 +2054,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let count_before = b.function().graph().all_node_ids().count();
     // Mutate via graph_mut() — create an IntConst node directly.
     let node_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(42_u64)),
+        NodeKind::IntConst(crate::const_value::ConstId::new((42_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -2062,7 +2067,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     );
     assert!(matches!(
         b.function().node_kind(node_id),
-        NodeKind::IntConst(IntPayload::Small(42))
+        NodeKind::IntConst(_)
     ));
     Ok(())
 }
@@ -2076,10 +2081,7 @@ fn entry_returns_recorded_entry_node_id() -> Result<()> {
     let entry_via_accessor = b.entry();
     // The builder delegates entry() to the underlying Function's entry,
     // which is set atomically in build_entry().
-    let entry_via_function = b
-        .function()
-        .entry()
-        .expect("entry is always set after new()");
+    let entry_via_function = b.function().entry();
     assert_eq!(
         entry_via_accessor, entry_via_function,
         "FunctionBuilder::entry() must match Function::entry()"
@@ -2103,7 +2105,7 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     b.set_lift_addr(None);
     // Mutate via graph_mut() in the same way an opt pass would.
     let extra = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(99_u64)),
+        NodeKind::IntConst(crate::const_value::ConstId::new((99_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -2128,14 +2130,14 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
     let mut b = empty_builder()?;
     // First mutation: create constant A.
     let a = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(1_u64)),
+        NodeKind::IntConst(crate::const_value::ConstId::new((1_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
     // Second mutation: create constant B.  The second call sees the first
     // mutation (the underlying graph counter advanced) — node ids must differ.
     let b_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(IntPayload::Small(2_u64)),
+        NodeKind::IntConst(crate::const_value::ConstId::new((2_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -2144,13 +2146,10 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
         "consecutive create_node calls must produce distinct ids"
     );
     // Both nodes are in the arena.
-    assert!(matches!(
-        b.function().node_kind(a),
-        NodeKind::IntConst(IntPayload::Small(1))
-    ));
+    assert!(matches!(b.function().node_kind(a), NodeKind::IntConst(_)));
     assert!(matches!(
         b.function().node_kind(b_id),
-        NodeKind::IntConst(IntPayload::Small(2))
+        NodeKind::IntConst(_)
     ));
     Ok(())
 }
@@ -2204,97 +2203,97 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
     Ok(())
 }
 
-/// A genuinely-wide (> u64) constant built via `build_int_const_wide`
-/// stores an interned `Wide` payload whose interner lookup returns the
-/// original storage value.
+/// A genuinely-wide (> u128) constant built via `build_int_const_limbs`
+/// stores an interned `Wide` value whose interner lookup returns the
+/// original limbs.
 #[test]
-fn build_int_const_wide_round_trips_through_graph() -> Result<()> {
-    use crate::wide_const::WideConstStorage;
-    // Rows: (label = former test name, storage, declared type).
-    let cases: [(&str, WideConstStorage, ValueType); 2] = [
+fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
+    use crate::const_value::ConstValue;
+    // Rows: (label, limbs, declared type). High limbs set ⇒ genuinely Wide.
+    let cases: [(&str, Vec<u64>, ValueType); 2] = [
         (
-            "build_int_const_wide_u256_round_trips_through_graph",
-            WideConstStorage::I256([0x1234, 0xabcd, 0, 0]),
+            "u256_round_trips_through_graph",
+            vec![0x1234, 0xabcd, 0, 0x8000_0000_0000_0000],
             ValueType::I256,
         ),
         (
-            "build_int_const_wide_u512_round_trips_through_graph",
-            WideConstStorage::I512([1, 2, 3, 4, 5, 6, 7, 8]),
+            "u512_round_trips_through_graph",
+            vec![1, 2, 3, 4, 5, 6, 7, 8],
             ValueType::I512,
         ),
     ];
     let mut b = builder_with_region()?;
-    for (label, v, ty) in cases {
-        let value = b.build_int_const_wide(v.clone(), ty)?;
+    for (label, limbs, ty) in cases {
+        let value = b.build_int_const_limbs(&limbs, ty)?;
         let node = b.function().producer(value);
-        let NodeKind::IntConst(IntPayload::Wide(id)) = b.function().node_kind(node) else {
+        let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
             panic!(
-                "{label}: expected IntConst(Wide), got {:?}",
+                "{label}: expected IntConst, got {:?}",
                 b.function().node_kind(node)
             );
         };
-        assert_eq!(b.function().wide_const(*id), &v, "{label}");
+        assert_eq!(
+            b.function().const_value(id),
+            &ConstValue::Wide(limbs.into_boxed_slice()),
+            "{label}"
+        );
     }
     Ok(())
 }
 
-/// `int_const_i64` reads a canonical `IntConst` sign-extended from its
+/// `int_const_i128` reads a canonical `IntConst` sign-extended from its
 /// declared width; it does NOT peel `Neg`/`Truncate`/`Extend` wrappers
 /// (`ConstantFold` collapses those upstream), and returns `None` for a
 /// non-constant value.
 #[test]
-fn int_const_i64_sign_extends_and_rejects_non_const() -> Result<()> {
+fn int_const_i128_sign_extends_and_rejects_non_const() -> Result<()> {
     let mut b = builder_with_region()?;
     // 0xFFFF_FFFC at I32 reads as -4 (sign-extended from its declared width).
     let neg = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
-    assert_eq!(b.function().int_const_i64(neg), Some(-4));
+    assert_eq!(b.function().int_const_i128(neg), Some(-4));
     // A plain positive constant.
     let pos = b.build_int_const(7u64, ValueType::I32)?;
-    assert_eq!(b.function().int_const_i64(pos), Some(7));
+    assert_eq!(b.function().int_const_i128(pos), Some(7));
     // A non-`IntConst` value (an Add of the two) yields `None`.
     let sum = b.build_int_binary_operation(neg, pos, IntBinaryOp::Add, ValueType::I32)?;
-    assert_eq!(b.function().int_const_i64(sum), None);
+    assert_eq!(b.function().int_const_i128(sum), None);
     Ok(())
 }
 
 #[test]
-fn build_int_const_wide_dedups_repeated_values() -> Result<()> {
+fn build_int_const_limbs_dedups_repeated_values() -> Result<()> {
     let mut b = builder_with_region()?;
-    let v = crate::wide_const::WideConstStorage::I256([42, 0, 0, 0]);
-    let o1 = b.build_int_const_wide(v.clone(), ValueType::I256)?;
-    let o2 = b.build_int_const_wide(v, ValueType::I256)?;
+    // High limb set ⇒ genuinely Wide; repeated builds must dedup.
+    let limbs = [42u64, 0, 0, 0x8000_0000_0000_0000];
+    let o1 = b.build_int_const_limbs(&limbs, ValueType::I256)?;
+    let o2 = b.build_int_const_limbs(&limbs, ValueType::I256)?;
     let n1 = b.function().producer(o1);
     let n2 = b.function().producer(o2);
     assert_eq!(n1, n2, "structural dedup must reuse the same NodeId");
     Ok(())
 }
 
-/// Regression: `build_int_const` must reject `I512` (and `I256`) because
-/// `IntConst` stores the value in `u128`.  Without the guard, the resulting
-/// `IntConst` would claim a width its storage cannot represent — silent type
-/// confusion.
+/// `build_int_const` now covers I1..I512: a value that fits `u128` interns as
+/// `Bits` regardless of declared width, so I256/I512 are accepted (no longer
+/// rejected).
 #[test]
-fn build_int_const_rejects_u256_and_u512() -> Result<()> {
+fn build_int_const_accepts_u256_and_u512() -> Result<()> {
     let mut b = builder_with_region()?;
-    let err256 = b
-        .build_int_const(0u64, ValueType::I256)
-        .expect_err("I256 must be rejected — use build_int_const_wide");
-    assert!(err256.to_string().contains("I256"), "got: {err256}");
-    let err512 = b
-        .build_int_const(0u64, ValueType::I512)
-        .expect_err("I512 must be rejected — use build_int_const_wide");
-    assert!(err512.to_string().contains("I512"), "got: {err512}");
+    let v256 = b.build_int_const(0u64, ValueType::I256)?;
+    assert_eq!(b.function().value_type(v256)?, ValueType::I256);
+    let v512 = b.build_int_const(7u64, ValueType::I512)?;
+    assert_eq!(b.function().value_type(v512)?, ValueType::I512);
+    assert_eq!(b.function().int_const_u128(v512), Some(7));
     Ok(())
 }
 
 #[test]
-fn build_int_const_wide_rejects_non_wide_output_type() -> Result<()> {
+fn build_int_const_limbs_rejects_non_wide_output_type() -> Result<()> {
     // I64 is not a valid wide-const output type; I80/I128/I256/I512 are.
     let mut b = builder_with_region()?;
-    let v = crate::wide_const::WideConstStorage::I256([0; 4]);
     let err = b
-        .build_int_const_wide(v, ValueType::I64)
-        .expect_err("I64 must be rejected by build_int_const_wide");
+        .build_int_const_limbs(&[0; 4], ValueType::I64)
+        .expect_err("I64 must be rejected by build_int_const_limbs");
     assert!(
         err.to_string().contains("non-wide output type"),
         "got: {err}"
@@ -2303,28 +2302,28 @@ fn build_int_const_wide_rejects_non_wide_output_type() -> Result<()> {
 }
 
 #[test]
-fn build_int_const_wide_rejects_storage_byte_size_mismatch() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let v_256 = crate::wide_const::WideConstStorage::I256([0; 4]);
-    let err = b
-        .build_int_const_wide(v_256, ValueType::I512)
-        .expect_err("I256 storage with I512 output must be rejected");
-    assert!(err.to_string().contains("byte_size"), "got: {err}");
-    Ok(())
-}
-
-#[test]
 fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     use crate::validate::validate;
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let v = crate::wide_const::WideConstStorage::I256([0x1234_5678, 0, 0, 0]);
-    let value = b.build_int_const_wide(v, ValueType::I256)?;
+    // Genuinely-wide value (high limb set).
+    let value =
+        b.build_int_const_limbs(&[0x1234_5678, 0, 0, 0x8000_0000_0000_0000], ValueType::I256)?;
     b.set_lift_addr(None);
     // Wire the wide const into the reachable spine via Return[ctrl, mem, value].
+    // Chain control off the entry Region (which already consumes Entry's
+    // Control) rather than Entry directly: feeding this Return from Entry's
+    // Control would fan it out to two consumers (the region AND the Return),
+    // which the single-successor control invariant rejects.
+    let region_node = b
+        .function()
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(b.function().node_kind(*n), NodeKind::Region))
+        .unwrap();
     let entry_ctrl = b
         .function()
-        .node_outputs(b.entry())
+        .node_outputs(region_node)
         .iter()
         .copied()
         .next()
@@ -2351,20 +2350,19 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     b.function_mut()
         .extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
     let function = b.function();
-    validate(function)
-        .expect("IntConst(Wide(...)) built via intern_wide_const must validate clean");
+    validate(function).expect("genuinely-wide IntConst must validate clean");
     Ok(())
 }
 
 #[test]
 fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
-    use crate::wide_const::WideConstStorage;
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let _live = b.build_int_const_wide(WideConstStorage::I256([1; 4]), ValueType::I256)?;
+    // High limb set ⇒ genuinely Wide values (distinct, interned separately).
+    let _live = b.build_int_const_limbs(&[1, 1, 1, 1], ValueType::I256)?;
     // Build an additional wide const that we'll never wire into the
     // reachable graph — `compact()` should drop it.
-    let _zombie = b.build_int_const_wide(WideConstStorage::I256([2; 4]), ValueType::I256)?;
+    let _zombie = b.build_int_const_limbs(&[2, 2, 2, 2], ValueType::I256)?;
     b.set_lift_addr(None);
     // Zombie isn't referenced by `_live` and the only Return walk-spine
     // visits `_live` (we wire it through Return to keep it reachable).
@@ -2381,9 +2379,19 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         .copied()
         .next()
         .unwrap();
+    // Chain control off the entry Region (which already consumes Entry's
+    // Control) rather than Entry directly: feeding this Return from Entry's
+    // Control would fan it out to two consumers (the region AND the Return),
+    // which the single-successor control invariant rejects.
+    let region_node = b
+        .function()
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(b.function().node_kind(*n), NodeKind::Region))
+        .unwrap();
     let entry_ctrl = b
         .function()
-        .node_outputs(b.entry())
+        .node_outputs(region_node)
         .iter()
         .copied()
         .next()
@@ -2396,16 +2404,16 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     b.function_mut()
         .extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
 
-    let pre = b.function().wide_const_interner.len();
+    let pre = b.function().const_interner.len();
     assert_eq!(
         pre, 2,
-        "before compact, both wide consts are in the side-table"
+        "before compact, both wide consts are in the interner"
     );
 
     let mut bfg = b.build()?;
     bfg.compact()?;
 
-    let post = bfg.wide_const_interner.len();
+    let post = bfg.const_interner.len();
     assert_eq!(
         post, 1,
         "compact must drop the unreferenced zombie wide const; got {post} entries"
@@ -2458,7 +2466,7 @@ mod build_call_with_cc {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
-        b.build_call(addr, None).unwrap();
+        b.build_call_cc(addr, None).unwrap();
         // The Call output kinds match `build_call(addr, None)` exactly: Control,
         // Memory, then one slot per `call_clobbered_variables` entry.
         let function = b.function();
@@ -2471,9 +2479,10 @@ mod build_call_with_cc {
             function.node_outputs(call_node).len() >= 2,
             "Control + Memory at minimum"
         );
-        assert!(
-            function.call_cc(call_node).is_none(),
-            "no override means no recorded call_cc"
+        assert_eq!(
+            function.get_cc(call_node),
+            function.default_cc(),
+            "no override → effective CC is the function default"
         );
     }
 
@@ -2516,7 +2525,7 @@ mod build_call_with_cc {
         };
 
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
-        b.build_call(addr, Some(&override_cc)).unwrap();
+        b.build_call_cc(addr, Some(&override_cc)).unwrap();
         let function = b.function();
         let call_node = function
             .graph()
@@ -2537,9 +2546,10 @@ mod build_call_with_cc {
             4,
             "fentry-style Call takes no args (ctrl, mem, target, sp)"
         );
-        assert!(
-            function.call_cc(call_node).is_some(),
-            "override CC is recorded even when it clobbers nothing"
+        assert_eq!(
+            function.get_cc(call_node),
+            &override_cc,
+            "override CC is the effective CC even when it clobbers nothing"
         );
         // No clobber outputs → no value_vn clobber tags on this Call.
         assert!(
@@ -2578,7 +2588,7 @@ mod build_call_with_cc {
         let arg0_value = b.read_variable(&rdi).unwrap();
 
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
-        b.build_call(addr, None).unwrap();
+        b.build_call_cc(addr, None).unwrap();
 
         let function = b.function();
         let call_node = function
@@ -2619,7 +2629,7 @@ mod build_call_with_cc {
 
         // First mutation: synthesize a fresh IntConst via graph_mut().
         let r1 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(1_u64)),
+            NodeKind::IntConst(crate::const_value::ConstId::new((1_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -2627,7 +2637,7 @@ mod build_call_with_cc {
 
         // Second mutation: another synthesis; the first node must persist.
         let r2 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(IntPayload::Small(2_u64)),
+            NodeKind::IntConst(crate::const_value::ConstId::new((2_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -2635,14 +2645,8 @@ mod build_call_with_cc {
         assert_ne!(r1, r2, "consecutive create_node calls produce distinct ids");
 
         // Both synthesized nodes are live in the arena.
-        assert!(matches!(
-            b.function().node_kind(r1),
-            NodeKind::IntConst(IntPayload::Small(1))
-        ));
-        assert!(matches!(
-            b.function().node_kind(r2),
-            NodeKind::IntConst(IntPayload::Small(2))
-        ));
+        assert!(matches!(b.function().node_kind(r1), NodeKind::IntConst(_)));
+        assert!(matches!(b.function().node_kind(r2), NodeKind::IntConst(_)));
     }
 
     /// After driving the builder through several rounds of in-place
@@ -2666,7 +2670,7 @@ mod build_call_with_cc {
         // unreachable nodes, so detached extras are still valid.
         for k in 1u64..=5 {
             b.function_mut().graph_mut().create_node(
-                NodeKind::IntConst(IntPayload::Small(k)),
+                NodeKind::IntConst(crate::const_value::ConstId::new((k) as usize)),
                 std::iter::empty(),
                 [ValueKind::Typed(ValueType::I64)],
             );
@@ -2736,7 +2740,7 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let addr = b.build_int_const(0x1234_u64, ValueType::I64)?;
-    b.build_call(addr, None)?;
+    b.build_call_cc(addr, None)?;
     b.set_lift_addr(None);
 
     let f = b.function();
@@ -2775,90 +2779,81 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 
 // ── create_node_attributed canonicalisation edge cases ────────────────────
 
-/// I80 small→wide promotion parity: a small-valued I80 constant minted via
-/// `build_int_const` and via the explicit wide path (`build_int_const_wide`)
-/// canonicalise to ONE node holding the inline `Small` payload (the width
-/// lives in the output type).  Mirrors the I128 parity pin in
-/// `small_valued_wide_const_uses_small_payload`.
+/// I80 value parity: a small-valued I80 constant is interned as `Bits` (every
+/// fitting value is `Bits`), reads back at the declared width, and an equal
+/// value re-built dedups to one node.
 #[test]
-fn small_valued_i80_const_promotion_parity() -> Result<()> {
+fn small_valued_i80_const_interns_as_bits() -> Result<()> {
+    use crate::const_value::ConstValue;
     let mut b = empty_builder()?;
     let via_small = b.build_int_const(5u64, ValueType::I80)?;
     let node = b.function().producer(via_small);
-    assert!(
-        matches!(
-            b.function().node_kind(node),
-            NodeKind::IntConst(IntPayload::Small(5))
-        ),
-        "small-valued I80 const must use the inline Small payload, got {:?}",
-        b.function().node_kind(node)
-    );
+    let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
+        panic!("expected IntConst");
+    };
+    assert_eq!(b.function().const_value(id), &ConstValue::Bits(5));
     assert_eq!(b.function().value_type(via_small)?, ValueType::I80);
     assert_eq!(b.function().int_const_u128(via_small), Some(5u128));
 
-    let via_wide =
-        b.build_int_const_wide(crate::wide_const::WideConstStorage::I80(5), ValueType::I80)?;
+    let again = b.build_int_const(5u64, ValueType::I80)?;
     assert_eq!(
-        b.function().producer(via_wide),
+        b.function().producer(again),
         node,
-        "build_int_const and the wide path must dedup to one node"
+        "equal I80 value must dedup to one node"
     );
     Ok(())
 }
 
-/// I256 parity: `build_int_const` rejects I256, so the small-valued paths
-/// are `build_int_const_wide` and a raw `IntConst(Wide(id))` payload handed
-/// straight to `create_node_attributed`.  Both canonicalise the in-`u64`
-/// value down to the inline `Small` payload and dedup to one node.
+/// I256 parity: limbs that fit `u128` canonicalise to `ConstValue::Bits`, so a
+/// small-valued I256 constant built via `build_int_const_limbs` and one built
+/// via `build_int_const` at the same value share ONE `ConstId` (distinct nodes
+/// only when the declared width differs).
 #[test]
-fn small_valued_i256_wide_payload_demotes_to_small() -> Result<()> {
-    use crate::wide_const::WideConstStorage;
+fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
+    use crate::const_value::ConstValue;
     let mut b = empty_builder()?;
-    let via_builder =
-        b.build_int_const_wide(WideConstStorage::I256([5, 0, 0, 0]), ValueType::I256)?;
-    let node = b.function().producer(via_builder);
-    assert!(
-        matches!(
-            b.function().node_kind(node),
-            NodeKind::IntConst(IntPayload::Small(5))
-        ),
-        "small-valued I256 wide const must demote to the Small payload, got {:?}",
-        b.function().node_kind(node)
-    );
-    assert_eq!(b.function().value_type(via_builder)?, ValueType::I256);
-
-    // A raw Wide payload for the same value canonicalises to the same node.
-    let id = b
-        .function_mut()
-        .intern_wide_const(WideConstStorage::I256([5, 0, 0, 0]));
-    let via_raw_wide = b.function_mut().create_node_attributed(
-        NodeKind::IntConst(IntPayload::Wide(id)),
-        [],
-        [ValueKind::Typed(ValueType::I256)],
-        &[],
-    );
+    let via_limbs = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::I256)?;
+    let node = b.function().producer(via_limbs);
+    let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
+        panic!("expected IntConst");
+    };
     assert_eq!(
-        via_raw_wide, node,
-        "raw Wide payload must canonicalise onto the Small node"
+        b.function().const_value(id),
+        &ConstValue::Bits(5),
+        "small-valued I256 limbs must canonicalise to Bits, got {:?}",
+        b.function().const_value(id)
     );
+    assert_eq!(b.function().value_type(via_limbs)?, ValueType::I256);
+
+    // The same value at a different width shares the ConstId (one interned 5)
+    // but is a distinct node (different output width).
+    let via_i64 = b.build_int_const(5u64, ValueType::I64)?;
+    let i64_node = b.function().producer(via_i64);
+    let NodeKind::IntConst(i64_id) = *b.function().node_kind(i64_node) else {
+        panic!("expected IntConst");
+    };
+    assert_eq!(i64_id, id, "value 5 must share one ConstId");
+    assert_ne!(i64_node, node, "different widths must be distinct nodes");
     Ok(())
 }
 
-/// An `IntConst` whose payload exceeds its declared 1-bit width is masked at
-/// construction: payload 3 at I1 becomes `Small(1)`, and therefore dedups
-/// with the canonical boolean `true` constant.
+/// An `IntConst` whose value exceeds its declared 1-bit width is masked at
+/// interning: value 3 at I1 becomes 1, and therefore dedups with the canonical
+/// boolean `true` constant.
 #[test]
 fn i1_const_payload_masks_to_one_bit() -> Result<()> {
+    use crate::const_value::ConstValue;
     let mut b = empty_builder()?;
     let v = b.build_int_const(3u64, ValueType::I1)?;
     let node = b.function().producer(v);
-    assert!(
-        matches!(
-            b.function().node_kind(node),
-            NodeKind::IntConst(IntPayload::Small(1))
-        ),
-        "payload 3 at I1 must mask to 1, got {:?}",
-        b.function().node_kind(node)
+    let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
+        panic!("expected IntConst");
+    };
+    assert_eq!(
+        b.function().const_value(id),
+        &ConstValue::Bits(1),
+        "value 3 at I1 must mask to 1, got {:?}",
+        b.function().const_value(id)
     );
     let t = b.build_boolean_const(true);
     assert_eq!(
@@ -2873,17 +2868,20 @@ fn i1_const_payload_masks_to_one_bit() -> Result<()> {
 /// I64)` keeps every bit.
 #[test]
 fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
+    use crate::const_value::ConstValue;
     let mut b = empty_builder()?;
     let v = b.build_int_const(u64::MAX, ValueType::I64)?;
-    assert!(
-        matches!(
-            producer_kind(&b, v),
-            NodeKind::IntConst(IntPayload::Small(u64::MAX))
-        ),
+    let node = b.function().producer(v);
+    let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
+        panic!("expected IntConst");
+    };
+    assert_eq!(
+        b.function().const_value(id),
+        &ConstValue::Bits(u128::from(u64::MAX)),
         "all 64 bits must survive the width mask, got {:?}",
-        producer_kind(&b, v)
+        b.function().const_value(id)
     );
-    assert_eq!(b.get_as_unsigned_int(v)?, Some(u64::MAX));
+    assert_eq!(b.int_const_u128(v), Some(u128::from(u64::MAX)));
     Ok(())
 }
 
@@ -2928,7 +2926,7 @@ fn write_subregister_merge_preserves_container_high_bytes() -> Result<()> {
     // Both Or operands are And nodes; their constant operands are exactly
     // the keep-mask (!0xFF — high bytes preserved), the byte mask (0xFF),
     // and the written value (0xAB, zero-extend folded to a const).
-    let mut consts: Vec<u64> = Vec::new();
+    let mut consts: Vec<u128> = Vec::new();
     let mut saw_initial_container = false;
     for and_val in [lhs, rhs] {
         assert_eq!(
@@ -2937,7 +2935,7 @@ fn write_subregister_merge_preserves_container_high_bytes() -> Result<()> {
             "each Or operand is an And"
         );
         for input in b.function().node_inputs(b.function().producer(and_val)) {
-            if let Some(c) = b.function().int_const_val(input) {
+            if let Some(c) = b.function().int_const_u128(input) {
                 consts.push(c);
             }
             if input == initial_rax {
@@ -3095,11 +3093,11 @@ fn write_high_byte_subregister_positions_mask_and_shift() -> Result<()> {
 
     // Keep-mask preserves the low byte (bits 0..8) and high 6 bytes; only
     // bits 8..16 are cleared.  !0xFF00 in I64 coordinates.
-    let preserve_consts: Vec<u64> = b
+    let preserve_consts: Vec<u128> = b
         .function()
         .node_inputs(b.function().producer(preserve_arm))
         .into_iter()
-        .filter_map(|v| b.function().int_const_val(v))
+        .filter_map(|v| b.function().int_const_u128(v))
         .collect();
     assert_eq!(
         preserve_consts,
@@ -3113,13 +3111,13 @@ fn write_high_byte_subregister_positions_mask_and_shift() -> Result<()> {
     let [im_a, im_b] = b
         .function()
         .node_inputs_exact::<2>(b.function().producer(insert_arm))?;
-    let (reg_mask_val, shifted_val) = if b.function().int_const_val(im_a).is_some() {
+    let (reg_mask_val, shifted_val) = if b.function().int_const_u128(im_a).is_some() {
         (im_a, im_b)
     } else {
         (im_b, im_a)
     };
     assert_eq!(
-        b.function().int_const_val(reg_mask_val),
+        b.function().int_const_u128(reg_mask_val),
         Some(0xFF00),
         "byte mask must be positioned at bits 8..16"
     );
@@ -3132,12 +3130,12 @@ fn write_high_byte_subregister_positions_mask_and_shift() -> Result<()> {
         .function()
         .node_inputs_exact::<2>(b.function().producer(shifted_val))?;
     assert_eq!(
-        b.function().int_const_val(shl_amount),
+        b.function().int_const_u128(shl_amount),
         Some(8),
         "left-shift amount must be 8 (one byte)"
     );
     assert_eq!(
-        b.function().int_const_val(shl_value),
+        b.function().int_const_u128(shl_value),
         Some(0xAB),
         "the zero-extended written byte feeds the shift"
     );
@@ -3207,11 +3205,11 @@ fn write_high_byte_subregister_big_endian_positions_mask_and_shift() -> Result<(
     let insert_arm = insert_arm.expect("one And arm inserts the shifted value");
 
     // Keep-mask clears only bits 24..32 (the BE high byte): 0x00FF_FFFF.
-    let preserve_consts: Vec<u64> = b
+    let preserve_consts: Vec<u128> = b
         .function()
         .node_inputs(b.function().producer(preserve_arm))
         .into_iter()
-        .filter_map(|v| b.function().int_const_val(v))
+        .filter_map(|v| b.function().int_const_u128(v))
         .collect();
     assert_eq!(
         preserve_consts,
@@ -3223,13 +3221,13 @@ fn write_high_byte_subregister_big_endian_positions_mask_and_shift() -> Result<(
     let [im_a, im_b] = b
         .function()
         .node_inputs_exact::<2>(b.function().producer(insert_arm))?;
-    let (reg_mask_val, shifted_val) = if b.function().int_const_val(im_a).is_some() {
+    let (reg_mask_val, shifted_val) = if b.function().int_const_u128(im_a).is_some() {
         (im_a, im_b)
     } else {
         (im_b, im_a)
     };
     assert_eq!(
-        b.function().int_const_val(reg_mask_val),
+        b.function().int_const_u128(reg_mask_val),
         Some(0xFF00_0000),
         "BE byte mask must be positioned at bits 24..32"
     );
@@ -3242,7 +3240,7 @@ fn write_high_byte_subregister_big_endian_positions_mask_and_shift() -> Result<(
         .function()
         .node_inputs_exact::<2>(b.function().producer(shifted_val))?;
     assert_eq!(
-        b.function().int_const_val(shl_amount),
+        b.function().int_const_u128(shl_amount),
         Some(24),
         "BE left-shift amount must be 24 (high byte of a 4-byte container)"
     );
@@ -3285,7 +3283,7 @@ fn read_high_byte_subregister_big_endian_shifts_then_truncates() -> Result<()> {
         .function()
         .node_inputs_exact::<2>(b.function().producer(shifted))?;
     assert_eq!(
-        b.function().int_const_val(shr_amount),
+        b.function().int_const_u128(shr_amount),
         Some(24),
         "BE right-shift amount must be 24 (high byte of a 4-byte container)"
     );
@@ -3426,7 +3424,7 @@ fn subregister_access_within_wide_container_fails_closed() -> Result<()> {
 /// An empty tracked list stays empty.
 #[test]
 fn dedup_overlapping_largest_empty_input_yields_empty() {
-    assert!(dedup_overlapping_largest(&[]).is_empty());
+    assert!(dedup_and_container_map(&[]).0.is_empty());
 }
 
 /// Value-identical duplicates pass through the overlap filter UNCHANGED —
@@ -3437,7 +3435,7 @@ fn dedup_overlapping_largest_empty_input_yields_empty() {
 fn dedup_overlapping_largest_keeps_duplicate_identical_vns() -> Result<()> {
     let r = reg_vn(0x10, 8);
     assert_eq!(
-        dedup_overlapping_largest(&[r, r]),
+        dedup_and_container_map(&[r, r]).0,
         vec![r, r],
         "the overlap filter does not collapse value-equal duplicates"
     );
@@ -3466,7 +3464,7 @@ fn dedup_overlapping_largest_keeps_duplicate_identical_vns() -> Result<()> {
 fn dedup_overlapping_largest_keeps_partially_overlapping_vns() {
     let a = reg_vn(0x0, 4); // bytes [0, 4)
     let b = reg_vn(0x2, 4); // bytes [2, 6) — overlaps a, not nested
-    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
+    assert_eq!(dedup_and_container_map(&[a, b]).0, vec![a, b]);
 }
 
 /// Behaviour pin for the O(n log n) sweep (IR-1): on a large tracked set with
@@ -3499,7 +3497,7 @@ fn dedup_overlapping_largest_handles_many_aliasing_uniques() {
         input.push(uniq(base + 7, 1)); // nested 1-byte slice — dropped
         expected.push(container);
     }
-    let kept = dedup_overlapping_largest(&input);
+    let kept = dedup_and_container_map(&input).0;
     assert_eq!(
         kept, expected,
         "exactly each group's strict-largest 8-byte container survives, in order"
@@ -3515,7 +3513,40 @@ fn dedup_overlapping_largest_keeps_equal_size_aliases() {
     let a = reg_vn(0x10, 8);
     let b = reg_vn(0x10, 8); // value-equal duplicate
     // Value-equal duplicates are both kept (interning is the builder's job).
-    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
+    assert_eq!(dedup_and_container_map(&[a, b]).0, vec![a, b]);
+}
+
+/// Crossing partial-overlap enclosers: two same-space varnodes that each
+/// enclose a third but neither encloses the other.  The dropped inner view
+/// must map to the WIDER encloser, not merely the first-seen one — the case a
+/// naive first-open stack sweep returned too small.  Pins that the fused
+/// `dedup_and_container_map` records the MAX-size container at drop time.
+#[test]
+fn dedup_and_container_map_picks_widest_crossing_encloser() {
+    fn uniq(off: u64, size: u32) -> rsleigh::Vn {
+        rsleigh::Vn {
+            size,
+            addr_off: off,
+            addr_space: rsleigh::VnSpace::UNIQUE,
+        }
+    }
+    let a = uniq(0, 12); // [0,12): encloses [5,9); crosses b; survives.
+    let b = uniq(2, 18); // [2,20): encloses [5,9) and is wider; survives.
+    let inner = uniq(5, 4); // [5,9): enclosed by BOTH a and b -> dropped.
+
+    let (survivors, map) = dedup_and_container_map(&[a, b, inner]);
+
+    assert_eq!(
+        survivors,
+        vec![a, b],
+        "crossing enclosers both survive (neither encloses the other); inner dropped"
+    );
+    assert_eq!(
+        map[&inner], b,
+        "inner maps to the WIDER (size-18) encloser b, not the size-12 a"
+    );
+    assert_eq!(map[&a], a, "a is its own container");
+    assert_eq!(map[&b], b, "b is its own container");
 }
 
 // ── IR-6: symmetric sub-register write coercion ─────────────────────────────
@@ -3654,11 +3685,11 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
     assert_eq!(arg1.len(), 1, "arg 1 carrier registered at entry");
     assert!(
         matches!(b.function().node_kind(b.function().producer(arg0[0])),
-        NodeKind::InitialVar(v) if *v == rdi)
+        NodeKind::InitialVar(v) if b.function().initial_vn(*v) == rdi)
     );
     assert!(
         matches!(b.function().node_kind(b.function().producer(arg1[0])),
-        NodeKind::InitialVar(v) if *v == rsi)
+        NodeKind::InitialVar(v) if b.function().initial_vn(*v) == rsi)
     );
     Ok(())
 }
@@ -3700,7 +3731,7 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
     );
     assert!(
         matches!(b.function().node_kind(b.function().producer(arg0[0])),
-        NodeKind::InitialVar(v) if *v == rdi)
+        NodeKind::InitialVar(v) if b.function().initial_vn(*v) == rdi)
     );
     Ok(())
 }
