@@ -19,12 +19,10 @@
 //! Owns the pure data that describes the machine and ABI being analysed.
 
 pub mod arch;
-pub mod call_descriptor;
 pub mod call_other_abi;
 pub mod calling_convention;
 
 pub use arch::{ArchPreset, Endianness, SleighArch};
-pub use call_descriptor::CallDescriptor;
 pub use call_other_abi::BuiltCallOtherAbi;
 pub use calling_convention::{
     BuiltCallingConvention, CallingConvention, MissingPresetError, StackArgs,

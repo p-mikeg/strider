@@ -64,7 +64,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// (which owns the implicit-footprint resolution: reading implicit
     /// reads, emitting + tagging clobbers, advancing memory, writing the
     /// clobbers back, writing the result back to `output`, and recording
-    /// the `CallDescriptor`).
+    /// the per-Call CC override map).
     fn handle_call_other_modeled(
         &mut self,
         insn: &rsleigh::Insn,
@@ -87,7 +87,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // The builder reads the implicit reads, emits + tags the clobbers,
         // advances memory per `clobbers_memory`, writes each clobber back,
         // writes the result back to `output`, and records the
-        // `CallDescriptor::CallOther` footprint.  The result writeback now
+        // CallOther footprint.  The result writeback now
         // lives in the builder — the lifter no longer touches it.
         self.builder
             .build_call_other(

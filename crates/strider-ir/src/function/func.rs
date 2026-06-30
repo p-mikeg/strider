@@ -509,44 +509,24 @@ impl Function {
         self.side_tables.value_vn.get(&value).copied()
     }
 
-    /// Returns the vn-resolved [`strider_target::BuiltCallOtherAbi`] recorded
-    /// for a [`crate::node::NodeKind::CallOther`] node, or `None` when the node
-    /// is a `Call` or carries no descriptor.  The CallOther counterpart to
-    /// [`Self::get_cc`].
+    /// Records `cc` as the per-`Call` override calling convention for
+    /// `node_id`.  Replaces any prior override.  Read back via [`Self::get_cc`]
+    /// (whose `stack_args` is the call's effective stack-arg layout).
     #[inline]
-    pub fn call_other_abi(&self, node_id: NodeId) -> Option<&strider_target::BuiltCallOtherAbi> {
-        match self.side_tables.call_descriptor.get(&node_id)? {
-            crate::CallDescriptor::CallOther(abi) => Some(abi),
-            crate::CallDescriptor::Call(_) => None,
-        }
-    }
-
-    /// Records `cc` as the per-Call override calling convention for
-    /// `node_id`, wrapping it in [`crate::CallDescriptor::Call`].  Replaces
-    /// any prior descriptor.  Subsumes the stack-arg layout override (read
-    /// back via [`Self::get_cc`]'s `stack_args`).
-    ///
-    /// Prod writes the `call_descriptor` side-table directly; this
-    /// `BuiltCallingConvention`-only wrapper is used only by tests.
-    #[inline]
-    #[cfg(any(test, feature = "test-util"))]
     pub fn set_call_cc(&mut self, node_id: NodeId, cc: strider_target::BuiltCallingConvention) {
-        self.side_tables.call_descriptor
-            .insert(node_id, crate::CallDescriptor::Call(cc));
+        self.side_tables.call_cc.insert(node_id, cc);
     }
 
     /// The **effective** calling convention for `node_id`: the per-`Call`
     /// override if one was recorded, else the function-default CC.  So
     /// `get_cc(call).stack_args` is the call's effective stack-arg layout with
-    /// no override-vs-default branch at the call site.  A `CallOther` (whose
-    /// descriptor is an ABI, not a CC) and a default `Call` both resolve to the
-    /// function-default CC — only override `Call`s carry their own convention.
+    /// no override-vs-default branch at the call site.
     #[inline]
     pub fn get_cc(&self, node_id: NodeId) -> &strider_target::BuiltCallingConvention {
-        match self.side_tables.call_descriptor.get(&node_id) {
-            Some(crate::CallDescriptor::Call(cc)) => cc,
-            _ => &self.default_cc,
-        }
+        self.side_tables
+            .call_cc
+            .get(&node_id)
+            .unwrap_or(&self.default_cc)
     }
 
     // ── arg_index_to_values accessors ────────────────────────────────────

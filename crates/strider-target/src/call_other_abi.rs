@@ -14,7 +14,7 @@ use crate::calling_convention::regs_to_vns;
 /// Constructed by the lifter via `resolve_call_other_abi` in
 /// `strider-orchestrator::strider::insn`; recorded in
 /// `strider_ir::Function`'s `call_descriptor` side-table as the
-/// `CallDescriptor::CallOther` arm.
+/// `CallOther` lifting.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BuiltCallOtherAbi {
     /// Register varnodes this op reads beyond Sleigh's pcode-explicit

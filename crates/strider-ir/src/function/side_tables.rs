@@ -70,21 +70,13 @@ pub(crate) struct SideTables {
     /// Keyed by `ValueId` (not `NodeId`) so it remaps through the
     /// `ValueId` translation that [`crate::Function::compact`] applies.
     pub(crate) value_vn: FxHashMap<ValueId, rsleigh::Vn>,
-    /// Per-[`crate::node::NodeKind::Call`] or
-    /// [`crate::node::NodeKind::CallOther`] descriptor, recorded at build
-    /// time for non-default calls:
-    ///
-    /// - `Call` nodes built with a per-address CC override store
-    ///   [`crate::CallDescriptor::Call`].
-    /// - Modeled `CallOther` nodes store
-    ///   [`crate::CallDescriptor::CallOther`] with the vn-resolved ABI.
-    ///
-    /// Sparse: the default Call (function-default CC) and unmodeled
-    /// `CallOther` nodes have no entry.  Read only through the typed views
-    /// [`crate::Function::get_cc`] (a `Call`'s effective CC, from which override
-    /// stack-arg offsets derive) and [`crate::Function::call_other_abi`] (a
-    /// `CallOther`'s ABI) — never in its raw enum form.
-    pub(crate) call_descriptor: FxHashMap<NodeId, crate::CallDescriptor>,
+    /// Per-[`crate::node::NodeKind::Call`] override calling convention, recorded
+    /// at build time for a Call built with a per-address CC override.  Sparse:
+    /// a default Call (function-default CC) has no entry.  Read through
+    /// [`crate::Function::get_cc`] (the Call's effective CC — the override here
+    /// if present, else the function default — from which its stack-arg offsets
+    /// derive).
+    pub(crate) call_cc: FxHashMap<NodeId, strider_target::BuiltCallingConvention>,
     /// Maps each calling-convention argument index to the [`ValueId`](s) of
     /// the underlying carrier nodes' outputs:
     /// [`crate::node::NodeKind::InitialVar`] for register args,
@@ -128,8 +120,8 @@ impl SideTables {
         // NodeId-keyed tables: translate the key, drop pruned nodes.
         remap_node_keyed(&mut self.call_other_names, remap);
         remap_node_keyed(&mut self.asm_fingerprints, remap);
-        self.call_descriptor = remap_hashmap(&mut self.call_descriptor, |old, d| {
-            remap.node_old_to_new(old).map(|n| (n, d))
+        self.call_cc = remap_hashmap(&mut self.call_cc, |old, cc| {
+            remap.node_old_to_new(old).map(|n| (n, cc))
         });
         // `stack_offsets`: the only NodeId-keyed table whose VALUE also
         // references a node (the slot `base`, a `ValueId`); remap both.

@@ -1005,7 +1005,7 @@ fn read_subregister_routes_through_container_map() -> Result<()> {
 /// `abi.implicit_reads` register itself (via `read_reg_vn`), appends those
 /// reads after the explicit args, emits the result + per-implicit-write
 /// clobber outputs, writes each clobber back to its register, and records
-/// the `CallDescriptor::CallOther(abi)` on the node — reproducing the IR
+/// the CallOther footprint inline — reproducing the IR
 /// the lifter used to assemble by hand.
 #[test]
 fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
@@ -1117,12 +1117,8 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
     let mem_after = b.cur_region_memory()?;
     assert_ne!(mem_before, mem_after, "clobbers_memory → memory advances");
 
-    // The vn-resolved ABI footprint is recorded on the node.
-    assert_eq!(
-        b.function().call_other_abi(node),
-        Some(&abi),
-        "recorded footprint must equal the input abi"
-    );
+    // The ABI footprint is consumed inline (clobbers/reads/memory checked
+    // above); it is not stored, so only the user-op name is recorded.
     assert_eq!(b.function().call_other_name(node), Some("syscall"));
     Ok(())
 }

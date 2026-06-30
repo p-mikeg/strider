@@ -282,8 +282,7 @@ impl FunctionBuilder {
         // offsets) so per-address-CC consumers — the stack-arg collector
         // and pattern queries — can recover it.
         if let Some(cc) = override_cc {
-            self.function_mut()
-                .side_tables.call_descriptor.insert(call, crate::CallDescriptor::Call(cc.clone()));
+            self.function_mut().set_call_cc(call, cc.clone());
         }
 
         // Apply the post-call SP adjust on stack-push ISAs, reusing the
@@ -321,7 +320,7 @@ impl FunctionBuilder {
     ///   AFTER the clobbers, so an aliased clobber cannot re-clobber the
     ///   result.  The builder now owns the result writeback (it used to be
     ///   the lifter's job).
-    /// - Records `CallDescriptor::CallOther(abi.clone())` on the node and
+    /// - Records the user-op name on the node and
     ///   stamps `name` on `Graph::call_other_names`.
     ///
     /// `abi.implicit_reads`, `abi.implicit_writes`, and `output` must all
@@ -418,9 +417,9 @@ impl FunctionBuilder {
             self.write_reg_vn(out_vn, value)?;
         }
 
-        // Record the vn-resolved footprint + the user-op name on the node.
-        self.function_mut()
-            .side_tables.call_descriptor.insert(node, crate::CallDescriptor::CallOther(abi.clone()));
+        // Record the user-op name on the node.  The vn-resolved ABI footprint
+        // is consumed inline above (implicit reads/writes, memory effect); it is
+        // not stored, since nothing reads it back.
         self.function_mut()
             .side_tables.call_other_names[node] = Some(name.to_string());
 
