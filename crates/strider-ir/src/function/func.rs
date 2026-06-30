@@ -364,7 +364,7 @@ impl Function {
     /// sub-register ABI ret reg (e.g. `eax`) classified as the return
     /// value when the function tracks the wider container (`rax`) instead
     /// of silently dropping it.  Identity on full-width preset regs.
-    pub(crate) fn call_ret_vals_for(
+    pub fn call_ret_vals_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
@@ -398,7 +398,7 @@ impl Function {
     /// To obtain the FULL combined set (ret-vals ++ clobbers) for callers
     /// that need the old single-list shape, chain the two accessors:
     /// `call_ret_vals_for(cc).into_iter().chain(call_clobbered_for(cc))`.
-    pub(crate) fn call_clobbered_for(
+    pub fn call_clobbered_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {

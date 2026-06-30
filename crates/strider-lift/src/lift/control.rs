@@ -213,6 +213,62 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.builder.build_function_return()
     }
 
+    /// Builds a `Call` from the (override or function-default) calling
+    /// convention — the prod call-construction orchestration.  Derives the
+    /// ret-val / clobber / arg vns from the CC, reads the args + SP through the
+    /// shared vn read path, emits the dumb [`strider_ir::FunctionBuilder::build_call`],
+    /// writes the clobbers then ret-vals back, records the override CC, and
+    /// applies the post-call SP adjust.  (strider-ir's constructor is dumb: it
+    /// takes resolved Vn lists and knows nothing about calling conventions.)
+    fn build_cc_call(
+        &mut self,
+        call_address: strider_ir::Value,
+        override_cc: Option<&strider_target::BuiltCallingConvention>,
+    ) -> Result<()> {
+        // Snapshot the CC-derived ingredients (owned) so the immutable borrow of
+        // the function ends before the &mut read / build / write path below.
+        let (ret_vns, clobber_vns, arg_vns, sp_vn, ret_stack_pop, advance_memory) = {
+            let cc = override_cc.unwrap_or_else(|| self.builder.function().default_cc());
+            (
+                self.builder.function().call_ret_vals_for(cc),
+                self.builder.function().call_clobbered_for(cc),
+                cc.arg_passing_regs.clone(),
+                cc.stack_vn,
+                cc.ret_stack_pop,
+                !cc.preserves_memory,
+            )
+        };
+
+        let args = self.read_vns(&arg_vns)?;
+        let sp_value = self.read_vn(&sp_vn)?;
+
+        let mut output_vns = ret_vns.clone();
+        output_vns.extend_from_slice(&clobber_vns);
+        let (call, outputs) =
+            self.builder
+                .build_call(call_address, sp_value, &args, &output_vns, advance_memory)?;
+        let (ret_vals, clobbers) = outputs.split_at(ret_vns.len());
+
+        // Writeback: clobbers first, then ret-vals (an aliased clobber must not
+        // re-clobber the return value).  Clobbers go through `write_variable`
+        // (the set legitimately includes CONST / RAM Sleigh temps that the
+        // aliasing-aware register path can't slice); ret-vals are REGISTER /
+        // UNIQUE, so they take the aliasing-aware `write_vn`.
+        for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
+            self.builder.write_variable(vn, *v)?;
+        }
+        for (vn, v) in core::iter::zip(&ret_vns, ret_vals) {
+            self.write_vn(vn, *v)?;
+        }
+
+        if let Some(cc) = override_cc {
+            self.builder.function_mut().set_call_cc(call, cc.clone());
+        }
+        self.builder
+            .apply_post_call_sp_adjust(&sp_vn, sp_value, ret_stack_pop)?;
+        Ok(())
+    }
+
     pub(super) fn handle_call(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // Direct call: the target varnode is in the code space and its offset
         // *is* the target address — it's not a pointer to dereference.
@@ -220,13 +276,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let space = target_vn.addr_space;
         let target_addr = target_vn.addr_off;
         let call_address = self.build_addr_const(space, target_addr, "call target space")?;
-        // Per-address CC override: when the call target matches a
-        // user-supplied entry, build the Call with that CC instead of
-        // the function-default.
-        let override_cc = self.per_address_ccs.get(&target_addr);
-        // `build_call` records the override CC (and its stack-arg
-        // offsets) on the Call when `override_cc` is `Some`.
-        self.builder.build_call(call_address, override_cc)?;
+        // Per-address CC override: when the call target matches a user-supplied
+        // entry, build the Call with that CC instead of the function-default.
+        // Cloned so the per_address_ccs borrow ends before the &mut build call.
+        let override_cc = self.per_address_ccs.get(&target_addr).cloned();
+        self.build_cc_call(call_address, override_cc.as_ref())?;
         Ok(())
     }
 
@@ -248,10 +302,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let call_address =
             self.build_addr_const(default_code_space, target, "default code space")?;
         // Per-address CC override applies to lift-time tail calls too.
-        let override_cc = self.per_address_ccs.get(&target);
-        // `build_call` records the override CC (and its stack-arg
-        // offsets) on the Call when `override_cc` is `Some`.
-        self.builder.build_call(call_address, override_cc)?;
+        let override_cc = self.per_address_ccs.get(&target).cloned();
+        self.build_cc_call(call_address, override_cc.as_ref())?;
         // build_function_return terminates the region unconditionally.
         self.builder.build_function_return()
     }
@@ -259,7 +311,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(super) fn handle_call_indirect(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // Indirect call: target is a register/memory value holding the address.
         let call_address = self.read_vn(nth_input_or_err(insn, 0)?)?;
-        self.builder.build_call(call_address, None)?;
+        self.build_cc_call(call_address, None)?;
         Ok(())
     }
 

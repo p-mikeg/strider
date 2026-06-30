@@ -39,15 +39,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     implicit_writes: Vec::new(),
                     clobbers_memory: false,
                 };
-                let _ = self.builder.build_call_other(
-                    user_op_id,
-                    name,
-                    None,
-                    &[],
-                    &empty_abi,
-                    None,
-                    true,
-                )?;
+                self.build_abi_call_other(user_op_id, name, &[], &empty_abi, None, true)?;
                 Ok(())
             }
 
@@ -84,22 +76,61 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // vn-resolved footprint the builder consumes.
         let built_abi = abi.build(&self.lifter.sleigh_regs)?;
 
-        // The builder reads the implicit reads, emits + tags the clobbers,
-        // advances memory per `clobbers_memory`, writes each clobber back,
-        // writes the result back to `output`, and records the
-        // CallOther footprint.  The result writeback now
-        // lives in the builder — the lifter no longer touches it.
-        self.builder
-            .build_call_other(
-                user_op_id,
-                name,
-                None,
-                &explicit_args,
-                &built_abi,
-                output_vn,
-                false,
-            )
-            .map(|_| ())
+        self.build_abi_call_other(user_op_id, name, &explicit_args, &built_abi, output_vn, false)?;
+        Ok(())
+    }
+
+    /// Build a `CallOther` from a vn-resolved ABI footprint — the prod
+    /// CallOther orchestration (strider-ir's `build_call_other` is a dumb
+    /// node emitter).  Reads the implicit-read registers FIRST (before the
+    /// explicit pcode operands), emits the node with the result + implicit-write
+    /// clobber output vns, then writes the clobbers and the result back through
+    /// the shared vn write path.  Returns the result value, if any.
+    fn build_abi_call_other(
+        &mut self,
+        user_op_id: u64,
+        name: &str,
+        explicit_args: &[strider_ir::Value],
+        abi: &strider_target::BuiltCallOtherAbi,
+        output: Option<rsleigh::Vn>,
+        terminate: bool,
+    ) -> Result<Option<strider_ir::Value>> {
+        // Args: implicit-read register values FIRST, then the explicit operands.
+        let mut args: Vec<strider_ir::Value> =
+            Vec::with_capacity(abi.implicit_reads.len() + explicit_args.len());
+        for vn in &abi.implicit_reads {
+            args.push(self.read_vn(vn)?);
+        }
+        args.extend_from_slice(explicit_args);
+
+        // Output vns: the 0-or-1 result, then one per implicit-write clobber.
+        let ret_vns: Vec<rsleigh::Vn> = output.iter().copied().collect();
+        let clobber_vns = abi.implicit_writes.clone();
+        let mut output_vns = ret_vns.clone();
+        output_vns.extend_from_slice(&clobber_vns);
+
+        let (_node, outputs) = self.builder.build_call_other(
+            user_op_id,
+            name,
+            None,
+            &args,
+            &output_vns,
+            abi.clobbers_memory,
+            terminate,
+        )?;
+        let (ret_vals, clobbers) = outputs.split_at(ret_vns.len());
+
+        // Writeback: clobbers first (via `write_variable` — may include CONST /
+        // RAM Sleigh temps), then the result (a REGISTER, via `write_vn`); an
+        // aliased clobber must not re-clobber the result.
+        for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
+            self.builder.write_variable(vn, *v)?;
+        }
+        let result = ret_vals.first().copied();
+        if let (Some(out_vn), Some(v)) = (output.as_ref(), result) {
+            self.write_vn(out_vn, v)?;
+        }
+        Ok(result)
     }
 }
 

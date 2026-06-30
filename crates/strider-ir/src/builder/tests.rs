@@ -1045,9 +1045,10 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
     let (node, result) =
         b.build_call_other_abi(5, "syscall", None, &[explicit], &abi, Some(out_vn), false)?;
 
-    // Inputs: [ctrl, mem] ++ explicit_args ++ [read(RCX)].  No target.
+    // Inputs: [ctrl, mem] ++ [read(RCX)] ++ explicit_args.  Implicit reads
+    // come FIRST, then the explicit pcode operands.  No target.
     let inputs: Vec<ValueId> = b.function().node_inputs(node).into_iter().collect();
-    assert_eq!(inputs.len(), 4, "ctrl + mem + explicit + 1 implicit read");
+    assert_eq!(inputs.len(), 4, "ctrl + mem + 1 implicit read + explicit");
     assert!(matches!(
         b.function().value_kind(inputs[0]),
         ValueKind::Control
@@ -1056,23 +1057,20 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
         b.function().value_kind(inputs[1]),
         ValueKind::Memory
     ));
+    // inputs[2] is the read of RCX (implicit read, FIRST): the builder reads
+    // it via read_reg_vn, so it equals the current SSA value of the RCX
+    // variable (an I64-typed value edge — RCX is an 8-byte container).
     assert_eq!(
-        inputs[2], explicit,
-        "explicit arg precedes the implicit read"
-    );
-    // inputs[3] is the read of RCX: the builder reads it via read_reg_vn,
-    // so it equals the current SSA value of the RCX variable (an I64-typed
-    // value edge — RCX is an 8-byte container).
-    assert_eq!(
-        inputs[3],
+        inputs[2],
         b.read_variable(&rcx)?,
-        "last input must be the implicit read of register RCX",
+        "implicit read of register RCX precedes the explicit arg",
     );
     assert_eq!(
-        b.function().value_kind(inputs[3]),
+        b.function().value_kind(inputs[2]),
         ValueKind::Typed(ValueType::I64),
         "RCX read is I64-typed (8-byte container)",
     );
+    assert_eq!(inputs[3], explicit, "explicit arg follows the implicit read");
 
     // Outputs: [ctrl, mem, result(tagged out_vn), RAX, RDX].
     let outs: Vec<ValueId> = b.function().node_outputs(node).to_vec();
