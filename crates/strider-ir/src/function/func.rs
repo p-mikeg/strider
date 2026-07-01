@@ -111,10 +111,11 @@ pub struct Function {
     /// [`Self::ret_val_regs`]).
     pub(crate) default_cc: strider_target::BuiltCallingConvention,
     /// Target endianness of the architecture this function was lifted
-    /// for.  Drives the bit-shift formula the builder's register-aliasing
-    /// path uses when reading / writing a sub-register inside a wider
-    /// container (see [`crate::FunctionBuilder::read_reg_vn`]).  A `Copy`
-    /// scalar (so [`Self::compact`] needs no remap for it); defaults to
+    /// for.  Read by post-lift analyses that decode multi-byte values
+    /// (the optimizer's ROM-const evaluation and stack high/low-half
+    /// splits).  Register-aliasing sub-register slicing itself lives in the
+    /// lifter now, so this is no longer on that hot path.  A `Copy` scalar
+    /// (so [`Self::compact`] needs no remap for it); defaults to
     /// little-endian on the [`Default`]-derived / synthetic-test path.
     pub(crate) endianness: strider_target::Endianness,
     /// Ordered list of every tracked varnode, in `InitialVar`-creation
@@ -275,9 +276,8 @@ impl Function {
     }
 
     /// Target endianness of the architecture this function was lifted for.
-    /// Consumed by the builder's register-aliasing bit-shift formula
-    /// ([`crate::FunctionBuilder::read_reg_vn`] /
-    /// [`crate::FunctionBuilder::write_reg_vn`]).
+    /// Consumed by post-lift analyses that decode multi-byte values (the
+    /// optimizer's ROM-const evaluation and stack high/low-half splits).
     #[inline]
     pub fn endianness(&self) -> strider_target::Endianness {
         self.endianness
@@ -468,9 +468,9 @@ impl Function {
     /// The calling convention's combined return-value register list
     /// (integer then float, in ABI order), at each register's declared
     /// width — no tracked-container projection.  The registers are read
-    /// through the aliasing-aware [`crate::FunctionBuilder::read_reg_vn`]
-    /// at use sites, which resolves each declared register to its tracked
-    /// container (and errors if none exists), so the raw declared list is
+    /// through the lifter's aliasing-aware read path at use sites, which
+    /// resolves each declared register to its tracked container (and errors
+    /// if none exists), so the raw declared list is
     /// the right shape: a wider register (e.g. `RSI`) is read at its full
     /// width rather than being narrowed to a tracked sub-register.
     #[inline]

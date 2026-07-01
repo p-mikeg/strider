@@ -38,12 +38,11 @@ fn is_aliasable_space(s: rsleigh::VnSpace) -> bool {
 
 /// Errors unless `vn` is in REGISTER or UNIQUE space.
 ///
-/// `Call` / `CallOther` / `Return` registers all flow through the
-/// aliasing-aware [`FunctionBuilder::read_reg_vn`] /
-/// [`FunctionBuilder::write_reg_vn`] path, which only models fixed-offset
-/// register containment.  A RAM / CONST / code-space varnode there is a
-/// bug (or an unmodeled ABI), so it fails closed with a clear message
-/// rather than producing a malformed read/write.
+/// `Call` / `CallOther` / `Return` output registers only model fixed-offset
+/// register containment (the lifter reads/writes them through its
+/// aliasing-aware `read_vn` / `write_vn` path).  A RAM / CONST / code-space
+/// varnode there is a bug (or an unmodeled ABI), so it fails closed with a
+/// clear message rather than producing a malformed read/write.
 pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()> {
     match vn.addr_space {
         rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE => Ok(()),
@@ -276,9 +275,9 @@ impl FunctionBuilder {
         // store visible to Return.
         //
         // Arg-passing regs + stack pointer: every `Call` reads each
-        // arg-passing register and the stack pointer through the aliasing-
-        // aware `read_reg_vn`, which requires a tracked container, and never
-        // mints one at the call site.  Seeding them here freezes the tracked
+        // arg-passing register and the stack pointer through the lifter's
+        // aliasing-aware read path, which requires a tracked container, and
+        // never mints one at the call site.  Seeding them here freezes the tracked
         // variable SET at construction, so a leaf function that merely
         // forwards a call still has an `InitialVar` for each CC register the
         // Call must read.  A function that *does* touch a wider view of one
