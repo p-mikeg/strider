@@ -187,12 +187,12 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         if space != rsleigh::VnSpace::REGISTER && space != rsleigh::VnSpace::UNIQUE {
             bail!("unsupported varnode space {space:?}");
         }
-        // `Function::container_of` covers every tracked vn + CC register (fast
-        // map hit) and falls back to an `all_vns` containment scan for ad-hoc
-        // vns.  It returns `reg` unchanged when nothing tracked contains it —
-        // for this caller that means `reg` is its own container (a legitimate
-        // full-width access).
-        Ok(self.builder.function().container_of(reg))
+        // The lifter's `container_of` covers every tracked vn + CC register
+        // (fast map hit) and falls back to an `all_vns` containment scan for
+        // ad-hoc vns.  It returns `reg` unchanged when nothing tracked contains
+        // it — for this caller that means `reg` is its own container (a
+        // legitimate full-width access).
+        Ok(self.container_of(reg))
     }
 
     /// Computes the bit-shift needed to move `reg`'s bits to/from their

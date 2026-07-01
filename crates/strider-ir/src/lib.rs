@@ -51,7 +51,9 @@ mod control_flow_view;
 pub use control_flow_view::{control_dominators, dominates};
 pub mod error;
 mod function;
-pub use function::{EditFunction, Function, FunctionState};
+pub use function::{
+    EditFunction, Function, FunctionState, build_container_map, largest_container_in,
+};
 pub mod graph;
 pub use graph::Graph;
 pub mod node;

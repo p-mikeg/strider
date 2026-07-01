@@ -13,10 +13,18 @@ use rustc_hash::FxHashSet;
 use super::FunctionLifter;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    /// Resolve `vn` to its largest tracked container (delegates to the IR's
-    /// container map).
-    fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
-        self.builder.function().container_of(vn)
+    /// Resolve `vn` to its largest tracked container.
+    ///
+    /// Fast path: the lifter's precomputed `vn_to_container` map (covers every
+    /// raw collected varnode + every CC register).  Fallback: an on-the-fly
+    /// containment scan of `all_vns` for ad-hoc REGISTER / UNIQUE varnodes not
+    /// in the map.  Returns `vn` unchanged when nothing tracked contains it, or
+    /// when `vn` is not in an aliasable (REGISTER / UNIQUE) space.
+    pub(crate) fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
+        if let Some(c) = self.vn_to_container.get(vn) {
+            return *c;
+        }
+        strider_ir::largest_container_in(self.builder.function().all_vns(), vn)
     }
 
     /// The shared call-clobber predicate: a register (resolved to its tracked

@@ -108,10 +108,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // write_reg operate on containers, and the builder validates output vns
         // are containers) and deduplicated, since sub-registers of one container
         // collapse to a single slot and the result wins ties over a clobber.
-        let result_vn = output.map(|vn| self.builder.function().container_of(&vn));
+        let result_vn = output.map(|vn| self.container_of(&vn));
         let mut clobber_vns: Vec<rsleigh::Vn> = Vec::new();
         for vn in &abi.implicit_writes {
-            let c = self.builder.function().container_of(vn);
+            let c = self.container_of(vn);
             if Some(c) == result_vn || clobber_vns.contains(&c) {
                 continue;
             }

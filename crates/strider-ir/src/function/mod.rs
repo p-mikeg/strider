@@ -9,7 +9,7 @@ pub(crate) mod dot;
 mod edit;
 
 pub use func::Function;
-pub(crate) use func::largest_container_in;
+pub use func::{build_container_map, largest_container_in};
 pub use edit::EditFunction;
 pub use edit::FunctionState;
 

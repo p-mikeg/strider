@@ -1,0 +1,2428 @@
+# Production call graph — 1680 functions across 14 crates
+
+NAME-BASED resolution (Rust semantic resolution unavailable): a call `foo(`/`.foo(` counts toward every prod fn named `foo`, so same-named methods are conflated. Comments + string literals stripped; #[cfg(test)] items, tests.rs/*_tests.rs/tests/benches/examples, and strider-ir-test-utils excluded. 0/1-caller are REVIEW CANDIDATES, not proof.
+
+
+## A. STRONG dead candidates — 1
+
+Internal (priv / pub(crate) / pub(super)), NOT a common trait-method name, NOT pyo3-exported, zero production callers. Highest-signal deletions.
+
+- `predecessors` [priv] crates/graphwalk/src/lib.rs:70
+
+## B. WEAK zero-caller — 214
+
+Zero name-based callers BUT `pub` (external API / re-export / used only by tests), or a dispatched trait-method name, or pyo3-exported. Review with care.
+
+- `entity_preorder` [pub] crates/graphwalk/src/lib.rs:223  (pub-external)
+- `corrupt_clear_first_use` [pub] crates/strider-graph/src/graph.rs:543  (pub-external)
+- `corrupt_retarget_input` [pub] crates/strider-graph/src/graph.rs:555  (pub-external)
+- `next_node_id` [pub] crates/strider-graph/src/graph.rs:261  (pub-external)
+- `remove_node_input` [pub] crates/strider-graph/src/graph.rs:405  (pub-external)
+- `value_has_one_use` [pub] crates/strider-graph/src/graph.rs:352  (pub-external)
+- `neighbors` [priv] crates/strider-graph/src/petgraph_view.rs:76  (trait-impl/dispatched)
+- `neighbors_directed` [priv] crates/strider-graph/src/petgraph_view.rs:84  (trait-impl/dispatched)
+- `node_identifiers` [priv] crates/strider-graph/src/petgraph_view.rs:95  (trait-impl/dispatched)
+- `reset_map` [priv] crates/strider-graph/src/petgraph_view.rs:114  (trait-impl/dispatched)
+- `visit_map` [priv] crates/strider-graph/src/petgraph_view.rs:110  (trait-impl/dispatched)
+- `vn_sort_key` [priv] crates/strider-ir/src/builder/mod.rs:157  (name-referenced (fn-pointer / macro / re-export))
+- `neighbors` [priv] crates/strider-ir/src/control_flow_view.rs:47  (trait-impl/dispatched)
+- `reset_map` [priv] crates/strider-ir/src/control_flow_view.rs:65  (trait-impl/dispatched)
+- `visit_map` [priv] crates/strider-ir/src/control_flow_view.rs:61  (trait-impl/dispatched)
+- `raw_dot` [pub] crates/strider-ir/src/function/dot/raw.rs:168  (pub-external)
+- `raw_html` [pub] crates/strider-ir/src/function/dot/raw.rs:178  (pub-external)
+- `is_root` [pub] crates/strider-ir/src/function/edit.rs:255  (pub-external)
+- `live_snapshot` [pub] crates/strider-ir/src/function/edit.rs:261  (pub-external)
+- `roots_snapshot` [pub] crates/strider-ir/src/function/edit.rs:267  (pub-external)
+- `call_clobbered_regs` [pub] crates/strider-ir/src/function/func.rs:443  (pub-external)
+- `call_ret_val_regs` [pub] crates/strider-ir/src/function/func.rs:451  (pub-external)
+- `is_memory` [pub] crates/strider-ir/src/node/value_kind.rs:65  (pub-external)
+- `is_phi_token` [pub(crate)] crates/strider-ir/src/node/value_kind.rs:59  (name-referenced (fn-pointer / macro / re-export))
+- `fmt` [priv] crates/strider-ir/src/node/value_type.rs:255  (trait-impl/dispatched)
+- `fmt` [priv] crates/strider-ir/src/validate/mod.rs:294  (trait-impl/dispatched)
+- `fmt` [priv] crates/strider-ir/src/validate/mod.rs:300  (trait-impl/dispatched)
+- `run_one` [pub] crates/strider-opt/src/pipeline.rs:201  (pub-external)
+- `run_post` [pub] crates/strider-opt/src/pipeline.rs:225  (pub-external)
+- `is_alignment_mask` [priv] crates/strider-opt/src/sp_expr/analyzer.rs:288  (name-referenced (fn-pointer / macro / re-export))
+- `get_bool_binary_op` [pub] crates/strider-pattern/src/bindings.rs:281  (pub-external)
+- `get_float_binary_op` [pub] crates/strider-pattern/src/bindings.rs:300  (pub-external)
+- `get_float_cmp_op` [pub] crates/strider-pattern/src/bindings.rs:318  (pub-external)
+- `get_float_unary_op` [pub] crates/strider-pattern/src/bindings.rs:309  (pub-external)
+- `get_int_unary_op` [pub] crates/strider-pattern/src/bindings.rs:262  (pub-external)
+- `fmt` [priv] crates/strider-pattern/src/error.rs:21  (trait-impl/dispatched)
+- `fmt` [priv] crates/strider-pattern/src/error.rs:49  (trait-impl/dispatched)
+- `set_force_ordered` [pub] crates/strider-pattern/src/matcher/builder.rs:187  (pub-external)
+- `set_post_match` [pub] crates/strider-pattern/src/matcher/builder.rs:181  (pub-external)
+- `find_joined` [pub] crates/strider-pattern/src/matcher/mod.rs:248  (pub-external)
+- `function_arg` [pub] crates/strider-pattern/src/matcher/mod.rs:306  (pub-external)
+- `function_args` [pub] crates/strider-pattern/src/matcher/mod.rs:317  (pub-external)
+- `call_other` [pub] crates/strider-pattern/src/node_builders/flow.rs:212  (pub-external)
+- `ctrl` [pub] crates/strider-pattern/src/node_builders/flow.rs:89  (pub-external)
+- `ctrl` [pub] crates/strider-pattern/src/node_builders/flow.rs:165  (pub-external)
+- `preceded_by` [pub] crates/strider-pattern/src/node_builders/flow.rs:232  (pub-external)
+- `ret` [pub] crates/strider-pattern/src/node_builders/flow.rs:255  (pub-external)
+- `ret_val` [pub] crates/strider-pattern/src/node_builders/flow.rs:238  (pub-external)
+- `user_op_id` [pub] crates/strider-pattern/src/node_builders/flow.rs:137  (pub-external)
+- `function_arg` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:160  (pub-external)
+- `function_arg_reg` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:173  (pub-external)
+- `function_arg_stack` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:181  (pub-external)
+- `addr` [pub] crates/strider-pattern/src/node_builders/memory.rs:152  (pub-external)
+- `addr` [pub] crates/strider-pattern/src/node_builders/memory.rs:249  (pub-external)
+- `load` [pub] crates/strider-pattern/src/node_builders/memory.rs:224  (pub-external)
+- `mem_in` [pub] crates/strider-pattern/src/node_builders/memory.rs:162  (pub-external)
+- `mem_in` [pub] crates/strider-pattern/src/node_builders/memory.rs:262  (pub-external)
+- `space` [pub] crates/strider-pattern/src/node_builders/memory.rs:146  (pub-external)
+- `space` [pub] crates/strider-pattern/src/node_builders/memory.rs:243  (pub-external)
+- `stack_only` [pub] crates/strider-pattern/src/node_builders/memory.rs:181  (pub-external)
+- `stack_only` [pub] crates/strider-pattern/src/node_builders/memory.rs:282  (pub-external)
+- `store` [pub] crates/strider-pattern/src/node_builders/memory.rs:337  (pub-external)
+- `mem_phi` [pub] crates/strider-pattern/src/node_builders/phi.rs:137  (pub-external)
+- `phi_for` [pub] crates/strider-pattern/src/node_builders/phi.rs:98  (pub-external)
+- `float_const_with_fn` [pub] crates/strider-pattern/src/typed/consts.rs:408  (pub-external)
+- `bool_binary` [pub] crates/strider-pattern/src/typed/value_ops.rs:755  (pub-external)
+- `float_binary` [pub] crates/strider-pattern/src/typed/value_ops.rs:737  (pub-external)
+- `float_cmp` [pub] crates/strider-pattern/src/typed/value_ops.rs:746  (pub-external)
+- `float_is_nan` [pub] crates/strider-pattern/src/typed/value_ops.rs:477  (pub-external)
+- `float_le` [pub] crates/strider-pattern/src/typed/value_ops.rs:444  (pub-external)
+- `float_ne` [pub] crates/strider-pattern/src/typed/value_ops.rs:700  (pub-external)
+- `float_sub` [pub] crates/strider-pattern/src/typed/value_ops.rs:681  (pub-external)
+- `int_binary` [pub] crates/strider-pattern/src/typed/value_ops.rs:719  (pub-external)
+- `int_cmp` [pub] crates/strider-pattern/src/typed/value_ops.rs:728  (pub-external)
+- `int_le` [pub] crates/strider-pattern/src/typed/value_ops.rs:663  (pub-external)
+- `int_ne` [pub] crates/strider-pattern/src/typed/value_ops.rs:658  (pub-external)
+- `int_sle` [pub] crates/strider-pattern/src/typed/value_ops.rs:668  (pub-external)
+- `not_` [pub] crates/strider-pattern/src/typed/value_ops.rs:616  (pub-external)
+- `bool_inputs` [pub] crates/strider-pattern/src/typed/wildcards.rs:146  (pub-external)
+- `bool_value` [pub] crates/strider-pattern/src/typed/wildcards.rs:85  (pub-external)
+- `__repr__` [priv] crates/strider-py/src/arch.rs:27  (pyo3)
+- `__repr__` [priv] crates/strider-py/src/cc.rs:183  (pyo3)
+- `custom` [priv] crates/strider-py/src/cc.rs:119  (pyo3)
+- `x86_64_all_preserving` [priv] crates/strider-py/src/cc.rs:66  (pyo3)
+- `html_str` [priv] crates/strider-py/src/cfg.rs:70  (pyo3)
+- `to_dot` [priv] crates/strider-py/src/cfg.rs:58  (pyo3)
+- `to_html` [priv] crates/strider-py/src/cfg.rs:49  (pyo3)
+- `count_regions` [priv] crates/strider-py/src/function.rs:301  (pyo3)
+- `find_joined` [priv] crates/strider-py/src/function.rs:527  (pyo3)
+- `find_one` [priv] crates/strider-py/src/function.rs:485  (pyo3)
+- `get_cfg` [priv] crates/strider-py/src/function.rs:225  (pyo3)
+- `html_str` [priv] crates/strider-py/src/function.rs:247  (pyo3)
+- `node_count` [priv] crates/strider-py/src/function.rs:291  (pyo3)
+- `optimize` [priv] crates/strider-py/src/function.rs:405  (pyo3)
+- `py_clone` [priv] crates/strider-py/src/function.rs:426  (pyo3)
+- `reoptimize` [priv] crates/strider-py/src/function.rs:413  (pyo3)
+- `rewrite` [priv] crates/strider-py/src/function.rs:575  (pyo3)
+- `rewrite_all` [priv] crates/strider-py/src/function.rs:594  (pyo3)
+- `to_dot` [priv] crates/strider-py/src/function.rs:240  (pyo3)
+- `to_html` [priv] crates/strider-py/src/function.rs:232  (pyo3)
+- `to_raw_dot` [priv] crates/strider-py/src/function.rs:277  (pyo3)
+- `to_raw_html` [priv] crates/strider-py/src/function.rs:283  (pyo3)
+- `wide_const_bytes` [priv] crates/strider-py/src/function.rs:355  (pyo3)
+- `strider` [priv] crates/strider-py/src/lib.rs:90  (name-referenced (fn-pointer / macro / re-export))
+- `__contains__` [priv] crates/strider-py/src/matcher.rs:197  (pyo3)
+- `__getitem__` [priv] crates/strider-py/src/matcher.rs:186  (pyo3)
+- `bool_` [priv] crates/strider-py/src/matcher.rs:218  (pyo3)
+- `float_bits` [priv] crates/strider-py/src/matcher.rs:224  (pyo3)
+- `int_` [priv] crates/strider-py/src/matcher.rs:211  (pyo3)
+- `op_name` [priv] crates/strider-py/src/matcher.rs:314  (name-referenced (fn-pointer / macro / re-export))
+- `uint` [priv] crates/strider-py/src/matcher.rs:204  (pyo3)
+- `vn` [priv] crates/strider-py/src/matcher.rs:250  (pyo3)
+- `__hash__` [priv] crates/strider-py/src/node.rs:242  (pyo3)
+- `__repr__` [priv] crates/strider-py/src/node.rs:224  (pyo3)
+- `__richcmp__` [priv] crates/strider-py/src/node.rs:231  (pyo3)
+- `const_bool` [priv] crates/strider-py/src/node.rs:189  (pyo3)
+- `const_int` [priv] crates/strider-py/src/node.rs:157  (pyo3)
+- `fingerprint` [priv] crates/strider-py/src/node.rs:202  (pyo3)
+- `inputs` [priv] crates/strider-py/src/node.rs:134  (pyo3)
+- `wide_const_bytes` [priv] crates/strider-py/src/node.rs:211  (pyo3)
+- `add_post` [priv] crates/strider-py/src/opt.rs:264  (pyo3)
+- `pass_count` [priv] crates/strider-py/src/opt.rs:271  (pyo3)
+- `post_pass_count` [priv] crates/strider-py/src/opt.rs:277  (pyo3)
+- `__and__` [priv] crates/strider-py/src/pattern.rs:1327  (pyo3)
+- `__contains__` [priv] crates/strider-py/src/pattern.rs:1168  (pyo3)
+- `__eq__` [priv] crates/strider-py/src/pattern.rs:1333  (pyo3)
+- `__getitem__` [priv] crates/strider-py/src/pattern.rs:1150  (pyo3)
+- `__hash__` [priv] crates/strider-py/src/pattern.rs:79  (pyo3)
+- `__hash__` [priv] crates/strider-py/src/pattern.rs:1337  (pyo3)
+- `__or__` [priv] crates/strider-py/src/pattern.rs:1321  (pyo3)
+- `__repr__` [priv] crates/strider-py/src/pattern.rs:74  (pyo3)
+- `__repr__` [priv] crates/strider-py/src/pattern.rs:1345  (pyo3)
+- `__repr__` [priv] crates/strider-py/src/pattern.rs:1404  (pyo3)
+- `any_` [pub] crates/strider-py/src/pattern.rs:1413  (pyo3)
+- `bool_` [priv] crates/strider-py/src/pattern.rs:1128  (pyo3)
+- `bool_bin_any` [pub] crates/strider-py/src/pattern.rs:1953  (pyo3)
+- `bool_binary` [pub] crates/strider-py/src/pattern.rs:2974  (pyo3)
+- `bool_inputs` [pub] crates/strider-py/src/pattern.rs:1443  (pyo3)
+- `bool_value` [pub] crates/strider-py/src/pattern.rs:1431  (pyo3)
+- `call_other` [pub] crates/strider-py/src/pattern.rs:2567  (pyo3)
+- `cap` [priv] crates/strider-py/src/pattern.rs:1360  (pyo3)
+- `cap` [priv] crates/strider-py/src/pattern.rs:2015  (pyo3)
+- `extract_bound` [priv] crates/strider-py/src/pattern.rs:1094  (trait-impl/dispatched)
+- `false_branch` [priv] crates/strider-py/src/pattern.rs:2655  (pyo3)
+- `float_bin_any` [pub] crates/strider-py/src/pattern.rs:1959  (pyo3)
+- `float_binary` [pub] crates/strider-py/src/pattern.rs:2980  (pyo3)
+- `float_bits` [priv] crates/strider-py/src/pattern.rs:1136  (pyo3)
+- `float_is_nan` [pub] crates/strider-py/src/pattern.rs:1858  (pyo3)
+- `float_le` [pub] crates/strider-py/src/pattern.rs:1882  (pyo3)
+- `float_lt` [pub] crates/strider-py/src/pattern.rs:1870  (pyo3)
+- `float_ne` [pub] crates/strider-py/src/pattern.rs:1876  (pyo3)
+- `float_sub` [pub] crates/strider-py/src/pattern.rs:1831  (pyo3)
+- `float_un_any` [pub] crates/strider-py/src/pattern.rs:1965  (pyo3)
+- `function_arg` [pub] crates/strider-py/src/pattern.rs:2819  (pyo3)
+- `function_arg_reg` [pub] crates/strider-py/src/pattern.rs:2833  (pyo3)
+- `function_arg_stack` [pub] crates/strider-py/src/pattern.rs:2844  (pyo3)
+- `if_` [pub] crates/strider-py/src/pattern.rs:2673  (pyo3)
+- `int_` [priv] crates/strider-py/src/pattern.rs:1119  (pyo3)
+- `int_bin_any` [pub] crates/strider-py/src/pattern.rs:1935  (pyo3)
+- `int_binary` [pub] crates/strider-py/src/pattern.rs:2968  (pyo3)
+- `int_cmp` [pub] crates/strider-py/src/pattern.rs:1758  (pyo3)
+- `int_le` [pub] crates/strider-py/src/pattern.rs:1746  (pyo3)
+- `int_ne` [pub] crates/strider-py/src/pattern.rs:1740  (pyo3)
+- `int_sle` [pub] crates/strider-py/src/pattern.rs:1752  (pyo3)
+- `int_un_any` [pub] crates/strider-py/src/pattern.rs:1941  (pyo3)
+- `into_pat` [priv] crates/strider-py/src/pattern.rs:2026  (pyo3)
+- `load` [pub] crates/strider-py/src/pattern.rs:2376  (pyo3)
+- `lookup_op` [priv] crates/strider-py/src/pattern.rs:1556  (pyo3)
+- `mem_phi` [pub] crates/strider-py/src/pattern.rs:2731  (pyo3)
+- `not_` [pub] crates/strider-py/src/pattern.rs:1779  (pyo3)
+- `phi_for` [pub] crates/strider-py/src/pattern.rs:2707  (pyo3)
+- `ret` [pub] crates/strider-py/src/pattern.rs:2590  (pyo3)
+- `source_register` [priv] crates/strider-py/src/pattern.rs:2790  (pyo3)
+- `source_stack` [priv] crates/strider-py/src/pattern.rs:2798  (pyo3)
+- `store` [pub] crates/strider-py/src/pattern.rs:2411  (pyo3)
+- `true_branch` [priv] crates/strider-py/src/pattern.rs:2650  (pyo3)
+- `type_output` [priv] crates/strider-py/src/pattern.rs:949  (trait-impl/dispatched)
+- `uint` [priv] crates/strider-py/src/pattern.rs:1110  (pyo3)
+- `when` [priv] crates/strider-py/src/pattern.rs:1370  (pyo3)
+- `when` [priv] crates/strider-py/src/pattern.rs:2021  (pyo3)
+- `pcode_at` [pub] crates/strider-py/src/pcode.rs:75  (pyo3)
+- `pcode_at_addrs` [pub] crates/strider-py/src/pcode.rs:115  (pyo3)
+- `add_elf` [priv] crates/strider-py/src/reader.rs:356  (pyo3)
+- `entry_point` [priv] crates/strider-py/src/reader.rs:331  (pyo3)
+- `extract_bound` [priv] crates/strider-py/src/reader.rs:684  (trait-impl/dispatched)
+- `into_box` [pub] crates/strider-py/src/reader.rs:710  (pub-external)
+- `reader` [priv] crates/strider-py/src/reader.rs:269  (pyo3)
+- `ro_reader` [priv] crates/strider-py/src/reader.rs:279  (pyo3)
+- `symbol` [priv] crates/strider-py/src/reader.rs:286  (pyo3)
+- `symbol_addr_and_size` [priv] crates/strider-py/src/reader.rs:308  (pyo3)
+- `symbol_size` [priv] crates/strider-py/src/reader.rs:298  (pyo3)
+- `symbols` [priv] crates/strider-py/src/reader.rs:316  (pyo3)
+- `__eq__` [priv] crates/strider-py/src/sleigh.rs:157  (pyo3)
+- `__eq__` [priv] crates/strider-py/src/sleigh.rs:244  (pyo3)
+- `__hash__` [priv] crates/strider-py/src/sleigh.rs:162  (pyo3)
+- `__hash__` [priv] crates/strider-py/src/sleigh.rs:249  (pyo3)
+- `__repr__` [priv] crates/strider-py/src/sleigh.rs:78  (pyo3)
+- `__repr__` [priv] crates/strider-py/src/sleigh.rs:152  (pyo3)
+- `__repr__` [priv] crates/strider-py/src/sleigh.rs:235  (pyo3)
+- `arch_name` [priv] crates/strider-py/src/sleigh.rs:63  (pyo3)
+- `const_` [priv] crates/strider-py/src/sleigh.rs:122  (pyo3)
+- `from_inner` [pub(crate)] crates/strider-py/src/sleigh.rs:197  (pyo3)
+- `off` [priv] crates/strider-py/src/sleigh.rs:225  (pyo3)
+- `ram` [priv] crates/strider-py/src/sleigh.rs:108  (pyo3)
+- `reg` [priv] crates/strider-py/src/sleigh.rs:73  (pyo3)
+- `space` [priv] crates/strider-py/src/sleigh.rs:218  (pyo3)
+- `unique` [priv] crates/strider-py/src/sleigh.rs:129  (pyo3)
+- `analyze_cfg` [priv] crates/strider-py/src/strider_cls.rs:126  (pyo3)
+- `build_optimizer_pipeline` [priv] crates/strider-py/src/strider_cls.rs:147  (pyo3)
+- `strider` [pub] crates/strider-py/src/strider_cls.rs:347  (pyo3)
+- `from_path` [pub] crates/strider-reader/src/elf/reader.rs:65  (pub-external)
+- `fmt` [priv] crates/strider-reader/src/lib.rs:45  (trait-impl/dispatched)
+- `probe_regs` [pub] crates/strider-target/src/arch.rs:250  (pub-external)
+- `cc_from_table` [priv] crates/strider-target/src/calling_convention/mod.rs:847  (name-referenced (fn-pointer / macro / re-export))
+
+## C. SINGLE production caller — 513 (inline / single-use candidates)
+
+- `create_initial_state` [priv] crates/dot/src/lib.rs:54  <- as_dot
+- `dark_cfg` [pub] crates/dot/src/lib.rs:118  <- dot_style_for
+- `dot_node_count` [pub(crate)] crates/dot/src/lib.rs:337  <- as_html_from_dot
+- `emit_attr_block` [priv] crates/dot/src/lib.rs:301  <- new
+- `iter_nodes` [priv] crates/dot/src/lib.rs:57  <- as_dot
+- `json_quote` [priv] crates/dot/src/lib.rs:172  <- as_html_from_dot
+- `values` [pub] crates/entity-utils/src/interner.rs:79  <- new
+- `entity_postorder` [pub] crates/graphwalk/src/lib.rs:366  <- cone_order
+- `next_event` [pub] crates/graphwalk/src/lib.rs:279  <- next
+- `next_event` [pub] crates/graphwalk/src/lib.rs:342  <- next
+- `try_predecessors` [priv] crates/graphwalk/src/lib.rs:62  <- predecessors
+- `try_predecessors` [priv] crates/graphwalk/src/lib.rs:79  <- predecessors
+- `try_successors` [priv] crates/graphwalk/src/lib.rs:31  <- successors
+- `try_successors` [priv] crates/graphwalk/src/lib.rs:50  <- successors
+- `explore` [priv] crates/strider-cfg/src/builder/mod.rs:214  <- build
+- `for_arch` [pub] crates/strider-cfg/src/builder/mod.rs:83  <- build_cfg
+- `start_pcode_addr` [priv] crates/strider-cfg/src/builder/mod.rs:200  <- build
+- `tail_call_stub` [pub(super)] crates/strider-cfg/src/builder/mod.rs:166  <- process_cond_branch
+- `detect_fallthrough_oob_tail_call` [priv] crates/strider-cfg/src/builder/region_builder.rs:660  <- build
+- `finish_branch_or_tail_call` [priv] crates/strider-cfg/src/builder/region_builder.rs:520  <- process_branch_indirect
+- `process_branch` [priv] crates/strider-cfg/src/builder/region_builder.rs:291  <- process_new_insn
+- `process_branch_indirect` [priv] crates/strider-cfg/src/builder/region_builder.rs:426  <- process_new_insn
+- `process_call_other` [priv] crates/strider-cfg/src/builder/region_builder.rs:381  <- process_new_insn
+- `process_cond_branch` [priv] crates/strider-cfg/src/builder/region_builder.rs:328  <- process_new_insn
+- `process_new_insn` [priv] crates/strider-cfg/src/builder/region_builder.rs:264  <- process_insn
+- `split_region` [pub(super)] crates/strider-cfg/src/builder/split.rs:31  <- explore
+- `create_initial_state` [priv] crates/strider-cfg/src/dot.rs:36  <- as_dot
+- `iter_nodes` [priv] crates/strider-cfg/src/dot.rs:38  <- as_dot
+- `is_addr_tail_call` [pub] crates/strider-cfg/src/query.rs:32  <- is_branch_tail_call_nocheck
+- `region_id_at_start` [pub] crates/strider-cfg/src/query.rs:174  <- handle_switch
+- `region_predecessors` [pub] crates/strider-cfg/src/query.rs:148  <- translate_regions
+- `regions` [pub] crates/strider-cfg/src/query.rs:136  <- find_all_unique_vns
+- `canonicalize` [pub(crate)] crates/strider-graph/src/cache.rs:222  <- canonicalize_node
+- `get_or_alloc` [pub(crate)] crates/strider-graph/src/cache.rs:183  <- create_node
+- `canonicalize_node` [pub] crates/strider-graph/src/graph.rs:251  <- clean
+- `detach_node_inputs` [pub] crates/strider-graph/src/graph.rs:495  <- kill_node
+- `has_node` [pub] crates/strider-graph/src/graph.rs:267  <- node_id_from_u32
+- `next_use` [pub] crates/strider-graph/src/graph.rs:365  <- check_use_list_consistency
+- `node_of_use` [pub] crates/strider-graph/src/graph.rs:243  <- update_input
+- `rebuild_cache` [pub] crates/strider-graph/src/graph.rs:328  <- compact
+- `remove_node_inputs_batch` [pub] crates/strider-graph/src/graph.rs:438  <- remove_region_predecessors
+- `replace_all_uses` [pub] crates/strider-graph/src/graph.rs:513  <- replace_value
+- `retain_reachable` [pub] crates/strider-graph/src/graph.rs:581  <- compact
+- `surviving_node_pairs` [pub] crates/strider-graph/src/graph.rs:693  <- remap_node_keyed
+- `value_first_use_id` [pub] crates/strider-graph/src/graph.rs:359  <- check_use_list_consistency
+- `value_old_to_new` [pub] crates/strider-graph/src/graph.rs:702  <- remap
+- `value_use_cursor` [pub] crates/strider-graph/src/graph.rs:371  <- replace_all_uses
+- `current` [pub] crates/strider-graph/src/iter.rs:121  <- replace_all_uses
+- `move_next` [priv] crates/strider-graph/src/iter.rs:126  <- replace_current_with
+- `replace_current_with` [pub] crates/strider-graph/src/iter.rs:137  <- replace_all_uses
+- `size_hint` [priv] crates/strider-graph/src/iter.rs:106  <- from_iter
+- `in_neighbors` [priv] crates/strider-graph/src/petgraph_view.rs:56  <- neighbors_directed
+- `alloc_node` [pub(crate)] crates/strider-graph/src/storage.rs:138  <- get_or_alloc
+- `node_ids` [pub(crate)] crates/strider-graph/src/storage.rs:178  <- rebuild
+- `build_boolean_const` [priv] crates/strider-ir/src/builder/builder_ext.rs:176  <- build_logical_not
+- `build_cpool_ref` [priv] crates/strider-ir/src/builder/builder_ext.rs:594  <- handle_cpool_ref
+- `build_float_bits_to_int` [priv] crates/strider-ir/src/builder/builder_ext.rs:516  <- write_float_to_vn
+- `build_float_const` [priv] crates/strider-ir/src/builder/builder_ext.rs:363  <- build_int_bits_to_float
+- `build_float_to_int` [priv] crates/strider-ir/src/builder/builder_ext.rs:448  <- handle_float_trunc
+- `build_int_bits_to_float` [priv] crates/strider-ir/src/builder/builder_ext.rs:474  <- cast_to_float_if_needed
+- `build_int_const_limbs` [priv] crates/strider-ir/src/builder/builder_ext.rs:209  <- build_all_ones
+- `build_int_to_float` [priv] crates/strider-ir/src/builder/builder_ext.rs:435  <- handle_float_int_to_float
+- `build_lzcount` [priv] crates/strider-ir/src/builder/builder_ext.rs:329  <- handle_lzcount
+- `build_new` [priv] crates/strider-ir/src/builder/builder_ext.rs:604  <- handle_new
+- `build_popcount` [priv] crates/strider-ir/src/builder/builder_ext.rs:319  <- handle_popcount
+- `build_segment_op` [priv] crates/strider-ir/src/builder/builder_ext.rs:551  <- handle_segment_op
+- `apply_post_call_sp_adjust` [pub] crates/strider-ir/src/builder/call.rs:301  <- build_cc_call
+- `build_call` [pub] crates/strider-ir/src/builder/call.rs:152  <- build_cc_call
+- `build_call_other` [pub] crates/strider-ir/src/builder/call.rs:254  <- build_abi_call_other
+- `dedup_and_container_map` [priv] crates/strider-ir/src/builder/mod.rs:82  <- new
+- `end_of` [priv] crates/strider-ir/src/builder/mod.rs:87  <- dedup_and_container_map
+- `set_lift_addr` [pub] crates/strider-ir/src/builder/mod.rs:352  <- with_lift_addr
+- `build_branch` [pub] crates/strider-ir/src/builder/nodes.rs:145  <- build_switch_if_ladder
+- `build_indirect_branch` [pub] crates/strider-ir/src/builder/nodes.rs:123  <- handle_unresolved_indirect_branch
+- `build_return` [pub] crates/strider-ir/src/builder/nodes.rs:54  <- build_function_return
+- `build_vn_phi` [pub(super)] crates/strider-ir/src/builder/nodes.rs:238  <- create_region
+- `set_entry_region` [pub] crates/strider-ir/src/builder/vars.rs:55  <- build_region_map
+- `build_masked_insert` [priv] crates/strider-ir/src/builder/vn_io.rs:319  <- write_reg_vn
+- `calculate_reg_shift_from_container` [pub(crate)] crates/strider-ir/src/builder/vn_io.rs:101  <- enter_sub_register
+- `find_largest_fitting_register` [pub(crate)] crates/strider-ir/src/builder/vn_io.rs:78  <- enter_sub_register
+- `vn_mask` [pub(crate)] crates/strider-ir/src/builder/vn_io.rs:47  <- build_masked_insert
+- `write_reg_vn` [pub] crates/strider-ir/src/builder/vn_io.rs:179  <- write_vn
+- `control_dominators` [pub] crates/strider-ir/src/control_flow_view.rs:73  <- apply
+- `dominates` [pub] crates/strider-ir/src/control_flow_view.rs:82  <- dominating_guard
+- `call_clobbered_name` [pub(super)] crates/strider-ir/src/function/dot/label.rs:276  <- emit_input_edge
+- `cmp_label` [priv] crates/strider-ir/src/function/dot/label.rs:255  <- pretty_label
+- `emit_const_node` [pub(super)] crates/strider-ir/src/function/dot/label.rs:259  <- emit_input_edge
+- `input_type_suffix` [priv] crates/strider-ir/src/function/dot/label.rs:90  <- pretty_label
+- `out_type_str` [priv] crates/strider-ir/src/function/dot/label.rs:72  <- width_change_label
+- `out_type_suffix` [priv] crates/strider-ir/src/function/dot/label.rs:84  <- pretty_label
+- `pretty_vnspace` [priv] crates/strider-ir/src/function/dot/label.rs:39  <- pretty_label
+- `return_ret_name` [pub(super)] crates/strider-ir/src/function/dot/label.rs:292  <- emit_input_edge
+- `vn_to_display_name` [pub(crate)] crates/strider-ir/src/function/dot/label.rs:23  <- vn_to_name
+- `width_change_label` [priv] crates/strider-ir/src/function/dot/label.rs:246  <- pretty_label
+- `with_sp_offset` [priv] crates/strider-ir/src/function/dot/label.rs:100  <- pretty_label
+- `alloc_id` [priv] crates/strider-ir/src/function/dot/mod.rs:159  <- get_dot_id
+- `edge_style` [pub(super)] crates/strider-ir/src/function/dot/mod.rs:100  <- emit_input_edge
+- `node_shape` [pub(super)] crates/strider-ir/src/function/dot/mod.rs:17  <- try_declare_node
+- `role_color` [priv] crates/strider-ir/src/function/dot/mod.rs:81  <- edge_style
+- `create_initial_state` [priv] crates/strider-ir/src/function/dot/raw.rs:126  <- as_dot
+- `fmt_vn` [priv] crates/strider-ir/src/function/dot/raw.rs:25  <- node_label
+- `iter_nodes` [priv] crates/strider-ir/src/function/dot/raw.rs:128  <- as_dot
+- `node_label` [priv] crates/strider-ir/src/function/dot/raw.rs:47  <- dump_as_dot
+- `all_uses_go_through_inline` [priv] crates/strider-ir/src/function/dot/render.rs:11  <- try_declare_node
+- `create_initial_state` [priv] crates/strider-ir/src/function/dot/render.rs:25  <- as_dot
+- `emit_if_branch_virtuals` [priv] crates/strider-ir/src/function/dot/render.rs:126  <- dump_as_dot
+- `emit_input_edge` [priv] crates/strider-ir/src/function/dot/render.rs:185  <- dump_as_dot
+- `iter_nodes` [priv] crates/strider-ir/src/function/dot/render.rs:33  <- as_dot
+- `pred_index` [priv] crates/strider-ir/src/function/dot/render.rs:303  <- emit_input_edge
+- `try_declare_node` [priv] crates/strider-ir/src/function/dot/render.rs:75  <- dump_as_dot
+- `canonicalize_node` [priv] crates/strider-ir/src/function/edit.rs:397  <- clean
+- `is_node_dead` [priv] crates/strider-ir/src/function/edit.rs:435  <- clean
+- `mark_node_dead` [priv] crates/strider-ir/src/function/edit.rs:486  <- kill_node
+- `populate` [pub(crate)] crates/strider-ir/src/function/edit.rs:72  <- new
+- `postorder_filter` [pub] crates/strider-ir/src/function/edit.rs:219  <- run_peephole
+- `redirect_input` [pub] crates/strider-ir/src/function/edit.rs:738  <- invert
+- `remove_node_inputs_batch` [priv] crates/strider-ir/src/function/edit.rs:826  <- remove_region_predecessors
+- `remove_region_predecessors` [pub] crates/strider-ir/src/function/edit.rs:775  <- apply
+- `replace_all_uses` [pub] crates/strider-ir/src/function/edit.rs:645  <- replace_value
+- `track_created` [priv] crates/strider-ir/src/function/edit.rs:544  <- create_node_attributed
+- `will_detach_value` [priv] crates/strider-ir/src/function/edit.rs:275  <- update_input
+- `all_vns` [pub] crates/strider-ir/src/function/func.rs:285  <- find_all_unique_vns
+- `clear_arg_values_from` [pub] crates/strider-ir/src/function/func.rs:573  <- apply
+- `gc_consts` [priv] crates/strider-ir/src/function/func.rs:780  <- compact
+- `initial_sp` [pub] crates/strider-ir/src/function/func.rs:626  <- detect_stack_args
+- `initial_var_index_entries` [pub(crate)] crates/strider-ir/src/function/func.rs:602  <- check_graph_invariants_side_indices
+- `intern_int_const_limbs` [pub] crates/strider-ir/src/function/func.rs:237  <- build_int_const_limbs
+- `retain_reachable` [pub(crate)] crates/strider-ir/src/function/func.rs:723  <- compact
+- `set_call_cc` [pub] crates/strider-ir/src/function/func.rs:514  <- build_cc_call
+- `set_stack_offset` [pub] crates/strider-ir/src/function/func.rs:592  <- apply
+- `stack_vn` [pub(crate)] crates/strider-ir/src/function/func.rs:478  <- build_call
+- `value_vn_entries` [pub(crate)] crates/strider-ir/src/function/func.rs:611  <- check_graph_invariants_side_indices
+- `remap` [pub(crate)] crates/strider-ir/src/function/side_tables.rs:119  <- compact
+- `remap_hashmap` [priv] crates/strider-ir/src/function/side_tables.rs:19  <- remap
+- `remap_node_keyed` [pub(crate)] crates/strider-ir/src/graph.rs:133  <- remap
+- `asm_fingerprint_exempt` [pub] crates/strider-ir/src/node/kind.rs:301  <- check_graph_invariants_asm_fingerprints
+- `is_commutative` [pub] crates/strider-ir/src/node/kind.rs:432  <- try_match_at
+- `is_value` [pub] crates/strider-ir/src/node/value_kind.rs:26  <- value_output
+- `float_for_byte_size` [pub] crates/strider-ir/src/node/value_type.rs:242  <- float_type
+- `fixed` [pub(crate)] crates/strider-ir/src/node_signature.rs:94  <- expected_signature
+- `head_len` [pub(crate)] crates/strider-ir/src/node_signature.rs:112  <- check_local_typing
+- `is_variadic` [pub(crate)] crates/strider-ir/src/node_signature.rs:105  <- check_local_typing
+- `variadic` [pub(crate)] crates/strider-ir/src/node_signature.rs:98  <- expected_signature
+- `advance_cur_region_ctrl` [pub(crate)] crates/strider-ir/src/region.rs:86  <- build_call_kind
+- `create_region_helper` [pub(crate)] crates/strider-ir/src/region.rs:151  <- create_region
+- `cur_region_control` [pub(crate)] crates/strider-ir/src/region.rs:76  <- build_call_kind
+- `link_regions` [pub] crates/strider-ir/src/region.rs:247  <- link_region_edges
+- `read_variable_from_id` [pub(crate)] crates/strider-ir/src/region.rs:184  <- read_variable
+- `write_variable_from_id` [pub] crates/strider-ir/src/region.rs:177  <- write_variable
+- `check_graph_invariants_asm_fingerprints` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:358  <- validate
+- `check_graph_invariants_cc_arity` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:297  <- validate
+- `check_graph_invariants_consts` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:495  <- validate
+- `check_graph_invariants_control_single_use` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:94  <- validate
+- `check_graph_invariants_extend_truncate` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:134  <- validate
+- `check_graph_invariants_memory_chain` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:403  <- validate
+- `check_graph_invariants_phis` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:180  <- validate
+- `check_graph_invariants_region` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:62  <- validate
+- `check_graph_invariants_side_indices` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:443  <- validate
+- `check_graph_invariants_uniqueness` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:24  <- validate
+- `check_local_typing` [pub(super)] crates/strider-ir/src/validate/local_typing.rs:12  <- validate
+- `kind_matches` [priv] crates/strider-ir/src/validate/mod.rs:115  <- check_local_typing
+- `check_use_list_consistency` [pub(super)] crates/strider-ir/src/validate/use_list_consistency.rs:28  <- validate
+- `infer_float_type` [priv] crates/strider-ir/src/viewer.rs:482  <- cast_float_cmp_operands
+- `cast_mask_of` [pub] crates/strider-ir/src/walk/cast/mod.rs:39  <- skip_casts
+- `cfg_outputs` [pub(crate)] crates/strider-ir/src/walk/mod.rs:98  <- cfg_succs
+- `cfg_reachable` [pub] crates/strider-ir/src/walk/mod.rs:28  <- apply
+- `graph_walk_succs` [pub(crate)] crates/strider-ir/src/walk/mod.rs:89  <- try_successors
+- `try_successors` [priv] crates/strider-ir/src/walk/mod.rs:116  <- successors
+- `try_successors` [priv] crates/strider-ir/src/walk/mod.rs:168  <- successors
+- `try_successors` [priv] crates/strider-ir/src/walk/mod.rs:202  <- successors
+- `build_all_ones` [priv] crates/strider-lift/src/lift/arithmetic.rs:77  <- handle_int_neg_as_xor
+- `build_or_i1` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:313  <- handle_float_less_equal
+- `handle_int_less_equal` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:339  <- process_insn_inner
+- `handle_int_neg_as_xor` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:132  <- process_insn_inner
+- `handle_int_not_equal` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:329  <- process_insn_inner
+- `handle_int_sless_equal` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:348  <- process_insn_inner
+- `handle_int_sub` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:363  <- process_insn_inner
+- `process_int_binary_op` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:161  <- process_insn_inner
+- `process_int_cmp_op` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:230  <- process_insn_inner
+- `process_int_unary_op` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:113  <- process_insn_inner
+- `reject_operand_wider_than_output` [priv] crates/strider-lift/src/lift/arithmetic.rs:99  <- process_int_binary_op
+- `process_bool_binary_op` [pub(super)] crates/strider-lift/src/lift/boolean.rs:20  <- process_insn_inner
+- `process_bool_unary_op` [pub(super)] crates/strider-lift/src/lift/boolean.rs:42  <- process_insn_inner
+- `decode_user_op` [priv] crates/strider-lift/src/lift/call.rs:149  <- handle_call_other
+- `handle_call_other` [pub(super)] crates/strider-lift/src/lift/call.rs:16  <- process_insn_inner
+- `handle_call_other_modeled` [priv] crates/strider-lift/src/lift/call.rs:59  <- handle_call_other
+- `build_bit_field_insert` [priv] crates/strider-lift/src/lift/cast.rs:52  <- handle_insert
+- `handle_extract` [pub(super)] crates/strider-lift/src/lift/cast.rs:215  <- process_insn_inner
+- `handle_insert` [pub(super)] crates/strider-lift/src/lift/cast.rs:264  <- process_insn_inner
+- `handle_lzcount` [pub(super)] crates/strider-lift/src/lift/cast.rs:163  <- process_insn_inner
+- `handle_piece` [pub(super)] crates/strider-lift/src/lift/cast.rs:167  <- process_insn_inner
+- `handle_popcount` [pub(super)] crates/strider-lift/src/lift/cast.rs:159  <- process_insn_inner
+- `handle_subpiece` [pub(super)] crates/strider-lift/src/lift/cast.rs:88  <- process_insn_inner
+- `build_switch_if_ladder` [pub(crate)] crates/strider-lift/src/lift/control.rs:53  <- handle_switch
+- `handle_branch` [pub(super)] crates/strider-lift/src/lift/control.rs:110  <- process_insn_inner
+- `handle_call` [pub(super)] crates/strider-lift/src/lift/control.rs:272  <- process_insn_inner
+- `handle_call_indirect` [pub(super)] crates/strider-lift/src/lift/control.rs:311  <- process_insn_inner
+- `handle_cond_branch` [pub(super)] crates/strider-lift/src/lift/control.rs:169  <- process_insn_inner
+- `handle_return` [pub(super)] crates/strider-lift/src/lift/control.rs:211  <- process_insn_inner
+- `handle_switch` [pub(crate)] crates/strider-lift/src/lift/control.rs:138  <- translate_regions
+- `handle_tail_call` [pub(crate)] crates/strider-lift/src/lift/control.rs:300  <- translate_regions
+- `handle_unresolved_indirect_branch` [pub(crate)] crates/strider-lift/src/lift/control.rs:336  <- translate_regions
+- `process_insn_inner` [priv] crates/strider-lift/src/lift/dispatch.rs:62  <- process_insn
+- `handle_float_float_to_float` [pub(super)] crates/strider-lift/src/lift/float.rs:225  <- process_insn_inner
+- `handle_float_int_to_float` [pub(super)] crates/strider-lift/src/lift/float.rs:208  <- process_insn_inner
+- `handle_float_less_equal` [pub(super)] crates/strider-lift/src/lift/float.rs:193  <- process_insn_inner
+- `handle_float_nan` [pub(super)] crates/strider-lift/src/lift/float.rs:146  <- process_insn_inner
+- `handle_float_not_equal` [pub(super)] crates/strider-lift/src/lift/float.rs:177  <- process_insn_inner
+- `handle_float_sub` [pub(super)] crates/strider-lift/src/lift/float.rs:164  <- process_insn_inner
+- `handle_float_trunc` [pub(super)] crates/strider-lift/src/lift/float.rs:242  <- process_insn_inner
+- `lift_float_unary` [priv] crates/strider-lift/src/lift/float.rs:57  <- process_float_unary_op
+- `process_float_binary_op` [pub(super)] crates/strider-lift/src/lift/float.rs:78  <- process_insn_inner
+- `process_float_cmp_op` [pub(super)] crates/strider-lift/src/lift/float.rs:96  <- process_insn_inner
+- `process_float_unary_op` [pub(super)] crates/strider-lift/src/lift/float.rs:87  <- process_insn_inner
+- `handle_copy` [pub(super)] crates/strider-lift/src/lift/integer.rs:15  <- process_insn_inner
+- `process_extend` [pub(super)] crates/strider-lift/src/lift/integer.rs:28  <- process_insn_inner
+- `handle_load` [pub(super)] crates/strider-lift/src/lift/memory.rs:12  <- process_insn_inner
+- `handle_store` [pub(super)] crates/strider-lift/src/lift/memory.rs:20  <- process_insn_inner
+- `handle_cpool_ref` [pub(super)] crates/strider-lift/src/lift/misc.rs:35  <- process_insn_inner
+- `handle_new` [pub(super)] crates/strider-lift/src/lift/misc.rs:43  <- process_insn_inner
+- `handle_segment_op` [pub(super)] crates/strider-lift/src/lift/misc.rs:19  <- process_insn_inner
+- `build_ir` [pub] crates/strider-lift/src/lift/mod.rs:148  <- analyze_cfg
+- `build_region_map` [priv] crates/strider-lift/src/lift/mod.rs:237  <- build_ir_with
+- `find_all_unique_vns` [pub(crate)] crates/strider-lift/src/lift/mod.rs:125  <- build_ir_with
+- `from_terminator` [priv] crates/strider-lift/src/lift/mod.rs:390  <- translate_regions
+- `link_region_edges` [priv] crates/strider-lift/src/lift/mod.rs:337  <- build_ir_with
+- `skips_opcode` [priv] crates/strider-lift/src/lift/mod.rs:432  <- translate_regions
+- `translate_regions` [priv] crates/strider-lift/src/lift/mod.rs:258  <- build_ir_with
+- `read_rom_const` [pub(crate)] crates/strider-opt/src/const_eval.rs:18  <- eval_node_const
+- `eval_float_binary` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_float.rs:68  <- build_bool_float_rules
+- `eval_float_cmp` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_float.rs:87  <- build_bool_float_rules
+- `eval_float_unary` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_float.rs:101  <- build_bool_float_rules
+- `signed_min` [priv] crates/strider-opt/src/opt/constant_fold/eval_int.rs:12  <- eval_int_binary
+- `matches_kind` [priv] crates/strider-opt/src/opt/constant_fold/mod.rs:54  <- run_peephole
+- `try_rewrite` [priv] crates/strider-opt/src/opt/constant_fold/mod.rs:58  <- run_peephole
+- `apply_all` [pub(super)] crates/strider-opt/src/opt/constant_fold/rules.rs:56  <- try_rewrite
+- `build_bitcast_extend_rules` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:275  <- build
+- `build_bool_float_rules` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:724  <- build
+- `build_const_eval_rules` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:551  <- build
+- `build_identity_rules` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:453  <- build
+- `build_reassoc_and_mask_rules` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:80  <- build
+- `require_operand_widths` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:530  <- build_const_eval_rules
+- `truncate_low_mask` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:265  <- build_bitcast_extend_rules
+- `matches_kind` [priv] crates/strider-opt/src/opt/dead_branch/mod.rs:43  <- run_peephole
+- `propagate_to_consumers` [priv] crates/strider-opt/src/opt/dead_branch/mod.rs:100  <- run_peephole
+- `try_rewrite` [priv] crates/strider-opt/src/opt/dead_branch/mod.rs:47  <- run_peephole
+- `absorb_cr_pack_fingerprints` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:458  <- canonicalize_cr_bit_test
+- `build_rules` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:192  <- new
+- `canonicalize_cr_bit_test` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:430  <- try_rewrite
+- `cr_bit_comparison` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:491  <- canonicalize_cr_bit_test
+- `flatten_or` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:540  <- cr_bit_comparison
+- `matches_kind` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:96  <- run_peephole
+- `neg_relation` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:151  <- build_rules
+- `propagate_to_consumers` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:135  <- run_peephole
+- `seed_order` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:104  <- run_peephole
+- `single_bit_term` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:558  <- cr_bit_comparison
+- `sub_relation` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:173  <- build_rules
+- `try_rewrite` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:108  <- run_peephole
+- `invert` [priv] crates/strider-opt/src/opt/if_cond_inversion/mod.rs:156  <- try_rewrite
+- `is_inverted_cond_match` [priv] crates/strider-opt/src/opt/if_cond_inversion/mod.rs:136  <- try_rewrite
+- `matches_kind` [priv] crates/strider-opt/src/opt/if_cond_inversion/mod.rs:93  <- run_peephole
+- `propagate_to_consumers` [priv] crates/strider-opt/src/opt/if_cond_inversion/mod.rs:118  <- run_peephole
+- `try_rewrite` [priv] crates/strider-opt/src/opt/if_cond_inversion/mod.rs:97  <- run_peephole
+- `build_cone_fingerprint_memo` [priv] crates/strider-opt/src/opt/known_bits/mod.rs:631  <- apply
+- `classify_const_shift` [priv] crates/strider-opt/src/opt/known_bits/mod.rs:106  <- shift_known_bits
+- `from_const` [priv] crates/strider-opt/src/opt/known_bits/mod.rs:65  <- node_known_bits
+- `max_value` [pub] crates/strider-opt/src/opt/known_bits/mod.rs:85  <- compute_value_ranges
+- `node_known_bits` [pub(crate)] crates/strider-opt/src/opt/known_bits/mod.rs:185  <- analyze
+- `propagates_known_bits` [priv] crates/strider-opt/src/opt/known_bits/mod.rs:419  <- build_cone_fingerprint_memo
+- `shift_known_bits` [priv] crates/strider-opt/src/opt/known_bits/mod.rs:133  <- node_known_bits
+- `matches_kind` [priv] crates/strider-opt/src/opt/load_forward/mod.rs:54  <- run_peephole
+- `narrow` [priv] crates/strider-opt/src/opt/load_forward/mod.rs:192  <- try_forward_load
+- `propagate_to_consumers` [priv] crates/strider-opt/src/opt/load_forward/mod.rs:60  <- run_peephole
+- `try_forward_load` [priv] crates/strider-opt/src/opt/load_forward/mod.rs:88  <- try_rewrite
+- `try_rewrite` [priv] crates/strider-opt/src/opt/load_forward/mod.rs:64  <- run_peephole
+- `matches_kind` [priv] crates/strider-opt/src/opt/load_readonly/mod.rs:79  <- run_peephole
+- `propagate_to_consumers` [priv] crates/strider-opt/src/opt/load_readonly/mod.rs:84  <- run_peephole
+- `try_fold_const_load_at` [pub(crate)] crates/strider-opt/src/opt/load_readonly/mod.rs:127  <- try_rewrite
+- `try_rewrite` [priv] crates/strider-opt/src/opt/load_readonly/mod.rs:88  <- run_peephole
+- `matches_kind` [priv] crates/strider-opt/src/opt/phi_collapse/mod.rs:36  <- run_peephole
+- `propagate_to_consumers` [priv] crates/strider-opt/src/opt/phi_collapse/mod.rs:112  <- run_peephole
+- `try_rewrite` [priv] crates/strider-opt/src/opt/phi_collapse/mod.rs:40  <- run_peephole
+- `try_collapse` [priv] crates/strider-opt/src/opt/region_collapse/mod.rs:60  <- apply
+- `matches_kind` [priv] crates/strider-opt/src/peephole.rs:85  <- run_peephole
+- `propagate_to_consumers` [priv] crates/strider-opt/src/peephole.rs:113  <- run_peephole
+- `run_peephole` [pub(crate)] crates/strider-opt/src/peephole.rs:138  <- apply
+- `seed_order` [priv] crates/strider-opt/src/peephole.rs:91  <- run_peephole
+- `try_rewrite` [priv] crates/strider-opt/src/peephole.rs:102  <- run_peephole
+- `passes` [pub] crates/strider-opt/src/pipeline.rs:353  <- snapshot_from
+- `post_passes` [pub] crates/strider-opt/src/pipeline.rs:360  <- snapshot_from
+- `collect_stack_args` [priv] crates/strider-opt/src/post_opt/call_stack_args/mod.rs:43  <- apply
+- `detect_stack_args` [priv] crates/strider-opt/src/post_opt/function_args/mod.rs:122  <- apply
+- `mem_chain_is_dirty` [priv] crates/strider-opt/src/post_opt/function_args/mod.rs:275  <- detect_stack_args
+- `as_const` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:41  <- eval_target
+- `cone_order` [pub(crate)] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:249  <- classify_table_dispatch
+- `eval_add` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:140  <- eval_node
+- `eval_load` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:161  <- eval_node
+- `eval_node` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:99  <- eval_target
+- `eval_phi` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:208  <- eval_node
+- `eval_target` [pub(crate)] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:75  <- classify_table_dispatch
+- `reshape` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:192  <- eval_load
+- `try_successors` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:235  <- successors
+- `classify_anchor` [pub] crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs:102  <- apply
+- `link_register_return` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs:149  <- classify_anchor
+- `single_const_target` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs:128  <- classify_anchor
+- `classify_table_dispatch` [pub] crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs:70  <- classify_anchor
+- `enumerate_targets` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs:120  <- classify_table_dispatch
+- `find_index_candidates` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs:142  <- classify_table_dispatch
+- `is_and_masked` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs:204  <- find_index_candidates
+- `is_load_derived` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs:215  <- find_index_candidates
+- `apply_rules_count` [pub] crates/strider-opt/src/rewrite_rule.rs:252  <- apply_rules_count_on
+- `classify_sp_node` [priv] crates/strider-opt/src/sp_expr/analyzer.rs:176  <- decompose
+- `classify_store_addr` [pub(crate)] crates/strider-opt/src/sp_expr/analyzer.rs:272  <- def_clobbers
+- `offset_range_verdict` [priv] crates/strider-opt/src/sp_expr/analyzer.rs:306  <- alias_verdict
+- `shifted` [pub(crate)] crates/strider-opt/src/sp_expr/analyzer.rs:52  <- classify_sp_node
+- `def_clobbers` [priv] crates/strider-opt/src/sp_expr/cfg.rs:49  <- walk_from
+- `verdict` [pub(crate)] crates/strider-opt/src/sp_expr/cfg.rs:169  <- try_forward_load
+- `combine` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:348  <- walk_from
+- `def_clobbers` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:101  <- walk_from
+- `join_phi_results` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:167  <- combine
+- `walk_from` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:251  <- nearest_clobber
+- `ranges_disjoint` [pub] crates/strider-opt/src/sp_expr/ranges.rs:42  <- offset_range_verdict
+- `add_operand_shifted_interval` [priv] crates/strider-opt/src/value_range/mod.rs:416  <- compute_value_ranges
+- `arm_query_regions` [priv] crates/strider-opt/src/value_range/mod.rs:327  <- resolve_phi
+- `compute_value_ranges` [pub] crates/strider-opt/src/value_range/mod.rs:477  <- apply
+- `ctrl_source_region` [priv] crates/strider-opt/src/value_range/mod.rs:358  <- arm_query_regions
+- `find_joining_region` [priv] crates/strider-opt/src/value_range/mod.rs:294  <- resolve_phi
+- `guard_from_compare` [priv] crates/strider-opt/src/value_range/mod.rs:620  <- compute_value_ranges
+- `is_sign_bit_known_zero` [priv] crates/strider-opt/src/value_range/mod.rs:444  <- guard_from_compare
+- `is_top` [pub] crates/strider-opt/src/value_range/mod.rs:53  <- resolve_phi
+- `resolve_leaf` [priv] crates/strider-opt/src/value_range/mod.rs:385  <- range_of
+- `resolve_phi` [priv] crates/strider-opt/src/value_range/mod.rs:184  <- range_of
+- `single_control_consumer` [priv] crates/strider-opt/src/value_range/mod.rs:696  <- compute_value_ranges
+- `union` [priv] crates/strider-opt/src/value_range/mod.rs:69  <- resolve_phi
+- `apply_resolutions` [priv] crates/strider-orchestrator/src/lib.rs:375  <- analyze
+- `build_lift` [priv] crates/strider-orchestrator/src/lib.rs:288  <- analyze
+- `edge_set_of` [priv] crates/strider-orchestrator/src/lib.rs:516  <- apply_resolutions
+- `live_unresolved_branches` [priv] crates/strider-orchestrator/src/lib.rs:472  <- analyze
+- `merge_resolved` [priv] crates/strider-orchestrator/src/lib.rs:442  <- apply_resolutions
+- `bind_capture` [pub(crate)] crates/strider-pattern/src/bindings.rs:146  <- try_match_at
+- `get_int_binary_op` [pub] crates/strider-pattern/src/bindings.rs:253  <- build_const_eval_rules
+- `get_int_cmp_op` [pub] crates/strider-pattern/src/bindings.rs:271  <- build_const_eval_rules
+- `matched_nodes` [pub(crate)] crates/strider-pattern/src/bindings.rs:137  <- rewrite_rule_impl
+- `next_id` [priv] crates/strider-pattern/src/capture.rs:16  <- new
+- `is_skip` [pub] crates/strider-pattern/src/error.rs:37  <- rewrite_rule_impl
+- `missing_binding` [pub] crates/strider-pattern/src/error.rs:60  <- build_const_eval_rules
+- `input_slots` [priv] crates/strider-pattern/src/graph_ext.rs:33  <- consumed_inputs
+- `producer_of` [priv] crates/strider-pattern/src/graph_ext.rs:43  <- try_match_at
+- `producer_of` [priv] crates/strider-pattern/src/graph_ext.rs:69  <- try_match_at
+- `first_value_input_type` [pub] crates/strider-pattern/src/lib.rs:61  <- build_const_eval_rules
+- `bindings_clone` [pub] crates/strider-pattern/src/match_result.rs:136  <- rewrite_rule_impl
+- `from_root` [pub(crate)] crates/strider-pattern/src/match_result.rs:29  <- try_match_at_node
+- `get_vn` [pub] crates/strider-pattern/src/match_result.rs:87  <- vn
+- `matched_nodes` [pub] crates/strider-pattern/src/match_result.rs:152  <- rewrite_rule_impl
+- `constrain_input_widths` [pub] crates/strider-pattern/src/matcher/builder.rs:193  <- compile
+- `control_output` [pub] crates/strider-pattern/src/matcher/builder.rs:124  <- build
+- `memory_output` [pub] crates/strider-pattern/src/matcher/builder.rs:129  <- lower
+- `set_output_control` [pub] crates/strider-pattern/src/matcher/builder.rs:144  <- control_compiler
+- `set_value_width` [pub] crates/strider-pattern/src/matcher/builder.rs:157  <- lower
+- `skip_casts` [pub(crate)] crates/strider-pattern/src/matcher/cast_walk_through.rs:33  <- match_inputs
+- `ignore_casts` [pub] crates/strider-pattern/src/matcher/graph.rs:109  <- apply_cast_mask
+- `set_root_post_match` [pub(crate)] crates/strider-pattern/src/matcher/graph.rs:86  <- with_root_post_match
+- `with_root_post_match` [pub] crates/strider-pattern/src/matcher/graph.rs:96  <- apply_when_to_pattern
+- `bool_valued` [priv] crates/strider-pattern/src/matcher/match_pat.rs:189  <- bool_value
+- `value_ty` [priv] crates/strider-pattern/src/matcher/match_pat.rs:184  <- compile_repr_match
+- `dedup_on_shared_captures` [priv] crates/strider-pattern/src/matcher/mod.rs:384  <- find_joined
+- `find_all` [pub] crates/strider-pattern/src/matcher/mod.rs:122  <- find_joined
+- `find_first` [pub] crates/strider-pattern/src/matcher/mod.rs:151  <- find_one
+- `prefix_agrees` [priv] crates/strider-pattern/src/matcher/mod.rs:416  <- find_joined
+- `control` [pub] crates/strider-pattern/src/matcher/vertex.rs:171  <- control_output
+- `exact` [pub] crates/strider-pattern/src/matcher/vertex.rs:103  <- binary
+- `input_slots` [priv] crates/strider-pattern/src/matcher/vertex.rs:96  <- consumed_inputs
+- `match_inputs` [priv] crates/strider-pattern/src/matcher/walk.rs:296  <- try_match_at
+- `output_ok` [priv] crates/strider-pattern/src/matcher/walk.rs:381  <- try_match_at
+- `root_output_vertex_for` [priv] crates/strider-pattern/src/matcher/walk.rs:127  <- try_match
+- `root_requires_value_output` [priv] crates/strider-pattern/src/matcher/walk.rs:102  <- try_match_node
+- `try_match` [pub(crate)] crates/strider-pattern/src/matcher/walk.rs:49  <- try_match_at_node
+- `try_match_node` [pub(crate)] crates/strider-pattern/src/matcher/walk.rs:86  <- try_match_at_node
+- `arg` [pub] crates/strider-pattern/src/node_builders/flow.rs:83  <- core_builder
+- `arg` [pub] crates/strider-pattern/src/node_builders/flow.rs:158  <- core_builder
+- `at_any` [pub] crates/strider-pattern/src/node_builders/flow.rs:74  <- core_builder
+- `call` [pub] crates/strider-pattern/src/node_builders/flow.rs:119  <- core_builder
+- `if_node` [pub] crates/strider-pattern/src/node_builders/flow.rs:465  <- build_pattern_py
+- `match_branch_consumer` [priv] crates/strider-pattern/src/node_builders/flow.rs:437  <- with_branch
+- `mem` [pub] crates/strider-pattern/src/node_builders/flow.rs:96  <- core_builder
+- `mem` [pub] crates/strider-pattern/src/node_builders/flow.rs:171  <- core_builder
+- `validate_branch_pattern` [priv] crates/strider-pattern/src/node_builders/flow.rs:421  <- with_branch
+- `with_false` [pub] crates/strider-pattern/src/node_builders/flow.rs:324  <- build_pattern_py
+- `with_true` [pub] crates/strider-pattern/src/node_builders/flow.rs:312  <- build_pattern_py
+- `function_arg_any` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:167  <- core_builder
+- `control_compiler` [priv] crates/strider-pattern/src/node_builders/node_pat.rs:228  <- input_control
+- `with_input_width` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:146  <- configured
+- `with_kind` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:90  <- user_op_id
+- `with_output_width` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:137  <- configured
+- `for_vn` [pub] crates/strider-pattern/src/node_builders/phi.rs:65  <- phi_for
+- `phi` [pub] crates/strider-pattern/src/node_builders/phi.rs:88  <- phi_for
+- `phi_var_limit` [priv] crates/strider-pattern/src/node_builders/phi.rs:31  <- build
+- `memory_output` [pub] crates/strider-pattern/src/template/builder.rs:149  <- lower
+- `out_data_of` [priv] crates/strider-pattern/src/template/builder.rs:236  <- set_value_ty
+- `set_template_kind` [pub] crates/strider-pattern/src/template/builder.rs:163  <- compile
+- `input_slots` [priv] crates/strider-pattern/src/template/graph.rs:45  <- consumed_inputs
+- `referenced_captures` [pub] crates/strider-pattern/src/template/graph.rs:151  <- check_capture_coverage
+- `collect_inputs` [priv] crates/strider-pattern/src/template/mod.rs:280  <- instantiate
+- `instantiate` [pub] crates/strider-pattern/src/template/mod.rs:132  <- rewrite_rule_impl
+- `intern_fn_int_const` [priv] crates/strider-pattern/src/template/mod.rs:265  <- instantiate
+- `node_value_ty` [priv] crates/strider-pattern/src/template/mod.rs:335  <- instantiate
+- `output_kinds_for` [priv] crates/strider-pattern/src/template/mod.rs:358  <- instantiate
+- `resolve_ty` [priv] crates/strider-pattern/src/template/mod.rs:252  <- resolved_output_kind
+- `any_bool_const` [pub] crates/strider-pattern/src/typed/consts.rs:291  <- compile_repr_match
+- `bool_const_with_fn` [pub] crates/strider-pattern/src/typed/consts.rs:395  <- build_const_eval_rules
+- `first_int_const_value` [priv] crates/strider-pattern/src/typed/consts.rs:62  <- int_const_leaf
+- `int_const_discriminant` [priv] crates/strider-pattern/src/typed/consts.rs:50  <- int_const_leaf
+- `bit_not` [pub] crates/strider-pattern/src/typed/value_ops.rs:611  <- not_
+- `initial_var` [pub] crates/strider-pattern/src/typed/wildcards.rs:167  <- compile_repr_match
+- `initial_var_for` [pub] crates/strider-pattern/src/typed/wildcards.rs:199  <- compile_repr_match
+- `inputs_of_width_check` [priv] crates/strider-pattern/src/typed/wildcards.rs:116  <- compile
+- `predicate` [pub] crates/strider-pattern/src/typed/wildcards.rs:67  <- try_match_at
+- `value_of_width` [pub] crates/strider-pattern/src/typed/wildcards.rs:80  <- compile_repr_match
+- `register` [pub] crates/strider-py/src/arch.rs:41  <- strider
+- `register` [pub] crates/strider-py/src/cc.rs:188  <- strider
+- `register` [pub] crates/strider-py/src/cfg.rs:79  <- strider
+- `register` [pub] crates/strider-py/src/errors.rs:36  <- strider
+- `find_all` [priv] crates/strider-py/src/function.rs:452  <- find_joined
+- `node_ids` [priv] crates/strider-py/src/function.rs:312  <- rebuild
+- `raw_dot_str` [priv] crates/strider-py/src/function.rs:263  <- to_raw_dot
+- `raw_html_str` [priv] crates/strider-py/src/function.rs:270  <- to_raw_html
+- `register` [pub] crates/strider-py/src/function.rs:724  <- strider
+- `write_inner` [pub(crate)] crates/strider-py/src/function.rs:85  <- run_with_custom_pipeline
+- `force_anyhow_backtrace_capture` [priv] crates/strider-py/src/lib.rs:63  <- strider
+- `has` [priv] crates/strider-py/src/matcher.rs:231  <- __contains__
+- `register` [pub] crates/strider-py/src/matcher.rs:318  <- strider
+- `register` [pub] crates/strider-py/src/node.rs:250  <- strider
+- `into_erased_post` [priv] crates/strider-py/src/opt.rs:413  <- add_post
+- `register` [pub] crates/strider-py/src/opt.rs:435  <- strider
+- `snapshot_from` [priv] crates/strider-py/src/opt.rs:130  <- new_full_default
+- `any_bool_const` [pub] crates/strider-py/src/pattern.rs:1510  <- compile_repr_match
+- `apply_cap_when` [priv] crates/strider-py/src/pattern.rs:2930  <- compile_value
+- `arg` [priv] crates/strider-py/src/pattern.rs:2518  <- core_builder
+- `at_any` [priv] crates/strider-py/src/pattern.rs:2513  <- core_builder
+- `bit_not` [pub] crates/strider-py/src/pattern.rs:1773  <- not_
+- `bool_valued` [priv] crates/strider-py/src/pattern.rs:1390  <- bool_value
+- `call` [pub] crates/strider-py/src/pattern.rs:2533  <- core_builder
+- `canonical` [priv] crates/strider-py/src/pattern.rs:1599  <- lookup_op
+- `cast_match` [priv] crates/strider-py/src/pattern.rs:734  <- compile_repr_match
+- `cast_tpl` [priv] crates/strider-py/src/pattern.rs:887  <- compile_repr_template
+- `clear_graph_ptr` [priv] crates/strider-py/src/pattern.rs:1058  <- run_when_predicate
+- `compile_operand_mem` [pub(crate)] crates/strider-py/src/pattern.rs:396  <- core_builder
+- `compile_operand_template` [pub(crate)] crates/strider-py/src/pattern.rs:371  <- op_tpl
+- `compile_repr_match` [priv] crates/strider-py/src/pattern.rs:554  <- compile_match
+- `compile_repr_template` [priv] crates/strider-py/src/pattern.rs:754  <- compile_template
+- `float_cmp_any` [pub] crates/strider-py/src/pattern.rs:1971  <- build_bool_float_rules
+- `float_eq` [pub] crates/strider-py/src/pattern.rs:1864  <- float_ne
+- `function_arg_any` [pub] crates/strider-py/src/pattern.rs:2827  <- core_builder
+- `has` [priv] crates/strider-py/src/pattern.rs:1144  <- __contains__
+- `initial_var` [pub] crates/strider-py/src/pattern.rs:1522  <- compile_repr_match
+- `initial_var_for` [pub] crates/strider-py/src/pattern.rs:1528  <- compile_repr_match
+- `int_cmp_any` [pub] crates/strider-py/src/pattern.rs:1947  <- build_const_eval_rules
+- `intern_table` [priv] crates/strider-py/src/pattern.rs:90  <- intern_str
+- `make_root_post_match` [pub(crate)] crates/strider-py/src/pattern.rs:1245  <- apply_when_to_pattern
+- `mem` [priv] crates/strider-py/src/pattern.rs:2523  <- core_builder
+- `op_match` [priv] crates/strider-py/src/pattern.rs:549  <- compile_repr_match
+- `op_tpl` [priv] crates/strider-py/src/pattern.rs:749  <- compile_repr_template
+- `operand_kind_name` [priv] crates/strider-py/src/pattern.rs:427  <- compile_operand_mem
+- `parse_value_ty` [priv] crates/strider-py/src/pattern.rs:457  <- value_ty
+- `pattern_for_operand` [priv] crates/strider-py/src/pattern.rs:2664  <- build_pattern_py
+- `phi` [pub] crates/strider-py/src/pattern.rs:2701  <- phi_for
+- `predicate` [pub] crates/strider-py/src/pattern.rs:1535  <- try_match_at
+- `register` [pub] crates/strider-py/src/pattern.rs:2986  <- strider
+- `value_of_width` [pub] crates/strider-py/src/pattern.rs:1425  <- compile_repr_match
+- `value_ty` [priv] crates/strider-py/src/pattern.rs:1383  <- compile_repr_match
+- `register` [pub] crates/strider-py/src/pcode.rs:129  <- strider
+- `invalidate_and_extend` [priv] crates/strider-py/src/reader.rs:236  <- add_elf
+- `load_elf` [pub] crates/strider-py/src/reader.rs:379  <- add_elf
+- `register` [pub] crates/strider-py/src/reader.rs:736  <- strider
+- `parse_alias_mode` [pub(crate)] crates/strider-py/src/run.rs:82  <- analyze
+- `register` [pub] crates/strider-py/src/run.rs:525  <- strider
+- `run_via_orchestrator` [priv] crates/strider-py/src/run.rs:309  <- run
+- `run_with_custom_pipeline` [priv] crates/strider-py/src/run.rs:420  <- run
+- `register` [priv] crates/strider-py/src/sleigh.rs:115  <- strider
+- `register` [pub] crates/strider-py/src/sleigh.rs:261  <- strider
+- `register` [pub] crates/strider-py/src/strider_cls.rs:381  <- strider
+- `elf_load_readonly_with_relocations` [pub] crates/strider-reader/src/elf/load.rs:71  <- elf_to_rom_regions
+- `elf_load_with_relocations` [pub] crates/strider-reader/src/elf/load.rs:30  <- elf_to_mem_regions
+- `load_elf` [pub] crates/strider-reader/src/elf/load.rs:97  <- add_elf
+- `from_bytes` [pub] crates/strider-reader/src/elf/reader.rs:54  <- from_path
+- `from_object` [pub] crates/strider-reader/src/elf/reader.rs:39  <- from_bytes
+- `apply_elf_relocations_autoload` [pub] crates/strider-reader/src/elf/relocations.rs:586  <- elf_load_with_relocations
+- `apply_elf_relocations_with_extender` [pub(crate)] crates/strider-reader/src/elf/relocations.rs:497  <- apply_elf_relocations_autoload
+- `apply_one_relocation` [priv] crates/strider-reader/src/elf/relocations.rs:182  <- apply_elf_relocations
+- `covering_index` [priv] crates/strider-reader/src/elf/relocations.rs:439  <- locate_and_write
+- `covers` [priv] crates/strider-reader/src/elf/relocations.rs:418  <- apply_elf_relocations_with_extender
+- `find_loadable_section_containing` [priv] crates/strider-reader/src/elf/relocations.rs:606  <- apply_elf_relocations_autoload
+- `got_or_plt_slot_reloc_size` [priv] crates/strider-reader/src/elf/relocations.rs:794  <- apply_one_relocation
+- `image_relative_reloc` [priv] crates/strider-reader/src/elf/relocations.rs:696  <- apply_one_relocation
+- `locate_and_write` [priv] crates/strider-reader/src/elf/relocations.rs:886  <- apply_one_relocation
+- `mips_rel32_symbol_reloc_size` [priv] crates/strider-reader/src/elf/relocations.rs:858  <- apply_one_relocation
+- `resolve_symbol_target` [priv] crates/strider-reader/src/elf/relocations.rs:655  <- apply_one_relocation
+- `write_at` [priv] crates/strider-reader/src/elf/relocations.rs:914  <- locate_and_write
+- `collect_loadable_sections_dedup` [priv] crates/strider-reader/src/elf/sections.rs:191  <- collect_loadable_regions
+- `collect_loadable_segments` [priv] crates/strider-reader/src/elf/sections.rs:156  <- collect_loadable_regions
+- `elf_get_loadable_regions_including_writable` [pub] crates/strider-reader/src/elf/sections.rs:130  <- elf_load_with_relocations
+- `section_accepts` [priv] crates/strider-reader/src/elf/sections.rs:81  <- collect_loadable_sections_dedup
+- `segment_accepts` [priv] crates/strider-reader/src/elf/sections.rs:70  <- collect_loadable_segments
+- `data_mut` [pub] crates/strider-reader/src/lib.rs:128  <- locate_and_write
+- `read_uint` [pub] crates/strider-target/src/arch.rs:25  <- read_rom_const
+- `classify_arch_independent` [priv] crates/strider-target/src/call_other_abi.rs:454  <- classify
+- `classify_arch_specific` [priv] crates/strider-target/src/call_other_abi.rs:127  <- classify
+- `first_dup` [priv] crates/strider-target/src/calling_convention/mod.rs:191  <- try_new
+- `first_in_both` [priv] crates/strider-target/src/calling_convention/mod.rs:183  <- try_new
+- `lookup_preset` [pub(crate)] crates/strider-target/src/calling_convention/mod.rs:836  <- cc_from_table
+- `offset_of` [pub] crates/strider-target/src/calling_convention/mod.rs:354  <- collect_stack_args
+- `slot_of` [pub] crates/strider-target/src/calling_convention/mod.rs:386  <- detect_stack_args
+- `slots_spanned` [pub] crates/strider-target/src/calling_convention/mod.rs:411  <- collect_stack_args
+
+## D. Full call graph (fn -> callees)
+
+- `create_initial_state` [priv] crates/dot/src/lib.rs:54  (callers=1)  ->  (leaf)
+- `iter_nodes` [priv] crates/dot/src/lib.rs:57  (callers=1)  ->  (leaf)
+- `dump_as_dot` [priv] crates/dot/src/lib.rs:65  (callers=3)  ->  (leaf)
+- `dark_with_font` [priv] crates/dot/src/lib.rs:84  (callers=2)  ->  (leaf)
+- `dark` [pub] crates/dot/src/lib.rs:109  (callers=3)  ->  dark_with_font
+- `dark_cfg` [pub] crates/dot/src/lib.rs:118  (callers=1)  ->  dark_with_font
+- `empty` [pub] crates/dot/src/lib.rs:123  (callers=4)  ->  (leaf)
+- `escape_dot_label` [priv] crates/dot/src/lib.rs:143  (callers=3)  ->  len, next, with_capacity
+- `json_quote` [priv] crates/dot/src/lib.rs:172  (callers=1)  ->  len, with_capacity
+- `new` [pub] crates/dot/src/lib.rs:210  (callers=210)  ->  emit_attr_block, escape_dot_label
+- `node` [pub] crates/dot/src/lib.rs:236  (callers=17)  ->  escape_dot_label, push_attr
+- `edge` [pub] crates/dot/src/lib.rs:260  (callers=4)  ->  escape_dot_label, is_empty, iter, push_attr
+- `finish` [pub] crates/dot/src/lib.rs:284  (callers=9)  ->  (leaf)
+- `push_attr` [priv] crates/dot/src/lib.rs:295  (callers=3)  ->  (leaf)
+- `emit_attr_block` [priv] crates/dot/src/lib.rs:301  (callers=1)  ->  is_empty, push_attr
+- `dot_node_count` [pub(crate)] crates/dot/src/lib.rs:337  (callers=1)  ->  matches
+- `new` [pub] crates/dot/src/lib.rs:353  (callers=210)  ->  (leaf)
+- `as_dot` [pub] crates/dot/src/lib.rs:366  (callers=3)  ->  create_initial_state, dump_as_dot, finish, iter_nodes, new
+- `as_html_from_dot` [pub] crates/dot/src/lib.rs:391  (callers=4)  ->  as_dot, dot_node_count, json_quote
+- `dump_as_html` [pub] crates/dot/src/lib.rs:412  (callers=2)  ->  as_html_from_dot
+- `dump_as_dot` [pub] crates/dot/src/lib.rs:421  (callers=3)  ->  as_dot
+- `new` [pub] crates/entity-utils/src/interner.rs:33  (callers=210)  ->  default
+- `intern` [pub] crates/entity-utils/src/interner.rs:39  (callers=4)  ->  clone, get, insert
+- `get` [pub] crates/entity-utils/src/interner.rs:49  (callers=57)  ->  (leaf)
+- `key_of` [pub] crates/entity-utils/src/interner.rs:54  (callers=3)  ->  get
+- `contains` [pub] crates/entity-utils/src/interner.rs:59  (callers=35)  ->  (leaf)
+- `len` [pub] crates/entity-utils/src/interner.rs:64  (callers=61)  ->  (leaf)
+- `is_empty` [pub] crates/entity-utils/src/interner.rs:69  (callers=40)  ->  (leaf)
+- `keys` [pub] crates/entity-utils/src/interner.rs:74  (callers=9)  ->  (leaf)
+- `values` [pub] crates/entity-utils/src/interner.rs:79  (callers=1)  ->  (leaf)
+- `default` [priv] {trait-impl} crates/entity-utils/src/interner.rs:85  (callers=54)  ->  new
+- `index` [priv] {trait-impl} crates/entity-utils/src/interner.rs:102  (callers=15)  ->  (leaf)
+- `new` [pub] crates/entity-utils/src/set.rs:19  (callers=210)  ->  default
+- `with_capacity` [pub] crates/entity-utils/src/set.rs:24  (callers=14)  ->  (leaf)
+- `clear` [pub] crates/entity-utils/src/set.rs:32  (callers=11)  ->  (leaf)
+- `len` [pub] crates/entity-utils/src/set.rs:41  (callers=61)  ->  (leaf)
+- `is_empty` [pub] crates/entity-utils/src/set.rs:49  (callers=40)  ->  (leaf)
+- `contains` [pub] crates/entity-utils/src/set.rs:54  (callers=35)  ->  index
+- `insert` [pub] crates/entity-utils/src/set.rs:67  (callers=47)  ->  index
+- `remove` [pub] crates/entity-utils/src/set.rs:72  (callers=10)  ->  index
+- `iter` [pub] crates/entity-utils/src/set.rs:81  (callers=101)  ->  (leaf)
+- `next` [priv] {trait-impl} crates/entity-utils/src/set.rs:100  (callers=16)  ->  (leaf)
+- `into_iter` [priv] {trait-impl} crates/entity-utils/src/set.rs:113  (callers=53)  ->  iter
+- `default` [priv] {trait-impl} crates/entity-utils/src/set.rs:119  (callers=54)  ->  (leaf)
+- `from_iter` [priv] {trait-impl} crates/entity-utils/src/set.rs:128  (callers=3)  ->  insert, into_iter, size_hint, with_capacity
+- `new` [pub] crates/entity-utils/src/worklist.rs:20  (callers=210)  ->  (leaf)
+- `is_empty` [pub] crates/entity-utils/src/worklist.rs:28  (callers=40)  ->  (leaf)
+- `len` [pub] crates/entity-utils/src/worklist.rs:33  (callers=61)  ->  (leaf)
+- `clear` [pub] crates/entity-utils/src/worklist.rs:38  (callers=11)  ->  (leaf)
+- `enqueue` [pub] crates/entity-utils/src/worklist.rs:46  (callers=7)  ->  insert
+- `dequeue` [pub] crates/entity-utils/src/worklist.rs:54  (callers=5)  ->  remove
+- `default` [priv] {trait-impl} crates/entity-utils/src/worklist.rs:62  (callers=54)  ->  new
+- `from_iter` [priv] {trait-impl} crates/entity-utils/src/worklist.rs:68  (callers=3)  ->  extend, new
+- `extend` [priv] {trait-impl} crates/entity-utils/src/worklist.rs:76  (callers=8)  ->  enqueue
+- `try_successors` [priv] crates/graphwalk/src/lib.rs:31  (callers=1)  ->  (leaf)
+- `successors` [priv] crates/graphwalk/src/lib.rs:39  (callers=4)  ->  try_successors
+- `try_successors` [priv] {trait-impl} crates/graphwalk/src/lib.rs:50  (callers=1)  ->  (leaf)
+- `try_predecessors` [priv] crates/graphwalk/src/lib.rs:62  (callers=1)  ->  (leaf)
+- `predecessors` [priv] crates/graphwalk/src/lib.rs:70  (callers=0)  ->  try_predecessors
+- `try_predecessors` [priv] {trait-impl} crates/graphwalk/src/lib.rs:79  (callers=1)  ->  (leaf)
+- `is_visited` [priv] crates/graphwalk/src/lib.rs:91  (callers=2)  ->  (leaf)
+- `mark_visited` [priv] crates/graphwalk/src/lib.rs:93  (callers=2)  ->  (leaf)
+- `is_visited` [priv] {trait-impl} crates/graphwalk/src/lib.rs:102  (callers=2)  ->  (leaf)
+- `mark_visited` [priv] {trait-impl} crates/graphwalk/src/lib.rs:106  (callers=2)  ->  (leaf)
+- `is_visited` [priv] {trait-impl} crates/graphwalk/src/lib.rs:110  (callers=2)  ->  contains
+- `mark_visited` [priv] {trait-impl} crates/graphwalk/src/lib.rs:114  (callers=2)  ->  insert
+- `new` [pub] crates/graphwalk/src/lib.rs:127  (callers=210)  ->  (leaf)
+- `reset` [pub] crates/graphwalk/src/lib.rs:142  (callers=2)  ->  clear, extend
+- `next` [pub] crates/graphwalk/src/lib.rs:148  (callers=16)  ->  is_visited, mark_visited, successors
+- `default` [priv] {trait-impl} crates/graphwalk/src/lib.rs:176  (callers=54)  ->  new
+- `new` [pub] crates/graphwalk/src/lib.rs:194  (callers=210)  ->  default, reset
+- `into_visited` [pub] crates/graphwalk/src/lib.rs:208  (callers=2)  ->  (leaf)
+- `next` [priv] {trait-impl} crates/graphwalk/src/lib.rs:216  (callers=16)  ->  (leaf)
+- `entity_preorder` [pub] crates/graphwalk/src/lib.rs:223  (callers=0)  ->  new
+- `new` [pub] crates/graphwalk/src/lib.rs:241  (callers=210)  ->  (leaf)
+- `reset` [pub] crates/graphwalk/src/lib.rs:246  (callers=2)  ->  clear, extend, into_iter
+- `next` [pub] crates/graphwalk/src/lib.rs:264  (callers=16)  ->  next_event
+- `next_event` [pub] crates/graphwalk/src/lib.rs:279  (callers=1)  ->  is_visited, mark_visited, successors
+- `default` [priv] {trait-impl} crates/graphwalk/src/lib.rs:312  (callers=54)  ->  new
+- `new` [pub] crates/graphwalk/src/lib.rs:330  (callers=210)  ->  default, reset
+- `next_event` [pub] crates/graphwalk/src/lib.rs:342  (callers=1)  ->  (leaf)
+- `into_visited` [pub] crates/graphwalk/src/lib.rs:351  (callers=2)  ->  (leaf)
+- `next` [priv] {trait-impl} crates/graphwalk/src/lib.rs:359  (callers=16)  ->  (leaf)
+- `entity_postorder` [pub] crates/graphwalk/src/lib.rs:366  (callers=1)  ->  new
+- `read` [priv] crates/read-only-memory/src/lib.rs:44  (callers=5)  ->  (leaf)
+- `read` [priv] {trait-impl} crates/read-only-memory/src/lib.rs:52  (callers=5)  ->  (leaf)
+- `for_arch` [pub] crates/strider-cfg/src/builder/mod.rs:83  (callers=1)  ->  clone, new
+- `add_region` [pub(super)] crates/strider-cfg/src/builder/mod.rs:126  (callers=3)  ->  add_node, insert, is_empty
+- `tail_call_stub` [pub(super)] crates/strider-cfg/src/builder/mod.rs:166  (callers=1)  ->  add_region, get, new
+- `find_region_containing_addr` [pub(super)] crates/strider-cfg/src/builder/mod.rs:184  (callers=2)  ->  contains_addr, node_weight
+- `start_pcode_addr` [priv] crates/strider-cfg/src/builder/mod.rs:200  (callers=1)  ->  (leaf)
+- `explore` [priv] crates/strider-cfg/src/builder/mod.rs:214  (callers=1)  ->  build, find_region_containing_addr, new, split_region
+- `build` [pub] crates/strider-cfg/src/builder/mod.rs:250  (callers=17)  ->  explore, find_region_containing_addr, start_pcode_addr
+- `branch_target_operand` [priv] crates/strider-cfg/src/builder/region_builder.rs:11  (callers=3)  ->  (leaf)
+- `next_pcode_addr` [priv] crates/strider-cfg/src/builder/region_builder.rs:31  (callers=3)  ->  len
+- `new` [pub(super)] crates/strider-cfg/src/builder/region_builder.rs:95  (callers=210)  ->  (leaf)
+- `lift_one` [priv] crates/strider-cfg/src/builder/region_builder.rs:115  (callers=2)  ->  (leaf)
+- `decode_branch_target` [priv] crates/strider-cfg/src/builder/region_builder.rs:136  (callers=2)  ->  at_machine_start, from, len, next_pcode_addr
+- `is_branch_tail_call_nocheck` [pub(super)] crates/strider-cfg/src/builder/region_builder.rs:232  (callers=4)  ->  is_addr_tail_call
+- `classify_branch_target` [priv] crates/strider-cfg/src/builder/region_builder.rs:250  (callers=2)  ->  is_branch_tail_call_nocheck
+- `process_new_insn` [priv] crates/strider-cfg/src/builder/region_builder.rs:264  (callers=1)  ->  clone, finish_current_region, process_branch, process_branch_indirect, process_call_other, process_cond_branch
+- `process_branch` [priv] crates/strider-cfg/src/builder/region_builder.rs:291  (callers=1)  ->  branch_target_operand, classify_branch_target, decode_branch_target, finish_current_region
+- `process_cond_branch` [priv] crates/strider-cfg/src/builder/region_builder.rs:328  (callers=1)  ->  branch_target_operand, classify_branch_target, decode_branch_target, finish_current_region, is_branch_tail_call_nocheck, next_pcode_addr, tail_call_stub
+- `process_call_other` [priv] crates/strider-cfg/src/builder/region_builder.rs:381  (callers=1)  ->  classify, finish_current_region, preset
+- `process_branch_indirect` [priv] crates/strider-cfg/src/builder/region_builder.rs:426  (callers=1)  ->  any, at_machine_start, branch_target_operand, clone, finish_branch_or_tail_call, finish_current_region, get, is_branch_tail_call_nocheck, is_empty, iter
+- `finish_current_region` [priv] crates/strider-cfg/src/builder/region_builder.rs:503  (callers=7)  ->  add_region
+- `finish_branch_or_tail_call` [priv] crates/strider-cfg/src/builder/region_builder.rs:520  (callers=1)  ->  finish_current_region
+- `process_insn` [priv] crates/strider-cfg/src/builder/region_builder.rs:566  (callers=2)  ->  finish_current_region, get, is_empty, process_new_insn
+- `build` [pub(super)] crates/strider-cfg/src/builder/region_builder.rs:606  (callers=17)  ->  detect_fallthrough_oob_tail_call, iter, lift_one, next_pcode_addr, process_insn, skip
+- `detect_fallthrough_oob_tail_call` [priv] crates/strider-cfg/src/builder/region_builder.rs:660  (callers=1)  ->  is_branch_tail_call_nocheck
+- `split_region` [pub(super)] crates/strider-cfg/src/builder/split.rs:31  (callers=1)  ->  add_region, id, insert, is_empty, iter, len, source
+- `dot_dumper` [pub] crates/strider-cfg/src/dot.rs:18  (callers=4)  ->  (leaf)
+- `create_initial_state` [priv] {trait-impl} crates/strider-cfg/src/dot.rs:36  (callers=1)  ->  (leaf)
+- `iter_nodes` [priv] {trait-impl} crates/strider-cfg/src/dot.rs:38  (callers=1)  ->  (leaf)
+- `dump_as_dot` [priv] {trait-impl} crates/strider-cfg/src/dot.rs:42  (callers=3)  ->  edge, index, insert, new, node, node_weight, region_if, source
+- `region_graph` [pub] crates/strider-cfg/src/lib.rs:87  (callers=2)  ->  (leaf)
+- `entry` [pub] crates/strider-cfg/src/lib.rs:92  (callers=21)  ->  (leaf)
+- `is_addr_tail_call` [pub] crates/strider-cfg/src/query.rs:32  (callers=1)  ->  (leaf)
+- `region_if` [pub] crates/strider-cfg/src/query.rs:93  (callers=2)  ->  contains_addr, node_weight, target
+- `regions` [pub] crates/strider-cfg/src/query.rs:136  (callers=1)  ->  (leaf)
+- `region_predecessors` [pub] crates/strider-cfg/src/query.rs:148  (callers=1)  ->  node_weight, source
+- `region_ids` [pub] crates/strider-cfg/src/query.rs:155  (callers=2)  ->  (leaf)
+- `region_id_at_start` [pub] crates/strider-cfg/src/query.rs:174  (callers=1)  ->  next
+- `from` [priv] {trait-impl} crates/strider-cfg/src/types.rs:17  (callers=35)  ->  (leaf)
+- `at_machine_start` [pub] crates/strider-cfg/src/types.rs:42  (callers=2)  ->  (leaf)
+- `contains_addr` [pub] crates/strider-cfg/src/types.rs:205  (callers=2)  ->  (leaf)
+- `should_cache` [priv] crates/strider-graph/src/cache.rs:69  (callers=3)  ->  (leaf)
+- `hash` [priv] crates/strider-graph/src/cache.rs:81  (callers=4)  ->  (leaf)
+- `eq` [priv] crates/strider-graph/src/cache.rs:92  (callers=2)  ->  (leaf)
+- `default` [priv] {trait-impl} crates/strider-graph/src/cache.rs:141  (callers=54)  ->  new
+- `avoid_sentinel` [priv] crates/strider-graph/src/cache.rs:161  (callers=3)  ->  (leaf)
+- `insert_hashed` [priv] crates/strider-graph/src/cache.rs:174  (callers=3)  ->  (leaf)
+- `get_or_alloc` [pub(crate)] crates/strider-graph/src/cache.rs:183  (callers=1)  ->  alloc_node, avoid_sentinel, eq, hash, insert_hashed, should_cache
+- `canonicalize` [pub(crate)] crates/strider-graph/src/cache.rs:222  (callers=1)  ->  avoid_sentinel, eq, hash, input_values, insert_hashed, kind_of, output_kinds, should_cache
+- `invalidate` [pub(crate)] crates/strider-graph/src/cache.rs:272  (callers=5)  ->  remove
+- `rebuild` [pub(crate)] crates/strider-graph/src/cache.rs:296  (callers=2)  ->  avoid_sentinel, clear, hash, input_values, insert_hashed, kind_of, node_ids, output_kinds, should_cache
+- `default` [priv] {trait-impl} crates/strider-graph/src/graph.rs:47  (callers=54)  ->  new
+- `clone` [priv] {trait-impl} crates/strider-graph/src/graph.rs:57  (callers=45)  ->  (leaf)
+- `new` [pub] crates/strider-graph/src/graph.rs:72  (callers=210)  ->  default
+- `create_node` [pub] crates/strider-graph/src/graph.rs:86  (callers=13)  ->  get_or_alloc, into_iter
+- `node_kind` [pub] crates/strider-graph/src/graph.rs:102  (callers=75)  ->  kind_of
+- `value_kind` [pub] crates/strider-graph/src/graph.rs:114  (callers=30)  ->  (leaf)
+- `value_kind_ref` [pub] crates/strider-graph/src/graph.rs:128  (callers=3)  ->  value_kind
+- `value_definition` [pub] crates/strider-graph/src/graph.rs:134  (callers=9)  ->  (leaf)
+- `producer` [pub] crates/strider-graph/src/graph.rs:141  (callers=50)  ->  (leaf)
+- `node_outputs` [pub] crates/strider-graph/src/graph.rs:147  (callers=40)  ->  (leaf)
+- `node_inputs` [pub] crates/strider-graph/src/graph.rs:153  (callers=36)  ->  node_input_uses
+- `nth_input` [pub] crates/strider-graph/src/graph.rs:163  (callers=2)  ->  get, node_input_uses
+- `node_input_id_at` [pub] crates/strider-graph/src/graph.rs:173  (callers=4)  ->  get, len, node_input_uses, node_inputs
+- `node_inputs_exact` [pub] crates/strider-graph/src/graph.rs:189  (callers=6)  ->  default, into_iter, len, node_inputs
+- `node_outputs_exact` [pub] crates/strider-graph/src/graph.rs:212  (callers=16)  ->  default, len, node_outputs
+- `kind_of_value` [pub] crates/strider-graph/src/graph.rs:230  (callers=10)  ->  node_kind, producer
+- `value_of_use` [pub] crates/strider-graph/src/graph.rs:236  (callers=5)  ->  (leaf)
+- `node_of_use` [pub] crates/strider-graph/src/graph.rs:243  (callers=1)  ->  (leaf)
+- `canonicalize_node` [pub] crates/strider-graph/src/graph.rs:251  (callers=1)  ->  canonicalize
+- `next_node_id` [pub] crates/strider-graph/src/graph.rs:261  (callers=0)  ->  (leaf)
+- `has_node` [pub] crates/strider-graph/src/graph.rs:267  (callers=1)  ->  (leaf)
+- `node_id_from_u32` [pub] crates/strider-graph/src/graph.rs:274  (callers=3)  ->  has_node, new
+- `generation` [pub] crates/strider-graph/src/graph.rs:282  (callers=4)  ->  (leaf)
+- `bump_generation` [pub] crates/strider-graph/src/graph.rs:295  (callers=2)  ->  (leaf)
+- `all_node_ids` [pub] crates/strider-graph/src/graph.rs:300  (callers=6)  ->  keys
+- `all_value_ids` [pub] crates/strider-graph/src/graph.rs:306  (callers=3)  ->  keys
+- `node_kind_mut` [pub] crates/strider-graph/src/graph.rs:319  (callers=2)  ->  (leaf)
+- `rebuild_cache` [pub] crates/strider-graph/src/graph.rs:328  (callers=1)  ->  rebuild
+- `value_uses` [pub] crates/strider-graph/src/graph.rs:340  (callers=22)  ->  successors
+- `value_has_one_use` [pub] crates/strider-graph/src/graph.rs:352  (callers=0)  ->  next, value_uses
+- `value_first_use_id` [pub] crates/strider-graph/src/graph.rs:359  (callers=1)  ->  (leaf)
+- `next_use` [pub] crates/strider-graph/src/graph.rs:365  (callers=1)  ->  (leaf)
+- `value_use_cursor` [pub] crates/strider-graph/src/graph.rs:371  (callers=1)  ->  (leaf)
+- `add_node_input` [pub] crates/strider-graph/src/graph.rs:386  (callers=5)  ->  invalidate, len, link_use_to_value_list, new
+- `remove_node_input` [pub] crates/strider-graph/src/graph.rs:405  (callers=0)  ->  get, invalidate, remove, unlink_use_from_value_list
+- `remove_node_inputs_batch` [pub] crates/strider-graph/src/graph.rs:438  (callers=1)  ->  clear, from_iter, into_iter, invalidate, len, node_input_uses, unlink_use_from_value_list, with_capacity
+- `update_input` [pub] crates/strider-graph/src/graph.rs:481  (callers=4)  ->  invalidate, link_use_to_value_list, unlink_use_from_value_list
+- `detach_node_inputs` [pub] crates/strider-graph/src/graph.rs:495  (callers=1)  ->  clear, invalidate, unlink_use_from_value_list
+- `replace_all_uses` [pub] crates/strider-graph/src/graph.rs:513  (callers=1)  ->  current, replace_current_with, value_use_cursor
+- `corrupt_clear_first_use` [pub] crates/strider-graph/src/graph.rs:543  (callers=0)  ->  (leaf)
+- `corrupt_retarget_input` [pub] crates/strider-graph/src/graph.rs:555  (callers=0)  ->  (leaf)
+- `retain_reachable` [pub] crates/strider-graph/src/graph.rs:581  (callers=1)  ->  clone, default, from_iter, into_iter, keys, len, link_use_to_value_list, new, rebuild, with_capacity
+- `node_old_to_new` [pub] crates/strider-graph/src/graph.rs:684  (callers=2)  ->  (leaf)
+- `surviving_node_pairs` [pub] crates/strider-graph/src/graph.rs:693  (callers=1)  ->  iter
+- `value_old_to_new` [pub] crates/strider-graph/src/graph.rs:702  (callers=1)  ->  (leaf)
+- `clone` [priv] {trait-impl} crates/strider-graph/src/iter.rs:22  (callers=45)  ->  (leaf)
+- `len` [pub] crates/strider-graph/src/iter.rs:31  (callers=61)  ->  (leaf)
+- `is_empty` [pub] crates/strider-graph/src/iter.rs:36  (callers=40)  ->  (leaf)
+- `get` [pub] crates/strider-graph/src/iter.rs:42  (callers=57)  ->  (leaf)
+- `iter` [pub] crates/strider-graph/src/iter.rs:50  (callers=101)  ->  (leaf)
+- `into_iter` [priv] {trait-impl} crates/strider-graph/src/iter.rs:62  (callers=53)  ->  iter
+- `index` [priv] {trait-impl} crates/strider-graph/src/iter.rs:79  (callers=15)  ->  (leaf)
+- `clone` [priv] {trait-impl} crates/strider-graph/src/iter.rs:91  (callers=45)  ->  (leaf)
+- `next` [priv] {trait-impl} crates/strider-graph/src/iter.rs:102  (callers=16)  ->  (leaf)
+- `size_hint` [priv] {trait-impl} crates/strider-graph/src/iter.rs:106  (callers=1)  ->  (leaf)
+- `current` [pub] crates/strider-graph/src/iter.rs:121  (callers=1)  ->  (leaf)
+- `move_next` [priv] crates/strider-graph/src/iter.rs:126  (callers=1)  ->  (leaf)
+- `replace_current_with` [pub] crates/strider-graph/src/iter.rs:137  (callers=1)  ->  move_next, update_input
+- `out_neighbors` [priv] crates/strider-graph/src/petgraph_view.rs:36  (callers=2)  ->  default, insert, into_iter, iter, node_outputs, value_uses
+- `in_neighbors` [priv] crates/strider-graph/src/petgraph_view.rs:56  (callers=1)  ->  default, insert, into_iter, node_inputs, producer
+- `neighbors` [priv] {trait-impl} crates/strider-graph/src/petgraph_view.rs:76  (callers=0)  ->  out_neighbors
+- `neighbors_directed` [priv] {trait-impl} crates/strider-graph/src/petgraph_view.rs:84  (callers=0)  ->  in_neighbors, out_neighbors
+- `node_identifiers` [priv] {trait-impl} crates/strider-graph/src/petgraph_view.rs:95  (callers=0)  ->  all_node_ids, into_iter, new, node_outputs
+- `visit_map` [priv] {trait-impl} crates/strider-graph/src/petgraph_view.rs:110  (callers=0)  ->  default
+- `reset_map` [priv] {trait-impl} crates/strider-graph/src/petgraph_view.rs:114  (callers=0)  ->  clear
+- `new` [pub(crate)] crates/strider-graph/src/storage.rs:35  (callers=210)  ->  (leaf)
+- `new` [pub(crate)] crates/strider-graph/src/storage.rs:65  (callers=210)  ->  (leaf)
+- `new` [pub(crate)] crates/strider-graph/src/storage.rs:89  (callers=210)  ->  (leaf)
+- `new` [pub(crate)] crates/strider-graph/src/storage.rs:120  (callers=210)  ->  (leaf)
+- `alloc_node` [pub(crate)] crates/strider-graph/src/storage.rs:138  (callers=1)  ->  from_iter, into_iter, link_use_to_value_list, new
+- `node_ids` [pub(crate)] crates/strider-graph/src/storage.rs:178  (callers=1)  ->  keys
+- `kind_of` [pub] crates/strider-graph/src/storage.rs:184  (callers=4)  ->  (leaf)
+- `input_values` [pub] crates/strider-graph/src/storage.rs:189  (callers=3)  ->  iter, node_input_uses
+- `output_kinds` [pub] crates/strider-graph/src/storage.rs:197  (callers=3)  ->  clone, iter, node_outputs
+- `node_kind_mut` [pub(crate)] crates/strider-graph/src/storage.rs:213  (callers=2)  ->  (leaf)
+- `node_input_uses` [pub(crate)] crates/strider-graph/src/storage.rs:219  (callers=5)  ->  (leaf)
+- `node_outputs` [pub(crate)] crates/strider-graph/src/storage.rs:225  (callers=40)  ->  (leaf)
+- `value_kind` [pub(crate)] crates/strider-graph/src/storage.rs:231  (callers=30)  ->  (leaf)
+- `producer` [pub(crate)] crates/strider-graph/src/storage.rs:237  (callers=50)  ->  (leaf)
+- `link_use_to_value_list` [pub(crate)] crates/strider-graph/src/storage.rs:250  (callers=4)  ->  (leaf)
+- `unlink_use_from_value_list` [pub(crate)] crates/strider-graph/src/storage.rs:266  (callers=4)  ->  (leaf)
+- `default` [priv] {trait-impl} crates/strider-graph/src/storage.rs:289  (callers=54)  ->  new
+- `function_mut` [priv] crates/strider-ir/src/builder/build_trait.rs:34  (callers=22)  ->  (leaf)
+- `create_node_attributed` [priv] crates/strider-ir/src/builder/build_trait.rs:39  (callers=5)  ->  (leaf)
+- `create_node` [priv] crates/strider-ir/src/builder/build_trait.rs:53  (callers=13)  ->  create_node_attributed
+- `function_mut` [priv] {trait-impl} crates/strider-ir/src/builder/build_trait.rs:66  (callers=22)  ->  (leaf)
+- `create_node_attributed` [priv] {trait-impl} crates/strider-ir/src/builder/build_trait.rs:70  (callers=5)  ->  create_node, extend_asm_fingerprint_from, function_mut
+- `build_single_output_pure` [priv] crates/strider-ir/src/builder/builder_ext.rs:39  (callers=22)  ->  create_node, function, node_outputs
+- `truncate_if_needed` [priv] crates/strider-ir/src/builder/builder_ext.rs:56  (callers=6)  ->  bit_width, build_int_const, build_single_output_pure, int_const_u128, value_type
+- `extend_if_needed` [priv] crates/strider-ir/src/builder/builder_ext.rs:77  (callers=5)  ->  bit_width, build_int_const, build_single_output_pure, int_const_i128, int_const_u128, is_integer, truncate_if_needed, value_type
+- `convert_to_int_if_needed` [priv] crates/strider-ir/src/builder/builder_ext.rs:132  (callers=11)  ->  extend_if_needed, is_integer, truncate_if_needed, value_type
+- `cast_to_float_if_needed` [priv] crates/strider-ir/src/builder/builder_ext.rs:154  (callers=5)  ->  build_float_to_float, build_int_bits_to_float, is_float, value_type
+- `build_boolean_const` [priv] crates/strider-ir/src/builder/builder_ext.rs:176  (callers=1)  ->  build_int_const, from
+- `build_int_const` [priv] crates/strider-ir/src/builder/builder_ext.rs:190  (callers=15)  ->  build_single_output_pure, function_mut, intern_int_const, is_integer
+- `build_int_const_limbs` [priv] crates/strider-ir/src/builder/builder_ext.rs:209  (callers=1)  ->  build_single_output_pure, function_mut, intern_int_const_limbs, is_wide_int
+- `build_int_binary_operation` [priv] crates/strider-ir/src/builder/builder_ext.rs:229  (callers=12)  ->  build_single_output_pure, require_value_type
+- `build_const_binop` [priv] crates/strider-ir/src/builder/builder_ext.rs:250  (callers=2)  ->  build_int_binary_operation, build_int_const
+- `build_shift_by_const` [priv] crates/strider-ir/src/builder/builder_ext.rs:270  (callers=6)  ->  build_const_binop, from
+- `build_int_unary_operation` [priv] crates/strider-ir/src/builder/builder_ext.rs:292  (callers=2)  ->  build_single_output_pure, require_value_type
+- `build_popcount` [priv] crates/strider-ir/src/builder/builder_ext.rs:319  (callers=1)  ->  build_single_output_pure, require_value_type
+- `build_lzcount` [priv] crates/strider-ir/src/builder/builder_ext.rs:329  (callers=1)  ->  build_single_output_pure, require_value_type
+- `build_int_cmp_operation` [priv] crates/strider-ir/src/builder/builder_ext.rs:341  (callers=3)  ->  build_single_output_pure, require_value_type
+- `build_float_const` [priv] crates/strider-ir/src/builder/builder_ext.rs:363  (callers=1)  ->  build_single_output_pure
+- `build_float_binary_op` [priv] crates/strider-ir/src/builder/builder_ext.rs:374  (callers=2)  ->  build_single_output_pure, require_value_type
+- `build_float_unary_op` [priv] crates/strider-ir/src/builder/builder_ext.rs:393  (callers=2)  ->  build_single_output_pure, require_value_type
+- `build_float_cmp_op` [priv] crates/strider-ir/src/builder/builder_ext.rs:410  (callers=3)  ->  build_single_output_pure, is_float, require_value_type, value_type
+- `build_int_to_float` [priv] crates/strider-ir/src/builder/builder_ext.rs:435  (callers=1)  ->  build_single_output_pure, require_float_type, require_integer_value
+- `build_float_to_int` [priv] crates/strider-ir/src/builder/builder_ext.rs:448  (callers=1)  ->  build_single_output_pure, require_float_value, require_integer_type
+- `build_float_to_float` [priv] crates/strider-ir/src/builder/builder_ext.rs:460  (callers=2)  ->  build_single_output_pure, require_float_type, require_float_value
+- `build_int_bits_to_float` [priv] crates/strider-ir/src/builder/builder_ext.rs:474  (callers=1)  ->  build_float_const, build_single_output_pure, byte_size, int_const_u128, require_float_type, require_integer_value, value_type
+- `build_float_bits_to_int` [priv] crates/strider-ir/src/builder/builder_ext.rs:516  (callers=1)  ->  build_int_const, build_single_output_pure, byte_size, function, kind_of_value, require_float_value, require_integer_type, value_type
+- `build_segment_op` [priv] crates/strider-ir/src/builder/builder_ext.rs:551  (callers=1)  ->  build_single_output_pure, validate_value_inputs
+- `build_opaque_variadic` [priv] crates/strider-ir/src/builder/builder_ext.rs:572  (callers=2)  ->  create_node, function, iter, node_outputs_exact, validate_value_inputs
+- `build_cpool_ref` [priv] crates/strider-ir/src/builder/builder_ext.rs:594  (callers=1)  ->  build_opaque_variadic
+- `build_new` [priv] crates/strider-ir/src/builder/builder_ext.rs:604  (callers=1)  ->  build_opaque_variadic
+- `build_call_kind` [pub(super)] crates/strider-ir/src/builder/call.rs:57  (callers=2)  ->  advance_cur_region_ctrl, advance_cur_region_memory, create_node, cur_region_control, cur_region_memory, function, function_mut, insert, int_type, into_iter, iter, new, node_outputs, terminate_cur_region, validate_value_inputs
+- `build_call` [pub] crates/strider-ir/src/builder/call.rs:152  (callers=1)  ->  build_call_kind, read_variable, stack_vn, validate_call_output_vns
+- `validate_call_output_vns` [priv] crates/strider-ir/src/builder/call.rs:179  (callers=2)  ->  container_of, contains, function, iter, require_reg_or_unique
+- `build_call_other` [pub] crates/strider-ir/src/builder/call.rs:254  (callers=1)  ->  build_call_kind, function_mut, validate_call_output_vns
+- `apply_post_call_sp_adjust` [pub] crates/strider-ir/src/builder/call.rs:301  (callers=1)  ->  build_int_binary_operation, build_int_const, contains, int_type, write_variable
+- `is_aliasable_space` [priv] crates/strider-ir/src/builder/mod.rs:29  (callers=2)  ->  (leaf)
+- `require_reg_or_unique` [pub(super)] crates/strider-ir/src/builder/mod.rs:41  (callers=2)  ->  (leaf)
+- `dedup_and_container_map` [priv] crates/strider-ir/src/builder/mod.rs:82  (callers=1)  ->  default, end_of, entry, filter, from, insert, is_aliasable_space, iter, len, new
+- `end_of` [priv] crates/strider-ir/src/builder/mod.rs:87  (callers=1)  ->  from
+- `vn_sort_key` [priv] crates/strider-ir/src/builder/mod.rs:157  (callers=0)  ->  (leaf)
+- `function` [pub] crates/strider-ir/src/builder/mod.rs:205  (callers=71)  ->  (leaf)
+- `function_mut` [pub] crates/strider-ir/src/builder/mod.rs:221  (callers=22)  ->  (leaf)
+- `entry` [pub] crates/strider-ir/src/builder/mod.rs:233  (callers=21)  ->  (leaf)
+- `new` [pub] crates/strider-ir/src/builder/mod.rs:254  (callers=210)  ->  build_entry, clone, contains, dedup_and_container_map, default, entry, filter, intern, is_aliasable_space, iter, largest_container_in, values
+- `set_lift_addr` [pub] crates/strider-ir/src/builder/mod.rs:352  (callers=1)  ->  (leaf)
+- `create_node` [pub(crate)] crates/strider-ir/src/builder/mod.rs:371  (callers=13)  ->  create_node_attributed, extend_asm_fingerprint, function_mut
+- `build` [pub] crates/strider-ir/src/builder/mod.rs:399  (callers=17)  ->  validate
+- `build_entry` [pub] crates/strider-ir/src/builder/nodes.rs:23  (callers=2)  ->  create_node, function, function_mut, graph_mut, node_outputs_exact
+- `build_return` [pub] crates/strider-ir/src/builder/nodes.rs:54  (callers=1)  ->  create_node, into_iter, new, read_reg_vn, require_reg_or_unique, require_terminator_kinds, terminate_cur_region, validate_value_inputs
+- `build_function_return` [pub] crates/strider-ir/src/builder/nodes.rs:94  (callers=2)  ->  build_return, into_iter, ret_val_regs
+- `build_indirect_branch` [pub] crates/strider-ir/src/builder/nodes.rs:123  (callers=1)  ->  create_node, require_terminator_kinds, terminate_cur_region, validate_value_inputs
+- `build_branch` [pub] crates/strider-ir/src/builder/nodes.rs:145  (callers=1)  ->  link_region, require_terminator_kinds, terminate_cur_region
+- `build_if` [pub] crates/strider-ir/src/builder/nodes.rs:160  (callers=2)  ->  create_node, function, link_region, node_outputs_exact, terminate_cur_region
+- `build_store` [pub] crates/strider-ir/src/builder/nodes.rs:191  (callers=2)  ->  advance_cur_region_memory, create_node, cur_region_memory, function, node_outputs_exact
+- `build_load` [pub] crates/strider-ir/src/builder/nodes.rs:220  (callers=2)  ->  build_single_output_pure, cur_region_memory
+- `build_vn_phi` [pub(super)] crates/strider-ir/src/builder/nodes.rs:238  (callers=1)  ->  build_single_output_pure, function_mut, insert, int_for_byte_size, iter, validate_value_inputs
+- `read_variable` [pub] crates/strider-ir/src/builder/vars.rs:21  (callers=3)  ->  key_of, read_variable_from_id
+- `write_variable` [pub] crates/strider-ir/src/builder/vars.rs:36  (callers=4)  ->  key_of, write_variable_from_id
+- `set_entry_region` [pub] crates/strider-ir/src/builder/vars.rs:55  (callers=1)  ->  build_single_output_pure, clone, container_of, default_cc, entry, from_index, function, function_mut, index, insert, int_for_byte_size, iter, key_of, keys, link_control_regions, link_memory_regions, link_region_variables, new, node_outputs_exact, producer, register_arg_value
+- `create_region` [pub] crates/strider-ir/src/builder/vars.rs:117  (callers=2)  ->  add_node_input, build_vn_phi, create_node, create_region_helper, function, function_mut, graph_mut, keys, new, node_outputs_exact
+- `vn_mask` [pub(crate)] crates/strider-ir/src/builder/vn_io.rs:47  (callers=1)  ->  from
+- `find_largest_fitting_register` [pub(crate)] crates/strider-ir/src/builder/vn_io.rs:78  (callers=1)  ->  container_of
+- `calculate_reg_shift_from_container` [pub(crate)] crates/strider-ir/src/builder/vn_io.rs:101  (callers=1)  ->  endianness
+- `read_reg_vn` [pub] crates/strider-ir/src/builder/vn_io.rs:129  (callers=2)  ->  build_shift_by_const, enter_sub_register, int_type, read_variable, truncate_if_needed
+- `write_reg_vn` [pub] crates/strider-ir/src/builder/vn_io.rs:179  (callers=1)  ->  build_masked_insert, convert_to_int_if_needed, enter_sub_register, int_type, write_variable
+- `enter_sub_register` [priv] crates/strider-ir/src/builder/vn_io.rs:245  (callers=2)  ->  calculate_reg_shift_from_container, find_largest_fitting_register, int_type
+- `build_masked_insert` [priv] crates/strider-ir/src/builder/vn_io.rs:319  (callers=1)  ->  build_const_binop, build_int_binary_operation, build_shift_by_const, extend_if_needed, read_variable, vn_mask
+- `fits_u128` [pub] crates/strider-ir/src/const_value.rs:37  (callers=2)  ->  all, from, get, iter, skip
+- `to_le_bytes` [pub] crates/strider-ir/src/const_value.rs:53  (callers=2)  ->  iter, len
+- `new` [pub(crate)] crates/strider-ir/src/control_flow_view.rs:31  (callers=210)  ->  (leaf)
+- `neighbors` [priv] {trait-impl} crates/strider-ir/src/control_flow_view.rs:47  (callers=0)  ->  cfg_succs, graph, into_iter
+- `visit_map` [priv] {trait-impl} crates/strider-ir/src/control_flow_view.rs:61  (callers=0)  ->  default
+- `reset_map` [priv] {trait-impl} crates/strider-ir/src/control_flow_view.rs:65  (callers=0)  ->  clear
+- `control_dominators` [pub] crates/strider-ir/src/control_flow_view.rs:73  (callers=1)  ->  entry, new
+- `dominates` [pub] crates/strider-ir/src/control_flow_view.rs:82  (callers=1)  ->  any
+- `vn_to_display_name` [pub(crate)] crates/strider-ir/src/function/dot/label.rs:23  (callers=1)  ->  (leaf)
+- `vn_to_name` [priv] crates/strider-ir/src/function/dot/label.rs:32  (callers=3)  ->  vn_to_display_name
+- `pretty_vnspace` [priv] crates/strider-ir/src/function/dot/label.rs:39  (callers=1)  ->  (leaf)
+- `out_type` [priv] crates/strider-ir/src/function/dot/label.rs:55  (callers=3)  ->  first_value_output_of, value_type_opt
+- `input_type` [priv] crates/strider-ir/src/function/dot/label.rs:63  (callers=2)  ->  into_iter, node_inputs, value_type_opt
+- `out_type_str` [priv] crates/strider-ir/src/function/dot/label.rs:72  (callers=1)  ->  out_type
+- `input_type_str` [priv] crates/strider-ir/src/function/dot/label.rs:77  (callers=2)  ->  input_type
+- `out_type_suffix` [priv] crates/strider-ir/src/function/dot/label.rs:84  (callers=1)  ->  as_str, out_type
+- `input_type_suffix` [priv] crates/strider-ir/src/function/dot/label.rs:90  (callers=1)  ->  as_str, input_type
+- `with_sp_offset` [priv] crates/strider-ir/src/function/dot/label.rs:100  (callers=1)  ->  stack_offset
+- `pretty_label` [pub(super)] crates/strider-ir/src/function/dot/label.rs:108  (callers=2)  ->  byte_size, call_other_name, cmp_label, first_value_output_of, get, get_vn_for_value, index, initial_vn_opt, input_type_suffix, int_const_u128, int_const_wide_le_bytes, is_empty, is_wide_int, iter, node_kind, node_outputs, out_type, out_type_suffix, pretty_vnspace, vn_to_name, width_change_label, with_sp_offset
+- `width_change_label` [priv] crates/strider-ir/src/function/dot/label.rs:246  (callers=1)  ->  input_type_str, out_type_str
+- `cmp_label` [priv] crates/strider-ir/src/function/dot/label.rs:255  (callers=1)  ->  input_type_str
+- `emit_const_node` [pub(super)] crates/strider-ir/src/function/dot/label.rs:259  (callers=1)  ->  node, node_fillcolor, node_kind, pretty_label
+- `call_clobbered_name` [pub(super)] crates/strider-ir/src/function/dot/label.rs:276  (callers=1)  ->  get_vn_for_value, value_definition, vn_to_name
+- `return_ret_name` [pub(super)] crates/strider-ir/src/function/dot/label.rs:292  (callers=1)  ->  get, ret_val_regs, vn_to_name
+- `node_shape` [pub(super)] crates/strider-ir/src/function/dot/mod.rs:17  (callers=1)  ->  (leaf)
+- `node_fillcolor` [pub(super)] crates/strider-ir/src/function/dot/mod.rs:43  (callers=2)  ->  (leaf)
+- `role_color` [priv] crates/strider-ir/src/function/dot/mod.rs:81  (callers=1)  ->  (leaf)
+- `edge_style` [pub(super)] crates/strider-ir/src/function/dot/mod.rs:100  (callers=1)  ->  at, expected_signature, node_kind, role_color
+- `build_arg_reverse_map` [pub] crates/strider-ir/src/function/dot/mod.rs:135  (callers=2)  ->  arg_index_to_values, default, entry, graph, iter_arg_indices, producer
+- `alloc_id` [priv] crates/strider-ir/src/function/dot/mod.rs:159  (callers=1)  ->  clone, insert
+- `alloc_virtual_id` [pub(super)] crates/strider-ir/src/function/dot/mod.rs:169  (callers=2)  ->  (leaf)
+- `get_dot_id` [pub(super)] crates/strider-ir/src/function/dot/mod.rs:175  (callers=2)  ->  alloc_id, clone, get, is_const, node_kind
+- `fmt_vn` [priv] crates/strider-ir/src/function/dot/raw.rs:25  (callers=1)  ->  (leaf)
+- `new` [pub] crates/strider-ir/src/function/dot/raw.rs:38  (callers=210)  ->  build_arg_reverse_map
+- `node_label` [priv] crates/strider-ir/src/function/dot/raw.rs:47  (callers=1)  ->  asm_fingerprint, call_other_name, filter, fmt_vn, get, get_vn_for_value, index, initial_vn_opt, is_empty, iter, node_kind, node_outputs, stack_offset, value_kind
+- `create_initial_state` [priv] {trait-impl} crates/strider-ir/src/function/dot/raw.rs:126  (callers=1)  ->  (leaf)
+- `iter_nodes` [priv] {trait-impl} crates/strider-ir/src/function/dot/raw.rs:128  (callers=1)  ->  walk
+- `dump_as_dot` [priv] {trait-impl} crates/strider-ir/src/function/dot/raw.rs:137  (callers=3)  ->  edge, into_iter, node, node_inputs, node_label, value_definition
+- `raw_dot` [pub] crates/strider-ir/src/function/dot/raw.rs:168  (callers=0)  ->  as_dot, dark, new
+- `raw_html` [pub] crates/strider-ir/src/function/dot/raw.rs:178  (callers=0)  ->  as_html_from_dot, dark, new
+- `all_uses_go_through_inline` [priv] crates/strider-ir/src/function/dot/render.rs:11  (callers=1)  ->  len, node_outputs, value_uses
+- `create_initial_state` [priv] {trait-impl} crates/strider-ir/src/function/dot/render.rs:25  (callers=1)  ->  default
+- `iter_nodes` [priv] {trait-impl} crates/strider-ir/src/function/dot/render.rs:33  (callers=1)  ->  graph, walk_graph
+- `dump_as_dot` [priv] {trait-impl} crates/strider-ir/src/function/dot/render.rs:38  (callers=3)  ->  emit_if_branch_virtuals, emit_input_edge, into_iter, node_inputs, node_kind, try_declare_node
+- `try_declare_node` [priv] crates/strider-ir/src/function/dot/render.rs:75  (callers=1)  ->  all_uses_go_through_inline, get, get_dot_id, graph, is_const, iter, node, node_fillcolor, node_kind, node_shape, pretty_label
+- `emit_if_branch_virtuals` [priv] crates/strider-ir/src/function/dot/render.rs:126  (callers=1)  ->  edge, get_or_create_if_branch_virtual, iter, node_outputs
+- `get_or_create_if_branch_virtual` [priv] crates/strider-ir/src/function/dot/render.rs:162  (callers=2)  ->  alloc_virtual_id, clone, get, insert, node
+- `emit_input_edge` [priv] crates/strider-ir/src/function/dot/render.rs:185  (callers=1)  ->  alloc_virtual_id, call_clobbered_name, clone, edge, edge_style, emit_const_node, get, get_dot_id, get_or_create_if_branch_virtual, graph, insert, is_const, is_empty, node, node_kind, pred_index, producer, return_ret_name, value_definition
+- `pred_index` [priv] crates/strider-ir/src/function/dot/render.rs:303  (callers=1)  ->  (leaf)
+- `populate` [pub(crate)] crates/strider-ir/src/function/edit.rs:72  (callers=1)  ->  compute_full, entry, graph, into_iter, new
+- `new` [pub] crates/strider-ir/src/function/edit.rs:105  (callers=210)  ->  populate
+- `cull_dead` [pub] crates/strider-ir/src/function/edit.rs:120  (callers=3)  ->  contains, graph, iter, kill_node, new
+- `function` [pub] crates/strider-ir/src/function/edit.rs:139  (callers=71)  ->  (leaf)
+- `function_mut` [pub] crates/strider-ir/src/function/edit.rs:155  (callers=22)  ->  (leaf)
+- `postorder` [pub] crates/strider-ir/src/function/edit.rs:172  (callers=3)  ->  graph, iter, new
+- `reverse_postorder` [pub] crates/strider-ir/src/function/edit.rs:184  (callers=3)  ->  postorder
+- `reverse_postorder_filter` [pub] crates/strider-ir/src/function/edit.rs:201  (callers=3)  ->  filter, into_iter, node_kind, reverse_postorder
+- `postorder_filter` [pub] crates/strider-ir/src/function/edit.rs:219  (callers=1)  ->  filter, into_iter, node_kind, postorder
+- `graph_ref` [pub] crates/strider-ir/src/function/edit.rs:229  (callers=6)  ->  graph
+- `entry` [pub] crates/strider-ir/src/function/edit.rs:234  (callers=21)  ->  (leaf)
+- `is_live` [pub] crates/strider-ir/src/function/edit.rs:247  (callers=2)  ->  contains
+- `is_root` [pub] crates/strider-ir/src/function/edit.rs:255  (callers=0)  ->  contains
+- `live_snapshot` [pub] crates/strider-ir/src/function/edit.rs:261  (callers=0)  ->  clone
+- `roots_snapshot` [pub] crates/strider-ir/src/function/edit.rs:267  (callers=0)  ->  clone
+- `will_detach_value` [priv] crates/strider-ir/src/function/edit.rs:275  (callers=1)  ->  enqueue_killed_def_node, graph, producer, value_uses
+- `will_attach_value` [priv] crates/strider-ir/src/function/edit.rs:309  (callers=4)  ->  contains, dequeue, enqueue, enqueue_for_recanon, has_control_flow, insert, into_iter, is_cacheable, is_empty, new, node_inputs, node_kind, producer
+- `enqueue_killed_def_node` [priv] crates/strider-ir/src/function/edit.rs:361  (callers=4)  ->  enqueue, has_side_effects, insert, node_kind
+- `enqueue` [priv] crates/strider-ir/src/function/edit.rs:370  (callers=7)  ->  contains, insert
+- `enqueue_for_recanon` [priv] crates/strider-ir/src/function/edit.rs:383  (callers=3)  ->  contains, enqueue, insert
+- `canonicalize_node` [priv] crates/strider-ir/src/function/edit.rs:397  (callers=1)  ->  graph_mut, node_outputs_exact, remove, replace_value
+- `dequeue` [priv] crates/strider-ir/src/function/edit.rs:423  (callers=5)  ->  contains, remove
+- `is_node_dead` [priv] crates/strider-ir/src/function/edit.rs:435  (callers=1)  ->  all, graph, has_side_effects, iter, next, node_kind, node_outputs, value_uses
+- `kill_node` [pub] crates/strider-ir/src/function/edit.rs:465  (callers=5)  ->  detach_node_inputs, enqueue_killed_def_node, graph, graph_mut, into_iter, mark_node_dead, next, node_inputs, producer, value_uses
+- `mark_node_dead` [priv] crates/strider-ir/src/function/edit.rs:486  (callers=1)  ->  empty, remove
+- `clean` [pub] crates/strider-ir/src/function/edit.rs:495  (callers=3)  ->  canonicalize_node, contains, dequeue, is_node_dead, kill_node, remove
+- `live_of_kind` [pub] crates/strider-ir/src/function/edit.rs:515  (callers=4)  ->  filter, iter, node_kind
+- `track_created` [priv] crates/strider-ir/src/function/edit.rs:544  (callers=1)  ->  graph, insert, is_empty, node_inputs
+- `create_node` [pub] crates/strider-ir/src/function/edit.rs:553  (callers=13)  ->  create_node_attributed
+- `create_node_attributed` [pub] crates/strider-ir/src/function/edit.rs:569  (callers=5)  ->  into_iter, track_created, will_attach_value
+- `update_input` [pub] crates/strider-ir/src/function/edit.rs:598  (callers=4)  ->  enqueue_for_recanon, graph, graph_mut, node_of_use, value_of_use, will_attach_value, will_detach_value
+- `add_node_input` [pub] crates/strider-ir/src/function/edit.rs:623  (callers=5)  ->  graph, graph_mut, is_empty, node_inputs, remove, will_attach_value
+- `replace_all_uses` [pub] crates/strider-ir/src/function/edit.rs:645  (callers=1)  ->  enqueue_for_recanon, graph, graph_mut, new, next, value_uses, will_attach_value
+- `register_arg_value` [pub] crates/strider-ir/src/function/edit.rs:673  (callers=2)  ->  (leaf)
+- `absorb_fingerprint` [pub] crates/strider-ir/src/function/edit.rs:681  (callers=2)  ->  extend_asm_fingerprint_from, function, function_mut, producer
+- `replace_value` [pub] crates/strider-ir/src/function/edit.rs:706  (callers=9)  ->  enqueue_killed_def_node, extend_asm_fingerprint_from, producer, replace_all_uses
+- `redirect_input` [pub] crates/strider-ir/src/function/edit.rs:738  (callers=1)  ->  extend_asm_fingerprint_from, graph_ref, producer, update_input, value_of_use, value_uses
+- `remove_region_predecessors` [pub] crates/strider-ir/src/function/edit.rs:775  (callers=1)  ->  graph_ref, is_empty, iter, len, new, node_kind, node_outputs, remove_node_inputs_batch, value_uses
+- `remove_node_inputs_batch` [priv] crates/strider-ir/src/function/edit.rs:826  (callers=1)  ->  enqueue_killed_def_node, graph, graph_mut, into_iter, iter, len, new, next, node_inputs, producer, value_uses
+- `function_mut` [priv] {trait-impl} crates/strider-ir/src/function/edit.rs:863  (callers=22)  ->  (leaf)
+- `create_node_attributed` [priv] {trait-impl} crates/strider-ir/src/function/edit.rs:867  (callers=5)  ->  (leaf)
+- `largest_container_in` [pub(crate)] crates/strider-ir/src/function/func.rs:38  (callers=2)  ->  from
+- `new` [pub] crates/strider-ir/src/function/func.rs:175  (callers=210)  ->  create_node, default
+- `graph` [pub] crates/strider-ir/src/function/func.rs:208  (callers=73)  ->  (leaf)
+- `graph_mut` [pub] crates/strider-ir/src/function/func.rs:214  (callers=14)  ->  (leaf)
+- `intern_int_const` [pub] crates/strider-ir/src/function/func.rs:221  (callers=3)  ->  bit_mask_u128, intern
+- `intern_int_const_limbs` [pub] crates/strider-ir/src/function/func.rs:237  (callers=1)  ->  fits_u128, intern, intern_int_const
+- `const_value` [pub(crate)] crates/strider-ir/src/function/func.rs:255  (callers=2)  ->  (leaf)
+- `entry` [pub] crates/strider-ir/src/function/func.rs:262  (callers=21)  ->  (leaf)
+- `default_cc` [pub] crates/strider-ir/src/function/func.rs:271  (callers=6)  ->  (leaf)
+- `endianness` [pub] crates/strider-ir/src/function/func.rs:280  (callers=6)  ->  (leaf)
+- `all_vns` [pub] crates/strider-ir/src/function/func.rs:285  (callers=1)  ->  (leaf)
+- `initial_vn` [pub] crates/strider-ir/src/function/func.rs:293  (callers=7)  ->  index
+- `initial_vn_opt` [pub(crate)] crates/strider-ir/src/function/func.rs:301  (callers=2)  ->  get, index
+- `container_of` [pub] crates/strider-ir/src/function/func.rs:313  (callers=6)  ->  get, largest_container_in
+- `clobber_oracle` [priv] crates/strider-ir/src/function/func.rs:326  (callers=2)  ->  container_of, contains, iter
+- `combined_ret_containers` [priv] crates/strider-ir/src/function/func.rs:346  (callers=2)  ->  container_of, iter
+- `call_ret_vals_for` [pub] crates/strider-ir/src/function/func.rs:372  (callers=3)  ->  clobber_oracle, combined_ret_containers, contains, filter
+- `call_clobbered_for` [pub] crates/strider-ir/src/function/func.rs:406  (callers=3)  ->  clobber_oracle, combined_ret_containers, contains, filter, iter
+- `call_clobbered_regs` [pub] crates/strider-ir/src/function/func.rs:443  (callers=0)  ->  call_clobbered_for
+- `call_ret_val_regs` [pub] crates/strider-ir/src/function/func.rs:451  (callers=0)  ->  call_ret_vals_for
+- `ret_val_regs` [pub] crates/strider-ir/src/function/func.rs:464  (callers=3)  ->  iter
+- `stack_vn` [pub(crate)] crates/strider-ir/src/function/func.rs:478  (callers=1)  ->  (leaf)
+- `call_other_name` [pub] crates/strider-ir/src/function/func.rs:488  (callers=3)  ->  (leaf)
+- `get_vn_for_value` [pub] crates/strider-ir/src/function/func.rs:506  (callers=5)  ->  get
+- `set_call_cc` [pub] crates/strider-ir/src/function/func.rs:514  (callers=1)  ->  insert
+- `get_cc` [pub] crates/strider-ir/src/function/func.rs:523  (callers=2)  ->  get
+- `arg_index_to_values` [pub] crates/strider-ir/src/function/func.rs:540  (callers=4)  ->  get
+- `register_arg_value` [pub] crates/strider-ir/src/function/func.rs:553  (callers=2)  ->  entry
+- `iter_arg_indices` [pub] crates/strider-ir/src/function/func.rs:562  (callers=3)  ->  keys
+- `clear_arg_values_from` [pub] crates/strider-ir/src/function/func.rs:573  (callers=1)  ->  (leaf)
+- `stack_offset` [pub] crates/strider-ir/src/function/func.rs:586  (callers=6)  ->  (leaf)
+- `set_stack_offset` [pub] crates/strider-ir/src/function/func.rs:592  (callers=1)  ->  (leaf)
+- `initial_var_index_entries` [pub(crate)] crates/strider-ir/src/function/func.rs:602  (callers=1)  ->  iter
+- `value_vn_entries` [pub(crate)] crates/strider-ir/src/function/func.rs:611  (callers=1)  ->  iter
+- `initial_sp` [pub] crates/strider-ir/src/function/func.rs:626  (callers=1)  ->  get
+- `asm_fingerprint` [pub] crates/strider-ir/src/function/func.rs:637  (callers=4)  ->  (leaf)
+- `extend_asm_fingerprint` [pub] crates/strider-ir/src/function/func.rs:644  (callers=3)  ->  is_empty
+- `extend_asm_fingerprint_from` [pub] crates/strider-ir/src/function/func.rs:660  (callers=8)  ->  extend_asm_fingerprint, iter
+- `create_node_attributed` [pub] crates/strider-ir/src/function/func.rs:681  (callers=5)  ->  create_node, extend_asm_fingerprint_from
+- `retain_reachable` [pub(crate)] crates/strider-ir/src/function/func.rs:723  (callers=1)  ->  graph_mut, walk
+- `compact` [pub] crates/strider-ir/src/function/func.rs:741  (callers=2)  ->  gc_consts, node_old_to_new, rebuild_cache, remap, retain_reachable
+- `gc_consts` [priv] crates/strider-ir/src/function/func.rs:780  (callers=1)  ->  all_node_ids, clone, default, get, insert, intern, new, node_kind, node_kind_mut
+- `dot_dumper` [pub] crates/strider-ir/src/function/func.rs:821  (callers=4)  ->  build_arg_reverse_map
+- `function_mut` [priv] {trait-impl} crates/strider-ir/src/function/func.rs:844  (callers=22)  ->  (leaf)
+- `create_node_attributed` [priv] {trait-impl} crates/strider-ir/src/function/func.rs:848  (callers=5)  ->  (leaf)
+- `remap_hashmap` [priv] crates/strider-ir/src/function/side_tables.rs:19  (callers=1)  ->  default, insert, len
+- `remap` [pub(crate)] crates/strider-ir/src/function/side_tables.rs:119  (callers=1)  ->  into_iter, is_empty, iter, new, node_old_to_new, remap_hashmap, remap_node_keyed, value_old_to_new
+- `should_cache` [priv] {trait-impl} crates/strider-ir/src/graph.rs:42  (callers=3)  ->  is_cacheable
+- `hash` [priv] {trait-impl} crates/strider-ir/src/graph.rs:57  (callers=4)  ->  default, finish
+- `eq` [priv] {trait-impl} crates/strider-ir/src/graph.rs:69  (callers=2)  ->  input_values, kind_of, output_kinds
+- `remap_node_keyed` [pub(crate)] crates/strider-ir/src/graph.rs:133  (callers=1)  ->  new, surviving_node_pairs
+- `from_index` [pub] crates/strider-ir/src/node/kind.rs:40  (callers=2)  ->  (leaf)
+- `index` [pub] crates/strider-ir/src/node/kind.rs:46  (callers=15)  ->  (leaf)
+- `is_const` [pub] crates/strider-ir/src/node/kind.rs:223  (callers=3)  ->  (leaf)
+- `is_cacheable` [pub] crates/strider-ir/src/node/kind.rs:238  (callers=2)  ->  (leaf)
+- `asm_fingerprint_exempt` [pub] crates/strider-ir/src/node/kind.rs:301  (callers=1)  ->  (leaf)
+- `has_control_flow` [pub] crates/strider-ir/src/node/kind.rs:351  (callers=2)  ->  (leaf)
+- `has_side_effects` [pub] crates/strider-ir/src/node/kind.rs:405  (callers=2)  ->  has_control_flow
+- `is_commutative` [pub] crates/strider-ir/src/node/kind.rs:432  (callers=1)  ->  (leaf)
+- `is_value` [pub] crates/strider-ir/src/node/value_kind.rs:26  (callers=1)  ->  (leaf)
+- `as_value` [pub] crates/strider-ir/src/node/value_kind.rs:33  (callers=17)  ->  (leaf)
+- `as_value_or_err` [pub] crates/strider-ir/src/node/value_kind.rs:46  (callers=2)  ->  as_value
+- `is_control` [pub] crates/strider-ir/src/node/value_kind.rs:53  (callers=2)  ->  (leaf)
+- `is_phi_token` [pub(crate)] crates/strider-ir/src/node/value_kind.rs:59  (callers=0)  ->  (leaf)
+- `is_memory` [pub] crates/strider-ir/src/node/value_kind.rs:65  (callers=0)  ->  (leaf)
+- `is_bool` [pub] crates/strider-ir/src/node/value_kind.rs:72  (callers=2)  ->  as_value
+- `is_integer` [pub] crates/strider-ir/src/node/value_kind.rs:78  (callers=18)  ->  as_value
+- `as_str` [pub] crates/strider-ir/src/node/value_type.rs:47  (callers=7)  ->  (leaf)
+- `byte_size` [pub] crates/strider-ir/src/node/value_type.rs:68  (callers=15)  ->  (leaf)
+- `bit_width` [pub] crates/strider-ir/src/node/value_type.rs:86  (callers=21)  ->  (leaf)
+- `is_bool` [pub] crates/strider-ir/src/node/value_type.rs:105  (callers=2)  ->  (leaf)
+- `is_integer` [pub] crates/strider-ir/src/node/value_type.rs:112  (callers=18)  ->  is_float
+- `is_float` [pub] crates/strider-ir/src/node/value_type.rs:119  (callers=7)  ->  (leaf)
+- `is_wide_int` [pub] crates/strider-ir/src/node/value_type.rs:130  (callers=3)  ->  byte_size, is_integer
+- `bit_mask_u128` [pub] crates/strider-ir/src/node/value_type.rs:145  (callers=17)  ->  bit_width, is_integer
+- `get_unsigned_int` [pub] crates/strider-ir/src/node/value_type.rs:166  (callers=10)  ->  bit_mask_u128, bit_width, is_integer
+- `get_signed_int` [pub] crates/strider-ir/src/node/value_type.rs:182  (callers=4)  ->  bit_mask_u128, bit_width, is_integer
+- `int_for_byte_size` [pub] crates/strider-ir/src/node/value_type.rs:218  (callers=5)  ->  (leaf)
+- `float_for_byte_size` [pub] crates/strider-ir/src/node/value_type.rs:242  (callers=1)  ->  (leaf)
+- `fmt` [priv] {trait-impl} crates/strider-ir/src/node/value_type.rs:255  (callers=0)  ->  as_str
+- `int_type` [priv] crates/strider-ir/src/node/value_type.rs:274  (callers=22)  ->  (leaf)
+- `float_type` [priv] crates/strider-ir/src/node/value_type.rs:281  (callers=5)  ->  (leaf)
+- `int_type` [priv] {trait-impl} crates/strider-ir/src/node/value_type.rs:286  (callers=22)  ->  int_for_byte_size
+- `float_type` [priv] {trait-impl} crates/strider-ir/src/node/value_type.rs:291  (callers=5)  ->  float_for_byte_size
+- `fixed` [pub(crate)] crates/strider-ir/src/node_signature.rs:94  (callers=1)  ->  (leaf)
+- `variadic` [pub(crate)] crates/strider-ir/src/node_signature.rs:98  (callers=1)  ->  (leaf)
+- `is_variadic` [pub(crate)] crates/strider-ir/src/node_signature.rs:105  (callers=1)  ->  (leaf)
+- `head_len` [pub(crate)] crates/strider-ir/src/node_signature.rs:112  (callers=1)  ->  len
+- `at` [pub(crate)] crates/strider-ir/src/node_signature.rs:118  (callers=3)  ->  get
+- `expected_signature` [pub(crate)] crates/strider-ir/src/node_signature.rs:271  (callers=2)  ->  fixed, variadic
+- `require_terminator_kinds` [pub(crate)] crates/strider-ir/src/region.rs:57  (callers=3)  ->  (leaf)
+- `require_cur_region` [pub(crate)] crates/strider-ir/src/region.rs:64  (callers=7)  ->  (leaf)
+- `cur_region_control` [pub(crate)] crates/strider-ir/src/region.rs:76  (callers=1)  ->  require_cur_region
+- `cur_region_memory` [pub(crate)] crates/strider-ir/src/region.rs:81  (callers=3)  ->  require_cur_region
+- `advance_cur_region_ctrl` [pub(crate)] crates/strider-ir/src/region.rs:86  (callers=1)  ->  require_cur_region
+- `advance_cur_region_memory` [pub] crates/strider-ir/src/region.rs:105  (callers=2)  ->  require_cur_region
+- `terminate_cur_region` [pub(crate)] crates/strider-ir/src/region.rs:114  (callers=5)  ->  require_cur_region
+- `set_region` [pub] crates/strider-ir/src/region.rs:128  (callers=2)  ->  (leaf)
+- `link_region_variables` [pub(crate)] crates/strider-ir/src/region.rs:134  (callers=2)  ->  add_node_input, function, function_mut, graph_mut, keys, producer
+- `create_region_helper` [pub(crate)] crates/strider-ir/src/region.rs:151  (callers=1)  ->  clone
+- `write_variable_from_id` [pub] crates/strider-ir/src/region.rs:177  (callers=1)  ->  require_cur_region
+- `read_variable_from_id` [pub(crate)] crates/strider-ir/src/region.rs:184  (callers=1)  ->  require_cur_region
+- `link_control_regions` [pub(crate)] crates/strider-ir/src/region.rs:190  (callers=2)  ->  add_node_input, function_mut, graph_mut
+- `link_memory_regions` [pub(crate)] crates/strider-ir/src/region.rs:204  (callers=2)  ->  add_node_input, function_mut, graph_mut
+- `link_region` [pub(crate)] crates/strider-ir/src/region.rs:214  (callers=3)  ->  link_control_regions, link_memory_regions, link_region_variables
+- `link_regions` [pub] crates/strider-ir/src/region.rs:247  (callers=1)  ->  link_region
+- `check_graph_invariants_uniqueness` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:24  (callers=1)  ->  iter, node_kind
+- `check_graph_invariants_region` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:62  (callers=1)  ->  is_empty, iter, node_inputs, node_kind
+- `check_graph_invariants_control_single_use` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:94  (callers=1)  ->  graph, iter, next, node_outputs, reachable_kind_iter, value_kind, value_uses
+- `check_graph_invariants_extend_truncate` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:134  (callers=1)  ->  bit_width, graph, into_iter, iter, next, node_inputs, node_kind, node_outputs, value_type_opt
+- `check_graph_invariants_phis` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:180  (callers=1)  ->  as_value, first_value_output_of, graph, is_empty, iter, len, node_inputs, node_kind, skip, value_definition, value_kind, value_type_opt
+- `check_graph_invariants_cc_arity` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:297  (callers=1)  ->  call_clobbered_for, call_ret_vals_for, default_cc, get_cc, len, node_inputs, node_outputs, reachable_kind_iter, ret_val_regs
+- `check_graph_invariants_asm_fingerprints` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:358  (callers=1)  ->  asm_fingerprint, asm_fingerprint_exempt, is_empty, reachable_kind_iter
+- `check_graph_invariants_memory_chain` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:403  (callers=1)  ->  any, contains, graph, node_outputs, reachable_kind_iter, value_kind, value_uses
+- `check_graph_invariants_side_indices` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:443  (callers=1)  ->  contains, graph, initial_var_index_entries, initial_vn, node_kind, producer, value_vn_entries
+- `check_graph_invariants_consts` [pub(super)] crates/strider-ir/src/validate/graph_invariants.rs:495  (callers=1)  ->  any, bit_mask_u128, bit_width, get, graph, iter, len, node_outputs, reachable_kind_iter, value_kind
+- `check_local_typing` [pub(super)] crates/strider-ir/src/validate/local_typing.rs:12  (callers=1)  ->  at, expected_signature, head_len, into_iter, is_variadic, iter, kind_matches, len, node_inputs, node_kind, node_outputs, value_kind
+- `validate` [pub] crates/strider-ir/src/validate/mod.rs:73  (callers=2)  ->  check_graph_invariants_asm_fingerprints, check_graph_invariants_cc_arity, check_graph_invariants_consts, check_graph_invariants_control_single_use, check_graph_invariants_extend_truncate, check_graph_invariants_memory_chain, check_graph_invariants_phis, check_graph_invariants_region, check_graph_invariants_side_indices, check_graph_invariants_uniqueness, check_local_typing, check_use_list_consistency, entry, graph, into_visited, is_empty, new, reachable_kind_iter, walk_graph
+- `kind_matches` [priv] crates/strider-ir/src/validate/mod.rs:115  (callers=1)  ->  is_float, is_integer
+- `fmt` [priv] {trait-impl} crates/strider-ir/src/validate/mod.rs:294  (callers=0)  ->  finish
+- `fmt` [priv] {trait-impl} crates/strider-ir/src/validate/mod.rs:300  (callers=0)  ->  (leaf)
+- `check_use_list_consistency` [pub(super)] crates/strider-ir/src/validate/use_list_consistency.rs:28  (callers=1)  ->  all_value_ids, contains, insert, iter, len, new, next_use, node_input_id_at, node_inputs, value_definition, value_first_use_id, value_of_use
+- `function` [priv] crates/strider-ir/src/viewer.rs:66  (callers=71)  ->  (leaf)
+- `node_kind` [priv] crates/strider-ir/src/viewer.rs:75  (callers=75)  ->  function, graph
+- `node_inputs` [priv] crates/strider-ir/src/viewer.rs:80  (callers=36)  ->  function, graph
+- `phi_data_inputs` [priv] crates/strider-ir/src/viewer.rs:88  (callers=3)  ->  filter, function, graph, into_iter, node_inputs, value_kind
+- `node_outputs` [priv] crates/strider-ir/src/viewer.rs:96  (callers=40)  ->  function, graph
+- `node_inputs_exact` [priv] crates/strider-ir/src/viewer.rs:104  (callers=6)  ->  function, graph
+- `producer_inputs_exact` [priv] crates/strider-ir/src/viewer.rs:114  (callers=5)  ->  node_inputs_exact, producer
+- `node_outputs_exact` [priv] crates/strider-ir/src/viewer.rs:122  (callers=16)  ->  function, graph
+- `single_value_output` [priv] crates/strider-ir/src/viewer.rs:134  (callers=5)  ->  node_outputs_exact, value_type
+- `node_input_id_at` [priv] crates/strider-ir/src/viewer.rs:146  (callers=4)  ->  function, graph
+- `value_kind` [priv] crates/strider-ir/src/viewer.rs:151  (callers=30)  ->  function, graph
+- `value_type_opt` [priv] crates/strider-ir/src/viewer.rs:159  (callers=23)  ->  as_value, value_kind
+- `producer` [priv] crates/strider-ir/src/viewer.rs:164  (callers=50)  ->  function, graph
+- `value_definition` [priv] crates/strider-ir/src/viewer.rs:169  (callers=9)  ->  function, graph
+- `kind_of_value` [priv] crates/strider-ir/src/viewer.rs:174  (callers=10)  ->  function, graph, node_kind, producer
+- `int_const_u128` [priv] crates/strider-ir/src/viewer.rs:189  (callers=23)  ->  as_value, bit_mask_u128, const_value, fits_u128, function, is_integer, kind_of_value, value_kind
+- `int_const_i128` [priv] crates/strider-ir/src/viewer.rs:204  (callers=3)  ->  as_value, get_signed_int, int_const_u128, value_kind
+- `int_const_wide_le_bytes` [priv] crates/strider-ir/src/viewer.rs:218  (callers=4)  ->  as_value, byte_size, const_value, function, is_wide_int, node_kind, node_outputs_exact, to_le_bytes, value_kind
+- `bool_const_val` [priv] crates/strider-ir/src/viewer.rs:233  (callers=3)  ->  int_const_u128, is_bool, value_kind
+- `first_value_output_of` [priv] crates/strider-ir/src/viewer.rs:243  (callers=4)  ->  as_value, function, graph, iter, node_outputs, value_kind
+- `memory_output_of` [priv] crates/strider-ir/src/viewer.rs:258  (callers=2)  ->  function, graph, node_outputs, value_kind
+- `memory_input_of` [priv] crates/strider-ir/src/viewer.rs:278  (callers=4)  ->  into_iter, next, node_inputs, node_kind
+- `reachable_kind_iter` [priv] crates/strider-ir/src/viewer.rs:337  (callers=6)  ->  function, graph, iter, node_kind
+- `value_type` [priv] crates/strider-ir/src/viewer.rs:355  (callers=13)  ->  as_value, function, graph, value_kind
+- `require_value_type` [priv] crates/strider-ir/src/viewer.rs:370  (callers=8)  ->  value_type
+- `require_integer_value` [priv] crates/strider-ir/src/viewer.rs:416  (callers=2)  ->  ensure_value_type, is_integer, value_type
+- `require_float_value` [priv] crates/strider-ir/src/viewer.rs:428  (callers=3)  ->  ensure_value_type, is_float, value_type
+- `require_integer_type` [priv] crates/strider-ir/src/viewer.rs:440  (callers=2)  ->  is_integer
+- `require_float_type` [priv] crates/strider-ir/src/viewer.rs:451  (callers=3)  ->  is_float
+- `validate_value_inputs` [priv] crates/strider-ir/src/viewer.rs:462  (callers=6)  ->  (leaf)
+- `infer_float_type` [priv] crates/strider-ir/src/viewer.rs:482  (callers=1)  ->  byte_size, is_float, value_type
+- `function` [priv] {trait-impl} crates/strider-ir/src/viewer.rs:501  (callers=71)  ->  (leaf)
+- `function` [priv] {trait-impl} crates/strider-ir/src/viewer.rs:511  (callers=71)  ->  (leaf)
+- `function` [priv] {trait-impl} crates/strider-ir/src/viewer.rs:521  (callers=71)  ->  (leaf)
+- `walk_info` [priv] crates/strider-ir/src/viewer.rs:543  (callers=2)  ->  compute_full, entry, function, graph
+- `walk` [priv] crates/strider-ir/src/viewer.rs:551  (callers=9)  ->  entry, function, graph, walk_graph
+- `walk_kind` [priv] crates/strider-ir/src/viewer.rs:557  (callers=3)  ->  filter, node_kind, walk
+- `reverse_postorder` [priv] crates/strider-ir/src/viewer.rs:567  (callers=3)  ->  function, graph
+- `reverse_postorder_filter` [priv] crates/strider-ir/src/viewer.rs:574  (callers=3)  ->  filter, into_iter, node_kind, reverse_postorder, walk_info
+- `ensure_value_type` [priv] crates/strider-ir/src/viewer.rs:587  (callers=2)  ->  (leaf)
+- `cast_mask_of` [pub] crates/strider-ir/src/walk/cast/mod.rs:39  (callers=1)  ->  empty
+- `cfg_reachable` [pub] crates/strider-ir/src/walk/mod.rs:28  (callers=1)  ->  cfg_succs, dequeue, enqueue, insert, new
+- `new` [pub(crate)] crates/strider-ir/src/walk/mod.rs:69  (callers=210)  ->  (leaf)
+- `graph_walk_succs` [pub(crate)] crates/strider-ir/src/walk/mod.rs:89  (callers=1)  ->  cfg_succs, into_iter, node_inputs, value_definition
+- `cfg_outputs` [pub(crate)] crates/strider-ir/src/walk/mod.rs:98  (callers=1)  ->  filter, is_control, iter, node_outputs, value_kind
+- `cfg_succs` [pub(crate)] crates/strider-ir/src/walk/mod.rs:107  (callers=3)  ->  cfg_outputs, value_uses
+- `try_successors` [priv] {trait-impl} crates/strider-ir/src/walk/mod.rs:116  (callers=1)  ->  graph_walk_succs
+- `walk_graph` [pub(crate)] crates/strider-ir/src/walk/mod.rs:137  (callers=4)  ->  new
+- `new` [pub] crates/strider-ir/src/walk/mod.rs:160  (callers=210)  ->  (leaf)
+- `try_successors` [priv] {trait-impl} crates/strider-ir/src/walk/mod.rs:168  (callers=1)  ->  iter, node_outputs, value_uses
+- `new` [pub] crates/strider-ir/src/walk/mod.rs:194  (callers=210)  ->  (leaf)
+- `try_successors` [priv] {trait-impl} crates/strider-ir/src/walk/mod.rs:202  (callers=1)  ->  contains, filter, iter, node_outputs, value_uses
+- `compute_full` [pub] crates/strider-ir/src/walk/mod.rs:237  (callers=2)  ->  into_visited, is_empty, new, node_inputs, walk_graph
+- `postorder` [pub] crates/strider-ir/src/walk/mod.rs:254  (callers=3)  ->  iter, new
+- `reverse_postorder` [pub] crates/strider-ir/src/walk/mod.rs:263  (callers=3)  ->  postorder
+- `require_equal_input_widths` [priv] crates/strider-lift/src/lift/arithmetic.rs:38  (callers=3)  ->  (leaf)
+- `require_equal_input_output_width` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:56  (callers=2)  ->  (leaf)
+- `build_all_ones` [priv] crates/strider-lift/src/lift/arithmetic.rs:77  (callers=1)  ->  build_int_const, build_int_const_limbs, byte_size
+- `reject_operand_wider_than_output` [priv] crates/strider-lift/src/lift/arithmetic.rs:99  (callers=1)  ->  (leaf)
+- `process_int_unary_op` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:113  (callers=1)  ->  build_int_unary_operation, lift_int_unary
+- `handle_int_neg_as_xor` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:132  (callers=1)  ->  build_all_ones, build_int_binary_operation, lift_int_unary
+- `process_int_binary_op` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:161  (callers=1)  ->  build_int_binary_operation, convert_to_int_if_needed, extend_if_needed, int_type, nth_input_or_err, read_input, reject_operand_wider_than_output, require_output_vn, write_vn
+- `process_int_cmp_op` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:230  (callers=1)  ->  build_int_cmp_operation, extend_if_needed, int_for_byte_size, nth_input_or_err, read_input, require_equal_input_widths, require_output_vn, write_vn
+- `lower_cmp_negated` [priv] crates/strider-lift/src/lift/arithmetic.rs:273  (callers=3)  ->  build_int_cmp_operation, build_logical_not, convert_to_int_if_needed, int_type, nth_input_or_err, read_input, require_equal_input_widths, require_output_vn, write_vn
+- `build_logical_not` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:304  (callers=3)  ->  build_boolean_const, build_int_binary_operation
+- `build_or_i1` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:313  (callers=1)  ->  build_int_binary_operation
+- `handle_int_not_equal` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:329  (callers=1)  ->  lower_cmp_negated
+- `handle_int_less_equal` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:339  (callers=1)  ->  lower_cmp_negated
+- `handle_int_sless_equal` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:348  (callers=1)  ->  lower_cmp_negated
+- `handle_int_sub` [pub(super)] crates/strider-lift/src/lift/arithmetic.rs:363  (callers=1)  ->  build_int_binary_operation, build_int_unary_operation, convert_to_int_if_needed, int_type, nth_input_or_err, read_input, require_equal_input_output_width, require_equal_input_widths, require_output_vn, write_vn
+- `process_bool_binary_op` [pub(super)] crates/strider-lift/src/lift/boolean.rs:20  (callers=1)  ->  build_int_binary_operation, convert_to_int_if_needed, read_input, require_output_vn, write_vn
+- `process_bool_unary_op` [pub(super)] crates/strider-lift/src/lift/boolean.rs:42  (callers=1)  ->  build_logical_not, convert_to_int_if_needed, read_input, require_output_vn, write_vn
+- `handle_call_other` [pub(super)] crates/strider-lift/src/lift/call.rs:16  (callers=1)  ->  build_abi_call_other, classify, decode_user_op, handle_call_other_modeled, new, preset, sleigh
+- `handle_call_other_modeled` [priv] crates/strider-lift/src/lift/call.rs:59  (callers=1)  ->  build, build_abi_call_other, get, read_vns
+- `build_abi_call_other` [priv] crates/strider-lift/src/lift/call.rs:88  (callers=2)  ->  build_call_other, container_of, contains, function, into_iter, iter, len, new, read_vn, with_capacity, write_variable
+- `decode_user_op` [priv] crates/strider-lift/src/lift/call.rs:149  (callers=1)  ->  ensure_const_space, nth_input_or_err
+- `extract_bit_pos_u8` [priv] crates/strider-lift/src/lift/cast.rs:19  (callers=2)  ->  (leaf)
+- `low_bits_mask` [priv] crates/strider-lift/src/lift/cast.rs:40  (callers=2)  ->  (leaf)
+- `build_bit_field_insert` [priv] crates/strider-lift/src/lift/cast.rs:52  (callers=1)  ->  build_int_binary_operation, build_int_const, build_shift_by_const, from, low_bits_mask
+- `handle_subpiece` [pub(super)] crates/strider-lift/src/lift/cast.rs:88  (callers=1)  ->  build_shift_by_const, ensure_const_space, from, int_type, nth_input_or_err, read_vn, require_output_vn, truncate_if_needed, write_vn
+- `lift_int_unary` [pub(super)] crates/strider-lift/src/lift/cast.rs:135  (callers=4)  ->  build, convert_to_int_if_needed, int_type, nth_input_or_err, read_input, require_equal_input_output_width, require_output_vn, write_vn
+- `handle_popcount` [pub(super)] crates/strider-lift/src/lift/cast.rs:159  (callers=1)  ->  build_popcount, lift_int_unary
+- `handle_lzcount` [pub(super)] crates/strider-lift/src/lift/cast.rs:163  (callers=1)  ->  build_lzcount, lift_int_unary
+- `handle_piece` [pub(super)] crates/strider-lift/src/lift/cast.rs:167  (callers=1)  ->  build_int_binary_operation, build_shift_by_const, convert_to_int_if_needed, from, int_type, nth_input_or_err, read_vn, require_output_vn, write_vn
+- `handle_extract` [pub(super)] crates/strider-lift/src/lift/cast.rs:215  (callers=1)  ->  bit_width, build_int_binary_operation, build_int_const, build_shift_by_const, convert_to_int_if_needed, ensure_const_space, extract_bit_pos_u8, from, int_type, low_bits_mask, nth_input_or_err, read_vn, require_output_vn, truncate_if_needed, write_vn
+- `handle_insert` [pub(super)] crates/strider-lift/src/lift/cast.rs:264  (callers=1)  ->  bit_width, build_bit_field_insert, convert_to_int_if_needed, ensure_const_space, extract_bit_pos_u8, int_type, nth_input_or_err, read_input, require_output_vn, write_vn
+- `build_switch_if_ladder` [pub(crate)] crates/strider-lift/src/lift/control.rs:53  (callers=1)  ->  as_value_or_err, build_branch, build_if, build_int_cmp_operation, build_int_const, create_region, function, len, set_region, value_kind
+- `handle_branch` [pub(super)] crates/strider-lift/src/lift/control.rs:110  (callers=1)  ->  (leaf)
+- `handle_switch` [pub(crate)] crates/strider-lift/src/lift/control.rs:138  (callers=1)  ->  build_switch_if_ladder, from, ir_region_of, is_empty, len, read_vn, region_id_at_start, with_capacity
+- `handle_cond_branch` [pub(super)] crates/strider-lift/src/lift/control.rs:169  (callers=1)  ->  build_if, ir_region_of, read_input, region_if, truncate_if_needed
+- `handle_return` [pub(super)] crates/strider-lift/src/lift/control.rs:211  (callers=1)  ->  build_function_return
+- `build_cc_call` [priv] crates/strider-lift/src/lift/control.rs:224  (callers=3)  ->  apply_post_call_sp_adjust, build_call, call_clobbered_for, call_ret_vals_for, clone, default_cc, function, function_mut, len, read_vn, read_vns, set_call_cc, write_variable, write_vn
+- `handle_call` [pub(super)] crates/strider-lift/src/lift/control.rs:272  (callers=1)  ->  build_addr_const, build_cc_call, get, nth_input_or_err
+- `handle_tail_call` [pub(crate)] crates/strider-lift/src/lift/control.rs:300  (callers=1)  ->  build_addr_const, build_cc_call, build_function_return, get, sleigh
+- `handle_call_indirect` [pub(super)] crates/strider-lift/src/lift/control.rs:311  (callers=1)  ->  build_cc_call, nth_input_or_err, read_vn
+- `handle_unresolved_indirect_branch` [pub(crate)] crates/strider-lift/src/lift/control.rs:336  (callers=1)  ->  build_indirect_branch, read_vn
+- `process_insn` [pub(crate)] crates/strider-lift/src/lift/dispatch.rs:29  (callers=2)  ->  process_insn_inner, with_lift_addr
+- `process_insn_inner` [priv] crates/strider-lift/src/lift/dispatch.rs:62  (callers=1)  ->  handle_branch, handle_call, handle_call_indirect, handle_call_other, handle_cond_branch, handle_copy, handle_cpool_ref, handle_extract, handle_float_float_to_float, handle_float_int_to_float, handle_float_less_equal, handle_float_nan, handle_float_not_equal, handle_float_sub, handle_float_trunc, handle_insert, handle_int_less_equal, handle_int_neg_as_xor, handle_int_not_equal, handle_int_sless_equal, handle_int_sub, handle_load, handle_lzcount, handle_new, handle_piece, handle_popcount, handle_return, handle_segment_op, handle_store, handle_subpiece, process_bool_binary_op, process_bool_unary_op, process_extend, process_float_binary_op, process_float_cmp_op, process_float_unary_op, process_int_binary_op, process_int_cmp_op, process_int_unary_op
+- `write_float_to_vn` [pub(super)] crates/strider-lift/src/lift/float.rs:19  (callers=4)  ->  build_float_bits_to_int, int_type, write_vn
+- `lift_float_binary` [priv] crates/strider-lift/src/lift/float.rs:34  (callers=2)  ->  build, cast_to_float_if_needed, float_type, read_input, require_output_vn, write_float_to_vn
+- `lift_float_unary` [priv] crates/strider-lift/src/lift/float.rs:57  (callers=1)  ->  build, cast_to_float_if_needed, float_type, read_input, require_output_vn, write_float_to_vn
+- `process_float_binary_op` [pub(super)] crates/strider-lift/src/lift/float.rs:78  (callers=1)  ->  build_float_binary_op, lift_float_binary
+- `process_float_unary_op` [pub(super)] crates/strider-lift/src/lift/float.rs:87  (callers=1)  ->  build_float_unary_op, lift_float_unary
+- `process_float_cmp_op` [pub(super)] crates/strider-lift/src/lift/float.rs:96  (callers=1)  ->  build_float_cmp_op, cast_float_cmp_operands, read_input, require_output_vn, write_vn
+- `cast_float_cmp_operands` [priv] crates/strider-lift/src/lift/float.rs:113  (callers=3)  ->  cast_to_float_if_needed, infer_float_type
+- `build_float_eq_negated` [priv] crates/strider-lift/src/lift/float.rs:134  (callers=2)  ->  build_float_cmp_op, build_logical_not, cast_float_cmp_operands
+- `handle_float_nan` [pub(super)] crates/strider-lift/src/lift/float.rs:146  (callers=1)  ->  build_float_eq_negated, read_input, require_output_vn, write_vn
+- `handle_float_sub` [pub(super)] crates/strider-lift/src/lift/float.rs:164  (callers=1)  ->  build_float_binary_op, build_float_unary_op, lift_float_binary
+- `handle_float_not_equal` [pub(super)] crates/strider-lift/src/lift/float.rs:177  (callers=1)  ->  build_float_eq_negated, read_input, require_output_vn, write_vn
+- `handle_float_less_equal` [pub(super)] crates/strider-lift/src/lift/float.rs:193  (callers=1)  ->  build_float_cmp_op, build_or_i1, cast_float_cmp_operands, read_input, require_output_vn, write_vn
+- `handle_float_int_to_float` [pub(super)] crates/strider-lift/src/lift/float.rs:208  (callers=1)  ->  build_int_to_float, convert_to_int_if_needed, float_type, int_type, nth_input_or_err, read_input, require_output_vn, write_float_to_vn
+- `handle_float_float_to_float` [pub(super)] crates/strider-lift/src/lift/float.rs:225  (callers=1)  ->  build_float_to_float, cast_to_float_if_needed, float_type, nth_input_or_err, read_input, require_output_vn, write_float_to_vn
+- `handle_float_trunc` [pub(super)] crates/strider-lift/src/lift/float.rs:242  (callers=1)  ->  build_float_to_int, cast_to_float_if_needed, float_type, int_type, nth_input_or_err, read_input, require_output_vn, write_vn
+- `new` [pub(crate)] crates/strider-lift/src/lift/function_lifter.rs:40  (callers=210)  ->  endianness
+- `with_lift_addr` [pub(crate)] crates/strider-lift/src/lift/function_lifter.rs:61  (callers=2)  ->  set_lift_addr
+- `handle_copy` [pub(super)] crates/strider-lift/src/lift/integer.rs:15  (callers=1)  ->  read_input, require_output_vn, write_vn
+- `process_extend` [pub(super)] crates/strider-lift/src/lift/integer.rs:28  (callers=1)  ->  extend_if_needed, int_type, nth_input_or_err, read_input, require_output_vn, write_vn
+- `handle_load` [pub(super)] crates/strider-lift/src/lift/memory.rs:12  (callers=1)  ->  build_load, decode_space_id, int_type, read_input, require_output_vn, write_vn
+- `handle_store` [pub(super)] crates/strider-lift/src/lift/memory.rs:20  (callers=1)  ->  build_store, decode_space_id, read_input
+- `handle_segment_op` [pub(super)] crates/strider-lift/src/lift/misc.rs:19  (callers=1)  ->  build_segment_op, ensure_const_space, int_type, nth_input_or_err, read_input, require_output_vn, write_vn
+- `handle_cpool_ref` [pub(super)] crates/strider-lift/src/lift/misc.rs:35  (callers=1)  ->  build_cpool_ref, int_type, read_vns, require_output_vn, write_vn
+- `handle_new` [pub(super)] crates/strider-lift/src/lift/misc.rs:43  (callers=1)  ->  build_new, int_type, read_vns, require_output_vn, write_vn
+- `new` [pub] crates/strider-lift/src/lift/mod.rs:83  (callers=210)  ->  (leaf)
+- `sleigh` [pub] crates/strider-lift/src/lift/mod.rs:95  (callers=5)  ->  (leaf)
+- `sleigh_regs` [pub] crates/strider-lift/src/lift/mod.rs:101  (callers=3)  ->  (leaf)
+- `build_cfg` [pub] crates/strider-lift/src/lift/mod.rs:110  (callers=2)  ->  build, for_arch
+- `find_all_unique_vns` [pub(crate)] crates/strider-lift/src/lift/mod.rs:125  (callers=1)  ->  all_vns, default, insert, into_iter, iter, regions
+- `build_ir` [pub] crates/strider-lift/src/lift/mod.rs:148  (callers=1)  ->  build_ir_with, default
+- `build_ir_with` [pub] crates/strider-lift/src/lift/mod.rs:173  (callers=3)  ->  build, build_region_map, find_all_unique_vns, link_region_edges, new, translate_regions
+- `ir_region_of` [pub(crate)] crates/strider-lift/src/lift/mod.rs:218  (callers=4)  ->  get
+- `build_region_map` [priv] crates/strider-lift/src/lift/mod.rs:237  (callers=1)  ->  build_entry, create_region, default, entry, get, insert, region_ids, set_entry_region
+- `translate_regions` [priv] crates/strider-lift/src/lift/mod.rs:258  (callers=1)  ->  from_terminator, handle_switch, handle_tail_call, handle_unresolved_indirect_branch, ir_region_of, node_weight, process_insn, region_graph, region_ids, region_predecessors, set_region, skips_opcode, with_lift_addr
+- `link_region_edges` [priv] crates/strider-lift/src/lift/mod.rs:337  (callers=1)  ->  ir_region_of, link_regions, node_weight, region_graph
+- `from_terminator` [priv] crates/strider-lift/src/lift/mod.rs:390  (callers=1)  ->  clone
+- `skips_opcode` [priv] crates/strider-lift/src/lift/mod.rs:432  (callers=1)  ->  (leaf)
+- `require_output_vn` [pub(crate)] crates/strider-lift/src/lift/pcode_util.rs:12  (callers=26)  ->  (leaf)
+- `nth_input_or_err` [pub(crate)] crates/strider-lift/src/lift/pcode_util.rs:25  (callers=19)  ->  get, len
+- `ensure_const_space` [pub(crate)] crates/strider-lift/src/lift/pcode_util.rs:49  (callers=6)  ->  (leaf)
+- `decode_space_id` [pub(crate)] crates/strider-lift/src/lift/pcode_util.rs:89  (callers=2)  ->  ensure_const_space, nth_input_or_err
+- `build_addr_const` [pub(crate)] crates/strider-lift/src/lift/vn_io.rs:23  (callers=4)  ->  build_int_const, int_for_byte_size, sleigh
+- `read_vns` [pub(crate)] crates/strider-lift/src/lift/vn_io.rs:41  (callers=4)  ->  iter, read_vn
+- `read_input` [pub(super)] crates/strider-lift/src/lift/vn_io.rs:46  (callers=23)  ->  nth_input_or_err, read_vn
+- `read_vn` [pub(crate)] crates/strider-lift/src/lift/vn_io.rs:72  (callers=10)  ->  build_addr_const, build_int_const, build_load, int_type, read_reg_vn
+- `write_vn` [pub(crate)] crates/strider-lift/src/lift/vn_io.rs:100  (callers=24)  ->  build_addr_const, build_store, write_reg_vn
+- `default` [priv] {trait-impl} crates/strider-lift/src/lift_options.rs:41  (callers=54)  ->  (leaf)
+- `read_rom_const` [pub(crate)] crates/strider-opt/src/const_eval.rs:18  (callers=1)  ->  byte_size, get_unsigned_int, read, read_uint
+- `eval_node_const` [pub(crate)] crates/strider-opt/src/const_eval.rs:40  (callers=2)  ->  endianness, eval_int_binary, eval_int_cmp, eval_int_unary, eval_lzcount, eval_popcount, eval_sign_extend, from, get, get_unsigned_int, int_const_u128, node_inputs, node_kind, producer, read_rom_const, resolve, value_type_opt
+- `default_pipeline` [pub] crates/strider-opt/src/lib.rs:135  (callers=2)  ->  add, add_post_pass, new
+- `apply` [priv] {trait-impl} crates/strider-opt/src/opt/cfg_detach/mod.rs:40  (callers=4)  ->  cfg_reachable, contains, default, entry, function, graph, into_iter, is_empty, node_inputs, remove_region_predecessors, reverse_postorder_filter, value_definition
+- `eval_float_binary` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_float.rs:68  (callers=1)  ->  (leaf)
+- `eval_float_cmp` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_float.rs:87  (callers=1)  ->  (leaf)
+- `eval_float_unary` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_float.rs:101  (callers=1)  ->  (leaf)
+- `signed_min` [priv] crates/strider-opt/src/opt/constant_fold/eval_int.rs:12  (callers=1)  ->  bit_width
+- `require_signed` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_int.rs:24  (callers=2)  ->  get_signed_int
+- `eval_int_binary` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_int.rs:40  (callers=2)  ->  bit_mask_u128, bit_width, from, get_signed_int, signed_min
+- `eval_int_cmp` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_int.rs:134  (callers=2)  ->  bit_mask_u128, bit_width, require_signed
+- `eval_int_unary` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_int.rs:168  (callers=2)  ->  get_unsigned_int
+- `eval_sign_extend` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_int.rs:176  (callers=2)  ->  get_unsigned_int, require_signed
+- `eval_popcount` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_int.rs:182  (callers=2)  ->  from, get_unsigned_int
+- `eval_lzcount` [pub(crate)] crates/strider-opt/src/opt/constant_fold/eval_int.rs:188  (callers=2)  ->  bit_width, from, get_unsigned_int
+- `new` [pub] crates/strider-opt/src/opt/constant_fold/mod.rs:34  (callers=210)  ->  build
+- `default` [priv] {trait-impl} crates/strider-opt/src/opt/constant_fold/mod.rs:42  (callers=54)  ->  new
+- `matches_kind` [priv] {trait-impl} crates/strider-opt/src/opt/constant_fold/mod.rs:54  (callers=1)  ->  (leaf)
+- `try_rewrite` [priv] {trait-impl} crates/strider-opt/src/opt/constant_fold/mod.rs:58  (callers=1)  ->  apply_all, producer
+- `build` [pub(super)] crates/strider-opt/src/opt/constant_fold/rules.rs:41  (callers=17)  ->  build_bitcast_extend_rules, build_bool_float_rules, build_const_eval_rules, build_identity_rules, build_reassoc_and_mask_rules
+- `apply_all` [pub(super)] crates/strider-opt/src/opt/constant_fold/rules.rs:56  (callers=1)  ->  apply_rules_in_order
+- `build_reassoc_and_mask_rules` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:80  (callers=1)  ->  add, any_int_const, capture, function, get_uint, new, ordered, rewrite_rule, sub, var, when_match
+- `truncate_low_mask` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:265  (callers=1)  ->  bit_width
+- `build_bitcast_extend_rules` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:275  (callers=1)  ->  any_int_const, capture, function, get_type, get_uint, new, rewrite_rule, truncate_low_mask, var, when_match
+- `build_identity_rules` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:453  (callers=1)  ->  add, any_int_const, capture, function, get_uint, get_unsigned_int, int_const, new, rewrite_rule, sub, var, when_match
+- `require_operand_widths` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:530  (callers=1)  ->  bit_width, get_type, skip
+- `build_const_eval_rules` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:551  (callers=1)  ->  any_int_const, bool_const_with_fn, capture, eval_int_binary, eval_int_cmp, eval_int_unary, eval_lzcount, eval_popcount, eval_sign_extend, first_value_input_type, get_int_binary_op, get_int_cmp_op, get_uint, get_unsigned_int, graph, int_cmp_any, int_const_with_fn, lzcount, missing_binding, new, popcount, require_operand_widths, rewrite_rule
+- `build_bool_float_rules` [priv] crates/strider-opt/src/opt/constant_fold/rules.rs:724  (callers=1)  ->  any_float_const, bool_not, capture, eval_float_binary, eval_float_cmp, eval_float_unary, float_cmp_any, new, rewrite_rule, var
+- `matches_kind` [priv] {trait-impl} crates/strider-opt/src/opt/dead_branch/mod.rs:43  (callers=1)  ->  (leaf)
+- `try_rewrite` [priv] {trait-impl} crates/strider-opt/src/opt/dead_branch/mod.rs:47  (callers=1)  ->  absorb_fingerprint, bool_const_val, function, graph_ref, kill_node, node_inputs_exact, node_outputs_exact, replace_value
+- `propagate_to_consumers` [priv] {trait-impl} crates/strider-opt/src/opt/dead_branch/mod.rs:100  (callers=1)  ->  (leaf)
+- `new` [pub] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:80  (callers=210)  ->  build_rules
+- `default` [priv] {trait-impl} crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:88  (callers=54)  ->  new
+- `matches_kind` [priv] {trait-impl} crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:96  (callers=1)  ->  (leaf)
+- `seed_order` [priv] {trait-impl} crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:104  (callers=1)  ->  (leaf)
+- `try_rewrite` [priv] {trait-impl} crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:108  (callers=1)  ->  apply_rules_in_order, canonicalize_cr_bit_test, producer
+- `propagate_to_consumers` [priv] {trait-impl} crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:135  (callers=1)  ->  (leaf)
+- `neg_relation` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:151  (callers=1)  ->  bit_mask_u128, get_type, get_uint
+- `sub_relation` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:173  (callers=1)  ->  bit_mask_u128, get_type, get_uint
+- `build_rules` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:192  (callers=1)  ->  add, any_int_const, bool_not, capture, extend, function, int_const, neg, neg_relation, new, of_width, rewrite_rule, sub_relation, var, when_match
+- `canonicalize_cr_bit_test` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:430  (callers=1)  ->  absorb_cr_pack_fingerprints, cr_bit_comparison, replace_value
+- `absorb_cr_pack_fingerprints` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:458  (callers=1)  ->  extend, extend_asm_fingerprint_from, function_mut, input_producers_iter, insert, new, node_kind, producer
+- `cr_bit_comparison` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:491  (callers=1)  ->  contains, flatten_or, int_const_u128, kind_of_value, new, node_inputs_exact, node_kind, node_outputs, producer_inputs_exact, single_bit_term, value_type_opt
+- `flatten_or` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:540  (callers=1)  ->  kind_of_value, producer_inputs_exact
+- `single_bit_term` [priv] crates/strider-opt/src/opt/flag_cmp_canonicalize/mod.rs:558  (callers=1)  ->  int_const_u128, kind_of_value, producer_inputs_exact, value_type_opt
+- `new` [pub] crates/strider-opt/src/opt/if_cond_inversion/mod.rs:77  (callers=210)  ->  bool_not, into_pattern, var
+- `default` [priv] {trait-impl} crates/strider-opt/src/opt/if_cond_inversion/mod.rs:87  (callers=54)  ->  new
+- `matches_kind` [priv] {trait-impl} crates/strider-opt/src/opt/if_cond_inversion/mod.rs:93  (callers=1)  ->  (leaf)
+- `try_rewrite` [priv] {trait-impl} crates/strider-opt/src/opt/if_cond_inversion/mod.rs:97  (callers=1)  ->  function, invert, is_inverted_cond_match
+- `propagate_to_consumers` [priv] {trait-impl} crates/strider-opt/src/opt/if_cond_inversion/mod.rs:118  (callers=1)  ->  (leaf)
+- `is_inverted_cond_match` [priv] crates/strider-opt/src/opt/if_cond_inversion/mod.rs:136  (callers=1)  ->  match_at, new, producer, value
+- `invert` [priv] crates/strider-opt/src/opt/if_cond_inversion/mod.rs:156  (callers=1)  ->  graph_ref, node_input_id_at, node_outputs_exact, redirect_input, update_input, value_uses
+- `type_mask_u128` [pub(crate)] crates/strider-opt/src/opt/known_bits/mod.rs:27  (callers=6)  ->  bit_mask_u128, bit_width, is_integer
+- `from_const` [priv] crates/strider-opt/src/opt/known_bits/mod.rs:65  (callers=1)  ->  get_unsigned_int, type_mask_u128
+- `all_known` [priv] crates/strider-opt/src/opt/known_bits/mod.rs:75  (callers=2)  ->  (leaf)
+- `max_value` [pub] crates/strider-opt/src/opt/known_bits/mod.rs:85  (callers=1)  ->  (leaf)
+- `classify_const_shift` [priv] crates/strider-opt/src/opt/known_bits/mod.rs:106  (callers=1)  ->  all_known, from
+- `shift_known_bits` [priv] crates/strider-opt/src/opt/known_bits/mod.rs:133  (callers=1)  ->  bit_width, classify_const_shift, type_mask_u128, value_type_opt
+- `node_known_bits` [pub(crate)] crates/strider-opt/src/opt/known_bits/mod.rs:185  (callers=1)  ->  as_value_or_err, bit_width, from_const, graph, int_const_u128, is_integer, iter, node_inputs_exact, node_kind, node_outputs, shift_known_bits, type_mask_u128, value_kind
+- `propagates_known_bits` [priv] crates/strider-opt/src/opt/known_bits/mod.rs:419  (callers=1)  ->  (leaf)
+- `analyze` [pub] crates/strider-opt/src/opt/known_bits/mod.rs:456  (callers=3)  ->  dequeue, enqueue, graph, new, node_known_bits, reverse_postorder_filter, value_uses
+- `apply` [priv] {trait-impl} crates/strider-opt/src/opt/known_bits/mod.rs:509  (callers=4)  ->  all_known, analyze, build_cone_fingerprint_memo, build_int_const, extend_asm_fingerprint, function, function_mut, get, input_producers, is_integer, iter, node_kind, producer, replace_value, type_mask_u128, value_type_opt
+- `build_cone_fingerprint_memo` [priv] crates/strider-opt/src/opt/known_bits/mod.rs:631  (callers=1)  ->  asm_fingerprint, default, function, get, input_producers_iter, insert, iter, new, node_kind, producer, propagates_known_bits
+- `matches_kind` [priv] {trait-impl} crates/strider-opt/src/opt/load_forward/mod.rs:54  (callers=1)  ->  (leaf)
+- `propagate_to_consumers` [priv] {trait-impl} crates/strider-opt/src/opt/load_forward/mod.rs:60  (callers=1)  ->  (leaf)
+- `try_rewrite` [priv] {trait-impl} crates/strider-opt/src/opt/load_forward/mod.rs:64  (callers=1)  ->  try_forward_load
+- `try_forward_load` [priv] crates/strider-opt/src/opt/load_forward/mod.rs:88  (callers=1)  ->  byte_size, call_blocking, from_changed, function, is_integer, memory_input_of, narrow, narrow_load_to, nearest_clobber, node_kind, replace_value, single_value_output, value_type_opt, verdict
+- `narrow` [priv] crates/strider-opt/src/opt/load_forward/mod.rs:192  (callers=1)  ->  build_int_const, create_node_attributed, endianness, extend_asm_fingerprint_from, from, function, function_mut, high_low_shift_bits, node_outputs_exact, producer, single_value_output, value_type
+- `matches_kind` [priv] {trait-impl} crates/strider-opt/src/opt/load_readonly/mod.rs:79  (callers=1)  ->  (leaf)
+- `propagate_to_consumers` [priv] {trait-impl} crates/strider-opt/src/opt/load_readonly/mod.rs:84  (callers=1)  ->  (leaf)
+- `try_rewrite` [priv] {trait-impl} crates/strider-opt/src/opt/load_readonly/mod.rs:88  (callers=1)  ->  try_fold_const_load_at
+- `try_fold_const_load_at` [pub(crate)] crates/strider-opt/src/opt/load_readonly/mod.rs:127  (callers=1)  ->  absorb_fingerprint, build_int_const, eval_node_const, function, int_const_u128, replace_value, single_value_output
+- `matches_kind` [priv] {trait-impl} crates/strider-opt/src/opt/phi_collapse/mod.rs:36  (callers=1)  ->  (leaf)
+- `try_rewrite` [priv] {trait-impl} crates/strider-opt/src/opt/phi_collapse/mod.rs:40  (callers=1)  ->  is_empty, kill_node, node_inputs, node_outputs_exact, phi_data_inputs, replace_value
+- `propagate_to_consumers` [priv] {trait-impl} crates/strider-opt/src/opt/phi_collapse/mod.rs:112  (callers=1)  ->  (leaf)
+- `apply` [priv] {trait-impl} crates/strider-opt/src/opt/region_collapse/mod.rs:31  (callers=4)  ->  changed, live_of_kind, try_collapse
+- `try_collapse` [priv] crates/strider-opt/src/opt/region_collapse/mod.rs:60  (callers=1)  ->  all, from_changed, graph_ref, is_empty, is_live, iter, kill_node, len, node_inputs, node_outputs, node_outputs_exact, replace_value, value_uses
+- `input_producers` [pub(crate)] crates/strider-opt/src/peephole.rs:35  (callers=2)  ->  input_producers_iter
+- `input_producers_iter` [pub(crate)] crates/strider-opt/src/peephole.rs:44  (callers=3)  ->  into_iter, node_inputs, producer
+- `matches_kind` [priv] crates/strider-opt/src/peephole.rs:85  (callers=1)  ->  (leaf)
+- `seed_order` [priv] crates/strider-opt/src/peephole.rs:91  (callers=1)  ->  (leaf)
+- `try_rewrite` [priv] crates/strider-opt/src/peephole.rs:102  (callers=1)  ->  (leaf)
+- `propagate_to_consumers` [priv] crates/strider-opt/src/peephole.rs:113  (callers=1)  ->  (leaf)
+- `run_peephole` [pub(crate)] crates/strider-opt/src/peephole.rs:138  (callers=1)  ->  clear, dequeue, enqueue, graph_ref, into_iter, matches_kind, new, node_kind, node_outputs, postorder_filter, propagate_to_consumers, reverse_postorder_filter, seed_order, try_rewrite, value_uses
+- `apply` [priv] {trait-impl} crates/strider-opt/src/peephole.rs:218  (callers=4)  ->  run_peephole
+- `changed` [pub] crates/strider-opt/src/pipeline.rs:18  (callers=2)  ->  (leaf)
+- `from_changed` [pub] crates/strider-opt/src/pipeline.rs:25  (callers=2)  ->  (leaf)
+- `new` [pub] crates/strider-opt/src/pipeline.rs:94  (callers=210)  ->  default
+- `apply` [priv] crates/strider-opt/src/pipeline.rs:175  (callers=4)  ->  (leaf)
+- `run_one` [pub] crates/strider-opt/src/pipeline.rs:201  (callers=0)  ->  apply, clean, cull_dead, new
+- `run_post` [pub] crates/strider-opt/src/pipeline.rs:225  (callers=0)  ->  apply, clean, cull_dead, new
+- `clone_box` [priv] crates/strider-opt/src/pipeline.rs:255  (callers=4)  ->  (leaf)
+- `clone_box` [priv] {trait-impl} crates/strider-opt/src/pipeline.rs:259  (callers=4)  ->  clone, new
+- `apply` [priv] crates/strider-opt/src/pipeline.rs:295  (callers=4)  ->  (leaf)
+- `default` [priv] {trait-impl} crates/strider-opt/src/pipeline.rs:319  (callers=54)  ->  new
+- `new` [pub] crates/strider-opt/src/pipeline.rs:327  (callers=210)  ->  (leaf)
+- `add` [pub] crates/strider-opt/src/pipeline.rs:335  (callers=7)  ->  new
+- `add_post_pass` [pub] crates/strider-opt/src/pipeline.rs:342  (callers=3)  ->  new
+- `passes` [pub] crates/strider-opt/src/pipeline.rs:353  (callers=1)  ->  (leaf)
+- `post_passes` [pub] crates/strider-opt/src/pipeline.rs:360  (callers=1)  ->  (leaf)
+- `run` [pub] crates/strider-opt/src/pipeline.rs:387  (callers=4)  ->  apply, changed, clean, clear, cull_dead, new, validate
+- `collect_stack_args` [priv] crates/strider-opt/src/post_opt/call_stack_args/mod.rs:43  (callers=1)  ->  data, decompose, memory_input_of, new, node_inputs, offset_of, reaching_store, size, slots_spanned
+- `apply` [priv] {trait-impl} crates/strider-opt/src/post_opt/call_stack_args/mod.rs:110  (callers=4)  ->  add_node_input, call_blocking, collect_stack_args, function, get_cc, live_of_kind
+- `apply` [priv] {trait-impl} crates/strider-opt/src/post_opt/function_args/mod.rs:71  (callers=4)  ->  clear_arg_values_from, default_cc, detect_stack_args, function, function_mut, len, new
+- `detect_stack_args` [priv] crates/strider-opt/src/post_opt/function_args/mod.rs:122  (callers=1)  ->  all, byte_size, contains, decompose, default, entry, function, get, initial_sp, insert, is_live, iter, live_of_kind, mem_chain_is_dirty, new, node_kind, node_outputs_exact, register_arg_value, remove, slot_of, value_type_opt
+- `mem_chain_is_dirty` [priv] crates/strider-opt/src/post_opt/function_args/mod.rs:275  (callers=1)  ->  function, memory_input_of, narrow_load_to, nearest_clobber, node_kind
+- `value_input_producers` [pub(crate)] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:24  (callers=3)  ->  filter, into_iter, node_inputs, value_type_opt
+- `as_const` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:41  (callers=1)  ->  (leaf)
+- `new` [pub(crate)] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:58  (callers=210)  ->  default
+- `eval_target` [pub(crate)] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:75  (callers=1)  ->  as_const, clear, eval_node, get, insert
+- `get` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:95  (callers=57)  ->  (leaf)
+- `eval_node` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:99  (callers=1)  ->  call_blocking, decompose, eval_add, eval_const_node, eval_load, eval_phi, get, int_const_u128, node_kind, producer, value_input_producers, value_type_opt
+- `eval_const_node` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:133  (callers=3)  ->  eval_node_const, get
+- `eval_add` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:140  (callers=1)  ->  eval_const_node, get_signed_int
+- `eval_load` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:161  (callers=1)  ->  byte_size, call_blocking, data, eval_const_node, get, int_const_u128, node_inputs_exact, reaching_store, reshape, value_type_opt
+- `reshape` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:192  (callers=1)  ->  byte_size, endianness, get_unsigned_int, high_low_shift_bits, is_integer
+- `eval_phi` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:208  (callers=1)  ->  get, value_input_producers
+- `try_successors` [priv] {trait-impl} crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:235  (callers=1)  ->  producer, value_input_producers
+- `cone_order` [pub(crate)] crates/strider-opt/src/post_opt/indirect_branch_resolve/eval.rs:249  (callers=1)  ->  entity_postorder
+- `classify_anchor` [pub] crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs:102  (callers=1)  ->  classify_table_dispatch, link_register_return, single_const_target
+- `single_const_target` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs:128  (callers=1)  ->  int_const_u128, kind_of_value
+- `link_register_return` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs:149  (callers=1)  ->  default_cc, initial_vn, kind_of_value
+- `apply` [priv] {trait-impl} crates/strider-opt/src/post_opt/indirect_branch_resolve/mod.rs:190  (callers=4)  ->  analyze, classify_anchor, compute_value_ranges, control_dominators, default, function, insert, walk_kind
+- `classify_table_dispatch` [pub] crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs:70  (callers=1)  ->  cone_order, enumerate_targets, eval_target, find_index_candidates, is_empty, new
+- `enumerate_targets` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs:120  (callers=1)  ->  is_empty, new
+- `find_index_candidates` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs:142  (callers=1)  ->  bit_mask_u128, default, dominating_guard, from, int_const_u128, is_and_masked, is_integer, is_load_derived, new, range_of, value_type_opt
+- `is_and_masked` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs:204  (callers=1)  ->  any, int_const_u128, into_iter, node_inputs, node_kind, producer
+- `is_load_derived` [priv] crates/strider-opt/src/post_opt/indirect_branch_resolve/table.rs:215  (callers=1)  ->  any, get, insert, into_iter, node_inputs, node_kind, producer, value_type_opt
+- `apply` [priv] {trait-impl} crates/strider-opt/src/post_opt/stack_offset_detect/mod.rs:28  (callers=4)  ->  call_blocking, decompose, function, function_mut, live_of_kind, node_kind, set_stack_offset
+- `rewrite_rule` [pub] crates/strider-opt/src/rewrite_rule.rs:75  (callers=6)  ->  check_capture_coverage, into_pattern, into_template, new, rewrite_rule_impl
+- `rewrite_rule_runtime` [pub] crates/strider-opt/src/rewrite_rule.rs:116  (callers=2)  ->  check_capture_coverage, new, rewrite_rule_impl
+- `rewrite_rule_impl` [priv] crates/strider-opt/src/rewrite_rule.rs:131  (callers=2)  ->  bindings_clone, extend_asm_fingerprint_from, function, function_mut, instantiate, is_skip, match_at, matched_nodes, new, producer, replace_value, single_value_output
+- `check_capture_coverage` [priv] crates/strider-opt/src/rewrite_rule.rs:215  (callers=2)  ->  bound_captures, contains, id, referenced_captures
+- `apply_rules_count` [pub] crates/strider-opt/src/rewrite_rule.rs:252  (callers=1)  ->  walk
+- `apply_rules_in_order` [pub] crates/strider-opt/src/rewrite_rule.rs:288  (callers=2)  ->  (leaf)
+- `shifted` [pub(crate)] crates/strider-opt/src/sp_expr/analyzer.rs:52  (callers=1)  ->  (leaf)
+- `new` [pub(crate)] crates/strider-opt/src/sp_expr/analyzer.rs:116  (callers=210)  ->  (leaf)
+- `decompose` [pub(crate)] crates/strider-opt/src/sp_expr/analyzer.rs:147  (callers=6)  ->  classify_sp_node, entry, get, graph, insert, node_outputs_exact, producer, reverse_postorder, walk_info
+- `classify_sp_node` [priv] crates/strider-opt/src/sp_expr/analyzer.rs:176  (callers=1)  ->  default_cc, get, initial_vn, int_const_i128, int_const_u128, node_inputs_exact, node_kind, shifted
+- `classify_addr` [pub(super)] crates/strider-opt/src/sp_expr/analyzer.rs:252  (callers=3)  ->  decompose, int_const_u128
+- `classify_store_addr` [pub(crate)] crates/strider-opt/src/sp_expr/analyzer.rs:272  (callers=1)  ->  classify_addr, stack_offset
+- `is_alignment_mask` [priv] crates/strider-opt/src/sp_expr/analyzer.rs:288  (callers=0)  ->  (leaf)
+- `offset_range_verdict` [priv] crates/strider-opt/src/sp_expr/analyzer.rs:306  (callers=1)  ->  ranges_disjoint
+- `alias_verdict` [pub(crate)] crates/strider-opt/src/sp_expr/analyzer.rs:323  (callers=2)  ->  offset_range_verdict
+- `def_clobbers` [priv] {trait-impl} crates/strider-opt/src/sp_expr/cfg.rs:49  (callers=1)  ->  alias_verdict, classify_store_addr, graph, new, node_kind, store_value_byte_size
+- `new` [pub(crate)] crates/strider-opt/src/sp_expr/cfg.rs:96  (callers=210)  ->  (leaf)
+- `call_blocking` [pub(crate)] crates/strider-opt/src/sp_expr/cfg.rs:113  (callers=5)  ->  new
+- `oracle` [priv] crates/strider-opt/src/sp_expr/cfg.rs:126  (callers=2)  ->  (leaf)
+- `classify_addr` [pub(crate)] crates/strider-opt/src/sp_expr/cfg.rs:141  (callers=3)  ->  new
+- `decompose` [pub(crate)] crates/strider-opt/src/sp_expr/cfg.rs:148  (callers=6)  ->  new
+- `load_class_and_size` [priv] crates/strider-opt/src/sp_expr/cfg.rs:156  (callers=2)  ->  byte_size, classify_addr, single_value_output
+- `verdict` [pub(crate)] crates/strider-opt/src/sp_expr/cfg.rs:169  (callers=1)  ->  alias_verdict, classify_addr, graph, load_class_and_size, store_value_byte_size
+- `nearest_clobber` [pub(crate)] crates/strider-opt/src/sp_expr/cfg.rs:195  (callers=3)  ->  find_nearest_clobber, load_class_and_size, node_kind, oracle, producer
+- `reaching_store` [pub(crate)] crates/strider-opt/src/sp_expr/cfg.rs:227  (callers=2)  ->  decompose, find_nearest_clobber, node_kind, oracle, producer, stack_offset
+- `data` [pub] crates/strider-opt/src/sp_expr/cfg.rs:294  (callers=7)  ->  (leaf)
+- `size` [pub] crates/strider-opt/src/sp_expr/cfg.rs:300  (callers=4)  ->  data, graph, store_value_byte_size
+- `def_clobbers` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:101  (callers=1)  ->  (leaf)
+- `find_nearest_clobber` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:111  (callers=2)  ->  nearest_clobber, new
+- `narrow_load_to` [pub(crate)] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:131  (callers=2)  ->  function, graph, memory_output_of, node_input_id_at, node_kind, update_input, value_of_use
+- `join_phi_results` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:167  (callers=1)  ->  all, iter
+- `new` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:212  (callers=210)  ->  (leaf)
+- `nearest_clobber` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:220  (callers=3)  ->  memory_output_of, producer, walk_from
+- `walk_from` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:251  (callers=1)  ->  combine, def_clobbers, default, get, insert, into_iter, node_kind, producer, successors
+- `successors` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:328  (callers=4)  ->  into_iter, memory_input_of, new, node_kind, phi_data_inputs, producer
+- `combine` [priv] crates/strider-opt/src/sp_expr/mem_ssa/mod.rs:348  (callers=1)  ->  join_phi_results, node_kind, producer
+- `high_low_shift_bits` [pub(crate)] crates/strider-opt/src/sp_expr/ranges.rs:21  (callers=2)  ->  byte_size
+- `ranges_disjoint` [pub] crates/strider-opt/src/sp_expr/ranges.rs:42  (callers=1)  ->  (leaf)
+- `store_value_byte_size` [pub(crate)] crates/strider-opt/src/sp_expr/ranges.rs:59  (callers=3)  ->  as_value, byte_size, value_kind
+- `top` [pub] crates/strider-opt/src/value_range/mod.rs:45  (callers=3)  ->  (leaf)
+- `is_top` [pub] crates/strider-opt/src/value_range/mod.rs:53  (callers=1)  ->  (leaf)
+- `intersect` [priv] crates/strider-opt/src/value_range/mod.rs:62  (callers=3)  ->  (leaf)
+- `union` [priv] crates/strider-opt/src/value_range/mod.rs:69  (callers=1)  ->  (leaf)
+- `range_of` [pub] crates/strider-opt/src/value_range/mod.rs:139  (callers=2)  ->  get, insert, node_kind, producer, resolve_leaf, resolve_phi, top, type_mask_or_top, value_type_opt
+- `resolve_phi` [priv] crates/strider-opt/src/value_range/mod.rs:184  (callers=1)  ->  arm_query_regions, dominating_guard, find_joining_region, graph, intersect, is_top, iter, len, node_outputs, phi_data_inputs, range_of, top, type_mask_or_top, union, value_type_opt
+- `dominating_guard` [pub(crate)] crates/strider-opt/src/value_range/mod.rs:282  (callers=3)  ->  dominates, filter, get, intersect, iter
+- `find_joining_region` [priv] crates/strider-opt/src/value_range/mod.rs:294  (callers=1)  ->  graph, node_kind, nth_input, producer, value_kind
+- `arm_query_regions` [priv] crates/strider-opt/src/value_range/mod.rs:327  (callers=1)  ->  ctrl_source_region, filter, graph, is_control, is_empty, iter, node_inputs, node_kind, node_outputs, producer, value_kind
+- `ctrl_source_region` [priv] crates/strider-opt/src/value_range/mod.rs:358  (callers=1)  ->  graph, node_kind, nth_input, producer
+- `resolve_leaf` [priv] crates/strider-opt/src/value_range/mod.rs:385  (callers=1)  ->  dominating_guard, intersect, top, type_mask_or_top, value_type_opt
+- `type_mask_or_top` [priv] crates/strider-opt/src/value_range/mod.rs:407  (callers=3)  ->  bit_mask_u128
+- `add_operand_shifted_interval` [priv] crates/strider-opt/src/value_range/mod.rs:416  (callers=1)  ->  bit_mask_u128, int_const_u128, kind_of_value, producer_inputs_exact, value_type_opt
+- `is_sign_bit_known_zero` [priv] crates/strider-opt/src/value_range/mod.rs:444  (callers=1)  ->  type_mask_u128, value_type_opt
+- `compute_value_ranges` [pub] crates/strider-opt/src/value_range/mod.rs:477  (callers=1)  ->  add_operand_shifted_interval, default, entry, guard_from_compare, len, max_value, new, node_kind, node_outputs, single_control_consumer, type_mask_u128, value_type_opt, walk, walk_kind
+- `guard_from_compare` [priv] crates/strider-opt/src/value_range/mod.rs:620  (callers=1)  ->  bit_mask_u128, int_const_u128, is_integer, is_sign_bit_known_zero, kind_of_value, producer_inputs_exact, value_type_opt
+- `single_control_consumer` [priv] crates/strider-opt/src/value_range/mod.rs:696  (callers=1)  ->  graph, next, value_uses
+- `new` [pub] crates/strider-orchestrator/src/lib.rs:124  (callers=210)  ->  (leaf)
+- `sleigh_regs` [pub] crates/strider-orchestrator/src/lib.rs:136  (callers=3)  ->  (leaf)
+- `analyze` [pub] crates/strider-orchestrator/src/lib.rs:176  (callers=3)  ->  add_post_pass, apply_resolutions, build_lift, clone, compact, default, from, is_empty, live_unresolved_branches
+- `build_lift` [priv] crates/strider-orchestrator/src/lib.rs:288  (callers=1)  ->  build_cfg, build_ir_with, clone, new, run
+- `apply_resolutions` [priv] crates/strider-orchestrator/src/lib.rs:375  (callers=1)  ->  default, edge_set_of, entry, get, insert, iter, merge_resolved
+- `targets_of` [priv] crates/strider-orchestrator/src/lib.rs:425  (callers=2)  ->  into_iter, iter
+- `merge_resolved` [priv] crates/strider-orchestrator/src/lib.rs:442  (callers=1)  ->  targets_of
+- `live_unresolved_branches` [priv] crates/strider-orchestrator/src/lib.rs:472  (callers=1)  ->  contains, filter, iter, node_kind, walk
+- `edge_set_of` [priv] crates/strider-orchestrator/src/lib.rs:516  (callers=1)  ->  insert, new, targets_of
+- `mark` [pub(crate)] crates/strider-pattern/src/bindings.rs:106  (callers=2)  ->  len
+- `restore` [pub(crate)] crates/strider-pattern/src/bindings.rs:120  (callers=2)  ->  remove
+- `record_matched` [pub(crate)] crates/strider-pattern/src/bindings.rs:130  (callers=2)  ->  (leaf)
+- `matched_nodes` [pub(crate)] crates/strider-pattern/src/bindings.rs:137  (callers=1)  ->  (leaf)
+- `bind_capture` [pub(crate)] crates/strider-pattern/src/bindings.rs:146  (callers=1)  ->  get, insert, len
+- `get_binding` [pub(crate)] crates/strider-pattern/src/bindings.rs:161  (callers=4)  ->  get
+- `get_value` [pub] crates/strider-pattern/src/bindings.rs:168  (callers=8)  ->  get_binding
+- `is_bound` [pub] crates/strider-pattern/src/bindings.rs:178  (callers=3)  ->  (leaf)
+- `get_node` [pub] crates/strider-pattern/src/bindings.rs:188  (callers=12)  ->  get_binding, producer
+- `iter` [pub(crate)] crates/strider-pattern/src/bindings.rs:199  (callers=101)  ->  (leaf)
+- `get_uint` [pub] crates/strider-pattern/src/bindings.rs:213  (callers=10)  ->  get_value, int_const_u128
+- `get_int` [pub] crates/strider-pattern/src/bindings.rs:220  (callers=2)  ->  get_value, int_const_i128
+- `get_bool` [pub] crates/strider-pattern/src/bindings.rs:226  (callers=4)  ->  bool_const_val, get_value
+- `get_type` [pub] crates/strider-pattern/src/bindings.rs:234  (callers=5)  ->  as_value, get_value, value_kind
+- `get_float_bits` [pub] crates/strider-pattern/src/bindings.rs:244  (callers=4)  ->  get_value, kind_of_value
+- `get_int_binary_op` [pub] crates/strider-pattern/src/bindings.rs:253  (callers=1)  ->  get_node, node_kind
+- `get_int_unary_op` [pub] crates/strider-pattern/src/bindings.rs:262  (callers=0)  ->  get_node, node_kind
+- `get_int_cmp_op` [pub] crates/strider-pattern/src/bindings.rs:271  (callers=1)  ->  get_node, node_kind
+- `get_bool_binary_op` [pub] crates/strider-pattern/src/bindings.rs:281  (callers=0)  ->  as_value, get_node, get_value, is_bool, node_kind, value_kind
+- `get_float_binary_op` [pub] crates/strider-pattern/src/bindings.rs:300  (callers=0)  ->  get_node, node_kind
+- `get_float_unary_op` [pub] crates/strider-pattern/src/bindings.rs:309  (callers=0)  ->  get_node, node_kind
+- `get_float_cmp_op` [pub] crates/strider-pattern/src/bindings.rs:318  (callers=0)  ->  get_node, node_kind
+- `next_id` [priv] crates/strider-pattern/src/capture.rs:16  (callers=1)  ->  (leaf)
+- `new` [pub] crates/strider-pattern/src/capture.rs:41  (callers=210)  ->  next_id
+- `id` [pub] crates/strider-pattern/src/capture.rs:51  (callers=4)  ->  (leaf)
+- `fmt` [priv] {trait-impl} crates/strider-pattern/src/error.rs:21  (callers=0)  ->  (leaf)
+- `skip` [pub] crates/strider-pattern/src/error.rs:32  (callers=5)  ->  from
+- `is_skip` [pub] crates/strider-pattern/src/error.rs:37  (callers=1)  ->  (leaf)
+- `fmt` [priv] {trait-impl} crates/strider-pattern/src/error.rs:49  (callers=0)  ->  (leaf)
+- `missing_binding` [pub] crates/strider-pattern/src/error.rs:60  (callers=1)  ->  new
+- `input_slots` [priv] crates/strider-pattern/src/graph_ext.rs:33  (callers=1)  ->  (leaf)
+- `node_weight` [priv] crates/strider-pattern/src/graph_ext.rs:39  (callers=9)  ->  (leaf)
+- `output_weight` [priv] crates/strider-pattern/src/graph_ext.rs:41  (callers=6)  ->  (leaf)
+- `producer_of` [priv] crates/strider-pattern/src/graph_ext.rs:43  (callers=1)  ->  (leaf)
+- `consumed_inputs` [priv] crates/strider-pattern/src/graph_ext.rs:46  (callers=2)  ->  (leaf)
+- `produced_outputs` [priv] crates/strider-pattern/src/graph_ext.rs:50  (callers=5)  ->  (leaf)
+- `derive_root` [priv] crates/strider-pattern/src/graph_ext.rs:57  (callers=3)  ->  (leaf)
+- `node_weight` [priv] {trait-impl} crates/strider-pattern/src/graph_ext.rs:61  (callers=9)  ->  node_kind
+- `output_weight` [priv] {trait-impl} crates/strider-pattern/src/graph_ext.rs:65  (callers=6)  ->  value_kind_ref
+- `producer_of` [priv] {trait-impl} crates/strider-pattern/src/graph_ext.rs:69  (callers=1)  ->  producer
+- `consumed_inputs` [priv] {trait-impl} crates/strider-pattern/src/graph_ext.rs:73  (callers=2)  ->  input_slots, into_iter, node_inputs, node_kind
+- `produced_outputs` [priv] {trait-impl} crates/strider-pattern/src/graph_ext.rs:82  (callers=5)  ->  node_outputs
+- `derive_root` [priv] {trait-impl} crates/strider-pattern/src/graph_ext.rs:86  (callers=3)  ->  all, all_node_ids, filter, iter, len, next, node_outputs, value_uses
+- `reachable_topo` [pub(crate)] crates/strider-pattern/src/graph_ext.rs:117  (callers=2)  ->  contains, filter, into_iter, iter, new
+- `first_value_input_type` [pub] crates/strider-pattern/src/lib.rs:61  (callers=1)  ->  into_iter, next, node_inputs, value_kind
+- `from_root` [pub(crate)] crates/strider-pattern/src/match_result.rs:29  (callers=1)  ->  (leaf)
+- `root` [pub] crates/strider-pattern/src/match_result.rs:34  (callers=5)  ->  (leaf)
+- `bindings` [pub] crates/strider-pattern/src/match_result.rs:42  (callers=5)  ->  (leaf)
+- `node` [pub] crates/strider-pattern/src/match_result.rs:51  (callers=17)  ->  get_node
+- `value` [pub] crates/strider-pattern/src/match_result.rs:59  (callers=8)  ->  get_value
+- `is_bound` [pub] crates/strider-pattern/src/match_result.rs:67  (callers=3)  ->  (leaf)
+- `get_vn` [pub] crates/strider-pattern/src/match_result.rs:87  (callers=1)  ->  get_binding, get_node, get_vn_for_value, graph, initial_vn, node_kind, value_definition
+- `asm_fingerprint` [pub] crates/strider-pattern/src/match_result.rs:126  (callers=4)  ->  get_node, graph
+- `bindings_clone` [pub] crates/strider-pattern/src/match_result.rs:136  (callers=1)  ->  clone
+- `matched_nodes` [pub] crates/strider-pattern/src/match_result.rs:152  (callers=1)  ->  (leaf)
+- `seal` [priv] {trait-impl} crates/strider-pattern/src/matcher/builder.rs:50  (callers=2)  ->  (leaf)
+- `default` [priv] {trait-impl} crates/strider-pattern/src/matcher/builder.rs:69  (callers=54)  ->  new
+- `new` [pub] crates/strider-pattern/src/matcher/builder.rs:76  (callers=210)  ->  (leaf)
+- `leaf` [pub] crates/strider-pattern/src/matcher/builder.rs:86  (callers=8)  ->  from_kind, stage, value_output
+- `unary` [pub] crates/strider-pattern/src/matcher/builder.rs:93  (callers=2)  ->  from_kind, input, stage, value_output
+- `binary` [pub] crates/strider-pattern/src/matcher/builder.rs:101  (callers=3)  ->  exact, input, stage, value_output
+- `node` [pub] crates/strider-pattern/src/matcher/builder.rs:109  (callers=17)  ->  from_kind, stage
+- `input` [pub] crates/strider-pattern/src/matcher/builder.rs:114  (callers=16)  ->  add_input
+- `value_output` [pub] crates/strider-pattern/src/matcher/builder.rs:119  (callers=9)  ->  add_output, value
+- `control_output` [pub] crates/strider-pattern/src/matcher/builder.rs:124  (callers=1)  ->  add_output, control
+- `memory_output` [pub] crates/strider-pattern/src/matcher/builder.rs:129  (callers=1)  ->  add_output, memory
+- `set_value_ty` [pub] crates/strider-pattern/src/matcher/builder.rs:136  (callers=6)  ->  out_of
+- `set_output_control` [pub] crates/strider-pattern/src/matcher/builder.rs:144  (callers=1)  ->  out_of
+- `set_output_any` [pub] crates/strider-pattern/src/matcher/builder.rs:152  (callers=2)  ->  out_of
+- `set_value_width` [pub] crates/strider-pattern/src/matcher/builder.rs:157  (callers=1)  ->  out_of
+- `capture_output` [pub] crates/strider-pattern/src/matcher/builder.rs:164  (callers=4)  ->  out_of
+- `capture_node` [pub] crates/strider-pattern/src/matcher/builder.rs:171  (callers=2)  ->  kind_mut
+- `set_node_predicate` [pub] crates/strider-pattern/src/matcher/builder.rs:176  (callers=6)  ->  kind_mut
+- `set_post_match` [pub] crates/strider-pattern/src/matcher/builder.rs:181  (callers=0)  ->  kind_mut
+- `set_force_ordered` [pub] crates/strider-pattern/src/matcher/builder.rs:187  (callers=0)  ->  kind_mut
+- `constrain_input_widths` [pub] crates/strider-pattern/src/matcher/builder.rs:193  (callers=1)  ->  input_producers, output_mut
+- `finish` [pub] crates/strider-pattern/src/matcher/builder.rs:213  (callers=9)  ->  from_graph, seal
+- `stage` [priv] crates/strider-pattern/src/matcher/builder.rs:220  (callers=4)  ->  add_node
+- `add_output` [priv] crates/strider-pattern/src/matcher/builder.rs:224  (callers=4)  ->  (leaf)
+- `out_of` [priv] crates/strider-pattern/src/matcher/builder.rs:232  (callers=5)  ->  output_mut
+- `skip_casts` [pub(crate)] crates/strider-pattern/src/matcher/cast_walk_through.rs:33  (callers=1)  ->  cast_mask_of, contains, function, into_iter, is_empty, next, node_inputs, node_kind, producer
+- `from_graph` [pub(crate)] crates/strider-pattern/src/matcher/graph.rs:32  (callers=2)  ->  empty
+- `root` [pub] crates/strider-pattern/src/matcher/graph.rs:48  (callers=5)  ->  derive_root, reachable_topo
+- `bound_captures` [pub] crates/strider-pattern/src/matcher/graph.rs:61  (callers=2)  ->  all_node_ids, all_value_ids, node_kind, value_kind_ref
+- `set_root_post_match` [pub(crate)] crates/strider-pattern/src/matcher/graph.rs:86  (callers=1)  ->  derive_root, node_kind_mut
+- `with_root_post_match` [pub] crates/strider-pattern/src/matcher/graph.rs:96  (callers=1)  ->  set_root_post_match
+- `ignore_casts_mask` [pub] crates/strider-pattern/src/matcher/graph.rs:103  (callers=2)  ->  (leaf)
+- `ignore_casts` [pub] crates/strider-pattern/src/matcher/graph.rs:109  (callers=1)  ->  all, ignore_casts_mask
+- `compile` [priv] crates/strider-pattern/src/matcher/match_pat.rs:26  (callers=14)  ->  (leaf)
+- `into_pattern` [priv] crates/strider-pattern/src/matcher/match_pat.rs:29  (callers=6)  ->  compile, finish, new
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/matcher/match_pat.rs:45  (callers=14)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/matcher/match_pat.rs:56  (callers=14)  ->  capture_output
+- `compile` [priv] crates/strider-pattern/src/matcher/match_pat.rs:89  (callers=14)  ->  (leaf)
+- `capture` [priv] crates/strider-pattern/src/matcher/match_pat.rs:150  (callers=16)  ->  (leaf)
+- `when_match` [priv] crates/strider-pattern/src/matcher/match_pat.rs:158  (callers=6)  ->  (leaf)
+- `filter` [priv] crates/strider-pattern/src/matcher/match_pat.rs:166  (callers=20)  ->  (leaf)
+- `ordered` [priv] crates/strider-pattern/src/matcher/match_pat.rs:173  (callers=2)  ->  (leaf)
+- `of_width` [priv] crates/strider-pattern/src/matcher/match_pat.rs:177  (callers=4)  ->  (leaf)
+- `value_ty` [priv] crates/strider-pattern/src/matcher/match_pat.rs:184  (callers=1)  ->  (leaf)
+- `bool_valued` [priv] crates/strider-pattern/src/matcher/match_pat.rs:189  (callers=1)  ->  of_width
+- `root_kind_discriminant` [priv] crates/strider-pattern/src/matcher/mod.rs:42  (callers=2)  ->  discriminant, node_weight
+- `build` [priv] crates/strider-pattern/src/matcher/mod.rs:69  (callers=17)  ->  default, discriminant, entry, node_kind, walk
+- `nodes_of_kind` [priv] crates/strider-pattern/src/matcher/mod.rs:78  (callers=2)  ->  get
+- `new` [pub] crates/strider-pattern/src/matcher/mod.rs:90  (callers=210)  ->  (leaf)
+- `kind_index` [priv] crates/strider-pattern/src/matcher/mod.rs:99  (callers=2)  ->  build
+- `function` [pub] crates/strider-pattern/src/matcher/mod.rs:107  (callers=71)  ->  (leaf)
+- `find_all` [pub] crates/strider-pattern/src/matcher/mod.rs:122  (callers=1)  ->  kind_index, new, nodes_of_kind, root, root_kind_discriminant, try_match_at_node, walk
+- `find_first` [pub] crates/strider-pattern/src/matcher/mod.rs:151  (callers=1)  ->  kind_index, nodes_of_kind, root, root_kind_discriminant, try_match_at_node, walk
+- `try_match_at_node` [priv] crates/strider-pattern/src/matcher/mod.rs:177  (callers=3)  ->  default, from_root, is_empty, node_outputs, try_match, try_match_node
+- `match_at` [pub] crates/strider-pattern/src/matcher/mod.rs:202  (callers=3)  ->  root, try_match_at_node
+- `find_joined` [pub] crates/strider-pattern/src/matcher/mod.rs:248  (callers=0)  ->  any, bound_captures, clone, contains, dedup_on_shared_captures, extend, find_all, function, graph, is_empty, iter, new, prefix_agrees, skip
+- `function_arg` [pub] crates/strider-pattern/src/matcher/mod.rs:306  (callers=0)  ->  arg_index_to_values, producer
+- `function_args` [pub] crates/strider-pattern/src/matcher/mod.rs:317  (callers=0)  ->  arg_index_to_values, into_iter, iter_arg_indices, producer
+- `node` [pub] crates/strider-pattern/src/matcher/mod.rs:358  (callers=17)  ->  (leaf)
+- `source` [pub] crates/strider-pattern/src/matcher/mod.rs:363  (callers=6)  ->  initial_vn, node_kind
+- `dedup_on_shared_captures` [priv] crates/strider-pattern/src/matcher/mod.rs:384  (callers=1)  ->  default, get_node, id, insert, is_empty, iter, new
+- `prefix_agrees` [priv] crates/strider-pattern/src/matcher/mod.rs:416  (callers=1)  ->  get_binding, get_node, iter
+- `discriminant` [pub] crates/strider-pattern/src/matcher/vertex.rs:32  (callers=12)  ->  (leaf)
+- `matches` [pub] crates/strider-pattern/src/matcher/vertex.rs:44  (callers=2)  ->  check, discriminant
+- `input_slots` [priv] {trait-impl} crates/strider-pattern/src/matcher/vertex.rs:96  (callers=1)  ->  (leaf)
+- `exact` [pub] crates/strider-pattern/src/matcher/vertex.rs:103  (callers=1)  ->  from_kind
+- `from_kind` [pub] crates/strider-pattern/src/matcher/vertex.rs:108  (callers=4)  ->  new
+- `value` [pub] crates/strider-pattern/src/matcher/vertex.rs:161  (callers=8)  ->  (leaf)
+- `control` [pub] crates/strider-pattern/src/matcher/vertex.rs:171  (callers=1)  ->  (leaf)
+- `memory` [pub] crates/strider-pattern/src/matcher/vertex.rs:183  (callers=2)  ->  (leaf)
+- `try_match` [pub(crate)] crates/strider-pattern/src/matcher/walk.rs:49  (callers=1)  ->  function, producer, root_output_vertex_for, try_match_at
+- `try_match_node` [pub(crate)] crates/strider-pattern/src/matcher/walk.rs:86  (callers=1)  ->  root_requires_value_output, try_match_at
+- `root_requires_value_output` [priv] crates/strider-pattern/src/matcher/walk.rs:102  (callers=1)  ->  any, iter, output_weight, produced_outputs
+- `root_output_vertex_for` [priv] crates/strider-pattern/src/matcher/walk.rs:127  (callers=1)  ->  function, iter, next, output_weight, produced_outputs, value_definition
+- `try_match_at` [priv] crates/strider-pattern/src/matcher/walk.rs:167  (callers=3)  ->  as_value, bind_capture, consumed_inputs, function, into_iter, is_commutative, len, mark, match_inputs, matches, node_kind, node_weight, output_ok, output_weight, predicate, producer_of, record_matched, restore, value_kind
+- `match_inputs` [priv] crates/strider-pattern/src/matcher/walk.rs:296  (callers=1)  ->  function, get, graph, is_empty, mark, new, node_input_id_at, producer, record_matched, restore, skip_casts, try_match_at, value_of_use
+- `output_ok` [priv] crates/strider-pattern/src/matcher/walk.rs:381  (callers=1)  ->  as_value, bit_width, value_kind
+- `target` [pub] crates/strider-pattern/src/node_builders/flow.rs:61  (callers=8)  ->  input
+- `at` [pub] crates/strider-pattern/src/node_builders/flow.rs:67  (callers=3)  ->  from, int_const, target
+- `at_any` [pub] crates/strider-pattern/src/node_builders/flow.rs:74  (callers=1)  ->  int_const_any_of, target
+- `arg` [pub] crates/strider-pattern/src/node_builders/flow.rs:83  (callers=1)  ->  input
+- `ctrl` [pub] crates/strider-pattern/src/node_builders/flow.rs:89  (callers=0)  ->  input_control
+- `mem` [pub] crates/strider-pattern/src/node_builders/flow.rs:96  (callers=1)  ->  input_mem
+- `capture` [pub] crates/strider-pattern/src/node_builders/flow.rs:101  (callers=16)  ->  (leaf)
+- `build` [pub] crates/strider-pattern/src/node_builders/flow.rs:107  (callers=17)  ->  (leaf)
+- `compile_mem` [priv] {trait-impl} crates/strider-pattern/src/node_builders/flow.rs:113  (callers=2)  ->  compile_anchored
+- `call` [pub] crates/strider-pattern/src/node_builders/flow.rs:119  (callers=1)  ->  node, with_mem_value
+- `user_op_id` [pub] crates/strider-pattern/src/node_builders/flow.rs:137  (callers=0)  ->  discriminant, new, variant_kind, with_kind
+- `name` [pub] crates/strider-pattern/src/node_builders/flow.rs:151  (callers=3)  ->  (leaf)
+- `arg` [pub] crates/strider-pattern/src/node_builders/flow.rs:158  (callers=1)  ->  input
+- `ctrl` [pub] crates/strider-pattern/src/node_builders/flow.rs:165  (callers=0)  ->  input_control
+- `mem` [pub] crates/strider-pattern/src/node_builders/flow.rs:171  (callers=1)  ->  input_mem
+- `capture` [pub] crates/strider-pattern/src/node_builders/flow.rs:177  (callers=16)  ->  (leaf)
+- `configured` [priv] crates/strider-pattern/src/node_builders/flow.rs:184  (callers=6)  ->  as_str, call_other_name, function, new, with_node_predicate
+- `build` [pub] crates/strider-pattern/src/node_builders/flow.rs:200  (callers=17)  ->  configured
+- `compile_mem` [priv] {trait-impl} crates/strider-pattern/src/node_builders/flow.rs:206  (callers=2)  ->  compile_anchored, configured
+- `call_other` [pub] crates/strider-pattern/src/node_builders/flow.rs:212  (callers=0)  ->  discriminant, node, variant_kind, with_mem_value
+- `preceded_by` [pub] crates/strider-pattern/src/node_builders/flow.rs:232  (callers=0)  ->  input_control
+- `ret_val` [pub] crates/strider-pattern/src/node_builders/flow.rs:238  (callers=0)  ->  input
+- `capture` [pub] crates/strider-pattern/src/node_builders/flow.rs:243  (callers=16)  ->  (leaf)
+- `build` [pub] crates/strider-pattern/src/node_builders/flow.rs:249  (callers=17)  ->  (leaf)
+- `ret` [pub] crates/strider-pattern/src/node_builders/flow.rs:255  (callers=0)  ->  node
+- `cond` [pub] crates/strider-pattern/src/node_builders/flow.rs:282  (callers=2)  ->  compile, new
+- `with_true` [pub] crates/strider-pattern/src/node_builders/flow.rs:312  (callers=1)  ->  with_branch
+- `with_false` [pub] crates/strider-pattern/src/node_builders/flow.rs:324  (callers=1)  ->  with_branch
+- `with_branch` [priv] crates/strider-pattern/src/node_builders/flow.rs:331  (callers=2)  ->  match_branch_consumer, new, validate_branch_pattern
+- `capture` [pub] crates/strider-pattern/src/node_builders/flow.rs:345  (callers=16)  ->  (leaf)
+- `build` [pub] crates/strider-pattern/src/node_builders/flow.rs:352  (callers=17)  ->  capture_node, cond, control_output, finish, input, new, node, set_node_predicate
+- `validate_branch_pattern` [priv] crates/strider-pattern/src/node_builders/flow.rs:421  (callers=1)  ->  root
+- `match_branch_consumer` [priv] crates/strider-pattern/src/node_builders/flow.rs:437  (callers=1)  ->  function, get, graph, match_at, next, node_outputs, value_uses
+- `if_node` [pub] crates/strider-pattern/src/node_builders/flow.rs:465  (callers=1)  ->  default
+- `source` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:46  (callers=6)  ->  (leaf)
+- `index` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:52  (callers=15)  ->  (leaf)
+- `capture` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:58  (callers=16)  ->  (leaf)
+- `lower` [priv] crates/strider-pattern/src/node_builders/function_arg.rs:67  (callers=4)  ->  any, arg_index_to_values, capture_output, function, initial_vn, iter, iter_arg_indices, new, node, node_kind, producer, set_node_predicate, stack_offset, value_output
+- `build` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:144  (callers=17)  ->  finish, lower, new
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/node_builders/function_arg.rs:152  (callers=14)  ->  lower
+- `function_arg` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:160  (callers=0)  ->  default, index
+- `function_arg_any` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:167  (callers=1)  ->  default
+- `function_arg_reg` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:173  (callers=0)  ->  default, index, source
+- `function_arg_stack` [pub] crates/strider-pattern/src/node_builders/function_arg.rs:181  (callers=0)  ->  default, index, source
+- `active` [priv] crates/strider-pattern/src/node_builders/memory.rs:42  (callers=2)  ->  (leaf)
+- `check` [priv] crates/strider-pattern/src/node_builders/memory.rs:46  (callers=2)  ->  active, stack_offset
+- `apply` [priv] crates/strider-pattern/src/node_builders/memory.rs:64  (callers=4)  ->  active, check, function, new, with_node_predicate
+- `load_store_kind` [priv] crates/strider-pattern/src/node_builders/memory.rs:78  (callers=2)  ->  discriminant, new, variant_kind
+- `wire_mem_and_capture` [priv] crates/strider-pattern/src/node_builders/memory.rs:116  (callers=2)  ->  capture
+- `apply_stack` [priv] crates/strider-pattern/src/node_builders/memory.rs:127  (callers=2)  ->  apply
+- `space` [pub] crates/strider-pattern/src/node_builders/memory.rs:146  (callers=0)  ->  (leaf)
+- `addr` [pub] crates/strider-pattern/src/node_builders/memory.rs:152  (callers=0)  ->  input, new
+- `mem_in` [pub] crates/strider-pattern/src/node_builders/memory.rs:162  (callers=0)  ->  input_mem, new
+- `bit_width` [pub] crates/strider-pattern/src/node_builders/memory.rs:168  (callers=21)  ->  (leaf)
+- `stack_offset` [pub] crates/strider-pattern/src/node_builders/memory.rs:175  (callers=6)  ->  (leaf)
+- `stack_only` [pub] crates/strider-pattern/src/node_builders/memory.rs:181  (callers=0)  ->  (leaf)
+- `capture` [pub] crates/strider-pattern/src/node_builders/memory.rs:187  (callers=16)  ->  (leaf)
+- `configured` [priv] crates/strider-pattern/src/node_builders/memory.rs:194  (callers=6)  ->  apply_stack, load_store_kind, value, wire_mem_and_capture, with_output_width
+- `build` [pub] crates/strider-pattern/src/node_builders/memory.rs:212  (callers=17)  ->  configured
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/node_builders/memory.rs:218  (callers=14)  ->  compile_anchored, configured
+- `load` [pub] crates/strider-pattern/src/node_builders/memory.rs:224  (callers=0)  ->  default
+- `space` [pub] crates/strider-pattern/src/node_builders/memory.rs:243  (callers=0)  ->  (leaf)
+- `addr` [pub] crates/strider-pattern/src/node_builders/memory.rs:249  (callers=0)  ->  input, new
+- `data` [pub] crates/strider-pattern/src/node_builders/memory.rs:255  (callers=7)  ->  input, new
+- `mem_in` [pub] crates/strider-pattern/src/node_builders/memory.rs:262  (callers=0)  ->  input_mem, new
+- `bit_width` [pub] crates/strider-pattern/src/node_builders/memory.rs:269  (callers=21)  ->  (leaf)
+- `stack_offset` [pub] crates/strider-pattern/src/node_builders/memory.rs:276  (callers=6)  ->  (leaf)
+- `stack_only` [pub] crates/strider-pattern/src/node_builders/memory.rs:282  (callers=0)  ->  (leaf)
+- `capture` [pub] crates/strider-pattern/src/node_builders/memory.rs:288  (callers=16)  ->  (leaf)
+- `configured` [priv] crates/strider-pattern/src/node_builders/memory.rs:295  (callers=6)  ->  any, apply_stack, input, load_store_kind, node, wire_mem_and_capture, with_input_width, with_mem_value
+- `build` [pub] crates/strider-pattern/src/node_builders/memory.rs:325  (callers=17)  ->  configured
+- `compile_mem` [priv] {trait-impl} crates/strider-pattern/src/node_builders/memory.rs:331  (callers=2)  ->  compile_anchored, configured
+- `store` [pub] crates/strider-pattern/src/node_builders/memory.rs:337  (callers=0)  ->  default
+- `compile_mem` [priv] crates/strider-pattern/src/node_builders/mod.rs:73  (callers=2)  ->  (leaf)
+- `node` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:68  (callers=17)  ->  new
+- `value` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:82  (callers=8)  ->  node
+- `with_kind` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:90  (callers=1)  ->  (leaf)
+- `with_mem_value` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:97  (callers=4)  ->  (leaf)
+- `input` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:104  (callers=16)  ->  compile, new
+- `input_control` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:111  (callers=3)  ->  control_compiler
+- `input_mem` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:118  (callers=5)  ->  compile_mem, new
+- `with_node_predicate` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:126  (callers=3)  ->  new
+- `with_output_width` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:137  (callers=1)  ->  (leaf)
+- `with_input_width` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:146  (callers=1)  ->  (leaf)
+- `capture` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:152  (callers=16)  ->  (leaf)
+- `lower` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:161  (callers=4)  ->  capture_node, capture_output, compile, input, iter, memory_output, node, set_node_predicate, set_value_width, value_output
+- `build` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:205  (callers=17)  ->  finish, lower, new
+- `compile_anchored` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:218  (callers=5)  ->  lower
+- `control_compiler` [priv] crates/strider-pattern/src/node_builders/node_pat.rs:228  (callers=1)  ->  compile, new, set_output_control
+- `variant_kind` [pub(crate)] crates/strider-pattern/src/node_builders/node_pat.rs:245  (callers=3)  ->  (leaf)
+- `phi_var_limit` [priv] crates/strider-pattern/src/node_builders/phi.rs:31  (callers=1)  ->  function, get_vn_for_value, new, node_outputs
+- `phi_kind` [priv] crates/strider-pattern/src/node_builders/phi.rs:39  (callers=2)  ->  discriminant
+- `input` [pub] crates/strider-pattern/src/node_builders/phi.rs:58  (callers=16)  ->  (leaf)
+- `for_vn` [pub] crates/strider-pattern/src/node_builders/phi.rs:65  (callers=1)  ->  (leaf)
+- `capture` [pub] crates/strider-pattern/src/node_builders/phi.rs:71  (callers=16)  ->  (leaf)
+- `build` [pub] crates/strider-pattern/src/node_builders/phi.rs:77  (callers=17)  ->  phi_var_limit, with_node_predicate
+- `phi` [pub] crates/strider-pattern/src/node_builders/phi.rs:88  (callers=1)  ->  phi_kind, value
+- `phi_for` [pub] crates/strider-pattern/src/node_builders/phi.rs:98  (callers=0)  ->  for_vn, phi
+- `input` [pub] crates/strider-pattern/src/node_builders/phi.rs:115  (callers=16)  ->  input_mem
+- `capture` [pub] crates/strider-pattern/src/node_builders/phi.rs:120  (callers=16)  ->  (leaf)
+- `build` [pub] crates/strider-pattern/src/node_builders/phi.rs:125  (callers=17)  ->  (leaf)
+- `compile_mem` [priv] {trait-impl} crates/strider-pattern/src/node_builders/phi.rs:131  (callers=2)  ->  compile_anchored
+- `mem_phi` [pub] crates/strider-pattern/src/node_builders/phi.rs:137  (callers=0)  ->  node, phi_kind, with_mem_value
+- `seal` [priv] crates/strider-pattern/src/staging.rs:46  (callers=2)  ->  (leaf)
+- `default` [priv] {trait-impl} crates/strider-pattern/src/staging.rs:59  (callers=54)  ->  new
+- `new` [pub(crate)] crates/strider-pattern/src/staging.rs:66  (callers=210)  ->  (leaf)
+- `add_node` [pub(crate)] crates/strider-pattern/src/staging.rs:72  (callers=4)  ->  index, new
+- `add_output` [pub(crate)] crates/strider-pattern/src/staging.rs:83  (callers=4)  ->  len, new
+- `add_input` [pub(crate)] crates/strider-pattern/src/staging.rs:93  (callers=2)  ->  new
+- `kind_mut` [pub(crate)] crates/strider-pattern/src/staging.rs:108  (callers=5)  ->  new
+- `output_mut` [pub(crate)] crates/strider-pattern/src/staging.rs:113  (callers=3)  ->  new
+- `input_producers` [pub(crate)] crates/strider-pattern/src/staging.rs:119  (callers=2)  ->  iter, new
+- `seal` [pub(crate)] crates/strider-pattern/src/staging.rs:136  (callers=2)  ->  create_node, index, into_iter, len, new, node_outputs, with_capacity
+- `seal` [priv] {trait-impl} crates/strider-pattern/src/template/builder.rs:54  (callers=2)  ->  (leaf)
+- `default` [priv] {trait-impl} crates/strider-pattern/src/template/builder.rs:94  (callers=54)  ->  new
+- `new` [pub] crates/strider-pattern/src/template/builder.rs:101  (callers=210)  ->  (leaf)
+- `leaf` [pub] crates/strider-pattern/src/template/builder.rs:111  (callers=8)  ->  add_buildable, add_built_output, value
+- `unary` [pub] crates/strider-pattern/src/template/builder.rs:118  (callers=2)  ->  add_buildable, add_built_output, input, value
+- `binary` [pub] crates/strider-pattern/src/template/builder.rs:126  (callers=3)  ->  add_buildable, add_built_output, input, value
+- `node` [pub] crates/strider-pattern/src/template/builder.rs:134  (callers=17)  ->  add_buildable
+- `input` [pub] crates/strider-pattern/src/template/builder.rs:139  (callers=16)  ->  add_input
+- `value_output` [pub] crates/strider-pattern/src/template/builder.rs:144  (callers=9)  ->  add_built_output, value
+- `memory_output` [pub] crates/strider-pattern/src/template/builder.rs:149  (callers=1)  ->  add_built_output, memory
+- `set_value_ty` [pub] crates/strider-pattern/src/template/builder.rs:157  (callers=6)  ->  out_data_of
+- `set_template_kind` [pub] crates/strider-pattern/src/template/builder.rs:163  (callers=1)  ->  kind_mut
+- `capture` [pub] crates/strider-pattern/src/template/builder.rs:177  (callers=16)  ->  add_node, add_value
+- `finish` [pub] crates/strider-pattern/src/template/builder.rs:196  (callers=9)  ->  from_graph, seal
+- `add_built_output` [priv] crates/strider-pattern/src/template/builder.rs:204  (callers=5)  ->  add_value
+- `add_value` [priv] crates/strider-pattern/src/template/builder.rs:208  (callers=2)  ->  add_output
+- `add_buildable` [priv] crates/strider-pattern/src/template/builder.rs:221  (callers=4)  ->  add_node
+- `out_data_of` [priv] crates/strider-pattern/src/template/builder.rs:236  (callers=1)  ->  output_mut
+- `input_slots` [priv] {trait-impl} crates/strider-pattern/src/template/graph.rs:45  (callers=1)  ->  (leaf)
+- `value` [pub] crates/strider-pattern/src/template/graph.rs:103  (callers=8)  ->  (leaf)
+- `memory` [pub] crates/strider-pattern/src/template/graph.rs:112  (callers=2)  ->  (leaf)
+- `from_graph` [pub(crate)] crates/strider-pattern/src/template/graph.rs:132  (callers=2)  ->  (leaf)
+- `root` [pub] crates/strider-pattern/src/template/graph.rs:142  (callers=5)  ->  derive_root
+- `referenced_captures` [pub] crates/strider-pattern/src/template/graph.rs:151  (callers=1)  ->  all_value_ids, value_kind_ref
+- `instantiate` [pub] crates/strider-pattern/src/template/mod.rs:132  (callers=1)  ->  collect_inputs, create_node_attributed, default, first_value_output_of, function, get, get_value, insert, intern_fn_int_const, iter, node_outputs, node_value_ty, node_weight, output_kinds_for, output_weight, produced_outputs, reachable_topo, root
+- `resolve_ty` [priv] crates/strider-pattern/src/template/mod.rs:252  (callers=1)  ->  (leaf)
+- `intern_fn_int_const` [priv] crates/strider-pattern/src/template/mod.rs:265  (callers=1)  ->  function_mut, intern_int_const
+- `collect_inputs` [priv] crates/strider-pattern/src/template/mod.rs:280  (callers=1)  ->  any, consumed_inputs, get, insert, keys, len, new
+- `resolved_output_kind` [priv] crates/strider-pattern/src/template/mod.rs:317  (callers=2)  ->  resolve_ty
+- `node_value_ty` [priv] crates/strider-pattern/src/template/mod.rs:335  (callers=1)  ->  iter, output_weight, produced_outputs, resolved_output_kind
+- `output_kinds_for` [priv] crates/strider-pattern/src/template/mod.rs:358  (callers=1)  ->  insert, is_empty, iter, new, output_weight, produced_outputs, resolved_output_kind
+- `compile` [priv] crates/strider-pattern/src/template/template_pat.rs:24  (callers=14)  ->  (leaf)
+- `into_template` [priv] crates/strider-pattern/src/template/template_pat.rs:27  (callers=3)  ->  compile, finish, new
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/template/template_pat.rs:39  (callers=14)  ->  capture
+- `unary` [priv] crates/strider-pattern/src/typed/builder_like.rs:42  (callers=2)  ->  (leaf)
+- `binary` [priv] crates/strider-pattern/src/typed/builder_like.rs:45  (callers=3)  ->  (leaf)
+- `node` [priv] crates/strider-pattern/src/typed/builder_like.rs:47  (callers=17)  ->  (leaf)
+- `input` [priv] crates/strider-pattern/src/typed/builder_like.rs:49  (callers=16)  ->  (leaf)
+- `value_output` [priv] crates/strider-pattern/src/typed/builder_like.rs:51  (callers=9)  ->  (leaf)
+- `set_value_ty` [priv] crates/strider-pattern/src/typed/builder_like.rs:53  (callers=6)  ->  (leaf)
+- `leaf` [priv] crates/strider-pattern/src/typed/builder_like.rs:55  (callers=8)  ->  (leaf)
+- `unary` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:62  (callers=2)  ->  (leaf)
+- `binary` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:65  (callers=3)  ->  (leaf)
+- `node` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:68  (callers=17)  ->  (leaf)
+- `input` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:71  (callers=16)  ->  (leaf)
+- `value_output` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:74  (callers=9)  ->  (leaf)
+- `set_value_ty` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:77  (callers=6)  ->  (leaf)
+- `leaf` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:80  (callers=8)  ->  (leaf)
+- `unary` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:89  (callers=2)  ->  (leaf)
+- `binary` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:92  (callers=3)  ->  (leaf)
+- `node` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:95  (callers=17)  ->  (leaf)
+- `input` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:98  (callers=16)  ->  (leaf)
+- `value_output` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:101  (callers=9)  ->  (leaf)
+- `set_value_ty` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:104  (callers=6)  ->  (leaf)
+- `leaf` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:107  (callers=8)  ->  (leaf)
+- `compile_into` [priv] crates/strider-pattern/src/typed/builder_like.rs:122  (callers=4)  ->  (leaf)
+- `compile_into` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:126  (callers=4)  ->  compile
+- `compile_into` [priv] {trait-impl} crates/strider-pattern/src/typed/builder_like.rs:132  (callers=4)  ->  compile
+- `compile_unary_kind` [pub(crate)] crates/strider-pattern/src/typed/builder_like.rs:151  (callers=6)  ->  compile_into, unary
+- `compile_int_binary` [pub(crate)] crates/strider-pattern/src/typed/builder_like.rs:161  (callers=3)  ->  binary, compile_into
+- `compile_two_input` [pub(crate)] crates/strider-pattern/src/typed/builder_like.rs:175  (callers=7)  ->  compile_into, input, node, set_value_ty, value_output
+- `compile_bool_binary` [pub(crate)] crates/strider-pattern/src/typed/builder_like.rs:200  (callers=5)  ->  binary, compile_into, set_value_ty
+- `compile_const_leaf` [priv] crates/strider-pattern/src/typed/consts.rs:27  (callers=2)  ->  leaf, set_value_ty
+- `int_const_discriminant` [priv] crates/strider-pattern/src/typed/consts.rs:50  (callers=1)  ->  discriminant
+- `first_int_const_value` [priv] crates/strider-pattern/src/typed/consts.rs:62  (callers=1)  ->  as_value, int_const_u128, iter, node_outputs, value_kind
+- `int_const_leaf` [priv] crates/strider-pattern/src/typed/consts.rs:80  (callers=6)  ->  first_int_const_value, function, int_const_discriminant, leaf, new, set_node_predicate, set_value_ty
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:99  (callers=14)  ->  bit_mask_u128, int_const_leaf
+- `const_template` [priv] crates/strider-pattern/src/typed/consts.rs:116  (callers=3)  ->  new
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:124  (callers=14)  ->  const_template
+- `int_const` [pub] crates/strider-pattern/src/typed/consts.rs:134  (callers=6)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:151  (callers=14)  ->  bit_mask_u128, bit_width, from, int_const_leaf
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:192  (callers=14)  ->  const_template, from
+- `signed_int_const` [pub] crates/strider-pattern/src/typed/consts.rs:203  (callers=2)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:213  (callers=14)  ->  from, int_const_leaf
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:224  (callers=14)  ->  const_template, from
+- `bool_const` [pub] crates/strider-pattern/src/typed/consts.rs:233  (callers=4)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:243  (callers=14)  ->  compile_const_leaf
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:249  (callers=14)  ->  compile_const_leaf
+- `float_const` [pub] crates/strider-pattern/src/typed/consts.rs:255  (callers=2)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:264  (callers=14)  ->  int_const_leaf
+- `any_int_const` [pub] crates/strider-pattern/src/typed/consts.rs:277  (callers=6)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:285  (callers=14)  ->  int_const_leaf
+- `any_bool_const` [pub] crates/strider-pattern/src/typed/consts.rs:291  (callers=1)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:299  (callers=14)  ->  discriminant, leaf
+- `any_float_const` [pub] crates/strider-pattern/src/typed/consts.rs:306  (callers=2)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:316  (callers=14)  ->  contains, int_const_leaf
+- `int_const_any_of` [pub] crates/strider-pattern/src/typed/consts.rs:335  (callers=2)  ->  into_iter
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/consts.rs:356  (callers=14)  ->  leaf, set_template_kind, set_value_ty
+- `int_const_with_fn` [pub] crates/strider-pattern/src/typed/consts.rs:376  (callers=2)  ->  new
+- `bool_const_with_fn` [pub] crates/strider-pattern/src/typed/consts.rs:395  (callers=1)  ->  from, new
+- `float_const_with_fn` [pub] crates/strider-pattern/src/typed/consts.rs:408  (callers=0)  ->  new
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:64  (callers=14)  ->  discriminant, input, node, set_value_ty, value_output
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:102  (callers=14)  ->  discriminant, unary
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:126  (callers=14)  ->  compile_int_binary
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:132  (callers=14)  ->  compile_int_binary
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:152  (callers=14)  ->  compile_sub
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:158  (callers=14)  ->  compile_sub
+- `compile_sub` [priv] crates/strider-pattern/src/typed/value_ops.rs:165  (callers=2)  ->  compile_int_binary
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:188  (callers=14)  ->  compile_unary_kind
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:194  (callers=14)  ->  compile_unary_kind
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:213  (callers=14)  ->  int_const
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:221  (callers=14)  ->  binary, bit_mask_u128, int_const_with_fn
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:243  (callers=14)  ->  compile_unary_kind
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:249  (callers=14)  ->  compile_unary_kind
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:264  (callers=14)  ->  compile_two_input
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:271  (callers=14)  ->  compile_two_input
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:296  (callers=14)  ->  compile_two_input
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:303  (callers=14)  ->  compile_two_input
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:325  (callers=14)  ->  compile_float_sub
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:331  (callers=14)  ->  compile_float_sub
+- `compile_float_sub` [priv] crates/strider-pattern/src/typed/value_ops.rs:338  (callers=2)  ->  compile_two_input
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:360  (callers=14)  ->  compile_unary_kind
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:367  (callers=14)  ->  compile_unary_kind
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:389  (callers=14)  ->  compile_two_input
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:396  (callers=14)  ->  compile_two_input
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:420  (callers=14)  ->  compile_bool_binary
+- `float_le` [pub] crates/strider-pattern/src/typed/value_ops.rs:444  (callers=0)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:455  (callers=14)  ->  bool_const, compile_bool_binary
+- `float_is_nan` [pub] crates/strider-pattern/src/typed/value_ops.rs:477  (callers=0)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:491  (callers=14)  ->  compile_bool_binary
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:497  (callers=14)  ->  compile_bool_binary
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:517  (callers=14)  ->  compile_bool_not
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/value_ops.rs:523  (callers=14)  ->  compile_bool_not
+- `compile_bool_not` [priv] crates/strider-pattern/src/typed/value_ops.rs:530  (callers=2)  ->  bool_const, compile_bool_binary
+- `sub` [pub] crates/strider-pattern/src/typed/value_ops.rs:598  (callers=2)  ->  (leaf)
+- `bit_not` [pub] crates/strider-pattern/src/typed/value_ops.rs:611  (callers=1)  ->  (leaf)
+- `not_` [pub] crates/strider-pattern/src/typed/value_ops.rs:616  (callers=0)  ->  bit_not
+- `extend` [pub] crates/strider-pattern/src/typed/value_ops.rs:639  (callers=8)  ->  (leaf)
+- `int_ne` [pub] crates/strider-pattern/src/typed/value_ops.rs:658  (callers=0)  ->  (leaf)
+- `int_le` [pub] crates/strider-pattern/src/typed/value_ops.rs:663  (callers=0)  ->  (leaf)
+- `int_sle` [pub] crates/strider-pattern/src/typed/value_ops.rs:668  (callers=0)  ->  (leaf)
+- `float_sub` [pub] crates/strider-pattern/src/typed/value_ops.rs:681  (callers=0)  ->  (leaf)
+- `float_ne` [pub] crates/strider-pattern/src/typed/value_ops.rs:700  (callers=0)  ->  float_eq
+- `bool_not` [pub] crates/strider-pattern/src/typed/value_ops.rs:713  (callers=3)  ->  (leaf)
+- `int_binary` [pub] crates/strider-pattern/src/typed/value_ops.rs:719  (callers=0)  ->  (leaf)
+- `int_cmp` [pub] crates/strider-pattern/src/typed/value_ops.rs:728  (callers=0)  ->  (leaf)
+- `float_binary` [pub] crates/strider-pattern/src/typed/value_ops.rs:737  (callers=0)  ->  (leaf)
+- `float_cmp` [pub] crates/strider-pattern/src/typed/value_ops.rs:746  (callers=0)  ->  (leaf)
+- `bool_binary` [pub] crates/strider-pattern/src/typed/value_ops.rs:755  (callers=0)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/wildcards.rs:20  (callers=14)  ->  leaf, set_output_any
+- `any` [pub] crates/strider-pattern/src/typed/wildcards.rs:31  (callers=18)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/wildcards.rs:41  (callers=14)  ->  capture_output, leaf, set_output_any
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/wildcards.rs:52  (callers=14)  ->  capture
+- `var` [pub] crates/strider-pattern/src/typed/wildcards.rs:60  (callers=10)  ->  (leaf)
+- `predicate` [pub] crates/strider-pattern/src/typed/wildcards.rs:67  (callers=1)  ->  any, when_match
+- `value_of_width` [pub] crates/strider-pattern/src/typed/wildcards.rs:80  (callers=1)  ->  any, of_width
+- `bool_value` [pub] crates/strider-pattern/src/typed/wildcards.rs:85  (callers=0)  ->  any, bool_valued
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/wildcards.rs:99  (callers=14)  ->  constrain_input_widths, inputs_of_width_check, new, set_node_predicate
+- `inputs_of_width_check` [priv] crates/strider-pattern/src/typed/wildcards.rs:116  (callers=1)  ->  any, as_value, bit_width, function, iter, node_inputs, node_outputs, value_kind
+- `inputs_of_width` [pub] crates/strider-pattern/src/typed/wildcards.rs:141  (callers=2)  ->  (leaf)
+- `bool_inputs` [pub] crates/strider-pattern/src/typed/wildcards.rs:146  (callers=0)  ->  inputs_of_width
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/wildcards.rs:154  (callers=14)  ->  initial_var_discriminant, leaf
+- `initial_var_discriminant` [priv] crates/strider-pattern/src/typed/wildcards.rs:160  (callers=2)  ->  discriminant, from_index
+- `initial_var` [pub] crates/strider-pattern/src/typed/wildcards.rs:167  (callers=1)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-pattern/src/typed/wildcards.rs:177  (callers=14)  ->  function, initial_var_discriminant, initial_vn, leaf, new, node_kind, set_node_predicate
+- `initial_var_for` [pub] crates/strider-pattern/src/typed/wildcards.rs:199  (callers=1)  ->  (leaf)
+- `name` [priv] {pyo3} crates/strider-py/src/arch.rs:22  (callers=3)  ->  (leaf)
+- `__repr__` [priv] {pyo3} crates/strider-py/src/arch.rs:27  (callers=0)  ->  (leaf)
+- `register` [pub] crates/strider-py/src/arch.rs:41  (callers=1)  ->  (leaf)
+- `x86_64_all_preserving` [priv] {pyo3} crates/strider-py/src/cc.rs:66  (callers=0)  ->  (leaf)
+- `custom` [priv] {pyo3} crates/strider-py/src/cc.rs:119  (callers=0)  ->  clone, drop, into_strider_err, iter, new, resolve, try_new
+- `name` [priv] {pyo3} crates/strider-py/src/cc.rs:177  (callers=3)  ->  (leaf)
+- `__repr__` [priv] {pyo3} crates/strider-py/src/cc.rs:183  (callers=0)  ->  (leaf)
+- `register` [pub] crates/strider-py/src/cc.rs:188  (callers=1)  ->  (leaf)
+- `with_sleigh` [priv] crates/strider-py/src/cfg.rs:34  (callers=3)  ->  sleigh
+- `to_html` [priv] {pyo3} crates/strider-py/src/cfg.rs:49  (callers=0)  ->  dot_dumper, dot_style_for, dump_as_html, new, with_sleigh
+- `to_dot` [priv] {pyo3} crates/strider-py/src/cfg.rs:58  (callers=0)  ->  dot_dumper, dot_style_for, dump_as_dot, new, with_sleigh
+- `html_str` [priv] {pyo3} crates/strider-py/src/cfg.rs:70  (callers=0)  ->  as_html_from_dot, dot_dumper, dot_style_for, new, with_sleigh
+- `register` [pub] crates/strider-py/src/cfg.rs:79  (callers=1)  ->  (leaf)
+- `dot_style_for` [pub] crates/strider-py/src/dot.rs:8  (callers=4)  ->  dark, dark_cfg, empty
+- `into_strider_err` [pub] crates/strider-py/src/errors.rs:28  (callers=36)  ->  (leaf)
+- `register` [pub] crates/strider-py/src/errors.rs:36  (callers=1)  ->  add
+- `node_id_from_u32` [priv] crates/strider-py/src/function.rs:54  (callers=3)  ->  graph, into_strider_err
+- `new` [pub(crate)] crates/strider-py/src/function.rs:66  (callers=210)  ->  (leaf)
+- `read_inner` [pub(crate)] crates/strider-py/src/function.rs:75  (callers=9)  ->  read
+- `write_inner` [pub(crate)] crates/strider-py/src/function.rs:85  (callers=1)  ->  (leaf)
+- `try_write_inner` [pub(crate)] crates/strider-py/src/function.rs:98  (callers=4)  ->  (leaf)
+- `with_read` [priv] crates/strider-py/src/function.rs:114  (callers=3)  ->  read_inner
+- `with_read_value` [priv] crates/strider-py/src/function.rs:122  (callers=5)  ->  read_inner
+- `with_node` [priv] crates/strider-py/src/function.rs:131  (callers=11)  ->  node_id_from_u32, with_read
+- `dispatch_dot` [priv] crates/strider-py/src/function.rs:149  (callers=3)  ->  as_html_from_dot, dot_dumper, dot_style_for, dump_as_dot, dump_as_html, new, sleigh, with_read
+- `run_pipeline_in_place` [priv] crates/strider-py/src/function.rs:184  (callers=2)  ->  bump_generation, graph_mut, into_strider_err, new, run, try_write_inner
+- `write_to` [priv] crates/strider-py/src/function.rs:212  (callers=2)  ->  into_strider_err
+- `get_cfg` [priv] {pyo3} crates/strider-py/src/function.rs:225  (callers=0)  ->  (leaf)
+- `to_html` [priv] {pyo3} crates/strider-py/src/function.rs:232  (callers=0)  ->  dispatch_dot
+- `to_dot` [priv] {pyo3} crates/strider-py/src/function.rs:240  (callers=0)  ->  dispatch_dot
+- `html_str` [priv] {pyo3} crates/strider-py/src/function.rs:247  (callers=0)  ->  dispatch_dot, into_strider_err
+- `raw_dot_str` [priv] {pyo3} crates/strider-py/src/function.rs:263  (callers=1)  ->  with_read_value
+- `raw_html_str` [priv] {pyo3} crates/strider-py/src/function.rs:270  (callers=1)  ->  with_read_value
+- `to_raw_dot` [priv] {pyo3} crates/strider-py/src/function.rs:277  (callers=0)  ->  raw_dot_str, write_to
+- `to_raw_html` [priv] {pyo3} crates/strider-py/src/function.rs:283  (callers=0)  ->  raw_html_str, write_to
+- `node_count` [priv] {pyo3} crates/strider-py/src/function.rs:291  (callers=0)  ->  all_node_ids, graph, with_read_value
+- `count_regions` [priv] {pyo3} crates/strider-py/src/function.rs:301  (callers=0)  ->  walk_kind, with_read_value
+- `node_ids` [priv] {pyo3} crates/strider-py/src/function.rs:312  (callers=1)  ->  all_node_ids, graph, with_read_value
+- `node_kind` [priv] {pyo3} crates/strider-py/src/function.rs:328  (callers=75)  ->  with_node
+- `asm_fingerprint` [priv] {pyo3} crates/strider-py/src/function.rs:341  (callers=4)  ->  with_node
+- `wide_const_bytes` [priv] {pyo3} crates/strider-py/src/function.rs:355  (callers=0)  ->  int_const_wide_le_bytes, with_node
+- `call_other_name` [priv] {pyo3} crates/strider-py/src/function.rs:363  (callers=3)  ->  with_node
+- `validate` [priv] {pyo3} crates/strider-py/src/function.rs:374  (callers=2)  ->  with_read
+- `compact` [priv] {pyo3} crates/strider-py/src/function.rs:386  (callers=2)  ->  try_write_inner
+- `optimize` [priv] {pyo3} crates/strider-py/src/function.rs:405  (callers=0)  ->  drain_into_pipeline, run_pipeline_in_place
+- `reoptimize` [priv] {pyo3} crates/strider-py/src/function.rs:413  (callers=0)  ->  default_pipeline, run_pipeline_in_place
+- `py_clone` [priv] {pyo3} crates/strider-py/src/function.rs:426  (callers=0)  ->  clone, new, read_inner
+- `find_all` [priv] {pyo3} crates/strider-py/src/function.rs:452  (callers=1)  ->  apply_cast_mask, len, reject_conflicting_cast_flags, run_query, to_pattern, with_capacity
+- `find_one` [priv] {pyo3} crates/strider-py/src/function.rs:485  (callers=0)  ->  apply_cast_mask, find_first, reject_conflicting_cast_flags, run_query, to_pattern
+- `find_joined` [priv] {pyo3} crates/strider-py/src/function.rs:527  (callers=0)  ->  apply_cast_mask, iter, len, reject_conflicting_cast_flags, run_query, to_pattern, with_capacity
+- `rewrite` [priv] {pyo3} crates/strider-py/src/function.rs:575  (callers=0)  ->  apply_rules_count_on, rewrite_rule_runtime, to_pattern, to_template, try_write_inner
+- `rewrite_all` [priv] {pyo3} crates/strider-py/src/function.rs:594  (callers=0)  ->  apply_rules_count_on, len, rewrite_rule_runtime, to_pattern, to_template, try_write_inner, with_capacity
+- `node` [priv] {pyo3} crates/strider-py/src/function.rs:624  (callers=17)  ->  new
+- `reject_conflicting_cast_flags` [priv] crates/strider-py/src/function.rs:632  (callers=3)  ->  into_strider_err
+- `run_query` [priv] crates/strider-py/src/function.rs:654  (callers=3)  ->  drop, generation, graph, new, read_inner, run, take_pending_control_flow
+- `apply_cast_mask` [priv] crates/strider-py/src/function.rs:685  (callers=3)  ->  ignore_casts, ignore_casts_mask
+- `apply_rules_count_on` [priv] crates/strider-py/src/function.rs:709  (callers=2)  ->  apply_rules_count, bump_generation, graph_mut, new
+- `register` [pub] crates/strider-py/src/function.rs:724  (callers=1)  ->  (leaf)
+- `force_anyhow_backtrace_capture` [priv] crates/strider-py/src/lib.rs:63  (callers=1)  ->  (leaf)
+- `strider` [priv] crates/strider-py/src/lib.rs:90  (callers=0)  ->  add, force_anyhow_backtrace_capture, register
+- `resolve` [priv] crates/strider-py/src/matcher.rs:49  (callers=7)  ->  as_str, intern_str
+- `capture_value_to_py` [pub(crate)] crates/strider-py/src/matcher.rs:69  (callers=2)  ->  (leaf)
+- `with_function` [priv] crates/strider-py/src/matcher.rs:93  (callers=11)  ->  assert_generation, read_inner, resolve
+- `assert_generation` [priv] crates/strider-py/src/matcher.rs:111  (callers=3)  ->  generation, graph, into_strider_err
+- `root` [priv] {pyo3} crates/strider-py/src/matcher.rs:180  (callers=5)  ->  (leaf)
+- `__getitem__` [priv] {pyo3} crates/strider-py/src/matcher.rs:186  (callers=0)  ->  bindings, capture_value_to_py, get_bool, get_float_bits, get_uint, graph, with_function
+- `__contains__` [priv] {pyo3} crates/strider-py/src/matcher.rs:197  (callers=0)  ->  is_bound, resolve
+- `uint` [priv] {pyo3} crates/strider-py/src/matcher.rs:204  (callers=0)  ->  bindings, get_uint, with_function
+- `int_` [priv] {pyo3} crates/strider-py/src/matcher.rs:211  (callers=0)  ->  bindings, get_int, with_function
+- `bool_` [priv] {pyo3} crates/strider-py/src/matcher.rs:218  (callers=0)  ->  bindings, get_bool, with_function
+- `float_bits` [priv] {pyo3} crates/strider-py/src/matcher.rs:224  (callers=0)  ->  bindings, get_float_bits, graph, with_function
+- `has` [priv] {pyo3} crates/strider-py/src/matcher.rs:231  (callers=1)  ->  is_bound, resolve
+- `vn` [priv] {pyo3} crates/strider-py/src/matcher.rs:250  (callers=0)  ->  get_vn, with_function
+- `asm_fingerprint` [priv] {pyo3} crates/strider-py/src/matcher.rs:266  (callers=4)  ->  assert_generation, read_inner, resolve
+- `node` [priv] {pyo3} crates/strider-py/src/matcher.rs:282  (callers=17)  ->  assert_generation, graph, new, read_inner, resolve
+- `op_name` [priv] crates/strider-py/src/matcher.rs:314  (callers=0)  ->  (leaf)
+- `register` [pub] crates/strider-py/src/matcher.rs:318  (callers=1)  ->  (leaf)
+- `new` [pub(crate)] crates/strider-py/src/node.rs:53  (callers=210)  ->  generation, graph, into_strider_err, node_id_from_u32, read_inner
+- `with_node` [priv] crates/strider-py/src/node.rs:77  (callers=11)  ->  generation, graph, into_strider_err, node_id_from_u32, read_inner
+- `value_output` [priv] crates/strider-py/src/node.rs:99  (callers=9)  ->  is_value, iter, node_outputs, value_kind
+- `id` [priv] {pyo3} crates/strider-py/src/node.rs:117  (callers=4)  ->  (leaf)
+- `kind` [priv] {pyo3} crates/strider-py/src/node.rs:124  (callers=4)  ->  node_kind, with_node
+- `inputs` [priv] {pyo3} crates/strider-py/src/node.rs:134  (callers=0)  ->  into_iter, len, new, node_inputs, producer, with_capacity, with_node
+- `const_int` [priv] {pyo3} crates/strider-py/src/node.rs:157  (callers=0)  ->  int_const_u128, int_const_wide_le_bytes, value_output, with_node
+- `const_bool` [priv] {pyo3} crates/strider-py/src/node.rs:189  (callers=0)  ->  bool_const_val, value_output, with_node
+- `fingerprint` [priv] {pyo3} crates/strider-py/src/node.rs:202  (callers=0)  ->  asm_fingerprint, with_node
+- `wide_const_bytes` [priv] {pyo3} crates/strider-py/src/node.rs:211  (callers=0)  ->  int_const_wide_le_bytes, with_node
+- `call_other_name` [priv] {pyo3} crates/strider-py/src/node.rs:217  (callers=3)  ->  with_node
+- `__repr__` [priv] {pyo3} crates/strider-py/src/node.rs:224  (callers=0)  ->  kind
+- `__richcmp__` [priv] {pyo3} crates/strider-py/src/node.rs:231  (callers=0)  ->  (leaf)
+- `__hash__` [priv] {pyo3} crates/strider-py/src/node.rs:242  (callers=0)  ->  finish, hash, new
+- `register` [pub] crates/strider-py/src/node.rs:250  (callers=1)  ->  (leaf)
+- `clone` [priv] {trait-impl} crates/strider-py/src/opt.rs:42  (callers=45)  ->  clone_box
+- `apply` [priv] {trait-impl} crates/strider-py/src/opt.rs:51  (callers=4)  ->  (leaf)
+- `clone` [priv] {trait-impl} crates/strider-py/src/opt.rs:67  (callers=45)  ->  clone_box
+- `apply` [priv] {trait-impl} crates/strider-py/src/opt.rs:73  (callers=4)  ->  (leaf)
+- `clone` [priv] {trait-impl} crates/strider-py/src/opt.rs:90  (callers=45)  ->  clone_box
+- `apply` [priv] {trait-impl} crates/strider-py/src/opt.rs:96  (callers=4)  ->  (leaf)
+- `new` [priv] crates/strider-py/src/opt.rs:116  (callers=210)  ->  (leaf)
+- `snapshot_from` [priv] crates/strider-py/src/opt.rs:130  (callers=1)  ->  clone_box, new, passes, post_passes
+- `new_with` [priv] crates/strider-py/src/opt.rs:163  (callers=2)  ->  new
+- `lock_state` [priv] crates/strider-py/src/opt.rs:172  (callers=5)  ->  into_strider_err
+- `new_full_default` [pub(crate)] crates/strider-py/src/opt.rs:183  (callers=2)  ->  default_pipeline, new_with, snapshot_from
+- `drain_into_pipeline` [pub(crate)] crates/strider-py/src/opt.rs:210  (callers=2)  ->  add, add_post_pass, into_strider_err, is_empty, lock_state, new
+- `empty` [priv] {pyo3} crates/strider-py/src/opt.rs:238  (callers=4)  ->  new, new_with
+- `default` [priv] {pyo3} crates/strider-py/src/opt.rs:245  (callers=54)  ->  new_full_default
+- `add` [priv] {pyo3} crates/strider-py/src/opt.rs:256  (callers=7)  ->  into_erased, lock_state
+- `add_post` [priv] {pyo3} crates/strider-py/src/opt.rs:264  (callers=0)  ->  into_erased_post, lock_state
+- `pass_count` [priv] {pyo3} crates/strider-py/src/opt.rs:271  (callers=0)  ->  len, lock_state
+- `post_pass_count` [priv] {pyo3} crates/strider-py/src/opt.rs:277  (callers=0)  ->  len, lock_state
+- `new` [priv] {pyo3} crates/strider-py/src/opt.rs:303  (callers=210)  ->  (leaf)
+- `into_erased` [priv] crates/strider-py/src/opt.rs:381  (callers=2)  ->  into_strider_err, new
+- `into_erased_post` [priv] crates/strider-py/src/opt.rs:413  (callers=1)  ->  into_erased, new
+- `register` [pub] crates/strider-py/src/opt.rs:435  (callers=1)  ->  (leaf)
+- `new` [priv] {pyo3} crates/strider-py/src/pattern.rs:67  (callers=210)  ->  (leaf)
+- `__repr__` [priv] {pyo3} crates/strider-py/src/pattern.rs:74  (callers=0)  ->  (leaf)
+- `__hash__` [priv] {pyo3} crates/strider-py/src/pattern.rs:79  (callers=0)  ->  id
+- `intern_table` [priv] crates/strider-py/src/pattern.rs:90  (callers=1)  ->  new
+- `intern_str` [pub(crate)] crates/strider-py/src/pattern.rs:95  (callers=10)  ->  entry, intern_table, into_strider_err
+- `compile` [priv] {trait-impl} crates/strider-py/src/pattern.rs:116  (callers=14)  ->  (leaf)
+- `compile` [priv] {trait-impl} crates/strider-py/src/pattern.rs:128  (callers=14)  ->  (leaf)
+- `compile_mem` [priv] {trait-impl} crates/strider-py/src/pattern.rs:139  (callers=2)  ->  (leaf)
+- `from_repr` [pub(crate)] {pyo3} crates/strider-py/src/pattern.rs:302  (callers=52)  ->  new
+- `compile_operand_match` [pub(crate)] crates/strider-py/src/pattern.rs:319  (callers=4)  ->  any, compile, compile_match, compile_value, enter, intern_str, into_strider_err, mc, new, var
+- `compile_operand_template` [pub(crate)] crates/strider-py/src/pattern.rs:371  (callers=1)  ->  compile_template, enter, intern_str, new, rhs_error, template_var
+- `compile_operand_mem` [pub(crate)] crates/strider-py/src/pattern.rs:396  (callers=1)  ->  compile_mem, enter, into_strider_err, operand_kind_name
+- `operand_kind_name` [priv] crates/strider-py/src/pattern.rs:427  (callers=1)  ->  get_type, name
+- `template_var` [priv] crates/strider-py/src/pattern.rs:434  (callers=3)  ->  tc, var
+- `mc` [priv] crates/strider-py/src/pattern.rs:440  (callers=3)  ->  compile
+- `tc` [priv] crates/strider-py/src/pattern.rs:445  (callers=3)  ->  compile
+- `rhs_error` [priv] crates/strider-py/src/pattern.rs:449  (callers=3)  ->  into_strider_err
+- `parse_value_ty` [priv] crates/strider-py/src/pattern.rs:457  (callers=1)  ->  as_str, into_strider_err
+- `compile_match` [pub(crate)] crates/strider-py/src/pattern.rs:482  (callers=2)  ->  compile_repr_match
+- `compile_template` [pub(crate)] crates/strider-py/src/pattern.rs:488  (callers=2)  ->  compile_repr_template
+- `enter` [priv] crates/strider-py/src/pattern.rs:521  (callers=5)  ->  get, into_strider_err
+- `drop` [priv] {trait-impl} crates/strider-py/src/pattern.rs:536  (callers=4)  ->  get
+- `op_match` [priv] crates/strider-py/src/pattern.rs:549  (callers=1)  ->  compile_operand_match
+- `compile_repr_match` [priv] crates/strider-py/src/pattern.rs:554  (callers=1)  ->  any, any_bool_const, any_float_const, any_int_const, bool_const, capture, cast_match, clone, enter, float_const, initial_var, initial_var_for, inputs_of_width, int_const, int_const_any_of, into_strider_err, lzcount, mc, neg, new, of_width, op_match, popcount, signed_int_const, value_of_width, value_ty, var, wrap_when
+- `cast_match` [priv] crates/strider-py/src/pattern.rs:734  (callers=1)  ->  mc
+- `op_tpl` [priv] crates/strider-py/src/pattern.rs:749  (callers=1)  ->  compile_operand_template
+- `compile_repr_template` [priv] crates/strider-py/src/pattern.rs:754  (callers=1)  ->  bool_const, capture, cast_tpl, enter, float_const, int_const, lzcount, neg, new, op_tpl, popcount, rhs_error, signed_int_const, tc, template_var
+- `cast_tpl` [priv] crates/strider-py/src/pattern.rs:887  (callers=1)  ->  tc
+- `to_pattern` [pub(crate)] crates/strider-py/src/pattern.rs:904  (callers=6)  ->  compile_match, into_pattern, into_strider_err
+- `to_template` [pub(crate)] crates/strider-py/src/pattern.rs:917  (callers=2)  ->  compile_template, into_template
+- `type_output` [priv] {trait-impl} crates/strider-py/src/pattern.rs:949  (callers=0)  ->  (leaf)
+- `to_pattern` [pub(crate)] crates/strider-py/src/pattern.rs:956  (callers=6)  ->  any, build_pattern_py, intern_str, into_pattern, var
+- `to_template` [pub(crate)] crates/strider-py/src/pattern.rs:985  (callers=2)  ->  intern_str, into_template, new, rhs_error, template_var
+- `take_pending_control_flow` [pub(crate)] crates/strider-py/src/pattern.rs:1021  (callers=2)  ->  (leaf)
+- `peek_pending_control_flow` [pub(crate)] crates/strider-py/src/pattern.rs:1026  (callers=2)  ->  (leaf)
+- `stash_pending_control_flow` [pub(crate)] crates/strider-py/src/pattern.rs:1036  (callers=2)  ->  (leaf)
+- `new` [priv] crates/strider-py/src/pattern.rs:1051  (callers=210)  ->  (leaf)
+- `clear_graph_ptr` [priv] crates/strider-py/src/pattern.rs:1058  (callers=1)  ->  (leaf)
+- `with_function` [priv] crates/strider-py/src/pattern.rs:1066  (callers=11)  ->  (leaf)
+- `capture_from_key` [priv] crates/strider-py/src/pattern.rs:1079  (callers=6)  ->  as_str, intern_str
+- `extract_bound` [priv] {trait-impl} crates/strider-py/src/pattern.rs:1094  (callers=0)  ->  (leaf)
+- `uint` [priv] {pyo3} crates/strider-py/src/pattern.rs:1110  (callers=0)  ->  capture_from_key, get_uint, with_function
+- `int_` [priv] {pyo3} crates/strider-py/src/pattern.rs:1119  (callers=0)  ->  capture_from_key, get_int, with_function
+- `bool_` [priv] {pyo3} crates/strider-py/src/pattern.rs:1128  (callers=0)  ->  capture_from_key, get_bool, with_function
+- `float_bits` [priv] {pyo3} crates/strider-py/src/pattern.rs:1136  (callers=0)  ->  capture_from_key, get_float_bits, graph, with_function
+- `has` [priv] {pyo3} crates/strider-py/src/pattern.rs:1144  (callers=1)  ->  capture_from_key, is_bound
+- `__getitem__` [priv] {pyo3} crates/strider-py/src/pattern.rs:1150  (callers=0)  ->  capture_from_key, capture_value_to_py, get_bool, get_float_bits, get_uint, graph, with_function
+- `__contains__` [priv] {pyo3} crates/strider-py/src/pattern.rs:1168  (callers=0)  ->  has
+- `run_when_predicate` [priv] crates/strider-py/src/pattern.rs:1187  (callers=2)  ->  clear_graph_ptr, clone, function, new, peek_pending_control_flow, stash_pending_control_flow
+- `wrap_when` [pub(crate)] crates/strider-py/src/pattern.rs:1236  (callers=3)  ->  run_when_predicate, when_match
+- `make_root_post_match` [pub(crate)] crates/strider-py/src/pattern.rs:1245  (callers=1)  ->  new, run_when_predicate
+- `apply_when_to_pattern` [priv] crates/strider-py/src/pattern.rs:1252  (callers=6)  ->  make_root_post_match, with_root_post_match
+- `all` [priv] crates/strider-py/src/pattern.rs:1310  (callers=7)  ->  clone, from_repr, intern_str
+- `empty` [priv] crates/strider-py/src/pattern.rs:1311  (callers=4)  ->  clone, from_repr, intern_str
+- `empty` [priv] {pyo3} crates/strider-py/src/pattern.rs:1317  (callers=4)  ->  (leaf)
+- `__or__` [priv] {pyo3} crates/strider-py/src/pattern.rs:1321  (callers=0)  ->  (leaf)
+- `__and__` [priv] {pyo3} crates/strider-py/src/pattern.rs:1327  (callers=0)  ->  (leaf)
+- `__eq__` [priv] {pyo3} crates/strider-py/src/pattern.rs:1333  (callers=0)  ->  (leaf)
+- `__hash__` [priv] {pyo3} crates/strider-py/src/pattern.rs:1337  (callers=0)  ->  bits, from
+- `bits` [priv] {pyo3} crates/strider-py/src/pattern.rs:1341  (callers=2)  ->  (leaf)
+- `__repr__` [priv] {pyo3} crates/strider-py/src/pattern.rs:1345  (callers=0)  ->  bits
+- `capture` [priv] {pyo3} crates/strider-py/src/pattern.rs:1355  (callers=16)  ->  clone, from_repr
+- `cap` [priv] {pyo3} crates/strider-py/src/pattern.rs:1360  (callers=0)  ->  clone, from_repr, intern_str
+- `when` [priv] {pyo3} crates/strider-py/src/pattern.rs:1370  (callers=0)  ->  clone, from_repr
+- `of_width` [priv] {pyo3} crates/strider-py/src/pattern.rs:1376  (callers=4)  ->  clone, from_repr
+- `value_ty` [priv] {pyo3} crates/strider-py/src/pattern.rs:1383  (callers=1)  ->  clone, from_repr, parse_value_ty
+- `bool_valued` [priv] {pyo3} crates/strider-py/src/pattern.rs:1390  (callers=1)  ->  clone, from_repr
+- `ordered` [priv] {pyo3} crates/strider-py/src/pattern.rs:1397  (callers=2)  ->  into_strider_err
+- `__repr__` [priv] {pyo3} crates/strider-py/src/pattern.rs:1404  (callers=0)  ->  (leaf)
+- `any_` [pub] {pyo3} crates/strider-py/src/pattern.rs:1413  (callers=0)  ->  from_repr
+- `var` [pub] {pyo3} crates/strider-py/src/pattern.rs:1419  (callers=10)  ->  from_repr
+- `value_of_width` [pub] {pyo3} crates/strider-py/src/pattern.rs:1425  (callers=1)  ->  from_repr
+- `bool_value` [pub] {pyo3} crates/strider-py/src/pattern.rs:1431  (callers=0)  ->  from_repr
+- `inputs_of_width` [pub] {pyo3} crates/strider-py/src/pattern.rs:1437  (callers=2)  ->  from_repr
+- `bool_inputs` [pub] {pyo3} crates/strider-py/src/pattern.rs:1443  (callers=0)  ->  from_repr
+- `int_const` [pub] {pyo3} crates/strider-py/src/pattern.rs:1451  (callers=6)  ->  from_repr
+- `signed_int_const` [pub] {pyo3} crates/strider-py/src/pattern.rs:1461  (callers=2)  ->  from_repr, into_strider_err
+- `int_const_any_of` [pub] {pyo3} crates/strider-py/src/pattern.rs:1476  (callers=2)  ->  from_repr, into_iter, into_strider_err
+- `bool_const` [pub] {pyo3} crates/strider-py/src/pattern.rs:1492  (callers=4)  ->  from_repr
+- `float_const` [pub] {pyo3} crates/strider-py/src/pattern.rs:1498  (callers=2)  ->  from_repr
+- `any_int_const` [pub] {pyo3} crates/strider-py/src/pattern.rs:1504  (callers=6)  ->  from_repr
+- `any_bool_const` [pub] {pyo3} crates/strider-py/src/pattern.rs:1510  (callers=1)  ->  from_repr
+- `any_float_const` [pub] {pyo3} crates/strider-py/src/pattern.rs:1516  (callers=2)  ->  from_repr
+- `initial_var` [pub] {pyo3} crates/strider-py/src/pattern.rs:1522  (callers=1)  ->  from_repr
+- `initial_var_for` [pub] {pyo3} crates/strider-py/src/pattern.rs:1528  (callers=1)  ->  from_repr
+- `predicate` [pub] {pyo3} crates/strider-py/src/pattern.rs:1535  (callers=1)  ->  from_repr, new
+- `lookup_op` [priv] {pyo3} crates/strider-py/src/pattern.rs:1556  (callers=0)  ->  canonical, into_strider_err, iter
+- `canonical` [priv] crates/strider-py/src/pattern.rs:1599  (callers=1)  ->  (leaf)
+- `sub` [pub] {pyo3} crates/strider-py/src/pattern.rs:1707  (callers=2)  ->  from_repr
+- `int_ne` [pub] {pyo3} crates/strider-py/src/pattern.rs:1740  (callers=0)  ->  from_repr
+- `int_le` [pub] {pyo3} crates/strider-py/src/pattern.rs:1746  (callers=0)  ->  from_repr
+- `int_sle` [pub] {pyo3} crates/strider-py/src/pattern.rs:1752  (callers=0)  ->  from_repr
+- `int_cmp` [pub] {pyo3} crates/strider-py/src/pattern.rs:1758  (callers=0)  ->  from_repr
+- `neg` [pub] {pyo3} crates/strider-py/src/pattern.rs:1767  (callers=3)  ->  from_repr
+- `bit_not` [pub] {pyo3} crates/strider-py/src/pattern.rs:1773  (callers=1)  ->  from_repr
+- `not_` [pub] {pyo3} crates/strider-py/src/pattern.rs:1779  (callers=0)  ->  from_repr
+- `popcount` [pub] {pyo3} crates/strider-py/src/pattern.rs:1785  (callers=3)  ->  from_repr
+- `lzcount` [pub] {pyo3} crates/strider-py/src/pattern.rs:1791  (callers=3)  ->  from_repr
+- `bool_not` [pub] {pyo3} crates/strider-py/src/pattern.rs:1812  (callers=3)  ->  from_repr
+- `float_sub` [pub] {pyo3} crates/strider-py/src/pattern.rs:1831  (callers=0)  ->  from_repr
+- `float_is_nan` [pub] {pyo3} crates/strider-py/src/pattern.rs:1858  (callers=0)  ->  from_repr
+- `float_eq` [pub] {pyo3} crates/strider-py/src/pattern.rs:1864  (callers=1)  ->  from_repr
+- `float_lt` [pub] {pyo3} crates/strider-py/src/pattern.rs:1870  (callers=0)  ->  from_repr
+- `float_ne` [pub] {pyo3} crates/strider-py/src/pattern.rs:1876  (callers=0)  ->  from_repr
+- `float_le` [pub] {pyo3} crates/strider-py/src/pattern.rs:1882  (callers=0)  ->  from_repr
+- `extend` [pub] {pyo3} crates/strider-py/src/pattern.rs:1918  (callers=8)  ->  from_repr, into_strider_err
+- `int_bin_any` [pub] {pyo3} crates/strider-py/src/pattern.rs:1935  (callers=0)  ->  from_repr
+- `int_un_any` [pub] {pyo3} crates/strider-py/src/pattern.rs:1941  (callers=0)  ->  from_repr
+- `int_cmp_any` [pub] {pyo3} crates/strider-py/src/pattern.rs:1947  (callers=1)  ->  from_repr
+- `bool_bin_any` [pub] {pyo3} crates/strider-py/src/pattern.rs:1953  (callers=0)  ->  from_repr
+- `float_bin_any` [pub] {pyo3} crates/strider-py/src/pattern.rs:1959  (callers=0)  ->  from_repr
+- `float_un_any` [pub] {pyo3} crates/strider-py/src/pattern.rs:1965  (callers=0)  ->  from_repr
+- `float_cmp_any` [pub] {pyo3} crates/strider-py/src/pattern.rs:1971  (callers=1)  ->  from_repr
+- `clone_opt` [priv] {pyo3} crates/strider-py/src/pattern.rs:1993  (callers=2)  ->  (leaf)
+- `capture` [priv] {pyo3} crates/strider-py/src/pattern.rs:2010  (callers=16)  ->  (leaf)
+- `cap` [priv] {pyo3} crates/strider-py/src/pattern.rs:2015  (callers=0)  ->  intern_str
+- `when` [priv] {pyo3} crates/strider-py/src/pattern.rs:2021  (callers=0)  ->  (leaf)
+- `into_pat` [priv] {pyo3} crates/strider-py/src/pattern.rs:2026  (callers=0)  ->  build_pattern_py, from_repr, new
+- `compile_value` [priv] crates/strider-py/src/pattern.rs:2251  (callers=3)  ->  compile, core_builder, new, wrap_when
+- `build_pattern_py` [priv] crates/strider-py/src/pattern.rs:2260  (callers=3)  ->  compile_value, into_pattern
+- `compile_mem` [priv] crates/strider-py/src/pattern.rs:2266  (callers=2)  ->  core_builder, new
+- `build_pattern_py` [priv] crates/strider-py/src/pattern.rs:2271  (callers=3)  ->  apply_when_to_pattern, build, core_builder
+- `build_pattern_py` [priv] crates/strider-py/src/pattern.rs:2277  (callers=3)  ->  apply_when_to_pattern, build, core_builder
+- `compile_value` [priv] crates/strider-py/src/pattern.rs:2287  (callers=3)  ->  into_strider_err
+- `build_pattern_py` [priv] crates/strider-py/src/pattern.rs:2295  (callers=3)  ->  apply_when_to_pattern, build, core_builder
+- `new` [priv] crates/strider-py/src/pattern.rs:2323  (callers=210)  ->  default
+- `core_builder` [priv] crates/strider-py/src/pattern.rs:2332  (callers=9)  ->  capture
+- `load` [pub] {pyo3} crates/strider-py/src/pattern.rs:2376  (callers=0)  ->  new
+- `store` [pub] {pyo3} crates/strider-py/src/pattern.rs:2411  (callers=0)  ->  new
+- `new` [priv] crates/strider-py/src/pattern.rs:2448  (callers=210)  ->  default
+- `core_builder` [priv] crates/strider-py/src/pattern.rs:2456  (callers=9)  ->  arg, at, at_any, call, capture, clone, clone_opt, compile_operand_match, compile_operand_mem, iter, mem, target
+- `compile_mem` [priv] crates/strider-py/src/pattern.rs:2488  (callers=2)  ->  core_builder, new
+- `build_pattern_py` [priv] crates/strider-py/src/pattern.rs:2493  (callers=3)  ->  apply_when_to_pattern, build, core_builder
+- `target` [priv] {pyo3} crates/strider-py/src/pattern.rs:2503  (callers=8)  ->  (leaf)
+- `at` [priv] {pyo3} crates/strider-py/src/pattern.rs:2508  (callers=3)  ->  (leaf)
+- `at_any` [priv] {pyo3} crates/strider-py/src/pattern.rs:2513  (callers=1)  ->  (leaf)
+- `arg` [priv] {pyo3} crates/strider-py/src/pattern.rs:2518  (callers=1)  ->  (leaf)
+- `mem` [priv] {pyo3} crates/strider-py/src/pattern.rs:2523  (callers=1)  ->  (leaf)
+- `call` [pub] {pyo3} crates/strider-py/src/pattern.rs:2533  (callers=1)  ->  new
+- `call_other` [pub] {pyo3} crates/strider-py/src/pattern.rs:2567  (callers=0)  ->  new
+- `ret` [pub] {pyo3} crates/strider-py/src/pattern.rs:2590  (callers=0)  ->  new
+- `new` [priv] crates/strider-py/src/pattern.rs:2612  (callers=210)  ->  default
+- `build_pattern_py` [priv] crates/strider-py/src/pattern.rs:2619  (callers=3)  ->  apply_when_to_pattern, build, capture, clone_opt, compile_operand_match, cond, if_node, pattern_for_operand, with_false, with_true
+- `cond` [priv] {pyo3} crates/strider-py/src/pattern.rs:2645  (callers=2)  ->  (leaf)
+- `true_branch` [priv] {pyo3} crates/strider-py/src/pattern.rs:2650  (callers=0)  ->  (leaf)
+- `false_branch` [priv] {pyo3} crates/strider-py/src/pattern.rs:2655  (callers=0)  ->  (leaf)
+- `pattern_for_operand` [priv] crates/strider-py/src/pattern.rs:2664  (callers=1)  ->  to_pattern
+- `if_` [pub] {pyo3} crates/strider-py/src/pattern.rs:2673  (callers=0)  ->  new
+- `phi` [pub] {pyo3} crates/strider-py/src/pattern.rs:2701  (callers=1)  ->  new
+- `phi_for` [pub] {pyo3} crates/strider-py/src/pattern.rs:2707  (callers=0)  ->  new
+- `mem_phi` [pub] {pyo3} crates/strider-py/src/pattern.rs:2731  (callers=0)  ->  new
+- `new` [priv] crates/strider-py/src/pattern.rs:2748  (callers=210)  ->  default
+- `core_builder` [priv] crates/strider-py/src/pattern.rs:2756  (callers=9)  ->  capture, function_arg_any, index, source
+- `compile_value` [priv] crates/strider-py/src/pattern.rs:2770  (callers=3)  ->  compile, core_builder, new
+- `build_pattern_py` [priv] crates/strider-py/src/pattern.rs:2775  (callers=3)  ->  apply_when_to_pattern, build, core_builder
+- `index` [priv] {pyo3} crates/strider-py/src/pattern.rs:2785  (callers=15)  ->  (leaf)
+- `source_register` [priv] {pyo3} crates/strider-py/src/pattern.rs:2790  (callers=0)  ->  (leaf)
+- `source_stack` [priv] {pyo3} crates/strider-py/src/pattern.rs:2798  (callers=0)  ->  (leaf)
+- `function_arg` [pub] {pyo3} crates/strider-py/src/pattern.rs:2819  (callers=0)  ->  new
+- `function_arg_any` [pub] {pyo3} crates/strider-py/src/pattern.rs:2827  (callers=1)  ->  new
+- `function_arg_reg` [pub] {pyo3} crates/strider-py/src/pattern.rs:2833  (callers=0)  ->  new
+- `function_arg_stack` [pub] {pyo3} crates/strider-py/src/pattern.rs:2844  (callers=0)  ->  new
+- `new` [priv] crates/strider-py/src/pattern.rs:2873  (callers=210)  ->  default
+- `compile_value` [priv] crates/strider-py/src/pattern.rs:2883  (callers=3)  ->  apply_cap_when, compile_operand_match, get, new, ordered
+- `build_pattern_py` [priv] crates/strider-py/src/pattern.rs:2904  (callers=3)  ->  compile_value, into_pattern
+- `ordered` [priv] {pyo3} crates/strider-py/src/pattern.rs:2914  (callers=2)  ->  build_pattern_py, from_repr, new
+- `apply_cap_when` [priv] crates/strider-py/src/pattern.rs:2930  (callers=1)  ->  capture, compile, wrap_when
+- `int_binary` [pub] {pyo3} crates/strider-py/src/pattern.rs:2968  (callers=0)  ->  new
+- `bool_binary` [pub] {pyo3} crates/strider-py/src/pattern.rs:2974  (callers=0)  ->  new
+- `float_binary` [pub] {pyo3} crates/strider-py/src/pattern.rs:2980  (callers=0)  ->  new
+- `register` [pub] {pyo3} crates/strider-py/src/pattern.rs:2986  (callers=1)  ->  (leaf)
+- `build_sleigh` [priv] crates/strider-py/src/pcode.rs:29  (callers=2)  ->  into_strider_err, new, pspec, reader_view, sla_spec
+- `lift_one_text` [priv] crates/strider-py/src/pcode.rs:44  (callers=2)  ->  into_strider_err, iter, lift_one
+- `pcode_at` [pub] {pyo3} crates/strider-py/src/pcode.rs:75  (callers=0)  ->  build_sleigh, into_strider_err, lift_one_text, with_capacity
+- `pcode_at_addrs` [pub] {pyo3} crates/strider-py/src/pcode.rs:115  (callers=0)  ->  build_sleigh, len, lift_one_text, with_capacity
+- `register` [pub] crates/strider-py/src/pcode.rs:129  (callers=1)  ->  (leaf)
+- `lookup_table` [pub(crate)] crates/strider-py/src/reader.rs:68  (callers=2)  ->  clone, new
+- `reader_view` [pub(crate)] crates/strider-py/src/reader.rs:84  (callers=3)  ->  lookup_table
+- `available_at` [priv] crates/strider-py/src/reader.rs:93  (callers=3)  ->  contains, end_addr, filter, iter
+- `from_regions` [pub(crate)] crates/strider-py/src/reader.rs:107  (callers=4)  ->  new
+- `new` [priv] {pyo3} crates/strider-py/src/reader.rs:125  (callers=210)  ->  from_regions
+- `read` [priv] {pyo3} crates/strider-py/src/reader.rs:133  (callers=5)  ->  available_at, lookup_table
+- `elf_to_mem_regions` [priv] crates/strider-py/src/reader.rs:163  (callers=2)  ->  elf_get_loadable_regions, elf_load_with_relocations
+- `elf_to_rom_regions` [priv] crates/strider-py/src/reader.rs:186  (callers=2)  ->  elf_get_loadable_regions, elf_load_readonly_with_relocations
+- `nonzero_size` [priv] crates/strider-py/src/reader.rs:228  (callers=2)  ->  (leaf)
+- `invalidate_and_extend` [priv] crates/strider-py/src/reader.rs:236  (callers=1)  ->  extend
+- `find_symbol` [priv] crates/strider-py/src/reader.rs:246  (callers=3)  ->  into_strider_err, iter, len
+- `reader` [priv] {pyo3} crates/strider-py/src/reader.rs:269  (callers=0)  ->  clone
+- `ro_reader` [priv] {pyo3} crates/strider-py/src/reader.rs:279  (callers=0)  ->  clone
+- `symbol` [priv] {pyo3} crates/strider-py/src/reader.rs:286  (callers=0)  ->  find_symbol
+- `symbol_size` [priv] {pyo3} crates/strider-py/src/reader.rs:298  (callers=0)  ->  find_symbol, nonzero_size, size
+- `symbol_addr_and_size` [priv] {pyo3} crates/strider-py/src/reader.rs:308  (callers=0)  ->  find_symbol, nonzero_size, size
+- `symbols` [priv] {pyo3} crates/strider-py/src/reader.rs:316  (callers=0)  ->  entry, is_empty, iter, name, new
+- `entry_point` [priv] {pyo3} crates/strider-py/src/reader.rs:331  (callers=0)  ->  entry
+- `read` [priv] {pyo3} crates/strider-py/src/reader.rs:340  (callers=5)  ->  (leaf)
+- `add_elf` [priv] {pyo3} crates/strider-py/src/reader.rs:356  (callers=0)  ->  elf_to_mem_regions, elf_to_rom_regions, invalidate_and_extend, load_elf
+- `load_elf` [pub] {pyo3} crates/strider-py/src/reader.rs:379  (callers=1)  ->  elf_to_mem_regions, elf_to_rom_regions, from_regions
+- `new` [priv] {pyo3} crates/strider-py/src/reader.rs:407  (callers=210)  ->  (leaf)
+- `read` [priv] {pyo3} crates/strider-py/src/reader.rs:421  (callers=5)  ->  (leaf)
+- `call_py_read` [priv] crates/strider-py/src/reader.rs:454  (callers=2)  ->  peek_pending_control_flow, stash_pending_control_flow
+- `read` [priv] {trait-impl} crates/strider-py/src/reader.rs:490  (callers=5)  ->  call_py_read, len
+- `new` [priv] {pyo3} crates/strider-py/src/reader.rs:545  (callers=210)  ->  (leaf)
+- `read` [priv] {pyo3} crates/strider-py/src/reader.rs:557  (callers=5)  ->  (leaf)
+- `read` [priv] {trait-impl} crates/strider-py/src/reader.rs:570  (callers=5)  ->  call_py_read, len
+- `read` [priv] {trait-impl} crates/strider-py/src/reader.rs:613  (callers=5)  ->  (leaf)
+- `read` [priv] {trait-impl} crates/strider-py/src/reader.rs:642  (callers=5)  ->  from
+- `read` [priv] {trait-impl} crates/strider-py/src/reader.rs:657  (callers=5)  ->  read_exact
+- `extract_bound` [priv] {trait-impl} crates/strider-py/src/reader.rs:684  (callers=0)  ->  clone
+- `into_box` [pub] crates/strider-py/src/reader.rs:710  (callers=0)  ->  new, reader_view
+- `into_any` [pub] crates/strider-py/src/reader.rs:718  (callers=5)  ->  reader_view
+- `clone_one` [pub] crates/strider-py/src/reader.rs:728  (callers=4)  ->  clone
+- `register` [pub] crates/strider-py/src/reader.rs:736  (callers=1)  ->  (leaf)
+- `build_cc` [pub(crate)] crates/strider-py/src/run.rs:31  (callers=3)  ->  build, clone
+- `build_per_address_ccs` [pub(crate)] crates/strider-py/src/run.rs:45  (callers=3)  ->  build, into_iter, into_strider_err
+- `reject_zero_max_size` [pub(crate)] crates/strider-py/src/run.rs:69  (callers=3)  ->  (leaf)
+- `parse_alias_mode` [pub(crate)] crates/strider-py/src/run.rs:82  (callers=1)  ->  (leaf)
+- `build_orch_sleigh` [pub(crate)] crates/strider-py/src/run.rs:96  (callers=3)  ->  into_strider_err, new, pspec, sla_spec
+- `orch_lift_opts` [pub(crate)] crates/strider-py/src/run.rs:108  (callers=2)  ->  default
+- `unresolved_machine_addrs` [pub(crate)] crates/strider-py/src/run.rs:129  (callers=2)  ->  iter
+- `check_pending_control_flow` [pub(crate)] crates/strider-py/src/run.rs:138  (callers=4)  ->  take_pending_control_flow
+- `prefer_pending_control_flow` [pub(crate)] crates/strider-py/src/run.rs:152  (callers=2)  ->  check_pending_control_flow
+- `build_snapshot_cfg` [pub(crate)] crates/strider-py/src/run.rs:167  (callers=2)  ->  build_cfg_internal, new
+- `run` [pub] crates/strider-py/src/run.rs:255  (callers=4)  ->  reject_zero_max_size, run_via_orchestrator, run_with_custom_pipeline
+- `run_via_orchestrator` [priv] crates/strider-py/src/run.rs:309  (callers=1)  ->  analyze, build_cc, build_orch_sleigh, build_per_address_ccs, build_snapshot_cfg, check_pending_control_flow, clone, clone_one, default, into_any, into_strider_err, new, new_internal, orch_lift_opts, prefer_pending_control_flow, unresolved_machine_addrs
+- `run_with_custom_pipeline` [priv] crates/strider-py/src/run.rs:420  (callers=1)  ->  build_cfg_internal, build_ir_with, build_per_address_ccs, check_pending_control_flow, clone, clone_one, compact, default, drain_into_pipeline, drop, into_any, into_strider_err, iter, new, new_internal, prefer_pending_control_flow, run, sleigh_regs, write_inner
+- `register` [pub] crates/strider-py/src/run.rs:525  (callers=1)  ->  (leaf)
+- `new_internal` [pub(crate)] crates/strider-py/src/sleigh.rs:38  (callers=3)  ->  into_strider_err, new, pspec, sla_spec
+- `new` [priv] {pyo3} crates/strider-py/src/sleigh.rs:57  (callers=210)  ->  into_any, new_internal
+- `arch_name` [priv] {pyo3} crates/strider-py/src/sleigh.rs:63  (callers=0)  ->  (leaf)
+- `reg` [priv] {pyo3} crates/strider-py/src/sleigh.rs:73  (callers=0)  ->  (leaf)
+- `__repr__` [priv] {pyo3} crates/strider-py/src/sleigh.rs:78  (callers=0)  ->  (leaf)
+- `ram` [priv] {pyo3} crates/strider-py/src/sleigh.rs:108  (callers=0)  ->  (leaf)
+- `register` [priv] {pyo3} crates/strider-py/src/sleigh.rs:115  (callers=1)  ->  (leaf)
+- `const_` [priv] {pyo3} crates/strider-py/src/sleigh.rs:122  (callers=0)  ->  (leaf)
+- `unique` [priv] {pyo3} crates/strider-py/src/sleigh.rs:129  (callers=0)  ->  (leaf)
+- `name` [priv] {pyo3} crates/strider-py/src/sleigh.rs:137  (callers=3)  ->  (leaf)
+- `__repr__` [priv] {pyo3} crates/strider-py/src/sleigh.rs:152  (callers=0)  ->  name
+- `__eq__` [priv] {pyo3} crates/strider-py/src/sleigh.rs:157  (callers=0)  ->  (leaf)
+- `__hash__` [priv] {pyo3} crates/strider-py/src/sleigh.rs:162  (callers=0)  ->  from
+- `from_inner` [pub(crate)] {pyo3} crates/strider-py/src/sleigh.rs:197  (callers=0)  ->  (leaf)
+- `new` [priv] {pyo3} crates/strider-py/src/sleigh.rs:206  (callers=210)  ->  (leaf)
+- `space` [priv] {pyo3} crates/strider-py/src/sleigh.rs:218  (callers=0)  ->  (leaf)
+- `off` [priv] {pyo3} crates/strider-py/src/sleigh.rs:225  (callers=0)  ->  (leaf)
+- `size` [priv] {pyo3} crates/strider-py/src/sleigh.rs:230  (callers=4)  ->  (leaf)
+- `__repr__` [priv] {pyo3} crates/strider-py/src/sleigh.rs:235  (callers=0)  ->  (leaf)
+- `__eq__` [priv] {pyo3} crates/strider-py/src/sleigh.rs:244  (callers=0)  ->  (leaf)
+- `__hash__` [priv] {pyo3} crates/strider-py/src/sleigh.rs:249  (callers=0)  ->  from
+- `register` [pub] crates/strider-py/src/sleigh.rs:261  (callers=1)  ->  (leaf)
+- `new` [pub(crate)] {pyo3} crates/strider-py/src/strider_cls.rs:80  (callers=210)  ->  build_cc, build_orch_sleigh, into_any, sleigh_regs
+- `build_cfg` [priv] {pyo3} crates/strider-py/src/strider_cls.rs:107  (callers=2)  ->  build_cfg_internal
+- `analyze_cfg` [priv] {pyo3} crates/strider-py/src/strider_cls.rs:126  (callers=0)  ->  build_ir, drop, len, new
+- `build_optimizer_pipeline` [priv] {pyo3} crates/strider-py/src/strider_cls.rs:147  (callers=0)  ->  new_full_default
+- `build_cfg_internal` [pub(crate)] crates/strider-py/src/strider_cls.rs:156  (callers=3)  ->  build_cfg, default, from, reject_zero_max_size
+- `analyze` [priv] {pyo3} crates/strider-py/src/strider_cls.rs:251  (callers=3)  ->  build_per_address_ccs, build_snapshot_cfg, check_pending_control_flow, clone, clone_one, new, orch_lift_opts, parse_alias_mode, reject_zero_max_size, sleigh_regs, unresolved_machine_addrs
+- `strider` [pub] {pyo3} crates/strider-py/src/strider_cls.rs:347  (callers=0)  ->  build_cc, build_orch_sleigh, clone_one, into_any, into_strider_err, new
+- `register` [pub] crates/strider-py/src/strider_cls.rs:381  (callers=1)  ->  (leaf)
+- `elf_load_with_relocations` [pub] crates/strider-reader/src/elf/load.rs:30  (callers=1)  ->  apply_elf_relocations_autoload, elf_get_loadable_regions_including_writable
+- `elf_load_readonly_with_relocations` [pub] crates/strider-reader/src/elf/load.rs:71  (callers=1)  ->  apply_elf_relocations, elf_get_loadable_regions
+- `load_elf` [pub] crates/strider-reader/src/elf/load.rs:97  (callers=1)  ->  read
+- `from_object` [pub] crates/strider-reader/src/elf/reader.rs:39  (callers=1)  ->  elf_get_loadable_regions, new
+- `from_bytes` [pub] crates/strider-reader/src/elf/reader.rs:54  (callers=1)  ->  from_object
+- `from_path` [pub] crates/strider-reader/src/elf/reader.rs:65  (callers=0)  ->  from_bytes, read
+- `read` [priv] {trait-impl} crates/strider-reader/src/elf/reader.rs:74  (callers=5)  ->  (leaf)
+- `read` [priv] {trait-impl} crates/strider-reader/src/elf/reader.rs:86  (callers=5)  ->  read_exact
+- `apply_addend` [priv] crates/strider-reader/src/elf/relocations.rs:39  (callers=2)  ->  (leaf)
+- `apply_elf_relocations` [pub] crates/strider-reader/src/elf/relocations.rs:110  (callers=2)  ->  apply_one_relocation, for_each_reloc_site, from_regions
+- `for_each_reloc_site` [priv] crates/strider-reader/src/elf/relocations.rs:148  (callers=2)  ->  kind
+- `apply_one_relocation` [priv] crates/strider-reader/src/elf/relocations.rs:182  (callers=1)  ->  apply_addend, endianness, got_or_plt_slot_reloc_size, image_relative_reloc, kind, locate_and_write, mips_rel32_symbol_reloc_size, resolve_symbol_target, size, target
+- `from_regions` [priv] crates/strider-reader/src/elf/relocations.rs:378  (callers=4)  ->  end_addr, iter, new, rebuild_max_end, start_addr
+- `rebuild_max_end` [priv] crates/strider-reader/src/elf/relocations.rs:394  (callers=2)  ->  clear, len
+- `insert` [priv] crates/strider-reader/src/elf/relocations.rs:410  (callers=47)  ->  rebuild_max_end
+- `covers` [priv] crates/strider-reader/src/elf/relocations.rs:418  (callers=1)  ->  (leaf)
+- `covering_index` [priv] crates/strider-reader/src/elf/relocations.rs:439  (callers=1)  ->  fully_covers, iter
+- `apply_elf_relocations_with_extender` [pub(crate)] crates/strider-reader/src/elf/relocations.rs:497  (callers=1)  ->  apply_elf_relocations, covers, end_addr, extend, for_each_reloc_site, from_regions, insert, len, new, start_addr
+- `apply_elf_relocations_autoload` [pub] crates/strider-reader/src/elf/relocations.rs:586  (callers=1)  ->  apply_elf_relocations_with_extender, data, find_loadable_section_containing, is_empty, new
+- `find_loadable_section_containing` [priv] crates/strider-reader/src/elf/relocations.rs:606  (callers=1)  ->  data, from, is_empty, len
+- `resolve_symbol_target` [priv] crates/strider-reader/src/elf/relocations.rs:655  (callers=1)  ->  target
+- `image_relative_reloc` [priv] crates/strider-reader/src/elf/relocations.rs:696  (callers=1)  ->  apply_addend, target
+- `got_or_plt_slot_reloc_size` [priv] crates/strider-reader/src/elf/relocations.rs:794  (callers=1)  ->  (leaf)
+- `mips_rel32_symbol_reloc_size` [priv] crates/strider-reader/src/elf/relocations.rs:858  (callers=1)  ->  target
+- `locate_and_write` [priv] crates/strider-reader/src/elf/relocations.rs:886  (callers=1)  ->  covering_index, data_mut, start_addr, write_at
+- `write_at` [priv] crates/strider-reader/src/elf/relocations.rs:914  (callers=1)  ->  len, to_le_bytes
+- `segment_accepts` [priv] crates/strider-reader/src/elf/sections.rs:70  (callers=1)  ->  (leaf)
+- `section_accepts` [priv] crates/strider-reader/src/elf/sections.rs:81  (callers=1)  ->  from
+- `elf_get_loadable_regions` [pub] crates/strider-reader/src/elf/sections.rs:113  (callers=4)  ->  collect_loadable_regions
+- `elf_get_loadable_regions_including_writable` [pub] crates/strider-reader/src/elf/sections.rs:130  (callers=1)  ->  collect_loadable_regions
+- `collect_loadable_regions` [priv] crates/strider-reader/src/elf/sections.rs:138  (callers=2)  ->  collect_loadable_sections_dedup, collect_loadable_segments, kind
+- `collect_loadable_segments` [priv] crates/strider-reader/src/elf/sections.rs:156  (callers=1)  ->  data, is_empty, new, segment_accepts
+- `collect_loadable_sections_dedup` [priv] crates/strider-reader/src/elf/sections.rs:191  (callers=1)  ->  data, entry, insert, is_empty, new, section_accepts
+- `fmt` [priv] {trait-impl} crates/strider-reader/src/lib.rs:45  (callers=0)  ->  (leaf)
+- `source` [priv] {trait-impl} crates/strider-reader/src/lib.rs:51  (callers=6)  ->  (leaf)
+- `from` [priv] {trait-impl} crates/strider-reader/src/lib.rs:60  (callers=35)  ->  (leaf)
+- `new` [pub] crates/strider-reader/src/lib.rs:105  (callers=210)  ->  len
+- `start_addr` [pub] crates/strider-reader/src/lib.rs:114  (callers=4)  ->  (leaf)
+- `data` [pub] crates/strider-reader/src/lib.rs:119  (callers=7)  ->  (leaf)
+- `data_mut` [pub] crates/strider-reader/src/lib.rs:128  (callers=1)  ->  (leaf)
+- `end_addr` [pub] crates/strider-reader/src/lib.rs:137  (callers=5)  ->  len
+- `contains` [pub] crates/strider-reader/src/lib.rs:142  (callers=35)  ->  end_addr
+- `read` [pub] crates/strider-reader/src/lib.rs:160  (callers=5)  ->  available_at, len
+- `available_at` [priv] crates/strider-reader/src/lib.rs:173  (callers=3)  ->  len
+- `fully_covers` [pub] crates/strider-reader/src/lib.rs:188  (callers=2)  ->  contains, end_addr
+- `new` [pub] crates/strider-reader/src/lib.rs:218  (callers=210)  ->  insert, start_addr
+- `read` [pub] crates/strider-reader/src/lib.rs:262  (callers=5)  ->  available_at, fully_covers, len
+- `read_exact` [pub] crates/strider-reader/src/lib.rs:293  (callers=2)  ->  len, read
+- `read_uint` [pub] crates/strider-target/src/arch.rs:25  (callers=1)  ->  len
+- `sla_spec` [pub] crates/strider-target/src/arch.rs:117  (callers=3)  ->  (leaf)
+- `pspec` [pub] crates/strider-target/src/arch.rs:121  (callers=3)  ->  (leaf)
+- `endianness` [pub] crates/strider-target/src/arch.rs:125  (callers=6)  ->  (leaf)
+- `preset` [pub] crates/strider-target/src/arch.rs:132  (callers=2)  ->  (leaf)
+- `probe_regs` [pub] crates/strider-target/src/arch.rs:250  (callers=0)  ->  new
+- `build` [pub] crates/strider-target/src/call_other_abi.rs:79  (callers=17)  ->  regs_to_vns
+- `classify` [pub] crates/strider-target/src/call_other_abi.rs:117  (callers=2)  ->  classify_arch_independent, classify_arch_specific
+- `classify_arch_specific` [priv] crates/strider-target/src/call_other_abi.rs:127  (callers=1)  ->  contains, iter
+- `classify_arch_independent` [priv] crates/strider-target/src/call_other_abi.rs:454  (callers=1)  ->  iter
+- `vn_for_name` [pub(crate)] crates/strider-target/src/calling_convention/mod.rs:8  (callers=2)  ->  (leaf)
+- `regs_to_vns` [pub(crate)] crates/strider-target/src/calling_convention/mod.rs:16  (callers=2)  ->  iter, vn_for_name
+- `default` [priv] {trait-impl} crates/strider-target/src/calling_convention/mod.rs:153  (callers=54)  ->  new
+- `first_in_both` [priv] crates/strider-target/src/calling_convention/mod.rs:183  (callers=1)  ->  contains, iter
+- `first_dup` [priv] crates/strider-target/src/calling_convention/mod.rs:191  (callers=1)  ->  contains, iter
+- `try_new` [pub] crates/strider-target/src/calling_convention/mod.rs:223  (callers=2)  ->  contains, first_dup, first_in_both, iter
+- `offset_of` [pub] crates/strider-target/src/calling_convention/mod.rs:354  (callers=1)  ->  (leaf)
+- `slot_of` [pub] crates/strider-target/src/calling_convention/mod.rs:386  (callers=1)  ->  (leaf)
+- `slots_spanned` [pub] crates/strider-target/src/calling_convention/mod.rs:411  (callers=1)  ->  (leaf)
+- `lookup_preset` [pub(crate)] crates/strider-target/src/calling_convention/mod.rs:836  (callers=1)  ->  iter
+- `cc_from_table` [priv] crates/strider-target/src/calling_convention/mod.rs:847  (callers=0)  ->  lookup_preset
+- `build` [pub] crates/strider-target/src/calling_convention/mod.rs:914  (callers=17)  ->  regs_to_vns, try_new, vn_for_name
