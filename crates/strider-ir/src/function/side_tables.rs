@@ -181,14 +181,6 @@ impl SideTables {
         self.arg_index_to_values.keys().copied()
     }
 
-    /// Drop registered argument carriers for every index `>= first` (lets the
-    /// stack-arg pass idempotently rebuild only the stack-arg portion without
-    /// disturbing the register-arg carriers at indices `0 .. first`).
-    #[inline]
-    pub fn clear_arg_values_from(&mut self, first: u32) {
-        self.arg_index_to_values.retain(|&index, _| index < first);
-    }
-
     /// Returns the stack slot `(base, offset)` recorded for a Store/Load node,
     /// or `None`.  `base` is the SP-derived terminal node the offset is
     /// relative to; offsets compare only when their bases match.
