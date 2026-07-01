@@ -665,12 +665,17 @@ impl Function {
 
     /// Iterates the `initial_var_index` as `(vn, node_id)` pairs.  Used by the
     /// validator to enforce that every entry still resolves to a live
-    /// `InitialVar(vn)` node with the matching varnode.
+    /// `InitialVar(id)` node with the matching varnode.  Resolves each
+    /// [`crate::node::InitialVnId`] key back to its varnode at the boundary so
+    /// callers stay `Vn`-facing.
     #[inline]
     pub(crate) fn initial_var_index_entries(
         &self,
     ) -> impl Iterator<Item = (rsleigh::Vn, NodeId)> + '_ {
-        self.side_tables.initial_var_index.iter().map(|(&vn, &id)| (vn, id))
+        self.side_tables
+            .initial_var_index
+            .iter()
+            .map(|(&vn_id, &id)| (self.initial_vn(vn_id), id))
     }
 
     /// Iterates the `value_vn` map as `(value, vn)` pairs.  Used by the
@@ -692,10 +697,8 @@ impl Function {
     /// an [`crate::EditFunction`] that maintains one) — a culled `InitialVar(sp)`
     /// is never referenced by a live load anyway.
     pub fn initial_sp(&self) -> Option<NodeId> {
-        self.side_tables
-            .initial_var_index
-            .get(&self.default_cc.stack_vn)
-            .copied()
+        let sp_id = self.vn_id_of(&self.default_cc.stack_vn)?;
+        self.side_tables.initial_var_index.get(&sp_id).copied()
     }
 
     /// Returns the asm-instruction-address fingerprint of `node_id` as a
@@ -817,9 +820,12 @@ impl Function {
         })?;
         self.entry = new_entry;
         // Remap all the arena-id-keyed overlay tables through the old→new
-        // translation produced by `retain_reachable`.  `all_vns`, `default_cc`
-        // and `vn_to_container` hold plain `rsleigh::Vn`s (no arena ids), so
-        // they need no remap.
+        // translation produced by `retain_reachable`.  The `vn_interner`,
+        // `default_cc` and `vn_to_container` are untouched: the tracked-vn set
+        // does not change when dead nodes are culled, so `InitialVnId`
+        // assignment is stable and the interner needs no remap (which is why
+        // `initial_var_index`, now `InitialVnId`-keyed, remaps only its NodeId
+        // payload).
         self.side_tables.remap(&remap);
         // GC the const interner over only the values referenced by surviving
         // `IntConst(id)` nodes, rewriting each survivor's id to the new dense

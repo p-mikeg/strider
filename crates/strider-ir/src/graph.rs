@@ -110,8 +110,8 @@ pub type InputCursor<'a> = strider_graph::InputCursor<'a, NodeKind, ValueKind, I
 /// Used by [`crate::Function::compact`] to fold every `NodeId`-keyed
 /// overlay table through one iteration site.
 ///
-/// The Vn-keyed `initial_var_index` does **not** fit this shape (its
-/// key is `rsleigh::Vn`, not `NodeId`) and is remapped inline in
+/// The `InitialVnId`-keyed `initial_var_index` does **not** fit this shape
+/// (its key is a tracked-varnode id, not `NodeId`) and is remapped inline in
 /// `Function::compact`.
 pub(crate) fn remap_node_keyed<T: Default + Clone>(
     map: &mut SecondaryMap<NodeId, T>,

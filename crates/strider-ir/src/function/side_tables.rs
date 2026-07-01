@@ -99,17 +99,20 @@ pub(crate) struct SideTables {
     /// case (address is a phi of different constants per branch) is not
     /// recorded — consumers can re-decompose via `decompose_sp` if needed.
     pub(crate) stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>>,
-    /// O(1) varnode → `InitialVar(vn)` node-id accelerator for
-    /// indirect-resolve sites and the lifter's lazy `read_or_init_var`
-    /// fallback.  Maintained at every canonical `InitialVar`
-    /// creation site (the lift-time path and the orchestrator
-    /// fallback) and remapped through [`NodeIdRemap`] by
-    /// [`crate::Function::compact`].
+    /// O(1) [`crate::node::InitialVnId`] → `InitialVar(id)` node-id accelerator
+    /// for indirect-resolve sites and the lifter's lazy `read_or_init_var`
+    /// fallback.  Keyed by the tracked-varnode id (not the raw `rsleigh::Vn`)
+    /// — the id is 4 bytes vs the varnode's 16, and every key is by
+    /// construction a tracked varnode (an `InitialVar` payload).  Maintained
+    /// at every canonical `InitialVar` creation site (the lift-time path and
+    /// the orchestrator fallback).  The `InitialVnId` keys are stable across
+    /// compaction (the tracked set doesn't change when dead nodes are culled),
+    /// so [`crate::Function::compact`] remaps only the `NodeId` payload.
     ///
     /// Writers must guarantee the inserted `node_id`'s kind is
-    /// `NodeKind::InitialVar(vn)` for the key `vn` — the index is advisory and
+    /// `NodeKind::InitialVar(id)` for the key `id` — the index is advisory and
     /// never re-checked.
-    pub(crate) initial_var_index: FxHashMap<rsleigh::Vn, NodeId>,
+    pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
 }
 
 impl SideTables {
@@ -145,9 +148,12 @@ impl SideTables {
                 .value_old_to_new(old_value)
                 .map(|new_value| (new_value, vn))
         });
-        // `initial_var_index`: Vn-keyed with a NodeId payload; remap the value.
-        self.initial_var_index = remap_hashmap(&mut self.initial_var_index, |vn, old_id| {
-            remap.node_old_to_new(old_id).map(|new_id| (vn, new_id))
+        // `initial_var_index`: `InitialVnId`-keyed with a NodeId payload. The
+        // `InitialVnId` keys are stable across compaction (the tracked-vn set
+        // is unchanged), so only the NodeId payload is remapped; a key whose
+        // node did not survive is dropped.
+        self.initial_var_index = remap_hashmap(&mut self.initial_var_index, |vn_id, old_id| {
+            remap.node_old_to_new(old_id).map(|new_id| (vn_id, new_id))
         });
         // `arg_index_to_values`: index-keyed with a `Vec<ValueId>` payload;
         // filter-map the carriers, dropping an index whose carriers all vanish.
