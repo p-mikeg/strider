@@ -31,7 +31,11 @@ use super::node_pat::NodePat;
 fn phi_var_limit(want: rsleigh::Vn) -> NodePredicate {
     Box::new(move |m, n| {
         let v = m.function().node_outputs(n)[0];
-        m.function().get_vn_for_value(v) == Some(want)
+        // The tag stores the largest container, so a pinned sub-register
+        // matches its container (see [`crate::vn_contain`]).
+        m.function()
+            .get_vn_for_value(v)
+            .is_some_and(|got| crate::vn_contain::vn_contains(&got, &want))
     })
 }
 

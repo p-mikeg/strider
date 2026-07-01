@@ -187,7 +187,9 @@ impl MatchPat for InitialVarFor {
                 matches!(
                     *m.function().node_kind(node),
                     strider_ir::node::NodeKind::InitialVar(id)
-                        if m.function().initial_vn(id) == want
+                        // The IR stores only the largest container, so a pinned
+                        // sub-register (`eax`) matches its container (`rax`).
+                        if crate::vn_contain::vn_contains(&m.function().initial_vn(id), &want)
                 )
             }),
         );
