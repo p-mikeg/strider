@@ -733,30 +733,15 @@ fn standard_presets_have_preserves_memory_false() {
     // so its Call nodes correctly clobber memory.  Only x86_64_all_preserving
     // opts out.
     let presets: &[(&str, CallingConvention)] = &[
-        (
-            "x86_64_systemv",
-            CallingConvention::x86_64_systemv(),
-        ),
+        ("x86_64_systemv", CallingConvention::x86_64_systemv()),
         ("x86_cdecl", CallingConvention::x86_cdecl()),
-        (
-            "aarch64_aapcs64",
-            CallingConvention::aarch64_aapcs64(),
-        ),
+        ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64()),
         ("arm_aapcs", CallingConvention::arm_aapcs()),
         ("mips_o32", CallingConvention::mips_o32()),
         ("mips_n64", CallingConvention::mips_n64()),
-        (
-            "powerpc_sysv32",
-            CallingConvention::powerpc_sysv32(),
-        ),
-        (
-            "powerpc64_elf_v1",
-            CallingConvention::powerpc64_elf_v1(),
-        ),
-        (
-            "powerpc64_elf_v2",
-            CallingConvention::powerpc64_elf_v2(),
-        ),
+        ("powerpc_sysv32", CallingConvention::powerpc_sysv32()),
+        ("powerpc64_elf_v1", CallingConvention::powerpc64_elf_v1()),
+        ("powerpc64_elf_v2", CallingConvention::powerpc64_elf_v2()),
     ];
     for (name, cc) in presets {
         assert!(
@@ -773,10 +758,7 @@ fn every_preset_factory_resolves() {
     // future edit appends a wrapper without appending a row (or
     // misspells the name), this test catches it before the production
     // panic at `cc_from_table` fires.
-    let factories: &[(
-        &str,
-        fn() -> CallingConvention,
-    )] = &[
+    let factories: &[(&str, fn() -> CallingConvention)] = &[
         ("x86_64_systemv", CallingConvention::x86_64_systemv),
         (
             "x86_64_all_preserving",
@@ -819,9 +801,7 @@ fn every_preset_factory_resolves() {
 #[test]
 fn positional_arg_layout_x86_64_systemv() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
-    let cc = CallingConvention::x86_64_systemv()
-        .build(&regs)
-        .unwrap();
+    let cc = CallingConvention::x86_64_systemv().build(&regs).unwrap();
     assert_eq!(cc.arg_passing_regs.len(), 6);
     let stack = cc.stack_args.unwrap();
     // First stack positional sits at ordinal 6 (after the 6 register args).
@@ -833,9 +813,7 @@ fn positional_arg_layout_x86_64_systemv() {
 #[test]
 fn positional_arg_layout_x86_cdecl_stack_only() {
     let regs = regs_for(crate::arch::SleighArch::x86());
-    let cc = CallingConvention::x86_cdecl()
-        .build(&regs)
-        .unwrap();
+    let cc = CallingConvention::x86_cdecl().build(&regs).unwrap();
 
     // No register args; stack slots start at index 0, offset +4 with a
     // 4-byte stride.

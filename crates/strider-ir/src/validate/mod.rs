@@ -39,11 +39,11 @@ mod tests;
 mod use_list_consistency;
 
 use graph_invariants::{
-    check_graph_invariants_asm_fingerprints,
-    check_graph_invariants_consts, check_graph_invariants_control_single_use,
-    check_graph_invariants_extend_truncate, check_graph_invariants_memory_chain,
-    check_graph_invariants_phis, check_graph_invariants_region,
-    check_graph_invariants_side_indices, check_graph_invariants_uniqueness,
+    check_graph_invariants_asm_fingerprints, check_graph_invariants_consts,
+    check_graph_invariants_control_single_use, check_graph_invariants_extend_truncate,
+    check_graph_invariants_memory_chain, check_graph_invariants_phis,
+    check_graph_invariants_region, check_graph_invariants_side_indices,
+    check_graph_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 use use_list_consistency::check_use_list_consistency;

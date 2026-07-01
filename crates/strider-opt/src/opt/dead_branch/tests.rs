@@ -1,7 +1,7 @@
 use super::*;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{IRBuilderExt, IRWalker};
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
 use crate::{CfgDetach, ConstantFold, OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse};
@@ -381,7 +381,6 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
         let (call_node, _) = b.build_call_other_abi(
             0,
             "cpuid",
-            None,
             &[],
             &strider_target::BuiltCallOtherAbi {
                 implicit_reads: Vec::new(),

@@ -39,8 +39,9 @@ fn single_input_region_collapses() -> crate::Result<()> {
         .next()
         .expect("a control consumer of the body Region");
 
-    let changed = crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?
-        .changed();
+    let changed =
+        crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?
+            .changed();
     assert!(changed, "single-input Region must collapse");
 
     // The consumer's control input now points at the Region's predecessor.

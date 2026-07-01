@@ -2,8 +2,8 @@ use super::*;
 use crate::error::Result;
 use crate::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeKind, ValueId, ValueType};
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{
     RegisterSet, SENTINEL_LIFT_ADDR, reg_vn, stack_vn_aarch64, stack_vn_x86 as sp32_vn,
     stack_vn_x86_64 as stack_vn,
@@ -1330,7 +1330,6 @@ fn callother_on_chain_gated_only_by_calls_clobber() -> Result<()> {
         let (call_node, _result) = b.build_call_other_abi(
             42,
             "escape_helper",
-            None,
             &[sp_val],
             &strider_target::BuiltCallOtherAbi {
                 implicit_reads: Vec::new(),

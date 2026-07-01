@@ -578,10 +578,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// The generic graph compacts only the structural arena (nodes, values,
     /// uses). Any consumer side-tables are the consumer's concern; they remap
     /// via the returned table.
-    pub fn retain_reachable(
-        &mut self,
-        reachable: impl IntoIterator<Item = NodeId>,
-    ) -> NodeIdRemap
+    pub fn retain_reachable(&mut self, reachable: impl IntoIterator<Item = NodeId>) -> NodeIdRemap
     where
         N: Clone,
         V: Clone,
@@ -667,7 +664,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
         remap
     }
-
 }
 
 /// Old→new id translation table produced by [`Graph::retain_reachable`].

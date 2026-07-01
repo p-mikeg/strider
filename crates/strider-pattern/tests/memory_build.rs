@@ -27,13 +27,7 @@ fn load_unconstrained_matches() {
     let function = b.build().unwrap();
 
     let pat = load().build();
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&pat)
-            .unwrap()
-            .len(),
-        1
-    );
+    assert_eq!(Matcher::new(&function).find_all(&pat).unwrap().len(), 1);
 }
 
 #[test]
@@ -296,13 +290,7 @@ fn load_mem_in_rejects_wrong_store() {
         .addr(int_const(0x999u128))
         .mem_in(store().addr(int_const(0xBEEFu128)))
         .build();
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&pat)
-            .unwrap()
-            .len(),
-        0
-    );
+    assert_eq!(Matcher::new(&function).find_all(&pat).unwrap().len(), 0);
 }
 
 #[test]

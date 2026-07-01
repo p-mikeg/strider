@@ -30,8 +30,8 @@ mod common;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{IRViewer, IRWalker};
+use strider_ir_test_utils::IrWalkerEx;
 use strider_orchestrator::opt::OptOptions;
 use strider_orchestrator::{LiftOptions, Strider};
 use strider_target::{CallingConvention, SleighArch};
@@ -251,7 +251,9 @@ fn find_call_to(function: &strider_ir::Function, target: u64) -> Option<strider_
                 .node_inputs(nid)
                 .into_iter()
                 .nth(2)
-                .is_some_and(|target_value| function.int_const_u128(target_value) == Some(u128::from(target)))
+                .is_some_and(|target_value| {
+                    function.int_const_u128(target_value) == Some(u128::from(target))
+                })
     })
 }
 

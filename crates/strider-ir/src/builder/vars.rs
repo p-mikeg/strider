@@ -75,7 +75,10 @@ impl FunctionBuilder {
             // `read_or_init_var` fallback) don't re-scan `preorder()`
             // to locate it.
             let node_id = self.function().producer(value);
-            self.function_mut().side_tables.initial_var_index.insert(vn_id, node_id);
+            self.function_mut()
+                .side_tables
+                .initial_var_index
+                .insert(vn_id, node_id);
         }
         // Register-passed argument carriers are recorded by the LIFTER right
         // after this call (it owns the machine-register `container_of` map,

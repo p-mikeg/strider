@@ -16,10 +16,10 @@
 
 use std::collections::BTreeMap;
 
+use strider_ir::node::NodeKind;
 use strider_ir::{
     Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, ReadOnlyMemory, Result, Value,
 };
-use strider_ir::node::NodeKind;
 
 /// Test-only extension over [`IRWalker`] supplying node-kind counting /
 /// existence assertions.  These are assertion vocabulary used only by tests, so

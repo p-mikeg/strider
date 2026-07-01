@@ -93,7 +93,9 @@ pub(crate) fn try_match_node(
     if root_requires_value_output(pat, root) {
         return false;
     }
-    try_match_at(matcher, pat, root, node, None, None, bindings, &mut |_| true)
+    try_match_at(matcher, pat, root, node, None, None, bindings, &mut |_| {
+        true
+    })
 }
 
 /// Whether the root pat node declares an output vertex that demands a
@@ -235,7 +237,11 @@ fn try_match_at(
     };
 
     let mark = bindings.mark();
-    let orders: &[bool] = if commutative { &[false, true] } else { &[false] };
+    let orders: &[bool] = if commutative {
+        &[false, true]
+    } else {
+        &[false]
+    };
 
     for &swap in orders {
         // `done` finishes THIS node once an operand ordering has fully matched

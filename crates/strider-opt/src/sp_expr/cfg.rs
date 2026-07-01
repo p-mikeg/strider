@@ -62,8 +62,7 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_, '_> {
                 // `decompose`) and its size, then run the pure class-on-class
                 // verdict directly — anything but `Disjoint` clobbers (a
                 // `load_forward` caller re-checks exact-`Match` afterward).
-                let store_size =
-                    store_value_byte_size(function.graph(), function.store_data(def));
+                let store_size = store_value_byte_size(function.graph(), function.store_data(def));
                 let store_class =
                     SpAnalyzer::new(function, &mut *self.cfg.sp_memo).classify_store_addr(def);
                 alias_verdict(

@@ -76,7 +76,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // vn-resolved footprint the builder consumes.
         let built_abi = abi.build(&self.lifter.sleigh_regs)?;
 
-        self.build_abi_call_other(user_op_id, name, &explicit_args, &built_abi, output_vn, false)?;
+        self.build_abi_call_other(
+            user_op_id,
+            name,
+            &explicit_args,
+            &built_abi,
+            output_vn,
+            false,
+        )?;
         Ok(())
     }
 
@@ -120,15 +127,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let mut output_vns: Vec<rsleigh::Vn> = result_vn.into_iter().collect();
         output_vns.extend_from_slice(&clobber_vns);
 
-        let (_node, outputs) = self.builder.build_call_other(
+        let (node, outputs) = self.builder.build_call_other(
             user_op_id,
-            name,
-            None,
             &args,
             &output_vns,
             abi.clobbers_memory,
             terminate,
         )?;
+        self.builder.function_mut().set_call_other_name(node, name);
         let (ret_vals, clobbers) = outputs.split_at(result_vn.iter().count());
 
         // Writeback: clobbers then the result — both full-container writes via

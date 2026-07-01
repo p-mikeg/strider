@@ -5,7 +5,7 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
-use crate::graph::{remap_node_keyed, NodeIdRemap};
+use crate::graph::{NodeIdRemap, remap_node_keyed};
 use crate::node::{NodeId, ValueId};
 
 /// Drains an `FxHashMap` and rebuilds it through a per-entry translation,

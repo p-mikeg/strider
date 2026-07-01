@@ -583,15 +583,8 @@ fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
     let ctrl_before = b.cur_region_control()?;
     let mem_before = b.cur_region_memory()?;
 
-    let (node, result) = b.build_call_other_abi(
-        7,
-        "NEON_rev64",
-        None,
-        &[],
-        &empty_call_other_abi(),
-        None,
-        false,
-    )?;
+    let (node, result) =
+        b.build_call_other_abi(7, "NEON_rev64", &[], &empty_call_other_abi(), None, false)?;
     assert!(result.is_none(), "no output vn -> no ret-val output");
 
     // Ctrl advances; memory does NOT (empty footprint, clobbers_memory=false).
@@ -617,7 +610,6 @@ fn build_call_other_with_result_returns_typed_value() -> Result<()> {
     let (node, result) = b.build_call_other_abi(
         3,
         "cpuid",
-        None,
         &[arg],
         &empty_call_other_abi(),
         Some(out_vn),
@@ -644,7 +636,6 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
     let (node, _) = b.build_call_other_abi(
         4,
         "cpuid",
-        None,
         &[],
         &empty_call_other_abi(),
         Some(out_vn),
@@ -736,15 +727,7 @@ fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
 fn build_call_other_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
-    let res = b.build_call_other_abi(
-        0,
-        "cpuid",
-        None,
-        &[mem],
-        &empty_call_other_abi(),
-        None,
-        false,
-    );
+    let res = b.build_call_other_abi(0, "cpuid", &[mem], &empty_call_other_abi(), None, false);
     let err = res.expect_err("expected ExpectedValue error");
     assert!(
         err.to_string().contains("is not a value edge"),
@@ -1014,7 +997,7 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
 
     let mem_before = b.cur_region_memory()?;
     let (node, result) =
-        b.build_call_other_abi(5, "syscall", None, &[explicit], &abi, Some(out_vn), false)?;
+        b.build_call_other_abi(5, "syscall", &[explicit], &abi, Some(out_vn), false)?;
 
     // Inputs: [ctrl, mem] ++ [read(RCX)] ++ explicit_args.  Implicit reads
     // come FIRST, then the explicit pcode operands.  No target.
@@ -1041,7 +1024,10 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
         ValueKind::Typed(ValueType::I64),
         "RCX read is I64-typed (8-byte container)",
     );
-    assert_eq!(inputs[3], explicit, "explicit arg follows the implicit read");
+    assert_eq!(
+        inputs[3], explicit,
+        "explicit arg follows the implicit read"
+    );
 
     // Outputs: [ctrl, mem, result(tagged out_vn), RAX, RDX].
     let outs: Vec<ValueId> = b.function().node_outputs(node).to_vec();
@@ -1105,7 +1091,7 @@ fn build_call_other_rejects_untracked_implicit_write() -> Result<()> {
         implicit_writes: vec![untracked],
         clobbers_memory: false,
     };
-    let res = b.build_call_other_abi(11, "bogus", None, &[], &abi, None, false);
+    let res = b.build_call_other_abi(11, "bogus", &[], &abi, None, false);
     assert!(res.is_err(), "untracked implicit-write register must error");
     Ok(())
 }
@@ -1184,7 +1170,7 @@ fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
     // the no-return classification.
     let mut b = builder_with_region()?;
     let (node, result) =
-        b.build_call_other_abi(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
+        b.build_call_other_abi(0, "ud2", &[], &empty_call_other_abi(), None, true)?;
     assert!(result.is_none(), "no output vn -> no ret-val output");
     let outs: Vec<_> = b.function().node_outputs(node).to_vec();
     assert_eq!(
@@ -1226,7 +1212,7 @@ fn build_call_other_terminate_true_closes_region() -> Result<()> {
     // build_call_other with terminate=true (the NoReturn class) must
     // close the region on its own — no external termination call.
     let mut b = builder_with_region()?;
-    b.build_call_other_abi(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
+    b.build_call_other_abi(0, "ud2", &[], &empty_call_other_abi(), None, true)?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_err(),
@@ -1241,7 +1227,7 @@ fn build_call_other_terminate_false_keeps_region_open() -> Result<()> {
     // leave the region open — control advances to the CallOther's Control
     // output, but the region is still live.
     let mut b = builder_with_region()?;
-    b.build_call_other_abi(0, "cpuid", None, &[], &empty_call_other_abi(), None, false)?;
+    b.build_call_other_abi(0, "cpuid", &[], &empty_call_other_abi(), None, false)?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_ok(),

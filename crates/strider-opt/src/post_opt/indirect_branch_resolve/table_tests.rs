@@ -17,10 +17,10 @@ use crate::{
 use rsleigh::VnSpace;
 use std::sync::Mutex;
 use strider_ir::node::ValueType;
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{
     ExtendOp, Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
 };
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{
     MockRom, RegisterSet, stack_vn_aarch64 as sp64, stack_vn_x86 as sp32_vn,
 };
@@ -1554,7 +1554,6 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
         let (lock_node, _result) = b.build_call_other_abi(
             0x1234,
             "LOCK",
-            None,
             &[],
             &strider_target::BuiltCallOtherAbi {
                 implicit_reads: Vec::new(),

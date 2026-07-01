@@ -1,11 +1,11 @@
 use super::*;
 use anyhow::anyhow;
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
 };
+use strider_ir_test_utils::IrWalkerEx;
 
 use crate::test_support::{
     assert_return_kind, assert_returns_const, make_fn, make_fn_with_var, return_kind, return_value,
@@ -79,17 +79,11 @@ fn two_independent_instances_each_fold() -> Result<()> {
     let pass_b = ConstantFold::new();
 
     let mut fg_a = add_consts_fixture()?;
-    assert!(
-        crate::pipeline::run_one(&pass_a, &mut fg_a, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
+    assert!(crate::pipeline::run_one(&pass_a, &mut fg_a, &mut crate::OptCtx::new(None))?.changed());
     assert_returns_const(&fg_a, 7);
 
     let mut fg_b = add_consts_fixture()?;
-    assert!(
-        crate::pipeline::run_one(&pass_b, &mut fg_b, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
+    assert!(crate::pipeline::run_one(&pass_b, &mut fg_b, &mut crate::OptCtx::new(None))?.changed());
     assert_returns_const(&fg_b, 7);
     Ok(())
 }
@@ -120,7 +114,8 @@ fn int_binary_fold_skips_width_mismatched_operands() -> Result<()> {
             .expect("binary op has 1 output");
         Ok(out)
     })?;
-    let outcome = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    let outcome =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     assert!(
         !outcome.changed(),
         "width-mismatched binary fold must skip, not fold"
@@ -157,7 +152,8 @@ fn int_cmp_fold_skips_width_mismatched_operands() -> Result<()> {
             .expect("cmp op has 1 output");
         Ok(out)
     })?;
-    let outcome = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    let outcome =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     assert!(
         !outcome.changed(),
         "width-mismatched cmp fold must skip, not fold"
@@ -401,7 +397,8 @@ fn unary_fold_skips_wide_const_cleanly() -> Result<()> {
         b.build_int_unary_operation(c, IntUnaryOp::Neg, ValueType::I256)
     })?;
     // Must not error (the bug surfaced here as `Err(missing binding …)`).
-    let outcome = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    let outcome =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     // The wide const can't fold, so nothing should change.
     assert!(
         !outcome.changed(),
@@ -591,7 +588,8 @@ fn reassoc_no_fold_without_const() -> Result<()> {
     let mut fg = b.build()?;
     let before = return_value(fg.graph())?;
     // Should not change: no constants anywhere.
-    let res = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    let res =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     assert!(!res.changed(), "no-const chain should not reassociate");
     assert_eq!(return_value(fg.graph())?, before);
     Ok(())
@@ -637,8 +635,9 @@ fn reachable_or_nodes(fg: &strider_ir::Function) -> usize {
 fn distribution_rewrite_simplifies_when_a_product_is_zero() -> Result<()> {
     let mut fg = build_and_dist_fn(0xFFFF_0000, 0x0000_FFFF, 0x0000_FFFF)?;
     assert_eq!(reachable_or_nodes(&fg), 1, "test setup expects one Or node");
-    let changed = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
-        .changed();
+    let changed =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
+            .changed();
     assert!(changed, "distribution rule should fire and simplify");
     // Drive ConstantFold to a true fixed point (each `run_one` only
     // re-seeds the directly-rewritten node, so the cascade
@@ -689,8 +688,9 @@ fn align_or_removal_drops_or_when_set_bits_are_masked_off() -> Result<()> {
     let mut fg = b.build()?;
     assert_eq!(reachable_or_nodes(&fg), 1, "test setup expects one Or node");
 
-    let changed = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
-        .changed();
+    let changed =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
+            .changed();
     assert!(changed, "alignment-OR-removal rule should fire");
     for _ in 0..8 {
         if !crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
@@ -740,8 +740,9 @@ fn distribution_does_not_churn_when_both_products_nonzero() -> Result<()> {
     );
 
     // Re-running converges immediately: the result is a stable fixed point.
-    let second = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
-        .changed();
+    let second =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
+            .changed();
     assert!(
         !second,
         "result must be a stable fixed point (no further change)"
@@ -1389,8 +1390,12 @@ fn no_fold_divide_family_by_zero_i32_cases() -> Result<()> {
             b.build_int_binary_operation(x, zero, op, ValueType::I32)
         })?;
         assert!(
-            !crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
-                .changed(),
+            !crate::pipeline::run_one(
+                &ConstantFold::new(),
+                &mut fg,
+                &mut crate::OptCtx::new(None)
+            )?
+            .changed(),
             "{op:?} by const 0 must not fold (undefined)",
         );
         assert_eq!(
@@ -1626,7 +1631,8 @@ fn fold_count_op_wide_const_input_skips_cleanly_cases() -> Result<()> {
     ];
     for (case, kind, wide_ty) in cases {
         let mut fg = build_unary_with_wide_const_input(kind, wide_ty, ValueType::I64)?;
-        let result = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None));
+        let result =
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None));
         assert!(
             result.is_ok(),
             "{case}: ConstantFold must not error on {kind:?}({wide_ty:?} const), got {:?}",
@@ -2275,8 +2281,9 @@ fn fold_i128_interner_backed_add_round_trip() -> Result<()> {
     })?;
 
     // Fold should fire: both operands are I128 int constants.
-    let changed = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
-        .changed();
+    let changed =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
+            .changed();
     assert!(
         changed,
         "ConstantFold must fold Add(I128, I128) to a constant"

@@ -62,7 +62,6 @@ fn assert_validation_err(f: &Function, pred: impl Fn(&ValidationError) -> bool) 
     );
 }
 
-
 #[test]
 fn local_typing_wrong_input_kind_on_int_unary_op() {
     use crate::node::IntUnaryOp;
@@ -276,10 +275,9 @@ fn graph_invariants_entry_dedupes_on_repeated_create() {
         s.f.graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     assert_eq!(s.entry, entry2, "Entry must dedup");
-    let u = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    let u =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
     stamp(&mut s.f, u);
     validate(&s.f).expect("graph with single deduped Entry must validate");
 }
@@ -291,10 +289,9 @@ fn graph_invariants_initial_memory_dedupes_on_repeated_create() {
         s.f.graph_mut()
             .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     assert_eq!(s.mem, mem2, "InitialMemory must dedup");
-    let u = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    let u =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
     stamp(&mut s.f, u);
     validate(&s.f).expect("graph with single deduped InitialMemory must validate");
 }
@@ -821,10 +818,9 @@ fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
     let mut s = spine();
     let _const_node = int_const(&mut s.f, 7, ValueType::I64);
     // The IntConst is unreachable from entry; default validate ignores it.
-    let u = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    let u =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
     stamp(&mut s.f, u);
     validate(&s.f).expect("default validate is unaffected");
 }
@@ -955,15 +951,13 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
 fn control_output_consumed_twice_is_flagged() {
     let mut s = spine();
     // Entry's single Control output feeds TWO Return terminators.
-    let r1 = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    let r1 =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     stamp(&mut s.f, r1);
-    let r2 = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    let r2 =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     stamp(&mut s.f, r2);
 
     assert_validation_err(&s.f, |e| {
@@ -1002,14 +996,12 @@ fn unused_control_output_is_flagged() {
 #[test]
 fn entry_into_unreachable_validates() {
     let mut s = spine();
-    let unreachable = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    let unreachable =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
     stamp(&mut s.f, unreachable);
     validate(&s.f).expect("Entry -> Unreachable is a valid terminated graph");
 }
-
 
 #[test]
 fn indirect_branch_with_control_memory_and_value_validates() {
@@ -1056,7 +1048,8 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
     // Intern a genuinely-wide (> u128, 4 limbs) value but assign it to a
     // narrower (I64) output — bits set above the declared width.
     let id =
-        s.f.const_interner.intern(ConstValue::Wide(vec![0, 0, 0, 1].into_boxed_slice()));
+        s.f.const_interner
+            .intern(ConstValue::Wide(vec![0, 0, 0, 1].into_boxed_slice()));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],

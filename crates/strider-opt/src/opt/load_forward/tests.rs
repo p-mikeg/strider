@@ -2,8 +2,8 @@ use super::*;
 use crate::error::Result;
 use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{
     RegisterSet, SENTINEL_LIFT_ADDR, stack_vn_aarch64 as sp64_vn, stack_vn_x86 as sp32_vn,
 };

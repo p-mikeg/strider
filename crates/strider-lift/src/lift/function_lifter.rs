@@ -53,7 +53,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<Self> {
-        let builder = strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch.endianness())?;
+        let builder =
+            strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch.endianness())?;
         // Build the container map from the deduped tracked survivors
         // (`function.all_vns()`), resolving every raw collected varnode plus
         // every calling-convention register (arg / ret / float-ret / stack /

@@ -41,9 +41,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         FxHashMap::default();
     overrides.insert(
         call_target,
-        TargetCC::x86_64_all_preserving()
-            .build(&regs)
-            .unwrap(),
+        TargetCC::x86_64_all_preserving().build(&regs).unwrap(),
     );
     let lift_opts = LiftOptions {
         per_address_ccs: overrides,

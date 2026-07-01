@@ -43,8 +43,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
 fn known_bits_const_no_change() -> Result<()> {
     let mut fg = make_fn(|b| Ok(b.build_int_const(42u64, ValueType::I64).unwrap()))?;
     assert!(
-        !crate::pipeline::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
+        !crate::pipeline::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?.changed()
     );
     Ok(())
 }

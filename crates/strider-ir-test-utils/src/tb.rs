@@ -330,7 +330,7 @@ impl Tb {
         };
         let (_node, result) = self
             .fb
-            .build_call_other_abi(user_op_id, name, None, args, &abi, output_vn, false)
+            .build_call_other_abi(user_op_id, name, args, &abi, output_vn, false)
             .expect("call_other");
         result
     }

@@ -35,10 +35,7 @@ fn count(
     fixture: &strider_ir::Function,
 ) -> usize {
     let pat = f();
-    Matcher::new(fixture)
-        .find_all(&pat)
-        .unwrap()
-        .len()
+    Matcher::new(fixture).find_all(&pat).unwrap().len()
 }
 
 // ── Task 3.1 core: Add / Var / Any / IntConst ─────────────────────────
@@ -879,13 +876,7 @@ fn of_width_with_capture() {
     // A var(c).of_width(1) nested in an op behaves like the old
     // .when_match width check: a mismatched width fails the whole match.
     let pat_bad = zero_extend(var(c).of_width(64)).into_pattern();
-    assert_eq!(
-        Matcher::new(&fx)
-            .find_all(&pat_bad)
-            .unwrap()
-            .len(),
-        0
-    );
+    assert_eq!(Matcher::new(&fx).find_all(&pat_bad).unwrap().len(), 0);
 }
 
 // ── test helpers ──────────────────────────────────────────────────────

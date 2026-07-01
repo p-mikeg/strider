@@ -828,7 +828,9 @@ value_op_factories! {
 // side.
 pub mod template {
     use strider_ir::node::NodeKind;
-    use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+    use strider_ir::{
+        ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    };
 
     use crate::template::template_pat::TemplatePat;
     use crate::typed::consts::bool_const;

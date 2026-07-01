@@ -3,8 +3,8 @@ use cranelift_entity::{SecondaryMap, entity_impl};
 
 use crate::IRViewer;
 use crate::builder::FunctionBuilder;
-use crate::node::InitialVnId;
 use crate::error::Result;
+use crate::node::InitialVnId;
 use crate::node::{NodeId, ValueId};
 
 /// A unique identifier for a basic-block region in the IR graph.

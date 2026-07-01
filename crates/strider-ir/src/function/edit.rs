@@ -82,7 +82,6 @@ impl FunctionState {
     }
 }
 
-
 // ── EditFunction ─────────────────────────────────────────────────────
 
 /// Edit context: a borrowed `&mut Function` plus its self-cleaning
@@ -1768,8 +1767,8 @@ mod tests {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod function_state_tests {
     use super::FunctionState;
-    use crate::builder::IRBuilderExt;
     use super::test_fixtures::single_region_builder;
+    use crate::builder::IRBuilderExt;
     use crate::node::NodeKind;
     use crate::{IRViewer, IntBinaryOp, ValueType};
 

@@ -265,7 +265,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// the function never reads is culled by DCE and dropped from the arg table
     /// by `Function::compact`, so patterns won't find it.
     fn record_register_arg_carriers(&mut self) {
-        let arg_regs = self.builder.function().default_cc().arg_passing_regs.clone();
+        let arg_regs = self
+            .builder
+            .function()
+            .default_cc()
+            .arg_passing_regs
+            .clone();
         for (i, reg) in arg_regs.iter().enumerate() {
             let container = self.container_of(reg);
             if let Some(value) = self.builder.function().initial_var_value(&container) {
@@ -481,8 +486,8 @@ mod tests {
     /// `unresolved_branches` stays empty.
     #[test]
     fn aarch64_bx_lr_lifts_to_cc_return_not_indirect() {
-        use strider_ir_test_utils::IrWalkerEx;
         use strider_ir::node::NodeKind;
+        use strider_ir_test_utils::IrWalkerEx;
 
         let arch = strider_target::SleighArch::aarch64();
         // `probe_regs` consumes the arch, so build a second copy for the lift.

@@ -1,8 +1,8 @@
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 use super::*;
-use crate::function::test_function;
 use crate::function::Function;
+use crate::function::test_function;
 use crate::node::{NodeKind, ValueKind, ValueType};
 use crate::{IRViewer, IRWalker};
 use ::dot::GraphDotDumper as _;

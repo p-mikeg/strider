@@ -20,10 +20,10 @@ use rustc_hash::FxHashMap;
 #[cfg(any(test, feature = "test-util"))]
 use rustc_hash::FxHashSet;
 
-use crate::graph::{Graph, NodeIdRemap};
-use crate::node::{NodeId, NodeKind, ValueId};
 use crate::IRWalker;
 use crate::function::side_tables::SideTables;
+use crate::graph::{Graph, NodeIdRemap};
+use crate::node::{NodeId, NodeKind, ValueId};
 
 /// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
 /// inclusion) that fully contains `vn`, or `vn` itself when none does.
@@ -227,8 +227,7 @@ pub struct Function {
     /// varnode list via [`Self::all_vns`], resolve an id via
     /// [`Self::initial_vn`], and resolve a varnode to its id via
     /// [`Self::vn_id_of`].
-    pub(crate) vn_interner:
-        entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
+    pub(crate) vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 
     // ── overlay tables ─────────────────────────────────────────────────────
     //
@@ -356,7 +355,10 @@ impl Function {
     /// malformed graph (the validator's `DanglingConstId` guard, the debug
     /// renderers) probe `const_interner.get` directly.  Ids produced on a
     /// different function are not portable.
-    pub(crate) fn const_value(&self, id: crate::const_value::ConstId) -> &crate::const_value::ConstValue {
+    pub(crate) fn const_value(
+        &self,
+        id: crate::const_value::ConstId,
+    ) -> &crate::const_value::ConstValue {
         &self.const_interner[id]
     }
 
@@ -433,7 +435,6 @@ impl Function {
         }
         self.vn_interner = interner;
     }
-
 
     /// The shared call-clobber predicate: a register (resolved to its tracked
     /// container) is clobbered iff it is neither callee-saved under `cc` nor the
@@ -618,6 +619,15 @@ impl Function {
         self.side_tables.call_other_names[node_id].as_deref()
     }
 
+    /// Records the user-op `name` for a
+    /// [`crate::node::NodeKind::CallOther`] node.  The `CallOther` emitter
+    /// is name-agnostic; the caller (the lifter, or a test) stamps the name
+    /// here after building the node.
+    #[inline]
+    pub fn set_call_other_name(&mut self, node_id: NodeId, name: impl Into<String>) {
+        self.side_tables.call_other_names[node_id] = Some(name.into());
+    }
+
     /// Returns the source varnode a value represents, or `None`. Single
     /// value-keyed view over `value_vn`, which tags three populations: a
     /// lift-time `Phi`'s tracked varnode, a `Call`/`CallOther` ret-val
@@ -680,7 +690,8 @@ impl Function {
     /// [`Graph::producer`].
     #[inline]
     pub fn arg_index_to_values(&self, index: u32) -> &[ValueId] {
-        self.side_tables.arg_index_to_values
+        self.side_tables
+            .arg_index_to_values
             .get(&index)
             .map_or(&[], Vec::as_slice)
     }
@@ -693,7 +704,8 @@ impl Function {
     /// for the same offset).
     #[inline]
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
-        self.side_tables.arg_index_to_values
+        self.side_tables
+            .arg_index_to_values
             .entry(index)
             .or_default()
             .push(value);
@@ -713,7 +725,9 @@ impl Function {
     /// (which occupy indices `0 .. first`).
     #[inline]
     pub fn clear_arg_values_from(&mut self, first: u32) {
-        self.side_tables.arg_index_to_values.retain(|&index, _| index < first);
+        self.side_tables
+            .arg_index_to_values
+            .retain(|&index, _| index < first);
     }
 
     // ── stack_offsets accessors ───────────────────────────────────────────
@@ -824,8 +838,10 @@ impl Function {
         if dst == src {
             return;
         }
-        let src_slice: smallvec::SmallVec<[u64; 4]> =
-            self.side_tables.asm_fingerprints[src].iter().copied().collect();
+        let src_slice: smallvec::SmallVec<[u64; 4]> = self.side_tables.asm_fingerprints[src]
+            .iter()
+            .copied()
+            .collect();
         self.extend_asm_fingerprint(dst, &src_slice);
     }
 
@@ -1038,7 +1054,11 @@ mod function_skeleton_tests {
         assert_eq!(ids.len(), 2, "new() builds exactly Entry + InitialMemory");
         assert!(matches!(f.node_kind(ids[0]), NodeKind::Entry));
         assert!(matches!(f.node_kind(ids[1]), NodeKind::InitialMemory));
-        assert_eq!(f.entry(), ids[0], "entry() points at the Entry node (node 0)");
+        assert_eq!(
+            f.entry(),
+            ids[0],
+            "entry() points at the Entry node (node 0)"
+        );
     }
 
     #[test]

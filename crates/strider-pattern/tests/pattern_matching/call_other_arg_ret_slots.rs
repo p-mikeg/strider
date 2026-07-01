@@ -26,7 +26,6 @@ fn build_cpuid_graph() -> Function {
         .build_call_other_abi(
             7,
             "cpuid",
-            None,
             &[],
             &strider_target::BuiltCallOtherAbi {
                 implicit_reads: Vec::new(),
@@ -84,7 +83,6 @@ fn arg_constrains_pcode_explicit_value_argument() {
         .build_call_other_abi(
             9,
             "rdmsr",
-            None,
             &[a0],
             &strider_target::BuiltCallOtherAbi {
                 implicit_reads: Vec::new(),

@@ -101,7 +101,10 @@ fn read_reg_vn_truncates_subregister_of_tracked_container() {
         );
         let read_node = d.builder.function().producer(read);
         assert!(
-            matches!(d.builder.function().node_kind(read_node), NodeKind::Truncate),
+            matches!(
+                d.builder.function().node_kind(read_node),
+                NodeKind::Truncate
+            ),
             "AL (offset 0, shift 0) read must be a direct Truncate of the container read, got {:?}",
             d.builder.function().node_kind(read_node)
         );
@@ -120,7 +123,10 @@ fn write_subregister_merge_preserves_container_high_bytes() {
         d.write_reg_vn(&al, byte_val).unwrap();
 
         let merged = d.read_reg_vn(&rax).unwrap();
-        assert_eq!(d.builder.function().value_type(merged).unwrap(), ValueType::I64);
+        assert_eq!(
+            d.builder.function().value_type(merged).unwrap(),
+            ValueType::I64
+        );
         assert_eq!(pk(d, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
         let [lhs, rhs] = d
             .builder
@@ -238,7 +244,10 @@ fn write_high_byte_subregister_positions_mask_and_shift() {
         d.write_reg_vn(&ah, byte_val).unwrap();
 
         let merged = d.read_reg_vn(&rax).unwrap();
-        assert_eq!(d.builder.function().value_type(merged).unwrap(), ValueType::I64);
+        assert_eq!(
+            d.builder.function().value_type(merged).unwrap(),
+            ValueType::I64
+        );
         assert_eq!(pk(d, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
         let [lhs, rhs] = d
             .builder
@@ -333,7 +342,10 @@ fn write_high_byte_subregister_big_endian_positions_mask_and_shift() {
         d.write_reg_vn(&sub, byte_val).unwrap();
 
         let merged = d.read_reg_vn(&container).unwrap();
-        assert_eq!(d.builder.function().value_type(merged).unwrap(), ValueType::I32);
+        assert_eq!(
+            d.builder.function().value_type(merged).unwrap(),
+            ValueType::I32
+        );
         assert_eq!(pk(d, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
         let [lhs, rhs] = d
             .builder
@@ -417,7 +429,10 @@ fn read_high_byte_subregister_big_endian_shifts_then_truncates() {
     let sub = reg_vn(0x100, 1); // BE high byte → shift 24
     with_test_lifter_tracking_arch(ppc32be(), ppc32be_term(), vec![container], |d, _| {
         let read = d.read_reg_vn(&sub).unwrap();
-        assert_eq!(d.builder.function().value_type(read).unwrap(), ValueType::I8);
+        assert_eq!(
+            d.builder.function().value_type(read).unwrap(),
+            ValueType::I8
+        );
         assert_eq!(pk(d, read), NodeKind::Truncate);
         let [shifted] = d
             .builder
@@ -493,7 +508,10 @@ fn read_unique_subslice_of_tracked_unique_container() {
     let sub = unique_vn(0x404, 4); // upper 4 bytes → LE shift 32
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![container], |d, _| {
         let read = d.read_reg_vn(&sub).unwrap();
-        assert_eq!(d.builder.function().value_type(read).unwrap(), ValueType::I32);
+        assert_eq!(
+            d.builder.function().value_type(read).unwrap(),
+            ValueType::I32
+        );
         assert_eq!(pk(d, read), NodeKind::Truncate);
         let [shifted] = d
             .builder

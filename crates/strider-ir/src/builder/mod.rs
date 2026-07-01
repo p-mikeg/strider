@@ -1,5 +1,5 @@
-use cranelift_entity::packed_option::ReservedValue;
 use cranelift_entity::PrimaryMap;
+use cranelift_entity::packed_option::ReservedValue;
 use rustc_hash::FxHashMap;
 
 use crate::error::Result;
@@ -100,9 +100,7 @@ fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh:
             // `end ≥ v_end`, `size > v.size`): if present, `v` is a subsumed
             // sub-register view and is dropped; else `v` is the largest in its
             // chain and joins the opens.
-            let enclosed = open
-                .iter()
-                .any(|&(end, c)| end >= v_end && c.size > v.size);
+            let enclosed = open.iter().any(|&(end, c)| end >= v_end && c.size > v.size);
             if enclosed {
                 dropped[idx] = true;
             } else {

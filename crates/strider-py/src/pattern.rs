@@ -1618,23 +1618,55 @@ macro_rules! op_parser {
     };
 }
 
-op_parser!(parse_int_cmp_op, strider_ir::IntCmpOp, "IntCmpOp",
+op_parser!(
+    parse_int_cmp_op,
+    strider_ir::IntCmpOp,
+    "IntCmpOp",
     variants = [Equal, Less, Sless, Carry, Scarry, Sborrow],
-    aliases = [("eq", Equal), ("lt", Less), ("slt", Sless)]);
+    aliases = [("eq", Equal), ("lt", Less), ("slt", Sless)]
+);
 
-op_parser!(parse_int_binary_op, strider_ir::IntBinaryOp, "IntBinaryOp",
-    variants = [Add, And, Or, Xor, Div, Sdiv, Rem, Srem,
-                ShiftRight, SShiftRight, ShiftLeft, Mul],
-    aliases = [("shl", ShiftLeft), ("shr", ShiftRight), ("sshr", SShiftRight)]);
+op_parser!(
+    parse_int_binary_op,
+    strider_ir::IntBinaryOp,
+    "IntBinaryOp",
+    variants = [
+        Add,
+        And,
+        Or,
+        Xor,
+        Div,
+        Sdiv,
+        Rem,
+        Srem,
+        ShiftRight,
+        SShiftRight,
+        ShiftLeft,
+        Mul
+    ],
+    aliases = [
+        ("shl", ShiftLeft),
+        ("shr", ShiftRight),
+        ("sshr", SShiftRight)
+    ]
+);
 
-op_parser!(parse_bool_binary_op, strider_ir::IntBinaryOp, "boolean binary op",
+op_parser!(
+    parse_bool_binary_op,
+    strider_ir::IntBinaryOp,
+    "boolean binary op",
     variants = [And, Or, Xor],
     rest_unreachable = "non-boolean IntBinaryOp in bool table",
-    aliases = []);
+    aliases = []
+);
 
-op_parser!(parse_float_binary_op, strider_ir::FloatBinaryOp, "FloatBinaryOp",
+op_parser!(
+    parse_float_binary_op,
+    strider_ir::FloatBinaryOp,
+    "FloatBinaryOp",
     variants = [Add, Mul, Div],
-    aliases = []);
+    aliases = []
+);
 
 // ── pat-fn thunk macro ───────────────────────────────────────────────────
 //

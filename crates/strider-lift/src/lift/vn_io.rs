@@ -418,21 +418,26 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let container_val = self.builder.read_variable(&ctx.container_reg)?;
 
         // Extend `val` to container width, then shift into position.
-        let val_extended = self.builder.extend_if_needed(val, ty, ExtendOp::ZeroExtend)?;
-        let shifted_value =
-            self.builder
-                .build_shift_by_const(val_extended, shift_bits, IntBinaryOp::ShiftLeft, ty)?;
+        let val_extended = self
+            .builder
+            .extend_if_needed(val, ty, ExtendOp::ZeroExtend)?;
+        let shifted_value = self.builder.build_shift_by_const(
+            val_extended,
+            shift_bits,
+            IntBinaryOp::ShiftLeft,
+            ty,
+        )?;
 
         // Isolate the positioned value's bits (`shifted_value & reg_mask`) and
         // clear that slot in the container (`container_val & container_mask`); both
         // ANDs fold the const + binary-op via `build_const_binop` (And is
         // commutative, so the operand order matches the former explicit form).
-        let reg_val = self
-            .builder
-            .build_const_binop(reg_mask, shifted_value, IntBinaryOp::And, ty)?;
-        let preserved = self
-            .builder
-            .build_const_binop(container_mask, container_val, IntBinaryOp::And, ty)?;
+        let reg_val =
+            self.builder
+                .build_const_binop(reg_mask, shifted_value, IntBinaryOp::And, ty)?;
+        let preserved =
+            self.builder
+                .build_const_binop(container_mask, container_val, IntBinaryOp::And, ty)?;
 
         self.builder
             .build_int_binary_operation(preserved, reg_val, IntBinaryOp::Or, ty)

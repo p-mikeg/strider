@@ -228,11 +228,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 
     /// Builds a `Call` from the (override or function-default) calling
     /// convention — the prod call-construction orchestration.  Derives the
-    /// ret-val / clobber / arg vns from the CC, reads the args + SP through the
-    /// shared vn read path, emits the dumb [`strider_ir::FunctionBuilder::build_call`],
-    /// writes the clobbers then ret-vals back, records the override CC, and
-    /// applies the post-call SP adjust.  (strider-ir's constructor is dumb: it
-    /// takes resolved Vn lists and knows nothing about calling conventions.)
+    /// ret-val / clobber / arg vns from the CC, reads the args through the
+    /// shared vn read path, emits the dumb [`strider_ir::FunctionBuilder::build_call`]
+    /// (which reads SP, emits the node, and applies the post-call SP adjust from
+    /// `ret_stack_pop` itself), then writes the clobbers then ret-vals back and
+    /// records the override CC.  (strider-ir's constructor is dumb: it takes
+    /// resolved Vn lists and knows nothing about calling conventions.)
     fn build_cc_call(
         &mut self,
         call_address: strider_ir::Value,
@@ -240,25 +241,26 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ) -> Result<()> {
         // Snapshot the CC-derived ingredients (owned) so the immutable borrow of
         // the function ends before the &mut read / build / write path below.
-        let (ret_vns, clobber_vns, arg_vns, sp_vn, ret_stack_pop) = {
+        let (ret_vns, clobber_vns, arg_vns, ret_stack_pop) = {
             let cc = override_cc.unwrap_or_else(|| self.builder.function().default_cc());
             (
                 self.call_ret_vals_for(cc),
                 self.call_clobbered_for(cc),
                 cc.arg_passing_regs.clone(),
-                cc.stack_vn,
                 cc.ret_stack_pop,
             )
         };
 
         let args = self.read_vns(&arg_vns)?;
-        // Snapshot the pre-call SP (preserved across the call) for the post-call
-        // adjust; `build_call` reads SP itself for the node's anchor.
-        let sp_value = self.read_vn(&sp_vn)?;
 
         let mut output_vns = ret_vns.clone();
         output_vns.extend_from_slice(&clobber_vns);
-        let (call, outputs) = self.builder.build_call(call_address, &args, &output_vns)?;
+        // `build_call` reads SP, emits the node, and applies the post-call SP
+        // adjust (`ret_stack_pop`) itself — SP is never a clobber/ret-val, so
+        // the writebacks below cannot race with it.
+        let (call, outputs) =
+            self.builder
+                .build_call(call_address, &args, &output_vns, ret_stack_pop)?;
         let (ret_vals, clobbers) = outputs.split_at(ret_vns.len());
 
         // Writeback: clobbers first, then ret-vals (an aliased clobber must not
@@ -276,8 +278,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         if let Some(cc) = override_cc {
             self.builder.function_mut().set_call_cc(call, cc.clone());
         }
-        self.builder
-            .apply_post_call_sp_adjust(&sp_vn, sp_value, ret_stack_pop)?;
         Ok(())
     }
 

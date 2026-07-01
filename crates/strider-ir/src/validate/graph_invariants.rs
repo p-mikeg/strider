@@ -145,14 +145,16 @@ pub(super) fn check_graph_invariants_extend_truncate(
         };
         // Single INT input, single INT output. Bail to the local-typing check
         // if the arity/kind is off (missing slot or non-integer type).
-        let (Some(in_value), Some(&out_value)) =
-            (graph.node_inputs(node).into_iter().next(), graph.node_outputs(node).first())
-        else {
+        let (Some(in_value), Some(&out_value)) = (
+            graph.node_inputs(node).into_iter().next(),
+            graph.node_outputs(node).first(),
+        ) else {
             continue;
         };
-        let (Some(in_ty), Some(out_ty)) =
-            (function.value_type_opt(in_value), function.value_type_opt(out_value))
-        else {
+        let (Some(in_ty), Some(out_ty)) = (
+            function.value_type_opt(in_value),
+            function.value_type_opt(out_value),
+        ) else {
             continue;
         };
         let (in_width, out_width) = (in_ty.bit_width(), out_ty.bit_width());

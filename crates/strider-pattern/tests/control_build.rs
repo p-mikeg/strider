@@ -197,7 +197,6 @@ fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
         .build_call_other_abi(
             op,
             name,
-            None,
             &[],
             &strider_target::BuiltCallOtherAbi {
                 implicit_reads: Vec::new(),

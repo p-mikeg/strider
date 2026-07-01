@@ -214,8 +214,7 @@ impl PyFunction {
 /// Write `contents` to `path`, mapping any I/O error to a `StriderError`.
 /// Shared by the `to_raw_dot` / `to_raw_html` file-dump methods.
 fn write_to(path: &str, contents: String) -> PyResult<()> {
-    std::fs::write(path, contents)
-        .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
+    std::fs::write(path, contents).map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
 }
 
 #[pymethods]
@@ -236,13 +235,15 @@ impl PyFunction {
     fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
         // `dot_style_for(None)` already defaults to the dark theme, so the
         // `Option` flows through untouched.
-        self.dispatch_dot(py, style, DotOp::DumpHtml(path)).map(|_| ())
+        self.dispatch_dot(py, style, DotOp::DumpHtml(path))
+            .map(|_| ())
     }
 
     /// Render the IR graph to a Graphviz `.dot` file at `path`.
     #[pyo3(signature = (path,))]
     fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
-        self.dispatch_dot(py, None, DotOp::DumpDot(path)).map(|_| ())
+        self.dispatch_dot(py, None, DotOp::DumpDot(path))
+            .map(|_| ())
     }
 
     /// Return the IR graph rendered as an HTML string (default `"dark"`
@@ -376,11 +377,9 @@ impl PyFunction {
     /// The asm-fingerprint Layer-C check is always-on: every reachable
     /// non-exempt node must carry a non-empty contributor list.
     fn validate(&self) -> PyResult<Option<String>> {
-        self.with_read(|function| {
-            match strider_ir::validate::validate(function) {
-                Ok(()) => Ok(None),
-                Err(e) => Ok(Some(format!("{e}"))),
-            }
+        self.with_read(|function| match strider_ir::validate::validate(function) {
+            Ok(()) => Ok(None),
+            Err(e) => Ok(Some(format!("{e}"))),
         })
     }
 
