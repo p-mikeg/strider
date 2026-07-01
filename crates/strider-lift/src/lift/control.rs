@@ -210,8 +210,20 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// list.
     pub(super) fn handle_return(&mut self) -> Result<()> {
         // The p-code `Return` input is discarded (see above); nothing from the
-        // insn is needed. build_function_return terminates the region.
-        self.builder.build_function_return()
+        // insn is needed.  `build_cc_return` resolves + reads the CC return
+        // registers and terminates the region with a `Return`.
+        self.build_cc_return()
+    }
+
+    /// Emits a function-ABI `Return` for the function-default calling
+    /// convention: resolve the CC's return registers, read each through the
+    /// aliasing-aware `read_vn` (which slices a sub-register ret reg out of
+    /// its tracked container), then emit the dumb `Return` node.  Terminates
+    /// the current region.
+    fn build_cc_return(&mut self) -> Result<()> {
+        let ret_vns = self.cc_ret_val_regs(self.builder.function().default_cc());
+        let ret_values = self.read_vns(&ret_vns)?;
+        self.builder.build_return(None, &ret_values)
     }
 
     /// Builds a `Call` from the (override or function-default) calling
@@ -231,8 +243,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let (ret_vns, clobber_vns, arg_vns, sp_vn, ret_stack_pop) = {
             let cc = override_cc.unwrap_or_else(|| self.builder.function().default_cc());
             (
-                self.builder.function().call_ret_vals_for(cc),
-                self.builder.function().call_clobbered_for(cc),
+                self.call_ret_vals_for(cc),
+                self.call_clobbered_for(cc),
                 cc.arg_passing_regs.clone(),
                 cc.stack_vn,
                 cc.ret_stack_pop,
@@ -304,8 +316,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // Per-address CC override applies to lift-time tail calls too.
         let override_cc = self.per_address_ccs.get(&target).cloned();
         self.build_cc_call(call_address, override_cc.as_ref())?;
-        // build_function_return terminates the region unconditionally.
-        self.builder.build_function_return()
+        // build_cc_return terminates the region unconditionally.
+        self.build_cc_return()
     }
 
     pub(super) fn handle_call_indirect(&mut self, insn: &rsleigh::Insn) -> Result<()> {

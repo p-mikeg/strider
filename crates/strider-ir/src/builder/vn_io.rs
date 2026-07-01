@@ -13,10 +13,12 @@
 
 use anyhow::{anyhow, bail};
 
+use smallvec::SmallVec;
+
 use crate::Value;
 use crate::builder::IRBuilderExt;
 use crate::error::Result;
-use crate::node::{ExtendOp, IntBinaryOp, ValueType, VnTypeExt};
+use crate::node::{ExtendOp, IntBinaryOp, ValueId, ValueType, VnTypeExt};
 
 use super::FunctionBuilder;
 
@@ -113,6 +115,29 @@ impl FunctionBuilder {
                     - (reg.addr_off - container_reg.addr_off))
             }
         }
+    }
+
+    /// Test-support: emits a function-ABI `Return` node whose value slots are
+    /// the function's calling-convention return registers, in ABI order, read
+    /// through the aliasing-aware [`Self::read_reg_vn`].  Prod lifting builds
+    /// this in `strider-lift`; this convenience keeps strider-ir's own tests
+    /// and the `RegisterSet` fixtures off manual CC-return plumbing.
+    ///
+    /// Like [`Self::build_return`], this **terminates** the current region
+    /// unconditionally.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::build_return`] plus any `read_reg_vn` failure.
+    pub fn build_function_return(&mut self) -> Result<()> {
+        let ret_vars: SmallVec<[rsleigh::Vn; 4]> =
+            self.function.ret_val_regs().into_iter().collect();
+        let mut ret_values: SmallVec<[ValueId; 4]> = SmallVec::new();
+        for var in &ret_vars {
+            super::require_reg_or_unique(var)?;
+            ret_values.push(self.read_reg_vn(var)?);
+        }
+        self.build_return(None, &ret_values)
     }
 
     /// Emits IR nodes to read the value of a register varnode.

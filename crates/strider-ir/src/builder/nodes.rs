@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use super::{FunctionBuilder, require_reg_or_unique};
+use super::FunctionBuilder;
 use crate::IRViewer;
 use crate::builder::IRBuilderExt;
 use crate::error::Result;
@@ -31,12 +31,16 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Emits a `Return` node into the current region from the resolved
+    /// Emits a `Return` node into the current region from already-resolved
     /// return-value inputs.
     ///
     /// Terminates the current region with a `Return` node whose value
     /// slots are the explicitly-provided `value` (when `Some`) followed
-    /// by the current SSA values of `ret_vars` in order.
+    /// by `ret_values` in order.  This is a **dumb** node emitter: the
+    /// caller (the lifter) resolves the calling-convention return registers
+    /// and reads them through its own aliasing-aware `read_vn` before
+    /// handing the resulting values here — strider-ir knows nothing about
+    /// which varnodes those values came from.
     ///
     /// This method **terminates** the current region unconditionally —
     /// callers must not terminate it again afterwards; doing so would
@@ -45,21 +49,17 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Returns `NoCurrentRegion`
-    /// when there is no active region; `VariableNotFound` when
-    /// any element of `ret_vars` is not tracked; `ExpectedControl`
+    /// when there is no active region; `ExpectedControl`
     /// or `ExpectedMemory` if the region's snapshotted ctrl/mem
     /// edges are mistyped (graph-construction bug); or
-    /// `ExpectedValue` when `value` or any read return register
+    /// `ExpectedValue` when `value` or any element of `ret_values`
     /// is not a value edge.
-    pub fn build_return(&mut self, value: Option<ValueId>, ret_vars: &[rsleigh::Vn]) -> Result<()> {
+    pub fn build_return(&mut self, value: Option<ValueId>, ret_values: &[ValueId]) -> Result<()> {
         let mut ret_inputs: SmallVec<[ValueId; 4]> = SmallVec::new();
         if let Some(v) = value {
             ret_inputs.push(v);
         }
-        for var in ret_vars {
-            require_reg_or_unique(var)?;
-            ret_inputs.push(self.read_reg_vn(var)?);
-        }
+        ret_inputs.extend_from_slice(ret_values);
 
         // Terminate the region and snapshot ctrl/mem in one step.
         let res = self.terminate_cur_region()?;
@@ -72,31 +72,6 @@ impl FunctionBuilder {
             [],
         );
         Ok(())
-    }
-
-    /// Emits a function-ABI `Return` node whose value slots are the
-    /// function's calling-convention return registers, in ABI order.
-    /// This is the canonical RET lowering: the caller no longer threads
-    /// the return-register list — it is read from the function's
-    /// resolved CC ([`crate::Function::ret_val_regs`]).
-    ///
-    /// Like [`Self::build_return`], this **terminates** the current
-    /// region unconditionally.  Callers must not terminate it again
-    /// afterwards.
-    ///
-    /// The synthetic single-value return path
-    /// ([`Self::build_return`] with an explicit `Some(value)` and no
-    /// `ret_vars`) is intentionally kept separate.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Self::build_return`].
-    pub fn build_function_return(&mut self) -> Result<()> {
-        // Clone the ABI return-register list out so the subsequent
-        // `&mut self` reads in `build_return` don't alias the borrow.
-        let ret_vars: SmallVec<[rsleigh::Vn; 4]> =
-            self.function.ret_val_regs().into_iter().collect();
-        self.build_return(None, &ret_vars)
     }
 
     /// Terminates the current region with an `IndirectBranch` placeholder

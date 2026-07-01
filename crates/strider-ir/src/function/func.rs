@@ -16,7 +16,9 @@
 //! other [`Graph`] method is reached explicitly through [`Function::graph`] /
 //! [`Function::graph_mut`].
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
+#[cfg(any(test, feature = "test-util"))]
+use rustc_hash::FxHashSet;
 
 use crate::graph::{Graph, NodeIdRemap};
 use crate::node::{NodeId, NodeKind, ValueId};
@@ -323,6 +325,12 @@ impl Function {
     /// O(1) per probe (keeping the `call_*_for` derivations O(N), not O(N·M)).
     /// CC regs are resolved to their tracked container first so a sub-register
     /// ABI reg matches the wider tracked vn.
+    ///
+    /// TEST-SUPPORT ONLY: the prod lift path derives these CC register-list
+    /// projections in `strider-lift` (`lift::cc_projection`).  These copies
+    /// exist for the `RegisterSet` / `build_call_cc` test fixtures and the
+    /// cross-crate CC-shape tests, which is why they are feature-gated.
+    #[cfg(any(test, feature = "test-util"))]
     fn clobber_oracle(
         &self,
         cc: &strider_target::BuiltCallingConvention,
@@ -343,6 +351,7 @@ impl Function {
     /// [`Self::call_ret_vals_for`] (which keeps the tracked + clobbered ones)
     /// and [`Self::call_clobbered_for`] (which excludes them) — one place that
     /// owns "the ret regs, in container coordinates".
+    #[cfg(any(test, feature = "test-util"))]
     fn combined_ret_containers<'a>(
         &'a self,
         cc: &'a strider_target::BuiltCallingConvention,
@@ -369,6 +378,7 @@ impl Function {
     /// sub-register ABI ret reg (e.g. `eax`) classified as the return
     /// value when the function tracks the wider container (`rax`) instead
     /// of silently dropping it.  Identity on full-width preset regs.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn call_ret_vals_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
@@ -403,6 +413,7 @@ impl Function {
     /// To obtain the FULL combined set (ret-vals ++ clobbers) for callers
     /// that need the old single-list shape, chain the two accessors:
     /// `call_ret_vals_for(cc).into_iter().chain(call_clobbered_for(cc))`.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn call_clobbered_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
@@ -439,6 +450,7 @@ impl Function {
     /// Returns only the NON-ret caller-saved registers.  To get the full
     /// set (ret-vals ++ clobbers), chain with
     /// `call_ret_vals_for(default_cc())`.
+    #[cfg(any(test, feature = "test-util"))]
     #[inline]
     pub fn call_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
         self.call_clobbered_for(&self.default_cc)
@@ -447,6 +459,7 @@ impl Function {
     /// The function-default ret-val varnode list (derived against
     /// [`Self::default_cc`]).  Convenience for consumers that want the
     /// default-CC ret-val shape.
+    #[cfg(any(test, feature = "test-util"))]
     #[inline]
     pub fn call_ret_val_regs(&self) -> Vec<rsleigh::Vn> {
         self.call_ret_vals_for(&self.default_cc)
