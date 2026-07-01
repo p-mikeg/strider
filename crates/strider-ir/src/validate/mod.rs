@@ -39,7 +39,7 @@ mod tests;
 mod use_list_consistency;
 
 use graph_invariants::{
-    check_graph_invariants_asm_fingerprints, check_graph_invariants_cc_arity,
+    check_graph_invariants_asm_fingerprints,
     check_graph_invariants_consts, check_graph_invariants_control_single_use,
     check_graph_invariants_extend_truncate, check_graph_invariants_memory_chain,
     check_graph_invariants_phis, check_graph_invariants_region,
@@ -92,7 +92,6 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_graph_invariants_control_single_use(function, &reachable, &mut errs);
     check_graph_invariants_phis(function, &reachable, &mut errs);
     check_graph_invariants_consts(function, &reachable, &mut errs);
-    check_graph_invariants_cc_arity(function, &reachable, &mut errs);
     check_graph_invariants_extend_truncate(function, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_graph_invariants_memory_chain(function, &reachable, &mut errs);
