@@ -1452,8 +1452,9 @@ fn value_vn_clobber_tag_round_trips() {
         addr_off: 0x10,
         addr_space: rsleigh::VnSpace::REGISTER,
     };
+    function.set_all_vns(vec![vn]); // only a tracked vn can be tagged
     assert!(function.get_vn_for_value(clobber_value).is_none());
-    function.side_tables.value_vn.insert(clobber_value, vn);
+    function.set_vn_for_value(clobber_value, vn);
     assert_eq!(function.get_vn_for_value(clobber_value), Some(vn));
 }
 

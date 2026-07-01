@@ -840,7 +840,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
         [ValueKind::Typed(ValueType::I64)],
     );
     let [phi_value] = f.node_outputs_exact::<1>(phi).unwrap();
-    f.side_tables.value_vn.insert(
+    f.set_vn_for_value(
         phi_value,
         Vn {
             addr_off: 0x10,

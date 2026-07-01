@@ -118,11 +118,14 @@ impl FunctionBuilder {
             self.advance_cur_region_memory(outputs[1])?;
         }
 
-        // Tag each output value with the register it represents (via
-        // `value_vn`) so pattern queries can recover the varnode for each slot.
+        // Tag each output value with the tracked varnode it represents (via
+        // `value_vn`) so pattern queries can recover it. Only a TRACKED vn (one
+        // with a `VnId`) is tagged — an untracked vn (e.g. a `CallOther` clobber
+        // register outside the tracked set) carries no meaningful id, so it is
+        // left untagged rather than stored as a dangling `Vn`.
         let output_values: Vec<ValueId> = outputs[2..].to_vec();
         for (value, vn) in core::iter::zip(&output_values, output_vns) {
-            self.function_mut().side_tables.value_vn.insert(*value, *vn);
+            self.function_mut().set_vn_for_value(*value, *vn);
         }
 
         Ok((node, output_values))

@@ -224,7 +224,10 @@ impl FunctionBuilder {
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
             output_type,
         );
-        self.function_mut().side_tables.value_vn.insert(phi_value, var);
+        // A phi's source varnode is always a tracked variable, so it has a
+        // `VnId`; tag the phi output with it (set_vn_for_value no-ops on the
+        // impossible untracked case, matching the Call/CallOther path).
+        self.function_mut().set_vn_for_value(phi_value, var);
         Ok(phi_value)
     }
 }

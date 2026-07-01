@@ -404,7 +404,8 @@ fn validate_flags_stale_value_vn_entry() {
     // population, so the producer-kind check must flag it.
     let (k, kv) = int_const(&mut s.f, 7, ValueType::I32);
     stamp(&mut s.f, k);
-    s.f.side_tables.value_vn.insert(kv, vn);
+    s.f.set_all_vns(vec![vn]); // only a tracked vn can be tagged
+    s.f.set_vn_for_value(kv, vn);
     // Make it reachable via the Return.
     let ret =
         s.f.graph_mut()
@@ -435,7 +436,7 @@ fn graph_invariants_phi_token_from_wrong_node() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let phi_value = s.f.node_outputs(phi)[0];
-    s.f.side_tables.value_vn.insert(phi_value, vn);
+    s.f.set_vn_for_value(phi_value, vn);
 
     assert_validation_err(&s.f, |e| {
         matches!(e, ValidationError::PhiTokenNotFromRegion { .. })
@@ -461,7 +462,7 @@ fn graph_invariants_phi_value_arity_mismatch() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let phi_value = s.f.node_outputs(phi)[0];
-    s.f.side_tables.value_vn.insert(phi_value, vn);
+    s.f.set_vn_for_value(phi_value, vn);
 
     // V-2: graph_invariants_phis is reachability-scoped, so the phi must be
     // attached to something reachable from the entry.  Wire its value
@@ -504,7 +505,7 @@ fn graph_invariants_phi_input_type_mismatch() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let phi_value = s.f.node_outputs(phi)[0];
-    s.f.side_tables.value_vn.insert(phi_value, test_vn());
+    s.f.set_vn_for_value(phi_value, test_vn());
 
     // Put the phi on the reachable spine (see the arity test above).
     let cs_ctrl_value = s.f.node_outputs(cs).iter().copied().next().unwrap();
@@ -548,7 +549,7 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
         s.f.graph_mut()
             .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
     let zombie_value = s.f.node_outputs(zombie)[0];
-    s.f.side_tables.value_vn.insert(zombie_value, vn);
+    s.f.set_vn_for_value(zombie_value, vn);
 
     validate(&s.f).expect("validator must skip unreachable zombie phis");
 }

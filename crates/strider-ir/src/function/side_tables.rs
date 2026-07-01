@@ -69,7 +69,14 @@ pub(crate) struct SideTables {
     ///
     /// Keyed by `ValueId` (not `NodeId`) so it remaps through the
     /// `ValueId` translation that [`crate::Function::compact`] applies.
-    pub(crate) value_vn: FxHashMap<ValueId, rsleigh::Vn>,
+    ///
+    /// The payload is a tracked-varnode id (`InitialVnId`), NOT a raw `Vn`: a
+    /// value's source-register tag is only meaningful for a *tracked* varnode
+    /// (one the function has a `VnId` for), so an untracked vn (e.g. a
+    /// `CallOther` clobber register outside the tracked set) is simply not
+    /// tagged. Stored as a 4-byte id, and stable across `compact` (the
+    /// tracked-vn interner never renumbers).
+    pub(crate) value_vn: FxHashMap<ValueId, crate::node::InitialVnId>,
     /// Per-[`crate::node::NodeKind::Call`] override calling convention, recorded
     /// at build time for a Call built with a per-address CC override.  Sparse:
     /// a default Call (function-default CC) has no entry.  Read through
@@ -143,10 +150,12 @@ impl SideTables {
         }
         self.stack_offsets = new_stack_offsets;
         // `value_vn`: ValueId-keyed (a phi / clobber output); translate keys.
-        self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn| {
+        // The `InitialVnId` payload is stable across compaction, so it passes
+        // through unchanged.
+        self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn_id| {
             remap
                 .value_old_to_new(old_value)
-                .map(|new_value| (new_value, vn))
+                .map(|new_value| (new_value, vn_id))
         });
         // `initial_var_index`: `InitialVnId`-keyed with a NodeId payload. The
         // `InitialVnId` keys are stable across compaction (the tracked-vn set

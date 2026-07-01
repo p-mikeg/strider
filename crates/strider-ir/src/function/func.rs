@@ -572,7 +572,20 @@ impl Function {
     /// Phi-of-IntConst arm must not mistake a clobber tag for a phi tag.
     #[inline]
     pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
-        self.side_tables.value_vn.get(&value).copied()
+        self.side_tables
+            .value_vn
+            .get(&value)
+            .map(|&id| self.initial_vn(id))
+    }
+
+    /// Tag `value` with the tracked varnode `vn`.  A no-op when `vn` is not a
+    /// tracked varnode (no `VnId`): a source-register tag is only meaningful for
+    /// a tracked vn, so an untracked one is left untagged rather than stored.
+    #[inline]
+    pub fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
+        if let Some(vn_id) = self.vn_id_of(&vn) {
+            self.side_tables.value_vn.insert(value, vn_id);
+        }
     }
 
     /// Records `cc` as the per-`Call` override calling convention for
@@ -682,7 +695,10 @@ impl Function {
     /// validator to enforce that every key is a live value output.
     #[inline]
     pub(crate) fn value_vn_entries(&self) -> impl Iterator<Item = (ValueId, rsleigh::Vn)> + '_ {
-        self.side_tables.value_vn.iter().map(|(&value, &vn)| (value, vn))
+        self.side_tables
+            .value_vn
+            .iter()
+            .map(|(&value, &id)| (value, self.initial_vn(id)))
     }
 
     /// Returns the entry-stack-pointer node — the `InitialVar(stack_vn)` node,
@@ -1005,8 +1021,9 @@ mod function_skeleton_tests {
             addr_off: 0x20,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
+        f.set_all_vns(vec![vn]); // only a tracked vn (with a VnId) can be tagged
         assert_eq!(f.get_vn_for_value(phi_value), None);
-        f.side_tables.value_vn.insert(phi_value, vn);
+        f.set_vn_for_value(phi_value, vn);
         assert_eq!(f.get_vn_for_value(phi_value), Some(vn));
     }
 
@@ -1266,7 +1283,8 @@ mod compact_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         let zombie_phi_value = f.node_outputs(zombie_phi)[0];
-        f.side_tables.value_vn.insert(zombie_phi_value, dead_vn);
+        f.set_all_vns(vec![dead_vn]); // only a tracked vn can be tagged
+        f.set_vn_for_value(zombie_phi_value, dead_vn);
         assert_eq!(
             f.get_vn_for_value(zombie_phi_value),
             Some(dead_vn),
@@ -1408,8 +1426,9 @@ mod compact_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         let dead_phi_value = f.node_outputs(dead_phi)[0];
-        f.side_tables.value_vn.insert(live_phi_value, live_vn);
-        f.side_tables.value_vn.insert(dead_phi_value, dead_vn);
+        f.set_all_vns(vec![live_vn, dead_vn]); // only tracked vns can be tagged
+        f.set_vn_for_value(live_phi_value, live_vn);
+        f.set_vn_for_value(dead_phi_value, dead_vn);
 
         let remap = f.compact().expect("compact must succeed");
         let new_live_phi = remap
@@ -1510,8 +1529,9 @@ mod compact_tests {
             addr_off: 0x40,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
+        f.set_all_vns(vec![vn]); // only a tracked vn can be tagged
         assert_eq!(f.get_vn_for_value(clobber_value), None);
-        f.side_tables.value_vn.insert(clobber_value, vn);
+        f.set_vn_for_value(clobber_value, vn);
         // Recoverable per-output: the clobber output value carries its Vn.
         assert_eq!(f.get_vn_for_value(clobber_value), Some(vn));
         // Control / Memory outputs carry no clobber tag.
@@ -1558,7 +1578,8 @@ mod compact_tests {
             addr_off: 0x40,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
-        f.side_tables.value_vn.insert(clob, clob_vn);
+        f.set_all_vns(vec![clob_vn]); // only a tracked vn can be tagged
+        f.set_vn_for_value(clob, clob_vn);
         f.set_call_cc(call, cc.clone());
         let _ret = f
             .graph_mut()
