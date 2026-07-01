@@ -40,12 +40,14 @@ class CallbackRom(strider.ReadOnlyMemory):
         self.blob = blob
         self.calls = 0
 
-    def read(self, addr: int, size: int) -> int | None:
+    def read(self, addr: int, size: int) -> bytes | None:
+        # Return the RAW `size` bytes (no endianness swap — the optimizer
+        # decodes them per the run's endianness). Must be exactly `size` long.
         self.calls += 1
         if addr < self.base or addr + size > self.base + len(self.blob):
             return None
         offset = addr - self.base
-        return int.from_bytes(self.blob[offset:offset + size], "little")
+        return self.blob[offset:offset + size]
 
 
 # Use the real ELF for the code (sleigh fetch needs disassembly bytes),
@@ -60,29 +62,24 @@ addr = elf.symbol("array_sum")
 # the ELF BufferReader doesn't cover.
 rom = CallbackRom(base=0xCAFE0000, blob=bytes(range(16)))
 
-# Build a custom pipeline that includes BOTH the BufferReader-backed
-# LoadReadOnly (fast) AND the Python callback ROM. Order matters: the
-# pipeline runs each pass in turn, so a value resolved by one ROM
-# satisfies subsequent passes.
-arch = strider.SleighArch.x86()
-cc = strider.CallingConvention.x86_cdecl()
-
-pipe = strider.OptimizerPipeline.empty()
-pipe.add(strider.opt.ConstantFold())
-pipe.add(strider.opt.KnownBits())
-pipe.add(strider.opt.LoadReadOnly(mem))   # fast path for ELF .rodata
-pipe.add(strider.opt.LoadReadOnly(rom))   # callback path for our blob
-
-s = strider.Lifter(arch, mem, cc)
-cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
-function = s.analyze_cfg(cfg).function
-
-before = len(function.find_all(load()))
-function.optimize(pipe)
+# The ROM flows in through `strider.run(..., rom=...)` — the callback ABC
+# is wired to LoadReadOnly by the orchestrator, so there is no
+# `LoadReadOnly(rom)` pass to construct by hand. `mem` serves both the
+# sleigh instruction fetch (code) and the ELF-backed constant loads;
+# `rom` layers our Python-served blob on top for addresses the ELF
+# doesn't cover.
+result = strider.run(
+    arch=strider.SleighArch.x86(),
+    cc=strider.CallingConvention.x86_cdecl(),
+    mem=mem,
+    entry=addr,
+    rom=rom,
+    allow_code_before_start_addr=True,
+)
+function = result.function
 after = len(function.find_all(load()))
 
-print(f"loads before optimize: {before}")
-print(f"loads after  optimize: {after}")
+print(f"loads after optimize: {after}")
 print(f"CallbackRom.read invoked {rom.calls} time(s) by LoadReadOnly")
 
 if rom.calls == 0:
