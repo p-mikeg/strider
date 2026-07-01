@@ -1,13 +1,10 @@
 //! Whole-graph validator for the IR.
 //!
 //! The validator walks a built [`crate::graph::Graph`] starting from the
-//! function's own entry node and checks structural invariants across three
+//! function's own entry node and checks structural invariants across two
 //! groups:
 //!   - **Local typing** (`local_typing`): per-node input/output kind checks
 //!     against `node_signature::expected_signature` (reachability-scoped).
-//!   - **Use-list consistency** (`use_list_consistency`): bidirectional
-//!     consistency between inputs and the outputs' use-lists
-//!     (reachability-scoped on the source side).
 //!   - **Graph invariants** (`graph_invariants`): whole-graph rules —
 //!     Entry/InitialMemory uniqueness, Region predecessor kinds,
 //!     phi-token ownership, phi per-predecessor arity,
@@ -28,7 +25,7 @@
 
 use crate::IRViewer;
 use crate::function::Function;
-use crate::node::{NodeId, UseId, ValueId, ValueKind, ValueType};
+use crate::node::{NodeId, ValueId, ValueKind, ValueType};
 use crate::node_signature::ExpectedValueKind;
 use crate::walk::NodeIdSet;
 
@@ -36,7 +33,6 @@ mod graph_invariants;
 mod local_typing;
 #[cfg(test)]
 mod tests;
-mod use_list_consistency;
 
 use graph_invariants::{
     check_graph_invariants_asm_fingerprints, check_graph_invariants_consts,
@@ -46,7 +42,6 @@ use graph_invariants::{
     check_graph_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
-use use_list_consistency::check_use_list_consistency;
 
 /// Validates the structural invariants of `function`, starting the walk from
 /// the function's own entry node.
@@ -59,16 +54,19 @@ use use_list_consistency::check_use_list_consistency;
 /// Local per-node checks (`check_local_typing`) are scoped to nodes
 /// reachable from the entry so that detached zombie nodes left behind by
 /// optimization passes (e.g. orphaned dead-branch residue) do not trigger
-/// false positives.  Use-list consistency and graph-invariants
-/// checks iterate all nodes but are naturally tolerant of detached nodes:
-/// `detach_node_inputs` scrubs the use-lists of the producers it disconnects,
-/// so a detached node contributes no inputs and no live use-list entries
-/// anywhere.
+/// false positives.  The graph-invariants checks iterate all nodes but are
+/// naturally tolerant of detached nodes: `detach_node_inputs` scrubs the
+/// use-lists of the producers it disconnects, so a detached node contributes
+/// no inputs and no live use-list entries anywhere.
+///
+/// (Input ↔ use-list consistency is a structural `strider_graph` invariant
+/// maintained by construction — see `Graph::use_list_inconsistencies` — so it
+/// is verified at the graph layer, not re-checked here.)
 ///
 /// # Errors
 ///
-/// Returns a [`ValidationErrors`] bundle aggregating every local-typing,
-/// use-list, and graph-invariants violation found in `function`. Validation
+/// Returns a [`ValidationErrors`] bundle aggregating every local-typing and
+/// graph-invariants violation found in `function`. Validation
 /// does not fail fast — every check runs to completion so the caller sees
 /// the full set of problems at once.
 pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
@@ -84,8 +82,6 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     for (node, _kind) in function.reachable_kind_iter(&reachable) {
         check_local_typing(function.graph(), node, &mut errs);
     }
-
-    check_use_list_consistency(function.graph(), &reachable, &mut errs);
 
     check_graph_invariants_uniqueness(function.graph(), &reachable, &mut errs);
     check_graph_invariants_region(function.graph(), &reachable, &mut errs);
@@ -165,22 +161,6 @@ pub enum ValidationError {
         expected: ExpectedValueKind,
         actual: ValueKind,
     },
-
-    #[error(
-        "node {node:?} input[{input_idx}] references output {value:?} \
-         but is not in that output's use-list"
-    )]
-    InputMissingFromUseList {
-        node: NodeId,
-        input_idx: usize,
-        value: ValueId,
-    },
-
-    #[error(
-        "output {value:?}'s use-list contains input {listed_use:?} \
-         that no longer references this output"
-    )]
-    UseListContainsStaleInput { value: ValueId, listed_use: UseId },
 
     #[error("multiple Entry nodes: {first:?} and {second:?}")]
     MultipleEntryNodes { first: NodeId, second: NodeId },

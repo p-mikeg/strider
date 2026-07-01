@@ -539,7 +539,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// consuming test crate), and is hidden from docs so it can never surface as
     /// a discoverable API.
     #[doc(hidden)]
-    #[cfg(feature = "test-injectors")]
+    #[cfg(any(test, feature = "test-injectors"))]
     pub fn corrupt_clear_first_use(&mut self, value: ValueId) {
         self.store.outputs[value].first_use = None.into();
     }
@@ -551,7 +551,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// `#[doc(hidden)]`: see [`Self::corrupt_clear_first_use`] — a test-only
     /// corruption injector, hidden from docs and gated behind `test-injectors`.
     #[doc(hidden)]
-    #[cfg(feature = "test-injectors")]
+    #[cfg(any(test, feature = "test-injectors"))]
     pub fn corrupt_retarget_input(&mut self, use_id: UseId, new_target: ValueId) {
         self.store.inputs[use_id].value_id = new_target;
     }
