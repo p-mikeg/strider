@@ -118,15 +118,21 @@ pub struct Function {
     /// (so [`Self::compact`] needs no remap for it); defaults to
     /// little-endian on the [`Default`]-derived / synthetic-test path.
     pub(crate) endianness: strider_target::Endianness,
-    /// Ordered list of every tracked varnode, in `InitialVar`-creation
-    /// (allocation) order.  Single source of truth for the function's
-    /// tracked-variable SET *and* the slot ordering of derived clobber
-    /// lists (so the `i`-th `Call` clobber output still corresponds to
-    /// the `i`-th derived clobber varnode).  `VarId` is a build-time-only
-    /// SSA key on the [`crate::FunctionBuilder`]; this is the post-build
-    /// replacement.  Holds plain `rsleigh::Vn`s (no arena ids), so
-    /// [`Self::compact`] leaves it untouched.
-    pub(crate) all_vns: Vec<rsleigh::Vn>,
+    /// The single interner for every tracked varnode
+    /// ([`crate::node::InitialVnId`] → [`rsleigh::Vn`], value-deduped in
+    /// deterministic `(space, offset, size)` order).  Single source of truth
+    /// for the function's tracked-variable SET *and* the slot ordering of
+    /// derived clobber lists (so the `i`-th `Call` clobber output still
+    /// corresponds to the `i`-th derived clobber varnode) *and* the SSA-
+    /// variable key the [`crate::FunctionBuilder`] uses during construction
+    /// (via [`Self::vn_id_of`] / [`Self::vn_ids`]).  `InitialVnId` is a plain
+    /// dense id whose assignment does not change when dead nodes are culled,
+    /// so [`Self::compact`] leaves the interner untouched.  Read the ordered
+    /// varnode list via [`Self::all_vns`], resolve an id via
+    /// [`Self::initial_vn`], and resolve a varnode to its id via
+    /// [`Self::vn_id_of`].
+    pub(crate) vn_interner:
+        entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
     /// `original vn → its largest tracked container` map. Domain: every
     /// REGISTER/UNIQUE varnode in the pre-dedup tracked set *plus* every
     /// register the calling convention names (arg / ret / float-ret /
@@ -194,12 +200,21 @@ impl Function {
             [],
             [crate::node::ValueKind::Control],
         );
+        // Intern the (already deduped + CC-seeded, deterministically ordered)
+        // tracked varnodes.  `all_vns` arrives sorted by `(space, offset,
+        // size)` from the builder, so id assignment is stable and the `i`-th
+        // interned id is the `i`-th tracked varnode.
+        let mut vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn> =
+            entity_utils::EntityInterner::default();
+        for vn in all_vns {
+            vn_interner.intern(vn);
+        }
         Self {
             graph,
             entry,
             default_cc,
             endianness,
-            all_vns,
+            vn_interner,
             vn_to_container,
             side_tables: SideTables::default(),
             const_interner: entity_utils::EntityInterner::default(),
@@ -283,17 +298,18 @@ impl Function {
         self.endianness
     }
 
-    /// The ordered tracked-varnode SSoT.
+    /// The ordered tracked-varnode SSoT (the `vn_interner`'s values, in
+    /// `InitialVnId` order).
     pub fn all_vns(&self) -> &[rsleigh::Vn] {
-        &self.all_vns
+        self.vn_interner.values_as_slice()
     }
 
     /// Resolve an [`crate::node::InitialVnId`] (carried by an
     /// `InitialVar` node) back to its varnode.  Panics on an
     /// out-of-range id — every id in the graph is minted from this
-    /// function's `all_vns`, so a miss is a structural invariant break.
+    /// function's `vn_interner`, so a miss is a structural invariant break.
     pub fn initial_vn(&self, id: crate::node::InitialVnId) -> rsleigh::Vn {
-        self.all_vns[id.index()]
+        self.vn_interner[id]
     }
 
     /// Non-panicking [`Self::initial_vn`] — `None` if `id` is out of range.
@@ -301,7 +317,35 @@ impl Function {
     /// partially-built graph; analysis code uses `initial_vn` and relies on
     /// the invariant.
     pub(crate) fn initial_vn_opt(&self, id: crate::node::InitialVnId) -> Option<rsleigh::Vn> {
-        self.all_vns.get(id.index()).copied()
+        self.vn_interner.get(id).copied()
+    }
+
+    /// Resolve a tracked varnode to its [`crate::node::InitialVnId`], or
+    /// `None` when `vn` is not a tracked variable.  The reverse of
+    /// [`Self::initial_vn`]; the [`crate::FunctionBuilder`] uses it as its
+    /// variable-table lookup during construction.
+    pub(crate) fn vn_id_of(&self, vn: &rsleigh::Vn) -> Option<crate::node::InitialVnId> {
+        self.vn_interner.key_of(vn)
+    }
+
+    /// Every tracked-varnode id, in `InitialVnId` (allocation) order.  The
+    /// builder iterates this to create one `InitialVar` / `Phi` per tracked
+    /// variable.
+    pub(crate) fn vn_ids(&self) -> impl Iterator<Item = crate::node::InitialVnId> + '_ {
+        self.vn_interner.keys()
+    }
+
+    /// Test-only: rebuild the tracked-varnode interner from `vns` (in order),
+    /// so `InitialVnId(i)` resolves to `vns[i]`.  White-box validator / CC
+    /// tests use it to declare the tracked set of a hand-built function.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn set_all_vns(&mut self, vns: Vec<rsleigh::Vn>) {
+        let mut interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn> =
+            entity_utils::EntityInterner::default();
+        for vn in vns {
+            interner.intern(vn);
+        }
+        self.vn_interner = interner;
     }
 
     /// Resolve `vn` to its largest tracked container.
@@ -316,7 +360,7 @@ impl Function {
         if let Some(c) = self.vn_to_container.get(vn) {
             return *c;
         }
-        largest_container_in(&self.all_vns, vn)
+        largest_container_in(self.all_vns(), vn)
     }
 
     /// The shared call-clobber predicate: a register (resolved to its tracked
@@ -388,7 +432,7 @@ impl Function {
         // `all_vns` is cheaper (and allocation-free) than hashing the whole
         // tracked register file to test 1-2 items.
         self.combined_ret_containers(cc)
-            .filter(|c| self.all_vns.contains(c) && is_clobbered(c))
+            .filter(|c| self.vn_interner.contains(c) && is_clobbered(c))
             .collect()
     }
 
@@ -429,7 +473,7 @@ impl Function {
         // Only REGISTER / UNIQUE varnodes can be clobbered: clobbering a CONST /
         // RAM tracked temp is meaningless (and the dumb `build_call` rejects a
         // non-reg output vn).
-        self.all_vns
+        self.all_vns()
             .iter()
             .copied()
             .filter(|v| {

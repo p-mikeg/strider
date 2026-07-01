@@ -359,7 +359,7 @@ fn validate_flags_stale_initial_var_index_entry() {
         size: 4,
     };
     // Two tracked varnodes so `InitialVnId` 0/1 resolve to vn/other_vn.
-    s.f.all_vns = vec![vn, other_vn];
+    s.f.set_all_vns(vec![vn, other_vn]);
     // A reachable InitialVar(vn): its value output is returned so the walk
     // keeps it in the reachable set.
     let iv = s.f.graph_mut().create_node(

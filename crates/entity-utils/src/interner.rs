@@ -79,6 +79,15 @@ impl<K: EntityRef, V: Clone + Eq + Hash> EntityInterner<K, V> {
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.forward.values()
     }
+
+    /// The interned values as a contiguous slice in allocation (key) order.
+    ///
+    /// The `i`-th element is the value for the key at index `i`, so a caller
+    /// can index it directly by a key's `.index()`.  Backed by the forward
+    /// [`PrimaryMap`]'s element vec, so it is O(1) and allocation-free.
+    pub fn values_as_slice(&self) -> &[V] {
+        self.forward.values().as_slice()
+    }
 }
 
 impl<K: EntityRef, V: Clone + Eq + Hash> Default for EntityInterner<K, V> {
