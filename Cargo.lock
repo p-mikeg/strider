@@ -1403,6 +1403,7 @@ dependencies = [
  "strider-ir-test-utils",
  "strider-target",
  "thiserror",
+ "vn-container",
 ]
 
 [[package]]
@@ -1428,6 +1429,7 @@ dependencies = [
  "strider-ir-test-utils",
  "strider-reader",
  "strider-target",
+ "vn-container",
 ]
 
 [[package]]
@@ -1493,6 +1495,7 @@ dependencies = [
  "strider-ir",
  "strider-ir-test-utils",
  "strider-target",
+ "vn-container",
 ]
 
 [[package]]
@@ -1670,6 +1673,14 @@ name = "unindent"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
+
+[[package]]
+name = "vn-container"
+version = "0.1.0"
+dependencies = [
+ "rsleigh",
+ "rustc-hash",
+]
 
 [[package]]
 name = "wait-timeout"

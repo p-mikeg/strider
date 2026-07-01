@@ -20,10 +20,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// in the map.  Returns `vn` unchanged when nothing tracked contains it, or
     /// when `vn` is not in an aliasable (REGISTER / UNIQUE) space.
     pub(crate) fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
-        if let Some(c) = self.vn_to_container.get(vn) {
-            return *c;
-        }
-        super::container::largest_container_in(self.builder.function().all_vns(), vn)
+        self.container_map
+            .container_of(self.builder.function().all_vns(), vn)
     }
 
     /// Derive the ret-val varnode list for a `Call` built under calling

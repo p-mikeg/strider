@@ -36,7 +36,7 @@ pub(crate) fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
 ///
 /// A thin binding of the SSoT
 /// [`strider_target::BuiltCallingConvention::ret_and_clobber_vns`] to the
-/// IR-side container resolver ([`largest_container_in`] over the tracked set) —
+/// container resolver (`vn_container::largest_container_in` over the tracked set) —
 /// the same result the lifter's `cc_projection` produces in prod with its
 /// container map.  This exists only for the strider-ir test fixtures
 /// (`build_call_cc`) and cross-crate CC-shape tests that build a `Call`
@@ -48,39 +48,7 @@ pub fn cc_ret_and_clobber_vns(
     cc: &strider_target::BuiltCallingConvention,
 ) -> (Vec<rsleigh::Vn>, Vec<rsleigh::Vn>) {
     let all = function.all_vns();
-    cc.ret_and_clobber_vns(all, |v| largest_container_in(all, v))
-}
-
-/// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
-/// inclusion) that fully contains `vn`, or `vn` itself when none does.
-///
-/// Container geometry — machine-register knowledge owned by the lifter
-/// (`strider-lift`'s `container` module).  It survives here only under
-/// `#[cfg(test/test-util)]` for the CC-projection fixtures
-/// ([`cc_ret_and_clobber_vns`], `build_call_cc`) that construct a `Call`
-/// without a lifter; the two copies must stay in sync.
-#[cfg(any(test, feature = "test-util"))]
-pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
-    if vn.addr_space != rsleigh::VnSpace::REGISTER && vn.addr_space != rsleigh::VnSpace::UNIQUE {
-        return *vn;
-    }
-    let start = vn.addr_off;
-    let end = start.saturating_add(u64::from(vn.size));
-    let mut best: Option<rsleigh::Vn> = None;
-    for cand in vns {
-        if cand.addr_space != vn.addr_space {
-            continue;
-        }
-        let cs = cand.addr_off;
-        let ce = cs.saturating_add(u64::from(cand.size));
-        if cs > start || ce < end {
-            continue;
-        }
-        if best.is_none_or(|b| b.size < cand.size) {
-            best = Some(*cand);
-        }
-    }
-    best.unwrap_or(*vn)
+    cc.ret_and_clobber_vns(all, |v| vn_container::largest_container_in(all, v))
 }
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.

@@ -1,6 +1,5 @@
 use cranelift_entity::PrimaryMap;
 use cranelift_entity::packed_option::ReservedValue;
-use rustc_hash::FxHashMap;
 
 use crate::error::Result;
 use crate::function::Function;
@@ -16,14 +15,6 @@ mod nodes;
 #[cfg(test)]
 mod tests;
 mod vars;
-
-/// Returns `true` for varnode spaces whose offsets are addressed as fixed
-/// byte ranges (REGISTER, UNIQUE).  CONST and code-space varnodes don't
-/// behave like fixed-offset registers, so containment-by-offset is
-/// meaningless there.
-fn is_aliasable_space(s: rsleigh::VnSpace) -> bool {
-    s == rsleigh::VnSpace::REGISTER || s == rsleigh::VnSpace::UNIQUE
-}
 
 /// Errors unless `vn` is in REGISTER or UNIQUE space.
 ///
@@ -42,112 +33,6 @@ pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()
     }
 }
 
-/// Filters `all_used_variables` down to the largest enclosing tracked
-/// variable in each fixed-offset (REGISTER/UNIQUE) space.  E.g. if both
-/// `rdi` and `edi` are touched, the `edi` entry is dropped.  CONST and
-/// code-space varnodes are kept verbatim — containment-by-offset is
-/// meaningless there.
-///
-/// MIPS-style example: Sleigh's MIPS lifter writes a 64-bit IntMul
-/// result to a unique varnode then Copies a 4-byte slice to a register;
-/// without this filter the 4-byte and 8-byte unique varnodes look like
-/// independent SSA variables.  Keeping the wider varnode preserves the
-/// data dependency.
-///
-/// Returns the deduped tracked set in INPUT order; [`Function::new`] re-sorts
-/// it before interning, so downstream `InitialVnId` assignment is deterministic
-/// regardless of this input order.  A varnode is dropped iff some STRICTLY
-/// larger same-space varnode encloses its byte range.
-///
-/// This is container geometry — machine-register knowledge owned by the lifter
-/// (`strider-lift`'s `container` module).  It survives here only under
-/// `#[cfg(test/test-util)]` so fixtures that build a `Function` without a lifter
-/// can reproduce the canonical tracked set (via [`canonicalize_tracked`]); the
-/// two copies must stay in sync.
-#[cfg(any(test, feature = "test-util"))]
-fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
-    // Range end with saturating arithmetic (high-offset CR slices on ppc64 /
-    // aarch64be can push `addr_off + size` past `u64::MAX`).
-    fn end_of(v: &rsleigh::Vn) -> u64 {
-        v.addr_off.saturating_add(u64::from(v.size))
-    }
-
-    // Bucket aliasable inputs by space, carrying each entry's original index.
-    let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
-    for (i, v) in all_used_variables.iter().enumerate() {
-        if is_aliasable_space(v.addr_space) {
-            by_space.entry(v.addr_space).or_default().push((i, *v));
-        }
-    }
-
-    let mut dropped = vec![false; all_used_variables.len()];
-    for (_space, mut bucket) in by_space {
-        // addr_off ascending, then size descending so a wider enclosure is
-        // seen before the narrower slices it contains.
-        bucket.sort_by_key(|(_, v)| (v.addr_off, std::cmp::Reverse(v.size)));
-
-        // Open enclosures whose range still extends past the current start,
-        // kept as `(end, vn)` and holding only SURVIVORS. Sorted-by-start
-        // arrival means any open entry has `off <= v.off`; one with
-        // `end >= v_end` AND `size > v.size` strictly encloses `v`.
-        let mut open: Vec<(u64, rsleigh::Vn)> = Vec::new();
-        for (idx, v) in bucket {
-            let v_end = end_of(&v);
-            // Drop opens whose range ends before this entry STARTS: by the
-            // addr_off-ascending sort every remaining entry starts at or after
-            // `v.addr_off`, so such an open can enclose neither `v` nor any
-            // later entry (whose end is ≥ its own start ≥ v.addr_off).  Opens
-            // surviving this prune may still enclose a later, even-narrower
-            // entry that shares `v`'s start, so they stay live.
-            open.retain(|&(end, _)| end >= v.addr_off);
-            // Strictly-larger enclosing open (`off ≤ v.off` by sort,
-            // `end ≥ v_end`, `size > v.size`): if present, `v` is a subsumed
-            // sub-register view and is dropped; else `v` is the largest in its
-            // chain and joins the opens.
-            let enclosed = open.iter().any(|&(end, c)| end >= v_end && c.size > v.size);
-            if enclosed {
-                dropped[idx] = true;
-            } else {
-                open.push((v_end, v));
-            }
-        }
-    }
-
-    all_used_variables
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !dropped[*i])
-        .map(|(_, v)| *v)
-        .collect()
-}
-
-/// Test-only: reproduce the lifter's canonical tracked-universe construction —
-/// seed every calling-convention register, then drop strictly-enclosed
-/// sub-register views — so fixtures that build a `Function` without a lifter get
-/// the same tracked set the lifter would produce.
-///
-/// Prod construction does this in `strider-lift`'s `container` module (its
-/// `seed_cc_regs` + `dedup_overlapping_largest`); this is the
-/// `#[cfg(test/test-util)]` mirror.  `FunctionBuilder::new` itself performs no
-/// container reasoning, so every fixture / `RegisterSet` passes its result here.
-#[cfg(any(test, feature = "test-util"))]
-pub fn canonicalize_tracked(
-    mut all_used_variables: Vec<rsleigh::Vn>,
-    cc: &strider_target::BuiltCallingConvention,
-) -> Vec<rsleigh::Vn> {
-    for v in cc
-        .ret_val_regs
-        .iter()
-        .chain(cc.ret_val_regs_float.iter())
-        .chain(cc.arg_passing_regs.iter())
-        .chain(std::iter::once(&cc.stack_vn))
-    {
-        if !all_used_variables.contains(v) {
-            all_used_variables.push(*v);
-        }
-    }
-    dedup_overlapping_largest(&all_used_variables)
-}
 
 /// Incrementally constructs a sea-of-nodes IR function graph.
 ///
@@ -238,26 +123,42 @@ impl FunctionBuilder {
     /// has no matching `ValueType` (the entry block allocates one
     /// `InitialVar` per tracked variable).
     pub fn new(
-        all_used_variables: Vec<rsleigh::Vn>,
+        mut all_used_variables: Vec<rsleigh::Vn>,
         cc: &strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
     ) -> Result<Self> {
-        // `all_used_variables` is the already-canonical tracked universe: the
-        // lifter seeds every calling-convention register and drops
-        // strictly-enclosed sub-register views (its `container` module) before
-        // constructing the builder.  This constructor performs NO container
-        // reasoning — resolving a varnode to its largest tracked container is
-        // machine-register knowledge owned by the lifter, not the
-        // target-agnostic IR.  Fixtures that build a `Function` without a lifter
-        // canonicalise via [`canonicalize_tracked`] first.
+        // Build the canonical tracked universe here: seed every
+        // calling-convention register (int + float return regs, the
+        // argument-passing regs, and the stack pointer), so a leaf function that
+        // merely forwards a call still tracks each CC register the
+        // aliasing-aware read path needs; then drop strictly-enclosed
+        // sub-register views so each aliasing chain keeps only its widest
+        // varnode.  This is the sole construction path shared by the lifter
+        // (prod) and the fixtures that build a `Function` without one, so it
+        // lives here rather than being duplicated per caller.
         //
-        // `Function::new` sorts by `(space, offset, size)` and interns the
+        // Resolving an ARBITRARY varnode to its largest tracked container (the
+        // `vn_to_container` map / `largest_container_in`) is a different,
+        // machine-register concern owned by the lifter — NOT built here.
+        //
+        // `Function::new` then sorts by `(space, offset, size)` and interns the
         // varnodes (the SSoT `vn_interner`), so `InitialVnId` assignment is
         // deterministic and the `i`-th tracked varnode still lines up with the
-        // `i`-th `Call` clobber output.  Every register-list projection a Call
-        // / Return / CallOther needs is derived from `(default_cc, all_vns)`.
+        // `i`-th `Call` clobber output.
+        for v in cc
+            .ret_val_regs
+            .iter()
+            .chain(cc.ret_val_regs_float.iter())
+            .chain(cc.arg_passing_regs.iter())
+            .chain(std::iter::once(&cc.stack_vn))
+        {
+            if !all_used_variables.contains(v) {
+                all_used_variables.push(*v);
+            }
+        }
+        let tracked_vns = vn_container::dedup_overlapping_largest(&all_used_variables);
         let mut fb = FunctionBuilder {
-            function: Function::new(cc.clone(), endianness, all_used_variables),
+            function: Function::new(cc.clone(), endianness, tracked_vns),
             entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,

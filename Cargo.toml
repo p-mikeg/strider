@@ -21,6 +21,7 @@ strider-lift = { path = "crates/strider-lift" }
 strider-opt = { path = "crates/strider-opt" }
 strider-orchestrator = { path = "crates/strider-orchestrator" }
 strider-pattern = { path = "crates/strider-pattern" }
+vn-container = { path = "crates/vn-container" }
 rsleigh = { path = "../rsleigh" }
 
 cranelift-bitset = "0.112.2"

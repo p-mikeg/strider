@@ -7,6 +7,7 @@ edition = { workspace = true }
 strider-ir = { workspace = true }
 strider-graph = { workspace = true }
 rsleigh = { workspace = true }
+vn-container = { workspace = true }
 petgraph = { workspace = true }
 anyhow = { workspace = true }
 rustc-hash = "2"

@@ -13,7 +13,7 @@ pub use edit::EditFunction;
 pub use edit::FunctionState;
 pub use func::Function;
 #[cfg(any(test, feature = "test-util"))]
-pub use func::{cc_ret_and_clobber_vns, largest_container_in};
+pub use func::cc_ret_and_clobber_vns;
 
 /// The trivial-convention [`Function`] used throughout the in-crate tests.
 ///

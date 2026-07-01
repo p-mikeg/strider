@@ -93,7 +93,7 @@ impl FunctionBuilder {
     /// mirroring what the LIFTER does in prod right after `set_entry_region`.
     ///
     /// Each arg-passing register resolves to its largest tracked container (via
-    /// [`crate::function::largest_container_in`] over `all_vns` — the same
+    /// [`vn_container::largest_container_in`] over `all_vns` — the same
     /// containment rule the lifter's `container_of` map applies), and that
     /// container's `InitialVar` value is registered as the carrier for the
     /// argument's positional index.  Direct-builder tests (no lifter) call this
@@ -102,7 +102,7 @@ impl FunctionBuilder {
     pub fn record_register_arg_carriers(&mut self) {
         let arg_regs: Vec<rsleigh::Vn> = self.function.default_cc().arg_passing_regs.clone();
         for (i, reg) in arg_regs.iter().enumerate() {
-            let container = crate::function::largest_container_in(self.function.all_vns(), reg);
+            let container = vn_container::largest_container_in(self.function.all_vns(), reg);
             if let Some(value) = self.function.initial_var_value(&container) {
                 self.function_mut().side_tables_mut().register_arg_value(i as u32, value);
             }

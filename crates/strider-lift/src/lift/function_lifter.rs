@@ -1,6 +1,5 @@
 use anyhow::Result;
 
-use super::container;
 use super::Lifter;
 
 /// Per-function translation context that converts a [`strider_cfg::Cfg`] into an IR
@@ -26,15 +25,15 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// overrides (the `LiftOptions` default), so lookups are a plain `.get`.
     pub(crate) per_address_ccs:
         &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    /// `vn → largest tracked container` map: the machine-register-container
-    /// knowledge that lives with the lifter (not the target-agnostic IR).
-    /// Built once from the raw collected varnode set plus every
-    /// calling-convention register, it is the O(1) fast path the
+    /// `vn → largest tracked container` map ([`vn_container::ContainerMap`]):
+    /// the machine-register-container knowledge that lives with the lifter (not
+    /// the target-agnostic IR).  Built once from the raw collected varnode set
+    /// plus every calling-convention register, it is the O(1) fast path the
     /// register-aliasing read/write (`vn_io`) and the CC / CallOther register
     /// projections read on every access.  Ad-hoc varnodes absent from the map
-    /// resolve through the `all_vns` scan fallback in
+    /// fall through to its `all_vns` scan fallback in
     /// [`FunctionLifter::container_of`].
-    pub(crate) vn_to_container: rustc_hash::FxHashMap<rsleigh::Vn, rsleigh::Vn>,
+    pub(crate) container_map: vn_container::ContainerMap,
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
@@ -54,22 +53,18 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<Self> {
-        // Build the canonical tracked universe here in the lifter: seed every
-        // calling-convention register, then drop strictly-enclosed sub-register
-        // views so each aliasing chain keeps only its widest varnode.  All
-        // container geometry is machine-register knowledge owned by the lifter,
-        // not the target-agnostic IR — `FunctionBuilder::new` just interns the
-        // canonical set (sorting it for deterministic `InitialVnId` order).
-        let mut seeded = all_vns.clone();
-        container::seed_cc_regs(&mut seeded, cc);
-        let tracked = container::dedup_overlapping_largest(&seeded);
-        let builder = strider_ir::FunctionBuilder::new(tracked, cc, lifter.arch.endianness())?;
-        // Precompute the `vn → container` map over every raw collected varnode
-        // plus every CC register (arg / ret / float-ret / stack / callee-saved),
-        // resolving each to its largest tracked container — the O(1) fast path
-        // the register-aliasing read/write and CC projections read on every
-        // access.  A CC register narrower than its tracked container (ABI says
-        // `eax`, function tracks `rax`) resolves to the container.
+        // `FunctionBuilder::new` seeds the CC registers and drops enclosed
+        // sub-registers, so `builder.function().all_vns()` is the canonical
+        // tracked set (universe construction — shared by every fixture — lives
+        // there).  Resolving a varnode INTO that set is the machine-register
+        // concern owned here in the lifter: precompute the `vn → container` map
+        // over every raw collected varnode plus every CC register (arg / ret /
+        // float-ret / stack / callee-saved), so a CC register narrower than its
+        // tracked container (ABI says `eax`, function tracks `rax`) resolves to
+        // the container.  This is the O(1) fast path the register-aliasing
+        // read/write and CC projections read on every access.
+        let builder =
+            strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch.endianness())?;
         let cc_regs = cc
             .ret_val_regs
             .iter()
@@ -79,14 +74,15 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .chain(std::iter::once(&cc.stack_vn))
             .copied();
         let queries = all_vns.iter().copied().chain(cc_regs);
-        let vn_to_container = container::build_container_map(builder.function().all_vns(), queries);
+        let container_map =
+            vn_container::ContainerMap::build(builder.function().all_vns(), queries);
         Ok(Self {
             lifter,
             builder,
             cfg,
             unresolved_branches: Vec::new(),
             per_address_ccs,
-            vn_to_container,
+            container_map,
         })
     }
 

@@ -43,11 +43,6 @@ fn raw_builder(
     // stamp the sentinel lift address — it mirrors the old `new_raw`, which
     // left `lift_addr` as `None`.  Tests that build fingerprint-bearing
     // nodes set the lift address themselves.
-    //
-    // `canonicalize_tracked` seeds the CC registers and drops enclosed
-    // sub-registers — the canonical universe the lifter builds before
-    // `FunctionBuilder::new` (which itself does no container reasoning).
-    let tracked = super::canonicalize_tracked(tracked, &cc);
     FunctionBuilder::new(tracked, &cc, endianness)
 }
 
@@ -755,22 +750,6 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 
 /// Regression: high-offset register varnodes (e.g. ppc64 / aarch64be
 /// condition-register slices) can have `addr_off + size` overflow `u64`.
-/// The overlap-dedup helper must use saturating arithmetic to match the
-/// convention `build_largest_container_map` already documents — a plain `+`
-/// panics in debug and wrap-misclassifies containment in release.
-#[test]
-fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
-    let wide = reg_vn(u64::MAX - 1, 8);
-    let narrow = reg_vn(u64::MAX - 1, 4);
-    // Must not panic; the wider varnode subsumes the narrower one.
-    let kept = dedup_overlapping_largest(&[wide, narrow]);
-    assert_eq!(
-        kept,
-        vec![wide],
-        "wider high-offset varnode wins, no overflow"
-    );
-}
-
 /// Every value that fits `u128` is interned as `ConstValue::Bits` regardless
 /// of the declared width — the width lives in the output `ValueKind`, not the
 /// stored value.  Both a small and a large-but-`u128`-fitting I128 value read
@@ -874,7 +853,7 @@ fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
         strider_target::Endianness::Little,
     )?;
     let f = b.function();
-    let container_of = |vn: &rsleigh::Vn| crate::function::largest_container_in(f.all_vns(), vn);
+    let container_of = |vn: &rsleigh::Vn| vn_container::largest_container_in(f.all_vns(), vn);
     assert_eq!(
         container_of(&eax),
         rax,
@@ -2251,7 +2230,6 @@ mod build_call_with_cc {
         // read via `read_reg_vn`, which errors on an untracked register.
         let mut tracked = vec![rax, rsp];
         tracked.extend(x86_64_arg_regs(&regs));
-        let tracked = super::canonicalize_tracked(tracked, &cc);
         let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little).unwrap();
         let _ = rdi;
         let region = b.create_region().unwrap();
@@ -2295,9 +2273,8 @@ mod build_call_with_cc {
         let xmm0 = regs.name_to_vn("XMM0").unwrap();
         let xmm1 = regs.name_to_vn("XMM1").unwrap();
         let _ = rdi;
-        let tracked = super::canonicalize_tracked(vec![rax, rsp], &cc);
         let mut b =
-            FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little).unwrap();
+            FunctionBuilder::new(vec![rax, rsp], &cc, strider_target::Endianness::Little).unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
@@ -2369,7 +2346,6 @@ mod build_call_with_cc {
         // register.  RDI is still slot [4] (the first arg).
         let mut tracked = vec![rax, rsp];
         tracked.extend(x86_64_arg_regs(&regs));
-        let tracked = super::canonicalize_tracked(tracked, &cc);
         let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little).unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
@@ -2679,102 +2655,6 @@ fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
 
 // ── register-aliasing read/write edge cases ────────────────────────────────
 
-// ── dedup_overlapping_largest edge cases ────────────────────────────────────
-
-/// An empty tracked list stays empty.
-#[test]
-fn dedup_overlapping_largest_empty_input_yields_empty() {
-    assert!(dedup_overlapping_largest(&[]).is_empty());
-}
-
-/// Value-identical duplicates pass through the overlap filter UNCHANGED —
-/// the `other != *v` guard skips equal entries, so neither copy subsumes
-/// the other.  Collapsing duplicates is the var-table interner's job in
-/// `FunctionBuilder::new`, pinned by the second half.
-#[test]
-fn dedup_overlapping_largest_keeps_duplicate_identical_vns() -> Result<()> {
-    let r = reg_vn(0x10, 8);
-    assert_eq!(
-        dedup_overlapping_largest(&[r, r]),
-        vec![r, r],
-        "the overlap filter does not collapse value-equal duplicates"
-    );
-    // The builder's interning collapses them to one tracked variable.
-    let b = raw_builder(
-        vec![r, r],
-        &[],
-        &[],
-        &[],
-        None,
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    assert_eq!(
-        b.function().all_vns().iter().filter(|&&v| v == r).count(),
-        1,
-        "FunctionBuilder::new tracks the duplicated vn exactly once"
-    );
-    Ok(())
-}
-
-/// Two PARTIALLY overlapping (non-nested) varnodes are both kept: the filter
-/// drops only a varnode fully contained in a strictly larger one, and
-/// neither range encloses the other here.
-#[test]
-fn dedup_overlapping_largest_keeps_partially_overlapping_vns() {
-    let a = reg_vn(0x0, 4); // bytes [0, 4)
-    let b = reg_vn(0x2, 4); // bytes [2, 6) — overlaps a, not nested
-    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
-}
-
-/// Behaviour pin for the O(n log n) sweep (IR-1): on a large tracked set with
-/// many nested aliasing UNIQUE slices, exactly the strictly-largest enclosing
-/// varnode in each containment chain survives, in input order, and every
-/// equal-but-not-strictly-larger / partially-overlapping entry is kept.  The
-/// set is sized so an accidental O(n²) regression would be visibly slow.
-#[test]
-fn dedup_overlapping_largest_handles_many_aliasing_uniques() {
-    fn uniq(off: u64, size: u32) -> rsleigh::Vn {
-        rsleigh::Vn {
-            size,
-            addr_off: off,
-            addr_space: rsleigh::VnSpace::UNIQUE,
-        }
-    }
-
-    // 500 containers, each at a distinct 8-byte-aligned offset, every one with
-    // two strictly-narrower nested slices (a 4-byte at the start and a 1-byte
-    // at the end).  Only the 8-byte container of each group should survive.
-    let n = 500u64;
-    let mut input = Vec::new();
-    let mut expected = Vec::new();
-    for i in 0..n {
-        let base = i * 8;
-        let container = uniq(base, 8);
-        // Interleave narrow-before-wide so order-independence is exercised.
-        input.push(uniq(base, 4)); // nested 4-byte slice — dropped
-        input.push(container); // strict-largest — kept
-        input.push(uniq(base + 7, 1)); // nested 1-byte slice — dropped
-        expected.push(container);
-    }
-    let kept = dedup_overlapping_largest(&input);
-    assert_eq!(
-        kept, expected,
-        "exactly each group's strict-largest 8-byte container survives, in order"
-    );
-    assert_eq!(kept.len(), n as usize);
-}
-
-/// Equal-size overlapping varnodes are BOTH kept: the drop predicate requires a
-/// STRICTLY larger enclosing varnode, so two same-size aliases never subsume
-/// each other (pins that the sweep keeps the `size >` strictness).
-#[test]
-fn dedup_overlapping_largest_keeps_equal_size_aliases() {
-    let a = reg_vn(0x10, 8);
-    let b = reg_vn(0x10, 8); // value-equal duplicate
-    // Value-equal duplicates are both kept (interning is the builder's job).
-    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
-}
 
 // ── IR-6: symmetric sub-register write coercion ─────────────────────────────
 
@@ -2797,7 +2677,7 @@ fn container_of_untracked_callee_saved_and_adhoc_vns_resolve_to_self() -> Result
         strider_target::Endianness::Little,
     )?;
     let f = b.function();
-    let container_of = |vn: &rsleigh::Vn| crate::function::largest_container_in(f.all_vns(), vn);
+    let container_of = |vn: &rsleigh::Vn| vn_container::largest_container_in(f.all_vns(), vn);
     assert!(
         !f.all_vns().contains(&r_cs),
         "callee-saved CC regs are not seeded into the tracked set"
@@ -2847,8 +2727,7 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         link_register_vn: None,
         preserves_memory: false,
     };
-    let tracked = super::canonicalize_tracked(vec![rdi, rsi, sp], &cc);
-    let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little)?;
+    let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], &cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     // The lifter records register-arg carriers after `set_entry_region`; the
@@ -2893,11 +2772,10 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
         link_register_vn: None,
         preserves_memory: false,
     };
-    // Track only the wider container rdi (+ sp). canonicalize_tracked seeds
+    // Track only the wider container rdi (+ sp). FunctionBuilder::new seeds
     // edi (the narrow arg alias) then drops it as enclosed by rdi, so the var
     // table is keyed by rdi, not edi.
-    let tracked = super::canonicalize_tracked(vec![rdi, sp], &cc);
-    let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little)?;
+    let mut b = FunctionBuilder::new(vec![rdi, sp], &cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     // The lifter records register-arg carriers after `set_entry_region`; the

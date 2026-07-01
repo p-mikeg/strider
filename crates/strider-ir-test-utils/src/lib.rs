@@ -172,10 +172,8 @@ impl RegisterSet {
         // variable table and errors when it is absent (it no longer mints an
         // SP anchor), so a fixture that builds a `Call` needs a tracked SP.
         // The synthetic SP sits at a high offset no common test register
-        // uses; `canonicalize_tracked` seeds it (and any declared arg/ret regs)
-        // into the tracked set and drops enclosed sub-registers — the same
-        // canonical universe the lifter builds before `FunctionBuilder::new`
-        // (which itself does no container reasoning).
+        // uses; `FunctionBuilder::new` seeds it (and any declared arg/ret regs)
+        // into the tracked set, and drops enclosed sub-registers.
         let stack_vn = self.sp.unwrap_or(DEFAULT_TEST_SP);
         // Synthesise a convention from the declared register lists and hand
         // it to the single `FunctionBuilder::new` constructor.  Struct-literal
@@ -195,8 +193,7 @@ impl RegisterSet {
         let endianness = self
             .endianness
             .unwrap_or(strider_target::Endianness::Little);
-        let tracked = strider_ir::canonicalize_tracked(self.tracked, &cc);
-        let mut b = FunctionBuilder::new(tracked, &cc, endianness)?;
+        let mut b = FunctionBuilder::new(self.tracked, &cc, endianness)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)
     }

@@ -33,7 +33,6 @@ pub mod match_result;
 pub mod matcher;
 pub mod template;
 pub mod typed;
-pub(crate) mod vn_contain;
 
 pub use bindings::Bindings;
 pub use capture::Capture;
