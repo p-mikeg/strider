@@ -21,6 +21,7 @@ use strider_ir::{
     ExtendOp, Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
 };
 use strider_ir_test_utils::IrWalkerEx;
+use strider_ir_test_utils::IrBuilderEx;
 use strider_ir_test_utils::{
     MockRom, RegisterSet, stack_vn_aarch64 as sp64, stack_vn_x86 as sp32_vn,
 };

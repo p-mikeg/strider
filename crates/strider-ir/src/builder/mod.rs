@@ -177,13 +177,6 @@ impl FunctionBuilder {
         self.lift_addr = addr;
     }
 
-    /// Sets the function-default convention's stack-argument layout.
-    /// Prod sets stack args through the lift path; used only by tests.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn set_stack_args(&mut self, stack_args: Option<strider_target::StackArgs>) {
-        self.function.default_cc.stack_args = stack_args;
-    }
-
     /// Creates a node in the graph with the given kind, inputs, and
     /// output kinds.  When the attributed lift address is `Some(addr)`, also
     /// records `addr` in the resulting node's asm-fingerprint side-table

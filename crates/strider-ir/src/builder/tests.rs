@@ -865,33 +865,6 @@ fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn set_stack_args_round_trips_on_default_cc() -> Result<()> {
-    use strider_target::StackArgs;
-    let sp = reg_vn(0x7000, 8);
-    let mut b = raw_builder(
-        vec![],
-        &[],
-        &[],
-        &[],
-        Some(sp),
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    b.set_stack_args(Some(StackArgs {
-        base_offset: 8,
-        increment: 8,
-    }));
-    assert_eq!(
-        b.function().default_cc().stack_args,
-        Some(StackArgs {
-            base_offset: 8,
-            increment: 8
-        }),
-    );
-    Ok(())
-}
-
 /// The footprint-resolving `build_call_other` reads each
 /// `abi.implicit_reads` register itself (via `read_reg_vn`), appends those
 /// reads after the explicit args, emits the result + per-implicit-write

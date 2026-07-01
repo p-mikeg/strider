@@ -16,9 +16,10 @@
 
 use std::collections::BTreeMap;
 
-use strider_ir::node::NodeKind;
+use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{
-    Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, ReadOnlyMemory, Result, Value,
+    Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntUnaryOp,
+    ReadOnlyMemory, Result, Value, ValueType,
 };
 
 /// Test-only extension over [`IRWalker`] supplying node-kind counting /
@@ -40,6 +41,32 @@ pub trait IrWalkerEx: IRWalker {
 }
 
 impl<T: IRWalker + ?Sized> IrWalkerEx for T {}
+
+/// Test-only extension over [`IRBuilderExt`] supplying builder shorthands that
+/// aren't primitive in the IR.  Blanket-implemented for every `IRBuilderExt`,
+/// so a test brings them into scope with
+/// `use strider_ir_test_utils::IrBuilderEx;`.
+pub trait IrBuilderEx: IRBuilderExt {
+    /// Emits the canonical lowered shape for `lhs - rhs`:
+    /// `Add(lhs, IntUnaryOp::Neg(rhs))`.  `IntBinaryOp::Sub` is not a primitive
+    /// in this IR (pcode-lift lowers `IntSub` at lift time); this reproduces the
+    /// same shape from the builder API.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either operand is not a value edge.
+    fn build_sub_as_add_neg(
+        &mut self,
+        lhs_id: ValueId,
+        rhs_id: ValueId,
+        output_type: ValueType,
+    ) -> Result<ValueId> {
+        let neg_rhs = self.build_int_unary_operation(rhs_id, IntUnaryOp::Neg, output_type)?;
+        self.build_int_binary_operation(lhs_id, neg_rhs, IntBinaryOp::Add, output_type)
+    }
+}
+
+impl<T: IRBuilderExt + ?Sized> IrBuilderEx for T {}
 
 /// Sentinel asm-fingerprint address used by every helper in this
 /// module.  Distinct from any real machine address so debug output

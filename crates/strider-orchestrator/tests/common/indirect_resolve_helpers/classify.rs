@@ -25,6 +25,7 @@ use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::MachineInsnAddr;
 use strider_ir::node::NodeKind;
 use strider_ir::{Function, IRBuilderExt, IRViewer, IRWalker};
+use strider_ir_test_utils::IrBuilderEx;
 use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 

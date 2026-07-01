@@ -79,6 +79,14 @@ impl Tb {
         Self { fb }
     }
 
+    /// Build a `Tb` from a fully-configured [`RegisterSet`], with an entry
+    /// region pre-created and set active.  Use when the fixture needs a CC
+    /// knob the positional constructors don't take (e.g. `stack_args`).
+    pub fn from_rs(rs: RegisterSet) -> Self {
+        let fb = rs.build_fn_single_region().expect("build_fn_single_region");
+        Self { fb }
+    }
+
     /// Low-level raw constructor matching `FunctionBuilder::new`, with
     /// an entry region pre-created and set active.
     pub fn raw(

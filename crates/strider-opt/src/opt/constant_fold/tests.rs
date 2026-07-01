@@ -6,6 +6,7 @@ use strider_ir::{
     IntCmpOp, IntUnaryOp,
 };
 use strider_ir_test_utils::IrWalkerEx;
+use strider_ir_test_utils::IrBuilderEx;
 
 use crate::test_support::{
     assert_return_kind, assert_returns_const, make_fn, make_fn_with_var, return_kind, return_value,

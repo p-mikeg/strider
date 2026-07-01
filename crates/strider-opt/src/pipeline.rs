@@ -452,6 +452,7 @@ mod tests {
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir_test_utils::IrBuilderEx;
 
     /// Build a tiny single-region function returning `IntConst(K)`.
     fn one_const_fn(k: u64) -> strider_ir::Function {
@@ -544,19 +545,14 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 4,
         };
-        let mut b = strider_ir_test_utils::builder(
-            vec![sp],
-            &[],
-            &[sp],
-            &[],
-            None,
-            0,
-            strider_target::Endianness::Little,
-        )?;
-        b.set_stack_args(Some(strider_target::StackArgs {
-            base_offset: 0,
-            increment: 8,
-        }));
+        let mut b = strider_ir_test_utils::RegisterSet::new()
+            .tracked(sp)
+            .callee_saved(sp)
+            .stack_args(Some(strider_target::StackArgs {
+                base_offset: 0,
+                increment: 8,
+            }))
+            .build_fn()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -649,19 +645,15 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 4,
         };
-        let mut b = strider_ir_test_utils::builder(
-            vec![sp],
-            &[],
-            &[sp],
-            &[],
-            Some(sp),
-            0,
-            strider_target::Endianness::Little,
-        )?;
-        b.set_stack_args(Some(strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        }));
+        let mut b = strider_ir_test_utils::RegisterSet::new()
+            .tracked(sp)
+            .callee_saved(sp)
+            .stack_vn(sp)
+            .stack_args(Some(strider_target::StackArgs {
+                base_offset: 0,
+                increment: 4,
+            }))
+            .build_fn()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);

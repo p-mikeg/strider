@@ -15,6 +15,7 @@ use strider_ir::{
     IntCmpOp,
 };
 use strider_ir_test_utils::{make_empty_fn, reg_vn};
+use strider_ir_test_utils::IrBuilderEx;
 
 use strider_pattern::{
     Capture, CaptureExt, MatchPat, Matcher, add, and, any, any_bool_const, any_float_const,
