@@ -17,8 +17,6 @@
 //! [`Function::graph_mut`].
 
 use rustc_hash::FxHashMap;
-#[cfg(any(test, feature = "test-util"))]
-use rustc_hash::FxHashSet;
 
 use crate::IRWalker;
 use crate::function::side_tables::SideTables;
@@ -43,6 +41,26 @@ use crate::node::{NodeId, NodeKind, ValueId};
 /// stable regardless of the order varnodes were collected from the CFG.
 pub(crate) fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
     (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
+}
+
+/// Test-fixture CC register-list projection: the ret-val + clobber varnode
+/// groups a `Call` under `cc` emits, over `function`'s tracked varnodes.
+///
+/// A thin binding of the SSoT
+/// [`strider_target::BuiltCallingConvention::ret_and_clobber_vns`] to the
+/// IR-side container resolver ([`largest_container_in`] over the tracked set) —
+/// the same result the lifter's `cc_projection` produces in prod with its
+/// container map.  This exists only for the strider-ir test fixtures
+/// (`build_call_cc`) and cross-crate CC-shape tests that build a `Call`
+/// without a lifter, which is why it is feature-gated; prod call construction
+/// goes through the lifter.
+#[cfg(any(test, feature = "test-util"))]
+pub fn cc_ret_and_clobber_vns(
+    function: &Function,
+    cc: &strider_target::BuiltCallingConvention,
+) -> (Vec<rsleigh::Vn>, Vec<rsleigh::Vn>) {
+    let all = function.all_vns();
+    cc.ret_and_clobber_vns(all, |v| largest_container_in(all, v))
 }
 
 pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
@@ -186,8 +204,10 @@ pub struct Function {
     // `default_cc` (the resolved convention) and `all_vns` (the ordered
     // tracked-varnode set) are the two genuinely-non-derivable inputs.
     // Every register-list projection a `Call` / `CallOther` / `Return`
-    // node needs is *derived* from these two via the accessors below
-    // (`call_clobbered_for`, `ret_val_regs`, `call_other_clobbered`) —
+    // node needs is *derived* from these two — in prod by the lifter's
+    // `cc_projection`, and for test fixtures by the SSoT
+    // [`strider_target::BuiltCallingConvention::ret_and_clobber_vns`]
+    // (bound to the IR container resolver by [`cc_ret_and_clobber_vns`]) —
     // there are no cached projected lists, so a per-address-CC override
     // produces a correct per-call clobber set by deriving against that
     // call's effective CC over the same `all_vns`.
@@ -203,8 +223,8 @@ pub struct Function {
     /// surfaced by the [`Self::stack_vn`] / [`Self::ret_stack_pop`] /
     /// [`Self::preserves_memory`] accessors.  The convention's
     /// `arg_passing_regs` / `ret_val_regs` / `callee_saved_regs` drive the
-    /// register-list derivations ([`Self::call_clobbered_for`],
-    /// [`Self::ret_val_regs`]).
+    /// ret-val/clobber register-list projection (the lifter's `cc_projection`
+    /// in prod; [`cc_ret_and_clobber_vns`] for test fixtures).
     pub(crate) default_cc: strider_target::BuiltCallingConvention,
     /// Target endianness of the architecture this function was lifted
     /// for.  Read by post-lift analyses that decode multi-byte values
@@ -434,152 +454,6 @@ impl Function {
             interner.intern(vn);
         }
         self.vn_interner = interner;
-    }
-
-    /// The shared call-clobber predicate: a register (resolved to its tracked
-    /// container) is clobbered iff it is neither callee-saved under `cc` nor the
-    /// stack pointer.  The callee-saved set is hashed once so the predicate is
-    /// O(1) per probe (keeping the `call_*_for` derivations O(N), not O(N·M)).
-    /// CC regs are resolved to their tracked container first so a sub-register
-    /// ABI reg matches the wider tracked vn.
-    ///
-    /// TEST-SUPPORT ONLY: the prod lift path derives these CC register-list
-    /// projections in `strider-lift` (`lift::cc_projection`).  These copies
-    /// exist for the `RegisterSet` / `build_call_cc` test fixtures and the
-    /// cross-crate CC-shape tests, which is why they are feature-gated.
-    #[cfg(any(test, feature = "test-util"))]
-    fn clobber_oracle(
-        &self,
-        cc: &strider_target::BuiltCallingConvention,
-    ) -> impl Fn(&rsleigh::Vn) -> bool + use<> {
-        let stack_vn = cc.stack_vn;
-        let callee_saved: FxHashSet<rsleigh::Vn> = cc
-            .callee_saved_regs
-            .iter()
-            .map(|v| largest_container_in(self.all_vns(), v))
-            .collect();
-        move |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn
-    }
-
-    /// The convention's combined return-register list (integer ++ float),
-    /// each resolved to its tracked container via [`largest_container_in`].
-    ///
-    /// The shared CC-ret-reg → container chain behind both
-    /// [`Self::call_ret_vals_for`] (which keeps the tracked + clobbered ones)
-    /// and [`Self::call_clobbered_for`] (which excludes them) — one place that
-    /// owns "the ret regs, in container coordinates".
-    #[cfg(any(test, feature = "test-util"))]
-    fn combined_ret_containers<'a>(
-        &'a self,
-        cc: &'a strider_target::BuiltCallingConvention,
-    ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
-        cc.ret_val_regs
-            .iter()
-            .chain(cc.ret_val_regs_float.iter())
-            .map(|v| largest_container_in(self.all_vns(), v))
-    }
-
-    /// Derive the ret-val varnode list for a `Call` built under calling
-    /// convention `cc`.  Returns only those tracked, clobbered varnodes
-    /// that appear in the convention's combined return-register list
-    /// (`ret_val_regs` then `ret_val_regs_float`), in ABI order.
-    ///
-    /// This is the first group of Call output slots past `[Control,
-    /// Memory]`.  Together with [`Self::call_clobbered_for`] it partitions
-    /// what was formerly a single clobber tail into two labeled groups —
-    /// the slot ORDER is unchanged; only the conceptual split is new.
-    ///
-    /// Each CC register (ret-val, float-ret, callee-saved) is resolved to
-    /// its tracked container via [`largest_container_in`] before membership
-    /// is tested, and the resolved CONTAINER is emitted.  This keeps a
-    /// sub-register ABI ret reg (e.g. `eax`) classified as the return
-    /// value when the function tracks the wider container (`rax`) instead
-    /// of silently dropping it.  Identity on full-width preset regs.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn call_ret_vals_for(
-        &self,
-        cc: &strider_target::BuiltCallingConvention,
-    ) -> Vec<rsleigh::Vn> {
-        let is_clobbered = self.clobber_oracle(cc);
-        // The combined ret list is tiny (1-2 regs), so a linear probe against
-        // `all_vns` is cheaper (and allocation-free) than hashing the whole
-        // tracked register file to test 1-2 items.
-        self.combined_ret_containers(cc)
-            .filter(|c| self.vn_interner.contains(c) && is_clobbered(c))
-            .collect()
-    }
-
-    /// Derive the call-clobbered varnode list for a `Call` built under
-    /// calling convention `cc`, in the canonical slot order.
-    ///
-    /// Returns ONLY the non-ret caller-saved registers.  The ret-val
-    /// registers (formerly the "ret_prefix" front-loaded by the old
-    /// `build_call_clobbered_list`) are now emitted as a separate group
-    /// by [`Self::call_ret_vals_for`].  A varnode is clobbered iff it is
-    /// neither in `cc.callee_saved_regs` nor the function's stack pointer,
-    /// AND it is not in the convention's combined ret-val register list.
-    /// All elements are drawn from `all_vns` in allocation order.
-    ///
-    /// Each CC register (callee-saved, ret-val, float-ret) is resolved to
-    /// its tracked container via [`largest_container_in`] before it is used
-    /// to exclude entries here, so a sub-register ABI ret reg (e.g. `eax`)
-    /// whose tracked container is wider (`rax`) is correctly excluded from
-    /// the clobber tail rather than mis-filed as a clobber.  Identity on
-    /// full-width preset regs.
-    ///
-    /// To obtain the FULL combined set (ret-vals ++ clobbers) for callers
-    /// that need the old single-list shape, chain the two accessors:
-    /// `call_ret_vals_for(cc).into_iter().chain(call_clobbered_for(cc))`.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn call_clobbered_for(
-        &self,
-        cc: &strider_target::BuiltCallingConvention,
-    ) -> Vec<rsleigh::Vn> {
-        // The clobber predicate (callee-saved + stack-vn exclusion) is shared
-        // with `call_ret_vals_for` via `clobber_oracle`.  The output ORDER
-        // (`all_vns` allocation order) is unchanged.
-        let is_clobbered = self.clobber_oracle(cc);
-        // The combined ret-reg list, resolved to tracked containers: the
-        // ret-val group is emitted separately by `call_ret_vals_for`, so
-        // exclude its containers here.
-        let ret_vars: FxHashSet<rsleigh::Vn> = self.combined_ret_containers(cc).collect();
-        // Only REGISTER / UNIQUE varnodes can be clobbered: clobbering a CONST /
-        // RAM tracked temp is meaningless (and the dumb `build_call` rejects a
-        // non-reg output vn).
-        self.all_vns()
-            .iter()
-            .copied()
-            .filter(|v| {
-                matches!(
-                    v.addr_space,
-                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
-                ) && is_clobbered(v)
-                    && !ret_vars.contains(v)
-            })
-            .collect()
-    }
-
-    /// The function-default call-clobbered varnode list (derived against
-    /// [`Self::default_cc`]).  Convenience for consumers that want the
-    /// default-CC shape; per-address-override `Call`s derive against
-    /// their own CC via [`Self::call_clobbered_for`].
-    ///
-    /// Returns only the NON-ret caller-saved registers.  To get the full
-    /// set (ret-vals ++ clobbers), chain with
-    /// `call_ret_vals_for(default_cc())`.
-    #[cfg(any(test, feature = "test-util"))]
-    #[inline]
-    pub fn call_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
-        self.call_clobbered_for(&self.default_cc)
-    }
-
-    /// The function-default ret-val varnode list (derived against
-    /// [`Self::default_cc`]).  Convenience for consumers that want the
-    /// default-CC ret-val shape.
-    #[cfg(any(test, feature = "test-util"))]
-    #[inline]
-    pub fn call_ret_val_regs(&self) -> Vec<rsleigh::Vn> {
-        self.call_ret_vals_for(&self.default_cc)
     }
 
     /// The calling convention's combined return-value register list

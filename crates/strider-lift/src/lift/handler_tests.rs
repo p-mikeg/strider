@@ -144,6 +144,52 @@ pub(super) fn with_test_lifter_tracking_arch(
     f(&mut driver, region_id);
 }
 
+/// Like [`with_test_lifter_tracking_arch`] but with a CALLER-PROVIDED
+/// calling convention instead of the harness's `empty_cc()`.  The
+/// projection tests need this because `with_test_lifter_tracking*` seeds
+/// `empty_cc`'s `stack_vn` (0x9000) into the tracked set — a register that
+/// the caller's test cc neither owns nor callee-saves, so it would be
+/// misclassified as an extra clobber and pollute exact clobber-list
+/// assertions.  Passing the test cc directly means the tracked set is
+/// exactly the caller's regs plus its own `stack_vn` (which the projection
+/// correctly excludes).  Body mirrors `with_test_lifter_tracking_arch`
+/// (x86, `ret` terminator) but hands `cc` to `FunctionLifter::new`.
+pub(super) fn with_test_lifter_cc(
+    cc: strider_target::BuiltCallingConvention,
+    all_vns: Vec<Vn>,
+    f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
+) {
+    let arch = strider_target::SleighArch::x86();
+    let mut sleigh = rsleigh::Sleigh::new(
+        arch.sla_spec(),
+        arch.pspec(),
+        BufMemReader::new(vec![0xc3], 0x1000),
+    )
+    .expect("create test Sleigh");
+    let cfg = strider_cfg::Builder::for_arch(
+        &arch,
+        &mut sleigh,
+        0x1000,
+        &strider_cfg::CfgOptions::default(),
+    )
+    .build()
+    .expect("throwaway cfg");
+    let region_id = cfg.entry();
+    let lifter = Lifter::new(arch, sleigh).expect("lifter");
+    let no_overrides = rustc_hash::FxHashMap::default();
+    let mut driver =
+        FunctionLifter::new(&lifter, &cc, &cfg, all_vns, &no_overrides).expect("driver");
+    driver.builder.set_lift_addr(None);
+    driver.builder.build_entry().expect("build_entry");
+    let region = driver.builder.create_region().expect("create_region");
+    driver
+        .builder
+        .set_entry_region(region)
+        .expect("set_entry_region");
+    driver.builder.set_region(region);
+    f(&mut driver, region_id);
+}
+
 /// Shared scaffold: lift one hand-built `Insn` through the unified
 /// `process_insn` dispatch and assert it succeeds (the opcode lifts
 /// cleanly).  Value opcodes never resolve a region, so an empty

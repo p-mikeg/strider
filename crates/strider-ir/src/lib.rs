@@ -54,6 +54,8 @@ mod function;
 pub use function::{
     EditFunction, Function, FunctionState, build_container_map, largest_container_in,
 };
+#[cfg(any(test, feature = "test-util"))]
+pub use function::cc_ret_and_clobber_vns;
 pub mod graph;
 pub use graph::Graph;
 pub mod node;

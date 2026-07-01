@@ -881,53 +881,6 @@ fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
     Ok(())
 }
 
-/// A calling convention whose ret-val register is a SUB-register (`eax`)
-/// of a tracked container (`rax`) must still classify the container as the
-/// return value — not silently drop it (call_ret_vals_for) nor mis-file it
-/// as a clobber (call_clobbered_for). Pins the container routing.
-#[test]
-fn cc_subregister_ret_reg_resolves_to_tracked_container() -> Result<()> {
-    use strider_target::BuiltCallingConvention;
-    let rax = reg_vn(0x0, 8);
-    let eax = reg_vn(0x0, 4);
-    let sp = reg_vn(0x7000, 8);
-    let cc = BuiltCallingConvention::try_new(
-        vec![],    // arg_passing_regs
-        vec![],    // callee_saved_regs
-        vec![eax], // ret_val_regs (sub-register!)
-        vec![],    // ret_val_regs_float
-        sp,        // stack_vn
-        None,      // stack_args
-        0,         // ret_stack_pop
-        None,      // link_register_vn
-        false,     // preserves_memory
-    )?;
-    // Build a function that tracks rax (+ sp). all_vns() then contains the
-    // rax container, and largest_container_in(eax) resolves to rax.
-    let b = raw_builder(
-        vec![rax],
-        &[],
-        &[],
-        &[],
-        Some(sp),
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    let f = b.function();
-    let ret_vals = f.call_ret_vals_for(&cc);
-    assert_eq!(
-        ret_vals,
-        vec![rax],
-        "eax ret reg resolves to its rax container"
-    );
-    let clobbers = f.call_clobbered_for(&cc);
-    assert!(
-        !clobbers.contains(&rax),
-        "the rax return register must not also appear as a clobber",
-    );
-    Ok(())
-}
-
 #[test]
 fn set_stack_args_round_trips_on_default_cc() -> Result<()> {
     use strider_target::StackArgs;
@@ -1733,26 +1686,18 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
         "ret_val_regs projects the ABI ret list"
     );
 
-    // call_ret_val_regs: r0 is a tracked, clobbered ret reg.
+    // The default-CC ret / clobber projection: r0 is the tracked, clobbered
+    // ret reg; r1 the non-ret caller-clobbered; r2 (callee-saved) and sp excluded.
+    let (ret_group, clobber_group) =
+        crate::cc_ret_and_clobber_vns(b.function(), b.function().default_cc());
+    assert_eq!(ret_group, vec![r0], "ret group is the ret-val register (r0)");
     assert_eq!(
-        b.function().call_ret_val_regs(),
-        vec![r0],
-        "call_ret_val_regs returns only the ret-val registers (r0)"
-    );
-    // call_clobbered_regs: only the non-ret caller-clobbered regs (r1);
-    // r0 has moved to the ret-val group; r2 (callee-saved) and sp excluded.
-    assert_eq!(
-        b.function().call_clobbered_regs(),
+        clobber_group,
         vec![r1],
-        "call_clobbered_regs returns only the non-ret caller-clobbered regs"
+        "clobber group is only the non-ret caller-clobbered reg (r1)"
     );
     // The full combined set (ret-vals ++ clobbers) reproduces the old list.
-    let combined: Vec<_> = b
-        .function()
-        .call_ret_val_regs()
-        .into_iter()
-        .chain(b.function().call_clobbered_regs())
-        .collect();
+    let combined: Vec<_> = ret_group.into_iter().chain(clobber_group).collect();
     assert_eq!(
         combined,
         vec![r0, r1],
@@ -1784,90 +1729,6 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
         "call_other_clobbered is every tracked var except the stack pointer"
     );
 
-    Ok(())
-}
-
-/// `call_clobbered_for(cc)` derives a per-call clobber set against an
-/// arbitrary CC over the same `all_vns`.  An override CC that marks an
-/// extra register callee-saved must yield a strictly smaller clobber set
-/// than the function-default — proving the derivation honours the
-/// effective CC rather than a baked-in default list.
-#[test]
-fn call_clobbered_for_override_cc_differs_from_default() -> Result<()> {
-    let r0 = reg_vn(0x10, 8); // ret + clobbered under default
-    let r1 = reg_vn(0x20, 8); // plain caller-clobbered under default
-    let r2 = reg_vn(0x30, 8); // callee-saved under default
-    let sp = reg_vn(0x40, 8); // stack pointer
-
-    let b = raw_builder(
-        vec![r0, r1, r2, sp],
-        &[r0], // arg_passing
-        &[r2], // callee_saved (default)
-        &[r0], // ret_vars
-        Some(sp),
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    let f = b.function();
-
-    // Default: ret-val group = [r0]; clobber group = [r1].
-    // (r2 callee-saved, sp excluded from both.)
-    assert_eq!(
-        f.call_ret_vals_for(f.default_cc()),
-        vec![r0],
-        "call_ret_vals_for default-CC returns the ret-val register r0"
-    );
-    assert_eq!(
-        f.call_clobbered_for(f.default_cc()),
-        vec![r1],
-        "call_clobbered_for default-CC returns only the non-ret clobbered reg r1"
-    );
-    assert_eq!(
-        f.call_clobbered_for(f.default_cc()),
-        f.call_clobbered_regs()
-    );
-    // Combined (ret-vals ++ clobbers) reproduces the old single list [r0, r1].
-    let full_default: Vec<_> = f
-        .call_ret_vals_for(f.default_cc())
-        .into_iter()
-        .chain(f.call_clobbered_for(f.default_cc()))
-        .collect();
-    assert_eq!(full_default, vec![r0, r1]);
-
-    // Override CC: mark BOTH r1 and r2 callee-saved, no ret regs.  The
-    // override has no ret-val group (no ret_val_regs) so the entire
-    // combined set is the clobber group.  Only r0 survives the
-    // callee-saved filter — strictly smaller than the default.
-    let override_cc = strider_target::BuiltCallingConvention {
-        arg_passing_regs: vec![],
-        callee_saved_regs: vec![r1, r2],
-        ret_val_regs: vec![],
-        ret_val_regs_float: vec![],
-        stack_vn: sp,
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register_vn: None,
-        preserves_memory: false,
-    };
-    assert_eq!(
-        f.call_ret_vals_for(&override_cc),
-        vec![],
-        "override CC with no ret regs has an empty ret-val group"
-    );
-    assert_eq!(
-        f.call_clobbered_for(&override_cc),
-        vec![r0],
-        "override CC marking r1+r2 callee-saved leaves only r0 in clobbers"
-    );
-    let full_override: Vec<_> = f
-        .call_ret_vals_for(&override_cc)
-        .into_iter()
-        .chain(f.call_clobbered_for(&override_cc))
-        .collect();
-    assert!(
-        full_override.len() < full_default.len(),
-        "override combined set must be strictly smaller than the default"
-    );
     Ok(())
 }
 
@@ -2637,16 +2498,14 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 
     let cc = b.function().default_cc().clone();
 
-    // (a) call_ret_vals_for returns only rax.
-    let ret_vals = b.function().call_ret_vals_for(&cc);
+    // (a)/(b) the CC ret / clobber projection: rax is the ret reg, rcx a plain
+    // caller-clobber, rbx (callee-saved) + rsp excluded.
+    let (ret_vals, clobbered) = crate::cc_ret_and_clobber_vns(b.function(), &cc);
     assert_eq!(
         ret_vals,
         vec![rax],
-        "call_ret_vals_for must return exactly the ret-val registers"
+        "ret group must be exactly the ret-val registers"
     );
-
-    // (b) call_clobbered_for must NOT contain rax (it moved to the ret-val group).
-    let clobbered = b.function().call_clobbered_for(&cc);
     assert!(
         !clobbered.contains(&rax),
         "call_clobbered_for must not contain the ret-val register rax; got {clobbered:?}"

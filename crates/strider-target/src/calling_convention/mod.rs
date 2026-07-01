@@ -196,6 +196,63 @@ fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
 }
 
 impl BuiltCallingConvention {
+    /// Split this convention's clobbered registers into the ret-val group and
+    /// the (non-ret) caller-clobbered group, over the given `tracked_vns`.
+    ///
+    /// This is the **single source of truth** for CC register-list projection:
+    /// the production lifter and the strider-ir test-fixture `build_call_cc`
+    /// both call it, so their `Call` output shapes agree.  Each CC register is
+    /// resolved to its tracked container via the injected `container_of`
+    /// (the lifter passes its O(1) vn→container map; IR-side callers pass a
+    /// `largest_container_in` scan) — that resolution is the only
+    /// machine-register knowledge involved, and it stays with the caller.
+    ///
+    /// A register is *clobbered* iff it is neither callee-saved nor the stack
+    /// pointer.  The returned `(ret_vals, clobbers)`:
+    /// - `ret_vals`: the tracked, clobbered containers of the combined return
+    ///   list (`ret_val_regs` then `ret_val_regs_float`), in ABI order.
+    /// - `clobbers`: every other clobbered REGISTER/UNIQUE `tracked_vns` entry,
+    ///   in `tracked_vns` order.
+    ///
+    /// These are exactly the two output groups a `Call` emits past
+    /// `[Control, Memory]`.
+    pub fn ret_and_clobber_vns(
+        &self,
+        tracked_vns: &[rsleigh::Vn],
+        container_of: impl Fn(&rsleigh::Vn) -> rsleigh::Vn,
+    ) -> (Vec<rsleigh::Vn>, Vec<rsleigh::Vn>) {
+        let stack_vn = self.stack_vn;
+        // The register lists are tiny (1-4 regs), so a linear `Vec::contains`
+        // is cheaper than hashing and needs no extra dependency.
+        let callee_saved: Vec<rsleigh::Vn> =
+            self.callee_saved_regs.iter().map(&container_of).collect();
+        let is_clobbered = |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn;
+
+        let ret_containers: Vec<rsleigh::Vn> = self
+            .ret_val_regs
+            .iter()
+            .chain(self.ret_val_regs_float.iter())
+            .map(&container_of)
+            .collect();
+        let ret_vals: Vec<rsleigh::Vn> = ret_containers
+            .iter()
+            .copied()
+            .filter(|c| tracked_vns.contains(c) && is_clobbered(c))
+            .collect();
+        let clobbers: Vec<rsleigh::Vn> = tracked_vns
+            .iter()
+            .copied()
+            .filter(|v| {
+                matches!(
+                    v.addr_space,
+                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
+                ) && is_clobbered(v)
+                    && !ret_containers.contains(v)
+            })
+            .collect();
+        (ret_vals, clobbers)
+    }
+
     /// Validating constructor.  Builds a
     /// `BuiltCallingConvention` from explicit fields and checks the
     /// canonical ABI invariants:

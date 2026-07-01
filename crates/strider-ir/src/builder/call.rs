@@ -247,10 +247,7 @@ impl FunctionBuilder {
         let cc = override_cc.unwrap_or_else(|| self.function.default_cc());
         let ret_stack_pop = cc.ret_stack_pop;
 
-        let ret_val_vars: SmallVec<[rsleigh::Vn; 4]> =
-            self.function.call_ret_vals_for(cc).into_iter().collect();
-        let clobber_vars: SmallVec<[rsleigh::Vn; 4]> =
-            self.function.call_clobbered_for(cc).into_iter().collect();
+        let (ret_val_vars, clobber_vars) = crate::cc_ret_and_clobber_vns(self.function(), cc);
 
         let arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc.arg_passing_regs.iter().copied().collect();
         let mut arg_passing: SmallVec<[ValueId; 4]> = SmallVec::new();
