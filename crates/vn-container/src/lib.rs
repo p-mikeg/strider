@@ -111,19 +111,13 @@ pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::V
         return *vn;
     }
     let end = end_of(vn);
-    let mut best: Option<rsleigh::Vn> = None;
-    for cand in vns {
-        if cand.addr_space != vn.addr_space {
-            continue;
-        }
-        if cand.addr_off > vn.addr_off || end_of(cand) < end {
-            continue;
-        }
-        if best.is_none_or(|b| b.size < cand.size) {
-            best = Some(*cand);
-        }
-    }
-    best.unwrap_or(*vn)
+    vns.iter()
+        .filter(|c| {
+            c.addr_space == vn.addr_space && c.addr_off <= vn.addr_off && end_of(c) >= end
+        })
+        .max_by_key(|c| c.size)
+        .copied()
+        .unwrap_or(*vn)
 }
 
 /// A precomputed `vn → largest containing tracked vn` map: the O(1) fast path
