@@ -26,7 +26,7 @@ fn lift_builder_trait_stamps_lift_addr() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let fp = IRViewer::function(&b).asm_fingerprint(n);
+    let fp = IRViewer::function(&b).side_tables().asm_fingerprint(n);
     assert!(
         fp.contains(&0x4000),
         "expected fingerprint to contain 0x4000, got {fp:?}"

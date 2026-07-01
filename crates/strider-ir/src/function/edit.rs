@@ -670,7 +670,7 @@ impl<'g> EditFunction<'g> {
     /// Register an argument-carrier value under a CC argument index —
     /// delegates to [`Function::register_arg_value`].
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
-        self.function.register_arg_value(index, value);
+        self.function.side_tables_mut().register_arg_value(index, value);
     }
 
     /// Absorb `from_value`'s producer asm-fingerprint into `into_value`'s
@@ -680,7 +680,7 @@ impl<'g> EditFunction<'g> {
     pub fn absorb_fingerprint(&mut self, into_value: ValueId, from_value: ValueId) {
         let into = self.function().producer(into_value);
         let from = self.function().producer(from_value);
-        self.function_mut().extend_asm_fingerprint_from(into, from);
+        self.function_mut().side_tables_mut().extend_asm_fingerprint_from(into, from);
     }
 
     // ── composite rewrites ───────────────────────────────────────────
@@ -710,7 +710,7 @@ impl<'g> EditFunction<'g> {
         // (afterwards every use of `old` has moved to `new`, leaving `from`
         // orphaned).
         let from = self.function.producer(old);
-        self.function.extend_asm_fingerprint_from(into, from);
+        self.function.side_tables_mut().extend_asm_fingerprint_from(into, from);
         // `replace_all_uses` redirects every use of `old` onto `new` AND flags
         // each redirected consumer for re-canonicalization (the cascade).
         let changed = self.replace_all_uses(old, new)?;
@@ -746,7 +746,7 @@ impl<'g> EditFunction<'g> {
             // fingerprint into `new`'s producer (superset-only union).
             let into = self.function.producer(new);
             let from = self.function.producer(old_value);
-            self.function.extend_asm_fingerprint_from(into, from);
+            self.function.side_tables_mut().extend_asm_fingerprint_from(into, from);
         }
     }
 
@@ -1013,9 +1013,9 @@ mod tests {
         );
         assert!(ctx.is_live(a_node), "the survivor A stays live");
         assert!(
-            ctx.function().asm_fingerprint(a_node).contains(&0xC),
+            ctx.function().side_tables().asm_fingerprint(a_node).contains(&0xC),
             "A absorbs C's asm address 0xC on merge (superset contract), got {:?}",
-            ctx.function().asm_fingerprint(a_node)
+            ctx.function().side_tables().asm_fingerprint(a_node)
         );
     }
 
@@ -1104,9 +1104,9 @@ mod tests {
         );
         assert!(ctx.is_live(a_node), "the survivor A stays live");
         assert!(
-            ctx.function().asm_fingerprint(a_node).contains(&0xC),
+            ctx.function().side_tables().asm_fingerprint(a_node).contains(&0xC),
             "A absorbs C's asm address 0xC (superset contract), got {:?}",
-            ctx.function().asm_fingerprint(a_node)
+            ctx.function().side_tables().asm_fingerprint(a_node)
         );
     }
 

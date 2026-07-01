@@ -98,7 +98,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// entry SP *or* an alignment-masked SP — the address-input edge resolves
     /// which one concretely; this line is just the quick-read offset.
     fn with_sp_offset(&self, node: NodeId, label: String) -> String {
-        match self.function.stack_offset(node) {
+        match self.function.side_tables().stack_offset(node) {
             Some((_, k)) if k < 0 => format!("{label}\nbase sp - {}", -k),
             Some((_, k)) => format!("{label}\nbase sp + {k}"),
             None => label,
@@ -218,7 +218,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 // that bypass the name side-table.
                 let name_prefix = self
                     .function
-                    .call_other_name(node)
+                    .side_tables().call_other_name(node)
                     .map(|n| format!("{n} "))
                     .unwrap_or_default();
                 format!(

@@ -87,10 +87,10 @@ fn load_fold_absorbs_address_fingerprint() -> Result<()> {
 
     let folded = fg.producer(crate::test_support::return_value(fg.graph())?);
     assert!(
-        fg.asm_fingerprint(folded).contains(&ADDR_ADDR),
+        fg.side_tables().asm_fingerprint(folded).contains(&ADDR_ADDR),
         "LoadReadOnly must absorb the load address's asm-fingerprint into the \
          folded constant (proof of which bytes were read); got {:?}",
-        fg.asm_fingerprint(folded)
+        fg.side_tables().asm_fingerprint(folded)
     );
     Ok(())
 }
@@ -386,7 +386,7 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
     assert!(
         fg.graph()
             .all_node_ids()
-            .any(|n| fg.stack_offset(n).is_some()),
+            .any(|n| fg.side_tables().stack_offset(n).is_some()),
         "StackOffsetDetect must stamp the stack-store offset"
     );
 

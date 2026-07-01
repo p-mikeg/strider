@@ -270,7 +270,7 @@ impl<'a> SpAnalyzer<'a> {
     /// consulted first.  The store-side counterpart of [`Self::classify_addr`];
     /// callers feed the result straight into [`alias_verdict`].
     pub(crate) fn classify_store_addr(&mut self, store_node: NodeId) -> AddrClass {
-        match self.function.stack_offset(store_node) {
+        match self.function.side_tables().stack_offset(store_node) {
             Some((base, offset)) => AddrClass::SpRooted { base, offset },
             None => {
                 let addr = self.function.store_addr(store_node);

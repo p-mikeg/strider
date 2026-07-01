@@ -145,7 +145,7 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::IntCmpOp(IntCmpOp::Less)))
         .expect("the canonicalized comparison survives");
-    let fp = fg.asm_fingerprint(cmp_node);
+    let fp = fg.side_tables().asm_fingerprint(cmp_node);
     assert!(
         fp.contains(&ADDR_PACK),
         "the CR-pack instructions' address {ADDR_PACK:#x} must survive in the \

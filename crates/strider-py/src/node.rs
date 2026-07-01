@@ -202,7 +202,7 @@ impl PyNode {
     /// Region) whose existence is synthesised by the IR builder rather
     /// than tied to a specific asm instruction.
     fn fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
-        self.with_node(py, |function, nid| function.asm_fingerprint(nid).to_vec())
+        self.with_node(py, |function, nid| function.side_tables().asm_fingerprint(nid).to_vec())
     }
 
     /// Raw little-endian bytes of a wide-typed integer constant (10 bytes
@@ -218,7 +218,7 @@ impl PyNode {
     /// for any other node kind.
     fn call_other_name(&self, py: Python<'_>) -> PyResult<Option<String>> {
         self.with_node(py, |function, nid| {
-            function.call_other_name(nid).map(str::to_owned)
+            function.side_tables().call_other_name(nid).map(str::to_owned)
         })
     }
 

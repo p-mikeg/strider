@@ -52,7 +52,7 @@ pub use control_flow_view::{control_dominators, dominates};
 pub mod error;
 mod function;
 pub use function::{
-    EditFunction, Function, FunctionState, build_container_map, largest_container_in,
+    EditFunction, Function, FunctionState, SideTables, build_container_map, largest_container_in,
 };
 #[cfg(any(test, feature = "test-util"))]
 pub use function::cc_ret_and_clobber_vns;

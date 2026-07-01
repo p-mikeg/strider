@@ -276,7 +276,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         }
 
         if let Some(cc) = override_cc {
-            self.builder.function_mut().set_call_cc(call, cc.clone());
+            self.builder.function_mut().side_tables_mut().set_call_cc(call, cc.clone());
         }
         Ok(())
     }

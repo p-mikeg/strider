@@ -85,6 +85,7 @@ impl FunctionArgPat {
                 match index {
                     Some(idx) => {
                         if !f
+                            .side_tables()
                             .arg_index_to_values(idx)
                             .iter()
                             .any(|&v| f.producer(v) == node)
@@ -93,8 +94,8 @@ impl FunctionArgPat {
                         }
                     }
                     None => {
-                        let any = f.iter_arg_indices().any(|i| {
-                            f.arg_index_to_values(i)
+                        let any = f.side_tables().iter_arg_indices().any(|i| {
+                            f.side_tables().arg_index_to_values(i)
                                 .iter()
                                 .any(|&v| f.producer(v) == node)
                         });
@@ -127,7 +128,7 @@ impl FunctionArgPat {
                         if want_space != *actual_space {
                             return false;
                         }
-                        matches!(f.stack_offset(node), Some((_, off)) if off == want_offset)
+                        matches!(f.side_tables().stack_offset(node), Some((_, off)) if off == want_offset)
                     }
                     _ => false,
                 }

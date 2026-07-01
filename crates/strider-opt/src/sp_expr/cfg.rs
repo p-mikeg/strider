@@ -252,7 +252,7 @@ impl<'m> SpAliasCfg<'m> {
         }
         // Resolve the store's own SP offset (side-table SSoT, else decompose); it
         // must share `base` to be comparable to the probed location.
-        let store_offset = match function.stack_offset(clobber) {
+        let store_offset = match function.side_tables().stack_offset(clobber) {
             Some((b, off)) if b == base => off,
             Some(_) => return None,
             None => match self.decompose(function, function.store_addr(clobber)) {

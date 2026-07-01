@@ -181,7 +181,7 @@ fn rewrite_rule_impl(
         let new_producer = ctx.producer(new_value);
         for &matched in &matched_nodes {
             ctx.function_mut()
-                .extend_asm_fingerprint_from(new_producer, matched);
+                .side_tables_mut().extend_asm_fingerprint_from(new_producer, matched);
         }
 
         // 4. Redirect every consumer of the old root's value output to the
@@ -361,7 +361,7 @@ mod tests {
 
         // new_node absorbs old_node's fingerprint (superset) while keeping
         // its own.
-        let fp = function.asm_fingerprint(new_node);
+        let fp = function.side_tables().asm_fingerprint(new_node);
         assert!(
             fp.contains(&0xAA),
             "absorbed old's fingerprint 0xAA: {fp:?}"
@@ -413,7 +413,7 @@ mod tests {
         assert!(!changed, "no uses of old → changed must be false");
 
         // Fingerprint is still absorbed even with no uses redirected.
-        let fp = function.asm_fingerprint(new_node);
+        let fp = function.side_tables().asm_fingerprint(new_node);
         assert!(
             fp.contains(&0xAA),
             "fingerprint absorbed even when no uses redirected: {fp:?}"
@@ -1165,7 +1165,7 @@ mod tests {
 
         // The survivor x must now carry the interior IntConst(0)'s address
         // (0xCC) — without the fix it would be lost when the const is culled.
-        let fp = ctx.function().asm_fingerprint(x_node);
+        let fp = ctx.function().side_tables().asm_fingerprint(x_node);
         assert!(
             fp.contains(&0xCC),
             "survivor must absorb the culled interior const's fingerprint 0xCC: {fp:?}"
@@ -1420,7 +1420,7 @@ mod tests {
 
         // Characterization lock: the matched root's asm-fingerprint reaches every
         // fresh interior RHS node (memory + value), stamped at creation.
-        let root_fp: Vec<u64> = ctx.function().asm_fingerprint(load_node).to_vec();
+        let root_fp: Vec<u64> = ctx.function().side_tables().asm_fingerprint(load_node).to_vec();
         assert!(
             !root_fp.is_empty(),
             "fixture's matched root must carry a fingerprint"
@@ -1434,7 +1434,7 @@ mod tests {
                     | NodeKind::Load(_)
             )
         }) {
-            let fp = ctx.function().asm_fingerprint(n);
+            let fp = ctx.function().side_tables().asm_fingerprint(n);
             assert!(
                 root_fp.iter().all(|a| fp.contains(a)),
                 "fresh RHS node {n:?} missing root fingerprint"

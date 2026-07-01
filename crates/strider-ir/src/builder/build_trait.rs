@@ -82,7 +82,7 @@ impl IRBuilder for FunctionBuilder {
         // stamp is applied, then union each contributor's fingerprint.
         let node = FunctionBuilder::create_node(self, kind, inputs, outputs);
         for &c in contributors {
-            self.function_mut().extend_asm_fingerprint_from(node, c);
+            self.function_mut().side_tables_mut().extend_asm_fingerprint_from(node, c);
         }
         node
     }

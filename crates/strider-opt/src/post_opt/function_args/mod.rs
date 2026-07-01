@@ -89,7 +89,7 @@ impl PostOptimizer for FunctionArgDetect {
         // across stable iterations stays idempotent without wiping the
         // build-time register-arg carriers.
         ctx.function_mut()
-            .clear_arg_values_from(first_stack_arg as u32);
+            .side_tables_mut().clear_arg_values_from(first_stack_arg as u32);
         // Build the SP-alias context once for the whole pass: it owns the shared
         // decompose memo + the alias knobs (read from `OptOptions` here, not
         // threaded down).

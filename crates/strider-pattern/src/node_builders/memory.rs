@@ -47,7 +47,7 @@ impl StackAccessSpec {
         if !self.active() {
             return true;
         }
-        let Some((_base, offset)) = function.stack_offset(node) else {
+        let Some((_base, offset)) = function.side_tables().stack_offset(node) else {
             return false;
         };
         if let Some(k) = self.stack_offset_filter

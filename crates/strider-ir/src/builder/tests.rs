@@ -1027,7 +1027,7 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
 
     // The ABI footprint is consumed inline (clobbers/reads/memory checked
     // above); it is not stored, so only the user-op name is recorded.
-    assert_eq!(b.function().call_other_name(node), Some("syscall"));
+    assert_eq!(b.function().side_tables().call_other_name(node), Some("syscall"));
     Ok(())
 }
 
@@ -1072,7 +1072,7 @@ fn create_node_attributed_unions_contributor_fingerprints() -> Result<()> {
         [crate::node::ValueKind::Typed(ValueType::I8)],
         &[l_node, r_node],
     );
-    let fp = b.function().asm_fingerprint(or_node);
+    let fp = b.function().side_tables().asm_fingerprint(or_node);
     assert!(
         fp.contains(&0x100) && fp.contains(&0x104),
         "create_node_attributed must union both contributors' fingerprints; got {fp:?}"
@@ -1103,7 +1103,7 @@ fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
     let c2_node = b.function().producer(c2);
 
     assert_eq!(c1_node, c2_node, "cache must return the same NodeId");
-    let fp = b.function().asm_fingerprint(c1_node);
+    let fp = b.function().side_tables().asm_fingerprint(c1_node);
     assert!(
         fp.contains(&0x100),
         "fingerprint must retain first lift's address (0x100); got {fp:?}"
@@ -1984,9 +1984,9 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
     let in_node = b.function().producer(inside);
     let post_node = b.function().producer(outside_post);
 
-    assert_eq!(b.function().asm_fingerprint(pre_node), &[0x10]);
-    assert_eq!(b.function().asm_fingerprint(in_node), &[0xC0DE]);
-    assert_eq!(b.function().asm_fingerprint(post_node), &[0x10]);
+    assert_eq!(b.function().side_tables().asm_fingerprint(pre_node), &[0x10]);
+    assert_eq!(b.function().side_tables().asm_fingerprint(in_node), &[0xC0DE]);
+    assert_eq!(b.function().side_tables().asm_fingerprint(post_node), &[0x10]);
     Ok(())
 }
 
@@ -2135,7 +2135,7 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
         [],
     );
     b.function_mut()
-        .extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
+        .side_tables_mut().extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
     let function = b.function();
     validate(function).expect("genuinely-wide IntConst must validate clean");
     Ok(())
@@ -2189,7 +2189,7 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         [],
     );
     b.function_mut()
-        .extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
+        .side_tables_mut().extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
 
     let pre = b.function().const_interner.len();
     assert_eq!(
@@ -2882,8 +2882,8 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
     b.record_register_arg_carriers();
     b.set_region(region);
 
-    let arg0 = b.function().arg_index_to_values(0);
-    let arg1 = b.function().arg_index_to_values(1);
+    let arg0 = b.function().side_tables().arg_index_to_values(0);
+    let arg1 = b.function().side_tables().arg_index_to_values(1);
     assert_eq!(arg0.len(), 1, "arg 0 carrier registered at entry");
     assert_eq!(arg1.len(), 1, "arg 1 carrier registered at entry");
     assert!(
@@ -2929,7 +2929,7 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
     b.record_register_arg_carriers();
     b.set_region(region);
 
-    let arg0 = b.function().arg_index_to_values(0);
+    let arg0 = b.function().side_tables().arg_index_to_values(0);
     assert_eq!(
         arg0.len(),
         1,

@@ -279,7 +279,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             if let Some(value) = self.builder.function().initial_var_value(&container) {
                 self.builder
                     .function_mut()
-                    .register_arg_value(i as u32, value);
+                    .side_tables_mut().register_arg_value(i as u32, value);
             }
         }
     }

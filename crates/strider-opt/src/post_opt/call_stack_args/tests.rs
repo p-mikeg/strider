@@ -1276,7 +1276,7 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         .walk_kind(|k| matches!(k, NodeKind::Call))
         .next()
         .expect("Call node must exist");
-    fg.set_call_cc(call_id, override_cc);
+    fg.side_tables_mut().set_call_cc(call_id, override_cc);
 
     // Run optimization with the default table [4, 8].  The pass must read
     // the per-call override [0, 4] and collect the arg at offset 0.
@@ -1381,8 +1381,9 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
 
     // Stamp the opaque node with the sentinel fingerprint so IR validation
     // doesn't reject the manually-wired graph.
-    fg.extend_asm_fingerprint(
-        fg.producer(opaque_addr),
+    let opaque_producer = fg.producer(opaque_addr);
+    fg.side_tables_mut().extend_asm_fingerprint(
+        opaque_producer,
         &[strider_ir_test_utils::SENTINEL_LIFT_ADDR],
     );
 
@@ -1396,7 +1397,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         .next()
         .map(|n| fg.node_outputs(n).iter().copied().next().unwrap())
         .expect("InitialVar(sp) node must exist");
-    fg.set_stack_offset(arg0_store, sp_base, 4);
+    fg.side_tables_mut().set_stack_offset(arg0_store, sp_base, 4);
 
     // Run CallStackArgCollect with slot table [4, 8] (offset 0 = anchor).
     let pass = CallStackArgCollect;

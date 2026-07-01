@@ -188,7 +188,7 @@ impl CallOtherPat {
             // before child recursion.
             Some(want) => inner.with_node_predicate(move || {
                 Box::new(move |matcher, n| {
-                    matcher.function().call_other_name(n) == Some(want.as_str())
+                    matcher.function().side_tables().call_other_name(n) == Some(want.as_str())
                 })
             }),
             None => inner,

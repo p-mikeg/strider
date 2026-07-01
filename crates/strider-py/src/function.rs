@@ -345,7 +345,7 @@ impl PyFunction {
     /// the IR builder rather than tied to a specific asm instruction.
     fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
         self.with_node(node_id, |function, nid| {
-            function.asm_fingerprint(nid).to_vec()
+            function.side_tables().asm_fingerprint(nid).to_vec()
         })
     }
 
@@ -367,7 +367,7 @@ impl PyFunction {
     /// or `None` for any other node kind.
     fn call_other_name(&self, node_id: u32) -> PyResult<Option<String>> {
         self.with_node(node_id, |function, nid| {
-            function.call_other_name(nid).map(str::to_owned)
+            function.side_tables().call_other_name(nid).map(str::to_owned)
         })
     }
 

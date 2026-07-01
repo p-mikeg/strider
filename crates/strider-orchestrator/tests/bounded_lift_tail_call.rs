@@ -299,9 +299,9 @@ fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() 
         .expect("fall-through arm must carry Call(IntConst(0x1002))");
     for call in [taken_call, fallthrough_call] {
         assert!(
-            function.asm_fingerprint(call).contains(&BASE),
+            function.side_tables().asm_fingerprint(call).contains(&BASE),
             "stub Call fingerprint must name the cond-branch insn at {BASE:#x}; got {:?}",
-            function.asm_fingerprint(call)
+            function.side_tables().asm_fingerprint(call)
         );
     }
     assert_eq!(
@@ -353,9 +353,9 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
     let call =
         find_call_to(&function, OOB_TARGET).expect("the OOB arm must carry Call(IntConst(0x1080))");
     assert!(
-        function.asm_fingerprint(call).contains(&JE_ADDR),
+        function.side_tables().asm_fingerprint(call).contains(&JE_ADDR),
         "stub Call fingerprint must name the cond-branch insn at {JE_ADDR:#x}; got {:?}",
-        function.asm_fingerprint(call)
+        function.side_tables().asm_fingerprint(call)
     );
     assert_eq!(
         function.count_kind(|k| matches!(k, NodeKind::Call)),

@@ -134,7 +134,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             abi.clobbers_memory,
             terminate,
         )?;
-        self.builder.function_mut().set_call_other_name(node, name);
+        self.builder.function_mut().side_tables_mut().set_call_other_name(node, name);
         let (ret_vals, clobbers) = outputs.split_at(result_vn.iter().count());
 
         // Writeback: clobbers then the result — both full-container writes via

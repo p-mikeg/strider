@@ -111,7 +111,7 @@ fn field_load_at_offset(base: Capture, offset: Capture) -> impl MatchPat {
 fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> impl MatchPat + 'static {
     use strider_ir::node::ValueId;
     // The side-table already stores each carrier's primary output value.
-    let carrier_outputs: Vec<ValueId> = function.arg_index_to_values(arg_index).to_vec();
+    let carrier_outputs: Vec<ValueId> = function.side_tables().arg_index_to_values(arg_index).to_vec();
     let cap = Capture::new();
     any().capture(cap).when_match(move |_ctx, _ty, b| {
         b.get_value(cap)
@@ -331,7 +331,7 @@ fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
     );
     // Carrier for arg 1 (the `p` parameter).
     assert!(
-        !function.arg_index_to_values(1).is_empty(),
+        !function.side_tables().arg_index_to_values(1).is_empty(),
         "arg 1 must be registered in the side-table"
     );
     let pat = masked(call().arg(0, arg_carrier_pat(function, 1)).build());

@@ -338,6 +338,23 @@ impl Function {
         &mut self.graph
     }
 
+    /// Shared access to the per-function overlay [`SideTables`] — the pure
+    /// get/set accessors for `CallOther` names, asm fingerprints, stack
+    /// offsets, argument carriers, and per-`Call` CC overrides live there.
+    /// Accessors that also consult the `vn_interner` / `default_cc`
+    /// (`get`/`set_vn_for_value`, [`Self::get_cc`], [`Self::initial_sp`],
+    /// [`Self::initial_var_value`]) stay on `Function`.
+    #[inline]
+    pub fn side_tables(&self) -> &SideTables {
+        &self.side_tables
+    }
+
+    /// Mutable access to the per-function overlay [`SideTables`].
+    #[inline]
+    pub fn side_tables_mut(&mut self) -> &mut SideTables {
+        &mut self.side_tables
+    }
+
     /// Interns the integer value `value`, masked to `ty`'s width, returning its
     /// `ConstId`. The single canonicalisation point for ≤ u128 constants: equal
     /// (masked) values share one id regardless of declared type.
@@ -485,23 +502,6 @@ impl Function {
 
     // ── NodeId-keyed overlay accessors ────────────────────────────────────
 
-    /// Returns the user-op name associated with a
-    /// [`crate::node::NodeKind::CallOther`] node, or `None` if no name has
-    /// been recorded for that node.
-    #[inline]
-    pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
-        self.side_tables.call_other_names[node_id].as_deref()
-    }
-
-    /// Records the user-op `name` for a
-    /// [`crate::node::NodeKind::CallOther`] node.  The `CallOther` emitter
-    /// is name-agnostic; the caller (the lifter, or a test) stamps the name
-    /// here after building the node.
-    #[inline]
-    pub fn set_call_other_name(&mut self, node_id: NodeId, name: impl Into<String>) {
-        self.side_tables.call_other_names[node_id] = Some(name.into());
-    }
-
     /// Returns the source varnode a value represents, or `None`. Single
     /// value-keyed view over `value_vn`, which tags three populations: a
     /// lift-time `Phi`'s tracked varnode, a `Call`/`CallOther` ret-val
@@ -533,14 +533,6 @@ impl Function {
         }
     }
 
-    /// Records `cc` as the per-`Call` override calling convention for
-    /// `node_id`.  Replaces any prior override.  Read back via [`Self::get_cc`]
-    /// (whose `stack_args` is the call's effective stack-arg layout).
-    #[inline]
-    pub fn set_call_cc(&mut self, node_id: NodeId, cc: strider_target::BuiltCallingConvention) {
-        self.side_tables.call_cc.insert(node_id, cc);
-    }
-
     /// The **effective** calling convention for `node_id`: the per-`Call`
     /// override if one was recorded, else the function-default CC.  So
     /// `get_cc(call).stack_args` is the call's effective stack-arg layout with
@@ -555,73 +547,7 @@ impl Function {
 
     // ── arg_index_to_values accessors ────────────────────────────────────
 
-    /// All carrier output [`ValueId`]s registered for argument `index`.
-    ///
-    /// Returns `&[]` if no carriers have been registered for that index.
-    /// Register args have a slice of length 1; stack args may have multiple
-    /// entries (different-width [`crate::node::NodeKind::Load`]s at the same
-    /// `sp+K` offset).  Each value's carrier node is recoverable via
-    /// [`Graph::producer`].
-    #[inline]
-    pub fn arg_index_to_values(&self, index: u32) -> &[ValueId] {
-        self.side_tables
-            .arg_index_to_values
-            .get(&index)
-            .map_or(&[], Vec::as_slice)
-    }
-
-    /// Register `value` (a carrier node's single output) as a carrier for
-    /// argument `index`.
-    ///
-    /// Appends to the per-index `Vec`; multiple values per index are allowed
-    /// (the stack-args case may register multiple `Load`s at different widths
-    /// for the same offset).
-    #[inline]
-    pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
-        self.side_tables
-            .arg_index_to_values
-            .entry(index)
-            .or_default()
-            .push(value);
-    }
-
-    /// Iterate over all registered argument indices (unordered).
-    #[inline]
-    pub fn iter_arg_indices(&self) -> impl Iterator<Item = u32> + '_ {
-        self.side_tables.arg_index_to_values.keys().copied()
-    }
-
-    /// Drop registered argument carriers for every index `>= first`.
-    ///
-    /// Lets the stack-arg detection pass rebuild only the stack-arg portion of
-    /// the table idempotently across the orchestrator's stable iterations,
-    /// without disturbing the register-arg carriers recorded at builder entry
-    /// (which occupy indices `0 .. first`).
-    #[inline]
-    pub fn clear_arg_values_from(&mut self, first: u32) {
-        self.side_tables
-            .arg_index_to_values
-            .retain(|&index, _| index < first);
-    }
-
     // ── stack_offsets accessors ───────────────────────────────────────────
-
-    /// Returns the stack slot `(base, offset)` recorded for a Store/Load
-    /// node, or `None` if the node has no recorded slot (non-stack node, or
-    /// a phi-of-offsets address whose single concrete offset cannot be
-    /// named).  `base` is the SP-derived terminal node the offset is
-    /// relative to; the offset is only comparable against another access's
-    /// offset when their bases match.
-    #[inline]
-    pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i128)> {
-        self.side_tables.stack_offsets[id]
-    }
-
-    /// Records a concrete stack slot `(base, offset)` for a Store/Load node.
-    #[inline]
-    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i128) {
-        self.side_tables.stack_offsets[id] = Some((base, offset));
-    }
 
     // ── initial_var_index accessors ───────────────────────────────────────
 
@@ -681,44 +607,6 @@ impl Function {
         self.graph.node_outputs(node).first().copied()
     }
 
-    /// Returns the asm-instruction-address fingerprint of `node_id` as a
-    /// sorted-deduplicated slice.  Returns an empty slice when no
-    /// contributors have been recorded.
-    #[inline]
-    pub fn asm_fingerprint(&self, id: NodeId) -> &[u64] {
-        self.side_tables.asm_fingerprints[id].as_slice()
-    }
-
-    /// Unions `contributors` into `node_id`'s fingerprint.  Result is kept
-    /// sorted and deduplicated.  Existing entries are never removed: this
-    /// satisfies the no-shrink contract.  Empty `contributors` is a no-op.
-    pub fn extend_asm_fingerprint(&mut self, node_id: NodeId, contributors: &[u64]) {
-        if contributors.is_empty() {
-            return;
-        }
-        // Union `contributors` into the node's fingerprint, keeping it sorted
-        // and deduplicated.  Both `m` (existing) and `k` (contributors) are
-        // tiny (a handful of addresses), so the standard extend + sort + dedup
-        // is the right wheel — no hand-rolled two-pointer merge needed.
-        let fp = &mut self.side_tables.asm_fingerprints[node_id];
-        fp.extend_from_slice(contributors);
-        fp.sort_unstable();
-        fp.dedup();
-    }
-
-    /// Unions the fingerprint of `src` into `dst`.  Self-extension
-    /// (`src == dst`) is a no-op.
-    pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
-        if dst == src {
-            return;
-        }
-        let src_slice: smallvec::SmallVec<[u64; 4]> = self.side_tables.asm_fingerprints[src]
-            .iter()
-            .copied()
-            .collect();
-        self.extend_asm_fingerprint(dst, &src_slice);
-    }
-
     /// Same as [`Graph::create_node`] plus unions the asm-fingerprint of
     /// every node in `contributors` into the resulting node.
     ///
@@ -740,7 +628,7 @@ impl Function {
     ) -> NodeId {
         let node_id = self.graph.create_node(kind, inputs, output_kinds);
         for &src in contributors {
-            self.extend_asm_fingerprint_from(node_id, src);
+            self.side_tables_mut().extend_asm_fingerprint_from(node_id, src);
         }
         node_id
     }
@@ -939,15 +827,15 @@ mod function_skeleton_tests {
     fn function_asm_fingerprint_round_trips() {
         let mut f = test_function();
         let n = f.entry();
-        f.extend_asm_fingerprint(n, &[0xDEAD_BEEF]);
-        assert_eq!(f.asm_fingerprint(n), &[0xDEAD_BEEF]);
+        f.side_tables_mut().extend_asm_fingerprint(n, &[0xDEAD_BEEF]);
+        assert_eq!(f.side_tables().asm_fingerprint(n), &[0xDEAD_BEEF]);
     }
 
     #[test]
     fn arg_index_to_values_returns_empty_for_unregistered() {
         let f = test_function();
-        assert!(f.arg_index_to_values(0).is_empty());
-        assert!(f.arg_index_to_values(99).is_empty());
+        assert!(f.side_tables().arg_index_to_values(0).is_empty());
+        assert!(f.side_tables().arg_index_to_values(99).is_empty());
     }
 
     #[test]
@@ -963,16 +851,16 @@ mod function_skeleton_tests {
         let v2 = f.node_outputs(n2)[0];
 
         // Register two values for arg index 3 (the stack-args multi-Load case).
-        f.register_arg_value(3, v1);
-        f.register_arg_value(3, v2);
+        f.side_tables_mut().register_arg_value(3, v1);
+        f.side_tables_mut().register_arg_value(3, v2);
 
-        let values = f.arg_index_to_values(3);
+        let values = f.side_tables().arg_index_to_values(3);
         assert_eq!(values.len(), 2);
         assert!(values.contains(&v1));
         assert!(values.contains(&v2));
 
         // iter_arg_indices contains the registered index.
-        assert!(f.iter_arg_indices().any(|i| i == 3));
+        assert!(f.side_tables().iter_arg_indices().any(|i| i == 3));
     }
 
     /// `get_vn_for_value` round-trips via the ValueId-keyed map.
@@ -1009,9 +897,9 @@ mod function_skeleton_tests {
             [ValueKind::Typed(ValueType::I64)],
         );
         let value = f.node_outputs(carrier)[0];
-        f.register_arg_value(0, value);
+        f.side_tables_mut().register_arg_value(0, value);
 
-        assert_eq!(f.arg_index_to_values(0), &[value]);
+        assert_eq!(f.side_tables().arg_index_to_values(0), &[value]);
         assert_eq!(f.graph().producer(value), carrier);
     }
 }
@@ -1129,7 +1017,7 @@ mod compact_tests {
         let ret =
             f.graph_mut()
                 .create_node(NodeKind::Return, [entry_ctrl, mem_value, base_value], []);
-        f.set_stack_offset(ret, base_value, -16);
+        f.side_tables_mut().set_stack_offset(ret, base_value, -16);
 
         let remap = f.compact().expect("compact must succeed");
 
@@ -1146,7 +1034,7 @@ mod compact_tests {
             "the zombie ahead of it must shift the Return's id"
         );
         assert_eq!(
-            f.stack_offset(new_ret),
+            f.side_tables().stack_offset(new_ret),
             Some((new_base_value, -16)),
             "surviving stack_offsets entry must be remapped on key AND base"
         );
@@ -1172,14 +1060,14 @@ mod compact_tests {
                 .create_node(NodeKind::Return, [entry_ctrl, mem_value, surv_value], []);
 
         // Stamp three asm addresses on the surviving IntConst before compact.
-        f.extend_asm_fingerprint(surviving, &[0x1000, 0x1004, 0x1008]);
+        f.side_tables_mut().extend_asm_fingerprint(surviving, &[0x1000, 0x1004, 0x1008]);
 
         let remap = f.compact().expect("compact must succeed");
         let new_id = remap
             .node_old_to_new(surviving)
             .expect("surviving IntConst must remain after compact");
         assert_eq!(
-            f.asm_fingerprint(new_id),
+            f.side_tables().asm_fingerprint(new_id),
             &[0x1000, 0x1004, 0x1008],
             "surviving node's asm-fingerprint must transfer to its post-compact NodeId"
         );
@@ -1264,9 +1152,9 @@ mod compact_tests {
         let zombie_stack =
             int_const_node(&mut f, (0xBEEF_u64) as u128, crate::node::ValueType::I64);
         let zombie_value = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
-        f.set_stack_offset(zombie_stack, zombie_value, -8);
+        f.side_tables_mut().set_stack_offset(zombie_stack, zombie_value, -8);
         assert_eq!(
-            f.stack_offset(zombie_stack),
+            f.side_tables().stack_offset(zombie_stack),
             Some((zombie_value, -8)),
             "offset must be set before compact"
         );
@@ -1297,7 +1185,7 @@ mod compact_tests {
         let surviving_with_offset = f
             .graph()
             .all_node_ids()
-            .any(|n| f.stack_offset(n).map(|(_, o)| o) == Some(-8));
+            .any(|n| f.side_tables().stack_offset(n).map(|(_, o)| o) == Some(-8));
         assert!(
             !surviving_with_offset,
             "stack_offset -8 must not survive compaction on a surviving node"
@@ -1335,7 +1223,7 @@ mod compact_tests {
         let _ret =
             f.graph_mut()
                 .create_node(NodeKind::Return, [entry_ctrl, mem_value, arg_value], []);
-        f.register_arg_value(0, arg_value);
+        f.side_tables_mut().register_arg_value(0, arg_value);
 
         let remap = f.compact().expect("compact must succeed");
         let new_arg_value = remap
@@ -1343,12 +1231,12 @@ mod compact_tests {
             .expect("the live arg carrier value must survive compaction");
 
         assert_eq!(
-            f.arg_index_to_values(0),
+            f.side_tables().arg_index_to_values(0),
             &[new_arg_value],
             "arg_index_to_values must carry the carrier's post-compaction value"
         );
         // Every stored carrier value's producer must be a live node.
-        for &v in f.arg_index_to_values(0) {
+        for &v in f.side_tables().arg_index_to_values(0) {
             let node = f.graph().producer(v);
             assert!(
                 f.graph().all_node_ids().any(|n| n == node),
@@ -1458,18 +1346,18 @@ mod compact_tests {
         );
         let [dead_value] = f.node_outputs_exact::<1>(dead_carrier).unwrap();
 
-        f.register_arg_value(0, live_value);
-        f.register_arg_value(1, dead_value);
+        f.side_tables_mut().register_arg_value(0, live_value);
+        f.side_tables_mut().register_arg_value(1, dead_value);
 
         f.compact().expect("compact must succeed");
 
         // arg 1's value was pruned → index removed entirely.
         assert!(
-            f.arg_index_to_values(1).is_empty(),
+            f.side_tables().arg_index_to_values(1).is_empty(),
             "pruned arg value must be dropped"
         );
         // arg 0 survives → producer recovers the live carrier.
-        let surviving = f.arg_index_to_values(0);
+        let surviving = f.side_tables().arg_index_to_values(0);
         assert_eq!(surviving.len(), 1);
         let node = f.graph().producer(surviving[0]);
         assert!(matches!(f.node_kind(node), NodeKind::InitialVar(_)));
@@ -1549,7 +1437,7 @@ mod compact_tests {
         };
         f.set_all_vns(vec![clob_vn]); // only a tracked vn can be tagged
         f.set_vn_for_value(clob, clob_vn);
-        f.set_call_cc(call, cc.clone());
+        f.side_tables_mut().set_call_cc(call, cc.clone());
         let _ret = f
             .graph_mut()
             .create_node(NodeKind::Return, [call_ctrl, call_mem], []);

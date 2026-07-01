@@ -40,7 +40,7 @@ where
 /// typed accessor on [`crate::Function`].  All entries are remapped (or dropped) when
 /// the arena is compacted.
 #[derive(Default, Clone)]
-pub(crate) struct SideTables {
+pub struct SideTables {
     /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
     /// nodes.
     pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
@@ -123,6 +123,119 @@ pub(crate) struct SideTables {
 }
 
 impl SideTables {
+    // ── pure get/set accessors ────────────────────────────────────────────
+    //
+    // Each of these only reads or writes ONE side table with no cross-table or
+    // interner resolution, so it lives here with the data.  Accessors that also
+    // consult the `vn_interner` / `default_cc` (`get`/`set_vn_for_value`,
+    // `get_cc`, `initial_sp`, `initial_var_value`) stay on `Function`, reached
+    // through [`crate::Function::side_tables`] / `side_tables_mut`.
+
+    /// Returns the user-op name associated with a
+    /// [`crate::node::NodeKind::CallOther`] node, or `None` if no name has been
+    /// recorded for that node.
+    #[inline]
+    pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
+        self.call_other_names[node_id].as_deref()
+    }
+
+    /// Records the user-op `name` for a [`crate::node::NodeKind::CallOther`]
+    /// node.  The `CallOther` emitter is name-agnostic; the caller (the lifter,
+    /// or a test) stamps the name here after building the node.
+    #[inline]
+    pub fn set_call_other_name(&mut self, node_id: NodeId, name: impl Into<String>) {
+        self.call_other_names[node_id] = Some(name.into());
+    }
+
+    /// Records `cc` as the per-`Call` override calling convention for
+    /// `node_id`.  Replaces any prior override.  Read back via
+    /// [`crate::Function::get_cc`] (the Call's effective CC).
+    #[inline]
+    pub fn set_call_cc(&mut self, node_id: NodeId, cc: strider_target::BuiltCallingConvention) {
+        self.call_cc.insert(node_id, cc);
+    }
+
+    /// All carrier output [`ValueId`]s registered for argument `index`, or
+    /// `&[]` if none.  Register args have a slice of length 1; stack args may
+    /// have multiple entries (different-width `Load`s at the same `sp+K`).
+    #[inline]
+    pub fn arg_index_to_values(&self, index: u32) -> &[ValueId] {
+        self.arg_index_to_values
+            .get(&index)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Register `value` (a carrier node's single output) as a carrier for
+    /// argument `index`.  Appends to the per-index `Vec`.
+    #[inline]
+    pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
+        self.arg_index_to_values
+            .entry(index)
+            .or_default()
+            .push(value);
+    }
+
+    /// Iterate over all registered argument indices (unordered).
+    #[inline]
+    pub fn iter_arg_indices(&self) -> impl Iterator<Item = u32> + '_ {
+        self.arg_index_to_values.keys().copied()
+    }
+
+    /// Drop registered argument carriers for every index `>= first` (lets the
+    /// stack-arg pass idempotently rebuild only the stack-arg portion without
+    /// disturbing the register-arg carriers at indices `0 .. first`).
+    #[inline]
+    pub fn clear_arg_values_from(&mut self, first: u32) {
+        self.arg_index_to_values.retain(|&index, _| index < first);
+    }
+
+    /// Returns the stack slot `(base, offset)` recorded for a Store/Load node,
+    /// or `None`.  `base` is the SP-derived terminal node the offset is
+    /// relative to; offsets compare only when their bases match.
+    #[inline]
+    pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i128)> {
+        self.stack_offsets[id]
+    }
+
+    /// Records a concrete stack slot `(base, offset)` for a Store/Load node.
+    #[inline]
+    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i128) {
+        self.stack_offsets[id] = Some((base, offset));
+    }
+
+    /// Returns the asm-instruction-address fingerprint of `id` as a
+    /// sorted-deduplicated slice (empty when nothing was recorded).
+    #[inline]
+    pub fn asm_fingerprint(&self, id: NodeId) -> &[u64] {
+        self.asm_fingerprints[id].as_slice()
+    }
+
+    /// Unions `contributors` into `node_id`'s fingerprint, kept sorted and
+    /// deduplicated.  Existing entries are never removed (the no-shrink
+    /// contract).  Empty `contributors` is a no-op.
+    pub fn extend_asm_fingerprint(&mut self, node_id: NodeId, contributors: &[u64]) {
+        if contributors.is_empty() {
+            return;
+        }
+        // Both existing and `contributors` are tiny (a handful of addresses),
+        // so extend + sort + dedup is the right wheel.
+        let fp = &mut self.asm_fingerprints[node_id];
+        fp.extend_from_slice(contributors);
+        fp.sort_unstable();
+        fp.dedup();
+    }
+
+    /// Unions the fingerprint of `src` into `dst`.  Self-extension
+    /// (`src == dst`) is a no-op.
+    pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
+        if dst == src {
+            return;
+        }
+        let src_slice: smallvec::SmallVec<[u64; 4]> =
+            self.asm_fingerprints[src].iter().copied().collect();
+        self.extend_asm_fingerprint(dst, &src_slice);
+    }
+
     /// Remaps every arena-id key / value through `remap` after a
     /// `retain_reachable` compaction; an entry whose node or value did not
     /// survive is dropped.  Called once by [`crate::Function::compact`].

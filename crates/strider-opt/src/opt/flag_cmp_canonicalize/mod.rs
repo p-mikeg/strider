@@ -476,7 +476,7 @@ fn absorb_cr_pack_fingerprints(ctx: &mut crate::EditFunction<'_>, cond_out: Valu
     }
     for n in interior {
         if n != into {
-            ctx.function_mut().extend_asm_fingerprint_from(into, n);
+            ctx.function_mut().side_tables_mut().extend_asm_fingerprint_from(into, n);
         }
     }
 }
