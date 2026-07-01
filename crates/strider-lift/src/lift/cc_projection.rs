@@ -47,21 +47,4 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         cc.ret_and_clobber_vns(self.builder.function().all_vns(), |v| self.container_of(v))
             .1
     }
-
-    /// The calling convention's combined return-value register list (integer
-    /// then float, in ABI order), at each register's declared width — no
-    /// tracked-container projection.  The registers are read through the
-    /// aliasing-aware `read_vn` at use sites, which resolves each declared
-    /// register to its tracked container, so the raw declared list is the
-    /// right shape.
-    pub(crate) fn cc_ret_val_regs(
-        &self,
-        cc: &strider_target::BuiltCallingConvention,
-    ) -> Vec<rsleigh::Vn> {
-        cc.ret_val_regs
-            .iter()
-            .chain(cc.ret_val_regs_float.iter())
-            .copied()
-            .collect()
-    }
 }
