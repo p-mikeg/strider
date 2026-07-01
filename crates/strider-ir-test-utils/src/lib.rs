@@ -212,6 +212,10 @@ impl RegisterSet {
         let mut b = self.build_fn()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
+        // Mirror the lifter: record register-arg carriers after entry setup so
+        // arg-query tests see the same `arg_index_to_values` a lifted function
+        // would (the IR no longer records these inside `set_entry_region`).
+        b.record_register_arg_carriers();
         b.set_region(region);
         Ok(b)
     }
@@ -248,6 +252,7 @@ impl RegisterSet {
         let f = b.create_region()?;
 
         b.set_entry_region(entry)?;
+        b.record_register_arg_carriers();
         b.set_region(entry);
         let (cond, aux) = cond_builder(&mut b)?;
         b.build_if(cond, t, f)?;
@@ -305,6 +310,7 @@ where
     let mut b = RegisterSet::new().endianness(endianness).build_fn()?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
+    b.record_register_arg_carriers();
     b.set_region(region);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let val = f(&mut b)?;

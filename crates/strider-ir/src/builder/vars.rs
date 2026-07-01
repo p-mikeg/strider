@@ -77,25 +77,33 @@ impl FunctionBuilder {
             let node_id = self.function().producer(value);
             self.function_mut().side_tables.initial_var_index.insert(vn_id, node_id);
         }
-        // Record register-passed arguments unconditionally: each arg-passing
-        // register's (largest-container) InitialVar is the carrier for its
-        // positional index. We don't filter on use here — an argument the
-        // function never reads is culled by DCE and dropped from the arg
-        // table by `Function::compact`, so patterns won't find it.
+        // Register-passed argument carriers are recorded by the LIFTER right
+        // after this call (it owns the machine-register `container_of` map,
+        // which resolves a narrow ABI arg alias like `edi` to its tracked
+        // container `rdi`).  `set_entry_region` only wires the region and the
+        // `InitialVar` nodes; the carrier's entry value is recoverable via
+        // [`crate::Function::initial_var_value`].
+        self.link_region_variables(region_id, &initial_variables)
+    }
+
+    /// Test-only: record register-passed argument carriers on the arg table,
+    /// mirroring what the LIFTER does in prod right after `set_entry_region`.
+    ///
+    /// Each arg-passing register resolves to its largest tracked container (via
+    /// [`crate::function::largest_container_in`] over `all_vns` — the same
+    /// containment rule the lifter's `container_of` map applies), and that
+    /// container's `InitialVar` value is registered as the carrier for the
+    /// argument's positional index.  Direct-builder tests (no lifter) call this
+    /// after `set_entry_region` to reproduce the prod arg table.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn record_register_arg_carriers(&mut self) {
         let arg_regs: Vec<rsleigh::Vn> = self.function.default_cc().arg_passing_regs.clone();
         for (i, reg) in arg_regs.iter().enumerate() {
-            // Resolve the arg register to its largest tracked container
-            // before the var-table lookup: the var table is keyed only by
-            // the deduped largest-container tracked varnodes, so a narrow
-            // ABI arg alias (e.g. `edi`) must route through its container
-            // (`rdi`) — mirroring `call_ret_vals_for` / `call_clobbered_for`.
-            let key = self.function.container_of(reg);
-            if let Some(vn_id) = self.function.vn_id_of(&key) {
-                let value = initial_variables[vn_id];
+            let container = crate::function::largest_container_in(self.function.all_vns(), reg);
+            if let Some(value) = self.function.initial_var_value(&container) {
                 self.function_mut().register_arg_value(i as u32, value);
             }
         }
-        self.link_region_variables(region_id, &initial_variables)
     }
 
     /// Creates a new region in the graph with fresh `Region`,

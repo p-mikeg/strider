@@ -174,19 +174,17 @@ impl FunctionBuilder {
     }
 
     /// Validates a Call / CallOther `output_vns` list: every varnode must be in
-    /// REGISTER / UNIQUE space and be its own largest tracked container (a
-    /// register is returned / clobbered at container granularity), and no
-    /// varnode may appear in two slots.  Callers canonicalize sub-register ABI
-    /// footprints to their container before reaching here (the lifter's CC /
-    /// ABI projection does this).
+    /// REGISTER / UNIQUE space, and no varnode may appear in two slots.
+    ///
+    /// Callers canonicalize sub-register ABI footprints to their largest
+    /// tracked container before reaching here (the lifter's CC / ABI projection,
+    /// which owns the machine-register `container_of` map, does this), so a
+    /// "each output vn is its own container" check would be redundant with that
+    /// guarantee and is deliberately not repeated here — the IR is
+    /// target-agnostic and no longer carries the container map.
     fn validate_call_output_vns(&self, output_vns: &[rsleigh::Vn]) -> Result<()> {
         for (i, vn) in output_vns.iter().enumerate() {
             require_reg_or_unique(vn)?;
-            if self.function().container_of(vn) != *vn {
-                return Err(anyhow!(
-                    "call output varnode {vn:?} is not its own largest tracked container"
-                ));
-            }
             if output_vns[..i].contains(vn) {
                 return Err(anyhow!("duplicate call output varnode {vn:?}"));
             }
@@ -355,10 +353,12 @@ impl FunctionBuilder {
 
         // Output vns: result then implicit-write clobbers, each canonicalized to
         // its largest tracked container and deduplicated (the result wins ties).
-        let result_vn = output.map(|vn| self.function().container_of(&vn));
+        let result_vn = output.map(|vn| {
+            crate::function::largest_container_in(self.function().all_vns(), &vn)
+        });
         let mut clobber_vns: SmallVec<[rsleigh::Vn; 4]> = SmallVec::new();
         for vn in &abi.implicit_writes {
-            let c = self.function().container_of(vn);
+            let c = crate::function::largest_container_in(self.function().all_vns(), vn);
             if Some(c) == result_vn || clobber_vns.contains(&c) {
                 continue;
             }

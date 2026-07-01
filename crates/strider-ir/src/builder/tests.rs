@@ -886,14 +886,15 @@ fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
         strider_target::Endianness::Little,
     )?;
     let f = b.function();
+    let container_of = |vn: &rsleigh::Vn| crate::function::largest_container_in(f.all_vns(), vn);
     assert_eq!(
-        f.container_of(&eax),
+        container_of(&eax),
         rax,
         "eax must resolve to its rax container"
     );
-    assert_eq!(f.container_of(&rax), rax, "rax is its own container");
+    assert_eq!(container_of(&rax), rax, "rax is its own container");
     let r9 = reg_vn(0x90, 8);
-    assert_eq!(f.container_of(&r9), r9, "untracked, uncontained -> self");
+    assert_eq!(container_of(&r9), r9, "untracked, uncontained -> self");
     Ok(())
 }
 
@@ -3630,19 +3631,20 @@ fn container_of_untracked_callee_saved_and_adhoc_vns_resolve_to_self() -> Result
         strider_target::Endianness::Little,
     )?;
     let f = b.function();
+    let container_of = |vn: &rsleigh::Vn| crate::function::largest_container_in(f.all_vns(), vn);
     assert!(
         !f.all_vns().contains(&r_cs),
         "callee-saved CC regs are not seeded into the tracked set"
     );
     assert_eq!(
-        f.container_of(&r_cs),
+        container_of(&r_cs),
         r_cs,
         "untracked callee-saved reg resolves to itself"
     );
 
     let adhoc = unique_vn(0x999, 4);
     assert_eq!(
-        f.container_of(&adhoc),
+        container_of(&adhoc),
         adhoc,
         "never-seen UNIQUE vn resolves to itself"
     );
@@ -3682,6 +3684,9 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
     let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], &cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
+    // The lifter records register-arg carriers after `set_entry_region`; the
+    // test-util helper reproduces that here (direct-builder tests have no lifter).
+    b.record_register_arg_carriers();
     b.set_region(region);
 
     let arg0 = b.function().arg_index_to_values(0);
@@ -3704,7 +3709,7 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
 /// recorded in `arg_index_to_values`: the arg register is resolved to its
 /// tracked container before the var-table lookup, mirroring how the CC
 /// register derivations (`call_ret_vals_for` / `call_clobbered_for`)
-/// resolve through `Function::container_of`.
+/// resolve through `largest_container_in`.
 #[test]
 fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
     let rdi = reg_vn(0x38, 8);
@@ -3726,6 +3731,9 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
     let mut b = FunctionBuilder::new(vec![rdi, sp], &cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
+    // The lifter records register-arg carriers after `set_entry_region`; the
+    // test-util helper reproduces that here (direct-builder tests have no lifter).
+    b.record_register_arg_carriers();
     b.set_region(region);
 
     let arg0 = b.function().arg_index_to_values(0);

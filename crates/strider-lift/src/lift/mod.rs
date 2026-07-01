@@ -247,7 +247,30 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .get(&cfg.entry())
             .ok_or_else(|| anyhow!("entry region {:?} missing from region_map", cfg.entry()))?;
         self.builder.set_entry_region(entry_ir)?;
+        self.record_register_arg_carriers();
         Ok(region_map)
+    }
+
+    /// Record register-passed argument carriers on the function's arg table.
+    ///
+    /// Each arg-passing register's (largest-container) `InitialVar` output is
+    /// the carrier for its positional index.  The container resolution is
+    /// machine-register knowledge owned by the lifter (`container_of`), so this
+    /// lives here rather than in `set_entry_region`: a narrow ABI arg alias
+    /// (e.g. `edi`) routes through its tracked container (`rdi`), mirroring the
+    /// CC ret-val / clobber projections.  We don't filter on use — an argument
+    /// the function never reads is culled by DCE and dropped from the arg table
+    /// by `Function::compact`, so patterns won't find it.
+    fn record_register_arg_carriers(&mut self) {
+        let arg_regs = self.builder.function().default_cc().arg_passing_regs.clone();
+        for (i, reg) in arg_regs.iter().enumerate() {
+            let container = self.container_of(reg);
+            if let Some(value) = self.builder.function().initial_var_value(&container) {
+                self.builder
+                    .function_mut()
+                    .register_arg_value(i as u32, value);
+            }
+        }
     }
 
     /// Second stage of [`Lifter::build_ir_with`]: translate every

@@ -482,7 +482,7 @@ impl Function {
         let callee_saved: FxHashSet<rsleigh::Vn> = cc
             .callee_saved_regs
             .iter()
-            .map(|v| self.container_of(v))
+            .map(|v| largest_container_in(self.all_vns(), v))
             .collect();
         move |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn
     }
@@ -502,7 +502,7 @@ impl Function {
         cc.ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
-            .map(|v| self.container_of(v))
+            .map(|v| largest_container_in(self.all_vns(), v))
     }
 
     /// Derive the ret-val varnode list for a `Call` built under calling
@@ -803,6 +803,21 @@ impl Function {
     pub fn initial_sp(&self) -> Option<NodeId> {
         let sp_id = self.vn_id_of(&self.default_cc.stack_vn)?;
         self.side_tables.initial_var_index.get(&sp_id).copied()
+    }
+
+    /// The `InitialVar(vn)` node's output value for a tracked varnode `vn`, or
+    /// `None` when `vn` is not tracked (no [`crate::node::InitialVnId`], so no
+    /// `InitialVar` node was created for it).
+    ///
+    /// O(1) via the `initial_var_index` accelerator.  The lifter uses it right
+    /// after `set_entry_region` to record register-passed arguments: an
+    /// arg-passing register resolves (lifter-side) to its tracked container,
+    /// and this returns that container's entry value — the carrier for the
+    /// argument's positional index.
+    pub fn initial_var_value(&self, vn: &rsleigh::Vn) -> Option<ValueId> {
+        let id = self.vn_id_of(vn)?;
+        let node = *self.side_tables.initial_var_index.get(&id)?;
+        self.graph.node_outputs(node).first().copied()
     }
 
     /// Returns the asm-instruction-address fingerprint of `node_id` as a

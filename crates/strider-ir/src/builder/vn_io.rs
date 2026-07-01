@@ -84,12 +84,15 @@ impl FunctionBuilder {
         if space != rsleigh::VnSpace::REGISTER && space != rsleigh::VnSpace::UNIQUE {
             bail!("unsupported varnode space {space:?}");
         }
-        // The persisted `Function::container_of` covers every tracked vn +
-        // CC register (fast map hit) and falls back to an `all_vns`
-        // containment scan for ad-hoc vns. It returns `reg` unchanged when
-        // nothing tracked contains it — for this caller that means `reg` is
-        // its own container (a legitimate full-width access).
-        Ok(self.function.container_of(reg))
+        // A containment scan of the tracked set (`all_vns`): returns `reg`
+        // unchanged when nothing tracked contains it — for this caller that
+        // means `reg` is its own container (a legitimate full-width access).
+        // This is the test-util aliasing path; the prod aliasing path lives in
+        // `strider-lift` and reads the lifter's O(1) container map.
+        Ok(crate::function::largest_container_in(
+            self.function.all_vns(),
+            reg,
+        ))
     }
 
     /// Computes the bit-shift needed to move `reg`'s bits to/from their
