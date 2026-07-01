@@ -35,8 +35,8 @@ use crate::function::side_tables::SideTables;
 /// fully encloses `vn`'s range, falling back to `*vn` when nothing does.
 ///
 /// This is the single linear containment scan shared by
-/// [`Function::container_of`]'s fallback and the bulk `vn_to_container`
-/// map build in `FunctionBuilder::new`.
+/// the lifter's `container_of` ad-hoc fallback and the bulk
+/// [`build_container_map`] sweep.
 /// Deterministic ordering key for a tracked varnode: `(space, offset,
 /// size)`.  [`Function::new`] sorts the tracked set by this before interning
 /// so `InitialVnId` assignment — and every derived clobber-slot index — is
@@ -229,17 +229,6 @@ pub struct Function {
     /// [`Self::vn_id_of`].
     pub(crate) vn_interner:
         entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
-    /// `original vn → its largest tracked container` map. Domain: every
-    /// REGISTER/UNIQUE varnode in the pre-dedup tracked set *plus* every
-    /// register the calling convention names (arg / ret / float-ret /
-    /// stack / callee-saved), so a CC register narrower than its tracked
-    /// container (ABI says `eax`, function tracks `rax`) resolves to the
-    /// container. Codomain: an element of `all_vns`, or the key itself when
-    /// no wider tracked vn contains it. Const / RAM vns are NOT canonicalized
-    /// (left out of the map). Computed once in `FunctionBuilder::new`. Plain
-    /// `rsleigh::Vn` keys/values (no arena ids), so `compact` leaves it
-    /// untouched. Read through [`Self::container_of`].
-    pub(crate) vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
 
     // ── overlay tables ─────────────────────────────────────────────────────
     //
@@ -281,7 +270,6 @@ impl Function {
         default_cc: strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
         tracked_vns: Vec<rsleigh::Vn>,
-        vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
     ) -> Self {
         // Build the `Entry` node (node 0) directly on the empty graph.  It is an
         // asm-fingerprint-exempt initial-state kind, so it needs no contributor
@@ -314,7 +302,6 @@ impl Function {
             default_cc,
             endianness,
             vn_interner,
-            vn_to_container,
             side_tables: SideTables::default(),
             const_interner: entity_utils::EntityInterner::default(),
         }
@@ -447,20 +434,6 @@ impl Function {
         self.vn_interner = interner;
     }
 
-    /// Resolve `vn` to its largest tracked container.
-    ///
-    /// Fast path: the precomputed `vn_to_container` map (covers
-    /// every original REGISTER/UNIQUE tracked vn + every CC register).
-    /// Fallback: an on-the-fly containment scan of `all_vns` for ad-hoc
-    /// REGISTER/UNIQUE vns not in the map. Returns `vn` unchanged when
-    /// nothing tracked contains it, or when `vn` is not in an aliasable
-    /// (REGISTER/UNIQUE) space.
-    pub fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
-        if let Some(c) = self.vn_to_container.get(vn) {
-            return *c;
-        }
-        largest_container_in(self.all_vns(), vn)
-    }
 
     /// The shared call-clobber predicate: a register (resolved to its tracked
     /// container) is clobbered iff it is neither callee-saved under `cc` nor the
@@ -488,7 +461,7 @@ impl Function {
     }
 
     /// The convention's combined return-register list (integer ++ float),
-    /// each resolved to its tracked container via [`Self::container_of`].
+    /// each resolved to its tracked container via [`largest_container_in`].
     ///
     /// The shared CC-ret-reg → container chain behind both
     /// [`Self::call_ret_vals_for`] (which keeps the tracked + clobbered ones)
@@ -516,7 +489,7 @@ impl Function {
     /// the slot ORDER is unchanged; only the conceptual split is new.
     ///
     /// Each CC register (ret-val, float-ret, callee-saved) is resolved to
-    /// its tracked container via [`Self::container_of`] before membership
+    /// its tracked container via [`largest_container_in`] before membership
     /// is tested, and the resolved CONTAINER is emitted.  This keeps a
     /// sub-register ABI ret reg (e.g. `eax`) classified as the return
     /// value when the function tracks the wider container (`rax`) instead
@@ -547,7 +520,7 @@ impl Function {
     /// All elements are drawn from `all_vns` in allocation order.
     ///
     /// Each CC register (callee-saved, ret-val, float-ret) is resolved to
-    /// its tracked container via [`Self::container_of`] before it is used
+    /// its tracked container via [`largest_container_in`] before it is used
     /// to exclude entries here, so a sub-register ABI ret reg (e.g. `eax`)
     /// whose tracked container is wider (`rax`) is correctly excluded from
     /// the clobber tail rather than mis-filed as a clobber.  Identity on
@@ -939,12 +912,11 @@ impl Function {
         })?;
         self.entry = new_entry;
         // Remap all the arena-id-keyed overlay tables through the old→new
-        // translation produced by `retain_reachable`.  The `vn_interner`,
-        // `default_cc` and `vn_to_container` are untouched: the tracked-vn set
-        // does not change when dead nodes are culled, so `InitialVnId`
-        // assignment is stable and the interner needs no remap (which is why
-        // `initial_var_index`, now `InitialVnId`-keyed, remaps only its NodeId
-        // payload).
+        // translation produced by `retain_reachable`.  The `vn_interner` and
+        // `default_cc` are untouched: the tracked-vn set does not change when
+        // dead nodes are culled, so `InitialVnId` assignment is stable and the
+        // interner needs no remap (which is why `initial_var_index`, now
+        // `InitialVnId`-keyed, remaps only its NodeId payload).
         self.side_tables.remap(&remap);
         // GC the const interner over only the values referenced by surviving
         // `IntConst(id)` nodes, rewriting each survivor's id to the new dense

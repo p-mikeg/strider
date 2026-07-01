@@ -25,7 +25,6 @@ pub(crate) fn test_function() -> Function {
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
         Vec::new(),
-        rustc_hash::FxHashMap::default(),
     );
     // The builder owns the memory spine; this test helper bypasses the builder,
     // so mint the `InitialMemory` node directly to mirror a built function.

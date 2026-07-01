@@ -59,30 +59,15 @@ pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()
 /// without this filter the 4-byte and 8-byte unique varnodes look like
 /// independent SSA variables.  Keeping the wider varnode preserves the
 /// data dependency.
-/// also computing, in the SAME O(n log n) sweep, every aliasable input
-/// varnode's largest tracked container (the SP-relative `vn_to_container`
-/// SSoT). Returns `(survivors_in_input_order, vn_to_container)`:
 ///
-/// * **survivors** — the deduped tracked set in INPUT order; [`Function::new`]
-///   re-sorts it before interning, so downstream `InitialVnId` assignment is
-///   deterministic regardless of this input order. A varnode is dropped iff
-///   some STRICTLY larger same-space varnode encloses its byte range.
-/// * **vn_to_container** — aliasable-only: a survivor maps to itself; a
-///   dropped sub-register view maps to its largest strict encloser (always a
-///   survivor, since only survivors are pushed as open enclosures). Non-
-///   aliasable spaces (CONST / code) are kept verbatim and absent from the map
-///   — containment-by-offset is meaningless there.
-///
-/// Computing the container at drop time reuses the same per-space stack sweep
-/// the dedup needs, so it replaces the former separate `vn → container` build
-/// plus the O(V²) per-view `largest_container_in` rescan. Picking the
-/// MAX-size enclosing open (not merely the first) makes it correct even for
-/// crossing partial-overlap enclosers (`[0,12)` and `[2,20)` both enclosing
-/// `[5,9)` → the wider `[2,20)`), the case a naive first-open stack sweep got
-/// wrong.
-fn dedup_and_container_map(
-    all_used_variables: &[rsleigh::Vn],
-) -> (Vec<rsleigh::Vn>, FxHashMap<rsleigh::Vn, rsleigh::Vn>) {
+/// Returns the deduped tracked set in INPUT order; [`Function::new`] re-sorts
+/// it before interning, so downstream `InitialVnId` assignment is deterministic
+/// regardless of this input order.  A varnode is dropped iff some STRICTLY
+/// larger same-space varnode encloses its byte range.  The `vn → container`
+/// resolution the register-aliasing hot path needs is machine-register
+/// knowledge the lifter owns (see [`crate::build_container_map`]); it is not
+/// computed here.
+fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
     // Range end with saturating arithmetic (high-offset CR slices on ppc64 /
     // aarch64be can push `addr_off + size` past `u64::MAX`).
     fn end_of(v: &rsleigh::Vn) -> u64 {
@@ -98,8 +83,6 @@ fn dedup_and_container_map(
     }
 
     let mut dropped = vec![false; all_used_variables.len()];
-    let mut vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
-        FxHashMap::with_capacity_and_hasher(all_used_variables.len(), Default::default());
     for (_space, mut bucket) in by_space {
         // addr_off ascending, then size descending so a wider enclosure is
         // seen before the narrower slices it contains.
@@ -119,35 +102,27 @@ fn dedup_and_container_map(
             // surviving this prune may still enclose a later, even-narrower
             // entry that shares `v`'s start, so they stay live.
             open.retain(|&(end, _)| end >= v.addr_off);
-            // Largest STRICTLY-larger enclosing open (`off ≤ v.off` by sort,
+            // Strictly-larger enclosing open (`off ≤ v.off` by sort,
             // `end ≥ v_end`, `size > v.size`): if present, `v` is a subsumed
-            // sub-register view whose container is that open; else `v` is the
-            // largest in its chain (its own container) and joins the opens.
-            let container = open
+            // sub-register view and is dropped; else `v` is the largest in its
+            // chain and joins the opens.
+            let enclosed = open
                 .iter()
-                .filter(|&&(end, c)| end >= v_end && c.size > v.size)
-                .max_by_key(|&&(_, c)| c.size)
-                .map(|&(_, c)| c);
-            match container {
-                Some(c) => {
-                    dropped[idx] = true;
-                    vn_to_container.insert(v, c);
-                }
-                None => {
-                    vn_to_container.insert(v, v);
-                    open.push((v_end, v));
-                }
+                .any(|&(end, c)| end >= v_end && c.size > v.size);
+            if enclosed {
+                dropped[idx] = true;
+            } else {
+                open.push((v_end, v));
             }
         }
     }
 
-    let survivors = all_used_variables
+    all_used_variables
         .iter()
         .enumerate()
         .filter(|(i, _)| !dropped[*i])
         .map(|(_, v)| *v)
-        .collect();
-    (survivors, vn_to_container)
+        .collect()
 }
 
 /// Incrementally constructs a sea-of-nodes IR function graph.
@@ -163,7 +138,8 @@ fn dedup_and_container_map(
 /// needs is derived from those two.  The builder holds only genuine
 /// build-time scratch (region map, current region, the `InitialMemory`
 /// output, and the per-insn `lift_addr` attribution).  Varnode-container
-/// resolution is delegated to the persisted [`Function::container_of`].
+/// resolution is machine-register knowledge owned by the lifter (its
+/// `vn_to_container` map), not the target-agnostic IR.
 pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
     /// Calling-convention state (stack_vn, ret_stack_pop,
@@ -276,29 +252,14 @@ impl FunctionBuilder {
             }
         }
 
-        // Single sweep: drop strictly-enclosed views AND record every
-        // aliasable input varnode's largest container (REGISTER/UNIQUE only;
-        // CONST is left to the graph's structural dedup cache and RAM
-        // load/store is deliberately not deduped).
-        let (tracked_vns, mut vn_to_container) = dedup_and_container_map(&all_used_variables);
-
-        // `dedup_and_container_map` already mapped every aliasable varnode
-        // in `all_used_variables`. The only keys it can't have seen are
-        // callee-saved registers a leaf function never touches (so they were
-        // never in the used set); resolve those few against the tracked set.
-        // `largest_container_in` scans the whole set regardless of order, so
-        // the not-yet-sorted `tracked_vns` gives the same container the sorted
-        // `Function::all_vns` would.
-        for vn in cc
-            .callee_saved_regs
-            .iter()
-            .copied()
-            .filter(|v| is_aliasable_space(v.addr_space))
-        {
-            vn_to_container
-                .entry(vn)
-                .or_insert_with(|| crate::function::largest_container_in(&tracked_vns, &vn));
-        }
+        // Drop strictly-enclosed sub-register views, keeping the widest
+        // enclosing varnode of each aliasing chain (REGISTER/UNIQUE only; CONST
+        // is left to the graph's structural dedup cache and RAM load/store is
+        // deliberately not deduped).  The `vn → container` resolution the
+        // register-aliasing hot path needs is machine-register knowledge owned
+        // by the lifter (its `vn_to_container` map), NOT this target-agnostic
+        // IR — so it is no longer built or stored here.
+        let tracked_vns = dedup_overlapping_largest(&all_used_variables);
 
         // Hand the deduped tracked set + resolved CC straight through:
         // `Function::new` sorts by `(space, offset, size)` and interns the
@@ -307,7 +268,7 @@ impl FunctionBuilder {
         // `i`-th `Call` clobber output.  Every register-list projection a Call
         // / Return / CallOther needs is derived from `(default_cc, all_vns)`.
         let mut fb = FunctionBuilder {
-            function: Function::new(cc.clone(), endianness, tracked_vns, vn_to_container),
+            function: Function::new(cc.clone(), endianness, tracked_vns),
             entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,

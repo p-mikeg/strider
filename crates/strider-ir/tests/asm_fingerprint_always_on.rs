@@ -21,7 +21,6 @@ fn default_validate_flags_missing_asm_fingerprint() {
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
         Vec::new(),
-        rustc_hash::FxHashMap::default(),
     );
     let entry = function.entry();
     // Entry + InitialMemory are deduped from the auto-built skeleton.
