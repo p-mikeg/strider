@@ -203,9 +203,9 @@ impl FunctionBuilder {
     /// Given the lifter-resolved pcode operands (`explicit_args`) and the
     /// vn-resolved [`strider_target::BuiltCallOtherAbi`], this method:
     ///
-    /// - Reads each `abi.implicit_reads` register via [`Self::read_reg_vn`]
-    ///   and appends those values after `explicit_args`, so the node's
-    ///   value inputs are `explicit_args ++ implicit_read_values`.
+    /// - Reads each `abi.implicit_reads` register via [`Self::read_variable`]
+    ///   (container-resolved) and appends those values after `explicit_args`,
+    ///   so the node's value inputs are `explicit_args ++ implicit_read_values`.
     /// - Derives the ret-val group from `output`: when `Some(vn)`, a
     ///   single `Typed(int_for_byte_size(vn.size))` output slot tagged
     ///   with `vn`; when `None`, no ret-val slot.
@@ -215,7 +215,7 @@ impl FunctionBuilder {
     /// - Writes the implicit-write clobbers back first (via
     ///   [`Self::write_variable`], matching the `Call` clobber path — a
     ///   full-register write is identical and this unifies clobber
-    ///   handling), THEN the result to `output` via [`Self::write_reg_vn`]
+    ///   handling), THEN the result to `output` via [`Self::write_variable`]
     ///   AFTER the clobbers, so an aliased clobber cannot re-clobber the
     ///   result.  The builder now owns the result writeback (it used to be
     ///   the lifter's job).
@@ -239,7 +239,7 @@ impl FunctionBuilder {
     /// Outputs: `[Control, Memory] ++ ret_val? ++ clobbers`.
     ///
     /// The result writeback to `output` now stays with the builder: it
-    /// writes the result via [`Self::write_reg_vn`] after the clobbers.
+    /// writes the result via [`Self::write_variable`] after the clobbers.
     /// `output` is therefore required to name a REGISTER / UNIQUE varnode.
     /// The method still returns the result value for callers that want it.
     ///
@@ -299,7 +299,11 @@ impl FunctionBuilder {
         let arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc.arg_passing_regs.iter().copied().collect();
         let mut arg_passing: SmallVec<[ValueId; 4]> = SmallVec::new();
         for vn in &arg_vns {
-            arg_passing.push(self.read_reg_vn(vn)?);
+            // CC arg regs are tracked full-width containers here, so a plain
+            // container-resolved variable read matches what the lifter's
+            // aliasing dispatch produces (no sub-register slice to insert).
+            let c = crate::function::largest_container_in(self.function().all_vns(), vn);
+            arg_passing.push(self.read_variable(&c)?);
         }
 
         // Snapshot the pre-call SP (preserved across the call) for the
@@ -316,7 +320,9 @@ impl FunctionBuilder {
             self.write_variable(vn, *new_val)?;
         }
         for (vn, new_val) in core::iter::zip(&ret_val_vars, ret_val_values) {
-            self.write_reg_vn(vn, *new_val)?;
+            // `ret_val_vars` are already container-resolved (via
+            // `call_ret_vals_for`), so a direct variable write is exact.
+            self.write_variable(vn, *new_val)?;
         }
 
         if let Some(cc) = override_cc {
@@ -324,6 +330,28 @@ impl FunctionBuilder {
         }
         self.apply_post_call_sp_adjust(&sp_vn, sp_value, ret_stack_pop)?;
         Ok(call)
+    }
+
+    /// Test-only convenience: terminate the current region with a `Return`
+    /// reading exactly the calling convention's return-value registers, the
+    /// way the lifter does in prod.  The ret-val regs are already
+    /// container-resolved (via [`crate::Function::ret_val_regs`]), so a plain
+    /// variable read is exact — no sub-register aliasing needed.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`Self::build_return`] failures, plus a
+    /// non-REGISTER/UNIQUE ret-val vn or an untracked ret-val read.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn build_function_return(&mut self) -> Result<()> {
+        let ret_vars: SmallVec<[rsleigh::Vn; 4]> =
+            self.function.ret_val_regs().into_iter().collect();
+        let mut ret_values: SmallVec<[ValueId; 4]> = SmallVec::new();
+        for var in &ret_vars {
+            require_reg_or_unique(var)?;
+            ret_values.push(self.read_variable(var)?);
+        }
+        self.build_return(None, &ret_values)
     }
 
     /// Test-only convenience: build a `CallOther` from a vn-resolved ABI, the
@@ -347,7 +375,8 @@ impl FunctionBuilder {
         // operands.
         let mut args: SmallVec<[ValueId; 4]> = SmallVec::new();
         for vn in &abi.implicit_reads {
-            args.push(self.read_reg_vn(vn)?);
+            let c = crate::function::largest_container_in(self.function().all_vns(), vn);
+            args.push(self.read_variable(&c)?);
         }
         args.extend_from_slice(explicit_args);
 

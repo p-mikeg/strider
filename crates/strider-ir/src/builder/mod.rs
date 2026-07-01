@@ -16,12 +16,6 @@ mod nodes;
 #[cfg(test)]
 mod tests;
 mod vars;
-/// Register-aliasing sub-register read/write helpers.  Machine-specific
-/// (sub-register slicing lives here); prod lifting owns this in
-/// `strider-lift`.  Kept here only for the test-support `build_call_cc` /
-/// `build_call_other_abi` / `build_function_return` convenience constructors.
-#[cfg(any(test, feature = "test-util"))]
-mod vn_io;
 
 /// Returns `true` for varnode spaces whose offsets are addressed as fixed
 /// byte ranges (REGISTER, UNIQUE).  CONST and code-space varnodes don't

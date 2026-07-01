@@ -53,7 +53,7 @@ fn test_addr() -> strider_cfg::PcodeInsnAddr {
 /// builder the pre-merge value-lifter tests used (the value handlers
 /// never consult the convention).  Struct-literal construction skips the
 /// ABI-disjointness validation, fine for a synthetic fixture.
-fn empty_cc() -> strider_target::BuiltCallingConvention {
+pub(super) fn empty_cc() -> strider_target::BuiltCallingConvention {
     let _ = TEST_ENDIAN;
     strider_target::BuiltCallingConvention {
         arg_passing_regs: Vec::new(),
@@ -93,11 +93,24 @@ fn with_test_lifter_tracking(
     all_vns: Vec<Vn>,
     f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
 ) {
-    let arch = strider_target::SleighArch::x86();
+    with_test_lifter_tracking_arch(strider_target::SleighArch::x86(), vec![0xc3], all_vns, f);
+}
+
+/// Like [`with_test_lifter_tracking`] but for an arbitrary `arch` and
+/// caller-provided terminator `term_bytes` (the single-instruction throwaway
+/// CFG must terminate cleanly — e.g. `0xc3` `ret` on x86, or `4e 80 00 20`
+/// `blr` on big-endian PowerPC).  This lets the aliasing tests exercise the
+/// prod `read_reg_vn`/`write_reg_vn` methods under both endiannesses.
+pub(super) fn with_test_lifter_tracking_arch(
+    arch: strider_target::SleighArch,
+    term_bytes: Vec<u8>,
+    all_vns: Vec<Vn>,
+    f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
+) {
     let mut sleigh = rsleigh::Sleigh::new(
-        rsleigh::sla_spec::SLA_SPEC_X86,
-        rsleigh::pspec::PSPEC_X86,
-        BufMemReader::new(vec![0xc3u8], 0x1000),
+        arch.sla_spec(),
+        arch.pspec(),
+        BufMemReader::new(term_bytes, 0x1000),
     )
     .expect("create test Sleigh");
     let cfg = strider_cfg::Builder::for_arch(

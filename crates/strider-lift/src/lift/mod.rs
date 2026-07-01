@@ -23,6 +23,9 @@ mod vn_io;
 #[cfg(test)]
 mod handler_tests;
 
+#[cfg(test)]
+mod aliasing_tests;
+
 pub(crate) use function_lifter::FunctionLifter;
 
 /// The full result of a strider lift, exposing the lifted IR plus the

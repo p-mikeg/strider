@@ -233,7 +233,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// enclosing tracked container, is a sub-slice of a wide (>16-byte)
     /// container, has an unsupported byte size, or an underlying builder
     /// node-construction call fails.
-    fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<Value> {
+    pub(crate) fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<Value> {
         let ctx = match self.enter_sub_register(reg, "read_reg_vn")? {
             SubRegOutcome::Direct { container_reg } => {
                 // Direct-container read: no aliasing slicing needed.
@@ -283,7 +283,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// enclosing tracked container, is a sub-slice of a wide (>16-byte)
     /// container, has an unsupported byte size, or an underlying builder
     /// node-construction call fails.
-    fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: Value) -> Result<()> {
+    pub(crate) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: Value) -> Result<()> {
         let ctx = match self.enter_sub_register(reg, "write_reg_vn")? {
             SubRegOutcome::Direct { container_reg: _ } => {
                 // Direct full-container write.  Register variables hold
