@@ -2,7 +2,8 @@ use anyhow::anyhow;
 use cranelift_entity::{SecondaryMap, entity_impl};
 
 use crate::IRViewer;
-use crate::builder::{FunctionBuilder, VarId};
+use crate::builder::FunctionBuilder;
+use crate::node::InitialVnId;
 use crate::error::Result;
 use crate::node::{NodeId, ValueId};
 
@@ -33,10 +34,10 @@ pub(crate) struct Region {
     /// The current memory token inside this region (advances through stores/calls).
     cur_memory: ValueId,
     /// Current SSA value of each variable in this region.
-    variables: SecondaryMap<VarId, ValueId>,
+    variables: SecondaryMap<InitialVnId, ValueId>,
     /// `Phi` outputs — one per variable — that gather incoming values
     /// from predecessor regions (filled in as predecessors are linked).
-    initial_variables: SecondaryMap<VarId, ValueId>,
+    initial_variables: SecondaryMap<InitialVnId, ValueId>,
 }
 
 /// The result of terminating the current region: the final control and memory
@@ -134,7 +135,7 @@ impl FunctionBuilder {
     pub(crate) fn link_region_variables(
         &mut self,
         region: RegionId,
-        variables: &SecondaryMap<VarId, ValueId>,
+        variables: &SecondaryMap<InitialVnId, ValueId>,
     ) -> Result<()> {
         for var_id in variables.keys() {
             let region_variable_output_id = self.regions[region].initial_variables[var_id];
@@ -154,7 +155,7 @@ impl FunctionBuilder {
         control_id: ValueId,
         memory_node: NodeId,
         memory_id: ValueId,
-        initial_variables: SecondaryMap<VarId, ValueId>,
+        initial_variables: SecondaryMap<InitialVnId, ValueId>,
     ) -> Result<RegionId> {
         self.require_memory_kind(memory_id)?;
         self.require_control_kind(control_id)?;
@@ -174,14 +175,14 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Returns `NoCurrentRegion` when no region is active.
-    pub fn write_variable_from_id(&mut self, var_id: VarId, value: ValueId) -> Result<()> {
+    pub fn write_variable_from_id(&mut self, var_id: InitialVnId, value: ValueId) -> Result<()> {
         let region_id = self.require_cur_region()?;
         self.regions[region_id].variables[var_id] = value;
         Ok(())
     }
 
     /// Reads the current value of variable `var_id` from the active region.
-    pub(crate) fn read_variable_from_id(&self, var_id: VarId) -> Result<ValueId> {
+    pub(crate) fn read_variable_from_id(&self, var_id: InitialVnId) -> Result<ValueId> {
         let region_id = self.require_cur_region()?;
         Ok(self.regions[region_id].variables[var_id])
     }

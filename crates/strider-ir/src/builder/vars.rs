@@ -20,8 +20,8 @@ impl FunctionBuilder {
     /// active.
     pub fn read_variable(&self, variable: &rsleigh::Vn) -> Result<ValueId> {
         let id = self
-            .var_table
-            .key_of(variable)
+            .function
+            .vn_id_of(variable)
             .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
         self.read_variable_from_id(id)
     }
@@ -35,8 +35,8 @@ impl FunctionBuilder {
     /// active.
     pub fn write_variable(&mut self, variable: &rsleigh::Vn, value: ValueId) -> Result<()> {
         let var_id = self
-            .var_table
-            .key_of(variable)
+            .function
+            .vn_id_of(variable)
             .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
         self.write_variable_from_id(var_id, value)
     }
@@ -59,24 +59,17 @@ impl FunctionBuilder {
         self.link_control_regions(region_id, entry_control)?;
         self.link_memory_regions(region_id, entry_memory)?;
 
-        // Create initial variables
-        let var_ids: Vec<_> = self.var_table.keys().collect();
+        // Create initial variables.  The tracked-varnode ids ARE the
+        // `InitialVar` payloads (both come from the one `vn_interner`), so a
+        // `vn_id` doubles as the SSA-variable key and the node payload — no
+        // index translation.
+        let vn_ids: Vec<_> = self.function().vn_ids().collect();
         let mut initial_variables = SecondaryMap::new();
-        for var_id in var_ids {
-            let var = self.var_table[var_id];
+        for vn_id in vn_ids {
+            let var = self.function().initial_vn(vn_id);
             let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
-            // `VarId` allocation order is exactly `all_vns` order (both come
-            // from `var_table` in `new`), so the var's `all_vns` index is its
-            // `VarId` index — no lookup needed.
-            let vn_id =
-                crate::node::InitialVnId::from_index(cranelift_entity::EntityRef::index(var_id));
             let value = self.build_single_output_pure(NodeKind::InitialVar(vn_id), [], output_type);
-            initial_variables[var_id] = value;
-            // `Function::all_vns` (the ordered tracked-varnode SSoT) is
-            // populated eagerly in `new` from the same `var_table`
-            // (VarId / allocation order), so this loop — which iterates
-            // that same order — needs no per-`InitialVar` push.  The
-            // register-list derivations read `all_vns` directly.
+            initial_variables[vn_id] = value;
             // Register the InitialVar in the graph's O(1) Vn→NodeId
             // index so downstream consumers (the orchestrator's
             // `read_or_init_var` fallback) don't re-scan `preorder()`
@@ -97,8 +90,8 @@ impl FunctionBuilder {
             // ABI arg alias (e.g. `edi`) must route through its container
             // (`rdi`) — mirroring `call_ret_vals_for` / `call_clobbered_for`.
             let key = self.function.container_of(reg);
-            if let Some(var_id) = self.var_table.key_of(&key) {
-                let value = initial_variables[var_id];
+            if let Some(vn_id) = self.function.vn_id_of(&key) {
+                let value = initial_variables[vn_id];
                 self.function_mut().register_arg_value(i as u32, value);
             }
         }
@@ -134,11 +127,11 @@ impl FunctionBuilder {
             .graph_mut()
             .add_node_input(memory_node, phi_token);
 
-        let var_ids: Vec<_> = self.var_table.keys().collect();
+        let vn_ids: Vec<_> = self.function().vn_ids().collect();
         let mut variables = SecondaryMap::new();
-        for var_id in var_ids {
-            let var = self.var_table[var_id];
-            variables[var_id] = self.build_vn_phi(var, phi_token, &[])?;
+        for vn_id in vn_ids {
+            let var = self.function().initial_vn(vn_id);
+            variables[vn_id] = self.build_vn_phi(var, phi_token, &[])?;
         }
         self.create_region_helper(control_node, control, memory_node, memory, variables)
     }

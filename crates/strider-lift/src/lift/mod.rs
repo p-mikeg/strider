@@ -122,7 +122,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// Ordering is owned by [`strider_ir::FunctionBuilder::new`], which
     /// sorts the tracked set deterministically (by
-    /// `(space-shortcut, offset, size)`) so downstream `VarId` numbering is
+    /// `(space-shortcut, offset, size)`) so downstream `InitialVnId` numbering is
     /// stable across runs; the lifter only needs the unique used-vn set.
     pub(crate) fn find_all_unique_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
         let mut all_vns: rustc_hash::FxHashSet<rsleigh::Vn> = rustc_hash::FxHashSet::default();
@@ -160,7 +160,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// The tracked-varnode set is scanned fresh from `cfg` (via
     /// `find_all_unique_vns`); the deterministic ordering that gives
-    /// stable `VarId` numbering is applied by
+    /// stable `InitialVnId` numbering is applied by
     /// [`strider_ir::FunctionBuilder::new`].  Direct Calls whose target is in
     /// [`LiftOptions::per_address_ccs`] are built via
     /// [`strider_ir::FunctionBuilder::build_call`] with the override.

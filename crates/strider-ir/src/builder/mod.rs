@@ -1,5 +1,5 @@
 use cranelift_entity::packed_option::ReservedValue;
-use cranelift_entity::{PrimaryMap, entity_impl};
+use cranelift_entity::PrimaryMap;
 use rustc_hash::FxHashMap;
 
 use crate::error::Result;
@@ -22,11 +22,6 @@ mod vars;
 /// `build_call_other_abi` / `build_function_return` convenience constructors.
 #[cfg(any(test, feature = "test-util"))]
 mod vn_io;
-
-/// A dense, typed identifier for a tracked variable (varnode).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VarId(u32);
-entity_impl!(VarId);
 
 /// Returns `true` for varnode spaces whose offsets are addressed as fixed
 /// byte ranges (REGISTER, UNIQUE).  CONST and code-space varnodes don't
@@ -68,9 +63,9 @@ pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()
 /// varnode's largest tracked container (the SP-relative `vn_to_container`
 /// SSoT). Returns `(survivors_in_input_order, vn_to_container)`:
 ///
-/// * **survivors** — the deduped tracked set in INPUT order, so `VarId`
-///   assignment downstream stays the input-order-derived one the sort in
-///   [`FunctionBuilder::new`] then re-canonicalises. A varnode is dropped iff
+/// * **survivors** — the deduped tracked set in INPUT order; [`Function::new`]
+///   re-sorts it before interning, so downstream `InitialVnId` assignment is
+///   deterministic regardless of this input order. A varnode is dropped iff
 ///   some STRICTLY larger same-space varnode encloses its byte range.
 /// * **vn_to_container** — aliasable-only: a survivor maps to itself; a
 ///   dropped sub-register view maps to its largest strict encloser (always a
@@ -155,15 +150,6 @@ fn dedup_and_container_map(
     (survivors, vn_to_container)
 }
 
-/// Deterministic ordering key for a tracked varnode: `(space, offset,
-/// size)`.  Sorting `all_vns` by this in `FunctionBuilder::new` makes
-/// `VarId` assignment — and every derived clobber-slot index — stable
-/// regardless of the order varnodes were collected from the CFG.  The
-/// builder owns this so the lifter need not pre-sort.
-fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
-    (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
-}
-
 /// Incrementally constructs a sea-of-nodes IR function graph.
 ///
 /// The builder tracks SSA-style per-region variable state: each variable has
@@ -185,12 +171,6 @@ pub struct FunctionBuilder {
     /// (call_clobbered, ret_val_regs, call_other_clobbered) all come off
     /// the [`Function`]'s `default_cc` + `all_vns`.
     pub(crate) function: Function,
-    /// Build-time-only SSA bookkeeping: the bidirectional `VarId ↔ Vn`
-    /// tracked-variable table.  `VarId` is a build-time key that never
-    /// escapes the builder; the finished [`Function`] records varnodes
-    /// via the ordered `all_vns` list instead (snapshotted from this
-    /// table in `new`, one entry per tracked variable).
-    pub(crate) var_table: crate::graph::VarTable,
     /// The single `Memory` output of the `InitialMemory` node.
     pub(crate) entry_memory: ValueId,
     pub(crate) regions: PrimaryMap<crate::region::RegionId, Region>,
@@ -300,29 +280,15 @@ impl FunctionBuilder {
         // aliasable input varnode's largest container (REGISTER/UNIQUE only;
         // CONST is left to the graph's structural dedup cache and RAM
         // load/store is deliberately not deduped).
-        let (mut all_variables, mut vn_to_container) =
-            dedup_and_container_map(&all_used_variables);
-        // FunctionBuilder owns vn ordering: sort the deduped tracked set
-        // by (space, offset, size) so VarId assignment is deterministic
-        // independent of CFG-collection order.  The lifter no longer sorts.
-        all_variables.sort_by_key(vn_sort_key);
-        let mut var_table = crate::graph::VarTable::default();
-        for variable in all_variables {
-            var_table.intern(variable);
-        }
-        // The ordered tracked-varnode SSoT (`Function::all_vns`).  Captured
-        // eagerly from `var_table` in VarId / interning order — the same
-        // order `set_entry_region` later iterates when creating one
-        // `InitialVar` per tracked variable, so the `i`-th derived clobber
-        // varnode still lines up with the `i`-th `Call` clobber output.
-        // The tracked set is fixed at construction, so this snapshot is
-        // stable for the function's lifetime.
-        let all_vns: Vec<rsleigh::Vn> = var_table.values().copied().collect();
+        let (tracked_vns, mut vn_to_container) = dedup_and_container_map(&all_used_variables);
 
         // `dedup_and_container_map` already mapped every aliasable varnode
         // in `all_used_variables`. The only keys it can't have seen are
         // callee-saved registers a leaf function never touches (so they were
-        // never in the used set); resolve those few against `all_vns`.
+        // never in the used set); resolve those few against the tracked set.
+        // `largest_container_in` scans the whole set regardless of order, so
+        // the not-yet-sorted `tracked_vns` gives the same container the sorted
+        // `Function::all_vns` would.
         for vn in cc
             .callee_saved_regs
             .iter()
@@ -331,16 +297,17 @@ impl FunctionBuilder {
         {
             vn_to_container
                 .entry(vn)
-                .or_insert_with(|| crate::function::largest_container_in(&all_vns, &vn));
+                .or_insert_with(|| crate::function::largest_container_in(&tracked_vns, &vn));
         }
 
-        // Hand the resolved CC straight through: every register-list
-        // projection a Call / Return / CallOther needs is derived from
-        // `(default_cc, all_vns)`, so there is no synthesised stand-in to
-        // overwrite afterwards.
+        // Hand the deduped tracked set + resolved CC straight through:
+        // `Function::new` sorts by `(space, offset, size)` and interns the
+        // varnodes (the SSoT `vn_interner`), so `InitialVnId` assignment is
+        // deterministic and the `i`-th tracked varnode still lines up with the
+        // `i`-th `Call` clobber output.  Every register-list projection a Call
+        // / Return / CallOther needs is derived from `(default_cc, all_vns)`.
         let mut fb = FunctionBuilder {
-            function: Function::new(cc.clone(), endianness, all_vns, vn_to_container),
-            var_table,
+            function: Function::new(cc.clone(), endianness, tracked_vns, vn_to_container),
             entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,

@@ -837,7 +837,7 @@ fn fitting_values_intern_as_bits() -> Result<()> {
 
 /// `FunctionBuilder::new` is the SSoT for vn ordering: the tracked
 /// `all_vns` set must come out sorted by (space, offset, size)
-/// regardless of the order the vns were handed in, so `VarId`
+/// regardless of the order the vns were handed in, so `InitialVnId`
 /// assignment (and every derived clobber-slot index) is deterministic.
 #[test]
 fn function_builder_sorts_all_vns_deterministically() -> Result<()> {
@@ -1605,7 +1605,7 @@ fn new_raw_filters_contained_unique_varnodes() -> Result<()> {
             0,
             strider_target::Endianness::Little,
         )?;
-        let tracked: Vec<rsleigh::Vn> = b.var_table.values().copied().collect();
+        let tracked: Vec<rsleigh::Vn> = b.function().all_vns().to_vec();
         assert!(
             tracked.contains(&outer),
             "{label}: wider UNIQUE varnode must remain tracked; got {tracked:?}"
@@ -1634,7 +1634,7 @@ fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
         0,
         strider_target::Endianness::Little,
     )?;
-    let tracked: Vec<rsleigh::Vn> = b.var_table.values().copied().collect();
+    let tracked: Vec<rsleigh::Vn> = b.function().all_vns().to_vec();
     assert!(tracked.contains(&a));
     assert!(tracked.contains(&b_vn));
     Ok(())

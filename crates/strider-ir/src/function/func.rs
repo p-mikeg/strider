@@ -37,6 +37,14 @@ use crate::function::side_tables::SideTables;
 /// This is the single linear containment scan shared by
 /// [`Function::container_of`]'s fallback and the bulk `vn_to_container`
 /// map build in `FunctionBuilder::new`.
+/// Deterministic ordering key for a tracked varnode: `(space, offset,
+/// size)`.  [`Function::new`] sorts the tracked set by this before interning
+/// so `InitialVnId` assignment — and every derived clobber-slot index — is
+/// stable regardless of the order varnodes were collected from the CFG.
+pub(crate) fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
+    (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
+}
+
 pub(crate) fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
     if vn.addr_space != rsleigh::VnSpace::REGISTER && vn.addr_space != rsleigh::VnSpace::UNIQUE {
         return *vn;
@@ -184,7 +192,7 @@ impl Function {
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
-        all_vns: Vec<rsleigh::Vn>,
+        tracked_vns: Vec<rsleigh::Vn>,
         vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
     ) -> Self {
         // Build the `Entry` node (node 0) directly on the empty graph.  It is an
@@ -200,13 +208,16 @@ impl Function {
             [],
             [crate::node::ValueKind::Control],
         );
-        // Intern the (already deduped + CC-seeded, deterministically ordered)
-        // tracked varnodes.  `all_vns` arrives sorted by `(space, offset,
-        // size)` from the builder, so id assignment is stable and the `i`-th
+        // The sort lives with the interner: the caller hands the (already
+        // deduped + CC-seeded) tracked set in arbitrary order; sorting by
+        // `(space, offset, size)` here makes `InitialVnId` assignment stable
+        // and reproducible independent of CFG-collection order, so the `i`-th
         // interned id is the `i`-th tracked varnode.
+        let mut tracked_vns = tracked_vns;
+        tracked_vns.sort_by_key(vn_sort_key);
         let mut vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn> =
             entity_utils::EntityInterner::default();
-        for vn in all_vns {
+        for vn in tracked_vns {
             vn_interner.intern(vn);
         }
         Self {

@@ -410,7 +410,7 @@ impl FunctionBuilder {
         }
         // Only rebind a tracked SP variable; an untracked (sentinel) SP
         // has no variable slot to write back to.
-        if self.var_table.contains(sp) {
+        if self.function.vn_id_of(sp).is_some() {
             let sp_ty = sp.int_type()?;
             let const_id = self.build_int_const(ret_stack_pop as u64, sp_ty)?;
             let adjusted =

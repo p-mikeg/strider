@@ -12,8 +12,7 @@
 //!   embeds no domain normalisation.  Integer-constant canonicalisation
 //!   (masking + small→wide promotion) happens at construction in
 //!   `Function::create_node_attributed`, before a node reaches the cache.
-//! - The `Inputs` / `InputCursor` IR-payload aliases and the `VarTable`
-//!   build-time interner.
+//! - The `Inputs` / `InputCursor` IR-payload aliases.
 //!
 //! The typed / fallible structural accessors (`node_outputs_exact` /
 //! `node_inputs_exact` / `node_input_id_at`) are inherent on the generic
@@ -81,22 +80,6 @@ impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
 
 // The id translation table is structural — it comes from `strider-graph`.
 pub use strider_graph::NodeIdRemap;
-
-
-/// Bidirectional tracked-variable table (`VarId ↔ Vn`): the forward
-/// `VarId → Vn` map plus its `Vn → VarId` reverse index, kept consistent by
-/// construction.  An [`entity_utils::EntityInterner`] — `intern` is the sole
-/// mutator (writes both halves), `key_of`/`get` resolve either direction in
-/// O(1), and `keys()`/`values()` iterate in insertion (`VarId`) order for
-/// the consumers that need ABI slot order.
-///
-/// This is a **build-time-only** type: it lives on the
-/// [`crate::FunctionBuilder`] for SSA bookkeeping while the function is
-/// being constructed.  It is **not** stored on the finished
-/// [`crate::Function`] — the post-build varnode record is the ordered
-/// `crate::Function::all_vns` list (snapshotted from this table in
-/// `new`, one entry per tracked variable) instead.
-pub(crate) type VarTable = entity_utils::EntityInterner<crate::builder::VarId, rsleigh::Vn>;
 
 /// The IR sea-of-nodes graph.
 ///
