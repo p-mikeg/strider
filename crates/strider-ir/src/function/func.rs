@@ -149,7 +149,7 @@ pub struct Function {
     /// map and the reverse value-dedup index.  Rebuilt over the live ids by
     /// [`Self::compact`].
     pub(crate) const_interner:
-        entity_utils::EntityInterner<crate::const_value::ConstId, crate::const_value::ConstValue>,
+        entity_utils::EntityInterner<crate::node::const_value::ConstId, crate::node::const_value::ConstValue>,
 }
 
 impl Function {
@@ -239,10 +239,10 @@ impl Function {
         &mut self,
         value: u128,
         ty: crate::node::ValueType,
-    ) -> crate::const_value::ConstId {
+    ) -> crate::node::const_value::ConstId {
         let masked = value & ty.bit_mask_u128();
         self.const_interner
-            .intern(crate::const_value::ConstValue::Bits(masked))
+            .intern(crate::node::const_value::ConstValue::Bits(masked))
     }
 
     /// Interns a limbed integer value, canonicalising to `Bits` when the limbs
@@ -255,8 +255,8 @@ impl Function {
         &mut self,
         limbs: &[u64],
         ty: crate::node::ValueType,
-    ) -> crate::const_value::ConstId {
-        let cv = crate::const_value::ConstValue::Wide(limbs.to_vec().into_boxed_slice());
+    ) -> crate::node::const_value::ConstId {
+        let cv = crate::node::const_value::ConstValue::Wide(limbs.to_vec().into_boxed_slice());
         match cv.fits_u128() {
             Some(v) => self.intern_int_const(v, ty),
             None => self.const_interner.intern(cv),
@@ -271,8 +271,8 @@ impl Function {
     /// different function are not portable.
     pub(crate) fn const_value(
         &self,
-        id: crate::const_value::ConstId,
-    ) -> &crate::const_value::ConstValue {
+        id: crate::node::const_value::ConstId,
+    ) -> &crate::node::const_value::ConstValue {
         &self.const_interner[id]
     }
 
@@ -598,7 +598,7 @@ impl Function {
     /// surviving nodes, so the live-id scan correctly excludes zombie
     /// references.
     fn gc_consts(&mut self) {
-        use crate::const_value::ConstId;
+        use crate::node::const_value::ConstId;
         use crate::node::NodeKind;
 
         let mut live_old_ids: Vec<ConstId> = Vec::new();
@@ -611,7 +611,7 @@ impl Function {
         }
         let mut new_interner: entity_utils::EntityInterner<
             ConstId,
-            crate::const_value::ConstValue,
+            crate::node::const_value::ConstValue,
         > = entity_utils::EntityInterner::default();
         let mut old_to_new: FxHashMap<ConstId, ConstId> = FxHashMap::default();
         for old_id in live_old_ids {
@@ -823,7 +823,7 @@ mod compact_tests {
     /// payload rewrite the survivor would dangle or read the wrong constant.
     #[test]
     fn compact_gcs_and_remaps_surviving_wide_const() {
-        use crate::const_value::ConstValue;
+        use crate::node::const_value::ConstValue;
         use crate::node::ValueType;
 
         // Genuinely-wide I256 value (high limb set ⇒ stays `Wide`).

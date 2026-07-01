@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn expected_signature_int_const() {
-        let (inputs, outputs) = kinds(&NodeKind::IntConst(crate::const_value::ConstId::new(
+        let (inputs, outputs) = kinds(&NodeKind::IntConst(crate::node::const_value::ConstId::new(
             42_usize,
         )));
         assert_eq!(inputs, vec![]);
@@ -626,7 +626,7 @@ mod tests {
             NodeKind::IndirectBranch,
             NodeKind::Load(space),
             NodeKind::Store(space),
-            NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             NodeKind::IntUnaryOp(IntUnaryOp::Neg),
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             NodeKind::IntCmpOp(IntCmpOp::Equal),

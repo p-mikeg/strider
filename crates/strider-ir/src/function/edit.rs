@@ -943,7 +943,7 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1170,7 +1170,7 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1178,7 +1178,7 @@ mod tests {
         assert!(!ctx.is_live(node));
 
         let recreated = ctx.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1727,7 +1727,7 @@ mod tests {
         let mut consts = Vec::new();
         for i in 0..FANIN {
             let k = ctx.create_node(
-                NodeKind::IntConst(crate::const_value::ConstId::new((0xC0 + i as u64) as usize)),
+                NodeKind::IntConst(crate::node::const_value::ConstId::new((0xC0 + i as u64) as usize)),
                 [],
                 [ValueKind::Typed(ValueType::I64)],
             );

@@ -3,6 +3,7 @@
 //! Public paths are preserved by `pub use`: `ir::node::NodeId`,
 //! `ir::node::NodeKind`, etc. all resolve through this module.
 
+pub(crate) mod const_value;
 mod kind;
 mod ops;
 mod value_kind;

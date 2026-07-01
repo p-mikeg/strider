@@ -149,7 +149,7 @@ fn is_integer_for_all_integer_output_types() {
 /// `IntConst(Small(0|1))` values typed `I1`.
 #[test]
 fn is_const_only_for_constant_kinds() {
-    assert!(NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)).is_const());
+    assert!(NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)).is_const());
     assert!(NodeKind::FloatConst(0).is_const());
     assert!(!NodeKind::Entry.is_const());
     assert!(!NodeKind::Return.is_const());
@@ -181,7 +181,7 @@ fn non_cacheable_kinds_are_not_cacheable() {
 /// with equal inputs produce the same result and can be deduplicated.
 #[test]
 fn arithmetic_kinds_are_cacheable() {
-    assert!(NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)).is_cacheable());
+    assert!(NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)).is_cacheable());
     assert!(NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add).is_cacheable());
     assert!(NodeKind::IntUnaryOp(crate::node::IntUnaryOp::Neg).is_cacheable());
     assert!(NodeKind::If.is_cacheable());
@@ -354,8 +354,8 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Load(space),
         NodeKind::Store(space),
         // pure value: integer
-        NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
-        NodeKind::IntConst(crate::const_value::ConstId::new(0)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new(0)),
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::IntCmpOp(IntCmpOp::Equal),

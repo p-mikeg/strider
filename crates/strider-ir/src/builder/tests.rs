@@ -757,7 +757,7 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 /// canonicalize to one node for the same value (dedup).
 #[test]
 fn fitting_values_intern_as_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let sp = reg_vn(0x7000, 8);
     let mut b = raw_builder(
         vec![],
@@ -1798,7 +1798,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let count_before = b.function().graph().all_node_ids().count();
     // Mutate via graph_mut() — create an IntConst node directly.
     let node_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((42_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((42_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1849,7 +1849,7 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     b.set_lift_addr(None);
     // Mutate via graph_mut() in the same way an opt pass would.
     let extra = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((99_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((99_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1874,14 +1874,14 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
     let mut b = empty_builder()?;
     // First mutation: create constant A.
     let a = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((1_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((1_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
     // Second mutation: create constant B.  The second call sees the first
     // mutation (the underlying graph counter advanced) — node ids must differ.
     let b_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((2_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((2_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1952,7 +1952,7 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
 /// original limbs.
 #[test]
 fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     // Rows: (label, limbs, declared type). High limbs set ⇒ genuinely Wide.
     let cases: [(&str, Vec<u64>, ValueType); 2] = [
         (
@@ -2372,7 +2372,7 @@ mod build_call_with_cc {
 
         // First mutation: synthesize a fresh IntConst via graph_mut().
         let r1 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new((1_u64) as usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new((1_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -2380,7 +2380,7 @@ mod build_call_with_cc {
 
         // Second mutation: another synthesis; the first node must persist.
         let r2 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new((2_u64) as usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new((2_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -2413,7 +2413,7 @@ mod build_call_with_cc {
         // unreachable nodes, so detached extras are still valid.
         for k in 1u64..=5 {
             b.function_mut().graph_mut().create_node(
-                NodeKind::IntConst(crate::const_value::ConstId::new((k) as usize)),
+                NodeKind::IntConst(crate::node::const_value::ConstId::new((k) as usize)),
                 std::iter::empty(),
                 [ValueKind::Typed(ValueType::I64)],
             );
@@ -2525,7 +2525,7 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 /// value re-built dedups to one node.
 #[test]
 fn small_valued_i80_const_interns_as_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let via_small = b.build_int_const(5u64, ValueType::I80)?;
     let node = b.function().producer(via_small);
@@ -2551,7 +2551,7 @@ fn small_valued_i80_const_interns_as_bits() -> Result<()> {
 /// only when the declared width differs).
 #[test]
 fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let via_limbs = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::I256)?;
     let node = b.function().producer(via_limbs);
@@ -2583,7 +2583,7 @@ fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
 /// boolean `true` constant.
 #[test]
 fn i1_const_payload_masks_to_one_bit() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let v = b.build_int_const(3u64, ValueType::I1)?;
     let node = b.function().producer(v);
@@ -2609,7 +2609,7 @@ fn i1_const_payload_masks_to_one_bit() -> Result<()> {
 /// I64)` keeps every bit.
 #[test]
 fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let v = b.build_int_const(u64::MAX, ValueType::I64)?;
     let node = b.function().producer(v);

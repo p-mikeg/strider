@@ -134,7 +134,7 @@ pub enum NodeKind {
     // ── Integer constants and operations ──────────────────────────────────────
     /// An integer constant; the value is interned in
     /// `Function::const_interner`, read via `IRViewer::int_const_u128`.
-    IntConst(crate::const_value::ConstId),
+    IntConst(crate::node::const_value::ConstId),
     /// Integer unary operation — two's-complement negate (`-x`).  Bitwise
     /// complement (`~x`) is no longer a unary op; it is `Xor(x, all_ones)`
     /// at lift time and beyond.
@@ -467,7 +467,7 @@ const _: () = assert!(
 #[cfg(test)]
 mod tests {
     use super::NodeKind;
-    use crate::const_value::ConstId;
+    use crate::node::const_value::ConstId;
     use cranelift_entity::EntityRef;
 
     #[test]
