@@ -489,22 +489,28 @@ pub fn compute_value_ranges<'f>(
 ) -> RangeMap<'f> {
     // ── Step 1: KnownBits base ────────────────────────────────────────────
     let mut kb_bounds: SecondaryMap<ValueId, Option<Interval>> = SecondaryMap::new();
-    for value_id in function.graph().all_value_ids() {
-        let kb: KnownBitsFacts = known[value_id];
-        // Skip fully unknown entries (the default).
-        if kb.ones == 0 && kb.zeros == 0 {
-            continue;
-        }
-        let Some(ty) = function.value_type_opt(value_id) else {
-            continue;
-        };
-        let Some(type_mask) = crate::opt::known_bits::type_mask_u128(ty) else {
-            continue;
-        };
-        let max_val = kb.max_value(type_mask);
-        // Only record if strictly tighter than the full range.
-        if max_val < type_mask {
-            kb_bounds[value_id] = Some(Interval { lo: 0, hi: max_val });
+    // Entry-reachable values only — walk the live graph, not the raw arena. A
+    // culled-but-not-compacted value carries no useful KnownBits and would hit
+    // the skip below anyway; walking from entry makes "live values only"
+    // explicit and is O(reachable) ≤ O(arena).
+    for node in function.walk() {
+        for &value_id in function.node_outputs(node) {
+            let kb: KnownBitsFacts = known[value_id];
+            // Skip fully unknown entries (the default).
+            if kb.ones == 0 && kb.zeros == 0 {
+                continue;
+            }
+            let Some(ty) = function.value_type_opt(value_id) else {
+                continue;
+            };
+            let Some(type_mask) = crate::opt::known_bits::type_mask_u128(ty) else {
+                continue;
+            };
+            let max_val = kb.max_value(type_mask);
+            // Only record if strictly tighter than the full range.
+            if max_val < type_mask {
+                kb_bounds[value_id] = Some(Interval { lo: 0, hi: max_val });
+            }
         }
     }
 

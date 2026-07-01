@@ -87,7 +87,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
 
     check_use_list_consistency(function.graph(), &reachable, &mut errs);
 
-    check_graph_invariants_uniqueness(function.graph(), &mut errs);
+    check_graph_invariants_uniqueness(function.graph(), &reachable, &mut errs);
     check_graph_invariants_region(function.graph(), &reachable, &mut errs);
     check_graph_invariants_control_single_use(function, &reachable, &mut errs);
     check_graph_invariants_phis(function, &reachable, &mut errs);
@@ -188,12 +188,6 @@ pub enum ValidationError {
 
     #[error("multiple InitialMemory nodes: {first:?} and {second:?}")]
     MultipleInitialMemoryNodes { first: NodeId, second: NodeId },
-
-    #[error("missing Entry node")]
-    MissingEntryNode,
-
-    #[error("missing InitialMemory node")]
-    MissingInitialMemoryNode,
 
     #[error("Region {region:?} has zero predecessors")]
     EmptyRegionPredecessors { region: NodeId },
