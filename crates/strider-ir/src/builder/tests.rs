@@ -43,6 +43,11 @@ fn raw_builder(
     // stamp the sentinel lift address — it mirrors the old `new_raw`, which
     // left `lift_addr` as `None`.  Tests that build fingerprint-bearing
     // nodes set the lift address themselves.
+    //
+    // `canonicalize_tracked` seeds the CC registers and drops enclosed
+    // sub-registers — the canonical universe the lifter builds before
+    // `FunctionBuilder::new` (which itself does no container reasoning).
+    let tracked = super::canonicalize_tracked(tracked, &cc);
     FunctionBuilder::new(tracked, &cc, endianness)
 }
 
@@ -2246,6 +2251,7 @@ mod build_call_with_cc {
         // read via `read_reg_vn`, which errors on an untracked register.
         let mut tracked = vec![rax, rsp];
         tracked.extend(x86_64_arg_regs(&regs));
+        let tracked = super::canonicalize_tracked(tracked, &cc);
         let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little).unwrap();
         let _ = rdi;
         let region = b.create_region().unwrap();
@@ -2289,8 +2295,9 @@ mod build_call_with_cc {
         let xmm0 = regs.name_to_vn("XMM0").unwrap();
         let xmm1 = regs.name_to_vn("XMM1").unwrap();
         let _ = rdi;
+        let tracked = super::canonicalize_tracked(vec![rax, rsp], &cc);
         let mut b =
-            FunctionBuilder::new(vec![rax, rsp], &cc, strider_target::Endianness::Little).unwrap();
+            FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little).unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
@@ -2362,6 +2369,7 @@ mod build_call_with_cc {
         // register.  RDI is still slot [4] (the first arg).
         let mut tracked = vec![rax, rsp];
         tracked.extend(x86_64_arg_regs(&regs));
+        let tracked = super::canonicalize_tracked(tracked, &cc);
         let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little).unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
@@ -2768,41 +2776,6 @@ fn dedup_overlapping_largest_keeps_equal_size_aliases() {
     assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
 }
 
-/// Crossing partial-overlap enclosers: two same-space varnodes that each
-/// enclose a third but neither encloses the other.  The dropped inner view
-/// must map to the WIDER encloser, not merely the first-seen one — the case a
-/// naive first-open stack sweep returned too small.  `dedup_overlapping_largest`
-/// keeps both crossing enclosers and drops the inner; the lifter's
-/// `build_container_map` records the MAX-size container for the inner view.
-#[test]
-fn build_container_map_picks_widest_crossing_encloser() {
-    fn uniq(off: u64, size: u32) -> rsleigh::Vn {
-        rsleigh::Vn {
-            size,
-            addr_off: off,
-            addr_space: rsleigh::VnSpace::UNIQUE,
-        }
-    }
-    let a = uniq(0, 12); // [0,12): encloses [5,9); crosses b; survives.
-    let b = uniq(2, 18); // [2,20): encloses [5,9) and is wider; survives.
-    let inner = uniq(5, 4); // [5,9): enclosed by BOTH a and b -> dropped.
-
-    let survivors = dedup_overlapping_largest(&[a, b, inner]);
-    assert_eq!(
-        survivors,
-        vec![a, b],
-        "crossing enclosers both survive (neither encloses the other); inner dropped"
-    );
-
-    let map = crate::build_container_map(&survivors, [a, b, inner]);
-    assert_eq!(
-        map[&inner], b,
-        "inner maps to the WIDER (size-18) encloser b, not the size-12 a"
-    );
-    assert_eq!(map[&a], a, "a is its own container");
-    assert_eq!(map[&b], b, "b is its own container");
-}
-
 // ── IR-6: symmetric sub-register write coercion ─────────────────────────────
 
 // ── largest_container_in edge cases ─────────────────────────────────────────
@@ -2874,7 +2847,8 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         link_register_vn: None,
         preserves_memory: false,
     };
-    let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], &cc, strider_target::Endianness::Little)?;
+    let tracked = super::canonicalize_tracked(vec![rdi, rsi, sp], &cc);
+    let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     // The lifter records register-arg carriers after `set_entry_region`; the
@@ -2919,9 +2893,11 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
         link_register_vn: None,
         preserves_memory: false,
     };
-    // Track only the wider container rdi (+ sp). dedup_overlapping_largest
-    // keeps rdi; the var table is keyed by rdi, not edi.
-    let mut b = FunctionBuilder::new(vec![rdi, sp], &cc, strider_target::Endianness::Little)?;
+    // Track only the wider container rdi (+ sp). canonicalize_tracked seeds
+    // edi (the narrow arg alias) then drops it as enclosed by rdi, so the var
+    // table is keyed by rdi, not edi.
+    let tracked = super::canonicalize_tracked(vec![rdi, sp], &cc);
+    let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     // The lifter records register-arg carriers after `set_entry_region`; the

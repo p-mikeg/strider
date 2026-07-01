@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use super::container;
 use super::Lifter;
 
 /// Per-function translation context that converts a [`strider_cfg::Cfg`] into an IR
@@ -53,16 +54,22 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<Self> {
-        let builder =
-            strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch.endianness())?;
-        // Build the container map from the deduped tracked survivors
-        // (`function.all_vns()`), resolving every raw collected varnode plus
-        // every calling-convention register (arg / ret / float-ret / stack /
-        // callee-saved) to its largest tracked container.  A CC register
-        // narrower than its tracked container (ABI says `eax`, function tracks
-        // `rax`) thus resolves to the container.  This is the machine-register
-        // knowledge relocated out of the IR into the lifter.
-        let tracked = builder.function().all_vns();
+        // Build the canonical tracked universe here in the lifter: seed every
+        // calling-convention register, then drop strictly-enclosed sub-register
+        // views so each aliasing chain keeps only its widest varnode.  All
+        // container geometry is machine-register knowledge owned by the lifter,
+        // not the target-agnostic IR — `FunctionBuilder::new` just interns the
+        // canonical set (sorting it for deterministic `InitialVnId` order).
+        let mut seeded = all_vns.clone();
+        container::seed_cc_regs(&mut seeded, cc);
+        let tracked = container::dedup_overlapping_largest(&seeded);
+        let builder = strider_ir::FunctionBuilder::new(tracked, cc, lifter.arch.endianness())?;
+        // Precompute the `vn → container` map over every raw collected varnode
+        // plus every CC register (arg / ret / float-ret / stack / callee-saved),
+        // resolving each to its largest tracked container — the O(1) fast path
+        // the register-aliasing read/write and CC projections read on every
+        // access.  A CC register narrower than its tracked container (ABI says
+        // `eax`, function tracks `rax`) resolves to the container.
         let cc_regs = cc
             .ret_val_regs
             .iter()
@@ -72,7 +79,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .chain(std::iter::once(&cc.stack_vn))
             .copied();
         let queries = all_vns.iter().copied().chain(cc_regs);
-        let vn_to_container = strider_ir::build_container_map(tracked, queries);
+        let vn_to_container = container::build_container_map(builder.function().all_vns(), queries);
         Ok(Self {
             lifter,
             builder,

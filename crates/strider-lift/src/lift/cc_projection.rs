@@ -23,7 +23,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         if let Some(c) = self.vn_to_container.get(vn) {
             return *c;
         }
-        strider_ir::largest_container_in(self.builder.function().all_vns(), vn)
+        super::container::largest_container_in(self.builder.function().all_vns(), vn)
     }
 
     /// Derive the ret-val varnode list for a `Call` built under calling

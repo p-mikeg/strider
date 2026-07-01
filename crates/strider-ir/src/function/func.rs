@@ -23,18 +23,6 @@ use crate::function::side_tables::SideTables;
 use crate::graph::{Graph, NodeIdRemap};
 use crate::node::{NodeId, NodeKind, ValueId};
 
-/// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
-/// inclusion) that fully contains `vn`, or `vn` itself when none does.
-///
-/// Returns `*vn` unchanged when `vn` is not in an aliasable
-/// (REGISTER/UNIQUE) space — containment-by-offset is meaningless for
-/// CONST / RAM / code-space varnodes.  Otherwise it picks the largest
-/// same-space element of `vns` whose `[off, off+size)` (saturating) range
-/// fully encloses `vn`'s range, falling back to `*vn` when nothing does.
-///
-/// This is the single linear containment scan shared by
-/// the lifter's `container_of` ad-hoc fallback and the bulk
-/// [`build_container_map`] sweep.
 /// Deterministic ordering key for a tracked varnode: `(space, offset,
 /// size)`.  [`Function::new`] sorts the tracked set by this before interning
 /// so `InitialVnId` assignment — and every derived clobber-slot index — is
@@ -63,6 +51,15 @@ pub fn cc_ret_and_clobber_vns(
     cc.ret_and_clobber_vns(all, |v| largest_container_in(all, v))
 }
 
+/// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
+/// inclusion) that fully contains `vn`, or `vn` itself when none does.
+///
+/// Container geometry — machine-register knowledge owned by the lifter
+/// (`strider-lift`'s `container` module).  It survives here only under
+/// `#[cfg(test/test-util)]` for the CC-projection fixtures
+/// ([`cc_ret_and_clobber_vns`], `build_call_cc`) that construct a `Call`
+/// without a lifter; the two copies must stay in sync.
+#[cfg(any(test, feature = "test-util"))]
 pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
     if vn.addr_space != rsleigh::VnSpace::REGISTER && vn.addr_space != rsleigh::VnSpace::UNIQUE {
         return *vn;
@@ -84,94 +81,6 @@ pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::V
         }
     }
     best.unwrap_or(*vn)
-}
-
-/// Build a `vn → largest containing tracked vn` map over `queries`, resolving
-/// every REGISTER / UNIQUE query varnode against the `tracked` set with an
-/// O(n log n) per-space stack sweep (never the O(n²) per-query rescan).
-///
-/// A query that is its own largest container maps to itself; a sub-register
-/// slice maps to the largest tracked varnode that strictly encloses it (its
-/// container).  Non-aliasable (CONST / RAM / code) query varnodes are omitted —
-/// containment-by-offset is meaningless there — so a lookup miss on them falls
-/// through to the caller's fallback (self).  The map is the O(1) fast path the
-/// register-aliasing hot path reads on every register access; the lifter owns
-/// it, built once per function from the raw collected varnode set plus every
-/// calling-convention register.
-///
-/// This is the machine-register-container knowledge relocated out of the
-/// target-agnostic IR: the shared linear scan behind ad-hoc lookups is
-/// [`largest_container_in`], and this bulk builder reuses the same containment
-/// rule in one sweep.
-pub fn build_container_map(
-    tracked: &[rsleigh::Vn],
-    queries: impl IntoIterator<Item = rsleigh::Vn>,
-) -> FxHashMap<rsleigh::Vn, rsleigh::Vn> {
-    // Bucket the tracked set by space, `(off ascending, size descending)`, so a
-    // wider enclosure is seen before the narrower slices it contains.
-    let mut tracked_by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> = FxHashMap::default();
-    for v in tracked {
-        if v.addr_space == rsleigh::VnSpace::REGISTER || v.addr_space == rsleigh::VnSpace::UNIQUE {
-            tracked_by_space.entry(v.addr_space).or_default().push(*v);
-        }
-    }
-
-    // Query varnodes to resolve, deduped and bucketed by space (only aliasable
-    // spaces participate).
-    let mut queries_by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> = FxHashMap::default();
-    let mut map: FxHashMap<rsleigh::Vn, rsleigh::Vn> = FxHashMap::default();
-    for q in queries {
-        if (q.addr_space == rsleigh::VnSpace::REGISTER || q.addr_space == rsleigh::VnSpace::UNIQUE)
-            && !map.contains_key(&q)
-        {
-            // Mark seen so a repeated query is not re-pushed; real value filled
-            // by the sweep below.
-            map.insert(q, q);
-            queries_by_space.entry(q.addr_space).or_default().push(q);
-        }
-    }
-
-    for (space, mut qs) in queries_by_space {
-        let Some(tracked_here) = tracked_by_space.get(&space) else {
-            // No tracked varnodes in this space: every query is its own
-            // container (the `map.insert(q, q)` above already holds).
-            continue;
-        };
-        // Merge the tracked enclosures and the queries into one start-ordered
-        // sweep.  For each query we want the largest tracked varnode whose range
-        // encloses it.
-        let mut opens: Vec<rsleigh::Vn> = tracked_here.clone();
-        opens.sort_by_key(|v| (v.addr_off, std::cmp::Reverse(v.size)));
-        qs.sort_by_key(|q| (q.addr_off, std::cmp::Reverse(q.size)));
-
-        // For each query, scan the tracked opens whose start <= query start and
-        // end >= query end, picking the max-size one.  A two-pointer sweep keeps
-        // the active window; opens are small (a register file), so this is
-        // O((t + q) log(t + q)).
-        let mut active: Vec<rsleigh::Vn> = Vec::new();
-        let mut ti = 0usize;
-        for q in qs {
-            let q_start = q.addr_off;
-            let q_end = q_start.saturating_add(u64::from(q.size));
-            // Admit every tracked open that starts at or before this query.
-            while ti < opens.len() && opens[ti].addr_off <= q_start {
-                active.push(opens[ti]);
-                ti += 1;
-            }
-            // Drop opens that end before this query starts (they can enclose no
-            // remaining query, since queries are start-ascending).
-            active.retain(|c| c.addr_off.saturating_add(u64::from(c.size)) >= q_start);
-            // Largest active open enclosing `q`.
-            let container = active
-                .iter()
-                .filter(|c| c.addr_off.saturating_add(u64::from(c.size)) >= q_end)
-                .max_by_key(|c| c.size)
-                .copied()
-                .unwrap_or(q);
-            map.insert(q, container);
-        }
-    }
-    map
 }
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.

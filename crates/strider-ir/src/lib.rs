@@ -51,11 +51,9 @@ mod control_flow_view;
 pub use control_flow_view::{control_dominators, dominates};
 pub mod error;
 mod function;
-pub use function::{
-    EditFunction, Function, FunctionState, SideTables, build_container_map, largest_container_in,
-};
+pub use function::{EditFunction, Function, FunctionState, SideTables};
 #[cfg(any(test, feature = "test-util"))]
-pub use function::cc_ret_and_clobber_vns;
+pub use function::{cc_ret_and_clobber_vns, largest_container_in};
 pub mod graph;
 pub use graph::Graph;
 pub mod node;
@@ -71,6 +69,8 @@ pub mod walk;
 pub use crate::const_value::{ConstId, ConstValue};
 pub use crate::error::Result;
 pub use builder::{FunctionBuilder, IRBuilder, IRBuilderExt};
+#[cfg(any(test, feature = "test-util"))]
+pub use builder::canonicalize_tracked;
 pub use node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, VnTypeExt,
 };
