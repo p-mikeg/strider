@@ -360,11 +360,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.outputs[value].first_use.expand()
     }
 
-    /// Returns the `next` pointer of `use_id` in its use-list.
-    #[inline]
-    pub fn next_use(&self, use_id: UseId) -> Option<UseId> {
-        self.store.inputs[use_id].next.expand()
-    }
 
     /// Returns a cursor over the use-list of `value_id`.
     #[inline]

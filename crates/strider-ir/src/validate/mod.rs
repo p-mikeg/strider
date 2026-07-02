@@ -60,8 +60,8 @@ use local_typing::check_local_typing;
 /// no inputs and no live use-list entries anywhere.
 ///
 /// (Input ↔ use-list consistency is a structural `strider_graph` invariant
-/// maintained by construction — see `Graph::use_list_inconsistencies` — so it
-/// is verified at the graph layer, not re-checked here.)
+/// maintained by construction by every mutating graph verb, so it is
+/// guaranteed at the graph layer, not re-checked here.)
 ///
 /// # Errors
 ///

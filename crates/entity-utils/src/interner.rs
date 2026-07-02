@@ -55,11 +55,6 @@ impl<K: EntityRef, V: Clone + Eq + Hash> EntityInterner<K, V> {
         self.reverse.get(value).copied()
     }
 
-    /// Returns whether `value` has been interned.
-    pub fn contains(&self, value: &V) -> bool {
-        self.reverse.contains_key(value)
-    }
-
     /// Returns the number of interned values.
     pub fn len(&self) -> usize {
         self.forward.len()
@@ -73,11 +68,6 @@ impl<K: EntityRef, V: Clone + Eq + Hash> EntityInterner<K, V> {
     /// Iterates the keys in allocation order.
     pub fn keys(&self) -> impl Iterator<Item = K> + '_ {
         self.forward.keys()
-    }
-
-    /// Iterates the values in allocation (key) order.
-    pub fn values(&self) -> impl Iterator<Item = &V> {
-        self.forward.values()
     }
 
     /// The interned values as a contiguous slice in allocation (key) order.
@@ -151,10 +141,8 @@ mod tests {
         assert_eq!(interner[k], 42);
         // reverse
         assert_eq!(interner.key_of(&42), Some(k));
-        assert!(interner.contains(&42));
         // absent
         assert_eq!(interner.key_of(&99), None);
-        assert!(!interner.contains(&99));
         assert_eq!(interner.get(TestId(7)), None);
     }
 
@@ -166,7 +154,7 @@ mod tests {
         }
         let keys: Vec<usize> = interner.keys().map(|k| k.index()).collect();
         assert_eq!(keys, vec![0, 1, 2]);
-        let values: Vec<char> = interner.values().copied().collect();
+        let values: Vec<char> = interner.values_as_slice().to_vec();
         assert_eq!(values, vec!['p', 'q', 'r']);
     }
 
