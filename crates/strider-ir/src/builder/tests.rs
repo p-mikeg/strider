@@ -265,6 +265,27 @@ fn extend_noop_when_already_wide_enough() -> Result<()> {
     Ok(())
 }
 
+/// `extend_if_needed` must NOT narrow: a value wider than the target is a
+/// caller error (the caller must `truncate_if_needed` first).  Covers both a
+/// non-constant value and a constant (which previously folded-and-masked).
+#[test]
+fn extend_rejects_value_wider_than_target() -> Result<()> {
+    let mut b = empty_builder()?;
+    let wide_add = non_const_add(&mut b, ValueType::I64)?;
+    assert!(
+        b.extend_if_needed(wide_add, ValueType::I32, ExtendOp::ZeroExtend)
+            .is_err(),
+        "extend must reject a non-const value wider than the target"
+    );
+    let wide_const = b.build_int_const(0xDEAD_BEEFu64, ValueType::I64)?;
+    assert!(
+        b.extend_if_needed(wide_const, ValueType::I32, ExtendOp::SignExtend)
+            .is_err(),
+        "extend must reject a constant wider than the target"
+    );
+    Ok(())
+}
+
 // ── build_int_binary_operation ────────────────────────────────────────────
 
 /// Building an Add on two constants of the same type must produce an

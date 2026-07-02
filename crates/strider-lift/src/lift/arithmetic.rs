@@ -92,10 +92,11 @@ fn build_all_ones(
 /// Errors when a sign-extended operand is WIDER than the output width.
 ///
 /// A signed table op (`Sdiv` / `Srem` / `SShiftRight`) routes its value
-/// operand through `extend_if_needed(.., SignExtend)`, which silently
-/// TRUNCATES a wider-than-output operand (sign-blind), corrupting the signed
-/// result.  A narrower operand sign-extends correctly and is left permissive
-/// — only the wider direction is rejected.
+/// operand through `extend_if_needed(.., SignExtend)`, which cannot narrow a
+/// wider-than-output operand.  Reject it here with an op-specific message
+/// rather than leaning on the generic extend error.  A narrower operand
+/// sign-extends correctly and is left permissive — only the wider direction is
+/// rejected.
 fn reject_operand_wider_than_output(operand: &rsleigh::Vn, output: &rsleigh::Vn) -> Result<()> {
     if operand.size > output.size {
         return Err(anyhow::anyhow!(
@@ -152,10 +153,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// `handle_int_sless_equal`) whose lowering arithmetic *does* require
     /// matching widths, plus the width-sensitive table ops.  The
     /// signedness-sensitive ones (`Sdiv` / `Srem` / `SShiftRight`) route their
-    /// value operand through `extend_if_needed(.., SignExtend)`, which SILENTLY
-    /// TRUNCATES a wider-than-output operand before the signed operation; the
-    /// unsigned `Div` / `Rem` truncate via the zero-extend path.  Either way a
-    /// wider operand corrupts a quotient / remainder (their low bits are NOT
+    /// value operand through `extend_if_needed(.., SignExtend)`, which cannot
+    /// narrow a wider-than-output operand; the unsigned `Div` / `Rem` narrow
+    /// via the zero-extend path's truncate-then-extend.  Either way a wider
+    /// operand corrupts a quotient / remainder (their low bits are NOT
     /// width-agnostic), so every division / remainder is guarded loud rather
     /// than mis-lifted.  The bitwise / shift-left / add / mul ops are
     /// width-agnostic in their low bits and stay permissive.
