@@ -62,21 +62,18 @@ addr = elf.symbol("array_sum")
 # the ELF BufferReader doesn't cover.
 rom = CallbackRom(base=0xCAFE0000, blob=bytes(range(16)))
 
-# The ROM flows in through `strider.run(..., rom=...)` — the callback ABC
-# is wired to LoadReadOnly by the orchestrator, so there is no
+# The ROM flows in through `strider.lifter(..., rom=...)` — the callback
+# ABC is wired to LoadReadOnly by the Lifter, so there is no
 # `LoadReadOnly(rom)` pass to construct by hand. `mem` serves both the
 # sleigh instruction fetch (code) and the ELF-backed constant loads;
 # `rom` layers our Python-served blob on top for addresses the ELF
 # doesn't cover.
-result = strider.run(
-    arch=strider.SleighArch.x86(),
-    cc=strider.CallingConvention.x86_cdecl(),
-    mem=mem,
-    entry=addr,
-    rom=rom,
+lft = strider.lifter(strider.SleighArch.x86(), mem, rom)
+function, _unresolved = lft.analyze(
+    addr,
+    strider.CallingConvention.x86_cdecl(),
     allow_code_before_start_addr=True,
 )
-function = result.function
 after = len(function.find_all(load()))
 
 print(f"loads after optimize: {after}")

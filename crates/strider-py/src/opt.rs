@@ -141,8 +141,11 @@ impl PipelineState {
 
 /// Builder for an optimizer pipeline.  Construct via `empty()` or
 /// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
-/// `Function.optimize` or pass `pipeline=` to `strider.run`.  Applying
-/// a pipeline drains it, so rebuild before reuse.
+/// `Function.optimize(pipeline)`.  (`Lifter.analyze` always drives its
+/// own internal default pipeline — there is no Python-facing way to
+/// hand it a custom one; build the custom pipeline and apply it via
+/// `Function.optimize` afterwards instead.)  Applying a pipeline drains
+/// it, so rebuild before reuse.
 ///
 /// Holds the internal state behind a `Mutex` so `add` / `add_post`
 /// don't require `&mut self` (PyO3 method receivers are typically
@@ -192,10 +195,10 @@ impl PyOptimizerPipeline {
     ///
     /// returns `Err(StriderError)` if
     /// the wrapper has already been drained (both pass lists empty).
-    /// Without this guard a second `Graph.optimize(pipe)` would
+    /// Without this guard a second `Function.optimize(pipe)` would
     /// silently run an empty pipeline and report success — masking
     /// caller bugs where the same wrapper is reused after a previous
-    /// `optimize` / `strider.run` consumed it.
+    /// `Function.optimize` call already consumed it.
     ///
     /// When `prepend_load_read_only` is set, a unit `LoadReadOnly` pass is
     /// prepended to the materialised pipeline so a caller-supplied `rom`
@@ -215,7 +218,7 @@ impl PyOptimizerPipeline {
         if state.passes.is_empty() && state.post_passes.is_empty() {
             return Err(into_strider_err(anyhow::anyhow!(
                 "OptimizerPipeline is empty — already drained by a prior \
-                 Graph.optimize() / strider.run().  Build a fresh pipeline \
+                 Function.optimize() call.  Build a fresh pipeline \
                  (e.g. OptimizerPipeline.default()) or re-add passes before \
                  calling again."
             )));
@@ -361,7 +364,8 @@ pure_pass_class!("CallStackArgCollect" => PyCallStackArgCollect,
 
 pure_pass_class!("LoadReadOnly" => PyLoadReadOnly,
     "`LoadReadOnly()` — folds constant-address loads against the rom \
-     supplied via `strider.run(..., rom=mem)`.  The rom flows through the \
+     supplied via `strider.lifter(arch, mem, rom=mem)` / \
+     `strider.load_elf(...)`.  The rom flows through the \
      orchestrator's `Strider::rom` → `OptCtx` plumbing rather than being \
      attached to the pass; an instance constructed here is a marker, and \
      the pass short-circuits to no-change when no rom is available.");

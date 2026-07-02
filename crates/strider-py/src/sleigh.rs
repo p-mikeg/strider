@@ -19,8 +19,9 @@ use crate::reader::{AnyMemReader, MemInput};
 /// it builds one transiently at construction to probe the register table
 /// and keeps only the cached `SleighRegs` (for `reg(...)` lookups) plus
 /// the arch preset name (for `arch_name()` / `__repr__`).  It is the
-/// public `strider.Sleigh` class and the `RunResult.sleigh` handle whose
-/// `regs` stay accessible after a run.
+/// public `strider.Sleigh` class — a standalone register-table lookup
+/// independent of any `Lifter`, constructed directly via
+/// `strider.Sleigh(arch, mem)`.
 #[pyclass(name = "Sleigh", module = "strider")]
 pub struct PySleigh {
     pub(crate) arch_name: &'static str,

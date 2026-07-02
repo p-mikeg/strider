@@ -621,7 +621,7 @@ impl FingerprintNodeArg<'_> {
 /// different conventions (e.g. per-target-address overrides via
 /// `per_address_ccs`, or simply different `cc`s across calls).
 ///
-/// For an ELF, prefer `strider.load_elf(path)` → `ElfStrider`, which
+/// For an ELF, prefer `strider.load_elf(path)` → `ElfLifter`, which
 /// wires `mem`/`rom` from the loaded sections and adds symbol lookups.
 ///
 /// Raises `StriderError` on Sleigh-construction failure.

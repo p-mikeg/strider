@@ -54,15 +54,11 @@ class DictMem(strider.MemReader):
 INSTR = bytes([0x90, 0x90, 0xc3]) + bytes([0x90] * 64)
 mem = DictMem({0x1000: INSTR})
 
-result = strider.run(
-    arch=strider.SleighArch.x86(),
-    cc=strider.CallingConvention.x86_cdecl(),
-    mem=mem,
-    entry=0x1000,
-)
+lft = strider.lifter(strider.SleighArch.x86(), mem)
+function, _unresolved = lft.analyze(0x1000, strider.CallingConvention.x86_cdecl())
 
 # Confirm the IR has at least one return.
-hits = result.function.find_all(ret())
+hits = function.find_all(ret())
 print(f"lifted graph contains {len(hits)} Return node(s)")
 assert len(hits) >= 1, "expected at least one Return"
 

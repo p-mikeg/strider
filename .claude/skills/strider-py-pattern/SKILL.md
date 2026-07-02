@@ -192,7 +192,8 @@ hits = graph.find_all(pat, ignore_casts_mask=CastMask.all())
 
 **Universal builder methods** (every typed builder has these):
 `.capture(c)` (bind a `Capture`), `.cap("name")` (bind via auto-interned name), `.when(f)` (Python
-predicate guard, signature `f(match: PartialMatch) -> bool`), `.into_pat()` (finalise to `Pat`).
+predicate guard, signature `f(match: Match) -> bool` — there is no separate partial-match type;
+`.when` sees the same `Match` handle `find_all` hands back, just mid-walk), `.into_pat()` (finalise to `Pat`).
 Typed builders also accept being passed directly anywhere a `Pat` is expected — `into_pat()` is
 implicit at use-site via the `PatLike` trait.
 
@@ -251,8 +252,8 @@ p.int_binary("Add", p.int_const(5), p.var(c)).ordered()
 import strider
 from strider import pattern as p
 
-result = strider.run(arch=…, cc=…, mem=…, entry=…)
-graph = result.graph
+lift = strider.lifter(arch=…, mem=…)
+graph, unresolved = lift.analyze(entry=…, cc=…)
 
 c = p.Capture()
 pat = p.add(p.var(c), p.int_const(8))

@@ -466,7 +466,10 @@ fn tc<P: TemplatePat>(p: P, b: &mut TemplateBuilder) -> TmplValueRef {
     p.compile(b)
 }
 
-pub(crate) fn rhs_error(kind: &str) -> PyErr {
+// Module-private: every caller (`compile_operand_match` and the
+// `PatRepr::compile_template` match-only-variant arms) lives in this
+// same file — no cross-module consumer needs this widened.
+fn rhs_error(kind: &str) -> PyErr {
     into_strider_err(anyhow::anyhow!(
         "cannot use {kind} as a rewrite RHS — the RHS must be a buildable \
          value expression"
@@ -1587,18 +1590,21 @@ fn lookup_op<Op: Copy>(
 // (or a compile error) rather than silently desyncing the round-trip.  The
 // optional `_ => unreachable` arm lets a curated subset (the boolean ops) list
 // only the variants it accepts while still matching exhaustively.
+//
+// The leading `$vis` token controls per-invocation visibility: only
+// `parse_int_cmp_op` is reused outside this module (`crate::template`'s
+// `int_cmp` build-side constructor calls it directly), so only its
+// invocation below carries an explicit `pub(crate)`; `parse_int_binary_op`
+// / `parse_bool_binary_op` / `parse_float_binary_op` have no consumer
+// outside `pattern.rs` and stay module-private.
 macro_rules! op_parser {
     (
-        $fn:ident, $ty:ty, $op_kind:literal,
+        $vis:vis $fn:ident, $ty:ty, $op_kind:literal,
         variants = [$($variant:ident),+ $(,)?],
         $(rest_unreachable = $msg:literal,)?
         aliases = [$(($alias:literal, $aop:ident)),* $(,)?] $(,)?
     ) => {
-        // `pub(crate)` (not module-private): `parse_int_binary_op` /
-        // `parse_int_cmp_op` are reused from `crate::template` for the
-        // build-side generic op-name constructors (`tpl::int_binary`,
-        // `tpl::int_cmp`).
-        pub(crate) fn $fn(name: &str) -> PyResult<$ty> {
+        $vis fn $fn(name: &str) -> PyResult<$ty> {
             use $ty as Op;
             static VARIANTS: &[$ty] = &[$(Op::$variant),+];
             fn canonical(op: $ty) -> &'static str {
@@ -1614,7 +1620,7 @@ macro_rules! op_parser {
 }
 
 op_parser!(
-    parse_int_cmp_op,
+    pub(crate) parse_int_cmp_op,
     strider_ir::IntCmpOp,
     "IntCmpOp",
     variants = [Equal, Less, Sless, Carry, Scarry, Sborrow],

@@ -164,15 +164,15 @@ tpl_fn!(binary
     "Build: `IntBinaryOp::SShiftRight` (arithmetic `a >> b`)."
 );
 tpl_fn!(binary
-    and_ = "and_", IntBinary, strider_ir::IntBinaryOp::And,
+    and_ = "int_and", IntBinary, strider_ir::IntBinaryOp::And,
     "Build: `IntBinaryOp::And` (`a & b`)."
 );
 tpl_fn!(binary
-    or_ = "or_", IntBinary, strider_ir::IntBinaryOp::Or,
+    or_ = "int_or", IntBinary, strider_ir::IntBinaryOp::Or,
     "Build: `IntBinaryOp::Or` (`a | b`)."
 );
 tpl_fn!(binary
-    xor, IntBinary, strider_ir::IntBinaryOp::Xor,
+    xor = "int_xor", IntBinary, strider_ir::IntBinaryOp::Xor,
     "Build: `IntBinaryOp::Xor` (`a ^ b`)."
 );
 
@@ -227,14 +227,8 @@ pub fn neg(operand: Py<PyAny>) -> PyTemplate {
 }
 
 /// Build: bitwise complement (`~x`) — `Xor(x, all_ones)`.
-#[pyfunction]
+#[pyfunction(name = "int_not")]
 pub fn bit_not(operand: Py<PyAny>) -> PyTemplate {
-    PyTemplate::from_repr(PatRepr::BitNot(operand))
-}
-
-/// Build: bitwise complement (`~x`). Alias for `bit_not`.
-#[pyfunction(name = "not_")]
-pub fn not_(operand: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::BitNot(operand))
 }
 
@@ -406,7 +400,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(int_sborrow);
     add_fn!(neg);
     add_fn!(bit_not);
-    add_fn!(not_);
     add_fn!(popcount);
     add_fn!(lzcount);
     add_fn!(bool_and);

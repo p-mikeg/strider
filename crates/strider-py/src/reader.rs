@@ -268,12 +268,12 @@ pub struct PyLoadedElf {
     elfs: Vec<object::File<'static>>,
     /// Instruction-fetch / raw-read reader assembled from the ELF
     /// sections (writable sections included when relocations are
-    /// applied).  Handed to `strider.run(mem=…)` via `reader()`.
+    /// applied).  Handed to `strider.lifter(arch, mem=…)` via `reader()`.
     mem: PyBufferReader,
     /// Runtime-immutable reader (code + read-only sections only,
-    /// writable sections EXCLUDED).  Handed to `strider.run(rom=…)` via
-    /// `ro_reader()`: the `LoadReadOnly` rom MUST be runtime-immutable
-    /// because the fold trusts it unconditionally.
+    /// writable sections EXCLUDED).  Handed to `strider.lifter(arch, mem,
+    /// rom=…)` via `ro_reader()`: the `LoadReadOnly` rom MUST be
+    /// runtime-immutable because the fold trusts it unconditionally.
     rom: PyBufferReader,
     /// The region-collection strategy this handle was built with
     /// (`load_elf_from_segments` vs `load_elf_from_sections`).  Reused
@@ -325,17 +325,17 @@ impl PyLoadedElf {
     /// The multi-region instruction-fetch / raw-read `BufferReader`
     /// assembled from this ELF's sections (writable sections included
     /// when relocations were applied).  Pass it to
-    /// `strider.run(mem=…)`.
+    /// `strider.lifter(arch, mem=…)`.
     fn reader(&self) -> PyBufferReader {
         self.mem.clone()
     }
 
     /// The **runtime-immutable** `BufferReader` (code + read-only
     /// sections only — writable `.data` / `.got` / `.data.rel.ro`
-    /// EXCLUDED).  Pass it to `strider.run(rom=…)`: the `LoadReadOnly`
-    /// rom MUST be runtime-immutable, because the fold replaces a
-    /// constant-address load with the resolved bytes WITHOUT consulting
-    /// the memory chain.
+    /// EXCLUDED).  Pass it to `strider.lifter(arch, mem, rom=…)`: the
+    /// `LoadReadOnly` rom MUST be runtime-immutable, because the fold
+    /// replaces a constant-address load with the resolved bytes WITHOUT
+    /// consulting the memory chain.
     fn ro_reader(&self) -> PyBufferReader {
         self.rom.clone()
     }
@@ -354,7 +354,7 @@ impl PyLoadedElf {
     /// defined in any loaded ELF.
     ///
     /// Pair with `symbol(name)` to derive a `function_max_size`
-    /// argument for `strider.run` / `strider.build_cfg`.
+    /// argument for `Lifter.analyze` / `Lifter.build_cfg`.
     fn symbol_size(&self, name: &str) -> PyResult<Option<u64>> {
         self.find_symbol(name, |sym| nonzero_size(sym.size()))
     }
@@ -363,7 +363,7 @@ impl PyLoadedElf {
     /// pair — returns `(addr, size)` so callers don't need two lookups.
     /// `size` is `None` when the ELF doesn't record one (zero
     /// `st_size`).  Raises `StriderError` when the symbol is undefined.
-    /// The `size` half is exactly what `strider.run`'s
+    /// The `size` half is exactly what `Lifter.analyze`'s
     /// `function_max_size=` keyword expects.
     fn symbol_addr_and_size(&self, name: &str) -> PyResult<(u64, Option<u64>)> {
         self.find_symbol(name, |sym| (sym.address(), nonzero_size(sym.size())))

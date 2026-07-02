@@ -629,8 +629,12 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   `allow_code_before_start_addr` / `compact` / `per_address_ccs` /
   `calls_clobber` / `assume_distinct_sp_bases_disjoint` / `alias_mode`).
   `strider.load_elf(path) -> ElfLifter` auto-detects arch/CC from the ELF
-  `e_machine` (override via `arch=`/`cc=`/`apply_relocations=`);
-  `ElfLifter` **is** a `Lifter` (`isinstance(x, strider.Lifter)` is
+  `e_machine` (override via `arch=`/`cc=`/`apply_relocations=`) and
+  delegates to `load_elf_from_segments(path, ...)` (regions collected by
+  walking `PT_LOAD` segments, falling back to sections for `ET_REL`);
+  `load_elf_from_sections(path, ...)` forces the section-header-walk
+  strategy even for a linked binary that does carry `PT_LOAD` segments.
+  All three return an `ElfLifter`.  `ElfLifter` **is** a `Lifter` (`isinstance(x, strider.Lifter)` is
   true) that additionally wires the ELF's sections as both the code
   reader and the `LoadReadOnly` rom, and adds `symbol` / `symbol_size` /
   `symbols` / `entry_point` / `read` / `reader` plus a name-aware
@@ -648,8 +652,20 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   live on the internal `_LoadedElf` that `ElfLifter` wraps, built by
   `strider.load_elf(path)`), `MemReader`, `ReadOnlyMemory`, `Sleigh`,
   `Function`, `Cfg`, `OptimizerPipeline`.  `strider.opt` exposes
-  per-pass classes; `strider.pattern` is a full mirror of the Rust
-  pattern crate.  Cross-pattern joins on shared captures via
+  per-pass classes (every built-in pass is now zero-argument — the
+  calling convention is read from the function under analysis at run
+  time, not bound into the pass at construction).  `strider.pattern` is
+  a full mirror of the Rust pattern crate, with descriptive constructor
+  names: `int_and` / `int_or` / `int_xor` / `int_not` (bitwise ops —
+  `and_`/`or_`/`xor`/`bit_not`/`not_` are gone), `anything()` (the
+  wildcard, formerly `any_()`), `if_else` (the `If` pattern builder,
+  formerly `if_()`).  `strider.template` is the build-side (`replace`)
+  mirror of `strider.pattern` — free functions (`var(c)`, `int_const`,
+  `add`, `int_and`, …) construct a `Template` from only the build-valid
+  subset (no `.when()`, no commutativity, no wildcards, since those are
+  match-only concepts); `Function.rewrite`/`rewrite_all` type `replace`
+  as a `Template`, though a bare `strider.pattern.Pat` is still accepted
+  for back-compat.  Cross-pattern joins on shared captures via
   `Function.find_joined([pat1, pat2, …])`.  Asm-fingerprint accessor:
   `match.asm_fingerprint(c) -> list[int]`.  Every Rust error lands in
   Python as a single `strider.errors.StriderError` exception carrying an

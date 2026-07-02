@@ -231,7 +231,9 @@ impl PyFunction {
     /// The pipeline runs without a rom image (`OptCtx::new(None)`); any
     /// `LoadReadOnly` pass present in the pipeline short-circuits
     /// silently.  Callers that need rom-driven folding should route
-    /// through `strider.run(..., rom=mem)` instead.
+    /// through `strider.lifter(arch, mem, rom=mem).analyze(...)` (or
+    /// `strider.load_elf(...)`, which wires the rom automatically)
+    /// instead.
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
         let real_pipeline = pipeline.drain_into_pipeline(false)?;
         self.run_pipeline_in_place(real_pipeline, "optimize")
