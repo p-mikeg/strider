@@ -43,6 +43,14 @@ fn raw_builder(
     // stamp the sentinel lift address — it mirrors the old `new_raw`, which
     // left `lift_addr` as `None`.  Tests that build fingerprint-bearing
     // nodes set the lift address themselves.
+    //
+    // `FunctionBuilder::new` no longer seeds the stack vn (the lifter is the
+    // SSoT for that in production); mirror the lifter here so `build_call`,
+    // which reads SP, finds it tracked.
+    let mut tracked = tracked;
+    if !tracked.contains(&cc.stack_vn) {
+        tracked.push(cc.stack_vn);
+    }
     FunctionBuilder::new(tracked, &cc, endianness)
 }
 
@@ -262,6 +270,27 @@ fn extend_noop_when_already_wide_enough() -> Result<()> {
     let add = non_const_add(&mut b, ValueType::I64)?;
     let result = b.extend_if_needed(add, ValueType::I64, ExtendOp::ZeroExtend)?;
     assert_eq!(result, add);
+    Ok(())
+}
+
+/// `extend_if_needed` must NOT narrow: a value wider than the target is a
+/// caller error (the caller must `truncate_if_needed` first).  Covers both a
+/// non-constant value and a constant (which previously folded-and-masked).
+#[test]
+fn extend_rejects_value_wider_than_target() -> Result<()> {
+    let mut b = empty_builder()?;
+    let wide_add = non_const_add(&mut b, ValueType::I64)?;
+    assert!(
+        b.extend_if_needed(wide_add, ValueType::I32, ExtendOp::ZeroExtend)
+            .is_err(),
+        "extend must reject a non-const value wider than the target"
+    );
+    let wide_const = b.build_int_const(0xDEAD_BEEFu64, ValueType::I64)?;
+    assert!(
+        b.extend_if_needed(wide_const, ValueType::I32, ExtendOp::SignExtend)
+            .is_err(),
+        "extend must reject a constant wider than the target"
+    );
     Ok(())
 }
 

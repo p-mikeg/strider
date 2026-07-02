@@ -22,9 +22,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// extend node and writes the result to the output varnode.
     ///
     /// Sleigh's `IntZext` / `IntSext` contract requires `output.size >=
-    /// input.size`.  A malformed `.sla` emitting `output.size <
-    /// input.size` would silently invoke `extend_if_needed`'s truncate
-    /// path — surface the inversion as a lift-time error.
+    /// input.size`.  `extend_if_needed` now rejects a wider-than-target input
+    /// outright, but check here first to surface the `.sla` inversion as a
+    /// clearer, extend-specific lift-time error.
     pub(super) fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) -> Result<()> {
         let out_vn = require_output_vn(insn)?;
         let in0_size = nth_input_or_err(insn, 0)?.size;

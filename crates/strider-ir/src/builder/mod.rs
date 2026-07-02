@@ -145,12 +145,15 @@ impl FunctionBuilder {
         // varnodes (the SSoT `vn_interner`), so `InitialVnId` assignment is
         // deterministic and the `i`-th tracked varnode still lines up with the
         // `i`-th `Call` clobber output.
+        // The stack vn is NOT seeded here: the lifter (the sole production
+        // caller) is the SSoT for adding it to the tracked set before calling
+        // this constructor.  Direct (test) callers that need SP tracked pass it
+        // in `all_used_variables` themselves.
         for v in cc
             .ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
             .chain(cc.arg_passing_regs.iter())
-            .chain(std::iter::once(&cc.stack_vn))
         {
             if !all_used_variables.contains(v) {
                 all_used_variables.push(*v);

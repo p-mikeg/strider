@@ -69,11 +69,16 @@ pub trait IRBuilderExt: IRBuilder {
 
     /// Extends `value_id` to `output_type` using zero- or sign-extension.
     ///
+    /// Extend only ever *widens* (or is a no-op at equal width); it never
+    /// narrows.  A value wider than `output_type` is a caller error — the
+    /// caller must narrow it via [`Self::truncate_if_needed`] (or
+    /// [`Self::convert_to_int_if_needed`], which truncates then extends) first.
+    ///
     /// # Errors
     ///
-    /// Returns an error when `value_id` is not a value edge, or when
-    /// `output_type` is not an integer type and the input is not already a
-    /// constant we can fold.
+    /// Returns an error when `value_id` is not a value edge, when either
+    /// `output_type` or the input is not an integer type, or when the input is
+    /// wider than `output_type` (extend cannot narrow).
     fn extend_if_needed(
         &mut self,
         value_id: ValueId,
@@ -82,23 +87,9 @@ pub trait IRBuilderExt: IRBuilder {
     ) -> Result<ValueId> {
         let curr_output_type = self.value_type(value_id)?;
 
-        if let Some(unsigned_val) = self.int_const_u128(value_id)
-            && let Some(signed_val) = self.int_const_i128(value_id)
-        {
-            // `i128 as u128` reinterprets the sign-extended bits, and
-            // build_int_const masks to output_type's width.  Reading the
-            // const as the full u128 / i128 (rather than a u64 / i64
-            // projection) folds I80 / I128 const extends too.
-            return match op {
-                ExtendOp::SignExtend => self.build_int_const(signed_val as u128, output_type),
-                ExtendOp::ZeroExtend => self.build_int_const(unsigned_val, output_type),
-            };
-        }
-
         if !output_type.is_integer() {
-            return Err(anyhow!("output {value_id:?} is not an integer value"));
+            return Err(anyhow!("output {value_id:?} target is not an integer value"));
         }
-
         // Booleans are I1 (integer); the only non-integer input here would be
         // a float, which cannot be width-extended as an integer — it needs an
         // explicit bitcast (`FloatBitsToInt`) first.
@@ -108,15 +99,31 @@ pub trait IRBuilderExt: IRBuilder {
                  ({curr_output_type}); a bitcast is required first"
             ));
         }
+        if curr_output_type.bit_width() > output_type.bit_width() {
+            // Extend must not narrow.  The caller has to truncate the value
+            // itself (`truncate_if_needed` / `convert_to_int_if_needed`).
+            return Err(anyhow!(
+                "extend_if_needed: value {value_id:?} ({curr_output_type}) is wider than \
+                 target {output_type}; extend cannot narrow — truncate first"
+            ));
+        }
+
+        if let Some(unsigned_val) = self.int_const_u128(value_id)
+            && let Some(signed_val) = self.int_const_i128(value_id)
+        {
+            // `i128 as u128` reinterprets the sign-extended bits, and
+            // build_int_const masks to output_type's width.  Reading the
+            // const as the full u128 / i128 (rather than a u64 / i64
+            // projection) folds I80 / I128 const extends too.  The width guard
+            // above already rejected narrowing, so this only ever widens.
+            return match op {
+                ExtendOp::SignExtend => self.build_int_const(signed_val as u128, output_type),
+                ExtendOp::ZeroExtend => self.build_int_const(unsigned_val, output_type),
+            };
+        }
 
         if curr_output_type.bit_width() == output_type.bit_width() {
             return Ok(value_id);
-        }
-        if curr_output_type.bit_width() > output_type.bit_width() {
-            // Caller asked to extend a value that is already wider than the
-            // target.  Truncate so the returned id always carries
-            // `output_type`.
-            return self.truncate_if_needed(value_id, output_type);
         }
         Ok(self.build_single_output_pure(NodeKind::Extend(op), [value_id], output_type))
     }
