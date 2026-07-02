@@ -30,13 +30,13 @@ strategy explicitly (PT_LOAD program headers vs section headers);
 
 For non-ELF / firmware / custom-source cases, build a `Lifter`
 directly with `strider.lifter(arch, mem, rom=None)` (the native
-Rust handle) and call its `analyze(addr, cc, ...)`.  `Analysis` is an
-optional convenience wrapper around a bare `(Function, ...)` result —
-`find` / `find_one` / `find_joined` / `fingerprint` /
-`fingerprint_pcode` — for callers who want that on top of a raw
-`Lifter.analyze()` result (an `ElfLifter.analyze()` result can be
-wrapped the same way; `analyze()` itself never constructs one
-automatically).
+Rust handle) and call its `analyze(addr, cc, ...)`.  Pattern queries
+(`find_all` / `find_one` / `find_joined`) and the addr-only
+`fingerprint`/`asm_fingerprint` live directly on the returned
+`Function`/`Node` (no Sleigh needed); the Sleigh-needing pretty
+renders (`dump_html` / `dump_dot` / `html_str`) and the p-code
+audit-trail helper (`fingerprint_pcode`) live on the `Lifter` that
+produced the function, since it owns the Sleigh.
 
 Arch detection is done by reading the first 20 bytes of the ELF
 header (magic + EI_CLASS + EI_DATA + e_machine).  No pyelftools
@@ -57,7 +57,6 @@ import importlib as _importlib
 _ext = _importlib.import_module("strider.strider")
 from .strider import (  # noqa: E402
     CallingConvention,
-    Function,
     Lifter,
     SleighArch,
 )
@@ -528,213 +527,3 @@ class ElfLifter(Lifter):
         if cc is None:
             cc = self._cc
         return super().analyze(addr, cc, **opts)
-
-
-# ── Analysis ──────────────────────────────────────────────────────────────
-
-
-class Analysis:
-    """Optional wrapper around a lifted, optimized IR `Function` —
-    manually built by a caller around a `(Function, unresolved)` result
-    from `Lifter.analyze` / `ElfLifter.analyze` — with convenience
-    methods for pattern queries and provenance lookup.  Neither
-    `Lifter.analyze` nor `ElfLifter.analyze` constructs one
-    automatically; both return the bare tuple, and a caller who wants
-    the `find` / `fingerprint` / `fingerprint_pcode` conveniences wraps
-    the result in an `Analysis` explicitly.
-    """
-
-    __slots__ = (
-        "_function",
-        "_entry",
-        "_name",
-        "_effective_arch",
-        "_mem",
-        "_unresolved_indirect_branches",
-    )
-
-    def __init__(
-        self,
-        function: Function,
-        *,
-        entry: int,
-        name: Optional[str] = None,
-        effective_arch: Optional[SleighArch] = None,
-        mem: Optional[object] = None,
-        unresolved_indirect_branches: Optional[list] = None,
-    ) -> None:
-        self._function = function
-        self._entry = entry
-        self._name = name
-        # Machine addresses of indirect branches the orchestrator could
-        # not resolve (empty when fully resolved).
-        self._unresolved_indirect_branches = list(unresolved_indirect_branches or [])
-        # The arch the lift actually used (Thumb-resolved for ARM
-        # interworking entries).  `fingerprint_pcode` lifts the
-        # fingerprint addresses through this so a Thumb function's
-        # provenance is lifted with the Thumb Sleigh spec.  Required —
-        # `fingerprint_pcode` cannot resolve provenance without it.
-        if effective_arch is None:
-            raise ValueError("Analysis requires an explicit effective_arch")
-        self._effective_arch = effective_arch
-        # The code reader to lift fingerprint addresses through.  For an
-        # ELF-backed analysis this is the ELF's loaded regions.
-        self._mem = mem
-
-    # ── Properties ──────────────────────────────────────────────────
-
-    @property
-    def function(self) -> Function:
-        """The underlying `Function` for direct access to the IR
-        (preorder walks, `node_count`, `validate`, etc.)."""
-        return self._function
-
-    @property
-    def unresolved_indirect_branches(self) -> list:
-        """Machine addresses of indirect branches that could not be
-        resolved (empty when fully resolved).  Assert this is empty to
-        require complete indirect-branch resolution:
-        `assert not a.unresolved_indirect_branches`."""
-        return self._unresolved_indirect_branches
-
-    @property
-    def cfg(self):
-        """The snapshot CFG the function was lifted from (pre-resolution
-        for binaries that hit the indirect-branch loop)."""
-        return self._function.cfg
-
-    @property
-    def sleigh(self):
-        """A `Sleigh` handle for the arch the lift used — useful for
-        register-name lookups (`reg(...)`).  The lift's own Sleigh is
-        owned internally by the lifter and not handed out; this builds a
-        fresh register-table handle for the same arch + code reader.
-        Requires the analysis to carry a code reader (`mem`)."""
-        if self._mem is None:
-            raise ValueError(
-                "Analysis.sleigh requires a code reader; this analysis was "
-                "built without one (mem=None)"
-            )
-        from .strider import Sleigh  # noqa: PLC0415
-
-        return Sleigh(self._effective_arch, self._mem)
-
-    @property
-    def entry(self) -> int:
-        """The entry-point address that was lifted."""
-        return self._entry
-
-    @property
-    def name(self) -> Optional[str]:
-        """The symbol name passed to `analyze(...)`, or `None` if
-        `analyze(<int>)` was used."""
-        return self._name
-
-    def __repr__(self) -> str:
-        if self._name is not None:
-            head = f"name={self._name!r}, entry={self._entry:#x}"
-        else:
-            head = f"entry={self._entry:#x}"
-        return f"Analysis({head}, nodes={self._function.node_count()})"
-
-    # ── Pattern queries ──────────────────────────────────────────────
-
-    def find(self, pattern, **matcher_options) -> list:
-        """Run a pattern against this function's IR.  Returns the
-        list of `Match` objects.  Forwards every kwarg to
-        `Function.find_all` (`ignore_casts`, `ignore_casts_mask`)."""
-        return self._function.find_all(pattern, **matcher_options)
-
-    def find_one(self, pattern, **matcher_options):
-        """Run a pattern and return the first `Match`, or `None` if it
-        does not match anywhere.  A one-shot convenience for the
-        `hits = a.find(pat); hits[0] if hits else None` idiom.
-        Forwards every kwarg to `Function.find_one` (`ignore_casts`,
-        `ignore_casts_mask`)."""
-        return self._function.find_one(pattern, **matcher_options)
-
-    def find_joined(self, patterns, **matcher_options) -> list:
-        """Run multiple patterns and return matched sets joined on
-        shared `Capture`s — a cross-pattern join.  See
-        `Function.find_joined` for the full contract."""
-        return self._function.find_joined(patterns, **matcher_options)
-
-    # ── Provenance ───────────────────────────────────────────────────
-
-    @staticmethod
-    def _coerce_node_id(node) -> int:
-        """Coerce a node argument to a raw `u32` node id.
-
-        Accepts a raw `int` id (e.g. `match.root`), a `Match` (its
-        `.root` is used), or a `Node` handle (its `.id` is used).
-        Raises `TypeError` for anything else.
-        """
-        if isinstance(node, int):
-            return node
-        if hasattr(node, "root"):
-            # PyMatch.root is a property returning u32.
-            return node.root
-        if hasattr(node, "id"):
-            # PyNode.id is a property returning the raw u32 arena index.
-            return node.id
-        raise TypeError(
-            f"expected int, Match, or Node, got {type(node).__name__}"
-        )
-
-    def fingerprint(self, node) -> list[int]:
-        """Return the asm-fingerprint of the given node — a
-        sorted-deduplicated list of source machine-instruction
-        addresses whose lifting (or subsequent rewrite) contributed
-        to that node's value.
-
-        `node` can be:
-        * A raw `u32` node id (e.g. `match.root`).
-        * A `Match` object — the match's root is used.
-        * A `Node` handle — its `.id` is used.
-
-        Returns an empty list for "structural" node kinds
-        (Entry, InitialMemory, InitialVar, Region, and phis).
-        See `ir::Graph::asm_fingerprint` for the full contract.
-        """
-        node_id = self._coerce_node_id(node)
-        return self._function.asm_fingerprint(node_id)
-
-    def fingerprint_pcode(self, node) -> list[tuple[int, str]]:
-        """Return the asm-fingerprint of `node` as `(addr, text)` pairs,
-        sorted by address — the p-code companion to `fingerprint`.
-
-        Resolves the node's fingerprint addresses (see `fingerprint`),
-        then lifts each through a single shared Sleigh build, so the
-        audit trail reads as the lifted semantics without leaving
-        strider.  `text` is the lifted p-code for that machine
-        instruction (the instruction's p-code ops joined with `"; "`,
-        empty for ops like `endbr64` that lift to no p-code).  rsleigh
-        is a p-code lifter — this is the lifted semantics, NOT native
-        assembly mnemonics.
-
-        `node` can be a raw `u32` id, a `Match`, or a `Node` handle.
-
-        Returns `[]` for "structural" nodes that carry no fingerprint
-        (Entry, InitialMemory, InitialVar, Region, and phis).
-        """
-        addrs = self.fingerprint(node)
-        if not addrs:
-            return []
-        if self._mem is None:
-            raise ValueError(
-                "fingerprint_pcode: no memory source was supplied to this "
-                "Analysis"
-            )
-        pairs = _ext.pcode_at_addrs(self._effective_arch, self._mem, addrs)
-        return sorted(pairs, key=lambda p: p[0])
-
-    # ── Visualisation ────────────────────────────────────────────────
-
-    def dump_html(self, path: str, style: Optional[str] = None) -> None:
-        """Dump the IR graph as an interactive HTML file at `path`.
-        `style` may be `"dark"` (default) or `"light"`."""
-        self._function.to_html(path, style)
-
-    def dump_dot(self, path: str) -> None:
-        """Dump the IR graph as a raw .dot file at `path`."""
-        self._function.to_dot(path)

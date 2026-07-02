@@ -13,14 +13,18 @@
 //! entry points (`strider.strider`/`Strider`, `strider.run`, and the old
 //! low-level `Lifter`/`AnalyzeOutcome`) into one.
 
+use std::path::Path;
+
 use pyo3::prelude::*;
 use strider_orchestrator::opt::AliasMode;
 
 use crate::arch::PySleighArch;
 use crate::cc::PyCallingConvention;
 use crate::cfg::PyCfg;
+use crate::dot::dot_style_for;
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
+use crate::node::PyNode;
 use crate::reader::{AnyMemReader, MemInput};
 
 /// Resolve a `PyCallingConvention` against an already-fetched register
@@ -200,6 +204,62 @@ impl PyLifter {
     pub(crate) fn sleigh(&self) -> &rsleigh::Sleigh<AnyMemReader> {
         self.inner.sleigh()
     }
+
+    /// Mutable access to the owned `Sleigh`, for `Sleigh::lift_one`
+    /// (the `fingerprint_pcode` audit-trail path).
+    fn sleigh_mut(&mut self) -> &mut rsleigh::Sleigh<AnyMemReader> {
+        self.inner.sleigh_mut()
+    }
+
+    /// Build a `GraphDot` over `function`'s IR through this Lifter's own
+    /// Sleigh and dispatch to `op`.  Centralises the borrow / dumper-
+    /// construction ritual shared by `dump_html` / `dump_dot` /
+    /// `html_str` — the Sleigh-needing pretty renders that moved here
+    /// from `Function` (a bare `Function` has no Sleigh to resolve
+    /// register names with).
+    fn dispatch_dot(
+        &self,
+        function: &PyFunction,
+        style: Option<&str>,
+        op: DotOp<'_>,
+    ) -> PyResult<DotResult> {
+        let sleigh = self.sleigh();
+        let guard = function.read_inner().map_err(into_strider_err)?;
+        let dumper = guard.dot_dumper(sleigh).map_err(into_strider_err)?;
+        let d = dot::GraphDot::new(dumper, dot_style_for(style));
+        match op {
+            DotOp::DumpHtml(p) => d
+                .dump_as_html(Path::new(p))
+                .map(|()| DotResult::Unit)
+                .map_err(into_strider_err),
+            DotOp::DumpDot(p) => d
+                .dump_as_dot(Path::new(p))
+                .map(|()| DotResult::Unit)
+                .map_err(into_strider_err),
+            DotOp::HtmlStr => d
+                .as_html_from_dot()
+                .map(DotResult::Html)
+                .map_err(into_strider_err),
+        }
+    }
+}
+
+/// Discriminator for [`PyLifter::dispatch_dot`].  Each variant carries
+/// the per-op arguments the public accessor `dump_html` / `dump_dot` /
+/// `html_str` would otherwise duplicate the sleigh-borrow / dumper-
+/// construction ritual for.
+enum DotOp<'a> {
+    DumpHtml(&'a str),
+    DumpDot(&'a str),
+    HtmlStr,
+}
+
+/// Return shape of [`PyLifter::dispatch_dot`].  Returning a sum lets a
+/// single helper cover both unit-returning dump methods and the
+/// string-returning `html_str` without separate variants per dispatch.
+enum DotResult {
+    Unit,
+    Html(String),
 }
 
 #[pymethods]
@@ -420,6 +480,72 @@ impl PyLifter {
 
         let py_function = Py::new(py, PyFunction::new(function, cfg_obj))?;
         Ok((py_function, unresolved))
+    }
+
+    /// Render `function`'s IR graph to a standalone HTML file at `path`.
+    /// `style` selects the dot theme (default `"dark"`).
+    ///
+    /// Lives on `Lifter` (not `Function`) because the pretty renderer
+    /// inlines constants / adds virtual nodes / resolves register names,
+    /// all of which need a `Sleigh` — a bare `Function` doesn't carry
+    /// one, but the `Lifter` that produced it does.
+    #[pyo3(signature = (function, path, style=None))]
+    fn dump_html(&self, function: &PyFunction, path: &str, style: Option<&str>) -> PyResult<()> {
+        self.dispatch_dot(function, style, DotOp::DumpHtml(path))
+            .map(|_| ())
+    }
+
+    /// Render `function`'s IR graph to a Graphviz `.dot` file at `path`.
+    #[pyo3(signature = (function, path))]
+    fn dump_dot(&self, function: &PyFunction, path: &str) -> PyResult<()> {
+        self.dispatch_dot(function, None, DotOp::DumpDot(path))
+            .map(|_| ())
+    }
+
+    /// Return `function`'s IR graph rendered as an HTML string (default
+    /// `"dark"` style) instead of writing it to a file.
+    #[pyo3(signature = (function, style=None))]
+    fn html_str(&self, function: &PyFunction, style: Option<&str>) -> PyResult<String> {
+        match self.dispatch_dot(function, style, DotOp::HtmlStr)? {
+            DotResult::Html(s) => Ok(s),
+            DotResult::Unit => Err(into_strider_err(anyhow::anyhow!(
+                "internal: DotOp::HtmlStr returned DotResult::Unit"
+            ))),
+        }
+    }
+
+    /// Return the asm-fingerprint of `node` as `(addr, text)` p-code
+    /// pairs, sorted by address — the p-code companion to
+    /// `Node.fingerprint()` (addr-only).  `node` is typically obtained
+    /// via `Function.node(id)` or `Match.node(key)`.
+    ///
+    /// Lives on `Lifter` (not `Function`/`Node`) because rendering an
+    /// address to p-code text needs a `Sleigh`; this reuses the Lifter's
+    /// own Sleigh instance rather than building a second one.
+    ///
+    /// Returns `[]` for "structural" nodes that carry no fingerprint
+    /// (Entry, InitialMemory, InitialVar, Region, phis).
+    fn fingerprint_pcode(
+        &mut self,
+        py: Python<'_>,
+        node: &PyNode,
+    ) -> PyResult<Vec<(u64, String)>> {
+        let addrs = node.fingerprint(py)?;
+        let sleigh = self.sleigh_mut();
+        let mut out = Vec::with_capacity(addrs.len());
+        for addr in addrs {
+            let lift = sleigh.lift_one(addr).map_err(|e| {
+                into_strider_err(anyhow::anyhow!("lift_one at {addr:#x} failed: {e:?}"))
+            })?;
+            let text = lift
+                .insns
+                .iter()
+                .map(|insn| insn.to_string())
+                .collect::<Vec<_>>()
+                .join("; ");
+            out.push((addr, text));
+        }
+        Ok(out)
     }
 }
 

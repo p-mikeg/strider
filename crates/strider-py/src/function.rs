@@ -6,7 +6,6 @@
 //! so the Sleigh stays alive for the graph's lifetime and is
 //! reachable through `strider_cfg::Cfg::sleigh`.
 
-use std::path::Path;
 use std::sync::{Arc, RwLock, TryLockError};
 
 use pyo3::prelude::*;
@@ -14,7 +13,6 @@ use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
 
 use crate::cfg::PyCfg;
-use crate::dot::dot_style_for;
 
 /// Opaque wrapper over `strider_ir::Function`.
 ///
@@ -28,25 +26,6 @@ pub struct PyFunction {
     /// Strong reference to the parent Cfg; keeps the Sleigh alive for
     /// dot rendering and ensures destruction order is graph-then-cfg.
     pub(crate) cfg: Py<PyCfg>,
-}
-
-/// Discriminator for [`PyFunction::dispatch_dot`].  Each variant carries
-/// the per-op arguments the public accessor `to_html` / `to_dot` /
-/// `html_str` would otherwise duplicate the cfg-borrow / graph-borrow
-/// / dumper-construction ritual for.
-enum DotOp<'a> {
-    DumpHtml(&'a str),
-    DumpDot(&'a str),
-    HtmlStr,
-}
-
-/// Return shape of [`PyFunction::dispatch_dot`].  Returning a sum lets a
-/// single helper cover both unit-returning dump methods and the
-/// string-returning `html_str` without separate variants per
-/// dispatch.
-enum DotResult {
-    Unit,
-    Html(String),
 }
 
 /// Convert a Python-supplied `u32` node id into a validated `strider_ir::NodeId`,
@@ -133,44 +112,6 @@ impl PyFunction {
         })
     }
 
-    /// Enum tagging the three dot-rendering operations the public
-    /// surface needs.  Lets [`Self::dispatch_dot`] funnel them
-    /// through a single helper that builds the `GraphDot` once and
-    /// dispatches to the right `dot::GraphDot` method, instead of
-    /// repeating the borrow / dumper / GraphDot construction at every
-    /// caller (the dumper type is `pub(crate)` in `strider-ir` and
-    /// can't be named from this crate's closures).
-    fn dispatch_dot(
-        &self,
-        py: Python<'_>,
-        style: Option<&str>,
-        op: DotOp<'_>,
-    ) -> PyResult<DotResult> {
-        let cfg_borrow = self.cfg.borrow(py);
-        let lifter_borrow = cfg_borrow.lifter.borrow(py);
-        let sleigh = lifter_borrow.sleigh();
-        self.with_read(|function| {
-            let dumper = function
-                .dot_dumper(sleigh)
-                .map_err(crate::errors::into_strider_err)?;
-            let d = dot::GraphDot::new(dumper, dot_style_for(style));
-            match op {
-                DotOp::DumpHtml(p) => d
-                    .dump_as_html(Path::new(p))
-                    .map(|()| DotResult::Unit)
-                    .map_err(crate::errors::into_strider_err),
-                DotOp::DumpDot(p) => d
-                    .dump_as_dot(Path::new(p))
-                    .map(|()| DotResult::Unit)
-                    .map_err(crate::errors::into_strider_err),
-                DotOp::HtmlStr => d
-                    .as_html_from_dot()
-                    .map(DotResult::Html)
-                    .map_err(crate::errors::into_strider_err),
-            }
-        })
-    }
-
     /// Run `pipeline` over this graph in place, bumping the generation
     /// first so any stale handle is invalidated even if a pass errors
     /// mid-run and leaves the arena partially rewritten.  `label` names
@@ -210,42 +151,13 @@ fn write_to(path: &str, contents: String) -> PyResult<()> {
 #[pymethods]
 impl PyFunction {
     /// The snapshot `Cfg` this function was lifted from — kept alive for
-    /// dot rendering (its `Sleigh` resolves register names).  The
-    /// high-level `Analysis.cfg` property delegates here so a function
-    /// returned by `Strider.analyze` is self-describing without a
-    /// separate `RunResult`.
+    /// dot rendering (its `Sleigh` resolves register names).  Combine
+    /// with `Lifter.dump_html(function, path)` (or the `Cfg`'s own
+    /// `to_html`) for a self-describing render without a separate result
+    /// wrapper.
     #[getter(cfg)]
     fn get_cfg(&self, py: Python<'_>) -> Py<PyCfg> {
         self.cfg.clone_ref(py)
-    }
-
-    /// Render the IR graph to a standalone HTML file at `path`.  `style`
-    /// selects the dot theme (default `"dark"`).
-    #[pyo3(signature = (path, style=None))]
-    fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
-        // `dot_style_for(None)` already defaults to the dark theme, so the
-        // `Option` flows through untouched.
-        self.dispatch_dot(py, style, DotOp::DumpHtml(path))
-            .map(|_| ())
-    }
-
-    /// Render the IR graph to a Graphviz `.dot` file at `path`.
-    #[pyo3(signature = (path,))]
-    fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
-        self.dispatch_dot(py, None, DotOp::DumpDot(path))
-            .map(|_| ())
-    }
-
-    /// Return the IR graph rendered as an HTML string (default `"dark"`
-    /// style) instead of writing it to a file.
-    #[pyo3(signature = (style=None))]
-    fn html_str(&self, py: Python<'_>, style: Option<&str>) -> PyResult<String> {
-        match self.dispatch_dot(py, style, DotOp::HtmlStr)? {
-            DotResult::Html(s) => Ok(s),
-            DotResult::Unit => Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                "internal: DotOp::HtmlStr returned DotResult::Unit"
-            ))),
-        }
     }
 
     /// Render the graph **exactly as stored** to a Graphviz `.dot` string:

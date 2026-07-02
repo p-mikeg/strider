@@ -2,13 +2,18 @@
 
 Covers `ElfLifter.pcode(addr, count)`, the `strider.pcode_at` /
 `strider.pcode_at_addrs` `#[pyfunction]`s, and the
-`Analysis.fingerprint_pcode(node)` audit-trail companion to
-`Analysis.fingerprint`.
+`Lifter.fingerprint_pcode(node)` audit-trail companion to
+`Node.fingerprint()` / `Function.asm_fingerprint(id)`.
 
 These close the "audit trail" loop: a matched value node's fingerprint
 (machine-instruction *addresses*) can be lifted to p-code text without
 leaving strider.  rsleigh is a p-code lifter — the returned text is the
 lifted semantics, NOT native assembly mnemonics.
+
+`fingerprint_pcode` lives on `Lifter` (not `Function`/`Node`) because it
+needs a `Sleigh` to render an address to p-code text; an `ElfLifter` IS a
+`Lifter`, so calling it on `prog` below reuses the same Sleigh instance
+that produced the function.
 
 Each test skips cleanly when the required fixture isn't built.
 """
@@ -24,23 +29,6 @@ def _load_memory():
     """Load the x86_64 `memory.elf` fixture (carries `array_sum`)."""
     elf = fixture_path("x64", "memory")
     return strider.load_elf(str(elf))
-
-
-def _analyze_wrapped(prog, name: str) -> strider.Analysis:
-    """Wrap `ElfLifter.analyze(name)`'s `(Function, unresolved)` tuple in
-    an `Analysis` — `analyze()` itself no longer constructs one
-    automatically, so the `fingerprint_pcode` tests below (which need
-    the mem + effective-arch binding `Analysis` carries) build it here."""
-    addr = prog.symbol(name)
-    function, unresolved = prog.analyze(name)
-    return strider.Analysis(
-        function,
-        entry=addr,
-        name=name,
-        effective_arch=prog.arch,
-        mem=prog.reader(),
-        unresolved_indirect_branches=unresolved,
-    )
 
 
 # ── ElfLifter.pcode ─────────────────────────────────────────────────────
@@ -123,25 +111,25 @@ def test_pcode_at_addrs_decodes_a_set_once():
         assert t == by_addr[a]
 
 
-# ── Analysis.fingerprint_pcode ───────────────────────────────────────────
+# ── Lifter.fingerprint_pcode ─────────────────────────────────────────────
 
 
 def test_fingerprint_pcode_renders_a_matched_node():
-    """For a matched value node, `fingerprint_pcode(match)` returns
-    `(addr, text)` pairs whose addresses equal `fingerprint(match)`
+    """For a matched value node, `fingerprint_pcode(node)` returns
+    `(addr, text)` pairs whose addresses equal `node.fingerprint()`
     and whose texts are non-empty, sorted by address."""
     prog = _load_memory()
-    a = _analyze_wrapped(prog, "array_sum")
-    matches = a.find(
+    function, _unresolved = prog.analyze("array_sum")
+    matches = function.find_all(
         strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
     )
     assert matches, "expected at least one Add node in array_sum"
-    m = matches[0]
+    node = function.node(matches[0].root)
 
-    fp = a.fingerprint(m)
+    fp = node.fingerprint()
     assert fp, "matched Add node must carry a non-empty fingerprint"
 
-    fpc = a.fingerprint_pcode(m)
+    fpc = prog.fingerprint_pcode(node)
     assert isinstance(fpc, list)
     # Addresses (sorted) equal the fingerprint addresses.
     assert [addr for addr, _ in fpc] == sorted(fp)
@@ -155,31 +143,31 @@ def test_fingerprint_pcode_renders_a_matched_node():
         assert text.strip(), f"empty p-code text for {addr:#x}"
 
 
-def test_fingerprint_pcode_accepts_root_id_and_node():
-    """`fingerprint_pcode` accepts a raw id, a Match, and a Node handle
-    interchangeably (mirrors `fingerprint`'s coercion)."""
+def test_fingerprint_pcode_stable_across_separately_constructed_nodes():
+    """Two separately-constructed `Node` handles for the same id produce
+    identical `fingerprint_pcode` output — `Lifter.fingerprint_pcode`
+    only cares about the (function, node id) the `Node` carries, not
+    `Node` object identity."""
     prog = _load_memory()
-    a = _analyze_wrapped(prog, "array_sum")
-    matches = a.find(
+    function, _unresolved = prog.analyze("array_sum")
+    matches = function.find_all(
         strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
     )
     assert matches
-    m = matches[0]
-    via_match = a.fingerprint_pcode(m)
-    via_id = a.fingerprint_pcode(m.root)
-    via_node = a.fingerprint_pcode(a.function.node(m.root))
-    assert via_match == via_id == via_node
+    root = matches[0].root
+    via_a = prog.fingerprint_pcode(function.node(root))
+    via_b = prog.fingerprint_pcode(function.node(root))
+    assert via_a == via_b
 
 
 def test_fingerprint_pcode_empty_for_structural_node():
     """A structural node (no fingerprint, e.g. Entry) yields `[]`."""
     prog = _load_memory()
-    a = _analyze_wrapped(prog, "array_sum")
-    fn = a.function
+    function, _unresolved = prog.analyze("array_sum")
     struct_id = None
-    for nid in fn.node_ids():
-        if not fn.asm_fingerprint(nid):
+    for nid in function.node_ids():
+        if not function.asm_fingerprint(nid):
             struct_id = nid
             break
     assert struct_id is not None, "expected at least one structural node"
-    assert a.fingerprint_pcode(struct_id) == []
+    assert prog.fingerprint_pcode(function.node(struct_id)) == []

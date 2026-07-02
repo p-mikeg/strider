@@ -104,6 +104,17 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         &self.sleigh
     }
 
+    /// Mutable access to the owned Sleigh context — needed for
+    /// `Sleigh::lift_one`, which carries context-register state across
+    /// calls (see the module doc).  Used by the fingerprint-to-p-code
+    /// audit-trail path (`fingerprint_pcode`), which lifts a node's
+    /// fingerprint addresses through this same instance rather than
+    /// building a second Sleigh.
+    #[must_use]
+    pub fn sleigh_mut(&mut self) -> &mut rsleigh::Sleigh<R> {
+        &mut self.sleigh
+    }
+
     /// Returns the cached Sleigh register-name table.
     #[must_use]
     pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {

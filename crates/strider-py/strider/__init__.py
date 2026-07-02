@@ -38,14 +38,16 @@ __version__ = _ext.__version__
 #   * `strider.ElfLifter` — an `ElfLifter` IS a `Lifter`
 #     (`isinstance(x, strider.Lifter)` is true), plus the ELF symbol
 #     backend and a name-aware `analyze(target)`
-#   * `strider.Analysis` — optional wrapper around a lifted `Function`
 #
 # The cdylib's `strider.lifter(arch, mem, rom=None) -> Lifter` is the
 # single lift+optimise+resolve handle (`build_cfg` + `analyze`); it comes
-# from `_ext` via the wildcard import above.
+# from `_ext` via the wildcard import above.  Sleigh-needing renders
+# (`dump_html`/`dump_dot`/`html_str`) and provenance-to-p-code
+# (`fingerprint_pcode`) are `Lifter` methods; pattern queries and the
+# addr-only `fingerprint` live on `Function`/`Node` directly — there is
+# no separate `Analysis` wrapper.
 from . import _api as _api  # noqa: E402,F401
 from ._api import (  # noqa: E402,F401
-    Analysis,
     ElfLifter,
     load_elf,
     load_elf_from_segments,

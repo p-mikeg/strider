@@ -24,7 +24,6 @@ def _public(mod):
 
 
 EXPECTED_TOP = {
-    "Analysis",
     "BufferReader",
     "CallingConvention",
     "Cfg",

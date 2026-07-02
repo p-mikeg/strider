@@ -145,6 +145,14 @@ where
         self.lifter.sleigh()
     }
 
+    /// Returns the owned `Sleigh` mutably — needed for `Sleigh::lift_one`
+    /// (the fingerprint-to-p-code audit-trail path), which carries
+    /// context-register state across calls.
+    #[must_use]
+    pub fn sleigh_mut(&mut self) -> &mut rsleigh::Sleigh<R> {
+        self.lifter.sleigh_mut()
+    }
+
     /// Build the CFG for `entry` only — no lift, no optimisation, no
     /// indirect-branch resolution.  Reuses the same owned `Lifter` (and
     /// its `Sleigh`) that [`Strider::analyze`] drives, so callers that

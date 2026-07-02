@@ -264,28 +264,20 @@ def test_fingerprint_returns_machine_addresses():
         )
 
 
-def test_fingerprint_accepts_match_directly():
-    """`Analysis.fingerprint(match)` (no `.root`) is supported as a
-    convenience — the match's root id is read internally.  Wraps the
-    bare `analyze()` tuple in an `Analysis` explicitly (analyze() no
-    longer constructs one automatically)."""
+def test_fingerprint_matches_via_function_and_node():
+    """The addr-only fingerprint is Sleigh-free, so it lives directly on
+    `Function`/`Node` (no wrapper needed): `Function.asm_fingerprint(id)`
+    and `Node.fingerprint()` must agree for the same node."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load_elf(str(elf))
-    addr = s.symbol("add")
-    function, unresolved = s.analyze("add")
-    a = strider.Analysis(
-        function,
-        entry=addr,
-        name="add",
-        effective_arch=s.arch,
-        mem=s.reader(),
-        unresolved_indirect_branches=unresolved,
+    function, _unresolved = s.analyze("add")
+    matches = function.find_all(
+        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
     )
-    matches = a.find(strider.pattern.add(strider.pattern.any_(), strider.pattern.any_()))
     assert matches
-    fp_via_root = a.fingerprint(matches[0].root)
-    fp_via_match = a.fingerprint(matches[0])
-    assert fp_via_root == fp_via_match
+    fp_via_function = function.asm_fingerprint(matches[0].root)
+    fp_via_node = function.node(matches[0].root).fingerprint()
+    assert fp_via_function == fp_via_node
 
 
 def test_fingerprint_rejects_bad_type():
@@ -304,25 +296,6 @@ def test_elf_lifter_repr():
     r = repr(s)
     assert "x86_64" in r
     assert "x86_64_systemv" in r
-
-
-def test_analysis_repr():
-    """`Analysis.__repr__` includes the function name and entry."""
-    elf = fixture_path("x64", "arithmetic")
-    s = strider.load_elf(str(elf))
-    addr = s.symbol("add")
-    function, unresolved = s.analyze("add")
-    a = strider.Analysis(
-        function,
-        entry=addr,
-        name="add",
-        effective_arch=s.arch,
-        mem=s.reader(),
-        unresolved_indirect_branches=unresolved,
-    )
-    r = repr(a)
-    assert "add" in r
-    assert "nodes=" in r
 
 
 # ── Analyse-many: hold an ElfLifter, call analyze repeatedly ────────────
@@ -397,33 +370,25 @@ def test_analyze_allow_code_before_start_addr():
 
 def test_standalone_strider_by_address():
     """`strider.lifter(arch, mem)` over a raw BufferReader lifts a
-    function by address; wrapping the resulting `Function` in an
-    `Analysis` lets find() and fingerprint_pcode() work even though
-    there is no backing ELF symbol table."""
+    function by address; pattern queries work directly on the returned
+    `Function` and `fingerprint_pcode` works directly on the `Lifter`
+    (which owns the Sleigh) — no wrapper needed even though there is no
+    backing ELF symbol table."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.load_elf(str(elf))
     mem = loaded._elf.reader()
     arch = strider.SleighArch.x86_64()
     addr = loaded.symbol("add")
     s = strider.lifter(arch, mem)
-    fn, unresolved = s.analyze(addr, strider.CallingConvention.x86_64_systemv())
-    a = strider.Analysis(
-        fn,
-        entry=addr,
-        effective_arch=arch,
-        mem=mem,
-        unresolved_indirect_branches=unresolved,
-    )
-    assert a.entry == addr
-    assert a.name is None
-    assert a.function.node_count() > 0
-    matches = a.find(
+    fn, _unresolved = s.analyze(addr, strider.CallingConvention.x86_64_systemv())
+    assert fn.node_count() > 0
+    matches = fn.find_all(
         strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
     )
     assert matches, "expected at least one Add node"
-    # The standalone path must keep fingerprint_pcode working using the
-    # supplied mem + effective arch.
-    pcode = a.fingerprint_pcode(matches[0].root)
+    # The standalone path must keep fingerprint_pcode working via the
+    # Lifter that produced the function.
+    pcode = s.fingerprint_pcode(fn.node(matches[0].root))
     assert isinstance(pcode, list)
     for addr_, text in pcode:
         assert isinstance(addr_, int)

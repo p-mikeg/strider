@@ -65,9 +65,14 @@ _ARCH_PRESETS = {
 }
 
 
-def built_function(arch_name: str, case: str, symbol: str, *, optimize: bool = True):
+def built_lifter_and_function(
+    arch_name: str, case: str, symbol: str, *, optimize: bool = True
+):
     """Lift `fixtures/out/<arch_name>/<case>.elf::<symbol>` and return the
-    IR `Function`.
+    `(Lifter, Function)` pair — the `Lifter` is needed by callers that
+    want the Sleigh-needing pretty renders (`dump_html` / `dump_dot` /
+    `html_str`) or `fingerprint_pcode`, which live on it rather than on
+    the bare `Function`.
 
     The single `Lifter.analyze` handle always drives the full
     lift+optimise+resolve pipeline (there is no lower-level "lift only,
@@ -87,6 +92,16 @@ def built_function(arch_name: str, case: str, symbol: str, *, optimize: bool = T
     lift = strider.lifter(arch, mem, rom=mem)
     function, _unresolved = lift.analyze(
         addr, cc, allow_code_before_start_addr=True
+    )
+    return lift, function
+
+
+def built_function(arch_name: str, case: str, symbol: str, *, optimize: bool = True):
+    """Like `built_lifter_and_function`, but returns just the `Function`
+    for callers that only need Sleigh-free reads (pattern queries,
+    `node_count`, `raw_dot_str`, ...)."""
+    _lift, function = built_lifter_and_function(
+        arch_name, case, symbol, optimize=optimize
     )
     return function
 

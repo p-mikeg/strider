@@ -201,7 +201,11 @@ impl PyNode {
     /// Empty for structural node kinds (Entry, InitialMemory, phis,
     /// Region) whose existence is synthesised by the IR builder rather
     /// than tied to a specific asm instruction.
-    fn fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
+    ///
+    /// `pub(crate)` so `PyLifter::fingerprint_pcode` (`strider_cls.rs`)
+    /// can reuse the same addr-only lookup instead of duplicating the
+    /// side-table read.
+    pub(crate) fn fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
         self.with_node(py, |function, nid| function.side_tables().asm_fingerprint(nid).to_vec())
     }
 
