@@ -133,6 +133,35 @@ pub fn elf_get_loadable_regions_including_writable(
     collect_loadable_regions(obj, LoadFilter::AllAllocatable)
 }
 
+/// Force the **section-header-walk** strategy (first-wins VMA dedup)
+/// regardless of `obj.kind()` — bypassing [`elf_get_loadable_regions`]'s
+/// kind dispatch even for an ET_EXEC / ET_DYN binary that DOES carry
+/// PT_LOAD segments.  Used by `strider.load_elf_from_sections` (the
+/// Python high-level facade) when the caller explicitly wants
+/// section-granular regions (e.g. `.text` / `.rodata` / `.plt` as
+/// separate mappings) instead of the segment loader's coalesced
+/// PT_LOAD ranges.
+///
+/// # Errors
+///
+/// Same as [`elf_get_loadable_regions`].
+pub fn elf_get_loadable_regions_sections_only(obj: &object::File<'_>) -> Result<Vec<MemRegion>> {
+    collect_loadable_sections_dedup(obj, LoadFilter::CodeAndReadOnly)
+}
+
+/// Like [`elf_get_loadable_regions_sections_only`] but additionally
+/// includes writable mappings, mirroring
+/// [`elf_get_loadable_regions_including_writable`]'s writable axis.
+///
+/// # Errors
+///
+/// Same as [`elf_get_loadable_regions`].
+pub fn elf_get_loadable_regions_sections_only_including_writable(
+    obj: &object::File<'_>,
+) -> Result<Vec<MemRegion>> {
+    collect_loadable_sections_dedup(obj, LoadFilter::AllAllocatable)
+}
+
 /// Kind-dispatch: program-headers path for ET_EXEC / ET_DYN, sections
 /// path (with first-wins VMA dedup) for ET_REL and everything else.
 fn collect_loadable_regions(obj: &object::File<'_>, filter: LoadFilter) -> Result<Vec<MemRegion>> {

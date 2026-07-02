@@ -18,10 +18,11 @@ import pathlib
 import strider
 from strider.pattern import add, load
 
-# 1. Load the ELF. `strider.load_elf(path)` returns an `ElfStrider` —
-#    one object that *is* the loaded binary. It auto-detects the arch +
-#    calling convention from the ELF header, wires the code + ROM
-#    readers internally, and answers `symbol()` / `symbols()` /
+# 1. Load the ELF. `strider.load_elf(path)` returns an `ElfLifter` —
+#    one object that *is* the loaded binary (it IS a `Lifter`:
+#    `isinstance(prog, strider.Lifter)` is true). It auto-detects the
+#    arch + calling convention from the ELF header, wires the code +
+#    ROM readers internally, and answers `symbol()` / `symbols()` /
 #    `entry_point()` queries — no pyelftools dance required.
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
@@ -30,11 +31,21 @@ prog = strider.load_elf(str(FIXTURE))
 addr = prog.symbol("array_sum")
 print(f"array_sum @ {addr:#x}")
 
-# 2. Analyze a function. `ElfStrider.analyze(name_or_addr)` wraps:
+# 2. Analyze a function. `ElfLifter.analyze(name_or_addr)` wraps:
 #       Sleigh build → CFG build → IR lift → optimization
 #       → indirect-branch fixed-point loop → final IR
-#    in one call, returning an `Analysis` over the lifted Function.
-a = prog.analyze("array_sum", allow_code_before_start_addr=True)
+#    in one call, returning the same `(Function, unresolved)` tuple as
+#    the base `Lifter.analyze`.  Wrap it in an `Analysis` for the
+#    `find` / `dump_html` conveniences used below.
+function, unresolved = prog.analyze("array_sum", allow_code_before_start_addr=True)
+a = strider.Analysis(
+    function,
+    entry=addr,
+    name="array_sum",
+    effective_arch=prog.arch,
+    mem=prog.reader(),
+    unresolved_indirect_branches=unresolved,
+)
 print(f"lifted {a}")
 
 # 3. Query the optimized graph.

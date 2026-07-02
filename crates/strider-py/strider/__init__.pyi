@@ -101,7 +101,7 @@ class BufferReader:
     roles, so one `BufferReader` can be passed as either argument to
     `strider.lifter` / `strider.Sleigh`.
 
-    For an ELF, prefer `strider.load_elf(path)` -> `ElfStrider`, which
+    For an ELF, prefer `strider.load_elf(path)` -> `ElfLifter`, which
     wires a multi-region reader up automatically and adds symbol/
     entry-point lookups.
     """
@@ -175,13 +175,15 @@ class Cfg:
 
 class Lifter:
     """The single lift+optimise+resolve handle.  Build one with
-    `strider.lifter(arch, mem, rom=None)` — `cc` is NOT fixed at
+    `strider.lifter(arch, mem, rom=None)` (equivalently
+    `strider.Lifter(arch, mem, rom=None)`) — `cc` is NOT fixed at
     construction, it is a required argument of every `analyze` call, so
     one handle can analyse functions under different calling
     conventions.  `build_cfg` is structural-only (no lift/optimise/
     indirect-branch resolution); `analyze` drives the full fixed-point
-    loop."""
+    loop.  Subclassable from Python — see `ElfLifter`."""
 
+    def __init__(self, arch: SleighArch, mem: Any, rom: Optional[Any] = ...) -> None: ...
     def build_cfg(
         self,
         entry: int,
@@ -211,7 +213,7 @@ def lifter(
     """Build a `Lifter` — the single lift+optimise+resolve handle — over
     a raw code reader (`BufferReader` or `MemReader`).  `rom` is the
     optional read-only memory image for `LoadReadOnly` constant folding.
-    For an ELF, prefer `strider.load_elf(path)` → `ElfStrider`, which
+    For an ELF, prefer `strider.load_elf(path)` → `ElfLifter`, which
     wires `mem`/`rom` from the loaded sections and adds symbol lookups."""
     ...
 
@@ -421,12 +423,16 @@ def pcode_at_addrs(
 
 # ── High-level facade (strider._api) ─────────────────────────────────────
 
-class ElfStrider:
-    """The loaded ELF binary — `strider.load_elf(path)` returns one.
-    Holds the ELF symbol backend plus a persistent `Strider` run handle
-    wired with the ELF's memory (as both code reader and ROM); exposes
-    symbols, sizes, the entry point, raw reads, and `analyze()`.  Analyse
-    many functions by calling `analyze` repeatedly."""
+class ElfLifter(Lifter):
+    """The loaded ELF binary as a `Lifter` — `strider.load_elf(path)` /
+    `load_elf_from_segments(path)` / `load_elf_from_sections(path)`
+    return one.  `ElfLifter` IS a `Lifter`
+    (`isinstance(x, strider.Lifter)` is true): it carries the same
+    persistent lift+optimise+resolve state wired with the ELF's memory
+    (as both code reader and ROM), plus the ELF symbol backend
+    (symbols, sizes, the entry point, raw reads) and a name-aware
+    `analyze(target)`.  Analyse many functions by calling `analyze`
+    repeatedly."""
     @property
     def arch(self) -> SleighArch: ...
     @property
@@ -454,6 +460,7 @@ class ElfStrider:
     def analyze(
         self,
         target: Any,  # str | int
+        cc: Optional[CallingConvention] = ...,
         *,
         function_max_size: Optional[int] = ...,
         allow_code_before_start_addr: bool = ...,
@@ -462,18 +469,30 @@ class ElfStrider:
         calls_clobber: bool = ...,
         assume_distinct_sp_bases_disjoint: bool = ...,
         alias_mode: str = ...,
-    ) -> Analysis:
+    ) -> Tuple[Function, List[int]]:
         """Lift the function at `target` (symbol name or absolute
-        address) into an `Analysis`, driving the full
-        lift+optimise+resolve pipeline through the persistent inner
-        `Lifter`."""
+        address), driving the full lift+optimise+resolve pipeline and
+        returning the same `(Function, unresolved_addrs)` tuple as the
+        base `Lifter.analyze`.  `cc` defaults to the ELF-derived (or
+        explicitly-passed at construction) calling convention."""
         ...
     def __repr__(self) -> str: ...
 
 class Analysis:
-    """Wrapper around a lifted, optimized IR `Function` — the result of
-    `ElfStrider.analyze` — with convenience methods for pattern queries
-    and provenance lookup."""
+    """Optional wrapper around a lifted, optimized IR `Function` —
+    manually built by a caller around a `Lifter.analyze` /
+    `ElfLifter.analyze` result — with convenience methods for pattern
+    queries and provenance lookup."""
+    def __init__(
+        self,
+        function: Function,
+        *,
+        entry: int,
+        name: Optional[str] = ...,
+        effective_arch: Optional[SleighArch] = ...,
+        mem: Optional[Any] = ...,
+        unresolved_indirect_branches: Optional[List[int]] = ...,
+    ) -> None: ...
     @property
     def function(self) -> Function: ...
     @property
@@ -503,6 +522,33 @@ class Analysis:
         ...
     def dump_html(self, path: str, style: Optional[str] = ...) -> None: ...
     def dump_dot(self, path: str) -> None: ...
+    def __repr__(self) -> str: ...
+
+def load_elf_from_segments(
+    path: str,
+    *,
+    apply_relocations: bool = ...,
+    arch: Optional[SleighArch] = ...,
+    cc: Optional[CallingConvention] = ...,
+) -> ElfLifter:
+    """Load an ELF binary and return an `ElfLifter`, collecting regions
+    by walking PT_LOAD program headers (falling back to sections for
+    ET_REL, which has none).  The arch + calling convention are
+    auto-picked from the ELF header (override via `arch=` / `cc=` for
+    kernel / syscall / custom-ABI workflows)."""
+    ...
+
+def load_elf_from_sections(
+    path: str,
+    *,
+    apply_relocations: bool = ...,
+    arch: Optional[SleighArch] = ...,
+    cc: Optional[CallingConvention] = ...,
+) -> ElfLifter:
+    """Like `load_elf_from_segments`, but FORCES the section-header-walk
+    region-collection strategy (first-wins VMA dedup) even for a linked
+    ET_EXEC / ET_DYN binary that does carry PT_LOAD segments."""
+    ...
 
 def load_elf(
     path: str,
@@ -510,10 +556,8 @@ def load_elf(
     apply_relocations: bool = ...,
     arch: Optional[SleighArch] = ...,
     cc: Optional[CallingConvention] = ...,
-) -> ElfStrider:
-    """Load an ELF binary and return an `ElfStrider` with the arch +
-    calling convention auto-picked from the ELF header (override via
-    `arch=` / `cc=` for kernel / syscall / custom-ABI workflows)."""
+) -> ElfLifter:
+    """Convenience: delegates to `load_elf_from_segments`."""
     ...
 
 # ── Subpackages ────────────────────────────────────────────────────────

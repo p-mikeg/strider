@@ -1,6 +1,6 @@
 """Tests for the p-code provenance surface.
 
-Covers `ElfStrider.pcode(addr, count)`, the `strider.pcode_at` /
+Covers `ElfLifter.pcode(addr, count)`, the `strider.pcode_at` /
 `strider.pcode_at_addrs` `#[pyfunction]`s, and the
 `Analysis.fingerprint_pcode(node)` audit-trail companion to
 `Analysis.fingerprint`.
@@ -26,7 +26,24 @@ def _load_memory():
     return strider.load_elf(str(elf))
 
 
-# ── ElfStrider.pcode ─────────────────────────────────────────────────────
+def _analyze_wrapped(prog, name: str) -> strider.Analysis:
+    """Wrap `ElfLifter.analyze(name)`'s `(Function, unresolved)` tuple in
+    an `Analysis` — `analyze()` itself no longer constructs one
+    automatically, so the `fingerprint_pcode` tests below (which need
+    the mem + effective-arch binding `Analysis` carries) build it here."""
+    addr = prog.symbol(name)
+    function, unresolved = prog.analyze(name)
+    return strider.Analysis(
+        function,
+        entry=addr,
+        name=name,
+        effective_arch=prog.arch,
+        mem=prog.reader(),
+        unresolved_indirect_branches=unresolved,
+    )
+
+
+# ── ElfLifter.pcode ─────────────────────────────────────────────────────
 
 
 def test_pcode_returns_count_tuples_in_order():
@@ -79,7 +96,7 @@ def test_pcode_default_count_is_one():
 
 def test_pcode_at_pyfunction_matches_elf_strider_pcode():
     """The low-level `strider.pcode_at(arch, mem, addr, count)`
-    pyfunction produces the same result as `ElfStrider.pcode` for a
+    pyfunction produces the same result as `ElfLifter.pcode` for a
     non-interworking arch."""
     prog = _load_memory()
     entry = prog.symbol("array_sum")
@@ -114,7 +131,7 @@ def test_fingerprint_pcode_renders_a_matched_node():
     `(addr, text)` pairs whose addresses equal `fingerprint(match)`
     and whose texts are non-empty, sorted by address."""
     prog = _load_memory()
-    a = prog.analyze("array_sum")
+    a = _analyze_wrapped(prog, "array_sum")
     matches = a.find(
         strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
     )
@@ -142,7 +159,7 @@ def test_fingerprint_pcode_accepts_root_id_and_node():
     """`fingerprint_pcode` accepts a raw id, a Match, and a Node handle
     interchangeably (mirrors `fingerprint`'s coercion)."""
     prog = _load_memory()
-    a = prog.analyze("array_sum")
+    a = _analyze_wrapped(prog, "array_sum")
     matches = a.find(
         strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
     )
@@ -157,7 +174,7 @@ def test_fingerprint_pcode_accepts_root_id_and_node():
 def test_fingerprint_pcode_empty_for_structural_node():
     """A structural node (no fingerprint, e.g. Entry) yields `[]`."""
     prog = _load_memory()
-    a = prog.analyze("array_sum")
+    a = _analyze_wrapped(prog, "array_sum")
     fn = a.function
     struct_id = None
     for nid in fn.node_ids():

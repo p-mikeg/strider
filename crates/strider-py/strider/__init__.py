@@ -30,9 +30,15 @@ if hasattr(_ext, "pattern"):
 __version__ = _ext.__version__
 
 # High-level Python facade.  Adds:
-#   * `strider.load_elf(path)` → `ElfStrider` (the loaded ELF + lift handle)
-#   * `strider.ElfStrider` — the user-facing loaded-binary handle
-#   * `strider.Analysis` — wrapper around a lifted `Function`
+#   * `strider.load_elf(path)` → `ElfLifter` (delegates to
+#     `load_elf_from_segments`)
+#   * `strider.load_elf_from_segments(path)` / `load_elf_from_sections(path)`
+#     — explicit ELF region-collection strategy (PT_LOAD segments vs
+#     section headers)
+#   * `strider.ElfLifter` — an `ElfLifter` IS a `Lifter`
+#     (`isinstance(x, strider.Lifter)` is true), plus the ELF symbol
+#     backend and a name-aware `analyze(target)`
+#   * `strider.Analysis` — optional wrapper around a lifted `Function`
 #
 # The cdylib's `strider.lifter(arch, mem, rom=None) -> Lifter` is the
 # single lift+optimise+resolve handle (`build_cfg` + `analyze`); it comes
@@ -40,6 +46,8 @@ __version__ = _ext.__version__
 from . import _api as _api  # noqa: E402,F401
 from ._api import (  # noqa: E402,F401
     Analysis,
-    ElfStrider,
+    ElfLifter,
     load_elf,
+    load_elf_from_segments,
+    load_elf_from_sections,
 )

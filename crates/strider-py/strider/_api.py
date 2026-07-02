@@ -7,21 +7,36 @@ This module adds the three-line convenience workflow:
 
 ```python
 import strider
-es = strider.load_elf("path/to/file.elf")   # → ElfStrider
-a = es.analyze("function_name")             # → Analysis
-matches = a.find(strider.pattern.call())    # → list[Match]
+lift = strider.load_elf("path/to/file.elf")        # → ElfLifter
+function, unresolved = lift.analyze("function_name")
+matches = function.find_all(strider.pattern.call())  # → list[Match]
 ```
 
-`strider.load_elf(path)` returns an `ElfStrider` — one object that *is*
-the loaded ELF.  It holds the ELF symbol backend AND a persistent
-`Lifter` handle (the Rust `strider.lifter(...)`) wired with the ELF's
-memory as both the code reader and the read-only-memory image for
+`strider.load_elf(path)` returns an `ElfLifter` — an `ElfLifter` IS a
+`Lifter` (`isinstance(lift, strider.Lifter)` is true): it holds the ELF
+symbol backend AND the persistent lift+optimise+resolve state (the same
+Rust handle `strider.lifter(...)` builds), wired with the ELF's memory
+as both the code reader and the read-only-memory image for
 `LoadReadOnly` constant folding.  It exposes symbols, sizes, the entry
-point, raw reads, and `analyze()`.
+point, raw reads, and a name-aware `analyze(target)` that resolves a
+`str` symbol name (or accepts an address) and returns the same
+`(Function, unresolved_addrs)` tuple as the base `Lifter.analyze`.
+
+`strider.load_elf_from_segments(path)` and
+`strider.load_elf_from_sections(path)` pick the ELF region-collection
+strategy explicitly (PT_LOAD program headers vs section headers);
+`strider.load_elf(path)` is a thin convenience that delegates to
+`load_elf_from_segments`.
 
 For non-ELF / firmware / custom-source cases, build a `Lifter`
 directly with `strider.lifter(arch, mem, rom=None)` (the native
-Rust handle) and call its `analyze(addr, cc, ...)`.
+Rust handle) and call its `analyze(addr, cc, ...)`.  `Analysis` is an
+optional convenience wrapper around a bare `(Function, ...)` result —
+`find` / `find_one` / `find_joined` / `fingerprint` /
+`fingerprint_pcode` — for callers who want that on top of a raw
+`Lifter.analyze()` result (an `ElfLifter.analyze()` result can be
+wrapped the same way; `analyze()` itself never constructs one
+automatically).
 
 Arch detection is done by reading the first 20 bytes of the ELF
 header (magic + EI_CLASS + EI_DATA + e_machine).  No pyelftools
@@ -43,6 +58,7 @@ _ext = _importlib.import_module("strider.strider")
 from .strider import (  # noqa: E402
     CallingConvention,
     Function,
+    Lifter,
     SleighArch,
 )
 
@@ -176,25 +192,60 @@ def _effective_arch_and_addr(
     return arch, raw_addr
 
 
-# ── ElfStrider facade ───────────────────────────────────────────────────────
+# ── ElfLifter facade ─────────────────────────────────────────────────────
 
 
-def load_elf(
+def _load_elf_with(
+    loader,
+    path: str,
+    *,
+    apply_relocations: bool,
+    arch: Optional[SleighArch],
+    cc: Optional[CallingConvention],
+) -> "ElfLifter":
+    """Shared body of `load_elf_from_segments` / `load_elf_from_sections`:
+    validates `path`, auto-detects `arch`/`cc` from the ELF header when
+    either is omitted, calls the Rust `loader(path, apply_relocations)`
+    (one of `_ext.load_elf_from_segments` / `_ext.load_elf_from_sections`)
+    to build the `_LoadedElf` backend, and wraps it in an `ElfLifter`.
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+    header = _ElfHeader(path)
+    # Auto-detect the arch/cc the header implies, but let any explicit
+    # argument win.  Only fall into the (possibly raising) detector when
+    # at least one of arch/cc is missing.
+    if arch is None or cc is None:
+        det_arch, det_cc = _arch_and_cc_for_elf(header)
+        arch = arch if arch is not None else det_arch
+        cc = cc if cc is not None else det_cc
+    elf = loader(path, apply_relocations)
+    return ElfLifter(elf, arch, cc, elf.reader(), rom=elf.ro_reader())
+
+
+def load_elf_from_segments(
     path: str,
     *,
     apply_relocations: bool = True,
     arch: Optional[SleighArch] = None,
     cc: Optional[CallingConvention] = None,
-) -> "ElfStrider":
-    """Load an ELF binary and return an `ElfStrider` — one object that
-    *is* the loaded binary, with the arch and userland calling convention
-    auto-picked from the ELF header.
+) -> "ElfLifter":
+    """Load an ELF binary and return an `ElfLifter` — an `ElfLifter` IS a
+    `Lifter` (`isinstance(lift, strider.Lifter)` is true), with the arch
+    and userland calling convention auto-picked from the ELF header.
+
+    Regions are collected by walking **PT_LOAD program headers** (the
+    runtime memory layout) for ET_EXEC / ET_DYN binaries, falling back to
+    the section-walker (first-wins VMA dedup) for ET_REL objects, which
+    carry no program headers at all.  This is the strategy strider has
+    always used; see `load_elf_from_sections` to force section-header
+    walking even for a linked binary.
 
     For non-userland workflows (Linux kernel, syscall stubs, embedded
     firmware with a custom CC) pass an explicit `arch=` / `cc=`, e.g.:
 
     ```python
-    es = strider.load_elf(
+    lift = strider.load_elf_from_segments(
         "vmlinux-i386",
         arch=strider.SleighArch.x86(),
         cc=strider.CallingConvention.x86_linux_kernel(),
@@ -212,83 +263,112 @@ def load_elf(
         of the supported architectures (only when `arch`/`cc` aren't
         both supplied).
     """
-    if not os.path.exists(path):
-        raise FileNotFoundError(path)
-    header = _ElfHeader(path)
-    # Auto-detect the arch/cc the header implies, but let any explicit
-    # argument win.  Only fall into the (possibly raising) detector when
-    # at least one of arch/cc is missing.
-    if arch is None or cc is None:
-        det_arch, det_cc = _arch_and_cc_for_elf(header)
-        arch = arch if arch is not None else det_arch
-        cc = cc if cc is not None else det_cc
-    elf = _ext.load_elf(path, apply_relocations)
-    return ElfStrider(elf=elf, arch=arch, cc=cc, _elf_path=path, _header=header)
+    return _load_elf_with(
+        _ext.load_elf_from_segments,
+        path,
+        apply_relocations=apply_relocations,
+        arch=arch,
+        cc=cc,
+    )
 
 
-class ElfStrider:
-    """The loaded ELF binary as a reusable analysis handle: an ELF symbol
-    backend plus a persistent `Lifter` handle wired with the ELF's
-    memory — the writable-inclusive reader as the code reader (`mem`),
-    and the runtime-immutable reader (code + read-only only) as the
-    `rom` for `LoadReadOnly` constant folding.
+def load_elf_from_sections(
+    path: str,
+    *,
+    apply_relocations: bool = True,
+    arch: Optional[SleighArch] = None,
+    cc: Optional[CallingConvention] = None,
+) -> "ElfLifter":
+    """Like `load_elf_from_segments`, but FORCES the section-header-walk
+    region-collection strategy (first-wins VMA dedup) — even for a linked
+    ET_EXEC / ET_DYN binary that does carry PT_LOAD segments.  Use this
+    when you want section-granular regions (`.text` / `.rodata` / `.plt`
+    as separate mappings) instead of the segment loader's coalesced
+    PT_LOAD ranges.
 
-    Constructed via `strider.load_elf(path)` — for the auto-detected
-    common case, or with explicit `arch=` / `cc=` for kernel / syscall
-    / custom-ABI workflows.  Analyse many functions by calling
-    `analyze` repeatedly:
+    Same arguments, auto-detection, and error contract as
+    `load_elf_from_segments`.
+    """
+    return _load_elf_with(
+        _ext.load_elf_from_sections,
+        path,
+        apply_relocations=apply_relocations,
+        arch=arch,
+        cc=cc,
+    )
+
+
+def load_elf(
+    path: str,
+    *,
+    apply_relocations: bool = True,
+    arch: Optional[SleighArch] = None,
+    cc: Optional[CallingConvention] = None,
+) -> "ElfLifter":
+    """Convenience: delegates to `load_elf_from_segments` — the
+    region-collection strategy strider has always used."""
+    return load_elf_from_segments(
+        path, apply_relocations=apply_relocations, arch=arch, cc=cc
+    )
+
+
+class ElfLifter(Lifter):
+    """The loaded ELF binary as a `Lifter`: `ElfLifter` IS a `Lifter`
+    (`isinstance(lift, strider.Lifter)` is true) — it carries the same
+    persistent lift+optimise+resolve state as a plain `strider.lifter(...)`
+    handle, wired with the ELF's memory — the writable-inclusive reader
+    as the code reader, and the runtime-immutable reader (code +
+    read-only only) as the rom for `LoadReadOnly` constant folding — PLUS
+    the ELF symbol backend (`symbol` / `symbols` / `symbol_size` /
+    `entry_point` / `functions`) and a name-aware `analyze(target)`
+    override that resolves a `str` symbol to an address before delegating
+    to the base `Lifter.analyze`.
+
+    Constructed via `strider.load_elf(path)` / `load_elf_from_segments`
+    / `load_elf_from_sections` — for the auto-detected common case, or
+    with explicit `arch=` / `cc=` for kernel / syscall / custom-ABI
+    workflows.  Never construct `ElfLifter(...)` directly.  Analyse many
+    functions by calling `analyze` repeatedly:
 
     ```python
-    es = strider.load_elf("vmlinux-i386", arch=strider.SleighArch.x86(),
-                          cc=strider.CallingConvention.x86_linux_kernel())
-    for fn in es.functions():
-        a = es.analyze(fn)
+    lift = strider.load_elf("vmlinux-i386", arch=strider.SleighArch.x86(),
+                            cc=strider.CallingConvention.x86_linux_kernel())
+    for fn in lift.functions():
+        function, unresolved = lift.analyze(fn)
     ```
     """
 
-    __slots__ = ("_elf", "_lifter", "_arch", "_cc", "_elf_path", "_header")
+    __slots__ = ("_elf", "_arch", "_cc")
+
+    def __new__(
+        cls,
+        elf: object,  # strider._LoadedElf (internal, returned by the loader)
+        arch: SleighArch,
+        cc: CallingConvention,
+        mem: object,
+        rom: Optional[object] = None,
+    ) -> "ElfLifter":
+        # Build the base `Lifter` (the Rust `PyLifter` payload) via the
+        # standard PyO3 "extra Python state on a Rust base" recipe:
+        # `Lifter.__new__` only wants `(arch, mem, rom=...)`.
+        return super().__new__(cls, arch, mem, rom=rom)
 
     def __init__(
         self,
-        elf: object,  # strider._LoadedElf (internal, returned by load_elf)
+        elf: object,
         arch: SleighArch,
         cc: CallingConvention,
-        *,
-        _elf_path: Optional[str] = None,
-        _header: Optional[_ElfHeader] = None,
+        mem: object,
+        rom: Optional[object] = None,
     ) -> None:
+        del mem, rom  # consumed by __new__ / the base Lifter construction
         self._elf = elf
         self._arch = arch
+        # `cc` is NOT stored on the base `Lifter` (it takes no default —
+        # every `analyze` call supplies its own); `ElfLifter` keeps the
+        # ELF-derived (or explicitly-passed) default here and threads it
+        # into `analyze` below when the caller doesn't override it.
         self._cc = cc
-        self._elf_path = _elf_path
-        self._header = _header
-        # Persistent lift handle.  The ELF's writable-inclusive regions
-        # serve as the code reader (`mem`); the runtime-immutable regions
-        # (code + read-only only) serve as the read-only-memory image
-        # (`rom`) for `LoadReadOnly` constant folding.  The rom MUST stay
-        # immutable: the fold trusts every resolvable address
-        # unconditionally (see `_rebuild_lifter`).  `cc` is NOT baked into
-        # the handle (the native `Lifter` stores no default cc) — it is
-        # kept here on `self._cc` and passed explicitly to `analyze` below.
-        self._rebuild_lifter()
-
-    def _rebuild_lifter(self) -> None:
-        """(Re)build the persistent inner `Lifter` handle from the ELF's
-        *current* loaded regions.  Called at construction and after
-        `add_elf`: the handle snapshots the memory map when it is built,
-        so it must be rebuilt when the regions change for a
-        later-merged shared library to be visible to `analyze`."""
-        # `mem` (instruction fetch / raw reads) is the writable-inclusive
-        # reader; `rom` (LoadReadOnly constant folding) MUST be the
-        # runtime-immutable reader — code + read-only sections only.  The
-        # fold replaces a constant-address load with the resolved bytes
-        # WITHOUT consulting the memory chain, so a writable global that
-        # is stored then reloaded must not fold to its file-initial value.
-        self._lifter = _ext.lifter(
-            self._arch,
-            self._elf.reader(),
-            rom=self._elf.ro_reader(),
-        )
 
     # ── Properties for introspection / advanced use ─────────────────
 
@@ -300,15 +380,13 @@ class ElfStrider:
     @property
     def cc(self) -> CallingConvention:
         """The default calling convention (`CallingConvention`) applied
-        when analysing functions."""
+        when analysing functions and `cc` isn't passed explicitly to
+        `analyze`."""
         return self._cc
 
     def __repr__(self) -> str:
-        path = self._elf_path or "<no path>"
-        return (
-            f"ElfStrider(elf={path!r}, arch={self._arch.name()}, "
-            f"cc={self._cc.name()})"
-        )
+        """`repr(elf_lifter)` — includes the arch + cc names."""
+        return f"ElfLifter(arch={self._arch.name()}, cc={self._cc.name()})"
 
     # ── Symbol lookup / raw reads (delegate to the loaded ELF) ───────
 
@@ -364,12 +442,12 @@ class ElfStrider:
         extends the loaded regions and the symbol set.  The
         earlier-loaded ELF wins on symbol-name collisions.
 
-        The persistent inner `Lifter` handle snapshots the memory map
-        when it is built, so it is rebuilt here from the merged
-        regions — subsequent `analyze` calls (and `read`/`symbol`) see
-        the newly-added ELF."""
+        The base `Lifter`'s Sleigh was built from a point-in-time
+        snapshot of the ELF's regions, so it is rebuilt here from the
+        merged regions — subsequent `analyze` calls (and `read`/`symbol`)
+        see the newly-added ELF."""
         self._elf.add_elf(path, apply_relocations)
-        self._rebuild_lifter()
+        self._rebuild(self._arch, self._elf.reader(), rom=self._elf.ro_reader())
 
     # ── P-code ───────────────────────────────────────────────────────
 
@@ -397,112 +475,73 @@ class ElfStrider:
     def analyze(
         self,
         target: Union[str, int],
-        *,
-        function_max_size: Optional[int] = None,
-        allow_code_before_start_addr: bool = False,
-        compact: bool = True,
-        per_address_ccs: Optional[dict] = None,
-        calls_clobber: bool = False,
-        assume_distinct_sp_bases_disjoint: bool = False,
-        alias_mode: str = "stack_global_disjoint",
-    ) -> "Analysis":
+        cc: Optional[CallingConvention] = None,
+        **opts,
+    ):
         """Lift the function at `target` (symbol name or absolute
-        address) into an `Analysis`.
+        address), returning the same `(Function, unresolved_addrs)`
+        tuple as the base `Lifter.analyze`.
 
-        Drives the full orchestrator pipeline through the persistent
-        inner `Lifter`: builds the CFG, lifts to IR, runs the stable +
-        destructive optimizers, and resolves indirect branches via the
-        fixed-point loop.
+        A `str` target is resolved to an address via the ELF symbol
+        table; when the symbol's recorded size is non-zero and the
+        caller didn't pass an explicit `function_max_size`, the ELF's
+        `st_size` is used as the bound automatically.  An `int` target
+        is used verbatim.
 
-        Optional arguments:
-        * `function_max_size` — bound the lift to `[entry, entry+N)`;
-          useful when the ELF's `st_size` is zero (stripped binary)
-          or when you only want a prefix.  When the symbol's
-          recorded size is non-zero and no explicit value is passed,
-          the ELF's `st_size` is used automatically.
-        * `allow_code_before_start_addr` — let the lifter follow
-          backward branches below `entry`.  Required for trampolines
-          / cold-jumps that reach a label before the prologue.
-        * `compact` — compact the IR arena after analysis (default
-          `True`).
-        * `per_address_ccs` — per-target-address calling-convention
-          overrides.
-        * `calls_clobber` — treat a `Call` / `CallOther`
-          on a stack-arg load's memory chain as shadowing the slot
-          (default `False`, i.e. aggressive stack-arg detection).
-        * `assume_distinct_sp_bases_disjoint` — assume a `Store`
-          rooted at a *different* SP base (e.g. an alignment-masked
-          `sp & -16` frame local) is disjoint from the incoming-arg
-          slots rather than conservatively may-aliasing them (default
-          `False`).
-        * `alias_mode` — SP-aware alias precision shared by every memory
-          pass.  `"stack_global_disjoint"` (default) trusts that the
-          stack and global/constant memory never overlap; `"strict"` is
-          the always-sound floor that bails on any unprovable overlap.
+        `cc` defaults to the ELF-derived (or explicitly-passed at
+        construction) calling convention when omitted.  Every other
+        keyword argument (`function_max_size`, `allow_code_before_start_addr`,
+        `compact`, `per_address_ccs`, `calls_clobber`,
+        `assume_distinct_sp_bases_disjoint`, `alias_mode`) forwards
+        verbatim to the base `Lifter.analyze` — see its docstring for
+        the full list.
 
         The read-only memory for `LoadReadOnly` constant folding is the
         ELF's runtime-immutable regions (code + read-only sections only;
-        writable sections excluded), wired once into the inner `Lifter`
-        at construction.
+        writable sections excluded), wired into the base `Lifter` at
+        construction (and rebuilt by `add_elf`).
+
+        Raises `TypeError` when `target` is neither `str` nor `int`.
         """
         if isinstance(target, str):
             addr, sym_size = self._elf.symbol_addr_and_size(target)
-            name: Optional[str] = target
             # Honour the symbol's recorded size when the caller didn't
             # provide an explicit bound (zero-size symbols surface as
             # `None`).
-            if function_max_size is None:
-                function_max_size = sym_size
+            if opts.get("function_max_size") is None:
+                opts["function_max_size"] = sym_size
         elif isinstance(target, int):
             addr = target
-            name = None
         else:
             raise TypeError(
                 f"`target` must be a symbol name (str) or address (int), "
                 f"got {type(target).__name__}"
             )
 
-        # ARM Thumb interworking: switch to the Thumb Sleigh spec and
-        # strip the low bit for an interworking entry; non-ARM arches
-        # pass through verbatim.  The inner `Lifter` was built with the
-        # base arch, so a Thumb entry uses the effective arch here for
-        # fingerprint-pcode resolution (the lift itself follows the
-        # base-arch Sleigh the handle owns).
-        eff_arch, addr = _effective_arch_and_addr(self._arch, addr)
+        # ARM Thumb interworking: strip the low bit for an interworking
+        # entry; non-ARM arches pass through verbatim.  The base
+        # `Lifter`'s Sleigh was built with the base arch, so — as before
+        # this refactor — the lift itself follows that base-arch Sleigh;
+        # only the address is adjusted here.
+        _eff_arch, addr = _effective_arch_and_addr(self._arch, addr)
 
-        # `cc` is not stored on the native `Lifter` (Task 2 collapses it
-        # to a per-`analyze`-call argument), so `ElfStrider` supplies its
-        # own `self._cc` (the ELF-derived or explicitly-passed default)
-        # here.
-        function, unresolved_indirect_branches = self._lifter.analyze(
-            addr,
-            self._cc,
-            function_max_size=function_max_size,
-            allow_code_before_start_addr=allow_code_before_start_addr,
-            compact=compact,
-            per_address_ccs=per_address_ccs,
-            calls_clobber=calls_clobber,
-            assume_distinct_sp_bases_disjoint=assume_distinct_sp_bases_disjoint,
-            alias_mode=alias_mode,
-        )
-        return Analysis(
-            function=function,
-            entry=addr,
-            name=name,
-            effective_arch=eff_arch,
-            mem=self._elf.reader(),
-            unresolved_indirect_branches=unresolved_indirect_branches,
-        )
+        if cc is None:
+            cc = self._cc
+        return super().analyze(addr, cc, **opts)
 
 
 # ── Analysis ──────────────────────────────────────────────────────────────
 
 
 class Analysis:
-    """Wrapper around a lifted, optimized IR `Function` — the result of
-    `ElfStrider.analyze` (or a hand-built analysis over a standalone
-    `Lifter`) — with convenience methods for pattern queries and
-    provenance lookup.
+    """Optional wrapper around a lifted, optimized IR `Function` —
+    manually built by a caller around a `(Function, unresolved)` result
+    from `Lifter.analyze` / `ElfLifter.analyze` — with convenience
+    methods for pattern queries and provenance lookup.  Neither
+    `Lifter.analyze` nor `ElfLifter.analyze` constructs one
+    automatically; both return the bare tuple, and a caller who wants
+    the `find` / `fingerprint` / `fingerprint_pcode` conveniences wraps
+    the result in an `Analysis` explicitly.
     """
 
     __slots__ = (

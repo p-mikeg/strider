@@ -62,21 +62,24 @@ import strider
 from strider.pattern import Capture, var, add, load
 
 # 1. Load — auto-picks arch + calling convention from the ELF header.
+#    `s` IS a `Lifter` (`isinstance(s, strider.Lifter)` is true).
 s = strider.load_elf("fixtures/out/x86/memory.elf")
 
-# 2. Analyze a single function by symbol name (or by address int).
-a = s.analyze("array_sum")
+# 2. Analyze a single function by symbol name (or by address int) —
+#    returns the same `(Function, unresolved)` tuple as `Lifter.analyze`.
+function, unresolved = s.analyze("array_sum")
 
 # 3. Query the optimized graph with a pattern.
 base, off = Capture(), Capture()
 pat = load(addr=add(var(base), var(off)))
-for hit in a.find(pat, ignore_casts=True):
+for hit in function.find_all(pat, ignore_casts=True):
     print(hit.uint(off))
-    # `a.fingerprint(hit.root)` returns the contributing-instruction
-    # machine addresses — proof-of-correctness audit trail.
+    # `function.asm_fingerprint(hit.root)` returns the
+    # contributing-instruction machine addresses — proof-of-correctness
+    # audit trail.
 
 # 4. Visualize.
-a.dump_html("graph.html")
+function.to_html("graph.html")
 
 # Walk every function in the binary:
 for name in s.functions():
@@ -86,15 +89,16 @@ for name in s.functions():
 
 ### Analyze many functions with one setup
 
-An `ElfStrider` *is* the analyse-many handle: it bundles the arch + cc +
-memory once, so analysing many functions is just calling `analyze`
-repeatedly.  Any option can be passed (or overridden) per call:
+An `ElfLifter` *is* the analyse-many handle (it IS a `Lifter`): it
+bundles the arch + cc + memory once, so analysing many functions is
+just calling `analyze` repeatedly.  Any option can be passed (or
+overridden) per call:
 
 ```python
 for name in s.functions():
-    a = s.analyze(name)               # only the target per call
+    function, unresolved = s.analyze(name)   # only the target per call
 # Per-call option:
-a = s.analyze("array_sum", function_max_size=64)
+function, unresolved = s.analyze("array_sum", function_max_size=64)
 ```
 
 For a raw firmware blob / non-ELF source, build a standalone `Strider`
@@ -166,7 +170,7 @@ mem = strider.MemoryMap()
 mem.add_region(elf.entry_point(), elf.read(elf.entry_point(), 0x1000) or b"")
 
 # `Lifter` is the LOW-LEVEL lift-driver (lift one CFG, no indirect-branch
-# resolution) — distinct from the high-level `ElfStrider` returned by
+# resolution) — distinct from the high-level `ElfLifter` returned by
 # `strider.load_elf` and the `Strider` run handle from `strider.strider`.
 # It OWNS the Sleigh (built from `mem`); `cc` is bound at construction.
 s = strider.Lifter(arch, mem, cc)

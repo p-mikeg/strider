@@ -95,6 +95,23 @@ pub(crate) fn build_orch_sleigh(
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))
 }
 
+/// Build the orchestrator `Strider` handle over `mem` for `arch`, with
+/// optional read-only `rom`.  Shared by `PyLifter::new` (the `#[new]`
+/// constructor / the `lifter()` free function) and `PyLifter::rebuild`
+/// (the `ElfLifter.add_elf` reconstruction seam), so both paths build
+/// the handle identically.
+pub(crate) fn build_strider(
+    arch: PySleighArch,
+    mem: MemInput,
+    rom: Option<MemInput>,
+) -> PyResult<strider_orchestrator::Strider<AnyMemReader>> {
+    let reader = mem.into_any();
+    let sleigh = build_orch_sleigh(&arch, reader)?;
+    let rom_box: Option<Box<dyn strider_orchestrator::opt::ReadOnlyMemory>> =
+        rom.map(MemInput::into_box);
+    strider_orchestrator::Strider::new(arch.inner, sleigh, rom_box).map_err(into_strider_err)
+}
+
 /// Build the orchestrator `LiftOptions` from the CFG-shaping knobs plus
 /// the resolved per-address CCs and `compact` flag.
 pub(crate) fn orch_lift_opts(
@@ -158,7 +175,14 @@ pub(crate) fn prefer_pending_control_flow<T>(result: PyResult<T>) -> PyResult<T>
 /// `MemReader` may be a non-`Send` Python-callback / `BufferReader`
 /// reader.  Like every Python-thread-bound wrapper here, it is only ever
 /// touched while holding the GIL.
-#[pyclass(name = "Lifter", module = "strider", unsendable)]
+///
+/// `subclass`: lets the Python high-level facade define `ElfLifter` as a
+/// PURE-PYTHON subclass (`class ElfLifter(Lifter): ...` in `_api.py`) —
+/// `ElfLifter` adds the ELF symbol backend + a name-aware `analyze`
+/// override entirely in Python, reusing this Rust struct's `#[new]`
+/// constructor via `super().__new__(cls, arch, mem, rom=rom)` (the
+/// standard PyO3 "extra Python state on a Rust base" recipe).
+#[pyclass(name = "Lifter", module = "strider", unsendable, subclass)]
 pub struct PyLifter {
     /// The orchestrator handle: owns the Sleigh, the cached register
     /// table, and the optional rom.  Both `build_cfg` and `analyze` are
@@ -180,6 +204,37 @@ impl PyLifter {
 
 #[pymethods]
 impl PyLifter {
+    /// Construct the single lift+optimise+resolve handle over `mem` for
+    /// `arch`, with optional read-only `rom` for constant-load folding.
+    /// Equivalent to (and shares its implementation with) the
+    /// `strider.lifter(arch, mem, rom=None)` free function; both exist so
+    /// Python code can spell either `strider.lifter(...)` or
+    /// `strider.Lifter(...)`, and so a Python subclass (`ElfLifter`) can
+    /// build the base via `super().__new__(cls, arch, mem, rom=rom)`.
+    #[new]
+    #[pyo3(signature = (arch, mem, rom = None))]
+    fn new(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<Self> {
+        Ok(PyLifter {
+            inner: build_strider(arch, mem, rom)?,
+        })
+    }
+
+    /// Replace this handle's inner orchestrator state in place — the
+    /// `ElfLifter.add_elf` (Python subclass) reconstruction seam.
+    ///
+    /// The existing Sleigh was built from a point-in-time snapshot of
+    /// `mem`/`rom` (see `PyBufferReaderView`), so it does NOT observe
+    /// later region growth; `ElfLifter.add_elf` extends the ELF's
+    /// backing regions then calls this to rebuild the Sleigh/Strider
+    /// from the merged map so a subsequent `analyze` sees the newly
+    /// merged ELF.  Leading underscore marks it as an internal seam for
+    /// the Python high-level facade, not a general-purpose API.
+    #[pyo3(name = "_rebuild", signature = (arch, mem, rom = None))]
+    fn rebuild(&mut self, arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<()> {
+        self.inner = build_strider(arch, mem, rom)?;
+        Ok(())
+    }
+
     /// Build a control-flow graph for the function at `entry` — no lift,
     /// no optimisation, no indirect-branch resolution.  Every
     /// `BranchIndirect` is left as an `UnresolvedIndirectBranch`
@@ -367,16 +422,9 @@ impl PyLifter {
 #[pyfunction]
 #[pyo3(name = "lifter", signature = (arch, mem, rom = None))]
 pub fn lifter(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<PyLifter> {
-    let reader = mem.into_any();
-    let sleigh = build_orch_sleigh(&arch, reader)?;
-
-    let rom_box: Option<Box<dyn strider_orchestrator::opt::ReadOnlyMemory>> =
-        rom.map(MemInput::into_box);
-
-    let inner = strider_orchestrator::Strider::new(arch.inner, sleigh, rom_box)
-        .map_err(into_strider_err)?;
-
-    Ok(PyLifter { inner })
+    Ok(PyLifter {
+        inner: build_strider(arch, mem, rom)?,
+    })
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

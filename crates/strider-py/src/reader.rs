@@ -45,7 +45,7 @@ pub(crate) struct PyBufferReaderInner {
 ///
 /// This is the low-level reader for non-ELF / firmware / custom-source
 /// cases.  For an ELF, prefer `strider.load_elf(path)` (yields an
-/// `ElfStrider`), which builds the (multi-region) reader from the ELF
+/// `ElfLifter`), which builds the (multi-region) reader from the ELF
 /// sections and adds symbol lookups.
 ///
 /// `unsendable`: a `PyBufferReader` is only ever touched from the Python
@@ -154,20 +154,57 @@ impl PyBufferReader {
     }
 }
 
-// ── _LoadedElf (ELF parse + symbols, built by load_elf) ──────────────────
+// ── _LoadedElf (ELF parse + symbols, built by load_elf_from_*) ───────────
+
+/// Which ELF region-collection strategy `_LoadedElf` was built with.
+///
+/// `Segments` is the auto-dispatching path strider has always used:
+/// PT_LOAD program headers for ET_EXEC / ET_DYN, falling back to the
+/// section-walker for ET_REL (which has no program headers at all) —
+/// see `strider_reader::elf::elf_get_loadable_regions`'s kind dispatch.
+/// `Sections` FORCES the section-header walk (first-wins VMA dedup)
+/// even for a linked ET_EXEC/ET_DYN binary that does carry PT_LOAD
+/// segments — `strider.load_elf_from_sections`'s strategy.
+#[derive(Clone, Copy)]
+pub(crate) enum ElfRegionSource {
+    Segments,
+    Sections,
+}
 
 /// Load an ELF's code + read-only (and, when `apply_relocations`, the
 /// relocated-data) sections into the instruction-fetch / raw-read `mem`
 /// region list, applying every understood relocation in-place when
-/// requested.  Shared by both `load_elf` and `_LoadedElf::add_elf`.
+/// requested.  Shared by `load_elf_from_segments` /
+/// `load_elf_from_sections` and `_LoadedElf::add_elf`.
 fn elf_to_mem_regions(
     obj: &object::File<'static>,
+    source: ElfRegionSource,
     apply_relocations: bool,
 ) -> PyResult<Vec<MemRegion>> {
-    if apply_relocations {
-        strider_reader::elf::elf_load_with_relocations(obj).map_err(into_strider_err)
-    } else {
-        strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
+    match source {
+        ElfRegionSource::Segments => {
+            if apply_relocations {
+                strider_reader::elf::elf_load_with_relocations(obj).map_err(into_strider_err)
+            } else {
+                strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
+            }
+        }
+        ElfRegionSource::Sections => {
+            let mut regions = if apply_relocations {
+                strider_reader::elf::elf_get_loadable_regions_sections_only_including_writable(
+                    obj,
+                )
+                .map_err(into_strider_err)?
+            } else {
+                strider_reader::elf::elf_get_loadable_regions_sections_only(obj)
+                    .map_err(into_strider_err)?
+            };
+            if apply_relocations {
+                strider_reader::elf::apply_elf_relocations_autoload(&mut regions, obj)
+                    .map_err(into_strider_err)?;
+            }
+            Ok(regions)
+        }
     }
 }
 
@@ -185,17 +222,33 @@ fn elf_to_mem_regions(
 /// relocations into `.rodata` are applied.
 fn elf_to_rom_regions(
     obj: &object::File<'static>,
+    source: ElfRegionSource,
     apply_relocations: bool,
 ) -> PyResult<Vec<MemRegion>> {
-    if apply_relocations {
-        strider_reader::elf::elf_load_readonly_with_relocations(obj).map_err(into_strider_err)
-    } else {
-        strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
+    match source {
+        ElfRegionSource::Segments => {
+            if apply_relocations {
+                strider_reader::elf::elf_load_readonly_with_relocations(obj)
+                    .map_err(into_strider_err)
+            } else {
+                strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
+            }
+        }
+        ElfRegionSource::Sections => {
+            let mut regions = strider_reader::elf::elf_get_loadable_regions_sections_only(obj)
+                .map_err(into_strider_err)?;
+            if apply_relocations {
+                strider_reader::elf::apply_elf_relocations(&mut regions, obj)
+                    .map_err(into_strider_err)?;
+            }
+            Ok(regions)
+        }
     }
 }
 
-/// Parsed ELF binary: the friendly face is the Python `Program`
-/// returned by `strider.load(...)`, which wraps one of these.
+/// Parsed ELF binary: the friendly face is the Python `ElfLifter`
+/// returned by `strider.load_elf(...)` / `load_elf_from_segments(...)` /
+/// `load_elf_from_sections(...)`, which wraps one of these.
 ///
 /// Holds the parsed `object::File`(s) (in load order — the first wins
 /// on symbol-name collisions) plus two internal raw `BufferReader`s
@@ -205,7 +258,8 @@ fn elf_to_rom_regions(
 /// `rom` reader (code + read-only only) for `LoadReadOnly` constant
 /// folding (`ro_reader()`).  The leading underscore marks it as
 /// internal-by-convention: construct it via `strider.load_elf(path)`
-/// and reach for `Program` for the user-facing surface.
+/// (or the explicit `load_elf_from_segments` / `load_elf_from_sections`)
+/// and reach for `ElfLifter` for the user-facing surface.
 #[pyclass(name = "_LoadedElf", module = "strider", unsendable)]
 pub struct PyLoadedElf {
     /// Loaded ELF objects, in `load_elf` / `add_elf` insertion order.
@@ -221,6 +275,11 @@ pub struct PyLoadedElf {
     /// `ro_reader()`: the `LoadReadOnly` rom MUST be runtime-immutable
     /// because the fold trusts it unconditionally.
     rom: PyBufferReader,
+    /// The region-collection strategy this handle was built with
+    /// (`load_elf_from_segments` vs `load_elf_from_sections`).  Reused
+    /// by `add_elf` so a later merge stays consistent with the
+    /// strategy the caller originally picked.
+    source: ElfRegionSource,
 }
 
 /// Returns `Some(s)` when `s != 0`, `None` otherwise — used to map
@@ -356,8 +415,8 @@ impl PyLoadedElf {
     #[pyo3(signature = (path, apply_relocations=false))]
     fn add_elf(&mut self, path: &str, apply_relocations: bool) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-        let mem_regions = elf_to_mem_regions(&obj, apply_relocations)?;
-        let rom_regions = elf_to_rom_regions(&obj, apply_relocations)?;
+        let mem_regions = elf_to_mem_regions(&obj, self.source, apply_relocations)?;
+        let rom_regions = elf_to_rom_regions(&obj, self.source, apply_relocations)?;
         invalidate_and_extend(&self.mem, mem_regions);
         invalidate_and_extend(&self.rom, rom_regions);
         self.elfs.push(obj);
@@ -365,10 +424,32 @@ impl PyLoadedElf {
     }
 }
 
+/// Shared body of `load_elf_from_segments` / `load_elf_from_sections`:
+/// parses the ELF at `path` and builds a `_LoadedElf` whose `mem` / `rom`
+/// readers are assembled with `source`'s region-collection strategy.
+fn load_elf_impl(
+    path: &str,
+    source: ElfRegionSource,
+    apply_relocations: bool,
+) -> PyResult<PyLoadedElf> {
+    let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
+    let mem = PyBufferReader::from_regions(elf_to_mem_regions(&obj, source, apply_relocations)?);
+    let rom = PyBufferReader::from_regions(elf_to_rom_regions(&obj, source, apply_relocations)?);
+    Ok(PyLoadedElf {
+        elfs: vec![obj],
+        mem,
+        rom,
+        source,
+    })
+}
+
 /// Load an ELF binary from `path` into a `_LoadedElf` (the parsed
-/// object the high-level `Program` wraps).  Loads every executable
-/// section and every non-writable file-backed section into the inner
-/// raw `BufferReader`, deriving the byte order from the ELF header.
+/// object the high-level `ElfLifter` wraps), collecting regions by
+/// walking **PT_LOAD program headers** (the runtime memory layout) for
+/// ET_EXEC / ET_DYN binaries — falling back to the section-walker (with
+/// first-wins VMA dedup) for ET_REL objects, which carry no program
+/// headers at all.  This is the strategy `strider.load_elf` (and every
+/// prior version of the loader) has always used.
 ///
 /// `apply_relocations` defaults to `False`.  Set it to `True` for
 /// ET_DYN binaries (kernels, PIE userland) whose `.text` or
@@ -377,15 +458,23 @@ impl PyLoadedElf {
 /// every understood relocation is patched in-place.
 #[pyfunction]
 #[pyo3(signature = (path, apply_relocations=false))]
-pub fn load_elf(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
-    let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-    let mem = PyBufferReader::from_regions(elf_to_mem_regions(&obj, apply_relocations)?);
-    let rom = PyBufferReader::from_regions(elf_to_rom_regions(&obj, apply_relocations)?);
-    Ok(PyLoadedElf {
-        elfs: vec![obj],
-        mem,
-        rom,
-    })
+pub fn load_elf_from_segments(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
+    load_elf_impl(path, ElfRegionSource::Segments, apply_relocations)
+}
+
+/// Load an ELF binary from `path` into a `_LoadedElf`, collecting
+/// regions by walking **section headers** (first-wins VMA dedup) —
+/// bypassing the PT_LOAD path even for a linked ET_EXEC / ET_DYN binary
+/// that does carry program headers.  Use this when you want
+/// section-granular regions (`.text` / `.rodata` / `.plt` as separate
+/// mappings) instead of the segment loader's coalesced PT_LOAD ranges.
+///
+/// `apply_relocations` defaults to `False`, with the same semantics as
+/// `load_elf_from_segments`.
+#[pyfunction]
+#[pyo3(signature = (path, apply_relocations=false))]
+pub fn load_elf_from_sections(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
+    load_elf_impl(path, ElfRegionSource::Sections, apply_relocations)
 }
 
 // ── PyMemReader (callback ABC) ───────────────────────────────────────────
@@ -725,12 +814,14 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBufferReader>()?;
     // NOTE: `PyLoadedElf` (`_LoadedElf`) is deliberately NOT registered as
     // a public Python class — it is an internal ELF parse / symbol backend
-    // owned by the Python `ElfStrider`.  The `load_elf` pyfunction below is
-    // the only seam: it returns a fully-usable `_LoadedElf` instance (its
-    // pyclass methods are bound on the type object regardless of module
-    // registration) that `_api.py` wraps inside an `ElfStrider`.
+    // owned by the Python `ElfLifter`.  The `load_elf_from_segments` /
+    // `load_elf_from_sections` pyfunctions below are the only seam: each
+    // returns a fully-usable `_LoadedElf` instance (its pyclass methods
+    // are bound on the type object regardless of module registration)
+    // that `_api.py` wraps inside an `ElfLifter`.
     m.add_class::<PyMemReader>()?;
     m.add_class::<PyReadOnlyMemory>()?;
-    m.add_function(wrap_pyfunction!(load_elf, m)?)?;
+    m.add_function(wrap_pyfunction!(load_elf_from_segments, m)?)?;
+    m.add_function(wrap_pyfunction!(load_elf_from_sections, m)?)?;
     Ok(())
 }
