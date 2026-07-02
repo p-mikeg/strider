@@ -229,6 +229,24 @@ impl PyLifter {
     /// from the merged map so a subsequent `analyze` sees the newly
     /// merged ELF.  Leading underscore marks it as an internal seam for
     /// the Python high-level facade, not a general-purpose API.
+    ///
+    /// INTERNAL API, not a public surface: this is a `#[pymethods]`
+    /// entry on `PyLifter` itself, so — because `PyLifter` is
+    /// `#[pyclass(subclass)]` and `ElfLifter` is a *pure-Python*
+    /// subclass (route (a): a Python subclass over a Rust
+    /// `#[pyclass(subclass)]` base, which requires any method the
+    /// subclass calls on itself to be Python-callable) — it is
+    /// unavoidably callable on *any* `strider.lifter(...)` handle, not
+    /// just on an `ElfLifter`.  It exists solely so
+    /// `ElfLifter.add_elf` (`strider/_api.py`) can rebuild this
+    /// handle's inner Sleigh/Strider state in place after merging in a
+    /// new ELF's regions.  This is accepted as intentional
+    /// shared-internal surface given route (a) — it is NOT a fixable
+    /// leak without changing the subclassing strategy.  The leading
+    /// underscore is the only enforcement: general `Lifter` handles
+    /// (constructed via `strider.lifter(...)` / `strider.Lifter(...)`)
+    /// must NOT call `_rebuild` themselves.  Deliberately left out of
+    /// `strider/__init__.pyi` (underscore-private → no stub entry).
     #[pyo3(name = "_rebuild", signature = (arch, mem, rom = None))]
     fn rebuild(&mut self, arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<()> {
         self.inner = build_strider(arch, mem, rom)?;

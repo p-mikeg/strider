@@ -433,6 +433,21 @@ class ElfLifter(Lifter):
     (symbols, sizes, the entry point, raw reads) and a name-aware
     `analyze(target)`.  Analyse many functions by calling `analyze`
     repeatedly."""
+
+    def __init__(
+        self,
+        elf: Any,  # strider._LoadedElf (internal, returned by the loader)
+        arch: SleighArch,
+        cc: CallingConvention,
+        mem: Any,
+        rom: Optional[Any] = ...,
+    ) -> None:
+        """Do not construct directly — use `load_elf_from_segments` /
+        `load_elf_from_sections` (or the `load_elf` convenience
+        wrapper). This is `ElfLifter`'s real constructor (`elf` is the
+        internal `_LoadedElf` the loader builds), NOT the inherited
+        base `Lifter(arch, mem, rom=None)` shape."""
+        ...
     @property
     def arch(self) -> SleighArch: ...
     @property
