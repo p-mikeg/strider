@@ -13,7 +13,8 @@ from __future__ import annotations
 import pytest
 
 import strider
-from strider.pattern import Capture, add, var, int_const
+from strider.pattern import Capture, add, int_const, var
+from strider import template as tpl
 
 from .conftest import built_function
 
@@ -36,7 +37,7 @@ def test_clone_is_independent_of_original():
     assert len(clone.find_all(add(var(x), var(y)))) == before
 
     # Collapse every add(a, b) → a on the CLONE only.
-    fired = clone.rewrite(find=add(var(x), var(y)), replace=var(x))
+    fired = clone.rewrite(find=add(var(x), var(y)), replace=tpl.var(x))
     assert fired > 0, "the rewrite must mutate the clone"
 
     # The original is untouched: same number of adds as before the clone.
@@ -59,7 +60,7 @@ def test_clone_then_rewrite_identity_fold_fires():
     if matches_before == 0:
         pytest.skip("fixture has no add(_, 0) to fold")
 
-    fired = clone.rewrite(find=add(var(x), int_const(0)), replace=var(x))
+    fired = clone.rewrite(find=add(var(x), int_const(0)), replace=tpl.var(x))
     assert isinstance(fired, int)
     assert fired == matches_before
 
@@ -77,7 +78,7 @@ def test_rewrite_returns_zero_when_nothing_matches():
     sentinel = 0xDEAD_BEEF_1234_5678
     fired = clone.rewrite(
         find=add(int_const(sentinel), int_const(sentinel)),
-        replace=int_const(sentinel),
+        replace=tpl.int_const(sentinel),
     )
     assert fired == 0
 
@@ -96,7 +97,7 @@ def test_clone_match_staleness_is_independent():
     clone_hits = clone.find_all(add(var(x), var(y)))
     assert orig_hits and clone_hits
 
-    fired = clone.rewrite(find=add(var(x), var(y)), replace=var(x))
+    fired = clone.rewrite(find=add(var(x), var(y)), replace=tpl.var(x))
     assert fired > 0
 
     # The clone's pre-rewrite handle is now stale.

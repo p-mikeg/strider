@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Iterable, List, Optional, Tuple, Union
 
+from .pattern import PatLike as _PatLike
+from .template import Template as _Template
+
 __version__: str
 
 # ── Architecture / calling convention ───────────────────────────────────
@@ -381,8 +384,17 @@ class Function:
         one `Match` per input pattern (in input order) where every
         `Capture` shared between patterns binds to the same node."""
         ...
-    def rewrite(self, find: Any, replace: Any) -> int: ...
-    def rewrite_all(self, pairs: List[Tuple[Any, Any]]) -> int: ...
+    def rewrite(self, find: _PatLike, replace: _Template) -> int:
+        """Apply a single `find -> replace` rewrite rule across the graph,
+        returning the fire count.  `replace` is a `strider.template.Template`
+        (build it via the `strider.template` free functions) — a bare
+        `strider.pattern.Pat` is still accepted for back-compat, but only
+        its build-valid subset compiles."""
+        ...
+    def rewrite_all(self, pairs: List[Tuple[_PatLike, _Template]]) -> int:
+        """Apply a list of `(find, replace)` pairs round-robin across every
+        reachable node; returns the total fire count."""
+        ...
     def clone(self) -> "Function":
         """Return a deep, fully independent copy of this function.
 

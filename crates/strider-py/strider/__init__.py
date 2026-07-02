@@ -25,6 +25,8 @@ if hasattr(_ext, "opt"):
     _sys.modules["strider.opt"] = _ext.opt
 if hasattr(_ext, "pattern"):
     _sys.modules["strider.pattern"] = _ext.pattern
+if hasattr(_ext, "template"):
+    _sys.modules["strider.template"] = _ext.template
 
 # __version__ comes from the cdylib.
 __version__ = _ext.__version__

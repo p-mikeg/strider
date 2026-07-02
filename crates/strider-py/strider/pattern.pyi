@@ -1,4 +1,14 @@
-"""Type stubs for strider.pattern."""
+"""Type stubs for strider.pattern — the match-side pattern DSL.
+
+`Pat` is the LHS of a `find` / `rewrite` query (match-only affordances:
+`.when()`, commutativity, `.of_width()`, `.value_ty()`, wildcards). For a
+rewrite RHS (`replace=`), use the build-side `strider.template` module and
+its `Template` type instead — `Function.rewrite`/`rewrite_all` type
+`replace` as `Template`. A bare `Pat` is still accepted there for
+back-compat (only its build-valid subset compiles: no `.when`, no
+wildcard, no commutativity), but `strider.template` is the documented
+path.
+"""
 
 from __future__ import annotations
 
@@ -40,9 +50,11 @@ class CastMask:
     def __hash__(self) -> int: ...
 
 class Pat:
-    """Opaque finalised pattern.  Built by the free constructors and
-    chained via `.capture` / `.cap` / `.when` / `.ordered` /
-    `.of_width` / `.value_ty` / `.bool_valued`."""
+    """Opaque finalised match pattern — the LHS of a `find` / `rewrite`
+    query.  Built by the free constructors and chained via `.capture` /
+    `.cap` / `.when` / `.ordered` / `.of_width` / `.value_ty` /
+    `.bool_valued`.  For the rewrite RHS, build a `strider.template.Template`
+    instead (see that module)."""
     def capture(self, c: Capture) -> Pat: ...
     def cap(self, name: str) -> Pat: ...
     def when(self, f: Callable[[Match], bool]) -> Pat: ...

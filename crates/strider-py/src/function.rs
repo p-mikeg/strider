@@ -392,10 +392,14 @@ impl PyFunction {
     }
 
     /// Apply a single `find → replace` rewrite rule across the graph.
-    /// Returns the number of times the rule fired.  Both `find` and
-    /// `replace` accept `PatLike` (so e.g.
-    /// `g.rewrite(find=call().arg(0, …), replace=…)` works without
-    /// an explicit `.into_pat()` conversion).
+    /// Returns the number of times the rule fired.  `find` accepts
+    /// `PatLike` (so e.g. `g.rewrite(find=call().arg(0, …), replace=…)`
+    /// works without an explicit `.into_pat()` conversion); `replace`
+    /// is typed as `strider.template.Template` — build it via the
+    /// `strider.template` free functions (`tpl.var(c)`, `tpl.add(...)`,
+    /// …).  A bare `strider.pattern.Pat` (its build-valid subset only),
+    /// a `Capture`, or a string capture-name is still accepted for
+    /// back-compat.
     ///
     /// The RHS is validated at rule-construction time via
     /// `rewrite_rule_dynamic` — every node must be either a concrete
@@ -406,7 +410,7 @@ impl PyFunction {
         &self,
         py: Python<'_>,
         find: crate::pattern::PatLike<'_>,
-        replace: crate::pattern::PatLike<'_>,
+        replace: crate::pattern::TemplateLike<'_>,
     ) -> PyResult<usize> {
         let lhs = find.to_pattern(py)?;
         let rhs = replace.to_template(py)?;
@@ -420,11 +424,12 @@ impl PyFunction {
 
     /// Apply a list of `(find, replace)` pairs across the graph round-
     /// robin at every reachable node.  Returns the total fire count
-    /// (sum across pairs and nodes).
+    /// (sum across pairs and nodes).  `replace` is typed as
+    /// `strider.template.Template` — see `rewrite`'s doc comment.
     fn rewrite_all(
         &self,
         py: Python<'_>,
-        pairs: Vec<(crate::pattern::PatLike<'_>, crate::pattern::PatLike<'_>)>,
+        pairs: Vec<(crate::pattern::PatLike<'_>, crate::pattern::TemplateLike<'_>)>,
     ) -> PyResult<usize> {
         // Build a match `Pattern` (LHS) and a build `Template` (RHS) per
         // pair, then box each rule.

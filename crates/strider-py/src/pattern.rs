@@ -26,6 +26,11 @@
 //! also accepts a string; the string is interned to a `Capture` at the
 //! point the outermost pattern is compiled, so back-references
 //! (`add("x", "x")`) work. The intern table is global per process.
+//!
+//! `crate::template` (the `strider.template` submodule) exposes the
+//! build-valid subset of this same machinery under a distinct `Template`
+//! type, so `Function.rewrite(find: Pat, replace: Template)` is
+//! statically distinguished — see that module's doc comment.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -375,6 +380,14 @@ pub(crate) fn compile_operand_template(ob: &Bound<'_, PyAny>) -> PyResult<DynTem
     // operands recurse through here, so bound the native recursion.
     let _depth = DepthGuard::enter()?;
     let py = ob.py();
+    // The typed `strider.template` build DSL — the primary path once a
+    // rewrite RHS is nested inside another `tpl.*` builder call.
+    if let Ok(t) = ob.downcast::<crate::template::PyTemplate>() {
+        return t.borrow().repr.compile_template(py);
+    }
+    // Back-compat: a bare `Pat` (from `strider.pattern`) is still accepted
+    // as a nested RHS operand — only its build-valid subset compiles;
+    // match-only shapes surface a `StriderError` from `compile_template`.
     if let Ok(p) = ob.downcast::<PyPat>() {
         return p.borrow().repr.compile_template(py);
     }
@@ -435,7 +448,10 @@ fn operand_kind_name(ob: &Bound<'_, PyAny>) -> String {
 }
 
 /// Emit a `var(c)`-equivalent capture-only node on the template side.
-fn template_var(b: &mut TemplateBuilder, cap: Capture) -> TmplValueRef {
+///
+/// `pub(crate)` — reused by `crate::template`'s `var(c)` free function and
+/// by `TemplateLike`'s `Capture` / `Str` arms.
+pub(crate) fn template_var(b: &mut TemplateBuilder, cap: Capture) -> TmplValueRef {
     tc(strider_pattern::var(cap), b)
 }
 
@@ -450,7 +466,7 @@ fn tc<P: TemplatePat>(p: P, b: &mut TemplateBuilder) -> TmplValueRef {
     p.compile(b)
 }
 
-fn rhs_error(kind: &str) -> PyErr {
+pub(crate) fn rhs_error(kind: &str) -> PyErr {
     into_strider_err(anyhow::anyhow!(
         "cannot use {kind} as a rewrite RHS — the RHS must be a buildable \
          value expression"
@@ -987,18 +1003,50 @@ impl PatLike<'_> {
             PatLike::BoolBinaryPat(b) => b.borrow().build_pattern_py(py),
         }
     }
+}
 
+// ── TemplateLike — the polymorphic rewrite-RHS boundary input ────────────
+//
+// `PatLike` above is now match-side only (`find` / `find_all` / …). The
+// rewrite RHS (`replace=`) has its own polymorphic boundary type so
+// `Function.rewrite`/`rewrite_all` are typed against the build-valid
+// `strider.template.Template`, not the match-side `Pat`.
+
+/// Polymorphic input for a rewrite RHS (`Function.rewrite` /
+/// `rewrite_all`'s `replace`). Accepts a `Template` (the typed, build-valid
+/// path — see `strider.template`) — or, for back-compat with pre-Task-7
+/// callers, a `Pat` (only its build-valid subset compiles; a match-only
+/// `Pat` such as `any_()` surfaces a `StriderError`), a bare `Capture`, or
+/// a string (interned to a `Capture`).
+#[derive(FromPyObject)]
+pub enum TemplateLike<'py> {
+    Template(Bound<'py, crate::template::PyTemplate>),
+    Pat(Bound<'py, PyPat>),
+    Capture(Bound<'py, PyCapture>),
+    Str(Bound<'py, PyString>),
+}
+
+// Manual `PyStubType` impl so `pyo3-stub-gen`'s proc-macros translate
+// `TemplateLike` parameters to the canonical `Template` Python type.
+impl pyo3_stub_gen::PyStubType for TemplateLike<'_> {
+    fn type_output() -> pyo3_stub_gen::TypeInfo {
+        pyo3_stub_gen::TypeInfo::with_module("strider.template.Template", "strider.template".into())
+    }
+}
+
+impl TemplateLike<'_> {
     /// Seal into a finished build [`Template`], or a `StriderError` for a
-    /// match-only input.
+    /// match-only `Pat` input.
     pub(crate) fn to_template(&self, py: Python<'_>) -> PyResult<Template> {
         match self {
-            PatLike::Pat(p) => p.borrow().repr.to_template(py),
-            PatLike::Capture(c) => Ok(DynTemplate(Box::new({
+            TemplateLike::Template(t) => t.borrow().to_template(py),
+            TemplateLike::Pat(p) => p.borrow().repr.to_template(py),
+            TemplateLike::Capture(c) => Ok(DynTemplate(Box::new({
                 let cap = c.borrow().inner;
                 move |b| template_var(b, cap)
             }))
             .into_template()),
-            PatLike::Str(s) => {
+            TemplateLike::Str(s) => {
                 let name = s.to_string();
                 if name == "_" || name == "any_" {
                     Err(rhs_error("any_"))
@@ -1007,8 +1055,6 @@ impl PatLike<'_> {
                     Ok(DynTemplate(Box::new(move |b| template_var(b, cap))).into_template())
                 }
             }
-            // Every control / variadic builder is match-only on the RHS.
-            _ => Err(rhs_error("control / variadic builder")),
         }
     }
 }
@@ -1548,7 +1594,11 @@ macro_rules! op_parser {
         $(rest_unreachable = $msg:literal,)?
         aliases = [$(($alias:literal, $aop:ident)),* $(,)?] $(,)?
     ) => {
-        fn $fn(name: &str) -> PyResult<$ty> {
+        // `pub(crate)` (not module-private): `parse_int_binary_op` /
+        // `parse_int_cmp_op` are reused from `crate::template` for the
+        // build-side generic op-name constructors (`tpl::int_binary`,
+        // `tpl::int_cmp`).
+        pub(crate) fn $fn(name: &str) -> PyResult<$ty> {
             use $ty as Op;
             static VARIANTS: &[$ty] = &[$(Op::$variant),+];
             fn canonical(op: $ty) -> &'static str {

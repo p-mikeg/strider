@@ -46,6 +46,7 @@ mod pcode;
 mod reader;
 mod sleigh;
 mod strider_cls;
+mod template;
 
 /// Forces anyhow to capture a Rust backtrace at every error
 /// construction site, so the `StriderError` raised on the Python side
@@ -101,6 +102,7 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     opt::register(py, m)?;
     pcode::register(py, m)?;
     pattern::register(py, m)?;
+    template::register(py, m)?;
     matcher::register(py, m)?;
     Ok(())
 }
