@@ -622,12 +622,19 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   via `strider.lifter(arch, mem, rom=None)` or `strider.Lifter(arch, mem,
   rom=None)`); `cc` is NOT fixed at construction — it's a required
   argument of every `analyze` call, so one handle can analyse functions
-  under different calling conventions.  `lifter.build_cfg(entry, ...)` is
-  structural-only (no lift/optimise/indirect-branch resolution);
-  `lifter.analyze(entry, cc, **opts) -> (Function, unresolved_addrs)`
-  drives the full fixed-point loop (per-call opts `function_max_size` /
-  `allow_code_before_start_addr` / `compact` / `per_address_ccs` /
-  `calls_clobber` / `assume_distinct_sp_bases_disjoint` / `alias_mode`).
+  under different calling conventions.  Per-call knobs are Python opts
+  structs mirroring the Rust `LiftOptions` / `CfgOptions` (nested — one
+  `CfgOptions` reused), NOT keyword-argument piles:
+  `CfgOptions(function_max_size=None, allow_code_before_start_addr=False)`
+  and `LifterOptions(cfg=CfgOptions(), compact=True, per_address_ccs=None,
+  calls_clobber=False, assume_distinct_sp_bases_disjoint=False,
+  alias_mode="stack_global_disjoint", pipeline=None)`.
+  `lifter.build_cfg(entry, opts=CfgOptions())` is structural-only (no
+  lift/optimise/indirect-branch resolution);
+  `lifter.analyze(entry, cc, opts=LifterOptions()) -> (Function, unresolved_addrs)`
+  drives the full fixed-point loop.  `LifterOptions.pipeline`, when set,
+  overrides the optimiser pipeline for THAT function only (a per-function
+  custom pipeline; there is no pipeline argument on `strider.lifter(...)`).
   `strider.load_elf(path) -> ElfLifter` auto-detects arch/CC from the ELF
   `e_machine` (override via `arch=`/`cc=`/`apply_relocations=`) and
   delegates to `load_elf_from_segments(path, ...)` (regions collected by
