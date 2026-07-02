@@ -89,7 +89,7 @@ lft = strider.lifter(strider.SleighArch.x86_64(), mem, rom)
 fn, _unresolved = lft.analyze(
     CODE_ADDR,
     strider.CallingConvention.x86_64_systemv(),
-    allow_code_before_start_addr=True,
+    opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
 )
 
 print(f"DictMem.read (code)   fired {mem.calls} time(s)")

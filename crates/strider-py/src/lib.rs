@@ -41,6 +41,7 @@ mod macros;
 mod matcher;
 mod node;
 mod opt;
+mod options;
 mod pattern;
 mod pcode;
 mod reader;
@@ -99,6 +100,7 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     function::register(py, m)?;
     node::register(py, m)?;
     strider_cls::register(py, m)?;
+    options::register(py, m)?;
     opt::register(py, m)?;
     pcode::register(py, m)?;
     pattern::register(py, m)?;

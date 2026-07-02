@@ -29,7 +29,7 @@ def test_keyboard_interrupt_in_mem_reader_read_propagates():
     reader = _KbdReader()
     with pytest.raises(KeyboardInterrupt):
         strider.lifter(arch, reader).analyze(
-            0x1000, cc, allow_code_before_start_addr=True
+            0x1000, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
         )
 
 
@@ -39,5 +39,5 @@ def test_system_exit_in_mem_reader_read_propagates():
     reader = _SysExitReader()
     with pytest.raises(SystemExit):
         strider.lifter(arch, reader).analyze(
-            0x1000, cc, allow_code_before_start_addr=True
+            0x1000, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
         )

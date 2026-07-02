@@ -54,7 +54,7 @@ def test_keyboard_interrupt_in_rom_read_propagates():
     rom = _KbdRom()
     lift = strider.lifter(arch, mem, rom=rom)
     with pytest.raises(KeyboardInterrupt):
-        lift.analyze(0x1000, cc, allow_code_before_start_addr=True)
+        lift.analyze(0x1000, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)))
 
 
 def test_system_exit_in_rom_read_propagates():
@@ -64,4 +64,4 @@ def test_system_exit_in_rom_read_propagates():
     rom = _SysExitRom()
     lift = strider.lifter(arch, mem, rom=rom)
     with pytest.raises(SystemExit):
-        lift.analyze(0x1000, cc, allow_code_before_start_addr=True)
+        lift.analyze(0x1000, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)))

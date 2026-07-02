@@ -26,7 +26,7 @@ def _wide_const_function():
     lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
     function, _unresolved = lift.analyze(
         0x1000, strider.CallingConvention.x86_64_systemv(),
-        function_max_size=len(code),
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
     )
     return function
 
@@ -112,7 +112,7 @@ def _i80_const_function():
     lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
     function, _unresolved = lift.analyze(
         0x1000, strider.CallingConvention.x86_64_systemv(),
-        function_max_size=len(code),
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
     )
     return function
 
@@ -161,7 +161,7 @@ def test_small_const_node_const_int_exact_value():
     lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
     f, _unresolved = lift.analyze(
         0x1000, strider.CallingConvention.x86_64_systemv(),
-        function_max_size=len(code),
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
     )
     consts = [
         n

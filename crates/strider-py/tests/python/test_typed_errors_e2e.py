@@ -82,7 +82,7 @@ def test_lift_error_on_unmapped_entry_address():
     cc = strider.CallingConvention.x86_64_systemv()
     with pytest.raises(errors.StriderError):
         strider.lifter(arch, mem).analyze(
-            0x1000, cc, allow_code_before_start_addr=True
+            0x1000, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
         )
 
 
@@ -103,7 +103,9 @@ def test_rewrite_error_via_multi_output_lhs_root():
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     s = strider.lifter(arch, mem)
-    g, _unresolved = s.analyze(0x1000, cc, function_max_size=0x100)
+    g, _unresolved = s.analyze(
+        0x1000, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=0x100))
+    )
 
     from strider.pattern import call, int_const
 

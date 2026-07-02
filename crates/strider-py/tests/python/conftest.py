@@ -91,7 +91,11 @@ def built_lifter_and_function(
     addr = loaded.symbol(symbol)
     lift = strider.lifter(arch, mem, rom=mem)
     function, _unresolved = lift.analyze(
-        addr, cc, allow_code_before_start_addr=True
+        addr,
+        cc,
+        opts=strider.LifterOptions(
+            cfg=strider.CfgOptions(allow_code_before_start_addr=True)
+        ),
     )
     return lift, function
 

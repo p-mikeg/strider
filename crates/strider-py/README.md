@@ -100,8 +100,11 @@ overridden) per call:
 ```python
 for name in s.functions():
     function, unresolved = s.analyze(name)   # only the target per call
-# Per-call option:
-function, unresolved = s.analyze("array_sum", function_max_size=64)
+# Per-call options — a LifterOptions (mirroring strider_lift::LiftOptions,
+# nested CfgOptions):
+function, unresolved = s.analyze(
+    "array_sum", opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=64))
+)
 ```
 
 For a raw firmware blob / non-ELF source, build a `Lifter` directly over
@@ -154,7 +157,7 @@ lift = strider.lifter(strider.SleighArch.x86(), mem, rom=mem)
 function, unresolved = lift.analyze(
     elf.symbol("array_sum"),           # or any address int
     strider.CallingConvention.x86_cdecl(),
-    allow_code_before_start_addr=True,
+    opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
 )
 
 # 3. Query the optimized graph with a pattern.
@@ -166,7 +169,7 @@ for hit in function.find_all(pat, ignore_casts=True):
 # 4. Visualize. Both the CFG and the pretty IR render need the Sleigh
 #    only the `Lifter` owns, so both calls go through `lift`, not
 #    `function` directly.
-cfg = lift.build_cfg(elf.symbol("array_sum"), allow_code_before_start_addr=True)
+cfg = lift.build_cfg(elf.symbol("array_sum"), strider.CfgOptions(allow_code_before_start_addr=True))
 cfg.to_html("cfg.html")
 lift.dump_html(function, "graph.html")
 ```
@@ -192,6 +195,16 @@ function.optimize(pipe)
 
 `strider.OptimizerPipeline.default()` builds the canonical full
 pipeline in one call; `Function.reoptimize()` re-runs it in place.
+
+`Lifter.analyze`/`ElfLifter.analyze` can also run a custom pipeline for
+one call only, via `LifterOptions.pipeline` (never settable on
+`strider.lifter(...)` itself):
+
+```python
+function, unresolved = lift.analyze(
+    addr, cc, opts=strider.LifterOptions(pipeline=strider.OptimizerPipeline.empty())
+)
+```
 
 ## Pattern → template rewrite
 

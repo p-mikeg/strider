@@ -34,13 +34,15 @@ OUT_DIR = pathlib.Path("/tmp")
 
 prog = strider.load_elf(str(FIXTURE))
 addr = prog.symbol("array_sum")
-function, unresolved = prog.analyze("array_sum", allow_code_before_start_addr=True)
+function, unresolved = prog.analyze(
+    "array_sum", opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+)
 
 # Write the CFG. `dark_cfg` is the recommended style for CFGs — higher
 # contrast on basic-block boundaries.  `Lifter.build_cfg` returns a fresh
 # `Cfg` snapshot for `array_sum`, built off the same Sleigh `prog` (an
 # `ElfLifter`, itself a `Lifter`) used for `analyze` above.
-cfg = prog.build_cfg(addr, allow_code_before_start_addr=True)
+cfg = prog.build_cfg(addr, strider.CfgOptions(allow_code_before_start_addr=True))
 cfg_html = OUT_DIR / "array_sum-cfg.html"
 cfg.to_html(str(cfg_html), style="dark_cfg")
 print(f"wrote {cfg_html} ({cfg_html.stat().st_size} bytes)")

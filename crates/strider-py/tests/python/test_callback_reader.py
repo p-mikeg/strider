@@ -61,7 +61,9 @@ def test_callback_reader_lifts_array_sum(x86_memory_elf):
     arch = SleighArch.x86()
     cc = CallingConvention.x86_cdecl()
     s = strider.lifter(arch, reader)
-    g, _unresolved = s.analyze(addr, cc, allow_code_before_start_addr=True)
+    g, _unresolved = s.analyze(
+        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    )
 
     # The lifted graph should include at least one Return.
     from strider.pattern import ret
@@ -84,7 +86,7 @@ def test_run_via_callback_reader(x86_memory_elf):
     lift = strider.lifter(SleighArch.x86(), reader)
     function, _unresolved = lift.analyze(
         addr, CallingConvention.x86_cdecl(),
-        allow_code_before_start_addr=True,
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )
     assert function.node_count() > 0
     assert reader.calls > 0
@@ -147,6 +149,6 @@ def test_run_with_callback_rom_doesnt_crash(x86_memory_elf):
     lift = strider.lifter(SleighArch.x86(), inner, rom=rom)
     function, _unresolved = lift.analyze(
         addr, CallingConvention.x86_cdecl(),
-        allow_code_before_start_addr=True,
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )
     assert function.node_count() > 0

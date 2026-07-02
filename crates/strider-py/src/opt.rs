@@ -110,6 +110,15 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
 struct PipelineState {
     passes: Vec<ErasedPass>,
     post_passes: Vec<ErasedPostPass>,
+    /// Set once `drain_into_pipeline` has successfully materialised a
+    /// real pipeline from this state. Tracked explicitly (rather than
+    /// inferring "already drained" from "both pass lists are empty")
+    /// so a deliberately-built empty pipeline (`OptimizerPipeline.empty()`,
+    /// e.g. as a `LifterOptions.pipeline` override) is drainable exactly
+    /// once, same as any other pipeline — "empty from the start" and
+    /// "emptied by a prior drain" are otherwise indistinguishable by
+    /// list contents alone.
+    drained: bool,
 }
 
 impl PipelineState {
@@ -117,6 +126,7 @@ impl PipelineState {
         Self {
             passes: Vec::new(),
             post_passes: Vec::new(),
+            drained: false,
         }
     }
 
@@ -215,7 +225,7 @@ impl PyOptimizerPipeline {
         prepend_load_read_only: bool,
     ) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
         let mut state = self.lock_state()?;
-        if state.passes.is_empty() && state.post_passes.is_empty() {
+        if state.drained {
             return Err(into_strider_err(anyhow::anyhow!(
                 "OptimizerPipeline is empty — already drained by a prior \
                  Function.optimize() call.  Build a fresh pipeline \
@@ -223,6 +233,7 @@ impl PyOptimizerPipeline {
                  calling again."
             )));
         }
+        state.drained = true;
         let mut pipe = strider_orchestrator::opt::OptimizerPipeline::new();
         if prepend_load_read_only {
             pipe.add(strider_orchestrator::opt::LoadReadOnly);

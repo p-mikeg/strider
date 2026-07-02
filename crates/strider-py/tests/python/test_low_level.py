@@ -18,7 +18,7 @@ def test_lifter_analyze_returns_graph_and_unresolved(x86_memory_elf):
 
     lift = strider.lifter(arch, mem)  # no cc at construction
     graph, unresolved = lift.analyze(  # cc per call, tuple result
-        addr, cc, allow_code_before_start_addr=True
+        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
     )
     assert graph.node_count() > 0
     assert isinstance(unresolved, list)
@@ -30,7 +30,7 @@ def test_lifter_build_cfg_returns_cfg(x86_memory_elf):
     mem = strider.load_elf(str(x86_memory_elf)).reader()
 
     lift = strider.lifter(arch, mem)
-    cfg = lift.build_cfg(addr, allow_code_before_start_addr=True)
+    cfg = lift.build_cfg(addr, strider.CfgOptions(allow_code_before_start_addr=True))
     assert isinstance(cfg, strider.Cfg)
 
 
@@ -41,6 +41,8 @@ def test_lifter_analyze_accepts_rom(x86_memory_elf):
     mem = strider.load_elf(str(x86_memory_elf)).reader()
 
     lift = strider.lifter(arch, mem, rom=mem)
-    graph, unresolved = lift.analyze(addr, cc, allow_code_before_start_addr=True)
+    graph, unresolved = lift.analyze(
+        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    )
     assert graph.node_count() > 0
     assert unresolved == []

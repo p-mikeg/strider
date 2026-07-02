@@ -32,7 +32,7 @@ def test_run_resolves_indirect_branch_x86():
     addr = loaded.symbol("indirect_branch_resolved")
     lift = strider.lifter(arch, mem, rom=mem)
     function, _unresolved = lift.analyze(
-        addr, cc, allow_code_before_start_addr=True
+        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
     )
     assert function.node_count() > 0
 
@@ -51,7 +51,7 @@ def test_run_reports_single_unresolved_indirect_site_address():
     lift = strider.lifter(strider.SleighArch.x86_64(), mem)
     _function, unresolved = lift.analyze(
         0x2000, strider.CallingConvention.x86_64_systemv(),
-        function_max_size=len(code),
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
     )
     # Unresolvable is NOT an error — the run completes and the exact
     # branch address is reported.
@@ -69,7 +69,7 @@ def test_run_reports_both_unresolved_indirect_site_addresses():
     lift = strider.lifter(strider.SleighArch.x86_64(), mem)
     _function, unresolved = lift.analyze(
         0x1000, strider.CallingConvention.x86_64_systemv(),
-        function_max_size=len(code),
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
     )
     # BOTH sites are reported, by exact machine address.
     assert sorted(unresolved) == [0x1005, 0x1007]

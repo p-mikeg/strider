@@ -72,7 +72,7 @@ lft = strider.lifter(strider.SleighArch.x86(), mem, rom)
 function, _unresolved = lft.analyze(
     addr,
     strider.CallingConvention.x86_cdecl(),
-    allow_code_before_start_addr=True,
+    opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
 )
 after = len(function.find_all(load()))
 

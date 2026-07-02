@@ -48,7 +48,8 @@ def test_symbol_size_threads_into_analyze():
     it."""
     elf = strider.load_elf(str(fixture_path("x64", "switch")))
     function, _unresolved = elf.analyze(
-        "dispatch_value", allow_code_before_start_addr=True
+        "dispatch_value",
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )
     assert function.node_count() > 0
 

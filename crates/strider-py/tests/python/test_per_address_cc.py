@@ -23,7 +23,7 @@ def test_call_to_overridden_address_lifts_without_error():
     overrides = {fentry_addr: CallingConvention.x86_64_all_preserving()}
 
     function, _unresolved = strider.lifter(arch, mem).analyze(
-        0x1000, cc, per_address_ccs=overrides
+        0x1000, cc, opts=strider.LifterOptions(per_address_ccs=overrides)
     )
     # The override path must lift without error and find exactly one
     # Call in the resulting graph.  The Rust integration test
@@ -99,7 +99,7 @@ def test_per_address_ccs_honoured_in_both_pipeline_paths(with_override, expected
     )
 
     function, _unresolved = strider.lifter(arch, mem, rom=mem).analyze(
-        0x1000, cc, per_address_ccs=overrides
+        0x1000, cc, opts=strider.LifterOptions(per_address_ccs=overrides)
     )
     pat = call().at(0x3000).arg(0, function_arg(0))
     hits = function.find_all(pat)

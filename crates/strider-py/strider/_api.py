@@ -57,7 +57,9 @@ import importlib as _importlib
 _ext = _importlib.import_module("strider.strider")
 from .strider import (  # noqa: E402
     CallingConvention,
+    CfgOptions,
     Lifter,
+    LifterOptions,
     SleighArch,
 )
 
@@ -475,7 +477,7 @@ class ElfLifter(Lifter):
         self,
         target: Union[str, int],
         cc: Optional[CallingConvention] = None,
-        **opts,
+        opts: Optional[LifterOptions] = None,
     ):
         """Lift the function at `target` (symbol name or absolute
         address), returning the same `(Function, unresolved_addrs)`
@@ -483,17 +485,15 @@ class ElfLifter(Lifter):
 
         A `str` target is resolved to an address via the ELF symbol
         table; when the symbol's recorded size is non-zero and the
-        caller didn't pass an explicit `function_max_size`, the ELF's
-        `st_size` is used as the bound automatically.  An `int` target
-        is used verbatim.
+        caller didn't pass an explicit `opts.cfg.function_max_size`, the
+        ELF's `st_size` is used as the bound automatically.  An `int`
+        target is used verbatim.
 
         `cc` defaults to the ELF-derived (or explicitly-passed at
-        construction) calling convention when omitted.  Every other
-        keyword argument (`function_max_size`, `allow_code_before_start_addr`,
-        `compact`, `per_address_ccs`, `calls_clobber`,
-        `assume_distinct_sp_bases_disjoint`, `alias_mode`) forwards
-        verbatim to the base `Lifter.analyze` — see its docstring for
-        the full list.
+        construction) calling convention when omitted.  `opts` (a
+        `LifterOptions`, default all-defaults) forwards verbatim to the
+        base `Lifter.analyze` — see its docstring for the full field list,
+        including the per-function `opts.pipeline` override.
 
         The read-only memory for `LoadReadOnly` constant folding is the
         ELF's runtime-immutable regions (code + read-only sections only;
@@ -502,13 +502,27 @@ class ElfLifter(Lifter):
 
         Raises `TypeError` when `target` is neither `str` nor `int`.
         """
+        if opts is None:
+            opts = LifterOptions()
+
         if isinstance(target, str):
             addr, sym_size = self._elf.symbol_addr_and_size(target)
             # Honour the symbol's recorded size when the caller didn't
             # provide an explicit bound (zero-size symbols surface as
             # `None`).
-            if opts.get("function_max_size") is None:
-                opts["function_max_size"] = sym_size
+            if opts.cfg.function_max_size is None:
+                opts = LifterOptions(
+                    cfg=CfgOptions(
+                        function_max_size=sym_size,
+                        allow_code_before_start_addr=opts.cfg.allow_code_before_start_addr,
+                    ),
+                    compact=opts.compact,
+                    per_address_ccs=opts.per_address_ccs,
+                    calls_clobber=opts.calls_clobber,
+                    assume_distinct_sp_bases_disjoint=opts.assume_distinct_sp_bases_disjoint,
+                    alias_mode=opts.alias_mode,
+                    pipeline=opts.pipeline,
+                )
         elif isinstance(target, int):
             addr = target
         else:
@@ -526,4 +540,4 @@ class ElfLifter(Lifter):
 
         if cc is None:
             cc = self._cc
-        return super().analyze(addr, cc, **opts)
+        return super().analyze(addr, cc, opts)

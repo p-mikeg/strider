@@ -28,7 +28,9 @@ FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
 elf = strider.load_elf(str(FIXTURE))
 addr = elf.symbol("array_sum")
-function, _unresolved = elf.analyze(addr, allow_code_before_start_addr=True)
+function, _unresolved = elf.analyze(
+    addr, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+)
 
 # Snapshot the load count before rewriting.
 before = len(function.find_all(load()))

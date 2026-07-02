@@ -26,6 +26,7 @@ use crate::errors::into_strider_err;
 use crate::function::PyFunction;
 use crate::matcher::PyMatch;
 use crate::node::PyNode;
+use crate::options::{PyCfgOptions, PyLifterOptions};
 use crate::reader::{AnyMemReader, MemInput};
 
 /// Resolve a `PyCallingConvention` against an already-fetched register
@@ -322,18 +323,23 @@ impl PyLifter {
     /// keeps a back-reference to this `Lifter` so dot rendering can
     /// resolve register names through the owned Sleigh.
     ///
-    /// Raises `ValueError` for `function_max_size == 0` and
-    /// `StriderError` on a build failure.
-    #[pyo3(signature = (entry, allow_code_before_start_addr=false, function_max_size=None))]
+    /// `opts` (a `CfgOptions`, default all-defaults) mirrors
+    /// `strider_cfg::CfgOptions`.  `StriderError` on a build failure.
+    #[pyo3(signature = (entry, opts=None))]
     fn build_cfg(
         slf: Py<Self>,
         py: Python<'_>,
         entry: u64,
-        allow_code_before_start_addr: bool,
-        function_max_size: Option<u64>,
+        opts: Option<Py<PyCfgOptions>>,
     ) -> PyResult<PyCfg> {
-        reject_zero_max_size(function_max_size)?;
-        let opts = strider_cfg::CfgOptions {
+        let (function_max_size, allow_code_before_start_addr) = match opts {
+            Some(o) => {
+                let o = o.borrow(py);
+                (o.function_max_size, o.allow_code_before_start_addr)
+            }
+            None => (None, false),
+        };
+        let cfg_opts = strider_cfg::CfgOptions {
             allow_code_before_start_addr,
             fn_max_size: function_max_size,
             ..strider_cfg::CfgOptions::default()
@@ -342,7 +348,7 @@ impl PyLifter {
             let mut lifter = slf.borrow_mut(py);
             lifter
                 .inner
-                .build_cfg(entry, &opts)
+                .build_cfg(entry, &cfg_opts)
                 .map_err(into_strider_err)?
         };
         Ok(PyCfg { inner, lifter: slf })
@@ -354,56 +360,52 @@ impl PyLifter {
     ///
     /// `cc` is the function-default calling convention for THIS call
     /// (the handle stores no default); per-target-address overrides are
-    /// supplied via `per_address_ccs` (preset or custom CCs accepted).
+    /// supplied via `opts.per_address_ccs` (preset or custom CCs accepted).
     ///
     /// Args:
     ///     entry: Address of the function to analyse.
     ///     cc: Calling convention for this analysis.
-    ///     function_max_size: Optional byte bound past `entry`; must be > 0.
-    ///     allow_code_before_start_addr: Permit lifting before `entry`.
-    ///     compact: Compact the IR arena after analysis (default `True`).
-    ///     per_address_ccs: Per-target-address calling-convention overrides.
-    ///     calls_clobber: Treat a call on a stack-arg load's memory chain as
-    ///         shadowing the slot (default `False`).
-    ///     assume_distinct_sp_bases_disjoint: Assume a store rooted at a
-    ///         different SP base than the entry SP is disjoint from the
-    ///         incoming-arg slots (default `False`).
-    ///     alias_mode: SP-aware alias precision for every memory pass —
-    ///         `"stack_global_disjoint"` (default) trusts that stack and
-    ///         global/constant memory never overlap; `"strict"` is the
-    ///         always-sound floor.
+    ///     opts: A `LifterOptions` (default all-defaults) mirroring
+    ///         `strider_lift::LiftOptions` plus the optimize-side knobs and
+    ///         the per-function `pipeline` override.  When `opts.pipeline`
+    ///         is set, THAT `OptimizerPipeline` runs instead of the
+    ///         built-in default, for this call only.
     ///
-    /// Raises `ValueError` for `function_max_size == 0` or an unrecognised
-    /// `alias_mode`, and `StriderError` on lift/analysis failure.
-    #[pyo3(signature = (
-        entry,
-        cc,
-        *,
-        function_max_size = None,
-        allow_code_before_start_addr = false,
-        compact = true,
-        per_address_ccs = None,
-        calls_clobber = false,
-        assume_distinct_sp_bases_disjoint = false,
-        alias_mode = "stack_global_disjoint",
-    ))]
-    #[allow(clippy::too_many_arguments)]
+    /// Raises `ValueError` for a nested `function_max_size == 0` or an
+    /// unrecognised `alias_mode` (both raised eagerly by the `CfgOptions`/
+    /// `LifterOptions` constructors), and `StriderError` on lift/analysis
+    /// failure.
+    #[pyo3(signature = (entry, cc, opts=None))]
     fn analyze(
         slf: Py<Self>,
         py: Python<'_>,
         entry: u64,
         cc: PyCallingConvention,
-        function_max_size: Option<u64>,
-        allow_code_before_start_addr: bool,
-        compact: bool,
-        per_address_ccs: Option<std::collections::HashMap<u64, PyCallingConvention>>,
-        calls_clobber: bool,
-        assume_distinct_sp_bases_disjoint: bool,
-        alias_mode: &str,
+        opts: Option<Py<PyLifterOptions>>,
     ) -> PyResult<(Py<PyFunction>, Vec<u64>)> {
-        reject_zero_max_size(function_max_size)?;
-        let alias_mode = parse_alias_mode(alias_mode)?;
-        let per_address_ccs_py = per_address_ccs.unwrap_or_default();
+        let opts = match opts {
+            Some(o) => o,
+            None => Py::new(py, PyLifterOptions::new_default(py)?)?,
+        };
+        let opts_ref = opts.borrow(py);
+        let (function_max_size, allow_code_before_start_addr) = {
+            let cfg = opts_ref.cfg.borrow(py);
+            (cfg.function_max_size, cfg.allow_code_before_start_addr)
+        };
+        let compact = opts_ref.compact;
+        let per_address_ccs_py = opts_ref.per_address_ccs.clone().unwrap_or_default();
+        let calls_clobber = opts_ref.calls_clobber;
+        let assume_distinct_sp_bases_disjoint = opts_ref.assume_distinct_sp_bases_disjoint;
+        // Already validated at `LifterOptions` construction time.
+        let alias_mode = parse_alias_mode(&opts_ref.alias_mode)?;
+        // Materialise the per-function pipeline override (if any) BEFORE
+        // dropping the GIL below; `None` means "run the built-in default".
+        let custom_pipeline = opts_ref
+            .pipeline
+            .as_ref()
+            .map(|p| p.borrow(py).drain_into_pipeline(false))
+            .transpose()?;
+        drop(opts_ref);
 
         // Resolve the CC + per-address overrides against the handle's
         // cached register table before constructing the options.
@@ -430,7 +432,16 @@ impl PyLifter {
         };
 
         // Run the fixed-point loop without the GIL (the handle owns the
-        // Sleigh + rom + cached regs for the whole run).
+        // Sleigh + rom + cached regs for the whole run) — but only for the
+        // default (no custom pipeline) path: `custom_pipeline`'s boxed
+        // `dyn Optimizer`/`dyn PostOptimizer` trait objects don't implement
+        // `Send` (no `Send` bound on those traits), so a closure that
+        // *captures* it fails `allow_threads`'s `Ungil` bound even though
+        // every concrete pass inside is Python-callback-free and would be
+        // sound to move across the release. Rather than force `Send` onto
+        // the trait objects, keep the GIL held for a custom-pipeline run —
+        // it's the uncommon path, and correctness here is simpler than
+        // threading a `Send` bound through `strider-opt`'s dyn traits.
         let result = {
             let mut lifter = slf.borrow_mut(py);
             // Reborrow the inner `Strider` as a plain reference BEFORE the
@@ -440,10 +451,19 @@ impl PyLifter {
             // `PyRefMut`, which embeds a `!Send` `Python<'_>` marker that
             // would otherwise fail `allow_threads`'s `Ungil` bound.
             let inner = &mut lifter.inner;
-            prefer_pending_control_flow(
-                py.allow_threads(|| inner.analyze(entry, &cc_built, &lift_opts, &opt_opts, None))
+            match custom_pipeline {
+                Some(pipeline) => prefer_pending_control_flow(
+                    inner
+                        .analyze(entry, &cc_built, &lift_opts, &opt_opts, Some(pipeline))
+                        .map_err(into_strider_err),
+                )?,
+                None => prefer_pending_control_flow(
+                    py.allow_threads(|| {
+                        inner.analyze(entry, &cc_built, &lift_opts, &opt_opts, None)
+                    })
                     .map_err(into_strider_err),
-            )?
+                )?,
+            }
         };
         let function = result.function;
         // Surface the unresolved indirect-branch sites as machine addresses
@@ -459,7 +479,7 @@ impl PyLifter {
         // decode cache) so the returned `Function` can resolve register
         // names for dot rendering.
         let cfg_obj = {
-            let opts = strider_cfg::CfgOptions {
+            let cfg_opts = strider_cfg::CfgOptions {
                 allow_code_before_start_addr,
                 fn_max_size: function_max_size,
                 ..strider_cfg::CfgOptions::default()
@@ -468,7 +488,7 @@ impl PyLifter {
                 let mut lifter = slf.borrow_mut(py);
                 lifter
                     .inner
-                    .build_cfg(entry, &opts)
+                    .build_cfg(entry, &cfg_opts)
                     .map_err(into_strider_err)?
             };
             Py::new(

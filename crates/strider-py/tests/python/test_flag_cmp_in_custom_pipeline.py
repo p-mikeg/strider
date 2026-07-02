@@ -55,7 +55,9 @@ def test_list_empty_pattern_matches_under_custom_pipeline_with_fcc():
     entry, max_size = loaded._elf.symbol_addr_and_size("is_thread_group_empty")
 
     lift = strider.lifter(sleigh, mem, rom=mem)
-    function, _unresolved = lift.analyze(entry, cc, function_max_size=max_size)
+    function, _unresolved = lift.analyze(
+        entry, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=max_size))
+    )
 
     o = Capture()
     pat = int_eq(

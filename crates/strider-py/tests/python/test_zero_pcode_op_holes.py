@@ -43,8 +43,11 @@ def _lift_aarch64(elf_path: pathlib.Path, symbol: str):
     cc = strider.CallingConvention.aarch64_aapcs64()
     lift = strider.lifter(sleigh_arch, mem, rom=mem)
     function, _unresolved = lift.analyze(
-        entry, cc, function_max_size=size,
-        allow_code_before_start_addr=True,
+        entry,
+        cc,
+        opts=strider.LifterOptions(
+            cfg=strider.CfgOptions(function_max_size=size, allow_code_before_start_addr=True)
+        ),
     )
     return function
 

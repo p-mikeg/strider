@@ -117,7 +117,9 @@ def test_graph_reoptimize(x86_memory_elf):
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
     s = strider.lifter(arch, mem)
-    g, _unresolved = s.analyze(addr, cc, allow_code_before_start_addr=True)
+    g, _unresolved = s.analyze(
+        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    )
     g.reoptimize()
     assert g.node_count() > 0
 
@@ -128,7 +130,9 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
     s = strider.lifter(arch, mem)
-    g, _unresolved = s.analyze(addr, cc, allow_code_before_start_addr=True)
+    g, _unresolved = s.analyze(
+        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    )
     pre = g.node_count()
 
     pipe = strider.OptimizerPipeline.empty()
@@ -155,7 +159,9 @@ def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
     s = strider.lifter(arch, mem)
-    g, _unresolved = s.analyze(addr, cc, allow_code_before_start_addr=True)
+    g, _unresolved = s.analyze(
+        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    )
 
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())

@@ -32,7 +32,9 @@ addr = elf.symbol("array_sum")
 
 # `ElfLifter.analyze` drives the full default pipeline already — this
 # is the baseline every further clone below starts from.
-baseline, _unresolved = elf.analyze(addr, allow_code_before_start_addr=True)
+baseline, _unresolved = elf.analyze(
+    addr, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+)
 
 
 def shape(g: strider.Function) -> dict[str, int]:

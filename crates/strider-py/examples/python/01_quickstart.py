@@ -37,7 +37,9 @@ print(f"array_sum @ {addr:#x}")
 #    in one call, returning `(Function, unresolved_addrs)`.  Pattern
 #    queries (`find_all`) live directly on the `Function` — no wrapper
 #    needed.
-function, unresolved = prog.analyze("array_sum", allow_code_before_start_addr=True)
+function, unresolved = prog.analyze(
+    "array_sum", opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+)
 print(
     f"lifted array_sum: {function.node_count()} nodes, "
     f"{len(unresolved)} unresolved indirect branches"
@@ -68,7 +70,7 @@ for hit in narrow:
 #    register names), which only the `Lifter` (`prog`, here an
 #    `ElfLifter`) owns — that's why they're called on `prog`, not on
 #    `function` directly.
-cfg = prog.build_cfg(addr, allow_code_before_start_addr=True)
+cfg = prog.build_cfg(addr, strider.CfgOptions(allow_code_before_start_addr=True))
 cfg.to_html("/tmp/quickstart-cfg.html", style="dark_cfg")
 prog.dump_html(function, "/tmp/quickstart-graph.html", style="dark")
 print("wrote /tmp/quickstart-cfg.html and /tmp/quickstart-graph.html")

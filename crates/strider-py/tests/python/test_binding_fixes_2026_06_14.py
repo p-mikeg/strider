@@ -163,7 +163,7 @@ def _analysis(elf_path, sym):
     lift = strider.lifter(strider.SleighArch.x86(), mem)
     function, _unresolved = lift.analyze(
         addr, strider.CallingConvention.x86_cdecl(),
-        allow_code_before_start_addr=True,
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )
     return function
 

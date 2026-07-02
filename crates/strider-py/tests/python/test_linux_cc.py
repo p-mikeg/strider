@@ -45,6 +45,6 @@ def test_x86_linux_kernel_constructs_strider(x86_indirect_branch_elf):
     function, _unresolved = s.analyze(
         addr,
         strider.CallingConvention.x86_linux_kernel(),
-        allow_code_before_start_addr=True,
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )
     assert function is not None

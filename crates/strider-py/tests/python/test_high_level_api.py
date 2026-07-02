@@ -339,7 +339,7 @@ def test_analyze_function_max_size_clips_mid_function():
     assert function.node_count() > 0
     # A per-call bound of 4 clips mid-function -> function-boundary error.
     with pytest.raises(strider.errors.StriderError) as exc:
-        s.analyze("add", function_max_size=4)
+        s.analyze("add", opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=4)))
     assert "function-boundary error" in str(exc.value)
 
 
@@ -352,10 +352,12 @@ def test_analyze_explicit_none_lifts_whole_function():
     addr = s.symbol("add")
     # A tiny bound (4) -> sequential overflow error.
     with pytest.raises(strider.errors.StriderError) as exc:
-        s.analyze(addr, function_max_size=4)
+        s.analyze(addr, opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=4)))
     assert "function-boundary error" in str(exc.value)
     # Explicit None -> unbounded -> lifts cleanly.
-    full_function, _unresolved = s.analyze(addr, function_max_size=None)
+    full_function, _unresolved = s.analyze(
+        addr, opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=None))
+    )
     assert full_function.node_count() > 0
 
 
@@ -364,7 +366,9 @@ def test_analyze_allow_code_before_start_addr():
     valid analysis."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load_elf(str(elf))
-    function, _unresolved = s.analyze("add", allow_code_before_start_addr=True)
+    function, _unresolved = s.analyze(
+        "add", opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    )
     assert function.node_count() > 0
 
 

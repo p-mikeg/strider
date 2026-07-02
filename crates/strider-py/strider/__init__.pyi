@@ -176,6 +176,48 @@ class Cfg:
     def to_dot(self, path: str) -> None: ...
     def html_str(self, style: Optional[str] = ...) -> str: ...
 
+class CfgOptions:
+    """Mirrors `strider_cfg::CfgOptions` (the user-facing subset — the
+    orchestrator-internal `known_targets` feedback field is not
+    exposed).  Raises `ValueError` for `function_max_size=0` (zero is
+    meaningless — omit the argument for unbounded)."""
+
+    function_max_size: Optional[int]
+    allow_code_before_start_addr: bool
+    def __init__(
+        self,
+        *,
+        function_max_size: Optional[int] = ...,
+        allow_code_before_start_addr: bool = ...,
+    ) -> None: ...
+
+class LifterOptions:
+    """Mirrors `strider_lift::LiftOptions` (nested `cfg`, exactly like
+    the Rust struct) plus the optimize-side knobs, plus the per-function
+    optimizer-pipeline override `pipeline`.  `pipeline`, when set,
+    replaces the built-in default pipeline for THAT `analyze` call only
+    (never on `strider.lifter(...)` itself). Raises `ValueError` for an
+    unrecognised `alias_mode` or a nested `function_max_size=0`."""
+
+    cfg: CfgOptions
+    compact: bool
+    per_address_ccs: Optional[dict]
+    calls_clobber: bool
+    assume_distinct_sp_bases_disjoint: bool
+    alias_mode: str
+    pipeline: Optional[OptimizerPipeline]
+    def __init__(
+        self,
+        *,
+        cfg: Optional[CfgOptions] = ...,
+        compact: bool = ...,
+        per_address_ccs: Optional[dict] = ...,
+        calls_clobber: bool = ...,
+        assume_distinct_sp_bases_disjoint: bool = ...,
+        alias_mode: str = ...,
+        pipeline: Optional[OptimizerPipeline] = ...,
+    ) -> None: ...
+
 class Lifter:
     """The single lift+optimise+resolve handle.  Build one with
     `strider.lifter(arch, mem, rom=None)` (equivalently
@@ -190,22 +232,13 @@ class Lifter:
     def build_cfg(
         self,
         entry: int,
-        *,
-        allow_code_before_start_addr: bool = ...,
-        function_max_size: Optional[int] = ...,
+        opts: Optional[CfgOptions] = ...,
     ) -> Cfg: ...
     def analyze(
         self,
         entry: int,
         cc: CallingConvention,
-        *,
-        function_max_size: Optional[int] = ...,
-        allow_code_before_start_addr: bool = ...,
-        compact: bool = ...,
-        per_address_ccs: Optional[dict] = ...,
-        calls_clobber: bool = ...,
-        assume_distinct_sp_bases_disjoint: bool = ...,
-        alias_mode: str = ...,
+        opts: Optional[LifterOptions] = ...,
     ) -> Tuple[Function, List[int]]: ...
     def dump_html(
         self, function: Function, path: str, style: Optional[str] = ...
@@ -569,14 +602,7 @@ class ElfLifter(Lifter):
         self,
         target: Any,  # str | int
         cc: Optional[CallingConvention] = ...,
-        *,
-        function_max_size: Optional[int] = ...,
-        allow_code_before_start_addr: bool = ...,
-        compact: bool = ...,
-        per_address_ccs: Optional[dict] = ...,
-        calls_clobber: bool = ...,
-        assume_distinct_sp_bases_disjoint: bool = ...,
-        alias_mode: str = ...,
+        opts: Optional[LifterOptions] = ...,
     ) -> Tuple[Function, List[int]]:
         """Lift the function at `target` (symbol name or absolute
         address), driving the full lift+optimise+resolve pipeline and
