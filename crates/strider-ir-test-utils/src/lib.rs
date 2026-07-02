@@ -198,10 +198,15 @@ impl RegisterSet {
         // register.  `build_call` reads the stack pointer through the
         // variable table and errors when it is absent (it no longer mints an
         // SP anchor), so a fixture that builds a `Call` needs a tracked SP.
-        // The synthetic SP sits at a high offset no common test register
-        // uses; `FunctionBuilder::new` seeds it (and any declared arg/ret regs)
-        // into the tracked set, and drops enclosed sub-registers.
+        // The synthetic SP sits at a high offset no common test register uses.
+        // `FunctionBuilder::new` no longer seeds the stack vn (the lifter owns
+        // that in production), so add it to the tracked set here — mirroring
+        // the lifter — alongside the declared arg/ret regs it still seeds.
         let stack_vn = self.sp.unwrap_or(DEFAULT_TEST_SP);
+        let mut tracked = self.tracked;
+        if !tracked.contains(&stack_vn) {
+            tracked.push(stack_vn);
+        }
         // Synthesise a convention from the declared register lists and hand
         // it to the single `FunctionBuilder::new` constructor.  Struct-literal
         // construction (not `try_new`) skips the ABI-disjointness validation
@@ -220,7 +225,7 @@ impl RegisterSet {
         let endianness = self
             .endianness
             .unwrap_or(strider_target::Endianness::Little);
-        let mut b = FunctionBuilder::new(self.tracked, &cc, endianness)?;
+        let mut b = FunctionBuilder::new(tracked, &cc, endianness)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)
     }

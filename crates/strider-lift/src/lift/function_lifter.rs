@@ -50,9 +50,16 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         lifter: &'a Lifter<R>,
         cc: &'a strider_target::BuiltCallingConvention,
         cfg: &'a strider_cfg::Cfg,
-        all_vns: Vec<rsleigh::Vn>,
+        mut all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<Self> {
+        // The lifter is the SSoT for tracking the stack pointer: add
+        // `cc.stack_vn` to the tracked set here (a function may never reference
+        // SP by name yet still need it tracked for stack analysis).
+        // `FunctionBuilder::new` no longer seeds it.
+        if !all_vns.contains(&cc.stack_vn) {
+            all_vns.push(cc.stack_vn);
+        }
         // `FunctionBuilder::new` seeds the CC registers and drops enclosed
         // sub-registers, so `builder.function().all_vns()` is the canonical
         // tracked set (universe construction — shared by every fixture — lives
@@ -76,6 +83,19 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let queries = all_vns.iter().copied().chain(cc_regs);
         let container_map =
             vn_container::ContainerMap::build(builder.function().all_vns(), queries);
+        // The lifter added `cc.stack_vn` to `all_vns`, so after dedup the stack
+        // vn must resolve to a container that IS in the tracked set (either the
+        // stack vn itself, or a larger tracked vn that encloses it).
+        debug_assert!(
+            {
+                let tracked = builder.function().all_vns();
+                let sp_container = vn_container::largest_container_in(tracked, &cc.stack_vn);
+                tracked.contains(&sp_container)
+                    && vn_container::vn_contains(&sp_container, &cc.stack_vn)
+            },
+            "stack vn {:?} did not resolve to a tracked container",
+            cc.stack_vn,
+        );
         Ok(Self {
             lifter,
             builder,

@@ -185,7 +185,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
         // The CFG is rebuilt from scratch each lift, so the tracked-varnode
-        // set is always scanned fresh from it.
+        // set is always scanned fresh from it.  `FunctionLifter::new` adds the
+        // stack vn to the tracked set (the lifter is the SSoT for that).
         let all_vns = self.find_all_unique_vns(cfg);
         // An empty override map behaves identically to "no overrides"
         // (the default is an empty map, so lookups are a plain `.get`).
