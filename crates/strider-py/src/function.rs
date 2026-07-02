@@ -472,6 +472,21 @@ fn reject_conflicting_cast_flags(
     Ok(())
 }
 
+/// RAII guard pairing a `crate::pattern::push_current_query_function`
+/// call with its `pop_current_query_function` counterpart: the pop runs
+/// from `Drop`, so it fires on every exit path out of [`run_query`] —
+/// normal return, an early `?`, or a Rust panic unwinding through
+/// `run` — instead of only the fall-through path a plain function-call
+/// pair would cover. Without this, a panic inside `run` would leave a
+/// stale `(Py<PyFunction>, u64)` on the thread-local stack forever.
+struct QueryFunctionGuard;
+
+impl Drop for QueryFunctionGuard {
+    fn drop(&mut self) {
+        crate::pattern::pop_current_query_function();
+    }
+}
+
 /// Run a matcher query and snapshot the generation, collapsing the
 /// borrow → `read_inner` → `Matcher::new` → run → generation-snapshot
 /// → drop-guards → pending-control-flow scaffold the three query entry
@@ -487,7 +502,9 @@ fn reject_conflicting_cast_flags(
 /// a `.when()` predicate fired from inside the matcher can build a
 /// genuine `Match` handle back onto this same live function (patterns
 /// are built well before any `Function` is known, so the predicate
-/// closure itself can't capture `slf`).
+/// closure itself can't capture `slf`). The push is paired with its pop
+/// via a [`QueryFunctionGuard`] rather than a plain trailing call so the
+/// pop still runs if `run` panics.
 fn run_query<T>(
     slf: &Py<PyFunction>,
     py: Python<'_>,
@@ -500,8 +517,9 @@ fn run_query<T>(
     let matcher = strider_pattern::Matcher::new(&function_guard);
     let generation = function_guard.graph().generation();
     crate::pattern::push_current_query_function(slf.clone_ref(py), generation);
+    let _guard = QueryFunctionGuard;
     let raw = run(&matcher);
-    crate::pattern::pop_current_query_function();
+    drop(_guard);
     let raw = raw.map_err(crate::errors::into_strider_err)?;
     drop(function_guard);
     drop(function_borrow);

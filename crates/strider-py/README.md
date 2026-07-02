@@ -311,15 +311,17 @@ from strider.pattern import predicate
 graph.find_all(predicate(lambda m: True))
 ```
 
-The callback receives a transient `PartialMatch` proxy with the same
-accessor set as `Match` (`uint` / `int` / `bool` / `float_bits` /
-`has` / `[]` / `in`).  Returning `False` (or raising) fails the
-match; for commutative binary ops this triggers the swapped-operand
-retry automatically.
+The callback receives a `Match` — the same owned handle `find_all` /
+`find_one` / `find_joined` hand back for a completed match, with the
+same accessor set (`uint` / `int` / `bool` / `float_bits` / `has` /
+`[]` / `in`).  Returning `False` (or raising) fails the match; for
+commutative binary ops this triggers the swapped-operand retry
+automatically.
 
-The proxy is only valid during the synchronous predicate call; the
-underlying graph pointer is cleared right after the predicate returns
-to prevent accidental use-after-free.
+Because the predicate can fire mid-walk, before every capture in the
+pattern has bound, a capture that hasn't been reached yet reads as
+`None` (`uint` / `int` / `bool` / `float_bits`) or `False`
+(`has` / `in`) rather than raising.
 
 ## Python-implemented memory readers
 
