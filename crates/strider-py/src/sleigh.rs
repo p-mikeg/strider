@@ -23,11 +23,11 @@ use crate::reader::{AnyMemReader, MemInput};
 /// `regs` stay accessible after a run.
 #[pyclass(name = "Sleigh", module = "strider")]
 pub struct PySleigh {
-    arch_name: &'static str,
+    pub(crate) arch_name: &'static str,
     /// Cached register table, probed once at construction.  Backs
     /// `reg(...)` lookups so callers can resolve register names without
     /// re-running the (non-trivial) regs probe.
-    regs: rsleigh::SleighRegs,
+    pub(crate) regs: rsleigh::SleighRegs,
 }
 
 impl PySleigh {
@@ -98,7 +98,7 @@ impl PySleigh {
 #[pyclass(name = "VnSpace", module = "strider", frozen)]
 #[derive(Clone, Copy)]
 pub struct PyVnSpace {
-    inner: rsleigh::VnSpace,
+    pub(crate) inner: rsleigh::VnSpace,
 }
 
 #[pymethods]
@@ -190,7 +190,7 @@ impl PyVnSpace {
 #[pyclass(name = "Vn", module = "strider", frozen)]
 #[derive(Clone, Copy)]
 pub struct PyVn {
-    inner: rsleigh::Vn,
+    pub(crate) inner: rsleigh::Vn,
 }
 
 impl PyVn {

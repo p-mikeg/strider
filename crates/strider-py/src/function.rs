@@ -24,10 +24,10 @@ use crate::dot::dot_style_for;
 /// references.
 #[pyclass(name = "Function", module = "strider")]
 pub struct PyFunction {
-    inner: Arc<RwLock<strider_ir::Function>>,
+    pub(crate) inner: Arc<RwLock<strider_ir::Function>>,
     /// Strong reference to the parent Cfg; keeps the Sleigh alive for
     /// dot rendering and ensures destruction order is graph-then-cfg.
-    cfg: Py<PyCfg>,
+    pub(crate) cfg: Py<PyCfg>,
 }
 
 /// Discriminator for [`PyFunction::dispatch_dot`].  Each variant carries

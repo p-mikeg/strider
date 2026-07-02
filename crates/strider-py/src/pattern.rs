@@ -55,7 +55,7 @@ use crate::errors::into_strider_err;
 #[pyclass(name = "Capture", module = "strider.pattern", frozen)]
 #[derive(Clone)]
 pub struct PyCapture {
-    inner: Capture,
+    pub(crate) inner: Capture,
 }
 
 #[pymethods]
@@ -295,7 +295,7 @@ pub(crate) enum PatRepr {
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Pat", module = "strider.pattern", unsendable)]
 pub struct PyPat {
-    repr: Rc<PatRepr>,
+    pub(crate) repr: Rc<PatRepr>,
 }
 
 impl PyPat {
@@ -1273,7 +1273,7 @@ fn apply_when_to_pattern(py: Python<'_>, common: &CommonState, pat: Pattern) -> 
 #[pyclass(name = "CastMask", module = "strider.pattern", frozen)]
 #[derive(Clone, Copy)]
 pub struct PyCastMask {
-    inner: strider_pattern::CastMask,
+    pub(crate) inner: strider_pattern::CastMask,
 }
 
 macro_rules! forall_castmask {

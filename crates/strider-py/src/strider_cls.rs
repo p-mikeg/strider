@@ -46,11 +46,11 @@ use crate::run::{
 pub struct PyLifter {
     /// The owning lift driver — owns the `Sleigh` (built from the `mem`
     /// passed at construction) and the cached register table.
-    inner: strider_orchestrator::Lifter<AnyMemReader>,
+    pub(crate) inner: strider_orchestrator::Lifter<AnyMemReader>,
     /// The function-default calling convention, resolved at construction
     /// against the driver's register table.  Threaded into every lift
     /// call (the owning `Lifter` engine does not store it).
-    cc: strider_target::BuiltCallingConvention,
+    pub(crate) cc: strider_target::BuiltCallingConvention,
 }
 
 /// Mirror of `strider_orchestrator::LiftOutcome`.
@@ -66,7 +66,7 @@ pub struct PyAnalyzeOutcome {
     pub(crate) function: Py<PyFunction>,
     /// Number of indirect branches the analysis could not resolve.
     #[pyo3(get)]
-    unresolved_branch_count: usize,
+    pub(crate) unresolved_branch_count: usize,
 }
 
 #[pymethods]
