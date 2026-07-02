@@ -272,11 +272,27 @@ class Node:
         """The data/control nodes feeding this one, as a list of `Node`s."""
         ...
     def const_int(self) -> Optional[int]:
-        """The node's unsigned integer constant value (arbitrary
-        precision — covers I1 through I512), else `None`."""
+        """The node's signed integer constant value (sign-extended at
+        its declared width), or `None` when its value output isn't an
+        integer `IntConst` or the stored magnitude exceeds 128 bits
+        (I256/I512 — use `wide_const_bytes()` for those)."""
+        ...
+    def const_uint(self) -> Optional[int]:
+        """The node's unsigned integer constant value (masked to its
+        declared width), or `None` when its value output isn't an
+        integer `IntConst` or the stored magnitude exceeds 128 bits
+        (I256/I512 — use `wide_const_bytes()` for those)."""
         ...
     def const_bool(self) -> Optional[bool]:
         """The node's boolean constant value, else `None`."""
+        ...
+    def float_bits(self) -> Optional[int]:
+        """Raw IEEE 754 bit pattern as `u64`, else `None` when this
+        node isn't a `FloatConst`."""
+        ...
+    def vn(self) -> Optional[Vn]:
+        """The `Vn` associated with this node (`InitialVar` / `Call` /
+        `CallOther` clobber output), else `None`."""
         ...
     def fingerprint(self) -> List[int]:
         """Sorted, deduped asm-instruction addresses recorded on this node."""
@@ -286,6 +302,28 @@ class Node:
         ...
     def call_other_name(self) -> Optional[str]:
         """Sleigh user-op name attached to a `CallOther` node, else `None`."""
+        ...
+    def int_binary_op(self) -> Optional[str]:
+        """If this node is an `IntBinaryOp`, its variant name, else `None`."""
+        ...
+    def int_unary_op(self) -> Optional[str]:
+        """If this node is an `IntUnaryOp`, its variant name, else `None`."""
+        ...
+    def int_cmp_op(self) -> Optional[str]:
+        """If this node is an `IntCmpOp`, its variant name, else `None`."""
+        ...
+    def bool_binary_op(self) -> Optional[str]:
+        """If this node is a boolean binary op (`IntBinaryOp` at `I1`),
+        its variant name, else `None`."""
+        ...
+    def float_binary_op(self) -> Optional[str]:
+        """If this node is a `FloatBinaryOp`, its variant name, else `None`."""
+        ...
+    def float_unary_op(self) -> Optional[str]:
+        """If this node is a `FloatUnaryOp`, its variant name, else `None`."""
+        ...
+    def float_cmp_op(self) -> Optional[str]:
+        """If this node is a `FloatCmpOp`, its variant name, else `None`."""
         ...
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
@@ -303,21 +341,11 @@ class Function:
     def node_ids(self) -> List[int]:
         """All reachable node ids as raw integers."""
         ...
-    def node_kind(self, node_id: int) -> str:
-        """The `NodeKind` of `node_id` formatted as a string."""
-        ...
-    def asm_fingerprint(self, node_id: int) -> List[int]:
-        """Sorted, deduped asm-instruction addresses recorded on `node_id`."""
-        ...
-    def wide_const_bytes(self, node_id: int) -> Optional[bytes]:
-        """Raw LE bytes of an `IntConstWide` node, else `None`."""
-        ...
-    def call_other_name(self, node_id: int) -> Optional[str]:
-        """Sleigh user-op name attached to a `CallOther` node, else `None`."""
-        ...
     def node(self, node_id: int) -> Node:
-        """A discoverable `Node` handle on the node at `node_id`.  Raises
-        `StriderError` for an invalid id."""
+        """A discoverable `Node` handle on the node at `node_id` — the
+        single source of truth for per-node reads (`kind()`,
+        `asm_fingerprint()`-equivalent `fingerprint()`, `wide_const_bytes()`,
+        `call_other_name()`, …).  Raises `StriderError` for an invalid id."""
         ...
     def compact(self) -> None:
         """Drop every node unreachable from entry; invalidates node ids."""
@@ -367,48 +395,71 @@ class Function:
         ...
 
 class Match:
+    """`Node` is the single source of truth for per-node reads; every
+    value/op reader below is a thin forwarder to `self.node(key).<reader>()`
+    (returning `None` when `key` is unbound)."""
+
     @property
     def root(self) -> int:
         """The root node where the top-level pattern matched, as a `u32`
         node id."""
         ...
-    def uint(self, key: Any) -> Optional[int]: ...
-    def int(self, key: Any) -> Optional[int]: ...
-    def bool(self, key: Any) -> Optional[bool]: ...
-    def float_bits(self, key: Any) -> Optional[int]: ...
+    def uint(self, key: Any) -> Optional[int]:
+        """Thin forwarder to `Node.const_uint()`."""
+        ...
+    def int(self, key: Any) -> Optional[int]:
+        """Thin forwarder to `Node.const_int()`."""
+        ...
+    def bool(self, key: Any) -> Optional[bool]:
+        """Thin forwarder to `Node.const_bool()`."""
+        ...
+    def float_bits(self, key: Any) -> Optional[int]:
+        """Thin forwarder to `Node.float_bits()`."""
+        ...
     def has(self, key: Any) -> bool: ...
     def int_binary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `IntBinaryOp` variant name from `key`."""
+        """Recover the matched `IntBinaryOp` variant name from `key`.
+        Thin forwarder to `Node.int_binary_op()`."""
         ...
     def int_unary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `IntUnaryOp` variant name from `key`."""
+        """Recover the matched `IntUnaryOp` variant name from `key`.
+        Thin forwarder to `Node.int_unary_op()`."""
         ...
     def int_cmp_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `IntCmpOp` variant name from `key`."""
+        """Recover the matched `IntCmpOp` variant name from `key`.
+        Thin forwarder to `Node.int_cmp_op()`."""
         ...
     def bool_binary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched boolean binary op (`IntBinaryOp` at `I1`) name."""
+        """Recover the matched boolean binary op (`IntBinaryOp` at `I1`) name.
+        Thin forwarder to `Node.bool_binary_op()`."""
         ...
     # `bool_unary_op` was removed alongside `IntUnaryOp::BitNot`: a 1-bit
     # logical NOT is `Xor(_, IntConst(1)):I1`, so the op variant is
     # recovered via `bool_binary_op` (returns "Xor").
     def float_binary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `FloatBinaryOp` variant name from `key`."""
+        """Recover the matched `FloatBinaryOp` variant name from `key`.
+        Thin forwarder to `Node.float_binary_op()`."""
         ...
     def float_unary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `FloatUnaryOp` variant name from `key`."""
+        """Recover the matched `FloatUnaryOp` variant name from `key`.
+        Thin forwarder to `Node.float_unary_op()`."""
         ...
     def float_cmp_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `FloatCmpOp` variant name from `key`."""
+        """Recover the matched `FloatCmpOp` variant name from `key`.
+        Thin forwarder to `Node.float_cmp_op()`."""
         ...
     def vn(self, key: Any) -> Optional[Vn]:
-        """Recover the varnode bound by `key` (InitialVar / tagged Phi /
-        FunctionArg node), else `None`."""
+        """Recover the varnode bound by `key` (InitialVar / `Call` /
+        `CallOther` clobber output), else `None`.  Thin forwarder to
+        `Node.vn()`."""
         ...
-    def asm_fingerprint(self, key: Any) -> List[int]: ...
+    def asm_fingerprint(self, key: Any) -> List[int]:
+        """Thin forwarder to `Node.fingerprint()`; `[]` when `key` is unbound."""
+        ...
     def node(self, key: Any) -> Optional[Node]:
         """A `Node` handle on the node bound to `key` (a `Capture` or
-        string capture-name), or `None` when `key` is unbound."""
+        string capture-name), or `None` when `key` is unbound.  Every
+        other reader on `Match` is built on top of this resolution."""
         ...
     def __getitem__(self, key: Any) -> Any: ...
     def __contains__(self, key: Any) -> bool: ...

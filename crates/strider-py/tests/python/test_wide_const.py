@@ -36,9 +36,9 @@ def test_wide_const_node_is_minted_by_load_readonly_fold():
     # A wide const is identified by its declared type width (I80/I128/…),
     # surfaced via `wide_const_bytes` — not by the node-kind Debug string,
     # which is a plain `IntConst(constN)` for every interned constant.
-    wide_ids = [n for n in f.node_ids() if f.wide_const_bytes(n) is not None]
+    wide_ids = [n for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
     assert wide_ids, "expected a wide IntConst node from the 16-byte fold"
-    assert all(f.node_kind(n).startswith("IntConst") for n in wide_ids)
+    assert all(f.node(n).kind().startswith("IntConst") for n in wide_ids)
 
 
 def test_wide_const_match_uint_returns_full_u128():
@@ -70,18 +70,21 @@ def test_wide_const_int_const_literal_matches():
 
 
 def test_wide_const_node_const_int_returns_full_value():
-    # `Node.const_int()` is arbitrary-precision: a wide (here I128)
-    # IntConst surfaces its full interned value as a Python int, not
-    # None.
+    # `Node.const_int()` / `Node.const_uint()` cover any width up to 128
+    # bits: a wide (here I128) IntConst surfaces its full interned value
+    # as a Python int, not None.  WIDE's bit 127 is clear, so the signed
+    # and unsigned readings agree.
     f = _wide_const_function()
-    wide_ids = [n for n in f.node_ids() if f.wide_const_bytes(n) is not None]
+    wide_ids = [n for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
     assert wide_ids
     for nid in wide_ids:
-        v = f.node(nid).const_int()
+        node = f.node(nid)
+        v = node.const_int()
         assert isinstance(v, int)
         assert v == WIDE
+        assert node.const_uint() == WIDE
         # Agrees with the raw-bytes escape hatch.
-        wb = f.node(nid).wide_const_bytes()
+        wb = node.wide_const_bytes()
         assert wb is not None
         raw = bytes(wb)
         assert v == int.from_bytes(raw, "little")
@@ -118,13 +121,14 @@ def test_i80_const_node_const_int_returns_full_value():
     # The 10-byte x87 load folds to an I80 wide IntConst; `const_int()`
     # decodes all 80 bits.
     f = _i80_const_function()
-    wide_ids = [n for n in f.node_ids() if f.wide_const_bytes(n) is not None]
+    wide_ids = [n for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
     assert wide_ids, "expected a wide IntConst node from the 10-byte fold"
     for nid in wide_ids:
-        v = f.node(nid).const_int()
+        node = f.node(nid)
+        v = node.const_int()
         assert isinstance(v, int)
         assert v == I80_VALUE
-        wb = f.node(nid).wide_const_bytes()
+        wb = node.wide_const_bytes()
         assert wb is not None
         raw = bytes(wb)
         assert len(raw) == 10  # 80-bit x87 extended = 10 bytes
@@ -140,9 +144,11 @@ def test_i80_const_node_const_int_returns_full_value():
 #     tracked zmm0 container).
 #   - `vmovdqa64 zmm0, [abs]` lifts to an unclassified CallOther
 #     user-op ("vmovdqa64_avx512f"), so no 64-byte Load is minted.
-# `const_int()` decodes every wide width through the same
-# little-endian-bytes route that the I80/I128 tests above exercise, and
-# the I256/I512 byte serialisation itself is unit-tested in strider-ir.
+# `const_int()` / `const_uint()` cover every width up to 128 bits (I1
+# through I128) through the same viewer accessors the I80/I128 tests
+# above exercise; a genuine I256/I512 constant would return `None` from
+# both (use `wide_const_bytes()` there instead), and the I256/I512 byte
+# serialisation itself is unit-tested in strider-ir.
 
 
 def test_small_const_node_const_int_exact_value():
@@ -160,7 +166,7 @@ def test_small_const_node_const_int_exact_value():
     consts = [
         n
         for n in f.node_ids()
-        if f.node_kind(n).startswith("IntConst") and f.node(n).const_int() == value
+        if f.node(n).kind().startswith("IntConst") and f.node(n).const_int() == value
     ]
     assert consts, "expected the imm64 IntConst to surface its exact value"
     # Small constants have no wide-bytes representation.

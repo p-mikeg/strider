@@ -245,7 +245,7 @@ def test_fingerprint_returns_machine_addresses():
         strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
     )
     assert matches, "test fixture has no Add nodes — investigate"
-    fp = function.asm_fingerprint(matches[0].root)
+    fp = function.node(matches[0].root).fingerprint()
     assert isinstance(fp, list)
     assert all(isinstance(a, int) for a in fp)
     # An IntBinaryOp("Add") lifted from a real add instruction must
@@ -264,29 +264,32 @@ def test_fingerprint_returns_machine_addresses():
         )
 
 
-def test_fingerprint_matches_via_function_and_node():
-    """The addr-only fingerprint is Sleigh-free, so it lives directly on
-    `Function`/`Node` (no wrapper needed): `Function.asm_fingerprint(id)`
-    and `Node.fingerprint()` must agree for the same node."""
+def test_fingerprint_matches_via_node_and_match_forwarder():
+    """`Node` is the single source of truth for the addr-only
+    fingerprint; `Match.asm_fingerprint(key)` is a thin forwarder onto
+    `Node.fingerprint()` for a captured node."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load_elf(str(elf))
     function, _unresolved = s.analyze("add")
+    c = strider.pattern.Capture()
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_()).capture(c)
     )
     assert matches
-    fp_via_function = function.asm_fingerprint(matches[0].root)
     fp_via_node = function.node(matches[0].root).fingerprint()
-    assert fp_via_function == fp_via_node
+    fp_via_match = matches[0].asm_fingerprint(c)
+    assert fp_via_node == fp_via_match
 
 
 def test_fingerprint_rejects_bad_type():
-    """`Function.asm_fingerprint(<float>)` should raise TypeError."""
+    """`Function.node(<float>)` should raise TypeError — the same `u32`
+    conversion the removed id-keyed `asm_fingerprint(id)` used to reject
+    on."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load_elf(str(elf))
     function, _unresolved = s.analyze("add")
     with pytest.raises(TypeError):
-        function.asm_fingerprint(1.5)  # type: ignore[arg-type]
+        function.node(1.5)  # type: ignore[arg-type]
 
 
 def test_elf_lifter_repr():

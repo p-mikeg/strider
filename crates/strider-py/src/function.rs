@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock, TryLockError};
 
 use pyo3::prelude::*;
 use strider_ir::node::NodeKind;
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::IRWalker;
 
 use crate::cfg::PyCfg;
 
@@ -26,19 +26,6 @@ pub struct PyFunction {
     /// Strong reference to the parent Cfg; keeps the Sleigh alive for
     /// dot rendering and ensures destruction order is graph-then-cfg.
     pub(crate) cfg: Py<PyCfg>,
-}
-
-/// Convert a Python-supplied `u32` node id into a validated `strider_ir::NodeId`,
-/// returning `StriderError` on lookup failure.
-fn node_id_from_u32(
-    function: &strider_ir::Function,
-    node_id: u32,
-) -> PyResult<strider_ir::node::NodeId> {
-    // O(1) validated lookup (NodeIds are dense arena indices), replacing an
-    // O(N) scan over `all_node_ids` on every per-node accessor call.
-    function.graph().node_id_from_u32(node_id).ok_or_else(|| {
-        crate::errors::into_strider_err(anyhow::anyhow!("no node with id {node_id} in function"))
-    })
 }
 
 impl PyFunction {
@@ -82,8 +69,8 @@ impl PyFunction {
     /// Borrow the inner graph for read, then run `f` against it.  Centralises
     /// the `self.read_inner().map_err(into_strider_err)?` incantation that
     /// every read-only `#[pymethods]` accessor would otherwise repeat.  Use
-    /// this variant when `f` itself returns a `PyResult` (e.g. it propagates
-    /// `?` from `node_id_from_u32` or builds an error from graph state).
+    /// this variant when `f` itself returns a `PyResult` (e.g. it builds an
+    /// error from graph state).
     fn with_read<R>(&self, f: impl FnOnce(&strider_ir::Function) -> PyResult<R>) -> PyResult<R> {
         let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
         f(&function)
@@ -95,21 +82,6 @@ impl PyFunction {
     fn with_read_value<R>(&self, f: impl FnOnce(&strider_ir::Function) -> R) -> PyResult<R> {
         let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
         Ok(f(&function))
-    }
-
-    /// Borrow for read, validate `node_id` into a `NodeId`, then run `f`
-    /// against `(function, NodeId)`.  Centralises the
-    /// borrow → `node_id_from_u32` → call ritual every per-node read
-    /// accessor shares (analogous to [`crate::node::PyNode::with_node`]).
-    fn with_node<R>(
-        &self,
-        node_id: u32,
-        f: impl FnOnce(&strider_ir::Function, strider_ir::node::NodeId) -> R,
-    ) -> PyResult<R> {
-        self.with_read(|function| {
-            let nid = node_id_from_u32(function, node_id)?;
-            Ok(f(function, nid))
-        })
     }
 
     /// Run `pipeline` over this graph in place, bumping the generation
@@ -223,53 +195,6 @@ impl PyFunction {
                 .all_node_ids()
                 .map(|n| n.as_u32())
                 .collect()
-        })
-    }
-
-    /// Returns the [`NodeKind`] of the node at `node_id`, formatted as
-    /// a string (e.g. "IntConst", "Call", "Phi", "Add", …).  Useful
-    /// for direct graph introspection from Python tests / debug
-    /// scripts.
-    ///
-    /// Raises `StriderError` for an invalid `node_id`.
-    fn node_kind(&self, node_id: u32) -> PyResult<String> {
-        self.with_node(node_id, |function, nid| {
-            format!("{:?}", function.node_kind(nid))
-        })
-    }
-
-    /// Returns the asm-fingerprint addresses recorded on the node at
-    /// `node_id` — a sorted, deduped list of machine-instruction
-    /// addresses whose lift contributed to the node's value.
-    ///
-    /// Empty for "structural" node kinds (Entry, InitialMemory, phis,
-    /// Region, InitialVar) whose existence is synthesised by
-    /// the IR builder rather than tied to a specific asm instruction.
-    fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
-        self.with_node(node_id, |function, nid| {
-            function.side_tables().asm_fingerprint(nid).to_vec()
-        })
-    }
-
-    /// Returns the raw little-endian bytes of a wide-typed integer constant
-    /// (10 bytes for I80, 16 for I128, 32 for I256, 64 for I512), or `None`
-    /// for a narrow (≤ I64) constant and any non-const node kind.
-    ///
-    /// Works whether the value is stored inline (small value) or interned —
-    /// the width comes from the constant's declared type.  Use this for
-    /// I80/I128/I256/I512 register constants; narrow constants (≤ I64) are
-    /// accessible via `Match.get_uint(c)` instead.
-    fn wide_const_bytes(&self, node_id: u32) -> PyResult<Option<Vec<u8>>> {
-        self.with_node(node_id, |function, nid| {
-            function.int_const_wide_le_bytes(nid)
-        })
-    }
-
-    /// Returns the Sleigh user-op name attached to a `CallOther` node,
-    /// or `None` for any other node kind.
-    fn call_other_name(&self, node_id: u32) -> PyResult<Option<String>> {
-        self.with_node(node_id, |function, nid| {
-            function.side_tables().call_other_name(nid).map(str::to_owned)
         })
     }
 

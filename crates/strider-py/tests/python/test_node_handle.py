@@ -1,9 +1,12 @@
 """Tests for the discoverable `Node` handle + graph traversal API.
 
 Covers `Function.node(id)`, `Match.node(capture)`, and the `Node`
-accessors (`id`, `kind()`, `inputs()`, `const_int()`, `const_bool()`,
-`fingerprint()`, `__repr__`, `__eq__`/`__hash__`).  Built on the
-high-level `strider.load_elf(...).analyze(...)` facade against the
+accessors (`id`, `kind()`, `inputs()`, `const_int()`, `const_uint()`,
+`const_bool()`, `fingerprint()`, `__repr__`, `__eq__`/`__hash__`).
+`Node` is the single source of truth for per-node reads — `Function`
+does not duplicate the id-keyed readers, and `Match`'s value/op readers
+are thin forwarders onto `Match.node(key)`.  Built on the high-level
+`strider.load_elf(...).analyze(...)` facade against the
 `x64/arithmetic.elf` fixture so the test exercises a real lifted graph.
 """
 
@@ -43,11 +46,24 @@ def test_function_node_invalid_id_raises():
         a.node(bad)
 
 
-def test_node_kind_matches_function_node_kind():
-    """`Node.kind()` agrees with `Function.node_kind(id)`."""
+def test_function_has_no_id_keyed_readers():
+    """Reads are single-source on `Node`: `Function` no longer exposes
+    the duplicate id-keyed readers (`node_kind`, `asm_fingerprint`,
+    `wide_const_bytes`, `call_other_name`) — use `Function.node(id).*()`
+    instead."""
+    a = _analyze_add()
+    assert not hasattr(a, "node_kind")
+    assert not hasattr(a, "asm_fingerprint")
+    assert not hasattr(a, "wide_const_bytes")
+    assert not hasattr(a, "call_other_name")
+
+
+def test_node_kind_is_consistent_across_handles():
+    """`Node.kind()` is stable: two separately-constructed `Node`
+    handles for the same id agree."""
     a = _analyze_add()
     for nid in a.node_ids():
-        assert a.node(nid).kind() == a.node_kind(nid)
+        assert a.node(nid).kind() == a.node(nid).kind()
 
 
 def test_node_inputs_returns_nodes():
@@ -113,8 +129,8 @@ def test_node_const_bool_is_none_on_non_bool():
 
 
 def test_node_fingerprint_is_int_list():
-    """`Node.fingerprint()` returns a list of ints and agrees with
-    `Function.asm_fingerprint(id)`."""
+    """`Node.fingerprint()` returns a list of ints, stable across
+    separately-constructed `Node` handles for the same id."""
     a = _analyze_add()
     add_hits = a.find_all(add(any_(), any_()))
     assert add_hits
@@ -123,7 +139,7 @@ def test_node_fingerprint_is_int_list():
     fp = n.fingerprint()
     assert isinstance(fp, list)
     assert all(isinstance(x, int) for x in fp)
-    assert fp == a.asm_fingerprint(nid)
+    assert fp == a.node(nid).fingerprint()
     # An Add lifted from a real add instruction carries >= 1 source addr.
     assert len(fp) >= 1
 

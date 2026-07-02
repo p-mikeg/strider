@@ -3,7 +3,7 @@
 Covers `ElfLifter.pcode(addr, count)`, the `strider.pcode_at` /
 `strider.pcode_at_addrs` `#[pyfunction]`s, and the
 `Lifter.fingerprint_pcode(node)` audit-trail companion to
-`Node.fingerprint()` / `Function.asm_fingerprint(id)`.
+`Node.fingerprint()` (also reachable via `Match.asm_fingerprint(key)`).
 
 These close the "audit trail" loop: a matched value node's fingerprint
 (machine-instruction *addresses*) can be lifted to p-code text without
@@ -171,7 +171,7 @@ def test_fingerprint_pcode_empty_for_structural_node():
     function, _unresolved = prog.analyze("array_sum")
     struct_id = None
     for nid in function.node_ids():
-        if not function.asm_fingerprint(nid):
+        if not function.node(nid).fingerprint():
             struct_id = nid
             break
     assert struct_id is not None, "expected at least one structural node"
@@ -236,7 +236,9 @@ def test_fingerprint_pcode_does_not_perturb_a_following_analyze():
     # `fingerprint_pcode`, exercising all three accepted argument forms,
     # between the two `analyze()` calls.
     fingerprinted_ids = [
-        nid for nid in function_before.node_ids() if function_before.asm_fingerprint(nid)
+        nid
+        for nid in function_before.node_ids()
+        if function_before.node(nid).fingerprint()
     ]
     assert len(fingerprinted_ids) >= 2
     for nid in reversed(fingerprinted_ids):

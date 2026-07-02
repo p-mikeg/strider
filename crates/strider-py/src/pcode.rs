@@ -1,9 +1,9 @@
 //! `strider.pcode_at` / `strider.pcode_at_addrs` — lift machine
 //! addresses to their p-code semantics.
 //!
-//! These close the "audit trail" loop: `Node.fingerprint()` /
-//! `Function.asm_fingerprint(id)` hand back the machine-instruction
-//! *addresses* that explain a matched value; these functions lift those
+//! These close the "audit trail" loop: `Node.fingerprint()` (also
+//! reachable via `Match.asm_fingerprint(key)`) hands back the machine-
+//! instruction *addresses* that explain a matched value; these functions lift those
 //! addresses to p-code so the user can read the semantics that produced
 //! a match without leaving strider.  rsleigh is a p-code lifter — the
 //! returned `text` is the lifted semantics, NOT native assembly
