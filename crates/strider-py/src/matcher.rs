@@ -28,13 +28,13 @@ use crate::pattern::{PyCapture, intern_str};
 /// post-bump arena.
 #[pyclass(name = "Match", module = "strider")]
 pub struct PyMatch {
-    pub(crate) inner: strider_pattern::Match,
+    inner: strider_pattern::Match,
     pub(crate) function: Py<PyFunction>,
     /// Generation counter sampled at `PyMatch` construction time.
     /// Compared against `Function::generation()` on every accessor; a
     /// mismatch means the underlying arena was reshuffled since the
     /// match was created and the stored `ValueId`s are stale.
-    pub(crate) generation: u64,
+    generation: u64,
 }
 
 /// Polymorphic capture key: a `Capture` instance or a string name

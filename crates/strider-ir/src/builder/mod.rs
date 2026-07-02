@@ -1,6 +1,5 @@
 use cranelift_entity::PrimaryMap;
 use cranelift_entity::packed_option::ReservedValue;
-use rustc_hash::FxHashMap;
 
 use crate::error::Result;
 use crate::function::Function;
@@ -16,14 +15,6 @@ mod nodes;
 #[cfg(test)]
 mod tests;
 mod vars;
-
-/// Returns `true` for varnode spaces whose offsets are addressed as fixed
-/// byte ranges (REGISTER, UNIQUE).  CONST and code-space varnodes don't
-/// behave like fixed-offset registers, so containment-by-offset is
-/// meaningless there.
-fn is_aliasable_space(s: rsleigh::VnSpace) -> bool {
-    s == rsleigh::VnSpace::REGISTER || s == rsleigh::VnSpace::UNIQUE
-}
 
 /// Errors unless `vn` is in REGISTER or UNIQUE space.
 ///
@@ -42,80 +33,6 @@ pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()
     }
 }
 
-/// Filters `all_used_variables` down to the largest enclosing tracked
-/// variable in each fixed-offset (REGISTER/UNIQUE) space.  E.g. if both
-/// `rdi` and `edi` are touched, the `edi` entry is dropped.  CONST and
-/// code-space varnodes are kept verbatim — containment-by-offset is
-/// meaningless there.
-///
-/// MIPS-style example: Sleigh's MIPS lifter writes a 64-bit IntMul
-/// result to a unique varnode then Copies a 4-byte slice to a register;
-/// without this filter the 4-byte and 8-byte unique varnodes look like
-/// independent SSA variables.  Keeping the wider varnode preserves the
-/// data dependency.
-///
-/// Returns the deduped tracked set in INPUT order; [`Function::new`] re-sorts
-/// it before interning, so downstream `InitialVnId` assignment is deterministic
-/// regardless of this input order.  A varnode is dropped iff some STRICTLY
-/// larger same-space varnode encloses its byte range.  The `vn → container`
-/// resolution the register-aliasing hot path needs is machine-register
-/// knowledge the lifter owns (see [`crate::build_container_map`]); it is not
-/// computed here.
-fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
-    // Range end with saturating arithmetic (high-offset CR slices on ppc64 /
-    // aarch64be can push `addr_off + size` past `u64::MAX`).
-    fn end_of(v: &rsleigh::Vn) -> u64 {
-        v.addr_off.saturating_add(u64::from(v.size))
-    }
-
-    // Bucket aliasable inputs by space, carrying each entry's original index.
-    let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
-    for (i, v) in all_used_variables.iter().enumerate() {
-        if is_aliasable_space(v.addr_space) {
-            by_space.entry(v.addr_space).or_default().push((i, *v));
-        }
-    }
-
-    let mut dropped = vec![false; all_used_variables.len()];
-    for (_space, mut bucket) in by_space {
-        // addr_off ascending, then size descending so a wider enclosure is
-        // seen before the narrower slices it contains.
-        bucket.sort_by_key(|(_, v)| (v.addr_off, std::cmp::Reverse(v.size)));
-
-        // Open enclosures whose range still extends past the current start,
-        // kept as `(end, vn)` and holding only SURVIVORS. Sorted-by-start
-        // arrival means any open entry has `off <= v.off`; one with
-        // `end >= v_end` AND `size > v.size` strictly encloses `v`.
-        let mut open: Vec<(u64, rsleigh::Vn)> = Vec::new();
-        for (idx, v) in bucket {
-            let v_end = end_of(&v);
-            // Drop opens whose range ends before this entry STARTS: by the
-            // addr_off-ascending sort every remaining entry starts at or after
-            // `v.addr_off`, so such an open can enclose neither `v` nor any
-            // later entry (whose end is ≥ its own start ≥ v.addr_off).  Opens
-            // surviving this prune may still enclose a later, even-narrower
-            // entry that shares `v`'s start, so they stay live.
-            open.retain(|&(end, _)| end >= v.addr_off);
-            // Strictly-larger enclosing open (`off ≤ v.off` by sort,
-            // `end ≥ v_end`, `size > v.size`): if present, `v` is a subsumed
-            // sub-register view and is dropped; else `v` is the largest in its
-            // chain and joins the opens.
-            let enclosed = open.iter().any(|&(end, c)| end >= v_end && c.size > v.size);
-            if enclosed {
-                dropped[idx] = true;
-            } else {
-                open.push((v_end, v));
-            }
-        }
-    }
-
-    all_used_variables
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !dropped[*i])
-        .map(|(_, v)| *v)
-        .collect()
-}
 
 /// Incrementally constructs a sea-of-nodes IR function graph.
 ///
@@ -150,7 +67,7 @@ pub struct FunctionBuilder {
     /// Region-setup helpers (`build_entry`, region/phi creation) leave it
     /// `None`, so synthesised structural
     /// nodes legitimately stay empty in the fingerprint side-table.
-    pub(crate) lift_addr: Option<u64>,
+    lift_addr: Option<u64>,
 }
 
 impl FunctionBuilder {
@@ -210,28 +127,24 @@ impl FunctionBuilder {
         cc: &strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
     ) -> Result<Self> {
-        // Ensure every calling-convention register — the return registers
-        // (int + float), the argument-passing registers, and the stack
-        // pointer — is a tracked variable, even when the function body never
-        // touches it directly.
+        // Build the canonical tracked universe here: seed every
+        // calling-convention register (int + float return regs, the
+        // argument-passing regs, and the stack pointer), so a leaf function that
+        // merely forwards a call still tracks each CC register the
+        // aliasing-aware read path needs; then drop strictly-enclosed
+        // sub-register views so each aliasing chain keeps only its widest
+        // varnode.  This is the sole construction path shared by the lifter
+        // (prod) and the fixtures that build a `Function` without one, so it
+        // lives here rather than being duplicated per caller.
         //
-        // Return regs: keeps the data-flow chain from a float operation's
-        // output (e.g. an aarch64 FloatAdd writes to s0, the 4-byte
-        // sub-register of q0) connected to the Return node — without this
-        // step `q0` would not be in the variable set, and the pcode-lift
-        // register-aliasing logic would never widen the s0 write into a q0
-        // store visible to Return.
+        // Resolving an ARBITRARY varnode to its largest tracked container (the
+        // `vn_to_container` map / `largest_container_in`) is a different,
+        // machine-register concern owned by the lifter — NOT built here.
         //
-        // Arg-passing regs + stack pointer: every `Call` reads each
-        // arg-passing register and the stack pointer through the lifter's
-        // aliasing-aware read path, which requires a tracked container, and
-        // never mints one at the call site.  Seeding them here freezes the tracked
-        // variable SET at construction, so a leaf function that merely
-        // forwards a call still has an `InitialVar` for each CC register the
-        // Call must read.  A function that *does* touch a wider view of one
-        // of these (e.g. reads `RDI` after `EDI` was seeded) is handled by
-        // `dedup_and_container_map` below, which keeps the widest
-        // enclosing varnode.
+        // `Function::new` then sorts by `(space, offset, size)` and interns the
+        // varnodes (the SSoT `vn_interner`), so `InitialVnId` assignment is
+        // deterministic and the `i`-th tracked varnode still lines up with the
+        // `i`-th `Call` clobber output.
         for v in cc
             .ret_val_regs
             .iter()
@@ -243,22 +156,7 @@ impl FunctionBuilder {
                 all_used_variables.push(*v);
             }
         }
-
-        // Drop strictly-enclosed sub-register views, keeping the widest
-        // enclosing varnode of each aliasing chain (REGISTER/UNIQUE only; CONST
-        // is left to the graph's structural dedup cache and RAM load/store is
-        // deliberately not deduped).  The `vn → container` resolution the
-        // register-aliasing hot path needs is machine-register knowledge owned
-        // by the lifter (its `vn_to_container` map), NOT this target-agnostic
-        // IR — so it is no longer built or stored here.
-        let tracked_vns = dedup_overlapping_largest(&all_used_variables);
-
-        // Hand the deduped tracked set + resolved CC straight through:
-        // `Function::new` sorts by `(space, offset, size)` and interns the
-        // varnodes (the SSoT `vn_interner`), so `InitialVnId` assignment is
-        // deterministic and the `i`-th tracked varnode still lines up with the
-        // `i`-th `Call` clobber output.  Every register-list projection a Call
-        // / Return / CallOther needs is derived from `(default_cc, all_vns)`.
+        let tracked_vns = vn_container::dedup_overlapping_largest(&all_used_variables);
         let mut fb = FunctionBuilder {
             function: Function::new(cc.clone(), endianness, tracked_vns),
             entry_memory: ValueId::reserved_value(),
@@ -277,13 +175,6 @@ impl FunctionBuilder {
     #[inline]
     pub fn set_lift_addr(&mut self, addr: Option<u64>) {
         self.lift_addr = addr;
-    }
-
-    /// Sets the function-default convention's stack-argument layout.
-    /// Prod sets stack args through the lift path; used only by tests.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn set_stack_args(&mut self, stack_args: Option<strider_target::StackArgs>) {
-        self.function.default_cc.stack_args = stack_args;
     }
 
     /// Creates a node in the graph with the given kind, inputs, and

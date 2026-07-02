@@ -51,9 +51,7 @@ mod control_flow_view;
 pub use control_flow_view::{control_dominators, dominates};
 pub mod error;
 mod function;
-pub use function::{
-    EditFunction, Function, FunctionState, SideTables, build_container_map, largest_container_in,
-};
+pub use function::{EditFunction, Function, FunctionState, SideTables};
 #[cfg(any(test, feature = "test-util"))]
 pub use function::cc_ret_and_clobber_vns;
 pub mod graph;
@@ -63,12 +61,11 @@ pub use graph::Inputs;
 mod node_signature;
 mod region;
 pub use ::read_only_memory::ReadOnlyMemory;
-pub mod const_value;
 pub mod validate;
 mod viewer;
 pub mod walk;
 
-pub use crate::const_value::{ConstId, ConstValue};
+pub use crate::node::const_value::{ConstId, ConstValue};
 pub use crate::error::Result;
 pub use builder::{FunctionBuilder, IRBuilder, IRBuilderExt};
 pub use node::{

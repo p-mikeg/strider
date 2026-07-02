@@ -40,10 +40,10 @@ use crate::function::PyFunction;
 pub struct PyNode {
     pub(crate) function: Py<PyFunction>,
     /// Raw arena index of the node this handle points at.
-    pub(crate) id: u32,
+    id: u32,
     /// Generation counter sampled at construction.  Compared against
     /// `Function::generation()` on every accessor.
-    pub(crate) generation: u64,
+    generation: u64,
 }
 
 impl PyNode {

@@ -25,15 +25,15 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// overrides (the `LiftOptions` default), so lookups are a plain `.get`.
     pub(crate) per_address_ccs:
         &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    /// `vn → largest tracked container` map: the machine-register-container
-    /// knowledge that lives with the lifter (not the target-agnostic IR).
-    /// Built once from the raw collected varnode set plus every
-    /// calling-convention register, it is the O(1) fast path the
+    /// `vn → largest tracked container` map ([`vn_container::ContainerMap`]):
+    /// the machine-register-container knowledge that lives with the lifter (not
+    /// the target-agnostic IR).  Built once from the raw collected varnode set
+    /// plus every calling-convention register, it is the O(1) fast path the
     /// register-aliasing read/write (`vn_io`) and the CC / CallOther register
     /// projections read on every access.  Ad-hoc varnodes absent from the map
-    /// resolve through the `all_vns` scan fallback in
+    /// fall through to its `all_vns` scan fallback in
     /// [`FunctionLifter::container_of`].
-    pub(crate) vn_to_container: rustc_hash::FxHashMap<rsleigh::Vn, rsleigh::Vn>,
+    pub(crate) container_map: vn_container::ContainerMap,
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
@@ -53,16 +53,18 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<Self> {
+        // `FunctionBuilder::new` seeds the CC registers and drops enclosed
+        // sub-registers, so `builder.function().all_vns()` is the canonical
+        // tracked set (universe construction — shared by every fixture — lives
+        // there).  Resolving a varnode INTO that set is the machine-register
+        // concern owned here in the lifter: precompute the `vn → container` map
+        // over every raw collected varnode plus every CC register (arg / ret /
+        // float-ret / stack / callee-saved), so a CC register narrower than its
+        // tracked container (ABI says `eax`, function tracks `rax`) resolves to
+        // the container.  This is the O(1) fast path the register-aliasing
+        // read/write and CC projections read on every access.
         let builder =
             strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch.endianness())?;
-        // Build the container map from the deduped tracked survivors
-        // (`function.all_vns()`), resolving every raw collected varnode plus
-        // every calling-convention register (arg / ret / float-ret / stack /
-        // callee-saved) to its largest tracked container.  A CC register
-        // narrower than its tracked container (ABI says `eax`, function tracks
-        // `rax`) thus resolves to the container.  This is the machine-register
-        // knowledge relocated out of the IR into the lifter.
-        let tracked = builder.function().all_vns();
         let cc_regs = cc
             .ret_val_regs
             .iter()
@@ -72,14 +74,15 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .chain(std::iter::once(&cc.stack_vn))
             .copied();
         let queries = all_vns.iter().copied().chain(cc_regs);
-        let vn_to_container = strider_ir::build_container_map(tracked, queries);
+        let container_map =
+            vn_container::ContainerMap::build(builder.function().all_vns(), queries);
         Ok(Self {
             lifter,
             builder,
             cfg,
             unresolved_branches: Vec::new(),
             per_address_ccs,
-            vn_to_container,
+            container_map,
         })
     }
 

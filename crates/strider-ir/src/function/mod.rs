@@ -12,7 +12,6 @@ pub use side_tables::SideTables;
 pub use edit::EditFunction;
 pub use edit::FunctionState;
 pub use func::Function;
-pub use func::{build_container_map, largest_container_in};
 #[cfg(any(test, feature = "test-util"))]
 pub use func::cc_ret_and_clobber_vns;
 

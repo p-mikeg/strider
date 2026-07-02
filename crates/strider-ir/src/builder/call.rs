@@ -255,7 +255,7 @@ impl FunctionBuilder {
             // CC arg regs are tracked full-width containers here, so a plain
             // container-resolved variable read matches what the lifter's
             // aliasing dispatch produces (no sub-register slice to insert).
-            let c = crate::function::largest_container_in(self.function().all_vns(), vn);
+            let c = vn_container::largest_container_in(self.function().all_vns(), vn);
             arg_passing.push(self.read_variable(&c)?);
         }
 
@@ -324,7 +324,7 @@ impl FunctionBuilder {
         // operands.
         let mut args: SmallVec<[ValueId; 4]> = SmallVec::new();
         for vn in &abi.implicit_reads {
-            let c = crate::function::largest_container_in(self.function().all_vns(), vn);
+            let c = vn_container::largest_container_in(self.function().all_vns(), vn);
             args.push(self.read_variable(&c)?);
         }
         args.extend_from_slice(explicit_args);
@@ -332,10 +332,10 @@ impl FunctionBuilder {
         // Output vns: result then implicit-write clobbers, each canonicalized to
         // its largest tracked container and deduplicated (the result wins ties).
         let result_vn =
-            output.map(|vn| crate::function::largest_container_in(self.function().all_vns(), &vn));
+            output.map(|vn| vn_container::largest_container_in(self.function().all_vns(), &vn));
         let mut clobber_vns: SmallVec<[rsleigh::Vn; 4]> = SmallVec::new();
         for vn in &abi.implicit_writes {
-            let c = crate::function::largest_container_in(self.function().all_vns(), vn);
+            let c = vn_container::largest_container_in(self.function().all_vns(), vn);
             if Some(c) == result_vn || clobber_vns.contains(&c) {
                 continue;
             }

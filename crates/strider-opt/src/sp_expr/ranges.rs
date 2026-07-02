@@ -39,7 +39,7 @@ pub(crate) fn high_low_shift_bits(
 /// — i.e. an unknown-extent range is treated as effectively infinite in both
 /// directions, matching the conservative verdict callers expect.
 #[inline]
-pub fn ranges_disjoint(a_off: i128, a_size: i128, b_off: i128, b_size: i128) -> bool {
+pub(super) fn ranges_disjoint(a_off: i128, a_size: i128, b_off: i128, b_size: i128) -> bool {
     let a_end = a_off.saturating_add(a_size);
     let b_end = b_off.saturating_add(b_size);
     // If either endpoint saturated, treat the corresponding range as

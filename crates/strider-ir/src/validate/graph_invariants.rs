@@ -425,8 +425,8 @@ pub(super) fn check_graph_invariants_consts(
         };
         // Every bit above the declared width must be zero (canonical masking).
         let too_wide = match value {
-            crate::const_value::ConstValue::Bits(v) => v & !ty.bit_mask_u128() != 0,
-            crate::const_value::ConstValue::Wide(limbs) => {
+            crate::node::const_value::ConstValue::Bits(v) => v & !ty.bit_mask_u128() != 0,
+            crate::node::const_value::ConstValue::Wide(limbs) => {
                 limbs.len() * 64 > ty.bit_width()
                     && limbs
                         .iter()

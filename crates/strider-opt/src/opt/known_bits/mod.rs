@@ -16,7 +16,7 @@ mod tests;
 /// Migrated from `FxHashMap<ValueId, KnownBitsFacts>` to `SecondaryMap` to
 /// avoid hashing in the inner loop — at 10k+ nodes this is the
 /// hottest probe in the entire `KnownBits` pass.
-pub type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
+pub(crate) type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
 
 // ── Known-bits representation ─────────────────────────────────────────────────
 

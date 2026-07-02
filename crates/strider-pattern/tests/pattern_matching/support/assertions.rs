@@ -19,7 +19,7 @@ use strider_pattern::{Capture, Match, Matcher};
 /// Runs `pat` against `function` and returns the matches, panicking with
 /// a descriptive message if the count differs from `expected`.
 #[track_caller]
-pub fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec<Match> {
+pub(crate) fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec<Match> {
     let hits = Matcher::new(function).find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
@@ -32,14 +32,14 @@ pub fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec<Match>
 
 /// Asserts `pat` matches exactly once and returns that [`Match`].
 #[track_caller]
-pub fn unique(function: &Function, pat: Pattern) -> Match {
+pub(crate) fn unique(function: &Function, pat: Pattern) -> Match {
     let mut hits = matches(function, pat, 1);
     hits.pop().expect("unique requires exactly one match")
 }
 
 /// Asserts `pat` produces no matches.
 #[track_caller]
-pub fn none(function: &Function, pat: Pattern) {
+pub(crate) fn none(function: &Function, pat: Pattern) {
     matches(function, pat, 0);
 }
 
@@ -49,7 +49,7 @@ pub fn none(function: &Function, pat: Pattern) {
 /// places (e.g. a constant used twice) but the test only cares about *any*
 /// success, not exactly one.
 #[track_caller]
-pub fn first(function: &Function, pat: Pattern) -> Match {
+pub(crate) fn first(function: &Function, pat: Pattern) -> Match {
     let mut hits = Matcher::new(function).find_all(&pat).unwrap();
     assert!(!hits.is_empty(), "expected at least one match, got 0");
     hits.swap_remove(0)
@@ -60,7 +60,7 @@ pub fn first(function: &Function, pat: Pattern) -> Match {
 /// once.  Callers build the same pattern twice with the operands swapped;
 /// non-commutative rejection / `.ordered()` cases stay with [`none`].
 #[track_caller]
-pub fn matches_both_orders(function: &Function, order_a: Pattern, order_b: Pattern) {
+pub(crate) fn matches_both_orders(function: &Function, order_a: Pattern, order_b: Pattern) {
     matches(function, order_a, 1);
     matches(function, order_b, 1);
 }
@@ -69,14 +69,14 @@ pub fn matches_both_orders(function: &Function, order_a: Pattern, order_b: Patte
 /// the match bindings as an unsigned integer constant (`None` when the
 /// bound value is not an `IntConst`).
 #[track_caller]
-pub fn unique_uint(function: &Function, pat: Pattern, cap: Capture) -> Option<u128> {
+pub(crate) fn unique_uint(function: &Function, pat: Pattern, cap: Capture) -> Option<u128> {
     unique(function, pat).bindings().get_uint(cap, function)
 }
 
 /// Returns the first node in `function` whose kind satisfies `pred`,
 /// panicking if none exists.
 #[track_caller]
-pub fn find_node<F: Fn(&NodeKind) -> bool>(function: &Function, pred: F) -> NodeId {
+pub(crate) fn find_node<F: Fn(&NodeKind) -> bool>(function: &Function, pred: F) -> NodeId {
     function
         .walk()
         .find(|&n| pred(function.node_kind(n)))

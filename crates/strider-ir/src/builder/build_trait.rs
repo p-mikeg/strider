@@ -113,7 +113,7 @@ mod tests {
         // integration test `builder_trait.rs` where test-utils are available.
         let mut b = empty_builder().unwrap();
         assert_eq!(b.lift_addr, None);
-        let const_id = crate::const_value::ConstId::new(3);
+        let const_id = crate::node::const_value::ConstId::new(3);
         let n = <FunctionBuilder as IRBuilder>::create_node(
             &mut b,
             NodeKind::IntConst(const_id),

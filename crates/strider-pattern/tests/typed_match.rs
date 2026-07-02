@@ -15,6 +15,7 @@ use strider_ir::{
     IntCmpOp,
 };
 use strider_ir_test_utils::{make_empty_fn, reg_vn};
+use strider_ir_test_utils::IrBuilderEx;
 
 use strider_pattern::{
     Capture, CaptureExt, MatchPat, Matcher, add, and, any, any_bool_const, any_float_const,
@@ -758,6 +759,20 @@ fn initial_var_family() {
     assert_eq!(count(|| initial_var().into_pattern(), &fx), 1);
     assert_eq!(count(|| initial_var_for(rax).into_pattern(), &fx), 1);
     assert_eq!(count(|| initial_var_for(rbx).into_pattern(), &fx), 0);
+}
+
+#[test]
+fn initial_var_for_matches_sub_register_of_container() {
+    // The IR only ever holds the largest container, so pinning a sub-register
+    // (`eax`, the low 4 bytes of the tracked 8-byte `rax`) must still match the
+    // container's `InitialVar` — the pattern checks containment by hand rather
+    // than exact varnode equality. A disjoint register still does not match.
+    let rax = reg_vn(0, 8);
+    let eax = reg_vn(0, 4);
+    let disjoint = reg_vn(16, 4);
+    let (fx, _val) = strider_ir_test_utils::make_fn_with_var(rax, |_b, base| Ok(base)).unwrap();
+    assert_eq!(count(|| initial_var_for(eax).into_pattern(), &fx), 1);
+    assert_eq!(count(|| initial_var_for(disjoint).into_pattern(), &fx), 0);
 }
 
 // ── combinators ───────────────────────────────────────────────────────

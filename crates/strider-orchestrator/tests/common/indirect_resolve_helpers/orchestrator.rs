@@ -22,7 +22,7 @@ use strider_target::{CallingConvention, SleighArch};
 ///
 /// The placeholder `IndirectBranch` has exactly 3 inputs:
 /// `[control, memory, target_value]`.
-pub fn anchor_value_input(function: &Function) -> Option<strider_ir::Value> {
+pub(crate) fn anchor_value_input(function: &Function) -> Option<strider_ir::Value> {
     let mut found: Option<strider_ir::Value> = None;
     for nid in function.walk() {
         if !matches!(function.node_kind(nid), NodeKind::IndirectBranch) {
@@ -53,7 +53,7 @@ pub fn anchor_value_input(function: &Function) -> Option<strider_ir::Value> {
 /// Panics if the synthetic CFG produces zero or multiple
 /// `UnresolvedIndirectBranch` placeholders — every fixture in this
 /// module is supposed to have exactly one indirect branch.
-pub fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Option<rsleigh::Vn>) {
+pub(crate) fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Option<rsleigh::Vn>) {
     let base = 0x1000u64;
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);

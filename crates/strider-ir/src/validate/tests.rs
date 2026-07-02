@@ -221,7 +221,7 @@ fn validate_flags_stale_initial_var_index_entry() {
     stamp(&mut s.f, iv);
     let iv_value = s.f.node_outputs(iv)[0];
     let vn_id = s.f.vn_id_of(&vn).expect("vn is tracked");
-    s.f.side_tables.initial_var_index.insert(vn_id, iv);
+    s.f.side_tables_mut().initial_var_index.insert(vn_id, iv);
     let ret =
         s.f.graph_mut()
             .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, iv_value], []);
@@ -873,7 +873,7 @@ fn indirect_branch_with_control_memory_and_value_validates() {
 
 #[test]
 fn graph_invariants_dangling_const_id_detected() {
-    use crate::const_value::ConstId;
+    use crate::node::const_value::ConstId;
     use cranelift_entity::EntityRef;
     let mut s = spine();
     // Construct an IntConst pointing at an id that was never interned.
@@ -897,7 +897,7 @@ fn graph_invariants_dangling_const_id_detected() {
 
 #[test]
 fn graph_invariants_wide_const_width_mismatch_detected() {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut s = spine();
     // Intern a genuinely-wide (> u128, 4 limbs) value but assign it to a
     // narrower (I64) output — bits set above the declared width.
@@ -921,7 +921,7 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
 
 #[test]
 fn graph_invariants_const_bits_above_declared_width_detected() {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut s = spine();
     // A `Bits` value with bits set above the declared I8 width (un-masked) is
     // non-canonical: the validator flags it as a width mismatch.

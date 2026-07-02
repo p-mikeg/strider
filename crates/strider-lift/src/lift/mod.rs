@@ -69,16 +69,16 @@ pub use crate::lift_options::LiftOptions;
 /// need a detached engine (e.g. the strider-py GIL-release path) rebuild a
 /// fresh `Lifter` from a cloneable memory snapshot rather than cloning.
 pub struct Lifter<R: rsleigh::MemReader> {
-    pub(crate) arch: strider_target::SleighArch,
+    arch: strider_target::SleighArch,
     /// The Sleigh context, owning the `MemReader`.  Borrowed `&mut` to
     /// build the CFG, then `&` to lift it; reused across rebuilds.
-    pub(crate) sleigh: rsleigh::Sleigh<R>,
+    sleigh: rsleigh::Sleigh<R>,
     /// Cached `SleighRegs` table from construction.  Used by the CallOther
     /// per-op-ABI dispatch in `FunctionLifter::handle_call_other` to
     /// resolve register names to `rsleigh::Vn`s without paying the
     /// per-call cost of `Sleigh::regs()` (an "expensive operation" per its
     /// docstring).
-    pub(crate) sleigh_regs: rsleigh::SleighRegs,
+    sleigh_regs: rsleigh::SleighRegs,
 }
 
 impl<R: rsleigh::MemReader> Lifter<R> {

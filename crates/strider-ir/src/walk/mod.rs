@@ -401,7 +401,7 @@ mod tests {
         let mut graph = Graph::new();
         // A pure data source (no control outputs).
         let src = graph.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -444,7 +444,7 @@ mod tests {
     fn cfg_succs_no_control_outputs_is_empty() {
         let mut graph = Graph::new();
         let node = graph.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -552,7 +552,7 @@ mod tests {
     fn cfg_outputs_empty_when_all_outputs_are_data() {
         let mut graph = Graph::new();
         let node = graph.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(5_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
             [],
             [ValueKind::Typed(ValueType::I32)],
         );
@@ -568,13 +568,13 @@ mod tests {
     fn rpo_emits_operands_before_consumer() {
         let mut graph = Graph::new();
         let a = graph.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(5_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
         let [a_value] = graph.node_outputs_exact::<1>(a).unwrap();
         let c = graph.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(4_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(4_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -605,7 +605,7 @@ mod tests {
     fn rpo_visits_shared_operand_once() {
         let mut graph = Graph::new();
         let c = graph.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -631,7 +631,7 @@ mod tests {
     /// Builds an `IntConst` and returns `(node, value)`.
     fn int_const(graph: &mut Graph, v: u64) -> (NodeId, ValueId) {
         let n = graph.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new((v) as usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new((v) as usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -794,7 +794,7 @@ mod tests {
         let (a, c1) = make_ctrl_node(&mut graph, c0);
         // Data const consumed by the terminator so it is reachable.
         let data = graph.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -870,13 +870,13 @@ mod tests {
         let mut graph = Graph::new();
         let (entry, e_ctrl) = make_entry(&mut graph);
         let a = graph.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(5_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
         let [a_value] = graph.node_outputs_exact::<1>(a).unwrap();
         let c = graph.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(4_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(4_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -923,7 +923,7 @@ mod tests {
         let (b, b_ctrl) = make_ctrl_node(&mut graph, a_ctrl);
         // Pure data node referenced as Return's value input.
         let data = graph.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(0_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );

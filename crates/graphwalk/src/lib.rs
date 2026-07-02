@@ -64,15 +64,6 @@ pub trait PredGraphRef: GraphRef {
         node: Self::NodeId,
         f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
     ) -> ControlFlow<()>;
-
-    /// Convenience wrapper over [`try_predecessors`](PredGraphRef::try_predecessors)
-    /// that ignores the `ControlFlow` return value.
-    fn predecessors(&self, node: Self::NodeId, mut f: impl FnMut(Self::NodeId)) {
-        let _ = self.try_predecessors(node, |pred| {
-            f(pred);
-            ControlFlow::Continue(())
-        });
-    }
 }
 
 impl<G: PredGraphRef> PredGraphRef for &'_ G {

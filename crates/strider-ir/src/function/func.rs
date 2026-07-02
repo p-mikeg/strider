@@ -23,18 +23,6 @@ use crate::function::side_tables::SideTables;
 use crate::graph::{Graph, NodeIdRemap};
 use crate::node::{NodeId, NodeKind, ValueId};
 
-/// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
-/// inclusion) that fully contains `vn`, or `vn` itself when none does.
-///
-/// Returns `*vn` unchanged when `vn` is not in an aliasable
-/// (REGISTER/UNIQUE) space — containment-by-offset is meaningless for
-/// CONST / RAM / code-space varnodes.  Otherwise it picks the largest
-/// same-space element of `vns` whose `[off, off+size)` (saturating) range
-/// fully encloses `vn`'s range, falling back to `*vn` when nothing does.
-///
-/// This is the single linear containment scan shared by
-/// the lifter's `container_of` ad-hoc fallback and the bulk
-/// [`build_container_map`] sweep.
 /// Deterministic ordering key for a tracked varnode: `(space, offset,
 /// size)`.  [`Function::new`] sorts the tracked set by this before interning
 /// so `InitialVnId` assignment — and every derived clobber-slot index — is
@@ -48,7 +36,7 @@ pub(crate) fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
 ///
 /// A thin binding of the SSoT
 /// [`strider_target::BuiltCallingConvention::ret_and_clobber_vns`] to the
-/// IR-side container resolver ([`largest_container_in`] over the tracked set) —
+/// container resolver (`vn_container::largest_container_in` over the tracked set) —
 /// the same result the lifter's `cc_projection` produces in prod with its
 /// container map.  This exists only for the strider-ir test fixtures
 /// (`build_call_cc`) and cross-crate CC-shape tests that build a `Call`
@@ -60,118 +48,7 @@ pub fn cc_ret_and_clobber_vns(
     cc: &strider_target::BuiltCallingConvention,
 ) -> (Vec<rsleigh::Vn>, Vec<rsleigh::Vn>) {
     let all = function.all_vns();
-    cc.ret_and_clobber_vns(all, |v| largest_container_in(all, v))
-}
-
-pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
-    if vn.addr_space != rsleigh::VnSpace::REGISTER && vn.addr_space != rsleigh::VnSpace::UNIQUE {
-        return *vn;
-    }
-    let start = vn.addr_off;
-    let end = start.saturating_add(u64::from(vn.size));
-    let mut best: Option<rsleigh::Vn> = None;
-    for cand in vns {
-        if cand.addr_space != vn.addr_space {
-            continue;
-        }
-        let cs = cand.addr_off;
-        let ce = cs.saturating_add(u64::from(cand.size));
-        if cs > start || ce < end {
-            continue;
-        }
-        if best.is_none_or(|b| b.size < cand.size) {
-            best = Some(*cand);
-        }
-    }
-    best.unwrap_or(*vn)
-}
-
-/// Build a `vn → largest containing tracked vn` map over `queries`, resolving
-/// every REGISTER / UNIQUE query varnode against the `tracked` set with an
-/// O(n log n) per-space stack sweep (never the O(n²) per-query rescan).
-///
-/// A query that is its own largest container maps to itself; a sub-register
-/// slice maps to the largest tracked varnode that strictly encloses it (its
-/// container).  Non-aliasable (CONST / RAM / code) query varnodes are omitted —
-/// containment-by-offset is meaningless there — so a lookup miss on them falls
-/// through to the caller's fallback (self).  The map is the O(1) fast path the
-/// register-aliasing hot path reads on every register access; the lifter owns
-/// it, built once per function from the raw collected varnode set plus every
-/// calling-convention register.
-///
-/// This is the machine-register-container knowledge relocated out of the
-/// target-agnostic IR: the shared linear scan behind ad-hoc lookups is
-/// [`largest_container_in`], and this bulk builder reuses the same containment
-/// rule in one sweep.
-pub fn build_container_map(
-    tracked: &[rsleigh::Vn],
-    queries: impl IntoIterator<Item = rsleigh::Vn>,
-) -> FxHashMap<rsleigh::Vn, rsleigh::Vn> {
-    // Bucket the tracked set by space, `(off ascending, size descending)`, so a
-    // wider enclosure is seen before the narrower slices it contains.
-    let mut tracked_by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> = FxHashMap::default();
-    for v in tracked {
-        if v.addr_space == rsleigh::VnSpace::REGISTER || v.addr_space == rsleigh::VnSpace::UNIQUE {
-            tracked_by_space.entry(v.addr_space).or_default().push(*v);
-        }
-    }
-
-    // Query varnodes to resolve, deduped and bucketed by space (only aliasable
-    // spaces participate).
-    let mut queries_by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> = FxHashMap::default();
-    let mut map: FxHashMap<rsleigh::Vn, rsleigh::Vn> = FxHashMap::default();
-    for q in queries {
-        if (q.addr_space == rsleigh::VnSpace::REGISTER || q.addr_space == rsleigh::VnSpace::UNIQUE)
-            && !map.contains_key(&q)
-        {
-            // Mark seen so a repeated query is not re-pushed; real value filled
-            // by the sweep below.
-            map.insert(q, q);
-            queries_by_space.entry(q.addr_space).or_default().push(q);
-        }
-    }
-
-    for (space, mut qs) in queries_by_space {
-        let Some(tracked_here) = tracked_by_space.get(&space) else {
-            // No tracked varnodes in this space: every query is its own
-            // container (the `map.insert(q, q)` above already holds).
-            continue;
-        };
-        // Merge the tracked enclosures and the queries into one start-ordered
-        // sweep.  For each query we want the largest tracked varnode whose range
-        // encloses it.
-        let mut opens: Vec<rsleigh::Vn> = tracked_here.clone();
-        opens.sort_by_key(|v| (v.addr_off, std::cmp::Reverse(v.size)));
-        qs.sort_by_key(|q| (q.addr_off, std::cmp::Reverse(q.size)));
-
-        // For each query, scan the tracked opens whose start <= query start and
-        // end >= query end, picking the max-size one.  A two-pointer sweep keeps
-        // the active window; opens are small (a register file), so this is
-        // O((t + q) log(t + q)).
-        let mut active: Vec<rsleigh::Vn> = Vec::new();
-        let mut ti = 0usize;
-        for q in qs {
-            let q_start = q.addr_off;
-            let q_end = q_start.saturating_add(u64::from(q.size));
-            // Admit every tracked open that starts at or before this query.
-            while ti < opens.len() && opens[ti].addr_off <= q_start {
-                active.push(opens[ti]);
-                ti += 1;
-            }
-            // Drop opens that end before this query starts (they can enclose no
-            // remaining query, since queries are start-ascending).
-            active.retain(|c| c.addr_off.saturating_add(u64::from(c.size)) >= q_start);
-            // Largest active open enclosing `q`.
-            let container = active
-                .iter()
-                .filter(|c| c.addr_off.saturating_add(u64::from(c.size)) >= q_end)
-                .max_by_key(|c| c.size)
-                .copied()
-                .unwrap_or(q);
-            map.insert(q, container);
-        }
-    }
-    map
+    cc.ret_and_clobber_vns(all, |v| vn_container::largest_container_in(all, v))
 }
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
@@ -225,7 +102,7 @@ pub struct Function {
     /// `arg_passing_regs` / `ret_val_regs` / `callee_saved_regs` drive the
     /// ret-val/clobber register-list projection (the lifter's `cc_projection`
     /// in prod; [`cc_ret_and_clobber_vns`] for test fixtures).
-    pub(crate) default_cc: strider_target::BuiltCallingConvention,
+    default_cc: strider_target::BuiltCallingConvention,
     /// Target endianness of the architecture this function was lifted
     /// for.  Read by post-lift analyses that decode multi-byte values
     /// (the optimizer's ROM-const evaluation and stack high/low-half
@@ -233,7 +110,7 @@ pub struct Function {
     /// lifter now, so this is no longer on that hot path.  A `Copy` scalar
     /// (so [`Self::compact`] needs no remap for it); defaults to
     /// little-endian on the [`Default`]-derived / synthetic-test path.
-    pub(crate) endianness: strider_target::Endianness,
+    endianness: strider_target::Endianness,
     /// The single interner for every tracked varnode
     /// ([`crate::node::InitialVnId`] → [`rsleigh::Vn`], value-deduped in
     /// deterministic `(space, offset, size)` order).  Single source of truth
@@ -247,7 +124,7 @@ pub struct Function {
     /// varnode list via [`Self::all_vns`], resolve an id via
     /// [`Self::initial_vn`], and resolve a varnode to its id via
     /// [`Self::vn_id_of`].
-    pub(crate) vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
+    vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 
     // ── overlay tables ─────────────────────────────────────────────────────
     //
@@ -255,7 +132,7 @@ pub struct Function {
     // identity, grouped into [`SideTables`]; defaulted in one line by
     // [`Self::new`] and remapped in one [`SideTables::remap`] call by
     // [`Self::compact`].  Surfaced through the typed accessors below.
-    pub(crate) side_tables: SideTables,
+    side_tables: SideTables,
 
     /// Every integer-constant value referenced by an `IntConst(id)` node.
     ///
@@ -272,7 +149,7 @@ pub struct Function {
     /// map and the reverse value-dedup index.  Rebuilt over the live ids by
     /// [`Self::compact`].
     pub(crate) const_interner:
-        entity_utils::EntityInterner<crate::const_value::ConstId, crate::const_value::ConstValue>,
+        entity_utils::EntityInterner<crate::node::const_value::ConstId, crate::node::const_value::ConstValue>,
 }
 
 impl Function {
@@ -362,10 +239,10 @@ impl Function {
         &mut self,
         value: u128,
         ty: crate::node::ValueType,
-    ) -> crate::const_value::ConstId {
+    ) -> crate::node::const_value::ConstId {
         let masked = value & ty.bit_mask_u128();
         self.const_interner
-            .intern(crate::const_value::ConstValue::Bits(masked))
+            .intern(crate::node::const_value::ConstValue::Bits(masked))
     }
 
     /// Interns a limbed integer value, canonicalising to `Bits` when the limbs
@@ -378,8 +255,8 @@ impl Function {
         &mut self,
         limbs: &[u64],
         ty: crate::node::ValueType,
-    ) -> crate::const_value::ConstId {
-        let cv = crate::const_value::ConstValue::Wide(limbs.to_vec().into_boxed_slice());
+    ) -> crate::node::const_value::ConstId {
+        let cv = crate::node::const_value::ConstValue::Wide(limbs.to_vec().into_boxed_slice());
         match cv.fits_u128() {
             Some(v) => self.intern_int_const(v, ty),
             None => self.const_interner.intern(cv),
@@ -394,8 +271,8 @@ impl Function {
     /// different function are not portable.
     pub(crate) fn const_value(
         &self,
-        id: crate::const_value::ConstId,
-    ) -> &crate::const_value::ConstValue {
+        id: crate::node::const_value::ConstId,
+    ) -> &crate::node::const_value::ConstValue {
         &self.const_interner[id]
     }
 
@@ -721,7 +598,7 @@ impl Function {
     /// surviving nodes, so the live-id scan correctly excludes zombie
     /// references.
     fn gc_consts(&mut self) {
-        use crate::const_value::ConstId;
+        use crate::node::const_value::ConstId;
         use crate::node::NodeKind;
 
         let mut live_old_ids: Vec<ConstId> = Vec::new();
@@ -734,7 +611,7 @@ impl Function {
         }
         let mut new_interner: entity_utils::EntityInterner<
             ConstId,
-            crate::const_value::ConstValue,
+            crate::node::const_value::ConstValue,
         > = entity_utils::EntityInterner::default();
         let mut old_to_new: FxHashMap<ConstId, ConstId> = FxHashMap::default();
         for old_id in live_old_ids {
@@ -946,7 +823,7 @@ mod compact_tests {
     /// payload rewrite the survivor would dangle or read the wrong constant.
     #[test]
     fn compact_gcs_and_remaps_surviving_wide_const() {
-        use crate::const_value::ConstValue;
+        use crate::node::const_value::ConstValue;
         use crate::node::ValueType;
 
         // Genuinely-wide I256 value (high limb set ⇒ stays `Wide`).

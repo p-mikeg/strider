@@ -20,12 +20,12 @@ use crate::strider_cls::PyLifter;
 /// Renderable to Graphviz dot / dark-themed HTML for inspection.
 #[pyclass(name = "Cfg", module = "strider")]
 pub struct PyCfg {
-    pub(crate) inner: strider_cfg::Cfg,
+    inner: strider_cfg::Cfg,
     /// Shared handle to the `Lifter` that built `inner`.  The `Cfg` is a
     /// pure data structure and does not own the Sleigh; the `Lifter` owns
     /// it.  Dot rendering and the IR lift (`Lifter.analyze_cfg`) borrow
     /// the Sleigh through this handle to resolve register names.
-    pub(crate) lifter: Py<PyLifter>,
+    lifter: Py<PyLifter>,
 }
 
 impl PyCfg {

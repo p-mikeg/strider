@@ -750,22 +750,6 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 
 /// Regression: high-offset register varnodes (e.g. ppc64 / aarch64be
 /// condition-register slices) can have `addr_off + size` overflow `u64`.
-/// The overlap-dedup helper must use saturating arithmetic to match the
-/// convention `build_largest_container_map` already documents — a plain `+`
-/// panics in debug and wrap-misclassifies containment in release.
-#[test]
-fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
-    let wide = reg_vn(u64::MAX - 1, 8);
-    let narrow = reg_vn(u64::MAX - 1, 4);
-    // Must not panic; the wider varnode subsumes the narrower one.
-    let kept = dedup_overlapping_largest(&[wide, narrow]);
-    assert_eq!(
-        kept,
-        vec![wide],
-        "wider high-offset varnode wins, no overflow"
-    );
-}
-
 /// Every value that fits `u128` is interned as `ConstValue::Bits` regardless
 /// of the declared width — the width lives in the output `ValueKind`, not the
 /// stored value.  Both a small and a large-but-`u128`-fitting I128 value read
@@ -773,7 +757,7 @@ fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
 /// canonicalize to one node for the same value (dedup).
 #[test]
 fn fitting_values_intern_as_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let sp = reg_vn(0x7000, 8);
     let mut b = raw_builder(
         vec![],
@@ -869,7 +853,7 @@ fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
         strider_target::Endianness::Little,
     )?;
     let f = b.function();
-    let container_of = |vn: &rsleigh::Vn| crate::function::largest_container_in(f.all_vns(), vn);
+    let container_of = |vn: &rsleigh::Vn| vn_container::largest_container_in(f.all_vns(), vn);
     assert_eq!(
         container_of(&eax),
         rax,
@@ -878,33 +862,6 @@ fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
     assert_eq!(container_of(&rax), rax, "rax is its own container");
     let r9 = reg_vn(0x90, 8);
     assert_eq!(container_of(&r9), r9, "untracked, uncontained -> self");
-    Ok(())
-}
-
-#[test]
-fn set_stack_args_round_trips_on_default_cc() -> Result<()> {
-    use strider_target::StackArgs;
-    let sp = reg_vn(0x7000, 8);
-    let mut b = raw_builder(
-        vec![],
-        &[],
-        &[],
-        &[],
-        Some(sp),
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    b.set_stack_args(Some(StackArgs {
-        base_offset: 8,
-        increment: 8,
-    }));
-    assert_eq!(
-        b.function().default_cc().stack_args,
-        Some(StackArgs {
-            base_offset: 8,
-            increment: 8
-        }),
-    );
     Ok(())
 }
 
@@ -1841,7 +1798,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let count_before = b.function().graph().all_node_ids().count();
     // Mutate via graph_mut() — create an IntConst node directly.
     let node_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((42_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((42_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1892,7 +1849,7 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     b.set_lift_addr(None);
     // Mutate via graph_mut() in the same way an opt pass would.
     let extra = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((99_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((99_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1917,14 +1874,14 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
     let mut b = empty_builder()?;
     // First mutation: create constant A.
     let a = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((1_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((1_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
     // Second mutation: create constant B.  The second call sees the first
     // mutation (the underlying graph counter advanced) — node ids must differ.
     let b_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((2_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((2_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1995,7 +1952,7 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
 /// original limbs.
 #[test]
 fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     // Rows: (label, limbs, declared type). High limbs set ⇒ genuinely Wide.
     let cases: [(&str, Vec<u64>, ValueType); 2] = [
         (
@@ -2415,7 +2372,7 @@ mod build_call_with_cc {
 
         // First mutation: synthesize a fresh IntConst via graph_mut().
         let r1 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new((1_u64) as usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new((1_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -2423,7 +2380,7 @@ mod build_call_with_cc {
 
         // Second mutation: another synthesis; the first node must persist.
         let r2 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new((2_u64) as usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new((2_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -2456,7 +2413,7 @@ mod build_call_with_cc {
         // unreachable nodes, so detached extras are still valid.
         for k in 1u64..=5 {
             b.function_mut().graph_mut().create_node(
-                NodeKind::IntConst(crate::const_value::ConstId::new((k) as usize)),
+                NodeKind::IntConst(crate::node::const_value::ConstId::new((k) as usize)),
                 std::iter::empty(),
                 [ValueKind::Typed(ValueType::I64)],
             );
@@ -2568,7 +2525,7 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 /// value re-built dedups to one node.
 #[test]
 fn small_valued_i80_const_interns_as_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let via_small = b.build_int_const(5u64, ValueType::I80)?;
     let node = b.function().producer(via_small);
@@ -2594,7 +2551,7 @@ fn small_valued_i80_const_interns_as_bits() -> Result<()> {
 /// only when the declared width differs).
 #[test]
 fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let via_limbs = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::I256)?;
     let node = b.function().producer(via_limbs);
@@ -2626,7 +2583,7 @@ fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
 /// boolean `true` constant.
 #[test]
 fn i1_const_payload_masks_to_one_bit() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let v = b.build_int_const(3u64, ValueType::I1)?;
     let node = b.function().producer(v);
@@ -2652,7 +2609,7 @@ fn i1_const_payload_masks_to_one_bit() -> Result<()> {
 /// I64)` keeps every bit.
 #[test]
 fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let v = b.build_int_const(u64::MAX, ValueType::I64)?;
     let node = b.function().producer(v);
@@ -2671,137 +2628,6 @@ fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
 
 // ── register-aliasing read/write edge cases ────────────────────────────────
 
-// ── dedup_overlapping_largest edge cases ────────────────────────────────────
-
-/// An empty tracked list stays empty.
-#[test]
-fn dedup_overlapping_largest_empty_input_yields_empty() {
-    assert!(dedup_overlapping_largest(&[]).is_empty());
-}
-
-/// Value-identical duplicates pass through the overlap filter UNCHANGED —
-/// the `other != *v` guard skips equal entries, so neither copy subsumes
-/// the other.  Collapsing duplicates is the var-table interner's job in
-/// `FunctionBuilder::new`, pinned by the second half.
-#[test]
-fn dedup_overlapping_largest_keeps_duplicate_identical_vns() -> Result<()> {
-    let r = reg_vn(0x10, 8);
-    assert_eq!(
-        dedup_overlapping_largest(&[r, r]),
-        vec![r, r],
-        "the overlap filter does not collapse value-equal duplicates"
-    );
-    // The builder's interning collapses them to one tracked variable.
-    let b = raw_builder(
-        vec![r, r],
-        &[],
-        &[],
-        &[],
-        None,
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    assert_eq!(
-        b.function().all_vns().iter().filter(|&&v| v == r).count(),
-        1,
-        "FunctionBuilder::new tracks the duplicated vn exactly once"
-    );
-    Ok(())
-}
-
-/// Two PARTIALLY overlapping (non-nested) varnodes are both kept: the filter
-/// drops only a varnode fully contained in a strictly larger one, and
-/// neither range encloses the other here.
-#[test]
-fn dedup_overlapping_largest_keeps_partially_overlapping_vns() {
-    let a = reg_vn(0x0, 4); // bytes [0, 4)
-    let b = reg_vn(0x2, 4); // bytes [2, 6) — overlaps a, not nested
-    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
-}
-
-/// Behaviour pin for the O(n log n) sweep (IR-1): on a large tracked set with
-/// many nested aliasing UNIQUE slices, exactly the strictly-largest enclosing
-/// varnode in each containment chain survives, in input order, and every
-/// equal-but-not-strictly-larger / partially-overlapping entry is kept.  The
-/// set is sized so an accidental O(n²) regression would be visibly slow.
-#[test]
-fn dedup_overlapping_largest_handles_many_aliasing_uniques() {
-    fn uniq(off: u64, size: u32) -> rsleigh::Vn {
-        rsleigh::Vn {
-            size,
-            addr_off: off,
-            addr_space: rsleigh::VnSpace::UNIQUE,
-        }
-    }
-
-    // 500 containers, each at a distinct 8-byte-aligned offset, every one with
-    // two strictly-narrower nested slices (a 4-byte at the start and a 1-byte
-    // at the end).  Only the 8-byte container of each group should survive.
-    let n = 500u64;
-    let mut input = Vec::new();
-    let mut expected = Vec::new();
-    for i in 0..n {
-        let base = i * 8;
-        let container = uniq(base, 8);
-        // Interleave narrow-before-wide so order-independence is exercised.
-        input.push(uniq(base, 4)); // nested 4-byte slice — dropped
-        input.push(container); // strict-largest — kept
-        input.push(uniq(base + 7, 1)); // nested 1-byte slice — dropped
-        expected.push(container);
-    }
-    let kept = dedup_overlapping_largest(&input);
-    assert_eq!(
-        kept, expected,
-        "exactly each group's strict-largest 8-byte container survives, in order"
-    );
-    assert_eq!(kept.len(), n as usize);
-}
-
-/// Equal-size overlapping varnodes are BOTH kept: the drop predicate requires a
-/// STRICTLY larger enclosing varnode, so two same-size aliases never subsume
-/// each other (pins that the sweep keeps the `size >` strictness).
-#[test]
-fn dedup_overlapping_largest_keeps_equal_size_aliases() {
-    let a = reg_vn(0x10, 8);
-    let b = reg_vn(0x10, 8); // value-equal duplicate
-    // Value-equal duplicates are both kept (interning is the builder's job).
-    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
-}
-
-/// Crossing partial-overlap enclosers: two same-space varnodes that each
-/// enclose a third but neither encloses the other.  The dropped inner view
-/// must map to the WIDER encloser, not merely the first-seen one — the case a
-/// naive first-open stack sweep returned too small.  `dedup_overlapping_largest`
-/// keeps both crossing enclosers and drops the inner; the lifter's
-/// `build_container_map` records the MAX-size container for the inner view.
-#[test]
-fn build_container_map_picks_widest_crossing_encloser() {
-    fn uniq(off: u64, size: u32) -> rsleigh::Vn {
-        rsleigh::Vn {
-            size,
-            addr_off: off,
-            addr_space: rsleigh::VnSpace::UNIQUE,
-        }
-    }
-    let a = uniq(0, 12); // [0,12): encloses [5,9); crosses b; survives.
-    let b = uniq(2, 18); // [2,20): encloses [5,9) and is wider; survives.
-    let inner = uniq(5, 4); // [5,9): enclosed by BOTH a and b -> dropped.
-
-    let survivors = dedup_overlapping_largest(&[a, b, inner]);
-    assert_eq!(
-        survivors,
-        vec![a, b],
-        "crossing enclosers both survive (neither encloses the other); inner dropped"
-    );
-
-    let map = crate::build_container_map(&survivors, [a, b, inner]);
-    assert_eq!(
-        map[&inner], b,
-        "inner maps to the WIDER (size-18) encloser b, not the size-12 a"
-    );
-    assert_eq!(map[&a], a, "a is its own container");
-    assert_eq!(map[&b], b, "b is its own container");
-}
 
 // ── IR-6: symmetric sub-register write coercion ─────────────────────────────
 
@@ -2824,7 +2650,7 @@ fn container_of_untracked_callee_saved_and_adhoc_vns_resolve_to_self() -> Result
         strider_target::Endianness::Little,
     )?;
     let f = b.function();
-    let container_of = |vn: &rsleigh::Vn| crate::function::largest_container_in(f.all_vns(), vn);
+    let container_of = |vn: &rsleigh::Vn| vn_container::largest_container_in(f.all_vns(), vn);
     assert!(
         !f.all_vns().contains(&r_cs),
         "callee-saved CC regs are not seeded into the tracked set"
@@ -2919,8 +2745,9 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
         link_register_vn: None,
         preserves_memory: false,
     };
-    // Track only the wider container rdi (+ sp). dedup_overlapping_largest
-    // keeps rdi; the var table is keyed by rdi, not edi.
+    // Track only the wider container rdi (+ sp). FunctionBuilder::new seeds
+    // edi (the narrow arg alias) then drops it as enclosed by rdi, so the var
+    // table is keyed by rdi, not edi.
     let mut b = FunctionBuilder::new(vec![rdi, sp], &cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;

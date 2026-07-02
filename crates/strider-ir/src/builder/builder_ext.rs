@@ -302,27 +302,6 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntUnaryOp(op), [value], output_type))
     }
 
-    /// Emits the canonical lowered shape for `lhs - rhs`:
-    /// `Add(lhs, IntUnaryOp::Neg(rhs))`.
-    ///
-    /// `IntBinaryOp::Sub` is not a primitive in this IR; pcode-lift lowers
-    /// `IntSub` opcodes at lift time.  This helper constructs the same shape
-    /// from the builder API.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if either operand is not a value edge.
-    #[cfg(any(test, feature = "test-util"))]
-    fn build_sub_as_add_neg(
-        &mut self,
-        lhs_id: ValueId,
-        rhs_id: ValueId,
-        output_type: ValueType,
-    ) -> Result<ValueId> {
-        let neg_rhs = self.build_int_unary_operation(rhs_id, IntUnaryOp::Neg, output_type)?;
-        self.build_int_binary_operation(lhs_id, neg_rhs, IntBinaryOp::Add, output_type)
-    }
-
     /// Emits a `Popcount` node that counts set bits in `input_id`.
     ///
     /// # Errors

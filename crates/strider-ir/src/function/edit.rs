@@ -53,15 +53,15 @@ bitflags::bitflags! {
 /// crate.
 pub struct FunctionState {
     /// Every node currently considered live (entry-reachable, not culled).
-    pub(crate) live_nodes: DenseEntitySet<NodeId>,
+    live_nodes: DenseEntitySet<NodeId>,
     /// Input-less source nodes — the seeds of the cached reverse-post-order.
     /// Maintained in O(1) per edit (insert/remove/contains are O(1)); iterated
     /// in ascending-`NodeId` order.
-    pub(crate) roots: DenseEntitySet<NodeId>,
+    roots: DenseEntitySet<NodeId>,
     /// Nodes whose liveness may have just dropped; drained by `clean`.
-    pub(crate) queue: Worklist<NodeId>,
+    queue: Worklist<NodeId>,
     /// Per-node rewrite-state flags.
-    pub(crate) flags: SecondaryMap<NodeId, NodeFlags>,
+    flags: SecondaryMap<NodeId, NodeFlags>,
 }
 
 impl FunctionState {
@@ -943,7 +943,7 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1170,7 +1170,7 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1178,7 +1178,7 @@ mod tests {
         assert!(!ctx.is_live(node));
 
         let recreated = ctx.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1727,7 +1727,7 @@ mod tests {
         let mut consts = Vec::new();
         for i in 0..FANIN {
             let k = ctx.create_node(
-                NodeKind::IntConst(crate::const_value::ConstId::new((0xC0 + i as u64) as usize)),
+                NodeKind::IntConst(crate::node::const_value::ConstId::new((0xC0 + i as u64) as usize)),
                 [],
                 [ValueKind::Typed(ValueType::I64)],
             );

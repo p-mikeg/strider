@@ -35,12 +35,12 @@ use strider_ir_test_utils::IrWalkerEx;
 // integration tests in `tests/indirect_resolve_classify.rs`.  Kept as a sub-module
 // so the rest of the per-arch fixture infrastructure above remains
 // unchanged.
-pub mod indirect_resolve_helpers;
+pub(crate) mod indirect_resolve_helpers;
 
 // ── Architecture enum ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Arch {
+pub(crate) enum Arch {
     X86,
     /// x86 32-bit compiled with `-mregparm=3` and analysed under the
     /// Linux kernel-internal CC (`x86_linux_kernel`).  Same Sleigh
@@ -68,7 +68,7 @@ pub enum Arch {
 /// the full arch matrix (e.g. cross-arch shape baselines).  Keeping
 /// a single canonical list here prevents drift between callers and
 /// the `Arch` enum.
-pub const ALL_ARCHES: &[Arch] = &[
+pub(crate) const ALL_ARCHES: &[Arch] = &[
     Arch::X86,
     Arch::X86Kernel,
     Arch::X64,
@@ -88,7 +88,7 @@ pub const ALL_ARCHES: &[Arch] = &[
 ];
 
 impl Arch {
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Arch::X86 => "x86",
             Arch::X86Kernel => "x86_kernel",
@@ -108,7 +108,7 @@ impl Arch {
             Arch::Ppc64le => "ppc64le",
         }
     }
-    pub fn sleigh(self) -> strider_target::SleighArch {
+    pub(crate) fn sleigh(self) -> strider_target::SleighArch {
         match self {
             // x86_kernel uses the same Sleigh spec as x86 — only the
             // calling convention differs.
@@ -129,7 +129,7 @@ impl Arch {
             Arch::Ppc64le => strider_target::SleighArch::ppc64le(),
         }
     }
-    pub fn cc(self) -> strider_target::CallingConvention {
+    pub(crate) fn cc(self) -> strider_target::CallingConvention {
         match self {
             Arch::X86 => strider_target::CallingConvention::x86_cdecl(),
             Arch::X86Kernel => strider_target::CallingConvention::x86_linux_kernel(),
@@ -165,7 +165,7 @@ impl Arch {
 /// always bound to one concrete memory reader.  Callers build the CFG via
 /// `driver.build_cfg(entry, &opts)` and lift via
 /// `driver.build_ir(&cfg, &cc)`.
-pub fn driver_for_reader<R: rsleigh::MemReader>(
+pub(crate) fn driver_for_reader<R: rsleigh::MemReader>(
     arch: Arch,
     reader: R,
 ) -> (
@@ -186,7 +186,7 @@ pub fn driver_for_reader<R: rsleigh::MemReader>(
 /// Construct an x86_64-SystemV `Lifter` owning a `Sleigh` over
 /// `reader`, plus its resolved CC.  Used by tests that build
 /// hand-assembled byte sequences and don't care about ELF loading.
-pub fn strider_x86_64<R: rsleigh::MemReader>(
+pub(crate) fn strider_x86_64<R: rsleigh::MemReader>(
     reader: R,
 ) -> (
     strider_orchestrator::Lifter<R>,
@@ -198,7 +198,7 @@ pub fn strider_x86_64<R: rsleigh::MemReader>(
 /// AArch64-AAPCS64 sibling of [`strider_x86_64`] for the handful of
 /// synthetic-fixture tests that need an LR-bearing CC (e.g.
 /// `bug_on_lifts_cleanly`'s `bx lr` regression case).
-pub fn strider_aarch64<R: rsleigh::MemReader>(
+pub(crate) fn strider_aarch64<R: rsleigh::MemReader>(
     reader: R,
 ) -> (
     strider_orchestrator::Lifter<R>,
@@ -217,7 +217,7 @@ pub fn strider_aarch64<R: rsleigh::MemReader>(
 /// Returns `(bytes, base_addr, branch_indirect_addr, target_addrs)`.
 /// `branch_indirect_addr == base_addr == 0x1000`; targets are at
 /// `0x1002`, `0x1003`, … (each `ret` is 1 byte).
-pub fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64, Vec<u64>) {
+pub(crate) fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64, Vec<u64>) {
     let base = 0x1000u64;
     let mut bytes = vec![0xffu8, 0xe0]; // jmp rax — 2 bytes at 0x1000
     let mut target_addrs = Vec::with_capacity(n_targets);
@@ -237,7 +237,7 @@ pub fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64, Vec<u
 ///
 /// Returns `(graph, driver, cc)` so callers can drive the optimizer with
 /// the convention-aware pipeline.  Panics on any construction failure.
-pub fn analyze_with_known_targets(
+pub(crate) fn analyze_with_known_targets(
     bytes: &[u8],
     base: u64,
     branch_indirect_addr: u64,
@@ -275,7 +275,7 @@ pub fn analyze_with_known_targets(
 
 // ── Binary path resolution ───────────────────────────────────────────────────
 
-pub fn binary_path(arch: Arch, case: &str) -> PathBuf {
+pub(crate) fn binary_path(arch: Arch, case: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/out")
         .join(arch.name())
@@ -294,7 +294,7 @@ pub fn binary_path(arch: Arch, case: &str) -> PathBuf {
 /// `unresolved_branches`) and `indirect_branch.rs`'s
 /// `assert_no_unresolved_indirect_branch` (which needs both halves of
 /// the outcome).
-pub fn lift_for_pipeline(
+pub(crate) fn lift_for_pipeline(
     arch: Arch,
     case: &str,
     fn_name: &str,
@@ -362,7 +362,7 @@ pub fn lift_for_pipeline(
 /// Panics on any failure — system tests are pass/fail end-to-end checks.  If
 /// the binary is missing, the panic carries an actionable message including
 /// the `make -C fixtures` instruction.
-pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
+pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
     let (outcome, _lifter, _cc, _sleigh_arch, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
     let mut function = outcome.function;
     // The default pipeline already includes `LoadReadOnly`; it folds rodata
@@ -386,51 +386,51 @@ use strider_ir::node::NodeKind;
 
 // Re-export the canonical `Function::count_kind` / `Function::has_kind` under
 // their bare names so existing test call-sites need no qualification.
-pub fn count_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F) -> usize {
+pub(crate) fn count_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F) -> usize {
     function.count_kind(pred)
 }
 
-pub fn count_int_binop(function: &strider_ir::Function, op: strider_ir::IntBinaryOp) -> usize {
+pub(crate) fn count_int_binop(function: &strider_ir::Function, op: strider_ir::IntBinaryOp) -> usize {
     count_kind(
         function,
         |k| matches!(k, NodeKind::IntBinaryOp(o) if *o == op),
     )
 }
-pub fn count_int_unop(function: &strider_ir::Function, op: strider_ir::IntUnaryOp) -> usize {
+pub(crate) fn count_int_unop(function: &strider_ir::Function, op: strider_ir::IntUnaryOp) -> usize {
     count_kind(
         function,
         |k| matches!(k, NodeKind::IntUnaryOp(o) if *o == op),
     )
 }
-pub fn count_int_cmp(function: &strider_ir::Function, op: strider_ir::IntCmpOp) -> usize {
+pub(crate) fn count_int_cmp(function: &strider_ir::Function, op: strider_ir::IntCmpOp) -> usize {
     count_kind(function, |k| matches!(k, NodeKind::IntCmpOp(o) if *o == op))
 }
-pub fn count_float_binop(function: &strider_ir::Function, op: strider_ir::FloatBinaryOp) -> usize {
+pub(crate) fn count_float_binop(function: &strider_ir::Function, op: strider_ir::FloatBinaryOp) -> usize {
     count_kind(
         function,
         |k| matches!(k, NodeKind::FloatBinaryOp(o) if *o == op),
     )
 }
-pub fn count_float_unop(function: &strider_ir::Function, op: strider_ir::FloatUnaryOp) -> usize {
+pub(crate) fn count_float_unop(function: &strider_ir::Function, op: strider_ir::FloatUnaryOp) -> usize {
     count_kind(
         function,
         |k| matches!(k, NodeKind::FloatUnaryOp(o) if *o == op),
     )
 }
-pub fn count_float_cmp(function: &strider_ir::Function, op: strider_ir::FloatCmpOp) -> usize {
+pub(crate) fn count_float_cmp(function: &strider_ir::Function, op: strider_ir::FloatCmpOp) -> usize {
     count_kind(
         function,
         |k| matches!(k, NodeKind::FloatCmpOp(o) if *o == op),
     )
 }
 
-pub fn count_calls(function: &strider_ir::Function) -> usize {
+pub(crate) fn count_calls(function: &strider_ir::Function) -> usize {
     count_kind(function, |k| matches!(k, NodeKind::Call))
 }
-pub fn count_ifs(function: &strider_ir::Function) -> usize {
+pub(crate) fn count_ifs(function: &strider_ir::Function) -> usize {
     count_kind(function, |k| matches!(k, NodeKind::If))
 }
-pub fn count_returns(function: &strider_ir::Function) -> usize {
+pub(crate) fn count_returns(function: &strider_ir::Function) -> usize {
     count_kind(function, |k| matches!(k, NodeKind::Return))
 }
 
@@ -452,7 +452,7 @@ pub fn count_returns(function: &strider_ir::Function) -> usize {
 /// are not transitively expanded — the result is therefore a lower bound on
 /// the number of source-level return paths, sufficient for the
 /// "≥ 2 return paths" assertions in this suite.
-pub fn count_return_paths(function: &strider_ir::Function) -> usize {
+pub(crate) fn count_return_paths(function: &strider_ir::Function) -> usize {
     let mut total = 0usize;
     for nid in function.walk() {
         if !matches!(function.node_kind(nid), NodeKind::Return) {
@@ -487,7 +487,7 @@ pub fn count_return_paths(function: &strider_ir::Function) -> usize {
 /// variable is loop-invariant (e.g. a register that's read in the loop
 /// header but never modified by the body — `PhiCollapse`'s self-ref
 /// rule then collapses the phi to the entry value).
-pub fn count_loops(function: &strider_ir::Function) -> usize {
+pub(crate) fn count_loops(function: &strider_ir::Function) -> usize {
     use entity_utils::DenseEntitySet;
     let mut count = 0;
     let reachable: DenseEntitySet<strider_ir::node::NodeId> = function.walk().collect();
@@ -530,23 +530,23 @@ pub fn count_loops(function: &strider_ir::Function) -> usize {
     }
     count
 }
-pub fn count_loads(function: &strider_ir::Function) -> usize {
+pub(crate) fn count_loads(function: &strider_ir::Function) -> usize {
     count_kind(function, |k| matches!(k, NodeKind::Load(_)))
 }
-pub fn count_stores(function: &strider_ir::Function) -> usize {
+pub(crate) fn count_stores(function: &strider_ir::Function) -> usize {
     count_kind(function, |k| matches!(k, NodeKind::Store(_)))
 }
-pub fn count_popcount(function: &strider_ir::Function) -> usize {
+pub(crate) fn count_popcount(function: &strider_ir::Function) -> usize {
     count_kind(function, |k| matches!(k, NodeKind::Popcount))
 }
-pub fn count_lzcount(function: &strider_ir::Function) -> usize {
+pub(crate) fn count_lzcount(function: &strider_ir::Function) -> usize {
     count_kind(function, |k| matches!(k, NodeKind::Lzcount))
 }
-pub fn count_int_consts(function: &strider_ir::Function) -> usize {
+pub(crate) fn count_int_consts(function: &strider_ir::Function) -> usize {
     count_kind(function, |k| matches!(k, NodeKind::IntConst(_)))
 }
 
-pub fn has_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F) -> bool {
+pub(crate) fn has_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F) -> bool {
     function.has_kind(pred)
 }
 
@@ -554,7 +554,7 @@ pub fn has_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred:
 /// `Function::stack_offsets`.  This side-table is populated *only* by the
 /// `StackOffsetDetect` pass; a non-zero count after the pipeline proves the
 /// pass fired on this function.
-pub fn count_stack_offsets(function: &strider_ir::Function) -> usize {
+pub(crate) fn count_stack_offsets(function: &strider_ir::Function) -> usize {
     function
         .graph()
         .all_node_ids()
@@ -562,7 +562,7 @@ pub fn count_stack_offsets(function: &strider_ir::Function) -> usize {
         .count()
 }
 
-pub fn has_constant(function: &strider_ir::Function, value: u64) -> bool {
+pub(crate) fn has_constant(function: &strider_ir::Function, value: u64) -> bool {
     function.walk().any(|nid| {
         matches!(function.node_kind(nid), NodeKind::IntConst(_))
             && function
@@ -575,7 +575,7 @@ pub fn has_constant(function: &strider_ir::Function, value: u64) -> bool {
 /// is present — either case indicates a fixture-construction bug.  Use this
 /// helper when the test asserts on the condition of a known-unique `If` node
 /// rather than counting `If` nodes via [`count_ifs`].
-pub fn find_unique_if(function: &strider_ir::Function) -> strider_ir::node::NodeId {
+pub(crate) fn find_unique_if(function: &strider_ir::Function) -> strider_ir::node::NodeId {
     let mut iter = function
         .graph()
         .all_node_ids()

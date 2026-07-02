@@ -221,7 +221,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// its tracked container), then emit the dumb `Return` node.  Terminates
     /// the current region.
     fn build_cc_return(&mut self) -> Result<()> {
-        let ret_vns = self.cc_ret_val_regs(self.builder.function().default_cc());
+        let ret_vns = self.builder.function().ret_val_regs();
         let ret_values = self.read_vns(&ret_vns)?;
         self.builder.build_return(None, &ret_values)
     }

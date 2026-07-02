@@ -38,9 +38,9 @@ use crate::storage::{Node, RawStore, UseData, ValueData};
 /// is entirely the policy's concern (see the `cache` module).
 pub struct Graph<N, V, C: NodeCacheable<N, V>> {
     pub(crate) store: RawStore<N, V>,
-    pub(crate) cache: NodeCache,
-    pub(crate) _policy: PhantomData<C>,
-    pub(crate) generation: u64,
+    cache: NodeCache,
+    _policy: PhantomData<C>,
+    generation: u64,
 }
 
 impl<N, V, C: NodeCacheable<N, V>> Default for Graph<N, V, C> {

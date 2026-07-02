@@ -84,7 +84,7 @@ impl<N, V, C: NodeCacheable<N, V>> Index<usize> for Inputs<'_, N, V, C> {
 /// Concrete `IntoIter` for [`Inputs`].
 pub struct InputIter<'a, N, V, C: NodeCacheable<N, V>> {
     pub(crate) graph: &'a Graph<N, V, C>,
-    pub(crate) iter: slice::Iter<'a, UseId>,
+    iter: slice::Iter<'a, UseId>,
 }
 
 impl<N, V, C: NodeCacheable<N, V>> Clone for InputIter<'_, N, V, C> {

@@ -281,7 +281,7 @@ impl<'m> SpAliasCfg<'m> {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReachingSpStore {
     /// The reaching `Store` node.
-    pub node: NodeId,
+    node: NodeId,
     /// The store's SP-relative byte offset (from `base`).  Equals the probed
     /// `offset` exactly when the store is anchored at the probed location;
     /// callers that require anchoring compare the two.
@@ -290,13 +290,13 @@ pub(crate) struct ReachingSpStore {
 
 impl ReachingSpStore {
     /// The stored data value (the candidate argument / table entry).
-    pub fn data(&self, function: &Function) -> ValueId {
+    pub(crate) fn data(&self, function: &Function) -> ValueId {
         function.store_data(self.node)
     }
 
     /// The store's data byte width.  Callers derive an argument's slot span
     /// from this (`ceil(size / increment)`).
-    pub fn size(&self, function: &Function) -> i128 {
+    pub(crate) fn size(&self, function: &Function) -> i128 {
         store_value_byte_size(function.graph(), self.data(function))
     }
 }
