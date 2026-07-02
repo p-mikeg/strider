@@ -8,7 +8,9 @@
 //! `FloatTrunc`).
 
 use strider_ir::node::ValueType;
-use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, VnTypeExt};
+use strider_ir::{
+    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IntBinaryOp, VnTypeExt,
+};
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
@@ -201,7 +203,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let eq = self
             .builder
             .build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
-        let result = self.build_or_i1(lt, eq)?;
+        let result =
+            self.builder
+                .build_int_binary_operation(lt, eq, IntBinaryOp::Or, ValueType::I1)?;
         self.write_vn(out_vn, result)
     }
 

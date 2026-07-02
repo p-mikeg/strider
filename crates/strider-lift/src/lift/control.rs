@@ -243,9 +243,13 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // the function ends before the &mut read / build / write path below.
         let (ret_vns, clobber_vns, arg_vns, ret_stack_pop) = {
             let cc = override_cc.unwrap_or_else(|| self.builder.function().default_cc());
+            // One scan yields both the ret-val and clobber lists (they are the
+            // two halves of the same projection over `all_vns`).
+            let (ret_vns, clobber_vns) = cc
+                .ret_and_clobber_vns(self.builder.function().all_vns(), |v| self.container_of(v));
             (
-                self.call_ret_vals_for(cc),
-                self.call_clobbered_for(cc),
+                ret_vns,
+                clobber_vns,
                 cc.arg_passing_regs.clone(),
                 cc.ret_stack_pop,
             )

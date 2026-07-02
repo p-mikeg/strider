@@ -413,9 +413,7 @@ fn apply_resolutions(
     // an unconditional insert is correct: only `edge_set_of` and the cfg
     // builder read `known_targets`, and both are insensitive to re-inserting
     // an equal value.
-    for (addr, targets) in staged {
-        known_targets.insert(addr, targets);
-    }
+    known_targets.extend(staged);
     Ok(edge_set_of(known_targets) != prev_edge_set)
 }
 
