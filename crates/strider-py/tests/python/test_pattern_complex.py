@@ -21,13 +21,13 @@ import strider
 from strider.pattern import (
     Capture,
     add,
-    any_,
+    anything,
     any_int_const,
     int_const,
+    int_xor,
     load,
     mul,
     var,
-    xor,
 )
 
 from .conftest import symbol_addr, fixture_path
@@ -68,27 +68,27 @@ def test_multi_level_capture_chain(x86_memory_elf):
 
 
 def test_back_reference_same_capture_twice(x86_memory_elf):
-    """`xor(x, x)` should fire only when both operands are literally
-    the same value.  A shape like `xor(eax, eax)` (zeroing) appears in
+    """`int_xor(x, x)` should fire only when both operands are literally
+    the same value.  A shape like `int_xor(eax, eax)` (zeroing) appears in
     typical x86 codegen; `array_sum` doesn't always have one, so we
     just check the pattern is built and runs without raising.
     """
     g = _build_graph(x86_memory_elf, "array_sum")
-    pat = xor("v", "v")
+    pat = int_xor("v", "v")
     hits = g.find_all(pat)
     # Either 0 or N matches — both are valid (depends on codegen).
     assert isinstance(hits, list)
     # If we got matches, the same node must be on both sides.
     # We can't directly check that without exposing inputs; the
     # back-reference enforcement is in the matcher itself, so the
-    # mere fact `xor("v", "v")` returned a match list (not an error)
+    # mere fact `int_xor("v", "v")` returned a match list (not an error)
     # is the assertion.
 
-    # Build the contrasting `xor("a", "b")` — same number-of-matches
+    # Build the contrasting `int_xor("a", "b")` — same number-of-matches
     # bound is `>=`.
-    pat_distinct = xor("a", "b")
+    pat_distinct = int_xor("a", "b")
     hits_distinct = g.find_all(pat_distinct)
-    # `xor("v", "v")` must be a SUBSET of `xor("a", "b")` since the
+    # `int_xor("v", "v")` must be a SUBSET of `int_xor("a", "b")` since the
     # back-reference is a stricter constraint.
     assert len(hits) <= len(hits_distinct)
 
@@ -185,9 +185,9 @@ def test_chained_xor_mask_pattern_finds_xor():
     elf = fixture_path("x86", "patterns")
     g = _build_graph(elf, "chained_xor_mask")
     k = Capture()
-    pat = xor(any_(), any_int_const(k))
+    pat = int_xor(anything(), any_int_const(k))
     hits = g.find_all(pat, ignore_casts=True)
-    # `chained_xor_mask` has at least one `xor(..., const)` shape.
+    # `chained_xor_mask` has at least one `int_xor(..., const)` shape.
     assert len(hits) >= 1
     # The captured constant must extract as an integer.
     for h in hits:

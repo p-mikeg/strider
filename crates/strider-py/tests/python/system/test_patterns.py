@@ -8,7 +8,7 @@ the optimiser pipeline at least once per arch.
 from __future__ import annotations
 
 from strider import pattern as pat
-from strider.pattern import any_, var, Capture
+from strider.pattern import anything, var, Capture
 
 from ._helpers import (
     analyze,
@@ -23,7 +23,7 @@ def test_mul_then_add(arch_id, fixtures_dir):
     # add(mul(_, _), _) — `ignore_casts` lets the matcher walk through
     # x64's `Add(Extend(Mul), arg)` register-merge chain transparently.
     g = analyze(arch_id, "patterns", "mul_then_add", fixtures_dir=fixtures_dir)
-    p = pat.add(pat.mul(any_(), any_()), any_())
+    p = pat.add(pat.mul(anything(), anything()), anything())
     hits = g.find_all(p, ignore_casts=True)
     assert len(hits) >= 1, "expected ≥1 add(mul(_,_), _) match"
 
@@ -70,4 +70,4 @@ def test_recursive_with_accumulator(arch_id, fixtures_dir):
     g = analyze(arch_id, "patterns", "recursive_with_accumulator", fixtures_dir=fixtures_dir)
     hits = g.find_all(pat.call())
     assert len(hits) >= 1, "expected ≥1 Call match"
-    assert count_pat(g, pat.if_()) >= 1
+    assert count_pat(g, pat.if_else()) >= 1

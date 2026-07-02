@@ -6,7 +6,7 @@ the four "you'll want this" features beyond simple node-shape matching:
   1. Multi-level capture chains — bind operands of nested operations and
      read their values back as Python ints.
   2. Back-references — re-use a capture name to require the same value
-     in two positions (e.g. `xor(x, x)` → must be the same x).
+     in two positions (e.g. `int_xor(x, x)` → must be the same x).
   3. `.when` predicate guards — filter matches with arbitrary Python
      code that sees the partial Match.
   4. Commutative matching — `add(a, b)` automatically also matches
@@ -26,9 +26,9 @@ from strider.pattern import (
     function_arg,
     int_const,
     int_binary,
+    int_xor,
     load,
     mul,
-    xor,
 )
 
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
@@ -63,13 +63,13 @@ for h in hits[:3]:
 # ---------------------------------------------------------------------------
 # 2. Back-reference: same name twice → must be same value.
 #
-# `xor("v","v")` matches only when both operands of the XOR are the same
+# `int_xor("v","v")` matches only when both operands of the XOR are the same
 # IR value. This is the textbook "zero a register" idiom (`xor eax, eax`)
 # and is a strict subset of the general two-operand xor count.
 # ---------------------------------------------------------------------------
 print("\n=== 2. back-reference (xor x, x) ===")
-all_xors = function.find_all(xor("a", "b"))
-self_xors = function.find_all(xor("v", "v"))
+all_xors = function.find_all(int_xor("a", "b"))
+self_xors = function.find_all(int_xor("v", "v"))
 print(
     f"all xors: {len(all_xors)}, "
     f"self-xors (back-ref): {len(self_xors)} ({'subset' if len(self_xors) <= len(all_xors) else 'WRONG'})"

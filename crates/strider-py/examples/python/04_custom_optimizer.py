@@ -19,7 +19,7 @@ from __future__ import annotations
 import pathlib
 
 import strider
-from strider.pattern import any_, load, store
+from strider.pattern import anything, load, store
 
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
@@ -47,7 +47,7 @@ def shape(g: strider.Function) -> dict[str, int]:
     return {
         "loads": len(g.find_all(load())),
         "stores": len(g.find_all(store())),
-        "any": len(g.find_all(any_())),
+        "any": len(g.find_all(anything())),
     }
 
 

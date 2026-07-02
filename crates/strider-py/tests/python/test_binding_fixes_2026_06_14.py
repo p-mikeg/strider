@@ -28,7 +28,7 @@ from strider.pattern import (
     int_const,
     load,
     store,
-    any_,
+    anything,
     Pat,
 )
 
@@ -58,11 +58,11 @@ def test_call_other_ctrl_mem_methods_match():
     baseline = len(fn.find_all(call_other()))
     assert baseline >= 1
 
-    # `.ctrl(any_())` must route through the control-relaxed match
+    # `.ctrl(anything())` must route through the control-relaxed match
     # compiler at slot 0 (a CONTROL edge, not a value) and still match
     # every CallOther.  Before the fix it pushed onto the value-args slot,
     # so `output_ok` rejected the control edge and it matched nothing.
-    ctrl_hits = fn.find_all(call_other().ctrl(any_()))
+    ctrl_hits = fn.find_all(call_other().ctrl(anything()))
     assert len(ctrl_hits) == baseline
 
     # `.mem(...)` must route through the MEMORY-input compiler.  Before
@@ -78,7 +78,7 @@ def test_call_other_ctrl_mem_methods_match():
 
 def test_call_other_ctrl_mem_compile_to_pat():
     # Builder finalisation contract still holds for the dedicated methods.
-    assert isinstance(call_other().ctrl(any_()).into_pat(), Pat)
+    assert isinstance(call_other().ctrl(anything()).into_pat(), Pat)
     assert isinstance(call_other().mem(mem_phi()).into_pat(), Pat)
 
 
@@ -180,7 +180,7 @@ def test_int_ne_finds_lowered_shape(x86_memory_elf):
     # int_ne is the lifter-canonical `Xor(IntEqual(a,b),1):I1` shape.
     # Just assert it compiles + queries without error on a real graph.
     fn = _analysis(x86_memory_elf, "array_sum")
-    hits = fn.find_all(int_ne(any_(), any_()))
+    hits = fn.find_all(int_ne(anything(), anything()))
     assert isinstance(hits, list)
 
 

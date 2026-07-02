@@ -8,7 +8,7 @@ case.  Each (case, fn_name, arch_id) triple is one parametrised pytest.
 from __future__ import annotations
 
 from strider import pattern as pat
-from strider.pattern import any_
+from strider.pattern import anything
 
 from ._helpers import (
     analyze,
@@ -85,7 +85,7 @@ def test_bit_not(arch_id, fixtures_dir):
     # `Xor(_, IntConst(all_ones))` — the canonical form since the
     # former BitNot unary-op was removed.  `count_int_unop(g, "BitNot")`
     # is a back-compat wrapper that pattern-matches the Xor-with-all-ones
-    # shape via `pat.bit_not`.
+    # shape via `pat.int_not`.
     assert count_int_unop(g, "BitNot") >= 1
 
 

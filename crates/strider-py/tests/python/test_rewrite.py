@@ -85,4 +85,4 @@ def test_match_only_pat_rejected_as_replace():
     g = _build_graph()
     x = Capture()
     with pytest.raises(strider.errors.StriderError):
-        g.rewrite(find=add(var(x), int_const(0)), replace=strider.pattern.any_())
+        g.rewrite(find=add(var(x), int_const(0)), replace=strider.pattern.anything())

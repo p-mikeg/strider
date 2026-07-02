@@ -126,7 +126,7 @@ def test_fingerprint_pcode_renders_a_matched_node():
     prog = _load_memory()
     function, _unresolved = prog.analyze("array_sum")
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches, "expected at least one Add node in array_sum"
     node = function.node(matches[0].root)
@@ -156,7 +156,7 @@ def test_fingerprint_pcode_stable_across_separately_constructed_nodes():
     prog = _load_memory()
     function, _unresolved = prog.analyze("array_sum")
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches
     root = matches[0].root
@@ -185,7 +185,7 @@ def test_fingerprint_pcode_accepts_node_match_or_raw_id():
     prog = _load_memory()
     function, _unresolved = prog.analyze("array_sum")
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches
     match = matches[0]
@@ -204,7 +204,7 @@ def test_fingerprint_pcode_raw_id_without_function_raises():
     prog = _load_memory()
     function, _unresolved = prog.analyze("array_sum")
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches
     with pytest.raises(ValueError):
@@ -227,7 +227,7 @@ def test_fingerprint_pcode_does_not_perturb_a_following_analyze():
     function_before, unresolved_before = prog.analyze("array_sum")
     baseline_dot = function_before.raw_dot_str()
     matches = function_before.find_all(
-        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches
 

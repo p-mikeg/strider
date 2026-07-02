@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 import strider
-from strider.pattern import Capture, any_, any_int_const, add
+from strider.pattern import Capture, anything, any_int_const, add
 
 from .conftest import fixture_path
 
@@ -90,7 +90,7 @@ def test_node_inputs_map_to_real_producers():
     `Function.node`."""
     a = _analyze_add()
     valid_ids = set(a.node_ids())
-    add_matches = a.find_all(add(any_(), any_()))
+    add_matches = a.find_all(add(anything(), anything()))
     assert add_matches, "no Add node in add(a, b) — investigate fixture"
     add_node = a.node(add_matches[0].root)
     ins = add_node.inputs()
@@ -113,7 +113,7 @@ def test_node_const_int_on_int_const():
         assert v is None or isinstance(v, int)
 
     # A non-const node (the Add op) must return None.
-    add_hits = a.find_all(add(any_(), any_()))
+    add_hits = a.find_all(add(anything(), anything()))
     assert add_hits
     add_node = a.node(add_hits[0].root)
     assert add_node.const_int() is None
@@ -122,7 +122,7 @@ def test_node_const_int_on_int_const():
 def test_node_const_bool_is_none_on_non_bool():
     """`Node.const_bool()` returns `None` on a non-bool node."""
     a = _analyze_add()
-    add_hits = a.find_all(add(any_(), any_()))
+    add_hits = a.find_all(add(anything(), anything()))
     assert add_hits
     add_node = a.node(add_hits[0].root)
     assert add_node.const_bool() is None
@@ -132,7 +132,7 @@ def test_node_fingerprint_is_int_list():
     """`Node.fingerprint()` returns a list of ints, stable across
     separately-constructed `Node` handles for the same id."""
     a = _analyze_add()
-    add_hits = a.find_all(add(any_(), any_()))
+    add_hits = a.find_all(add(anything(), anything()))
     assert add_hits
     nid = add_hits[0].root
     n = a.node(nid)
@@ -147,7 +147,7 @@ def test_node_fingerprint_is_int_list():
 def test_node_repr():
     """`Node.__repr__` is `Node(#<id> <kind>)`."""
     a = _analyze_add()
-    add_hits = a.find_all(add(any_(), any_()))
+    add_hits = a.find_all(add(anything(), anything()))
     assert add_hits
     nid = add_hits[0].root
     n = a.node(nid)
@@ -179,8 +179,8 @@ def test_match_node_returns_node_for_bound_capture():
     """`Match.node(capture)` resolves the bound node id to a `Node`."""
     a = _analyze_add()
     c = Capture()
-    # `add(c, any_())` binds `c` to the left operand's producer node.
-    hits = a.find_all(add(c, any_()))
+    # `add(c, anything())` binds `c` to the left operand's producer node.
+    hits = a.find_all(add(c, anything()))
     assert hits
     child = hits[0].node(c)
     assert isinstance(child, strider.Node)
@@ -192,7 +192,7 @@ def test_match_node_unbound_capture_returns_none():
     """`Match.node(unbound)` returns `None` for a capture not present in
     the match."""
     a = _analyze_add()
-    add_hits = a.find_all(add(any_(), any_()))
+    add_hits = a.find_all(add(anything(), anything()))
     assert add_hits
     never_bound = Capture()
     assert add_hits[0].node(never_bound) is None

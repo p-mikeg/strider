@@ -20,7 +20,7 @@ import pytest
 
 import strider
 from strider import pattern as pat
-from strider.pattern import any_, var, Capture
+from strider.pattern import anything, var, Capture
 
 
 # ── Architecture registry ────────────────────────────────────────────────
@@ -140,9 +140,9 @@ _INT_BINOP_BUILDERS = {
     "Sdiv": pat.sdiv,
     "Rem": pat.rem,
     "Srem": pat.srem,
-    "And": pat.and_,
-    "Or": pat.or_,
-    "Xor": pat.xor,
+    "And": pat.int_and,
+    "Or": pat.int_or,
+    "Xor": pat.int_xor,
     "ShiftLeft": pat.shl,
     "ShiftRight": pat.shr,
     "SShiftRight": pat.sshr,
@@ -153,7 +153,7 @@ def count_int_binop(g, op: str) -> int:
     builder = _INT_BINOP_BUILDERS.get(op)
     if builder is None:
         raise ValueError(f"unknown IntBinaryOp variant {op!r}")
-    return count_pat(g, builder(any_(), any_()))
+    return count_pat(g, builder(anything(), anything()))
 
 
 def count_int_unop(g, op: str) -> int:
@@ -161,11 +161,11 @@ def count_int_unop(g, op: str) -> int:
     # remaining `IntUnaryOp` variant).  `"BitNot"` is accepted for
     # backwards compatibility — bitwise complement (`~x`) is now
     # `Xor(_, IntConst(all_ones))` (the former BitNot unary-op was
-    # removed in favour of the Xor shape), matched via `pat.bit_not`.
+    # removed in favour of the Xor shape), matched via `pat.int_not`.
     if op == "Neg":
-        return count_pat(g, pat.neg(any_()))
+        return count_pat(g, pat.neg(anything()))
     if op == "BitNot":
-        return count_pat(g, pat.bit_not(any_()))
+        return count_pat(g, pat.int_not(anything()))
     raise ValueError(f"unknown int unop {op!r}")
 
 
@@ -178,7 +178,7 @@ def count_returns(g) -> int:
 
 
 def count_ifs(g) -> int:
-    return count_pat(g, pat.if_())
+    return count_pat(g, pat.if_else())
 
 
 def count_loads(g) -> int:

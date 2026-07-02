@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import strider
 from strider.pattern import (
-    Capture, any_, any_int_const, call, var, int_const,
+    Capture, anything, any_int_const, call, var, int_const,
 )
 
 from .conftest import built_function, fixture_path

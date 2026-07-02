@@ -8,7 +8,7 @@ contributed to that node's value.  See
 
 from __future__ import annotations
 
-from strider.pattern import Capture, any_, any_int_const, int_binary
+from strider.pattern import Capture, anything, any_int_const, int_binary
 
 from .conftest import built_function
 
@@ -24,7 +24,7 @@ def test_asm_fingerprint_returns_non_empty_for_value_capture():
     """
     g = _arithmetic_add_graph()
     c = Capture()
-    pat = int_binary("Add", any_(), any_()).capture(c)
+    pat = int_binary("Add", anything(), anything()).capture(c)
     hits = g.find_all(pat)
     # The function `add(a, b)` in cases/arithmetic.c is `return a + b;`,
     # which lifts to at least one Add node — exact count depends on
@@ -46,7 +46,7 @@ def test_asm_fingerprint_unbound_capture_returns_empty_list():
     g = _arithmetic_add_graph()
     bound = Capture()
     unbound = Capture()
-    hits = g.find_all(int_binary("Add", any_(), any_()).capture(bound))
+    hits = g.find_all(int_binary("Add", anything(), anything()).capture(bound))
     assert hits
     for m in hits:
         # `unbound` was never declared in the pattern.

@@ -100,7 +100,7 @@ fn intern_table() -> &'static Mutex<HashMap<String, Capture>> {
 pub(crate) fn intern_str(name: &str) -> PyResult<Capture> {
     if name == "_" || name == "any_" {
         return Err(into_strider_err(anyhow::anyhow!(
-            "{name:?} is reserved (use any_() / var() / _ explicitly)"
+            "{name:?} is reserved (use anything() / var() / _ explicitly)"
         )));
     }
     let mut table = intern_table()
@@ -221,7 +221,7 @@ pub(crate) enum PatRepr {
     IntBinary(strider_ir::IntBinaryOp, Py<PyAny>, Py<PyAny>),
     /// A subtraction `sub(l, r)` → `add(l, neg(r))`. Buildable.
     Sub(Py<PyAny>, Py<PyAny>),
-    /// A bitwise complement `bit_not(x)` → `xor(x, all_ones)`. Buildable.
+    /// A bitwise complement `int_not(x)` → `int_xor(x, all_ones)`. Buildable.
     BitNot(Py<PyAny>),
     /// A fixed integer unary op (`neg`, `popcount`, `lzcount`). Buildable.
     IntUnary(IntUnaryKind, Py<PyAny>),
@@ -231,11 +231,11 @@ pub(crate) enum PatRepr {
     Extend(strider_ir::ExtendOp, Py<PyAny>),
     /// A fixed integer comparison (`int_eq`, `int_lt`, …). Buildable.
     IntCmp(strider_ir::IntCmpOp, Py<PyAny>, Py<PyAny>),
-    /// `int_ne(l, r)` → `xor(int_eq(l, r), 1)`. Match-only mirror.
+    /// `int_ne(l, r)` → `int_xor(int_eq(l, r), 1)`. Match-only mirror.
     IntNe(Py<PyAny>, Py<PyAny>),
-    /// `int_le(l, r)` → `xor(int_lt(r, l), 1)`. Match-only mirror.
+    /// `int_le(l, r)` → `int_xor(int_lt(r, l), 1)`. Match-only mirror.
     IntLe(Py<PyAny>, Py<PyAny>),
-    /// `int_sle(l, r)` → `xor(int_slt(r, l), 1)`. Match-only mirror.
+    /// `int_sle(l, r)` → `int_xor(int_slt(r, l), 1)`. Match-only mirror.
     IntSle(Py<PyAny>, Py<PyAny>),
     /// A fixed float binary op. Buildable.
     FloatBinary(strider_ir::FloatBinaryOp, Py<PyAny>, Py<PyAny>),
@@ -1016,7 +1016,7 @@ impl PatLike<'_> {
 /// `rewrite_all`'s `replace`). Accepts a `Template` (the typed, build-valid
 /// path — see `strider.template`) — or, for back-compat with pre-Task-7
 /// callers, a `Pat` (only its build-valid subset compiles; a match-only
-/// `Pat` such as `any_()` surfaces a `StriderError`), a bare `Capture`, or
+/// `Pat` such as `anything()` surfaces a `StriderError`), a bare `Capture`, or
 /// a string (interned to a `Capture`).
 #[derive(FromPyObject)]
 pub enum TemplateLike<'py> {
@@ -1410,7 +1410,7 @@ impl PyPat {
 // ── Free constructors ────────────────────────────────────────────────────
 
 /// Wildcard: matches any node without binding it.
-#[pyfunction]
+#[pyfunction(name = "anything")]
 pub fn any_() -> PyPat {
     PyPat::from_repr(PatRepr::Any)
 }
@@ -1531,7 +1531,7 @@ pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
 }
 
 /// Match any node, subject to a Python predicate. Shorthand for
-/// `any_().when(f)`.
+/// `anything().when(f)`.
 #[pyfunction]
 pub fn predicate(f: PyObject) -> PyPat {
     PyPat::from_repr(PatRepr::Guarded(Rc::new(PatRepr::Any), f))
@@ -1669,8 +1669,9 @@ op_parser!(
 // builder is a one-line thunk: a `#[pyfunction]` that wraps its operands in
 // one `PatRepr` variant.  The only per-builder variation is the operand
 // arity (binary `(l, r)` vs unary `(operand)`), the `PatRepr` variant
-// constructor, the embedded op value, and (for `and_` / `or_`) an explicit
-// Python name.  `pat_fn!` collapses all six former per-family macros into a
+// constructor, the embedded op value, and (for `and_`/`or_`/`xor`, whose
+// Rust idents stay short) an explicit Python name (`int_and`/`int_or`/
+// `int_xor`).  `pat_fn!` collapses all six former per-family macros into a
 // single arity-parameterised arm set.
 macro_rules! pat_fn {
     (binary $name:ident, $repr:ident, $op:expr, $doc:literal) => {
@@ -1727,15 +1728,15 @@ pat_fn!(binary
     "Pattern: `IntBinaryOp::SShiftRight` (arithmetic `a >> b`)."
 );
 pat_fn!(binary
-    and_ = "and_", IntBinary, strider_ir::IntBinaryOp::And,
+    and_ = "int_and", IntBinary, strider_ir::IntBinaryOp::And,
     "Pattern: `IntBinaryOp::And` (`a & b`). Commutative."
 );
 pat_fn!(binary
-    or_ = "or_", IntBinary, strider_ir::IntBinaryOp::Or,
+    or_ = "int_or", IntBinary, strider_ir::IntBinaryOp::Or,
     "Pattern: `IntBinaryOp::Or` (`a | b`). Commutative."
 );
 pat_fn!(binary
-    xor, IntBinary, strider_ir::IntBinaryOp::Xor,
+    xor = "int_xor", IntBinary, strider_ir::IntBinaryOp::Xor,
     "Pattern: `IntBinaryOp::Xor` (`a ^ b`). Commutative."
 );
 
@@ -1806,14 +1807,8 @@ pub fn neg(operand: Py<PyAny>) -> PyPat {
 }
 
 /// Pattern: bitwise complement (`~x`) — `Xor(x, all_ones)`.
-#[pyfunction]
+#[pyfunction(name = "int_not")]
 pub fn bit_not(operand: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::BitNot(operand))
-}
-
-/// Pattern: bitwise complement (`~x`). Alias for `bit_not`.
-#[pyfunction(name = "not_")]
-pub fn not_(operand: Py<PyAny>) -> PyPat {
     PyPat::from_repr(PatRepr::BitNot(operand))
 }
 
@@ -2707,7 +2702,7 @@ fn pattern_for_operand(ob: &Bound<'_, PyAny>) -> PyResult<Pattern> {
 }
 
 /// Start an `If` pattern builder, optionally pre-setting the condition.
-#[pyfunction]
+#[pyfunction(name = "if_else")]
 #[pyo3(signature = (cond=None))]
 pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
     let b = PyIfPat::new();
@@ -3094,7 +3089,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(int_sborrow);
     add_fn!(neg);
     add_fn!(bit_not);
-    add_fn!(not_);
     add_fn!(bool_and);
     add_fn!(bool_or);
     add_fn!(bool_xor);

@@ -13,7 +13,7 @@ from strider.pattern import (
     Capture,
     Pat,
     add,
-    any_,
+    anything,
     bool_const,
     bool_not,
     extend,
@@ -41,12 +41,12 @@ from strider.pattern import (
     int_bits_to_float,
     int_cmp_any,
     int_const,
+    int_not,
     int_to_float,
     int_un_any,
     lzcount,
     mul,
     neg,
-    not_,
     popcount,
     predicate,
     sign_extend,
@@ -122,7 +122,7 @@ def test_extend_with_invalid_op_raises():
 
 # ── Integer unary ops ────────────────────────────────────────────────
 
-@pytest.mark.parametrize("ctor", [neg, not_])
+@pytest.mark.parametrize("ctor", [neg, int_not])
 def test_int_unary_ops_return_pat(ctor):
     assert isinstance(ctor(var(Capture())), Pat)
 
@@ -195,7 +195,7 @@ def test_when_returning_false_filters_out_matches():
     # Build a real graph and use .when to filter every match out.
     # The non-trivial assertion lives in test_pattern_complex.py;
     # here we just confirm the predicate runs without raising.
-    p = any_().when(lambda m: False)
+    p = anything().when(lambda m: False)
     assert isinstance(p, Pat)
 
 
@@ -298,7 +298,7 @@ def test_when_predicate_exception_surfaces_on_stderr(capfd):
     """
     import sys
     # Simple synthetic graph + predicate that raises.
-    from strider.pattern import any_, var, Capture
+    from strider.pattern import anything, var, Capture
 
     def raising_predicate(_match):
         raise ValueError("intentional test exception")

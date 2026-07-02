@@ -185,7 +185,7 @@ def test_find_against_pattern_returns_list():
     # `add(a, b)` returns `a + b` — find every IntBinaryOp("Add") in
     # the lifted graph (at least one must exist: the actual add op).
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert isinstance(matches, list)
     assert len(matches) >= 1, "expected at least one Add node in add(a,b)"
@@ -197,7 +197,7 @@ def test_find_one_returns_match_when_present():
     elf = fixture_path("x64", "arithmetic")
     s = strider.load_elf(str(elf))
     function, _unresolved = s.analyze("add")
-    pat = strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+    pat = strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     matches = function.find_all(pat)
     assert matches, "fixture has no Add nodes — investigate"
     one = function.find_one(pat)
@@ -224,7 +224,7 @@ def test_function_find_one_matches_find_all_first():
     elf = fixture_path("x64", "arithmetic")
     s = strider.load_elf(str(elf))
     g, _unresolved = s.analyze("add")
-    pat = strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+    pat = strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     all_hits = g.find_all(pat)
     one = g.find_one(pat)
     assert all_hits, "fixture has no Add nodes — investigate"
@@ -242,7 +242,7 @@ def test_fingerprint_returns_machine_addresses():
     addr = s.symbol("add")
     function, _unresolved = s.analyze("add")
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches, "test fixture has no Add nodes — investigate"
     fp = function.node(matches[0].root).fingerprint()
@@ -273,7 +273,7 @@ def test_fingerprint_matches_via_node_and_match_forwarder():
     function, _unresolved = s.analyze("add")
     c = strider.pattern.Capture()
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_()).capture(c)
+        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything()).capture(c)
     )
     assert matches
     fp_via_node = function.node(matches[0].root).fingerprint()
@@ -386,7 +386,7 @@ def test_standalone_strider_by_address():
     fn, _unresolved = s.analyze(addr, strider.CallingConvention.x86_64_systemv())
     assert fn.node_count() > 0
     matches = fn.find_all(
-        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches, "expected at least one Add node"
     # The standalone path must keep fingerprint_pcode working via the

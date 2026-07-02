@@ -42,7 +42,7 @@ address is sp+const" / "write a pattern for the indexed-array-load shape" and si
 ### Captures
 
 ```python
-from strider.pattern import Capture, OffsetCapture, var, any_int_const
+from strider.pattern import Capture, OffsetCapture, var, any_int_const, int_xor
 
 # Explicit Capture — use when the same capture appears in multiple slots or
 # you need it as a back-reference.
@@ -50,7 +50,7 @@ c = Capture()
 pat = add(var(c), int_const(8))           # later: h.uint(c)
 
 # String shorthand — each unique string interns to the same Capture per process.
-pat = xor("v", "v")                       # zero-idiom: must be same value
+pat = int_xor("v", "v")                    # zero-idiom: must be same value
 
 # OffsetCapture — binds the i64 SP-relative offset of a matched stack Load/Store.
 # Use with LoadPat.offset_capture(oc) or StorePat.offset_capture(oc); retrieve via
@@ -94,7 +94,7 @@ enumerates every registered name).
 
 | Builder | Rust IR shape produced | Python signature | Commutative? |
 |---|---|---|---|
-| `p.any_()` | wildcard | `any_() -> Pat` | n/a |
+| `p.anything()` | wildcard | `anything() -> Pat` | n/a |
 | `p.var(c)` | wildcard + capture | `var(c: Capture) -> Pat` | n/a |
 | `p.int_const(K)` | `IntConst(K)` (strict width) | `int_const(value: int) -> Pat` | n/a |
 | `p.signed_int_const(K)` | `IntConst` re-interpreted as signed across widths | `signed_int_const(value: int) -> Pat` | n/a |
@@ -121,9 +121,9 @@ enumerates every registered name).
 | `p.div(a,b)` / `p.sdiv(a,b)` | unsigned / signed div | binary | no |
 | `p.rem(a,b)` / `p.srem(a,b)` | unsigned / signed rem | binary | no |
 | `p.shl(a,b)` / `p.shr(a,b)` / `p.sshr(a,b)` | shifts | binary | no |
-| `p.and_(a, b)` | `IntBinaryOp(And)` | binary | **yes** |
-| `p.or_(a, b)` | `IntBinaryOp(Or)` | binary | **yes** |
-| `p.xor(a, b)` | `IntBinaryOp(Xor)` | binary | **yes** |
+| `p.int_and(a, b)` | `IntBinaryOp(And)` | binary | **yes** |
+| `p.int_or(a, b)` | `IntBinaryOp(Or)` | binary | **yes** |
+| `p.int_xor(a, b)` | `IntBinaryOp(Xor)` | binary | **yes** |
 | `p.int_eq(a, b)` | `IntCmpOp(Equal)` | binary | **yes** |
 | `p.int_lt(a, b)` / `p.int_slt` | unsigned / signed less-than | binary | no |
 | `p.int_le(a, b)` | `BoolNeg(IntLess(b, a))` lowered | binary | no (lowered) |
@@ -131,7 +131,7 @@ enumerates every registered name).
 | `p.int_carry` / `p.int_scarry` / `p.int_sborrow` | carry / overflow / borrow | binary | Carry & Scarry only |
 | `p.int_cmp("Op", a, b)` | dispatch on op name | `int_cmp(op, l, r) -> Pat` | per op |
 | `p.neg(x)` | `IntUnaryOp(Neg)` | unary | n/a |
-| `p.bit_not(x)` / `p.not_(x)` | `IntUnaryOp(BitNot)` (`not_` is alias) | unary | n/a |
+| `p.int_not(x)` | `IntUnaryOp(BitNot)` | unary | n/a |
 | `p.bool_and` / `p.bool_or` / `p.bool_xor` / `p.bool_not` | bool ops | bin/unary | **bool_and/or/xor commutative** |
 | `p.float_add` / `p.float_sub` / `p.float_mul` / `p.float_div` | float arith | binary | Add/Mul **commutative** |
 | `p.float_neg` / `p.float_abs` / `p.float_sqrt` / `p.float_ceil` / `p.float_floor` / `p.float_round` | float unary | unary | n/a |
@@ -148,7 +148,7 @@ enumerates every registered name).
 | `p.call(at=…)` | `Call` builder | `.at(addr) .at_any([…]) .target(p) .arg(idx, p) .ret_output(idx, p)` | n/a |
 | `p.call_other()` | `CallOther` builder | `.user_op_id(v) .name(s) .arg(i, p) .ret(i, p) .ctrl .mem .ctrl_out .mem_out .next_ctrl .next_mem` | n/a |
 | `p.ret()` | `Return` builder | `.preceded_by(p) .ret_val(idx, p)` | n/a |
-| `p.if_(cond=…)` | `If` builder | `.cond(p) .true_branch(p) .false_branch(p)` — tries compiler-inverted layout too | n/a |
+| `p.if_else(cond=…)` | `If` builder | `.cond(p) .true_branch(p) .false_branch(p)` — tries compiler-inverted layout too | n/a |
 | `p.int_binary("Op", l, r)` | dispatch w/ chainable `.ordered()` | typed builder | per op |
 | `p.bool_binary("Op", l, r)` | dispatch w/ `.ordered()` | typed builder | per op |
 | `p.float_binary("Op", l, r)` | dispatch w/ `.ordered()` | typed builder | per op |
@@ -212,7 +212,7 @@ form before writing the pattern.
 | `FloatNotEqual(a, b)` | `BoolNeg(FloatEqual(a, b))` | `p.float_ne(a, b)` |
 | `FloatLessEqual(a, b)` | `Or(FloatLess(a, b), FloatEqual(a, b))` | `p.float_le(a, b)` |
 | `FLOAT_NAN(x)` | `BoolNeg(FloatEqual(x, x))` | `p.float_is_nan(x)` |
-| `If(BoolNeg(C)){A}{B}` | `If(C){B}{A}` (after `IfCondInversion` opt pass) | `p.if_(cond=C)` — matcher tries both layouts |
+| `If(BoolNeg(C)){A}{B}` | `If(C){B}{A}` (after `IfCondInversion` opt pass) | `p.if_else(cond=C)` — matcher tries both layouts |
 
 **Optimizer-induced shape changes** (after `Strider` runs the stable pipeline):
 
@@ -330,7 +330,7 @@ pat = p.truncate(
 ### Example 4: "xor x, x" (zero idiom)
 
 ```python
-pat = p.xor("v", "v")
+pat = p.int_xor("v", "v")
 ```
 
 ### Example 5: "indexed array load: base + idx * stride"
@@ -365,7 +365,7 @@ pat = p.int_bin_any(op_cap, p.var(l_cap), p.var(r_cap))
 ### Example 9: "If branch with `a < b` condition" (compiler may have inverted)
 
 ```python
-pat = p.if_(cond=p.int_lt("a", "b"))
+pat = p.if_else(cond=p.int_lt("a", "b"))
 ```
 
 ### Example 10: "Predicate guard — match `add(x, K)` only when K > 0"
@@ -407,7 +407,7 @@ hits = graph.find_all(load_pat, ignore_casts=True)
 - **Manually trying both commutative orderings.** `add` already tries both.
 - **Forgetting `.into_pat()` when chaining.** Typed builders are `PatLike` — pass them straight.
 - **Using `capture` as a back-reference key.**  String back-references go through the **same
-  string**: `p.xor("v", "v")` enforces same-value.  `p.xor(p.var(c), p.var(c))` does NOT.
+  string**: `p.int_xor("v", "v")` enforces same-value.  `p.int_xor(p.var(c), p.var(c))` does NOT.
 - **Matching post-optimization shapes when running pre-opt.**  `sub(x, K)` produces
   `Add(x, Neg(IntConst(K)))` pre-opt; after `ConstantFold`, `Neg(IntConst(K))` folds to
   `IntConst(-K)`.  Match with `add(x, signed_int_const(-K))` against optimised graphs.

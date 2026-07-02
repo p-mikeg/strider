@@ -53,8 +53,8 @@ def test_reader_error_on_unknown_symbol(x86_memory_elf):
 def test_pattern_error_on_reserved_capture_name():
     """The Capture intern table reserves `"_"` and `"any_"` for explicit
     free constructors; passing them as a `.cap(name)` string raises."""
-    from strider.pattern import any_
-    p = any_()
+    from strider.pattern import anything
+    p = anything()
     with pytest.raises(errors.StriderError):
         p.cap("_")
     with pytest.raises(errors.StriderError):

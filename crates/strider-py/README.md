@@ -231,19 +231,19 @@ pat = int_binary("Add", "x", "y").ordered()  # left-to-right only
 ```
 
 The `_` and `any_` strings are reserved wildcards (they convert to
-`any_()`); using them via `.cap(...)` raises `StriderError`.
+`anything()`); using them via `.cap(...)` raises `StriderError`.
 
 ## Pattern coverage
 
 `strider.pattern` mirrors the entire `pattern` Rust crate:
 
-* **Wildcards / consts:** `any_()`, `var(c)`, `int_const(n)`,
+* **Wildcards / consts:** `anything()`, `var(c)`, `int_const(n)`,
   `bool_const(b)`, `float_const(bits)`, `any_int_const(c)`,
   `any_bool_const(c)`, `any_float_const(c)`, `predicate(f)`.
 * **Integer binary / unary / cmp:** `add`, `sub`, `mul`, `div`,
-  `sdiv`, `rem`, `srem`, `shl`, `shr`, `sshr`, `and_`, `or_`,
-  `xor`, `int_eq`, `int_lt`, `int_le`, `int_slt`, `int_sle`,
-  `int_carry`, `int_scarry`, `int_sborrow`, `neg`, `not_`.
+  `sdiv`, `rem`, `srem`, `shl`, `shr`, `sshr`, `int_and`, `int_or`,
+  `int_xor`, `int_eq`, `int_lt`, `int_le`, `int_slt`, `int_sle`,
+  `int_carry`, `int_scarry`, `int_sborrow`, `neg`, `int_not`.
 * **Bool binary / unary:** `bool_and`, `bool_or`, `bool_xor`,
   `bool_not`.
 * **Float binary / unary / cmp:** `float_add`, `float_sub`,
@@ -259,7 +259,7 @@ The `_` and `any_` strings are reserved wildcards (they convert to
   `float_to_float` — see the conversions list above.)
 * **Memory & control:** `load`, `store` (use `.stack_only()` /
   `.stack_offset(k)` for SP-relative accesses), `call`, `call_other`,
-  `ret`, `if_`, `phi`, `mem_phi`, `value_phi`, `initial_var`,
+  `ret`, `if_else`, `phi`, `mem_phi`, `value_phi`, `initial_var`,
   `function_arg`, `function_arg_any`.
 * **Typed family dispatchers:** `int_binary(op_str, l, r)`,
   `bool_binary(op_str, l, r)`, `float_binary(op_str, l, r)` —
@@ -306,7 +306,7 @@ c = Capture()
 pat = any_int_const(c).when(lambda m: (m.uint(c) or 0) < 0x100)
 hits = graph.find_all(pat)
 
-# `predicate(f)` is shorthand for `any_().when(f)`.
+# `predicate(f)` is shorthand for `anything().when(f)`.
 from strider.pattern import predicate
 graph.find_all(predicate(lambda m: True))
 ```
