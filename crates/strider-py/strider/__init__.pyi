@@ -7,7 +7,7 @@ the README/usage examples.  Expand as the API grows.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Iterable, List, Optional, Tuple
+from typing import Any, ClassVar, Iterable, List, Optional, Tuple, Union
 
 __version__: str
 
@@ -220,13 +220,22 @@ class Lifter:
         """Return `function`'s IR graph rendered as an HTML string
         instead of writing it to a file."""
         ...
-    def fingerprint_pcode(self, node: Node) -> List[Tuple[int, str]]:
+    def fingerprint_pcode(
+        self,
+        node: Union[Node, Match, int],
+        function: Optional[Function] = ...,
+    ) -> List[Tuple[int, str]]:
         """The asm-fingerprint of `node` as `(addr, text)` pairs sorted by
         address, `text` being the lifted p-code (empty for ops like
         `endbr64` that lift to no p-code); `[]` for structural nodes with
         no fingerprint.  rsleigh is a p-code lifter — this is the lifted
-        semantics, NOT native assembly mnemonics.  `node` is typically
-        obtained via `Function.node(id)` or `Match.node(key)`."""
+        semantics, NOT native assembly mnemonics.
+
+        `node` may be a `Node` (typically from `Function.node(id)` or
+        `Match.node(key)`), a `Match` (its root node is used), or a raw
+        `int` node id (e.g. `match.root`).  A `Node`/`Match` already
+        carries its own function; a raw int id doesn't, so it must be
+        paired with the explicit `function=` kwarg."""
         ...
 
 def lifter(

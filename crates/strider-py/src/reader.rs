@@ -574,6 +574,22 @@ pub struct PyMemReaderAdapter {
     pub py_obj: Py<PyAny>,
 }
 
+/// Manual (not `#[derive]`) `Clone`: `Py<T>: Clone` requires the
+/// `py-clone` pyo3 feature (not enabled here), so cloning the
+/// underlying `Py<PyAny>` needs a `Python::with_gil` (the same pattern
+/// this struct's own `MemReader::read` impl below already uses).  This
+/// is what makes `AnyMemReader: Clone`, which in turn lets
+/// `rsleigh::Sleigh<AnyMemReader>: Clone` mint a fresh, independent
+/// Sleigh context (fresh underlying engine state, cloned reader) — see
+/// `PyLifter::fingerprint_pcode`'s throwaway-Sleigh build.
+impl Clone for PyMemReaderAdapter {
+    fn clone(&self) -> Self {
+        Python::with_gil(|py| Self {
+            py_obj: self.py_obj.clone_ref(py),
+        })
+    }
+}
+
 impl rsleigh::MemReader for PyMemReaderAdapter {
     type Err = strider_reader::MemReadError;
 
@@ -692,6 +708,15 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
 /// (PySleigh, PyCfg, PyStrider, …).  Constructed from either a
 /// `PyBufferReader` snapshot (fast in-process path) or a
 /// `PyMemReaderAdapter` (callback into a Python subclass).
+///
+/// `Clone` (both variants are cheap clones — an `Arc` bump or a
+/// `Py<PyAny>` refcount bump) is what makes
+/// `rsleigh::Sleigh<AnyMemReader>: Clone` available: cloning a `Sleigh`
+/// builds a brand-new underlying engine context from `(sla_spec, pspec,
+/// cloned reader)` — a genuinely fresh, independent instance, not a
+/// shared one — which is exactly the "fresh, throwaway Sleigh" a
+/// re-lift for `fingerprint_pcode` needs (see its doc comment).
+#[derive(Clone)]
 pub enum AnyMemReader {
     Buffer(PyBufferReaderView),
     Cb(PyMemReaderAdapter),
@@ -722,6 +747,11 @@ impl rsleigh::MemReader for AnyMemReader {
 /// the caller buffer with RAW bytes, and integer decode happens in the
 /// optimizer per the function's `Function::endianness` (derived from the
 /// `SleighArch`).
+///
+/// `Clone` is a cheap `Arc` bump (see `PyMemReaderAdapter`'s doc for why
+/// that matters: it's what lets `AnyMemReader` — and thus
+/// `rsleigh::Sleigh<AnyMemReader>` — be `Clone`).
+#[derive(Clone)]
 pub struct PyBufferReaderView {
     pub table: Arc<MemRegionsLookupTable>,
 }

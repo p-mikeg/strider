@@ -97,22 +97,16 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         })
     }
 
-    /// Read access to the owned Sleigh context (for dot rendering /
-    /// fingerprint p-code resolution).
+    /// Read access to the owned Sleigh context (for dot rendering, and
+    /// for cloning a fresh, throwaway Sleigh for the fingerprint-to-p-code
+    /// audit-trail path — see `strider-py`'s `PyLifter::fingerprint_pcode`,
+    /// which needs a Sleigh that starts with no inherited context-register
+    /// state and whose mutations never reach this persistent instance;
+    /// `Sleigh::lift_one` carries context-register state across calls,
+    /// see the module doc).
     #[must_use]
     pub fn sleigh(&self) -> &rsleigh::Sleigh<R> {
         &self.sleigh
-    }
-
-    /// Mutable access to the owned Sleigh context — needed for
-    /// `Sleigh::lift_one`, which carries context-register state across
-    /// calls (see the module doc).  Used by the fingerprint-to-p-code
-    /// audit-trail path (`fingerprint_pcode`), which lifts a node's
-    /// fingerprint addresses through this same instance rather than
-    /// building a second Sleigh.
-    #[must_use]
-    pub fn sleigh_mut(&mut self) -> &mut rsleigh::Sleigh<R> {
-        &mut self.sleigh
     }
 
     /// Returns the cached Sleigh register-name table.

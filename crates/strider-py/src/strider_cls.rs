@@ -24,6 +24,7 @@ use crate::cfg::PyCfg;
 use crate::dot::dot_style_for;
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
+use crate::matcher::PyMatch;
 use crate::node::PyNode;
 use crate::reader::{AnyMemReader, MemInput};
 
@@ -201,14 +202,15 @@ impl PyLifter {
     /// The owned `Sleigh`, for register-name resolution (dot rendering).
     /// Shared by `PyCfg`/`PyFunction`'s dot-dumper paths, which hold a
     /// back-reference to this handle rather than the Sleigh directly.
+    ///
+    /// Also the base `fingerprint_pcode` clones from to mint a fresh,
+    /// throwaway `Sleigh` per call (`AnyMemReader: Clone` makes
+    /// `Sleigh<AnyMemReader>: Clone` build a brand-new engine instance
+    /// from the same `(sla_spec, pspec)` over a cloned reader) — see
+    /// that method's doc for why it must NOT lift through this
+    /// persistent instance directly.
     pub(crate) fn sleigh(&self) -> &rsleigh::Sleigh<AnyMemReader> {
         self.inner.sleigh()
-    }
-
-    /// Mutable access to the owned `Sleigh`, for `Sleigh::lift_one`
-    /// (the `fingerprint_pcode` audit-trail path).
-    fn sleigh_mut(&mut self) -> &mut rsleigh::Sleigh<AnyMemReader> {
-        self.inner.sleigh_mut()
     }
 
     /// Build a `GraphDot` over `function`'s IR through this Lifter's own
@@ -517,35 +519,95 @@ impl PyLifter {
     /// Return the asm-fingerprint of `node` as `(addr, text)` p-code
     /// pairs, sorted by address — the p-code companion to
     /// `Node.fingerprint()` (addr-only).  `node` is typically obtained
-    /// via `Function.node(id)` or `Match.node(key)`.
+    /// via `Function.node(id)` or `Match.node(key)`, but a `Match` or a
+    /// raw `u32` node id (e.g. `match.root`) are also accepted directly
+    /// — the same three-way acceptance the old `Analysis.fingerprint_pcode`
+    /// gave via its `_coerce_node_id` helper.  A raw int id doesn't carry
+    /// its own function (a `Node`/`Match` does), so it must be paired
+    /// with the explicit `function=` kwarg; omit `function` when `node`
+    /// is already a `Node` or `Match`.
     ///
     /// Lives on `Lifter` (not `Function`/`Node`) because rendering an
-    /// address to p-code text needs a `Sleigh`; this reuses the Lifter's
-    /// own Sleigh instance rather than building a second one.
+    /// address to p-code text needs a `Sleigh`.  Builds a FRESH,
+    /// throwaway `Sleigh` (cloned from this handle's own — same
+    /// `sla_spec`/`pspec`, a cheap cloned reader, but a brand-new
+    /// underlying engine instance) for every call rather than lifting
+    /// through the Lifter's persistent Sleigh: `Sleigh::lift_one` carries
+    /// context-register state across calls (ARM Thumb mode, x86 segment
+    /// selectors, MIPS16 — see the module-level `rsleigh` doc in
+    /// CLAUDE.md), so reusing the persistent instance would (a) lift each
+    /// fingerprint address under whatever context the previous one left,
+    /// since addresses are visited in sorted, not decode, order, and (b)
+    /// POLLUTE the Lifter's Sleigh, corrupting subsequent `analyze()`
+    /// / `build_cfg()` calls on the same handle.  The throwaway clone is
+    /// discarded at the end of this call, so neither problem reaches the
+    /// handle's persistent state.
     ///
     /// Returns `[]` for "structural" nodes that carry no fingerprint
     /// (Entry, InitialMemory, InitialVar, Region, phis).
+    #[pyo3(signature = (node, function=None))]
     fn fingerprint_pcode(
         &mut self,
         py: Python<'_>,
-        node: &PyNode,
+        node: FingerprintNodeArg<'_>,
+        function: Option<Py<PyFunction>>,
     ) -> PyResult<Vec<(u64, String)>> {
-        let addrs = node.fingerprint(py)?;
-        let sleigh = self.sleigh_mut();
+        let (function, node_id) = node.resolve(py, function)?;
+        let py_node = PyNode::new(py, function, node_id)?;
+        let addrs = py_node.fingerprint(py)?;
+        // A fresh, independent Sleigh per call (see the doc comment
+        // above) — `Sleigh::clone` builds a brand-new engine context
+        // from this handle's `(sla_spec, pspec)` over a cloned reader,
+        // so it starts with no inherited context-register state and its
+        // mutations never reach `self.inner`'s persistent Sleigh.
+        let mut sleigh = self.sleigh().clone();
         let mut out = Vec::with_capacity(addrs.len());
         for addr in addrs {
-            let lift = sleigh.lift_one(addr).map_err(|e| {
-                into_strider_err(anyhow::anyhow!("lift_one at {addr:#x} failed: {e:?}"))
-            })?;
-            let text = lift
-                .insns
-                .iter()
-                .map(|insn| insn.to_string())
-                .collect::<Vec<_>>()
-                .join("; ");
+            let (text, _len) = crate::pcode::lift_one_text(&mut sleigh, addr)?;
             out.push((addr, text));
         }
         Ok(out)
+    }
+}
+
+/// Polymorphic node-or-id argument for [`PyLifter::fingerprint_pcode`]: a
+/// `Node` handle, a `Match` (its root node is used), or a raw `u32` node
+/// id (e.g. `match.root`) — mirrors the three-way acceptance the old
+/// `Analysis.fingerprint_pcode` gave via its `_coerce_node_id` helper.
+#[derive(FromPyObject)]
+enum FingerprintNodeArg<'py> {
+    Node(PyRef<'py, PyNode>),
+    Match(PyRef<'py, PyMatch>),
+    Id(u32),
+}
+
+impl FingerprintNodeArg<'_> {
+    /// Resolve to `(function, node_id)`.  A `Node`/`Match` already
+    /// carries its own function reference; a raw `Id` has none, so it
+    /// borrows the caller-supplied `function` (an error if omitted —
+    /// there is no implicit "current function" on a `Lifter`, which can
+    /// `analyze` many different functions over its lifetime).
+    fn resolve(
+        self,
+        py: Python<'_>,
+        function: Option<Py<PyFunction>>,
+    ) -> PyResult<(Py<PyFunction>, u32)> {
+        match self {
+            FingerprintNodeArg::Node(n) => Ok((n.function.clone_ref(py), n.id)),
+            FingerprintNodeArg::Match(m) => {
+                Ok((m.function.clone_ref(py), m.inner.root().as_u32()))
+            }
+            FingerprintNodeArg::Id(id) => {
+                let function = function.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "fingerprint_pcode: a raw int node id requires function=<Function> to \
+                         resolve which function's node arena it indexes (a Node or Match \
+                         already carries its own function)",
+                    )
+                })?;
+                Ok((function, id))
+            }
+        }
     }
 }
 

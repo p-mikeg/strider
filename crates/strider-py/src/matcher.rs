@@ -177,10 +177,11 @@ op_accessors! {
 #[pymethods]
 impl PyMatch {
     /// The root node where the top-level pattern matched, as a `u32`
-    /// node id.  Pair with `Graph.asm_fingerprint(node_id)` /
-    /// `Analysis.fingerprint(node)` for proof-of-correctness queries
-    /// that don't carry an explicit `Capture` (the root has no
-    /// user-visible capture binding).
+    /// node id.  Pair with `Function.asm_fingerprint(node_id)` /
+    /// `Lifter.fingerprint_pcode(node)` (both accept this `Match` or its
+    /// raw `root` id directly) for proof-of-correctness queries that
+    /// don't carry an explicit `Capture` (the root has no user-visible
+    /// capture binding).
     #[getter]
     fn root(&self) -> u32 {
         self.inner.root().as_u32()

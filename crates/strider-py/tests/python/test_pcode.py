@@ -12,13 +12,18 @@ lifted semantics, NOT native assembly mnemonics.
 
 `fingerprint_pcode` lives on `Lifter` (not `Function`/`Node`) because it
 needs a `Sleigh` to render an address to p-code text; an `ElfLifter` IS a
-`Lifter`, so calling it on `prog` below reuses the same Sleigh instance
-that produced the function.
+`Lifter`, so calling it on `prog` below is available directly.  It
+builds its OWN fresh, throwaway Sleigh per call rather than lifting
+through the Lifter's persistent one, so it never perturbs a later
+`analyze()`/`build_cfg()` call on the same handle (see
+`test_fingerprint_pcode_does_not_perturb_a_following_analyze`).
 
 Each test skips cleanly when the required fixture isn't built.
 """
 
 from __future__ import annotations
+
+import pytest
 
 import strider
 
@@ -171,3 +176,74 @@ def test_fingerprint_pcode_empty_for_structural_node():
             break
     assert struct_id is not None, "expected at least one structural node"
     assert prog.fingerprint_pcode(function.node(struct_id)) == []
+
+
+def test_fingerprint_pcode_accepts_node_match_or_raw_id():
+    """`fingerprint_pcode` accepts a `Node`, a `Match`, or a raw `int`
+    node id (paired with `function=`) — the same three-way acceptance
+    the old `Analysis.fingerprint_pcode` gave via `_coerce_node_id`."""
+    prog = _load_memory()
+    function, _unresolved = prog.analyze("array_sum")
+    matches = function.find_all(
+        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+    )
+    assert matches
+    match = matches[0]
+    node = function.node(match.root)
+
+    via_node = prog.fingerprint_pcode(node)
+    via_match = prog.fingerprint_pcode(match)
+    via_id = prog.fingerprint_pcode(match.root, function=function)
+    assert via_node == via_match == via_id
+
+
+def test_fingerprint_pcode_raw_id_without_function_raises():
+    """A raw int node id with no `function=` is ambiguous — a `Lifter`
+    can `analyze` many different functions over its lifetime, so there
+    is no implicit "current function" to resolve the id against."""
+    prog = _load_memory()
+    function, _unresolved = prog.analyze("array_sum")
+    matches = function.find_all(
+        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+    )
+    assert matches
+    with pytest.raises(ValueError):
+        prog.fingerprint_pcode(matches[0].root)
+
+
+def test_fingerprint_pcode_does_not_perturb_a_following_analyze():
+    """Regression: `fingerprint_pcode` must lift through its own fresh,
+    throwaway Sleigh rather than the `Lifter`'s persistent one — the
+    persistent Sleigh's `lift_one` carries context-register state across
+    calls (see CLAUDE.md's "External Dependency: rsleigh"), so lifting a
+    node's fingerprint addresses (visited in sorted, not decode, order)
+    through it would both mis-render the p-code AND leave the persistent
+    Sleigh's context wherever the last address left it — corrupting a
+    later `analyze()`/`build_cfg()` call on the same handle.  This pins
+    that a `fingerprint_pcode` call sandwiched between two `analyze()`
+    calls on the same entry doesn't change the second result."""
+    prog = _load_memory()
+
+    function_before, unresolved_before = prog.analyze("array_sum")
+    baseline_dot = function_before.raw_dot_str()
+    matches = function_before.find_all(
+        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+    )
+    assert matches
+
+    # Fingerprinted node ids, each with its own fingerprint address(es);
+    # walked in REVERSE node-id order (not asm decode order) through
+    # `fingerprint_pcode`, exercising all three accepted argument forms,
+    # between the two `analyze()` calls.
+    fingerprinted_ids = [
+        nid for nid in function_before.node_ids() if function_before.asm_fingerprint(nid)
+    ]
+    assert len(fingerprinted_ids) >= 2
+    for nid in reversed(fingerprinted_ids):
+        prog.fingerprint_pcode(nid, function=function_before)
+    prog.fingerprint_pcode(matches[0])
+    prog.fingerprint_pcode(function_before.node(matches[0].root))
+
+    function_after, unresolved_after = prog.analyze("array_sum")
+    assert function_after.raw_dot_str() == baseline_dot
+    assert unresolved_after == unresolved_before

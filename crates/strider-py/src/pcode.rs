@@ -1,12 +1,13 @@
 //! `strider.pcode_at` / `strider.pcode_at_addrs` — lift machine
 //! addresses to their p-code semantics.
 //!
-//! These close the "audit trail" loop: `Analysis.fingerprint(node)`
-//! hands back the machine-instruction *addresses* that explain a
-//! matched value; these functions lift those addresses to p-code so the
-//! user can read the semantics that produced a match without leaving
-//! strider.  rsleigh is a p-code lifter — the returned `text` is the
-//! lifted semantics, NOT native assembly mnemonics.
+//! These close the "audit trail" loop: `Node.fingerprint()` /
+//! `Function.asm_fingerprint(id)` hand back the machine-instruction
+//! *addresses* that explain a matched value; these functions lift those
+//! addresses to p-code so the user can read the semantics that produced
+//! a match without leaving strider.  rsleigh is a p-code lifter — the
+//! returned `text` is the lifted semantics, NOT native assembly
+//! mnemonics.
 //!
 //! Both build exactly ONE `rsleigh::Sleigh` from the arch + the
 //! `BufferReader`'s `Send + Sync` reader snapshot, then lift through it:
@@ -41,8 +42,13 @@ fn build_sleigh(
 /// `rsleigh::Insn`'s `Display` impl, joined with `"; "`.  A machine
 /// instruction that lifts to zero p-code ops (e.g. `endbr64`) yields an
 /// empty text but still advances by its byte length.
-fn lift_one_text(
-    sleigh: &mut rsleigh::Sleigh<PyBufferReaderView>,
+///
+/// Generic over the reader so `PyLifter::fingerprint_pcode`
+/// (`strider_cls.rs`) can reuse this exact rendering over its own
+/// `Sleigh<AnyMemReader>` clone instead of duplicating the
+/// insns-to-text join.
+pub(crate) fn lift_one_text<R: rsleigh::MemReader>(
+    sleigh: &mut rsleigh::Sleigh<R>,
     addr: u64,
 ) -> PyResult<(String, usize)> {
     let lift = sleigh
@@ -103,13 +109,14 @@ pub fn pcode_at(
 /// addresses, one instruction each, returning a list of `(addr, text)`
 /// tuples in the order of `addrs`.
 ///
-/// Builds the `Sleigh` only ONCE and lifts one machine instruction
-/// per supplied address — this is the path
-/// `Analysis.fingerprint_pcode` uses to render a node's fingerprint
-/// addresses without paying the Sleigh-construction cost per address.
-/// `text` is the lifted p-code (empty for ops like `endbr64` that lift
-/// to no p-code).  rsleigh is a p-code lifter — this is the lifted
-/// semantics, NOT native assembly mnemonics.
+/// Builds the `Sleigh` only ONCE and lifts one machine instruction per
+/// supplied address — the same shape `Lifter.fingerprint_pcode`
+/// (`strider_cls.rs`) uses over its own `Sleigh<AnyMemReader>` clone to
+/// render a node's fingerprint addresses without paying the
+/// Sleigh-construction cost per address. `text` is the lifted p-code
+/// (empty for ops like `endbr64` that lift to no p-code).  rsleigh is a
+/// p-code lifter — this is the lifted semantics, NOT native assembly
+/// mnemonics.
 ///
 /// Raises `StriderError` on a Sleigh-construction or lift failure.
 #[pyfunction]

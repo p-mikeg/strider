@@ -101,20 +101,18 @@ for name in s.functions():
 function, unresolved = s.analyze("array_sum", function_max_size=64)
 ```
 
-For a raw firmware blob / non-ELF source, build a standalone `Strider`
-run handle over a `MemoryMap` (address targets only — there's no ELF
-symbol table; do the name → address lookup at the call site if you have
-one).  `Strider.analyze(addr)` returns the lifted `Function` directly:
+For a raw firmware blob / non-ELF source, build a `Lifter` directly over
+a `BufferReader` (address targets only — there's no ELF symbol table; do
+the name → address lookup at the call site if you have one).
+`Lifter.analyze(addr, cc, ...)` returns the same `(Function, unresolved)`
+tuple as `ElfLifter.analyze`:
 
 ```python
-mem = strider.MemoryMap()
-mem.add_region(0x8000, firmware_bytes)
-s = strider.strider(
-    strider.SleighArch.arm_thumb(),
-    strider.CallingConvention.arm_aapcs(),
-    mem,
+mem = strider.BufferReader(0x8000, firmware_bytes)
+lift = strider.lifter(strider.SleighArch.arm_thumb(), mem)
+function, unresolved = lift.analyze(
+    0x8000, strider.CallingConvention.arm_aapcs()
 )
-fn = s.analyze(0x8000)
 ```
 
 For workflows that need granular control — explicit calling
