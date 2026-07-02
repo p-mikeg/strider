@@ -131,15 +131,12 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// `(space-shortcut, offset, size)`) so downstream `InitialVnId` numbering is
     /// stable across runs; the lifter only needs the unique used-vn set.
     pub(crate) fn find_all_unique_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
-        let mut all_vns: rustc_hash::FxHashSet<rsleigh::Vn> = rustc_hash::FxHashSet::default();
-        for region in cfg.regions() {
-            for wrapped in region.insns.iter() {
-                for vn in wrapped.insn.all_vns() {
-                    all_vns.insert(vn);
-                }
-            }
-        }
-        all_vns.into_iter().collect()
+        cfg.regions()
+            .flat_map(|region| region.insns.iter())
+            .flat_map(|wrapped| wrapped.insn.all_vns())
+            .collect::<rustc_hash::FxHashSet<rsleigh::Vn>>()
+            .into_iter()
+            .collect()
     }
 
     /// Translates a pre-built control-flow graph into a [`LiftOutcome`]

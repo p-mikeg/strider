@@ -27,11 +27,9 @@ mod ids;
 mod iter;
 mod petgraph_view;
 mod storage;
-mod validate;
 
 pub use cache::{NeverCacheable, NodeCacheable};
 pub use graph::{Graph, NodeIdRemap};
 pub use ids::{NodeId, UseId, ValueId, Vertex};
 pub use iter::{InputCursor, InputIter, Inputs};
 pub use storage::RawStore;
-pub use validate::UseListInconsistency;

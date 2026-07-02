@@ -6,7 +6,7 @@
 mod common;
 
 use common::graph;
-use graphwalk::{GraphRef, PredGraphRef};
+use graphwalk::GraphRef;
 use std::ops::ControlFlow;
 
 #[test]
@@ -51,27 +51,14 @@ fn succs(g: &common::Graph, node: common::NodeId) -> Vec<String> {
     out
 }
 
-fn preds(g: &common::Graph, node: common::NodeId) -> Vec<String> {
-    let mut out = Vec::new();
-    let _ = g.try_predecessors(node, |p| {
-        out.push(g.name(p).to_owned());
-        ControlFlow::Continue(())
-    });
-    out
-}
-
 #[test]
 #[allow(clippy::many_single_char_names)]
 fn fan_out_and_fan_in() {
     let g = graph("a, b -> c, d");
     let a = g.node("a");
     let b = g.node("b");
-    let c = g.node("c");
-    let d = g.node("d");
     assert_eq!(succs(&g, a), vec!["c", "d"]);
     assert_eq!(succs(&g, b), vec!["c", "d"]);
-    assert_eq!(preds(&g, c), vec!["a", "b"]);
-    assert_eq!(preds(&g, d), vec!["a", "b"]);
 }
 
 #[test]
@@ -79,7 +66,6 @@ fn self_loop() {
     let g = graph("a -> a");
     let a = g.node("a");
     assert_eq!(succs(&g, a), vec!["a"]);
-    assert_eq!(preds(&g, a), vec!["a"]);
 }
 
 #[test]
@@ -92,7 +78,6 @@ fn name_recurrence_resolves_to_same_id() {
     let a2 = g.node("a");
     assert_eq!(a1, a2);
     assert_eq!(succs(&g, a1), vec!["b"]);
-    assert_eq!(preds(&g, a1), vec!["b"]);
 }
 
 #[test]

@@ -55,46 +55,12 @@ impl<G: GraphRef> GraphRef for &'_ G {
         (*self).try_successors(node, f)
     }
 }
-/// Extension of [`GraphRef`] that can also enumerate predecessors.
-pub trait PredGraphRef: GraphRef {
-    /// Calls `f` with each predecessor of `node`, short-circuiting if `f`
-    /// returns [`ControlFlow::Break`].
-    fn try_predecessors(
-        &self,
-        node: Self::NodeId,
-        f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()>;
-}
-
-impl<G: PredGraphRef> PredGraphRef for &'_ G {
-    fn try_predecessors(
-        &self,
-        node: Self::NodeId,
-        f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        (*self).try_predecessors(node, f)
-    }
-}
-
 /// Tracks which nodes have already been visited during a graph walk.
 pub trait VisitTracker<N>: Default {
     /// Returns `true` if `node` has been marked as visited.
     fn is_visited(&self, node: N) -> bool;
     /// Marks `node` as visited.
     fn mark_visited(&mut self, node: N);
-}
-
-/// A no-op [`VisitTracker`] that never remembers visits.
-///
-/// Suitable for tree traversals where no node is visited twice.
-#[derive(Default, Clone, Copy)]
-pub struct NopTracker;
-impl<N> VisitTracker<N> for NopTracker {
-    fn is_visited(&self, _node: N) -> bool {
-        false
-    }
-
-    fn mark_visited(&mut self, _node: N) {}
 }
 
 impl<N: EntityRef> VisitTracker<N> for DenseEntitySet<N> {

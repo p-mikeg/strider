@@ -29,6 +29,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// return-register list, in ABI order.  Delegates to the SSoT
     /// [`strider_target::BuiltCallingConvention::ret_and_clobber_vns`],
     /// injecting the lifter's O(1) [`Self::container_of`] map.
+    ///
+    /// Test-only: production `build_cc_call` reads both halves from one
+    /// `ret_and_clobber_vns` scan directly.
+    #[cfg(test)]
     pub(crate) fn call_ret_vals_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
@@ -40,6 +44,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// Derive the call-clobbered varnode list (non-ret caller-saved registers)
     /// for a `Call` built under `cc`, in `all_vns` order.  Delegates to the
     /// SSoT [`strider_target::BuiltCallingConvention::ret_and_clobber_vns`].
+    ///
+    /// Test-only: production `build_cc_call` reads both halves from one
+    /// `ret_and_clobber_vns` scan directly.
+    #[cfg(test)]
     pub(crate) fn call_clobbered_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,

@@ -309,18 +309,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .build_int_binary_operation(x, one, IntBinaryOp::Xor, strider_ir::ValueType::I1)
     }
 
-    /// Builds the logical-OR of two 1-bit (`I1`) values: `Or(a, b):I1`.
-    /// Shared by the float `LessEqual` lowering (`a < b ∨ a == b`); both
-    /// operands must already be `I1`.
-    pub(super) fn build_or_i1(
-        &mut self,
-        a: strider_ir::Value,
-        b: strider_ir::Value,
-    ) -> Result<strider_ir::Value> {
-        self.builder
-            .build_int_binary_operation(a, b, IntBinaryOp::Or, strider_ir::ValueType::I1)
-    }
-
     /// Lowers `IntNotEqual(a, b)` to `Xor(IntEqual(a, b), IntConst(1)):I1`.
     ///
     /// Matches strider's canonical form (one IntCmpOp + one I1 Xor with the

@@ -197,15 +197,13 @@ impl<'f> RangeMap<'f> {
         // A Phi node's inputs are: [PhiToken, v0, v1, …]
         // where v0, v1, … are the data inputs (one per predecessor).
         // The PhiToken is at index 0 and has kind PhiToken (not a value).
-        let g = self.function.graph();
-
         // Collect data inputs in one pass: filter out the structural PhiToken (slot 0).
         let data_inputs: Vec<ValueId> = self.function.phi_data_inputs(phi_node).collect();
 
         // A Phi has exactly one output — its value — so derive it here rather
         // than taking it as a (redundant) parameter.  Empty outputs ⇒ degenerate
         // phi, resolve to top.
-        let Some(phi_value) = g.node_outputs(phi_node).first().copied() else {
+        let Some(phi_value) = self.function.graph().node_outputs(phi_node).first().copied() else {
             return Interval::top(u128::MAX);
         };
         let ty = self.function.value_type_opt(phi_value);
@@ -399,12 +397,13 @@ impl<'f> RangeMap<'f> {
 
         let kb = self.kb_bounds[value];
 
-        match (guard, kb) {
-            (Some(g), Some(k)) => g.intersect(k),
-            (Some(g), None) => g,
-            (None, Some(k)) => k,
-            (None, None) => Interval::top(type_mask),
-        }
+        // Intersect whichever bounds are present (both, either, or neither →
+        // top). `intersect` is commutative, so guard-then-kb order is fine.
+        guard
+            .into_iter()
+            .chain(kb)
+            .reduce(Interval::intersect)
+            .unwrap_or_else(|| Interval::top(type_mask))
     }
 }
 
