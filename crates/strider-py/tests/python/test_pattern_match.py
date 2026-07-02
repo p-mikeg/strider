@@ -8,7 +8,7 @@ find at least once.
 import strider
 from strider.pattern import Capture, var, add, load, int_const
 
-from .conftest import built_function
+from .conftest import built_function, built_lifter_and_function
 
 
 def _build_graph(case="memory", symbol="array_sum"):
@@ -205,14 +205,14 @@ def test_find_all_with_when_predicate_mutating_graph_is_safe():
     predicate sees a clean StriderError instead of blocking forever.
     """
     from strider.pattern import any_int_const
-    g = _build_graph()
+    lift, g = built_lifter_and_function("x86", "memory", "array_sum", optimize=False)
     errors_caught: list[str] = []
 
     def predicate(_m):
         try:
             # Mutating call from inside the predicate — must raise,
             # NOT deadlock.
-            g.reoptimize()
+            lift.optimize(g)
         except strider.errors.StriderError as e:
             errors_caught.append(str(e))
         return True

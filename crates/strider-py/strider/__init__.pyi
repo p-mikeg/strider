@@ -240,6 +240,18 @@ class Lifter:
         cc: CallingConvention,
         opts: Optional[LifterOptions] = ...,
     ) -> Tuple[Function, List[int]]: ...
+    def optimize(
+        self,
+        function: Function,
+        pipeline: Optional[OptimizerPipeline] = ...,
+    ) -> None:
+        """Run an optimizer pipeline over `function`'s IR in place.
+        `pipeline=None` (the default) builds and runs the canonical
+        default pipeline (equivalent to the former
+        `Function.reoptimize()`); passing an `OptimizerPipeline` runs
+        that pipeline instead, draining it (equivalent to the former
+        `Function.optimize(pipeline)`)."""
+        ...
     def dump_html(
         self, function: Function, path: str, style: Optional[str] = ...
     ) -> None:
@@ -389,8 +401,6 @@ class Function:
     def validate(self) -> Optional[str]:
         """Re-validate the graph; `None` on success, else an error message."""
         ...
-    def optimize(self, pipeline: OptimizerPipeline) -> None: ...
-    def reoptimize(self) -> None: ...
     def find_all(
         self,
         pat: Any,  # strider.pattern.PatLike

@@ -504,6 +504,45 @@ impl PyLifter {
         Ok((py_function, unresolved))
     }
 
+    /// Run an optimizer pipeline over `function`'s IR in place.
+    ///
+    /// `pipeline=None` (the default) builds and runs the canonical
+    /// default pipeline — the same one `analyze` drives internally
+    /// (`strider_orchestrator::opt::default_pipeline()`), equivalent to
+    /// the former `Function.reoptimize()`.  Passing an `OptimizerPipeline`
+    /// runs THAT pipeline instead (draining it — rebuild before reuse),
+    /// equivalent to the former `Function.optimize(pipeline)`.
+    ///
+    /// Useful after a manual `Function.rewrite(...)` / `rewrite_all(...)`
+    /// to re-converge the graph, or to layer extra passes on top of an
+    /// already-analyzed function.  Mutates `function` in place and bumps
+    /// its generation, invalidating outstanding `Node`/`Match` handles —
+    /// see `PyFunction::run_pipeline_in_place`.
+    ///
+    /// A custom `pipeline` runs without a rom image (`OptCtx::new(None)`);
+    /// any `LoadReadOnly` pass present short-circuits silently.  Callers
+    /// that need rom-driven folding should route through
+    /// `strider.lifter(arch, mem, rom=mem).analyze(...)` (or
+    /// `strider.load_elf(...)`, which wires the rom automatically)
+    /// instead.
+    #[pyo3(signature = (function, pipeline=None))]
+    fn optimize(
+        &self,
+        function: &PyFunction,
+        pipeline: Option<&crate::opt::PyOptimizerPipeline>,
+    ) -> PyResult<()> {
+        match pipeline {
+            Some(p) => {
+                let real_pipeline = p.drain_into_pipeline(false)?;
+                function.run_pipeline_in_place(real_pipeline, "optimize")
+            }
+            None => {
+                let pipe = strider_orchestrator::opt::default_pipeline();
+                function.run_pipeline_in_place(pipe, "optimize")
+            }
+        }
+    }
+
     /// Render `function`'s IR graph to a standalone HTML file at `path`.
     /// `style` selects the dot theme (default `"dark"`).
     ///

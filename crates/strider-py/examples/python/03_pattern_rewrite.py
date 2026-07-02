@@ -1,4 +1,4 @@
-"""03 — Pattern → pattern rewrite + reoptimize.
+"""03 — Pattern → pattern rewrite + re-optimize.
 
 Strider's optimizer has constant folding built in, so contrived
 identities like `x + 0` rarely survive long enough to demonstrate
@@ -9,7 +9,7 @@ exposed.
 
 Read this example to understand:
   - How `find` and `replace` patterns share captures by name.
-  - How to call `reoptimize()` after a manual rewrite.
+  - How to call `Lifter.optimize(function)` after a manual rewrite.
   - That `rewrite_all` lets you stage multiple rules in one pass.
 
 Run from the workspace root:
@@ -50,11 +50,11 @@ rule_repl = var(x)
 n = function.rewrite(find=rule_find, replace=rule_repl)
 print(f"`x + 0 → x` substitution: {n} site(s) rewritten")
 
-# After any structural change you should reoptimize. `reoptimize()`
-# re-runs the full default pipeline (constant folding, known-bits, and
-# the node-removing passes that collapse phi/dead-branch noise the
-# rewrite may have exposed).
-function.reoptimize()
+# After any structural change you should re-optimize. `Lifter.optimize`
+# (called with no pipeline) re-runs the full default pipeline (constant
+# folding, known-bits, and the node-removing passes that collapse
+# phi/dead-branch noise the rewrite may have exposed).
+elf.optimize(function)
 
 after = len(function.find_all(load()))
 print(f"after rewrite + reoptimize: {after} loads")

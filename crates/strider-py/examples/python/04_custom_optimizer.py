@@ -3,7 +3,7 @@
 `OptimizerPipeline.default()` builds the full pipeline (every built-in
 pass); `OptimizerPipeline.empty()` starts blank so you add exactly the
 passes your workflow needs, then apply the result via
-`Function.optimize(pipeline)`.
+`Lifter.optimize(function, pipeline)`.
 
 `Lifter.analyze()` (and `ElfLifter.analyze()`) always drive the
 canonical default pipeline to a fixed point — there is no
@@ -68,14 +68,14 @@ print(f"no further optimization applied                 : {shape(no_opt)}")
 partial_pipe = strider.OptimizerPipeline.empty()
 partial_pipe.add(strider.opt.ConstantFold())
 partial = no_opt.clone()
-partial.optimize(partial_pipe)
+elf.optimize(partial, partial_pipe)
 print(f"ConstantFold-only pipeline                      : {shape(partial)}")
 
 # The full default pipeline reaches at least the same fixed point (and
 # would additionally clean up phi/branch redundancy this fixture
 # doesn't happen to exercise).
 full = no_opt.clone()
-full.optimize(strider.OptimizerPipeline.default())
+elf.optimize(full, strider.OptimizerPipeline.default())
 print(f"default pipeline                                : {shape(full)}")
 
 print(

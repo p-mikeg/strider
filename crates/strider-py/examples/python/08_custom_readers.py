@@ -20,8 +20,8 @@ into `IntConst(42)`, leaving `Add(arg0, 42)` in the graph. We then:
 
   1. Query it with a capturing pattern and read the captured constant
      back as a Python int (`Match.uint`).
-  2. Template-rewrite `arg0 + 42 → arg0 + 0` and reoptimize, so
-     ConstantFold collapses the add away entirely.
+  2. Template-rewrite `arg0 + 42 → arg0 + 0` and re-optimize via
+     `Lifter.optimize`, so ConstantFold collapses the add away entirely.
 
 Run from the workspace root:
     python crates/strider-py/examples/python/08_custom_readers.py
@@ -124,8 +124,8 @@ x = Capture()
 n = edited.rewrite(find=add(x, int_const(DATA_VALUE)), replace=add(x, int_const(0)))
 print(f"rewrote {n} site(s)")
 
-# Reoptimize the clone so ConstantFold collapses `x + 0 → x`.
-edited.reoptimize()
+# Re-optimize the clone so ConstantFold collapses `x + 0 → x`.
+lft.optimize(edited)
 orig_shapes = len(fn.find_all(add(function_arg(0), var(k)), ignore_casts=True))
 edited_shapes = len(edited.find_all(add(function_arg(0), var(k)), ignore_casts=True))
 print(f"`arg0 + <captured>` shapes — original: {orig_shapes}, clone after rewrite: {edited_shapes}")

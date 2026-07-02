@@ -419,7 +419,7 @@ def test_standalone_strider_rejects_name_targets():
 # 2 of the strider-py API redesign) removed that entry point —
 # `Lifter.analyze` always drives the canonical default pipeline plus
 # indirect-branch resolution.  A caller wanting extra passes on top of
-# the fully-resolved graph now calls `Function.optimize(pipeline)`
+# the fully-resolved graph now calls `Lifter.optimize(function, pipeline)`
 # afterwards (already covered by `test_optimizer_pipeline.py`).
 
 

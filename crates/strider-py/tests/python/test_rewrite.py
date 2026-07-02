@@ -6,7 +6,7 @@ import strider
 from strider.pattern import Capture, var, add, int_const
 from strider import template as tpl
 
-from .conftest import built_function
+from .conftest import built_function, built_lifter_and_function
 
 
 def _build_graph(symbol="array_sum"):
@@ -35,10 +35,10 @@ def test_rewrite_all_returns_fire_count():
 
 
 def test_rewrite_then_reoptimize():
-    g = _build_graph()
+    lift, g = built_lifter_and_function("x86", "memory", "array_sum", optimize=False)
     x = Capture()
     g.rewrite(find=add(var(x), int_const(0)), replace=var(x))
-    g.reoptimize()
+    lift.optimize(g)
     assert g.node_count() > 0
 
 

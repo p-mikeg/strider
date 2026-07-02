@@ -190,11 +190,14 @@ pipe.add(strider.opt.KnownBits())
 pipe.add(strider.opt.LoadForward())
 pipe.add_post(strider.opt.FunctionArgDetect())
 pipe.add_post(strider.opt.CallStackArgCollect())
-function.optimize(pipe)
+lift.optimize(function, pipe)
 ```
 
-`strider.OptimizerPipeline.default()` builds the canonical full
-pipeline in one call; `Function.reoptimize()` re-runs it in place.
+`optimize` lives on `Lifter` (not `Function`) — mutates `function` in
+place, draining `pipe`.  `strider.OptimizerPipeline.default()` builds
+the canonical full pipeline in one call; `lift.optimize(function)`
+(no `pipeline` argument) re-runs that default pipeline in place —
+the replacement for the removed `Function.reoptimize()`.
 
 `Lifter.analyze`/`ElfLifter.analyze` can also run a custom pipeline for
 one call only, via `LifterOptions.pipeline` (never settable on
@@ -223,7 +226,7 @@ n = function.rewrite(
     find=add(var(x), int_const(0)),      # strider.pattern — the LHS
     replace=tpl.var(x),                  # strider.template — the RHS
 )
-function.reoptimize()  # re-run the default pipeline to collapse downstream effects
+lift.optimize(function)  # re-run the default pipeline to collapse downstream effects
 ```
 
 ## Patterns and captures

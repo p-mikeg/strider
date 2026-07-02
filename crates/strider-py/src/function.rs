@@ -47,10 +47,11 @@ impl PyFunction {
     }
 
     /// Try to acquire the write lock without blocking.  Used by mutating
-    /// methods (`optimize`, `compact`, `rewrite`, `reoptimize`) so that a
-    /// re-entrant call from inside a `.when()` predicate (which holds the
-    /// read lock for the duration of `find_all`) surfaces a typed error
-    /// rather than deadlocking the thread.
+    /// methods (`compact`, `rewrite`, and the `run_pipeline_in_place`
+    /// helper `Lifter.optimize` drives) so that a re-entrant call from
+    /// inside a `.when()` predicate (which holds the read lock for the
+    /// duration of `find_all`) surfaces a typed error rather than
+    /// deadlocking the thread.
     pub(crate) fn try_write_inner(
         &self,
     ) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
@@ -87,8 +88,13 @@ impl PyFunction {
     /// Run `pipeline` over this graph in place, bumping the generation
     /// first so any stale handle is invalidated even if a pass errors
     /// mid-run and leaves the arena partially rewritten.  `label` names
-    /// the operation in the surfaced error (`"optimize"` / `"reoptimize"`).
-    fn run_pipeline_in_place(
+    /// the operation in the surfaced error.
+    ///
+    /// `pub(crate)` (rather than a private fn) because `Lifter.optimize`
+    /// (`strider_cls.rs`) drives the same in-place-run logic — it lives
+    /// here so `PyFunction`'s lock-acquisition/generation-bump contract
+    /// stays in one place rather than being duplicated at the call site.
+    pub(crate) fn run_pipeline_in_place(
         &self,
         pipeline: strider_orchestrator::opt::OptimizerPipeline,
         label: &str,
@@ -223,37 +229,13 @@ impl PyFunction {
         Ok(())
     }
 
-    /// Apply a `PyOptimizerPipeline` to this graph in place.  Drains
-    /// the pipeline (subsequent calls to the same pipeline see an
-    /// empty pass list); rebuild it from `OptimizerPipeline.default()`
-    /// or the equivalent classmethods if you need to apply it again.
-    ///
-    /// The pipeline runs without a rom image (`OptCtx::new(None)`); any
-    /// `LoadReadOnly` pass present in the pipeline short-circuits
-    /// silently.  Callers that need rom-driven folding should route
-    /// through `strider.lifter(arch, mem, rom=mem).analyze(...)` (or
-    /// `strider.load_elf(...)`, which wires the rom automatically)
-    /// instead.
-    fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
-        let real_pipeline = pipeline.drain_into_pipeline(false)?;
-        self.run_pipeline_in_place(real_pipeline, "optimize")
-    }
-
-    /// Convenience: re-run the default optimizer pipeline on this graph.
-    /// Useful after a manual rewrite (`graph.rewrite(...)`) to
-    /// re-converge the graph.
-    fn reoptimize(&self) -> PyResult<()> {
-        let pipe = strider_orchestrator::opt::default_pipeline();
-        self.run_pipeline_in_place(pipe, "reoptimize")
-    }
-
     /// Deep-copy this function into a fully independent `Function`.
     ///
     /// The clone owns a fresh graph + side-tables (its own generation
-    /// counter), so mutating it via `rewrite(...)` / `reoptimize()` leaves the
-    /// original untouched — the idiom for a non-destructive rewrite is
-    /// `g2 = fn.clone(); g2.rewrite(find, replace)`.  The parent `Cfg` (Sleigh
-    /// for dot rendering) is shared by handle.
+    /// counter), so mutating it via `rewrite(...)` / `Lifter.optimize(...)`
+    /// leaves the original untouched — the idiom for a non-destructive
+    /// rewrite is `g2 = fn.clone(); g2.rewrite(find, replace)`.  The parent
+    /// `Cfg` (Sleigh for dot rendering) is shared by handle.
     #[pyo3(name = "clone")]
     fn py_clone(&self, py: Python<'_>) -> PyResult<PyFunction> {
         let cloned = self

@@ -118,11 +118,12 @@ def test_mem_reader_over_long_return_errors():
 # PY-5 ("reusing one pipeline across two `run(rom=...)` calls behaves
 # predictably") pinned the old `strider.run(pipeline=...)` custom-pipeline
 # draining semantics.  That entry point was removed by the single-`Lifter`
-# collapse (Task 2 of the strider-py API redesign): `Lifter.analyze` no
-# longer accepts a `pipeline=` override, so there is nothing left to reuse
-# across two calls.  The underlying "a drained `OptimizerPipeline` object
+# collapse (Task 2 of the strider-py API redesign); a later follow-up
+# reintroduced a per-call override as `LifterOptions.pipeline` (draining
+# it the same way), but there is no separate reusable-across-two-calls
+# entry point.  The underlying "a drained `OptimizerPipeline` object
 # raises on reuse" contract is still pinned directly against
-# `Function.optimize` in
+# `Lifter.optimize` in
 # `test_optimizer_pipeline.py::test_optimize_twice_on_same_pipeline_raises`.
 
 
@@ -137,7 +138,7 @@ def test_mem_reader_over_long_return_errors():
 def test_optimize_invalidates_outstanding_handles(x86_memory_elf):
     from strider.pattern import Capture
 
-    fn = _analysis(x86_memory_elf, "array_sum")
+    lift, fn = _analysis(x86_memory_elf, "array_sum")
 
     c = Capture()
     add_hits = fn.find_all(load().capture(c))
@@ -149,7 +150,7 @@ def test_optimize_invalidates_outstanding_handles(x86_memory_elf):
 
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
-    fn.optimize(pipe)
+    lift.optimize(fn, pipe)
 
     # The handle is now stale (generation bumped): a graph-dereferencing
     # accessor must raise rather than read the mutated arena.
@@ -165,7 +166,7 @@ def _analysis(elf_path, sym):
         addr, strider.CallingConvention.x86_cdecl(),
         opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )
-    return function
+    return lift, function
 
 
 # ── PY-9 — int_ne builder + Load/Store.stack_offset mirror ────────────
@@ -179,7 +180,7 @@ def test_int_ne_builder_compiles():
 def test_int_ne_finds_lowered_shape(x86_memory_elf):
     # int_ne is the lifter-canonical `Xor(IntEqual(a,b),1):I1` shape.
     # Just assert it compiles + queries without error on a real graph.
-    fn = _analysis(x86_memory_elf, "array_sum")
+    _lift, fn = _analysis(x86_memory_elf, "array_sum")
     hits = fn.find_all(int_ne(anything(), anything()))
     assert isinstance(hits, list)
 
@@ -190,7 +191,7 @@ def test_load_store_stack_offset_field_compiles():
 
 
 def test_load_stack_offset_filters(x86_memory_elf):
-    fn = _analysis(x86_memory_elf, "array_sum")
+    _lift, fn = _analysis(x86_memory_elf, "array_sum")
     # A wildly-out-of-range SP offset should match nothing.
     hits = fn.find_all(load().stack_offset(0x7FFF_FFFF))
     assert hits == []

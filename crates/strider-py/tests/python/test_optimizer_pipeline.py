@@ -111,6 +111,34 @@ def test_default_optimizer_pipeline_nonempty_pre_and_post():
     assert pipe.post_pass_count() > 0
 
 
+def test_optimize_on_lifter_mutates(x86_memory_elf):
+    """`optimize` lives on `Lifter`, not `Function`: `lift.optimize(g)`
+    (no pipeline) runs the default pipeline in place, and neither
+    `optimize` nor `reoptimize` exist on `Function` any more."""
+    addr = symbol_addr(x86_memory_elf, "array_sum")
+    arch = strider.SleighArch.x86()
+    cc = strider.CallingConvention.x86_cdecl()
+    mem = strider.load_elf(str(x86_memory_elf)).reader()
+    lift = strider.lifter(arch, mem)
+    g, _unresolved = lift.analyze(
+        addr,
+        cc,
+        opts=strider.LifterOptions(
+            cfg=strider.CfgOptions(allow_code_before_start_addr=True),
+            pipeline=strider.OptimizerPipeline.empty(),
+        ),
+    )
+    assert g.node_count() >= 1  # sanity: something to optimize
+    lift.optimize(g)  # default pipeline, in place
+    # `node_count` counts every arena slot (reachable or not) and isn't
+    # guaranteed to shrink monotonically pre-compaction — the load-
+    # bearing assertion is that the call succeeds and leaves a valid,
+    # non-empty graph.
+    assert g.node_count() >= 1
+    assert not hasattr(g, "optimize")
+    assert not hasattr(g, "reoptimize")
+
+
 def test_graph_reoptimize(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
@@ -120,7 +148,7 @@ def test_graph_reoptimize(x86_memory_elf):
     g, _unresolved = s.analyze(
         addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
     )
-    g.reoptimize()
+    s.optimize(g)
     assert g.node_count() > 0
 
 
@@ -138,7 +166,7 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
     pipe.add(strider.opt.KnownBits())
-    g.optimize(pipe)
+    s.optimize(g, pipe)
     # Optimization may or may not reduce node count; at minimum it must
     # leave a valid graph (no exception).
     assert g.node_count() >= 1
@@ -148,7 +176,7 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
 
 def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
     """Regression: a wrapper that has
-    already been drained by a prior `Function.optimize` call must
+    already been drained by a prior `Lifter.optimize` call must
     surface a typed error on a second call, not silently no-op with an
     empty pipeline.
     """
@@ -165,7 +193,7 @@ def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
 
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
-    g.optimize(pipe)  # drains pipe
+    s.optimize(g, pipe)  # drains pipe
     # Second call: must raise StriderError, not silently succeed.
     with pytest.raises(strider.errors.StriderError):
-        g.optimize(pipe)
+        s.optimize(g, pipe)

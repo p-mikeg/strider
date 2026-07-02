@@ -151,11 +151,10 @@ impl PipelineState {
 
 /// Builder for an optimizer pipeline.  Construct via `empty()` or
 /// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
-/// `Function.optimize(pipeline)`.  (`Lifter.analyze` always drives its
-/// own internal default pipeline — there is no Python-facing way to
-/// hand it a custom one; build the custom pipeline and apply it via
-/// `Function.optimize` afterwards instead.)  Applying a pipeline drains
-/// it, so rebuild before reuse.
+/// `Lifter.optimize(function, pipeline)`.  (`Lifter.analyze` drives its
+/// own internal default pipeline unless `LifterOptions.pipeline` is set,
+/// in which case that pipeline runs instead, for that call only.)
+/// Applying a pipeline drains it, so rebuild before reuse.
 ///
 /// Holds the internal state behind a `Mutex` so `add` / `add_post`
 /// don't require `&mut self` (PyO3 method receivers are typically
@@ -205,10 +204,10 @@ impl PyOptimizerPipeline {
     ///
     /// returns `Err(StriderError)` if
     /// the wrapper has already been drained (both pass lists empty).
-    /// Without this guard a second `Function.optimize(pipe)` would
-    /// silently run an empty pipeline and report success — masking
+    /// Without this guard a second `Lifter.optimize(function, pipe)`
+    /// would silently run an empty pipeline and report success — masking
     /// caller bugs where the same wrapper is reused after a previous
-    /// `Function.optimize` call already consumed it.
+    /// `Lifter.optimize` call already consumed it.
     ///
     /// When `prepend_load_read_only` is set, a unit `LoadReadOnly` pass is
     /// prepended to the materialised pipeline so a caller-supplied `rom`
@@ -228,7 +227,7 @@ impl PyOptimizerPipeline {
         if state.drained {
             return Err(into_strider_err(anyhow::anyhow!(
                 "OptimizerPipeline is empty — already drained by a prior \
-                 Function.optimize() call.  Build a fresh pipeline \
+                 Lifter.optimize() call.  Build a fresh pipeline \
                  (e.g. OptimizerPipeline.default()) or re-add passes before \
                  calling again."
             )));

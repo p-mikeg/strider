@@ -639,6 +639,14 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   reader and the `LoadReadOnly` rom, and adds `symbol` / `symbol_size` /
   `symbols` / `entry_point` / `read` / `reader` plus a name-aware
   `analyze(target, ...)` that accepts a `str` symbol name or an address.
+  `lifter.optimize(function, pipeline=None)` runs an `OptimizerPipeline`
+  over `function`'s IR in place (mutating it, same as `analyze`'s
+  internal run); `pipeline=None` builds and runs the canonical default
+  pipeline instead.  This is the sole way to re-run/apply optimization
+  passes on an already-lifted `Function` — `Function.optimize` and
+  `Function.reoptimize` were removed in favor of this single
+  `Lifter`-owned entry point (a bare `Function` carries no pipeline
+  state of its own).
   Pattern queries (`find_all` / `find_one` / `find_joined`) and the
   addr-only `fingerprint`/`asm_fingerprint` live directly on the returned
   `Function`/`Node` — there is no separate `Analysis` wrapper class.  The
