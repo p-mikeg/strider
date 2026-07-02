@@ -72,7 +72,7 @@ pub(crate) fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Valu
             &strider_cfg::CfgOptions::default(),
         )
         .expect("cfg build");
-    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
+    let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     let mut function = outcome.function;
 
     // Run the full optimiser pipeline so the placeholder's anchor

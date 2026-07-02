@@ -51,7 +51,7 @@ fn raw_builder(
     if !tracked.contains(&cc.stack_vn) {
         tracked.push(cc.stack_vn);
     }
-    FunctionBuilder::new(tracked, &cc, endianness)
+    FunctionBuilder::new(tracked, cc, endianness)
 }
 
 /// Build a minimal builder with no variables so tests that do not need
@@ -2232,7 +2232,7 @@ mod build_call_with_cc {
         // read via `read_reg_vn`, which errors on an untracked register.
         let mut tracked = vec![rax, rsp];
         tracked.extend(x86_64_arg_regs(&regs));
-        let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little).unwrap();
+        let mut b = FunctionBuilder::new(tracked, cc, strider_target::Endianness::Little).unwrap();
         let _ = rdi;
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
@@ -2276,7 +2276,7 @@ mod build_call_with_cc {
         let xmm1 = regs.name_to_vn("XMM1").unwrap();
         let _ = rdi;
         let mut b =
-            FunctionBuilder::new(vec![rax, rsp], &cc, strider_target::Endianness::Little).unwrap();
+            FunctionBuilder::new(vec![rax, rsp], cc, strider_target::Endianness::Little).unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
@@ -2348,7 +2348,7 @@ mod build_call_with_cc {
         // register.  RDI is still slot [4] (the first arg).
         let mut tracked = vec![rax, rsp];
         tracked.extend(x86_64_arg_regs(&regs));
-        let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little).unwrap();
+        let mut b = FunctionBuilder::new(tracked, cc, strider_target::Endianness::Little).unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
@@ -2729,7 +2729,7 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         link_register_vn: None,
         preserves_memory: false,
     };
-    let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], &cc, strider_target::Endianness::Little)?;
+    let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     // The lifter records register-arg carriers after `set_entry_region`; the
@@ -2777,7 +2777,7 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
     // Track only the wider container rdi (+ sp). FunctionBuilder::new seeds
     // edi (the narrow arg alias) then drops it as enclosed by rdi, so the var
     // table is keyed by rdi, not edi.
-    let mut b = FunctionBuilder::new(vec![rdi, sp], &cc, strider_target::Endianness::Little)?;
+    let mut b = FunctionBuilder::new(vec![rdi, sp], cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     // The lifter records register-arg carriers after `set_entry_region`; the

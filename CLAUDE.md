@@ -238,8 +238,9 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     varnode tag is recorded in `Function::value_vn` (via `set_vn_for_value`).
     Carries `lift_addr: Option<u64>` for centralised lift-time
     fingerprint attribution.  `FunctionBuilder::new(all_used_variables,
-    &cc, endianness)` takes the tracked-varnode list, a
-    `&strider_target::BuiltCallingConvention`, and the target endianness.
+    cc, endianness)` takes the tracked-varnode list, an owned
+    `strider_target::BuiltCallingConvention` (moved directly into
+    `Function::default_cc` — no clone), and the target endianness.
   - `FunctionBuilder::build` returns the populated `Function` directly —
     `entry()` is `Some(_)` after `build` succeeds.
   - `ReadOnlyMemory` trait — lives in the standalone `read-only-memory`

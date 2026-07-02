@@ -153,7 +153,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     pub fn build_ir(
         &self,
         cfg: &strider_cfg::Cfg,
-        cc: &strider_target::BuiltCallingConvention,
+        cc: strider_target::BuiltCallingConvention,
     ) -> Result<LiftOutcome> {
         self.build_ir_with(cfg, cc, &LiftOptions::default())
     }
@@ -178,7 +178,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     pub fn build_ir_with(
         &self,
         cfg: &strider_cfg::Cfg,
-        cc: &strider_target::BuiltCallingConvention,
+        cc: strider_target::BuiltCallingConvention,
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
         // The CFG is rebuilt from scratch each lift, so the tracked-varnode
@@ -511,7 +511,7 @@ mod tests {
         .build()
         .expect("cfg");
         let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
-        let outcome = lifter.build_ir(&cfg, &cc).expect("build_ir");
+        let outcome = lifter.build_ir(&cfg, cc).expect("build_ir");
 
         assert!(
             outcome.unresolved_branches.is_empty(),

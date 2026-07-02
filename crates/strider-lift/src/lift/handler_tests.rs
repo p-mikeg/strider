@@ -130,7 +130,7 @@ pub(super) fn with_test_lifter_tracking_arch(
     let lifter = Lifter::new(arch, sleigh).expect("lifter");
     let no_overrides = rustc_hash::FxHashMap::default();
     let mut driver =
-        FunctionLifter::new(&lifter, &cc, &cfg, all_vns, &no_overrides).expect("driver");
+        FunctionLifter::new(&lifter, cc, &cfg, all_vns, &no_overrides).expect("driver");
     // Entry-region setup (matches the old `make_builder`).  Clear the
     // lift address so tests start from `lift_addr = None`.
     driver.builder.set_lift_addr(None);
@@ -178,7 +178,7 @@ pub(super) fn with_test_lifter_cc(
     let lifter = Lifter::new(arch, sleigh).expect("lifter");
     let no_overrides = rustc_hash::FxHashMap::default();
     let mut driver =
-        FunctionLifter::new(&lifter, &cc, &cfg, all_vns, &no_overrides).expect("driver");
+        FunctionLifter::new(&lifter, cc, &cfg, all_vns, &no_overrides).expect("driver");
     driver.builder.set_lift_addr(None);
     driver.builder.build_entry().expect("build_entry");
     let region = driver.builder.create_region().expect("create_region");

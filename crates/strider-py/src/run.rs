@@ -475,7 +475,10 @@ fn run_with_custom_pipeline(
             .inner
             .build_ir_with(
                 &cfg_borrow.inner,
-                &lifter_borrow.cc,
+                // `build_ir_with` takes `cc` by value; `lifter_borrow` only
+                // holds a shared `PyRef` onto the Python-owned `PyLifter`,
+                // so the field can't be moved out — clone at this boundary.
+                lifter_borrow.cc.clone(),
                 &strider_orchestrator::LiftOptions {
                     per_address_ccs: per_address_built_ccs,
                     ..strider_orchestrator::LiftOptions::default()

@@ -36,7 +36,7 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let cfg = strider
         .build_cfg(MachineInsnAddr::from(base), &CfgOptions::default())
         .expect("cfg build");
-    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
+    let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     let mut function = outcome.function;
 
     let p = strider_orchestrator::opt::default_pipeline();

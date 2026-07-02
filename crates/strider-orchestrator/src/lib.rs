@@ -307,11 +307,18 @@ where
         // `known_targets` is deferred via `UnresolvedIndirectBranch` and
         // resolved at the full-function IR level by the classifier post-pass.
         let cfg = lifter.build_cfg(start_addr, &working.cfg)?;
+        // `build_ir_with` takes `cc` by value (it is moved all the way into
+        // `Function::default_cc` — see `strider-ir`'s `FunctionBuilder::new`).
+        // `analyze`'s resolve/re-lift loop calls `build_lift` — and thus this
+        // — more than once with the same caller-owned `cc`, so this clone is
+        // the one unavoidable boundary clone the by-value threading pushes
+        // out to: `Strider::analyze`'s iteration shape needs `cc` again on
+        // the next re-lift.
         let LiftOutcome {
             mut function,
             unresolved_branches: unresolved,
             ..
-        } = lifter.build_ir_with(&cfg, cc, working)?;
+        } = lifter.build_ir_with(&cfg, cc.clone(), working)?;
 
         let mut ctx = OptCtx::new(rom_ref);
         ctx.options = opt_opts.clone();

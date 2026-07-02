@@ -164,7 +164,7 @@ impl Arch {
 /// The lifter now OWNS the Sleigh and builds CFGs itself, so a driver is
 /// always bound to one concrete memory reader.  Callers build the CFG via
 /// `driver.build_cfg(entry, &opts)` and lift via
-/// `driver.build_ir(&cfg, &cc)`.
+/// `driver.build_ir(&cfg, cc)`.
 pub(crate) fn driver_for_reader<R: rsleigh::MemReader>(
     arch: Arch,
     reader: R,
@@ -269,7 +269,9 @@ pub(crate) fn analyze_with_known_targets(
         .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
         .expect("cfg build with Multiple known targets");
 
-    let function = driver.build_ir(&cfg, &cc).expect("build_ir").function;
+    // `build_ir` now takes `cc` by value; clone here so the caller still
+    // gets back an owned `cc` alongside the lifted function.
+    let function = driver.build_ir(&cfg, cc.clone()).expect("build_ir").function;
     (function, driver, cc)
 }
 
@@ -339,8 +341,10 @@ pub(crate) fn lift_for_pipeline(
     let cfg = ana
         .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_opts)
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
+    // `build_ir` now takes `cc` by value; clone here so the caller still
+    // gets back an owned `cc` alongside the outcome.
     let outcome = ana
-        .build_ir(&cfg, &cc)
+        .build_ir(&cfg, cc.clone())
         .unwrap_or_else(|e| panic!("build_ir for {fn_name}: {e:?}"));
     let rom_for_opt =
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");

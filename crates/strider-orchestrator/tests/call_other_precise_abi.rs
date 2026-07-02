@@ -26,7 +26,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
             &strider_cfg::CfgOptions::default(),
         )
         .expect("cfg");
-    let outcome = strider_h.build_ir(&cfg, &cc).expect("build_ir");
+    let outcome = strider_h.build_ir(&cfg, cc).expect("build_ir");
 
     // Find a cpuid* CallOther.  Sleigh's lift selects one of
     // cpuid / cpuid_<leaf>_info based on EAX; with no EAX setup it
@@ -96,7 +96,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
             &strider_cfg::CfgOptions::default(),
         )
         .expect("cfg");
-    let outcome = strider_h.build_ir(&cfg, &cc).expect("build_ir");
+    let outcome = strider_h.build_ir(&cfg, cc).expect("build_ir");
 
     let pat = call_other().name("UnkSytemRegRead").build();
     let matches = Matcher::new(&outcome.function).find_all(&pat).unwrap();

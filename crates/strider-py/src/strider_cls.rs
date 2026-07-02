@@ -127,9 +127,12 @@ impl PyLifter {
         let cfg_borrow = cfg.borrow(py);
         let outcome = {
             let lifter = slf.borrow(py);
+            // `build_ir` takes `cc` by value; `lifter` is a reusable Python
+            // handle (`analyze_cfg` may be called again), so its `cc` field
+            // can't be moved out — clone at this boundary.
             lifter
                 .inner
-                .build_ir(&cfg_borrow.inner, &lifter.cc)
+                .build_ir(&cfg_borrow.inner, lifter.cc.clone())
                 .map_err(into_strider_err)?
         };
         let unresolved_branch_count = outcome.unresolved_branches.len();

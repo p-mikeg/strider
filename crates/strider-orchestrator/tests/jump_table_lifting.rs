@@ -150,7 +150,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
         .expect("cfg build");
 
-    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
+    let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     let mut function = outcome.function;
 
     // Sanity: pre-optimization, the `build_switch_if_ladder` if-ladder produced N-1 = 2
