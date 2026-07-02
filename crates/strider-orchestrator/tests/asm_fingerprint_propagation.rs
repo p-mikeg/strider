@@ -55,7 +55,7 @@ fn constant_fold_add_consts_preserves_fingerprints() {
                     .is_some_and(|v| fg.int_const_u128(v) == Some(7))
         })
         .expect("IntConst(7)");
-    let fp = fg.asm_fingerprint(const7);
+    let fp = fg.side_tables().asm_fingerprint(const7);
     assert!(
         fp.contains(&0x108),
         "IntConst(7) fingerprint must include the Add's address 0x108: {fp:?}"
@@ -93,7 +93,7 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
                     .is_some_and(|v| fg.int_const_u128(v) == Some(0))
         })
         .expect("IntConst(0)");
-    let fp = fg.asm_fingerprint(const0);
+    let fp = fg.side_tables().asm_fingerprint(const0);
     assert!(
         fp.contains(&0x204),
         "IntConst(0) must inherit Xor's 0x204: {fp:?}"
@@ -140,7 +140,7 @@ fn known_bits_fold_preserves_fingerprints() {
     // input[2] is the value (input[0]=ctrl, input[1]=mem).
     assert!(ret_inputs.len() >= 3, "Return must have a value");
     let val_node = fg.producer(ret_inputs[2]);
-    let fp = fg.asm_fingerprint(val_node);
+    let fp = fg.side_tables().asm_fingerprint(val_node);
     assert!(
         !fp.is_empty(),
         "Folded return value must carry at least one contributor address: {fp:?}"
@@ -181,7 +181,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
         .expect("Return");
     let ret_inputs: Vec<_> = fg.node_inputs(ret).into_iter().collect();
     let val_node = fg.producer(ret_inputs[2]);
-    let fp = fg.asm_fingerprint(val_node);
+    let fp = fg.side_tables().asm_fingerprint(val_node);
     assert!(
         fp.contains(&0x510),
         "outer-And's 0x510 must survive in the surviving value's fingerprint: {fp:?}"

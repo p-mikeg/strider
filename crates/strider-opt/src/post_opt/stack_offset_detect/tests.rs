@@ -10,6 +10,7 @@
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{Function, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
+use strider_ir_test_utils::IrBuilderEx;
 
 use crate::StackOffsetDetect;
 
@@ -18,7 +19,7 @@ fn stamped_count(function: &Function) -> usize {
     function
         .graph()
         .all_node_ids()
-        .filter(|&n| function.stack_offset(n).is_some())
+        .filter(|&n| function.side_tables().stack_offset(n).is_some())
         .count()
 }
 
@@ -64,13 +65,13 @@ fn sp_relative_store_and_load_get_offset_stamped() {
         .graph()
         .all_node_ids()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
-        .filter_map(|n| f.stack_offset(n).map(|(_, off)| off))
+        .filter_map(|n| f.side_tables().stack_offset(n).map(|(_, off)| off))
         .collect();
     let load_offsets: Vec<i128> = f
         .graph()
         .all_node_ids()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::Load(_)))
-        .filter_map(|n| f.stack_offset(n).map(|(_, off)| off))
+        .filter_map(|n| f.side_tables().stack_offset(n).map(|(_, off)| off))
         .collect();
 
     assert_eq!(store_offsets, vec![-4]);
@@ -126,7 +127,7 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
         .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
         .expect("store node");
     let (base, offset) = f
-        .stack_offset(store)
+        .side_tables().stack_offset(store)
         .expect("aligned store must be stamped");
     assert_eq!(offset, 0, "store at the aligned base directly => offset 0");
     let base_node = f.producer(base);
@@ -167,7 +168,7 @@ fn nested_add_chain_stamps_summed_offset() {
         .all_node_ids()
         .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
         .expect("store node");
-    let (_base, offset) = f.stack_offset(store).expect("nested chain must be stamped");
+    let (_base, offset) = f.side_tables().stack_offset(store).expect("nested chain must be stamped");
     assert_eq!(offset, 20, "8 + 16 - 4 = 20");
 }
 
@@ -198,7 +199,7 @@ fn nested_chain_with_negative_net_offset_stamps_negative() {
         .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
         .expect("store node");
     let (_base, offset) = f
-        .stack_offset(store)
+        .side_tables().stack_offset(store)
         .expect("net-negative chain must be stamped");
     assert_eq!(offset, -4, "8 - 12 = -4");
 }

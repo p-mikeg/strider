@@ -216,7 +216,7 @@ fn narrow(ctx: &mut crate::EditFunction<'_>, store_data: ValueId, load: NodeId) 
             // asm-fingerprint.
             let shift_const_node = ctx.producer(shift_const);
             ctx.function_mut()
-                .extend_asm_fingerprint_from(shift_const_node, load);
+                .side_tables_mut().extend_asm_fingerprint_from(shift_const_node, load);
             let shr = ctx.create_node_attributed(
                 NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
                 [store_data, shift_const],

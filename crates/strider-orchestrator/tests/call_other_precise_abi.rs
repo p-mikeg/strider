@@ -55,9 +55,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let mut found_name: Option<&'static str> = None;
     for n in cpuid_names {
         let pat = call_other().name(n).build();
-        let matches = Matcher::new(&outcome.function)
-            .find_all(&pat)
-            .unwrap();
+        let matches = Matcher::new(&outcome.function).find_all(&pat).unwrap();
         if let Some(m) = matches.first() {
             found_node = Some(m.root());
             found_name = Some(n);
@@ -101,9 +99,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     let outcome = strider_h.build_ir(&cfg, &cc).expect("build_ir");
 
     let pat = call_other().name("UnkSytemRegRead").build();
-    let matches = Matcher::new(&outcome.function)
-        .find_all(&pat)
-        .unwrap();
+    let matches = Matcher::new(&outcome.function).find_all(&pat).unwrap();
     assert_eq!(
         matches.len(),
         1,

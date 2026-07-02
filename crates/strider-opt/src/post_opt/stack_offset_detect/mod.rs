@@ -3,7 +3,7 @@
 //! single `base + K` terminal, where `base` is the SP-derived terminal node
 //! (`InitialVar(sp)` or an alignment-masked `sp & mask`).
 //!
-//! `function.stack_offset(node)` returns `Some((base, K))` for every Store /
+//! `function.side_tables().stack_offset(node)` returns `Some((base, K))` for every Store /
 //! Load whose address is unambiguously `base + K`, and `None` for everything
 //! else (Phi-of-offsets, non-SP-rooted addresses).  The offset `K` is only
 //! comparable against another access sharing the same `base`.
@@ -65,7 +65,7 @@ impl PostOptimizer for StackOffsetDetect {
             };
             // The immutable `function` borrow ends here, freeing `edit` for
             // the stamping mutation.
-            edit.function_mut().set_stack_offset(node, base, offset);
+            edit.function_mut().side_tables_mut().set_stack_offset(node, base, offset);
         }
 
         Ok(())

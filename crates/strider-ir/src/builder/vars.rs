@@ -20,8 +20,8 @@ impl FunctionBuilder {
     /// active.
     pub fn read_variable(&self, variable: &rsleigh::Vn) -> Result<ValueId> {
         let id = self
-            .var_table
-            .key_of(variable)
+            .function
+            .vn_id_of(variable)
             .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
         self.read_variable_from_id(id)
     }
@@ -35,8 +35,8 @@ impl FunctionBuilder {
     /// active.
     pub fn write_variable(&mut self, variable: &rsleigh::Vn, value: ValueId) -> Result<()> {
         let var_id = self
-            .var_table
-            .key_of(variable)
+            .function
+            .vn_id_of(variable)
             .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
         self.write_variable_from_id(var_id, value)
     }
@@ -59,50 +59,54 @@ impl FunctionBuilder {
         self.link_control_regions(region_id, entry_control)?;
         self.link_memory_regions(region_id, entry_memory)?;
 
-        // Create initial variables
-        let var_ids: Vec<_> = self.var_table.keys().collect();
+        // Create initial variables.  The tracked-varnode ids ARE the
+        // `InitialVar` payloads (both come from the one `vn_interner`), so a
+        // `vn_id` doubles as the SSA-variable key and the node payload — no
+        // index translation.
+        let vn_ids: Vec<_> = self.function().vn_ids().collect();
         let mut initial_variables = SecondaryMap::new();
-        for var_id in var_ids {
-            let var = self.var_table[var_id];
+        for vn_id in vn_ids {
+            let var = self.function().initial_vn(vn_id);
             let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
-            // `VarId` allocation order is exactly `all_vns` order (both come
-            // from `var_table` in `new`), so the var's `all_vns` index is its
-            // `VarId` index — no lookup needed.
-            let vn_id =
-                crate::node::InitialVnId::from_index(cranelift_entity::EntityRef::index(var_id));
             let value = self.build_single_output_pure(NodeKind::InitialVar(vn_id), [], output_type);
-            initial_variables[var_id] = value;
-            // `Function::all_vns` (the ordered tracked-varnode SSoT) is
-            // populated eagerly in `new` from the same `var_table`
-            // (VarId / allocation order), so this loop — which iterates
-            // that same order — needs no per-`InitialVar` push.  The
-            // register-list derivations read `all_vns` directly.
+            initial_variables[vn_id] = value;
             // Register the InitialVar in the graph's O(1) Vn→NodeId
             // index so downstream consumers (the orchestrator's
             // `read_or_init_var` fallback) don't re-scan `preorder()`
             // to locate it.
             let node_id = self.function().producer(value);
-            self.function_mut().side_tables.initial_var_index.insert(var, node_id);
+            self.function_mut()
+                .side_tables_mut()
+                .initial_var_index
+                .insert(vn_id, node_id);
         }
-        // Record register-passed arguments unconditionally: each arg-passing
-        // register's (largest-container) InitialVar is the carrier for its
-        // positional index. We don't filter on use here — an argument the
-        // function never reads is culled by DCE and dropped from the arg
-        // table by `Function::compact`, so patterns won't find it.
+        // Register-passed argument carriers are recorded by the LIFTER right
+        // after this call (it owns the machine-register `container_of` map,
+        // which resolves a narrow ABI arg alias like `edi` to its tracked
+        // container `rdi`).  `set_entry_region` only wires the region and the
+        // `InitialVar` nodes; the carrier's entry value is recoverable via
+        // [`crate::Function::initial_var_value`].
+        self.link_region_variables(region_id, &initial_variables)
+    }
+
+    /// Test-only: record register-passed argument carriers on the arg table,
+    /// mirroring what the LIFTER does in prod right after `set_entry_region`.
+    ///
+    /// Each arg-passing register resolves to its largest tracked container (via
+    /// [`vn_container::largest_container_in`] over `all_vns` — the same
+    /// containment rule the lifter's `container_of` map applies), and that
+    /// container's `InitialVar` value is registered as the carrier for the
+    /// argument's positional index.  Direct-builder tests (no lifter) call this
+    /// after `set_entry_region` to reproduce the prod arg table.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn record_register_arg_carriers(&mut self) {
         let arg_regs: Vec<rsleigh::Vn> = self.function.default_cc().arg_passing_regs.clone();
         for (i, reg) in arg_regs.iter().enumerate() {
-            // Resolve the arg register to its largest tracked container
-            // before the var-table lookup: the var table is keyed only by
-            // the deduped largest-container tracked varnodes, so a narrow
-            // ABI arg alias (e.g. `edi`) must route through its container
-            // (`rdi`) — mirroring `call_ret_vals_for` / `call_clobbered_for`.
-            let key = self.function.container_of(reg);
-            if let Some(var_id) = self.var_table.key_of(&key) {
-                let value = initial_variables[var_id];
-                self.function_mut().register_arg_value(i as u32, value);
+            let container = vn_container::largest_container_in(self.function.all_vns(), reg);
+            if let Some(value) = self.function.initial_var_value(&container) {
+                self.function_mut().side_tables_mut().register_arg_value(i as u32, value);
             }
         }
-        self.link_region_variables(region_id, &initial_variables)
     }
 
     /// Creates a new region in the graph with fresh `Region`,
@@ -134,11 +138,11 @@ impl FunctionBuilder {
             .graph_mut()
             .add_node_input(memory_node, phi_token);
 
-        let var_ids: Vec<_> = self.var_table.keys().collect();
+        let vn_ids: Vec<_> = self.function().vn_ids().collect();
         let mut variables = SecondaryMap::new();
-        for var_id in var_ids {
-            let var = self.var_table[var_id];
-            variables[var_id] = self.build_vn_phi(var, phi_token, &[])?;
+        for vn_id in vn_ids {
+            let var = self.function().initial_vn(vn_id);
+            variables[vn_id] = self.build_vn_phi(var, phi_token, &[])?;
         }
         self.create_region_helper(control_node, control, memory_node, memory, variables)
     }

@@ -583,15 +583,8 @@ fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
     let ctrl_before = b.cur_region_control()?;
     let mem_before = b.cur_region_memory()?;
 
-    let (node, result) = b.build_call_other_abi(
-        7,
-        "NEON_rev64",
-        None,
-        &[],
-        &empty_call_other_abi(),
-        None,
-        false,
-    )?;
+    let (node, result) =
+        b.build_call_other_abi(7, "NEON_rev64", &[], &empty_call_other_abi(), None, false)?;
     assert!(result.is_none(), "no output vn -> no ret-val output");
 
     // Ctrl advances; memory does NOT (empty footprint, clobbers_memory=false).
@@ -617,7 +610,6 @@ fn build_call_other_with_result_returns_typed_value() -> Result<()> {
     let (node, result) = b.build_call_other_abi(
         3,
         "cpuid",
-        None,
         &[arg],
         &empty_call_other_abi(),
         Some(out_vn),
@@ -644,7 +636,6 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
     let (node, _) = b.build_call_other_abi(
         4,
         "cpuid",
-        None,
         &[],
         &empty_call_other_abi(),
         Some(out_vn),
@@ -736,15 +727,7 @@ fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
 fn build_call_other_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
-    let res = b.build_call_other_abi(
-        0,
-        "cpuid",
-        None,
-        &[mem],
-        &empty_call_other_abi(),
-        None,
-        false,
-    );
+    let res = b.build_call_other_abi(0, "cpuid", &[mem], &empty_call_other_abi(), None, false);
     let err = res.expect_err("expected ExpectedValue error");
     assert!(
         err.to_string().contains("is not a value edge"),
@@ -767,22 +750,6 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 
 /// Regression: high-offset register varnodes (e.g. ppc64 / aarch64be
 /// condition-register slices) can have `addr_off + size` overflow `u64`.
-/// The overlap-dedup helper must use saturating arithmetic to match the
-/// convention `build_largest_container_map` already documents — a plain `+`
-/// panics in debug and wrap-misclassifies containment in release.
-#[test]
-fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
-    let wide = reg_vn(u64::MAX - 1, 8);
-    let narrow = reg_vn(u64::MAX - 1, 4);
-    // Must not panic; the wider varnode subsumes the narrower one.
-    let kept = dedup_and_container_map(&[wide, narrow]).0;
-    assert_eq!(
-        kept,
-        vec![wide],
-        "wider high-offset varnode wins, no overflow"
-    );
-}
-
 /// Every value that fits `u128` is interned as `ConstValue::Bits` regardless
 /// of the declared width — the width lives in the output `ValueKind`, not the
 /// stored value.  Both a small and a large-but-`u128`-fitting I128 value read
@@ -790,7 +757,7 @@ fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
 /// canonicalize to one node for the same value (dedup).
 #[test]
 fn fitting_values_intern_as_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let sp = reg_vn(0x7000, 8);
     let mut b = raw_builder(
         vec![],
@@ -837,7 +804,7 @@ fn fitting_values_intern_as_bits() -> Result<()> {
 
 /// `FunctionBuilder::new` is the SSoT for vn ordering: the tracked
 /// `all_vns` set must come out sorted by (space, offset, size)
-/// regardless of the order the vns were handed in, so `VarId`
+/// regardless of the order the vns were handed in, so `InitialVnId`
 /// assignment (and every derived clobber-slot index) is deterministic.
 #[test]
 fn function_builder_sorts_all_vns_deterministically() -> Result<()> {
@@ -865,7 +832,7 @@ fn function_builder_sorts_all_vns_deterministically() -> Result<()> {
     Ok(())
 }
 
-/// `Function::container_of` resolves a sub-register query to its tracked
+/// `largest_container_in` resolves a sub-register query to its tracked
 /// largest container, so a calling convention that names `eax` (4 bytes)
 /// while the function tracks `rax` (8 bytes) maps correctly.  A vn that
 /// is its own container maps to itself; a vn with no tracked container
@@ -886,118 +853,15 @@ fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
         strider_target::Endianness::Little,
     )?;
     let f = b.function();
+    let container_of = |vn: &rsleigh::Vn| vn_container::largest_container_in(f.all_vns(), vn);
     assert_eq!(
-        f.container_of(&eax),
+        container_of(&eax),
         rax,
         "eax must resolve to its rax container"
     );
-    assert_eq!(f.container_of(&rax), rax, "rax is its own container");
+    assert_eq!(container_of(&rax), rax, "rax is its own container");
     let r9 = reg_vn(0x90, 8);
-    assert_eq!(f.container_of(&r9), r9, "untracked, uncontained -> self");
-    Ok(())
-}
-
-/// A calling convention whose ret-val register is a SUB-register (`eax`)
-/// of a tracked container (`rax`) must still classify the container as the
-/// return value — not silently drop it (call_ret_vals_for) nor mis-file it
-/// as a clobber (call_clobbered_for). Pins the container_of routing.
-#[test]
-fn cc_subregister_ret_reg_resolves_to_tracked_container() -> Result<()> {
-    use strider_target::BuiltCallingConvention;
-    let rax = reg_vn(0x0, 8);
-    let eax = reg_vn(0x0, 4);
-    let sp = reg_vn(0x7000, 8);
-    let cc = BuiltCallingConvention::try_new(
-        vec![],    // arg_passing_regs
-        vec![],    // callee_saved_regs
-        vec![eax], // ret_val_regs (sub-register!)
-        vec![],    // ret_val_regs_float
-        sp,        // stack_vn
-        None,      // stack_args
-        0,         // ret_stack_pop
-        None,      // link_register_vn
-        false,     // preserves_memory
-    )?;
-    // Build a function that tracks rax (+ sp). all_vns() then contains the
-    // rax container, and container_of(eax) resolves to rax.
-    let b = raw_builder(
-        vec![rax],
-        &[],
-        &[],
-        &[],
-        Some(sp),
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    let f = b.function();
-    let ret_vals = f.call_ret_vals_for(&cc);
-    assert_eq!(
-        ret_vals,
-        vec![rax],
-        "eax ret reg resolves to its rax container"
-    );
-    let clobbers = f.call_clobbered_for(&cc);
-    assert!(
-        !clobbers.contains(&rax),
-        "the rax return register must not also appear as a clobber",
-    );
-    Ok(())
-}
-
-#[test]
-fn set_stack_args_round_trips_on_default_cc() -> Result<()> {
-    use strider_target::StackArgs;
-    let sp = reg_vn(0x7000, 8);
-    let mut b = raw_builder(
-        vec![],
-        &[],
-        &[],
-        &[],
-        Some(sp),
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    b.set_stack_args(Some(StackArgs {
-        base_offset: 8,
-        increment: 8,
-    }));
-    assert_eq!(
-        b.function().default_cc().stack_args,
-        Some(StackArgs {
-            base_offset: 8,
-            increment: 8
-        }),
-    );
-    Ok(())
-}
-
-/// Reading a sub-register when only the wider container is tracked routes
-/// through `Function::container_of` (the persisted map), shifting/masking
-/// out of the container. Pins that the read path no longer depends on the
-/// deleted builder-lifetime `largest_container` cache.
-#[test]
-fn read_subregister_routes_through_container_map() -> Result<()> {
-    let rax = reg_vn(0x0, 8);
-    let eax = reg_vn(0x0, 4);
-    let sp = reg_vn(0x7000, 8);
-    let mut b = raw_builder(
-        vec![rax, eax],
-        &[],
-        &[],
-        &[],
-        Some(sp),
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    let v = b.read_reg_vn(&eax)?;
-    assert_eq!(
-        b.function().value_type(v).unwrap(),
-        ValueType::I32,
-        "eax read yields I32 sliced from the rax container",
-    );
+    assert_eq!(container_of(&r9), r9, "untracked, uncontained -> self");
     Ok(())
 }
 
@@ -1043,7 +907,7 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
 
     let mem_before = b.cur_region_memory()?;
     let (node, result) =
-        b.build_call_other_abi(5, "syscall", None, &[explicit], &abi, Some(out_vn), false)?;
+        b.build_call_other_abi(5, "syscall", &[explicit], &abi, Some(out_vn), false)?;
 
     // Inputs: [ctrl, mem] ++ [read(RCX)] ++ explicit_args.  Implicit reads
     // come FIRST, then the explicit pcode operands.  No target.
@@ -1070,7 +934,10 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
         ValueKind::Typed(ValueType::I64),
         "RCX read is I64-typed (8-byte container)",
     );
-    assert_eq!(inputs[3], explicit, "explicit arg follows the implicit read");
+    assert_eq!(
+        inputs[3], explicit,
+        "explicit arg follows the implicit read"
+    );
 
     // Outputs: [ctrl, mem, result(tagged out_vn), RAX, RDX].
     let outs: Vec<ValueId> = b.function().node_outputs(node).to_vec();
@@ -1117,7 +984,7 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
 
     // The ABI footprint is consumed inline (clobbers/reads/memory checked
     // above); it is not stored, so only the user-op name is recorded.
-    assert_eq!(b.function().call_other_name(node), Some("syscall"));
+    assert_eq!(b.function().side_tables().call_other_name(node), Some("syscall"));
     Ok(())
 }
 
@@ -1134,7 +1001,7 @@ fn build_call_other_rejects_untracked_implicit_write() -> Result<()> {
         implicit_writes: vec![untracked],
         clobbers_memory: false,
     };
-    let res = b.build_call_other_abi(11, "bogus", None, &[], &abi, None, false);
+    let res = b.build_call_other_abi(11, "bogus", &[], &abi, None, false);
     assert!(res.is_err(), "untracked implicit-write register must error");
     Ok(())
 }
@@ -1162,7 +1029,7 @@ fn create_node_attributed_unions_contributor_fingerprints() -> Result<()> {
         [crate::node::ValueKind::Typed(ValueType::I8)],
         &[l_node, r_node],
     );
-    let fp = b.function().asm_fingerprint(or_node);
+    let fp = b.function().side_tables().asm_fingerprint(or_node);
     assert!(
         fp.contains(&0x100) && fp.contains(&0x104),
         "create_node_attributed must union both contributors' fingerprints; got {fp:?}"
@@ -1193,7 +1060,7 @@ fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
     let c2_node = b.function().producer(c2);
 
     assert_eq!(c1_node, c2_node, "cache must return the same NodeId");
-    let fp = b.function().asm_fingerprint(c1_node);
+    let fp = b.function().side_tables().asm_fingerprint(c1_node);
     assert!(
         fp.contains(&0x100),
         "fingerprint must retain first lift's address (0x100); got {fp:?}"
@@ -1213,7 +1080,7 @@ fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
     // the no-return classification.
     let mut b = builder_with_region()?;
     let (node, result) =
-        b.build_call_other_abi(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
+        b.build_call_other_abi(0, "ud2", &[], &empty_call_other_abi(), None, true)?;
     assert!(result.is_none(), "no output vn -> no ret-val output");
     let outs: Vec<_> = b.function().node_outputs(node).to_vec();
     assert_eq!(
@@ -1255,7 +1122,7 @@ fn build_call_other_terminate_true_closes_region() -> Result<()> {
     // build_call_other with terminate=true (the NoReturn class) must
     // close the region on its own — no external termination call.
     let mut b = builder_with_region()?;
-    b.build_call_other_abi(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
+    b.build_call_other_abi(0, "ud2", &[], &empty_call_other_abi(), None, true)?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_err(),
@@ -1270,7 +1137,7 @@ fn build_call_other_terminate_false_keeps_region_open() -> Result<()> {
     // leave the region open — control advances to the CallOther's Control
     // output, but the region is still live.
     let mut b = builder_with_region()?;
-    b.build_call_other_abi(0, "cpuid", None, &[], &empty_call_other_abi(), None, false)?;
+    b.build_call_other_abi(0, "cpuid", &[], &empty_call_other_abi(), None, false)?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_ok(),
@@ -1605,7 +1472,7 @@ fn new_raw_filters_contained_unique_varnodes() -> Result<()> {
             0,
             strider_target::Endianness::Little,
         )?;
-        let tracked: Vec<rsleigh::Vn> = b.var_table.values().copied().collect();
+        let tracked: Vec<rsleigh::Vn> = b.function().all_vns().to_vec();
         assert!(
             tracked.contains(&outer),
             "{label}: wider UNIQUE varnode must remain tracked; got {tracked:?}"
@@ -1634,7 +1501,7 @@ fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
         0,
         strider_target::Endianness::Little,
     )?;
-    let tracked: Vec<rsleigh::Vn> = b.var_table.values().copied().collect();
+    let tracked: Vec<rsleigh::Vn> = b.function().all_vns().to_vec();
     assert!(tracked.contains(&a));
     assert!(tracked.contains(&b_vn));
     Ok(())
@@ -1776,26 +1643,18 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
         "ret_val_regs projects the ABI ret list"
     );
 
-    // call_ret_val_regs: r0 is a tracked, clobbered ret reg.
+    // The default-CC ret / clobber projection: r0 is the tracked, clobbered
+    // ret reg; r1 the non-ret caller-clobbered; r2 (callee-saved) and sp excluded.
+    let (ret_group, clobber_group) =
+        crate::cc_ret_and_clobber_vns(b.function(), b.function().default_cc());
+    assert_eq!(ret_group, vec![r0], "ret group is the ret-val register (r0)");
     assert_eq!(
-        b.function().call_ret_val_regs(),
-        vec![r0],
-        "call_ret_val_regs returns only the ret-val registers (r0)"
-    );
-    // call_clobbered_regs: only the non-ret caller-clobbered regs (r1);
-    // r0 has moved to the ret-val group; r2 (callee-saved) and sp excluded.
-    assert_eq!(
-        b.function().call_clobbered_regs(),
+        clobber_group,
         vec![r1],
-        "call_clobbered_regs returns only the non-ret caller-clobbered regs"
+        "clobber group is only the non-ret caller-clobbered reg (r1)"
     );
     // The full combined set (ret-vals ++ clobbers) reproduces the old list.
-    let combined: Vec<_> = b
-        .function()
-        .call_ret_val_regs()
-        .into_iter()
-        .chain(b.function().call_clobbered_regs())
-        .collect();
+    let combined: Vec<_> = ret_group.into_iter().chain(clobber_group).collect();
     assert_eq!(
         combined,
         vec![r0, r1],
@@ -1827,90 +1686,6 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
         "call_other_clobbered is every tracked var except the stack pointer"
     );
 
-    Ok(())
-}
-
-/// `call_clobbered_for(cc)` derives a per-call clobber set against an
-/// arbitrary CC over the same `all_vns`.  An override CC that marks an
-/// extra register callee-saved must yield a strictly smaller clobber set
-/// than the function-default — proving the derivation honours the
-/// effective CC rather than a baked-in default list.
-#[test]
-fn call_clobbered_for_override_cc_differs_from_default() -> Result<()> {
-    let r0 = reg_vn(0x10, 8); // ret + clobbered under default
-    let r1 = reg_vn(0x20, 8); // plain caller-clobbered under default
-    let r2 = reg_vn(0x30, 8); // callee-saved under default
-    let sp = reg_vn(0x40, 8); // stack pointer
-
-    let b = raw_builder(
-        vec![r0, r1, r2, sp],
-        &[r0], // arg_passing
-        &[r2], // callee_saved (default)
-        &[r0], // ret_vars
-        Some(sp),
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    let f = b.function();
-
-    // Default: ret-val group = [r0]; clobber group = [r1].
-    // (r2 callee-saved, sp excluded from both.)
-    assert_eq!(
-        f.call_ret_vals_for(f.default_cc()),
-        vec![r0],
-        "call_ret_vals_for default-CC returns the ret-val register r0"
-    );
-    assert_eq!(
-        f.call_clobbered_for(f.default_cc()),
-        vec![r1],
-        "call_clobbered_for default-CC returns only the non-ret clobbered reg r1"
-    );
-    assert_eq!(
-        f.call_clobbered_for(f.default_cc()),
-        f.call_clobbered_regs()
-    );
-    // Combined (ret-vals ++ clobbers) reproduces the old single list [r0, r1].
-    let full_default: Vec<_> = f
-        .call_ret_vals_for(f.default_cc())
-        .into_iter()
-        .chain(f.call_clobbered_for(f.default_cc()))
-        .collect();
-    assert_eq!(full_default, vec![r0, r1]);
-
-    // Override CC: mark BOTH r1 and r2 callee-saved, no ret regs.  The
-    // override has no ret-val group (no ret_val_regs) so the entire
-    // combined set is the clobber group.  Only r0 survives the
-    // callee-saved filter — strictly smaller than the default.
-    let override_cc = strider_target::BuiltCallingConvention {
-        arg_passing_regs: vec![],
-        callee_saved_regs: vec![r1, r2],
-        ret_val_regs: vec![],
-        ret_val_regs_float: vec![],
-        stack_vn: sp,
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register_vn: None,
-        preserves_memory: false,
-    };
-    assert_eq!(
-        f.call_ret_vals_for(&override_cc),
-        vec![],
-        "override CC with no ret regs has an empty ret-val group"
-    );
-    assert_eq!(
-        f.call_clobbered_for(&override_cc),
-        vec![r0],
-        "override CC marking r1+r2 callee-saved leaves only r0 in clobbers"
-    );
-    let full_override: Vec<_> = f
-        .call_ret_vals_for(&override_cc)
-        .into_iter()
-        .chain(f.call_clobbered_for(&override_cc))
-        .collect();
-    assert!(
-        full_override.len() < full_default.len(),
-        "override combined set must be strictly smaller than the default"
-    );
     Ok(())
 }
 
@@ -2007,43 +1782,6 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     Ok(())
 }
 
-/// Reading a 1-byte sub-register (`AL`) out of a tracked 8-byte container
-/// (`RAX`) under little-endian goes through the builder's register-aliasing
-/// path: the container read is `Truncate`d to the sub-register width.  For a
-/// sub-register at offset 0 the shift is 0, so the read is a direct
-/// `Truncate` of the container read with no `ShiftRight` in between.
-#[test]
-fn read_reg_vn_truncates_subregister_of_tracked_container() -> Result<()> {
-    use strider_target::Endianness;
-
-    let rax = reg_vn(0x100, 8);
-    let al = reg_vn(0x100, 1); // low byte, same offset → shift 0
-    let mut b = raw_builder(vec![rax], &[], &[], &[], None, 0, Endianness::Little)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    // Read the low-byte sub-register through the aliasing path.  The
-    // container's value is the opaque initial read of the tracked RAX (a
-    // non-constant), so the truncate is materialised as a real `Truncate`
-    // node rather than constant-folded away.
-    let read = b.read_reg_vn(&al)?;
-
-    // The result is an I8-typed Truncate (shift 0 → no ShiftRight).
-    assert_eq!(
-        b.function().value_kind(read),
-        ValueKind::Typed(ValueType::I8),
-        "AL read must be I8-typed"
-    );
-    let read_node = b.function().producer(read);
-    assert!(
-        matches!(b.function().node_kind(read_node), NodeKind::Truncate),
-        "AL (offset 0, shift 0) read must be a direct Truncate of the container read, got {:?}",
-        b.function().node_kind(read_node)
-    );
-    Ok(())
-}
-
 // ── graph_mut / entry / non-consuming use of the builder ─────────────────
 //
 // These tests pin the contract: the builder exposes `graph_mut()` and
@@ -2060,7 +1798,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let count_before = b.function().graph().all_node_ids().count();
     // Mutate via graph_mut() — create an IntConst node directly.
     let node_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((42_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((42_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -2111,7 +1849,7 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     b.set_lift_addr(None);
     // Mutate via graph_mut() in the same way an opt pass would.
     let extra = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((99_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((99_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -2136,14 +1874,14 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
     let mut b = empty_builder()?;
     // First mutation: create constant A.
     let a = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((1_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((1_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
     // Second mutation: create constant B.  The second call sees the first
     // mutation (the underlying graph counter advanced) — node ids must differ.
     let b_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::const_value::ConstId::new((2_u64) as usize)),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new((2_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -2203,9 +1941,9 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
     let in_node = b.function().producer(inside);
     let post_node = b.function().producer(outside_post);
 
-    assert_eq!(b.function().asm_fingerprint(pre_node), &[0x10]);
-    assert_eq!(b.function().asm_fingerprint(in_node), &[0xC0DE]);
-    assert_eq!(b.function().asm_fingerprint(post_node), &[0x10]);
+    assert_eq!(b.function().side_tables().asm_fingerprint(pre_node), &[0x10]);
+    assert_eq!(b.function().side_tables().asm_fingerprint(in_node), &[0xC0DE]);
+    assert_eq!(b.function().side_tables().asm_fingerprint(post_node), &[0x10]);
     Ok(())
 }
 
@@ -2214,7 +1952,7 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
 /// original limbs.
 #[test]
 fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     // Rows: (label, limbs, declared type). High limbs set ⇒ genuinely Wide.
     let cases: [(&str, Vec<u64>, ValueType); 2] = [
         (
@@ -2354,7 +2092,7 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
         [],
     );
     b.function_mut()
-        .extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
+        .side_tables_mut().extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
     let function = b.function();
     validate(function).expect("genuinely-wide IntConst must validate clean");
     Ok(())
@@ -2408,7 +2146,7 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         [],
     );
     b.function_mut()
-        .extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
+        .side_tables_mut().extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
 
     let pre = b.function().const_interner.len();
     assert_eq!(
@@ -2634,7 +2372,7 @@ mod build_call_with_cc {
 
         // First mutation: synthesize a fresh IntConst via graph_mut().
         let r1 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new((1_u64) as usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new((1_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -2642,7 +2380,7 @@ mod build_call_with_cc {
 
         // Second mutation: another synthesis; the first node must persist.
         let r2 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new((2_u64) as usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new((2_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -2675,7 +2413,7 @@ mod build_call_with_cc {
         // unreachable nodes, so detached extras are still valid.
         for k in 1u64..=5 {
             b.function_mut().graph_mut().create_node(
-                NodeKind::IntConst(crate::const_value::ConstId::new((k) as usize)),
+                NodeKind::IntConst(crate::node::const_value::ConstId::new((k) as usize)),
                 std::iter::empty(),
                 [ValueKind::Typed(ValueType::I64)],
             );
@@ -2717,16 +2455,14 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 
     let cc = b.function().default_cc().clone();
 
-    // (a) call_ret_vals_for returns only rax.
-    let ret_vals = b.function().call_ret_vals_for(&cc);
+    // (a)/(b) the CC ret / clobber projection: rax is the ret reg, rcx a plain
+    // caller-clobber, rbx (callee-saved) + rsp excluded.
+    let (ret_vals, clobbered) = crate::cc_ret_and_clobber_vns(b.function(), &cc);
     assert_eq!(
         ret_vals,
         vec![rax],
-        "call_ret_vals_for must return exactly the ret-val registers"
+        "ret group must be exactly the ret-val registers"
     );
-
-    // (b) call_clobbered_for must NOT contain rax (it moved to the ret-val group).
-    let clobbered = b.function().call_clobbered_for(&cc);
     assert!(
         !clobbered.contains(&rax),
         "call_clobbered_for must not contain the ret-val register rax; got {clobbered:?}"
@@ -2789,7 +2525,7 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 /// value re-built dedups to one node.
 #[test]
 fn small_valued_i80_const_interns_as_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let via_small = b.build_int_const(5u64, ValueType::I80)?;
     let node = b.function().producer(via_small);
@@ -2815,7 +2551,7 @@ fn small_valued_i80_const_interns_as_bits() -> Result<()> {
 /// only when the declared width differs).
 #[test]
 fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let via_limbs = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::I256)?;
     let node = b.function().producer(via_limbs);
@@ -2847,7 +2583,7 @@ fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
 /// boolean `true` constant.
 #[test]
 fn i1_const_payload_masks_to_one_bit() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let v = b.build_int_const(3u64, ValueType::I1)?;
     let node = b.function().producer(v);
@@ -2873,7 +2609,7 @@ fn i1_const_payload_masks_to_one_bit() -> Result<()> {
 /// I64)` keeps every bit.
 #[test]
 fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut b = empty_builder()?;
     let v = b.build_int_const(u64::MAX, ValueType::I64)?;
     let node = b.function().producer(v);
@@ -2892,726 +2628,10 @@ fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
 
 // ── register-aliasing read/write edge cases ────────────────────────────────
 
-/// Writing a 1-byte sub-register (`al`) into a tracked 8-byte container
-/// (`rax`) merges via the positioned-mask shape: the full-container read
-/// afterwards is `Or(And(keep-mask, old-container), And(byte-mask, value))`,
-/// so the container's 7 high bytes are preserved.
-#[test]
-fn write_subregister_merge_preserves_container_high_bytes() -> Result<()> {
-    let rax = reg_vn(0x100, 8);
-    let al = reg_vn(0x100, 1); // low byte → LE shift 0
-    let mut b = raw_builder(
-        vec![rax],
-        &[],
-        &[],
-        &[],
-        None,
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let initial_rax = b.read_variable(&rax)?;
-    let byte_val = b.build_int_const(0xABu64, ValueType::I8)?;
-    b.write_reg_vn(&al, byte_val)?;
-
-    // Reading the FULL container returns the merged value.
-    let merged = b.read_reg_vn(&rax)?;
-    assert_eq!(b.function().value_type(merged)?, ValueType::I64);
-    assert_eq!(
-        producer_kind(&b, merged),
-        NodeKind::IntBinaryOp(IntBinaryOp::Or)
-    );
-    let [lhs, rhs] = b
-        .function()
-        .node_inputs_exact::<2>(b.function().producer(merged))?;
-
-    // Both Or operands are And nodes; their constant operands are exactly
-    // the keep-mask (!0xFF — high bytes preserved), the byte mask (0xFF),
-    // and the written value (0xAB, zero-extend folded to a const).
-    let mut consts: Vec<u128> = Vec::new();
-    let mut saw_initial_container = false;
-    for and_val in [lhs, rhs] {
-        assert_eq!(
-            producer_kind(&b, and_val),
-            NodeKind::IntBinaryOp(IntBinaryOp::And),
-            "each Or operand is an And"
-        );
-        for input in b.function().node_inputs(b.function().producer(and_val)) {
-            if let Some(c) = b.function().int_const_u128(input) {
-                consts.push(c);
-            }
-            if input == initial_rax {
-                saw_initial_container = true;
-            }
-        }
-    }
-    consts.sort_unstable();
-    assert_eq!(
-        consts,
-        vec![0xAB, 0xFF, 0xFFFF_FFFF_FFFF_FF00],
-        "masks must be positioned in container coordinates"
-    );
-    assert!(
-        saw_initial_container,
-        "the preserve arm must consume the pre-write container value"
-    );
-    Ok(())
-}
-
-/// Writing a 4-byte sub-register into a 10-byte x87 extended container
-/// (`I80`) merges via the same positioned-mask `Or` shape, but with the
-/// 80-bit container mask `(1<<80)-1` (NOT a full-width `u64`/`u128` mask):
-/// the preserve arm keeps bits 32..80 and the value arm writes bits 0..32.
-/// This pins the 10-byte arm of `vn_mask` (`(1u128<<80)-1`), which the
-/// existing 8/16-byte aliasing tests never exercise.
-#[test]
-fn write_subregister_into_x87_80bit_container_preserves_high_bits() -> Result<()> {
-    let st = reg_vn(0x200, 10); // x87 80-bit extended register
-    let lo4 = reg_vn(0x200, 4); // low 4 bytes → LE shift 0
-    let mut b = raw_builder(
-        vec![st],
-        &[],
-        &[],
-        &[],
-        None,
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let initial = b.read_variable(&st)?;
-    let val = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
-    b.write_reg_vn(&lo4, val)?;
-
-    let merged = b.read_reg_vn(&st)?;
-    assert_eq!(
-        b.function().value_type(merged)?,
-        ValueType::I80,
-        "the 10-byte container reads back as I80",
-    );
-    assert_eq!(
-        producer_kind(&b, merged),
-        NodeKind::IntBinaryOp(IntBinaryOp::Or)
-    );
-    let [lhs, rhs] = b
-        .function()
-        .node_inputs_exact::<2>(b.function().producer(merged))?;
-
-    // The mask constants are 80-bit, so read them via int_const_u128 (the
-    // u64 projection would discard the ~80-bit preserve mask).
-    let mut consts: Vec<u128> = Vec::new();
-    let mut saw_initial = false;
-    for and_val in [lhs, rhs] {
-        assert_eq!(
-            producer_kind(&b, and_val),
-            NodeKind::IntBinaryOp(IntBinaryOp::And),
-            "each Or operand is an And"
-        );
-        for input in b.function().node_inputs(b.function().producer(and_val)) {
-            if let Some(c) = b.function().int_const_u128(input) {
-                consts.push(c);
-            }
-            if input == initial {
-                saw_initial = true;
-            }
-        }
-    }
-    consts.sort_unstable();
-    let container_mask = (1u128 << 80) - 1;
-    let keep_mask = container_mask & !0xFFFF_FFFFu128;
-    assert_eq!(
-        consts,
-        vec![0xDEAD_BEEF, 0xFFFF_FFFF, keep_mask],
-        "byte mask 0xFFFFFFFF + 80-bit preserve mask + the written value",
-    );
-    assert!(
-        saw_initial,
-        "the preserve arm must consume the pre-write 80-bit container value"
-    );
-    Ok(())
-}
-
-/// Writing the x86 high-byte sub-register `ah` (offset 1 → LE shift 8) into
-/// `rax` positions the byte mask at bits 8..16, preserves the low byte (and
-/// the 6 high bytes) via the keep-mask, and left-shifts the written value by
-/// 8 before the masked OR.  Unlike the `al` case (shift 0, a degenerate
-/// no-op), the value arm here must be a real `ShiftLeft(value, 8)`.
-#[test]
-fn write_high_byte_subregister_positions_mask_and_shift() -> Result<()> {
-    let rax = reg_vn(0x100, 8);
-    let ah = reg_vn(0x101, 1); // offset 1 byte → LE shift 8
-    let mut b = raw_builder(
-        vec![rax],
-        &[],
-        &[],
-        &[],
-        None,
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let initial_rax = b.read_variable(&rax)?;
-    let byte_val = b.build_int_const(0xABu64, ValueType::I8)?;
-    b.write_reg_vn(&ah, byte_val)?;
-
-    let merged = b.read_reg_vn(&rax)?;
-    assert_eq!(b.function().value_type(merged)?, ValueType::I64);
-    assert_eq!(
-        producer_kind(&b, merged),
-        NodeKind::IntBinaryOp(IntBinaryOp::Or)
-    );
-    let [lhs, rhs] = b
-        .function()
-        .node_inputs_exact::<2>(b.function().producer(merged))?;
-
-    // Identify the two And arms: the preserve arm consumes the pre-write
-    // container, the insert arm consumes the positioned (shifted) value.
-    let mut preserve_arm = None;
-    let mut insert_arm = None;
-    for and_val in [lhs, rhs] {
-        assert_eq!(
-            producer_kind(&b, and_val),
-            NodeKind::IntBinaryOp(IntBinaryOp::And),
-            "each Or operand is an And"
-        );
-        let consumes_container = b
-            .function()
-            .node_inputs(b.function().producer(and_val))
-            .into_iter()
-            .any(|input| input == initial_rax);
-        if consumes_container {
-            preserve_arm = Some(and_val);
-        } else {
-            insert_arm = Some(and_val);
-        }
-    }
-    let preserve_arm = preserve_arm.expect("one And arm preserves the container");
-    let insert_arm = insert_arm.expect("one And arm inserts the shifted value");
-
-    // Keep-mask preserves the low byte (bits 0..8) and high 6 bytes; only
-    // bits 8..16 are cleared.  !0xFF00 in I64 coordinates.
-    let preserve_consts: Vec<u128> = b
-        .function()
-        .node_inputs(b.function().producer(preserve_arm))
-        .into_iter()
-        .filter_map(|v| b.function().int_const_u128(v))
-        .collect();
-    assert_eq!(
-        preserve_consts,
-        vec![0xFFFF_FFFF_FFFF_00FF],
-        "keep-mask must clear only bits 8..16, preserving the low byte"
-    );
-
-    // Insert arm: And(reg_mask=0xFF00, ShiftLeft(value, 8)).  The byte mask is
-    // positioned at bits 8..16, and the value is left-shifted by 8 (NOT a
-    // shift-by-0 no-op as in the `al` case).
-    let [im_a, im_b] = b
-        .function()
-        .node_inputs_exact::<2>(b.function().producer(insert_arm))?;
-    let (reg_mask_val, shifted_val) = if b.function().int_const_u128(im_a).is_some() {
-        (im_a, im_b)
-    } else {
-        (im_b, im_a)
-    };
-    assert_eq!(
-        b.function().int_const_u128(reg_mask_val),
-        Some(0xFF00),
-        "byte mask must be positioned at bits 8..16"
-    );
-    assert_eq!(
-        producer_kind(&b, shifted_val),
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
-        "the written value must be shifted into position"
-    );
-    let [shl_value, shl_amount] = b
-        .function()
-        .node_inputs_exact::<2>(b.function().producer(shifted_val))?;
-    assert_eq!(
-        b.function().int_const_u128(shl_amount),
-        Some(8),
-        "left-shift amount must be 8 (one byte)"
-    );
-    assert_eq!(
-        b.function().int_const_u128(shl_value),
-        Some(0xAB),
-        "the zero-extended written byte feeds the shift"
-    );
-    Ok(())
-}
-
-/// Big-endian sub-register WRITE through the real `write_reg_vn` /
-/// `read_reg_vn` methods (not the free shift-formula copies): the low-offset
-/// byte `reg_vn(0x100, 1)` inside the 4-byte container `reg_vn(0x100, 4)` is
-/// the HIGH byte under BE, so `calculate_reg_shift_from_container`'s BE arm
-/// (`8 * (container.size - reg.size - (off - cont_off))` = `8*(4-1-0)`)
-/// yields shift 24.  Writing `0xAB` and reading the container back must
-/// position the byte mask at bits 24..32 and left-shift the value by 24.
-#[test]
-fn write_high_byte_subregister_big_endian_positions_mask_and_shift() -> Result<()> {
-    let container = reg_vn(0x100, 4);
-    let sub = reg_vn(0x100, 1); // BE: offset-0 byte is the HIGH byte → shift 24
-    let mut b = raw_builder(
-        vec![container],
-        &[],
-        &[],
-        &[],
-        None,
-        0,
-        strider_target::Endianness::Big,
-    )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let initial = b.read_variable(&container)?;
-    let byte_val = b.build_int_const(0xABu64, ValueType::I8)?;
-    b.write_reg_vn(&sub, byte_val)?;
-
-    let merged = b.read_reg_vn(&container)?;
-    assert_eq!(b.function().value_type(merged)?, ValueType::I32);
-    assert_eq!(
-        producer_kind(&b, merged),
-        NodeKind::IntBinaryOp(IntBinaryOp::Or)
-    );
-    let [lhs, rhs] = b
-        .function()
-        .node_inputs_exact::<2>(b.function().producer(merged))?;
-
-    // Identify the preserve arm (consumes the pre-write container) and the
-    // insert arm (the positioned shifted value).
-    let mut preserve_arm = None;
-    let mut insert_arm = None;
-    for and_val in [lhs, rhs] {
-        assert_eq!(
-            producer_kind(&b, and_val),
-            NodeKind::IntBinaryOp(IntBinaryOp::And),
-            "each Or operand is an And"
-        );
-        let consumes_container = b
-            .function()
-            .node_inputs(b.function().producer(and_val))
-            .into_iter()
-            .any(|input| input == initial);
-        if consumes_container {
-            preserve_arm = Some(and_val);
-        } else {
-            insert_arm = Some(and_val);
-        }
-    }
-    let preserve_arm = preserve_arm.expect("one And arm preserves the container");
-    let insert_arm = insert_arm.expect("one And arm inserts the shifted value");
-
-    // Keep-mask clears only bits 24..32 (the BE high byte): 0x00FF_FFFF.
-    let preserve_consts: Vec<u128> = b
-        .function()
-        .node_inputs(b.function().producer(preserve_arm))
-        .into_iter()
-        .filter_map(|v| b.function().int_const_u128(v))
-        .collect();
-    assert_eq!(
-        preserve_consts,
-        vec![0x00FF_FFFF],
-        "BE keep-mask must clear only the high byte (bits 24..32)"
-    );
-
-    // Insert arm: And(reg_mask=0xFF00_0000, ShiftLeft(value, 24)).
-    let [im_a, im_b] = b
-        .function()
-        .node_inputs_exact::<2>(b.function().producer(insert_arm))?;
-    let (reg_mask_val, shifted_val) = if b.function().int_const_u128(im_a).is_some() {
-        (im_a, im_b)
-    } else {
-        (im_b, im_a)
-    };
-    assert_eq!(
-        b.function().int_const_u128(reg_mask_val),
-        Some(0xFF00_0000),
-        "BE byte mask must be positioned at bits 24..32"
-    );
-    assert_eq!(
-        producer_kind(&b, shifted_val),
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
-        "the written value must be shifted into the high-byte position"
-    );
-    let [_shl_value, shl_amount] = b
-        .function()
-        .node_inputs_exact::<2>(b.function().producer(shifted_val))?;
-    assert_eq!(
-        b.function().int_const_u128(shl_amount),
-        Some(24),
-        "BE left-shift amount must be 24 (high byte of a 4-byte container)"
-    );
-    Ok(())
-}
-
-/// Big-endian sub-register READ companion: reading the BE high byte
-/// `reg_vn(0x100, 1)` out of the 4-byte container `reg_vn(0x100, 4)` shifts
-/// the container's bits down by 24 (the BE shift arm) before truncating —
-/// `Truncate(ShiftRight(container, 24))` typed I8.
-#[test]
-fn read_high_byte_subregister_big_endian_shifts_then_truncates() -> Result<()> {
-    let container = reg_vn(0x100, 4);
-    let sub = reg_vn(0x100, 1); // BE high byte → shift 24
-    let mut b = raw_builder(
-        vec![container],
-        &[],
-        &[],
-        &[],
-        None,
-        0,
-        strider_target::Endianness::Big,
-    )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let read = b.read_reg_vn(&sub)?;
-    assert_eq!(b.function().value_type(read)?, ValueType::I8);
-    assert_eq!(producer_kind(&b, read), NodeKind::Truncate);
-    let [shifted] = b
-        .function()
-        .node_inputs_exact::<1>(b.function().producer(read))?;
-    assert_eq!(
-        producer_kind(&b, shifted),
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight),
-        "BE high-byte read must shift right before truncating"
-    );
-    let [_shr_value, shr_amount] = b
-        .function()
-        .node_inputs_exact::<2>(b.function().producer(shifted))?;
-    assert_eq!(
-        b.function().int_const_u128(shr_amount),
-        Some(24),
-        "BE right-shift amount must be 24 (high byte of a 4-byte container)"
-    );
-    Ok(())
-}
-
-/// Writing an `I1` (1-bit comparison/flag) value directly into a tracked
-/// full-width register goes through `write_reg_vn`'s direct-container branch,
-/// which coerces sub-width values to the register's integer width: the I1 is
-/// zero-extended to I64.  A subsequent `read_reg_vn` of the container returns
-/// the stored value, whose producer is `Extend(ZeroExtend)` over the I1 — so
-/// no sub-width `I1` ever lives in a register SSA slot.
-#[test]
-fn write_i1_into_register_zero_extends_to_container_width() -> Result<()> {
-    let reg = reg_vn(0x200, 8); // tracked 8-byte register → I64
-    let mut b = raw_builder(
-        vec![reg],
-        &[],
-        &[],
-        &[],
-        None,
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    // An I1-producing comparison (not folded at this layer).
-    let lhs = b.build_int_const(1u64, ValueType::I32)?;
-    let rhs = b.build_int_const(2u64, ValueType::I32)?;
-    let i1_cmp = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, ValueType::I32)?;
-    assert_eq!(
-        b.function().value_type(i1_cmp)?,
-        ValueType::I1,
-        "the comparison output is I1"
-    );
-
-    b.write_reg_vn(&reg, i1_cmp)?;
-
-    // The stored value: full container width (I64), produced by a ZeroExtend.
-    let stored = b.read_reg_vn(&reg)?;
-    assert_eq!(
-        b.function().value_type(stored)?,
-        ValueType::I64,
-        "an I1 written into an 8-byte register must be stored at I64 width"
-    );
-    assert_eq!(
-        producer_kind(&b, stored),
-        NodeKind::Extend(ExtendOp::ZeroExtend),
-        "the stored value's producer must be a ZeroExtend of the I1"
-    );
-    let [extended_input] = b
-        .function()
-        .node_inputs_exact::<1>(b.function().producer(stored))?;
-    assert_eq!(
-        extended_input, i1_cmp,
-        "the ZeroExtend must consume the I1 comparison result directly"
-    );
-    Ok(())
-}
-
-/// Reading a UNIQUE-space sub-slice of a tracked UNIQUE container routes
-/// through the same aliasing path as REGISTER space: an upper 4-byte slice
-/// at LE shift 32 reads as `Truncate(ShiftRight(container, 32))` typed I32.
-#[test]
-fn read_unique_subslice_of_tracked_unique_container() -> Result<()> {
-    let container = unique_vn(0x400, 8);
-    let sub = unique_vn(0x404, 4); // upper 4 bytes → LE shift 32
-    let mut b = raw_builder(
-        vec![container],
-        &[],
-        &[],
-        &[],
-        None,
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let read = b.read_reg_vn(&sub)?;
-    assert_eq!(b.function().value_type(read)?, ValueType::I32);
-    assert_eq!(producer_kind(&b, read), NodeKind::Truncate);
-    let [shifted] = b
-        .function()
-        .node_inputs_exact::<1>(b.function().producer(read))?;
-    assert_eq!(
-        producer_kind(&b, shifted),
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight),
-        "mid-container UNIQUE slice must shift before truncating"
-    );
-    Ok(())
-}
-
-/// Sub-register access inside a >16-byte (ymm-like) container fails closed
-/// on both the read and the write path, with the wide-container guard's
-/// message naming the limitation.
-#[test]
-fn subregister_access_within_wide_container_fails_closed() -> Result<()> {
-    let ymm = reg_vn(0x1000, 32);
-    let low8 = reg_vn(0x1000, 8); // strict sub-slice of the 32-byte container
-    let mut b = raw_builder(
-        vec![ymm],
-        &[],
-        &[],
-        &[],
-        None,
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let read_err = b
-        .read_reg_vn(&low8)
-        .expect_err("read of a ymm sub-slice must error");
-    assert!(
-        read_err.to_string().contains("wide (32-byte) container"),
-        "read error must name the wide-container limitation; got: {read_err}"
-    );
-
-    let val = b.build_int_const(1u64, ValueType::I64)?;
-    let write_err = b
-        .write_reg_vn(&low8, val)
-        .expect_err("write of a ymm sub-slice must error");
-    assert!(
-        write_err.to_string().contains("wide (32-byte) container"),
-        "write error must name the wide-container limitation; got: {write_err}"
-    );
-    Ok(())
-}
-
-// ── dedup_overlapping_largest edge cases ────────────────────────────────────
-
-/// An empty tracked list stays empty.
-#[test]
-fn dedup_overlapping_largest_empty_input_yields_empty() {
-    assert!(dedup_and_container_map(&[]).0.is_empty());
-}
-
-/// Value-identical duplicates pass through the overlap filter UNCHANGED —
-/// the `other != *v` guard skips equal entries, so neither copy subsumes
-/// the other.  Collapsing duplicates is the var-table interner's job in
-/// `FunctionBuilder::new`, pinned by the second half.
-#[test]
-fn dedup_overlapping_largest_keeps_duplicate_identical_vns() -> Result<()> {
-    let r = reg_vn(0x10, 8);
-    assert_eq!(
-        dedup_and_container_map(&[r, r]).0,
-        vec![r, r],
-        "the overlap filter does not collapse value-equal duplicates"
-    );
-    // The builder's interning collapses them to one tracked variable.
-    let b = raw_builder(
-        vec![r, r],
-        &[],
-        &[],
-        &[],
-        None,
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    assert_eq!(
-        b.function().all_vns().iter().filter(|&&v| v == r).count(),
-        1,
-        "FunctionBuilder::new tracks the duplicated vn exactly once"
-    );
-    Ok(())
-}
-
-/// Two PARTIALLY overlapping (non-nested) varnodes are both kept: the filter
-/// drops only a varnode fully contained in a strictly larger one, and
-/// neither range encloses the other here.
-#[test]
-fn dedup_overlapping_largest_keeps_partially_overlapping_vns() {
-    let a = reg_vn(0x0, 4); // bytes [0, 4)
-    let b = reg_vn(0x2, 4); // bytes [2, 6) — overlaps a, not nested
-    assert_eq!(dedup_and_container_map(&[a, b]).0, vec![a, b]);
-}
-
-/// Behaviour pin for the O(n log n) sweep (IR-1): on a large tracked set with
-/// many nested aliasing UNIQUE slices, exactly the strictly-largest enclosing
-/// varnode in each containment chain survives, in input order, and every
-/// equal-but-not-strictly-larger / partially-overlapping entry is kept.  The
-/// set is sized so an accidental O(n²) regression would be visibly slow.
-#[test]
-fn dedup_overlapping_largest_handles_many_aliasing_uniques() {
-    fn uniq(off: u64, size: u32) -> rsleigh::Vn {
-        rsleigh::Vn {
-            size,
-            addr_off: off,
-            addr_space: rsleigh::VnSpace::UNIQUE,
-        }
-    }
-
-    // 500 containers, each at a distinct 8-byte-aligned offset, every one with
-    // two strictly-narrower nested slices (a 4-byte at the start and a 1-byte
-    // at the end).  Only the 8-byte container of each group should survive.
-    let n = 500u64;
-    let mut input = Vec::new();
-    let mut expected = Vec::new();
-    for i in 0..n {
-        let base = i * 8;
-        let container = uniq(base, 8);
-        // Interleave narrow-before-wide so order-independence is exercised.
-        input.push(uniq(base, 4)); // nested 4-byte slice — dropped
-        input.push(container); // strict-largest — kept
-        input.push(uniq(base + 7, 1)); // nested 1-byte slice — dropped
-        expected.push(container);
-    }
-    let kept = dedup_and_container_map(&input).0;
-    assert_eq!(
-        kept, expected,
-        "exactly each group's strict-largest 8-byte container survives, in order"
-    );
-    assert_eq!(kept.len(), n as usize);
-}
-
-/// Equal-size overlapping varnodes are BOTH kept: the drop predicate requires a
-/// STRICTLY larger enclosing varnode, so two same-size aliases never subsume
-/// each other (pins that the sweep keeps the `size >` strictness).
-#[test]
-fn dedup_overlapping_largest_keeps_equal_size_aliases() {
-    let a = reg_vn(0x10, 8);
-    let b = reg_vn(0x10, 8); // value-equal duplicate
-    // Value-equal duplicates are both kept (interning is the builder's job).
-    assert_eq!(dedup_and_container_map(&[a, b]).0, vec![a, b]);
-}
-
-/// Crossing partial-overlap enclosers: two same-space varnodes that each
-/// enclose a third but neither encloses the other.  The dropped inner view
-/// must map to the WIDER encloser, not merely the first-seen one — the case a
-/// naive first-open stack sweep returned too small.  Pins that the fused
-/// `dedup_and_container_map` records the MAX-size container at drop time.
-#[test]
-fn dedup_and_container_map_picks_widest_crossing_encloser() {
-    fn uniq(off: u64, size: u32) -> rsleigh::Vn {
-        rsleigh::Vn {
-            size,
-            addr_off: off,
-            addr_space: rsleigh::VnSpace::UNIQUE,
-        }
-    }
-    let a = uniq(0, 12); // [0,12): encloses [5,9); crosses b; survives.
-    let b = uniq(2, 18); // [2,20): encloses [5,9) and is wider; survives.
-    let inner = uniq(5, 4); // [5,9): enclosed by BOTH a and b -> dropped.
-
-    let (survivors, map) = dedup_and_container_map(&[a, b, inner]);
-
-    assert_eq!(
-        survivors,
-        vec![a, b],
-        "crossing enclosers both survive (neither encloses the other); inner dropped"
-    );
-    assert_eq!(
-        map[&inner], b,
-        "inner maps to the WIDER (size-18) encloser b, not the size-12 a"
-    );
-    assert_eq!(map[&a], a, "a is its own container");
-    assert_eq!(map[&b], b, "b is its own container");
-}
 
 // ── IR-6: symmetric sub-register write coercion ─────────────────────────────
 
-/// A sub-register write of a 1-bit `I1` value must succeed exactly like the
-/// direct-container arm: the value is zero-extended (through the shared
-/// `convert_to_int_if_needed` prelude) to the sub-register width and merged
-/// into its container.  Pins that the sub-register arm accepts `I1` operands.
-#[test]
-fn write_reg_vn_subregister_accepts_i1_like_direct_arm() -> Result<()> {
-    // Track an 8-byte container at offset 0 (e.g. rax); al is its low byte.
-    let container = reg_vn(0x0, 8);
-    let sub = reg_vn(0x0, 1);
-    let mut b = builder_with_region_tracking(vec![container])?;
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-
-    // A 1-bit flag value written into the sub-register slot.
-    let flag = b.build_boolean_const(true);
-    b.write_reg_vn(&sub, flag)?;
-
-    // The write succeeds and the container now reads back as a defined value.
-    let read_back = b.read_reg_vn(&container)?;
-    assert_eq!(
-        b.value_type(read_back)?,
-        ValueType::I64,
-        "container reads back at its natural width after the I1 sub-register write"
-    );
-    Ok(())
-}
-
-/// A sub-register write of a NON-integer (float) value must fail with the SAME
-/// "bitcast required first" diagnostic the direct-container arm raises — both
-/// arms now run `val` through `convert_to_int_if_needed`, so neither silently
-/// integer-extends a float (IR-6: divergent coercion behaviour removed).
-#[test]
-fn write_reg_vn_subregister_float_errors_like_direct_arm() -> Result<()> {
-    let container = reg_vn(0x0, 8);
-    let sub = reg_vn(0x0, 1);
-    let mut b = builder_with_region_tracking(vec![container])?;
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-
-    // A float value (F64) fed into the sub-register write arm.
-    let f = b.build_float_const(0x4000_0000_0000_0000u64, ValueType::F64);
-    let sub_err = b.write_reg_vn(&sub, f).unwrap_err().to_string();
-    assert!(
-        sub_err.contains("bitcast is required first"),
-        "sub-register float write must raise the direct-arm's bitcast error, got: {sub_err}"
-    );
-
-    // The direct-container arm raises the same diagnostic for the same input.
-    let f2 = b.build_float_const(0x4000_0000_0000_0000u64, ValueType::F64);
-    let direct_err = b.write_reg_vn(&container, f2).unwrap_err().to_string();
-    assert!(
-        direct_err.contains("bitcast is required first"),
-        "direct-container float write raises the bitcast error, got: {direct_err}"
-    );
-    Ok(())
-}
-
-// ── container_of edge cases ────────────────────────────────────────────────
+// ── largest_container_in edge cases ─────────────────────────────────────────
 
 /// A callee-saved CC register is recorded in the container map but NOT
 /// seeded into the tracked set (only ret / float-ret / arg / SP registers
@@ -3630,19 +2650,20 @@ fn container_of_untracked_callee_saved_and_adhoc_vns_resolve_to_self() -> Result
         strider_target::Endianness::Little,
     )?;
     let f = b.function();
+    let container_of = |vn: &rsleigh::Vn| vn_container::largest_container_in(f.all_vns(), vn);
     assert!(
         !f.all_vns().contains(&r_cs),
         "callee-saved CC regs are not seeded into the tracked set"
     );
     assert_eq!(
-        f.container_of(&r_cs),
+        container_of(&r_cs),
         r_cs,
         "untracked callee-saved reg resolves to itself"
     );
 
     let adhoc = unique_vn(0x999, 4);
     assert_eq!(
-        f.container_of(&adhoc),
+        container_of(&adhoc),
         adhoc,
         "never-seen UNIQUE vn resolves to itself"
     );
@@ -3682,10 +2703,13 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
     let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], &cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
+    // The lifter records register-arg carriers after `set_entry_region`; the
+    // test-util helper reproduces that here (direct-builder tests have no lifter).
+    b.record_register_arg_carriers();
     b.set_region(region);
 
-    let arg0 = b.function().arg_index_to_values(0);
-    let arg1 = b.function().arg_index_to_values(1);
+    let arg0 = b.function().side_tables().arg_index_to_values(0);
+    let arg1 = b.function().side_tables().arg_index_to_values(1);
     assert_eq!(arg0.len(), 1, "arg 0 carrier registered at entry");
     assert_eq!(arg1.len(), 1, "arg 1 carrier registered at entry");
     assert!(
@@ -3704,7 +2728,7 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
 /// recorded in `arg_index_to_values`: the arg register is resolved to its
 /// tracked container before the var-table lookup, mirroring how the CC
 /// register derivations (`call_ret_vals_for` / `call_clobbered_for`)
-/// resolve through `Function::container_of`.
+/// resolve through `largest_container_in`.
 #[test]
 fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
     let rdi = reg_vn(0x38, 8);
@@ -3721,14 +2745,18 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
         link_register_vn: None,
         preserves_memory: false,
     };
-    // Track only the wider container rdi (+ sp). dedup_overlapping_largest
-    // keeps rdi; the var table is keyed by rdi, not edi.
+    // Track only the wider container rdi (+ sp). FunctionBuilder::new seeds
+    // edi (the narrow arg alias) then drops it as enclosed by rdi, so the var
+    // table is keyed by rdi, not edi.
     let mut b = FunctionBuilder::new(vec![rdi, sp], &cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
+    // The lifter records register-arg carriers after `set_entry_region`; the
+    // test-util helper reproduces that here (direct-builder tests have no lifter).
+    b.record_register_arg_carriers();
     b.set_region(region);
 
-    let arg0 = b.function().arg_index_to_values(0);
+    let arg0 = b.function().side_tables().arg_index_to_values(0);
     assert_eq!(
         arg0.len(),
         1,

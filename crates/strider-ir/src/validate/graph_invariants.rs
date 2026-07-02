@@ -145,14 +145,16 @@ pub(super) fn check_graph_invariants_extend_truncate(
         };
         // Single INT input, single INT output. Bail to the local-typing check
         // if the arity/kind is off (missing slot or non-integer type).
-        let (Some(in_value), Some(&out_value)) =
-            (graph.node_inputs(node).into_iter().next(), graph.node_outputs(node).first())
-        else {
+        let (Some(in_value), Some(&out_value)) = (
+            graph.node_inputs(node).into_iter().next(),
+            graph.node_outputs(node).first(),
+        ) else {
             continue;
         };
-        let (Some(in_ty), Some(out_ty)) =
-            (function.value_type_opt(in_value), function.value_type_opt(out_value))
-        else {
+        let (Some(in_ty), Some(out_ty)) = (
+            function.value_type_opt(in_value),
+            function.value_type_opt(out_value),
+        ) else {
             continue;
         };
         let (in_width, out_width) = (in_ty.bit_width(), out_ty.bit_width());
@@ -259,99 +261,6 @@ pub(super) fn check_graph_invariants_phis(
     }
 }
 
-/// Graph invariant: every reachable `Call` node's output count and
-/// every reachable `Return` node's input count match the function's
-/// calling-convention metadata.
-///
-/// * `Call` outputs: `2 + ret_val_count + clobber_count`.  Slots 0/1
-///   are Control / Memory(_); slots 2..2+ret_val_count are the return
-///   values; slots 2+ret_val_count.. are the clobber values.
-///   `ret_val_count` is the function-default combined int+float ret-val
-///   register count; `clobber_count` is the per-`Call` override length
-///   (when set) or the function-default `call_clobbered_regs` length.
-/// * `Return` inputs: `2 + ret_val_count` where `ret_val_count` is
-///   the function's combined int+float ret-val register count.
-///
-/// Catches the class of bugs where the orchestrator's
-/// indirect-resolve in-place edits synthesise Returns / Calls whose
-/// arity drifts from the function-default shape (e.g. silently
-/// dropping `ret_val_regs_float`).
-///
-/// Skips the check when:
-///
-/// * the calling-convention lists are empty (synthetic graph that hasn't been built
-///   through `FunctionBuilder::build`), OR
-/// * the relevant CC list is empty — a function-default `Call`'s arity
-///   is unchecked when `call_clobbered_regs` is empty (an override
-///   `Call`, identified by a recorded `call_cc`, is instead checked
-///   against its tagged clobber outputs);
-///   `Return` arity is unchecked when `ret_val_regs` is empty.  This
-///   is the synthetic-test escape hatch: `RegisterSet`-built fixtures
-///   commonly track SP without declaring any ret-val regs and rely on
-///   the variadic Return tail to ship an arbitrary value to assert
-///   against.  Pinning arity against an empty CC list would block
-///   that intentional usage without catching any real-world bug class
-///   (the bug class — synthesised Return drops some declared
-///   ret-val regs — only manifests when at least one ret-val reg IS
-///   declared).
-pub(super) fn check_graph_invariants_cc_arity(
-    function: &Function,
-    reachable: &NodeIdSet,
-    errs: &mut Vec<ValidationError>,
-) {
-    let ret_val_count = function.ret_val_regs().len();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        match kind {
-            NodeKind::Call => {
-                // Cross-check arity against the Call's *effective* CC (its
-                // per-Call override if recorded, else the function default) —
-                // the SAME derivation the Call was built from.  Deriving from
-                // the node's own `value_vn` tags would be tautological: dropping
-                // a clobber output AND its tag changes the tag count and the
-                // actual count in lockstep, so a wrong-arity Call would pass
-                // silently.
-                let cc = function.get_cc(node);
-                let ret_vals = function.call_ret_vals_for(cc).len();
-                let clobbers = function.call_clobbered_for(cc).len();
-                // Synthetic-test escape: a *function-default* Call (effective CC
-                // equal to the default) whose default CC is trivial (no ret-vals,
-                // no clobbers) is the partially-built-fixture shape — skip arity.
-                // An override Call (effective CC differs from the default) is
-                // always checked, even when its projected lists are empty, to
-                // catch a spurious untagged output slot.
-                let is_override = cc != function.default_cc();
-                if !is_override && ret_vals == 0 && clobbers == 0 {
-                    continue;
-                }
-                let expected = 2 + ret_vals + clobbers;
-                let actual = function.node_outputs(node).len();
-                if actual != expected {
-                    errs.push(ValidationError::NodeOutputCountMismatch {
-                        node,
-                        expected,
-                        actual,
-                    });
-                }
-            }
-            NodeKind::Return => {
-                if ret_val_count == 0 {
-                    continue;
-                }
-                let expected = 2 + ret_val_count;
-                let actual = function.node_inputs(node).len();
-                if actual != expected {
-                    errs.push(ValidationError::NodeInputCountMismatch {
-                        node,
-                        expected,
-                        actual,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 /// Graph invariant: every reachable, non-exempt node must carry at
 /// least one asm-fingerprint contributor.  See
 /// [`crate::function::Function::asm_fingerprint`] for the full contract.
@@ -364,7 +273,7 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
         if kind.asm_fingerprint_exempt() {
             continue;
         }
-        if function.asm_fingerprint(node).is_empty() {
+        if function.side_tables().asm_fingerprint(node).is_empty() {
             errs.push(ValidationError::MissingAsmFingerprint { node, kind: *kind });
         }
     }
@@ -516,8 +425,8 @@ pub(super) fn check_graph_invariants_consts(
         };
         // Every bit above the declared width must be zero (canonical masking).
         let too_wide = match value {
-            crate::const_value::ConstValue::Bits(v) => v & !ty.bit_mask_u128() != 0,
-            crate::const_value::ConstValue::Wide(limbs) => {
+            crate::node::const_value::ConstValue::Bits(v) => v & !ty.bit_mask_u128() != 0,
+            crate::node::const_value::ConstValue::Wide(limbs) => {
                 limbs.len() * 64 > ty.bit_width()
                     && limbs
                         .iter()

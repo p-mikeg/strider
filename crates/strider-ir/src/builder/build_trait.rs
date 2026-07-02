@@ -82,7 +82,7 @@ impl IRBuilder for FunctionBuilder {
         // stamp is applied, then union each contributor's fingerprint.
         let node = FunctionBuilder::create_node(self, kind, inputs, outputs);
         for &c in contributors {
-            self.function_mut().extend_asm_fingerprint_from(node, c);
+            self.function_mut().side_tables_mut().extend_asm_fingerprint_from(node, c);
         }
         node
     }
@@ -113,7 +113,7 @@ mod tests {
         // integration test `builder_trait.rs` where test-utils are available.
         let mut b = empty_builder().unwrap();
         assert_eq!(b.lift_addr, None);
-        let const_id = crate::const_value::ConstId::new(3);
+        let const_id = crate::node::const_value::ConstId::new(3);
         let n = <FunctionBuilder as IRBuilder>::create_node(
             &mut b,
             NodeKind::IntConst(const_id),

@@ -37,7 +37,7 @@ use AddrClass::*;
 /// `decompose` returns `Option<SpExpr>`; `None` carries the
 /// "not a provable SP terminal" case, so there is no separate variant for it.
 #[derive(Clone, Copy, Debug)]
-pub struct SpExpr {
+pub(crate) struct SpExpr {
     pub base: ValueId,
     pub offset: i128,
 }
@@ -58,7 +58,7 @@ impl SpExpr {
 }
 
 /// Per-pass-call memo for `decompose`.
-pub type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
+pub(crate) type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
 
 /// Coarse classification of a Load / Store address.  The verdict table in
 /// [`alias_verdict`] is keyed on the `(load_class, store_class)` pair:
@@ -270,7 +270,7 @@ impl<'a> SpAnalyzer<'a> {
     /// consulted first.  The store-side counterpart of [`Self::classify_addr`];
     /// callers feed the result straight into [`alias_verdict`].
     pub(crate) fn classify_store_addr(&mut self, store_node: NodeId) -> AddrClass {
-        match self.function.stack_offset(store_node) {
+        match self.function.side_tables().stack_offset(store_node) {
             Some((base, offset)) => AddrClass::SpRooted { base, offset },
             None => {
                 let addr = self.function.store_addr(store_node);

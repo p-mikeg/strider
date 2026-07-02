@@ -12,7 +12,7 @@ use strider_ir_test_utils::{Tb, reg_vn, stack_vn_x86_64 as stack_vn};
 // the op lets every test module drive the full op enum without open-coding
 // the boilerplate.
 
-pub fn int_bin_5_3(op: IntBinaryOp) -> Function {
+pub(crate) fn int_bin_5_3(op: IntBinaryOp) -> Function {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -20,7 +20,7 @@ pub fn int_bin_5_3(op: IntBinaryOp) -> Function {
     t.ret_val(v)
 }
 
-pub fn int_bin(l: u64, r: u64, op: IntBinaryOp) -> Function {
+pub(crate) fn int_bin(l: u64, r: u64, op: IntBinaryOp) -> Function {
     let mut t = Tb::empty();
     let a = t.u64(l);
     let b = t.u64(r);
@@ -28,14 +28,14 @@ pub fn int_bin(l: u64, r: u64, op: IntBinaryOp) -> Function {
     t.ret_val(v)
 }
 
-pub fn int_un(v: u64, op: IntUnaryOp) -> Function {
+pub(crate) fn int_un(v: u64, op: IntUnaryOp) -> Function {
     let mut t = Tb::empty();
     let v = t.u64(v);
     let v = t.int_un(v, op);
     t.ret_val(v)
 }
 
-pub fn int_cmp_5_3(op: IntCmpOp) -> Function {
+pub(crate) fn int_cmp_5_3(op: IntCmpOp) -> Function {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -46,7 +46,7 @@ pub fn int_cmp_5_3(op: IntCmpOp) -> Function {
 
 /// `return(5 <= 3)` built as the lowered shape `BoolNeg(IntLess(3, 5))`,
 /// matching the canonical form pcode-lift produces for `IntLessEqual`.
-pub fn int_le_lowered_5_3() -> Function {
+pub(crate) fn int_le_lowered_5_3() -> Function {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -58,7 +58,7 @@ pub fn int_le_lowered_5_3() -> Function {
 }
 
 /// Signed analogue of [`int_le_lowered_5_3`]: `BoolNeg(IntSless(3, 5))`.
-pub fn int_sle_lowered_5_3() -> Function {
+pub(crate) fn int_sle_lowered_5_3() -> Function {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -68,7 +68,7 @@ pub fn int_sle_lowered_5_3() -> Function {
     t.ret_val(cast)
 }
 
-pub fn bool_bin(l: bool, r: bool, op: IntBinaryOp) -> Function {
+pub(crate) fn bool_bin(l: bool, r: bool, op: IntBinaryOp) -> Function {
     let mut t = Tb::empty();
     let a = t.boolean(l);
     let b = t.boolean(r);
@@ -77,7 +77,7 @@ pub fn bool_bin(l: bool, r: bool, op: IntBinaryOp) -> Function {
     t.ret_val(as_int)
 }
 
-pub fn float_bin(l: f64, r: f64, op: FloatBinaryOp) -> Function {
+pub(crate) fn float_bin(l: f64, r: f64, op: FloatBinaryOp) -> Function {
     let mut t = Tb::empty();
     let a = t.f64(l);
     let b = t.f64(r);
@@ -87,7 +87,7 @@ pub fn float_bin(l: f64, r: f64, op: FloatBinaryOp) -> Function {
 }
 
 /// `return(a + b)` — both operands are `IntConst` of type `I64`.
-pub fn add_consts(a: u64, b: u64) -> Function {
+pub(crate) fn add_consts(a: u64, b: u64) -> Function {
     let mut t = Tb::empty();
     let la = t.u64(a);
     let lb = t.u64(b);
@@ -96,7 +96,7 @@ pub fn add_consts(a: u64, b: u64) -> Function {
 }
 
 /// `return(((a + b) + c))` — three-deep nested add.
-pub fn add_nested_3(a: u64, b: u64, c: u64) -> Function {
+pub(crate) fn add_nested_3(a: u64, b: u64, c: u64) -> Function {
     let mut t = Tb::empty();
     let la = t.u64(a);
     let lb = t.u64(b);
@@ -107,14 +107,14 @@ pub fn add_nested_3(a: u64, b: u64, c: u64) -> Function {
 }
 
 /// `call(addr)` then `return` — no args, no return value.
-pub fn call_at(addr: u64) -> Function {
+pub(crate) fn call_at(addr: u64) -> Function {
     let mut t = Tb::empty();
     t.call_at(addr);
     t.ret_nothing()
 }
 
 /// `store(ram, addr=a, data=d)` then `load(ram, addr=a)` then return.
-pub fn store_then_load_ram(addr: u64, data: u64) -> Function {
+pub(crate) fn store_then_load_ram(addr: u64, data: u64) -> Function {
     let mut t = Tb::empty();
     let a = t.u64(addr);
     let d = t.u64(data);
@@ -125,7 +125,7 @@ pub fn store_then_load_ram(addr: u64, data: u64) -> Function {
 
 /// `if c == 1 { return 10 } else { return 20 }` where `c` is a u64 const
 /// supplied by the caller.  Useful for If-pattern and dead-branch tests.
-pub fn if_cmp_then_return(c: u64) -> Function {
+pub(crate) fn if_cmp_then_return(c: u64) -> Function {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let entry = t.region();
     let true_r = t.region();
@@ -156,7 +156,7 @@ pub fn if_cmp_then_return(c: u64) -> Function {
 /// program — `if (c == 1) { return 10 } else { return 20 }` — but the IR has
 /// the cond wrapped in `Not(...)` and the branches swapped, so the literal
 /// IR shape is `if (!(c == 1)) { return 20 } else { return 10 }`.
-pub fn if_cmp_then_return_inverted(c: u64) -> Function {
+pub(crate) fn if_cmp_then_return_inverted(c: u64) -> Function {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let entry = t.region();
     let true_r = t.region();
@@ -187,7 +187,7 @@ pub fn if_cmp_then_return_inverted(c: u64) -> Function {
 /// Graph with a single tracked register and `return(reg)` — yields one
 /// `InitialVar(reg)` node.  Returns the register so tests can construct
 /// `phi_for` / `initial_var_for` patterns against it.
-pub fn single_initial_var() -> (Function, rsleigh::Vn) {
+pub(crate) fn single_initial_var() -> (Function, rsleigh::Vn) {
     let reg = reg_vn(0x00, 8);
     let mut t = Tb::with_vars(&[reg]);
     let v = t.read_var(&reg);
@@ -197,7 +197,7 @@ pub fn single_initial_var() -> (Function, rsleigh::Vn) {
 /// Graph that, after `opt::FunctionArgDetect`, has `reg` registered as the
 /// carrier for arg 0 in `Function::arg_index_to_values`.  The underlying
 /// `InitialVar(reg)` node remains in place; no `FunctionArg` node is created.
-pub fn function_arg_reg() -> (Function, rsleigh::Vn) {
+pub(crate) fn function_arg_reg() -> (Function, rsleigh::Vn) {
     use strider_orchestrator::opt::{FunctionArgDetect, Optimizer};
     let reg = reg_vn(0x38, 8);
     let sp = stack_vn();

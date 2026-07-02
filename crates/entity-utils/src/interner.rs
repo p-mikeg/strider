@@ -14,7 +14,7 @@ use rustc_hash::FxHashMap;
 /// present, otherwise it allocates the next dense key and records *both*
 /// directions in lockstep — so the forward and reverse halves can never
 /// drift. This is the recurring "dedup by value, dense id by allocation"
-/// pattern: SSA variable tables (`Vn → VarId`), integer-constant interning
+/// pattern: SSA variable tables, integer-constant interning
 /// (`ConstValue → ConstId`), and similar.
 ///
 /// `V` must be `Clone` (one clone per genuinely-new value, to record both
@@ -78,6 +78,15 @@ impl<K: EntityRef, V: Clone + Eq + Hash> EntityInterner<K, V> {
     /// Iterates the values in allocation (key) order.
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.forward.values()
+    }
+
+    /// The interned values as a contiguous slice in allocation (key) order.
+    ///
+    /// The `i`-th element is the value for the key at index `i`, so a caller
+    /// can index it directly by a key's `.index()`.  Backed by the forward
+    /// [`PrimaryMap`]'s element vec, so it is O(1) and allocation-free.
+    pub fn values_as_slice(&self) -> &[V] {
+        self.forward.values().as_slice()
     }
 }
 

@@ -125,7 +125,7 @@ impl Match {
     /// for the full contract.
     pub fn asm_fingerprint<'g>(&self, c: Capture, graph: &'g strider_ir::Function) -> &'g [u64] {
         match self.bindings.get_node(c, graph.graph()) {
-            Some(node) => graph.asm_fingerprint(node),
+            Some(node) => graph.side_tables().asm_fingerprint(node),
             None => &[],
         }
     }

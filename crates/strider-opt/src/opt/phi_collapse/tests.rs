@@ -3,7 +3,6 @@ use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
-
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 /// Locate the unique `Return` node.
@@ -51,8 +50,8 @@ fn single_value_phi_collapses() -> crate::Result<()> {
     assert_eq!(phi_inputs.len(), 2, "token + 1 value");
     let lone_value = phi_inputs[1];
 
-    let changed = crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?
-        .changed();
+    let changed =
+        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?.changed();
     assert!(changed, "single-value phi must collapse");
 
     let ret_val = fg.node_inputs(find_return(&fg))[2];
@@ -119,8 +118,8 @@ fn multi_value_all_equal_phi_collapses() -> crate::Result<()> {
         "both values equal"
     );
 
-    let changed = crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?
-        .changed();
+    let changed =
+        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?.changed();
     assert!(changed, "all-equal phi must collapse");
 
     let ret_val = fg.node_inputs(find_return(&fg))[2];
@@ -160,8 +159,8 @@ fn chained_single_pred_phis_cascade_to_base_value() -> crate::Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let changed = crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?
-        .changed();
+    let changed =
+        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?.changed();
     assert!(changed, "chained trivial phis must collapse");
 
     let ret_val = fg.node_inputs(find_return(&fg))[2];
@@ -336,8 +335,8 @@ fn single_value_mem_phi_collapses() -> crate::Result<()> {
         "token + 1 memory value"
     );
 
-    let changed = crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?
-        .changed();
+    let changed =
+        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?.changed();
     assert!(changed, "single-value MemPhi must collapse");
 
     // After the cascade collapses every single-pred MemPhi (body then

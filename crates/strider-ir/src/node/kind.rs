@@ -23,25 +23,32 @@ pub enum FunctionArgSource {
     },
 }
 
-/// Index of a tracked varnode within [`crate::Function::all_vns`] — the
-/// per-function identity carried by an [`NodeKind::InitialVar`] node.
+/// Dense id of a tracked varnode, interned in
+/// [`crate::Function`]'s `vn_interner` — the single identity that serves
+/// BOTH as the payload of an [`NodeKind::InitialVar`] node AND as the
+/// [`crate::FunctionBuilder`]'s per-region SSA-variable key
+/// (`SecondaryMap<InitialVnId, ValueId>` bookkeeping).
 ///
 /// Stored instead of an inline `rsleigh::Vn` so the largest `NodeKind`
-/// payload is 8 bytes rather than 16 (`all_vns` is the deduped, stably
-/// ordered tracked-varnode SSoT; every `InitialVar` reads one of its
-/// members, so an index is always sufficient).  Resolve back to the
-/// varnode with [`crate::Function::initial_vn`].
+/// payload is 4 bytes rather than 16.  The interner assigns ids in
+/// deterministic `(space, offset, size)` order, so id assignment is stable
+/// and reproducible.  Resolve back to the varnode with
+/// [`crate::Function::initial_vn`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InitialVnId(u32);
+cranelift_entity::entity_impl!(InitialVnId);
 
 impl InitialVnId {
-    /// Wraps an `all_vns` position.
+    /// Wraps a raw position into an [`InitialVnId`].  Alias for
+    /// [`cranelift_entity::EntityRef::new`], kept for call sites that read
+    /// more clearly as "the id at this index".
     #[inline]
     pub fn from_index(index: usize) -> Self {
         Self(index as u32)
     }
 
-    /// The `all_vns` position this id refers to.
+    /// The position this id refers to.  Alias for
+    /// [`cranelift_entity::EntityRef::index`].
     #[inline]
     pub fn index(self) -> usize {
         self.0 as usize
@@ -127,7 +134,7 @@ pub enum NodeKind {
     // ── Integer constants and operations ──────────────────────────────────────
     /// An integer constant; the value is interned in
     /// `Function::const_interner`, read via `IRViewer::int_const_u128`.
-    IntConst(crate::const_value::ConstId),
+    IntConst(crate::node::const_value::ConstId),
     /// Integer unary operation — two's-complement negate (`-x`).  Bitwise
     /// complement (`~x`) is no longer a unary op; it is `Xor(x, all_ones)`
     /// at lift time and beyond.
@@ -460,7 +467,7 @@ const _: () = assert!(
 #[cfg(test)]
 mod tests {
     use super::NodeKind;
-    use crate::const_value::ConstId;
+    use crate::node::const_value::ConstId;
     use cranelift_entity::EntityRef;
 
     #[test]

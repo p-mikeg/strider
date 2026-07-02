@@ -114,9 +114,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         );
         // Right-shift by `bit_shift` at the input width (a no-op when offset 0),
         // then truncate to the output width.
-        let shifted =
-            self.builder
-                .build_shift_by_const(value, bit_shift, IntBinaryOp::ShiftRight, input_vn.int_type()?)?;
+        let shifted = self.builder.build_shift_by_const(
+            value,
+            bit_shift,
+            IntBinaryOp::ShiftRight,
+            input_vn.int_type()?,
+        )?;
         let result = self
             .builder
             .truncate_if_needed(shifted, out_vn.int_type()?)?;
@@ -242,9 +245,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             );
         }
         let x_int = self.builder.convert_to_int_if_needed(value, x_nat_ty)?;
-        let shifted =
-            self.builder
-                .build_shift_by_const(x_int, u64::from(lsb), IntBinaryOp::ShiftRight, x_nat_ty)?;
+        let shifted = self.builder.build_shift_by_const(
+            x_int,
+            u64::from(lsb),
+            IntBinaryOp::ShiftRight,
+            x_nat_ty,
+        )?;
         let narrowed = self.builder.truncate_if_needed(shifted, narrow_ty)?;
         let result = if (len as usize) < narrow_ty.bit_width() {
             // Compute the AND-mask in u128 so a I128 narrow_ty with
@@ -253,7 +259,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             // 0xFFFF_FFFF_FFFF_FFFF, then `build_int_const` would
             // zero-extend to u128 and the result would zero bits
             // 64..127 of the narrowed value.
-            let mask = self.builder.build_int_const(low_bits_mask(len), narrow_ty)?;
+            let mask = self
+                .builder
+                .build_int_const(low_bits_mask(len), narrow_ty)?;
             self.builder
                 .build_int_binary_operation(narrowed, mask, IntBinaryOp::And, narrow_ty)?
         } else {

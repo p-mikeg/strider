@@ -53,15 +53,15 @@ bitflags::bitflags! {
 /// crate.
 pub struct FunctionState {
     /// Every node currently considered live (entry-reachable, not culled).
-    pub(crate) live_nodes: DenseEntitySet<NodeId>,
+    live_nodes: DenseEntitySet<NodeId>,
     /// Input-less source nodes — the seeds of the cached reverse-post-order.
     /// Maintained in O(1) per edit (insert/remove/contains are O(1)); iterated
     /// in ascending-`NodeId` order.
-    pub(crate) roots: DenseEntitySet<NodeId>,
+    roots: DenseEntitySet<NodeId>,
     /// Nodes whose liveness may have just dropped; drained by `clean`.
-    pub(crate) queue: Worklist<NodeId>,
+    queue: Worklist<NodeId>,
     /// Per-node rewrite-state flags.
-    pub(crate) flags: SecondaryMap<NodeId, NodeFlags>,
+    flags: SecondaryMap<NodeId, NodeFlags>,
 }
 
 impl FunctionState {
@@ -81,7 +81,6 @@ impl FunctionState {
         }
     }
 }
-
 
 // ── EditFunction ─────────────────────────────────────────────────────
 
@@ -671,7 +670,7 @@ impl<'g> EditFunction<'g> {
     /// Register an argument-carrier value under a CC argument index —
     /// delegates to [`Function::register_arg_value`].
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
-        self.function.register_arg_value(index, value);
+        self.function.side_tables_mut().register_arg_value(index, value);
     }
 
     /// Absorb `from_value`'s producer asm-fingerprint into `into_value`'s
@@ -681,7 +680,7 @@ impl<'g> EditFunction<'g> {
     pub fn absorb_fingerprint(&mut self, into_value: ValueId, from_value: ValueId) {
         let into = self.function().producer(into_value);
         let from = self.function().producer(from_value);
-        self.function_mut().extend_asm_fingerprint_from(into, from);
+        self.function_mut().side_tables_mut().extend_asm_fingerprint_from(into, from);
     }
 
     // ── composite rewrites ───────────────────────────────────────────
@@ -711,7 +710,7 @@ impl<'g> EditFunction<'g> {
         // (afterwards every use of `old` has moved to `new`, leaving `from`
         // orphaned).
         let from = self.function.producer(old);
-        self.function.extend_asm_fingerprint_from(into, from);
+        self.function.side_tables_mut().extend_asm_fingerprint_from(into, from);
         // `replace_all_uses` redirects every use of `old` onto `new` AND flags
         // each redirected consumer for re-canonicalization (the cascade).
         let changed = self.replace_all_uses(old, new)?;
@@ -747,7 +746,7 @@ impl<'g> EditFunction<'g> {
             // fingerprint into `new`'s producer (superset-only union).
             let into = self.function.producer(new);
             let from = self.function.producer(old_value);
-            self.function.extend_asm_fingerprint_from(into, from);
+            self.function.side_tables_mut().extend_asm_fingerprint_from(into, from);
         }
     }
 
@@ -944,7 +943,7 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1014,9 +1013,9 @@ mod tests {
         );
         assert!(ctx.is_live(a_node), "the survivor A stays live");
         assert!(
-            ctx.function().asm_fingerprint(a_node).contains(&0xC),
+            ctx.function().side_tables().asm_fingerprint(a_node).contains(&0xC),
             "A absorbs C's asm address 0xC on merge (superset contract), got {:?}",
-            ctx.function().asm_fingerprint(a_node)
+            ctx.function().side_tables().asm_fingerprint(a_node)
         );
     }
 
@@ -1105,9 +1104,9 @@ mod tests {
         );
         assert!(ctx.is_live(a_node), "the survivor A stays live");
         assert!(
-            ctx.function().asm_fingerprint(a_node).contains(&0xC),
+            ctx.function().side_tables().asm_fingerprint(a_node).contains(&0xC),
             "A absorbs C's asm address 0xC (superset contract), got {:?}",
-            ctx.function().asm_fingerprint(a_node)
+            ctx.function().side_tables().asm_fingerprint(a_node)
         );
     }
 
@@ -1171,7 +1170,7 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1179,7 +1178,7 @@ mod tests {
         assert!(!ctx.is_live(node));
 
         let recreated = ctx.create_node(
-            NodeKind::IntConst(crate::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -1728,7 +1727,7 @@ mod tests {
         let mut consts = Vec::new();
         for i in 0..FANIN {
             let k = ctx.create_node(
-                NodeKind::IntConst(crate::const_value::ConstId::new((0xC0 + i as u64) as usize)),
+                NodeKind::IntConst(crate::node::const_value::ConstId::new((0xC0 + i as u64) as usize)),
                 [],
                 [ValueKind::Typed(ValueType::I64)],
             );
@@ -1768,8 +1767,8 @@ mod tests {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod function_state_tests {
     use super::FunctionState;
-    use crate::builder::IRBuilderExt;
     use super::test_fixtures::single_region_builder;
+    use crate::builder::IRBuilderExt;
     use crate::node::NodeKind;
     use crate::{IRViewer, IntBinaryOp, ValueType};
 

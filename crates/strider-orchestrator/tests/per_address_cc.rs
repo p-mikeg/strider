@@ -41,9 +41,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         FxHashMap::default();
     overrides.insert(
         call_target,
-        TargetCC::x86_64_all_preserving()
-            .build(&regs)
-            .unwrap(),
+        TargetCC::x86_64_all_preserving().build(&regs).unwrap(),
     );
     let lift_opts = LiftOptions {
         per_address_ccs: overrides,
@@ -89,14 +87,16 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         "Call's outputs = Control + Memory + tagged ret-val/clobber slots"
     );
     // The override total must be strictly smaller than the default total.
-    let default_total = bfg.call_ret_val_regs().len() + bfg.call_clobbered_regs().len();
+    let (default_ret, default_clob) =
+        strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
+    let default_total = default_ret.len() + default_clob.len();
     assert!(
         tagged_outputs < default_total,
         "override tagged output count ({}) must be strictly smaller than \
          function-default total (ret_vals={} + clobbers={} = {})",
         tagged_outputs,
-        bfg.call_ret_val_regs().len(),
-        bfg.call_clobbered_regs().len(),
+        default_ret.len(),
+        default_clob.len(),
         default_total,
     );
 }
@@ -135,7 +135,8 @@ fn call_without_override_uses_function_default_clobber_set() {
         "no override → effective CC is the function default"
     );
     let outs = bfg.node_outputs(call_id);
-    let expected = 2 + bfg.call_ret_val_regs().len() + bfg.call_clobbered_regs().len();
+    let (rv, clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
+    let expected = 2 + rv.len() + clob.len();
     assert_eq!(
         outs.len(),
         expected,

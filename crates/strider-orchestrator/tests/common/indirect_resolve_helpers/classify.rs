@@ -25,6 +25,7 @@ use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::MachineInsnAddr;
 use strider_ir::node::NodeKind;
 use strider_ir::{Function, IRBuilderExt, IRViewer, IRWalker};
+use strider_ir_test_utils::IrBuilderEx;
 use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 
@@ -41,7 +42,7 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 /// `DataUnavailErr` on the buffered memory reader; the terminator ends
 /// the region, so the pad bytes are never reachable from the analysed
 /// function.
-pub fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
+pub(crate) fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
     let mut bytes: Vec<u8> = Vec::new();
     for (encoding, _asm) in insns {
         bytes.extend_from_slice(encoding);
@@ -68,7 +69,7 @@ pub fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
 /// optimiser pipeline (including `LoadForward`), the loaded
 /// value folds to `IntConst(k)` —
 /// exactly the shape the IR-level resolver's IntConst arm classifies.
-pub fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, strider_ir::Value) {
+pub(crate) fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, strider_ir::Value) {
     // The `pop rax` step gives the optimiser an SP-rooted load that
     // `LoadForward` can simplify back to the pushed constant K; the cfg
     // builder cannot classify the target and defers it.
@@ -92,7 +93,7 @@ pub fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, strider_i
 /// On x86_64 there is no architectural link register, so the
 /// "InitialVar(target_vn) == InitialVar(lr_vn)" arm in the classifier
 /// returns `None` here regardless of caller-supplied lr.
-pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Value) {
+pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Value) {
     // Just `jmp rax`.  RAX is a function-entry value with no constant
     // write; the placeholder's input is `InitialVar(rax)`.
     let bytes = x86_64_snippet(&[(&[0xff, 0xe0], "jmp rax")]);
@@ -117,7 +118,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Valu
 /// This is the headline soundness test — it pins the design's
 /// claim that the natural pop-pc shape resolves to LinkRegister
 /// via LoadForward without any special-cased heuristic.
-pub fn build_pop_pc_via_stack_load_forward_scenario() -> (Function, strider_ir::Value, rsleigh::Vn)
+pub(crate) fn build_pop_pc_via_stack_load_forward_scenario() -> (Function, strider_ir::Value, rsleigh::Vn)
 {
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
@@ -219,7 +220,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario() -> (Function, strider_ir::
 /// Also returns the `lr` VN we added to the tracked-vars set so
 /// callers can pass it to `classify_anchor` and verify the
 /// LinkRegister arm doesn't false-positive.
-pub fn build_push_target_pop_pc_scenario(k: u64) -> (Function, strider_ir::Value, rsleigh::Vn) {
+pub(crate) fn build_push_target_pop_pc_scenario(k: u64) -> (Function, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
     use strider_orchestrator::opt::{ConstantFold, LoadForward, OptimizerPipeline};
@@ -313,7 +314,7 @@ pub fn build_push_target_pop_pc_scenario(k: u64) -> (Function, strider_ir::Value
 /// from the caller's rom.
 ///
 /// Returns the graph and the placeholder Return's value-input slot.
-pub fn build_jump_table_known_bits_scenario(
+pub(crate) fn build_jump_table_known_bits_scenario(
     base: u64,
     stride: u64,
     idx_mask: u64,
@@ -384,7 +385,7 @@ pub fn build_jump_table_known_bits_scenario(
 ///         └──[false]─────────────────── exit (early Return)
 ///
 /// The dispatch's placeholder Return is the anchor we return.
-pub fn build_jump_table_predecessor_if_scenario(
+pub(crate) fn build_jump_table_predecessor_if_scenario(
     base: u64,
     stride: u64,
     bound: u64,
@@ -460,7 +461,7 @@ pub fn build_jump_table_predecessor_if_scenario(
 /// but whose `idx` is NOT bounded by either KnownBits-visible bits
 /// or a predecessor If.  Used to verify the classifier returns None
 /// rather than guessing a bound.
-pub fn build_jump_table_unbounded_scenario(
+pub(crate) fn build_jump_table_unbounded_scenario(
     base: u64,
     stride: u64,
 ) -> (Function, strider_ir::Value) {
@@ -510,7 +511,7 @@ pub fn build_jump_table_unbounded_scenario(
 /// shaped — used to verify the classifier's Load arm falls through
 /// to None on unrelated load shapes (e.g. `Load(IntConst(addr))` for
 /// a simple global read).
-pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
+pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
     use strider_ir::node::ValueType;
     use strider_orchestrator::opt::{ConstantFold, OptimizerPipeline};
 
@@ -567,7 +568,7 @@ pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
 /// eliminating the Load entirely and turning the anchor into an
 /// IntConst (the Single-target arm), defeating the stack-array
 /// classifier exercise.
-pub fn build_stack_array_dispatch_scenario(
+pub(crate) fn build_stack_array_dispatch_scenario(
     targets: &[u64],
     base_offset: i64,
     stride: u64,
@@ -631,7 +632,7 @@ pub fn build_stack_array_dispatch_scenario(
     // auto-stamping; manually attribute these nodes to the sentinel
     // lift address so Layer-C asm-fingerprint validation accepts them.
     b.function_mut()
-        .extend_asm_fingerprint(arg_u32_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        .side_tables_mut().extend_asm_fingerprint(arg_u32_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
     let mask_c = b.build_int_const(mask, ValueType::I32).unwrap();
     let masked = b
@@ -643,7 +644,7 @@ pub fn build_stack_array_dispatch_scenario(
         [ValueKind::Typed(ValueType::I64)],
     );
     b.function_mut()
-        .extend_asm_fingerprint(idx_u64_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        .side_tables_mut().extend_asm_fingerprint(idx_u64_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
     let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
     let idx_scaled = b
@@ -703,7 +704,7 @@ pub fn build_stack_array_dispatch_scenario(
 /// The cfg builder does no indirect-branch classification of its own,
 /// so it defers the `br x0` via `UnresolvedIndirectBranch` and the
 /// IR-level indirect-branch resolver sees the cleaned-up shape.
-pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
+pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     // AArch64 (little-endian) encoding:
     //   mov x0, x30  →  e0 03 1e aa   (alias for `orr x0, xzr, x30`)
     //   br  x0       →  00 00 1f d6

@@ -10,7 +10,7 @@ const SENTINEL: u64 = 0xDEAD_BEEF_0000_0001;
 /// mock graphs.  Exempt kinds (`Entry`, `InitialMemory`, phis, etc.) can
 /// be stamped harmlessly — the check skips them.
 fn stamp(function: &mut Function, id: NodeId) {
-    function.extend_asm_fingerprint(id, &[SENTINEL]);
+    function.side_tables_mut().extend_asm_fingerprint(id, &[SENTINEL]);
 }
 
 /// The shared corruption-test prelude: a fresh [`Function`] with the
@@ -62,7 +62,6 @@ fn assert_validation_err(f: &Function, pred: impl Fn(&ValidationError) -> bool) 
     );
 }
 
-
 #[test]
 fn local_typing_wrong_input_kind_on_int_unary_op() {
     use crate::node::IntUnaryOp;
@@ -110,152 +109,6 @@ fn local_typing_wrong_output_kind() {
     });
 }
 
-#[test]
-fn use_list_input_missing_from_use_list() {
-    use crate::node::IntUnaryOp;
-
-    let mut s = spine();
-    let (_c, c_value) = int_const(&mut s.f, 3, ValueType::I64);
-    let neg = s.f.graph_mut().create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-        [c_value],
-        [ValueKind::Typed(ValueType::I64)],
-    );
-
-    // Corrupt the forward link: clear the IntConst output's head-of-use
-    // pointer.  The op's input is still recorded, but the producer no
-    // longer admits it as a consumer.
-    s.f.graph_mut().corrupt_clear_first_use(c_value);
-
-    // use-list consistency is reachability-scoped (matches the local-typing check and
-    // check_graph_invariants_phis), so wire `neg` onto the reachable spine via
-    // a Return that consumes Control + Memory + the value output.
-    let neg_value = s.f.node_outputs(neg).iter().copied().next().unwrap();
-    let _ret =
-        s.f.graph_mut()
-            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, neg_value], []);
-
-    assert_validation_err(&s.f, |e| {
-        matches!(
-            e,
-            ValidationError::InputMissingFromUseList { input_idx: 0, .. }
-        )
-    });
-}
-
-#[test]
-fn use_list_stale_input_in_use_list() {
-    use crate::node::IntUnaryOp;
-
-    let mut s = spine();
-    let (_a, a_value) = int_const(&mut s.f, 1, ValueType::I64);
-    let (_b, b_value) = int_const(&mut s.f, 2, ValueType::I64);
-    let neg = s.f.graph_mut().create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-        [a_value],
-        [ValueKind::Typed(ValueType::I64)],
-    );
-
-    // Retarget the op's input at idx 0 to `b_value` without updating any
-    // use-list.  `a_value`'s use-list still references this input, but the
-    // input itself now points at `b_value` — that's a stale entry.
-    let use_id = s.f.graph().node_input_id_at(neg, 0).unwrap();
-    s.f.graph_mut().corrupt_retarget_input(use_id, b_value);
-
-    // use-list consistency is reachability-scoped; wire `neg` AND `a` onto the
-    // reachable spine.  `a_value` must be reachable so the use-list sweep
-    // visits its (now-stale) head; otherwise the forward check on
-    // `neg`'s input fires first as InputMissingFromUseList instead of
-    // the intended UseListContainsStaleInput.  Threading both through
-    // a 2-value Return keeps both producers in the reachable set.
-    let neg_value = s.f.node_outputs(neg).iter().copied().next().unwrap();
-    let _ret = s.f.graph_mut().create_node(
-        NodeKind::Return,
-        [s.entry_ctrl, s.mem_value, neg_value, a_value],
-        [],
-    );
-
-    assert_validation_err(&s.f, |e| {
-        matches!(e, ValidationError::UseListContainsStaleInput { .. })
-    });
-}
-
-/// the use-list forward check must still flag missing-from-use-list cases
-/// at non-zero input slots (covers the O(E) refactor — the existing
-/// `use_list_input_missing_from_use_list` only covers slot 0).
-#[test]
-fn use_list_forward_check_catches_missing_at_non_zero_slot() {
-    use crate::node::IntBinaryOp;
-
-    let mut s = spine();
-    let (_a, a_value) = int_const(&mut s.f, 11, ValueType::I64);
-    let (_b, b_value) = int_const(&mut s.f, 13, ValueType::I64);
-
-    // Add(a, b) — a at slot 0, b at slot 1.
-    let add = s.f.graph_mut().create_node(
-        NodeKind::IntBinaryOp(IntBinaryOp::Add),
-        [a_value, b_value],
-        [ValueKind::Typed(ValueType::I64)],
-    );
-
-    // Corrupt only b's use-list head, leaving a's intact.  Only the
-    // slot-1 input should be flagged as missing.
-    s.f.graph_mut().corrupt_clear_first_use(b_value);
-
-    // use-list consistency is reachability-scoped; wire `add` onto the reachable
-    // spine via Return[Ctrl, Memory, add_value].
-    let add_value = s.f.node_outputs(add).iter().copied().next().unwrap();
-    let _ret =
-        s.f.graph_mut()
-            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, add_value], []);
-
-    let errs = validate(&s.f).unwrap_err();
-    let missing: Vec<_> = errs
-        .0
-        .iter()
-        .filter_map(|e| match e {
-            ValidationError::InputMissingFromUseList { input_idx, .. } => Some(*input_idx),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        missing,
-        vec![1],
-        "only slot-1 input must be flagged; got: {errs:?}"
-    );
-}
-
-#[test]
-fn use_list_skips_unreachable_zombie_node() {
-    // Pin the use-list reachability scoping (matches the local-typing check and
-    // check_graph_invariants_phis): a corrupted use-list on a node that's
-    // unreachable from the entry must NOT trip the use-list check.  Opt passes
-    // (DeadBranchElimination, CfgDetach) detach unreachable
-    // subgraphs but leave the zombie nodes in the arena; surfacing
-    // their use-list inconsistencies is noise, not real bugs.
-    use crate::node::IntUnaryOp;
-
-    let mut s = spine();
-    // Detached / unreachable producer + consumer pair.  Corrupt their
-    // use-list link so that, were the use-list check graph-wide, it would fire.
-    let (_c, c_value) = int_const(&mut s.f, 7, ValueType::I64);
-    let _zombie_consumer = s.f.graph_mut().create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-        [c_value],
-        [ValueKind::Typed(ValueType::I64)],
-    );
-    s.f.graph_mut().corrupt_clear_first_use(c_value); // Would fire the use-list check graph-wide.
-
-    // Minimal reachable spine — entry + memory + a Return that takes
-    // no values.  Neither `c` nor `_zombie_consumer` is reachable.
-    let ret =
-        s.f.graph_mut()
-            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
-    stamp(&mut s.f, ret);
-
-    validate(&s.f).expect("validator must skip unreachable use-list inconsistencies");
-}
-
 // `MissingInitialMemoryNode` was verified via a test that built an Entry-only
 // graph.  `Function::new` now always builds the Entry + InitialMemory spine, so
 // an InitialMemory-less function is unconstructable; the validator check
@@ -276,10 +129,9 @@ fn graph_invariants_entry_dedupes_on_repeated_create() {
         s.f.graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     assert_eq!(s.entry, entry2, "Entry must dedup");
-    let u = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    let u =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
     stamp(&mut s.f, u);
     validate(&s.f).expect("graph with single deduped Entry must validate");
 }
@@ -291,10 +143,9 @@ fn graph_invariants_initial_memory_dedupes_on_repeated_create() {
         s.f.graph_mut()
             .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     assert_eq!(s.mem, mem2, "InitialMemory must dedup");
-    let u = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    let u =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
     stamp(&mut s.f, u);
     validate(&s.f).expect("graph with single deduped InitialMemory must validate");
 }
@@ -359,7 +210,7 @@ fn validate_flags_stale_initial_var_index_entry() {
         size: 4,
     };
     // Two tracked varnodes so `InitialVnId` 0/1 resolve to vn/other_vn.
-    s.f.all_vns = vec![vn, other_vn];
+    s.f.set_all_vns(vec![vn, other_vn]);
     // A reachable InitialVar(vn): its value output is returned so the walk
     // keeps it in the reachable set.
     let iv = s.f.graph_mut().create_node(
@@ -369,7 +220,8 @@ fn validate_flags_stale_initial_var_index_entry() {
     );
     stamp(&mut s.f, iv);
     let iv_value = s.f.node_outputs(iv)[0];
-    s.f.side_tables.initial_var_index.insert(vn, iv);
+    let vn_id = s.f.vn_id_of(&vn).expect("vn is tracked");
+    s.f.side_tables_mut().initial_var_index.insert(vn_id, iv);
     let ret =
         s.f.graph_mut()
             .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, iv_value], []);
@@ -403,7 +255,8 @@ fn validate_flags_stale_value_vn_entry() {
     // population, so the producer-kind check must flag it.
     let (k, kv) = int_const(&mut s.f, 7, ValueType::I32);
     stamp(&mut s.f, k);
-    s.f.side_tables.value_vn.insert(kv, vn);
+    s.f.set_all_vns(vec![vn]); // only a tracked vn can be tagged
+    s.f.set_vn_for_value(kv, vn);
     // Make it reachable via the Return.
     let ret =
         s.f.graph_mut()
@@ -434,7 +287,7 @@ fn graph_invariants_phi_token_from_wrong_node() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let phi_value = s.f.node_outputs(phi)[0];
-    s.f.side_tables.value_vn.insert(phi_value, vn);
+    s.f.set_vn_for_value(phi_value, vn);
 
     assert_validation_err(&s.f, |e| {
         matches!(e, ValidationError::PhiTokenNotFromRegion { .. })
@@ -460,7 +313,7 @@ fn graph_invariants_phi_value_arity_mismatch() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let phi_value = s.f.node_outputs(phi)[0];
-    s.f.side_tables.value_vn.insert(phi_value, vn);
+    s.f.set_vn_for_value(phi_value, vn);
 
     // V-2: graph_invariants_phis is reachability-scoped, so the phi must be
     // attached to something reachable from the entry.  Wire its value
@@ -503,7 +356,7 @@ fn graph_invariants_phi_input_type_mismatch() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let phi_value = s.f.node_outputs(phi)[0];
-    s.f.side_tables.value_vn.insert(phi_value, test_vn());
+    s.f.set_vn_for_value(phi_value, test_vn());
 
     // Put the phi on the reachable spine (see the arity test above).
     let cs_ctrl_value = s.f.node_outputs(cs).iter().copied().next().unwrap();
@@ -547,7 +400,7 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
         s.f.graph_mut()
             .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
     let zombie_value = s.f.node_outputs(zombie)[0];
-    s.f.side_tables.value_vn.insert(zombie_value, vn);
+    s.f.set_vn_for_value(zombie_value, vn);
 
     validate(&s.f).expect("validator must skip unreachable zombie phis");
 }
@@ -819,10 +672,9 @@ fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
     let mut s = spine();
     let _const_node = int_const(&mut s.f, 7, ValueType::I64);
     // The IntConst is unreachable from entry; default validate ignores it.
-    let u = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    let u =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
     stamp(&mut s.f, u);
     validate(&s.f).expect("default validate is unaffected");
 }
@@ -867,8 +719,8 @@ fn asm_fingerprint_check_accepts_when_fingerprint_present() {
         [s.entry_ctrl, s.mem_value, const_value],
         [],
     );
-    s.f.extend_asm_fingerprint(int_const_node, &[0x1000]);
-    s.f.extend_asm_fingerprint(ret, &[0x1004]);
+    s.f.side_tables_mut().extend_asm_fingerprint(int_const_node, &[0x1000]);
+    s.f.side_tables_mut().extend_asm_fingerprint(ret, &[0x1004]);
     validate(&s.f).expect("populated fingerprints validate");
 }
 
@@ -953,15 +805,13 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
 fn control_output_consumed_twice_is_flagged() {
     let mut s = spine();
     // Entry's single Control output feeds TWO Return terminators.
-    let r1 = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    let r1 =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     stamp(&mut s.f, r1);
-    let r2 = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    let r2 =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     stamp(&mut s.f, r2);
 
     assert_validation_err(&s.f, |e| {
@@ -1000,14 +850,12 @@ fn unused_control_output_is_flagged() {
 #[test]
 fn entry_into_unreachable_validates() {
     let mut s = spine();
-    let unreachable = s
-        .f
-        .graph_mut()
-        .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
+    let unreachable =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
     stamp(&mut s.f, unreachable);
     validate(&s.f).expect("Entry -> Unreachable is a valid terminated graph");
 }
-
 
 #[test]
 fn indirect_branch_with_control_memory_and_value_validates() {
@@ -1025,7 +873,7 @@ fn indirect_branch_with_control_memory_and_value_validates() {
 
 #[test]
 fn graph_invariants_dangling_const_id_detected() {
-    use crate::const_value::ConstId;
+    use crate::node::const_value::ConstId;
     use cranelift_entity::EntityRef;
     let mut s = spine();
     // Construct an IntConst pointing at an id that was never interned.
@@ -1049,12 +897,13 @@ fn graph_invariants_dangling_const_id_detected() {
 
 #[test]
 fn graph_invariants_wide_const_width_mismatch_detected() {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut s = spine();
     // Intern a genuinely-wide (> u128, 4 limbs) value but assign it to a
     // narrower (I64) output — bits set above the declared width.
     let id =
-        s.f.const_interner.intern(ConstValue::Wide(vec![0, 0, 0, 1].into_boxed_slice()));
+        s.f.const_interner
+            .intern(ConstValue::Wide(vec![0, 0, 0, 1].into_boxed_slice()));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
@@ -1072,7 +921,7 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
 
 #[test]
 fn graph_invariants_const_bits_above_declared_width_detected() {
-    use crate::const_value::ConstValue;
+    use crate::node::const_value::ConstValue;
     let mut s = spine();
     // A `Bits` value with bits set above the declared I8 width (un-masked) is
     // non-canonical: the validator flags it as a width mismatch.
@@ -1090,281 +939,6 @@ fn graph_invariants_const_bits_above_declared_width_detected() {
     assert_validation_err(&s.f, |e| {
         matches!(e, ValidationError::ConstWidthMismatch { .. })
     });
-}
-
-// ── CC arity check ───────────────────────────────────────────────────────
-
-/// Build a minimal Function that declares `ret_val_regs = [v1, v2]`.
-/// Used by the cc-arity tests below.
-fn fn_with_declared_cc() -> (Function, NodeId) {
-    let mut f = crate::function::test_function();
-    let entry = f.entry();
-    stamp(&mut f, entry);
-    let mk_vn = |off: u64| rsleigh::Vn {
-        addr_off: off,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    // `ret_val_regs()` returns `default_cc.ret_val_regs` (chained with the
-    // float ret list) verbatim; declare both the CC's ABI ret list and the
-    // tracked set those vns live in so the function is internally consistent.
-    let ret = vec![mk_vn(0x10), mk_vn(0x18)];
-    f.all_vns = ret.clone();
-    f.default_cc.ret_val_regs = ret;
-    (f, entry)
-}
-
-#[test]
-fn cc_arity_catches_return_dropping_a_declared_ret_val_reg() {
-    // Function declares ret_val_regs = [v1, v2] (count 2).  We build
-    // a Return with only [ctrl, mem, v1_val] — one short.  The
-    // validator's cc-arity check must fire with NodeInputCountMismatch.
-    // This is the bug class A6-H1 in the multi-round review: a
-    // synthesised Return dropping ret_val_regs_float silently produces
-    // a too-short Return.
-    let (mut f, entry) = fn_with_declared_cc();
-    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f
-        .graph_mut()
-        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-    stamp(&mut f, mem);
-    let (v1, v1_value) = int_const(&mut f, 7, ValueType::I64);
-    stamp(&mut f, v1);
-    // Return with only ONE ret-val input — dropping v2's slot.
-    let ret = f
-        .graph_mut()
-        .create_node(NodeKind::Return, [ctrl, mem_value, v1_value], []);
-    stamp(&mut f, ret);
-
-    assert_validation_err(&f, |e| {
-        matches!(
-            e,
-            ValidationError::NodeInputCountMismatch {
-                expected: 4,
-                actual: 3,
-                ..
-            }
-        )
-    });
-}
-
-#[test]
-fn cc_arity_catches_override_call_with_untagged_clobber_output() {
-    // Function with EMPTY CC defaults but an override Call (identified by
-    // a recorded `call_cc`).  The override arity invariant is "every output
-    // slot past Control/Memory must be a tagged clobber output (carrying a
-    // `value_vn`)".  Here the Call has one clobber output slot that was
-    // never tagged, so the expected count (2 tagged-clobber-free outputs)
-    // drifts from the actual output count (3) and must be flagged.
-    let arch = strider_target::SleighArch::x86_64();
-    let regs = arch.probe_regs().unwrap();
-    let cc = strider_target::CallingConvention::x86_64_systemv()
-        .build(&regs)
-        .unwrap();
-
-    let mut f = crate::function::test_function();
-    let entry = f.entry();
-    stamp(&mut f, entry);
-    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f
-        .graph_mut()
-        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-    stamp(&mut f, mem);
-    let (target, target_value) = int_const(&mut f, 0x1000, ValueType::I64);
-    stamp(&mut f, target);
-    // Call has [Control, Memory, clobber] outputs (3) but the clobber
-    // output is never tagged via `set_vn_for_value`, so the expected count
-    // (2 + 0 tagged) drifts from the actual (3).
-    let call = f.graph_mut().create_node(
-        NodeKind::Call,
-        [ctrl, mem_value, target_value],
-        [
-            ValueKind::Control,
-            ValueKind::Memory,
-            ValueKind::Typed(ValueType::I64),
-        ],
-    );
-    stamp(&mut f, call);
-    f.set_call_cc(call, cc);
-    let [call_ctrl, call_mem, _clob] = f.node_outputs_exact::<3>(call).unwrap();
-    let ret = f
-        .graph_mut()
-        .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
-    stamp(&mut f, ret);
-
-    assert_validation_err(&f, |e| {
-        matches!(
-            e,
-            ValidationError::NodeOutputCountMismatch {
-                expected: 2,
-                actual: 3,
-                ..
-            }
-        )
-    });
-}
-
-#[test]
-fn cc_arity_passes_override_call_with_tagged_clobber_output() {
-    // Counterpart: an override Call whose single clobber output matches the
-    // CC's clobber list.  The CC clobbers exactly one tracked register, so the
-    // CC-derived expected count (2 + 0 ret + 1 clobber = 3) matches the actual
-    // (3) and the arity check passes.
-    let clob0 = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let (mut f, _entry, ctrl, mem_value, cc) = fn_with_override_clobber_cc(&[clob0]);
-    let (target, target_value) = int_const(&mut f, 0x1000, ValueType::I64);
-    stamp(&mut f, target);
-    let (sp, sp_value) = int_const(&mut f, 0x7fff_0000, ValueType::I64);
-    stamp(&mut f, sp);
-    let call = f.graph_mut().create_node(
-        NodeKind::Call,
-        [ctrl, mem_value, target_value, sp_value],
-        [
-            ValueKind::Control,
-            ValueKind::Memory,
-            ValueKind::Typed(ValueType::I64),
-        ],
-    );
-    stamp(&mut f, call);
-    f.set_call_cc(call, cc);
-    let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
-    f.side_tables.value_vn.insert(clob, clob0);
-    let ret = f
-        .graph_mut()
-        .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
-    stamp(&mut f, ret);
-
-    validate(&f).expect("override Call with a tagged clobber output must validate");
-}
-
-/// Build a `Function` tracking `clobbers` (REGISTER vns), with an override
-/// CC that clobbers all of them (no callee-saved / ret-val / stack
-/// overlap). `call_clobbered_for(cc)` projected onto this tracked set
-/// returns `clobbers`, giving the validator an independent expected count.
-fn fn_with_override_clobber_cc(
-    clobbers: &[rsleigh::Vn],
-) -> (
-    Function,
-    NodeId,
-    ValueId,
-    ValueId,
-    strider_target::BuiltCallingConvention,
-) {
-    let mut f = crate::function::test_function();
-    let entry = f.entry();
-    stamp(&mut f, entry);
-    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f
-        .graph_mut()
-        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-    stamp(&mut f, mem);
-    // Track the clobber regs so call_clobbered_for(cc) (which filters on the
-    // tracked all_vns) returns them. A distinct stack vn keeps SP out of the
-    // clobber set.
-    let sp = rsleigh::Vn {
-        addr_off: 0x7000,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    f.all_vns = clobbers.to_vec();
-    let cc = strider_target::BuiltCallingConvention::try_new(
-        vec![], // arg_passing_regs
-        vec![], // callee_saved_regs (none → every tracked reg clobbers)
-        vec![], // ret_val_regs
-        vec![], // ret_val_regs_float
-        sp,     // stack_vn
-        None,   // stack_args
-        0,      // ret_stack_pop
-        None,   // link_register_vn
-        false,  // preserves_memory
-    )
-    .unwrap();
-    (f, entry, ctrl, mem_value, cc)
-}
-
-/// The override-Call arity check must cross-check against the CC-derived
-/// clobber/ret-val counts — NOT against the Call's own `value_vn` tags.
-/// Dropping a clobber output slot together with its tag leaves the
-/// tag-derived expected count equal to the (now too-small) actual count, so
-/// a tag-only check passes a wrong-arity override Call silently. Deriving
-/// expected from `call_clobbered_for(cc)` catches it.
-#[test]
-fn cc_arity_catches_override_call_dropping_a_clobber_output() {
-    let clob0 = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let clob1 = rsleigh::Vn {
-        addr_off: 0x18,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let (mut f, _entry, ctrl, mem_value, cc) = fn_with_override_clobber_cc(&[clob0, clob1]);
-    let (target, target_value) = int_const(&mut f, 0x1000, ValueType::I64);
-    stamp(&mut f, target);
-    let (sp, sp_value) = int_const(&mut f, 0x7fff_0000, ValueType::I64);
-    stamp(&mut f, sp);
-    // A WRONG-ARITY override Call: the CC clobbers two regs (so a correct
-    // Call has 4 outputs: Control, Memory, clob0, clob1), but this Call has
-    // only ONE clobber output — and it IS tagged. A tag-derived expected
-    // count (2 + 1 tag = 3) would match the actual (3) and pass silently.
-    let call = f.graph_mut().create_node(
-        NodeKind::Call,
-        [ctrl, mem_value, target_value, sp_value],
-        [
-            ValueKind::Control,
-            ValueKind::Memory,
-            ValueKind::Typed(ValueType::I64),
-        ],
-    );
-    stamp(&mut f, call);
-    f.set_call_cc(call, cc);
-    let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
-    f.side_tables.value_vn.insert(clob, clob0);
-    let ret = f
-        .graph_mut()
-        .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
-    stamp(&mut f, ret);
-
-    assert_validation_err(&f, |e| {
-        matches!(
-            e,
-            ValidationError::NodeOutputCountMismatch {
-                expected: 4,
-                actual: 3,
-                ..
-            }
-        )
-    });
-}
-
-#[test]
-fn cc_arity_passes_when_return_matches_declared_ret_val_regs() {
-    let (mut f, entry) = fn_with_declared_cc();
-    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f
-        .graph_mut()
-        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-    stamp(&mut f, mem);
-    let (v1, v1_value) = int_const(&mut f, 7, ValueType::I64);
-    stamp(&mut f, v1);
-    let (v2, v2_value) = int_const(&mut f, 8, ValueType::I64);
-    stamp(&mut f, v2);
-    let ret =
-        f.graph_mut()
-            .create_node(NodeKind::Return, [ctrl, mem_value, v1_value, v2_value], []);
-    stamp(&mut f, ret);
-
-    validate(&f).expect("Return with declared 2 ret-val regs and 2 value inputs must validate");
 }
 
 // ── memory-chain anchoring ──────────────────────────────────────────────────

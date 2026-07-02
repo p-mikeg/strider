@@ -64,7 +64,7 @@ fn arithmetic_x86_add_node_fingerprint_is_inside_function_extent() {
     let function = analyze(Arch::X86, "arithmetic", "add");
     let mut saw_any = false;
     for node in function.walk() {
-        let fp = function.asm_fingerprint(node);
+        let fp = function.side_tables().asm_fingerprint(node);
         for &addr in fp {
             assert_ne!(addr, 0, "asm-fingerprint addr 0 is suspicious");
             // x86 fixtures are linked at the default location; everything
@@ -132,7 +132,7 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
     let mut non_exempt_seen = 0usize;
     for node in function.walk() {
         let kind = function.node_kind(node);
-        let fp = function.asm_fingerprint(node);
+        let fp = function.side_tables().asm_fingerprint(node);
         if kind.asm_fingerprint_exempt() {
             continue;
         }

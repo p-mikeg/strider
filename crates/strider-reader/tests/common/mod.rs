@@ -10,5 +10,5 @@
 #![allow(dead_code)]
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-pub mod elf_fixture;
-pub mod reader_contract;
+pub(crate) mod elf_fixture;
+pub(crate) mod reader_contract;

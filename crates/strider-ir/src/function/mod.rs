@@ -3,15 +3,17 @@
 //! and its [`FunctionState`] bookkeeping ([`state`]), and the IR-specific dot
 //! rendering ([`dot`]).
 
-mod func;
-mod side_tables;
 pub(crate) mod dot;
 mod edit;
+mod func;
+mod side_tables;
+pub use side_tables::SideTables;
 
-pub use func::Function;
-pub(crate) use func::largest_container_in;
 pub use edit::EditFunction;
 pub use edit::FunctionState;
+pub use func::Function;
+#[cfg(any(test, feature = "test-util"))]
+pub use func::cc_ret_and_clobber_vns;
 
 /// The trivial-convention [`Function`] used throughout the in-crate tests.
 ///
@@ -25,7 +27,6 @@ pub(crate) fn test_function() -> Function {
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
         Vec::new(),
-        rustc_hash::FxHashMap::default(),
     );
     // The builder owns the memory spine; this test helper bypasses the builder,
     // so mint the `InitialMemory` node directly to mirror a built function.

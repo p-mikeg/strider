@@ -457,12 +457,11 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
     // is the matched op (`and`/`or`) and the surviving operand (`x`/`c`).  The
     // guard depends on `c` and the per-match output type, so spell it once and
     // reuse it (mirrors the `const_on_right!` / `ext_round_trip!` factoring).
-    let is_all_ones =
-        move |ctx: &strider_pattern::Matcher,
-              ty: strider_ir::node::ValueType,
-              b: &strider_pattern::Bindings| {
-            b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
-        };
+    let is_all_ones = move |ctx: &strider_pattern::Matcher,
+                            ty: strider_ir::node::ValueType,
+                            b: &strider_pattern::Bindings| {
+        b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
+    };
     // x & all_ones → x  (commutative). The all-ones mask depends on the
     // output width, so the shared guard compares the captured constant against
     // the node's output-type all-ones value.

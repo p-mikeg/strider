@@ -138,8 +138,8 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
                     .any(|&o| fx.int_const_u128(o) == Some(1))
         })
         .unwrap();
-    assert!(fx.asm_fingerprint(proof_a).contains(&PROOF_A));
-    assert!(fx.asm_fingerprint(proof_b).contains(&PROOF_B));
+    assert!(fx.side_tables().asm_fingerprint(proof_a).contains(&PROOF_A));
+    assert!(fx.side_tables().asm_fingerprint(proof_b).contains(&PROOF_B));
 
     // Build the RHS with BOTH proof nodes as the attribution set.
     let rhs = template::add(var(x), int_const(2u128)).into_template();
@@ -166,7 +166,7 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
                     .any(|&o| fx.int_const_u128(o) == Some(2))
         })
         .expect("RHS materialised IntConst(2)");
-    let fp = fx.asm_fingerprint(new_const2);
+    let fp = fx.side_tables().asm_fingerprint(new_const2);
     assert!(
         fp.contains(&PROOF_A) && fp.contains(&PROOF_B),
         "intermediate new node must carry the full proof set; got {fp:?}"

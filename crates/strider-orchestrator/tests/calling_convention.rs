@@ -76,7 +76,7 @@ fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
 /// `Function::arg_index_to_values` (the side-table populated at builder
 /// entry via `set_entry_region`'s aliasing-aware register reads).
 fn function_arg_indices(function: &strider_ir::Function) -> HashSet<u32> {
-    function.iter_arg_indices().collect()
+    function.side_tables().iter_arg_indices().collect()
 }
 
 /// Asserts at least `min` distinct arg indices in `0..n` are registered
@@ -116,7 +116,7 @@ fn assert_some_call_arg_threads_through(function: &strider_ir::Function, n: u32,
     // back to the carrier through cast-transparent walks.
     let mut matched_indices: Vec<u32> = Vec::new();
     for i in 0..n {
-        let carriers = function.arg_index_to_values(i);
+        let carriers = function.side_tables().arg_index_to_values(i);
         if carriers.is_empty() {
             continue;
         }
@@ -330,7 +330,7 @@ fn narrow_widths_assertions(function: &strider_ir::Function) {
     //     sub-register fallback records the narrower-than-container Vn
     //     correctly when it does emit one.
     for idx in 0..4u32 {
-        let carriers = function.arg_index_to_values(idx);
+        let carriers = function.side_tables().arg_index_to_values(idx);
         for &v in carriers {
             let n = function.producer(v);
             match function.node_kind(n) {

@@ -38,9 +38,9 @@ use crate::storage::{Node, RawStore, UseData, ValueData};
 /// is entirely the policy's concern (see the `cache` module).
 pub struct Graph<N, V, C: NodeCacheable<N, V>> {
     pub(crate) store: RawStore<N, V>,
-    pub(crate) cache: NodeCache,
-    pub(crate) _policy: PhantomData<C>,
-    pub(crate) generation: u64,
+    cache: NodeCache,
+    _policy: PhantomData<C>,
+    generation: u64,
 }
 
 impl<N, V, C: NodeCacheable<N, V>> Default for Graph<N, V, C> {
@@ -539,7 +539,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// consuming test crate), and is hidden from docs so it can never surface as
     /// a discoverable API.
     #[doc(hidden)]
-    #[cfg(feature = "test-injectors")]
+    #[cfg(any(test, feature = "test-injectors"))]
     pub fn corrupt_clear_first_use(&mut self, value: ValueId) {
         self.store.outputs[value].first_use = None.into();
     }
@@ -551,7 +551,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// `#[doc(hidden)]`: see [`Self::corrupt_clear_first_use`] — a test-only
     /// corruption injector, hidden from docs and gated behind `test-injectors`.
     #[doc(hidden)]
-    #[cfg(feature = "test-injectors")]
+    #[cfg(any(test, feature = "test-injectors"))]
     pub fn corrupt_retarget_input(&mut self, use_id: UseId, new_target: ValueId) {
         self.store.inputs[use_id].value_id = new_target;
     }
@@ -578,10 +578,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// The generic graph compacts only the structural arena (nodes, values,
     /// uses). Any consumer side-tables are the consumer's concern; they remap
     /// via the returned table.
-    pub fn retain_reachable(
-        &mut self,
-        reachable: impl IntoIterator<Item = NodeId>,
-    ) -> NodeIdRemap
+    pub fn retain_reachable(&mut self, reachable: impl IntoIterator<Item = NodeId>) -> NodeIdRemap
     where
         N: Clone,
         V: Clone,
@@ -667,7 +664,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
         remap
     }
-
 }
 
 /// Old→new id translation table produced by [`Graph::retain_reachable`].

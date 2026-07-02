@@ -117,9 +117,7 @@ fn match_at_on_wrong_kind_returns_none() {
         })
         .unwrap();
     let pat = load().build();
-    let result = Matcher::new(&function)
-        .match_at(add_node, &pat)
-        .unwrap();
+    let result = Matcher::new(&function).match_at(add_node, &pat).unwrap();
     assert!(result.is_none());
 }
 
@@ -136,9 +134,7 @@ fn match_at_is_scoped_to_that_node_only() {
         })
         .unwrap();
     let pat = int_const(5u128).into_pattern();
-    let result = Matcher::new(&function)
-        .match_at(add_node, &pat)
-        .unwrap();
+    let result = Matcher::new(&function).match_at(add_node, &pat).unwrap();
     assert!(result.is_none());
 }
 

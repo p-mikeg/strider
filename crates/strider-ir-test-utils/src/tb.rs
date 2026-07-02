@@ -79,6 +79,14 @@ impl Tb {
         Self { fb }
     }
 
+    /// Build a `Tb` from a fully-configured [`RegisterSet`], with an entry
+    /// region pre-created and set active.  Use when the fixture needs a CC
+    /// knob the positional constructors don't take (e.g. `stack_args`).
+    pub fn from_rs(rs: RegisterSet) -> Self {
+        let fb = rs.build_fn_single_region().expect("build_fn_single_region");
+        Self { fb }
+    }
+
     /// Low-level raw constructor matching `FunctionBuilder::new`, with
     /// an entry region pre-created and set active.
     pub fn raw(
@@ -113,6 +121,8 @@ impl Tb {
     /// Makes `r` the entry region for the function.
     pub fn set_entry(&mut self, r: strider_ir::RegionId) {
         self.fb.set_entry_region(r).expect("set_entry_region");
+        // Mirror the lifter: record register-arg carriers after entry setup.
+        self.fb.record_register_arg_carriers();
     }
 
     // ── Raw access ────────────────────────────────────────────────────────────
@@ -328,7 +338,7 @@ impl Tb {
         };
         let (_node, result) = self
             .fb
-            .build_call_other_abi(user_op_id, name, None, args, &abi, output_vn, false)
+            .build_call_other_abi(user_op_id, name, args, &abi, output_vn, false)
             .expect("call_other");
         result
     }

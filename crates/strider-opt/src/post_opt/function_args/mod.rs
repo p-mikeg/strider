@@ -85,11 +85,12 @@ impl PostOptimizer for FunctionArgDetect {
             return Ok(());
         };
         // Register args are recorded at builder entry; this pass owns only the
-        // stack-arg indices (>= first_stack_arg). Clear just those so re-running
-        // across stable iterations stays idempotent without wiping the
-        // build-time register-arg carriers.
-        ctx.function_mut()
-            .clear_arg_values_from(first_stack_arg as u32);
+        // stack-arg indices (>= first_stack_arg).  Each analyze iteration lifts a
+        // fresh function, so the stack-arg carriers start empty; a re-run on the
+        // same function would at worst append a carrier `ValueId` a second time,
+        // which every consumer tolerates (they take `.first()` or test
+        // membership), so no clear is needed.
+        //
         // Build the SP-alias context once for the whole pass: it owns the shared
         // decompose memo + the alias knobs (read from `OptOptions` here, not
         // threaded down).

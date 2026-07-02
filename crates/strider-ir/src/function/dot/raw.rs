@@ -27,7 +27,7 @@ fn fmt_vn(vn: &rsleigh::Vn) -> String {
 }
 
 /// A raw 1:1 DOT dumper over a [`Function`] (see the module docs).
-pub struct RawFunctionDumper<'a> {
+pub(super) struct RawFunctionDumper<'a> {
     function: &'a Function,
     /// Reverse of `Function::arg_index_to_values`: carrier node → arg indices.
     arg_index: FxHashMap<NodeId, Vec<u32>>,
@@ -35,7 +35,7 @@ pub struct RawFunctionDumper<'a> {
 
 impl<'a> RawFunctionDumper<'a> {
     /// Wraps `function` for raw rendering.
-    pub fn new(function: &'a Function) -> Self {
+    pub(super) fn new(function: &'a Function) -> Self {
         Self {
             arg_index: super::build_arg_reverse_map(function),
             function,
@@ -82,7 +82,7 @@ impl<'a> RawFunctionDumper<'a> {
             s.push_str(&format!("\nout: {}", outs.join(", ")));
         }
 
-        if let Some((_, off)) = f.stack_offset(node) {
+        if let Some((_, off)) = f.side_tables().stack_offset(node) {
             s.push_str(&format!("\nsp[{off}]"));
         }
         if let Some(vn) = f
@@ -93,12 +93,12 @@ impl<'a> RawFunctionDumper<'a> {
         {
             s.push_str(&format!("\ntag={}", fmt_vn(&vn)));
         }
-        let fp = f.asm_fingerprint(node);
+        let fp = f.side_tables().asm_fingerprint(node);
         if !fp.is_empty() {
             let addrs: Vec<String> = fp.iter().map(|a| format!("{a:#x}")).collect();
             s.push_str(&format!("\nfp=[{}]", addrs.join(",")));
         }
-        if let Some(name) = f.call_other_name(node) {
+        if let Some(name) = f.side_tables().call_other_name(node) {
             s.push_str(&format!("\nop={name}"));
         }
         if matches!(f.node_kind(node), NodeKind::Call) {

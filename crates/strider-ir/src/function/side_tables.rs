@@ -5,7 +5,7 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
-use crate::graph::{remap_node_keyed, NodeIdRemap};
+use crate::graph::{NodeIdRemap, remap_node_keyed};
 use crate::node::{NodeId, ValueId};
 
 /// Drains an `FxHashMap` and rebuilds it through a per-entry translation,
@@ -40,7 +40,7 @@ where
 /// typed accessor on [`crate::Function`].  All entries are remapped (or dropped) when
 /// the arena is compacted.
 #[derive(Default, Clone)]
-pub(crate) struct SideTables {
+pub struct SideTables {
     /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
     /// nodes.
     pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
@@ -53,7 +53,7 @@ pub(crate) struct SideTables {
     // The mutation API (`extend_asm_fingerprint`,
     // `extend_asm_fingerprint_from`) keeps using `&[u64]` /
     // `impl IntoIterator<Item = u64>` so callers are unaffected.
-    pub(crate) asm_fingerprints: SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
+    asm_fingerprints: SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
     /// The varnode a value *represents*, keyed by [`ValueId`].  Two
     /// disjoint populations share this one map:
     ///
@@ -69,7 +69,14 @@ pub(crate) struct SideTables {
     ///
     /// Keyed by `ValueId` (not `NodeId`) so it remaps through the
     /// `ValueId` translation that [`crate::Function::compact`] applies.
-    pub(crate) value_vn: FxHashMap<ValueId, rsleigh::Vn>,
+    ///
+    /// The payload is a tracked-varnode id (`InitialVnId`), NOT a raw `Vn`: a
+    /// value's source-register tag is only meaningful for a *tracked* varnode
+    /// (one the function has a `VnId` for), so an untracked vn (e.g. a
+    /// `CallOther` clobber register outside the tracked set) is simply not
+    /// tagged. Stored as a 4-byte id, and stable across `compact` (the
+    /// tracked-vn interner never renumbers).
+    pub(crate) value_vn: FxHashMap<ValueId, crate::node::InitialVnId>,
     /// Per-[`crate::node::NodeKind::Call`] override calling convention, recorded
     /// at build time for a Call built with a per-address CC override.  Sparse:
     /// a default Call (function-default CC) has no entry.  Read through
@@ -89,7 +96,7 @@ pub(crate) struct SideTables {
     /// have a `Vec` of size 1.
     ///
     /// Populated by `FunctionArgDetect`; empty until that pass runs.
-    pub(crate) arg_index_to_values: FxHashMap<u32, Vec<ValueId>>,
+    arg_index_to_values: FxHashMap<u32, Vec<ValueId>>,
     /// Stack slot for Store/Load nodes whose address decomposes to
     /// `base + K` for a single concrete `K`, where `base` is the SP-derived
     /// terminal node (`InitialVar(sp)` or an alignment-masked `sp & -16`).
@@ -98,21 +105,129 @@ pub(crate) struct SideTables {
     /// Populated by the `StackOffsetDetect` classifier.  The phi-of-offsets
     /// case (address is a phi of different constants per branch) is not
     /// recorded — consumers can re-decompose via `decompose_sp` if needed.
-    pub(crate) stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>>,
-    /// O(1) varnode → `InitialVar(vn)` node-id accelerator for
-    /// indirect-resolve sites and the lifter's lazy `read_or_init_var`
-    /// fallback.  Maintained at every canonical `InitialVar`
-    /// creation site (the lift-time path and the orchestrator
-    /// fallback) and remapped through [`NodeIdRemap`] by
-    /// [`crate::Function::compact`].
+    stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>>,
+    /// O(1) [`crate::node::InitialVnId`] → `InitialVar(id)` node-id accelerator
+    /// for indirect-resolve sites and the lifter's lazy `read_or_init_var`
+    /// fallback.  Keyed by the tracked-varnode id (not the raw `rsleigh::Vn`)
+    /// — the id is 4 bytes vs the varnode's 16, and every key is by
+    /// construction a tracked varnode (an `InitialVar` payload).  Maintained
+    /// at every canonical `InitialVar` creation site (the lift-time path and
+    /// the orchestrator fallback).  The `InitialVnId` keys are stable across
+    /// compaction (the tracked set doesn't change when dead nodes are culled),
+    /// so [`crate::Function::compact`] remaps only the `NodeId` payload.
     ///
     /// Writers must guarantee the inserted `node_id`'s kind is
-    /// `NodeKind::InitialVar(vn)` for the key `vn` — the index is advisory and
+    /// `NodeKind::InitialVar(id)` for the key `id` — the index is advisory and
     /// never re-checked.
-    pub(crate) initial_var_index: FxHashMap<rsleigh::Vn, NodeId>,
+    pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
 }
 
 impl SideTables {
+    // ── pure get/set accessors ────────────────────────────────────────────
+    //
+    // Each of these only reads or writes ONE side table with no cross-table or
+    // interner resolution, so it lives here with the data.  Accessors that also
+    // consult the `vn_interner` / `default_cc` (`get`/`set_vn_for_value`,
+    // `get_cc`, `initial_sp`, `initial_var_value`) stay on `Function`, reached
+    // through [`crate::Function::side_tables`] / `side_tables_mut`.
+
+    /// Returns the user-op name associated with a
+    /// [`crate::node::NodeKind::CallOther`] node, or `None` if no name has been
+    /// recorded for that node.
+    #[inline]
+    pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
+        self.call_other_names[node_id].as_deref()
+    }
+
+    /// Records the user-op `name` for a [`crate::node::NodeKind::CallOther`]
+    /// node.  The `CallOther` emitter is name-agnostic; the caller (the lifter,
+    /// or a test) stamps the name here after building the node.
+    #[inline]
+    pub fn set_call_other_name(&mut self, node_id: NodeId, name: impl Into<String>) {
+        self.call_other_names[node_id] = Some(name.into());
+    }
+
+    /// Records `cc` as the per-`Call` override calling convention for
+    /// `node_id`.  Replaces any prior override.  Read back via
+    /// [`crate::Function::get_cc`] (the Call's effective CC).
+    #[inline]
+    pub fn set_call_cc(&mut self, node_id: NodeId, cc: strider_target::BuiltCallingConvention) {
+        self.call_cc.insert(node_id, cc);
+    }
+
+    /// All carrier output [`ValueId`]s registered for argument `index`, or
+    /// `&[]` if none.  Register args have a slice of length 1; stack args may
+    /// have multiple entries (different-width `Load`s at the same `sp+K`).
+    #[inline]
+    pub fn arg_index_to_values(&self, index: u32) -> &[ValueId] {
+        self.arg_index_to_values
+            .get(&index)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Register `value` (a carrier node's single output) as a carrier for
+    /// argument `index`.  Appends to the per-index `Vec`.
+    #[inline]
+    pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
+        self.arg_index_to_values
+            .entry(index)
+            .or_default()
+            .push(value);
+    }
+
+    /// Iterate over all registered argument indices (unordered).
+    #[inline]
+    pub fn iter_arg_indices(&self) -> impl Iterator<Item = u32> + '_ {
+        self.arg_index_to_values.keys().copied()
+    }
+
+    /// Returns the stack slot `(base, offset)` recorded for a Store/Load node,
+    /// or `None`.  `base` is the SP-derived terminal node the offset is
+    /// relative to; offsets compare only when their bases match.
+    #[inline]
+    pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i128)> {
+        self.stack_offsets[id]
+    }
+
+    /// Records a concrete stack slot `(base, offset)` for a Store/Load node.
+    #[inline]
+    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i128) {
+        self.stack_offsets[id] = Some((base, offset));
+    }
+
+    /// Returns the asm-instruction-address fingerprint of `id` as a
+    /// sorted-deduplicated slice (empty when nothing was recorded).
+    #[inline]
+    pub fn asm_fingerprint(&self, id: NodeId) -> &[u64] {
+        self.asm_fingerprints[id].as_slice()
+    }
+
+    /// Unions `contributors` into `node_id`'s fingerprint, kept sorted and
+    /// deduplicated.  Existing entries are never removed (the no-shrink
+    /// contract).  Empty `contributors` is a no-op.
+    pub fn extend_asm_fingerprint(&mut self, node_id: NodeId, contributors: &[u64]) {
+        if contributors.is_empty() {
+            return;
+        }
+        // Both existing and `contributors` are tiny (a handful of addresses),
+        // so extend + sort + dedup is the right wheel.
+        let fp = &mut self.asm_fingerprints[node_id];
+        fp.extend_from_slice(contributors);
+        fp.sort_unstable();
+        fp.dedup();
+    }
+
+    /// Unions the fingerprint of `src` into `dst`.  Self-extension
+    /// (`src == dst`) is a no-op.
+    pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
+        if dst == src {
+            return;
+        }
+        let src_slice: smallvec::SmallVec<[u64; 4]> =
+            self.asm_fingerprints[src].iter().copied().collect();
+        self.extend_asm_fingerprint(dst, &src_slice);
+    }
+
     /// Remaps every arena-id key / value through `remap` after a
     /// `retain_reachable` compaction; an entry whose node or value did not
     /// survive is dropped.  Called once by [`crate::Function::compact`].
@@ -140,14 +255,19 @@ impl SideTables {
         }
         self.stack_offsets = new_stack_offsets;
         // `value_vn`: ValueId-keyed (a phi / clobber output); translate keys.
-        self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn| {
+        // The `InitialVnId` payload is stable across compaction, so it passes
+        // through unchanged.
+        self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn_id| {
             remap
                 .value_old_to_new(old_value)
-                .map(|new_value| (new_value, vn))
+                .map(|new_value| (new_value, vn_id))
         });
-        // `initial_var_index`: Vn-keyed with a NodeId payload; remap the value.
-        self.initial_var_index = remap_hashmap(&mut self.initial_var_index, |vn, old_id| {
-            remap.node_old_to_new(old_id).map(|new_id| (vn, new_id))
+        // `initial_var_index`: `InitialVnId`-keyed with a NodeId payload. The
+        // `InitialVnId` keys are stable across compaction (the tracked-vn set
+        // is unchanged), so only the NodeId payload is remapped; a key whose
+        // node did not survive is dropped.
+        self.initial_var_index = remap_hashmap(&mut self.initial_var_index, |vn_id, old_id| {
+            remap.node_old_to_new(old_id).map(|new_id| (vn_id, new_id))
         });
         // `arg_index_to_values`: index-keyed with a `Vec<ValueId>` payload;
         // filter-map the carriers, dropping an index whose carriers all vanish.

@@ -81,7 +81,7 @@ impl Graph {
 ///
 /// Test-only helper — input is a hard-coded literal in callers, so a
 /// malformed line panics rather than returning an error.
-pub fn graph(input: &str) -> Graph {
+pub(crate) fn graph(input: &str) -> Graph {
     let mut graph = Graph {
         nodes: PrimaryMap::new(),
         nodes_by_name: std::collections::HashMap::default(),

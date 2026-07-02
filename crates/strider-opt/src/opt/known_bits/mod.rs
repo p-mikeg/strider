@@ -16,7 +16,7 @@ mod tests;
 /// Migrated from `FxHashMap<ValueId, KnownBitsFacts>` to `SecondaryMap` to
 /// avoid hashing in the inner loop — at 10k+ nodes this is the
 /// hottest probe in the entire `KnownBits` pass.
-pub type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
+pub(crate) type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
 
 // ── Known-bits representation ─────────────────────────────────────────────────
 
@@ -594,7 +594,7 @@ impl Optimizer for KnownBits {
             for p in crate::peephole::input_producers(ctx, folded_producer) {
                 if let Some(addrs) = cone_fps.get(&p) {
                     ctx.function_mut()
-                        .extend_asm_fingerprint(new_producer, addrs);
+                        .side_tables_mut().extend_asm_fingerprint(new_producer, addrs);
                 }
             }
             // `replace_value` absorbs the rewritten node's fingerprint into
@@ -647,7 +647,7 @@ fn build_cone_fingerprint_memo(
     while let Some((n, expanded)) = stack.pop() {
         if expanded {
             // Children resolved — assemble this node's set.
-            let mut addrs: ConeFps = ctx.function().asm_fingerprint(n).iter().copied().collect();
+            let mut addrs: ConeFps = ctx.function().side_tables().asm_fingerprint(n).iter().copied().collect();
             if propagates_known_bits(ctx.node_kind(n)) {
                 for p in crate::peephole::input_producers_iter(ctx, n) {
                     if let Some(child) = memo.get(&p) {

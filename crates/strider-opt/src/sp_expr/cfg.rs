@@ -62,8 +62,7 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_, '_> {
                 // `decompose`) and its size, then run the pure class-on-class
                 // verdict directly — anything but `Disjoint` clobbers (a
                 // `load_forward` caller re-checks exact-`Match` afterward).
-                let store_size =
-                    store_value_byte_size(function.graph(), function.store_data(def));
+                let store_size = store_value_byte_size(function.graph(), function.store_data(def));
                 let store_class =
                     SpAnalyzer::new(function, &mut *self.cfg.sp_memo).classify_store_addr(def);
                 alias_verdict(
@@ -253,7 +252,7 @@ impl<'m> SpAliasCfg<'m> {
         }
         // Resolve the store's own SP offset (side-table SSoT, else decompose); it
         // must share `base` to be comparable to the probed location.
-        let store_offset = match function.stack_offset(clobber) {
+        let store_offset = match function.side_tables().stack_offset(clobber) {
             Some((b, off)) if b == base => off,
             Some(_) => return None,
             None => match self.decompose(function, function.store_addr(clobber)) {
@@ -282,7 +281,7 @@ impl<'m> SpAliasCfg<'m> {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReachingSpStore {
     /// The reaching `Store` node.
-    pub node: NodeId,
+    node: NodeId,
     /// The store's SP-relative byte offset (from `base`).  Equals the probed
     /// `offset` exactly when the store is anchored at the probed location;
     /// callers that require anchoring compare the two.
@@ -291,13 +290,13 @@ pub(crate) struct ReachingSpStore {
 
 impl ReachingSpStore {
     /// The stored data value (the candidate argument / table entry).
-    pub fn data(&self, function: &Function) -> ValueId {
+    pub(crate) fn data(&self, function: &Function) -> ValueId {
         function.store_data(self.node)
     }
 
     /// The store's data byte width.  Callers derive an argument's slot span
     /// from this (`ceil(size / increment)`).
-    pub fn size(&self, function: &Function) -> i128 {
+    pub(crate) fn size(&self, function: &Function) -> i128 {
         store_value_byte_size(function.graph(), self.data(function))
     }
 }

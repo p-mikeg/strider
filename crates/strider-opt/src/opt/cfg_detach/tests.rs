@@ -289,7 +289,6 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     let (call_t, _) = b.build_call_other_abi(
         0,
         "cpuid",
-        None,
         &[],
         &strider_target::BuiltCallOtherAbi {
             implicit_reads: Vec::new(),
@@ -310,7 +309,6 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     let (call_f, _) = b.build_call_other_abi(
         0,
         "cpuid",
-        None,
         &[],
         &strider_target::BuiltCallOtherAbi {
             implicit_reads: Vec::new(),
@@ -403,7 +401,6 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     let (call_t, _) = b.build_call_other_abi(
         0,
         "cpuid",
-        None,
         &[],
         &strider_target::BuiltCallOtherAbi {
             implicit_reads: Vec::new(),
@@ -421,7 +418,6 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     let (call_f, _) = b.build_call_other_abi(
         0,
         "cpuid",
-        None,
         &[],
         &strider_target::BuiltCallOtherAbi {
             implicit_reads: Vec::new(),

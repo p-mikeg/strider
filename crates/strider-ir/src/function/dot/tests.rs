@@ -1,8 +1,8 @@
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 use super::*;
-use crate::function::test_function;
 use crate::function::Function;
+use crate::function::test_function;
 use crate::node::{NodeKind, ValueKind, ValueType};
 use crate::{IRViewer, IRWalker};
 use ::dot::GraphDotDumper as _;
@@ -538,7 +538,7 @@ fn call_other_label_includes_resolved_name() {
         [entry_ctrl, mem],
         [ValueKind::Control, ValueKind::Memory],
     );
-    f.side_tables.call_other_names[co] = Some("setISAMode".to_string());
+    f.side_tables_mut().call_other_names[co] = Some("setISAMode".to_string());
     let co_ctrl = f.node_outputs(co).iter().copied().next().unwrap();
     let co_mem = f.node_outputs(co).iter().copied().nth(1).unwrap();
     f.graph_mut()
@@ -650,7 +650,7 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
 
     // ── Case 2: stack_offset present — addr edge kept, label gains offset ──
 
-    f.set_stack_offset(store, addr_value, 0x10_i128);
+    f.side_tables_mut().set_stack_offset(store, addr_value, 0x10_i128);
 
     let dot_with_offset = render(&f, entry);
 
@@ -711,7 +711,7 @@ fn load_keeps_addr_edge_and_labels_base_sp_offset() {
     let edges_no_offset = edge_lines(&dot_no_offset).len();
 
     // With stack offset: addr edge kept, label gains `base sp - 8`.
-    f.set_stack_offset(load, addr_value, -8_i128);
+    f.side_tables_mut().set_stack_offset(load, addr_value, -8_i128);
     let dot_with_offset = render(&f, entry);
 
     assert!(
@@ -750,7 +750,7 @@ fn function_arg_node_label_includes_arg_index() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let [iv_value] = f.node_outputs_exact::<1>(init_var).unwrap();
-    f.register_arg_value(0, iv_value);
+    f.side_tables_mut().register_arg_value(0, iv_value);
 
     // Wire it into a Return so it's reachable.
     f.graph_mut()
@@ -840,7 +840,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
         [ValueKind::Typed(ValueType::I64)],
     );
     let [phi_value] = f.node_outputs_exact::<1>(phi).unwrap();
-    f.side_tables.value_vn.insert(
+    f.set_vn_for_value(
         phi_value,
         Vn {
             addr_off: 0x10,

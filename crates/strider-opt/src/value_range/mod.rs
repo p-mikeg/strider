@@ -631,7 +631,8 @@ fn guard_from_compare(
     edge_taken: bool,
     known: &KnownBitsMap,
 ) -> Option<(ValueId, Interval)> {
-    let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = *function.kind_of_value(cmp_value)
+    let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) =
+        *function.kind_of_value(cmp_value)
     else {
         return None;
     };

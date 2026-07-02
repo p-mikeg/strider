@@ -16,46 +16,39 @@
 //! other [`Graph`] method is reached explicitly through [`Function::graph`] /
 //! [`Function::graph_mut`].
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
-use crate::graph::{Graph, NodeIdRemap};
-use crate::node::{NodeId, NodeKind, ValueId};
 use crate::IRWalker;
 use crate::function::side_tables::SideTables;
+use crate::graph::{Graph, NodeIdRemap};
+use crate::node::{NodeId, NodeKind, ValueId};
 
-/// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
-/// inclusion) that fully contains `vn`, or `vn` itself when none does.
+/// Deterministic ordering key for a tracked varnode: `(space, offset,
+/// size)`.  [`Function::new`] sorts the tracked set by this before interning
+/// so `InitialVnId` assignment — and every derived clobber-slot index — is
+/// stable regardless of the order varnodes were collected from the CFG.
+pub(crate) fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
+    (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
+}
+
+/// Test-fixture CC register-list projection: the ret-val + clobber varnode
+/// groups a `Call` under `cc` emits, over `function`'s tracked varnodes.
 ///
-/// Returns `*vn` unchanged when `vn` is not in an aliasable
-/// (REGISTER/UNIQUE) space — containment-by-offset is meaningless for
-/// CONST / RAM / code-space varnodes.  Otherwise it picks the largest
-/// same-space element of `vns` whose `[off, off+size)` (saturating) range
-/// fully encloses `vn`'s range, falling back to `*vn` when nothing does.
-///
-/// This is the single linear containment scan shared by
-/// [`Function::container_of`]'s fallback and the bulk `vn_to_container`
-/// map build in `FunctionBuilder::new`.
-pub(crate) fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
-    if vn.addr_space != rsleigh::VnSpace::REGISTER && vn.addr_space != rsleigh::VnSpace::UNIQUE {
-        return *vn;
-    }
-    let start = vn.addr_off;
-    let end = start.saturating_add(u64::from(vn.size));
-    let mut best: Option<rsleigh::Vn> = None;
-    for cand in vns {
-        if cand.addr_space != vn.addr_space {
-            continue;
-        }
-        let cs = cand.addr_off;
-        let ce = cs.saturating_add(u64::from(cand.size));
-        if cs > start || ce < end {
-            continue;
-        }
-        if best.is_none_or(|b| b.size < cand.size) {
-            best = Some(*cand);
-        }
-    }
-    best.unwrap_or(*vn)
+/// A thin binding of the SSoT
+/// [`strider_target::BuiltCallingConvention::ret_and_clobber_vns`] to the
+/// container resolver (`vn_container::largest_container_in` over the tracked set) —
+/// the same result the lifter's `cc_projection` produces in prod with its
+/// container map.  This exists only for the strider-ir test fixtures
+/// (`build_call_cc`) and cross-crate CC-shape tests that build a `Call`
+/// without a lifter, which is why it is feature-gated; prod call construction
+/// goes through the lifter.
+#[cfg(any(test, feature = "test-util"))]
+pub fn cc_ret_and_clobber_vns(
+    function: &Function,
+    cc: &strider_target::BuiltCallingConvention,
+) -> (Vec<rsleigh::Vn>, Vec<rsleigh::Vn>) {
+    let all = function.all_vns();
+    cc.ret_and_clobber_vns(all, |v| vn_container::largest_container_in(all, v))
 }
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
@@ -88,8 +81,10 @@ pub struct Function {
     // `default_cc` (the resolved convention) and `all_vns` (the ordered
     // tracked-varnode set) are the two genuinely-non-derivable inputs.
     // Every register-list projection a `Call` / `CallOther` / `Return`
-    // node needs is *derived* from these two via the accessors below
-    // (`call_clobbered_for`, `ret_val_regs`, `call_other_clobbered`) —
+    // node needs is *derived* from these two — in prod by the lifter's
+    // `cc_projection`, and for test fixtures by the SSoT
+    // [`strider_target::BuiltCallingConvention::ret_and_clobber_vns`]
+    // (bound to the IR container resolver by [`cc_ret_and_clobber_vns`]) —
     // there are no cached projected lists, so a per-address-CC override
     // produces a correct per-call clobber set by deriving against that
     // call's effective CC over the same `all_vns`.
@@ -105,36 +100,31 @@ pub struct Function {
     /// surfaced by the [`Self::stack_vn`] / [`Self::ret_stack_pop`] /
     /// [`Self::preserves_memory`] accessors.  The convention's
     /// `arg_passing_regs` / `ret_val_regs` / `callee_saved_regs` drive the
-    /// register-list derivations ([`Self::call_clobbered_for`],
-    /// [`Self::ret_val_regs`]).
-    pub(crate) default_cc: strider_target::BuiltCallingConvention,
+    /// ret-val/clobber register-list projection (the lifter's `cc_projection`
+    /// in prod; [`cc_ret_and_clobber_vns`] for test fixtures).
+    default_cc: strider_target::BuiltCallingConvention,
     /// Target endianness of the architecture this function was lifted
-    /// for.  Drives the bit-shift formula the builder's register-aliasing
-    /// path uses when reading / writing a sub-register inside a wider
-    /// container (see [`crate::FunctionBuilder::read_reg_vn`]).  A `Copy`
-    /// scalar (so [`Self::compact`] needs no remap for it); defaults to
+    /// for.  Read by post-lift analyses that decode multi-byte values
+    /// (the optimizer's ROM-const evaluation and stack high/low-half
+    /// splits).  Register-aliasing sub-register slicing itself lives in the
+    /// lifter now, so this is no longer on that hot path.  A `Copy` scalar
+    /// (so [`Self::compact`] needs no remap for it); defaults to
     /// little-endian on the [`Default`]-derived / synthetic-test path.
-    pub(crate) endianness: strider_target::Endianness,
-    /// Ordered list of every tracked varnode, in `InitialVar`-creation
-    /// (allocation) order.  Single source of truth for the function's
-    /// tracked-variable SET *and* the slot ordering of derived clobber
-    /// lists (so the `i`-th `Call` clobber output still corresponds to
-    /// the `i`-th derived clobber varnode).  `VarId` is a build-time-only
-    /// SSA key on the [`crate::FunctionBuilder`]; this is the post-build
-    /// replacement.  Holds plain `rsleigh::Vn`s (no arena ids), so
-    /// [`Self::compact`] leaves it untouched.
-    pub(crate) all_vns: Vec<rsleigh::Vn>,
-    /// `original vn → its largest tracked container` map. Domain: every
-    /// REGISTER/UNIQUE varnode in the pre-dedup tracked set *plus* every
-    /// register the calling convention names (arg / ret / float-ret /
-    /// stack / callee-saved), so a CC register narrower than its tracked
-    /// container (ABI says `eax`, function tracks `rax`) resolves to the
-    /// container. Codomain: an element of `all_vns`, or the key itself when
-    /// no wider tracked vn contains it. Const / RAM vns are NOT canonicalized
-    /// (left out of the map). Computed once in `FunctionBuilder::new`. Plain
-    /// `rsleigh::Vn` keys/values (no arena ids), so `compact` leaves it
-    /// untouched. Read through [`Self::container_of`].
-    pub(crate) vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
+    endianness: strider_target::Endianness,
+    /// The single interner for every tracked varnode
+    /// ([`crate::node::InitialVnId`] → [`rsleigh::Vn`], value-deduped in
+    /// deterministic `(space, offset, size)` order).  Single source of truth
+    /// for the function's tracked-variable SET *and* the slot ordering of
+    /// derived clobber lists (so the `i`-th `Call` clobber output still
+    /// corresponds to the `i`-th derived clobber varnode) *and* the SSA-
+    /// variable key the [`crate::FunctionBuilder`] uses during construction
+    /// (via [`Self::vn_id_of`] / [`Self::vn_ids`]).  `InitialVnId` is a plain
+    /// dense id whose assignment does not change when dead nodes are culled,
+    /// so [`Self::compact`] leaves the interner untouched.  Read the ordered
+    /// varnode list via [`Self::all_vns`], resolve an id via
+    /// [`Self::initial_vn`], and resolve a varnode to its id via
+    /// [`Self::vn_id_of`].
+    vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 
     // ── overlay tables ─────────────────────────────────────────────────────
     //
@@ -142,7 +132,7 @@ pub struct Function {
     // identity, grouped into [`SideTables`]; defaulted in one line by
     // [`Self::new`] and remapped in one [`SideTables::remap`] call by
     // [`Self::compact`].  Surfaced through the typed accessors below.
-    pub(crate) side_tables: SideTables,
+    side_tables: SideTables,
 
     /// Every integer-constant value referenced by an `IntConst(id)` node.
     ///
@@ -159,7 +149,7 @@ pub struct Function {
     /// map and the reverse value-dedup index.  Rebuilt over the live ids by
     /// [`Self::compact`].
     pub(crate) const_interner:
-        entity_utils::EntityInterner<crate::const_value::ConstId, crate::const_value::ConstValue>,
+        entity_utils::EntityInterner<crate::node::const_value::ConstId, crate::node::const_value::ConstValue>,
 }
 
 impl Function {
@@ -175,8 +165,7 @@ impl Function {
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
-        all_vns: Vec<rsleigh::Vn>,
-        vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
+        tracked_vns: Vec<rsleigh::Vn>,
     ) -> Self {
         // Build the `Entry` node (node 0) directly on the empty graph.  It is an
         // asm-fingerprint-exempt initial-state kind, so it needs no contributor
@@ -191,13 +180,24 @@ impl Function {
             [],
             [crate::node::ValueKind::Control],
         );
+        // The sort lives with the interner: the caller hands the (already
+        // deduped + CC-seeded) tracked set in arbitrary order; sorting by
+        // `(space, offset, size)` here makes `InitialVnId` assignment stable
+        // and reproducible independent of CFG-collection order, so the `i`-th
+        // interned id is the `i`-th tracked varnode.
+        let mut tracked_vns = tracked_vns;
+        tracked_vns.sort_by_key(vn_sort_key);
+        let mut vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn> =
+            entity_utils::EntityInterner::default();
+        for vn in tracked_vns {
+            vn_interner.intern(vn);
+        }
         Self {
             graph,
             entry,
             default_cc,
             endianness,
-            all_vns,
-            vn_to_container,
+            vn_interner,
             side_tables: SideTables::default(),
             const_interner: entity_utils::EntityInterner::default(),
         }
@@ -215,6 +215,23 @@ impl Function {
         &mut self.graph
     }
 
+    /// Shared access to the per-function overlay [`SideTables`] — the pure
+    /// get/set accessors for `CallOther` names, asm fingerprints, stack
+    /// offsets, argument carriers, and per-`Call` CC overrides live there.
+    /// Accessors that also consult the `vn_interner` / `default_cc`
+    /// (`get`/`set_vn_for_value`, [`Self::get_cc`], [`Self::initial_sp`],
+    /// [`Self::initial_var_value`]) stay on `Function`.
+    #[inline]
+    pub fn side_tables(&self) -> &SideTables {
+        &self.side_tables
+    }
+
+    /// Mutable access to the per-function overlay [`SideTables`].
+    #[inline]
+    pub fn side_tables_mut(&mut self) -> &mut SideTables {
+        &mut self.side_tables
+    }
+
     /// Interns the integer value `value`, masked to `ty`'s width, returning its
     /// `ConstId`. The single canonicalisation point for ≤ u128 constants: equal
     /// (masked) values share one id regardless of declared type.
@@ -222,10 +239,10 @@ impl Function {
         &mut self,
         value: u128,
         ty: crate::node::ValueType,
-    ) -> crate::const_value::ConstId {
+    ) -> crate::node::const_value::ConstId {
         let masked = value & ty.bit_mask_u128();
         self.const_interner
-            .intern(crate::const_value::ConstValue::Bits(masked))
+            .intern(crate::node::const_value::ConstValue::Bits(masked))
     }
 
     /// Interns a limbed integer value, canonicalising to `Bits` when the limbs
@@ -238,8 +255,8 @@ impl Function {
         &mut self,
         limbs: &[u64],
         ty: crate::node::ValueType,
-    ) -> crate::const_value::ConstId {
-        let cv = crate::const_value::ConstValue::Wide(limbs.to_vec().into_boxed_slice());
+    ) -> crate::node::const_value::ConstId {
+        let cv = crate::node::const_value::ConstValue::Wide(limbs.to_vec().into_boxed_slice());
         match cv.fits_u128() {
             Some(v) => self.intern_int_const(v, ty),
             None => self.const_interner.intern(cv),
@@ -252,7 +269,10 @@ impl Function {
     /// malformed graph (the validator's `DanglingConstId` guard, the debug
     /// renderers) probe `const_interner.get` directly.  Ids produced on a
     /// different function are not portable.
-    pub(crate) fn const_value(&self, id: crate::const_value::ConstId) -> &crate::const_value::ConstValue {
+    pub(crate) fn const_value(
+        &self,
+        id: crate::node::const_value::ConstId,
+    ) -> &crate::node::const_value::ConstValue {
         &self.const_interner[id]
     }
 
@@ -273,25 +293,25 @@ impl Function {
     }
 
     /// Target endianness of the architecture this function was lifted for.
-    /// Consumed by the builder's register-aliasing bit-shift formula
-    /// ([`crate::FunctionBuilder::read_reg_vn`] /
-    /// [`crate::FunctionBuilder::write_reg_vn`]).
+    /// Consumed by post-lift analyses that decode multi-byte values (the
+    /// optimizer's ROM-const evaluation and stack high/low-half splits).
     #[inline]
     pub fn endianness(&self) -> strider_target::Endianness {
         self.endianness
     }
 
-    /// The ordered tracked-varnode SSoT.
+    /// The ordered tracked-varnode SSoT (the `vn_interner`'s values, in
+    /// `InitialVnId` order).
     pub fn all_vns(&self) -> &[rsleigh::Vn] {
-        &self.all_vns
+        self.vn_interner.values_as_slice()
     }
 
     /// Resolve an [`crate::node::InitialVnId`] (carried by an
     /// `InitialVar` node) back to its varnode.  Panics on an
     /// out-of-range id — every id in the graph is minted from this
-    /// function's `all_vns`, so a miss is a structural invariant break.
+    /// function's `vn_interner`, so a miss is a structural invariant break.
     pub fn initial_vn(&self, id: crate::node::InitialVnId) -> rsleigh::Vn {
-        self.all_vns[id.index()]
+        self.vn_interner[id]
     }
 
     /// Non-panicking [`Self::initial_vn`] — `None` if `id` is out of range.
@@ -299,165 +319,43 @@ impl Function {
     /// partially-built graph; analysis code uses `initial_vn` and relies on
     /// the invariant.
     pub(crate) fn initial_vn_opt(&self, id: crate::node::InitialVnId) -> Option<rsleigh::Vn> {
-        self.all_vns.get(id.index()).copied()
+        self.vn_interner.get(id).copied()
     }
 
-    /// Resolve `vn` to its largest tracked container.
-    ///
-    /// Fast path: the precomputed `vn_to_container` map (covers
-    /// every original REGISTER/UNIQUE tracked vn + every CC register).
-    /// Fallback: an on-the-fly containment scan of `all_vns` for ad-hoc
-    /// REGISTER/UNIQUE vns not in the map. Returns `vn` unchanged when
-    /// nothing tracked contains it, or when `vn` is not in an aliasable
-    /// (REGISTER/UNIQUE) space.
-    pub fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
-        if let Some(c) = self.vn_to_container.get(vn) {
-            return *c;
+    /// Resolve a tracked varnode to its [`crate::node::InitialVnId`], or
+    /// `None` when `vn` is not a tracked variable.  The reverse of
+    /// [`Self::initial_vn`]; the [`crate::FunctionBuilder`] uses it as its
+    /// variable-table lookup during construction.
+    pub(crate) fn vn_id_of(&self, vn: &rsleigh::Vn) -> Option<crate::node::InitialVnId> {
+        self.vn_interner.key_of(vn)
+    }
+
+    /// Every tracked-varnode id, in `InitialVnId` (allocation) order.  The
+    /// builder iterates this to create one `InitialVar` / `Phi` per tracked
+    /// variable.
+    pub(crate) fn vn_ids(&self) -> impl Iterator<Item = crate::node::InitialVnId> + '_ {
+        self.vn_interner.keys()
+    }
+
+    /// Test-only: rebuild the tracked-varnode interner from `vns` (in order),
+    /// so `InitialVnId(i)` resolves to `vns[i]`.  White-box validator / CC
+    /// tests use it to declare the tracked set of a hand-built function.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn set_all_vns(&mut self, vns: Vec<rsleigh::Vn>) {
+        let mut interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn> =
+            entity_utils::EntityInterner::default();
+        for vn in vns {
+            interner.intern(vn);
         }
-        largest_container_in(&self.all_vns, vn)
-    }
-
-    /// The shared call-clobber predicate: a register (resolved to its tracked
-    /// container) is clobbered iff it is neither callee-saved under `cc` nor the
-    /// stack pointer.  The callee-saved set is hashed once so the predicate is
-    /// O(1) per probe (keeping the `call_*_for` derivations O(N), not O(N·M)).
-    /// CC regs are resolved to their tracked container first so a sub-register
-    /// ABI reg matches the wider tracked vn.
-    fn clobber_oracle(
-        &self,
-        cc: &strider_target::BuiltCallingConvention,
-    ) -> impl Fn(&rsleigh::Vn) -> bool + use<> {
-        let stack_vn = cc.stack_vn;
-        let callee_saved: FxHashSet<rsleigh::Vn> = cc
-            .callee_saved_regs
-            .iter()
-            .map(|v| self.container_of(v))
-            .collect();
-        move |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn
-    }
-
-    /// The convention's combined return-register list (integer ++ float),
-    /// each resolved to its tracked container via [`Self::container_of`].
-    ///
-    /// The shared CC-ret-reg → container chain behind both
-    /// [`Self::call_ret_vals_for`] (which keeps the tracked + clobbered ones)
-    /// and [`Self::call_clobbered_for`] (which excludes them) — one place that
-    /// owns "the ret regs, in container coordinates".
-    fn combined_ret_containers<'a>(
-        &'a self,
-        cc: &'a strider_target::BuiltCallingConvention,
-    ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
-        cc.ret_val_regs
-            .iter()
-            .chain(cc.ret_val_regs_float.iter())
-            .map(|v| self.container_of(v))
-    }
-
-    /// Derive the ret-val varnode list for a `Call` built under calling
-    /// convention `cc`.  Returns only those tracked, clobbered varnodes
-    /// that appear in the convention's combined return-register list
-    /// (`ret_val_regs` then `ret_val_regs_float`), in ABI order.
-    ///
-    /// This is the first group of Call output slots past `[Control,
-    /// Memory]`.  Together with [`Self::call_clobbered_for`] it partitions
-    /// what was formerly a single clobber tail into two labeled groups —
-    /// the slot ORDER is unchanged; only the conceptual split is new.
-    ///
-    /// Each CC register (ret-val, float-ret, callee-saved) is resolved to
-    /// its tracked container via [`Self::container_of`] before membership
-    /// is tested, and the resolved CONTAINER is emitted.  This keeps a
-    /// sub-register ABI ret reg (e.g. `eax`) classified as the return
-    /// value when the function tracks the wider container (`rax`) instead
-    /// of silently dropping it.  Identity on full-width preset regs.
-    pub fn call_ret_vals_for(
-        &self,
-        cc: &strider_target::BuiltCallingConvention,
-    ) -> Vec<rsleigh::Vn> {
-        let is_clobbered = self.clobber_oracle(cc);
-        // The combined ret list is tiny (1-2 regs), so a linear probe against
-        // `all_vns` is cheaper (and allocation-free) than hashing the whole
-        // tracked register file to test 1-2 items.
-        self.combined_ret_containers(cc)
-            .filter(|c| self.all_vns.contains(c) && is_clobbered(c))
-            .collect()
-    }
-
-    /// Derive the call-clobbered varnode list for a `Call` built under
-    /// calling convention `cc`, in the canonical slot order.
-    ///
-    /// Returns ONLY the non-ret caller-saved registers.  The ret-val
-    /// registers (formerly the "ret_prefix" front-loaded by the old
-    /// `build_call_clobbered_list`) are now emitted as a separate group
-    /// by [`Self::call_ret_vals_for`].  A varnode is clobbered iff it is
-    /// neither in `cc.callee_saved_regs` nor the function's stack pointer,
-    /// AND it is not in the convention's combined ret-val register list.
-    /// All elements are drawn from `all_vns` in allocation order.
-    ///
-    /// Each CC register (callee-saved, ret-val, float-ret) is resolved to
-    /// its tracked container via [`Self::container_of`] before it is used
-    /// to exclude entries here, so a sub-register ABI ret reg (e.g. `eax`)
-    /// whose tracked container is wider (`rax`) is correctly excluded from
-    /// the clobber tail rather than mis-filed as a clobber.  Identity on
-    /// full-width preset regs.
-    ///
-    /// To obtain the FULL combined set (ret-vals ++ clobbers) for callers
-    /// that need the old single-list shape, chain the two accessors:
-    /// `call_ret_vals_for(cc).into_iter().chain(call_clobbered_for(cc))`.
-    pub fn call_clobbered_for(
-        &self,
-        cc: &strider_target::BuiltCallingConvention,
-    ) -> Vec<rsleigh::Vn> {
-        // The clobber predicate (callee-saved + stack-vn exclusion) is shared
-        // with `call_ret_vals_for` via `clobber_oracle`.  The output ORDER
-        // (`all_vns` allocation order) is unchanged.
-        let is_clobbered = self.clobber_oracle(cc);
-        // The combined ret-reg list, resolved to tracked containers: the
-        // ret-val group is emitted separately by `call_ret_vals_for`, so
-        // exclude its containers here.
-        let ret_vars: FxHashSet<rsleigh::Vn> = self.combined_ret_containers(cc).collect();
-        // Only REGISTER / UNIQUE varnodes can be clobbered: clobbering a CONST /
-        // RAM tracked temp is meaningless (and the dumb `build_call` rejects a
-        // non-reg output vn).
-        self.all_vns
-            .iter()
-            .copied()
-            .filter(|v| {
-                matches!(
-                    v.addr_space,
-                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
-                ) && is_clobbered(v)
-                    && !ret_vars.contains(v)
-            })
-            .collect()
-    }
-
-    /// The function-default call-clobbered varnode list (derived against
-    /// [`Self::default_cc`]).  Convenience for consumers that want the
-    /// default-CC shape; per-address-override `Call`s derive against
-    /// their own CC via [`Self::call_clobbered_for`].
-    ///
-    /// Returns only the NON-ret caller-saved registers.  To get the full
-    /// set (ret-vals ++ clobbers), chain with
-    /// `call_ret_vals_for(default_cc())`.
-    #[inline]
-    pub fn call_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
-        self.call_clobbered_for(&self.default_cc)
-    }
-
-    /// The function-default ret-val varnode list (derived against
-    /// [`Self::default_cc`]).  Convenience for consumers that want the
-    /// default-CC ret-val shape.
-    #[inline]
-    pub fn call_ret_val_regs(&self) -> Vec<rsleigh::Vn> {
-        self.call_ret_vals_for(&self.default_cc)
+        self.vn_interner = interner;
     }
 
     /// The calling convention's combined return-value register list
     /// (integer then float, in ABI order), at each register's declared
     /// width — no tracked-container projection.  The registers are read
-    /// through the aliasing-aware [`crate::FunctionBuilder::read_reg_vn`]
-    /// at use sites, which resolves each declared register to its tracked
-    /// container (and errors if none exists), so the raw declared list is
+    /// through the lifter's aliasing-aware read path at use sites, which
+    /// resolves each declared register to its tracked container (and errors
+    /// if none exists), so the raw declared list is
     /// the right shape: a wider register (e.g. `RSI`) is read at its full
     /// width rather than being narrowed to a tracked sub-register.
     #[inline]
@@ -481,14 +379,6 @@ impl Function {
 
     // ── NodeId-keyed overlay accessors ────────────────────────────────────
 
-    /// Returns the user-op name associated with a
-    /// [`crate::node::NodeKind::CallOther`] node, or `None` if no name has
-    /// been recorded for that node.
-    #[inline]
-    pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
-        self.side_tables.call_other_names[node_id].as_deref()
-    }
-
     /// Returns the source varnode a value represents, or `None`. Single
     /// value-keyed view over `value_vn`, which tags three populations: a
     /// lift-time `Phi`'s tracked varnode, a `Call`/`CallOther` ret-val
@@ -504,15 +394,20 @@ impl Function {
     /// Phi-of-IntConst arm must not mistake a clobber tag for a phi tag.
     #[inline]
     pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
-        self.side_tables.value_vn.get(&value).copied()
+        self.side_tables
+            .value_vn
+            .get(&value)
+            .map(|&id| self.initial_vn(id))
     }
 
-    /// Records `cc` as the per-`Call` override calling convention for
-    /// `node_id`.  Replaces any prior override.  Read back via [`Self::get_cc`]
-    /// (whose `stack_args` is the call's effective stack-arg layout).
+    /// Tag `value` with the tracked varnode `vn`.  A no-op when `vn` is not a
+    /// tracked varnode (no `VnId`): a source-register tag is only meaningful for
+    /// a tracked vn, so an untracked one is left untagged rather than stored.
     #[inline]
-    pub fn set_call_cc(&mut self, node_id: NodeId, cc: strider_target::BuiltCallingConvention) {
-        self.side_tables.call_cc.insert(node_id, cc);
+    pub fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
+        if let Some(vn_id) = self.vn_id_of(&vn) {
+            self.side_tables.value_vn.insert(value, vn_id);
+        }
     }
 
     /// The **effective** calling convention for `node_id`: the per-`Call`
@@ -529,87 +424,33 @@ impl Function {
 
     // ── arg_index_to_values accessors ────────────────────────────────────
 
-    /// All carrier output [`ValueId`]s registered for argument `index`.
-    ///
-    /// Returns `&[]` if no carriers have been registered for that index.
-    /// Register args have a slice of length 1; stack args may have multiple
-    /// entries (different-width [`crate::node::NodeKind::Load`]s at the same
-    /// `sp+K` offset).  Each value's carrier node is recoverable via
-    /// [`Graph::producer`].
-    #[inline]
-    pub fn arg_index_to_values(&self, index: u32) -> &[ValueId] {
-        self.side_tables.arg_index_to_values
-            .get(&index)
-            .map_or(&[], Vec::as_slice)
-    }
-
-    /// Register `value` (a carrier node's single output) as a carrier for
-    /// argument `index`.
-    ///
-    /// Appends to the per-index `Vec`; multiple values per index are allowed
-    /// (the stack-args case may register multiple `Load`s at different widths
-    /// for the same offset).
-    #[inline]
-    pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
-        self.side_tables.arg_index_to_values
-            .entry(index)
-            .or_default()
-            .push(value);
-    }
-
-    /// Iterate over all registered argument indices (unordered).
-    #[inline]
-    pub fn iter_arg_indices(&self) -> impl Iterator<Item = u32> + '_ {
-        self.side_tables.arg_index_to_values.keys().copied()
-    }
-
-    /// Drop registered argument carriers for every index `>= first`.
-    ///
-    /// Lets the stack-arg detection pass rebuild only the stack-arg portion of
-    /// the table idempotently across the orchestrator's stable iterations,
-    /// without disturbing the register-arg carriers recorded at builder entry
-    /// (which occupy indices `0 .. first`).
-    #[inline]
-    pub fn clear_arg_values_from(&mut self, first: u32) {
-        self.side_tables.arg_index_to_values.retain(|&index, _| index < first);
-    }
-
     // ── stack_offsets accessors ───────────────────────────────────────────
-
-    /// Returns the stack slot `(base, offset)` recorded for a Store/Load
-    /// node, or `None` if the node has no recorded slot (non-stack node, or
-    /// a phi-of-offsets address whose single concrete offset cannot be
-    /// named).  `base` is the SP-derived terminal node the offset is
-    /// relative to; the offset is only comparable against another access's
-    /// offset when their bases match.
-    #[inline]
-    pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i128)> {
-        self.side_tables.stack_offsets[id]
-    }
-
-    /// Records a concrete stack slot `(base, offset)` for a Store/Load node.
-    #[inline]
-    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i128) {
-        self.side_tables.stack_offsets[id] = Some((base, offset));
-    }
 
     // ── initial_var_index accessors ───────────────────────────────────────
 
     /// Iterates the `initial_var_index` as `(vn, node_id)` pairs.  Used by the
     /// validator to enforce that every entry still resolves to a live
-    /// `InitialVar(vn)` node with the matching varnode.
+    /// `InitialVar(id)` node with the matching varnode.  Resolves each
+    /// [`crate::node::InitialVnId`] key back to its varnode at the boundary so
+    /// callers stay `Vn`-facing.
     #[inline]
     pub(crate) fn initial_var_index_entries(
         &self,
     ) -> impl Iterator<Item = (rsleigh::Vn, NodeId)> + '_ {
-        self.side_tables.initial_var_index.iter().map(|(&vn, &id)| (vn, id))
+        self.side_tables
+            .initial_var_index
+            .iter()
+            .map(|(&vn_id, &id)| (self.initial_vn(vn_id), id))
     }
 
     /// Iterates the `value_vn` map as `(value, vn)` pairs.  Used by the
     /// validator to enforce that every key is a live value output.
     #[inline]
     pub(crate) fn value_vn_entries(&self) -> impl Iterator<Item = (ValueId, rsleigh::Vn)> + '_ {
-        self.side_tables.value_vn.iter().map(|(&value, &vn)| (value, vn))
+        self.side_tables
+            .value_vn
+            .iter()
+            .map(|(&value, &id)| (value, self.initial_vn(id)))
     }
 
     /// Returns the entry-stack-pointer node — the `InitialVar(stack_vn)` node,
@@ -624,46 +465,23 @@ impl Function {
     /// an [`crate::EditFunction`] that maintains one) — a culled `InitialVar(sp)`
     /// is never referenced by a live load anyway.
     pub fn initial_sp(&self) -> Option<NodeId> {
-        self.side_tables
-            .initial_var_index
-            .get(&self.default_cc.stack_vn)
-            .copied()
+        let sp_id = self.vn_id_of(&self.default_cc.stack_vn)?;
+        self.side_tables.initial_var_index.get(&sp_id).copied()
     }
 
-    /// Returns the asm-instruction-address fingerprint of `node_id` as a
-    /// sorted-deduplicated slice.  Returns an empty slice when no
-    /// contributors have been recorded.
-    #[inline]
-    pub fn asm_fingerprint(&self, id: NodeId) -> &[u64] {
-        self.side_tables.asm_fingerprints[id].as_slice()
-    }
-
-    /// Unions `contributors` into `node_id`'s fingerprint.  Result is kept
-    /// sorted and deduplicated.  Existing entries are never removed: this
-    /// satisfies the no-shrink contract.  Empty `contributors` is a no-op.
-    pub fn extend_asm_fingerprint(&mut self, node_id: NodeId, contributors: &[u64]) {
-        if contributors.is_empty() {
-            return;
-        }
-        // Union `contributors` into the node's fingerprint, keeping it sorted
-        // and deduplicated.  Both `m` (existing) and `k` (contributors) are
-        // tiny (a handful of addresses), so the standard extend + sort + dedup
-        // is the right wheel — no hand-rolled two-pointer merge needed.
-        let fp = &mut self.side_tables.asm_fingerprints[node_id];
-        fp.extend_from_slice(contributors);
-        fp.sort_unstable();
-        fp.dedup();
-    }
-
-    /// Unions the fingerprint of `src` into `dst`.  Self-extension
-    /// (`src == dst`) is a no-op.
-    pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
-        if dst == src {
-            return;
-        }
-        let src_slice: smallvec::SmallVec<[u64; 4]> =
-            self.side_tables.asm_fingerprints[src].iter().copied().collect();
-        self.extend_asm_fingerprint(dst, &src_slice);
+    /// The `InitialVar(vn)` node's output value for a tracked varnode `vn`, or
+    /// `None` when `vn` is not tracked (no [`crate::node::InitialVnId`], so no
+    /// `InitialVar` node was created for it).
+    ///
+    /// O(1) via the `initial_var_index` accelerator.  The lifter uses it right
+    /// after `set_entry_region` to record register-passed arguments: an
+    /// arg-passing register resolves (lifter-side) to its tracked container,
+    /// and this returns that container's entry value — the carrier for the
+    /// argument's positional index.
+    pub fn initial_var_value(&self, vn: &rsleigh::Vn) -> Option<ValueId> {
+        let id = self.vn_id_of(vn)?;
+        let node = *self.side_tables.initial_var_index.get(&id)?;
+        self.graph.node_outputs(node).first().copied()
     }
 
     /// Same as [`Graph::create_node`] plus unions the asm-fingerprint of
@@ -687,7 +505,7 @@ impl Function {
     ) -> NodeId {
         let node_id = self.graph.create_node(kind, inputs, output_kinds);
         for &src in contributors {
-            self.extend_asm_fingerprint_from(node_id, src);
+            self.side_tables_mut().extend_asm_fingerprint_from(node_id, src);
         }
         node_id
     }
@@ -749,9 +567,11 @@ impl Function {
         })?;
         self.entry = new_entry;
         // Remap all the arena-id-keyed overlay tables through the old→new
-        // translation produced by `retain_reachable`.  `all_vns`, `default_cc`
-        // and `vn_to_container` hold plain `rsleigh::Vn`s (no arena ids), so
-        // they need no remap.
+        // translation produced by `retain_reachable`.  The `vn_interner` and
+        // `default_cc` are untouched: the tracked-vn set does not change when
+        // dead nodes are culled, so `InitialVnId` assignment is stable and the
+        // interner needs no remap (which is why `initial_var_index`, now
+        // `InitialVnId`-keyed, remaps only its NodeId payload).
         self.side_tables.remap(&remap);
         // GC the const interner over only the values referenced by surviving
         // `IntConst(id)` nodes, rewriting each survivor's id to the new dense
@@ -778,7 +598,7 @@ impl Function {
     /// surviving nodes, so the live-id scan correctly excludes zombie
     /// references.
     fn gc_consts(&mut self) {
-        use crate::const_value::ConstId;
+        use crate::node::const_value::ConstId;
         use crate::node::NodeKind;
 
         let mut live_old_ids: Vec<ConstId> = Vec::new();
@@ -791,7 +611,7 @@ impl Function {
         }
         let mut new_interner: entity_utils::EntityInterner<
             ConstId,
-            crate::const_value::ConstValue,
+            crate::node::const_value::ConstValue,
         > = entity_utils::EntityInterner::default();
         let mut old_to_new: FxHashMap<ConstId, ConstId> = FxHashMap::default();
         for old_id in live_old_ids {
@@ -873,22 +693,26 @@ mod function_skeleton_tests {
         assert_eq!(ids.len(), 2, "new() builds exactly Entry + InitialMemory");
         assert!(matches!(f.node_kind(ids[0]), NodeKind::Entry));
         assert!(matches!(f.node_kind(ids[1]), NodeKind::InitialMemory));
-        assert_eq!(f.entry(), ids[0], "entry() points at the Entry node (node 0)");
+        assert_eq!(
+            f.entry(),
+            ids[0],
+            "entry() points at the Entry node (node 0)"
+        );
     }
 
     #[test]
     fn function_asm_fingerprint_round_trips() {
         let mut f = test_function();
         let n = f.entry();
-        f.extend_asm_fingerprint(n, &[0xDEAD_BEEF]);
-        assert_eq!(f.asm_fingerprint(n), &[0xDEAD_BEEF]);
+        f.side_tables_mut().extend_asm_fingerprint(n, &[0xDEAD_BEEF]);
+        assert_eq!(f.side_tables().asm_fingerprint(n), &[0xDEAD_BEEF]);
     }
 
     #[test]
     fn arg_index_to_values_returns_empty_for_unregistered() {
         let f = test_function();
-        assert!(f.arg_index_to_values(0).is_empty());
-        assert!(f.arg_index_to_values(99).is_empty());
+        assert!(f.side_tables().arg_index_to_values(0).is_empty());
+        assert!(f.side_tables().arg_index_to_values(99).is_empty());
     }
 
     #[test]
@@ -904,16 +728,16 @@ mod function_skeleton_tests {
         let v2 = f.node_outputs(n2)[0];
 
         // Register two values for arg index 3 (the stack-args multi-Load case).
-        f.register_arg_value(3, v1);
-        f.register_arg_value(3, v2);
+        f.side_tables_mut().register_arg_value(3, v1);
+        f.side_tables_mut().register_arg_value(3, v2);
 
-        let values = f.arg_index_to_values(3);
+        let values = f.side_tables().arg_index_to_values(3);
         assert_eq!(values.len(), 2);
         assert!(values.contains(&v1));
         assert!(values.contains(&v2));
 
         // iter_arg_indices contains the registered index.
-        assert!(f.iter_arg_indices().any(|i| i == 3));
+        assert!(f.side_tables().iter_arg_indices().any(|i| i == 3));
     }
 
     /// `get_vn_for_value` round-trips via the ValueId-keyed map.
@@ -931,8 +755,9 @@ mod function_skeleton_tests {
             addr_off: 0x20,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
+        f.set_all_vns(vec![vn]); // only a tracked vn (with a VnId) can be tagged
         assert_eq!(f.get_vn_for_value(phi_value), None);
-        f.side_tables.value_vn.insert(phi_value, vn);
+        f.set_vn_for_value(phi_value, vn);
         assert_eq!(f.get_vn_for_value(phi_value), Some(vn));
     }
 
@@ -949,9 +774,9 @@ mod function_skeleton_tests {
             [ValueKind::Typed(ValueType::I64)],
         );
         let value = f.node_outputs(carrier)[0];
-        f.register_arg_value(0, value);
+        f.side_tables_mut().register_arg_value(0, value);
 
-        assert_eq!(f.arg_index_to_values(0), &[value]);
+        assert_eq!(f.side_tables().arg_index_to_values(0), &[value]);
         assert_eq!(f.graph().producer(value), carrier);
     }
 }
@@ -998,7 +823,7 @@ mod compact_tests {
     /// payload rewrite the survivor would dangle or read the wrong constant.
     #[test]
     fn compact_gcs_and_remaps_surviving_wide_const() {
-        use crate::const_value::ConstValue;
+        use crate::node::const_value::ConstValue;
         use crate::node::ValueType;
 
         // Genuinely-wide I256 value (high limb set ⇒ stays `Wide`).
@@ -1069,7 +894,7 @@ mod compact_tests {
         let ret =
             f.graph_mut()
                 .create_node(NodeKind::Return, [entry_ctrl, mem_value, base_value], []);
-        f.set_stack_offset(ret, base_value, -16);
+        f.side_tables_mut().set_stack_offset(ret, base_value, -16);
 
         let remap = f.compact().expect("compact must succeed");
 
@@ -1086,7 +911,7 @@ mod compact_tests {
             "the zombie ahead of it must shift the Return's id"
         );
         assert_eq!(
-            f.stack_offset(new_ret),
+            f.side_tables().stack_offset(new_ret),
             Some((new_base_value, -16)),
             "surviving stack_offsets entry must be remapped on key AND base"
         );
@@ -1112,14 +937,14 @@ mod compact_tests {
                 .create_node(NodeKind::Return, [entry_ctrl, mem_value, surv_value], []);
 
         // Stamp three asm addresses on the surviving IntConst before compact.
-        f.extend_asm_fingerprint(surviving, &[0x1000, 0x1004, 0x1008]);
+        f.side_tables_mut().extend_asm_fingerprint(surviving, &[0x1000, 0x1004, 0x1008]);
 
         let remap = f.compact().expect("compact must succeed");
         let new_id = remap
             .node_old_to_new(surviving)
             .expect("surviving IntConst must remain after compact");
         assert_eq!(
-            f.asm_fingerprint(new_id),
+            f.side_tables().asm_fingerprint(new_id),
             &[0x1000, 0x1004, 0x1008],
             "surviving node's asm-fingerprint must transfer to its post-compact NodeId"
         );
@@ -1192,7 +1017,8 @@ mod compact_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         let zombie_phi_value = f.node_outputs(zombie_phi)[0];
-        f.side_tables.value_vn.insert(zombie_phi_value, dead_vn);
+        f.set_all_vns(vec![dead_vn]); // only a tracked vn can be tagged
+        f.set_vn_for_value(zombie_phi_value, dead_vn);
         assert_eq!(
             f.get_vn_for_value(zombie_phi_value),
             Some(dead_vn),
@@ -1203,9 +1029,9 @@ mod compact_tests {
         let zombie_stack =
             int_const_node(&mut f, (0xBEEF_u64) as u128, crate::node::ValueType::I64);
         let zombie_value = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
-        f.set_stack_offset(zombie_stack, zombie_value, -8);
+        f.side_tables_mut().set_stack_offset(zombie_stack, zombie_value, -8);
         assert_eq!(
-            f.stack_offset(zombie_stack),
+            f.side_tables().stack_offset(zombie_stack),
             Some((zombie_value, -8)),
             "offset must be set before compact"
         );
@@ -1236,7 +1062,7 @@ mod compact_tests {
         let surviving_with_offset = f
             .graph()
             .all_node_ids()
-            .any(|n| f.stack_offset(n).map(|(_, o)| o) == Some(-8));
+            .any(|n| f.side_tables().stack_offset(n).map(|(_, o)| o) == Some(-8));
         assert!(
             !surviving_with_offset,
             "stack_offset -8 must not survive compaction on a surviving node"
@@ -1274,7 +1100,7 @@ mod compact_tests {
         let _ret =
             f.graph_mut()
                 .create_node(NodeKind::Return, [entry_ctrl, mem_value, arg_value], []);
-        f.register_arg_value(0, arg_value);
+        f.side_tables_mut().register_arg_value(0, arg_value);
 
         let remap = f.compact().expect("compact must succeed");
         let new_arg_value = remap
@@ -1282,12 +1108,12 @@ mod compact_tests {
             .expect("the live arg carrier value must survive compaction");
 
         assert_eq!(
-            f.arg_index_to_values(0),
+            f.side_tables().arg_index_to_values(0),
             &[new_arg_value],
             "arg_index_to_values must carry the carrier's post-compaction value"
         );
         // Every stored carrier value's producer must be a live node.
-        for &v in f.arg_index_to_values(0) {
+        for &v in f.side_tables().arg_index_to_values(0) {
             let node = f.graph().producer(v);
             assert!(
                 f.graph().all_node_ids().any(|n| n == node),
@@ -1334,8 +1160,9 @@ mod compact_tests {
             addr_space: rsleigh::VnSpace::REGISTER,
         };
         let dead_phi_value = f.node_outputs(dead_phi)[0];
-        f.side_tables.value_vn.insert(live_phi_value, live_vn);
-        f.side_tables.value_vn.insert(dead_phi_value, dead_vn);
+        f.set_all_vns(vec![live_vn, dead_vn]); // only tracked vns can be tagged
+        f.set_vn_for_value(live_phi_value, live_vn);
+        f.set_vn_for_value(dead_phi_value, dead_vn);
 
         let remap = f.compact().expect("compact must succeed");
         let new_live_phi = remap
@@ -1396,18 +1223,18 @@ mod compact_tests {
         );
         let [dead_value] = f.node_outputs_exact::<1>(dead_carrier).unwrap();
 
-        f.register_arg_value(0, live_value);
-        f.register_arg_value(1, dead_value);
+        f.side_tables_mut().register_arg_value(0, live_value);
+        f.side_tables_mut().register_arg_value(1, dead_value);
 
         f.compact().expect("compact must succeed");
 
         // arg 1's value was pruned → index removed entirely.
         assert!(
-            f.arg_index_to_values(1).is_empty(),
+            f.side_tables().arg_index_to_values(1).is_empty(),
             "pruned arg value must be dropped"
         );
         // arg 0 survives → producer recovers the live carrier.
-        let surviving = f.arg_index_to_values(0);
+        let surviving = f.side_tables().arg_index_to_values(0);
         assert_eq!(surviving.len(), 1);
         let node = f.graph().producer(surviving[0]);
         assert!(matches!(f.node_kind(node), NodeKind::InitialVar(_)));
@@ -1436,8 +1263,9 @@ mod compact_tests {
             addr_off: 0x40,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
+        f.set_all_vns(vec![vn]); // only a tracked vn can be tagged
         assert_eq!(f.get_vn_for_value(clobber_value), None);
-        f.side_tables.value_vn.insert(clobber_value, vn);
+        f.set_vn_for_value(clobber_value, vn);
         // Recoverable per-output: the clobber output value carries its Vn.
         assert_eq!(f.get_vn_for_value(clobber_value), Some(vn));
         // Control / Memory outputs carry no clobber tag.
@@ -1484,8 +1312,9 @@ mod compact_tests {
             addr_off: 0x40,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
-        f.side_tables.value_vn.insert(clob, clob_vn);
-        f.set_call_cc(call, cc.clone());
+        f.set_all_vns(vec![clob_vn]); // only a tracked vn can be tagged
+        f.set_vn_for_value(clob, clob_vn);
+        f.side_tables_mut().set_call_cc(call, cc.clone());
         let _ret = f
             .graph_mut()
             .create_node(NodeKind::Return, [call_ctrl, call_mem], []);

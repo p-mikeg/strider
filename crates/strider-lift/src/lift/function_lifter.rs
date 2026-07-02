@@ -25,6 +25,15 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// overrides (the `LiftOptions` default), so lookups are a plain `.get`.
     pub(crate) per_address_ccs:
         &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
+    /// `vn → largest tracked container` map ([`vn_container::ContainerMap`]):
+    /// the machine-register-container knowledge that lives with the lifter (not
+    /// the target-agnostic IR).  Built once from the raw collected varnode set
+    /// plus every calling-convention register, it is the O(1) fast path the
+    /// register-aliasing read/write (`vn_io`) and the CC / CallOther register
+    /// projections read on every access.  Ad-hoc varnodes absent from the map
+    /// fall through to its `all_vns` scan fallback in
+    /// [`FunctionLifter::container_of`].
+    pub(crate) container_map: vn_container::ContainerMap,
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
@@ -32,7 +41,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ///
     /// Constructs the IR [`FunctionBuilder`] with the supplied
     /// `all_vns` (the set of every varnode any instruction in `cfg`
-    /// references); the deterministic ordering that gives stable `VarId`
+    /// references); the deterministic ordering that gives stable `InitialVnId`
     /// numbering is applied by [`strider_ir::FunctionBuilder::new`].  The
     /// Sleigh is reached through the `lifter` (which owns it).
     /// `per_address_ccs` is the lift-time CC override map; pass an empty map
@@ -44,13 +53,36 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<Self> {
-        let builder = strider_ir::FunctionBuilder::new(all_vns, cc, lifter.arch.endianness())?;
+        // `FunctionBuilder::new` seeds the CC registers and drops enclosed
+        // sub-registers, so `builder.function().all_vns()` is the canonical
+        // tracked set (universe construction — shared by every fixture — lives
+        // there).  Resolving a varnode INTO that set is the machine-register
+        // concern owned here in the lifter: precompute the `vn → container` map
+        // over every raw collected varnode plus every CC register (arg / ret /
+        // float-ret / stack / callee-saved), so a CC register narrower than its
+        // tracked container (ABI says `eax`, function tracks `rax`) resolves to
+        // the container.  This is the O(1) fast path the register-aliasing
+        // read/write and CC projections read on every access.
+        let builder =
+            strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch.endianness())?;
+        let cc_regs = cc
+            .ret_val_regs
+            .iter()
+            .chain(cc.ret_val_regs_float.iter())
+            .chain(cc.arg_passing_regs.iter())
+            .chain(cc.callee_saved_regs.iter())
+            .chain(std::iter::once(&cc.stack_vn))
+            .copied();
+        let queries = all_vns.iter().copied().chain(cc_regs);
+        let container_map =
+            vn_container::ContainerMap::build(builder.function().all_vns(), queries);
         Ok(Self {
             lifter,
             builder,
             cfg,
             unresolved_branches: Vec::new(),
             per_address_ccs,
+            container_map,
         })
     }
 

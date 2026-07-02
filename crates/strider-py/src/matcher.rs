@@ -247,7 +247,6 @@ impl PyMatch {
     // when the capture isn't bound or the bound node isn't of the
     // matching kind family.
 
-
     /// Recover the matched varnode from `c`.  Returns the `Vn`
     /// associated with the captured `InitialVar` / tagged `Phi`
     /// (via `Function::get_vn_for_value` on the Phi's output value),

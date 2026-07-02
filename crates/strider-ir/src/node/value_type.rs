@@ -24,7 +24,7 @@ pub enum ValueType {
     I128,
     I256,
     /// 512-bit unsigned integer (AVX-512 `zmm` registers).  Constant
-    /// values are interned via `crate::const_value::ConstValue::Wide`
+    /// values are interned via `crate::node::const_value::ConstValue::Wide`
     /// because they don't fit a `u128`.
     I512,
     /// 32-bit IEEE 754 single-precision float.

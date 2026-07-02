@@ -9,6 +9,7 @@ mod arithmetic;
 mod boolean;
 mod call;
 mod cast;
+mod cc_projection;
 mod control;
 mod dispatch;
 mod float;
@@ -21,6 +22,12 @@ mod vn_io;
 
 #[cfg(test)]
 mod handler_tests;
+
+#[cfg(test)]
+mod aliasing_tests;
+
+#[cfg(test)]
+mod cc_projection_tests;
 
 pub(crate) use function_lifter::FunctionLifter;
 
@@ -62,16 +69,16 @@ pub use crate::lift_options::LiftOptions;
 /// need a detached engine (e.g. the strider-py GIL-release path) rebuild a
 /// fresh `Lifter` from a cloneable memory snapshot rather than cloning.
 pub struct Lifter<R: rsleigh::MemReader> {
-    pub(crate) arch: strider_target::SleighArch,
+    arch: strider_target::SleighArch,
     /// The Sleigh context, owning the `MemReader`.  Borrowed `&mut` to
     /// build the CFG, then `&` to lift it; reused across rebuilds.
-    pub(crate) sleigh: rsleigh::Sleigh<R>,
+    sleigh: rsleigh::Sleigh<R>,
     /// Cached `SleighRegs` table from construction.  Used by the CallOther
     /// per-op-ABI dispatch in `FunctionLifter::handle_call_other` to
     /// resolve register names to `rsleigh::Vn`s without paying the
     /// per-call cost of `Sleigh::regs()` (an "expensive operation" per its
     /// docstring).
-    pub(crate) sleigh_regs: rsleigh::SleighRegs,
+    sleigh_regs: rsleigh::SleighRegs,
 }
 
 impl<R: rsleigh::MemReader> Lifter<R> {
@@ -121,7 +128,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// Ordering is owned by [`strider_ir::FunctionBuilder::new`], which
     /// sorts the tracked set deterministically (by
-    /// `(space-shortcut, offset, size)`) so downstream `VarId` numbering is
+    /// `(space-shortcut, offset, size)`) so downstream `InitialVnId` numbering is
     /// stable across runs; the lifter only needs the unique used-vn set.
     pub(crate) fn find_all_unique_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
         let mut all_vns: rustc_hash::FxHashSet<rsleigh::Vn> = rustc_hash::FxHashSet::default();
@@ -159,7 +166,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// The tracked-varnode set is scanned fresh from `cfg` (via
     /// `find_all_unique_vns`); the deterministic ordering that gives
-    /// stable `VarId` numbering is applied by
+    /// stable `InitialVnId` numbering is applied by
     /// [`strider_ir::FunctionBuilder::new`].  Direct Calls whose target is in
     /// [`LiftOptions::per_address_ccs`] are built via
     /// [`strider_ir::FunctionBuilder::build_call`] with the override.
@@ -246,7 +253,35 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .get(&cfg.entry())
             .ok_or_else(|| anyhow!("entry region {:?} missing from region_map", cfg.entry()))?;
         self.builder.set_entry_region(entry_ir)?;
+        self.record_register_arg_carriers();
         Ok(region_map)
+    }
+
+    /// Record register-passed argument carriers on the function's arg table.
+    ///
+    /// Each arg-passing register's (largest-container) `InitialVar` output is
+    /// the carrier for its positional index.  The container resolution is
+    /// machine-register knowledge owned by the lifter (`container_of`), so this
+    /// lives here rather than in `set_entry_region`: a narrow ABI arg alias
+    /// (e.g. `edi`) routes through its tracked container (`rdi`), mirroring the
+    /// CC ret-val / clobber projections.  We don't filter on use — an argument
+    /// the function never reads is culled by DCE and dropped from the arg table
+    /// by `Function::compact`, so patterns won't find it.
+    fn record_register_arg_carriers(&mut self) {
+        let arg_regs = self
+            .builder
+            .function()
+            .default_cc()
+            .arg_passing_regs
+            .clone();
+        for (i, reg) in arg_regs.iter().enumerate() {
+            let container = self.container_of(reg);
+            if let Some(value) = self.builder.function().initial_var_value(&container) {
+                self.builder
+                    .function_mut()
+                    .side_tables_mut().register_arg_value(i as u32, value);
+            }
+        }
     }
 
     /// Second stage of [`Lifter::build_ir_with`]: translate every
@@ -454,8 +489,8 @@ mod tests {
     /// `unresolved_branches` stays empty.
     #[test]
     fn aarch64_bx_lr_lifts_to_cc_return_not_indirect() {
-        use strider_ir_test_utils::IrWalkerEx;
         use strider_ir::node::NodeKind;
+        use strider_ir_test_utils::IrWalkerEx;
 
         let arch = strider_target::SleighArch::aarch64();
         // `probe_regs` consumes the arch, so build a second copy for the lift.

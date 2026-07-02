@@ -2,8 +2,9 @@ use super::*;
 use crate::error::Result;
 use crate::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeKind, ValueId, ValueType};
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
+use strider_ir_test_utils::IrWalkerEx;
+use strider_ir_test_utils::IrBuilderEx;
 use strider_ir_test_utils::{
     RegisterSet, SENTINEL_LIFT_ADDR, reg_vn, stack_vn_aarch64, stack_vn_x86 as sp32_vn,
     stack_vn_x86_64 as stack_vn,
@@ -42,7 +43,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
 
     // Side-table must have arg 0.
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         !arg0_nodes.is_empty(),
         "arg 0 should be registered in the side-table"
@@ -91,10 +92,10 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
 
     let pass = FunctionArgDetect;
     crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
-    let after_first = fg.arg_index_to_values(0).to_vec();
+    let after_first = fg.side_tables().arg_index_to_values(0).to_vec();
     // Re-run on the same function (simulating a second StableOnly iteration).
     crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
-    let after_second = fg.arg_index_to_values(0).to_vec();
+    let after_second = fg.side_tables().arg_index_to_values(0).to_vec();
 
     assert_eq!(
         after_first, after_second,
@@ -140,7 +141,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     // Side-table must have arg 0.
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(!arg0_nodes.is_empty(), "arg 0 should be registered (stack)");
     assert_eq!(arg0_nodes.len(), 1, "one Load at sp+4, so one carrier");
     assert!(
@@ -190,7 +191,7 @@ fn aligned_sp_load_is_not_a_stack_arg() -> Result<()> {
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     assert!(
-        fg.arg_index_to_values(0).is_empty(),
+        fg.side_tables().arg_index_to_values(0).is_empty(),
         "a load rooted at an alignment-masked SP (not the entry SP) must not \
          register as stack arg 0"
     );
@@ -248,7 +249,7 @@ fn detects_ten_contiguous_stack_args() -> Result<()> {
 
     for i in 0..N {
         assert!(
-            !fg.arg_index_to_values(i as u32).is_empty(),
+            !fg.side_tables().arg_index_to_values(i as u32).is_empty(),
             "arg {i} (sp + {}) must be registered",
             i * 8
         );
@@ -285,16 +286,16 @@ fn stack_arg_gap_truncates() -> Result<()> {
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     // Only arg 0 registered; arg 1 absent (gap) so arg 2 MUST NOT be registered.
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(!arg0_nodes.is_empty(), "arg 0 (sp+4) should be registered");
 
-    let arg1_nodes = fg.arg_index_to_values(1);
+    let arg1_nodes = fg.side_tables().arg_index_to_values(1);
     assert!(
         arg1_nodes.is_empty(),
         "arg 1 (sp+8) is absent — nothing at that offset"
     );
 
-    let arg2_nodes = fg.arg_index_to_values(2);
+    let arg2_nodes = fg.side_tables().arg_index_to_values(2);
     assert!(
         arg2_nodes.is_empty(),
         "arg 2 (sp+12) must be truncated by the gap"
@@ -345,7 +346,7 @@ fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     // Parity: the load is still registered as arg 0.
-    let arg0 = fg.arg_index_to_values(0).to_vec();
+    let arg0 = fg.side_tables().arg_index_to_values(0).to_vec();
     assert_eq!(arg0.len(), 1, "Load[sp+4] registered as arg 0");
 
     // Narrowing fired: the arg-carrier load's memory input skipped the two
@@ -389,7 +390,7 @@ fn prior_stackstore_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "Load[sp+4] is shadowed by Store(sp+4), must not be registered as arg"
@@ -454,7 +455,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "Load[sp+4] reaches a MemPhi with a shadowing branch — must not be registered"
@@ -494,7 +495,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     // Both Loads at offset 0 must be registered for arg 0.
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert_eq!(
         arg0_nodes.len(),
         2,
@@ -555,14 +556,14 @@ fn wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0 = fg.arg_index_to_values(0);
+    let arg0 = fg.side_tables().arg_index_to_values(0);
     assert_eq!(arg0.len(), 1, "wide arg (double) at sp+4 is ordinal 0");
     assert!(
         matches!(fg.node_kind(fg.producer(arg0[0])), NodeKind::Load(_)),
         "arg 0 carrier must be a Load node"
     );
 
-    let arg1 = fg.arg_index_to_values(1);
+    let arg1 = fg.side_tables().arg_index_to_values(1);
     assert_eq!(
         arg1.len(),
         1,
@@ -621,7 +622,7 @@ fn span_four_wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0 = fg.arg_index_to_values(0);
+    let arg0 = fg.side_tables().arg_index_to_values(0);
     assert_eq!(
         arg0.len(),
         1,
@@ -632,7 +633,7 @@ fn span_four_wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
         "arg 0 carrier must be a Load node"
     );
 
-    let arg1 = fg.arg_index_to_values(1);
+    let arg1 = fg.side_tables().arg_index_to_values(1);
     assert_eq!(
         arg1.len(),
         1,
@@ -669,7 +670,7 @@ fn unused_register_arg_dropped_by_compact() -> Result<()> {
 
     // Build-time: arg 0 is registered regardless of use.
     assert!(
-        !fg.arg_index_to_values(0).is_empty(),
+        !fg.side_tables().arg_index_to_values(0).is_empty(),
         "arg 0 registered at build time"
     );
 
@@ -677,11 +678,11 @@ fn unused_register_arg_dropped_by_compact() -> Result<()> {
     // arg-table entry.
     fg.compact()?;
     assert!(
-        fg.arg_index_to_values(0).is_empty(),
+        fg.side_tables().arg_index_to_values(0).is_empty(),
         "unused arg carrier dropped after compact"
     );
     assert_eq!(
-        fg.iter_arg_indices().count(),
+        fg.side_tables().iter_arg_indices().count(),
         0,
         "table empty after compact"
     );
@@ -715,7 +716,7 @@ fn second_and_third_register_args_recorded_at_their_indices() -> Result<()> {
     crate::pipeline::run_post(&FunctionArgDetect, &mut fg, &mut crate::OptCtx::new(None))?;
 
     for (idx, vn) in [(0u32, r0), (1, r1), (2, r2)] {
-        let carriers = fg.arg_index_to_values(idx);
+        let carriers = fg.side_tables().arg_index_to_values(idx);
         assert_eq!(carriers.len(), 1, "exactly one carrier for arg {idx}");
         assert!(
             matches!(fg.node_kind(fg.producer(carriers[0])), NodeKind::InitialVar(v) if fg.initial_vn(*v) ==vn),
@@ -773,7 +774,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     // Arg 0 = InitialVar(rdi).
-    let arg0 = fg.arg_index_to_values(0);
+    let arg0 = fg.side_tables().arg_index_to_values(0);
     assert!(!arg0.is_empty(), "arg 0 (rdi) should be registered");
     assert!(
         matches!(fg.node_kind(fg.producer(arg0[0])), NodeKind::InitialVar(v) if fg.initial_vn(*v) ==rdi),
@@ -781,7 +782,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     );
 
     // Arg 1 = InitialVar(rsi).
-    let arg1 = fg.arg_index_to_values(1);
+    let arg1 = fg.side_tables().arg_index_to_values(1);
     assert!(!arg1.is_empty(), "arg 1 (rsi) should be registered");
     assert!(
         matches!(fg.node_kind(fg.producer(arg1[0])), NodeKind::InitialVar(v) if fg.initial_vn(*v) ==rsi),
@@ -789,7 +790,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     );
 
     // Arg 2 = Load at sp+8.
-    let arg2 = fg.arg_index_to_values(2);
+    let arg2 = fg.side_tables().arg_index_to_values(2);
     assert!(!arg2.is_empty(), "arg 2 (sp+8) should be registered");
     assert!(
         matches!(fg.node_kind(fg.producer(arg2[0])), NodeKind::Load(_)),
@@ -834,7 +835,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "Load[sp+4] overlaps with Store(sp+0, size=8) — must not be registered"
@@ -877,7 +878,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         !arg0_nodes.is_empty(),
         "disjoint Store(sp+0, size=4) must not shadow Load[sp+4] — arg 0 should be registered"
@@ -951,7 +952,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "MemPhi with an overlapping-range Store predecessor must disqualify Load[sp+4]"
@@ -984,7 +985,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     assert_eq!(
-        fg.iter_arg_indices().count(),
+        fg.side_tables().iter_arg_indices().count(),
         0,
         "isolated sp+12 load must not be registered without arg 0/1"
     );
@@ -1028,7 +1029,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         !arg0_nodes.is_empty(),
         "Sub(sp, 0xFFFFFFFFFFFFFFFC_U64) must decompose to offset +4 and be registered as arg 0",
@@ -1090,7 +1091,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "plain Store(sp+4, I32) overlaps Load[sp+4]: chain must be dirty — no arg registered"
@@ -1139,7 +1140,7 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "Strict mode: the cross-class intervening Store must mark the chain \
@@ -1182,7 +1183,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         !arg0_nodes.is_empty(),
         "disjoint SP-rooted Store(sp+0, I32) must not mark Load[sp+4] dirty: still registered as arg 0"
@@ -1260,7 +1261,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "Store through a non-collapsing SP-phi address must conservatively mark chain dirty: no arg registered"
@@ -1306,7 +1307,7 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         !arg0_nodes.is_empty(),
         "10k disjoint stores must not mark the chain dirty: load at sp+4 should be registered as arg 0"
@@ -1330,7 +1331,6 @@ fn callother_on_chain_gated_only_by_calls_clobber() -> Result<()> {
         let (call_node, _result) = b.build_call_other_abi(
             42,
             "escape_helper",
-            None,
             &[sp_val],
             &strider_target::BuiltCallOtherAbi {
                 implicit_reads: Vec::new(),
@@ -1369,7 +1369,7 @@ fn callother_on_chain_gated_only_by_calls_clobber() -> Result<()> {
     p_default.add_post_pass(FunctionArgDetect);
     p_default.run(&mut fg_default, &mut crate::OptCtx::new(None))?;
     assert!(
-        !fg_default.arg_index_to_values(0).is_empty(),
+        !fg_default.side_tables().arg_index_to_values(0).is_empty(),
         "default (calls_clobber=false): a CallOther on the chain does not \
          block stack-arg promotion (the callee is opaque, no arg inspection)",
     );
@@ -1382,7 +1382,7 @@ fn callother_on_chain_gated_only_by_calls_clobber() -> Result<()> {
     octx_conservative.options.arg_alias.calls_clobber = true;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
-        fg_conservative.arg_index_to_values(0).is_empty(),
+        fg_conservative.side_tables().arg_index_to_values(0).is_empty(),
         "calls_clobber=true: the CallOther on the chain marks the slot dirty",
     );
     Ok(())
@@ -1431,7 +1431,7 @@ fn calls_clobber_toggle_gates_arg_across_call() -> Result<()> {
     p_default.add_post_pass(FunctionArgDetect);
     p_default.run(&mut fg_default, &mut crate::OptCtx::new(None))?;
     assert!(
-        !fg_default.arg_index_to_values(0).is_empty(),
+        !fg_default.side_tables().arg_index_to_values(0).is_empty(),
         "default (calls_clobber=false): Load[sp+4] across a plain Call \
          is detected as arg 0",
     );
@@ -1458,7 +1458,7 @@ fn calls_clobber_toggle_gates_arg_across_call() -> Result<()> {
     octx_conservative.options.arg_alias.calls_clobber = true;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
-        fg_conservative.arg_index_to_values(0).is_empty(),
+        fg_conservative.side_tables().arg_index_to_values(0).is_empty(),
         "calls_clobber=true: the Call on the chain marks the slot dirty, \
          so Load[sp+4] is NOT registered as an arg",
     );

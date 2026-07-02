@@ -14,7 +14,7 @@ use strider_reader::ReadOnlyMemory;
 
 /// Asserts that a full `buf.len()` read at `addr` succeeds and the
 /// resulting bytes equal `expected`.
-pub fn assert_mem_reader_reads<R>(r: &R, addr: u64, expected: &[u8])
+pub(crate) fn assert_mem_reader_reads<R>(r: &R, addr: u64, expected: &[u8])
 where
     R: MemReader,
     R::Err: std::fmt::Debug,
@@ -45,7 +45,7 @@ where
 /// Asserts that a read at an unmapped address fails with an error whose
 /// message identifies it as a "not mapped" failure carrying the
 /// requested address in hex.
-pub fn assert_mem_reader_unmapped_is_not_mapped_error<R>(r: &R, addr: u64)
+pub(crate) fn assert_mem_reader_unmapped_is_not_mapped_error<R>(r: &R, addr: u64)
 where
     R: MemReader,
     R::Err: std::fmt::Display,
@@ -70,7 +70,7 @@ where
 
 /// Asserts that a partial read (buf larger than region suffix) returns
 /// `Ok(expected_n)`, documenting MemReader's permissive partial-read contract.
-pub fn assert_mem_reader_partial_read_ok<R>(r: &R, addr: u64, buf_len: usize, expected_n: usize)
+pub(crate) fn assert_mem_reader_partial_read_ok<R>(r: &R, addr: u64, buf_len: usize, expected_n: usize)
 where
     R: MemReader,
     R::Err: std::fmt::Debug,
@@ -94,7 +94,7 @@ where
 /// Asserts that filling a `expected.len()`-byte buffer at `addr` succeeds
 /// and yields exactly the RAW mapped bytes (no endianness swap — the
 /// reader copies bytes verbatim; decode is the optimizer's job).
-pub fn assert_readonly_reads(r: &impl ReadOnlyMemory, addr: u64, expected: &[u8]) {
+pub(crate) fn assert_readonly_reads(r: &impl ReadOnlyMemory, addr: u64, expected: &[u8]) {
     let mut buf = vec![0u8; expected.len()];
     r.read(addr, &mut buf).expect("ReadOnlyMemory::read");
     assert_eq!(&buf[..], expected, "ReadOnlyMemory raw bytes");
@@ -102,7 +102,7 @@ pub fn assert_readonly_reads(r: &impl ReadOnlyMemory, addr: u64, expected: &[u8]
 
 /// Asserts that filling a `len`-byte buffer at `addr` errors (any byte in
 /// the range is unmapped — the all-or-nothing contract).
-pub fn assert_readonly_errors(r: &impl ReadOnlyMemory, addr: u64, len: usize) {
+pub(crate) fn assert_readonly_errors(r: &impl ReadOnlyMemory, addr: u64, len: usize) {
     let mut buf = vec![0u8; len];
     assert!(
         r.read(addr, &mut buf).is_err(),

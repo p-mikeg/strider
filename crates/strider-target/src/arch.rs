@@ -145,9 +145,9 @@ pub enum ArchPreset {
 /// same arch can in principle declare different SP registers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SleighArch {
-    pub(crate) sla_spec: rsleigh::sla_spec::SlaSpec,
-    pub(crate) pspec: rsleigh::pspec::PSpec,
-    pub(crate) endianness: Endianness,
+    sla_spec: rsleigh::sla_spec::SlaSpec,
+    pspec: rsleigh::pspec::PSpec,
+    endianness: Endianness,
     pub(crate) preset: ArchPreset,
 }
 

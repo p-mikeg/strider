@@ -39,8 +39,8 @@ use crate::template::{TemplateKind, TemplateTy};
 /// position).
 #[derive(Clone, Copy)]
 pub struct TmplValueRef {
-    pub(crate) node: usize,
-    pub(crate) output: usize,
+    node: usize,
+    output: usize,
 }
 
 /// Handle to a template **node** vertex (a staged node by position).

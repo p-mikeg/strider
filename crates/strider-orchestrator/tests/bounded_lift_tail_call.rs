@@ -30,8 +30,8 @@ mod common;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir::{IRViewer, IRWalker};
+use strider_ir_test_utils::IrWalkerEx;
 use strider_orchestrator::opt::OptOptions;
 use strider_orchestrator::{LiftOptions, Strider};
 use strider_target::{CallingConvention, SleighArch};
@@ -251,7 +251,9 @@ fn find_call_to(function: &strider_ir::Function, target: u64) -> Option<strider_
                 .node_inputs(nid)
                 .into_iter()
                 .nth(2)
-                .is_some_and(|target_value| function.int_const_u128(target_value) == Some(u128::from(target)))
+                .is_some_and(|target_value| {
+                    function.int_const_u128(target_value) == Some(u128::from(target))
+                })
     })
 }
 
@@ -297,9 +299,9 @@ fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() 
         .expect("fall-through arm must carry Call(IntConst(0x1002))");
     for call in [taken_call, fallthrough_call] {
         assert!(
-            function.asm_fingerprint(call).contains(&BASE),
+            function.side_tables().asm_fingerprint(call).contains(&BASE),
             "stub Call fingerprint must name the cond-branch insn at {BASE:#x}; got {:?}",
-            function.asm_fingerprint(call)
+            function.side_tables().asm_fingerprint(call)
         );
     }
     assert_eq!(
@@ -351,9 +353,9 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
     let call =
         find_call_to(&function, OOB_TARGET).expect("the OOB arm must carry Call(IntConst(0x1080))");
     assert!(
-        function.asm_fingerprint(call).contains(&JE_ADDR),
+        function.side_tables().asm_fingerprint(call).contains(&JE_ADDR),
         "stub Call fingerprint must name the cond-branch insn at {JE_ADDR:#x}; got {:?}",
-        function.asm_fingerprint(call)
+        function.side_tables().asm_fingerprint(call)
     );
     assert_eq!(
         function.count_kind(|k| matches!(k, NodeKind::Call)),

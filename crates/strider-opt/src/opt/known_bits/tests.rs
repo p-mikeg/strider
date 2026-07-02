@@ -43,8 +43,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
 fn known_bits_const_no_change() -> Result<()> {
     let mut fg = make_fn(|b| Ok(b.build_int_const(42u64, ValueType::I64).unwrap()))?;
     assert!(
-        !crate::pipeline::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
+        !crate::pipeline::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?.changed()
     );
     Ok(())
 }
@@ -689,10 +688,10 @@ fn known_bits_fold_absorbs_contributing_operand_fingerprint() -> Result<()> {
     assert_returns_const(&fg, 4);
     let folded = fg.producer(return_value(fg.graph())?);
     assert!(
-        fg.asm_fingerprint(folded).contains(&OPERAND_ADDR),
+        fg.side_tables().asm_fingerprint(folded).contains(&OPERAND_ADDR),
         "KnownBits must absorb the contributing operand's asm-fingerprint into \
          the folded constant (proof of why the value is constant); got {:?}",
-        fg.asm_fingerprint(folded)
+        fg.side_tables().asm_fingerprint(folded)
     );
     Ok(())
 }
@@ -730,11 +729,11 @@ fn known_bits_fold_absorbs_cone_through_nonfolding_intermediate() -> Result<()> 
     assert_returns_const(&fg, 0);
     let folded = fg.producer(return_value(fg.graph())?);
     assert!(
-        fg.asm_fingerprint(folded).contains(&INNER_ADDR),
+        fg.side_tables().asm_fingerprint(folded).contains(&INNER_ADDR),
         "fold must absorb the full backward cone — including the non-folding \
          inner `x & 1` two levels down, whose addr the fixpoint can never \
          propagate; got {:?}",
-        fg.asm_fingerprint(folded)
+        fg.side_tables().asm_fingerprint(folded)
     );
     Ok(())
 }
@@ -767,10 +766,10 @@ fn known_bits_fold_does_not_taint_opaque_load_address_cone() -> Result<()> {
     assert_returns_const(&fg, 0);
     let folded = fg.producer(return_value(fg.graph())?);
     assert!(
-        !fg.asm_fingerprint(folded).contains(&ADDR_ADDR),
+        !fg.side_tables().asm_fingerprint(folded).contains(&ADDR_ADDR),
         "fold must NOT taint the opaque Load's address cone — the address \
          did not contribute to the known bits; got {:?}",
-        fg.asm_fingerprint(folded)
+        fg.side_tables().asm_fingerprint(folded)
     );
     Ok(())
 }
@@ -838,17 +837,17 @@ fn known_bits_shared_cone_both_folds_absorb_fingerprint() -> Result<()> {
         if v == 4 {
             found_4 = true;
             assert!(
-                fg.asm_fingerprint(node).contains(&SHARED_ADDR),
+                fg.side_tables().asm_fingerprint(node).contains(&SHARED_ADDR),
                 "the `& 4` fold must absorb the shared cone's addr; got {:?}",
-                fg.asm_fingerprint(node)
+                fg.side_tables().asm_fingerprint(node)
             );
         } else if v == 1 {
             found_1 = true;
             assert!(
-                fg.asm_fingerprint(node).contains(&SHARED_ADDR),
+                fg.side_tables().asm_fingerprint(node).contains(&SHARED_ADDR),
                 "the `& 1` fold must ALSO absorb the shared cone's addr — a \
                  shared `seen` set would have lost it on the second fold; got {:?}",
-                fg.asm_fingerprint(node)
+                fg.side_tables().asm_fingerprint(node)
             );
         }
     }

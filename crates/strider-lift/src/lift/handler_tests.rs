@@ -53,7 +53,7 @@ fn test_addr() -> strider_cfg::PcodeInsnAddr {
 /// builder the pre-merge value-lifter tests used (the value handlers
 /// never consult the convention).  Struct-literal construction skips the
 /// ABI-disjointness validation, fine for a synthetic fixture.
-fn empty_cc() -> strider_target::BuiltCallingConvention {
+pub(super) fn empty_cc() -> strider_target::BuiltCallingConvention {
     let _ = TEST_ENDIAN;
     strider_target::BuiltCallingConvention {
         arg_passing_regs: Vec::new(),
@@ -93,11 +93,24 @@ fn with_test_lifter_tracking(
     all_vns: Vec<Vn>,
     f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
 ) {
-    let arch = strider_target::SleighArch::x86();
+    with_test_lifter_tracking_arch(strider_target::SleighArch::x86(), vec![0xc3], all_vns, f);
+}
+
+/// Like [`with_test_lifter_tracking`] but for an arbitrary `arch` and
+/// caller-provided terminator `term_bytes` (the single-instruction throwaway
+/// CFG must terminate cleanly — e.g. `0xc3` `ret` on x86, or `4e 80 00 20`
+/// `blr` on big-endian PowerPC).  This lets the aliasing tests exercise the
+/// prod `read_reg_vn`/`write_reg_vn` methods under both endiannesses.
+pub(super) fn with_test_lifter_tracking_arch(
+    arch: strider_target::SleighArch,
+    term_bytes: Vec<u8>,
+    all_vns: Vec<Vn>,
+    f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
+) {
     let mut sleigh = rsleigh::Sleigh::new(
-        rsleigh::sla_spec::SLA_SPEC_X86,
-        rsleigh::pspec::PSPEC_X86,
-        BufMemReader::new(vec![0xc3u8], 0x1000),
+        arch.sla_spec(),
+        arch.pspec(),
+        BufMemReader::new(term_bytes, 0x1000),
     )
     .expect("create test Sleigh");
     let cfg = strider_cfg::Builder::for_arch(
@@ -120,6 +133,52 @@ fn with_test_lifter_tracking(
         FunctionLifter::new(&lifter, &cc, &cfg, all_vns, &no_overrides).expect("driver");
     // Entry-region setup (matches the old `make_builder`).  Clear the
     // lift address so tests start from `lift_addr = None`.
+    driver.builder.set_lift_addr(None);
+    driver.builder.build_entry().expect("build_entry");
+    let region = driver.builder.create_region().expect("create_region");
+    driver
+        .builder
+        .set_entry_region(region)
+        .expect("set_entry_region");
+    driver.builder.set_region(region);
+    f(&mut driver, region_id);
+}
+
+/// Like [`with_test_lifter_tracking_arch`] but with a CALLER-PROVIDED
+/// calling convention instead of the harness's `empty_cc()`.  The
+/// projection tests need this because `with_test_lifter_tracking*` seeds
+/// `empty_cc`'s `stack_vn` (0x9000) into the tracked set — a register that
+/// the caller's test cc neither owns nor callee-saves, so it would be
+/// misclassified as an extra clobber and pollute exact clobber-list
+/// assertions.  Passing the test cc directly means the tracked set is
+/// exactly the caller's regs plus its own `stack_vn` (which the projection
+/// correctly excludes).  Body mirrors `with_test_lifter_tracking_arch`
+/// (x86, `ret` terminator) but hands `cc` to `FunctionLifter::new`.
+pub(super) fn with_test_lifter_cc(
+    cc: strider_target::BuiltCallingConvention,
+    all_vns: Vec<Vn>,
+    f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
+) {
+    let arch = strider_target::SleighArch::x86();
+    let mut sleigh = rsleigh::Sleigh::new(
+        arch.sla_spec(),
+        arch.pspec(),
+        BufMemReader::new(vec![0xc3], 0x1000),
+    )
+    .expect("create test Sleigh");
+    let cfg = strider_cfg::Builder::for_arch(
+        &arch,
+        &mut sleigh,
+        0x1000,
+        &strider_cfg::CfgOptions::default(),
+    )
+    .build()
+    .expect("throwaway cfg");
+    let region_id = cfg.entry();
+    let lifter = Lifter::new(arch, sleigh).expect("lifter");
+    let no_overrides = rustc_hash::FxHashMap::default();
+    let mut driver =
+        FunctionLifter::new(&lifter, &cc, &cfg, all_vns, &no_overrides).expect("driver");
     driver.builder.set_lift_addr(None);
     driver.builder.build_entry().expect("build_entry");
     let region = driver.builder.create_region().expect("create_region");
@@ -555,13 +614,13 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
         }
         let add_node = find_first_node(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
             .expect("IntAdd lift must produce an Add node");
-        let fp = d.builder.function().asm_fingerprint(add_node);
+        let fp = d.builder.function().side_tables().asm_fingerprint(add_node);
         assert_eq!(fp, &[0x4242], "Add node fingerprint should record 0x4242");
         // The two IntConst inputs should also carry the address.
         let const3 = find_int_const_node(&d.builder, 3).expect("IntConst(3) must be present");
         let const4 = find_int_const_node(&d.builder, 4).expect("IntConst(4) must be present");
-        assert_eq!(d.builder.function().asm_fingerprint(const3), &[0x4242]);
-        assert_eq!(d.builder.function().asm_fingerprint(const4), &[0x4242]);
+        assert_eq!(d.builder.function().side_tables().asm_fingerprint(const3), &[0x4242]);
+        assert_eq!(d.builder.function().side_tables().asm_fingerprint(const4), &[0x4242]);
     });
 }
 
@@ -591,7 +650,7 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
         assert!(
             d.builder
                 .function()
-                .asm_fingerprint(outside_node)
+                .side_tables().asm_fingerprint(outside_node)
                 .is_empty(),
             "a node built after process_insn returns should have an empty fingerprint \
              (the funnel reset lift_addr to None)"
@@ -627,7 +686,7 @@ fn lift_dedup_unions_two_addresses() {
         .unwrap();
         let add_node = find_first_node(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
             .expect("Add must dedup to a single node");
-        let fp = d.builder.function().asm_fingerprint(add_node);
+        let fp = d.builder.function().side_tables().asm_fingerprint(add_node);
         assert_eq!(fp, &[0x1000, 0x2000], "both addresses should be unioned");
     });
 }

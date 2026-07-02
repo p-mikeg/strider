@@ -17,7 +17,6 @@ fn name_matches_only_target() {
         .build_call_other_abi(
             1,
             "cpuid",
-            None,
             &[],
             &strider_target::BuiltCallOtherAbi {
                 implicit_reads: Vec::new(),
@@ -32,7 +31,6 @@ fn name_matches_only_target() {
         .build_call_other_abi(
             2,
             "rdtsc",
-            None,
             &[],
             &strider_target::BuiltCallOtherAbi {
                 implicit_reads: Vec::new(),
