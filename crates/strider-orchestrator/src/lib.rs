@@ -137,6 +137,32 @@ where
         self.lifter.sleigh_regs()
     }
 
+    /// Returns the owned `Sleigh`, for callers that need to resolve
+    /// register names (e.g. dot rendering) through the same instance
+    /// `analyze`/`build_cfg` drive.
+    #[must_use]
+    pub fn sleigh(&self) -> &rsleigh::Sleigh<R> {
+        self.lifter.sleigh()
+    }
+
+    /// Build the CFG for `entry` only — no lift, no optimisation, no
+    /// indirect-branch resolution.  Reuses the same owned `Lifter` (and
+    /// its `Sleigh`) that [`Strider::analyze`] drives, so callers that
+    /// want a structural-only preview or a snapshot for dot rendering
+    /// don't need a second handle.
+    ///
+    /// # Errors
+    ///
+    /// Propagates CFG-build failures (see [`Lifter::build_cfg`]).
+    pub fn build_cfg(
+        &mut self,
+        entry: u64,
+        cfg_opts: &strider_cfg::CfgOptions,
+    ) -> Result<strider_cfg::Cfg> {
+        self.lifter
+            .build_cfg(MachineInsnAddr::from(entry), cfg_opts)
+    }
+
     /// Lift the function at `entry`, optimise it, resolve its indirect
     /// branches, and return the final IR plus any indirect-branch sites
     /// that could not be resolved.

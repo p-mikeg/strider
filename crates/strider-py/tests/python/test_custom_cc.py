@@ -9,7 +9,8 @@ matches the binary's ABI.  Tests:
 2. An unknown register name surfaces as `StriderError`.
 3. An invariant violation (LR not in callee_saved when LR is set)
    surfaces as `StriderError`.
-4. The custom CC drives a full `strider.run` lift end-to-end.
+4. The custom CC drives a full `strider.lifter(...).analyze(...)` lift
+   end-to-end.
 """
 
 from __future__ import annotations
@@ -56,8 +57,9 @@ def test_custom_cc_matches_x86_64_systemv_for_equivalent_input():
     assert custom_cc.name() == "custom"
 
     # Run the lifter with the custom CC.  Must not raise.
-    fn = strider.run(arch=arch, cc=custom_cc, mem=mem, entry=entry)
-    assert fn is not None, "strider.run must produce a Function"
+    lift = strider.lifter(arch, mem)
+    function, _unresolved = lift.analyze(entry, custom_cc)
+    assert function is not None, "Lifter.analyze must produce a Function"
 
 
 def test_custom_cc_rejects_unknown_register_name():
@@ -131,6 +133,7 @@ def test_custom_cc_preserves_memory_chain():
         link_register=None,
         preserves_memory=True,
     )
-    # Must build the Strider without error.
-    fn = strider.run(arch=arch, cc=custom_cc, mem=mem, entry=entry)
-    assert fn is not None
+    # Must build the Lifter and analyze without error.
+    lift = strider.lifter(arch, mem)
+    function, _unresolved = lift.analyze(entry, custom_cc)
+    assert function is not None

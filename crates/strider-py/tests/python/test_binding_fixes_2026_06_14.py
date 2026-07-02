@@ -9,8 +9,6 @@ Each test pins one numbered finding from
             depth guard (raises `StriderError`, not a process abort).
   * PY-4  — a `MemReader.read` over-long return is rejected, not
             silently truncated.
-  * PY-5  — reusing one pipeline across two `run(rom=...)` calls
-            behaves predictably (the caller's object is not mutated).
   * PY-6  — a mid-run optimize failure still invalidates outstanding
             handles.
   * PY-9  — `int_ne` builder + `Load/Store.stack_offset` field mirror.
@@ -45,13 +43,11 @@ ENTRY = 0x1000
 
 def _cpuid_function():
     mem = strider.BufferReader(ENTRY, CPUID_BYTES)
-    result = strider.run(
-        arch=strider.SleighArch.x86_64(),
-        cc=strider.CallingConvention.x86_64_systemv(),
-        mem=mem,
-        entry=ENTRY,
+    lift = strider.lifter(strider.SleighArch.x86_64(), mem)
+    function, _unresolved = lift.analyze(
+        ENTRY, strider.CallingConvention.x86_64_systemv()
     )
-    return result.function
+    return function
 
 
 # ── PY-2 — CallOtherPat.ctrl()/.mem() route to the right slot ─────────
@@ -114,62 +110,20 @@ class _OverLongReader(strider.MemReader):
 
 def test_mem_reader_over_long_return_errors():
     reader = _OverLongReader()
+    lift = strider.lifter(strider.SleighArch.x86_64(), reader)
     with pytest.raises(strider.errors.StriderError):
-        strider.run(
-            arch=strider.SleighArch.x86_64(),
-            cc=strider.CallingConvention.x86_64_systemv(),
-            mem=reader,
-            entry=ENTRY,
-        )
+        lift.analyze(ENTRY, strider.CallingConvention.x86_64_systemv())
 
 
-# ── PY-5 — run(rom=, pipeline=) leaves the caller's pipeline usable ───
-
-
-def test_run_twice_with_rom_and_same_pipeline(x86_memory_elf):
-    addr = symbol_addr(x86_memory_elf, "array_sum")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).reader()
-
-    pipe = strider.OptimizerPipeline.empty()
-    pipe.add(strider.opt.ConstantFold())
-
-    first = strider.run(
-        arch=arch, cc=cc, mem=mem, entry=addr, rom=mem,
-        pipeline=pipe, allow_code_before_start_addr=True,
-    )
-    assert first.function.node_count() > 0
-
-    # The pipeline is drained on use (documented), so a second run with
-    # the SAME object must fail with the clean "already drained" error —
-    # NOT silently double-prepend a LoadReadOnly pass or otherwise
-    # mutate the caller's object into an inconsistent state.
-    with pytest.raises(strider.errors.StriderError):
-        strider.run(
-            arch=arch, cc=cc, mem=mem, entry=addr, rom=mem,
-            pipeline=pipe, allow_code_before_start_addr=True,
-        )
-
-
-def test_run_with_rom_fresh_pipeline_each_call(x86_memory_elf):
-    addr = symbol_addr(x86_memory_elf, "array_sum")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).reader()
-
-    def _run():
-        pipe = strider.OptimizerPipeline.empty()
-        pipe.add(strider.opt.ConstantFold())
-        return strider.run(
-            arch=arch, cc=cc, mem=mem, entry=addr, rom=mem,
-            pipeline=pipe, allow_code_before_start_addr=True,
-        )
-
-    a = _run()
-    b = _run()
-    # Identical inputs (fresh pipeline each time) produce identical shape.
-    assert a.function.node_count() == b.function.node_count()
+# PY-5 ("reusing one pipeline across two `run(rom=...)` calls behaves
+# predictably") pinned the old `strider.run(pipeline=...)` custom-pipeline
+# draining semantics.  That entry point was removed by the single-`Lifter`
+# collapse (Task 2 of the strider-py API redesign): `Lifter.analyze` no
+# longer accepts a `pipeline=` override, so there is nothing left to reuse
+# across two calls.  The underlying "a drained `OptimizerPipeline` object
+# raises on reuse" contract is still pinned directly against
+# `Function.optimize` in
+# `test_optimizer_pipeline.py::test_optimize_twice_on_same_pipeline_raises`.
 
 
 # ── PY-6 — optimize bumps the generation, invalidating handles ────────
@@ -183,8 +137,7 @@ def test_run_with_rom_fresh_pipeline_each_call(x86_memory_elf):
 def test_optimize_invalidates_outstanding_handles(x86_memory_elf):
     from strider.pattern import Capture
 
-    a = _analysis(x86_memory_elf, "array_sum")
-    fn = a.function
+    fn = _analysis(x86_memory_elf, "array_sum")
 
     c = Capture()
     add_hits = fn.find_all(load().capture(c))
@@ -207,14 +160,12 @@ def test_optimize_invalidates_outstanding_handles(x86_memory_elf):
 def _analysis(elf_path, sym):
     addr = symbol_addr(elf_path, sym)
     mem = strider.load_elf(str(elf_path)).reader()
-    result = strider.run(
-        arch=strider.SleighArch.x86(),
-        cc=strider.CallingConvention.x86_cdecl(),
-        mem=mem,
-        entry=addr,
+    lift = strider.lifter(strider.SleighArch.x86(), mem)
+    function, _unresolved = lift.analyze(
+        addr, strider.CallingConvention.x86_cdecl(),
         allow_code_before_start_addr=True,
     )
-    return result
+    return function
 
 
 # ── PY-9 — int_ne builder + Load/Store.stack_offset mirror ────────────
@@ -228,7 +179,7 @@ def test_int_ne_builder_compiles():
 def test_int_ne_finds_lowered_shape(x86_memory_elf):
     # int_ne is the lifter-canonical `Xor(IntEqual(a,b),1):I1` shape.
     # Just assert it compiles + queries without error on a real graph.
-    fn = _analysis(x86_memory_elf, "array_sum").function
+    fn = _analysis(x86_memory_elf, "array_sum")
     hits = fn.find_all(int_ne(any_(), any_()))
     assert isinstance(hits, list)
 
@@ -239,7 +190,7 @@ def test_load_store_stack_offset_field_compiles():
 
 
 def test_load_stack_offset_filters(x86_memory_elf):
-    fn = _analysis(x86_memory_elf, "array_sum").function
+    fn = _analysis(x86_memory_elf, "array_sum")
     # A wildly-out-of-range SP offset should match nothing.
     hits = fn.find_all(load().stack_offset(0x7FFF_FFFF))
     assert hits == []

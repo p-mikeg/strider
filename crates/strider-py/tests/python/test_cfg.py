@@ -6,9 +6,8 @@ from .conftest import symbol_addr
 def test_build_cfg_for_array_sum(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.Lifter(arch, mem, cc)
+    s = strider.lifter(arch, mem)
     cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
     assert cfg is not None
 
@@ -16,9 +15,8 @@ def test_build_cfg_for_array_sum(x86_memory_elf):
 def test_cfg_to_html_writes_nonempty_file(x86_memory_elf, tmp_path):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.Lifter(arch, mem, cc)
+    s = strider.lifter(arch, mem)
     cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
 
     out_html = tmp_path / "cfg.html"
@@ -30,9 +28,8 @@ def test_cfg_to_html_writes_nonempty_file(x86_memory_elf, tmp_path):
 def test_cfg_to_dot_writes_nonempty_file(x86_memory_elf, tmp_path):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.Lifter(arch, mem, cc)
+    s = strider.lifter(arch, mem)
     cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
 
     out_dot = tmp_path / "cfg.dot"
@@ -44,9 +41,8 @@ def test_cfg_to_dot_writes_nonempty_file(x86_memory_elf, tmp_path):
 def test_cfg_html_str_returns_html(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.Lifter(arch, mem, cc)
+    s = strider.lifter(arch, mem)
     cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
     html = cfg.html_str()
     assert isinstance(html, str)
@@ -63,9 +59,8 @@ def test_build_cfg_leaves_lifter_reusable(x86_memory_elf):
     ownership transfer that consumes the Lifter would fail here."""
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.Lifter(arch, mem, cc)
+    s = strider.lifter(arch, mem)
 
     cfg1 = s.build_cfg(addr, allow_code_before_start_addr=True)
 

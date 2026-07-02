@@ -668,14 +668,11 @@ impl ReadOnlyMemory for PyBufferReaderView {
 /// accepts either a `BufferReader` (fast owned-data path) or a Python
 /// subclass implementing `read(...)` (the callback path).
 ///
-/// Consumed in three modes:
+/// Consumed in two modes:
 /// - [`into_box`](Self::into_box) — lift to `Box<dyn ReadOnlyMemory>`
 ///   for the ROM-style pipeline pass.
 /// - [`into_any`](Self::into_any) — materialise into the unified
 ///   `AnyMemReader` (used to build a `Sleigh`).
-/// - [`clone_one`](Self::clone_one) — produce an independent copy so a
-///   single user-facing input can feed multiple `Sleigh` instances
-///   (the orchestrator + the snapshot CFG each want their own reader).
 pub enum MemInput {
     Buffer(PyBufferReader),
     Cb(Py<PyAny>),
@@ -720,16 +717,6 @@ impl MemInput {
         match self {
             MemInput::Buffer(m) => AnyMemReader::Buffer(m.reader_view()),
             MemInput::Cb(obj) => AnyMemReader::Cb(PyMemReaderAdapter { py_obj: obj }),
-        }
-    }
-
-    /// Produce an independent `MemInput` referring to the same
-    /// underlying source.  For `PyBufferReader` this is a cheap `Rc`
-    /// bump; for the callback path we bump the `Py<PyAny>` refcount.
-    pub fn clone_one(&self) -> PyResult<MemInput> {
-        match self {
-            MemInput::Buffer(m) => Ok(MemInput::Buffer(m.clone())),
-            MemInput::Cb(obj) => Python::with_gil(|py| Ok(MemInput::Cb(obj.clone_ref(py)))),
         }
     }
 }

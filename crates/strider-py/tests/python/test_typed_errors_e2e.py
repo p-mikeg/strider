@@ -74,19 +74,15 @@ def test_pattern_error_on_ordered_finalized_pat():
 # ── LiftError category ─────────────────────────────────────────────────────
 
 def test_lift_error_on_unmapped_entry_address():
-    """`strider.run` with an entry address outside any region must
-    raise: the cfg builder asks Sleigh to lift bytes that aren't
-    there."""
+    """`strider.lifter(...).analyze(...)` with an entry address outside
+    any region must raise: the cfg builder asks Sleigh to lift bytes
+    that aren't there."""
     mem = strider.BufferReader(0x9000, b"\x00")  # entry 0x1000 stays unmapped
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     with pytest.raises(errors.StriderError):
-        strider.run(
-            arch=arch,
-            cc=cc,
-            mem=mem,
-            entry=0x1000,
-            allow_code_before_start_addr=True,
+        strider.lifter(arch, mem).analyze(
+            0x1000, cc, allow_code_before_start_addr=True
         )
 
 
@@ -106,9 +102,8 @@ def test_rewrite_error_via_multi_output_lhs_root():
     mem = strider.BufferReader(0x1000, bytes_)
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
-    s = strider.Lifter(arch, mem, cc)
-    cfg = s.build_cfg(0x1000, function_max_size=0x100)
-    g = s.analyze_cfg(cfg).function
+    s = strider.lifter(arch, mem)
+    g, _unresolved = s.analyze(0x1000, cc, function_max_size=0x100)
 
     from strider.pattern import call, int_const
 
@@ -132,11 +127,10 @@ def test_unknown_call_other_via_x86_clflush_instruction():
     mem = strider.BufferReader(0x1000, bytes_)
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
-    s = strider.Lifter(arch, mem, cc)
-    cfg = s.build_cfg(0x1000)
+    s = strider.lifter(arch, mem)
 
     with pytest.raises(errors.StriderError):
-        s.analyze_cfg(cfg)
+        s.analyze(0x1000, cc)
 
 
 # ── UnresolvedIndirectBranch category ──────────────────────────────────────
@@ -144,9 +138,9 @@ def test_unknown_call_other_via_x86_clflush_instruction():
 def test_unresolved_indirect_branch_via_jmp_rax():
     """A bare `jmp rax` (RAX = the function-entry value of rax,
     `InitialVar(rax)`) is unresolvable — no classifier arm matches.  This
-    is NOT an error: `run` returns a `RunResult` whose
-    `unresolved_indirect_branches` lists the site (regression guard for
-    the old "unresolved => StriderError" behaviour).
+    is NOT an error: `analyze` returns the list of unresolved indirect
+    branches (regression guard for the old "unresolved => StriderError"
+    behaviour).
 
     Bytes: `FF E0` = `jmp rax`.
     """
@@ -155,8 +149,8 @@ def test_unresolved_indirect_branch_via_jmp_rax():
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
 
-    result = strider.run(arch=arch, cc=cc, mem=mem, entry=0x1000)
-    assert result.unresolved_indirect_branches, (
+    _function, unresolved = strider.lifter(arch, mem).analyze(0x1000, cc)
+    assert unresolved, (
         "expected the unresolvable jmp rax to be reported in "
         "unresolved_indirect_branches"
     )

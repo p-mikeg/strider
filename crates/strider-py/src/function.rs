@@ -80,16 +80,6 @@ impl PyFunction {
             .map_err(|_| anyhow::anyhow!("Function lock poisoned"))
     }
 
-    /// Borrow the inner graph for write.  Returns an `anyhow::Error`
-    /// when the lock is poisoned.
-    pub(crate) fn write_inner(
-        &self,
-    ) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
-        self.inner
-            .write()
-            .map_err(|_| anyhow::anyhow!("Function lock poisoned"))
-    }
-
     /// Try to acquire the write lock without blocking.  Used by mutating
     /// methods (`optimize`, `compact`, `rewrite`, `reoptimize`) so that a
     /// re-entrant call from inside a `.when()` predicate (which holds the
@@ -158,7 +148,7 @@ impl PyFunction {
     ) -> PyResult<DotResult> {
         let cfg_borrow = self.cfg.borrow(py);
         let lifter_borrow = cfg_borrow.lifter.borrow(py);
-        let sleigh = lifter_borrow.inner.sleigh();
+        let sleigh = lifter_borrow.sleigh();
         self.with_read(|function| {
             let dumper = function
                 .dot_dumper(sleigh)

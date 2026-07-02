@@ -44,7 +44,6 @@ mod opt;
 mod pattern;
 mod pcode;
 mod reader;
-mod run;
 mod sleigh;
 mod strider_cls;
 
@@ -100,7 +99,6 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     node::register(py, m)?;
     strider_cls::register(py, m)?;
     opt::register(py, m)?;
-    run::register(py, m)?;
     pcode::register(py, m)?;
     pattern::register(py, m)?;
     matcher::register(py, m)?;

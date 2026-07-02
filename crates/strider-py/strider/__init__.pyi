@@ -99,7 +99,7 @@ class BufferReader:
     """Single-region raw-byte reader for non-ELF / firmware-blob cases.
     Serves both the sleigh-fetch (`mem=`) and ReadOnlyMemory (`rom=`)
     roles, so one `BufferReader` can be passed as either argument to
-    `strider.run` / `strider.strider` / `strider.Lifter` / `strider.Sleigh`.
+    `strider.lifter` / `strider.Sleigh`.
 
     For an ELF, prefer `strider.load_elf(path)` -> `ElfStrider`, which
     wires a multi-region reader up automatically and adds symbol/
@@ -173,39 +173,26 @@ class Cfg:
     def to_dot(self, path: str) -> None: ...
     def html_str(self, style: Optional[str] = ...) -> str: ...
 
-class AnalyzeOutcome:
-    function: Function
-    unresolved_branch_count: int
-
 class Lifter:
-    """Low-level lift handle: build a single CFG and lift it to IR, no
-    indirect-branch resolution.  Owns the `Sleigh` (built from `mem`) and
-    the function-default calling convention.  Use `Strider` / `ElfStrider`
-    for the full lift+optimise+resolve workflow."""
+    """The single lift+optimise+resolve handle.  Build one with
+    `strider.lifter(arch, mem, rom=None)` — `cc` is NOT fixed at
+    construction, it is a required argument of every `analyze` call, so
+    one handle can analyse functions under different calling
+    conventions.  `build_cfg` is structural-only (no lift/optimise/
+    indirect-branch resolution); `analyze` drives the full fixed-point
+    loop."""
 
-    def __init__(
-        self, arch: SleighArch, mem: Any, cc: CallingConvention
-    ) -> None: ...
     def build_cfg(
         self,
         entry: int,
+        *,
         allow_code_before_start_addr: bool = ...,
         function_max_size: Optional[int] = ...,
     ) -> Cfg: ...
-    def analyze_cfg(self, cfg: Cfg) -> AnalyzeOutcome: ...
-    def build_optimizer_pipeline(self) -> OptimizerPipeline: ...
-
-class Strider:
-    """Standalone run handle (non-ELF / firmware): lift, optimise to a
-    fixed point, and resolve indirect branches, returning the final IR
-    `Function`.  Build one with `strider.strider(arch, cc, mem, rom=None)`
-    and call `analyze(entry, ...)` repeatedly.  The `cc` is fixed at
-    construction; per-target-address overrides go through
-    `per_address_ccs`."""
-
     def analyze(
         self,
         entry: int,
+        cc: CallingConvention,
         *,
         function_max_size: Optional[int] = ...,
         allow_code_before_start_addr: bool = ...,
@@ -216,17 +203,16 @@ class Strider:
         alias_mode: str = ...,
     ) -> Tuple[Function, List[int]]: ...
 
-def strider(
+def lifter(
     arch: SleighArch,
-    cc: CallingConvention,
     mem: Any,
     rom: Optional[Any] = ...,
-) -> Strider:
-    """Build a standalone `Strider` run handle over a raw code reader
-    (`BufferReader` or `MemReader`).  `rom` is the optional read-only memory
-    image for `LoadReadOnly` constant folding.  For an ELF, prefer
-    `strider.load_elf(path)` → `ElfStrider`, which wires `mem`/`rom` from
-    the loaded sections and adds symbol lookups."""
+) -> Lifter:
+    """Build a `Lifter` — the single lift+optimise+resolve handle — over
+    a raw code reader (`BufferReader` or `MemReader`).  `rom` is the
+    optional read-only memory image for `LoadReadOnly` constant folding.
+    For an ELF, prefer `strider.load_elf(path)` → `ElfStrider`, which
+    wires `mem`/`rom` from the loaded sections and adds symbol lookups."""
     ...
 
 class Node:
@@ -405,25 +391,6 @@ class OptimizerPipeline:
     def pass_count(self) -> int: ...
     def post_pass_count(self) -> int: ...
 
-class RunResult:
-    cfg: Cfg
-    function: Function
-    sleigh: Sleigh
-    unresolved_indirect_branches: List[int]
-
-def run(
-    arch: SleighArch,
-    cc: CallingConvention,
-    mem: Any,  # BufferReader | MemReader subclass
-    entry: int,
-    rom: Optional[Any] = ...,  # BufferReader | ReadOnlyMemory subclass
-    pipeline: Optional[OptimizerPipeline] = ...,
-    allow_code_before_start_addr: bool = ...,
-    function_max_size: Optional[int] = ...,
-    compact: bool = ...,
-    per_address_ccs: Optional[dict[int, CallingConvention]] = ...,
-) -> RunResult: ...
-
 def pcode_at(
     arch: SleighArch,
     mem: BufferReader,
@@ -472,8 +439,8 @@ class ElfStrider:
     def read(self, addr: int, size: int) -> Optional[bytes]: ...
     def reader(self) -> BufferReader:
         """The raw multi-region `BufferReader` assembled from the ELF's
-        loaded sections — the low-level code reader for `strider.run` /
-        `strider.strider` / `strider.Lifter` / `strider.Sleigh`."""
+        loaded sections — the low-level code reader for `strider.lifter`
+        / `strider.Sleigh`."""
         ...
     def add_elf(self, path: str, *, apply_relocations: bool = ...) -> None: ...
     def pcode(self, addr: int, count: int = ...) -> List[Tuple[int, str]]:
@@ -499,14 +466,14 @@ class ElfStrider:
         """Lift the function at `target` (symbol name or absolute
         address) into an `Analysis`, driving the full
         lift+optimise+resolve pipeline through the persistent inner
-        `Strider`."""
+        `Lifter`."""
         ...
     def __repr__(self) -> str: ...
 
 class Analysis:
-    """Wrapper around a `RunResult` — the lifted, optimized IR graph for
-    a single function — with convenience methods for pattern queries and
-    provenance lookup."""
+    """Wrapper around a lifted, optimized IR `Function` — the result of
+    `ElfStrider.analyze` — with convenience methods for pattern queries
+    and provenance lookup."""
     @property
     def function(self) -> Function: ...
     @property

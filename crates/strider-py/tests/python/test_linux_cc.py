@@ -10,10 +10,10 @@ The test:
 
   1. Calls `strider.CallingConvention.x86_linux_kernel()`.
   2. Asserts the returned object has `name() == "x86_linux_kernel"`.
-  3. Builds a `strider.Lifter(arch, mem, cc)` against an x86 fixture ELF
-     — the smoke check that the regparm-3 arg registers (EAX, EDX, ECX)
-     all resolve through the Python binding (a typo would fail at
-     `Strider.__new__`).
+  3. Builds a `strider.lifter(arch, mem)` against an x86 fixture ELF and
+     calls `analyze(entry, cc)` — the smoke check that the regparm-3
+     arg registers (EAX, EDX, ECX) all resolve through the Python
+     binding (a typo would fail CC resolution inside `analyze`).
 """
 
 from __future__ import annotations
@@ -33,12 +33,18 @@ def test_x86_linux_kernel_constructs_strider(x86_indirect_branch_elf):
     # x86_linux_kernel is the only kernel preset that DIFFERS from its
     # userland counterpart (regparm(3) vs cdecl).  Build a Lifter and
     # confirm the arg-passing register names (EAX, EDX, ECX) all resolve
-    # through Sleigh.
+    # through Sleigh — `cc` is resolved against the register table
+    # inside `analyze` (the handle itself stores no default cc), so the
+    # smoke check drives an actual `analyze` call rather than just
+    # construction.
     elf = fixture_path("x86", "indirect_branch")
-    mem = strider.load_elf(str(elf)).reader()
-    s = strider.Lifter(
-        strider.SleighArch.x86(),
-        mem,
+    loaded = strider.load_elf(str(elf))
+    mem = loaded.reader()
+    addr = loaded.symbol("indirect_branch_resolved")
+    s = strider.lifter(strider.SleighArch.x86(), mem)
+    function, _unresolved = s.analyze(
+        addr,
         strider.CallingConvention.x86_linux_kernel(),
+        allow_code_before_start_addr=True,
     )
-    assert s is not None
+    assert function is not None

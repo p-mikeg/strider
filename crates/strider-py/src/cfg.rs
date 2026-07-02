@@ -37,7 +37,7 @@ impl PyCfg {
         f: impl FnOnce(&rsleigh::Sleigh<AnyMemReader>) -> PyResult<R>,
     ) -> PyResult<R> {
         let lifter_borrow = self.lifter.borrow(py);
-        f(lifter_borrow.inner.sleigh())
+        f(lifter_borrow.sleigh())
     }
 }
 

@@ -29,8 +29,9 @@ def _lift_add(arch: strider.SleighArch, cc: strider.CallingConvention, elf_path)
 
     mem = strider.load_elf(str(elf_path)).reader()
     entry = symbol_addr(elf_path, "add")
-    res = strider.run(arch=arch, cc=cc, mem=mem, entry=entry)
-    return res.function
+    lift = strider.lifter(arch, mem)
+    function, _unresolved = lift.analyze(entry, cc)
+    return function
 
 
 def test_aarch64_arithmetic_add_lifts_cleanly():

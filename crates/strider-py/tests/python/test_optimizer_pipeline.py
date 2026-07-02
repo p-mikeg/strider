@@ -87,7 +87,7 @@ def test_cc_aware_passes_construct(x86_memory_elf):
     # zero-arg constructors work.  The calling convention is read from the
     # function under analysis at run time, so these passes carry no
     # per-instance state.  `LoadReadOnly()` is a marker too — its rom
-    # flows via `strider.run(..., rom=mem)`.
+    # flows via `strider.lifter(..., rom=mem)`.
     b = strider.opt.LoadForward()
     c = strider.opt.FunctionArgDetect()
     d = strider.opt.CallStackArgCollect()
@@ -101,12 +101,12 @@ def test_cc_aware_passes_construct(x86_memory_elf):
     assert pipe.post_pass_count() == 2
 
 
-def test_strider_build_optimizer_pipeline(x86_memory_elf):
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.Lifter(arch, mem, cc)
-    pipe = s.build_optimizer_pipeline()
+def test_default_optimizer_pipeline_nonempty_pre_and_post():
+    # `strider.OptimizerPipeline.default()` is the canonical default
+    # pipeline (the one `Lifter.analyze` drives internally); the
+    # low-level `Lifter.build_optimizer_pipeline()` this test used to
+    # exercise was removed by the single-`Lifter` collapse.
+    pipe = strider.OptimizerPipeline.default()
     assert pipe.pass_count() > 0
     assert pipe.post_pass_count() > 0
 
@@ -116,9 +116,8 @@ def test_graph_reoptimize(x86_memory_elf):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.Lifter(arch, mem, cc)
-    cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
-    g = s.analyze_cfg(cfg).function
+    s = strider.lifter(arch, mem)
+    g, _unresolved = s.analyze(addr, cc, allow_code_before_start_addr=True)
     g.reoptimize()
     assert g.node_count() > 0
 
@@ -128,9 +127,8 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.Lifter(arch, mem, cc)
-    cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
-    g = s.analyze_cfg(cfg).function
+    s = strider.lifter(arch, mem)
+    g, _unresolved = s.analyze(addr, cc, allow_code_before_start_addr=True)
     pre = g.node_count()
 
     pipe = strider.OptimizerPipeline.empty()
@@ -146,9 +144,9 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
 
 def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
     """Regression: a wrapper that has
-    already been drained by a prior `Function.optimize` (or
-    `strider.run`) call must surface a typed error on a second call,
-    not silently no-op with an empty pipeline.
+    already been drained by a prior `Function.optimize` call must
+    surface a typed error on a second call, not silently no-op with an
+    empty pipeline.
     """
     import pytest
 
@@ -156,9 +154,8 @@ def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.Lifter(arch, mem, cc)
-    cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
-    g = s.analyze_cfg(cfg).function
+    s = strider.lifter(arch, mem)
+    g, _unresolved = s.analyze(addr, cc, allow_code_before_start_addr=True)
 
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())

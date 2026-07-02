@@ -23,14 +23,12 @@ def _wide_const_function():
     buf[: len(code)] = code
     buf[0x1000 : 0x1000 + 16] = WIDE.to_bytes(16, "little")
     mem = strider.BufferReader(0x1000, bytes(buf))
-    return strider.run(
-        arch=strider.SleighArch.x86_64(),
-        cc=strider.CallingConvention.x86_64_systemv(),
-        mem=mem,
-        rom=mem,
-        entry=0x1000,
+    lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
+    function, _unresolved = lift.analyze(
+        0x1000, strider.CallingConvention.x86_64_systemv(),
         function_max_size=len(code),
-    ).function
+    )
+    return function
 
 
 def test_wide_const_node_is_minted_by_load_readonly_fold():
@@ -108,14 +106,12 @@ def _i80_const_function():
     buf[: len(code)] = code
     buf[0x1000 : 0x1000 + 10] = I80_VALUE.to_bytes(10, "little")
     mem = strider.BufferReader(0x1000, bytes(buf))
-    return strider.run(
-        arch=strider.SleighArch.x86_64(),
-        cc=strider.CallingConvention.x86_64_systemv(),
-        mem=mem,
-        rom=mem,
-        entry=0x1000,
+    lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
+    function, _unresolved = lift.analyze(
+        0x1000, strider.CallingConvention.x86_64_systemv(),
         function_max_size=len(code),
-    ).function
+    )
+    return function
 
 
 def test_i80_const_node_const_int_returns_full_value():
@@ -156,14 +152,11 @@ def test_small_const_node_const_int_exact_value():
     value = 0x1122_3344_5566_7788
     code = bytes([0x48, 0xB8]) + value.to_bytes(8, "little") + bytes([0xC3])
     mem = strider.BufferReader(0x1000, code)
-    f = strider.run(
-        arch=strider.SleighArch.x86_64(),
-        cc=strider.CallingConvention.x86_64_systemv(),
-        mem=mem,
-        rom=mem,
-        entry=0x1000,
+    lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
+    f, _unresolved = lift.analyze(
+        0x1000, strider.CallingConvention.x86_64_systemv(),
         function_max_size=len(code),
-    ).function
+    )
     consts = [
         n
         for n in f.node_ids()

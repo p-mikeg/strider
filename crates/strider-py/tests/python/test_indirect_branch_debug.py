@@ -2,11 +2,11 @@
 
 Mirror of `crates/strider/tests/indirect_branch.rs` for the x86 fixture
 (`fixtures/out/x86/indirect_branch.elf::indirect_branch_resolved`).
-End-to-end: build the CFG, run `strider.run` (which drives the
-indirect-branch fixed-point loop), assert the run completed without
-returning an UnresolvedIndirectBranch error and that the produced graph
-contains an IR Return node (proof the dispatch was lowered to a real
-control-flow tail rather than left as a placeholder).
+End-to-end: build the CFG, run `strider.lifter(...).analyze(...)`
+(which drives the indirect-branch fixed-point loop), assert the run
+completed without returning an UnresolvedIndirectBranch error and that
+the produced graph contains an IR Return node (proof the dispatch was
+lowered to a real control-flow tail rather than left as a placeholder).
 """
 
 from __future__ import annotations
@@ -30,15 +30,11 @@ def test_run_resolves_indirect_branch_x86():
     loaded = strider.load_elf(str(elf))
     mem = loaded.reader()
     addr = loaded.symbol("indirect_branch_resolved")
-    result = strider.run(
-        arch=arch,
-        cc=cc,
-        mem=mem,
-        rom=mem,
-        entry=addr,
-        allow_code_before_start_addr=True,
+    lift = strider.lifter(arch, mem, rom=mem)
+    function, _unresolved = lift.analyze(
+        addr, cc, allow_code_before_start_addr=True
     )
-    assert result.function.node_count() > 0
+    assert function.node_count() > 0
 
 
 # ── unresolved-site reporting (hand-assembled bytes) ─────────────────────
@@ -52,16 +48,14 @@ def test_run_reports_single_unresolved_indirect_site_address():
     # 0x2000: ff e0    jmp rax   (rax = entry InitialVar — unresolvable)
     code = bytes([0xFF, 0xE0])
     mem = strider.BufferReader(0x2000, code)
-    result = strider.run(
-        arch=strider.SleighArch.x86_64(),
-        cc=strider.CallingConvention.x86_64_systemv(),
-        mem=mem,
-        entry=0x2000,
+    lift = strider.lifter(strider.SleighArch.x86_64(), mem)
+    _function, unresolved = lift.analyze(
+        0x2000, strider.CallingConvention.x86_64_systemv(),
         function_max_size=len(code),
     )
     # Unresolvable is NOT an error — the run completes and the exact
     # branch address is reported.
-    assert result.unresolved_indirect_branches == [0x2000]
+    assert unresolved == [0x2000]
 
 
 def test_run_reports_both_unresolved_indirect_site_addresses():
@@ -72,12 +66,10 @@ def test_run_reports_both_unresolved_indirect_site_addresses():
     #   0x1007: ff e1       jmp  rcx
     code = bytes([0x48, 0x85, 0xFF, 0x74, 0x02, 0xFF, 0xE0, 0xFF, 0xE1])
     mem = strider.BufferReader(0x1000, code)
-    result = strider.run(
-        arch=strider.SleighArch.x86_64(),
-        cc=strider.CallingConvention.x86_64_systemv(),
-        mem=mem,
-        entry=0x1000,
+    lift = strider.lifter(strider.SleighArch.x86_64(), mem)
+    _function, unresolved = lift.analyze(
+        0x1000, strider.CallingConvention.x86_64_systemv(),
         function_max_size=len(code),
     )
     # BOTH sites are reported, by exact machine address.
-    assert sorted(result.unresolved_indirect_branches) == [0x1005, 0x1007]
+    assert sorted(unresolved) == [0x1005, 0x1007]

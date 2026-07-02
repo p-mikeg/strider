@@ -76,10 +76,14 @@ def analyze(
     full optimiser pipeline + LoadReadOnly against it.  Returns the
     Function.  Skip the test if the fixture is missing.
 
-    Mirrors `crates/strider/tests/common/mod.rs::analyze` — uses the
-    custom-pipeline path of `strider.run` so unresolved indirect
-    branches show up as `IndirectBranch` placeholders in the IR
-    instead of failing the run.  Pattern-shape tests don't depend on
+    Mirrors `crates/strider/tests/common/mod.rs::analyze` — drives the
+    orchestrator's fixed-point loop through `Lifter.analyze`, which
+    always runs the canonical default pipeline (this already includes
+    `LoadReadOnly`, so no custom pipeline is needed — the old
+    `build_optimizer_pipeline()` + hand-added `LoadReadOnly()` path was
+    removed by the single-`Lifter` collapse).  Unresolved indirect
+    branches show up as `IndirectBranch` placeholders in the IR rather
+    than failing the run.  Pattern-shape tests don't depend on
     indirect-branch resolution; the orchestrator path is exercised
     separately by `test_indirect_branch_debug.py` and
     `test_switch_jump_table.py`.
@@ -99,28 +103,11 @@ def analyze(
     arch = spec.arch_factory()
     cc = spec.cc_factory()
 
-    # Build a Strider so we can construct the convention-aware optimiser
-    # pipeline (mirrors `common::analyze`'s `ana.build_optimizer_pipeline`
-    # + `opt::LoadReadOnly`).  `LoadReadOnly()` is now a marker — its
-    # rom flows through `strider.run(..., rom=mem)` via the
-    # orchestrator's `OptCtx` plumbing.
-    s = strider.Lifter(arch, mem, cc)
-    pipeline = s.build_optimizer_pipeline()
-    pipeline.add(strider.opt.LoadReadOnly())
-
-    # `strider.run(pipeline=…)` lifts via `analyze_cfg` and applies the
-    # supplied pipeline, leaving any `IndirectBranch` placeholder in
-    # the IR — same shape as the Rust suite's `analyze` helper.
-    result = strider.run(
-        arch=arch,
-        cc=cc,
-        mem=mem,
-        rom=mem,
-        entry=addr,
-        pipeline=pipeline,
-        allow_code_before_start_addr=True,
+    lift = strider.lifter(arch, mem, rom=mem)
+    function, _unresolved = lift.analyze(
+        addr, cc, allow_code_before_start_addr=True
     )
-    return result.function
+    return function
 
 
 # ── Assertion vocabulary (mirror of common/mod.rs counters) ──────────────

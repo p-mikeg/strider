@@ -344,7 +344,7 @@ def test_analyze_allow_code_before_start_addr():
 
 
 def test_standalone_strider_by_address():
-    """`strider.strider(arch, cc, mem)` over a raw BufferReader lifts a
+    """`strider.lifter(arch, mem)` over a raw BufferReader lifts a
     function by address; wrapping the resulting `Function` in an
     `Analysis` lets find() and fingerprint_pcode() work even though
     there is no backing ELF symbol table."""
@@ -353,12 +353,8 @@ def test_standalone_strider_by_address():
     mem = loaded._elf.reader()
     arch = strider.SleighArch.x86_64()
     addr = loaded.symbol("add")
-    s = strider.strider(
-        arch,
-        strider.CallingConvention.x86_64_systemv(),
-        mem,
-    )
-    fn, unresolved = s.analyze(addr)
+    s = strider.lifter(arch, mem)
+    fn, unresolved = s.analyze(addr, strider.CallingConvention.x86_64_systemv())
     a = strider.Analysis(
         fn,
         entry=addr,
@@ -383,40 +379,24 @@ def test_standalone_strider_by_address():
 
 
 def test_standalone_strider_rejects_name_targets():
-    """A standalone `Strider` accepts only address targets; a name
+    """A standalone `Lifter` accepts only address targets; a name
     target raises rather than misbehaving (it is not a symbol table)."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.load_elf(str(elf))
     mem = loaded._elf.reader()
-    s = strider.strider(
-        strider.SleighArch.x86_64(),
-        strider.CallingConvention.x86_64_systemv(),
-        mem,
-    )
+    s = strider.lifter(strider.SleighArch.x86_64(), mem)
     with pytest.raises((TypeError, ValueError)):
-        s.analyze("add")
+        s.analyze("add", strider.CallingConvention.x86_64_systemv())
 
 
-# ── Custom pipeline via strider.run(pipeline=) ──────────────────────────
-
-
-def test_run_with_custom_pipeline():
-    """The custom-pipeline path lives on `strider.run(..., pipeline=)`:
-    passing an `OptimizerPipeline` lifts once and applies it (skipping
-    the orchestrator's indirect-branch loop) and still yields a
-    non-empty graph."""
-    elf = fixture_path("x64", "arithmetic")
-    loaded = strider.load_elf(str(elf))
-    mem = loaded._elf.reader()
-    addr = loaded.symbol("add")
-    result = strider.run(
-        strider.SleighArch.x86_64(),
-        strider.CallingConvention.x86_64_systemv(),
-        mem,
-        addr,
-        pipeline=strider.OptimizerPipeline.default(),
-    )
-    assert result.function.node_count() > 0
+# The custom-pipeline path used to live on `strider.run(..., pipeline=)`:
+# passing an `OptimizerPipeline` lifted once and applied it, skipping the
+# orchestrator's indirect-branch loop.  The single-`Lifter` collapse (Task
+# 2 of the strider-py API redesign) removed that entry point —
+# `Lifter.analyze` always drives the canonical default pipeline plus
+# indirect-branch resolution.  A caller wanting extra passes on top of
+# the fully-resolved graph now calls `Function.optimize(pipeline)`
+# afterwards (already covered by `test_optimizer_pipeline.py`).
 
 
 # ── ET_REL object-file loading (`*.o`, no PT_LOAD program headers) ──────

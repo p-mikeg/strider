@@ -3,15 +3,15 @@
 adapter rather than being swallowed and surfaced as a generic
 `StriderError`.
 
-The exercise path: build a custom pipeline that includes a
-`strider.opt.LoadReadOnly()` marker and pass the rom into
-`strider.run(rom=...)`; the rom flows down through the orchestrator's
-`OptCtx` into the pass and forces a callback into the Python rom on
-the constant-address load below.  Bytes encoding a load from a
-constant absolute address (`mov eax, ds:[0x2000]`) then force the
-optimizer to consult the ROM for the bytes at `0x2000`, which is
-where the Rust `PyReadOnlyMemoryAdapter::read` adapter calls through
-to the Python subclass.
+The exercise path: pass the rom into `strider.lifter(..., rom=...)`;
+`LoadReadOnly` (part of the canonical default pipeline `Lifter.analyze`
+always runs) then consults the rom via the orchestrator's `OptCtx`,
+forcing a callback into the Python rom on the constant-address load
+below.  Bytes encoding a load from a constant absolute address (`mov
+eax, ds:[0x2000]`) then force the optimizer to consult the ROM for the
+bytes at `0x2000`, which is where the Rust
+`PyReadOnlyMemoryAdapter::read` adapter calls through to the Python
+subclass.
 
 The Rust side stashes control-flow exceptions in the thread-local
 PENDING_CONTROL_FLOW cell (see `pattern.rs`) rather than
@@ -19,7 +19,7 @@ PENDING_CONTROL_FLOW cell (see `pattern.rs`) rather than
 error indicator set between callbacks, and the next callback would
 trip CPython's "returned a result with an exception set" guard,
 destroying the original `KeyboardInterrupt`/`SystemExit` signal.
-The outer `strider.run` boundary then drains the cell and surfaces
+The outer `Lifter.analyze` boundary then drains the cell and surfaces
 the saved PyErr as `Err(...)` to Python.
 """
 
@@ -47,31 +47,14 @@ def _build_mem() -> strider.BufferReader:
     return mem
 
 
-def _build_pipeline_with_load_readonly(arch, cc, mem):
-    """Build the orchestrator's default pipeline + a `LoadReadOnly()`
-    marker so the custom-pipeline path's rom plumbing fires the pass."""
-    s = strider.Lifter(arch, mem, cc)
-    pipeline = s.build_optimizer_pipeline()
-    pipeline.add(strider.opt.LoadReadOnly())
-    return pipeline
-
-
 def test_keyboard_interrupt_in_rom_read_propagates():
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     mem = _build_mem()
     rom = _KbdRom()
-    pipeline = _build_pipeline_with_load_readonly(arch, cc, mem)
+    lift = strider.lifter(arch, mem, rom=rom)
     with pytest.raises(KeyboardInterrupt):
-        strider.run(
-            arch=arch,
-            cc=cc,
-            mem=mem,
-            entry=0x1000,
-            rom=rom,
-            pipeline=pipeline,
-            allow_code_before_start_addr=True,
-        )
+        lift.analyze(0x1000, cc, allow_code_before_start_addr=True)
 
 
 def test_system_exit_in_rom_read_propagates():
@@ -79,14 +62,6 @@ def test_system_exit_in_rom_read_propagates():
     cc = strider.CallingConvention.x86_64_systemv()
     mem = _build_mem()
     rom = _SysExitRom()
-    pipeline = _build_pipeline_with_load_readonly(arch, cc, mem)
+    lift = strider.lifter(arch, mem, rom=rom)
     with pytest.raises(SystemExit):
-        strider.run(
-            arch=arch,
-            cc=cc,
-            mem=mem,
-            entry=0x1000,
-            rom=rom,
-            pipeline=pipeline,
-            allow_code_before_start_addr=True,
-        )
+        lift.analyze(0x1000, cc, allow_code_before_start_addr=True)

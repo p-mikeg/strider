@@ -1,7 +1,7 @@
 """High-level Python facade for the strider pipeline.
 
-The lower-level building blocks (`BufferReader`, `Sleigh`, `Strider`,
-`Lifter`, `Function`, `Matcher`, `OptimizerPipeline`, etc.) remain on the
+The lower-level building blocks (`BufferReader`, `Sleigh`, `Lifter`,
+`Function`, `Matcher`, `OptimizerPipeline`, etc.) remain on the
 top-level `strider` namespace for users who need granular control.
 This module adds the three-line convenience workflow:
 
@@ -14,14 +14,14 @@ matches = a.find(strider.pattern.call())    # → list[Match]
 
 `strider.load_elf(path)` returns an `ElfStrider` — one object that *is*
 the loaded ELF.  It holds the ELF symbol backend AND a persistent
-`Strider` run handle (the Rust `strider.strider(...)`) wired with the
-ELF's memory as both the code reader and the read-only-memory image for
+`Lifter` handle (the Rust `strider.lifter(...)`) wired with the ELF's
+memory as both the code reader and the read-only-memory image for
 `LoadReadOnly` constant folding.  It exposes symbols, sizes, the entry
 point, raw reads, and `analyze()`.
 
-For non-ELF / firmware / custom-source cases, build a `Strider`
-directly with `strider.strider(arch, cc, mem, rom=None)` (the native
-Rust handle, re-exported here) and call its `analyze(addr, ...)`.
+For non-ELF / firmware / custom-source cases, build a `Lifter`
+directly with `strider.lifter(arch, mem, rom=None)` (the native
+Rust handle) and call its `analyze(addr, cc, ...)`.
 
 Arch detection is done by reading the first 20 bytes of the ELF
 header (magic + EI_CLASS + EI_DATA + e_machine).  No pyelftools
@@ -34,12 +34,9 @@ import os
 import struct
 from typing import Iterator, Optional, Union
 
-# Resolve the cdylib submodule by its full dotted path.  A plain
-# `from . import strider as _ext` would mis-resolve to the package
-# attribute `strider` — the cdylib exports a `strider()` *function*
-# that `__init__`'s wildcard binds into the package namespace before
-# this module is imported (the same hazard `__init__.py` guards
-# against).  `import_module` always yields the extension submodule.
+# Resolve the cdylib submodule by its full dotted path so `_ext` is
+# unambiguously the extension module regardless of what names the
+# wildcard import in `__init__.py` binds into the package namespace.
 import importlib as _importlib
 
 _ext = _importlib.import_module("strider.strider")
@@ -179,17 +176,6 @@ def _effective_arch_and_addr(
     return arch, raw_addr
 
 
-# ── standalone Strider run handle (re-export the native ctor) ───────────────
-
-# `strider.strider(arch, cc, mem, rom=None) -> Strider` is the native
-# Rust run handle (from `strider_cls.rs`).  Re-export it under this
-# module's namespace so `strider.strider(...)` resolves whether or not
-# the high-level facade is loaded.  The standalone (non-ELF) analyse-many
-# workflow is just "build a Strider once, call `.analyze(addr, ...)`
-# repeatedly".
-strider = _ext.strider
-
-
 # ── ElfStrider facade ───────────────────────────────────────────────────────
 
 
@@ -242,7 +228,7 @@ def load_elf(
 
 class ElfStrider:
     """The loaded ELF binary as a reusable analysis handle: an ELF symbol
-    backend plus a persistent `Strider` run handle wired with the ELF's
+    backend plus a persistent `Lifter` handle wired with the ELF's
     memory — the writable-inclusive reader as the code reader (`mem`),
     and the runtime-immutable reader (code + read-only only) as the
     `rom` for `LoadReadOnly` constant folding.
@@ -260,7 +246,7 @@ class ElfStrider:
     ```
     """
 
-    __slots__ = ("_elf", "_strider", "_arch", "_cc", "_elf_path", "_header")
+    __slots__ = ("_elf", "_lifter", "_arch", "_cc", "_elf_path", "_header")
 
     def __init__(
         self,
@@ -276,19 +262,21 @@ class ElfStrider:
         self._cc = cc
         self._elf_path = _elf_path
         self._header = _header
-        # Persistent run handle.  The ELF's writable-inclusive regions
+        # Persistent lift handle.  The ELF's writable-inclusive regions
         # serve as the code reader (`mem`); the runtime-immutable regions
         # (code + read-only only) serve as the read-only-memory image
         # (`rom`) for `LoadReadOnly` constant folding.  The rom MUST stay
         # immutable: the fold trusts every resolvable address
-        # unconditionally (see `_rebuild_strider`).
-        self._rebuild_strider()
+        # unconditionally (see `_rebuild_lifter`).  `cc` is NOT baked into
+        # the handle (the native `Lifter` stores no default cc) — it is
+        # kept here on `self._cc` and passed explicitly to `analyze` below.
+        self._rebuild_lifter()
 
-    def _rebuild_strider(self) -> None:
-        """(Re)build the persistent inner `Strider` run handle from the
-        ELF's *current* loaded regions.  Called at construction and after
-        `add_elf`: the run handle snapshots the memory map when it is
-        built, so it must be rebuilt when the regions change for a
+    def _rebuild_lifter(self) -> None:
+        """(Re)build the persistent inner `Lifter` handle from the ELF's
+        *current* loaded regions.  Called at construction and after
+        `add_elf`: the handle snapshots the memory map when it is built,
+        so it must be rebuilt when the regions change for a
         later-merged shared library to be visible to `analyze`."""
         # `mem` (instruction fetch / raw reads) is the writable-inclusive
         # reader; `rom` (LoadReadOnly constant folding) MUST be the
@@ -296,9 +284,8 @@ class ElfStrider:
         # fold replaces a constant-address load with the resolved bytes
         # WITHOUT consulting the memory chain, so a writable global that
         # is stored then reloaded must not fold to its file-initial value.
-        self._strider = strider(
+        self._lifter = _ext.lifter(
             self._arch,
-            self._cc,
             self._elf.reader(),
             rom=self._elf.ro_reader(),
         )
@@ -368,9 +355,8 @@ class ElfStrider:
     def reader(self) -> object:
         """The raw multi-region `BufferReader` assembled from the ELF's
         loaded sections — the low-level code reader you can hand to
-        `strider.run`, `strider.strider`, `strider.Lifter`, or
-        `strider.Sleigh` when dropping below the high-level `analyze`
-        facade."""
+        `strider.lifter` or `strider.Sleigh` when dropping below the
+        high-level `analyze` facade."""
         return self._elf.reader()
 
     def add_elf(self, path: str, *, apply_relocations: bool = False) -> None:
@@ -378,12 +364,12 @@ class ElfStrider:
         extends the loaded regions and the symbol set.  The
         earlier-loaded ELF wins on symbol-name collisions.
 
-        The persistent inner `Strider` run handle snapshots the memory
-        map when it is built, so it is rebuilt here from the merged
+        The persistent inner `Lifter` handle snapshots the memory map
+        when it is built, so it is rebuilt here from the merged
         regions — subsequent `analyze` calls (and `read`/`symbol`) see
         the newly-added ELF."""
         self._elf.add_elf(path, apply_relocations)
-        self._rebuild_strider()
+        self._rebuild_lifter()
 
     # ── P-code ───────────────────────────────────────────────────────
 
@@ -424,7 +410,7 @@ class ElfStrider:
         address) into an `Analysis`.
 
         Drives the full orchestrator pipeline through the persistent
-        inner `Strider`: builds the CFG, lifts to IR, runs the stable +
+        inner `Lifter`: builds the CFG, lifts to IR, runs the stable +
         destructive optimizers, and resolves indirect branches via the
         fixed-point loop.
 
@@ -456,7 +442,7 @@ class ElfStrider:
 
         The read-only memory for `LoadReadOnly` constant folding is the
         ELF's runtime-immutable regions (code + read-only sections only;
-        writable sections excluded), wired once into the inner `Strider`
+        writable sections excluded), wired once into the inner `Lifter`
         at construction.
         """
         if isinstance(target, str):
@@ -478,14 +464,19 @@ class ElfStrider:
 
         # ARM Thumb interworking: switch to the Thumb Sleigh spec and
         # strip the low bit for an interworking entry; non-ARM arches
-        # pass through verbatim.  The inner `Strider` was built with the
+        # pass through verbatim.  The inner `Lifter` was built with the
         # base arch, so a Thumb entry uses the effective arch here for
         # fingerprint-pcode resolution (the lift itself follows the
         # base-arch Sleigh the handle owns).
         eff_arch, addr = _effective_arch_and_addr(self._arch, addr)
 
-        function, unresolved_indirect_branches = self._strider.analyze(
+        # `cc` is not stored on the native `Lifter` (Task 2 collapses it
+        # to a per-`analyze`-call argument), so `ElfStrider` supplies its
+        # own `self._cc` (the ELF-derived or explicitly-passed default)
+        # here.
+        function, unresolved_indirect_branches = self._lifter.analyze(
             addr,
+            self._cc,
             function_max_size=function_max_size,
             allow_code_before_start_addr=allow_code_before_start_addr,
             compact=compact,
@@ -510,7 +501,7 @@ class ElfStrider:
 class Analysis:
     """Wrapper around a lifted, optimized IR `Function` — the result of
     `ElfStrider.analyze` (or a hand-built analysis over a standalone
-    `Strider`) — with convenience methods for pattern queries and
+    `Lifter`) — with convenience methods for pattern queries and
     provenance lookup.
     """
 
