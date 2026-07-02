@@ -481,6 +481,13 @@ fn reject_conflicting_cast_flags(
 /// payload; the returned `generation` is what each raw `Match` must be
 /// tagged with so a later in-place rewrite / compaction invalidates the
 /// derived `PyMatch` handles.
+///
+/// Pushes `slf` + the sampled generation onto
+/// `crate::pattern::CURRENT_QUERY_FUNCTION` for the duration of `run`, so
+/// a `.when()` predicate fired from inside the matcher can build a
+/// genuine `Match` handle back onto this same live function (patterns
+/// are built well before any `Function` is known, so the predicate
+/// closure itself can't capture `slf`).
 fn run_query<T>(
     slf: &Py<PyFunction>,
     py: Python<'_>,
@@ -491,8 +498,11 @@ fn run_query<T>(
         .read_inner()
         .map_err(crate::errors::into_strider_err)?;
     let matcher = strider_pattern::Matcher::new(&function_guard);
-    let raw = run(&matcher).map_err(crate::errors::into_strider_err)?;
     let generation = function_guard.graph().generation();
+    crate::pattern::push_current_query_function(slf.clone_ref(py), generation);
+    let raw = run(&matcher);
+    crate::pattern::pop_current_query_function();
+    let raw = raw.map_err(crate::errors::into_strider_err)?;
     drop(function_guard);
     drop(function_borrow);
     // If a `.when()` predicate stashed a control-flow exception

@@ -116,8 +116,10 @@ def test_match_getitem_returns_unsigned_python_int():
 
 def test_partial_and_post_match_getitem_agree_on_bool_type():
     """Regression: `m[c]` for an `I1` (boolean) constant capture must
-    surface as a Python `bool` from BOTH the post-match `PyMatch` and the
-    in-`.when()`-predicate `PyPartialMatch` proxy.
+    surface as a Python `bool` from BOTH the post-match `Match` and the
+    in-`.when()`-predicate `Match` (the same pyclass — there is no
+    separate partial-match type; the in-progress `Match` simply returns
+    `None`/`False` for captures not yet bound).
 
     `get_uint` also matches an `I1` value (returning 0/1), so a
     `__getitem__` that probed uint *before* bool would leak the boolean out
@@ -167,9 +169,32 @@ def test_partial_and_post_match_getitem_agree_on_bool_type():
     assert hits, "predicate-guarded match must still fire"
     assert seen_types, "predicate must have been invoked"
     assert all(t is bool for t in seen_types), (
-        "PyPartialMatch m[c] for an I1 const must be bool (not int), matching "
-        f"PyMatch; got {[t.__name__ for t in seen_types]}"
+        "in-.when() Match m[c] for an I1 const must be bool (not int), matching "
+        f"the post-match Match; got {[t.__name__ for t in seen_types]}"
     )
+
+
+def test_when_receives_match():
+    """`.when(f)` must call `f` with a genuine `strider.Match` — not a
+    separate partial-match proxy type.  `Match` already returns
+    `None`/`False` for captures unbound at predicate-eval time, so no
+    partial type is needed (Task 6 of the strider-py API redesign).
+    """
+    from strider.pattern import any_, any_int_const
+
+    g = _build_graph()
+    seen: dict[str, type] = {}
+    c = Capture()
+
+    def predicate(m):
+        seen.setdefault("t", type(m))
+        return True
+
+    pat = add(any_int_const(c), any_()).when(predicate)
+    g.find_all(pat)
+    assert seen, "predicate must have been invoked at least once"
+    assert seen["t"].__name__ == "Match"
+    assert seen["t"] is strider.Match
 
 
 def test_find_all_with_when_predicate_mutating_graph_is_safe():

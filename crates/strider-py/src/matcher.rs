@@ -55,8 +55,9 @@ impl CaptureKey<'_> {
 }
 
 /// Convert a capture's already-resolved value Options to a Python object
-/// per the `m[c]` precedence shared by `PyMatch::__getitem__` and
-/// `PyPartialMatch::__getitem__`.
+/// per the `m[c]` precedence used by `PyMatch::__getitem__` (shared by
+/// both a finished match and the in-progress `Match` passed to a
+/// `.when()` predicate — both go through this same `PyMatch`).
 ///
 /// Check bool (an `I1`-typed IntConst) BEFORE the general uint path:
 /// `get_uint` also matches an `I1` value (returning 0/1), so probing it
