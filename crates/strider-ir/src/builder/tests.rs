@@ -43,6 +43,14 @@ fn raw_builder(
     // stamp the sentinel lift address — it mirrors the old `new_raw`, which
     // left `lift_addr` as `None`.  Tests that build fingerprint-bearing
     // nodes set the lift address themselves.
+    //
+    // `FunctionBuilder::new` no longer seeds the stack vn (the lifter is the
+    // SSoT for that in production); mirror the lifter here so `build_call`,
+    // which reads SP, finds it tracked.
+    let mut tracked = tracked;
+    if !tracked.contains(&cc.stack_vn) {
+        tracked.push(cc.stack_vn);
+    }
     FunctionBuilder::new(tracked, &cc, endianness)
 }
 
