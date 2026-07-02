@@ -5,7 +5,7 @@ use crate::error::Result;
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 use super::eval_int::{eval_int_binary, eval_int_cmp};
 
-use crate::{BoxedRule, apply_rules_in_order, rewrite_rule};
+use crate::{apply_rules_in_order, rewrite_rule};
 use strider_pattern::{
     Capture, CaptureExt, add, and, any_float_const, any_int_const, bool_const_with, bool_not,
     float_binary_any, float_bits_to_int, float_cmp_any, float_const_with, float_unary_any,
@@ -240,7 +240,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     let const_on_right_or = const_on_right!(or);
     let const_on_right_xor = const_on_right!(xor);
 
-    let rules: Vec<BoxedRule> = vec![
+    vec![
         rule_add_add,
         rule_sub_sub,
         rule_add_sub,
@@ -253,8 +253,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         const_on_right_and,
         const_on_right_or,
         const_on_right_xor,
-    ];
-    rules
+    ]
 }
 
 /// The low-`W` all-ones mask for a truncate's output width, or `None` when the
@@ -434,7 +433,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     );
     let trunc_trunc = rewrite_rule(truncate(truncate(var(x))), template::truncate(var(x)));
 
-    let rules: Vec<BoxedRule> = vec![
+    vec![
         rule_int_float,
         rule_float_int,
         zext_round_trip,
@@ -445,8 +444,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         narrow_mul_through_sext,
         mk_drop_high_half,
         mk_drop_low_mask_under_truncate,
-    ];
-    rules
+    ]
 }
 
 /// Builds the algebraic-identity rule vec for integer binary operations.
@@ -481,7 +479,7 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
         var(c),
     );
 
-    let rules: Vec<BoxedRule> = vec![
+    vec![
         // x + 0 → x  (commutative: also covers 0 + x)
         rewrite_rule(add(var(x), int_const(0u128)), var(x)),
         // x - 0 → x
@@ -512,8 +510,7 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
         rewrite_rule(sshr(var(x), int_const(0u128)), var(x)),
         all_ones_rule,
         or_all_ones_rule,
-    ];
-    rules
+    ]
 }
 
 /// Width-consistency guard for the integer const-eval folds.
@@ -555,7 +552,7 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         Capture::new(),
     );
 
-    let rules: Vec<BoxedRule> = vec![
+    vec![
         // 1. IntBinaryOp(op)(IntConst(l), IntConst(r)) =>
         //        int_const(eval_int_binary(op, l, r, ty)?, ty)
         //    `eval_int_binary` returns `None` for div-by-zero / signed
@@ -714,8 +711,7 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 }),
             )
         },
-    ];
-    rules
+    ]
 }
 
 /// Builds the constant-evaluation and absorbing-element rule vec for the
@@ -742,7 +738,7 @@ fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
     // Only the rules with no integer analogue are re-expressed here at
     // `I1`: `BOr(true, _) → true` (no `x | all_ones → all_ones` integer
     // rule) and `!!x → x` (no double-`BitNot` integer rule).
-    let rules: Vec<BoxedRule> = vec![
+    vec![
         // (`x | true → true` is handled generically by the integer
         // `x | all_ones → all_ones` rule — at I1, `true` is the all-ones
         // value — so no I1-specific Or-absorbing rule is needed here.)
@@ -787,6 +783,5 @@ fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
                 }),
             )
         },
-    ];
-    rules
+    ]
 }

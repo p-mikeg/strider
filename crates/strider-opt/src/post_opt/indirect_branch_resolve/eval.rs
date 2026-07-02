@@ -114,7 +114,6 @@ impl<'a> Evaluator<'a> {
         let out_ty = f.value_type_opt(value);
         let ins: SmallVec<[ValueId; 2]> = value_input_producers(f, node).collect();
         match kind {
-            NodeKind::IntConst(_) => Some(Abs::Const(f.int_const_u128(value)?)),
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add) => self.eval_add(
                 value,
                 self.get(*ins.first()?)?,

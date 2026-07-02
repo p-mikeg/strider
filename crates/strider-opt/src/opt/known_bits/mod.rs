@@ -374,11 +374,9 @@ pub(crate) fn node_known_bits(
             let input_kind = ctx.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
             let max_val = input_ty.bit_width() as u64;
-            let bits_needed = if max_val == 0 {
-                1
-            } else {
-                u64::BITS - max_val.leading_zeros()
-            } as u64;
+            // `max_val == 0` ⇒ leading_zeros() == 64 ⇒ the subtraction is 0, so
+            // `.max(1)` yields 1; otherwise it is a no-op.
+            let bits_needed = u64::from((u64::BITS - max_val.leading_zeros()).max(1));
             let result_mask = if bits_needed >= 128 {
                 u128::MAX
             } else {

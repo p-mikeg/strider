@@ -529,20 +529,14 @@ impl Function {
     /// is read internally rather than passed (a non-entry root would be a misuse:
     /// "retain reachable" means "from the function's entry").
     ///
-    /// # Errors
-    ///
-    /// Returns an error if [`Self::entry`] is `None`.  Otherwise infallible in
-    /// practice; the `Result` is kept so a future invariant check has a typed
-    /// channel.
-    ///
     /// Crate-internal: this remaps only the graph and leaves the `Function`
     /// side-tables stale, so [`Self::compact`] (which remaps them) is the only
     /// safe public entry point.
-    pub(crate) fn retain_reachable(&mut self) -> crate::Result<NodeIdRemap> {
+    pub(crate) fn retain_reachable(&mut self) -> NodeIdRemap {
         // Collect the reachable set into a `Vec` first: that ends the
         // immutable borrow before the mutable `graph_mut()` borrow below.
         let reachable: Vec<NodeId> = self.walk().collect();
-        Ok(self.graph_mut().retain_reachable(reachable))
+        self.graph_mut().retain_reachable(reachable)
     }
 
     /// Rebuilds the function's graph to retain only nodes reachable from
@@ -558,7 +552,7 @@ impl Function {
     /// entry (invariant violation).
     pub fn compact(&mut self) -> crate::Result<NodeIdRemap> {
         let entry = self.entry;
-        let remap = self.retain_reachable()?;
+        let remap = self.retain_reachable();
         let new_entry = remap.node_old_to_new(entry).ok_or_else(|| {
             anyhow::anyhow!(
                 "Function::compact: entry {:?} missing from remap (invariant violation)",

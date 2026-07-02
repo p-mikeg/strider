@@ -219,36 +219,24 @@ fn apply_one_relocation(
     // the symbol's address at the site.  Resolving eagerly means
     // analysis-time `Load(GOT[...])` reads the real target without
     // having to model a PLT.
-    if let Some(size_bytes) = got_or_plt_slot_reloc_size(reloc, obj.architecture()) {
-        // Need the target symbol for these (no symbol → skip); pass
-        // `require_symbol_target = true`.
-        let Some(target_addr) = resolve_symbol_target(obj, reloc) else {
-            return;
-        };
-        let value = apply_addend(target_addr, reloc.addend());
-        locate_and_write(
-            regions,
-            region_index,
-            site_addr,
-            value,
-            size_bytes,
-            endian_le,
-        );
-        return;
-    }
-
-    // Defined-symbol MIPS `R_MIPS_REL32` — `S + A` semantics.  The
-    // undefined / index-0 case is handled by `image_relative_reloc`
-    // above (addend-only, since `S = 0`); a REL32 against a defined
-    // symbol carries a `RelocationTarget::Symbol(_)` and needs the
-    // symbol's address.  `object` reports REL32 as
-    // `RelocationKind::Unknown`, so the general `match reloc.kind()`
-    // below would mis-bucket it as unsupported — resolve it here
-    // (4-byte field on both MIPS32 and MIPS64).  Pass
-    // `require_symbol_target = true`: the `Symbol`-target gate in
-    // `mips_rel32_symbol_reloc_size` guarantees the target is a
-    // `Symbol`, so this only ever takes the resolve-or-skip arms.
-    if let Some(size_bytes) = mips_rel32_symbol_reloc_size(reloc, obj.architecture()) {
+    // GOT/PLT slots (`R_*_GLOB_DAT` / `R_*_JUMP_SLOT`) and defined-symbol MIPS
+    // `R_MIPS_REL32` share identical `S + A` write semantics — only the size
+    // classifier differs — so they merge into one resolve-or-skip arm.  The two
+    // classifiers match disjoint `(architecture, r_type)` predicates, so at most
+    // one returns `Some`.
+    //
+    // On the MIPS REL32 case: the undefined / index-0 variant is handled by
+    // `image_relative_reloc` above (addend-only, since `S = 0`); a REL32 against
+    // a defined symbol carries a `RelocationTarget::Symbol(_)` and needs the
+    // symbol's address.  `object` reports REL32 as `RelocationKind::Unknown`, so
+    // the general `match reloc.kind()` below would mis-bucket it as unsupported
+    // — resolve it here (4-byte field on both MIPS32 and MIPS64).  The
+    // `Symbol`-target gate in `mips_rel32_symbol_reloc_size` guarantees the
+    // target is a `Symbol`, so this only ever takes the resolve-or-skip arms.
+    if let Some(size_bytes) = got_or_plt_slot_reloc_size(reloc, obj.architecture())
+        .or_else(|| mips_rel32_symbol_reloc_size(reloc, obj.architecture()))
+    {
+        // Need the target symbol (no symbol → skip).
         let Some(target_addr) = resolve_symbol_target(obj, reloc) else {
             return;
         };

@@ -1,8 +1,7 @@
 //! Test-only graph DSL — moved inline from the standalone `graphmock`
 //! crate (which had no production consumers beyond these tests).
 //!
-//! `&Graph` implements [`graphwalk::GraphRef`] and
-//! [`graphwalk::PredGraphRef`], so it plugs straight into
+//! `&Graph` implements [`graphwalk::GraphRef`], so it plugs straight into
 //! [`graphwalk::PreOrder`] / [`graphwalk::PostOrder`].
 
 #![allow(
@@ -16,7 +15,7 @@
 use std::ops::ControlFlow;
 
 use cranelift_entity::{PrimaryMap, entity_impl};
-use graphwalk::{GraphRef, PredGraphRef};
+use graphwalk::GraphRef;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(u32);
@@ -24,7 +23,6 @@ entity_impl!(NodeId);
 
 struct Node {
     name: String,
-    preds: Vec<NodeId>,
     succs: Vec<NodeId>,
 }
 
@@ -58,7 +56,6 @@ impl Graph {
             Entry::Vacant(v) => {
                 let node = self.nodes.push(Node {
                     name: v.key().clone(),
-                    preds: Vec::new(),
                     succs: Vec::new(),
                 });
                 v.insert(node);
@@ -69,7 +66,6 @@ impl Graph {
 
     fn add_succ(&mut self, node: NodeId, succ: NodeId) {
         self.nodes[node].succs.push(succ);
-        self.nodes[succ].preds.push(node);
     }
 }
 
@@ -131,15 +127,5 @@ impl GraphRef for &'_ Graph {
         f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
         self.nodes[node].succs.iter().copied().try_for_each(f)
-    }
-}
-
-impl PredGraphRef for &'_ Graph {
-    fn try_predecessors(
-        &self,
-        node: Self::NodeId,
-        f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        self.nodes[node].preds.iter().copied().try_for_each(f)
     }
 }
