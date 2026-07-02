@@ -12,8 +12,8 @@ use crate::macros::forall_preset;
 #[pyclass(name = "SleighArch", module = "strider", frozen)]
 #[derive(Clone)]
 pub struct PySleighArch {
-    pub(crate) inner: strider_target::SleighArch,
-    pub(crate) preset_name: &'static str,
+    inner: strider_target::SleighArch,
+    preset_name: &'static str,
 }
 
 #[pymethods]

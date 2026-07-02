@@ -27,8 +27,8 @@ pub(crate) enum CcImpl {
 #[pyclass(name = "CallingConvention", module = "strider", frozen)]
 #[derive(Clone)]
 pub struct PyCallingConvention {
-    pub(crate) inner: CcImpl,
-    pub(crate) preset_name: &'static str,
+    inner: CcImpl,
+    preset_name: &'static str,
 }
 
 // `x86_64_all_preserving` stays hand-written below because it carries

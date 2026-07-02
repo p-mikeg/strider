@@ -518,9 +518,9 @@ impl StackArgs {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CcPresetRow {
     /// The Rust factory name (also the Python classmethod name).
-    pub(crate) name: &'static str,
+    name: &'static str,
     /// The convention itself.  `Copy` — every field is `&'static`.
-    pub(crate) cc: CallingConvention,
+    cc: CallingConvention,
 }
 
 /// Static data table of every supported calling convention preset.

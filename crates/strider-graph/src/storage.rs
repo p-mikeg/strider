@@ -51,7 +51,7 @@ pub(crate) struct UseData {
     /// The value being consumed.
     pub(crate) value_id: ValueId,
     /// Previous use in the linked list of uses for `value_id`.
-    pub(crate) prev: PackedOption<UseId>,
+    prev: PackedOption<UseId>,
     /// Next use in the linked list of uses for `value_id`.
     pub(crate) next: PackedOption<UseId>,
     /// The node that consumes this input.

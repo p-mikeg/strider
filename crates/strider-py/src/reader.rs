@@ -31,9 +31,9 @@ use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
 /// `#[pyclass(unsendable)]` marker plus PyO3's GIL serialisation lets
 /// us drop all of the prior `Arc<RwLock<...>>` ceremony.
 pub(crate) struct PyBufferReaderInner {
-    pub(crate) regions: Vec<MemRegion>,
+    regions: Vec<MemRegion>,
     /// Lazily-rebuilt lookup table; cleared on every region change.
-    pub(crate) table: Option<Arc<MemRegionsLookupTable>>,
+    table: Option<Arc<MemRegionsLookupTable>>,
 }
 
 /// Owned-data single-region buffer reader.  Implements
@@ -58,7 +58,7 @@ pub(crate) struct PyBufferReaderInner {
 pub struct PyBufferReader {
     /// `Rc` so a `BufferReader` clone shares state with the original —
     /// the prior `Arc<RwLock<...>>` layout had the same semantics.
-    pub(crate) inner: Rc<RefCell<PyBufferReaderInner>>,
+    inner: Rc<RefCell<PyBufferReaderInner>>,
 }
 
 impl PyBufferReader {
@@ -482,7 +482,7 @@ where
 /// Internal adapter: holds a `Py<PyAny>` (the user's Python subclass)
 /// and implements `rsleigh::MemReader` by `Python::with_gil` per call.
 pub struct PyMemReaderAdapter {
-    pub py_obj: Py<PyAny>,
+    py_obj: Py<PyAny>,
 }
 
 impl rsleigh::MemReader for PyMemReaderAdapter {
@@ -564,7 +564,7 @@ impl PyReadOnlyMemory {
 
 /// Internal adapter wrapping a Python `ReadOnlyMemory` subclass.
 pub struct PyReadOnlyMemoryAdapter {
-    pub py_obj: Py<PyAny>,
+    py_obj: Py<PyAny>,
 }
 
 impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
@@ -634,7 +634,7 @@ impl rsleigh::MemReader for AnyMemReader {
 /// optimizer per the function's `Function::endianness` (derived from the
 /// `SleighArch`).
 pub struct PyBufferReaderView {
-    pub table: Arc<MemRegionsLookupTable>,
+    table: Arc<MemRegionsLookupTable>,
 }
 
 impl rsleigh::MemReader for PyBufferReaderView {
