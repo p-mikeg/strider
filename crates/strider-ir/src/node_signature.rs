@@ -86,8 +86,8 @@ pub(crate) struct Slot {
 /// `head.len()` slots long.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SlotList {
-    pub(crate) head: &'static [Slot],
-    pub(crate) tail: Option<Slot>,
+    head: &'static [Slot],
+    tail: Option<Slot>,
 }
 
 impl SlotList {

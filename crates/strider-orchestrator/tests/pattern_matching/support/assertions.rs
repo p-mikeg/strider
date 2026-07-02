@@ -16,7 +16,7 @@ use strider_pattern::{Match, Matcher, Pattern};
 /// Runs `pat` against `g` and returns the matches, panicking with a
 /// descriptive message if the count differs from `expected`.
 #[track_caller]
-pub fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec<Match> {
+pub(crate) fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec<Match> {
     let hits = Matcher::new(function).find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
@@ -29,14 +29,14 @@ pub fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec<Match>
 
 /// Asserts `pat` matches exactly once and returns that [`Match`].
 #[track_caller]
-pub fn unique(function: &Function, pat: Pattern) -> Match {
+pub(crate) fn unique(function: &Function, pat: Pattern) -> Match {
     let mut hits = matches(function, pat, 1);
     hits.pop().expect("unique requires exactly one match")
 }
 
 /// Asserts `pat` produces no matches.
 #[track_caller]
-pub fn none(function: &Function, pat: Pattern) {
+pub(crate) fn none(function: &Function, pat: Pattern) {
     matches(function, pat, 0);
 }
 
@@ -46,7 +46,7 @@ pub fn none(function: &Function, pat: Pattern) {
 /// places (e.g. a constant used twice) but the test only cares about *any*
 /// success, not exactly one.
 #[track_caller]
-pub fn first(function: &Function, pat: Pattern) -> Match {
+pub(crate) fn first(function: &Function, pat: Pattern) -> Match {
     let mut hits = Matcher::new(function).find_all(&pat).unwrap();
     assert!(!hits.is_empty(), "expected at least one match, got 0");
     hits.swap_remove(0)
@@ -55,7 +55,7 @@ pub fn first(function: &Function, pat: Pattern) -> Match {
 /// Returns the first node in `g` whose kind satisfies `pred`, panicking if
 /// none exists.
 #[track_caller]
-pub fn find_node<F: Fn(&NodeKind) -> bool>(function: &Function, pred: F) -> NodeId {
+pub(crate) fn find_node<F: Fn(&NodeKind) -> bool>(function: &Function, pred: F) -> NodeId {
     function
         .walk()
         .find(|&n| pred(function.node_kind(n)))

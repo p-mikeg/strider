@@ -67,7 +67,7 @@ pub struct FunctionBuilder {
     /// Region-setup helpers (`build_entry`, region/phi creation) leave it
     /// `None`, so synthesised structural
     /// nodes legitimately stay empty in the fingerprint side-table.
-    pub(crate) lift_addr: Option<u64>,
+    lift_addr: Option<u64>,
 }
 
 impl FunctionBuilder {

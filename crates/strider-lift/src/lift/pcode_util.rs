@@ -5,7 +5,7 @@
 //! checked input accessors and the LOAD/STORE space decoder.
 
 /// `Result` alias.  Every fallible helper here returns this type.
-pub type Result<T> = anyhow::Result<T>;
+pub(crate) type Result<T> = anyhow::Result<T>;
 
 /// Common boilerplate: require the instruction to have an output varnode and
 /// return a borrowed reference to it.

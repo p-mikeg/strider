@@ -102,7 +102,7 @@ pub struct Function {
     /// `arg_passing_regs` / `ret_val_regs` / `callee_saved_regs` drive the
     /// ret-val/clobber register-list projection (the lifter's `cc_projection`
     /// in prod; [`cc_ret_and_clobber_vns`] for test fixtures).
-    pub(crate) default_cc: strider_target::BuiltCallingConvention,
+    default_cc: strider_target::BuiltCallingConvention,
     /// Target endianness of the architecture this function was lifted
     /// for.  Read by post-lift analyses that decode multi-byte values
     /// (the optimizer's ROM-const evaluation and stack high/low-half
@@ -110,7 +110,7 @@ pub struct Function {
     /// lifter now, so this is no longer on that hot path.  A `Copy` scalar
     /// (so [`Self::compact`] needs no remap for it); defaults to
     /// little-endian on the [`Default`]-derived / synthetic-test path.
-    pub(crate) endianness: strider_target::Endianness,
+    endianness: strider_target::Endianness,
     /// The single interner for every tracked varnode
     /// ([`crate::node::InitialVnId`] → [`rsleigh::Vn`], value-deduped in
     /// deterministic `(space, offset, size)` order).  Single source of truth
@@ -124,7 +124,7 @@ pub struct Function {
     /// varnode list via [`Self::all_vns`], resolve an id via
     /// [`Self::initial_vn`], and resolve a varnode to its id via
     /// [`Self::vn_id_of`].
-    pub(crate) vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
+    vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 
     // ── overlay tables ─────────────────────────────────────────────────────
     //
@@ -132,7 +132,7 @@ pub struct Function {
     // identity, grouped into [`SideTables`]; defaulted in one line by
     // [`Self::new`] and remapped in one [`SideTables::remap`] call by
     // [`Self::compact`].  Surfaced through the typed accessors below.
-    pub(crate) side_tables: SideTables,
+    side_tables: SideTables,
 
     /// Every integer-constant value referenced by an `IntConst(id)` node.
     ///

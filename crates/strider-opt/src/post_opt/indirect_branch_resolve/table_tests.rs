@@ -44,9 +44,9 @@ fn make_known_and_doms(
 ///
 /// Kept distinct from the shared [`MockRom`] helper because its
 /// recording-side-log behaviour is unique to this file.
-pub struct RecordingRom {
-    pub inner: MockRom,
-    pub log: Mutex<Vec<(u64, usize)>>,
+pub(super) struct RecordingRom {
+    inner: MockRom,
+    log: Mutex<Vec<(u64, usize)>>,
 }
 
 impl ReadOnlyMemory for RecordingRom {

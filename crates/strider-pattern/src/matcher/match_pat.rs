@@ -49,7 +49,7 @@ impl MatchPat for Pre {
 
 /// Captures the node producing the inner pattern's root output.
 pub struct Captured<P> {
-    pub(crate) inner: P,
+    inner: P,
     pub(crate) cap: crate::capture::Capture,
 }
 impl<P: MatchPat> MatchPat for Captured<P> {
@@ -80,7 +80,7 @@ macro_rules! decorator {
     ) => {
         $(#[$smeta])*
         pub struct $struct<P $(, $g)?> {
-            pub(crate) inner: P,
+            inner: P,
             $($(#[$fmeta])* pub(crate) $field: $fty),*
         }
         impl<P: MatchPat $(, $g)?> MatchPat for $struct<P $(, $g)?>

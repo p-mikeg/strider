@@ -19,7 +19,7 @@ use crate::ids::{NodeId, UseId, UseIdList, ValueId, ValueIdList};
 /// Stores one output of a node and tracks all of its uses via an intrusive
 /// doubly-linked list of [`UseData`] ids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ValueData<V> {
+pub(crate) struct ValueData<V> {
     /// The payload describing what this output carries.
     pub(crate) kind: V,
     /// The node that produces this output.
@@ -47,7 +47,7 @@ impl<V> ValueData<V> {
 /// Forms part of a doubly-linked list of all uses of a particular value,
 /// enabling efficient update of all consumers when a value changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UseData {
+pub(crate) struct UseData {
     /// The value being consumed.
     pub(crate) value_id: ValueId,
     /// Previous use in the linked list of uses for `value_id`.
@@ -78,7 +78,7 @@ impl UseData {
 /// Holds the node's payload along with its input and output slot lists
 /// (stored externally in entity pools).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Node<N> {
+pub(crate) struct Node<N> {
     pub(crate) kind: N,
     pub(crate) inputs: UseIdList,
     pub(crate) outputs: ValueIdList,

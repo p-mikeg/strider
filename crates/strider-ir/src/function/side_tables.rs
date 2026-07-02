@@ -53,7 +53,7 @@ pub struct SideTables {
     // The mutation API (`extend_asm_fingerprint`,
     // `extend_asm_fingerprint_from`) keeps using `&[u64]` /
     // `impl IntoIterator<Item = u64>` so callers are unaffected.
-    pub(crate) asm_fingerprints: SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
+    asm_fingerprints: SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
     /// The varnode a value *represents*, keyed by [`ValueId`].  Two
     /// disjoint populations share this one map:
     ///
@@ -96,7 +96,7 @@ pub struct SideTables {
     /// have a `Vec` of size 1.
     ///
     /// Populated by `FunctionArgDetect`; empty until that pass runs.
-    pub(crate) arg_index_to_values: FxHashMap<u32, Vec<ValueId>>,
+    arg_index_to_values: FxHashMap<u32, Vec<ValueId>>,
     /// Stack slot for Store/Load nodes whose address decomposes to
     /// `base + K` for a single concrete `K`, where `base` is the SP-derived
     /// terminal node (`InitialVar(sp)` or an alignment-masked `sp & -16`).
@@ -105,7 +105,7 @@ pub struct SideTables {
     /// Populated by the `StackOffsetDetect` classifier.  The phi-of-offsets
     /// case (address is a phi of different constants per branch) is not
     /// recorded — consumers can re-decompose via `decompose_sp` if needed.
-    pub(crate) stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>>,
+    stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>>,
     /// O(1) [`crate::node::InitialVnId`] → `InitialVar(id)` node-id accelerator
     /// for indirect-resolve sites and the lifter's lazy `read_or_init_var`
     /// fallback.  Keyed by the tracked-varnode id (not the raw `rsleigh::Vn`)

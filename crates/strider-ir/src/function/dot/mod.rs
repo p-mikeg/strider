@@ -7,7 +7,7 @@ use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, ValueId};
 use crate::node_signature::{SlotRole, expected_signature};
 
-pub mod label;
+pub(crate) mod label;
 mod raw;
 mod render;
 #[cfg(test)]
@@ -133,7 +133,7 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
 /// Build the `node_to_arg_indices` reverse map from `function.side_tables().iter_arg_indices()`.
 /// Called once at construction time inside [`Function::dot_dumper`] and in
 /// test helpers that construct a [`FunctionDotDumper`] directly.
-pub fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<u32>> {
+pub(crate) fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<u32>> {
     let mut map: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
     for idx in function.side_tables().iter_arg_indices() {
         for &value in function.side_tables().arg_index_to_values(idx) {

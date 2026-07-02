@@ -27,7 +27,7 @@ fn fmt_vn(vn: &rsleigh::Vn) -> String {
 }
 
 /// A raw 1:1 DOT dumper over a [`Function`] (see the module docs).
-pub struct RawFunctionDumper<'a> {
+pub(super) struct RawFunctionDumper<'a> {
     function: &'a Function,
     /// Reverse of `Function::arg_index_to_values`: carrier node → arg indices.
     arg_index: FxHashMap<NodeId, Vec<u32>>,
@@ -35,7 +35,7 @@ pub struct RawFunctionDumper<'a> {
 
 impl<'a> RawFunctionDumper<'a> {
     /// Wraps `function` for raw rendering.
-    pub fn new(function: &'a Function) -> Self {
+    pub(super) fn new(function: &'a Function) -> Self {
         Self {
             arg_index: super::build_arg_reverse_map(function),
             function,

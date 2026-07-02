@@ -32,8 +32,8 @@ use crate::staging::{SealNode, StagedGraph};
 /// wiring a pattern graph; names a staged node's output by position.
 #[derive(Clone, Copy)]
 pub struct PatValueRef {
-    pub(crate) node: usize,
-    pub(crate) output: usize,
+    node: usize,
+    output: usize,
 }
 
 /// Handle to a pattern **node** vertex — used by the variadic / control

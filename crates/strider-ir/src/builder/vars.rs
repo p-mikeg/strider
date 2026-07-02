@@ -76,7 +76,7 @@ impl FunctionBuilder {
             // to locate it.
             let node_id = self.function().producer(value);
             self.function_mut()
-                .side_tables
+                .side_tables_mut()
                 .initial_var_index
                 .insert(vn_id, node_id);
         }

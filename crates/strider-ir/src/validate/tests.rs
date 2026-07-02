@@ -221,7 +221,7 @@ fn validate_flags_stale_initial_var_index_entry() {
     stamp(&mut s.f, iv);
     let iv_value = s.f.node_outputs(iv)[0];
     let vn_id = s.f.vn_id_of(&vn).expect("vn is tracked");
-    s.f.side_tables.initial_var_index.insert(vn_id, iv);
+    s.f.side_tables_mut().initial_var_index.insert(vn_id, iv);
     let ret =
         s.f.graph_mut()
             .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, iv_value], []);

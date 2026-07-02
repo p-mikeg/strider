@@ -53,15 +53,15 @@ bitflags::bitflags! {
 /// crate.
 pub struct FunctionState {
     /// Every node currently considered live (entry-reachable, not culled).
-    pub(crate) live_nodes: DenseEntitySet<NodeId>,
+    live_nodes: DenseEntitySet<NodeId>,
     /// Input-less source nodes — the seeds of the cached reverse-post-order.
     /// Maintained in O(1) per edit (insert/remove/contains are O(1)); iterated
     /// in ascending-`NodeId` order.
-    pub(crate) roots: DenseEntitySet<NodeId>,
+    roots: DenseEntitySet<NodeId>,
     /// Nodes whose liveness may have just dropped; drained by `clean`.
-    pub(crate) queue: Worklist<NodeId>,
+    queue: Worklist<NodeId>,
     /// Per-node rewrite-state flags.
-    pub(crate) flags: SecondaryMap<NodeId, NodeFlags>,
+    flags: SecondaryMap<NodeId, NodeFlags>,
 }
 
 impl FunctionState {

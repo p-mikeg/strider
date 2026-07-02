@@ -529,11 +529,11 @@ mod tests {
         );
         assert_ne!(id_a, id_b, "CallOther is non-cacheable");
         assert_eq!(function.side_tables().call_other_name(id_a), None);
-        function.side_tables.call_other_names[id_a] = Some("setISAMode".to_string());
+        function.side_tables_mut().call_other_names[id_a] = Some("setISAMode".to_string());
         assert_eq!(function.side_tables().call_other_name(id_a), Some("setISAMode"));
         assert_eq!(function.side_tables().call_other_name(id_b), None);
         // Replacement
-        function.side_tables.call_other_names[id_a] = Some("OtherName".to_string());
+        function.side_tables_mut().call_other_names[id_a] = Some("OtherName".to_string());
         assert_eq!(function.side_tables().call_other_name(id_a), Some("OtherName"));
     }
 

@@ -19,7 +19,7 @@ use object::{Endianness, elf};
 /// chosen `sh_addr`, and its dynamic-symbol layout is opaque).
 ///
 /// Returns the ELF bytes plus the two addresses the test asserts on.
-pub struct Mips32Rel32Fixture {
+pub(crate) struct Mips32Rel32Fixture {
     pub bytes: Vec<u8>,
     /// Virtual address of the 4-byte relocation site (in `.data.rel.ro`).
     pub slot_addr: u64,
@@ -29,7 +29,7 @@ pub struct Mips32Rel32Fixture {
 
 /// Builds a defined-symbol [`Mips32Rel32Fixture`] (the REL32 points at
 /// the defined `func` symbol).  See [`build_mips32be_rel32_elf_with`].
-pub fn build_mips32be_rel32_elf() -> Mips32Rel32Fixture {
+pub(crate) fn build_mips32be_rel32_elf() -> Mips32Rel32Fixture {
     build_mips32be_rel32_elf_with(/* defined_symbol */ true)
 }
 
@@ -50,7 +50,7 @@ pub fn build_mips32be_rel32_elf() -> Mips32Rel32Fixture {
 /// `object::dynamic_relocations()` iterates `SHT_REL` sections whose
 /// `sh_link` is the `SHT_DYNSYM` section, so wiring `sh_link`
 /// correctly is what makes the reloc visible.
-pub fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32Fixture {
+pub(crate) fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32Fixture {
     let endian = Endianness::Big;
     let sym_addr: u64 = 0x1000; // `.text` / `func`
     let slot_addr: u64 = 0x2000; // `.data.rel.ro` slot
@@ -268,7 +268,7 @@ pub fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32Fixture
 /// width-straddle case): the relocation site is placed at
 /// `slot_addr + reloc_off`, so a `slot_len` that ends before
 /// `reloc_off + 4` produces a field that straddles the staged region's end.
-pub struct X86Pc32Fixture {
+pub(crate) struct X86Pc32Fixture {
     pub bytes: Vec<u8>,
     /// Virtual address of the 4-byte relocation site.
     pub site_addr: u64,
@@ -287,7 +287,7 @@ pub struct X86Pc32Fixture {
 /// Mirrors [`build_mips32be_rel32_elf_with`] but for x86-64 RELA
 /// (24-byte entries with an explicit `r_addend`) and a `Relative`
 /// (`S + A - P`) reloc kind.
-pub fn build_x86_64_pc32_rela_elf(slot_len: usize, reloc_off: u64, addend: i64) -> X86Pc32Fixture {
+pub(crate) fn build_x86_64_pc32_rela_elf(slot_len: usize, reloc_off: u64, addend: i64) -> X86Pc32Fixture {
     let endian = Endianness::Little;
     let sym_addr: u64 = 0x1000; // `.text` / `func`
     let slot_addr: u64 = 0x2000; // `.data.rel.ro` section base
@@ -477,7 +477,7 @@ pub fn build_x86_64_pc32_rela_elf(slot_len: usize, reloc_off: u64, addend: i64) 
 /// `.text` section of `bytes` placed at virtual address `addr`.
 ///
 /// Flags: `SHF_ALLOC | SHF_EXECINSTR`. `sh_type` is `SHT_PROGBITS`.
-pub fn simple_text_elf(addr: u64, bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn simple_text_elf(addr: u64, bytes: &[u8]) -> Vec<u8> {
     build_one_section_elf(OneSectionOpts {
         addr,
         data: bytes,
@@ -492,7 +492,7 @@ pub fn simple_text_elf(addr: u64, bytes: &[u8]) -> Vec<u8> {
 
 /// Like `simple_text_elf` but lets the caller choose endianness. Used for
 /// endianness round-trip tests.
-pub fn simple_text_elf_with_endian(addr: u64, bytes: &[u8], endian: Endianness) -> Vec<u8> {
+pub(crate) fn simple_text_elf_with_endian(addr: u64, bytes: &[u8], endian: Endianness) -> Vec<u8> {
     build_one_section_elf(OneSectionOpts {
         addr,
         data: bytes,
@@ -603,7 +603,7 @@ fn build_one_section_elf(opts: OneSectionOpts<'_>) -> Vec<u8> {
 
 /// Description of one section in a fixture ELF.
 #[derive(Clone, Debug)]
-pub struct SectionSpec {
+pub(crate) struct SectionSpec {
     pub name: &'static [u8],
     pub addr: u64,
     pub data: Vec<u8>,
@@ -615,7 +615,7 @@ pub struct SectionSpec {
 }
 
 impl SectionSpec {
-    pub fn text(addr: u64, data: Vec<u8>) -> Self {
+    pub(crate) fn text(addr: u64, data: Vec<u8>) -> Self {
         Self {
             name: b".text",
             addr,
@@ -625,7 +625,7 @@ impl SectionSpec {
             nobits: false,
         }
     }
-    pub fn rodata(addr: u64, data: Vec<u8>) -> Self {
+    pub(crate) fn rodata(addr: u64, data: Vec<u8>) -> Self {
         Self {
             name: b".rodata",
             addr,
@@ -635,7 +635,7 @@ impl SectionSpec {
             nobits: false,
         }
     }
-    pub fn data(addr: u64, data: Vec<u8>) -> Self {
+    pub(crate) fn data(addr: u64, data: Vec<u8>) -> Self {
         Self {
             name: b".data",
             addr,
@@ -645,7 +645,7 @@ impl SectionSpec {
             nobits: false,
         }
     }
-    pub fn bss(addr: u64, size: usize) -> Self {
+    pub(crate) fn bss(addr: u64, size: usize) -> Self {
         Self {
             name: b".bss",
             addr,
@@ -674,7 +674,7 @@ impl SectionSpec {
 /// Sections with `nobits == true` contribute nothing to the file
 /// on-disk but still have a section header with the right `sh_size`
 /// and `sh_type`.  This is how `object` models `.bss`.
-pub fn build_elf_with_sections(sections: &[SectionSpec]) -> Vec<u8> {
+pub(crate) fn build_elf_with_sections(sections: &[SectionSpec]) -> Vec<u8> {
     build_sections_elf(sections, Endianness::Little, true, elf::EM_X86_64)
 }
 
@@ -775,7 +775,7 @@ fn build_sections_elf(
 
 /// Description of one PT_LOAD segment in a fixture ELF.
 #[derive(Clone, Debug)]
-pub struct SegmentSpec {
+pub(crate) struct SegmentSpec {
     pub addr: u64,
     pub data: Vec<u8>,
     pub exec: bool,
@@ -787,7 +787,7 @@ pub struct SegmentSpec {
 /// A single `.segN`-named section is also emitted per segment so the file
 /// also parses via the section view — but the typical consumer is the
 /// segment-level readers.
-pub fn build_elf_with_segments(segments: &[SegmentSpec]) -> Vec<u8> {
+pub(crate) fn build_elf_with_segments(segments: &[SegmentSpec]) -> Vec<u8> {
     let endian = Endianness::Little;
     let is_64 = true;
 
