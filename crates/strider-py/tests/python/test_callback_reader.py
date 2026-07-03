@@ -60,10 +60,10 @@ def test_callback_reader_lifts_array_sum(x86_memory_elf):
 
     arch = SleighArch.x86()
     cc = CallingConvention.x86_cdecl()
-    s = strider.Lifter(arch, reader, cc)
-    cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
-    outcome = s.analyze_cfg(cfg)
-    g = outcome.function
+    s = strider.lifter(arch, reader)
+    _cfg, g, _unresolved = s.analyze(
+        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    )
 
     # The lifted graph should include at least one Return.
     from strider.pattern import ret
@@ -75,22 +75,20 @@ def test_callback_reader_lifts_array_sum(x86_memory_elf):
 
 
 def test_run_via_callback_reader(x86_memory_elf):
-    """End-to-end: `strider.run` with a callback reader should drive
-    the orchestrator's indirect-branch fixed-point loop and produce
-    an optimised graph.
+    """End-to-end: `strider.lifter(...).analyze(...)` with a callback
+    reader should drive the orchestrator's indirect-branch fixed-point
+    loop and produce an optimised graph.
     """
     inner = strider.load_elf(str(x86_memory_elf)).reader()
     reader = make_counting_reader(inner)
     addr = symbol_addr(x86_memory_elf, "array_sum")
 
-    result = strider.run(
-        arch=SleighArch.x86(),
-        cc=CallingConvention.x86_cdecl(),
-        mem=reader,
-        entry=addr,
-        allow_code_before_start_addr=True,
+    lift = strider.lifter(SleighArch.x86(), reader)
+    _cfg, function, _unresolved = lift.analyze(
+        addr, CallingConvention.x86_cdecl(),
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )
-    assert result.function.node_count() > 0
+    assert function.node_count() > 0
     assert reader.calls > 0
 
 
@@ -133,7 +131,7 @@ def test_read_only_memory_subclass_default_raises():
 
 def test_load_readonly_accepts_callback_subclass():
     # Just confirm we can build a `LoadReadOnly` pass.  The rom flows
-    # through `strider.run(..., rom=...)` rather than being attached
+    # through `strider.lifter(..., rom=...)` rather than being attached
     # to the pass instance, so the constructor takes no arguments.
     _ = ConstReadOnlyMemory()
     pipe = LoadReadOnly()
@@ -141,19 +139,16 @@ def test_load_readonly_accepts_callback_subclass():
 
 
 def test_run_with_callback_rom_doesnt_crash(x86_memory_elf):
-    """Plug a callback ROM into `strider.run` — even if no loads
+    """Plug a callback ROM into `strider.lifter` — even if no loads
     actually fold, the pipeline must not crash.
     """
     inner = strider.load_elf(str(x86_memory_elf)).reader()
     addr = symbol_addr(x86_memory_elf, "array_sum")
     rom = ConstReadOnlyMemory()
 
-    result = strider.run(
-        arch=SleighArch.x86(),
-        cc=CallingConvention.x86_cdecl(),
-        mem=inner,
-        entry=addr,
-        rom=rom,
-        allow_code_before_start_addr=True,
+    lift = strider.lifter(SleighArch.x86(), inner, rom=rom)
+    _cfg, function, _unresolved = lift.analyze(
+        addr, CallingConvention.x86_cdecl(),
+        opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )
-    assert result.function.node_count() > 0
+    assert function.node_count() > 0

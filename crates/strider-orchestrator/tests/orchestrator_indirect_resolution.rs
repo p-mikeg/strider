@@ -295,7 +295,7 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
         )
         .expect("cfg");
     let mut single = lifter
-        .build_ir_with(&cfg, &cc, &LiftOptions::default())
+        .build_ir_with(&cfg, cc, &LiftOptions::default())
         .expect("ir")
         .function;
     let pipeline = strider_orchestrator::opt::default_pipeline();

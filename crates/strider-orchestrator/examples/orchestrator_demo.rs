@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dot.dump_as_html("cfg.html")?;
     dot.dump_as_dot("cfg.dot")?;
 
-    let mut function = strider.build_ir(&cfg, &cc)?.function;
+    let mut function = strider.build_ir(&cfg, cc)?.function;
 
     let dot = dot::GraphDot::new(
         function.dot_dumper(strider.sleigh())?,

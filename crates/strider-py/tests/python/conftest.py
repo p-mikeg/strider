@@ -65,31 +65,51 @@ _ARCH_PRESETS = {
 }
 
 
-def built_function(arch_name: str, case: str, symbol: str, *, optimize: bool = True):
+def built_lifter_and_function(
+    arch_name: str, case: str, symbol: str, *, optimize: bool = True
+):
     """Lift `fixtures/out/<arch_name>/<case>.elf::<symbol>` and return the
-    IR `Function`.
+    `(Lifter, Function)` pair — the `Lifter` is needed by callers that
+    want the Sleigh-needing pretty renders (`dump_html` / `dump_dot` /
+    `html_str`), which live on it rather than on the bare `Function`.
+    (The p-code audit trail, `fingerprint_pcode`, lives on the `Cfg`
+    `analyze` returns instead — discarded here as `_cfg`; callers that
+    need it should call `lift.analyze(...)` directly.)
 
-    * `optimize=True` (default) drives the full `strider.run` pipeline —
-      optimizers + indirect-branch resolution, with the ELF's regions
-      wired as the read-only memory for `LoadReadOnly` folding.
-    * `optimize=False` lifts the raw, unoptimized IR via the low-level
-      `Lifter` path (`build_cfg` + `analyze_cfg`, no optimizer pass).
+    The single `Lifter.analyze` handle always drives the full
+    lift+optimise+resolve pipeline (there is no lower-level "lift only,
+    skip the optimizer" entry point any more — `Lifter.build_cfg` stops
+    at the structural CFG, one level below IR).  `optimize` is kept as a
+    no-op parameter for call-site compatibility with tests that predate
+    the single-`Lifter` collapse; both branches behave identically.
 
     Skips cleanly (via `fixture_path`) when the fixture ELF is missing.
     """
+    del optimize
     arch_ctor, cc_ctor = _ARCH_PRESETS[arch_name]
     arch, cc = arch_ctor(), cc_ctor()
     loaded = strider.load_elf(str(fixture_path(arch_name, case)))
     mem = loaded.reader()
     addr = loaded.symbol(symbol)
-    if optimize:
-        return strider.run(
-            arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
-            allow_code_before_start_addr=True,
-        ).function
-    lifter = strider.Lifter(arch, mem, cc)
-    cfg = lifter.build_cfg(addr, allow_code_before_start_addr=True)
-    return lifter.analyze_cfg(cfg).function
+    lift = strider.lifter(arch, mem, rom=mem)
+    _cfg, function, _unresolved = lift.analyze(
+        addr,
+        cc,
+        opts=strider.LifterOptions(
+            cfg=strider.CfgOptions(allow_code_before_start_addr=True)
+        ),
+    )
+    return lift, function
+
+
+def built_function(arch_name: str, case: str, symbol: str, *, optimize: bool = True):
+    """Like `built_lifter_and_function`, but returns just the `Function`
+    for callers that only need Sleigh-free reads (pattern queries,
+    `node_count`, `raw_dot_str`, ...)."""
+    _lift, function = built_lifter_and_function(
+        arch_name, case, symbol, optimize=optimize
+    )
+    return function
 
 
 @pytest.fixture

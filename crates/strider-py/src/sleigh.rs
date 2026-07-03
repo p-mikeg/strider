@@ -19,8 +19,9 @@ use crate::reader::{AnyMemReader, MemInput};
 /// it builds one transiently at construction to probe the register table
 /// and keeps only the cached `SleighRegs` (for `reg(...)` lookups) plus
 /// the arch preset name (for `arch_name()` / `__repr__`).  It is the
-/// public `strider.Sleigh` class and the `RunResult.sleigh` handle whose
-/// `regs` stay accessible after a run.
+/// public `strider.Sleigh` class — a standalone register-table lookup
+/// independent of any `Lifter`, constructed directly via
+/// `strider.Sleigh(arch, mem)`.
 #[pyclass(name = "Sleigh", module = "strider")]
 pub struct PySleigh {
     pub(crate) arch_name: &'static str,
@@ -88,7 +89,7 @@ impl PySleigh {
 /// without having to thread a `Sleigh` through.
 ///
 /// Strider exposes the four standard Sleigh spaces via the `ram()`,
-/// `register()`, `const_()`, and `unique()` classmethods.
+/// `register()`, `const()`, and `unique()` classmethods.
 // `#[gen_stub_pyclass]` derives `PyStubType` for `PyVnSpace` so the
 // macro-emitted `.space(s: PyVnSpace)` signatures compile under
 // `#[gen_stub_pymethods]`.  The existing `#[pymethods]` block below is
@@ -119,6 +120,7 @@ impl PyVnSpace {
     }
     /// The constant ("const") address space.
     #[classmethod]
+    #[pyo3(name = "const")]
     fn const_(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
         Self {
             inner: rsleigh::VnSpace::CONST,

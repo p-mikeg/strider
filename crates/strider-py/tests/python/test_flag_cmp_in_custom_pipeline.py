@@ -1,6 +1,5 @@
-"""Regression test: a custom pipeline that includes
-`FlagCmpCanonicalize` must canonicalise the same flag-cmp shapes the
-default pipeline does.
+"""Regression test: the default pipeline's `FlagCmpCanonicalize` must
+canonicalise `head->next == &head`-style flag-cmp shapes.
 
 The canonical bug shape is `list_empty(head)`: `head->next == &head`
 compiles on x86_64 (`-O2`) to a `cmp QWORD PTR [rdi+K], rdi+K`
@@ -15,8 +14,11 @@ normalises to::
 
 — the canonical shape pattern queries match on
 (``int_eq(load(<base>+K), add(<base>, K))``).  ``FlagCmpCanonicalize``
-was not exposed to Python, so a custom pipeline that omitted it left
-the flag-tree shape in the IR and pattern queries failed silently.
+must run in the pipeline `Lifter.analyze` drives, or the flag-tree
+shape stays in the IR and pattern queries fail silently.  (There used
+to be a custom-pipeline entry point that could omit it entirely; the
+single-`Lifter` collapse removed that knob — `analyze` always runs the
+canonical default pipeline, which includes `FlagCmpCanonicalize`.)
 
 This test uses the in-repo fixture `fixtures/cases/list_empty.c` —
 `is_thread_group_empty(task*)` — which has the exact ``head->next ==
@@ -27,7 +29,6 @@ This test uses the in-repo fixture `fixtures/cases/list_empty.c` —
 from __future__ import annotations
 
 import strider
-from strider import opt
 from strider.pattern import (
     Capture,
     add,
@@ -40,53 +41,22 @@ from strider.pattern import (
 from .conftest import fixture_path
 
 
-def _build_user_pipeline_with_fcc(sl, sleigh, cc, mem):
-    """A bsdfinder-style custom pipeline that bolts
-    ``FlagCmpCanonicalize`` on top of the user's chosen passes.
-
-    The `mem` arg is unused here — `LoadReadOnly()` receives its rom
-    image via the orchestrator's `OptCtx` plumbing (see
-    `strider.run(..., rom=mem)`); the pass instance is now a marker.
-    """
-    del mem
-    pipe = strider.OptimizerPipeline.empty()
-    pipe.add(opt.ConstantFold())
-    pipe.add(opt.KnownBits())
-    pipe.add(opt.FlagCmpCanonicalize())
-    pipe.add(opt.IfCondInversion())
-    pipe.add(opt.PhiCollapse())
-    pipe.add(opt.RegionCollapse())
-    pipe.add(opt.DeadBranchElimination())
-    pipe.add(opt.LoadReadOnly())
-    pipe.add(opt.LoadForward())
-    pipe.add_post(opt.FunctionArgDetect())
-    pipe.add_post(opt.CallStackArgCollect())
-    return pipe
-
-
 def test_list_empty_pattern_matches_under_custom_pipeline_with_fcc():
-    """With `FlagCmpCanonicalize` in the custom pipeline, the
-    `head->next == &head` shape must be matchable as
-    `int_eq(load(<base>+K), add(<base>, K))` — the same way the
-    orchestrator's default-pipeline path matches it."""
+    """`FlagCmpCanonicalize` (part of the canonical default pipeline
+    `Lifter.analyze` always runs) must canonicalise the
+    `head->next == &head` shape so it is matchable as
+    `int_eq(load(<base>+K), add(<base>, K))`."""
     elf = fixture_path("x64", "list_empty")
     loaded = strider.load_elf(str(elf))
     mem = loaded.reader()
     sleigh = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
-    sl = strider.Sleigh(sleigh, mem)
 
     entry, max_size = loaded._elf.symbol_addr_and_size("is_thread_group_empty")
-    pipe = _build_user_pipeline_with_fcc(sl, sleigh, cc, mem)
 
-    res = strider.run(
-        arch=sleigh,
-        cc=cc,
-        mem=mem,
-        rom=mem,
-        entry=entry,
-        function_max_size=max_size,
-        pipeline=pipe,
+    lift = strider.lifter(sleigh, mem, rom=mem)
+    _cfg, function, _unresolved = lift.analyze(
+        entry, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=max_size))
     )
 
     o = Capture()
@@ -94,7 +64,7 @@ def test_list_empty_pattern_matches_under_custom_pipeline_with_fcc():
         load(addr=add(function_arg(0), any_int_const(o))),
         add(function_arg(0), any_int_const(o)),
     )
-    hits = list(res.function.find_all(pat, ignore_casts=True))
+    hits = list(function.find_all(pat, ignore_casts=True))
     offsets = sorted({h.uint(o) for h in hits if h.uint(o) is not None})
     # `offsetof(struct task, head)` in the C fixture: int (4) + char[60]
     # (60) = 64.  GCC at -O2 emits exactly `cmp [rdi+0x40], rdi+0x40`.

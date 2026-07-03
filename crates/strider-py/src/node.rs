@@ -19,6 +19,7 @@ use std::hash::{Hash, Hasher};
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 
+use strider_ir::node::NodeKind;
 use strider_ir::IRViewer;
 
 use crate::errors::into_strider_err;
@@ -121,8 +122,8 @@ impl PyNode {
     }
 
     /// The node's `NodeKind` formatted as a string (e.g. `"IntConst"`,
-    /// `"Call"`, `"Phi"`, `"Add"`).  Same formatting as
-    /// `Function.node_kind(id)`.
+    /// `"Call"`, `"Phi"`, `"Add"`).  The node's `NodeKind` formatted as a
+    /// string.
     fn kind(&self, py: Python<'_>) -> PyResult<String> {
         self.with_node(py, |function, nid| format!("{:?}", function.node_kind(nid)))
     }
@@ -151,46 +152,136 @@ impl PyNode {
         Ok(out)
     }
 
-    /// The node's integer constant value as an unsigned `int`, or `None`
-    /// when its value output isn't an integer `IntConst`.  Arbitrary
-    /// precision: every constant width (I1 through I512) surfaces its
-    /// full value, wide (> 64-bit) ones included.  Booleans are 1-bit
-    /// integers, so a bool constant surfaces here as `0` / `1` too.
-    fn const_int(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        // No single native pyo3 integer conversion spans every wide
-        // width (I80/I128/I256/I512), so all four share one uniform
-        // little-endian-bytes -> `int.from_bytes` path; narrow (<= I64)
-        // constants take the plain `u64` route.
-        enum ConstRepr {
-            Narrow(u128),
-            WideLe(Vec<u8>),
-        }
-        let repr = self.with_node(py, |function, nid| {
-            if let Some(bytes) = function.int_const_wide_le_bytes(nid) {
-                return Some(ConstRepr::WideLe(bytes));
-            }
-            Self::value_output(function, nid)
-                .and_then(|value| function.int_const_u128(value))
-                .map(ConstRepr::Narrow)
-        })?;
-        match repr {
-            None => Ok(None),
-            Some(ConstRepr::Narrow(v)) => Ok(Some(v.into_py(py))),
-            Some(ConstRepr::WideLe(bytes)) => {
-                let le = pyo3::types::PyBytes::new_bound(py, &bytes);
-                let value = py
-                    .get_type_bound::<pyo3::types::PyInt>()
-                    .call_method1("from_bytes", (le, "little"))?;
-                Ok(Some(value.unbind()))
-            }
-        }
+    /// The node's integer constant value as a signed `int` (sign-extended
+    /// at the value's declared width), or `None` when its value output
+    /// isn't an integer `IntConst` or the stored magnitude exceeds 128
+    /// bits (I256/I512 — use `wide_const_bytes()` for those).  Booleans
+    /// are 1-bit integers, so a bool constant surfaces here as `0` / `-1`.
+    pub(crate) fn const_int(&self, py: Python<'_>) -> PyResult<Option<i128>> {
+        self.with_node(py, |function, nid| {
+            Self::value_output(function, nid).and_then(|value| function.int_const_i128(value))
+        })
+    }
+
+    /// The node's integer constant value as an unsigned `int` (masked to
+    /// the value's declared width), or `None` when its value output isn't
+    /// an integer `IntConst` or the stored magnitude exceeds 128 bits
+    /// (I256/I512 — use `wide_const_bytes()` for those).
+    pub(crate) fn const_uint(&self, py: Python<'_>) -> PyResult<Option<u128>> {
+        self.with_node(py, |function, nid| {
+            Self::value_output(function, nid).and_then(|value| function.int_const_u128(value))
+        })
     }
 
     /// The node's boolean constant value, or `None` when its value
     /// output isn't an `I1`-typed `IntConst`.
-    fn const_bool(&self, py: Python<'_>) -> PyResult<Option<bool>> {
+    pub(crate) fn const_bool(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         self.with_node(py, |function, nid| {
             Self::value_output(function, nid).and_then(|value| function.bool_const_val(value))
+        })
+    }
+
+    /// The node's raw IEEE 754 bit pattern as `u64`, or `None` when it
+    /// isn't a `FloatConst`.
+    pub(crate) fn float_bits(&self, py: Python<'_>) -> PyResult<Option<u64>> {
+        self.with_node(py, |function, nid| match function.node_kind(nid) {
+            NodeKind::FloatConst(bits) => Some(*bits),
+            _ => None,
+        })
+    }
+
+    /// The `Vn` associated with this node, if one can be determined.
+    /// Well-defined only for a handful of producer kinds:
+    ///
+    /// * `InitialVar(vn)` — the varnode whose function-entry value is
+    ///   read.
+    /// * `Call` / `CallOther` clobber output — the register the call
+    ///   clobbers, recovered via `Function::get_vn_for_value` on the
+    ///   node's value output.
+    ///
+    /// Returns `None` for any other node kind.
+    pub(crate) fn vn(&self, py: Python<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
+        let vn = self.with_node(py, |function, nid| {
+            if matches!(function.node_kind(nid), NodeKind::Call | NodeKind::CallOther { .. })
+                && let Some(value) = Self::value_output(function, nid)
+                && let Some(vn) = function.get_vn_for_value(value)
+            {
+                return Some(vn);
+            }
+            match function.node_kind(nid) {
+                NodeKind::InitialVar(id) => Some(function.initial_vn(*id)),
+                _ => None,
+            }
+        })?;
+        Ok(vn.map(crate::sleigh::PyVn::from_inner))
+    }
+
+    /// If this node is an `IntBinaryOp`, its variant name (e.g. `"Add"`),
+    /// else `None`.
+    pub(crate) fn int_binary_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.with_node(py, |function, nid| match function.node_kind(nid) {
+            NodeKind::IntBinaryOp(op) => Some(format!("{op:?}")),
+            _ => None,
+        })
+    }
+
+    /// If this node is an `IntUnaryOp`, its variant name, else `None`.
+    pub(crate) fn int_unary_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.with_node(py, |function, nid| match function.node_kind(nid) {
+            NodeKind::IntUnaryOp(op) => Some(format!("{op:?}")),
+            _ => None,
+        })
+    }
+
+    /// If this node is an `IntCmpOp`, its variant name (e.g. `"Less"`,
+    /// `"Equal"`), else `None`.
+    pub(crate) fn int_cmp_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.with_node(py, |function, nid| match function.node_kind(nid) {
+            NodeKind::IntCmpOp(op) => Some(format!("{op:?}")),
+            _ => None,
+        })
+    }
+
+    /// If this node is a boolean binary op (an `IntBinaryOp` whose output
+    /// is `I1`), its variant name, else `None`.
+    ///
+    /// Note: there is no `bool_unary_op`.  A boolean logical NOT is
+    /// `Xor(x, IntConst(1)):I1`, so it is recovered here (returning
+    /// `"Xor"`).
+    pub(crate) fn bool_binary_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.with_node(py, |function, nid| {
+            let NodeKind::IntBinaryOp(op) = function.node_kind(nid) else {
+                return None;
+            };
+            let value = Self::value_output(function, nid)?;
+            if !function.value_kind(value).as_value()?.is_bool() {
+                return None;
+            }
+            Some(format!("{op:?}"))
+        })
+    }
+
+    /// If this node is a `FloatBinaryOp`, its variant name, else `None`.
+    pub(crate) fn float_binary_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.with_node(py, |function, nid| match function.node_kind(nid) {
+            NodeKind::FloatBinaryOp(op) => Some(format!("{op:?}")),
+            _ => None,
+        })
+    }
+
+    /// If this node is a `FloatUnaryOp`, its variant name, else `None`.
+    pub(crate) fn float_unary_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.with_node(py, |function, nid| match function.node_kind(nid) {
+            NodeKind::FloatUnaryOp(op) => Some(format!("{op:?}")),
+            _ => None,
+        })
+    }
+
+    /// If this node is a `FloatCmpOp`, its variant name, else `None`.
+    pub(crate) fn float_cmp_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.with_node(py, |function, nid| match function.node_kind(nid) {
+            NodeKind::FloatCmpOp(op) => Some(format!("{op:?}")),
+            _ => None,
         })
     }
 
@@ -201,7 +292,11 @@ impl PyNode {
     /// Empty for structural node kinds (Entry, InitialMemory, phis,
     /// Region) whose existence is synthesised by the IR builder rather
     /// than tied to a specific asm instruction.
-    fn fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
+    ///
+    /// `pub(crate)` so `PyCfg::fingerprint_pcode` (`cfg.rs`)
+    /// can reuse the same addr-only lookup instead of duplicating the
+    /// side-table read.
+    pub(crate) fn fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
         self.with_node(py, |function, nid| function.side_tables().asm_fingerprint(nid).to_vec())
     }
 

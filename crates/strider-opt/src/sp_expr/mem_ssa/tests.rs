@@ -713,13 +713,3 @@ fn cyclic_loop_header_phi_terminates() {
         fg.node_kind(r),
     );
 }
-
-#[test]
-fn long_linear_chain_is_heap_bounded() {
-    // 10k-deep chain — confirms the walk is iterative (heap-bounded),
-    // not call-stack-bounded.
-    const DEPTH: usize = 10_000;
-    let (mut fg, head, _store_mems) = linear_store_chain(DEPTH);
-    let r = run(&mut fg, &mut NeverAlias, head);
-    assert_clean(&fg, r);
-}

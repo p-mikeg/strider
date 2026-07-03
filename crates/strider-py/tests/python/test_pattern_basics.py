@@ -1,8 +1,8 @@
 import pytest
 import strider
 from strider.pattern import (
-    Capture, Pat, var, any_, int_const, bool_const,
-    add, sub, mul, load, store, call, ret, if_, phi, initial_var,
+    Capture, Pat, var, anything, int_const, bool_const,
+    add, sub, mul, load, store, call, ret, if_else, phi, initial_var,
 )
 
 
@@ -91,10 +91,10 @@ def test_ret_constructor():
 
 
 def test_if_constructor():
-    # `if_()` returns an `IfPat` typed builder (chain `.cond`,
+    # `if_else()` returns an `IfPat` typed builder (chain `.cond`,
     # `.true_branch`, `.false_branch`).
-    assert isinstance(if_().into_pat(), Pat)
-    assert isinstance(if_(cond="cnd").into_pat(), Pat)
+    assert isinstance(if_else().into_pat(), Pat)
+    assert isinstance(if_else(cond="cnd").into_pat(), Pat)
 
 
 def test_phi_constructor():
@@ -111,7 +111,7 @@ def test_pattern_submodule_dir():
     import strider.pattern as p
     # Smoke check that the most common builders are present.
     for name in ["add", "sub", "mul", "load", "store", "call", "ret",
-                 "if_", "phi", "var", "any_", "int_const",
+                 "if_else", "phi", "var", "anything", "int_const",
                  "bool_const", "Capture", "Pat"]:
         assert hasattr(p, name), name
 
@@ -138,8 +138,8 @@ def test_float_is_nan_constructs_pattern():
     """float_is_nan(x) used to raise NotImplementedError; it now produces
     a valid Pat via the IEEE-754 self-inequality (x != x) which matches
     the same IR shape Sleigh's FLOAT_NAN lowering produces at lift time."""
-    from strider.pattern import float_is_nan, any_
-    p = float_is_nan(any_())
+    from strider.pattern import float_is_nan, anything
+    p = float_is_nan(anything())
     assert isinstance(p, Pat)
 
 
@@ -149,3 +149,20 @@ def test_pyat_ordered_on_finalized_pat_raises():
     builder (int_binary(...).ordered())."""
     with pytest.raises(strider.errors.StriderError):
         add(var(Capture()), var(Capture())).ordered()
+
+
+def test_renamed_constructors():
+    """Task 8: keyword-colliding / needless-underscore constructors were
+    renamed to descriptive names (`and_`→`int_and`, `or_`→`int_or`,
+    `xor`→`int_xor`, `not_`/`bit_not`→`int_not`, `if_`→`if_else`,
+    `any_`→`anything`); the old names must no longer exist."""
+    from strider import pattern as pat
+
+    assert hasattr(pat, "int_and")
+    assert hasattr(pat, "int_or")
+    assert hasattr(pat, "int_xor")
+    assert hasattr(pat, "int_not")
+    assert hasattr(pat, "if_else")
+    assert hasattr(pat, "anything")
+    for gone in ("and_", "or_", "xor", "not_", "bit_not", "if_", "any_"):
+        assert not hasattr(pat, gone), gone

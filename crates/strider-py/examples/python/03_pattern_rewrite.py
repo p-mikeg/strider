@@ -1,4 +1,4 @@
-"""03 — Pattern → pattern rewrite + reoptimize.
+"""03 — Pattern → pattern rewrite + re-optimize.
 
 Strider's optimizer has constant folding built in, so contrived
 identities like `x + 0` rarely survive long enough to demonstrate
@@ -9,7 +9,7 @@ exposed.
 
 Read this example to understand:
   - How `find` and `replace` patterns share captures by name.
-  - How to call `reoptimize()` after a manual rewrite.
+  - How to call `Lifter.optimize(function)` after a manual rewrite.
   - That `rewrite_all` lets you stage multiple rules in one pass.
 
 Run from the workspace root:
@@ -27,19 +27,13 @@ WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
 elf = strider.load_elf(str(FIXTURE))
-mem = elf.reader()
 addr = elf.symbol("array_sum")
-result = strider.run(
-    arch=strider.SleighArch.x86(),
-    cc=strider.CallingConvention.x86_cdecl(),
-    mem=mem,
-    rom=mem,
-    entry=addr,
-    allow_code_before_start_addr=True,
+_cfg, function, _unresolved = elf.analyze(
+    addr, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
 )
 
 # Snapshot the load count before rewriting.
-before = len(result.function.find_all(load()))
+before = len(function.find_all(load()))
 print(f"before rewrite: {before} loads")
 
 # A no-op rewrite that demonstrates the API: replace `x + 0` with `x`
@@ -53,16 +47,16 @@ print(f"before rewrite: {before} loads")
 x = Capture()
 rule_find = add(var(x), int_const(0))
 rule_repl = var(x)
-n = result.function.rewrite(find=rule_find, replace=rule_repl)
+n = function.rewrite(find=rule_find, replace=rule_repl)
 print(f"`x + 0 → x` substitution: {n} site(s) rewritten")
 
-# After any structural change you should reoptimize. `reoptimize()`
-# re-runs the full default pipeline (constant folding, known-bits, and
-# the node-removing passes that collapse phi/dead-branch noise the
-# rewrite may have exposed).
-result.function.reoptimize()
+# After any structural change you should re-optimize. `Lifter.optimize`
+# (called with no pipeline) re-runs the full default pipeline (constant
+# folding, known-bits, and the node-removing passes that collapse
+# phi/dead-branch noise the rewrite may have exposed).
+elf.optimize(function)
 
-after = len(result.function.find_all(load()))
+after = len(function.find_all(load()))
 print(f"after rewrite + reoptimize: {after} loads")
 
 # A staged-rules example: apply two rules in order, first-match-wins per
@@ -70,7 +64,7 @@ print(f"after rewrite + reoptimize: {after} loads")
 # matters.
 y = Capture()
 z = Capture()
-result.function.rewrite_all([
+function.rewrite_all([
     (add(var(y), int_const(0)), var(y)),
     (add(int_const(0), var(z)), var(z)),   # commutative-twin
 ])

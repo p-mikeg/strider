@@ -225,7 +225,7 @@ impl RegisterSet {
         let endianness = self
             .endianness
             .unwrap_or(strider_target::Endianness::Little);
-        let mut b = FunctionBuilder::new(tracked, &cc, endianness)?;
+        let mut b = FunctionBuilder::new(tracked, cc, endianness)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)
     }

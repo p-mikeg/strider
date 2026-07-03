@@ -1,27 +1,43 @@
-from .conftest import built_function
+from .conftest import built_function, built_lifter_and_function
 
 
 def _build_graph():
     return built_function("x86", "memory", "array_sum", optimize=False)
 
 
-def test_graph_to_html_writes_file(tmp_path):
-    g = _build_graph()
+def _build_lifter_and_graph():
+    return built_lifter_and_function("x86", "memory", "array_sum", optimize=False)
+
+
+def test_pretty_dump_on_lifter():
+    """Pretty renders need a `Sleigh` (register-name resolution, constant
+    inlining, virtual nodes) which only the `Lifter` owns — a bare
+    `Function` has none, so the accessor moved off it entirely."""
+    lift, graph = _build_lifter_and_graph()
+    html = lift.html_str(graph)
+    assert isinstance(html, str) and len(html) > 0
+    assert not hasattr(graph, "html_str")
+    assert not hasattr(graph, "to_html")
+    assert not hasattr(graph, "to_dot")
+
+
+def test_lifter_dump_html_writes_file(tmp_path):
+    lift, g = _build_lifter_and_graph()
     out = tmp_path / "graph.html"
-    g.to_html(str(out))
+    lift.dump_html(g, str(out))
     assert out.exists() and out.stat().st_size > 0
 
 
-def test_graph_to_dot_writes_file(tmp_path):
-    g = _build_graph()
+def test_lifter_dump_dot_writes_file(tmp_path):
+    lift, g = _build_lifter_and_graph()
     out = tmp_path / "graph.dot"
-    g.to_dot(str(out))
+    lift.dump_dot(g, str(out))
     assert out.exists() and out.stat().st_size > 0
 
 
-def test_graph_html_str_returns_html():
-    g = _build_graph()
-    html = g.html_str()
+def test_lifter_html_str_returns_html():
+    lift, g = _build_lifter_and_graph()
+    html = lift.html_str(g)
     assert isinstance(html, str)
     assert "<html" in html.lower() or "svg" in html.lower()
 

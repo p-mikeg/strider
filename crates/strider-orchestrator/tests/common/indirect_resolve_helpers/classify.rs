@@ -735,7 +735,7 @@ pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::V
             &strider_cfg::CfgOptions::default(),
         )
         .expect("cfg build");
-    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
+    let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     let mut function = outcome.function;
     let p = strider_orchestrator::opt::default_pipeline();
     p.run(

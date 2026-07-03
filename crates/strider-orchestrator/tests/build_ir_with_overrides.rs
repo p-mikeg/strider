@@ -56,7 +56,7 @@ fn build_ir_with_applies_per_address_override() {
     let outcome = strider
         .build_ir_with(
             &cfg,
-            &cc,
+            cc,
             &LiftOptions {
                 per_address_ccs: built,
                 ..LiftOptions::default()
@@ -103,9 +103,9 @@ fn build_ir_with_default_options_matches_build_ir() {
         )
         .unwrap();
 
-    let outcome_default = strider.build_ir(&cfg, &cc).unwrap();
+    let outcome_default = strider.build_ir(&cfg, cc.clone()).unwrap();
     let outcome_with = strider
-        .build_ir_with(&cfg, &cc, &LiftOptions::default())
+        .build_ir_with(&cfg, cc, &LiftOptions::default())
         .unwrap();
 
     let n_default = outcome_default.function.graph().all_node_ids().count();

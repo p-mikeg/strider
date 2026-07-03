@@ -33,13 +33,14 @@ PYTHONPATH=crates/strider-py python crates/strider-py/examples/python/01_quickst
 
 | # | Script | Demonstrates |
 |---|---|---|
-| 01 | [`01_quickstart.py`](01_quickstart.py) | The five-line "load ELF → lift → query → visualize" flow with `strider.run`. |
+| 01 | [`01_quickstart.py`](01_quickstart.py) | The five-line "load ELF → lift → query → visualize" flow with `strider.load_elf` + `ElfLifter.analyze`. |
 | 02 | [`02_python_reader.py`](02_python_reader.py) | A custom `MemReader` subclass serving bytes from Python — lift a synthetic instruction stream without touching disk. |
 | 03 | [`03_pattern_rewrite.py`](03_pattern_rewrite.py) | Find a redundant idiom (`x + 0`) and rewrite it to `x`; re-optimize destructively to collapse the dead branch. |
 | 04 | [`04_custom_optimizer.py`](04_custom_optimizer.py) | Build an optimizer pipeline pass-by-pass; compare the lifted graph before and after. |
 | 05 | [`05_visualize.py`](05_visualize.py) | Dump the CFG and the lifted IR graph as standalone HTML files for browser viewing. |
 | 06 | [`06_complex_patterns.py`](06_complex_patterns.py) | Multi-level captures, back-references, `.when` predicate guards, commutative matching, the `_any` variant-agnostic constructors. |
 | 07 | [`07_callback_rom.py`](07_callback_rom.py) | A `ReadOnlyMemory` subclass that serves `.rodata` from Python; folds compile-time-constant loads into constants via `LoadReadOnly`. |
+| 08 | [`08_custom_readers.py`](08_custom_readers.py) | Combine a custom `MemReader` and `ReadOnlyMemory` in one lift; capture a folded constant and template-rewrite it on a clone. |
 
 ## What each example doesn't show
 
