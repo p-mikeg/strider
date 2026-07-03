@@ -34,7 +34,7 @@ def _run(elf_path):
     mem = loaded.reader()
     addr = loaded.symbol("dispatch_value")
     lift = strider.lifter(arch, mem, rom=mem)
-    function, _unresolved = lift.analyze(
+    _cfg, function, _unresolved = lift.analyze(
         addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
     )
     return lift, function

@@ -19,7 +19,7 @@ def test_find_all_mem_phi_pat_does_not_raise():
     # add: leaq (%rdi,%rsi), %rax; retq
     bytes_ = bytes([0x48, 0x8d, 0x04, 0x37, 0xc3])
     mem = strider.BufferReader(0x1000, bytes_)
-    g, _unresolved = strider.lifter(arch, mem).analyze(0x1000, cc)
+    _cfg, g, _unresolved = strider.lifter(arch, mem).analyze(0x1000, cc)
     # Should not raise — empty list is fine, the test verifies the
     # Python boundary accepts MemPhiPat as a Pat-like input.
     matches = g.find_all(pat.mem_phi())

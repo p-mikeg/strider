@@ -31,7 +31,7 @@ def test_run_resolves_indirect_branch_x86():
     mem = loaded.reader()
     addr = loaded.symbol("indirect_branch_resolved")
     lift = strider.lifter(arch, mem, rom=mem)
-    function, _unresolved = lift.analyze(
+    _cfg, function, _unresolved = lift.analyze(
         addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
     )
     assert function.node_count() > 0
@@ -49,7 +49,7 @@ def test_run_reports_single_unresolved_indirect_site_address():
     code = bytes([0xFF, 0xE0])
     mem = strider.BufferReader(0x2000, code)
     lift = strider.lifter(strider.SleighArch.x86_64(), mem)
-    _function, unresolved = lift.analyze(
+    _cfg, _function, unresolved = lift.analyze(
         0x2000, strider.CallingConvention.x86_64_systemv(),
         opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
     )
@@ -67,7 +67,7 @@ def test_run_reports_both_unresolved_indirect_site_addresses():
     code = bytes([0x48, 0x85, 0xFF, 0x74, 0x02, 0xFF, 0xE0, 0xFF, 0xE1])
     mem = strider.BufferReader(0x1000, code)
     lift = strider.lifter(strider.SleighArch.x86_64(), mem)
-    _function, unresolved = lift.analyze(
+    _cfg, _function, unresolved = lift.analyze(
         0x1000, strider.CallingConvention.x86_64_systemv(),
         opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
     )

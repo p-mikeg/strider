@@ -86,7 +86,7 @@ mem = DictMem({CODE_ADDR: CODE})
 rom = DictRom(base=DATA_ADDR, blob=DATA_VALUE.to_bytes(8, "little"))
 
 lft = strider.lifter(strider.SleighArch.x86_64(), mem, rom)
-fn, _unresolved = lft.analyze(
+_cfg, fn, _unresolved = lft.analyze(
     CODE_ADDR,
     strider.CallingConvention.x86_64_systemv(),
     opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),

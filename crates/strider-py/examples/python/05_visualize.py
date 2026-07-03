@@ -6,9 +6,11 @@ running graphviz binary.
 
 Both renders need a `Sleigh` (to resolve register names, inline
 constants, add virtual nodes), which only the `Lifter` owns — a bare
-`Function` carries none.  So `Cfg` (from `Lifter.build_cfg`) is rendered
-via its own trio, and the IR `Function` is rendered via the same trio
-on the `Lifter` that produced it:
+`Function` carries none.  So `Cfg` (returned by `Lifter.analyze`
+alongside the `Function` — the FINAL resolved CFG, no separate
+`build_cfg` rebuild needed) is rendered via its own trio, and the IR
+`Function` is rendered via the same trio on the `Lifter` that produced
+it:
 
     lift.dump_html(function, path, style=...)   # write HTML file
     lift.dump_dot(function, path)                # write raw .dot source
@@ -33,16 +35,14 @@ FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 OUT_DIR = pathlib.Path("/tmp")
 
 prog = strider.load_elf(str(FIXTURE))
-addr = prog.symbol("array_sum")
-function, unresolved = prog.analyze(
+cfg, function, unresolved = prog.analyze(
     "array_sum", opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
 )
 
 # Write the CFG. `dark_cfg` is the recommended style for CFGs — higher
-# contrast on basic-block boundaries.  `Lifter.build_cfg` returns a fresh
-# `Cfg` snapshot for `array_sum`, built off the same Sleigh `prog` (an
-# `ElfLifter`, itself a `Lifter`) used for `analyze` above.
-cfg = prog.build_cfg(addr, strider.CfgOptions(allow_code_before_start_addr=True))
+# contrast on basic-block boundaries.  `cfg` is the FINAL resolved CFG
+# `analyze` returned above (the one `function` was actually lifted from)
+# — no separate `build_cfg` rebuild needed.
 cfg_html = OUT_DIR / "array_sum-cfg.html"
 cfg.to_html(str(cfg_html), style="dark_cfg")
 print(f"wrote {cfg_html} ({cfg_html.stat().st_size} bytes)")

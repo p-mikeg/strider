@@ -74,7 +74,7 @@ def test_add_elf_then_analyze_sees_merged_regions(x86_memory_elf, x86_calls_elf)
     # `fib_recursive` is defined only in calls.elf, not in memory.elf.
     assert "fib_recursive" not in strider.load_elf(str(x86_memory_elf)).symbols()
     elf.add_elf(str(x86_calls_elf))
-    function, _unresolved = elf.analyze("fib_recursive")
+    _cfg, function, _unresolved = elf.analyze("fib_recursive")
     # A real lift of `fib_recursive` produces a non-trivial IR graph;
     # before the fix this raised because the inner run handle's memory
     # snapshot predated the merge, so the lifter had no bytes to read at

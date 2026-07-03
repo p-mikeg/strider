@@ -104,7 +104,7 @@ def analyze(
     cc = spec.cc_factory()
 
     lift = strider.lifter(arch, mem, rom=mem)
-    function, _unresolved = lift.analyze(
+    _cfg, function, _unresolved = lift.analyze(
         addr,
         cc,
         opts=strider.LifterOptions(

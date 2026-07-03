@@ -239,7 +239,7 @@ class Lifter:
         entry: int,
         cc: CallingConvention,
         opts: Optional[LifterOptions] = ...,
-    ) -> Tuple[Function, List[int]]: ...
+    ) -> Tuple[Cfg, Function, List[int]]: ...
     def optimize(
         self,
         function: Function,
@@ -613,11 +613,11 @@ class ElfLifter(Lifter):
         target: Any,  # str | int
         cc: Optional[CallingConvention] = ...,
         opts: Optional[LifterOptions] = ...,
-    ) -> Tuple[Function, List[int]]:
+    ) -> Tuple[Cfg, Function, List[int]]:
         """Lift the function at `target` (symbol name or absolute
         address), driving the full lift+optimise+resolve pipeline and
-        returning the same `(Function, unresolved_addrs)` tuple as the
-        base `Lifter.analyze`.  `cc` defaults to the ELF-derived (or
+        returning the same `(Cfg, Function, unresolved_addrs)` tuple as
+        the base `Lifter.analyze`.  `cc` defaults to the ELF-derived (or
         explicitly-passed at construction) calling convention."""
         ...
     def __repr__(self) -> str: ...

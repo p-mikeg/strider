@@ -124,7 +124,7 @@ def test_fingerprint_pcode_renders_a_matched_node():
     `(addr, text)` pairs whose addresses equal `node.fingerprint()`
     and whose texts are non-empty, sorted by address."""
     prog = _load_memory()
-    function, _unresolved = prog.analyze("array_sum")
+    _cfg, function, _unresolved = prog.analyze("array_sum")
     matches = function.find_all(
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
@@ -154,7 +154,7 @@ def test_fingerprint_pcode_stable_across_separately_constructed_nodes():
     only cares about the (function, node id) the `Node` carries, not
     `Node` object identity."""
     prog = _load_memory()
-    function, _unresolved = prog.analyze("array_sum")
+    _cfg, function, _unresolved = prog.analyze("array_sum")
     matches = function.find_all(
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
@@ -168,7 +168,7 @@ def test_fingerprint_pcode_stable_across_separately_constructed_nodes():
 def test_fingerprint_pcode_empty_for_structural_node():
     """A structural node (no fingerprint, e.g. Entry) yields `[]`."""
     prog = _load_memory()
-    function, _unresolved = prog.analyze("array_sum")
+    _cfg, function, _unresolved = prog.analyze("array_sum")
     struct_id = None
     for nid in function.node_ids():
         if not function.node(nid).fingerprint():
@@ -183,7 +183,7 @@ def test_fingerprint_pcode_accepts_node_match_or_raw_id():
     node id (paired with `function=`) — the same three-way acceptance
     the old `Analysis.fingerprint_pcode` gave via `_coerce_node_id`."""
     prog = _load_memory()
-    function, _unresolved = prog.analyze("array_sum")
+    _cfg, function, _unresolved = prog.analyze("array_sum")
     matches = function.find_all(
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
@@ -202,7 +202,7 @@ def test_fingerprint_pcode_raw_id_without_function_raises():
     can `analyze` many different functions over its lifetime, so there
     is no implicit "current function" to resolve the id against."""
     prog = _load_memory()
-    function, _unresolved = prog.analyze("array_sum")
+    _cfg, function, _unresolved = prog.analyze("array_sum")
     matches = function.find_all(
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
@@ -224,7 +224,7 @@ def test_fingerprint_pcode_does_not_perturb_a_following_analyze():
     calls on the same entry doesn't change the second result."""
     prog = _load_memory()
 
-    function_before, unresolved_before = prog.analyze("array_sum")
+    _cfg, function_before, unresolved_before = prog.analyze("array_sum")
     baseline_dot = function_before.raw_dot_str()
     matches = function_before.find_all(
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
@@ -246,6 +246,6 @@ def test_fingerprint_pcode_does_not_perturb_a_following_analyze():
     prog.fingerprint_pcode(matches[0])
     prog.fingerprint_pcode(function_before.node(matches[0].root))
 
-    function_after, unresolved_after = prog.analyze("array_sum")
+    _cfg, function_after, unresolved_after = prog.analyze("array_sum")
     assert function_after.raw_dot_str() == baseline_dot
     assert unresolved_after == unresolved_before

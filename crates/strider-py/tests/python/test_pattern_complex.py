@@ -39,7 +39,7 @@ def _build_graph(elf_path, symbol):
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(elf_path)).reader()
     s = strider.lifter(arch, mem)
-    g, _unresolved = s.analyze(
+    _cfg, g, _unresolved = s.analyze(
         addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
     )
     return g

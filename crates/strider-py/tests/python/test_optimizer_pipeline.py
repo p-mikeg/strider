@@ -120,7 +120,7 @@ def test_optimize_on_lifter_mutates(x86_memory_elf):
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
     lift = strider.lifter(arch, mem)
-    g, _unresolved = lift.analyze(
+    _cfg, g, _unresolved = lift.analyze(
         addr,
         cc,
         opts=strider.LifterOptions(
@@ -145,7 +145,7 @@ def test_graph_reoptimize(x86_memory_elf):
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
     s = strider.lifter(arch, mem)
-    g, _unresolved = s.analyze(
+    _cfg, g, _unresolved = s.analyze(
         addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
     )
     s.optimize(g)
@@ -158,7 +158,7 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
     s = strider.lifter(arch, mem)
-    g, _unresolved = s.analyze(
+    _cfg, g, _unresolved = s.analyze(
         addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
     )
     pre = g.node_count()
@@ -187,7 +187,7 @@ def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
     s = strider.lifter(arch, mem)
-    g, _unresolved = s.analyze(
+    _cfg, g, _unresolved = s.analyze(
         addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
     )
 

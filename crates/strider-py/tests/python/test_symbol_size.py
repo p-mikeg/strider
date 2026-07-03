@@ -47,7 +47,7 @@ def test_symbol_size_threads_into_analyze():
     from the ELF's `st_size` automatically and the analyser respects
     it."""
     elf = strider.load_elf(str(fixture_path("x64", "switch")))
-    function, _unresolved = elf.analyze(
+    _cfg, function, _unresolved = elf.analyze(
         "dispatch_value",
         opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )

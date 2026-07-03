@@ -58,7 +58,7 @@ def test_custom_cc_matches_x86_64_systemv_for_equivalent_input():
 
     # Run the lifter with the custom CC.  Must not raise.
     lift = strider.lifter(arch, mem)
-    function, _unresolved = lift.analyze(entry, custom_cc)
+    _cfg, function, _unresolved = lift.analyze(entry, custom_cc)
     assert function is not None, "Lifter.analyze must produce a Function"
 
 
@@ -135,5 +135,5 @@ def test_custom_cc_preserves_memory_chain():
     )
     # Must build the Lifter and analyze without error.
     lift = strider.lifter(arch, mem)
-    function, _unresolved = lift.analyze(entry, custom_cc)
+    _cfg, function, _unresolved = lift.analyze(entry, custom_cc)
     assert function is not None

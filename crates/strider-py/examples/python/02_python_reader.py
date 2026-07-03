@@ -55,7 +55,7 @@ INSTR = bytes([0x90, 0x90, 0xc3]) + bytes([0x90] * 64)
 mem = DictMem({0x1000: INSTR})
 
 lft = strider.lifter(strider.SleighArch.x86(), mem)
-function, _unresolved = lft.analyze(0x1000, strider.CallingConvention.x86_cdecl())
+_cfg, function, _unresolved = lft.analyze(0x1000, strider.CallingConvention.x86_cdecl())
 
 # Confirm the IR has at least one return.
 hits = function.find_all(ret())

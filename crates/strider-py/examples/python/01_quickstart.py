@@ -34,10 +34,12 @@ print(f"array_sum @ {addr:#x}")
 # 2. Analyze a function. `ElfLifter.analyze(name_or_addr)` wraps:
 #       Sleigh build → CFG build → IR lift → optimization
 #       → indirect-branch fixed-point loop → final IR
-#    in one call, returning `(Function, unresolved_addrs)`.  Pattern
+#    in one call, returning `(Cfg, Function, unresolved_addrs)` — `cfg`
+#    is the FINAL resolved CFG `function` was actually lifted from, so no
+#    separate rebuild is needed to render it (see step 4).  Pattern
 #    queries (`find_all`) live directly on the `Function` — no wrapper
 #    needed.
-function, unresolved = prog.analyze(
+cfg, function, unresolved = prog.analyze(
     "array_sum", opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
 )
 print(
@@ -66,11 +68,11 @@ for hit in narrow:
 
 # 4. Visualize. Open the HTMLs in any browser to see the rendered
 #    graphviz output. `dark` and `dark_cfg` are the built-in styles.
-#    Both the CFG render and the pretty IR render need a Sleigh (for
-#    register names), which only the `Lifter` (`prog`, here an
-#    `ElfLifter`) owns — that's why they're called on `prog`, not on
-#    `function` directly.
-cfg = prog.build_cfg(addr, strider.CfgOptions(allow_code_before_start_addr=True))
+#    `cfg` (from step 2's `analyze` call) already IS the final CFG —
+#    render it directly, no `build_cfg` rebuild needed.  The pretty IR
+#    render needs a Sleigh (for register names), which only the `Lifter`
+#    (`prog`, here an `ElfLifter`) owns — that's why it's called on
+#    `prog`, not on `function` directly.
 cfg.to_html("/tmp/quickstart-cfg.html", style="dark_cfg")
 prog.dump_html(function, "/tmp/quickstart-graph.html", style="dark")
 print("wrote /tmp/quickstart-cfg.html and /tmp/quickstart-graph.html")

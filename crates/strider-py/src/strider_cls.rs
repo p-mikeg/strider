@@ -6,7 +6,7 @@
 //! * `build_cfg(entry, ...)` — structural-only: build a `Cfg`, no lift/
 //!   optimisation/indirect-branch resolution.
 //! * `analyze(entry, cc, ...)` — the full lift+optimise+resolve
-//!   fixed-point loop, returning `(Function, unresolved_addrs)`.
+//!   fixed-point loop, returning `(Cfg, Function, unresolved_addrs)`.
 //!
 //! `cc` is a per-`analyze`-call argument, not handle state: the handle
 //! owns no default calling convention.  This collapses the four former
@@ -192,10 +192,10 @@ pub(crate) fn prefer_pending_control_flow<T>(result: PyResult<T>) -> PyResult<T>
 pub struct PyLifter {
     /// The orchestrator handle: owns the Sleigh, the cached register
     /// table, and the optional rom.  Both `build_cfg` and `analyze` are
-    /// driven off the same instance (and thus the same Sleigh), so a
-    /// snapshot `Cfg` built after `analyze` reuses the already-warm
-    /// per-address decode cache rather than decoding through a second
-    /// Sleigh.
+    /// driven off the same instance (and thus the same Sleigh); `analyze`
+    /// returns the orchestrator's own FINAL resolve/re-lift iteration's
+    /// `Cfg` (no separate snapshot rebuild is needed — it already matches
+    /// the returned `Function` exactly).
     inner: strider_orchestrator::Strider<AnyMemReader>,
 }
 
@@ -355,8 +355,11 @@ impl PyLifter {
     }
 
     /// Lift the function at `entry`, optimise it to a fixed point,
-    /// resolve its indirect branches, and return `(function,
-    /// unresolved_addrs)`.
+    /// resolve its indirect branches, and return `(cfg, function,
+    /// unresolved_addrs)`.  `cfg` is the FINAL resolve/re-lift iteration's
+    /// CFG — the one `function` was actually lifted from (resolved
+    /// indirect branches are seated as real terminators, so it matches
+    /// the returned IR exactly; no separate rebuild is done).
     ///
     /// `cc` is the function-default calling convention for THIS call
     /// (the handle stores no default); per-target-address overrides are
@@ -382,7 +385,7 @@ impl PyLifter {
         entry: u64,
         cc: PyCallingConvention,
         opts: Option<Py<PyLifterOptions>>,
-    ) -> PyResult<(Py<PyFunction>, Vec<u64>)> {
+    ) -> PyResult<(Py<PyCfg>, Py<PyFunction>, Vec<u64>)> {
         let opts = match opts {
             Some(o) => o,
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
@@ -465,6 +468,7 @@ impl PyLifter {
                 )?,
             }
         };
+        let cfg = result.cfg;
         let function = result.function;
         // Surface the unresolved indirect-branch sites as machine addresses
         // so the Python caller can assert full resolution.
@@ -475,33 +479,19 @@ impl PyLifter {
         // loop.
         check_pending_control_flow()?;
 
-        // Build a snapshot `Cfg` off the SAME handle (same Sleigh, warm
-        // decode cache) so the returned `Function` can resolve register
-        // names for dot rendering.
-        let cfg_obj = {
-            let cfg_opts = strider_cfg::CfgOptions {
-                allow_code_before_start_addr,
-                fn_max_size: function_max_size,
-                ..strider_cfg::CfgOptions::default()
-            };
-            let inner = {
-                let mut lifter = slf.borrow_mut(py);
-                lifter
-                    .inner
-                    .build_cfg(entry, &cfg_opts)
-                    .map_err(into_strider_err)?
-            };
-            Py::new(
-                py,
-                PyCfg {
-                    inner,
-                    lifter: slf.clone_ref(py),
-                },
-            )?
-        };
+        // Wrap the orchestrator's FINAL resolve/re-lift iteration's CFG —
+        // it's the one `function` was actually lifted from, so it's the
+        // SSoT `Cfg` for this analysis (no redundant rebuild needed).
+        let cfg_obj = Py::new(
+            py,
+            PyCfg {
+                inner: cfg,
+                lifter: slf.clone_ref(py),
+            },
+        )?;
 
-        let py_function = Py::new(py, PyFunction::new(function, cfg_obj))?;
-        Ok((py_function, unresolved))
+        let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
+        Ok((cfg_obj, py_function, unresolved))
     }
 
     /// Run an optimizer pipeline over `function`'s IR in place.

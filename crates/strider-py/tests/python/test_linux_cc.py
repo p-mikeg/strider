@@ -42,7 +42,7 @@ def test_x86_linux_kernel_constructs_strider(x86_indirect_branch_elf):
     mem = loaded.reader()
     addr = loaded.symbol("indirect_branch_resolved")
     s = strider.lifter(strider.SleighArch.x86(), mem)
-    function, _unresolved = s.analyze(
+    _cfg, function, _unresolved = s.analyze(
         addr,
         strider.CallingConvention.x86_linux_kernel(),
         opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),

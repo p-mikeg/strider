@@ -560,8 +560,13 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     branches are **not** an error — they're returned in
     `AnalyzeResult::unresolved_indirect_branches` (their placeholders remain
     in `function`); `compact` (a `LiftOptions` knob) is applied at finalize.
-    `Strider::new(arch, sleigh, rom)` builds the handle from a target arch +
-    owned `Sleigh` + optional ROM.
+    `AnalyzeResult` also carries `cfg: strider_cfg::Cfg` — the FINAL
+    resolve/re-lift iteration's CFG, i.e. the one `function` was actually
+    lifted from (`build_lift`, the private per-iteration helper, threads
+    the CFG out alongside the function/unresolved/resolutions tuple so the
+    last iteration's CFG survives the loop).  `Strider::new(arch, sleigh,
+    rom)` builds the handle from a target arch + owned `Sleigh` + optional
+    ROM.
   - `opt::indirect_branch_resolve` module — the live-IR indirect-branch
     classifiers: `classify_anchor` (producer-shape classifier) and
     `classify_table_dispatch` (the unified rodata-jump-table /
@@ -585,7 +590,7 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     `RewriteSkip` / `PatternBuildError` sentinels).  There is no bespoke
     error catalogue in this crate.  An indirect branch that can't be
     resolved is **not** an error: `Strider::analyze` returns an
-    `AnalyzeResult { function, unresolved_indirect_branches }` whose
+    `AnalyzeResult { cfg, function, unresolved_indirect_branches }` whose
     `unresolved_indirect_branches` lists the pcode address of each branch
     whose `IndirectBranch` placeholder is still in the function (empty when
     every branch resolved).  A caller wanting full resolution asserts that
@@ -631,8 +636,10 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   alias_mode="stack_global_disjoint", pipeline=None)`.
   `lifter.build_cfg(entry, opts=CfgOptions())` is structural-only (no
   lift/optimise/indirect-branch resolution);
-  `lifter.analyze(entry, cc, opts=LifterOptions()) -> (Function, unresolved_addrs)`
-  drives the full fixed-point loop.  `LifterOptions.pipeline`, when set,
+  `lifter.analyze(entry, cc, opts=LifterOptions()) -> (Cfg, Function, unresolved_addrs)`
+  drives the full fixed-point loop; the returned `Cfg` is the FINAL
+  resolve/re-lift iteration's CFG (the one `Function` was actually lifted
+  from — no separate rebuild).  `LifterOptions.pipeline`, when set,
   overrides the optimiser pipeline for THAT function only (a per-function
   custom pipeline; there is no pipeline argument on `strider.lifter(...)`).
   `strider.load_elf(path) -> ElfLifter` auto-detects arch/CC from the ELF
@@ -686,7 +693,7 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   Python as a single `strider.errors.StriderError` exception carrying an
   informative message; the hierarchy is intentionally flat (no typed
   subclasses).  An unresolved indirect branch is **not** an error: it is
-  reported via `analyze`'s second return value, `unresolved_addrs` (a
+  reported via `analyze`'s third return value, `unresolved_addrs` (a
   `list[int]` of machine addresses, empty when fully resolved).
   Dev workflow uses uv: `uv sync --group dev` → `uv run maturin develop` →
   `uv run pytest`.

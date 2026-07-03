@@ -8,7 +8,7 @@ This module adds the three-line convenience workflow:
 ```python
 import strider
 lift = strider.load_elf("path/to/file.elf")        # → ElfLifter
-function, unresolved = lift.analyze("function_name")
+cfg, function, unresolved = lift.analyze("function_name")
 matches = function.find_all(strider.pattern.call())  # → list[Match]
 ```
 
@@ -20,7 +20,7 @@ as both the code reader and the read-only-memory image for
 `LoadReadOnly` constant folding.  It exposes symbols, sizes, the entry
 point, raw reads, and a name-aware `analyze(target)` that resolves a
 `str` symbol name (or accepts an address) and returns the same
-`(Function, unresolved_addrs)` tuple as the base `Lifter.analyze`.
+`(Cfg, Function, unresolved_addrs)` tuple as the base `Lifter.analyze`.
 
 `strider.load_elf_from_segments(path)` and
 `strider.load_elf_from_sections(path)` pick the ELF region-collection
@@ -335,7 +335,7 @@ class ElfLifter(Lifter):
     lift = strider.load_elf("vmlinux-i386", arch=strider.SleighArch.x86(),
                             cc=strider.CallingConvention.x86_linux_kernel())
     for fn in lift.functions():
-        function, unresolved = lift.analyze(fn)
+        cfg, function, unresolved = lift.analyze(fn)
     ```
     """
 
@@ -480,7 +480,7 @@ class ElfLifter(Lifter):
         opts: Optional[LifterOptions] = None,
     ):
         """Lift the function at `target` (symbol name or absolute
-        address), returning the same `(Function, unresolved_addrs)`
+        address), returning the same `(Cfg, Function, unresolved_addrs)`
         tuple as the base `Lifter.analyze`.
 
         A `str` target is resolved to an address via the ELF symbol

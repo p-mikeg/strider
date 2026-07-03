@@ -66,8 +66,8 @@ from strider.pattern import Capture, var, add, load
 s = strider.load_elf("fixtures/out/x86/memory.elf")
 
 # 2. Analyze a single function by symbol name (or by address int) —
-#    returns the same `(Function, unresolved)` tuple as `Lifter.analyze`.
-function, unresolved = s.analyze("array_sum")
+#    returns the same `(Cfg, Function, unresolved)` tuple as `Lifter.analyze`.
+cfg, function, unresolved = s.analyze("array_sum")
 
 # 3. Query the optimized graph with a pattern.
 base, off = Capture(), Capture()
@@ -99,10 +99,10 @@ overridden) per call:
 
 ```python
 for name in s.functions():
-    function, unresolved = s.analyze(name)   # only the target per call
+    cfg, function, unresolved = s.analyze(name)   # only the target per call
 # Per-call options — a LifterOptions (mirroring strider_lift::LiftOptions,
 # nested CfgOptions):
-function, unresolved = s.analyze(
+cfg, function, unresolved = s.analyze(
     "array_sum", opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=64))
 )
 ```
@@ -110,13 +110,13 @@ function, unresolved = s.analyze(
 For a raw firmware blob / non-ELF source, build a `Lifter` directly over
 a `BufferReader` (address targets only — there's no ELF symbol table; do
 the name → address lookup at the call site if you have one).
-`Lifter.analyze(addr, cc, ...)` returns the same `(Function, unresolved)`
+`Lifter.analyze(addr, cc, ...)` returns the same `(Cfg, Function, unresolved)`
 tuple as `ElfLifter.analyze`:
 
 ```python
 mem = strider.BufferReader(0x8000, firmware_bytes)
 lift = strider.lifter(strider.SleighArch.arm_thumb(), mem)
-function, unresolved = lift.analyze(
+cfg, function, unresolved = lift.analyze(
     0x8000, strider.CallingConvention.arm_aapcs()
 )
 ```
@@ -152,9 +152,10 @@ mem = elf.reader()                 # the ELF's assembled BufferReader
 
 # 2. Build a `Lifter` over that reader and run the full pipeline
 #    (CFG → IR → optimize, including the indirect-branch fixed-point
-#    loop) in one call — returns `(Function, unresolved_addrs)`.
+#    loop) in one call — returns `(Cfg, Function, unresolved_addrs)`;
+#    `cfg` is the FINAL resolved CFG that `function` was lifted from.
 lift = strider.lifter(strider.SleighArch.x86(), mem, rom=mem)
-function, unresolved = lift.analyze(
+cfg, function, unresolved = lift.analyze(
     elf.symbol("array_sum"),           # or any address int
     strider.CallingConvention.x86_cdecl(),
     opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
@@ -167,9 +168,9 @@ for hit in function.find_all(pat, ignore_casts=True):
     print(hit.uint(off))
 
 # 4. Visualize. Both the CFG and the pretty IR render need the Sleigh
-#    only the `Lifter` owns, so both calls go through `lift`, not
-#    `function` directly.
-cfg = lift.build_cfg(elf.symbol("array_sum"), strider.CfgOptions(allow_code_before_start_addr=True))
+#    only the `Lifter` owns, so both calls go through `lift`/`cfg`, not
+#    `function` directly.  `cfg` is the SAME CFG `analyze` returned above
+#    — no rebuild needed.
 cfg.to_html("cfg.html")
 lift.dump_html(function, "graph.html")
 ```

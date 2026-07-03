@@ -44,7 +44,7 @@ ENTRY = 0x1000
 def _cpuid_function():
     mem = strider.BufferReader(ENTRY, CPUID_BYTES)
     lift = strider.lifter(strider.SleighArch.x86_64(), mem)
-    function, _unresolved = lift.analyze(
+    _cfg, function, _unresolved = lift.analyze(
         ENTRY, strider.CallingConvention.x86_64_systemv()
     )
     return function
@@ -162,7 +162,7 @@ def _analysis(elf_path, sym):
     addr = symbol_addr(elf_path, sym)
     mem = strider.load_elf(str(elf_path)).reader()
     lift = strider.lifter(strider.SleighArch.x86(), mem)
-    function, _unresolved = lift.analyze(
+    _cfg, function, _unresolved = lift.analyze(
         addr, strider.CallingConvention.x86_cdecl(),
         opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )

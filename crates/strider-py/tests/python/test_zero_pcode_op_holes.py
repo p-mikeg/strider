@@ -42,7 +42,7 @@ def _lift_aarch64(elf_path: pathlib.Path, symbol: str):
     sleigh_arch = strider.SleighArch.aarch64()
     cc = strider.CallingConvention.aarch64_aapcs64()
     lift = strider.lifter(sleigh_arch, mem, rom=mem)
-    function, _unresolved = lift.analyze(
+    _cfg, function, _unresolved = lift.analyze(
         entry,
         cc,
         opts=strider.LifterOptions(

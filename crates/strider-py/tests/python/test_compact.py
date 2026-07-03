@@ -20,7 +20,7 @@ def _run_with(compact: bool):
     arch, cc = _x86_64_strider()
     mem = BufferReader(0x1000, _trivial_function_bytes())
     lift = strider.lifter(arch, mem)
-    function, _unresolved = lift.analyze(0x1000, cc, opts=strider.LifterOptions(compact=compact))
+    _cfg, function, _unresolved = lift.analyze(0x1000, cc, opts=strider.LifterOptions(compact=compact))
     return function
 
 
@@ -37,7 +37,7 @@ def test_compact_default_is_true():
     arch, cc = _x86_64_strider()
     mem = BufferReader(0x1000, _trivial_function_bytes())
     lift = strider.lifter(arch, mem)
-    default_function, _unresolved = lift.analyze(0x1000, cc)
+    _cfg, default_function, _unresolved = lift.analyze(0x1000, cc)
     explicit_function = _run_with(True)
     assert default_function.node_count() == explicit_function.node_count()
 
@@ -57,9 +57,9 @@ def test_elf_analyze_compact_override_does_not_leak_into_next_call():
     elf_path = fixture_path("x64", "arithmetic")
     elf = strider.load_elf(str(elf_path))
 
-    uncompacted, _unresolved = elf.analyze("add", opts=strider.LifterOptions(compact=False))
-    after, _unresolved = elf.analyze("add")  # no override — must be compact again
-    fresh, _unresolved = strider.load_elf(str(elf_path)).analyze("add")
+    _cfg, uncompacted, _unresolved = elf.analyze("add", opts=strider.LifterOptions(compact=False))
+    _cfg, after, _unresolved = elf.analyze("add")  # no override — must be compact again
+    _cfg, fresh, _unresolved = strider.load_elf(str(elf_path)).analyze("add")
 
     # The override call itself observably differs from the default…
     assert uncompacted.node_count() > after.node_count()

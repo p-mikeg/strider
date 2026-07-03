@@ -69,7 +69,7 @@ rom = CallbackRom(base=0xCAFE0000, blob=bytes(range(16)))
 # `rom` layers our Python-served blob on top for addresses the ELF
 # doesn't cover.
 lft = strider.lifter(strider.SleighArch.x86(), mem, rom)
-function, _unresolved = lft.analyze(
+_cfg, function, _unresolved = lft.analyze(
     addr,
     strider.CallingConvention.x86_cdecl(),
     opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),

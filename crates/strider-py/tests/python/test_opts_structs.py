@@ -19,7 +19,7 @@ from .conftest import fixture_path
 def test_analyze_takes_lifter_options():
     fixture = fixture_path("x64", "arithmetic")
     lift = strider.load_elf_from_segments(str(fixture))
-    g, unresolved = lift.analyze(
+    _cfg, g, unresolved = lift.analyze(
         "add", opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=4096))
     )
     assert g.node_count() > 0
@@ -38,7 +38,7 @@ def test_analyze_default_opts_when_omitted():
     """Omitting `opts` entirely behaves like the all-defaults struct."""
     fixture = fixture_path("x64", "arithmetic")
     lift = strider.load_elf_from_segments(str(fixture))
-    g, unresolved = lift.analyze("add")
+    _cfg, g, unresolved = lift.analyze("add")
     assert g.node_count() > 0
 
 
@@ -75,9 +75,9 @@ def test_pipeline_override_runs_custom_pipeline():
     fixture = fixture_path("x64", "arithmetic")
     lift = strider.load_elf_from_segments(str(fixture))
 
-    default_fn, _unresolved = lift.analyze("add")
+    _cfg, default_fn, _unresolved = lift.analyze("add")
 
-    empty_fn, _unresolved2 = lift.analyze(
+    _cfg, empty_fn, _unresolved2 = lift.analyze(
         "add",
         opts=strider.LifterOptions(pipeline=strider.OptimizerPipeline.empty()),
     )

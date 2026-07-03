@@ -90,7 +90,7 @@ def built_lifter_and_function(
     mem = loaded.reader()
     addr = loaded.symbol(symbol)
     lift = strider.lifter(arch, mem, rom=mem)
-    function, _unresolved = lift.analyze(
+    _cfg, function, _unresolved = lift.analyze(
         addr,
         cc,
         opts=strider.LifterOptions(

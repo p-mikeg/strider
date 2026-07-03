@@ -103,7 +103,7 @@ def test_rewrite_error_via_multi_output_lhs_root():
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     s = strider.lifter(arch, mem)
-    g, _unresolved = s.analyze(
+    _cfg, g, _unresolved = s.analyze(
         0x1000, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=0x100))
     )
 
@@ -151,7 +151,7 @@ def test_unresolved_indirect_branch_via_jmp_rax():
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
 
-    _function, unresolved = strider.lifter(arch, mem).analyze(0x1000, cc)
+    _cfg, _function, unresolved = strider.lifter(arch, mem).analyze(0x1000, cc)
     assert unresolved, (
         "expected the unresolvable jmp rax to be reported in "
         "unresolved_indirect_branches"

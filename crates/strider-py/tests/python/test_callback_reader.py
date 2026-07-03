@@ -61,7 +61,7 @@ def test_callback_reader_lifts_array_sum(x86_memory_elf):
     arch = SleighArch.x86()
     cc = CallingConvention.x86_cdecl()
     s = strider.lifter(arch, reader)
-    g, _unresolved = s.analyze(
+    _cfg, g, _unresolved = s.analyze(
         addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
     )
 
@@ -84,7 +84,7 @@ def test_run_via_callback_reader(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
 
     lift = strider.lifter(SleighArch.x86(), reader)
-    function, _unresolved = lift.analyze(
+    _cfg, function, _unresolved = lift.analyze(
         addr, CallingConvention.x86_cdecl(),
         opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )
@@ -147,7 +147,7 @@ def test_run_with_callback_rom_doesnt_crash(x86_memory_elf):
     rom = ConstReadOnlyMemory()
 
     lift = strider.lifter(SleighArch.x86(), inner, rom=rom)
-    function, _unresolved = lift.analyze(
+    _cfg, function, _unresolved = lift.analyze(
         addr, CallingConvention.x86_cdecl(),
         opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
     )

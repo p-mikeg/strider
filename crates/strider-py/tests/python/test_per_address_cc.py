@@ -22,7 +22,7 @@ def test_call_to_overridden_address_lifts_without_error():
     fentry_addr = 0x2000
     overrides = {fentry_addr: CallingConvention.x86_64_all_preserving()}
 
-    function, _unresolved = strider.lifter(arch, mem).analyze(
+    _cfg, function, _unresolved = strider.lifter(arch, mem).analyze(
         0x1000, cc, opts=strider.LifterOptions(per_address_ccs=overrides)
     )
     # The override path must lift without error and find exactly one
@@ -37,7 +37,7 @@ def test_per_address_ccs_default_empty_does_not_break_normal_calls():
     arch = SleighArch.x86_64()
     cc = CallingConvention.x86_64_systemv()
     mem = BufferReader(0x1000, _x86_64_call_then_ret_bytes())
-    function, _unresolved = strider.lifter(arch, mem).analyze(0x1000, cc)
+    _cfg, function, _unresolved = strider.lifter(arch, mem).analyze(0x1000, cc)
     matches = function.find_all(call())
     assert len(matches) == 1
 
@@ -98,7 +98,7 @@ def test_per_address_ccs_honoured_in_both_pipeline_paths(with_override, expected
         {0x2000: CallingConvention.x86_64_all_preserving()} if with_override else {}
     )
 
-    function, _unresolved = strider.lifter(arch, mem, rom=mem).analyze(
+    _cfg, function, _unresolved = strider.lifter(arch, mem, rom=mem).analyze(
         0x1000, cc, opts=strider.LifterOptions(per_address_ccs=overrides)
     )
     pat = call().at(0x3000).arg(0, function_arg(0))

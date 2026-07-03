@@ -22,7 +22,7 @@ from .conftest import fixture_path
 
 def _analyze_add():
     elf = fixture_path("x64", "arithmetic")
-    function, _unresolved = strider.load_elf(str(elf)).analyze("add")
+    _cfg, function, _unresolved = strider.load_elf(str(elf)).analyze("add")
     return function
 
 

@@ -24,7 +24,7 @@ def _wide_const_function():
     buf[0x1000 : 0x1000 + 16] = WIDE.to_bytes(16, "little")
     mem = strider.BufferReader(0x1000, bytes(buf))
     lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
-    function, _unresolved = lift.analyze(
+    _cfg, function, _unresolved = lift.analyze(
         0x1000, strider.CallingConvention.x86_64_systemv(),
         opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
     )
@@ -110,7 +110,7 @@ def _i80_const_function():
     buf[0x1000 : 0x1000 + 10] = I80_VALUE.to_bytes(10, "little")
     mem = strider.BufferReader(0x1000, bytes(buf))
     lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
-    function, _unresolved = lift.analyze(
+    _cfg, function, _unresolved = lift.analyze(
         0x1000, strider.CallingConvention.x86_64_systemv(),
         opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
     )
@@ -159,7 +159,7 @@ def test_small_const_node_const_int_exact_value():
     code = bytes([0x48, 0xB8]) + value.to_bytes(8, "little") + bytes([0xC3])
     mem = strider.BufferReader(0x1000, code)
     lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
-    f, _unresolved = lift.analyze(
+    _cfg, f, _unresolved = lift.analyze(
         0x1000, strider.CallingConvention.x86_64_systemv(),
         opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
     )
