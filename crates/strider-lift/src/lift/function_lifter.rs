@@ -48,7 +48,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// when the caller has no overrides.
     pub(crate) fn new(
         lifter: &'a Lifter<R>,
-        cc: &'a strider_target::BuiltCallingConvention,
+        cc: strider_target::BuiltCallingConvention,
         cfg: &'a strider_cfg::Cfg,
         mut all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
@@ -70,16 +70,24 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // tracked container (ABI says `eax`, function tracks `rax`) resolves to
         // the container.  This is the O(1) fast path the register-aliasing
         // read/write and CC projections read on every access.
-        let builder =
-            strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch.endianness())?;
-        let cc_regs = cc
+        //
+        // All `&cc` reads needed after construction (the container-map query
+        // set + the stack-vn debug assertion) are captured into owned locals
+        // BEFORE `cc` is moved into `FunctionBuilder::new` below — `cc` is
+        // threaded by value all the way into `Function::default_cc` with no
+        // clone.
+        let stack_vn = cc.stack_vn;
+        let cc_regs: Vec<rsleigh::Vn> = cc
             .ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
             .chain(cc.arg_passing_regs.iter())
             .chain(cc.callee_saved_regs.iter())
             .chain(std::iter::once(&cc.stack_vn))
-            .copied();
+            .copied()
+            .collect();
+        let builder =
+            strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch.endianness())?;
         let queries = all_vns.iter().copied().chain(cc_regs);
         let container_map =
             vn_container::ContainerMap::build(builder.function().all_vns(), queries);
@@ -89,12 +97,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         debug_assert!(
             {
                 let tracked = builder.function().all_vns();
-                let sp_container = vn_container::largest_container_in(tracked, &cc.stack_vn);
+                let sp_container = vn_container::largest_container_in(tracked, &stack_vn);
                 tracked.contains(&sp_container)
-                    && vn_container::vn_contains(&sp_container, &cc.stack_vn)
+                    && vn_container::vn_contains(&sp_container, &stack_vn)
             },
             "stack vn {:?} did not resolve to a tracked container",
-            cc.stack_vn,
+            stack_vn,
         );
         Ok(Self {
             lifter,

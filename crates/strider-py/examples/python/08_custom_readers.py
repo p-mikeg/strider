@@ -14,14 +14,14 @@ The code at 0x0 computes `arg0 + *(uint64*)0x1000` and returns it:
     48 89 f8                   mov rax, rdi
     c3                         ret
 
-`strider.run(..., rom=...)` with no `pipeline` runs the full orchestrator
-(all default passes). `LoadReadOnly` folds the load into `IntConst(42)`,
-leaving `Add(arg0, 42)` in the graph. We then:
+`Lifter.analyze(...)` (built via `strider.lifter(arch, mem, rom=rom)`)
+runs the full default optimizer pipeline. `LoadReadOnly` folds the load
+into `IntConst(42)`, leaving `Add(arg0, 42)` in the graph. We then:
 
   1. Query it with a capturing pattern and read the captured constant
      back as a Python int (`Match.uint`).
-  2. Template-rewrite `arg0 + 42 → arg0 + 0` and reoptimize, so
-     ConstantFold collapses the add away entirely.
+  2. Template-rewrite `arg0 + 42 → arg0 + 0` and re-optimize via
+     `Lifter.optimize`, so ConstantFold collapses the add away entirely.
 
 Run from the workspace root:
     python crates/strider-py/examples/python/08_custom_readers.py
@@ -85,15 +85,12 @@ class DictRom(strider.ReadOnlyMemory):
 mem = DictMem({CODE_ADDR: CODE})
 rom = DictRom(base=DATA_ADDR, blob=DATA_VALUE.to_bytes(8, "little"))
 
-result = strider.run(
-    arch=strider.SleighArch.x86_64(),
-    cc=strider.CallingConvention.x86_64_systemv(),
-    mem=mem,
-    entry=CODE_ADDR,
-    rom=rom,
-    allow_code_before_start_addr=True,
+lft = strider.lifter(strider.SleighArch.x86_64(), mem, rom)
+_cfg, fn, _unresolved = lft.analyze(
+    CODE_ADDR,
+    strider.CallingConvention.x86_64_systemv(),
+    opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
 )
-fn = result.function
 
 print(f"DictMem.read (code)   fired {mem.calls} time(s)")
 print(f"DictRom.read (rodata) fired {rom.calls} time(s)")
@@ -127,8 +124,8 @@ x = Capture()
 n = edited.rewrite(find=add(x, int_const(DATA_VALUE)), replace=add(x, int_const(0)))
 print(f"rewrote {n} site(s)")
 
-# Reoptimize the clone so ConstantFold collapses `x + 0 → x`.
-edited.reoptimize()
+# Re-optimize the clone so ConstantFold collapses `x + 0 → x`.
+lft.optimize(edited)
 orig_shapes = len(fn.find_all(add(function_arg(0), var(k)), ignore_casts=True))
 edited_shapes = len(edited.find_all(add(function_arg(0), var(k)), ignore_casts=True))
 print(f"`arg0 + <captured>` shapes — original: {orig_shapes}, clone after rewrite: {edited_shapes}")

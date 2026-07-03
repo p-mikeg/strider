@@ -910,7 +910,7 @@ pub(crate) mod test_fixtures {
             link_register_vn: None,
             preserves_memory: false,
         };
-        let mut b = FunctionBuilder::new(Vec::new(), &cc, strider_target::Endianness::Little)
+        let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
             .expect("FunctionBuilder::new");
         let region = b.create_region().expect("create_region");
         b.set_entry_region(region).expect("set_entry_region");

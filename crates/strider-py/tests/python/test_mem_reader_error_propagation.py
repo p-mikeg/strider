@@ -33,7 +33,7 @@ def test_mem_reader_python_exception_text_propagates_into_reader_error():
     # Any entry will do — the first read attempt triggers the
     # Python exception immediately.
     with pytest.raises(StriderError) as excinfo:
-        strider.run(arch=arch, cc=cc, mem=reader, entry=0x1000)
+        strider.lifter(arch, reader).analyze(0x1000, cc)
 
     msg = str(excinfo.value)
     assert _SENTINEL in msg, (

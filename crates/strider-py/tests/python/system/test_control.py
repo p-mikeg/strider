@@ -18,22 +18,22 @@ from ._helpers import (
 
 def test_abs_val(arch_id, fixtures_dir):
     g = analyze(arch_id, "control", "abs_val", fixtures_dir=fixtures_dir)
-    assert count_pat(g, pat.if_()) >= 1
+    assert count_pat(g, pat.if_else()) >= 1
 
 
 def test_max_val(arch_id, fixtures_dir):
     g = analyze(arch_id, "control", "max_val", fixtures_dir=fixtures_dir)
-    assert count_pat(g, pat.if_()) >= 1
+    assert count_pat(g, pat.if_else()) >= 1
 
 
 def test_clamp(arch_id, fixtures_dir):
     g = analyze(arch_id, "control", "clamp", fixtures_dir=fixtures_dir)
-    assert count_pat(g, pat.if_()) >= 2
+    assert count_pat(g, pat.if_else()) >= 2
 
 
 def test_select_three(arch_id, fixtures_dir):
     g = analyze(arch_id, "control", "select_three", fixtures_dir=fixtures_dir)
-    assert count_pat(g, pat.if_()) >= 2
+    assert count_pat(g, pat.if_else()) >= 2
 
 
 def test_sum_to_n(arch_id, fixtures_dir):

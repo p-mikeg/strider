@@ -238,8 +238,9 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     varnode tag is recorded in `Function::value_vn` (via `set_vn_for_value`).
     Carries `lift_addr: Option<u64>` for centralised lift-time
     fingerprint attribution.  `FunctionBuilder::new(all_used_variables,
-    &cc, endianness)` takes the tracked-varnode list, a
-    `&strider_target::BuiltCallingConvention`, and the target endianness.
+    cc, endianness)` takes the tracked-varnode list, an owned
+    `strider_target::BuiltCallingConvention` (moved directly into
+    `Function::default_cc` — no clone), and the target endianness.
   - `FunctionBuilder::build` returns the populated `Function` directly —
     `entry()` is `Some(_)` after `build` succeeds.
   - `ReadOnlyMemory` trait — lives in the standalone `read-only-memory`
@@ -559,8 +560,13 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     branches are **not** an error — they're returned in
     `AnalyzeResult::unresolved_indirect_branches` (their placeholders remain
     in `function`); `compact` (a `LiftOptions` knob) is applied at finalize.
-    `Strider::new(arch, sleigh, rom)` builds the handle from a target arch +
-    owned `Sleigh` + optional ROM.
+    `AnalyzeResult` also carries `cfg: strider_cfg::Cfg` — the FINAL
+    resolve/re-lift iteration's CFG, i.e. the one `function` was actually
+    lifted from (`build_lift`, the private per-iteration helper, threads
+    the CFG out alongside the function/unresolved/resolutions tuple so the
+    last iteration's CFG survives the loop).  `Strider::new(arch, sleigh,
+    rom)` builds the handle from a target arch + owned `Sleigh` + optional
+    ROM.
   - `opt::indirect_branch_resolve` module — the live-IR indirect-branch
     classifiers: `classify_anchor` (producer-shape classifier) and
     `classify_table_dispatch` (the unified rodata-jump-table /
@@ -584,7 +590,7 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     `RewriteSkip` / `PatternBuildError` sentinels).  There is no bespoke
     error catalogue in this crate.  An indirect branch that can't be
     resolved is **not** an error: `Strider::analyze` returns an
-    `AnalyzeResult { function, unresolved_indirect_branches }` whose
+    `AnalyzeResult { cfg, function, unresolved_indirect_branches }` whose
     `unresolved_indirect_branches` lists the pcode address of each branch
     whose `IndirectBranch` placeholder is still in the function (empty when
     every branch resolved).  A caller wanting full resolution asserts that
@@ -617,40 +623,91 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   satisfy the always-on asm-fingerprint check without manual stamping.
 
 - **`strider-py`** — Python bindings (PyO3 + maturin + abi3-py39).
-  High-level API: `strider.load_elf(path) -> ElfStrider` (auto-detects
-  arch/CC from the ELF `e_machine`; override via
-  `arch=`/`cc=`/`apply_relocations=`).  `ElfStrider` is the loaded binary
-  as one handle — `symbol` / `symbol_size` / `symbols` / `entry_point` /
-  `read` / `reader` (the raw multi-region `BufferReader`) / `functions` +
-  `analyze(target, **opts) -> Analysis` (code + ROM readers wired
-  internally; per-call opts `function_max_size` /
-  `allow_code_before_start_addr` / `compact` / `per_address_ccs` — the
-  inner native `Strider` is built once at construction, so there is no
-  per-call `pipeline`/`cc`/`arch` override).  `Analysis.find(pattern)` /
-  `find_one` / `find_joined(patterns)` query the IR and
-  `Analysis.fingerprint(node) -> list[int]` (plus `fingerprint_pcode`)
-  is the proof-of-correctness helper.  The native run handle for
-  standalone / firmware (address targets only) is
-  `strider.strider(arch, cc, mem, rom=None) -> Strider`.  Low-level API
-  mirrors the Rust surface: `SleighArch`,
-  `CallingConvention`, `BufferReader` (a RAW-region reader for non-ELF /
-  custom sources — ELF parse + symbols live on the internal `_LoadedElf`
-  that `ElfStrider` wraps, built by `strider.load_elf(path)`), `MemReader`,
-  `ReadOnlyMemory`, `Sleigh`, `Lifter` (the low-level lift handle —
-  `Lifter(arch, mem, cc)` owns the Sleigh; `lifter.build_cfg(entry)` +
-  `lifter.analyze_cfg(cfg)`; there is no top-level `build_cfg` function),
-  `Graph`, `OptimizerPipeline`, plus
-  `strider.run(arch, cc, mem, entry, ...)`.  `strider.opt` exposes
-  per-pass classes; `strider.pattern` is a full mirror of the Rust
-  pattern crate.  Cross-pattern joins on shared captures via
-  `Graph.find_joined([pat1, pat2, …])`.  Asm-fingerprint
-  accessor: `match.asm_fingerprint(c) -> list[int]`.  Every Rust error
-  lands in Python as a single `strider.errors.StriderError` exception
-  carrying an informative message; the hierarchy is intentionally flat (no
-  typed subclasses).  An unresolved indirect branch is **not** an error:
-  it is reported via `Analysis.unresolved_indirect_branches` /
-  `RunResult.unresolved_indirect_branches` (a `list[int]` of machine
-  addresses, empty when fully resolved).
+  The single lift+optimise+resolve handle is `strider.Lifter` (build one
+  via `strider.lifter(arch, mem, rom=None)` or `strider.Lifter(arch, mem,
+  rom=None)`); `cc` is NOT fixed at construction — it's a required
+  argument of every `analyze` call, so one handle can analyse functions
+  under different calling conventions.  Per-call knobs are Python opts
+  structs mirroring the Rust `LiftOptions` / `CfgOptions` (nested — one
+  `CfgOptions` reused), NOT keyword-argument piles:
+  `CfgOptions(function_max_size=None, allow_code_before_start_addr=False)`
+  and `LifterOptions(cfg=CfgOptions(), compact=True, per_address_ccs=None,
+  calls_clobber=False, assume_distinct_sp_bases_disjoint=False,
+  alias_mode="stack_global_disjoint", pipeline=None)`.
+  `lifter.build_cfg(entry, opts=CfgOptions())` is structural-only (no
+  lift/optimise/indirect-branch resolution);
+  `lifter.analyze(entry, cc, opts=LifterOptions()) -> (Cfg, Function, unresolved_addrs)`
+  drives the full fixed-point loop; the returned `Cfg` is the FINAL
+  resolve/re-lift iteration's CFG (the one `Function` was actually lifted
+  from — no separate rebuild).  `LifterOptions.pipeline`, when set,
+  overrides the optimiser pipeline for THAT function only (a per-function
+  custom pipeline; there is no pipeline argument on `strider.lifter(...)`).
+  `strider.load_elf(path) -> ElfLifter` auto-detects arch/CC from the ELF
+  `e_machine` (override via `arch=`/`cc=`/`apply_relocations=`) and
+  delegates to `load_elf_from_segments(path, ...)` (regions collected by
+  walking `PT_LOAD` segments, falling back to sections for `ET_REL`);
+  `load_elf_from_sections(path, ...)` forces the section-header-walk
+  strategy even for a linked binary that does carry `PT_LOAD` segments.
+  All three return an `ElfLifter`.  `ElfLifter` **is** a `Lifter` (`isinstance(x, strider.Lifter)` is
+  true) that additionally wires the ELF's sections as both the code
+  reader and the `LoadReadOnly` rom, and adds `symbol` / `symbol_size` /
+  `symbols` / `entry_point` / `read` / `reader` plus a name-aware
+  `analyze(target, ...)` that accepts a `str` symbol name or an address.
+  `lifter.optimize(function, pipeline=None)` runs an `OptimizerPipeline`
+  over `function`'s IR in place (mutating it, same as `analyze`'s
+  internal run); `pipeline=None` builds and runs the canonical default
+  pipeline instead.  This is the sole way to re-run/apply optimization
+  passes on an already-lifted `Function` — `Function.optimize` and
+  `Function.reoptimize` were removed in favor of this single
+  `Lifter`-owned entry point (a bare `Function` carries no pipeline
+  state of its own).
+  Pattern queries (`find_all` / `find_one` / `find_joined`) and the
+  addr-only `fingerprint`/`asm_fingerprint` live directly on the returned
+  `Function`/`Node` — there is no separate `Analysis` wrapper class.  The
+  Sleigh-needing pretty renders (`dump_html` / `dump_dot` / `html_str`)
+  live on `Lifter`, since only it owns the Sleigh.  p-code rendering has
+  two homes: `Cfg.pcode_at(addr) -> str | None` and
+  `Cfg.fingerprint_pcode(node) -> list[(addr, text)]` (on the `Cfg`
+  `analyze`/`build_cfg` return — an exact LOOKUP against that CFG's own
+  stored decodes, i.e. `RegionInstruction`s, so it's correct even on
+  context-dependent arches like ARM/Thumb or MIPS16 where a fresh
+  default-context Sleigh would render the wrong p-code mid-function; a
+  machine instruction that lifts to ZERO p-code ops, e.g. `endbr64`,
+  leaves no `RegionInstruction` at all, so `pcode_at` returns `None` for
+  it — indistinguishable from an address never decoded), and
+  `Lifter.pcode_at(entry, addr) -> str` (a stand-alone LINEAR decode
+  sweep from `entry`, replaying context-register state on a throwaway
+  cloned Sleigh so the Lifter's own persistent Sleigh is never dirtied;
+  unlike the `Cfg` lookup it DOES return `""` for a zero-p-code-op
+  instruction since it re-decodes rather than looking up; raises
+  `StriderError` if `addr < entry` or the sweep steps past `addr`
+  without landing on it).  Low-level API mirrors the
+  Rust surface: `SleighArch`, `CallingConvention`, `BufferReader` (a
+  RAW-region reader for non-ELF / custom sources — ELF parse + symbols
+  live on the internal `_LoadedElf` that `ElfLifter` wraps, built by
+  `strider.load_elf(path)`), `MemReader`, `ReadOnlyMemory`, `Sleigh`,
+  `Function`, `Cfg`, `OptimizerPipeline`.  `strider.opt` exposes
+  per-pass classes (every built-in pass is now zero-argument — the
+  calling convention is read from the function under analysis at run
+  time, not bound into the pass at construction).  `strider.pattern` is
+  a full mirror of the Rust pattern crate, with descriptive constructor
+  names: `int_and` / `int_or` / `int_xor` / `int_not` (bitwise ops —
+  `and_`/`or_`/`xor`/`bit_not`/`not_` are gone), `anything()` (the
+  wildcard, formerly `any_()`), `if_else` (the `If` pattern builder,
+  formerly `if_()`).  `strider.template` is the build-side (`replace`)
+  mirror of `strider.pattern` — free functions (`var(c)`, `int_const`,
+  `add`, `int_and`, …) construct a `Template` from only the build-valid
+  subset (no `.when()`, no commutativity, no wildcards, since those are
+  match-only concepts); `Function.rewrite`/`rewrite_all` type `replace`
+  as a `Template`, though a bare `strider.pattern.Pat` is still accepted
+  for back-compat.  Cross-pattern joins on shared captures via
+  `Function.find_joined([pat1, pat2, …])`.  Asm-fingerprint accessor:
+  `match.asm_fingerprint(c) -> list[int]`.  Every Rust error lands in
+  Python as a single `strider.errors.StriderError` exception carrying an
+  informative message; the hierarchy is intentionally flat (no typed
+  subclasses).  An unresolved indirect branch is **not** an error: it is
+  reported via `analyze`'s third return value, `unresolved_addrs` (a
+  `list[int]` of machine addresses, empty when fully resolved).
   Dev workflow uses uv: `uv sync --group dev` → `uv run maturin develop` →
   `uv run pytest`.
 

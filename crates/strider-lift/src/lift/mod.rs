@@ -97,8 +97,13 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         })
     }
 
-    /// Read access to the owned Sleigh context (for dot rendering /
-    /// fingerprint p-code resolution).
+    /// Read access to the owned Sleigh context (for dot rendering, and
+    /// for cloning a fresh, throwaway Sleigh for the fingerprint-to-p-code
+    /// audit-trail path — see `strider-py`'s `PyLifter::fingerprint_pcode`,
+    /// which needs a Sleigh that starts with no inherited context-register
+    /// state and whose mutations never reach this persistent instance;
+    /// `Sleigh::lift_one` carries context-register state across calls,
+    /// see the module doc).
     #[must_use]
     pub fn sleigh(&self) -> &rsleigh::Sleigh<R> {
         &self.sleigh
@@ -153,7 +158,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     pub fn build_ir(
         &self,
         cfg: &strider_cfg::Cfg,
-        cc: &strider_target::BuiltCallingConvention,
+        cc: strider_target::BuiltCallingConvention,
     ) -> Result<LiftOutcome> {
         self.build_ir_with(cfg, cc, &LiftOptions::default())
     }
@@ -178,7 +183,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     pub fn build_ir_with(
         &self,
         cfg: &strider_cfg::Cfg,
-        cc: &strider_target::BuiltCallingConvention,
+        cc: strider_target::BuiltCallingConvention,
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
         // The CFG is rebuilt from scratch each lift, so the tracked-varnode
@@ -511,7 +516,7 @@ mod tests {
         .build()
         .expect("cfg");
         let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
-        let outcome = lifter.build_ir(&cfg, &cc).expect("build_ir");
+        let outcome = lifter.build_ir(&cfg, cc).expect("build_ir");
 
         assert!(
             outcome.unresolved_branches.is_empty(),

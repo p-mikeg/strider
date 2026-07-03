@@ -17,8 +17,8 @@ import pytest
 
 import strider
 from strider.pattern import (
-    Capture, Pat, CastMask, any_, var, add, mul, load, store,
-    call, call_other, ret, if_, phi, mem_phi,
+    Capture, Pat, CastMask, anything, var, add, mul, load, store,
+    call, call_other, ret, if_else, phi, mem_phi,
     phi_for, initial_var, initial_var_for, function_arg,
     function_arg_any, function_arg_reg, function_arg_stack,
     int_const, signed_int_const, int_cmp, int_bin_any, int_cmp_any,
@@ -50,7 +50,7 @@ def _control_graph(fn: str):
 
 NODE_BUILDER_CTORS = [
     pytest.param(ret, id="ret"),
-    pytest.param(if_, id="if_"),
+    pytest.param(if_else, id="if_else"),
     pytest.param(call, id="call"),
     pytest.param(call_other, id="call_other"),
     pytest.param(load, id="load"),
@@ -90,7 +90,7 @@ def test_ret_pat_returns_builder_chainable():
     # `preceded_by` as `MatchPat`).  Passing a node-rooted control builder
     # (`call()`) into `preceded_by` was loose typing the rewrite removed —
     # use a value predecessor to exercise builder chainability.
-    p = ret().preceded_by(any_())
+    p = ret().preceded_by(anything())
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -112,14 +112,14 @@ def test_ret_pat_finds_returns_in_real_graph():
 
 
 def test_if_pat_chain_sets_branches():
-    p = if_(cond="x").true_branch(any_()).false_branch(any_())
+    p = if_else(cond="x").true_branch(anything()).false_branch(anything())
     assert isinstance(p.into_pat(), Pat)
 
 
 def test_if_pat_finds_branches_in_real_graph():
     g = _control_graph("clamp")
     # `clamp` has at least 2 If nodes (lo + hi bounds).
-    hits = g.find_all(if_())
+    hits = g.find_all(if_else())
     assert len(hits) >= 2
 
 
@@ -164,7 +164,7 @@ def test_load_pat_finds_loads_in_real_graph():
 def test_load_pat_via_addr_chain():
     g = _switch_graph()
     # Constrain to load whose address is some Add expression.
-    hits = g.find_all(load().addr(add(any_(), any_())))
+    hits = g.find_all(load().addr(add(anything(), anything())))
     assert isinstance(hits, list)
 
 
@@ -314,7 +314,7 @@ def test_int_cmp_no_not_equal_op():
 def test_int_binary_op_recovery():
     g = _patterns_graph()
     c = Capture()
-    p = int_bin_any(c, any_(), any_())
+    p = int_bin_any(c, anything(), anything())
     hits = g.find_all(p)
     assert len(hits) >= 1
     # Recover a real op variant from the first match.
@@ -328,7 +328,7 @@ def test_int_binary_op_recovery():
 def test_int_cmp_op_recovery():
     g = _control_graph("clamp")
     c = Capture()
-    p = int_cmp_any(c, any_(), any_())
+    p = int_cmp_any(c, anything(), anything())
     hits = g.find_all(p)
     assert len(hits) >= 1
     op_name = hits[0].int_cmp_op(c)
@@ -372,9 +372,9 @@ def test_cast_mask_all_vs_none():
 def test_find_all_accepts_ignore_casts_mask():
     g = _patterns_graph()
     # Equivalent to ignore_casts=True but per-cast.
-    hits_strict = g.find_all(add(mul(any_(), any_()), any_()))
+    hits_strict = g.find_all(add(mul(anything(), anything()), anything()))
     hits_relaxed = g.find_all(
-        add(mul(any_(), any_()), any_()),
+        add(mul(anything(), anything()), anything()),
         ignore_casts_mask=CastMask.extend() | CastMask.truncate(),
     )
     # The relaxed walk must find at least as many matches as strict.
@@ -385,7 +385,7 @@ def test_find_all_rejects_both_ignore_casts_options():
     g = _patterns_graph()
     with pytest.raises(strider.errors.StriderError):
         g.find_all(
-            add(any_(), any_()),
+            add(anything(), anything()),
             ignore_casts=True,
             ignore_casts_mask=CastMask.extend(),
         )
@@ -397,7 +397,7 @@ def test_find_all_rejects_both_ignore_casts_options():
 def test_vn_space_classmethods_round_trip():
     assert strider.VnSpace.ram().name() == "RAM"
     assert strider.VnSpace.register().name() == "REGISTER"
-    assert strider.VnSpace.const_().name() == "CONST"
+    assert strider.VnSpace.const().name() == "CONST"
     assert strider.VnSpace.unique().name() == "UNIQUE"
     # Equality + hash work.
     assert strider.VnSpace.ram() == strider.VnSpace.ram()

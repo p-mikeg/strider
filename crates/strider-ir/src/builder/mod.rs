@@ -124,7 +124,7 @@ impl FunctionBuilder {
     /// `InitialVar` per tracked variable).
     pub fn new(
         mut all_used_variables: Vec<rsleigh::Vn>,
-        cc: &strider_target::BuiltCallingConvention,
+        cc: strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
     ) -> Result<Self> {
         // Build the canonical tracked universe here: seed every
@@ -161,7 +161,7 @@ impl FunctionBuilder {
         }
         let tracked_vns = vn_container::dedup_overlapping_largest(&all_used_variables);
         let mut fb = FunctionBuilder {
-            function: Function::new(cc.clone(), endianness, tracked_vns),
+            function: Function::new(cc, endianness, tracked_vns),
             entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,

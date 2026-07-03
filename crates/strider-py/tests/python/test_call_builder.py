@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import strider
 from strider.pattern import (
-    Capture, Pat, any_, var, call, int_const, load, function_arg,
+    Capture, Pat, anything, var, call, int_const, load, function_arg,
 )
 
 from .conftest import built_function, fixture_path
@@ -92,7 +92,7 @@ def test_target_accepts_pat_like():
     # PatLike: Pat, Capture, str ("name"), or another typed builder.
     assert isinstance(call().target(int_const(0x1234)).into_pat(), Pat)
     assert isinstance(call().target("tgt").into_pat(), Pat)
-    assert isinstance(call().target(any_()).into_pat(), Pat)
+    assert isinstance(call().target(anything()).into_pat(), Pat)
 
 
 def test_arg_accepts_pat_like():
@@ -212,10 +212,10 @@ def test_call_arg_huge_index_builds_but_never_matches():
     # An out-of-range positional index is NOT a build-time error: the
     # builder finalises fine, the constraint simply can never bind, so
     # find_all returns no matches.
-    b = call().arg(1_000_000, any_())
+    b = call().arg(1_000_000, anything())
     assert isinstance(b.into_pat(), Pat)
     g = _switch_graph()
-    assert g.find_all(call().arg(1_000_000, any_())) == []
+    assert g.find_all(call().arg(1_000_000, anything())) == []
 
 
 def test_call_arg_negative_index_overflows_at_chain_time():
@@ -225,4 +225,4 @@ def test_call_arg_negative_index_overflows_at_chain_time():
     import pytest
 
     with pytest.raises(OverflowError):
-        call().arg(-1, any_())
+        call().arg(-1, anything())

@@ -137,6 +137,32 @@ where
         self.lifter.sleigh_regs()
     }
 
+    /// Returns the owned `Sleigh`, for callers that need to resolve
+    /// register names (e.g. dot rendering) through the same instance
+    /// `analyze`/`build_cfg` drive.
+    #[must_use]
+    pub fn sleigh(&self) -> &rsleigh::Sleigh<R> {
+        self.lifter.sleigh()
+    }
+
+    /// Build the CFG for `entry` only — no lift, no optimisation, no
+    /// indirect-branch resolution.  Reuses the same owned `Lifter` (and
+    /// its `Sleigh`) that [`Strider::analyze`] drives, so callers that
+    /// want a structural-only preview or a snapshot for dot rendering
+    /// don't need a second handle.
+    ///
+    /// # Errors
+    ///
+    /// Propagates CFG-build failures (see [`Lifter::build_cfg`]).
+    pub fn build_cfg(
+        &mut self,
+        entry: u64,
+        cfg_opts: &strider_cfg::CfgOptions,
+    ) -> Result<strider_cfg::Cfg> {
+        self.lifter
+            .build_cfg(MachineInsnAddr::from(entry), cfg_opts)
+    }
+
     /// Lift the function at `entry`, optimise it, resolve its indirect
     /// branches, and return the final IR plus any indirect-branch sites
     /// that could not be resolved.
@@ -211,7 +237,7 @@ where
             compact: false,
         };
 
-        let (mut function, mut unresolved, mut resolutions) =
+        let (mut cfg, mut function, mut unresolved, mut resolutions) =
             self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
         // Each non-terminal iteration folds the classifier's results into
         // `known_targets` and re-lifts.  The loop terminates as soon as
@@ -235,7 +261,7 @@ where
                 converged = true;
                 break;
             }
-            (function, unresolved, resolutions) =
+            (cfg, function, unresolved, resolutions) =
                 self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
         }
 
@@ -268,6 +294,7 @@ where
             function.compact()?;
         }
         Ok(AnalyzeResult {
+            cfg,
             function,
             unresolved_indirect_branches,
         })
@@ -276,10 +303,11 @@ where
     /// Build the CFG, lift to IR, and run `pipeline` (which already carries
     /// the analysis-only [`strider_opt::IndirectBranchClassify`] post-pass,
     /// appended once by [`Self::analyze`]).
-    /// Returns `(function, unresolved, resolutions)`: the optimised IR, the
-    /// lift-time deferred-anchor list (each `BranchIndirect`'s pcode address
-    /// paired with its `IndirectBranch` placeholder `NodeId`), and the
-    /// post-pass's node-keyed classification map. The Sleigh stays owned by
+    /// Returns `(cfg, function, unresolved, resolutions)`: the CFG the
+    /// function was lifted from, the optimised IR, the lift-time
+    /// deferred-anchor list (each `BranchIndirect`'s pcode address paired
+    /// with its `IndirectBranch` placeholder `NodeId`), and the post-pass's
+    /// node-keyed classification map. The Sleigh stays owned by
     /// `self.lifter` across calls; `pipeline` is reused across re-lifts
     /// (`run` takes `&self`).
     ///
@@ -294,7 +322,12 @@ where
         working: &LiftOptions,
         opt_opts: &OptOptions,
         pipeline: &strider_opt::OptimizerPipeline,
-    ) -> Result<(strider_ir::Function, UnresolvedAnchors, IndirectResolutions)> {
+    ) -> Result<(
+        strider_cfg::Cfg,
+        strider_ir::Function,
+        UnresolvedAnchors,
+        IndirectResolutions,
+    )> {
         // Split the `Strider` borrow: the lifter takes `&mut` (build + lift
         // the CFG) while the optimiser ctx takes `&rom` (disjoint fields).
         let Strider {
@@ -307,29 +340,41 @@ where
         // `known_targets` is deferred via `UnresolvedIndirectBranch` and
         // resolved at the full-function IR level by the classifier post-pass.
         let cfg = lifter.build_cfg(start_addr, &working.cfg)?;
+        // `build_ir_with` takes `cc` by value (it is moved all the way into
+        // `Function::default_cc` — see `strider-ir`'s `FunctionBuilder::new`).
+        // `analyze`'s resolve/re-lift loop calls `build_lift` — and thus this
+        // — more than once with the same caller-owned `cc`, so this clone is
+        // the one unavoidable boundary clone the by-value threading pushes
+        // out to: `Strider::analyze`'s iteration shape needs `cc` again on
+        // the next re-lift.
         let LiftOutcome {
             mut function,
             unresolved_branches: unresolved,
             ..
-        } = lifter.build_ir_with(&cfg, cc, working)?;
+        } = lifter.build_ir_with(&cfg, cc.clone(), working)?;
 
         let mut ctx = OptCtx::new(rom_ref);
         ctx.options = opt_opts.clone();
         pipeline.run(&mut function, &mut ctx)?;
         let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
 
-        Ok((function, unresolved, resolutions))
+        Ok((cfg, function, unresolved, resolutions))
     }
 }
 
-/// The result of [`Strider::analyze`]: the optimised IR plus the
-/// indirect-branch sites that could not be resolved.
+/// The result of [`Strider::analyze`]: the final CFG plus the optimised IR
+/// plus the indirect-branch sites that could not be resolved.
 ///
 /// `unresolved_indirect_branches` is empty when every indirect branch was
 /// resolved to concrete targets; otherwise it lists the pcode address of
 /// each branch whose `IndirectBranch` placeholder is still present in
 /// `function`.  A caller wanting full resolution asserts it is empty.
 pub struct AnalyzeResult {
+    /// The CFG from the FINAL resolve/re-lift iteration — the one
+    /// `function` was actually lifted from (resolved indirect branches are
+    /// seated as real terminators via `known_targets`, so this is the SSoT
+    /// CFG matching the returned IR).
+    pub cfg: strider_cfg::Cfg,
     /// The optimised IR.  May still contain `IndirectBranch` placeholder
     /// nodes for any site in `unresolved_indirect_branches`.
     pub function: strider_ir::Function,

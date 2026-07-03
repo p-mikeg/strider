@@ -1,4 +1,4 @@
-"""End-to-end Python smoke for `strider.run(compact=...)`."""
+"""End-to-end Python smoke for `Lifter.analyze(compact=...)`."""
 
 import strider
 from strider import BufferReader, CallingConvention, SleighArch
@@ -19,31 +19,35 @@ def _trivial_function_bytes():
 def _run_with(compact: bool):
     arch, cc = _x86_64_strider()
     mem = BufferReader(0x1000, _trivial_function_bytes())
-    return strider.run(arch, cc, mem, entry=0x1000, compact=compact)
+    lift = strider.lifter(arch, mem)
+    _cfg, function, _unresolved = lift.analyze(0x1000, cc, opts=strider.LifterOptions(compact=compact))
+    return function
 
 
 def test_compact_default_true_does_not_grow_graph():
     """compact=True (default) must not produce more node ids than compact=False."""
-    compact_result = _run_with(True)
-    noncompact_result = _run_with(False)
-    assert compact_result.function.node_count() <= noncompact_result.function.node_count()
+    compact_function = _run_with(True)
+    noncompact_function = _run_with(False)
+    assert compact_function.node_count() <= noncompact_function.node_count()
 
 
 def test_compact_default_is_true():
-    """Calling strider.run without an explicit compact= keyword applies compaction."""
+    """Calling `Lifter.analyze` without an explicit compact= keyword
+    applies compaction."""
     arch, cc = _x86_64_strider()
     mem = BufferReader(0x1000, _trivial_function_bytes())
-    default_result = strider.run(arch, cc, mem, entry=0x1000)
-    explicit_result = _run_with(True)
-    assert default_result.function.node_count() == explicit_result.function.node_count()
+    lift = strider.lifter(arch, mem)
+    _cfg, default_function, _unresolved = lift.analyze(0x1000, cc)
+    explicit_function = _run_with(True)
+    assert default_function.node_count() == explicit_function.node_count()
 
 
-# ── per-call override isolation on the persistent ElfStrider handle ──────
+# ── per-call override isolation on the persistent ElfLifter handle ──────
 
 
 def test_elf_analyze_compact_override_does_not_leak_into_next_call():
-    """`ElfStrider.analyze(target, compact=False)` is a per-call
-    override on a persistent handle (the inner `Strider` is reused
+    """`ElfLifter.analyze(target, compact=False)` is a per-call
+    override on a persistent handle (the base `Lifter` state is reused
     across calls).  A subsequent `.analyze()` WITHOUT the override must
     get the default (`compact=True`) — observable because the
     uncompacted arena keeps culled nodes (much larger node_count).
@@ -53,12 +57,12 @@ def test_elf_analyze_compact_override_does_not_leak_into_next_call():
     elf_path = fixture_path("x64", "arithmetic")
     elf = strider.load_elf(str(elf_path))
 
-    uncompacted = elf.analyze("add", compact=False)
-    after = elf.analyze("add")  # no override — must be compact again
-    fresh = strider.load_elf(str(elf_path)).analyze("add")
+    _cfg, uncompacted, _unresolved = elf.analyze("add", opts=strider.LifterOptions(compact=False))
+    _cfg, after, _unresolved = elf.analyze("add")  # no override — must be compact again
+    _cfg, fresh, _unresolved = strider.load_elf(str(elf_path)).analyze("add")
 
     # The override call itself observably differs from the default…
-    assert uncompacted.function.node_count() > after.function.node_count()
+    assert uncompacted.node_count() > after.node_count()
     # …and the follow-up default call matches a fresh handle's default
     # exactly (no leak of compact=False into later calls).
-    assert after.function.node_count() == fresh.function.node_count()
+    assert after.node_count() == fresh.node_count()

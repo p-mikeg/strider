@@ -101,7 +101,7 @@ mod tests {
     fn empty_builder() -> crate::error::Result<FunctionBuilder> {
         FunctionBuilder::new(
             vec![],
-            &strider_target::BuiltCallingConvention::default(),
+            strider_target::BuiltCallingConvention::default(),
             strider_target::Endianness::Little,
         )
     }

@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Iterable, List, Optional, Tuple
 
+from .pattern import PatLike as _PatLike
+from .template import Template as _Template
+
 __version__: str
 
 # ── Architecture / calling convention ───────────────────────────────────
@@ -99,9 +102,9 @@ class BufferReader:
     """Single-region raw-byte reader for non-ELF / firmware-blob cases.
     Serves both the sleigh-fetch (`mem=`) and ReadOnlyMemory (`rom=`)
     roles, so one `BufferReader` can be passed as either argument to
-    `strider.run` / `strider.strider` / `strider.Lifter` / `strider.Sleigh`.
+    `strider.lifter` / `strider.Sleigh`.
 
-    For an ELF, prefer `strider.load_elf(path)` -> `ElfStrider`, which
+    For an ELF, prefer `strider.load_elf(path)` -> `ElfLifter`, which
     wires a multi-region reader up automatically and adds symbol/
     entry-point lookups.
     """
@@ -142,7 +145,7 @@ class VnSpace:
     @classmethod
     def register(cls) -> VnSpace: ...
     @classmethod
-    def const_(cls) -> VnSpace: ...
+    def const(cls) -> VnSpace: ...
     @classmethod
     def unique(cls) -> VnSpace: ...
     def name(self) -> str: ...
@@ -169,64 +172,159 @@ class Sleigh:
         ...
 
 class Cfg:
+    """Control-flow graph of a single function, produced by
+    `Lifter.build_cfg` / returned as element 0 of `Lifter.analyze`."""
+
     def to_html(self, path: str, style: Optional[str] = ...) -> None: ...
     def to_dot(self, path: str) -> None: ...
     def html_str(self, style: Optional[str] = ...) -> str: ...
+    def pcode_at(self, addr: int) -> Optional[str]:
+        """Look up the lifted p-code for the machine instruction at
+        `addr` — an exact LOOKUP against this CFG's own stored decodes
+        (the exact lift-time context, correct even for context-dependent
+        architectures like ARM/Thumb or MIPS16), never a fresh re-decode.
 
-class AnalyzeOutcome:
-    function: Function
-    unresolved_branch_count: int
+        Returns the joined p-code op text (ops rendered via their
+        `rsleigh::Insn` `Display` impl, joined with `"; "`), or `None`
+        when `addr` has no stored decode in this CFG.
 
-class Lifter:
-    """Low-level lift handle: build a single CFG and lift it to IR, no
-    indirect-branch resolution.  Owns the `Sleigh` (built from `mem`) and
-    the function-default calling convention.  Use `Strider` / `ElfStrider`
-    for the full lift+optimise+resolve workflow."""
+        Known limitation: a machine instruction that lifts to ZERO
+        p-code ops (e.g. `endbr64`) leaves no trace in the CFG at all,
+        so such an address is indistinguishable from one never decoded
+        — both return `None` here (`Lifter.pcode_at`, which re-decodes
+        instead of looking up, still returns `""` for it)."""
+        ...
+    def fingerprint_pcode(self, node: Node) -> List[Tuple[int, str]]:
+        """The asm-fingerprint of `node` as `(addr, text)` p-code pairs,
+        sorted by address — the CFG-lookup companion to
+        `Node.fingerprint()` (addr-only).  Each fingerprint address is
+        resolved via `pcode_at`; an address not present in this CFG is
+        SKIPPED (not emitted with empty text).  `[]` for structural
+        nodes with no fingerprint (Entry, InitialMemory, InitialVar,
+        Region, phis)."""
+        ...
 
+class CfgOptions:
+    """Mirrors `strider_cfg::CfgOptions` (the user-facing subset — the
+    orchestrator-internal `known_targets` feedback field is not
+    exposed).  Raises `ValueError` for `function_max_size=0` (zero is
+    meaningless — omit the argument for unbounded)."""
+
+    function_max_size: Optional[int]
+    allow_code_before_start_addr: bool
     def __init__(
-        self, arch: SleighArch, mem: Any, cc: CallingConvention
-    ) -> None: ...
-    def build_cfg(
         self,
-        entry: int,
-        allow_code_before_start_addr: bool = ...,
-        function_max_size: Optional[int] = ...,
-    ) -> Cfg: ...
-    def analyze_cfg(self, cfg: Cfg) -> AnalyzeOutcome: ...
-    def build_optimizer_pipeline(self) -> OptimizerPipeline: ...
-
-class Strider:
-    """Standalone run handle (non-ELF / firmware): lift, optimise to a
-    fixed point, and resolve indirect branches, returning the final IR
-    `Function`.  Build one with `strider.strider(arch, cc, mem, rom=None)`
-    and call `analyze(entry, ...)` repeatedly.  The `cc` is fixed at
-    construction; per-target-address overrides go through
-    `per_address_ccs`."""
-
-    def analyze(
-        self,
-        entry: int,
         *,
         function_max_size: Optional[int] = ...,
         allow_code_before_start_addr: bool = ...,
+    ) -> None: ...
+
+class LifterOptions:
+    """Mirrors `strider_lift::LiftOptions` (nested `cfg`, exactly like
+    the Rust struct) plus the optimize-side knobs, plus the per-function
+    optimizer-pipeline override `pipeline`.  `pipeline`, when set,
+    replaces the built-in default pipeline for THAT `analyze` call only
+    (never on `strider.lifter(...)` itself). Raises `ValueError` for an
+    unrecognised `alias_mode` or a nested `function_max_size=0`."""
+
+    cfg: CfgOptions
+    compact: bool
+    per_address_ccs: Optional[dict]
+    calls_clobber: bool
+    assume_distinct_sp_bases_disjoint: bool
+    alias_mode: str
+    pipeline: Optional[OptimizerPipeline]
+    def __init__(
+        self,
+        *,
+        cfg: Optional[CfgOptions] = ...,
         compact: bool = ...,
         per_address_ccs: Optional[dict] = ...,
         calls_clobber: bool = ...,
         assume_distinct_sp_bases_disjoint: bool = ...,
         alias_mode: str = ...,
-    ) -> Tuple[Function, List[int]]: ...
+        pipeline: Optional[OptimizerPipeline] = ...,
+    ) -> None: ...
 
-def strider(
+class Lifter:
+    """The single lift+optimise+resolve handle.  Build one with
+    `strider.lifter(arch, mem, rom=None)` (equivalently
+    `strider.Lifter(arch, mem, rom=None)`) — `cc` is NOT fixed at
+    construction, it is a required argument of every `analyze` call, so
+    one handle can analyse functions under different calling
+    conventions.  `build_cfg` is structural-only (no lift/optimise/
+    indirect-branch resolution); `analyze` drives the full fixed-point
+    loop.  Subclassable from Python — see `ElfLifter`."""
+
+    def __init__(self, arch: SleighArch, mem: Any, rom: Optional[Any] = ...) -> None: ...
+    def build_cfg(
+        self,
+        entry: int,
+        opts: Optional[CfgOptions] = ...,
+    ) -> Cfg: ...
+    def analyze(
+        self,
+        entry: int,
+        cc: CallingConvention,
+        opts: Optional[LifterOptions] = ...,
+    ) -> Tuple[Cfg, Function, List[int]]: ...
+    def optimize(
+        self,
+        function: Function,
+        pipeline: Optional[OptimizerPipeline] = ...,
+    ) -> None:
+        """Run an optimizer pipeline over `function`'s IR in place.
+        `pipeline=None` (the default) builds and runs the canonical
+        default pipeline (equivalent to the former
+        `Function.reoptimize()`); passing an `OptimizerPipeline` runs
+        that pipeline instead, draining it (equivalent to the former
+        `Function.optimize(pipeline)`)."""
+        ...
+    def dump_html(
+        self, function: Function, path: str, style: Optional[str] = ...
+    ) -> None:
+        """Render `function`'s IR graph to a standalone HTML file at
+        `path`.  Lives on `Lifter` (not `Function`) because the pretty
+        renderer needs the Sleigh the Lifter owns to resolve register
+        names."""
+        ...
+    def dump_dot(self, function: Function, path: str) -> None:
+        """Render `function`'s IR graph to a Graphviz `.dot` file at
+        `path`."""
+        ...
+    def html_str(self, function: Function, style: Optional[str] = ...) -> str:
+        """Return `function`'s IR graph rendered as an HTML string
+        instead of writing it to a file."""
+        ...
+    def pcode_at(self, entry: int, addr: int) -> str:
+        """Decode LINEARLY from `entry`, one machine instruction at a
+        time (advancing by each instruction's machine byte length,
+        replaying context-register state exactly as a real lift would),
+        until the cursor reaches `addr`, and return that instruction's
+        lifted p-code (ops joined `"; "`, empty for an instruction that
+        lifts to no p-code, e.g. `endbr64`).
+
+        Unlike `Cfg.pcode_at` / `Cfg.fingerprint_pcode` (an exact lookup
+        against an already-built CFG's stored decodes), this is a
+        stand-alone sweep — useful for an `addr` outside any CFG that
+        was actually analysed.  It does NOT follow control flow: `addr`
+        must be reachable via the LINEAR instruction stream starting at
+        `entry` (the same assumption the lifter itself makes).
+
+        Raises `StriderError` if `addr < entry`, or if the sweep steps
+        PAST `addr` without landing exactly on it (misaligned target)."""
+        ...
+
+def lifter(
     arch: SleighArch,
-    cc: CallingConvention,
     mem: Any,
     rom: Optional[Any] = ...,
-) -> Strider:
-    """Build a standalone `Strider` run handle over a raw code reader
-    (`BufferReader` or `MemReader`).  `rom` is the optional read-only memory
-    image for `LoadReadOnly` constant folding.  For an ELF, prefer
-    `strider.load_elf(path)` → `ElfStrider`, which wires `mem`/`rom` from
-    the loaded sections and adds symbol lookups."""
+) -> Lifter:
+    """Build a `Lifter` — the single lift+optimise+resolve handle — over
+    a raw code reader (`BufferReader` or `MemReader`).  `rom` is the
+    optional read-only memory image for `LoadReadOnly` constant folding.
+    For an ELF, prefer `strider.load_elf(path)` → `ElfLifter`, which
+    wires `mem`/`rom` from the loaded sections and adds symbol lookups."""
     ...
 
 class Node:
@@ -251,11 +349,27 @@ class Node:
         """The data/control nodes feeding this one, as a list of `Node`s."""
         ...
     def const_int(self) -> Optional[int]:
-        """The node's unsigned integer constant value (arbitrary
-        precision — covers I1 through I512), else `None`."""
+        """The node's signed integer constant value (sign-extended at
+        its declared width), or `None` when its value output isn't an
+        integer `IntConst` or the stored magnitude exceeds 128 bits
+        (I256/I512 — use `wide_const_bytes()` for those)."""
+        ...
+    def const_uint(self) -> Optional[int]:
+        """The node's unsigned integer constant value (masked to its
+        declared width), or `None` when its value output isn't an
+        integer `IntConst` or the stored magnitude exceeds 128 bits
+        (I256/I512 — use `wide_const_bytes()` for those)."""
         ...
     def const_bool(self) -> Optional[bool]:
         """The node's boolean constant value, else `None`."""
+        ...
+    def float_bits(self) -> Optional[int]:
+        """Raw IEEE 754 bit pattern as `u64`, else `None` when this
+        node isn't a `FloatConst`."""
+        ...
+    def vn(self) -> Optional[Vn]:
+        """The `Vn` associated with this node (`InitialVar` / `Call` /
+        `CallOther` clobber output), else `None`."""
         ...
     def fingerprint(self) -> List[int]:
         """Sorted, deduped asm-instruction addresses recorded on this node."""
@@ -266,14 +380,33 @@ class Node:
     def call_other_name(self) -> Optional[str]:
         """Sleigh user-op name attached to a `CallOther` node, else `None`."""
         ...
+    def int_binary_op(self) -> Optional[str]:
+        """If this node is an `IntBinaryOp`, its variant name, else `None`."""
+        ...
+    def int_unary_op(self) -> Optional[str]:
+        """If this node is an `IntUnaryOp`, its variant name, else `None`."""
+        ...
+    def int_cmp_op(self) -> Optional[str]:
+        """If this node is an `IntCmpOp`, its variant name, else `None`."""
+        ...
+    def bool_binary_op(self) -> Optional[str]:
+        """If this node is a boolean binary op (`IntBinaryOp` at `I1`),
+        its variant name, else `None`."""
+        ...
+    def float_binary_op(self) -> Optional[str]:
+        """If this node is a `FloatBinaryOp`, its variant name, else `None`."""
+        ...
+    def float_unary_op(self) -> Optional[str]:
+        """If this node is a `FloatUnaryOp`, its variant name, else `None`."""
+        ...
+    def float_cmp_op(self) -> Optional[str]:
+        """If this node is a `FloatCmpOp`, its variant name, else `None`."""
+        ...
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
 
 class Function:
-    def to_html(self, path: str, style: Optional[str] = ...) -> None: ...
-    def to_dot(self, path: str) -> None: ...
-    def html_str(self, style: Optional[str] = ...) -> str: ...
     def raw_dot_str(self) -> str: ...
     def raw_html_str(self) -> str: ...
     def to_raw_dot(self, path: str) -> None: ...
@@ -285,21 +418,11 @@ class Function:
     def node_ids(self) -> List[int]:
         """All reachable node ids as raw integers."""
         ...
-    def node_kind(self, node_id: int) -> str:
-        """The `NodeKind` of `node_id` formatted as a string."""
-        ...
-    def asm_fingerprint(self, node_id: int) -> List[int]:
-        """Sorted, deduped asm-instruction addresses recorded on `node_id`."""
-        ...
-    def wide_const_bytes(self, node_id: int) -> Optional[bytes]:
-        """Raw LE bytes of an `IntConstWide` node, else `None`."""
-        ...
-    def call_other_name(self, node_id: int) -> Optional[str]:
-        """Sleigh user-op name attached to a `CallOther` node, else `None`."""
-        ...
     def node(self, node_id: int) -> Node:
-        """A discoverable `Node` handle on the node at `node_id`.  Raises
-        `StriderError` for an invalid id."""
+        """A discoverable `Node` handle on the node at `node_id` — the
+        single source of truth for per-node reads (`kind()`,
+        `asm_fingerprint()`-equivalent `fingerprint()`, `wide_const_bytes()`,
+        `call_other_name()`, …).  Raises `StriderError` for an invalid id."""
         ...
     def compact(self) -> None:
         """Drop every node unreachable from entry; invalidates node ids."""
@@ -307,8 +430,6 @@ class Function:
     def validate(self) -> Optional[str]:
         """Re-validate the graph; `None` on success, else an error message."""
         ...
-    def optimize(self, pipeline: OptimizerPipeline) -> None: ...
-    def reoptimize(self) -> None: ...
     def find_all(
         self,
         pat: Any,  # strider.pattern.PatLike
@@ -335,8 +456,17 @@ class Function:
         one `Match` per input pattern (in input order) where every
         `Capture` shared between patterns binds to the same node."""
         ...
-    def rewrite(self, find: Any, replace: Any) -> int: ...
-    def rewrite_all(self, pairs: List[Tuple[Any, Any]]) -> int: ...
+    def rewrite(self, find: _PatLike, replace: _Template) -> int:
+        """Apply a single `find -> replace` rewrite rule across the graph,
+        returning the fire count.  `replace` is a `strider.template.Template`
+        (build it via the `strider.template` free functions) — a bare
+        `strider.pattern.Pat` is still accepted for back-compat, but only
+        its build-valid subset compiles."""
+        ...
+    def rewrite_all(self, pairs: List[Tuple[_PatLike, _Template]]) -> int:
+        """Apply a list of `(find, replace)` pairs round-robin across every
+        reachable node; returns the total fire count."""
+        ...
     def clone(self) -> "Function":
         """Return a deep, fully independent copy of this function.
 
@@ -349,48 +479,71 @@ class Function:
         ...
 
 class Match:
+    """`Node` is the single source of truth for per-node reads; every
+    value/op reader below is a thin forwarder to `self.node(key).<reader>()`
+    (returning `None` when `key` is unbound)."""
+
     @property
     def root(self) -> int:
         """The root node where the top-level pattern matched, as a `u32`
         node id."""
         ...
-    def uint(self, key: Any) -> Optional[int]: ...
-    def int(self, key: Any) -> Optional[int]: ...
-    def bool(self, key: Any) -> Optional[bool]: ...
-    def float_bits(self, key: Any) -> Optional[int]: ...
+    def uint(self, key: Any) -> Optional[int]:
+        """Thin forwarder to `Node.const_uint()`."""
+        ...
+    def int(self, key: Any) -> Optional[int]:
+        """Thin forwarder to `Node.const_int()`."""
+        ...
+    def bool(self, key: Any) -> Optional[bool]:
+        """Thin forwarder to `Node.const_bool()`."""
+        ...
+    def float_bits(self, key: Any) -> Optional[int]:
+        """Thin forwarder to `Node.float_bits()`."""
+        ...
     def has(self, key: Any) -> bool: ...
     def int_binary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `IntBinaryOp` variant name from `key`."""
+        """Recover the matched `IntBinaryOp` variant name from `key`.
+        Thin forwarder to `Node.int_binary_op()`."""
         ...
     def int_unary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `IntUnaryOp` variant name from `key`."""
+        """Recover the matched `IntUnaryOp` variant name from `key`.
+        Thin forwarder to `Node.int_unary_op()`."""
         ...
     def int_cmp_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `IntCmpOp` variant name from `key`."""
+        """Recover the matched `IntCmpOp` variant name from `key`.
+        Thin forwarder to `Node.int_cmp_op()`."""
         ...
     def bool_binary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched boolean binary op (`IntBinaryOp` at `I1`) name."""
+        """Recover the matched boolean binary op (`IntBinaryOp` at `I1`) name.
+        Thin forwarder to `Node.bool_binary_op()`."""
         ...
     # `bool_unary_op` was removed alongside `IntUnaryOp::BitNot`: a 1-bit
     # logical NOT is `Xor(_, IntConst(1)):I1`, so the op variant is
     # recovered via `bool_binary_op` (returns "Xor").
     def float_binary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `FloatBinaryOp` variant name from `key`."""
+        """Recover the matched `FloatBinaryOp` variant name from `key`.
+        Thin forwarder to `Node.float_binary_op()`."""
         ...
     def float_unary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `FloatUnaryOp` variant name from `key`."""
+        """Recover the matched `FloatUnaryOp` variant name from `key`.
+        Thin forwarder to `Node.float_unary_op()`."""
         ...
     def float_cmp_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `FloatCmpOp` variant name from `key`."""
+        """Recover the matched `FloatCmpOp` variant name from `key`.
+        Thin forwarder to `Node.float_cmp_op()`."""
         ...
     def vn(self, key: Any) -> Optional[Vn]:
-        """Recover the varnode bound by `key` (InitialVar / tagged Phi /
-        FunctionArg node), else `None`."""
+        """Recover the varnode bound by `key` (InitialVar / `Call` /
+        `CallOther` clobber output), else `None`.  Thin forwarder to
+        `Node.vn()`."""
         ...
-    def asm_fingerprint(self, key: Any) -> List[int]: ...
+    def asm_fingerprint(self, key: Any) -> List[int]:
+        """Thin forwarder to `Node.fingerprint()`; `[]` when `key` is unbound."""
+        ...
     def node(self, key: Any) -> Optional[Node]:
         """A `Node` handle on the node bound to `key` (a `Capture` or
-        string capture-name), or `None` when `key` is unbound."""
+        string capture-name), or `None` when `key` is unbound.  Every
+        other reader on `Match` is built on top of this resolution."""
         ...
     def __getitem__(self, key: Any) -> Any: ...
     def __contains__(self, key: Any) -> bool: ...
@@ -405,61 +558,33 @@ class OptimizerPipeline:
     def pass_count(self) -> int: ...
     def post_pass_count(self) -> int: ...
 
-class RunResult:
-    cfg: Cfg
-    function: Function
-    sleigh: Sleigh
-    unresolved_indirect_branches: List[int]
-
-def run(
-    arch: SleighArch,
-    cc: CallingConvention,
-    mem: Any,  # BufferReader | MemReader subclass
-    entry: int,
-    rom: Optional[Any] = ...,  # BufferReader | ReadOnlyMemory subclass
-    pipeline: Optional[OptimizerPipeline] = ...,
-    allow_code_before_start_addr: bool = ...,
-    function_max_size: Optional[int] = ...,
-    compact: bool = ...,
-    per_address_ccs: Optional[dict[int, CallingConvention]] = ...,
-) -> RunResult: ...
-
-def pcode_at(
-    arch: SleighArch,
-    mem: BufferReader,
-    addr: int,
-    count: int = ...,
-) -> List[Tuple[int, str]]:
-    """Lift the p-code of `count` machine instructions from `addr` over
-    `mem`, returning `(insn_addr, text)` tuples in address order.  `text`
-    is the instruction's p-code ops joined with `"; "` (empty for ops
-    like `endbr64` that lift to no p-code).  rsleigh is a p-code lifter —
-    this is the lifted semantics, NOT native assembly mnemonics.  Builds
-    one Sleigh and decodes sequentially.  Raises `StriderError` on
-    failure."""
-    ...
-
-def pcode_at_addrs(
-    arch: SleighArch,
-    mem: BufferReader,
-    addrs: List[int],
-) -> List[Tuple[int, str]]:
-    """Lift the p-code of a set of (possibly non-sequential) machine
-    addresses, one instruction each, returning `(addr, text)` tuples in
-    the order of `addrs`.  `text` is the instruction's p-code ops joined
-    with `"; "` (empty for ops like `endbr64` that lift to no p-code).
-    rsleigh is a p-code lifter — this is the lifted semantics, NOT native
-    assembly mnemonics.  Builds the Sleigh only once."""
-    ...
-
 # ── High-level facade (strider._api) ─────────────────────────────────────
 
-class ElfStrider:
-    """The loaded ELF binary — `strider.load_elf(path)` returns one.
-    Holds the ELF symbol backend plus a persistent `Strider` run handle
-    wired with the ELF's memory (as both code reader and ROM); exposes
-    symbols, sizes, the entry point, raw reads, and `analyze()`.  Analyse
-    many functions by calling `analyze` repeatedly."""
+class ElfLifter(Lifter):
+    """The loaded ELF binary as a `Lifter` — `strider.load_elf(path)` /
+    `load_elf_from_segments(path)` / `load_elf_from_sections(path)`
+    return one.  `ElfLifter` IS a `Lifter`
+    (`isinstance(x, strider.Lifter)` is true): it carries the same
+    persistent lift+optimise+resolve state wired with the ELF's memory
+    (as both code reader and ROM), plus the ELF symbol backend
+    (symbols, sizes, the entry point, raw reads) and a name-aware
+    `analyze(target)`.  Analyse many functions by calling `analyze`
+    repeatedly."""
+
+    def __init__(
+        self,
+        elf: Any,  # strider._LoadedElf (internal, returned by the loader)
+        arch: SleighArch,
+        cc: CallingConvention,
+        mem: Any,
+        rom: Optional[Any] = ...,
+    ) -> None:
+        """Do not construct directly — use `load_elf_from_segments` /
+        `load_elf_from_sections` (or the `load_elf` convenience
+        wrapper). This is `ElfLifter`'s real constructor (`elf` is the
+        internal `_LoadedElf` the loader builds), NOT the inherited
+        base `Lifter(arch, mem, rom=None)` shape."""
+        ...
     @property
     def arch(self) -> SleighArch: ...
     @property
@@ -472,70 +597,49 @@ class ElfStrider:
     def read(self, addr: int, size: int) -> Optional[bytes]: ...
     def reader(self) -> BufferReader:
         """The raw multi-region `BufferReader` assembled from the ELF's
-        loaded sections — the low-level code reader for `strider.run` /
-        `strider.strider` / `strider.Lifter` / `strider.Sleigh`."""
+        loaded sections — the low-level code reader for `strider.lifter`
+        / `strider.Sleigh`."""
         ...
     def add_elf(self, path: str, *, apply_relocations: bool = ...) -> None: ...
-    def pcode(self, addr: int, count: int = ...) -> List[Tuple[int, str]]:
-        """Lift the p-code of `count` machine instructions from `addr`,
-        returning `(insn_addr, text)` tuples in address order.  `text` is
-        the instruction's p-code ops joined with `"; "` (empty for ops
-        like `endbr64` that lift to no p-code).  rsleigh is a p-code
-        lifter — this is the lifted semantics, NOT native assembly
-        mnemonics."""
-        ...
     def analyze(
         self,
         target: Any,  # str | int
-        *,
-        function_max_size: Optional[int] = ...,
-        allow_code_before_start_addr: bool = ...,
-        compact: bool = ...,
-        per_address_ccs: Optional[dict] = ...,
-        calls_clobber: bool = ...,
-        assume_distinct_sp_bases_disjoint: bool = ...,
-        alias_mode: str = ...,
-    ) -> Analysis:
+        cc: Optional[CallingConvention] = ...,
+        opts: Optional[LifterOptions] = ...,
+    ) -> Tuple[Cfg, Function, List[int]]:
         """Lift the function at `target` (symbol name or absolute
-        address) into an `Analysis`, driving the full
-        lift+optimise+resolve pipeline through the persistent inner
-        `Strider`."""
+        address), driving the full lift+optimise+resolve pipeline and
+        returning the same `(Cfg, Function, unresolved_addrs)` tuple as
+        the base `Lifter.analyze`.  `cc` defaults to the ELF-derived (or
+        explicitly-passed at construction) calling convention."""
         ...
     def __repr__(self) -> str: ...
 
-class Analysis:
-    """Wrapper around a `RunResult` — the lifted, optimized IR graph for
-    a single function — with convenience methods for pattern queries and
-    provenance lookup."""
-    @property
-    def function(self) -> Function: ...
-    @property
-    def cfg(self) -> Cfg: ...
-    @property
-    def sleigh(self) -> Sleigh: ...
-    @property
-    def entry(self) -> int: ...
-    @property
-    def name(self) -> Optional[str]: ...
-    @property
-    def unresolved_indirect_branches(self) -> List[int]: ...
-    def find(self, pattern: Any, **matcher_options: Any) -> List[Match]: ...
-    def find_one(
-        self, pattern: Any, **matcher_options: Any
-    ) -> Optional[Match]: ...
-    def find_joined(
-        self, patterns: List[Any], **matcher_options: Any
-    ) -> List[List[Match]]: ...
-    def fingerprint(self, node: Any) -> List[int]: ...
-    def fingerprint_pcode(self, node: Any) -> List[Tuple[int, str]]:
-        """The node's asm-fingerprint as `(addr, text)` pairs sorted by
-        address, `text` being the lifted p-code (empty for ops like
-        `endbr64` that lift to no p-code); `[]` for structural nodes with
-        no fingerprint.  rsleigh is a p-code lifter — this is the lifted
-        semantics, NOT native assembly mnemonics."""
-        ...
-    def dump_html(self, path: str, style: Optional[str] = ...) -> None: ...
-    def dump_dot(self, path: str) -> None: ...
+def load_elf_from_segments(
+    path: str,
+    *,
+    apply_relocations: bool = ...,
+    arch: Optional[SleighArch] = ...,
+    cc: Optional[CallingConvention] = ...,
+) -> ElfLifter:
+    """Load an ELF binary and return an `ElfLifter`, collecting regions
+    by walking PT_LOAD program headers (falling back to sections for
+    ET_REL, which has none).  The arch + calling convention are
+    auto-picked from the ELF header (override via `arch=` / `cc=` for
+    kernel / syscall / custom-ABI workflows)."""
+    ...
+
+def load_elf_from_sections(
+    path: str,
+    *,
+    apply_relocations: bool = ...,
+    arch: Optional[SleighArch] = ...,
+    cc: Optional[CallingConvention] = ...,
+) -> ElfLifter:
+    """Like `load_elf_from_segments`, but FORCES the section-header-walk
+    region-collection strategy (first-wins VMA dedup) even for a linked
+    ET_EXEC / ET_DYN binary that does carry PT_LOAD segments."""
+    ...
 
 def load_elf(
     path: str,
@@ -543,10 +647,8 @@ def load_elf(
     apply_relocations: bool = ...,
     arch: Optional[SleighArch] = ...,
     cc: Optional[CallingConvention] = ...,
-) -> ElfStrider:
-    """Load an ELF binary and return an `ElfStrider` with the arch +
-    calling convention auto-picked from the ELF header (override via
-    `arch=` / `cc=` for kernel / syscall / custom-ABI workflows)."""
+) -> ElfLifter:
+    """Convenience: delegates to `load_elf_from_segments`."""
     ...
 
 # ── Subpackages ────────────────────────────────────────────────────────

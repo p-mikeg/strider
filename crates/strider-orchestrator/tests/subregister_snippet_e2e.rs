@@ -51,7 +51,7 @@ fn narrow_alias_read_lifts_with_truncate_or_mask_shape() {
             &strider_cfg::CfgOptions::default(),
         )
         .expect("cfg");
-    let function = driver.build_ir(&cfg, &cc).expect("build_ir").function;
+    let function = driver.build_ir(&cfg, cc).expect("build_ir").function;
 
     let truncates = common::count_kind(&function, |k| matches!(k, NodeKind::Truncate));
     let ands = common::count_int_binop(&function, strider_ir::IntBinaryOp::And);

@@ -76,7 +76,7 @@ fn make_unresolved_indirect_branch_cfg() -> (
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     let (strider, cfg, cc) = make_unresolved_indirect_branch_cfg();
     let function = strider
-        .build_ir(&cfg, &cc)
+        .build_ir(&cfg, cc)
         .expect("strider must lift unresolved branches as IndirectBranch placeholder")
         .function;
 
@@ -193,7 +193,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 
     // Lift to IR and verify Call + Return are both present.
     let function = strider
-        .build_ir(&cfg, &cc)
+        .build_ir(&cfg, cc)
         .expect("build_ir with TailCall terminator from known_targets must succeed")
         .function;
 
@@ -306,7 +306,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
     );
 
     let function = strider
-        .build_ir(&cfg, &cc)
+        .build_ir(&cfg, cc)
         .expect("build_ir with Unconditional terminator from intra Single")
         .function;
 
@@ -330,7 +330,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
 #[test]
 fn unresolved_branches_table_tracks_each_placeholder() {
     let (strider, cfg, cc) = make_unresolved_indirect_branch_cfg();
-    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
+    let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     // Single deferred branch in this synthetic fixture.
     assert_eq!(
         outcome.unresolved_branches.len(),

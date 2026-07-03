@@ -20,7 +20,7 @@ import pytest
 
 import strider
 from strider import pattern as pat
-from strider.pattern import any_, var, Capture
+from strider.pattern import anything, var, Capture
 
 
 # ── Architecture registry ────────────────────────────────────────────────
@@ -76,10 +76,14 @@ def analyze(
     full optimiser pipeline + LoadReadOnly against it.  Returns the
     Function.  Skip the test if the fixture is missing.
 
-    Mirrors `crates/strider/tests/common/mod.rs::analyze` — uses the
-    custom-pipeline path of `strider.run` so unresolved indirect
-    branches show up as `IndirectBranch` placeholders in the IR
-    instead of failing the run.  Pattern-shape tests don't depend on
+    Mirrors `crates/strider/tests/common/mod.rs::analyze` — drives the
+    orchestrator's fixed-point loop through `Lifter.analyze`, which
+    always runs the canonical default pipeline (this already includes
+    `LoadReadOnly`, so no custom pipeline is needed — the old
+    `build_optimizer_pipeline()` + hand-added `LoadReadOnly()` path was
+    removed by the single-`Lifter` collapse).  Unresolved indirect
+    branches show up as `IndirectBranch` placeholders in the IR rather
+    than failing the run.  Pattern-shape tests don't depend on
     indirect-branch resolution; the orchestrator path is exercised
     separately by `test_indirect_branch_debug.py` and
     `test_switch_jump_table.py`.
@@ -99,28 +103,15 @@ def analyze(
     arch = spec.arch_factory()
     cc = spec.cc_factory()
 
-    # Build a Strider so we can construct the convention-aware optimiser
-    # pipeline (mirrors `common::analyze`'s `ana.build_optimizer_pipeline`
-    # + `opt::LoadReadOnly`).  `LoadReadOnly()` is now a marker — its
-    # rom flows through `strider.run(..., rom=mem)` via the
-    # orchestrator's `OptCtx` plumbing.
-    s = strider.Lifter(arch, mem, cc)
-    pipeline = s.build_optimizer_pipeline()
-    pipeline.add(strider.opt.LoadReadOnly())
-
-    # `strider.run(pipeline=…)` lifts via `analyze_cfg` and applies the
-    # supplied pipeline, leaving any `IndirectBranch` placeholder in
-    # the IR — same shape as the Rust suite's `analyze` helper.
-    result = strider.run(
-        arch=arch,
-        cc=cc,
-        mem=mem,
-        rom=mem,
-        entry=addr,
-        pipeline=pipeline,
-        allow_code_before_start_addr=True,
+    lift = strider.lifter(arch, mem, rom=mem)
+    _cfg, function, _unresolved = lift.analyze(
+        addr,
+        cc,
+        opts=strider.LifterOptions(
+            cfg=strider.CfgOptions(allow_code_before_start_addr=True)
+        ),
     )
-    return result.function
+    return function
 
 
 # ── Assertion vocabulary (mirror of common/mod.rs counters) ──────────────
@@ -153,9 +144,9 @@ _INT_BINOP_BUILDERS = {
     "Sdiv": pat.sdiv,
     "Rem": pat.rem,
     "Srem": pat.srem,
-    "And": pat.and_,
-    "Or": pat.or_,
-    "Xor": pat.xor,
+    "And": pat.int_and,
+    "Or": pat.int_or,
+    "Xor": pat.int_xor,
     "ShiftLeft": pat.shl,
     "ShiftRight": pat.shr,
     "SShiftRight": pat.sshr,
@@ -166,7 +157,7 @@ def count_int_binop(g, op: str) -> int:
     builder = _INT_BINOP_BUILDERS.get(op)
     if builder is None:
         raise ValueError(f"unknown IntBinaryOp variant {op!r}")
-    return count_pat(g, builder(any_(), any_()))
+    return count_pat(g, builder(anything(), anything()))
 
 
 def count_int_unop(g, op: str) -> int:
@@ -174,11 +165,11 @@ def count_int_unop(g, op: str) -> int:
     # remaining `IntUnaryOp` variant).  `"BitNot"` is accepted for
     # backwards compatibility — bitwise complement (`~x`) is now
     # `Xor(_, IntConst(all_ones))` (the former BitNot unary-op was
-    # removed in favour of the Xor shape), matched via `pat.bit_not`.
+    # removed in favour of the Xor shape), matched via `pat.int_not`.
     if op == "Neg":
-        return count_pat(g, pat.neg(any_()))
+        return count_pat(g, pat.neg(anything()))
     if op == "BitNot":
-        return count_pat(g, pat.bit_not(any_()))
+        return count_pat(g, pat.int_not(anything()))
     raise ValueError(f"unknown int unop {op!r}")
 
 
@@ -191,7 +182,7 @@ def count_returns(g) -> int:
 
 
 def count_ifs(g) -> int:
-    return count_pat(g, pat.if_())
+    return count_pat(g, pat.if_else())
 
 
 def count_loads(g) -> int:

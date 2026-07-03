@@ -6,15 +6,13 @@
 //! so the Sleigh stays alive for the graph's lifetime and is
 //! reachable through `strider_cfg::Cfg::sleigh`.
 
-use std::path::Path;
 use std::sync::{Arc, RwLock, TryLockError};
 
 use pyo3::prelude::*;
 use strider_ir::node::NodeKind;
-use strider_ir::{IRViewer, IRWalker};
+use strider_ir::IRWalker;
 
 use crate::cfg::PyCfg;
-use crate::dot::dot_style_for;
 
 /// Opaque wrapper over `strider_ir::Function`.
 ///
@@ -28,38 +26,6 @@ pub struct PyFunction {
     /// Strong reference to the parent Cfg; keeps the Sleigh alive for
     /// dot rendering and ensures destruction order is graph-then-cfg.
     pub(crate) cfg: Py<PyCfg>,
-}
-
-/// Discriminator for [`PyFunction::dispatch_dot`].  Each variant carries
-/// the per-op arguments the public accessor `to_html` / `to_dot` /
-/// `html_str` would otherwise duplicate the cfg-borrow / graph-borrow
-/// / dumper-construction ritual for.
-enum DotOp<'a> {
-    DumpHtml(&'a str),
-    DumpDot(&'a str),
-    HtmlStr,
-}
-
-/// Return shape of [`PyFunction::dispatch_dot`].  Returning a sum lets a
-/// single helper cover both unit-returning dump methods and the
-/// string-returning `html_str` without separate variants per
-/// dispatch.
-enum DotResult {
-    Unit,
-    Html(String),
-}
-
-/// Convert a Python-supplied `u32` node id into a validated `strider_ir::NodeId`,
-/// returning `StriderError` on lookup failure.
-fn node_id_from_u32(
-    function: &strider_ir::Function,
-    node_id: u32,
-) -> PyResult<strider_ir::node::NodeId> {
-    // O(1) validated lookup (NodeIds are dense arena indices), replacing an
-    // O(N) scan over `all_node_ids` on every per-node accessor call.
-    function.graph().node_id_from_u32(node_id).ok_or_else(|| {
-        crate::errors::into_strider_err(anyhow::anyhow!("no node with id {node_id} in function"))
-    })
 }
 
 impl PyFunction {
@@ -80,21 +46,12 @@ impl PyFunction {
             .map_err(|_| anyhow::anyhow!("Function lock poisoned"))
     }
 
-    /// Borrow the inner graph for write.  Returns an `anyhow::Error`
-    /// when the lock is poisoned.
-    pub(crate) fn write_inner(
-        &self,
-    ) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
-        self.inner
-            .write()
-            .map_err(|_| anyhow::anyhow!("Function lock poisoned"))
-    }
-
     /// Try to acquire the write lock without blocking.  Used by mutating
-    /// methods (`optimize`, `compact`, `rewrite`, `reoptimize`) so that a
-    /// re-entrant call from inside a `.when()` predicate (which holds the
-    /// read lock for the duration of `find_all`) surfaces a typed error
-    /// rather than deadlocking the thread.
+    /// methods (`compact`, `rewrite`, and the `run_pipeline_in_place`
+    /// helper `Lifter.optimize` drives) so that a re-entrant call from
+    /// inside a `.when()` predicate (which holds the read lock for the
+    /// duration of `find_all`) surfaces a typed error rather than
+    /// deadlocking the thread.
     pub(crate) fn try_write_inner(
         &self,
     ) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
@@ -113,8 +70,8 @@ impl PyFunction {
     /// Borrow the inner graph for read, then run `f` against it.  Centralises
     /// the `self.read_inner().map_err(into_strider_err)?` incantation that
     /// every read-only `#[pymethods]` accessor would otherwise repeat.  Use
-    /// this variant when `f` itself returns a `PyResult` (e.g. it propagates
-    /// `?` from `node_id_from_u32` or builds an error from graph state).
+    /// this variant when `f` itself returns a `PyResult` (e.g. it builds an
+    /// error from graph state).
     fn with_read<R>(&self, f: impl FnOnce(&strider_ir::Function) -> PyResult<R>) -> PyResult<R> {
         let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
         f(&function)
@@ -128,64 +85,16 @@ impl PyFunction {
         Ok(f(&function))
     }
 
-    /// Borrow for read, validate `node_id` into a `NodeId`, then run `f`
-    /// against `(function, NodeId)`.  Centralises the
-    /// borrow → `node_id_from_u32` → call ritual every per-node read
-    /// accessor shares (analogous to [`crate::node::PyNode::with_node`]).
-    fn with_node<R>(
-        &self,
-        node_id: u32,
-        f: impl FnOnce(&strider_ir::Function, strider_ir::node::NodeId) -> R,
-    ) -> PyResult<R> {
-        self.with_read(|function| {
-            let nid = node_id_from_u32(function, node_id)?;
-            Ok(f(function, nid))
-        })
-    }
-
-    /// Enum tagging the three dot-rendering operations the public
-    /// surface needs.  Lets [`Self::dispatch_dot`] funnel them
-    /// through a single helper that builds the `GraphDot` once and
-    /// dispatches to the right `dot::GraphDot` method, instead of
-    /// repeating the borrow / dumper / GraphDot construction at every
-    /// caller (the dumper type is `pub(crate)` in `strider-ir` and
-    /// can't be named from this crate's closures).
-    fn dispatch_dot(
-        &self,
-        py: Python<'_>,
-        style: Option<&str>,
-        op: DotOp<'_>,
-    ) -> PyResult<DotResult> {
-        let cfg_borrow = self.cfg.borrow(py);
-        let lifter_borrow = cfg_borrow.lifter.borrow(py);
-        let sleigh = lifter_borrow.inner.sleigh();
-        self.with_read(|function| {
-            let dumper = function
-                .dot_dumper(sleigh)
-                .map_err(crate::errors::into_strider_err)?;
-            let d = dot::GraphDot::new(dumper, dot_style_for(style));
-            match op {
-                DotOp::DumpHtml(p) => d
-                    .dump_as_html(Path::new(p))
-                    .map(|()| DotResult::Unit)
-                    .map_err(crate::errors::into_strider_err),
-                DotOp::DumpDot(p) => d
-                    .dump_as_dot(Path::new(p))
-                    .map(|()| DotResult::Unit)
-                    .map_err(crate::errors::into_strider_err),
-                DotOp::HtmlStr => d
-                    .as_html_from_dot()
-                    .map(DotResult::Html)
-                    .map_err(crate::errors::into_strider_err),
-            }
-        })
-    }
-
     /// Run `pipeline` over this graph in place, bumping the generation
     /// first so any stale handle is invalidated even if a pass errors
     /// mid-run and leaves the arena partially rewritten.  `label` names
-    /// the operation in the surfaced error (`"optimize"` / `"reoptimize"`).
-    fn run_pipeline_in_place(
+    /// the operation in the surfaced error.
+    ///
+    /// `pub(crate)` (rather than a private fn) because `Lifter.optimize`
+    /// (`strider_cls.rs`) drives the same in-place-run logic — it lives
+    /// here so `PyFunction`'s lock-acquisition/generation-bump contract
+    /// stays in one place rather than being duplicated at the call site.
+    pub(crate) fn run_pipeline_in_place(
         &self,
         pipeline: strider_orchestrator::opt::OptimizerPipeline,
         label: &str,
@@ -220,42 +129,13 @@ fn write_to(path: &str, contents: String) -> PyResult<()> {
 #[pymethods]
 impl PyFunction {
     /// The snapshot `Cfg` this function was lifted from — kept alive for
-    /// dot rendering (its `Sleigh` resolves register names).  The
-    /// high-level `Analysis.cfg` property delegates here so a function
-    /// returned by `Strider.analyze` is self-describing without a
-    /// separate `RunResult`.
+    /// dot rendering (its `Sleigh` resolves register names).  Combine
+    /// with `Lifter.dump_html(function, path)` (or the `Cfg`'s own
+    /// `to_html`) for a self-describing render without a separate result
+    /// wrapper.
     #[getter(cfg)]
     fn get_cfg(&self, py: Python<'_>) -> Py<PyCfg> {
         self.cfg.clone_ref(py)
-    }
-
-    /// Render the IR graph to a standalone HTML file at `path`.  `style`
-    /// selects the dot theme (default `"dark"`).
-    #[pyo3(signature = (path, style=None))]
-    fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
-        // `dot_style_for(None)` already defaults to the dark theme, so the
-        // `Option` flows through untouched.
-        self.dispatch_dot(py, style, DotOp::DumpHtml(path))
-            .map(|_| ())
-    }
-
-    /// Render the IR graph to a Graphviz `.dot` file at `path`.
-    #[pyo3(signature = (path,))]
-    fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
-        self.dispatch_dot(py, None, DotOp::DumpDot(path))
-            .map(|_| ())
-    }
-
-    /// Return the IR graph rendered as an HTML string (default `"dark"`
-    /// style) instead of writing it to a file.
-    #[pyo3(signature = (style=None))]
-    fn html_str(&self, py: Python<'_>, style: Option<&str>) -> PyResult<String> {
-        match self.dispatch_dot(py, style, DotOp::HtmlStr)? {
-            DotResult::Html(s) => Ok(s),
-            DotResult::Unit => Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                "internal: DotOp::HtmlStr returned DotResult::Unit"
-            ))),
-        }
     }
 
     /// Render the graph **exactly as stored** to a Graphviz `.dot` string:
@@ -324,53 +204,6 @@ impl PyFunction {
         })
     }
 
-    /// Returns the [`NodeKind`] of the node at `node_id`, formatted as
-    /// a string (e.g. "IntConst", "Call", "Phi", "Add", …).  Useful
-    /// for direct graph introspection from Python tests / debug
-    /// scripts.
-    ///
-    /// Raises `StriderError` for an invalid `node_id`.
-    fn node_kind(&self, node_id: u32) -> PyResult<String> {
-        self.with_node(node_id, |function, nid| {
-            format!("{:?}", function.node_kind(nid))
-        })
-    }
-
-    /// Returns the asm-fingerprint addresses recorded on the node at
-    /// `node_id` — a sorted, deduped list of machine-instruction
-    /// addresses whose lift contributed to the node's value.
-    ///
-    /// Empty for "structural" node kinds (Entry, InitialMemory, phis,
-    /// Region, InitialVar) whose existence is synthesised by
-    /// the IR builder rather than tied to a specific asm instruction.
-    fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
-        self.with_node(node_id, |function, nid| {
-            function.side_tables().asm_fingerprint(nid).to_vec()
-        })
-    }
-
-    /// Returns the raw little-endian bytes of a wide-typed integer constant
-    /// (10 bytes for I80, 16 for I128, 32 for I256, 64 for I512), or `None`
-    /// for a narrow (≤ I64) constant and any non-const node kind.
-    ///
-    /// Works whether the value is stored inline (small value) or interned —
-    /// the width comes from the constant's declared type.  Use this for
-    /// I80/I128/I256/I512 register constants; narrow constants (≤ I64) are
-    /// accessible via `Match.get_uint(c)` instead.
-    fn wide_const_bytes(&self, node_id: u32) -> PyResult<Option<Vec<u8>>> {
-        self.with_node(node_id, |function, nid| {
-            function.int_const_wide_le_bytes(nid)
-        })
-    }
-
-    /// Returns the Sleigh user-op name attached to a `CallOther` node,
-    /// or `None` for any other node kind.
-    fn call_other_name(&self, node_id: u32) -> PyResult<Option<String>> {
-        self.with_node(node_id, |function, nid| {
-            function.side_tables().call_other_name(nid).map(str::to_owned)
-        })
-    }
-
     /// Re-validates the graph and returns `None` on success or a
     /// human-readable error message on failure.
     ///
@@ -396,35 +229,13 @@ impl PyFunction {
         Ok(())
     }
 
-    /// Apply a `PyOptimizerPipeline` to this graph in place.  Drains
-    /// the pipeline (subsequent calls to the same pipeline see an
-    /// empty pass list); rebuild it from `OptimizerPipeline.default()`
-    /// or the equivalent classmethods if you need to apply it again.
-    ///
-    /// The pipeline runs without a rom image (`OptCtx::new(None)`); any
-    /// `LoadReadOnly` pass present in the pipeline short-circuits
-    /// silently.  Callers that need rom-driven folding should route
-    /// through `strider.run(..., rom=mem)` instead.
-    fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
-        let real_pipeline = pipeline.drain_into_pipeline(false)?;
-        self.run_pipeline_in_place(real_pipeline, "optimize")
-    }
-
-    /// Convenience: re-run the default optimizer pipeline on this graph.
-    /// Useful after a manual rewrite (`graph.rewrite(...)`) to
-    /// re-converge the graph.
-    fn reoptimize(&self) -> PyResult<()> {
-        let pipe = strider_orchestrator::opt::default_pipeline();
-        self.run_pipeline_in_place(pipe, "reoptimize")
-    }
-
     /// Deep-copy this function into a fully independent `Function`.
     ///
     /// The clone owns a fresh graph + side-tables (its own generation
-    /// counter), so mutating it via `rewrite(...)` / `reoptimize()` leaves the
-    /// original untouched — the idiom for a non-destructive rewrite is
-    /// `g2 = fn.clone(); g2.rewrite(find, replace)`.  The parent `Cfg` (Sleigh
-    /// for dot rendering) is shared by handle.
+    /// counter), so mutating it via `rewrite(...)` / `Lifter.optimize(...)`
+    /// leaves the original untouched — the idiom for a non-destructive
+    /// rewrite is `g2 = fn.clone(); g2.rewrite(find, replace)`.  The parent
+    /// `Cfg` (Sleigh for dot rendering) is shared by handle.
     #[pyo3(name = "clone")]
     fn py_clone(&self, py: Python<'_>) -> PyResult<PyFunction> {
         let cloned = self
@@ -565,10 +376,14 @@ impl PyFunction {
     }
 
     /// Apply a single `find → replace` rewrite rule across the graph.
-    /// Returns the number of times the rule fired.  Both `find` and
-    /// `replace` accept `PatLike` (so e.g.
-    /// `g.rewrite(find=call().arg(0, …), replace=…)` works without
-    /// an explicit `.into_pat()` conversion).
+    /// Returns the number of times the rule fired.  `find` accepts
+    /// `PatLike` (so e.g. `g.rewrite(find=call().arg(0, …), replace=…)`
+    /// works without an explicit `.into_pat()` conversion); `replace`
+    /// is typed as `strider.template.Template` — build it via the
+    /// `strider.template` free functions (`tpl.var(c)`, `tpl.add(...)`,
+    /// …).  A bare `strider.pattern.Pat` (its build-valid subset only),
+    /// a `Capture`, or a string capture-name is still accepted for
+    /// back-compat.
     ///
     /// The RHS is validated at rule-construction time via
     /// `rewrite_rule_dynamic` — every node must be either a concrete
@@ -579,7 +394,7 @@ impl PyFunction {
         &self,
         py: Python<'_>,
         find: crate::pattern::PatLike<'_>,
-        replace: crate::pattern::PatLike<'_>,
+        replace: crate::pattern::TemplateLike<'_>,
     ) -> PyResult<usize> {
         let lhs = find.to_pattern(py)?;
         let rhs = replace.to_template(py)?;
@@ -593,11 +408,12 @@ impl PyFunction {
 
     /// Apply a list of `(find, replace)` pairs across the graph round-
     /// robin at every reachable node.  Returns the total fire count
-    /// (sum across pairs and nodes).
+    /// (sum across pairs and nodes).  `replace` is typed as
+    /// `strider.template.Template` — see `rewrite`'s doc comment.
     fn rewrite_all(
         &self,
         py: Python<'_>,
-        pairs: Vec<(crate::pattern::PatLike<'_>, crate::pattern::PatLike<'_>)>,
+        pairs: Vec<(crate::pattern::PatLike<'_>, crate::pattern::TemplateLike<'_>)>,
     ) -> PyResult<usize> {
         // Build a match `Pattern` (LHS) and a build `Template` (RHS) per
         // pair, then box each rule.
@@ -645,6 +461,21 @@ fn reject_conflicting_cast_flags(
     Ok(())
 }
 
+/// RAII guard pairing a `crate::pattern::push_current_query_function`
+/// call with its `pop_current_query_function` counterpart: the pop runs
+/// from `Drop`, so it fires on every exit path out of [`run_query`] —
+/// normal return, an early `?`, or a Rust panic unwinding through
+/// `run` — instead of only the fall-through path a plain function-call
+/// pair would cover. Without this, a panic inside `run` would leave a
+/// stale `(Py<PyFunction>, u64)` on the thread-local stack forever.
+struct QueryFunctionGuard;
+
+impl Drop for QueryFunctionGuard {
+    fn drop(&mut self) {
+        crate::pattern::pop_current_query_function();
+    }
+}
+
 /// Run a matcher query and snapshot the generation, collapsing the
 /// borrow → `read_inner` → `Matcher::new` → run → generation-snapshot
 /// → drop-guards → pending-control-flow scaffold the three query entry
@@ -654,6 +485,15 @@ fn reject_conflicting_cast_flags(
 /// payload; the returned `generation` is what each raw `Match` must be
 /// tagged with so a later in-place rewrite / compaction invalidates the
 /// derived `PyMatch` handles.
+///
+/// Pushes `slf` + the sampled generation onto
+/// `crate::pattern::CURRENT_QUERY_FUNCTION` for the duration of `run`, so
+/// a `.when()` predicate fired from inside the matcher can build a
+/// genuine `Match` handle back onto this same live function (patterns
+/// are built well before any `Function` is known, so the predicate
+/// closure itself can't capture `slf`). The push is paired with its pop
+/// via a [`QueryFunctionGuard`] rather than a plain trailing call so the
+/// pop still runs if `run` panics.
 fn run_query<T>(
     slf: &Py<PyFunction>,
     py: Python<'_>,
@@ -664,8 +504,12 @@ fn run_query<T>(
         .read_inner()
         .map_err(crate::errors::into_strider_err)?;
     let matcher = strider_pattern::Matcher::new(&function_guard);
-    let raw = run(&matcher).map_err(crate::errors::into_strider_err)?;
     let generation = function_guard.graph().generation();
+    crate::pattern::push_current_query_function(slf.clone_ref(py), generation);
+    let _guard = QueryFunctionGuard;
+    let raw = run(&matcher);
+    drop(_guard);
+    let raw = raw.map_err(crate::errors::into_strider_err)?;
     drop(function_guard);
     drop(function_borrow);
     // If a `.when()` predicate stashed a control-flow exception

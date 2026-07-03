@@ -110,6 +110,15 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
 struct PipelineState {
     passes: Vec<ErasedPass>,
     post_passes: Vec<ErasedPostPass>,
+    /// Set once `drain_into_pipeline` has successfully materialised a
+    /// real pipeline from this state. Tracked explicitly (rather than
+    /// inferring "already drained" from "both pass lists are empty")
+    /// so a deliberately-built empty pipeline (`OptimizerPipeline.empty()`,
+    /// e.g. as a `LifterOptions.pipeline` override) is drainable exactly
+    /// once, same as any other pipeline — "empty from the start" and
+    /// "emptied by a prior drain" are otherwise indistinguishable by
+    /// list contents alone.
+    drained: bool,
 }
 
 impl PipelineState {
@@ -117,6 +126,7 @@ impl PipelineState {
         Self {
             passes: Vec::new(),
             post_passes: Vec::new(),
+            drained: false,
         }
     }
 
@@ -141,8 +151,10 @@ impl PipelineState {
 
 /// Builder for an optimizer pipeline.  Construct via `empty()` or
 /// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
-/// `Function.optimize` or pass `pipeline=` to `strider.run`.  Applying
-/// a pipeline drains it, so rebuild before reuse.
+/// `Lifter.optimize(function, pipeline)`.  (`Lifter.analyze` drives its
+/// own internal default pipeline unless `LifterOptions.pipeline` is set,
+/// in which case that pipeline runs instead, for that call only.)
+/// Applying a pipeline drains it, so rebuild before reuse.
 ///
 /// Holds the internal state behind a `Mutex` so `add` / `add_post`
 /// don't require `&mut self` (PyO3 method receivers are typically
@@ -192,10 +204,10 @@ impl PyOptimizerPipeline {
     ///
     /// returns `Err(StriderError)` if
     /// the wrapper has already been drained (both pass lists empty).
-    /// Without this guard a second `Graph.optimize(pipe)` would
-    /// silently run an empty pipeline and report success — masking
+    /// Without this guard a second `Lifter.optimize(function, pipe)`
+    /// would silently run an empty pipeline and report success — masking
     /// caller bugs where the same wrapper is reused after a previous
-    /// `optimize` / `strider.run` consumed it.
+    /// `Lifter.optimize` call already consumed it.
     ///
     /// When `prepend_load_read_only` is set, a unit `LoadReadOnly` pass is
     /// prepended to the materialised pipeline so a caller-supplied `rom`
@@ -212,14 +224,15 @@ impl PyOptimizerPipeline {
         prepend_load_read_only: bool,
     ) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
         let mut state = self.lock_state()?;
-        if state.passes.is_empty() && state.post_passes.is_empty() {
+        if state.drained {
             return Err(into_strider_err(anyhow::anyhow!(
                 "OptimizerPipeline is empty — already drained by a prior \
-                 Graph.optimize() / strider.run().  Build a fresh pipeline \
+                 Lifter.optimize() call.  Build a fresh pipeline \
                  (e.g. OptimizerPipeline.default()) or re-add passes before \
                  calling again."
             )));
         }
+        state.drained = true;
         let mut pipe = strider_orchestrator::opt::OptimizerPipeline::new();
         if prepend_load_read_only {
             pipe.add(strider_orchestrator::opt::LoadReadOnly);
@@ -361,7 +374,8 @@ pure_pass_class!("CallStackArgCollect" => PyCallStackArgCollect,
 
 pure_pass_class!("LoadReadOnly" => PyLoadReadOnly,
     "`LoadReadOnly()` — folds constant-address loads against the rom \
-     supplied via `strider.run(..., rom=mem)`.  The rom flows through the \
+     supplied via `strider.lifter(arch, mem, rom=mem)` / \
+     `strider.load_elf(...)`.  The rom flows through the \
      orchestrator's `Strider::rom` → `OptCtx` plumbing rather than being \
      attached to the pass; an instance constructed here is a marker, and \
      the pass short-circuits to no-change when no rom is available.");

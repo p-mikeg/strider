@@ -9,8 +9,8 @@
 //! - A `Py<PyFunction>` reference so accessors like `get_uint` can
 //!   re-borrow the function and call `Match::get_uint(c, &function)`.
 //!
-//! The `Function.find_all` / `Function.match_at` / `Function.matcher` entry
-//! points live on PyFunction in `function.rs`.
+//! The `Function.find_all` / `Function.find_one` / `Function.find_joined`
+//! entry points live on PyFunction in `function.rs`.
 
 use pyo3::prelude::*;
 
@@ -55,8 +55,9 @@ impl CaptureKey<'_> {
 }
 
 /// Convert a capture's already-resolved value Options to a Python object
-/// per the `m[c]` precedence shared by `PyMatch::__getitem__` and
-/// `PyPartialMatch::__getitem__`.
+/// per the `m[c]` precedence used by `PyMatch::__getitem__` (shared by
+/// both a finished match and the in-progress `Match` passed to a
+/// `.when()` predicate — both go through this same `PyMatch`).
 ///
 /// Check bool (an `I1`-typed IntConst) BEFORE the general uint path:
 /// `get_uint` also matches an `I1` value (returning 0/1), so probing it
@@ -85,22 +86,6 @@ pub(crate) fn capture_value_to_py(
 }
 
 impl PyMatch {
-    /// Resolve `key` to a `Capture`, borrow the function for read, and run
-    /// `f` against `(capture, &function)`.  Centralises the boilerplate that
-    /// every typed accessor on `PyMatch` would otherwise repeat (resolve
-    /// the key → borrow the PyFunction → read the inner RwLock → poison-map
-    /// → check the generation hasn't drifted).
-    fn with_function<F, R>(&self, py: Python<'_>, key: CaptureKey<'_>, f: F) -> PyResult<R>
-    where
-        F: FnOnce(strider_pattern::Capture, &strider_ir::Function) -> R,
-    {
-        let cap = key.resolve()?;
-        let function = self.function.borrow(py);
-        let function = function.read_inner().map_err(into_strider_err)?;
-        self.assert_generation(&function)?;
-        Ok(f(cap, &function))
-    }
-
     /// Confirm the function's generation counter is still what it was
     /// when this `PyMatch` was constructed.  A mismatch indicates an
     /// arena-reshuffling op (`Function.compact`, `retain_reachable`,
@@ -122,16 +107,14 @@ impl PyMatch {
     }
 }
 
-/// Emits the op-variant accessors as their own `#[pymethods] impl PyMatch`
-/// block (one fn per `(name => getter)` pair).  Each recovers the matched op
-/// variant for an `*_any` capture as its canonical Sleigh-style string, or
-/// `None` when the capture isn't bound or the bound node isn't of the
-/// matching kind family.  The seven accessors are byte-identical bar the
-/// binding getter, so they share one body here.  (pyo3 forbids a bare
+/// Emits an op-variant forwarder as its own `#[pymethods] impl PyMatch`
+/// block (one fn per name).  Each resolves `key` to a `Node` (via
+/// `Self::node`) and forwards to the identically-named `Node` reader,
+/// or returns `None` when the capture is unbound.  (pyo3 forbids a bare
 /// `macro_rules!` invocation *inside* a `#[pymethods]` block, so the macro
 /// emits the whole block instead; pyo3 permits multiple such blocks.)
-macro_rules! op_accessors {
-    ($($name:ident => $getter:ident, $doc:literal;)+) => {
+macro_rules! op_forwarders {
+    ($($name:ident, $doc:literal;)+) => {
         #[pymethods]
         impl PyMatch {
             $(
@@ -141,46 +124,55 @@ macro_rules! op_accessors {
                     py: Python<'_>,
                     key: CaptureKey<'_>,
                 ) -> PyResult<Option<String>> {
-                    self.with_function(py, key, |c, g| {
-                        self.inner.bindings().$getter(c, g.graph()).map(op_name)
-                    })
+                    match self.node(py, key)? {
+                        Some(node) => node.$name(py),
+                        None => Ok(None),
+                    }
                 }
             )+
         }
     };
 }
 
-op_accessors! {
-    int_binary_op => get_int_binary_op,
-        "Recover the matched `IntBinaryOp` variant name from `c`, \
-         e.g. `\"Add\"`, `\"Sub\"`, `\"And\"`.";
-    int_unary_op => get_int_unary_op,
-        "Recover the matched `IntUnaryOp` variant name from `c`.";
-    int_cmp_op => get_int_cmp_op,
-        "Recover the matched `IntCmpOp` variant name from `c`, \
-         e.g. `\"Less\"`, `\"Equal\"`, `\"Sless\"`.";
-    bool_binary_op => get_bool_binary_op,
+op_forwarders! {
+    int_binary_op,
+        "Recover the matched `IntBinaryOp` variant name from `key`, \
+         e.g. `\"Add\"`, `\"Sub\"`, `\"And\"`.  Thin forwarder to \
+         `Node.int_binary_op()`.";
+    int_unary_op,
+        "Recover the matched `IntUnaryOp` variant name from `key`. \
+         Thin forwarder to `Node.int_unary_op()`.";
+    int_cmp_op,
+        "Recover the matched `IntCmpOp` variant name from `key`, \
+         e.g. `\"Less\"`, `\"Equal\"`, `\"Sless\"`.  Thin forwarder to \
+         `Node.int_cmp_op()`.";
+    bool_binary_op,
         "Recover the matched boolean binary op's variant name (an \
-         `IntBinaryOp` — `And` / `Or` / `Xor` — at `I1`) from `c`.";
+         `IntBinaryOp` — `And` / `Or` / `Xor` — at `I1`) from `key`. \
+         Thin forwarder to `Node.bool_binary_op()`.";
     // Note: there is no `bool_unary_op` accessor.  A boolean logical NOT
     // is `Xor(x, IntConst(1)):I1` since the former BitNot unary-op was
     // removed in favour of `Xor(_, all_ones)`, so the matching op variant
     // is recovered via `bool_binary_op` (which returns `"Xor"`).
-    float_binary_op => get_float_binary_op,
-        "Recover the matched `FloatBinaryOp` variant name from `c`.";
-    float_unary_op => get_float_unary_op,
-        "Recover the matched `FloatUnaryOp` variant name from `c`.";
-    float_cmp_op => get_float_cmp_op,
-        "Recover the matched `FloatCmpOp` variant name from `c`.";
+    float_binary_op,
+        "Recover the matched `FloatBinaryOp` variant name from `key`. \
+         Thin forwarder to `Node.float_binary_op()`.";
+    float_unary_op,
+        "Recover the matched `FloatUnaryOp` variant name from `key`. \
+         Thin forwarder to `Node.float_unary_op()`.";
+    float_cmp_op,
+        "Recover the matched `FloatCmpOp` variant name from `key`. \
+         Thin forwarder to `Node.float_cmp_op()`.";
 }
 
 #[pymethods]
 impl PyMatch {
     /// The root node where the top-level pattern matched, as a `u32`
-    /// node id.  Pair with `Graph.asm_fingerprint(node_id)` /
-    /// `Analysis.fingerprint(node)` for proof-of-correctness queries
-    /// that don't carry an explicit `Capture` (the root has no
-    /// user-visible capture binding).
+    /// node id.  Pair with `Function.node(node_id).fingerprint()` /
+    /// `Cfg.fingerprint_pcode(node)` (both accept this `Match` or its
+    /// raw `root` id directly) for proof-of-correctness queries that
+    /// don't carry an explicit `Capture` (the root has no user-visible
+    /// capture binding).
     #[getter]
     fn root(&self) -> u32 {
         self.inner.root().as_u32()
@@ -189,12 +181,14 @@ impl PyMatch {
     /// `m["name"]` / `m[capture]` — best-effort: integer if value
     /// output is an int, bool if it's a bool, raw bits otherwise.
     fn __getitem__(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<PyObject> {
-        self.with_function(py, key, |cap, g| {
-            let b = self.inner.bindings().get_bool(cap, g);
-            let v = self.inner.bindings().get_uint(cap, g);
-            let f = self.inner.bindings().get_float_bits(cap, g.graph());
-            capture_value_to_py(py, b, v, f)
-        })
+        let node = match self.node(py, key)? {
+            Some(node) => node,
+            None => return Ok(py.None()),
+        };
+        let b = node.const_bool(py)?;
+        let v = node.const_uint(py)?;
+        let f = node.float_bits(py)?;
+        Ok(capture_value_to_py(py, b, v, f))
     }
 
     /// `capture in m` — True if `key` (a `Capture` or string name) has
@@ -205,31 +199,44 @@ impl PyMatch {
     }
 
     /// The capture's value as an unsigned `int`, or `None` when the
-    /// capture isn't bound to an integer-valued node.
+    /// capture isn't bound to an integer-valued node.  Thin forwarder to
+    /// `Node.const_uint()`.
     fn uint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u128>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_uint(c, g))
+        match self.node(py, key)? {
+            Some(node) => node.const_uint(py),
+            None => Ok(None),
+        }
     }
 
     /// The capture's value as a signed `int` (sign-interpreted at the
-    /// node's width), or `None` when not bound to an integer node.
+    /// node's width), or `None` when not bound to an integer node.  Thin
+    /// forwarder to `Node.const_int()`.
     #[pyo3(name = "int")]
     fn int_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<i128>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_int(c, g))
+        match self.node(py, key)? {
+            Some(node) => node.const_int(py),
+            None => Ok(None),
+        }
     }
 
     /// The capture's value as a `bool`, or `None` when not bound to a
-    /// boolean-valued node.
+    /// boolean-valued node.  Thin forwarder to `Node.const_bool()`.
     #[pyo3(name = "bool")]
     fn bool_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<bool>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_bool(c, g))
+        match self.node(py, key)? {
+            Some(node) => node.const_bool(py),
+            None => Ok(None),
+        }
     }
 
     /// The capture's value as raw float bits (`u64`), or `None` when not
-    /// bound to a float-valued node.
+    /// bound to a float-valued node.  Thin forwarder to
+    /// `Node.float_bits()`.
     fn float_bits(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u64>> {
-        self.with_function(py, key, |c, g| {
-            self.inner.bindings().get_float_bits(c, g.graph())
-        })
+        match self.node(py, key)? {
+            Some(node) => node.float_bits(py),
+            None => Ok(None),
+        }
     }
 
     /// Returns True if the capture has a binding.
@@ -245,34 +252,35 @@ impl PyMatch {
     // recover that variant as the op's canonical Sleigh-style
     // string ("Add", "Sub", "Less", "Equal", ...).  Returns `None`
     // when the capture isn't bound or the bound node isn't of the
-    // matching kind family.
+    // matching kind family.  See the `op_forwarders!` block above.
 
-    /// Recover the matched varnode from `c`.  Returns the `Vn`
-    /// associated with the captured `InitialVar` / tagged `Phi`
-    /// (via `Function::get_vn_for_value` on the Phi's output value),
-    /// or `None` when `c` doesn't bind such a node.
+    /// Recover the matched varnode from `key`.  Returns the `Vn`
+    /// associated with the captured `InitialVar` / `Call`/`CallOther`
+    /// clobber output, or `None` when `key` doesn't bind such a node.
+    /// Thin forwarder to `Node.vn()`.
     fn vn(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
-        self.with_function(py, key, |c, g| {
-            self.inner.get_vn(c, g).map(crate::sleigh::PyVn::from_inner)
-        })
+        match self.node(py, key)? {
+            Some(node) => node.vn(py),
+            None => Ok(None),
+        }
     }
 
     /// Returns the asm-instruction-address fingerprint of the node
-    /// bound to `c` as a sorted-deduplicated `list[int]`.  Returns an
+    /// bound to `key` as a sorted-deduplicated `list[int]`.  Returns an
     /// empty list when the capture is unbound or when the captured
     /// node is one of the documented exempt kinds (see
-    /// `strider_ir::Graph::asm_fingerprint`).
+    /// `strider_ir::Graph::asm_fingerprint`).  Thin forwarder to
+    /// `Node.fingerprint()`.
     ///
     /// The fingerprint is the proof-of-correctness aid: when a pattern
     /// query captures a value node, this list names the machine
     /// instructions whose lifting (or subsequent rewrite) contributed
     /// to that node's value.
     fn asm_fingerprint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Vec<u64>> {
-        let cap = key.resolve()?;
-        let function = self.function.borrow(py);
-        let function = function.read_inner().map_err(into_strider_err)?;
-        self.assert_generation(&function)?;
-        Ok(self.inner.asm_fingerprint(cap, &function).to_vec())
+        match self.node(py, key)? {
+            Some(node) => node.fingerprint(py),
+            None => Ok(Vec::new()),
+        }
     }
 
     /// Returns a `Node` handle on the node bound to `key` (a `Capture`
@@ -283,6 +291,9 @@ impl PyMatch {
     /// graph: walk its `inputs()`, read its `kind()`, pull out constant
     /// values, etc.  Unlike `Match.root` (which always returns the raw
     /// top-level `u32` id), this resolves an explicit capture binding.
+    /// Every other value/op reader on `Match` is a thin forwarder built
+    /// on top of this resolution — `Node` is the single source of truth
+    /// for per-node reads.
     fn node(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<crate::node::PyNode>> {
         let cap = key.resolve()?;
         // Re-borrow the function to validate the generation hasn't drifted
@@ -303,20 +314,6 @@ impl PyMatch {
             None => Ok(None),
         }
     }
-}
-
-// ── Op-variant name helper ──────────────────────────────────────────────
-//
-// Mirror the Sleigh-style spelling used by the `int_binary("Add",
-// ...)` / `parse_int_cmp_op` constructors: `op_name` returns the
-// `Debug`-formatted variant name, which matches the string the
-// constructor accepts, so a `find_all → recover op → reconstruct
-// pattern` round-trip stays consistent.  Every op enum (IntBinaryOp,
-// IntUnaryOp, IntCmpOp, FloatBinaryOp, FloatUnaryOp, FloatCmpOp)
-// derives `Debug` whose output is exactly the variant identifier.
-
-fn op_name<T: std::fmt::Debug>(op: T) -> String {
-    format!("{op:?}")
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

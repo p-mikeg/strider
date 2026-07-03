@@ -328,7 +328,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
         .build_cfg(MachineInsnAddr::from(base), &CfgOptions::default())
         .expect("cfg build");
 
-    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
+    let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     let mut function = outcome.function;
 
     // Run the full optimiser pipeline so x30's value at the `br x30`

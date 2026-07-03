@@ -24,9 +24,16 @@ pub struct Match {
 
 impl Match {
     /// Construct a [`Match`] from a root [`NodeId`] and the
-    /// accumulated bindings.  `pub(crate)` because [`Bindings`] is
-    /// constructed only by the matcher.
-    pub(crate) fn from_root(root: NodeId, bindings: Bindings) -> Self {
+    /// accumulated bindings.  `pub` (not `pub(crate)`) so a language
+    /// binding (e.g. `strider-py`) can materialise a `Match` view over
+    /// an in-progress [`Bindings`] journal — this is how a `.when()`
+    /// predicate receives a real `Match` for the match attempt still in
+    /// flight, with `root` set to the node the guarded sub-pattern
+    /// matched at.  [`Bindings`] itself is still only ever produced by
+    /// the matcher (its mutation API stays `pub(crate)`), so this
+    /// doesn't open up bindings construction — only re-packaging an
+    /// already-produced one.
+    pub fn from_root(root: NodeId, bindings: Bindings) -> Self {
         Self { root, bindings }
     }
 

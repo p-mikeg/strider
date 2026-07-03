@@ -41,15 +41,15 @@ def _lift_aarch64(elf_path: pathlib.Path, symbol: str):
     entry, size = loaded._elf.symbol_addr_and_size(symbol)
     sleigh_arch = strider.SleighArch.aarch64()
     cc = strider.CallingConvention.aarch64_aapcs64()
-    return strider.run(
-        arch=sleigh_arch,
-        cc=cc,
-        mem=mem,
-        rom=mem,
-        entry=entry,
-        function_max_size=size,
-        allow_code_before_start_addr=True,
+    lift = strider.lifter(sleigh_arch, mem, rom=mem)
+    _cfg, function, _unresolved = lift.analyze(
+        entry,
+        cc,
+        opts=strider.LifterOptions(
+            cfg=strider.CfgOptions(function_max_size=size, allow_code_before_start_addr=True)
+        ),
     )
+    return function
 
 
 # ── Bug 1: empty-insns fall-through across zero-pcode-op stretches ────────────
@@ -62,8 +62,8 @@ def test_aarch64_nop_fallthrough_lifts_cleanly():
     the region-finalisation non-empty invariant with
     ``"region at PcodeInsnAddr ... has no instructions"``."""
     elf = fixture_path("aarch64", "zero_pcode_holes")
-    result = _lift_aarch64(elf, "nop_fallthrough")
-    assert result.function.node_count() > 0
+    g = _lift_aarch64(elf, "nop_fallthrough")
+    assert g.node_count() > 0
 
 
 # ── Bug 2: split-into-zero-pcode-op-hole ──────────────────────────────────────
@@ -75,5 +75,5 @@ def test_aarch64_autiasp_split_lifts_cleanly():
     region.  Pre-fix this raised ``"split address ... not found in
     region NodeIndex(N)'s instruction list"``."""
     elf = fixture_path("aarch64", "zero_pcode_holes")
-    result = _lift_aarch64(elf, "autiasp_split")
-    assert result.function.node_count() > 0
+    g = _lift_aarch64(elf, "autiasp_split")
+    assert g.node_count() > 0

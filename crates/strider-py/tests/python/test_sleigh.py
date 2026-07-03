@@ -33,10 +33,10 @@ def test_vn_repr_for_register_uses_rsleigh_display():
 
 
 def test_vn_repr_for_const_drops_space_prefix():
-    # CONST-space varnodes (`Vn(VnSpace.const_(), off, size)`) are formatted
+    # CONST-space varnodes (`Vn(VnSpace.const(), off, size)`) are formatted
     # by rsleigh's `Display` as `0x<off>:<size>` — no space prefix and no
     # `[]`, since the offset alone identifies the constant.
-    const_space = strider.VnSpace.const_()
+    const_space = strider.VnSpace.const()
     vn = strider.Vn(const_space, 0x42, 4)
     assert repr(vn) == "0x42:4"
 
