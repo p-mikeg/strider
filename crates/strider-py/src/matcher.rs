@@ -169,7 +169,7 @@ op_forwarders! {
 impl PyMatch {
     /// The root node where the top-level pattern matched, as a `u32`
     /// node id.  Pair with `Function.node(node_id).fingerprint()` /
-    /// `Lifter.fingerprint_pcode(node)` (both accept this `Match` or its
+    /// `Cfg.fingerprint_pcode(node)` (both accept this `Match` or its
     /// raw `root` id directly) for proof-of-correctness queries that
     /// don't carry an explicit `Capture` (the root has no user-visible
     /// capture binding).

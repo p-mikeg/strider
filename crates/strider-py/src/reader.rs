@@ -581,7 +581,7 @@ pub struct PyMemReaderAdapter {
 /// is what makes `AnyMemReader: Clone`, which in turn lets
 /// `rsleigh::Sleigh<AnyMemReader>: Clone` mint a fresh, independent
 /// Sleigh context (fresh underlying engine state, cloned reader) — see
-/// `PyLifter::fingerprint_pcode`'s throwaway-Sleigh build.
+/// `PyLifter::pcode_at`'s throwaway-Sleigh build.
 impl Clone for PyMemReaderAdapter {
     fn clone(&self) -> Self {
         Python::with_gil(|py| Self {
@@ -715,7 +715,7 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
 /// builds a brand-new underlying engine context from `(sla_spec, pspec,
 /// cloned reader)` — a genuinely fresh, independent instance, not a
 /// shared one — which is exactly the "fresh, throwaway Sleigh" a
-/// re-lift for `fingerprint_pcode` needs (see its doc comment).
+/// re-lift for `Lifter.pcode_at` needs (see its doc comment).
 #[derive(Clone)]
 pub enum AnyMemReader {
     Buffer(PyBufferReaderView),

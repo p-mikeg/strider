@@ -293,7 +293,7 @@ impl PyNode {
     /// Region) whose existence is synthesised by the IR builder rather
     /// than tied to a specific asm instruction.
     ///
-    /// `pub(crate)` so `PyLifter::fingerprint_pcode` (`strider_cls.rs`)
+    /// `pub(crate)` so `PyCfg::fingerprint_pcode` (`cfg.rs`)
     /// can reuse the same addr-only lookup instead of duplicating the
     /// side-table read.
     pub(crate) fn fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
