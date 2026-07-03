@@ -166,7 +166,11 @@ pub(crate) fn narrow_load_to(ctx: &mut crate::EditFunction<'_>, load: NodeId, cl
 /// boundary clobber (`phi_value`).
 fn join_phi_results(phi_value: ValueId, preds: &[Option<ValueId>]) -> Option<ValueId> {
     let Some((&first, rest)) = preds.split_first() else {
-        // A phi with no value predecessors carries no definition.
+        // A phi with no value predecessors carries no definition.  In a
+        // well-formed graph the memory-SSA walk never reaches one: a zero-arm
+        // `MemPhi` sits on a control-dead Region, and `CfgDetach` culls that
+        // subgraph out of the live set before any consumer walks it (see
+        // `resync_live_set`).  This bottoms the recursion out cleanly.
         return None;
     };
     if rest.iter().all(|&p| p == first) {

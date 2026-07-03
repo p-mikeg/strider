@@ -398,10 +398,15 @@ fn apply_elf_relocations_autoload_does_not_fabricate_values_for_undefined_extern
 }
 
 #[test]
-fn apply_elf_relocations_autoload_no_op_when_no_dynamic_table() {
-    // A statically-linked fixture (no dynamic_relocations()) ⇒ autoload
-    // short-circuits with zero region mutation.  Uses `arithmetic`
-    // because it's the simplest statically-linked fixture in the suite.
+fn apply_elf_relocations_autoload_preserves_preloaded_bytes_on_pre_resolved_binary() {
+    // `arithmetic` is a dynamically-linked ET_EXEC whose only dynamic relocs
+    // (R_386_GLOB_DAT / R_386_JUMP_SLOT) target undefined externs and are
+    // deliberately skipped.  The autoload variant may still STAGE an uncovered
+    // GOT section (so the region set can grow), but with nothing resolved to
+    // apply it must never patch the originally-loaded bytes.  This pins that
+    // autoload is byte-preserving on the pre-existing regions of a pre-resolved
+    // binary — the sibling `apply_elf_relocations` no-op test covers the pure
+    // variant, and `..._pulls_in_missing_site_sections` covers active patching.
     let path = fixture_path("x86", "arithmetic");
     if !path.exists() {
         return;
@@ -415,17 +420,21 @@ fn apply_elf_relocations_autoload_no_op_when_no_dynamic_table() {
 
     strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
 
-    // A statically-linked binary with no autoloadable dynamic relocs
-    // leaves the region set byte-for-byte unchanged (no sections staged,
-    // no patches applied).  When the linker did emit a small dynamic
-    // table the previous tests cover the patching path; here we only pin
-    // that nothing is corrupted in place.
-    let after: Vec<(u64, Vec<u8>)> = regions
-        .iter()
-        .map(|r| (r.start_addr(), r.data().to_vec()))
-        .collect();
-    assert_eq!(
-        before, after,
-        "no autoloadable dynamic relocs ⇒ no in-place region mutation"
+    // Every originally-loaded region survives byte-for-byte: autoload only
+    // APPENDS staged sections, and a pre-resolved binary has no patch to apply.
+    for (start, bytes) in &before {
+        let after = regions
+            .iter()
+            .find(|r| r.start_addr() == *start)
+            .expect("originally-loaded region must survive autoload");
+        assert_eq!(
+            after.data(),
+            bytes.as_slice(),
+            "autoload must not patch preloaded bytes of region @ {start:#x}"
+        );
+    }
+    assert!(
+        regions.len() >= before.len(),
+        "autoload never drops a preloaded region"
     );
 }

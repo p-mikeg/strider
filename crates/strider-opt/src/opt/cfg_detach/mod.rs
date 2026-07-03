@@ -83,8 +83,24 @@ impl Optimizer for CfgDetach {
         // Hand each region its full set of dead predecessor indices in one
         // call — `remove_region_predecessors` removes them highest-first
         // internally, so there's no per-index loop or ordering concern here.
+        // Severing a Region's LAST predecessor makes that region — and its
+        // whole control-dominated subgraph — unreachable from entry.  The
+        // incremental live-set bookkeeping the curated edit verbs maintain
+        // tracks DATA orphaning only, so a `MemPhi`/value on such a region can
+        // linger in the cached live set (nothing data-orphaned it: its value
+        // still feeds a consumer that is itself control-dead but not yet
+        // recognised as such).  A later pass reading the stale live set — the
+        // memory-SSA walk in particular — then observes a zero-arm `MemPhi` and
+        // trips its "clean chain bottoms out at InitialMemory" invariant.  When
+        // a strip empties a region, resync the cached live set to a fresh
+        // entry walk and cull the detached subgraph so no later pass sees it.
+        let mut emptied_a_region = false;
         for (region, idxs) in dead {
             edit.remove_region_predecessors(region, &idxs)?;
+            emptied_a_region |= edit.node_inputs(region).into_iter().next().is_none();
+        }
+        if emptied_a_region {
+            edit.resync_live_set();
         }
         Ok(OptimizationResult::Changed)
     }

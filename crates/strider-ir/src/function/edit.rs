@@ -129,6 +129,32 @@ impl<'g> EditFunction<'g> {
         }
     }
 
+    /// Reset the cached live/roots bookkeeping to a fresh entry walk, then
+    /// [`cull_dead`](Self::cull_dead) the nodes the fresh walk no longer reaches.
+    ///
+    /// The incremental bookkeeping the curated edit verbs maintain tracks
+    /// **data** orphaning only.  A structural **control** edit — severing a
+    /// `Region`'s last predecessor — makes that region and its whole
+    /// control-dominated subgraph unreachable from entry, yet a value or
+    /// `MemPhi` on it can linger in the cached live set because nothing
+    /// data-orphaned it (its value still feeds a consumer that is itself
+    /// control-dead but not yet recognised as such).  A stale entry like that
+    /// feeds the memory-SSA walk a zero-arm `MemPhi` and trips its
+    /// bottoms-out-at-`InitialMemory` invariant.  This recomputes `live_nodes`
+    /// / `roots` from ground truth ([`FunctionState::populate`]) and culls the
+    /// detached subgraph, restoring the "every cached-live node is
+    /// entry-reachable" invariant later passes rely on.  It also clears the
+    /// maybe-dead queue and per-node flags — safe because the fresh walk is a
+    /// superset of any pending liveness drop, and the following `cull_dead`
+    /// re-derives every removal from the current graph.
+    ///
+    /// O(graph): only worth calling after a control edit that actually detached
+    /// a subgraph (e.g. a `Region` reduced to zero predecessors).
+    pub fn resync_live_set(&mut self) {
+        self.state = FunctionState::populate(self.function);
+        self.cull_dead();
+    }
+
     // ── function access ──────────────────────────────────────────────
     //
     // The wrapped `&mut Function` is `pub(crate)` to this crate; downstream
@@ -953,6 +979,57 @@ mod tests {
         ctx.kill_node(node);
         assert!(!ctx.is_live(node), "killed node is no longer live");
         assert!(!ctx.is_root(node), "killed node dropped from roots");
+    }
+
+    /// `resync_live_set` reconciles the incrementally-maintained live set with a
+    /// fresh entry walk: a node the cache still lists as live but that a fresh
+    /// walk no longer reaches is dropped from the live set.
+    ///
+    /// This is the invariant `CfgDetach` relies on after it severs a Region's
+    /// last predecessor — the incremental bookkeeping tracks DATA orphaning
+    /// only, so a value stranded on a now-control-dead region lingers as
+    /// cache-live until a resync reconciles it.  Modelled here with an off-spine
+    /// data cone (`x → y`) that no entry-reachable node consumes: freshly
+    /// created nodes are marked cache-live, but a fresh entry walk (forward
+    /// control + backward data) never reaches them.
+    #[test]
+    fn resync_live_set_drops_cache_stale_unreachable_nodes() {
+        let mut b = single_region_builder();
+        let root = b.build_int_const(1u64, ValueType::I64).unwrap();
+        b.build_return(Some(root), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let mut ctx = EditFunction::new(&mut function);
+
+        // An off-spine chain x → y, consumed by nothing on the entry-reachable
+        // graph.  The incremental cache marks them live on creation.
+        let x = ctx.create_node(
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let xv = ctx.node_outputs(x)[0];
+        let y = ctx.create_node(
+            NodeKind::IntUnaryOp(crate::IntUnaryOp::Neg),
+            [xv],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        assert!(
+            ctx.is_live(x) && ctx.is_live(y),
+            "freshly created off-spine nodes are cache-live"
+        );
+
+        ctx.resync_live_set();
+
+        assert!(
+            !ctx.is_live(y),
+            "resync drops the unreachable consumer from the live set"
+        );
+        assert!(
+            !ctx.is_live(x),
+            "resync drops the unreachable producer from the live set"
+        );
     }
 
     /// Resurrecting a previously-dead cone that is a structural twin of a live
