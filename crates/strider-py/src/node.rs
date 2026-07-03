@@ -122,8 +122,8 @@ impl PyNode {
     }
 
     /// The node's `NodeKind` formatted as a string (e.g. `"IntConst"`,
-    /// `"Call"`, `"Phi"`, `"Add"`).  Same formatting as
-    /// `Function.node_kind(id)`.
+    /// `"Call"`, `"Phi"`, `"Add"`).  The node's `NodeKind` formatted as a
+    /// string.
     fn kind(&self, py: Python<'_>) -> PyResult<String> {
         self.with_node(py, |function, nid| format!("{:?}", function.node_kind(nid)))
     }

@@ -9,8 +9,8 @@
 //! - A `Py<PyFunction>` reference so accessors like `get_uint` can
 //!   re-borrow the function and call `Match::get_uint(c, &function)`.
 //!
-//! The `Function.find_all` / `Function.match_at` / `Function.matcher` entry
-//! points live on PyFunction in `function.rs`.
+//! The `Function.find_all` / `Function.find_one` / `Function.find_joined`
+//! entry points live on PyFunction in `function.rs`.
 
 use pyo3::prelude::*;
 
