@@ -102,7 +102,6 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     strider_cls::register(py, m)?;
     options::register(py, m)?;
     opt::register(py, m)?;
-    pcode::register(py, m)?;
     pattern::register(py, m)?;
     template::register(py, m)?;
     matcher::register(py, m)?;

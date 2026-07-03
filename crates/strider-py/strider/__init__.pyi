@@ -7,7 +7,7 @@ the README/usage examples.  Expand as the API grows.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Iterable, List, Optional, Tuple, Union
+from typing import Any, ClassVar, Iterable, List, Optional, Tuple
 
 from .pattern import PatLike as _PatLike
 from .template import Template as _Template
@@ -172,9 +172,37 @@ class Sleigh:
         ...
 
 class Cfg:
+    """Control-flow graph of a single function, produced by
+    `Lifter.build_cfg` / returned as element 0 of `Lifter.analyze`."""
+
     def to_html(self, path: str, style: Optional[str] = ...) -> None: ...
     def to_dot(self, path: str) -> None: ...
     def html_str(self, style: Optional[str] = ...) -> str: ...
+    def pcode_at(self, addr: int) -> Optional[str]:
+        """Look up the lifted p-code for the machine instruction at
+        `addr` — an exact LOOKUP against this CFG's own stored decodes
+        (the exact lift-time context, correct even for context-dependent
+        architectures like ARM/Thumb or MIPS16), never a fresh re-decode.
+
+        Returns the joined p-code op text (ops rendered via their
+        `rsleigh::Insn` `Display` impl, joined with `"; "`), or `None`
+        when `addr` has no stored decode in this CFG.
+
+        Known limitation: a machine instruction that lifts to ZERO
+        p-code ops (e.g. `endbr64`) leaves no trace in the CFG at all,
+        so such an address is indistinguishable from one never decoded
+        — both return `None` here (`Lifter.pcode_at`, which re-decodes
+        instead of looking up, still returns `""` for it)."""
+        ...
+    def fingerprint_pcode(self, node: Node) -> List[Tuple[int, str]]:
+        """The asm-fingerprint of `node` as `(addr, text)` p-code pairs,
+        sorted by address — the CFG-lookup companion to
+        `Node.fingerprint()` (addr-only).  Each fingerprint address is
+        resolved via `pcode_at`; an address not present in this CFG is
+        SKIPPED (not emitted with empty text).  `[]` for structural
+        nodes with no fingerprint (Entry, InitialMemory, InitialVar,
+        Region, phis)."""
+        ...
 
 class CfgOptions:
     """Mirrors `strider_cfg::CfgOptions` (the user-facing subset — the
@@ -268,22 +296,23 @@ class Lifter:
         """Return `function`'s IR graph rendered as an HTML string
         instead of writing it to a file."""
         ...
-    def fingerprint_pcode(
-        self,
-        node: Union[Node, Match, int],
-        function: Optional[Function] = ...,
-    ) -> List[Tuple[int, str]]:
-        """The asm-fingerprint of `node` as `(addr, text)` pairs sorted by
-        address, `text` being the lifted p-code (empty for ops like
-        `endbr64` that lift to no p-code); `[]` for structural nodes with
-        no fingerprint.  rsleigh is a p-code lifter — this is the lifted
-        semantics, NOT native assembly mnemonics.
+    def pcode_at(self, entry: int, addr: int) -> str:
+        """Decode LINEARLY from `entry`, one machine instruction at a
+        time (advancing by each instruction's machine byte length,
+        replaying context-register state exactly as a real lift would),
+        until the cursor reaches `addr`, and return that instruction's
+        lifted p-code (ops joined `"; "`, empty for an instruction that
+        lifts to no p-code, e.g. `endbr64`).
 
-        `node` may be a `Node` (typically from `Function.node(id)` or
-        `Match.node(key)`), a `Match` (its root node is used), or a raw
-        `int` node id (e.g. `match.root`).  A `Node`/`Match` already
-        carries its own function; a raw int id doesn't, so it must be
-        paired with the explicit `function=` kwarg."""
+        Unlike `Cfg.pcode_at` / `Cfg.fingerprint_pcode` (an exact lookup
+        against an already-built CFG's stored decodes), this is a
+        stand-alone sweep — useful for an `addr` outside any CFG that
+        was actually analysed.  It does NOT follow control flow: `addr`
+        must be reachable via the LINEAR instruction stream starting at
+        `entry` (the same assumption the lifter itself makes).
+
+        Raises `StriderError` if `addr < entry`, or if the sweep steps
+        PAST `addr` without landing exactly on it (misaligned target)."""
         ...
 
 def lifter(
@@ -529,34 +558,6 @@ class OptimizerPipeline:
     def pass_count(self) -> int: ...
     def post_pass_count(self) -> int: ...
 
-def pcode_at(
-    arch: SleighArch,
-    mem: BufferReader,
-    addr: int,
-    count: int = ...,
-) -> List[Tuple[int, str]]:
-    """Lift the p-code of `count` machine instructions from `addr` over
-    `mem`, returning `(insn_addr, text)` tuples in address order.  `text`
-    is the instruction's p-code ops joined with `"; "` (empty for ops
-    like `endbr64` that lift to no p-code).  rsleigh is a p-code lifter —
-    this is the lifted semantics, NOT native assembly mnemonics.  Builds
-    one Sleigh and decodes sequentially.  Raises `StriderError` on
-    failure."""
-    ...
-
-def pcode_at_addrs(
-    arch: SleighArch,
-    mem: BufferReader,
-    addrs: List[int],
-) -> List[Tuple[int, str]]:
-    """Lift the p-code of a set of (possibly non-sequential) machine
-    addresses, one instruction each, returning `(addr, text)` tuples in
-    the order of `addrs`.  `text` is the instruction's p-code ops joined
-    with `"; "` (empty for ops like `endbr64` that lift to no p-code).
-    rsleigh is a p-code lifter — this is the lifted semantics, NOT native
-    assembly mnemonics.  Builds the Sleigh only once."""
-    ...
-
 # ── High-level facade (strider._api) ─────────────────────────────────────
 
 class ElfLifter(Lifter):
@@ -600,14 +601,6 @@ class ElfLifter(Lifter):
         / `strider.Sleigh`."""
         ...
     def add_elf(self, path: str, *, apply_relocations: bool = ...) -> None: ...
-    def pcode(self, addr: int, count: int = ...) -> List[Tuple[int, str]]:
-        """Lift the p-code of `count` machine instructions from `addr`,
-        returning `(insn_addr, text)` tuples in address order.  `text` is
-        the instruction's p-code ops joined with `"; "` (empty for ops
-        like `endbr64` that lift to no p-code).  rsleigh is a p-code
-        lifter — this is the lifted semantics, NOT native assembly
-        mnemonics."""
-        ...
     def analyze(
         self,
         target: Any,  # str | int

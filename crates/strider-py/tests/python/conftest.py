@@ -71,8 +71,10 @@ def built_lifter_and_function(
     """Lift `fixtures/out/<arch_name>/<case>.elf::<symbol>` and return the
     `(Lifter, Function)` pair — the `Lifter` is needed by callers that
     want the Sleigh-needing pretty renders (`dump_html` / `dump_dot` /
-    `html_str`) or `fingerprint_pcode`, which live on it rather than on
-    the bare `Function`.
+    `html_str`), which live on it rather than on the bare `Function`.
+    (The p-code audit trail, `fingerprint_pcode`, lives on the `Cfg`
+    `analyze` returns instead — discarded here as `_cfg`; callers that
+    need it should call `lift.analyze(...)` directly.)
 
     The single `Lifter.analyze` handle always drives the full
     lift+optimise+resolve pipeline (there is no lower-level "lift only,

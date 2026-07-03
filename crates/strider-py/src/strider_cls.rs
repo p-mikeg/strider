@@ -24,8 +24,6 @@ use crate::cfg::PyCfg;
 use crate::dot::dot_style_for;
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
-use crate::matcher::PyMatch;
-use crate::node::PyNode;
 use crate::options::{PyCfgOptions, PyLifterOptions};
 use crate::reader::{AnyMemReader, MemInput};
 
@@ -204,8 +202,8 @@ impl PyLifter {
     /// Shared by `PyCfg`/`PyFunction`'s dot-dumper paths, which hold a
     /// back-reference to this handle rather than the Sleigh directly.
     ///
-    /// Also the base `fingerprint_pcode` clones from to mint a fresh,
-    /// throwaway `Sleigh` per call (`AnyMemReader: Clone` makes
+    /// Also what `pcode_at` clones from to mint a fresh, throwaway
+    /// `Sleigh` per call (`AnyMemReader: Clone` makes
     /// `Sleigh<AnyMemReader>: Clone` build a brand-new engine instance
     /// from the same `(sla_spec, pspec)` over a cloned reader) — see
     /// that method's doc for why it must NOT lift through this
@@ -351,7 +349,7 @@ impl PyLifter {
                 .build_cfg(entry, &cfg_opts)
                 .map_err(into_strider_err)?
         };
-        Ok(PyCfg { inner, lifter: slf })
+        Ok(PyCfg::new(inner, slf))
     }
 
     /// Lift the function at `entry`, optimise it to a fixed point,
@@ -482,13 +480,7 @@ impl PyLifter {
         // Wrap the orchestrator's FINAL resolve/re-lift iteration's CFG —
         // it's the one `function` was actually lifted from, so it's the
         // SSoT `Cfg` for this analysis (no redundant rebuild needed).
-        let cfg_obj = Py::new(
-            py,
-            PyCfg {
-                inner: cfg,
-                lifter: slf.clone_ref(py),
-            },
-        )?;
+        let cfg_obj = Py::new(py, PyCfg::new(cfg, slf.clone_ref(py)))?;
 
         let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
         Ok((cfg_obj, py_function, unresolved))
@@ -565,97 +557,74 @@ impl PyLifter {
         }
     }
 
-    /// Return the asm-fingerprint of `node` as `(addr, text)` p-code
-    /// pairs, sorted by address — the p-code companion to
-    /// `Node.fingerprint()` (addr-only).  `node` is typically obtained
-    /// via `Function.node(id)` or `Match.node(key)`, but a `Match` or a
-    /// raw `u32` node id (e.g. `match.root`) are also accepted directly
-    /// — the same three-way acceptance the old `Analysis.fingerprint_pcode`
-    /// gave via its `_coerce_node_id` helper.  A raw int id doesn't carry
-    /// its own function (a `Node`/`Match` does), so it must be paired
-    /// with the explicit `function=` kwarg; omit `function` when `node`
-    /// is already a `Node` or `Match`.
+    /// Decode LINEARLY from `entry`, one machine instruction at a time
+    /// (advancing by each instruction's machine byte length, replaying
+    /// context-register state exactly as a real lift would), until the
+    /// cursor reaches `addr`, and return that instruction's lifted
+    /// p-code (ops joined `"; "`, empty for an instruction that lifts to
+    /// no p-code, e.g. `endbr64`).
     ///
-    /// Lives on `Lifter` (not `Function`/`Node`) because rendering an
-    /// address to p-code text needs a `Sleigh`.  Builds a FRESH,
-    /// throwaway `Sleigh` (cloned from this handle's own — same
-    /// `sla_spec`/`pspec`, a cheap cloned reader, but a brand-new
-    /// underlying engine instance) for every call rather than lifting
-    /// through the Lifter's persistent Sleigh: `Sleigh::lift_one` carries
-    /// context-register state across calls (ARM Thumb mode, x86 segment
-    /// selectors, MIPS16 — see the module-level `rsleigh` doc in
-    /// CLAUDE.md), so reusing the persistent instance would (a) lift each
-    /// fingerprint address under whatever context the previous one left,
-    /// since addresses are visited in sorted, not decode, order, and (b)
-    /// POLLUTE the Lifter's Sleigh, corrupting subsequent `analyze()`
-    /// / `build_cfg()` calls on the same handle.  The throwaway clone is
-    /// discarded at the end of this call, so neither problem reaches the
-    /// handle's persistent state.
+    /// Unlike `Cfg.pcode_at` / `Cfg.fingerprint_pcode` (an exact lookup
+    /// against an already-built CFG's stored decodes), this is a
+    /// stand-alone sweep — useful for an `addr` outside any CFG that was
+    /// actually analysed (e.g. probing a neighbouring function by hand).
+    /// It does NOT follow control flow: `addr` must be reachable via the
+    /// LINEAR instruction stream starting at `entry` — the same
+    /// assumption the lifter itself makes (context fixed per entry,
+    /// decoding sequential-within-region).  A target only reachable via
+    /// a branch with an intervening context/mode switch off that linear
+    /// path is out of scope.
     ///
-    /// Returns `[]` for "structural" nodes that carry no fingerprint
-    /// (Entry, InitialMemory, InitialVar, Region, phis).
-    #[pyo3(signature = (node, function=None))]
-    fn fingerprint_pcode(
-        &mut self,
-        py: Python<'_>,
-        node: FingerprintNodeArg<'_>,
-        function: Option<Py<PyFunction>>,
-    ) -> PyResult<Vec<(u64, String)>> {
-        let (function, node_id) = node.resolve(py, function)?;
-        let py_node = PyNode::new(py, function, node_id)?;
-        let addrs = py_node.fingerprint(py)?;
-        // A fresh, independent Sleigh per call (see the doc comment
+    /// Builds a FRESH, throwaway `Sleigh` (cloned from this handle's own
+    /// — same `sla_spec`/`pspec`, a cheap cloned reader, but a brand-new
+    /// underlying engine instance) for the sweep, mirroring the same fix
+    /// the former `fingerprint_pcode` used: `Sleigh::lift_one` carries
+    /// context-register state across calls, so lifting through the
+    /// Lifter's persistent Sleigh here would leave it dirtied for a
+    /// subsequent `analyze()`/`build_cfg()` call on the same handle. The
+    /// throwaway clone is discarded at the end of this call.
+    ///
+    /// Raises `StriderError` if `addr < entry`, or if the sweep steps
+    /// PAST `addr` without landing exactly on it (misaligned target —
+    /// `addr` is not a machine-instruction boundary on the linear path
+    /// from `entry`).
+    fn pcode_at(&self, entry: u64, addr: u64) -> PyResult<String> {
+        if addr < entry {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "pcode_at: addr {addr:#x} is before entry {entry:#x}"
+            )));
+        }
+        // A fresh, independent Sleigh for the sweep (see the doc comment
         // above) — `Sleigh::clone` builds a brand-new engine context
         // from this handle's `(sla_spec, pspec)` over a cloned reader,
         // so it starts with no inherited context-register state and its
         // mutations never reach `self.inner`'s persistent Sleigh.
         let mut sleigh = self.sleigh().clone();
-        let mut out = Vec::with_capacity(addrs.len());
-        for addr in addrs {
-            let (text, _len) = crate::pcode::lift_one_text(&mut sleigh, addr)?;
-            out.push((addr, text));
-        }
-        Ok(out)
-    }
-}
-
-/// Polymorphic node-or-id argument for [`PyLifter::fingerprint_pcode`]: a
-/// `Node` handle, a `Match` (its root node is used), or a raw `u32` node
-/// id (e.g. `match.root`) — mirrors the three-way acceptance the old
-/// `Analysis.fingerprint_pcode` gave via its `_coerce_node_id` helper.
-#[derive(FromPyObject)]
-enum FingerprintNodeArg<'py> {
-    Node(PyRef<'py, PyNode>),
-    Match(PyRef<'py, PyMatch>),
-    Id(u32),
-}
-
-impl FingerprintNodeArg<'_> {
-    /// Resolve to `(function, node_id)`.  A `Node`/`Match` already
-    /// carries its own function reference; a raw `Id` has none, so it
-    /// borrows the caller-supplied `function` (an error if omitted —
-    /// there is no implicit "current function" on a `Lifter`, which can
-    /// `analyze` many different functions over its lifetime).
-    fn resolve(
-        self,
-        py: Python<'_>,
-        function: Option<Py<PyFunction>>,
-    ) -> PyResult<(Py<PyFunction>, u32)> {
-        match self {
-            FingerprintNodeArg::Node(n) => Ok((n.function.clone_ref(py), n.id)),
-            FingerprintNodeArg::Match(m) => {
-                Ok((m.function.clone_ref(py), m.inner.root().as_u32()))
+        let mut cur = entry;
+        loop {
+            let (text, len) = crate::pcode::lift_one_text(&mut sleigh, cur)?;
+            if cur == addr {
+                return Ok(text);
             }
-            FingerprintNodeArg::Id(id) => {
-                let function = function.ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(
-                        "fingerprint_pcode: a raw int node id requires function=<Function> to \
-                         resolve which function's node arena it indexes (a Node or Match \
-                         already carries its own function)",
-                    )
-                })?;
-                Ok((function, id))
+            if len == 0 {
+                return Err(into_strider_err(anyhow::anyhow!(
+                    "pcode_at: lift_one at {cur:#x} reported a zero-length machine \
+                     instruction; cannot advance toward {addr:#x}"
+                )));
             }
+            let next = cur.checked_add(len as u64).ok_or_else(|| {
+                into_strider_err(anyhow::anyhow!(
+                    "machine-address overflow advancing past {cur:#x}"
+                ))
+            })?;
+            if next > addr {
+                return Err(into_strider_err(anyhow::anyhow!(
+                    "pcode_at: linear sweep from entry {entry:#x} stepped past target \
+                     {addr:#x} (misaligned — {addr:#x} is not a machine-instruction \
+                     boundary on the linear path from entry)"
+                )));
+            }
+            cur = next;
         }
     }
 }

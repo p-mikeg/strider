@@ -389,8 +389,8 @@ def test_analyze_allow_code_before_start_addr():
 def test_standalone_strider_by_address():
     """`strider.lifter(arch, mem)` over a raw BufferReader lifts a
     function by address; pattern queries work directly on the returned
-    `Function` and `fingerprint_pcode` works directly on the `Lifter`
-    (which owns the Sleigh) — no wrapper needed even though there is no
+    `Function` and `fingerprint_pcode` works directly on the `Cfg`
+    `analyze` returns — no wrapper needed even though there is no
     backing ELF symbol table."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.load_elf(str(elf))
@@ -398,15 +398,15 @@ def test_standalone_strider_by_address():
     arch = strider.SleighArch.x86_64()
     addr = loaded.symbol("add")
     s = strider.lifter(arch, mem)
-    _cfg, fn, _unresolved = s.analyze(addr, strider.CallingConvention.x86_64_systemv())
+    cfg, fn, _unresolved = s.analyze(addr, strider.CallingConvention.x86_64_systemv())
     assert fn.node_count() > 0
     matches = fn.find_all(
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches, "expected at least one Add node"
     # The standalone path must keep fingerprint_pcode working via the
-    # Lifter that produced the function.
-    pcode = s.fingerprint_pcode(fn.node(matches[0].root))
+    # Cfg that produced the function.
+    pcode = cfg.fingerprint_pcode(fn.node(matches[0].root))
     assert isinstance(pcode, list)
     for addr_, text in pcode:
         assert isinstance(addr_, int)

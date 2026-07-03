@@ -44,8 +44,10 @@ __version__ = _ext.__version__
 # The cdylib's `strider.lifter(arch, mem, rom=None) -> Lifter` is the
 # single lift+optimise+resolve handle (`build_cfg` + `analyze`); it comes
 # from `_ext` via the wildcard import above.  Sleigh-needing renders
-# (`dump_html`/`dump_dot`/`html_str`) and provenance-to-p-code
-# (`fingerprint_pcode`) are `Lifter` methods; pattern queries and the
+# (`dump_html`/`dump_dot`/`html_str`) and the entry-relative p-code sweep
+# (`pcode_at(entry, addr)`) are `Lifter` methods; the CFG-lookup p-code
+# audit trail (`pcode_at(addr)` / `fingerprint_pcode(node)`) lives on
+# `Cfg` (returned as element 0 of `analyze`); pattern queries and the
 # addr-only `fingerprint` live on `Function`/`Node` directly — there is
 # no separate `Analysis` wrapper.
 from . import _api as _api  # noqa: E402,F401

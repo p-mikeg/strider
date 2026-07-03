@@ -34,9 +34,12 @@ Rust handle) and call its `analyze(addr, cc, ...)`.  Pattern queries
 (`find_all` / `find_one` / `find_joined`) and the addr-only
 `fingerprint`/`asm_fingerprint` live directly on the returned
 `Function`/`Node` (no Sleigh needed); the Sleigh-needing pretty
-renders (`dump_html` / `dump_dot` / `html_str`) and the p-code
-audit-trail helper (`fingerprint_pcode`) live on the `Lifter` that
-produced the function, since it owns the Sleigh.
+renders (`dump_html` / `dump_dot` / `html_str`) live on the `Lifter`
+that produced the function, since it owns the Sleigh.  p-code has two
+homes: `Cfg.pcode_at` / `Cfg.fingerprint_pcode` (an exact lookup
+against the `Cfg` `analyze` returns — the audit-trail path) and
+`Lifter.pcode_at(entry, addr)` (a linear decode from `entry`, for an
+address outside any analysed CFG).
 
 Arch detection is done by reading the first 20 bytes of the ELF
 header (magic + EI_CLASS + EI_DATA + e_machine).  No pyelftools
@@ -449,27 +452,6 @@ class ElfLifter(Lifter):
         see the newly-added ELF."""
         self._elf.add_elf(path, apply_relocations)
         self._rebuild(self._arch, self._elf.reader(), rom=self._elf.ro_reader())
-
-    # ── P-code ───────────────────────────────────────────────────────
-
-    def pcode(self, addr: int, count: int = 1) -> list[tuple[int, str]]:
-        """Lift the p-code of `count` machine instructions starting at
-        `addr`, returning a list of `(insn_addr, text)` tuples in
-        address order.
-
-        `text` is the lifted p-code for each machine instruction (the
-        instruction's p-code ops joined with `"; "`, empty for ops like
-        `endbr64` that lift to no p-code).  rsleigh is a p-code lifter —
-        this is the lifted semantics, NOT native assembly mnemonics.
-
-        ARM Thumb interworking is honoured: a Thumb pointer (`addr & 1`)
-        is decoded with the Thumb Sleigh spec and a halfword-aligned
-        address, matching `analyze(...)`.
-
-        Raises `StriderError` when `addr` is unmapped or a lift fails.
-        """
-        arch, addr = _effective_arch_and_addr(self._arch, addr)
-        return _ext.pcode_at(arch, self._elf.reader(), addr, count)
 
     # ── Lift a function ──────────────────────────────────────────────
 

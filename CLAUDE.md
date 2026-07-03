@@ -665,10 +665,23 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   addr-only `fingerprint`/`asm_fingerprint` live directly on the returned
   `Function`/`Node` — there is no separate `Analysis` wrapper class.  The
   Sleigh-needing pretty renders (`dump_html` / `dump_dot` / `html_str`)
-  and the p-code audit-trail helper
-  (`fingerprint_pcode(node, function=None) -> list[(addr, text)]`, which
-  accepts a `Node`, a `Match`, or a raw `int` node id) live on `Lifter`
-  instead, since only it owns the Sleigh.  Low-level API mirrors the
+  live on `Lifter`, since only it owns the Sleigh.  p-code rendering has
+  two homes: `Cfg.pcode_at(addr) -> str | None` and
+  `Cfg.fingerprint_pcode(node) -> list[(addr, text)]` (on the `Cfg`
+  `analyze`/`build_cfg` return — an exact LOOKUP against that CFG's own
+  stored decodes, i.e. `RegionInstruction`s, so it's correct even on
+  context-dependent arches like ARM/Thumb or MIPS16 where a fresh
+  default-context Sleigh would render the wrong p-code mid-function; a
+  machine instruction that lifts to ZERO p-code ops, e.g. `endbr64`,
+  leaves no `RegionInstruction` at all, so `pcode_at` returns `None` for
+  it — indistinguishable from an address never decoded), and
+  `Lifter.pcode_at(entry, addr) -> str` (a stand-alone LINEAR decode
+  sweep from `entry`, replaying context-register state on a throwaway
+  cloned Sleigh so the Lifter's own persistent Sleigh is never dirtied;
+  unlike the `Cfg` lookup it DOES return `""` for a zero-p-code-op
+  instruction since it re-decodes rather than looking up; raises
+  `StriderError` if `addr < entry` or the sweep steps past `addr`
+  without landing on it).  Low-level API mirrors the
   Rust surface: `SleighArch`, `CallingConvention`, `BufferReader` (a
   RAW-region reader for non-ELF / custom sources — ELF parse + symbols
   live on the internal `_LoadedElf` that `ElfLifter` wraps, built by

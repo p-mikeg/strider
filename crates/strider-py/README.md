@@ -205,7 +205,7 @@ one call only, via `LifterOptions.pipeline` (never settable on
 `strider.lifter(...)` itself):
 
 ```python
-function, unresolved = lift.analyze(
+cfg, function, unresolved = lift.analyze(
     addr, cc, opts=strider.LifterOptions(pipeline=strider.OptimizerPipeline.empty())
 )
 ```
@@ -367,7 +367,7 @@ class MyReader(strider.MemReader):
 
 reader = MyReader(open("binary.elf", "rb"))
 lift = strider.lifter(strider.SleighArch.x86(), reader)
-function, unresolved = lift.analyze(0x401000, strider.CallingConvention.x86_cdecl())
+cfg, function, unresolved = lift.analyze(0x401000, strider.CallingConvention.x86_cdecl())
 ```
 
 `ReadOnlyMemory` follows the same pattern but for the optimizer's
