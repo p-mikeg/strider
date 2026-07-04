@@ -79,14 +79,13 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 if let Some(out) = insn.output.as_ref() {
                     self.add_def(out, r, defs);
                 }
-                if let Ok((_, name)) = decode_user_op(insn, self.lifter.sleigh()) {
-                    if let Some(CallOtherClass::Call(abi)) =
+                if let Ok((_, name)) = decode_user_op(insn, self.lifter.sleigh())
+                    && let Some(CallOtherClass::Call(abi)) =
                         classify(self.lifter.arch.preset(), name)
-                    {
-                        for wname in abi.implicit_writes {
-                            if let Some(vn) = self.lifter.sleigh_regs().name_to_vn(wname) {
-                                self.add_def(&vn, r, defs);
-                            }
+                {
+                    for wname in abi.implicit_writes {
+                        if let Some(vn) = self.lifter.sleigh_regs().name_to_vn(wname) {
+                            self.add_def(&vn, r, defs);
                         }
                     }
                 }
@@ -127,12 +126,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// per-address override for a direct call whose target is registered, else
     /// the function default.  Mirrors `handle_call`'s CC selection.
     fn call_cc_for(&self, insn: &rsleigh::Insn) -> &strider_target::BuiltCallingConvention {
-        if insn.opcode == rsleigh::Opcode::Call {
-            if let Some(target) = insn.inputs.first().map(|v| v.addr_off) {
-                if let Some(cc) = self.per_address_ccs.get(&target) {
-                    return cc;
-                }
-            }
+        if insn.opcode == rsleigh::Opcode::Call
+            && let Some(target) = insn.inputs.first().map(|v| v.addr_off)
+            && let Some(cc) = self.per_address_ccs.get(&target)
+        {
+            return cc;
         }
         self.builder.function().default_cc()
     }
