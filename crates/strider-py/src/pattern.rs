@@ -968,6 +968,9 @@ pub enum PatLike<'py> {
     IntBinaryPat(Bound<'py, PyIntBinaryPat>),
     FloatBinaryPat(Bound<'py, PyFloatBinaryPat>),
     BoolBinaryPat(Bound<'py, PyBoolBinaryPat>),
+    IndirectBranchPat(Bound<'py, PyIndirectBranchPat>),
+    UnreachablePat(Bound<'py, PyUnreachablePat>),
+    SwitchPat(Bound<'py, PySwitchPat>),
 }
 
 // Manual `PyStubType` impl so `pyo3-stub-gen`'s proc-macros translate
@@ -1004,6 +1007,9 @@ impl PatLike<'_> {
             PatLike::IntBinaryPat(b) => b.borrow().build_pattern_py(py),
             PatLike::FloatBinaryPat(b) => b.borrow().build_pattern_py(py),
             PatLike::BoolBinaryPat(b) => b.borrow().build_pattern_py(py),
+            PatLike::IndirectBranchPat(b) => b.borrow().build_pattern_py(py),
+            PatLike::UnreachablePat(b) => b.borrow().build_pattern_py(py),
+            PatLike::SwitchPat(b) => b.borrow().build_pattern_py(py),
         }
     }
 }
@@ -2631,6 +2637,78 @@ pub fn ret() -> PyRetPat {
     PyRetPat::new()
 }
 
+// ── IndirectBranchPat (node-rooted) ───────────────────────────────────────
+
+node_builder! {
+    ty: PyIndirectBranchPat,
+    inner: IndirectBranchInner,
+    py_name: "IndirectBranchPat",
+    doc: "Typed builder for `IndirectBranch` node patterns.",
+    core: strider_pattern::indirect_branch,
+    core_ty: strider_pattern::IndirectBranchPat,
+    root: node,
+    fields: [
+        { pat target: target
+            = "Constrain the dispatch target (`inputs[2]`)." },
+        { pat preceded_by: preceded_by
+            = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
+        { mem mem: mem
+            = "Constrain the node's memory predecessor (`inputs[1]`)." },
+    ],
+}
+
+/// Start an `IndirectBranch` pattern builder.
+#[pyfunction]
+pub fn indirect_branch() -> PyIndirectBranchPat {
+    PyIndirectBranchPat::new()
+}
+
+// ── UnreachablePat (node-rooted) ──────────────────────────────────────────
+
+node_builder! {
+    ty: PyUnreachablePat,
+    inner: UnreachableInner,
+    py_name: "UnreachablePat",
+    doc: "Typed builder for `Unreachable` node patterns.",
+    core: strider_pattern::unreachable,
+    core_ty: strider_pattern::UnreachablePat,
+    root: node,
+    fields: [
+        { pat preceded_by: preceded_by
+            = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
+    ],
+}
+
+/// Start an `Unreachable` pattern builder.
+#[pyfunction]
+pub fn unreachable() -> PyUnreachablePat {
+    PyUnreachablePat::new()
+}
+
+// ── SwitchPat (node-rooted) ────────────────────────────────────────────────
+
+node_builder! {
+    ty: PySwitchPat,
+    inner: SwitchInner,
+    py_name: "SwitchPat",
+    doc: "Typed builder for `Switch` node patterns.",
+    core: strider_pattern::switch,
+    core_ty: strider_pattern::SwitchPat,
+    root: node,
+    fields: [
+        { pat address: address
+            = "Constrain the dispatch address (`inputs[1]`)." },
+        { pat preceded_by: preceded_by
+            = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
+    ],
+}
+
+/// Start a `Switch` pattern builder.
+#[pyfunction]
+pub fn switch() -> PySwitchPat {
+    PySwitchPat::new()
+}
+
 // ── IfPat (node-rooted; branches take finished Patterns) ─────────────────
 
 #[derive(Default)]
@@ -3033,6 +3111,9 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCallPat>()?;
     m.add_class::<PyCallOtherPat>()?;
     m.add_class::<PyRetPat>()?;
+    m.add_class::<PyIndirectBranchPat>()?;
+    m.add_class::<PyUnreachablePat>()?;
+    m.add_class::<PySwitchPat>()?;
     m.add_class::<PyIfPat>()?;
     m.add_class::<PyLoadPat>()?;
     m.add_class::<PyStorePat>()?;
@@ -3130,6 +3211,9 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(call);
     add_fn!(call_other);
     add_fn!(ret);
+    add_fn!(indirect_branch);
+    add_fn!(unreachable);
+    add_fn!(switch);
     add_fn!(if_);
     add_fn!(int_binary);
     add_fn!(bool_binary);

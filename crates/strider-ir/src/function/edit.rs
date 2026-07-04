@@ -939,8 +939,8 @@ pub(crate) mod test_fixtures {
         };
         let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
             .expect("FunctionBuilder::new");
-        let region = b.create_region().expect("create_region");
-        b.set_entry_region(region).expect("set_entry_region");
+        let region = b.create_region_all().expect("create_region");
+        b.set_entry_region_all(region).expect("set_entry_region");
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         b
@@ -1607,8 +1607,8 @@ mod tests {
     #[test]
     fn attach_output_of_killed_side_effecting_node_does_not_resurrect_it() {
         let mut b = single_region_builder();
-        let t = b.create_region().unwrap();
-        let f = b.create_region().unwrap();
+        let t = b.create_region_all().unwrap();
+        let f = b.create_region_all().unwrap();
         let cond = b.build_boolean_const(true);
         b.build_if(cond, t, f).unwrap();
         b.set_region(t);

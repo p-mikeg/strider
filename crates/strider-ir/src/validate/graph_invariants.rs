@@ -174,6 +174,36 @@ pub(super) fn check_graph_invariants_extend_truncate(
     }
 }
 
+/// Graph invariant: every reachable [`NodeKind::Switch`] must have at least
+/// one control output, and its control-output count must equal its recorded
+/// case-address count in `Function::switch_targets` — one output per case
+/// address, kept in sync by `FunctionBuilder::build_switch`. A mismatch means
+/// the side table has drifted from the graph shape (e.g. a surgical edit
+/// added/removed an output without updating `switch_targets`).
+pub(super) fn check_graph_invariants_switch(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph = function.graph();
+    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
+        if !matches!(kind, NodeKind::Switch) {
+            continue;
+        }
+        let n_out = graph.node_outputs(node).len();
+        let n_targets = function.side_tables().switch_targets(node).len();
+        if n_out == 0 {
+            errs.push(ValidationError::EmptySwitchTargets { node });
+        } else if n_out != n_targets {
+            errs.push(ValidationError::SwitchTargetArityMismatch {
+                node,
+                outputs: n_out,
+                targets: n_targets,
+            });
+        }
+    }
+}
+
 /// Graph invariant: every phi node (`Phi`, `MemPhi`) must take its
 /// dispatch token (input[0]) from a `Region`'s `PhiToken` output.
 ///

@@ -153,7 +153,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
 /// Decode the user-op id + look up its name from a `CallOther` insn.
 /// Extracted from [`FunctionLifter::handle_call_other`]'s preamble.
-fn decode_user_op<'a, R: rsleigh::MemReader>(
+pub(super) fn decode_user_op<'a, R: rsleigh::MemReader>(
     insn: &rsleigh::Insn,
     sleigh: &'a rsleigh::Sleigh<R>,
 ) -> Result<(u64, &'a str)> {

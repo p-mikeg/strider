@@ -689,11 +689,11 @@ fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Resul
         .callee_saved(sp)
         .stack_vn(sp)
         .build_fn()?;
-    let entry = b.create_region()?;
-    let then_r = b.create_region()?;
-    let else_r = b.create_region()?;
-    let merge = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let then_r = b.create_region_all()?;
+    let else_r = b.create_region_all()?;
+    let merge = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     // entry: if const(true) { then } else { else }
     b.set_region(entry);
@@ -763,13 +763,13 @@ fn three_predecessor_memphi_blocks_forwarding_no_phi() -> Result<()> {
         .callee_saved(sp)
         .stack_vn(sp)
         .build_fn()?;
-    let entry = b.create_region()?;
-    let arm_a = b.create_region()?;
-    let inner = b.create_region()?;
-    let arm_b = b.create_region()?;
-    let arm_c = b.create_region()?;
-    let merge = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let arm_a = b.create_region_all()?;
+    let inner = b.create_region_all()?;
+    let arm_b = b.create_region_all()?;
+    let arm_c = b.create_region_all()?;
+    let merge = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     // entry: if cond { arm_a } else { inner };  inner: if cond { arm_b } else { arm_c }
     b.set_region(entry);
@@ -833,11 +833,11 @@ fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()
         .callee_saved(sp)
         .stack_vn(sp)
         .build_fn()?;
-    let entry = b.create_region()?;
-    let then_r = b.create_region()?;
-    let else_r = b.create_region()?;
-    let merge = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let then_r = b.create_region_all()?;
+    let else_r = b.create_region_all()?;
+    let merge = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     // entry: *(sp+4) = 0xAB; if const(true) { then } else { else }
     b.set_region(entry);
@@ -902,11 +902,11 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
         .callee_saved(sp)
         .stack_vn(sp)
         .build_fn()?;
-    let entry = b.create_region()?;
-    let then_r = b.create_region()?;
-    let else_r = b.create_region()?;
-    let merge = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let then_r = b.create_region_all()?;
+    let else_r = b.create_region_all()?;
+    let merge = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     let cond = b.build_boolean_const(true);
@@ -965,11 +965,11 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
         .callee_saved(sp)
         .stack_vn(sp)
         .build_fn()?;
-    let entry = b.create_region()?;
-    let then_r = b.create_region()?;
-    let else_r = b.create_region()?;
-    let merge = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let then_r = b.create_region_all()?;
+    let else_r = b.create_region_all()?;
+    let merge = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     // entry: *(sp+4) = 0xAA; then if(true) goto then else goto else
     b.set_region(entry);
@@ -1264,11 +1264,11 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
         .callee_saved(sp)
         .stack_vn(sp)
         .build_fn()?;
-    let entry = b.create_region()?;
-    let then_r = b.create_region()?;
-    let else_r = b.create_region()?;
-    let merge = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let then_r = b.create_region_all()?;
+    let else_r = b.create_region_all()?;
+    let merge = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     let cond = b.build_boolean_const(true);
@@ -1365,11 +1365,11 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
         .callee_saved(sp)
         .stack_vn(sp)
         .build_fn()?;
-    let entry = b.create_region()?;
-    let then_r = b.create_region()?;
-    let else_r = b.create_region()?;
-    let merge = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let then_r = b.create_region_all()?;
+    let else_r = b.create_region_all()?;
+    let merge = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     let cond = b.build_boolean_const(true);

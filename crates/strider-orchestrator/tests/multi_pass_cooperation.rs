@@ -44,12 +44,12 @@ where
 #[test]
 fn nested_const_branches_fully_eliminated() -> Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let outer_t = b.create_region()?;
-    let outer_f = b.create_region()?;
-    let inner_t = b.create_region()?;
-    let inner_f = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let outer_t = b.create_region_all()?;
+    let outer_f = b.create_region_all()?;
+    let inner_t = b.create_region_all()?;
+    let inner_f = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -97,8 +97,8 @@ fn nested_const_branches_fully_eliminated() -> Result<()> {
 #[test]
 fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
@@ -145,9 +145,9 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
         .stack_vn(sp)
         .build_fn()?;
 
-    let entry = b.create_region()?;
-    let live = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let live = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
@@ -195,10 +195,10 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
 #[test]
 fn if_branch_collapses_after_const_fold() -> Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let t = b.create_region()?;
-    let f = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let t = b.create_region_all()?;
+    let f = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -245,9 +245,9 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
 #[test]
 fn region_with_one_predecessor_collapses() -> Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let body = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let body = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -286,8 +286,8 @@ fn region_with_one_predecessor_collapses() -> Result<()> {
 #[test]
 fn mem_chain_collapses_through_constant_fold() -> Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
@@ -334,10 +334,10 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
 fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
     // Build a slightly non-trivial fixture: if(true) { return 1+2 } else { return 3 }
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let t = b.create_region()?;
-    let f = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let t = b.create_region_all()?;
+    let f = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));

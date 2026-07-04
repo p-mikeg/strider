@@ -5,14 +5,17 @@
 //! real Sleigh-lifted function (or a hand-built one), pinning the
 //! user-facing contract:
 //!
-//! 1. `replace_switch_selector_with_const_collapses_to_one_branch` —
-//!    user replaces the selector of a 3-target Switch (lifted via the
-//!    If-ladder) with `IntConst(K_0)`, then re-optimises; the optimizer
-//!    collapses the dispatch to a single branch.
-//! 2. `replace_jump_table_index_with_const_collapses_to_one_target` —
-//!    IR-level-resolved jump table lifted via the If-ladder; user
-//!    replaces the index input with a constant; only one target's
-//!    branch survives.
+//! 1. `replace_switch_address_with_const_collapses_switch_after_reoptimize` —
+//!    directly rewrites a 3-target `Switch`'s `address` input (the
+//!    manual-edit analogue of "replace the selector", since there's no
+//!    rewrite-rule support for rooting on a `Switch`, which has no value
+//!    output) to `IntConst(K_0)`, then re-optimises; `DeadBranchElimination`
+//!    collapses the constant-address `Switch` to its matching arm, and the
+//!    graph stays valid.
+//! 2. `rewrite_rule_targeting_old_if_ladder_shape_is_a_no_op_against_switch_dispatch` —
+//!    the OLD if-ladder-shaped rewrite rule (match `Eq(_, K)`, replace
+//!    with `BoolConst`) must safely no-op against a `Switch`-lowered
+//!    jump table: it fires zero times and leaves the `Switch` untouched.
 //! 3. `replace_input_then_reoptimize_then_replace_again_works` —
 //!    multiple edits compose without leaving the rewriter.
 //! 4. `re_optimize_without_changes_is_no_op` — calling re_optimize on
@@ -27,15 +30,31 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{Function, IRBuilderExt, IRWalker, IntBinaryOp};
+use strider_ir::{Function, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::IrWalkerEx;
 use strider_opt::{EditFunction, apply_rules_count, rewrite_rule};
 use strider_pattern::{Capture, CaptureExt, add, int_const, var};
 
 mod common;
 
-fn count_eq_cmps(function: &Function) -> usize {
-    function.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
+fn count_switches(function: &Function) -> usize {
+    function.count_kind(|k| matches!(k, NodeKind::Switch))
+}
+
+/// Locates the unique `Switch` node in `function`. Panics if zero or more
+/// than one is present — either case indicates a fixture-construction bug.
+fn find_unique_switch(function: &Function) -> strider_ir::node::NodeId {
+    let mut iter = function
+        .walk()
+        .filter(|&nid| matches!(function.node_kind(nid), NodeKind::Switch));
+    let first = iter
+        .next()
+        .expect("fixture must contain exactly one Switch node");
+    assert!(
+        iter.next().is_none(),
+        "fixture has more than one Switch node"
+    );
+    first
 }
 
 /// Build a tiny non-Sleigh function: `fn() -> u64 { return Add(K, 0); }`.
@@ -43,8 +62,8 @@ fn count_eq_cmps(function: &Function) -> usize {
 /// on any Sleigh fixtures.
 fn add_k_plus_zero(k: u64) -> Function {
     let mut b = strider_ir_test_utils::empty_builder().unwrap();
-    let region = b.create_region().unwrap();
-    b.set_entry_region(region).unwrap();
+    let region = b.create_region_all().unwrap();
+    b.set_entry_region_all(region).unwrap();
     b.set_region(region);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let lhs = b.build_int_const(k, ValueType::I64).unwrap();
@@ -63,81 +82,108 @@ fn count_adds(function: &Function) -> usize {
 
 // ── Test 1 — replace switch selector with const, collapse to one branch ─────
 
-/// 3-target Switch lifted via `build_switch_if_ladder` produces an If-ladder of 2 If nodes
-/// comparing the index against `K_0` and `K_1`.  Rewriting **all** of
-/// the equality-cmp's right-hand-input (the `K_0` constant) to a
-/// matching value and then re-optimising won't actually collapse the
-/// ladder — the cmp is `Eq(idx, K_0)`, and replacing K_0 with K_0
-/// changes nothing.  Instead, the user-facing flow switch lifting enables is to
-/// rewrite the cmp's INDEX side (the `idx` operand) to `IntConst(K_0)`.
-/// Then `Eq(K_0, K_0)` folds to `BoolConst(true)`, the first If's
-/// false-branch becomes dead, and DeadBranchElim collapses the
-/// remaining ladder to nothing.  We pin the post-rewrite If count.
+/// 3-target Switch lifted via `build_switch` produces exactly one
+/// `NodeKind::Switch` node (inputs `[ctrl, address]`) — no cmp, no
+/// If-ladder.  A `Switch` has no value output, so it can't root a
+/// `rewrite_rule`; the manual-edit analogue of "replace the selector"
+/// goes through `EditFunction`'s low-level input-rewrite primitive:
+/// directly rewrite the Switch's `address` input (slot 1) to
+/// `IntConst(K_0)`.  Because `K_0 == targets[0]` (case 0),
+/// `DeadBranchElimination` then collapses the constant-address `Switch`
+/// to its single matching arm — the `Switch` is killed, control flows
+/// straight to case 0's region, no `If` nodes appear — and the graph
+/// must remain valid after the collapse.
 #[test]
-fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Result<()> {
+fn replace_switch_address_with_const_collapses_switch_after_reoptimize() -> anyhow::Result<()> {
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
     let (mut g, _strider, _cc) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
-    let if_count_pre = common::count_ifs(&g);
-    let cmp_count_pre = count_eq_cmps(&g);
-    assert_eq!(if_count_pre, 2, "3-target Switch produces N-1=2 If nodes");
     assert_eq!(
-        cmp_count_pre, 2,
-        "3-target Switch produces N-1=2 equality cmps"
+        common::count_ifs(&g),
+        0,
+        "3-target dispatch produces zero If nodes"
+    );
+    assert_eq!(
+        count_switches(&g),
+        1,
+        "3-target dispatch lifts to exactly one Switch node"
+    );
+    let switch_id = find_unique_switch(&g);
+    assert_eq!(
+        g.node_outputs(switch_id).len(),
+        3,
+        "Switch has one Control output per target",
     );
 
-    // Replace every IntCmpOp::Equal's left-hand input (the `idx`
-    // value) with `IntConst(K_0)`.  Pattern: any IntCmpOp::Equal
-    // whose RHS is the existing `K_0` integer constant — rewrite
-    // the cmp itself to `BoolConst(true)`.  We use the simpler form:
-    // match the cmp, replace its output with `bool_const(true)`.
-    let pipeline = strider_orchestrator::opt::default_pipeline();
-    let cmp_var = Capture::new();
-    let rule = rewrite_rule(
-        // LHS: int_eq(any, int_const(K_0))
-        strider_pattern::int_eq(strider_pattern::any(), int_const(targets[0] as u128))
-            .capture(cmp_var),
-        strider_pattern::bool_const(true),
-    );
-    let n = {
+    // Directly rewrite the Switch's `address` input (inputs are
+    // `[ctrl, address]`, so slot 1) to `IntConst(K_0)`.  The displaced
+    // `idx`-read is an (exempt) `InitialVar` with no asm history to
+    // absorb, so stamp the fresh constant's fingerprint from the
+    // `Switch` node itself (whose fingerprint traces back to the real
+    // `jmp rax` instruction) to satisfy the always-on fingerprint check.
+    let addr_use = g.node_input_id_at(switch_id, 1)?;
+    {
         let mut ctx = EditFunction::new(&mut g);
-        apply_rules_count(&mut ctx, std::slice::from_ref(&rule))?
-    };
-    assert!(
-        n >= 1,
-        "rule must fire at least once (matched the K_0 cmp); fired {n} times",
-    );
+        let k0 = ctx.build_int_const(targets[0], ValueType::I64)?;
+        let k0_node = ctx.function().producer(k0);
+        ctx.function_mut()
+            .side_tables_mut()
+            .extend_asm_fingerprint_from(k0_node, switch_id);
+        ctx.redirect_input(addr_use, k0);
+        ctx.clean();
+    }
+
+    let pipeline = strider_orchestrator::opt::default_pipeline();
     pipeline.run(&mut g, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
-    // After ConstantFold + DeadBranchElim collapse the now-true
-    // first If, the second If's condition is reachable only via the
-    // K_0-true path which the dead-branch eliminator pruned.  Final
-    // If count must drop below the pre-rewrite count.
-    let if_count_post = common::count_ifs(&g);
-    assert!(
-        if_count_post < if_count_pre,
-        "post-rewrite If count must shrink: pre={if_count_pre}, post={if_count_post}",
+    // The address now folds to `IntConst(K_0)` (== `targets[0]`, i.e. case 0),
+    // so `DeadBranchElimination` collapses the constant-address Switch to its
+    // single matching arm: the Switch node is killed and control flows directly
+    // to case 0's region. No Switch survives, and (as always for a
+    // Switch-lowered dispatch) no If nodes are introduced.
+    assert_eq!(
+        count_switches(&g),
+        0,
+        "constant-address Switch collapses to its matching arm (DeadBranchElimination)",
     );
+    assert_eq!(
+        common::count_ifs(&g),
+        0,
+        "Switch-lowered dispatch never produces If nodes, even after the collapse",
+    );
+    strider_ir::validate::validate(&g).map_err(|e| {
+        anyhow::anyhow!("assertion failed: validate failed after switch-address rewrite: {e}")
+    })?;
     Ok(())
 }
 
-// ── Test 2 — replace jump-table index with const, collapse to one target ────
+// ── Test 2 — old if-ladder rewrite rule is a no-op against a Switch ─────────
 
-/// **Headline switch lifting + post-resolution rewrite flow.**  IR-level-resolved jump table lifted via `build_switch_if_ladder`'s
-/// If-ladder; rewrite the cmp output to BoolConst(true) at one
-/// equality cmp; re-optimize; the dispatch collapses to a single
-/// branch (zero Ifs reachable post-fold).
+/// **Regression guard: rewrite rules written against the old if-ladder
+/// shape must not spuriously match the new `Switch` shape.**
+/// `handle_switch` used to lower a jump table into an if-ladder of
+/// `IntCmpOp::Equal` + `If` nodes, so a pattern-rewrite rule written
+/// against that shape (match any `Eq(_, K)` cmp, replace with
+/// `BoolConst`) used to fire once per ladder arm and, after
+/// re-optimizing, collapse the dispatch to a single branch.  Now that
+/// `handle_switch` emits a single `Switch` node instead (no cmp, no
+/// If), the SAME rule must be a safe no-op: zero matches, the `Switch`
+/// left completely untouched by the (no-op) rewrite + re-optimize.
 #[test]
-fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Result<()> {
+fn rewrite_rule_targeting_old_if_ladder_shape_is_a_no_op_against_switch_dispatch()
+-> anyhow::Result<()> {
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
     let (mut g, _strider, _cc) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
-    assert_eq!(common::count_ifs(&g), 2, "3-target Switch lifts to 2 Ifs");
-    assert_eq!(count_eq_cmps(&g), 2, "3-target Switch lifts to 2 cmps");
-    // Rewrite every Equal-cmp to `BoolConst(false)` *except* the K_1
-    // arm (let it stay so DeadBranchElim collapses around it).  Pin
-    // a much simpler shape: rewrite ALL Equal-cmps to BoolConst(false)
-    // and let the optimizer cascade.  Final shape: zero Ifs (every
-    // branch was constant-folded out — at least one whole arm must
-    // be unreachable, and the rest collapse via dead-branch-elim).
+    assert_eq!(
+        common::count_ifs(&g),
+        0,
+        "3-target Switch produces zero Ifs"
+    );
+    assert_eq!(
+        count_switches(&g),
+        1,
+        "3-target dispatch lifts to exactly one Switch node"
+    );
+
     let pipeline = strider_orchestrator::opt::default_pipeline();
     let rule_all_false = rewrite_rule(
         strider_pattern::int_eq(
@@ -150,17 +196,24 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Resu
         let mut ctx = EditFunction::new(&mut g);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule_all_false))?
     };
-    assert!(
-        fired >= 2,
-        "rule must fire on both equality cmps in the ladder; fired {fired}",
+    assert_eq!(
+        fired, 0,
+        "an if-ladder-shaped rewrite rule must not match anything against a Switch-lowered dispatch",
     );
     pipeline.run(&mut g, &mut strider_orchestrator::opt::OptCtx::new(None))?;
-    // After all conditions become BoolConst(false), every If's true
-    // branch goes dead; DeadBranchElim collapses the ladder.
+
+    // The rule found nothing to rewrite, so the Switch (and its
+    // zero-If shape) must be exactly as it was before the (no-op)
+    // rewrite + re-optimize.
+    assert_eq!(
+        count_switches(&g),
+        1,
+        "Switch node must be untouched by the no-op rewrite + re_optimize",
+    );
     assert_eq!(
         common::count_ifs(&g),
         0,
-        "post-rewrite ladder must contain zero If nodes after re_optimize",
+        "Switch-lowered dispatch produces zero If nodes before or after the no-op rewrite",
     );
     Ok(())
 }
@@ -174,8 +227,8 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     // second rewrite — the rewriter must support being called again
     // on the same graph after re_optimize ran.
     let mut b = strider_ir_test_utils::empty_builder().unwrap();
-    let region = b.create_region().unwrap();
-    b.set_entry_region(region).unwrap();
+    let region = b.create_region_all().unwrap();
+    b.set_entry_region_all(region).unwrap();
     b.set_region(region);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let a = b.build_int_const(7u64, ValueType::I64).unwrap();

@@ -8,10 +8,12 @@ use anyhow::{Result, anyhow};
 mod arithmetic;
 mod boolean;
 mod call;
+mod pruned_ssa;
 mod cast;
 mod cc_projection;
 mod control;
 mod dispatch;
+mod dominance;
 mod float;
 mod function_lifter;
 mod integer;
@@ -202,15 +204,26 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // (the default is an empty map, so lookups are a plain `.get`).
         let mut driver = FunctionLifter::new(self, cc, cfg, all_vns, &opts.per_address_ccs)?;
 
-        // build_entry + one IR region per CFG region; returns the
-        // CFG-region → IR-region map the per-insn loop resolves successors
-        // through (via the free `ir_region_of`).
-        let region_map = driver.build_region_map()?;
+        // Pruned-SSA phi placement (Cytron): dominators + dominance frontiers
+        // over the CFG, then the iterated dominance frontier of each variable's
+        // (exactly-collected) definition sites.  This is what stops the lifter
+        // minting a value `Phi` for every varnode at every region (millions of
+        // dead phis); a phi is placed only where it is actually needed.
+        let dom = dominance::DomInfo::compute(cfg);
+        let def_sites = driver.collect_def_sites();
+        let placement = pruned_ssa::compute_phi_placement(&def_sites, &dom);
 
-        // Translate every region's instructions + non-trivial terminator
-        // into IR, then wire the fallthrough edges the per-insn loop
-        // didn't reach (and Branch edges out of empty regions).
-        driver.translate_regions(&region_map)?;
+        // build_entry + one IR region per CFG region (each with only its placed
+        // phis); returns the CFG-region → IR-region map the per-insn loop
+        // resolves successors through (via the free `ir_region_of`).
+        let region_map = driver.build_region_map(&placement)?;
+
+        // Translate every region's instructions + non-trivial terminator into
+        // IR — in dominator-tree pre-order so each region inherits its
+        // reaching variable values from its (already-processed) immediate
+        // dominator — then wire the fallthrough edges the per-insn loop didn't
+        // reach (and Branch edges out of empty regions).
+        driver.translate_regions(&region_map, &dom)?;
         driver.link_region_edges(&region_map)?;
 
         // Drain the indirect-branch anchors, then consume the builder
@@ -253,12 +266,17 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// resolves a successor's IR region in O(1) without re-traversing the
     /// petgraph.  Every CFG region gets an IR region, so every key is
     /// present (no `Option` value).
-    fn build_region_map(&mut self) -> Result<RegionMap> {
+    fn build_region_map(&mut self, placement: &pruned_ssa::PhiPlacement) -> Result<RegionMap> {
         self.builder.build_entry()?;
         let cfg = self.cfg;
         let mut region_map: RegionMap = RegionMap::default();
         for cfg_rid in cfg.region_ids() {
-            region_map.insert(cfg_rid, self.builder.create_region()?);
+            // Only the Cytron IDF-placed variables get a phi at this region.
+            let placed: Vec<strider_ir::node::InitialVnId> = placement
+                .get(&cfg_rid)
+                .map(|s| s.iter().copied().collect())
+                .unwrap_or_default();
+            region_map.insert(cfg_rid, self.builder.create_region(&placed)?);
         }
         let entry_ir = *region_map
             .get(&cfg.entry())
@@ -302,10 +320,24 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// with asm-fingerprint attribution to the region's last machine
     /// address.  `region_map` resolves a CFG region to its IR region (via
     /// the free [`ir_region_of`]).
-    fn translate_regions(&mut self, region_map: &RegionMap) -> Result<()> {
+    fn translate_regions(
+        &mut self,
+        region_map: &RegionMap,
+        dom: &dominance::DomInfo,
+    ) -> Result<()> {
         let cfg = self.cfg;
-        for cfg_rid in cfg.region_ids() {
+        // Dominator-tree pre-order: process each region only after its
+        // immediate dominator, so the pruned-SSA current-value inheritance
+        // (`inherit_variables`) reads the dominator's FINAL variable values.
+        for &cfg_rid in dom.preorder() {
             let ir_region = ir_region_of(region_map, cfg_rid)?;
+            // Seed this region's current-value map from its immediate dominator
+            // (the entry region was seeded directly by `set_entry_region`
+            // and has no idom).
+            if let Some(idom_cfg) = dom.immediate_dominator(cfg_rid) {
+                let idom_ir = ir_region_of(region_map, idom_cfg)?;
+                self.builder.inherit_variables(ir_region, idom_ir);
+            }
             self.builder.set_region(ir_region);
             let region = cfg
                 .region_graph()

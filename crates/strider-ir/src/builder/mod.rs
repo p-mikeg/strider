@@ -12,6 +12,8 @@ mod builder_ext;
 pub use builder_ext::IRBuilderExt;
 mod call;
 mod nodes;
+#[cfg(any(test, feature = "test-util"))]
+mod test_support;
 #[cfg(test)]
 mod tests;
 mod vars;

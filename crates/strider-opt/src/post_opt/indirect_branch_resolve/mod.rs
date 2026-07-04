@@ -260,8 +260,8 @@ mod tests {
     ) -> (strider_ir::Function, ValueId) {
         // No tracked variables, no calling convention plumbing.
         let mut builder = strider_ir_test_utils::empty_builder().expect("FunctionBuilder::new_raw");
-        let region = builder.create_region().expect("create_region");
-        builder.set_entry_region(region).expect("set_entry_region");
+        let region = builder.create_region_all().expect("create_region");
+        builder.set_entry_region_all(region).expect("set_entry_region");
         builder.set_region(region);
         builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let anchor = anchor_inputs(&mut builder);

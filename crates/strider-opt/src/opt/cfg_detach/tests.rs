@@ -114,11 +114,11 @@ fn find_mem_phi_of_region(fg: &strider_ir::Function, region: NodeId) -> Option<N
 /// Build `if(cond_val) { return 1; } else { return 2; }`.
 fn make_if_fn(cond_val: bool) -> crate::Result<strider_ir::Function> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let true_region = b.create_region()?;
-    let false_region = b.create_region()?;
+    let entry = b.create_region_all()?;
+    let true_region = b.create_region_all()?;
+    let false_region = b.create_region_all()?;
 
-    b.set_entry_region(entry)?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(cond_val);
@@ -272,11 +272,11 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<(
 fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region()?;
-    let true_r = b.create_region()?;
-    let false_r = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let true_r = b.create_region_all()?;
+    let false_r = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     let cond = b.build_boolean_const(false);
@@ -386,11 +386,11 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
 #[test]
 fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let true_r = b.create_region()?;
-    let false_r = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let true_r = b.create_region_all()?;
+    let false_r = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -470,13 +470,13 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
 fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region()?;
-    let r_a = b.create_region()?; // outer-true
-    let mid = b.create_region()?; // outer-false → inner if
-    let r_b = b.create_region()?; // inner-true
-    let r_c = b.create_region()?; // inner-false
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let r_a = b.create_region_all()?; // outer-true
+    let mid = b.create_region_all()?; // outer-false → inner if
+    let r_b = b.create_region_all()?; // inner-true
+    let r_c = b.create_region_all()?; // inner-false
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     // Outer if: entry → if(false) { r_a } else { mid }.
     b.set_region(entry);
@@ -555,11 +555,11 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
 fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region()?;
-    let true_r = b.create_region()?;
-    let false_r = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let true_r = b.create_region_all()?;
+    let false_r = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     let cond = b.build_boolean_const(false);

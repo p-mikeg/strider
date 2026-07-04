@@ -8,7 +8,7 @@ strider-ir = { workspace = true }
 strider-pattern = { workspace = true }
 strider-target.workspace = true
 entity-utils = { workspace = true }
-graphwalk = { workspace = true }
+graph-algorithms = { workspace = true }
 # strider-cfg forward dep: the `indirect_branch_resolve` classifiers
 # produce `strider_cfg::ResolvedTargets` to seed the CFG-rebuild feedback
 # loop (the type only — the resolver implementation lives in

@@ -12,8 +12,8 @@ use strider_ir::node::ValueType;
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    Capture, MatchPat, Matcher, any, call, call_other, if_node, int_const, load, mem_phi, phi, ret,
-    var,
+    Capture, MatchPat, Matcher, any, call, call_other, if_node, indirect_branch, int_const, load,
+    mem_phi, phi, ret, switch, unreachable, var,
 };
 
 // ── Call ──────────────────────────────────────────────────────────────────────
@@ -349,6 +349,154 @@ fn ret_captures_node() {
         function.node_kind(node),
         strider_ir::node::NodeKind::Return
     ));
+}
+
+// ── IndirectBranch ───────────────────────────────────────────────────────────
+
+fn indirect_branch_to(target_addr: u64) -> strider_ir::Function {
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let tgt = b.build_int_const(target_addr, ValueType::I64).unwrap();
+    b.build_indirect_branch(tgt).unwrap();
+    b.build().unwrap()
+}
+
+#[test]
+fn indirect_branch_captures_node() {
+    // Build a function whose region ends in an IndirectBranch placeholder.
+    let function = indirect_branch_to(0x4000);
+    let n = Capture::new();
+    let hits = Matcher::new(&function)
+        .find_all(&indirect_branch().capture(n).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    let node = hits[0]
+        .node(n, function.graph())
+        .expect("indirect_branch node capture");
+    assert!(matches!(
+        function.node_kind(node),
+        strider_ir::node::NodeKind::IndirectBranch
+    ));
+}
+
+#[test]
+fn indirect_branch_target_matches_and_captures() {
+    let function = indirect_branch_to(0x4000);
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&indirect_branch().target(int_const(0x4000u128)).build())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        matcher
+            .find_all(&indirect_branch().target(int_const(0u128)).build())
+            .unwrap()
+            .len(),
+        0
+    );
+
+    let c = Capture::new();
+    let hits = matcher
+        .find_all(&indirect_branch().target(var(c)).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].value(c).is_some());
+}
+
+// ── Unreachable ──────────────────────────────────────────────────────────────
+
+fn unreachable_fn() -> strider_ir::Function {
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    b.build_unreachable().unwrap();
+    b.build().unwrap()
+}
+
+#[test]
+fn unreachable_matches() {
+    let function = unreachable_fn();
+    let hits = Matcher::new(&function)
+        .find_all(&unreachable().build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+}
+
+#[test]
+fn unreachable_captures_node() {
+    let function = unreachable_fn();
+    let n = Capture::new();
+    let hits = Matcher::new(&function)
+        .find_all(&unreachable().capture(n).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    let node = hits[0]
+        .node(n, function.graph())
+        .expect("unreachable node capture");
+    assert!(matches!(
+        function.node_kind(node),
+        strider_ir::node::NodeKind::Unreachable
+    ));
+}
+
+// ── Switch ───────────────────────────────────────────────────────────────────
+
+fn switch_fn(addr: u64) -> strider_ir::Function {
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let dispatch = b.build_int_const(addr, ValueType::I64).unwrap();
+    let a = b.create_region_all().unwrap();
+    let c = b.create_region_all().unwrap();
+    b.build_switch(dispatch, &[(a, 0x1000), (c, 0x1020)])
+        .unwrap();
+    b.set_region(a);
+    b.build_return(None, &[]).unwrap();
+    b.set_region(c);
+    b.build_return(None, &[]).unwrap();
+    b.build().unwrap()
+}
+
+#[test]
+fn switch_matches_and_captures() {
+    let function = switch_fn(0x1000);
+    let n = Capture::new();
+    let hits = Matcher::new(&function)
+        .find_all(&switch().capture(n).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    let node = hits[0]
+        .node(n, function.graph())
+        .expect("switch node capture");
+    assert!(matches!(
+        function.node_kind(node),
+        strider_ir::node::NodeKind::Switch
+    ));
+}
+
+#[test]
+fn switch_address_matches_and_captures() {
+    let function = switch_fn(0x1000);
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&switch().address(int_const(0x1000u128)).build())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        matcher
+            .find_all(&switch().address(int_const(0u128)).build())
+            .unwrap()
+            .len(),
+        0
+    );
+
+    let c = Capture::new();
+    let hits = matcher
+        .find_all(&switch().address(var(c)).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].value(c).is_some());
 }
 
 // ── If ────────────────────────────────────────────────────────────────────────

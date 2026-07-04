@@ -32,9 +32,9 @@ fn find_var_phi(fg: &strider_ir::Function, var: rsleigh::Vn) -> NodeId {
 fn single_value_phi_collapses() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     b.build_branch(join)?;
@@ -75,11 +75,11 @@ fn single_value_phi_collapses() -> crate::Result<()> {
 fn multi_value_all_equal_phi_collapses() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region()?;
-    let a = b.create_region()?;
-    let bb = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let a = b.create_region_all()?;
+    let bb = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     let cond = b.build_boolean_const(true);
@@ -141,10 +141,10 @@ fn multi_value_all_equal_phi_collapses() -> crate::Result<()> {
 fn chained_single_pred_phis_cascade_to_base_value() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region()?;
-    let mid = b.create_region()?;
-    let tail = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let mid = b.create_region_all()?;
+    let tail = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     b.build_branch(mid)?;
@@ -181,9 +181,9 @@ fn chained_single_pred_phis_cascade_to_base_value() -> crate::Result<()> {
 fn loop_carried_self_ref_phi_collapses() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     b.build_branch(join)?;
@@ -238,11 +238,11 @@ fn loop_carried_self_ref_phi_collapses() -> crate::Result<()> {
 fn genuine_two_value_phi_unchanged() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region()?;
-    let a = b.create_region()?;
-    let bb = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let a = b.create_region_all()?;
+    let bb = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     let cond = b.build_boolean_const(true);
@@ -302,9 +302,9 @@ fn genuine_two_value_phi_unchanged() -> crate::Result<()> {
 #[test]
 fn single_value_mem_phi_collapses() -> crate::Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let body = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let body = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
@@ -364,9 +364,9 @@ fn single_value_mem_phi_collapses() -> crate::Result<()> {
 fn collapse_then_validates() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.build_branch(join)?;
     b.set_region(join);

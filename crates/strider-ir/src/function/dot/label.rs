@@ -232,6 +232,17 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             NodeKind::CPoolRef => format!("CPoolRef{}", self.out_type_suffix(node, ":")),
             NodeKind::New => format!("New{}", self.out_type_suffix(node, ":")),
 
+            NodeKind::Switch => {
+                let cases: String = self
+                    .function
+                    .side_tables()
+                    .switch_targets(node)
+                    .iter()
+                    .map(|a| format!("\n0x{a:x}"))
+                    .collect();
+                format!("Switch{cases}")
+            }
+
             // ── everything else ───────────────────────────────────────────────
             _ => format!("{kind:?}"),
         };

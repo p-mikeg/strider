@@ -5,7 +5,7 @@ use crate::IRViewer;
 use crate::builder::FunctionBuilder;
 use crate::error::Result;
 use crate::node::InitialVnId;
-use crate::node::{NodeId, ValueId};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 /// A unique identifier for a basic-block region in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,9 +35,17 @@ pub(crate) struct Region {
     cur_memory: ValueId,
     /// Current SSA value of each variable in this region.
     variables: SecondaryMap<InitialVnId, ValueId>,
-    /// `Phi` outputs — one per variable — that gather incoming values
-    /// from predecessor regions (filled in as predecessors are linked).
+    /// `Phi` outputs — one per **`phi_vars`** variable — that gather incoming
+    /// values from predecessor regions (filled in as predecessors are linked).
+    /// Entries for variables NOT in `phi_vars` are unset (no phi node exists).
     initial_variables: SecondaryMap<InitialVnId, ValueId>,
+    /// The variables that actually have a `Phi` at this region.  The eager
+    /// [`FunctionBuilder::create_region`] lists EVERY tracked variable here; the
+    /// pruned [`FunctionBuilder::create_region`] lists only the Cytron
+    /// IDF-placed variables.  `link_region_variables` iterates exactly this set,
+    /// so a non-phi variable is never linked (its value flows in by dominator
+    /// inheritance instead — see [`FunctionBuilder::inherit_variables`]).
+    phi_vars: Vec<InitialVnId>,
 }
 
 /// The result of terminating the current region: the final control and memory
@@ -130,14 +138,23 @@ impl FunctionBuilder {
         self.cur_region = Some(region);
     }
 
-    /// Adds incoming variable values from `variables` to the `Phi`
-    /// nodes of `region`.
+    /// Adds each predecessor value from `variables` to the matching `Phi` of
+    /// `region` — but only for the variables that actually HAVE a phi there
+    /// (`region.phi_vars`).  Iterating the target's phi set (not the source
+    /// map's keys) is what makes the pruned path correct: a variable with no
+    /// phi at `region` is simply skipped (its value reaches by dominator
+    /// inheritance, not by a phi operand).  Operand order follows the caller's
+    /// per-edge order, so `phi.operand[i]` stays paired with `region`'s
+    /// `i`-th control predecessor.
     pub(crate) fn link_region_variables(
         &mut self,
         region: RegionId,
         variables: &SecondaryMap<InitialVnId, ValueId>,
     ) -> Result<()> {
-        for var_id in variables.keys() {
+        // Clone the small phi-var list so the `&mut self` graph edits below
+        // don't conflict with the borrow of `self.regions[region]`.
+        let phi_vars = self.regions[region].phi_vars.clone();
+        for var_id in phi_vars {
             let region_variable_output_id = self.regions[region].initial_variables[var_id];
             let region_variable_id = self.function().producer(region_variable_output_id);
             let current_variable = variables[var_id];
@@ -148,26 +165,88 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Allocates a new [`Region`] entry and registers it in the region map.
-    pub(crate) fn create_region_helper(
-        &mut self,
-        control_node: NodeId,
-        control_id: ValueId,
-        memory_node: NodeId,
-        memory_id: ValueId,
-        initial_variables: SecondaryMap<InitialVnId, ValueId>,
-    ) -> Result<RegionId> {
-        self.require_memory_kind(memory_id)?;
-        self.require_control_kind(control_id)?;
+    /// Creates a new region: a fresh `Region` + `MemPhi` skeleton and one value
+    /// `Phi` per variable in `phi_vars`, wires the `MemPhi`'s `phi_token`
+    /// back-edge to its `Region`, and registers the region.  `phi_vars` is the
+    /// Cytron IDF-placed set for a join (production), or every tracked varnode
+    /// for an ad-hoc build (the `strider-ir-test-utils` `create_region_all`
+    /// convenience).
+    ///
+    /// The freshly-built phis are recorded as the region's current variable
+    /// values, so a `read` in the region resolves to its `Phi` immediately.  The
+    /// pruned-SSA lift path then OVERWRITES this current-value map in
+    /// dominator-tree order via [`Self::inherit_variables`] (a placed variable
+    /// takes its phi; a non-placed one inherits the immediate dominator's
+    /// reaching value), so the seeding is transparent to production and only
+    /// load-bearing for callers that build a graph WITHOUT running the
+    /// inheritance walk (i.e. tests).
+    ///
+    /// # Errors
+    ///
+    /// Returns `WrongOutputCount` if the freshly created `Region` / `MemPhi`
+    /// lacks its expected output shape (a graph-construction bug, not a user
+    /// error).  Other variants from `build_vn_phi` propagate.
+    pub fn create_region(&mut self, phi_vars: &[InitialVnId]) -> Result<RegionId> {
+        // Skeleton: a `MemPhi` for the memory token and a `Region` for control.
+        let memory_node = self.create_node(NodeKind::MemPhi, [], [ValueKind::Memory]);
+        let [memory] = self.function().node_outputs_exact(memory_node)?;
+        let control_node =
+            self.create_node(NodeKind::Region, [], [ValueKind::Control, ValueKind::PhiToken]);
+        let [control, phi_token] = self.function().node_outputs_exact(control_node)?;
+        // Wire the PhiToken as MemPhi.inputs[0] (mirrors how Phi nodes link), a
+        // back-reference so dead-branch / redundant-phi passes treat MemPhi and
+        // Phi identically.
+        self.function_mut().graph_mut().add_node_input(memory_node, phi_token);
+
+        // One value `Phi` per placed variable; `variables` (the current-value
+        // map) is either seeded from those phis (eager) or left for inheritance.
+        let mut initial_variables = SecondaryMap::new();
+        for &vn_id in phi_vars {
+            let var = self.function().initial_vn(vn_id);
+            initial_variables[vn_id] = self.build_vn_phi(var, phi_token, &[])?;
+        }
+        // Seed the current-value map with the fresh phis (see the doc: the
+        // pruned lift path overwrites this via `inherit_variables`).
+        let variables = initial_variables.clone();
+
+        self.require_memory_kind(memory)?;
+        self.require_control_kind(control)?;
         Ok(self.regions.push(Region {
             terminated: false,
             control_node,
             memory_node,
-            cur_ctrl: control_id,
-            cur_memory: memory_id,
-            variables: initial_variables.clone(),
+            cur_ctrl: control,
+            cur_memory: memory,
+            variables,
             initial_variables,
+            phi_vars: phi_vars.to_vec(),
         }))
+    }
+
+    /// Fills `region`'s current-value map for the pruned path: every variable
+    /// starts at its reaching value from the immediate dominator `idom` (which
+    /// is fully processed first, in dom-tree order), then each of `region`'s
+    /// own placed phis overrides that variable.  After this, processing
+    /// `region`'s instructions reads/writes against `variables` exactly as the
+    /// eager path does.
+    pub fn inherit_variables(&mut self, region: RegionId, idom: RegionId) {
+        let mut variables = self.regions[idom].variables.clone();
+        let phi_vars = self.regions[region].phi_vars.clone();
+        for var_id in phi_vars {
+            variables[var_id] = self.regions[region].initial_variables[var_id];
+        }
+        self.regions[region].variables = variables;
+    }
+
+    /// Directly seeds `region`'s current-value map — the pruned entry setup,
+    /// where the entry region has no value phis so its `InitialVar` values ARE
+    /// its variable values (the root every dominated region inherits from).
+    pub(crate) fn set_region_variables(
+        &mut self,
+        region: RegionId,
+        variables: SecondaryMap<InitialVnId, ValueId>,
+    ) {
+        self.regions[region].variables = variables;
     }
 
     /// Writes `value` to variable `var_id` in the active region.

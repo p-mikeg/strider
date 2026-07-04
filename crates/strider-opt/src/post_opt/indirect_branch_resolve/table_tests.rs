@@ -63,8 +63,8 @@ fn build_with_anchor(
     anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
 ) -> (Function, ValueId) {
     let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
-    let region = builder.create_region().expect("create_region");
-    builder.set_entry_region(region).expect("set_entry_region");
+    let region = builder.create_region_all().expect("create_region");
+    builder.set_entry_region_all(region).expect("set_entry_region");
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let anchor = anchor_inputs(&mut builder);
@@ -425,10 +425,10 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
         size: 4,
     };
     let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
-    b.set_entry_region(entry).unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
     let idx_at_entry = b.read_variable(&idx_var).unwrap();
@@ -521,13 +521,13 @@ fn classify_table_dispatch_diamond_both_paths_guarded_defers() {
         size: 4,
     };
     let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
-    let entry = b.create_region().unwrap();
-    let path_a = b.create_region().unwrap();
-    let path_b = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit_a = b.create_region().unwrap();
-    let exit_b = b.create_region().unwrap();
-    b.set_entry_region(entry).unwrap();
+    let entry = b.create_region_all().unwrap();
+    let path_a = b.create_region_all().unwrap();
+    let path_b = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit_a = b.create_region_all().unwrap();
+    let exit_b = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
     let idx_e = b.read_variable(&idx_var).unwrap();
@@ -615,12 +615,12 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
         size: 4,
     };
     let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
-    let entry = b.create_region().unwrap();
-    let path_a = b.create_region().unwrap();
-    let path_b = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit_a = b.create_region().unwrap();
-    b.set_entry_region(entry).unwrap();
+    let entry = b.create_region_all().unwrap();
+    let path_a = b.create_region_all().unwrap();
+    let path_b = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit_a = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     // entry: read idx from register, split to path_a / path_b.
     b.set_region(entry);
@@ -700,10 +700,10 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
 fn classify_table_dispatch_guarded_direct_load_anchor() {
     use strider_ir::IntCmpOp;
     let mut b = strider_ir_test_utils::empty_builder().unwrap();
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
-    b.set_entry_region(entry).unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     // entry: load a value, guard `entry < 4`, branch to dispatch.
     b.set_region(entry);
@@ -780,10 +780,10 @@ fn classify_table_dispatch_decoy_offpath_value_not_enumerated() {
         .tracked(decoy_var)
         .build_fn()
         .unwrap();
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
-    b.set_entry_region(entry).unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     // entry: guard the DECOY (`decoy < 4`), branch to dispatch.
     b.set_region(entry);

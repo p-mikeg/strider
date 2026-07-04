@@ -12,9 +12,9 @@ use crate::{OptimizerPipeline, PhiCollapse};
 #[test]
 fn single_input_region_collapses() -> crate::Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let body = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let body = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
@@ -59,11 +59,11 @@ fn single_input_region_collapses() -> crate::Result<()> {
 #[test]
 fn multi_input_region_unchanged() -> crate::Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let true_r = b.create_region()?;
-    let false_r = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let true_r = b.create_region_all()?;
+    let false_r = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
@@ -124,9 +124,9 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
     // `fn() { branch body; body: return; }` — `body` is a single-pred
     // Region whose only control consumer is the Return.
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let body = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let body = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
@@ -193,9 +193,9 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
 fn collapse_with_phi_collapse_validates() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.build_branch(join)?;
     b.set_region(join);

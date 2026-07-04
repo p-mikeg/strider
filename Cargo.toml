@@ -11,7 +11,7 @@ strider-reader = { path = "crates/strider-reader" }
 strider-target = { path = "crates/strider-target" }
 dot = { path = "crates/dot" }
 entity-utils = { path = "crates/entity-utils" }
-graphwalk = { path = "crates/graphwalk" }
+graph-algorithms = { path = "crates/graph-algorithms" }
 read-only-memory = { path = "crates/read-only-memory" }
 strider-cfg = { path = "crates/strider-cfg" }
 strider-graph = { path = "crates/strider-graph" }

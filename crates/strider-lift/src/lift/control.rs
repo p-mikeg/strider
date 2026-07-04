@@ -1,110 +1,8 @@
 use crate::lift::pcode_util::nth_input_or_err;
 use anyhow::{Result, anyhow, bail};
-use strider_ir::{IRBuilderExt, IRViewer};
+use strider_ir::IRBuilderExt;
 
 use super::FunctionLifter;
-
-/// Emits an If-ladder dispatching `idx` against `targets_and_regions`.
-///
-/// Builds a chain of `IntCmpOp::Equal + If` nodes, one per case, using
-/// only the existing `FunctionBuilder::build_if` /
-/// `build_int_const` / `build_int_cmp_operation` primitives.
-///
-/// Layout (forward iteration over the slice):
-///
-/// ```text
-/// dispatch_region:
-///   if (idx == K_0)  → R_0
-///                    → dispatcher_1
-/// dispatcher_1:
-///   if (idx == K_1)  → R_1
-///                    → dispatcher_2
-/// ...
-/// dispatcher_{N-2}:
-///   if (idx == K_{N-2}) → R_{N-2}
-///                       → R_{N-1}            (last cmp's false-branch is the final target)
-/// ```
-///
-/// The last comparison's false-branch goes UNCONDITIONALLY to the
-/// final target's region — this is sound because the IR-level indirect-branch resolver's `Multiple`
-/// classification is exhaustive for the runtime index range
-/// (KnownBits / predecessor `If(idx < N)` provide the upper bound),
-/// so the runtime always picks one of `targets`.  Sending the
-/// otherwise-unreachable default to `targets[N-1]` keeps the IR
-/// well-formed without inventing an "unreachable" sink region; the
-/// optimizer can prune the dead default branch when ConstantFold
-/// folds `idx` to a constant in a single-target case.
-///
-/// Special cases:
-/// - `targets_and_regions.len() == 0` — returns an error.  Defensive;
-///   the cfg builder rejects empty `Multiple` upstream.
-/// - `targets_and_regions.len() == 1` — emits a plain
-///   `build_branch(target_0)` with no comparison.
-///
-/// `dispatch_region` (the region terminated by the Switch) appears in
-/// the empty-targets error for diagnostics only.
-///
-/// # Errors
-///
-/// Propagates the IR-shape errors from `FunctionBuilder::build_if` /
-/// `build_branch` / `build_int_cmp_operation` / `build_int_const` /
-/// `create_region`, plus an explicit error when `targets_and_regions`
-/// is empty.
-pub(crate) fn build_switch_if_ladder(
-    builder: &mut strider_ir::FunctionBuilder,
-    idx: strider_ir::Value,
-    targets_and_regions: &[(u64, strider_ir::RegionId)],
-    dispatch_region: strider_cfg::RegionId,
-) -> Result<()> {
-    let n = targets_and_regions.len();
-    if n == 0 {
-        bail!("switch terminator at region {dispatch_region:?} has no targets");
-    }
-    if n == 1 {
-        // Single target — degenerate ladder is just an unconditional
-        // branch.  ConstantFold can't simplify a `cmp` it doesn't see;
-        // emitting a 1-target switch as a plain branch keeps the IR
-        // shape minimal and matches what the cfg builder would have
-        // produced for `Single(K)`.
-        let (_target, region) = targets_and_regions[0];
-        builder.build_branch(region)?;
-        return Ok(());
-    }
-    // Comparison value type drives the IntConst widths and the
-    // IntCmpOp output type.  The cmp's output is always Bool but
-    // `build_int_cmp_operation` takes `output_type` for the
-    // input-side coercion.
-    let idx_ty = builder.function().value_kind(idx).as_value_or_err()?;
-    // Walk every case except the last; the last comparison's false
-    // branch is the final target's region (no extra dispatcher).
-    for i in 0..n - 1 {
-        let (k_i, region_i) = targets_and_regions[i];
-        let next_else: strider_ir::RegionId = if i + 1 == n - 1 {
-            // Final iteration's else IS the final target.
-            targets_and_regions[n - 1].1
-        } else {
-            // Synthesise a dispatcher region for the next comparison.
-            builder.create_region()?
-        };
-        let target_const = builder.build_int_const(k_i, idx_ty)?;
-        let cond = builder.build_int_cmp_operation(
-            idx,
-            target_const,
-            strider_ir::IntCmpOp::Equal,
-            idx_ty,
-        )?;
-        builder.build_if(cond, region_i, next_else)?;
-        if i + 1 < n - 1 {
-            // Move into the freshly synthesised dispatcher for the
-            // next iteration's `build_if` to terminate.  We skip the
-            // set on the second-to-last iteration because that
-            // iteration's else is the FINAL target's region (already
-            // existing) — no dispatcher to thread through.
-            builder.set_region(next_else);
-        }
-    }
-    Ok(())
-}
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(super) fn handle_branch(&mut self) -> Result<()> {
@@ -119,8 +17,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     /// Lifts a region whose CFG terminator is
-    /// [`strider_cfg::RegionTerminator::Switch`] into an If-ladder of
-    /// `IntCmpOp::Equal + If` nodes against each target.
+    /// [`strider_cfg::RegionTerminator::Switch`] into a single
+    /// `Switch` node with one control output per target.
     ///
     /// `region_id` is the dispatch region (the one terminated by
     /// the Switch).  For each target machine address in `targets`,
@@ -132,9 +30,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ///
     /// Returns an error when `targets` is empty, when a target
     /// machine address has no matching CFG region, or propagates IR
-    /// construction failures from `read_vn` / `build_if` /
-    /// `build_branch` / `build_int_const` / `build_int_cmp_operation` /
-    /// `create_region`.
+    /// construction failures from `read_vn` / `build_branch` /
+    /// `build_switch`.
     pub(crate) fn handle_switch(
         &mut self,
         region_id: strider_cfg::RegionId,
@@ -160,10 +57,18 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             let ir_region = super::ir_region_of(region_map, cfg_region)?;
             targets_and_regions.push((target, ir_region));
         }
-        // Read the dispatch value at the region exit — the comparison
-        // value for the If-ladder.
+        // Read the dispatch value at the region exit — the switch
+        // address value.
         let idx = self.read_vn(target_vn)?;
-        build_switch_if_ladder(&mut self.builder, idx, &targets_and_regions, region_id)
+        // n == 1 degenerates to a plain branch (unchanged behavior).
+        if targets_and_regions.len() == 1 {
+            return self.builder.build_branch(targets_and_regions[0].1);
+        }
+        let arms: Vec<(strider_ir::RegionId, u64)> = targets_and_regions
+            .iter()
+            .map(|&(addr, region)| (region, addr))
+            .collect();
+        self.builder.build_switch(idx, &arms)
     }
 
     pub(super) fn handle_cond_branch(
@@ -245,8 +150,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             let cc = override_cc.unwrap_or_else(|| self.builder.function().default_cc());
             // One scan yields both the ret-val and clobber lists (they are the
             // two halves of the same projection over `all_vns`).
-            let (ret_vns, clobber_vns) = cc
-                .ret_and_clobber_vns(self.builder.function().all_vns(), |v| self.container_of(v));
+            let (ret_vns, clobber_vns) =
+                cc.ret_and_clobber_vns(self.builder.function().all_vns(), |v| self.container_of(v));
             (
                 ret_vns,
                 clobber_vns,
@@ -280,7 +185,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         }
 
         if let Some(cc) = override_cc {
-            self.builder.function_mut().side_tables_mut().set_call_cc(call, cc.clone());
+            self.builder
+                .function_mut()
+                .side_tables_mut()
+                .set_call_cc(call, cc.clone());
         }
         Ok(())
     }
@@ -369,17 +277,16 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for `build_switch_if_ladder`.  Cover the IR
-    //! construction primitive in isolation (no Cfg required); the
-    //! integration coverage that drives the full
-    //! `handle_switch` → `build_ir` path lives in
+    //! Unit tests pinning the `Switch`-node shape `handle_switch` emits.
+    //! Cover the IR construction shape in isolation (no Cfg required, via
+    //! `FunctionBuilder::build_switch` directly); the integration coverage
+    //! that drives the full `handle_switch` → `build_ir` path lives in
     //! `crates/strider-orchestrator/tests/jump_table_lifting.rs`.
 
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::*;
     use strider_ir::node::NodeKind;
-    use strider_ir::{FunctionBuilder, IRWalker};
+    use strider_ir::{FunctionBuilder, IRViewer, IRWalker};
     use strider_ir_test_utils::{IrWalkerEx, RegisterSet};
 
     /// Build a 4-byte register VN to act as the `idx` source.
@@ -407,10 +314,10 @@ mod tests {
             .tracked(idx)
             .build_fn()
             .expect("RegisterSet::build_fn");
-        let dispatch = b.create_region().expect("dispatch region");
-        b.set_entry_region(dispatch).expect("set_entry_region");
+        let dispatch = b.create_region_all().expect("dispatch region");
+        b.set_entry_region_all(dispatch).expect("set_entry_region");
         let target_regions: Vec<strider_ir::RegionId> = (0..n)
-            .map(|_| b.create_region().expect("create target region"))
+            .map(|_| b.create_region_all().expect("create target region"))
             .collect();
         // Each target region terminates with a Return so `build()`
         // produces a valid graph.  We use the calling convention's
@@ -425,187 +332,38 @@ mod tests {
         (b, idx_val, target_regions)
     }
 
-    /// Returns the unique cfg-region-id sentinel.  The helper only
-    /// uses it inside the `SwitchHasNoTargets` error payload, so any
-    /// value is fine for these tests.
-    fn dummy_caller_region() -> strider_cfg::RegionId {
-        strider_cfg::RegionId::new(0)
-    }
-
     /// Count `If` nodes via the post-build preorder walk.
     fn count_if_nodes(function: &strider_ir::Function) -> usize {
         function.count_kind(|k| matches!(k, NodeKind::If))
     }
 
-    /// Count `IntCmpOp(Equal)` nodes via the post-build preorder walk.
-    fn count_eq_cmps(function: &strider_ir::Function) -> usize {
-        function.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
-    }
-
-    /// Count `IntConst` nodes whose value equals `want`.
-    fn count_int_consts_eq(function: &strider_ir::Function, want: u128) -> usize {
-        use strider_ir::IRViewer;
-        function
-            .walk_kind(|k| matches!(k, NodeKind::IntConst(_)))
-            .filter(|&n| {
-                function
-                    .node_outputs(n)
-                    .iter()
-                    .any(|&out| function.int_const_u128(out) == Some(want))
-            })
-            .count()
-    }
-
     #[test]
-    fn handle_switch_with_one_target_emits_single_branch_no_cmp() {
-        // Single-target switch: degenerate ladder collapses to a
-        // plain `build_branch`.  No comparison, no If, no IntConst
-        // for the dispatch value.  The target region is reachable
-        // via the single Branch edge.
-        let (mut b, idx, regions) = make_builder_with_targets(1);
-        build_switch_if_ladder(
-            &mut b,
-            idx,
-            &[(0xdeadu64, regions[0])],
-            dummy_caller_region(),
-        )
-        .expect("build_switch_if_ladder(1)");
+    fn handle_switch_emits_single_switch_node() {
+        // Multi-target switch: emits exactly one `Switch` node with one
+        // control output per arm (no If-ladder — this is what the
+        // handle_switch → build_switch rewrite replaces the ladder with).
+        let n = 3;
+        let (mut b, idx, regions) = make_builder_with_targets(n);
+        let arms: Vec<(strider_ir::RegionId, u64)> = regions
+            .iter()
+            .enumerate()
+            .map(|(i, &r)| (r, 0x1000u64 + i as u64 * 0x1000))
+            .collect();
+        b.build_switch(idx, &arms).expect("build_switch");
         let function = b.build().expect("build");
+        let switches: Vec<_> = function
+            .walk_kind(|k| matches!(k, NodeKind::Switch))
+            .collect();
+        assert_eq!(switches.len(), 1, "exactly one Switch node");
+        assert_eq!(
+            function.node_outputs(switches[0]).len(),
+            n,
+            "one control output per arm"
+        );
         assert_eq!(
             count_if_nodes(&function),
             0,
-            "no If nodes for 1-target switch"
-        );
-        assert_eq!(count_eq_cmps(&function), 0, "no equality cmps for 1-target");
-        assert_eq!(
-            count_int_consts_eq(&function, 0xdead),
-            0,
-            "no comparison constant emitted for 1-target",
-        );
-    }
-
-    #[test]
-    fn handle_switch_with_two_targets_emits_one_if_with_correct_polarity() {
-        // Two-target switch: emits exactly ONE If whose true-branch
-        // points at target_0 and whose false-branch points at
-        // target_1 (the last comparison's else IS the final target).
-        // One IntCmpOp(Equal), one IntConst for K_0.
-        let (mut b, idx, regions) = make_builder_with_targets(2);
-        build_switch_if_ladder(
-            &mut b,
-            idx,
-            &[(0x100u64, regions[0]), (0x200u64, regions[1])],
-            dummy_caller_region(),
-        )
-        .expect("build_switch_if_ladder(2)");
-        let function = b.build().expect("build");
-        assert_eq!(
-            count_if_nodes(&function),
-            1,
-            "exactly one If for 2-target switch"
-        );
-        assert_eq!(
-            count_eq_cmps(&function),
-            1,
-            "exactly one equality cmp for 2-target switch",
-        );
-        // K_0 (0x100) is compared; K_{N-1} (0x200) is NOT compared
-        // because the last If's false-branch flows unconditionally
-        // to its region.
-        assert!(
-            count_int_consts_eq(&function, 0x100) >= 1,
-            "K_0 (0x100) must be present as IntConst",
-        );
-    }
-
-    #[test]
-    fn handle_switch_with_three_targets_chains_if_ladder_and_two_consts() {
-        // Three-target switch: emits 2 If nodes (one per non-final
-        // case) and 2 IntCmpOp(Equal) cmps against K_0 and K_1.
-        // The final case (K_2) is reached via the last If's
-        // false-branch — no comparison emitted for K_2.
-        let (mut b, idx, regions) = make_builder_with_targets(3);
-        build_switch_if_ladder(
-            &mut b,
-            idx,
-            &[
-                (0x1000u64, regions[0]),
-                (0x2000u64, regions[1]),
-                (0x3000u64, regions[2]),
-            ],
-            dummy_caller_region(),
-        )
-        .expect("build_switch_if_ladder(3)");
-        let function = b.build().expect("build");
-        assert_eq!(
-            count_if_nodes(&function),
-            2,
-            "N-1=2 If nodes for 3-target switch"
-        );
-        assert_eq!(
-            count_eq_cmps(&function),
-            2,
-            "N-1=2 equality cmps for 3-target switch"
-        );
-        assert!(
-            count_int_consts_eq(&function, 0x1000) >= 1,
-            "K_0 (0x1000) IntConst present",
-        );
-        assert!(
-            count_int_consts_eq(&function, 0x2000) >= 1,
-            "K_1 (0x2000) IntConst present",
-        );
-        assert_eq!(
-            count_int_consts_eq(&function, 0x3000),
-            0,
-            "K_{{N-1}} (0x3000) NOT compared — flows via last If's false-branch",
-        );
-    }
-
-    #[test]
-    fn handle_switch_threads_control_chain_through_dispatcher_regions() {
-        // For N targets the helper allocates N-2 dispatcher regions
-        // (one per intermediate If's else side).  After the call,
-        // the IR graph has exactly N-1 If nodes feeding control to
-        // the target regions; running `build()` succeeds (validate
-        // passes), which is the strongest single check that the
-        // control chain is well-formed end-to-end.
-        let (mut b, idx, regions) = make_builder_with_targets(4);
-        build_switch_if_ladder(
-            &mut b,
-            idx,
-            &[
-                (0xa0u64, regions[0]),
-                (0xb0u64, regions[1]),
-                (0xc0u64, regions[2]),
-                (0xd0u64, regions[3]),
-            ],
-            dummy_caller_region(),
-        )
-        .expect("build_switch_if_ladder(4)");
-        let function = b.build().expect("build");
-        assert_eq!(
-            count_if_nodes(&function),
-            3,
-            "N-1=3 If nodes for 4-target switch"
-        );
-        // Validation already happened inside build(); reaching this
-        // line means the per-region control-chain is consistent.
-        let _ = function;
-    }
-
-    #[test]
-    fn handle_switch_with_zero_targets_returns_typed_error() {
-        // Defensive: cfg builder rejects empty `Multiple` upstream,
-        // but the helper's error path must still surface a typed
-        // error rather than a panic.  Pin that here.
-        let (mut b, idx, _regions) = make_builder_with_targets(0);
-        let err = build_switch_if_ladder(&mut b, idx, &[], dummy_caller_region())
-            .expect_err("zero-target switch must error");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("switch terminator") && msg.contains("no targets"),
-            "error must name the SwitchHasNoTargets variant; got {msg:?}",
+            "no If nodes from a Switch-lowered dispatch"
         );
     }
 }

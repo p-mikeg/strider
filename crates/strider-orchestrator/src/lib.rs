@@ -658,8 +658,8 @@ mod tests {
     fn fn_with_live_indirect_branch() -> (strider_ir::Function, NodeId) {
         use strider_ir::IRBuilderExt;
         let mut b = strider_ir_test_utils::empty_builder().expect("builder");
-        let region = b.create_region().expect("region");
-        b.set_entry_region(region).expect("entry");
+        let region = b.create_region_all().expect("region");
+        b.set_entry_region_all(region).expect("entry");
         b.set_region(region);
         b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
         let target = b
