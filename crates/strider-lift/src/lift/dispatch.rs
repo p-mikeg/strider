@@ -65,7 +65,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         insn: &rsleigh::Insn,
         region_map: &super::RegionMap,
     ) -> Result<()> {
-        let lifter = self;
         // `handle_branch` / `handle_cond_branch` resolve successor regions
         // through `region_map` (via `super::ir_region_of`).
         match insn.opcode {
@@ -73,17 +72,17 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // Cast: apply a data-type to the output varnode.  GHIDRA docs:
             // "semantically equivalent to a COPY operation", so it shares the
             // `Copy` handler verbatim (read input 0, write to the output vn).
-            Opcode::Copy | Opcode::Cast => lifter.handle_copy(insn)?,
-            Opcode::IntSub => lifter.handle_int_sub(insn)?,
-            Opcode::IntLessEqual => lifter.handle_int_less_equal(insn)?,
-            Opcode::IntSlessEqual => lifter.handle_int_sless_equal(insn)?,
-            Opcode::IntNotEqual => lifter.handle_int_not_equal(insn)?,
-            Opcode::Subpiece => lifter.handle_subpiece(insn)?,
-            Opcode::Popcount => lifter.handle_popcount(insn)?,
-            Opcode::Lzcount => lifter.handle_lzcount(insn)?,
-            Opcode::Piece => lifter.handle_piece(insn)?,
-            Opcode::Extract => lifter.handle_extract(insn)?,
-            Opcode::Insert => lifter.handle_insert(insn)?,
+            Opcode::Copy | Opcode::Cast => self.handle_copy(insn)?,
+            Opcode::IntSub => self.handle_int_sub(insn)?,
+            Opcode::IntLessEqual => self.handle_int_less_equal(insn)?,
+            Opcode::IntSlessEqual => self.handle_int_sless_equal(insn)?,
+            Opcode::IntNotEqual => self.handle_int_not_equal(insn)?,
+            Opcode::Subpiece => self.handle_subpiece(insn)?,
+            Opcode::Popcount => self.handle_popcount(insn)?,
+            Opcode::Lzcount => self.handle_lzcount(insn)?,
+            Opcode::Piece => self.handle_piece(insn)?,
+            Opcode::Extract => self.handle_extract(insn)?,
+            Opcode::Insert => self.handle_insert(insn)?,
             // PtrAdd / PtrSub are decompiler-internal pointer-arithmetic
             // opcodes (CPUI_PTRADD / CPUI_PTRSUB) that `rsleigh::Sleigh::lift_one`
             // does not emit — raw SLEIGH lifting uses INT_ADD/INT_MULT directly.
@@ -96,35 +95,35 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     insn.opcode
                 );
             }
-            Opcode::FloatSub => lifter.handle_float_sub(insn)?,
-            Opcode::FloatNotEqual => lifter.handle_float_not_equal(insn)?,
-            Opcode::FloatLessEqual => lifter.handle_float_less_equal(insn)?,
+            Opcode::FloatSub => self.handle_float_sub(insn)?,
+            Opcode::FloatNotEqual => self.handle_float_not_equal(insn)?,
+            Opcode::FloatLessEqual => self.handle_float_less_equal(insn)?,
             // FloatNan: tests whether input is NaN (unary, → bool).  Lowered to
             // Xor(FloatEqual(x, x), 1):I1 since IEEE 754 guarantees NaN != NaN.
-            Opcode::FloatNan => lifter.handle_float_nan(insn)?,
+            Opcode::FloatNan => self.handle_float_nan(insn)?,
             // IntNeg: bitwise complement (`~x`).  Lowered to `Xor(x, all_ones)` —
             // the former BitNot unary-op was removed in favour of the canonical Xor shape.
-            Opcode::IntNeg => lifter.handle_int_neg_as_xor(insn)?,
+            Opcode::IntNeg => self.handle_int_neg_as_xor(insn)?,
             // BoolNeg: logical NOT of a 1-bit value.  Lowered to
             // `Xor(x, IntConst(1)):I1` for the same reason.
-            Opcode::BoolNeg => lifter.process_bool_unary_op(insn)?,
+            Opcode::BoolNeg => self.process_bool_unary_op(insn)?,
             // ── Float / integer conversions ───────────────────────────────────
-            Opcode::FloatInt2Float => lifter.handle_float_int_to_float(insn)?,
-            Opcode::FloatFloat2Float => lifter.handle_float_float_to_float(insn)?,
-            Opcode::FloatTrunc => lifter.handle_float_trunc(insn)?,
-            Opcode::Load => lifter.handle_load(insn)?,
+            Opcode::FloatInt2Float => self.handle_float_int_to_float(insn)?,
+            Opcode::FloatFloat2Float => self.handle_float_float_to_float(insn)?,
+            Opcode::FloatTrunc => self.handle_float_trunc(insn)?,
+            Opcode::Load => self.handle_load(insn)?,
             // SegmentOp: segmented-address lookup.
-            Opcode::SegmentOp => lifter.handle_segment_op(insn)?,
+            Opcode::SegmentOp => self.handle_segment_op(insn)?,
             // CPoolRef: JVM constant-pool lookup.  Opaque, variadic refs.
-            Opcode::CPoolRef => lifter.handle_cpool_ref(insn)?,
+            Opcode::CPoolRef => self.handle_cpool_ref(insn)?,
             // New: JVM object allocation.  Opaque.
-            Opcode::New => lifter.handle_new(insn)?,
+            Opcode::New => self.handle_new(insn)?,
 
             // ── Control-flow / call / store opcodes ──────────────────────────
             Opcode::Nop => {}
-            Opcode::Branch => lifter.handle_branch()?,
-            Opcode::CondBranch => lifter.handle_cond_branch(region_id, insn, region_map)?,
-            Opcode::Store => lifter.handle_store(insn)?,
+            Opcode::Branch => self.handle_branch()?,
+            Opcode::CondBranch => self.handle_cond_branch(region_id, insn, region_map)?,
+            Opcode::Store => self.handle_store(insn)?,
             // `Return` and `BranchIndirect` share a handler that emits a
             // calling-convention `Return`.  This is correct for the
             // link-register-return case (e.g. ARM `bx lr`); tail calls /
@@ -132,9 +131,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // terminators (`Switch`, `UnresolvedIndirectBranch`) that the
             // cfg builder seats from the orchestrator's `known_targets`
             // feedback, both handled in the special-terminator post-pass.
-            Opcode::Return | Opcode::BranchIndirect => lifter.handle_return()?,
-            Opcode::Call => lifter.handle_call(insn)?,
-            Opcode::CallIndirect => lifter.handle_call_indirect(insn)?,
+            Opcode::Return | Opcode::BranchIndirect => self.handle_return()?,
+            Opcode::Call => self.handle_call(insn)?,
+            Opcode::CallIndirect => self.handle_call_indirect(insn)?,
             // GHIDRA's MULTIEQUAL is a decompiler-internal phi that
             // `rsleigh::Sleigh::lift_one` does not emit.  Surfacing it
             // here means rsleigh's contract changed; surface as an
@@ -149,7 +148,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // inputs[0] is a CONST user-op id; remaining inputs are arguments.
             // Clobbers memory.  The instruction's output varnode, if present,
             // receives the intrinsic's result value.
-            Opcode::CallOther => lifter.handle_call_other(insn)?,
+            Opcode::CallOther => self.handle_call_other(insn)?,
 
             // ── Trivial forwarding arms ──────────────────────────────────────
             // Integer / bool / float binary, comparison, unary, and extend
@@ -158,51 +157,51 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // a one-line match-arm edit.
             //
             // Integer binary:
-            Opcode::IntAdd => lifter.process_int_binary_op(insn, IntBinaryOp::Add)?,
-            Opcode::IntAnd => lifter.process_int_binary_op(insn, IntBinaryOp::And)?,
-            Opcode::IntXor => lifter.process_int_binary_op(insn, IntBinaryOp::Xor)?,
-            Opcode::IntOr => lifter.process_int_binary_op(insn, IntBinaryOp::Or)?,
-            Opcode::IntDiv => lifter.process_int_binary_op(insn, IntBinaryOp::Div)?,
-            Opcode::IntSdiv => lifter.process_int_binary_op(insn, IntBinaryOp::Sdiv)?,
-            Opcode::IntMul => lifter.process_int_binary_op(insn, IntBinaryOp::Mul)?,
-            Opcode::IntRight => lifter.process_int_binary_op(insn, IntBinaryOp::ShiftRight)?,
-            Opcode::IntSright => lifter.process_int_binary_op(insn, IntBinaryOp::SShiftRight)?,
-            Opcode::IntLeft => lifter.process_int_binary_op(insn, IntBinaryOp::ShiftLeft)?,
-            Opcode::IntRem => lifter.process_int_binary_op(insn, IntBinaryOp::Rem)?,
-            Opcode::IntSrem => lifter.process_int_binary_op(insn, IntBinaryOp::Srem)?,
+            Opcode::IntAdd => self.process_int_binary_op(insn, IntBinaryOp::Add)?,
+            Opcode::IntAnd => self.process_int_binary_op(insn, IntBinaryOp::And)?,
+            Opcode::IntXor => self.process_int_binary_op(insn, IntBinaryOp::Xor)?,
+            Opcode::IntOr => self.process_int_binary_op(insn, IntBinaryOp::Or)?,
+            Opcode::IntDiv => self.process_int_binary_op(insn, IntBinaryOp::Div)?,
+            Opcode::IntSdiv => self.process_int_binary_op(insn, IntBinaryOp::Sdiv)?,
+            Opcode::IntMul => self.process_int_binary_op(insn, IntBinaryOp::Mul)?,
+            Opcode::IntRight => self.process_int_binary_op(insn, IntBinaryOp::ShiftRight)?,
+            Opcode::IntSright => self.process_int_binary_op(insn, IntBinaryOp::SShiftRight)?,
+            Opcode::IntLeft => self.process_int_binary_op(insn, IntBinaryOp::ShiftLeft)?,
+            Opcode::IntRem => self.process_int_binary_op(insn, IntBinaryOp::Rem)?,
+            Opcode::IntSrem => self.process_int_binary_op(insn, IntBinaryOp::Srem)?,
             // Integer comparison:
-            Opcode::IntCarry => lifter.process_int_cmp_op(insn, IntCmpOp::Carry)?,
-            Opcode::IntEqual => lifter.process_int_cmp_op(insn, IntCmpOp::Equal)?,
-            Opcode::IntLess => lifter.process_int_cmp_op(insn, IntCmpOp::Less)?,
-            Opcode::IntSless => lifter.process_int_cmp_op(insn, IntCmpOp::Sless)?,
-            Opcode::IntScarry => lifter.process_int_cmp_op(insn, IntCmpOp::Scarry)?,
-            Opcode::IntSborrow => lifter.process_int_cmp_op(insn, IntCmpOp::Sborrow)?,
+            Opcode::IntCarry => self.process_int_cmp_op(insn, IntCmpOp::Carry)?,
+            Opcode::IntEqual => self.process_int_cmp_op(insn, IntCmpOp::Equal)?,
+            Opcode::IntLess => self.process_int_cmp_op(insn, IntCmpOp::Less)?,
+            Opcode::IntSless => self.process_int_cmp_op(insn, IntCmpOp::Sless)?,
+            Opcode::IntScarry => self.process_int_cmp_op(insn, IntCmpOp::Scarry)?,
+            Opcode::IntSborrow => self.process_int_cmp_op(insn, IntCmpOp::Sborrow)?,
             // Integer unary: only `Int2Comp` (two's-complement negate, `-x`)
             // — `IntNeg` (bitwise complement `~x`) is lowered above to
             // `Xor(x, all_ones)` via `handle_int_neg_as_xor`.
-            Opcode::Int2Comp => lifter.process_int_unary_op(insn, IntUnaryOp::Neg)?,
+            Opcode::Int2Comp => self.process_int_unary_op(insn, IntUnaryOp::Neg)?,
             // Integer extend:
-            Opcode::IntZext => lifter.process_extend(insn, ExtendOp::ZeroExtend)?,
-            Opcode::IntSext => lifter.process_extend(insn, ExtendOp::SignExtend)?,
+            Opcode::IntZext => self.process_extend(insn, ExtendOp::ZeroExtend)?,
+            Opcode::IntSext => self.process_extend(insn, ExtendOp::SignExtend)?,
             // Boolean binary: booleans are `I1`, so logical and/or/xor are
             // integer and/or/xor at `I1`.
-            Opcode::BoolAnd => lifter.process_bool_binary_op(insn, IntBinaryOp::And)?,
-            Opcode::BoolOr => lifter.process_bool_binary_op(insn, IntBinaryOp::Or)?,
-            Opcode::BoolXor => lifter.process_bool_binary_op(insn, IntBinaryOp::Xor)?,
+            Opcode::BoolAnd => self.process_bool_binary_op(insn, IntBinaryOp::And)?,
+            Opcode::BoolOr => self.process_bool_binary_op(insn, IntBinaryOp::Or)?,
+            Opcode::BoolXor => self.process_bool_binary_op(insn, IntBinaryOp::Xor)?,
             // Float binary:
-            Opcode::FloatAdd => lifter.process_float_binary_op(insn, FloatBinaryOp::Add)?,
-            Opcode::FloatMul => lifter.process_float_binary_op(insn, FloatBinaryOp::Mul)?,
-            Opcode::FloatDiv => lifter.process_float_binary_op(insn, FloatBinaryOp::Div)?,
+            Opcode::FloatAdd => self.process_float_binary_op(insn, FloatBinaryOp::Add)?,
+            Opcode::FloatMul => self.process_float_binary_op(insn, FloatBinaryOp::Mul)?,
+            Opcode::FloatDiv => self.process_float_binary_op(insn, FloatBinaryOp::Div)?,
             // Float unary:
-            Opcode::FloatNeg => lifter.process_float_unary_op(insn, FloatUnaryOp::Neg)?,
-            Opcode::FloatAbs => lifter.process_float_unary_op(insn, FloatUnaryOp::Abs)?,
-            Opcode::FloatSqrt => lifter.process_float_unary_op(insn, FloatUnaryOp::Sqrt)?,
-            Opcode::FloatCeil => lifter.process_float_unary_op(insn, FloatUnaryOp::Ceil)?,
-            Opcode::FloatFloor => lifter.process_float_unary_op(insn, FloatUnaryOp::Floor)?,
-            Opcode::FloatRound => lifter.process_float_unary_op(insn, FloatUnaryOp::Round)?,
+            Opcode::FloatNeg => self.process_float_unary_op(insn, FloatUnaryOp::Neg)?,
+            Opcode::FloatAbs => self.process_float_unary_op(insn, FloatUnaryOp::Abs)?,
+            Opcode::FloatSqrt => self.process_float_unary_op(insn, FloatUnaryOp::Sqrt)?,
+            Opcode::FloatCeil => self.process_float_unary_op(insn, FloatUnaryOp::Ceil)?,
+            Opcode::FloatFloor => self.process_float_unary_op(insn, FloatUnaryOp::Floor)?,
+            Opcode::FloatRound => self.process_float_unary_op(insn, FloatUnaryOp::Round)?,
             // Float comparison:
-            Opcode::FloatEqual => lifter.process_float_cmp_op(insn, FloatCmpOp::Equal)?,
-            Opcode::FloatLess => lifter.process_float_cmp_op(insn, FloatCmpOp::Less)?,
+            Opcode::FloatEqual => self.process_float_cmp_op(insn, FloatCmpOp::Equal)?,
+            Opcode::FloatLess => self.process_float_cmp_op(insn, FloatCmpOp::Less)?,
 
             // An opcode the lifter does not model bails.
             _ => bail!("unimplemented p-code opcode {:?}", insn.opcode),

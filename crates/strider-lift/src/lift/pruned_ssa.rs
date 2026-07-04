@@ -16,7 +16,6 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::RegionId;
 
-use super::dominance::DomInfo;
 use strider_ir::node::InitialVnId;
 use strider_target::call_other_abi::{CallOtherClass, classify};
 
@@ -25,7 +24,8 @@ use super::function_lifter::FunctionLifter;
 
 /// The set of variables that need a value `Phi` at each region — the output of
 /// Cytron placement, keyed by CFG region.  This is the return type of the
-/// generic [`graph_algorithms::dominance::phi_placement`] (via [`DomInfo::iterated_frontier`]).
+/// generic [`graph_algorithms::dominance::phi_placement`] (via
+/// [`super::dominance::DomInfo::iterated_frontier`]).
 pub(crate) type PhiPlacement = FxHashMap<RegionId, FxHashSet<InitialVnId>>;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
@@ -136,18 +136,3 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     }
 }
 
-/// Cytron iterated-dominance-frontier phi placement: a value `Phi` for variable
-/// `V` is placed at region `R` iff `R ∈ IDF(def-sites(V))`.
-///
-/// The IDF worklist algorithm itself is the generic, CFG-agnostic
-/// [`graph_algorithms::dominance::phi_placement`], reached through
-/// [`DomInfo::iterated_frontier`].  The strider def-site map
-/// (`InitialVnId → regions`) satisfies `graph_algorithms::dominance::DefSites` directly, so
-/// it is passed through unchanged.
-#[must_use]
-pub(crate) fn compute_phi_placement(
-    def_sites: &FxHashMap<InitialVnId, FxHashSet<RegionId>>,
-    dom: &DomInfo,
-) -> PhiPlacement {
-    dom.iterated_frontier(def_sites)
-}
