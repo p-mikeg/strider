@@ -436,11 +436,11 @@ mod tests {
         // `join` Region has two control predecessors and a 2-value VarPhi.
         let var = reg_vn(0x1000, 8);
         let mut b = RegisterSet::new().tracked(var).arg(var).build_fn().unwrap();
-        let entry = b.create_region().unwrap();
-        let true_r = b.create_region().unwrap();
-        let false_r = b.create_region().unwrap();
-        let join = b.create_region().unwrap();
-        b.set_entry_region(entry).unwrap();
+        let entry = b.create_region_all().unwrap();
+        let true_r = b.create_region_all().unwrap();
+        let false_r = b.create_region_all().unwrap();
+        let join = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
 
         b.set_region(entry);
         let cond = b.build_boolean_const(true);
@@ -916,8 +916,8 @@ mod tests {
         let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
 
         let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
@@ -992,8 +992,8 @@ mod tests {
             .arg(bb)
             .build_fn()
             .unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let av = b.read_variable(&a).unwrap();
@@ -1079,8 +1079,8 @@ mod tests {
         let x = Capture::new();
 
         let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
@@ -1132,8 +1132,8 @@ mod tests {
         let x = Capture::new();
 
         let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         // Distinct addresses: interior zero = 0xCC (dropped pre-fix),
         // root add = 0xDD (absorbed via replace_value either way).
@@ -1187,8 +1187,8 @@ mod tests {
         let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
 
         let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
@@ -1268,8 +1268,8 @@ mod tests {
         // ((var + 1) + 2) wrapped again: ((var+1)+2) is itself an operand of
         // a further (… + 4) so apply folds twice.
         let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
@@ -1497,8 +1497,8 @@ mod tests {
         let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
 
         let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();

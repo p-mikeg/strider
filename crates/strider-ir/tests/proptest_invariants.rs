@@ -232,8 +232,8 @@ impl Pools {
 /// to return).  Such sequences are uninteresting and proptest will retry.
 fn replay(steps: &[Step]) -> Option<strider_ir::Function> {
     let mut b = strider_ir_test_utils::empty_builder().ok()?;
-    let region = b.create_region().ok()?;
-    b.set_entry_region(region).ok()?;
+    let region = b.create_region_all().ok()?;
+    b.set_entry_region_all(region).ok()?;
     b.set_region(region);
 
     let mut pools = Pools::default();

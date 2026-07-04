@@ -13,7 +13,7 @@
 //! Sea-of-nodes intermediate representation for the Strider binary analysis
 //! framework.  Generic helpers live in their own unprefixed sibling crates:
 //! `dot` (Graphviz rendering), `entity-utils` (cranelift-entity helpers),
-//! `graphwalk` (graph traversal).
+//! `graph-algorithms` (graph traversal).
 //!
 //! The IR represents a lifted function as a directed graph where each
 //! [`node::NodeId`] is a computation or control-flow primitive.  Nodes have

@@ -231,7 +231,7 @@ struct ValueInputSuccs<'a> {
     function: &'a strider_ir::Function,
 }
 
-impl graphwalk::GraphRef for ValueInputSuccs<'_> {
+impl graph_algorithms::GraphRef for ValueInputSuccs<'_> {
     type NodeId = ValueId;
 
     fn try_successors(
@@ -245,11 +245,11 @@ impl graphwalk::GraphRef for ValueInputSuccs<'_> {
 
 /// The dispatch cone in producers-before-consumers order: backward reachability
 /// from `root` over value edges only (see [`ValueInputSuccs`]).  Reuses the
-/// shared iterative post-order walk (`graphwalk::PostOrder`), so a deep cone
+/// shared iterative post-order walk (`graph_algorithms::PostOrder`), so a deep cone
 /// costs O(1) host stack and each value is yielded once; a cycle's back-edge
 /// input is simply absent at eval time → `None`.
 pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<ValueId> {
-    graphwalk::entity_postorder(ValueInputSuccs { function }, [root]).collect()
+    graph_algorithms::entity_postorder(ValueInputSuccs { function }, [root]).collect()
 }
 
 #[cfg(test)]

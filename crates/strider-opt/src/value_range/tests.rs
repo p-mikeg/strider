@@ -64,11 +64,11 @@ fn build_guarded_dispatch(
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     // entry region: build idx (non-const — use a bitwise-and to make it a real
     // computation), then branch on Less(idx, bound).
@@ -127,10 +127,10 @@ fn guard_on_add_propagates_bound_back_to_operand() {
     let ty = ValueType::I32;
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
-    b.set_entry_region(entry).unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     // X = load (no KB info), diff = X + (-1), guard `diff < 7`.
     let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
@@ -177,10 +177,10 @@ fn guard_on_add_with_wrapping_backprop_stays_top() {
     let ty = ValueType::I32;
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
-    b.set_entry_region(entry).unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     // X = load (no KB info), diff = X + 4, guard `diff < 8` → diff ∈ [0, 7].
     let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
@@ -242,11 +242,11 @@ fn trivial_phi_of_guarded_index_is_bounded() {
     let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
     // Write some concrete value as idx — use a load so it has no KB facts.
@@ -296,10 +296,10 @@ fn known_bits_mask_bounds_index_everywhere() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let other = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let other = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
 
     // arg = unconstrained value (load from arbitrary address).
@@ -356,12 +356,12 @@ fn unguarded_predecessor_makes_range_top() {
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     // Regions: entry → (guarded_region, unguarded_region) → dispatch
-    let entry = b.create_region().unwrap();
-    let guarded = b.create_region().unwrap();
-    let unguarded = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let guarded = b.create_region_all().unwrap();
+    let unguarded = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
     let dummy = b.build_int_const(0xBEEFu64, ValueType::I64).unwrap();
@@ -423,11 +423,11 @@ fn lowered_le_guard_bounds_index() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
 
     let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
@@ -488,11 +488,11 @@ fn lowered_le_guard_swapped_xor_operands_still_bounds_index() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
 
     let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
@@ -550,11 +550,11 @@ fn sless_guard_with_known_zero_sign_bit_bounds_index() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
 
     let dummy = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
@@ -614,11 +614,11 @@ fn inverted_less_guard_bounds_index_on_false_edge() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let oob = b.create_region().unwrap(); // true edge: idx >= 8
-    let dispatch = b.create_region().unwrap(); // false edge: idx < 8
+    let entry = b.create_region_all().unwrap();
+    let oob = b.create_region_all().unwrap(); // true edge: idx >= 8
+    let dispatch = b.create_region_all().unwrap(); // false edge: idx < 8
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
 
     let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
@@ -676,8 +676,8 @@ fn no_constraint_is_top() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    b.set_entry_region(entry).unwrap();
+    let entry = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
 
     let dummy = b.build_int_const(0x4242u64, ValueType::I64).unwrap();
@@ -717,11 +717,11 @@ fn sless_guard_without_known_sign_bit_is_top() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
 
     let dummy = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
@@ -813,13 +813,13 @@ fn sibling_region_not_dominated_is_top() {
     let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let left = b.create_region().unwrap();
-    let right = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let guarded_exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let left = b.create_region_all().unwrap();
+    let right = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let guarded_exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
     // Load idx (unconstrained).
@@ -925,12 +925,12 @@ fn cyclic_phi_is_top() {
     let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let header = b.create_region().unwrap();
-    let body = b.create_region().unwrap();
-    let loop_exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let header = b.create_region_all().unwrap();
+    let body = b.create_region_all().unwrap();
+    let loop_exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     // entry: idx = 0, branch to header.
     b.set_region(entry);
@@ -1014,12 +1014,12 @@ fn phi_of_phi_cycle_terminates_top() {
         .unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let header = b.create_region().unwrap();
-    let body = b.create_region().unwrap();
-    let loop_exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let header = b.create_region_all().unwrap();
+    let body = b.create_region_all().unwrap();
+    let loop_exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     // entry: a = 0, b = 1, branch header.
     b.set_region(entry);
@@ -1085,13 +1085,13 @@ fn nested_guards_intersect_at_inner_region() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let outer_guard = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let mid_exit = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let outer_guard = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let mid_exit = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     // entry: load idx, check idx < 16.
     b.set_region(entry);
@@ -1263,15 +1263,15 @@ fn two_sibling_guard_regions_give_independent_bounds() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let branch_a = b.create_region().unwrap();
-    let branch_b = b.create_region().unwrap();
-    let dispatch_a = b.create_region().unwrap();
-    let sink_a = b.create_region().unwrap();
-    let dispatch_b = b.create_region().unwrap();
-    let sink_b = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let branch_a = b.create_region_all().unwrap();
+    let branch_b = b.create_region_all().unwrap();
+    let dispatch_a = b.create_region_all().unwrap();
+    let sink_a = b.create_region_all().unwrap();
+    let dispatch_b = b.create_region_all().unwrap();
+    let sink_b = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     // entry: load idx, use constant true flag to split to a/b.
     b.set_region(entry);
@@ -1397,12 +1397,12 @@ fn multi_input_phi_unions_two_distinct_finite_arms() {
     let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let path_a = b.create_region().unwrap();
-    let path_b = b.create_region().unwrap();
-    let join = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let path_a = b.create_region_all().unwrap();
+    let path_b = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     // entry: split unconditionally to path_a / path_b.
     b.set_region(entry);
@@ -1478,14 +1478,14 @@ fn multi_input_phi_output_guard_bounds_index() {
     let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let path_a = b.create_region().unwrap();
-    let path_b = b.create_region().unwrap();
-    let join = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let path_a = b.create_region_all().unwrap();
+    let path_b = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     // entry: load idx, write it, then split unconditionally to path_a / path_b.
     b.set_region(entry);
@@ -1613,13 +1613,13 @@ fn join_fails_closed_when_one_predecessor_unguarded() {
     let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let path_a = b.create_region().unwrap();
-    let path_b = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap();
-    let exit_a = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let path_a = b.create_region_all().unwrap();
+    let path_b = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit_a = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
 
     // entry: load idx into the tracked variable, then split to path_a / path_b.
     b.set_region(entry);
@@ -1697,11 +1697,11 @@ fn const_lhs_less_guard_bounds_false_edge() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let above = b.create_region().unwrap(); // true edge: v > 8
-    let at_or_below = b.create_region().unwrap(); // false edge: v <= 8
+    let entry = b.create_region_all().unwrap();
+    let above = b.create_region_all().unwrap(); // true edge: v > 8
+    let at_or_below = b.create_region_all().unwrap(); // false edge: v <= 8
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
 
     let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
@@ -1762,12 +1762,12 @@ fn guard_into_control_merge_is_not_applied() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let guarded = b.create_region().unwrap(); // entry's true edge → also branches to merge
-    let other = b.create_region().unwrap(); // entry's false edge → branches to merge
-    let merge = b.create_region().unwrap(); // 2 predecessors
+    let entry = b.create_region_all().unwrap();
+    let guarded = b.create_region_all().unwrap(); // entry's true edge → also branches to merge
+    let other = b.create_region_all().unwrap(); // entry's false edge → branches to merge
+    let merge = b.create_region_all().unwrap(); // 2 predecessors
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
     let idx = b
@@ -1839,11 +1839,11 @@ fn guard_on_edge_into_merge_is_top_below_merge() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let other = b.create_region().unwrap(); // false edge → branches to merge
-    let merge = b.create_region().unwrap(); // 2 preds: If true edge + other
+    let entry = b.create_region_all().unwrap();
+    let other = b.create_region_all().unwrap(); // false edge → branches to merge
+    let merge = b.create_region_all().unwrap(); // 2 preds: If true edge + other
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
     let idx = b
@@ -1903,11 +1903,11 @@ fn guard_survives_region_collapse_at_nonregion_consumer() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let entry = b.create_region().unwrap();
-    let dispatch = b.create_region().unwrap(); // single-pred → collapses
-    let exit = b.create_region().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap(); // single-pred → collapses
+    let exit = b.create_region_all().unwrap();
 
-    b.set_entry_region(entry).unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
     let idx = b

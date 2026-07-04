@@ -457,8 +457,8 @@ use strider_ir_test_utils::IrBuilderEx;
     /// Build a tiny single-region function returning `IntConst(K)`.
     fn one_const_fn(k: u64) -> strider_ir::Function {
         let mut b = strider_ir_test_utils::empty_builder().unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let v = b.build_int_const(k, ValueType::I64).unwrap();
@@ -553,8 +553,8 @@ use strider_ir_test_utils::IrBuilderEx;
                 increment: 8,
             }))
             .build_fn()?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
+        let region = b.create_region_all()?;
+        b.set_entry_region_all(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         b.build_return(None, &[])?;
@@ -596,8 +596,8 @@ use strider_ir_test_utils::IrBuilderEx;
             0,
             strider_target::Endianness::Little,
         )?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
+        let region = b.create_region_all()?;
+        b.set_entry_region_all(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_v = b.read_variable(&sp)?;
@@ -654,8 +654,8 @@ use strider_ir_test_utils::IrBuilderEx;
                 increment: 4,
             }))
             .build_fn()?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
+        let region = b.create_region_all()?;
+        b.set_entry_region_all(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_v0 = b.read_variable(&sp)?;

@@ -48,13 +48,13 @@ pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
 
 /// A pre-order walk over the IR graph using a [`DenseEntitySet`] as the
 /// visited tracker.
-pub type PreOrder<G> = graphwalk::PreOrder<G, DenseEntitySet<NodeId>>;
+pub type PreOrder<G> = graph_algorithms::PreOrder<G, DenseEntitySet<NodeId>>;
 
 /// A post-order walk over the IR graph using a [`DenseEntitySet`] as the
 /// visited tracker.
-pub type PostOrder<G> = graphwalk::PostOrder<G, DenseEntitySet<NodeId>>;
+pub type PostOrder<G> = graph_algorithms::PostOrder<G, DenseEntitySet<NodeId>>;
 
-/// A [`graphwalk::GraphRef`] implementation that drives successor enumeration
+/// A [`graph_algorithms::GraphRef`] implementation that drives successor enumeration
 /// for IR graph walks.
 ///
 /// Successors are derived by following both data inputs (so every producer is
@@ -110,7 +110,7 @@ pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
         .map(|(succ_node, _succ_input_idx)| succ_node)
 }
 
-impl graphwalk::GraphRef for GraphWalkSuccs<'_> {
+impl graph_algorithms::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 
     fn try_successors(
@@ -142,7 +142,7 @@ pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
 /// ([`GraphWalkInfo::reverse_postorder`]).
 pub type DefUsePostorder<'a> = PostOrder<DefUseSuccs<'a>>;
 
-/// A [`graphwalk::GraphRef`] over the forward def→use edges, **unrestricted**
+/// A [`graph_algorithms::GraphRef`] over the forward def→use edges, **unrestricted**
 /// by liveness — the raw counterpart of [`DefUseSuccs`].
 ///
 /// Driving a post-order with this relation from a set of roots visits every
@@ -162,7 +162,7 @@ impl<'a> RawDefUseSuccs<'a> {
     }
 }
 
-impl graphwalk::GraphRef for RawDefUseSuccs<'_> {
+impl graph_algorithms::GraphRef for RawDefUseSuccs<'_> {
     type NodeId = NodeId;
 
     fn try_successors(
@@ -178,7 +178,7 @@ impl graphwalk::GraphRef for RawDefUseSuccs<'_> {
     }
 }
 
-/// A [`graphwalk::GraphRef`] over the forward def→use edges, restricted to a
+/// A [`graph_algorithms::GraphRef`] over the forward def→use edges, restricted to a
 /// precomputed live set. Driving a post-order with it yields every node
 /// after all of its uses, so reversing the post-order gives a true RPO
 /// (every producer strictly before its consumers).
@@ -196,7 +196,7 @@ impl<'a> DefUseSuccs<'a> {
     }
 }
 
-impl graphwalk::GraphRef for DefUseSuccs<'_> {
+impl graph_algorithms::GraphRef for DefUseSuccs<'_> {
     type NodeId = NodeId;
 
     fn try_successors(

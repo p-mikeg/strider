@@ -582,8 +582,8 @@ fn empty_call_other_abi() -> strider_target::BuiltCallOtherAbi {
 /// Helper: build a single-region builder with an active region set.
 fn builder_with_region() -> Result<FunctionBuilder> {
     let mut b = empty_builder()?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
+    let r = b.create_region_all()?;
+    b.set_entry_region_all(r)?;
     b.set_region(r);
     Ok(b)
 }
@@ -601,8 +601,8 @@ fn builder_with_region_tracking(vns: Vec<rsleigh::Vn>) -> Result<FunctionBuilder
         0,
         strider_target::Endianness::Little,
     )?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
+    let r = b.create_region_all()?;
+    b.set_entry_region_all(r)?;
     b.set_region(r);
     Ok(b)
 }
@@ -923,8 +923,8 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
         0,
         Endianness::Little,
     )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
     b.set_region(region);
 
     let explicit = b.build_int_const(0x42u64, ValueType::I64)?;
@@ -1379,8 +1379,8 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
         8,
         strider_target::Endianness::Little,
     )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
     b.set_region(region);
 
     let pre_sp = b.read_variable(&sp)?;
@@ -1432,8 +1432,8 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
         0,
         strider_target::Endianness::Little,
     )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
     b.set_region(region);
 
     let pre_sp = b.read_variable(&sp)?;
@@ -1693,8 +1693,8 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
 
     // call_other_clobbered is populated by `build()`: complete the
     // function with a minimal terminated region first.
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
     b.set_region(region);
     b.set_lift_addr(Some(0x1000));
     b.build_function_return()?;
@@ -1735,8 +1735,8 @@ fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
         0,
         strider_target::Endianness::Little,
     )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
     b.set_region(region);
 
     // The current value of each ret var is its InitialVar value.
@@ -1786,8 +1786,8 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
         0,
         strider_target::Endianness::Little,
     )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
     b.set_region(region);
 
     // Synthesise a Bool-producing op (compare) — the same shape as
@@ -1870,8 +1870,8 @@ fn entry_returns_recorded_entry_node_id() -> Result<()> {
 fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     let mut b = empty_builder()?;
     // Set up a one-region function so build() has something to validate.
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
     b.set_region(region);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let val = b.build_int_const(7u64, ValueType::I64)?;
@@ -2235,8 +2235,8 @@ mod build_call_with_cc {
         tracked.extend(x86_64_arg_regs(&regs));
         let mut b = FunctionBuilder::new(tracked, cc, strider_target::Endianness::Little).unwrap();
         let _ = rdi;
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
         b.build_call_cc(addr, None).unwrap();
@@ -2278,8 +2278,8 @@ mod build_call_with_cc {
         let _ = rdi;
         let mut b =
             FunctionBuilder::new(vec![rax, rsp], cc, strider_target::Endianness::Little).unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
 
         // Override CC: every tracked variable is callee-saved → 0 clobbers.
@@ -2351,8 +2351,8 @@ mod build_call_with_cc {
         let mut tracked = vec![rax, rsp];
         tracked.extend(x86_64_arg_regs(&regs));
         let mut b = FunctionBuilder::new(tracked, cc, strider_target::Endianness::Little).unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
 
         // The current SP value at the call site — the value wired into
@@ -2391,8 +2391,8 @@ mod build_call_with_cc {
     #[test]
     fn analysis_loop_without_build_round_trips() {
         let mut b = empty_builder().unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let v = b.build_int_const(0u64, ValueType::I64).unwrap();
@@ -2431,8 +2431,8 @@ mod build_call_with_cc {
     #[test]
     fn final_build_after_extended_use_yields_valid_built() {
         let mut b = empty_builder().unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let v = b.build_int_const(7u64, ValueType::I64).unwrap();
@@ -2506,8 +2506,8 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 
     // (c) Build a Call and verify output order:
     //   [Control, Memory, <rax-ret-val>, <rcx-clobber>]
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
     b.set_region(region);
 
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -2733,8 +2733,8 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         no_return: false,
     };
     let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], cc, strider_target::Endianness::Little)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
     // The lifter records register-arg carriers after `set_entry_region`; the
     // test-util helper reproduces that here (direct-builder tests have no lifter).
     b.record_register_arg_carriers();
@@ -2782,8 +2782,8 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
     // edi (the narrow arg alias) then drops it as enclosed by rdi, so the var
     // table is keyed by rdi, not edi.
     let mut b = FunctionBuilder::new(vec![rdi, sp], cc, strider_target::Endianness::Little)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
     // The lifter records register-arg carriers after `set_entry_region`; the
     // test-util helper reproduces that here (direct-builder tests have no lifter).
     b.record_register_arg_carriers();
@@ -2799,5 +2799,39 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
         matches!(b.function().node_kind(b.function().producer(arg0[0])),
         NodeKind::InitialVar(v) if b.function().initial_vn(*v) == rdi)
     );
+    Ok(())
+}
+
+#[test]
+fn build_switch_makes_n_control_outputs_and_records_targets() -> Result<()> {
+    // Use this file's local `empty_builder()` (not
+    // `strider_ir_test_utils::empty_builder`) — the latter is built against
+    // the *separate* dev-dependency compilation of strider-ir (see the
+    // `raw_builder` doc comment above), whose `FunctionBuilder`/`Function`
+    // don't implement this file's `IRViewer`/`IRBuilderExt` traits.
+    let mut b = empty_builder()?;
+    let entry = b.create_region_all()?;
+    let a = b.create_region_all()?;
+    let c = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+    b.build_switch(addr, &[(a, 0x1000), (c, 0x1020)])?;
+    // terminate the arms so the function is valid
+    b.set_region(a);
+    b.build_return(None, &[])?;
+    b.set_region(c);
+    b.build_return(None, &[])?;
+    let f = b.build()?;
+    // Find the Switch node.
+    let sw = f
+        .graph()
+        .all_node_ids()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Switch))
+        .expect("switch node exists");
+    assert_eq!(f.node_inputs(sw).len(), 2, "[ctrl, address]");
+    assert_eq!(f.node_outputs(sw).len(), 2, "one control output per arm");
+    assert_eq!(f.side_tables().switch_targets(sw), &[0x1000, 0x1020]);
     Ok(())
 }

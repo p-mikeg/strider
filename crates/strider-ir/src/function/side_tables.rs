@@ -106,6 +106,9 @@ pub struct SideTables {
     /// case (address is a phi of different constants per branch) is not
     /// recorded — consumers can re-decompose via `decompose_sp` if needed.
     stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>>,
+    /// Per-output case addresses for a [`crate::node::NodeKind::Switch`]
+    /// node: raw target addresses (no arena ids), one per switch output.
+    switch_targets: SecondaryMap<NodeId, Vec<u64>>,
     /// O(1) [`crate::node::InitialVnId`] → `InitialVar(id)` node-id accelerator
     /// for indirect-resolve sites and the lifter's lazy `read_or_init_var`
     /// fallback.  Keyed by the tracked-varnode id (not the raw `rsleigh::Vn`)
@@ -195,6 +198,20 @@ impl SideTables {
         self.stack_offsets[id] = Some((base, offset));
     }
 
+    /// Returns the per-output case addresses recorded for a
+    /// [`crate::node::NodeKind::Switch`] node, or `&[]` if none.
+    #[inline]
+    pub fn switch_targets(&self, id: NodeId) -> &[u64] {
+        self.switch_targets[id].as_slice()
+    }
+
+    /// Records the per-output case addresses for a
+    /// [`crate::node::NodeKind::Switch`] node.
+    #[inline]
+    pub fn set_switch_targets(&mut self, id: NodeId, targets: Vec<u64>) {
+        self.switch_targets[id] = targets;
+    }
+
     /// Returns the asm-instruction-address fingerprint of `id` as a
     /// sorted-deduplicated slice (empty when nothing was recorded).
     #[inline]
@@ -235,6 +252,7 @@ impl SideTables {
         // NodeId-keyed tables: translate the key, drop pruned nodes.
         remap_node_keyed(&mut self.call_other_names, remap);
         remap_node_keyed(&mut self.asm_fingerprints, remap);
+        remap_node_keyed(&mut self.switch_targets, remap);
         self.call_cc = remap_hashmap(&mut self.call_cc, |old, cc| {
             remap.node_old_to_new(old).map(|n| (n, cc))
         });

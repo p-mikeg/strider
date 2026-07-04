@@ -242,8 +242,8 @@ impl RegisterSet {
     /// `create_region`, or `set_entry_region`.
     pub fn build_fn_single_region(self) -> Result<FunctionBuilder> {
         let mut b = self.build_fn()?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
+        let region = b.create_region_all()?;
+        b.set_entry_region_all(region)?;
         // Mirror the lifter: record register-arg carriers after entry setup so
         // arg-query tests see the same `arg_index_to_values` a lifted function
         // would (the IR no longer records these inside `set_entry_region`).
@@ -279,11 +279,11 @@ impl RegisterSet {
         use strider_ir::node::{NodeKind, ValueType};
 
         let mut b = self.build_fn()?;
-        let entry = b.create_region()?;
-        let t = b.create_region()?;
-        let f = b.create_region()?;
+        let entry = b.create_region_all()?;
+        let t = b.create_region_all()?;
+        let f = b.create_region_all()?;
 
-        b.set_entry_region(entry)?;
+        b.set_entry_region_all(entry)?;
         b.record_register_arg_carriers();
         b.set_region(entry);
         let (cond, aux) = cond_builder(&mut b)?;
@@ -340,8 +340,8 @@ where
     // No declared registers → the trivial convention (only the synthetic
     // SP gets tracked, as an unreferenced `InitialVar`).
     let mut b = RegisterSet::new().endianness(endianness).build_fn()?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
     b.record_register_arg_carriers();
     b.set_region(region);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));

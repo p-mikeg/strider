@@ -288,6 +288,13 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
                 outputs: SlotList::variadic(&[$($o),*], $ot),
             }
         };
+        // fixed inputs, variadic outputs (out_tail without in_tail)
+        (inputs: [$($i:expr),* $(,)?], outputs: [$($o:expr),* $(,)?]; out_tail: $ot:expr $(,)?) => {
+            Signature {
+                inputs: SlotList::fixed(&[$($i),*]),
+                outputs: SlotList::variadic(&[$($o),*], $ot),
+            }
+        };
     }
 
     match kind {
@@ -313,6 +320,9 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
 
         // ── Conditional branch ──────────────────────────────────────────────
         NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),
+        // Switch: [control, address] -> N Control outputs, one per target
+        // region in target order (variadic; exhaustive, no default arm).
+        NodeKind::Switch => sig!(inputs: [CTRL, INT_VAL], outputs: [CTRL]; out_tail: CTRL),
 
         // ── Calls and returns ───────────────────────────────────────────────
         // Call: [control, memory, call_address, stack_pointer, ...args].
@@ -621,6 +631,7 @@ mod tests {
             NodeKind::MemPhi,
             NodeKind::Phi,
             NodeKind::If,
+            NodeKind::Switch,
             NodeKind::Call,
             NodeKind::Return,
             NodeKind::IndirectBranch,
@@ -701,5 +712,18 @@ mod tests {
             .tail
             .expect("Call output tail is variadic (clobbered registers)");
         assert_eq!(tail.kind, K::AnyValue);
+    }
+
+    #[test]
+    fn expected_signature_switch_is_ctrl_val_in_variadic_ctrl_out() {
+        let sig = expected_signature(&NodeKind::Switch);
+        // inputs: fixed [CTRL, INT_VAL]
+        assert_eq!(sig.inputs.head.len(), 2);
+        assert!(sig.inputs.tail.is_none(), "switch inputs are fixed-arity");
+        // outputs: variadic Control (head [CTRL] + out_tail CTRL)
+        assert!(
+            sig.outputs.tail.is_some(),
+            "switch has variadic control outputs"
+        );
     }
 }

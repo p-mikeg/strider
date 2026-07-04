@@ -224,8 +224,8 @@ mod synthetic {
             .callee_saved(sp)
             .build_fn()
             .unwrap();
-        let entry = b.create_region().unwrap();
-        b.set_entry_region(entry).unwrap();
+        let entry = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
 
         // Build N diamonds.  prev_region is the predecessor for the
         // next branch; on each iteration we create true / false / merge
@@ -233,9 +233,9 @@ mod synthetic {
         // then set prev = merge for the next iteration.
         let mut prev_region = entry;
         for _ in 0..n {
-            let true_arm = b.create_region().unwrap();
-            let false_arm = b.create_region().unwrap();
-            let merge = b.create_region().unwrap();
+            let true_arm = b.create_region_all().unwrap();
+            let false_arm = b.create_region_all().unwrap();
+            let merge = b.create_region_all().unwrap();
 
             b.set_region(prev_region);
             let cond = b.build_boolean_const(true);
@@ -367,8 +367,8 @@ mod synthetic {
     /// (`find_joined`) with shared captures.
     pub fn build_many_int_consts(n: usize) -> strider_ir::Function {
         let mut b = strider_ir_test_utils::empty_builder().unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         // N consts → N adds → return.  Each `IntConst(i)` is a
         // distinct cache key (they hash on value), so we get N distinct

@@ -96,6 +96,13 @@ pub enum NodeKind {
     /// Conditional branch.  Consumes `(control, bool_cond)` and produces two
     /// `Control` outputs: index 0 for the true branch, index 1 for the false branch.
     If,
+    /// Multi-way branch (resolved jump table).  Consumes `(control, address)`
+    /// and produces N `Control` outputs, one per target region in target order;
+    /// output `i` is taken when `address == switch_targets[i]` (the per-output
+    /// case addresses live in the `Function::switch_targets` side table).  The
+    /// lifter emits this for a `RegionTerminator::Switch`; the table is
+    /// exhaustive (no default arm).
+    Switch,
 
     // ── Calls and returns ──────────────────────────────────────────────────────
     /// Function call.  Clobbers caller-saved registers and the memory token.
@@ -284,6 +291,7 @@ impl NodeKind {
             | Self::Return
             | Self::IndirectBranch
             | Self::Unreachable
+            | Self::Switch
             | Self::Call
             | Self::CallOther { .. }
             // Sleigh user-ops with opaque per-occurrence identity.
@@ -317,6 +325,7 @@ impl NodeKind {
 
             // Non-exempt: everything else requires fingerprints.
             Self::If
+            | Self::Switch
             | Self::Load(..)
             | Self::Store(..)
             | Self::IntConst(..)
@@ -361,6 +370,7 @@ impl NodeKind {
             Self::Entry
             | Self::Region
             | Self::If
+            | Self::Switch
             | Self::Return
             | Self::Call
             | Self::CallOther { .. }
@@ -477,6 +487,7 @@ mod tests {
             NodeKind::Entry,
             NodeKind::Region,
             NodeKind::If,
+            NodeKind::Switch,
             NodeKind::Return,
             NodeKind::Call,
             NodeKind::CallOther { user_op_id: 0 },

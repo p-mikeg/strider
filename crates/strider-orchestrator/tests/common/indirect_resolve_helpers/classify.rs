@@ -404,10 +404,10 @@ pub(crate) fn build_jump_table_predecessor_if_scenario(
         .tracked(idx_var)
         .build_fn()
         .expect("build_fn");
-    let entry = b.create_region().expect("entry");
-    let dispatch = b.create_region().expect("dispatch");
-    let exit = b.create_region().expect("exit");
-    b.set_entry_region(entry).expect("set_entry");
+    let entry = b.create_region_all().expect("entry");
+    let dispatch = b.create_region_all().expect("dispatch");
+    let exit = b.create_region_all().expect("exit");
+    b.set_entry_region_all(entry).expect("set_entry");
 
     // Entry: build `idx < bound`, branch to dispatch on true / exit on false.
     b.set_region(entry);
@@ -516,8 +516,8 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Val
     use strider_orchestrator::opt::{ConstantFold, OptimizerPipeline};
 
     let mut b = strider_ir_test_utils::empty_builder().expect("new_raw");
-    let region = b.create_region().expect("region");
-    b.set_entry_region(region).expect("set_entry");
+    let region = b.create_region_all().expect("region");
+    b.set_entry_region_all(region).expect("set_entry");
     b.set_region(region);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
 

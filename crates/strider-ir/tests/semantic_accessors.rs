@@ -14,8 +14,8 @@ use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 #[test]
 fn store_and_load_address_data_accessors() {
     let mut b = strider_ir_test_utils::empty_builder().unwrap();
-    let entry = b.create_region().unwrap();
-    b.set_entry_region(entry).unwrap();
+    let entry = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
@@ -47,10 +47,10 @@ fn store_and_load_address_data_accessors() {
 #[test]
 fn if_cond_accessor() {
     let mut b = strider_ir_test_utils::empty_builder().unwrap();
-    let entry = b.create_region().unwrap();
-    let true_region = b.create_region().unwrap();
-    let false_region = b.create_region().unwrap();
-    b.set_entry_region(entry).unwrap();
+    let entry = b.create_region_all().unwrap();
+    let true_region = b.create_region_all().unwrap();
+    let false_region = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
@@ -77,8 +77,8 @@ fn if_cond_accessor() {
 #[test]
 fn indirect_branch_target_accessor() {
     let mut b = strider_ir_test_utils::empty_builder().unwrap();
-    let entry = b.create_region().unwrap();
-    b.set_entry_region(entry).unwrap();
+    let entry = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let target = b.build_int_const(0xDEAD_0000u64, ValueType::I64).unwrap();

@@ -24,8 +24,8 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     let cc = CallingConvention::x86_64_systemv().build(&regs).unwrap();
     let mut b =
         FunctionBuilder::new(vec![rax, rsp], cc, strider_target::Endianness::Little).unwrap();
-    let region = b.create_region().unwrap();
-    b.set_entry_region(region).unwrap();
+    let region = b.create_region_all().unwrap();
+    b.set_entry_region_all(region).unwrap();
     b.set_region(region);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     // `FunctionBuilder::new` auto-tracks the ret-val regs (rax, rdx, xmm0,

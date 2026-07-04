@@ -1,8 +1,8 @@
 //! Test-only graph DSL — moved inline from the standalone `graphmock`
 //! crate (which had no production consumers beyond these tests).
 //!
-//! `&Graph` implements [`graphwalk::GraphRef`], so it plugs straight into
-//! [`graphwalk::PreOrder`] / [`graphwalk::PostOrder`].
+//! `&Graph` implements [`graph_algorithms::GraphRef`], so it plugs straight into
+//! [`graph_algorithms::PreOrder`] / [`graph_algorithms::PostOrder`].
 
 #![allow(
     dead_code,
@@ -15,7 +15,7 @@
 use std::ops::ControlFlow;
 
 use cranelift_entity::{PrimaryMap, entity_impl};
-use graphwalk::GraphRef;
+use graph_algorithms::GraphRef;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(u32);
@@ -27,7 +27,7 @@ struct Node {
 }
 
 /// A small directed graph built from the [`graph`] DSL, used as a fixture
-/// for `graphwalk` traversal tests.
+/// for `graph-algorithms` traversal tests.
 pub struct Graph {
     nodes: PrimaryMap<NodeId, Node>,
     nodes_by_name: std::collections::HashMap<String, NodeId>,

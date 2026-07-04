@@ -120,7 +120,7 @@ impl Tb {
 
     /// Makes `r` the entry region for the function.
     pub fn set_entry(&mut self, r: strider_ir::RegionId) {
-        self.fb.set_entry_region(r).expect("set_entry_region");
+        self.fb.set_entry_region_all(r).expect("set_entry_region");
         // Mirror the lifter: record register-arg carriers after entry setup.
         self.fb.record_register_arg_carriers();
     }
@@ -355,7 +355,7 @@ impl Tb {
     // ── Regions / branches ────────────────────────────────────────────────────
 
     pub fn region(&mut self) -> strider_ir::RegionId {
-        self.fb.create_region().expect("create_region")
+        self.fb.create_region_all().expect("create_region")
     }
     pub fn enter(&mut self, r: strider_ir::RegionId) {
         self.fb.set_region(r);

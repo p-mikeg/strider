@@ -346,6 +346,7 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Phi,
         // terminator
         NodeKind::If,
+        NodeKind::Switch,
         NodeKind::Call,
         NodeKind::Return,
         NodeKind::IndirectBranch,
@@ -391,6 +392,7 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
         kind,
         NodeKind::Return
             | NodeKind::IndirectBranch
+            | NodeKind::Switch
             | NodeKind::Region
             | NodeKind::MemPhi
             | NodeKind::Phi

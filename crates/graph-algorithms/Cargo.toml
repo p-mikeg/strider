@@ -1,11 +1,12 @@
 [package]
-name = "graphwalk"
+name = "graph-algorithms"
 version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
 cranelift-entity.workspace = true
 entity-utils.workspace = true
+rustc-hash = "2"
 
 [dev-dependencies]
 cranelift-entity.workspace = true

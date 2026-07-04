@@ -527,8 +527,8 @@ mod decompose_tests {
     fn decompose_sp_non_sp_returns_none() -> crate::Result<()> {
         // An IntConst is not SP-rooted.
         let mut b = strider_ir_test_utils::empty_builder()?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
+        let region = b.create_region_all()?;
+        b.set_entry_region_all(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let c = b.build_int_const(0x1000u64, ValueType::I32)?;
@@ -587,8 +587,8 @@ mod decompose_tests {
         // cached and reused, sparing the repeated cone walk for the common
         // non-SP (constant/global/heap) address case.
         let mut b = strider_ir_test_utils::empty_builder()?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
+        let region = b.create_region_all()?;
+        b.set_entry_region_all(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let c = b.build_int_const(0x1000u64, ValueType::I32)?;
@@ -625,10 +625,10 @@ mod decompose_tests {
             .arg(sp)
             .stack_vn(sp)
             .build_fn()?;
-        let entry = b.create_region()?;
-        let loop_hdr = b.create_region()?;
-        let exit = b.create_region()?;
-        b.set_entry_region(entry)?;
+        let entry = b.create_region_all()?;
+        let loop_hdr = b.create_region_all()?;
+        let exit = b.create_region_all()?;
+        b.set_entry_region_all(entry)?;
 
         // entry: sp is the incoming value; branch into the loop header.
         b.set_region(entry);
@@ -715,11 +715,11 @@ mod decompose_tests {
             .arg(sp)
             .stack_vn(sp)
             .build_fn()?;
-        let entry = b.create_region()?;
-        let a = b.create_region()?;
-        let bb = b.create_region()?;
-        let c = b.create_region()?;
-        b.set_entry_region(entry)?;
+        let entry = b.create_region_all()?;
+        let a = b.create_region_all()?;
+        let bb = b.create_region_all()?;
+        let c = b.create_region_all()?;
+        b.set_entry_region_all(entry)?;
 
         // entry: if cond goto a else goto bb
         b.set_region(entry);

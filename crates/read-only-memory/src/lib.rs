@@ -1,7 +1,7 @@
 //! `ReadOnlyMemory` trait — read access to a statically-known region of
 //! memory (typically a binary's `.rodata` or `.text` section).
 //!
-//! A tiny generic crate (like `dot` / `entity-utils` / `graphwalk`) so every
+//! A tiny generic crate (like `dot` / `entity-utils` / `graph-algorithms`) so every
 //! crate that needs the trait — the optimizer, the lifter, the reader — can
 //! depend on it one-way.  In particular the optimizer depends on this rather
 //! than on `strider-reader` so it never back-edges through the ELF-parsing

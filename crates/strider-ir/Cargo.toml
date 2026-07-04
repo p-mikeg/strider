@@ -14,7 +14,7 @@ anyhow.workspace = true
 bitflags = "2"
 dot.workspace = true
 entity-utils.workspace = true
-graphwalk.workspace = true
+graph-algorithms.workspace = true
 petgraph = { workspace = true }
 strider-graph.workspace = true
 read-only-memory.workspace = true
