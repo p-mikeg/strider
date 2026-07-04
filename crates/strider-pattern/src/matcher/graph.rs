@@ -24,32 +24,55 @@ pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 pub struct Pattern {
     pub(crate) graph: PatGraph,
     pub(crate) cast_mask: CastMask,
+    /// Match-root resolution, run ONCE at seal ([`Self::from_graph`]) and
+    /// memoized: `Ok(sink)` for a matchable pattern, or `Err(message)` naming
+    /// why it isn't (rootless / multi-sink / cyclic — buildable via shared
+    /// captures but not matchable).  Caching the whole verdict keeps the
+    /// per-candidate [`Matcher::match_at`](crate::Matcher::match_at) hot path
+    /// from re-deriving the root and re-running the acyclicity walk on every
+    /// node the rewrite driver probes, while [`Self::root`] still hands back
+    /// the exact error without recomputing.
+    root: Result<NodeId, String>,
 }
 
 impl Pattern {
     /// Build a pattern from an already-materialised generic graph (the seal
-    /// point of [`MatcherBuilder`]).
+    /// point of [`MatcherBuilder`]).  Resolves and memoizes the match root now,
+    /// since the graph structure is fixed from here on.
     pub(crate) fn from_graph(graph: PatGraph) -> Self {
+        let root = Self::resolve_root(&graph).map_err(|e| e.to_string());
         Self {
             graph,
             cast_mask: CastMask::empty(),
+            root,
         }
     }
 
-    /// The pattern's match root — the unique graph sink, recovered
-    /// structurally, after confirming the reachable graph is acyclic.
+    /// Resolve the match root from a sealed graph: its unique sink, after
+    /// confirming the reachable input cone is acyclic.
     ///
     /// # Errors
-    /// Errors if the pattern is not a single-rooted, acyclic graph the
-    /// matcher can handle: zero sinks (rootless / cyclic), more than one
-    /// sink (multi-rooted — a valid graph a user can build via shared
-    /// captures, but not yet matchable), or a cycle in the root's input
-    /// cone.
-    pub fn root(&self) -> anyhow::Result<NodeId> {
-        let root = self.graph.derive_root()?;
-        // Confirm the reachable input cone is acyclic (errors on a cycle).
-        crate::graph_ext::reachable_topo(&self.graph, root)?;
+    /// Errors if the graph is not a single-rooted, acyclic pattern the matcher
+    /// can handle: zero sinks (rootless / cyclic), more than one sink
+    /// (multi-rooted), or a cycle in the root's input cone.
+    fn resolve_root(graph: &PatGraph) -> anyhow::Result<NodeId> {
+        let root = graph.derive_root()?;
+        crate::graph_ext::reachable_topo(graph, root)?;
         Ok(root)
+    }
+
+    /// The pattern's match root — the unique graph sink (its reachable input
+    /// cone confirmed acyclic), resolved and memoized at construction.  This is
+    /// an O(1) read of that memoized verdict; the derivation ran once in
+    /// [`Self::from_graph`].
+    ///
+    /// # Errors
+    /// Returns the error recorded at construction if the pattern is not a
+    /// single-rooted, acyclic graph the matcher can handle — rootless,
+    /// multi-sink (a valid graph a user can build via shared captures, but not
+    /// matchable), or cyclic.  The message names the specific shape.
+    pub fn root(&self) -> anyhow::Result<NodeId> {
+        self.root.clone().map_err(anyhow::Error::msg)
     }
 
     /// Every [`Capture`](crate::capture::Capture) this pattern binds.

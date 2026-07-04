@@ -201,6 +201,19 @@ impl<'f> Matcher<'f> {
     /// can handle (see [`Pattern::root`]).
     pub fn match_at(&self, node: NodeId, pat: &Pattern) -> anyhow::Result<Option<Match>> {
         let root = pat.root()?;
+        // Root-kind gate: a pattern rooted at a concrete op-kind can only match
+        // a node of that same kind, so reject a mismatched candidate HERE —
+        // before `try_match_at_node` iterates outputs, allocates a `Bindings`
+        // per output, and walks in only to bail on the first kind check.  This
+        // is what makes `match_at` cheap to call at every node (the rewrite
+        // driver's usage); `find_all` gets the same prefilter from its
+        // `KindIndex` bucket.  A kind-`Any` root has no discriminant and skips
+        // the gate.
+        if let Some(rk) = root_kind_discriminant(pat, root)
+            && std::mem::discriminant(self.function.node_kind(node)) != rk
+        {
+            return Ok(None);
+        }
         Ok(self.try_match_at_node(node, pat, root))
     }
 
