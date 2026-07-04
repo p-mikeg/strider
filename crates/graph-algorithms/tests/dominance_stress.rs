@@ -22,7 +22,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use graph_algorithms::{DomTree, dominance_frontiers, dominator_tree_preorder, phi_placement};
+use graph_algorithms::dominance::{DomTree, dominance_frontiers, dominator_tree_preorder, phi_placement};
 
 /// A concrete [`DomTree`] over `u32` nodes with explicit predecessor lists and
 /// an explicit (oracle-computed) idom map.

@@ -9,7 +9,7 @@
 //! frontiers, dom-tree preorder, iterated-DF φ placement) via a thin
 //! [`DomTree`] adapter.  Nothing graph-theoretic lives here — only the bridge.
 
-use graph_algorithms::{DefSites, DomTree, Frontiers};
+use graph_algorithms::dominance::{DefSites, DomTree, Frontiers};
 use petgraph::Direction::Incoming;
 use petgraph::algo::dominators::{Dominators, simple_fast};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -63,8 +63,8 @@ impl DomInfo {
         let (frontiers, preorder) = {
             let adapter = CfgDomTree { cfg, doms: &doms };
             (
-                graph_algorithms::dominance_frontiers(&adapter),
-                graph_algorithms::dominator_tree_preorder(&adapter, cfg.entry()),
+                graph_algorithms::dominance::dominance_frontiers(&adapter),
+                graph_algorithms::dominance::dominator_tree_preorder(&adapter, cfg.entry()),
             )
         };
 
@@ -91,7 +91,7 @@ impl DomInfo {
 
     /// Iterated-dominance-frontier φ placement: given a `variable → defining
     /// regions` map, returns the set of variables that need a value `Phi` at each
-    /// region (Cytron pruned SSA).  Delegates to [`graph_algorithms::phi_placement`];
+    /// region (Cytron pruned SSA).  Delegates to [`graph_algorithms::dominance::phi_placement`];
     /// `def_sites` is any [`DefSites`] over `RegionId` nodes (e.g. the lifter's
     /// `FxHashMap<InitialVnId, FxHashSet<RegionId>>`).
     #[must_use]
@@ -99,6 +99,6 @@ impl DomInfo {
     where
         D: DefSites<Node = RegionId>,
     {
-        graph_algorithms::phi_placement(&self.frontiers, def_sites)
+        graph_algorithms::dominance::phi_placement(&self.frontiers, def_sites)
     }
 }
