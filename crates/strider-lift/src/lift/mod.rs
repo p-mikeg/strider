@@ -344,6 +344,21 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                         .map(|wrapped| wrapped.addr.machine_addr.addr)
                         .max()
                 });
+            // A `NoReturn` region whose trailing insn is a DIRECT `Call` ends in
+            // a no-return call whose return address left the function bound (the
+            // cfg builder's `process_call`).  The per-insn loop already lifted
+            // the `Call` (which keeps the region's control open), so sink that
+            // control into an `Unreachable` terminator here.  A `CallOther`
+            // NoReturn region self-terminates inside `handle_call_other`
+            // (`terminate=true`), so gate on the direct-`Call` opcode to avoid
+            // double-terminating it.
+            let noreturn_direct_call = matches!(
+                region.terminator,
+                strider_cfg::RegionTerminator::NoReturn
+            ) && region
+                .insns
+                .last()
+                .is_some_and(|w| w.insn.opcode == rsleigh::Opcode::Call);
             // Per-terminator funnel: same asm-fingerprint attribution
             // pattern as `process_insn` (see `with_lift_addr`).
             self.with_lift_addr(term_addr, |s| {
@@ -357,7 +372,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                     Some(SpecialTerm::TailCall(target)) => {
                         s.handle_tail_call(target)?;
                     }
-                    None => {}
+                    None => {
+                        if noreturn_direct_call {
+                            s.builder.build_unreachable()?;
+                        }
+                    }
                 }
                 Ok(())
             })?;

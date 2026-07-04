@@ -281,7 +281,38 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             }
             rsleigh::Opcode::BranchIndirect => self.process_branch_indirect(insn, addr),
             rsleigh::Opcode::CallOther => self.process_call_other(insn),
+            rsleigh::Opcode::Call => self.process_call(addr, lift_res),
             _ => Ok(InsnOutcome::Continue),
+        }
+    }
+
+    /// Handles a direct `Call` opcode.
+    ///
+    /// A `call` normally falls through to its return address (the next machine
+    /// instruction), so it is not a terminator — return
+    /// [`InsnOutcome::Continue`] and let the decode loop keep going.  BUT when
+    /// that return address lies **outside** the function bound
+    /// `[start, start + fn_max_size)`, there is no in-function code after the
+    /// call: either the callee is no-return (e.g. FreeBSD `exit1`/`__dead2`,
+    /// so the compiler emitted no `ret` and only inter-function padding
+    /// follows) or the function's recorded extent ends at the call.  Terminate
+    /// the region with `NoReturn` instead of falling through into the padding
+    /// and tripping `detect_fallthrough_oob_tail_call`'s function-boundary
+    /// error.  The IR lifter lowers a `NoReturn` region whose trailing insn is
+    /// a direct `Call` as `Call + Unreachable`.  This mirrors the existing
+    /// `process_call_other`→`NoReturn` and OOB-`CondBranch`→stub handling: an
+    /// OOB control-transfer is a region terminator, not a decode overrun.
+    fn process_call(
+        &mut self,
+        addr: PcodeInsnAddr,
+        lift_res: &rsleigh::LiftRes,
+    ) -> Result<InsnOutcome> {
+        let return_addr = next_pcode_addr(addr, lift_res)?;
+        if self.is_branch_tail_call_nocheck(return_addr) {
+            self.finish_current_region(RegionTerminator::NoReturn)?;
+            Ok(InsnOutcome::RegionClosed)
+        } else {
+            Ok(InsnOutcome::Continue)
         }
     }
 
@@ -554,15 +585,20 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ///
     /// **Zero-pcode-op stretch case.**  When the outer `build` loop walks
     /// across one or more machine instructions that lift to zero pcode
-    /// ops (AArch64 `nop` / `paciasp` / `autiasp`, ARM `bti`, etc.),
-    /// `self.insns` is still empty by the time fall-through into an
-    /// already-explored region fires.  Creating an empty intermediate
-    /// region would violate `add_region`'s non-empty invariant.
-    /// Instead, the parent edge is hot-wired straight into the existing
-    /// region with the parent's original edge kind preserved.  The
-    /// effect on the resulting CFG is the same as if the empty stretch
-    /// were a one-region pass-through: the parent's classification
-    /// flows directly to the explored successor.
+    /// ops (AArch64 `nop` / `paciasp` / `autiasp`, ARM `bti`, x86 `nop` /
+    /// `pause`, alignment padding), `self.insns` is still empty by the time
+    /// fall-through into an already-explored region fires.  We still
+    /// materialise an empty `Unconditional` region owning `self.start_addr`
+    /// (an `add_region`-permitted shape) rather than hot-wiring the parent
+    /// edge straight into the existing region.  This is load-bearing: that
+    /// `start_addr` can be a branch/switch **target** (e.g. a backward
+    /// `je` onto a `pause` loop header, or a jump-table case label after an
+    /// alignment `nop`), and `Cfg::region_if` / `region_id_at_start` resolve
+    /// such targets to the region that *owns* the address.  Hot-wiring past
+    /// the address leaves it owned by no region, so the IR lifter cannot
+    /// recover the branch/switch successor and fails.  The empty region is a
+    /// pass-through the IR per-region driver iterates as a no-op and wires via
+    /// its `Unconditional` terminator.
     fn process_insn(
         &mut self,
         insn: &rsleigh::Insn,
@@ -570,16 +606,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
         // If `addr` is the start of an already-explored region, the current region
-        // fell through to it: finalise the current region and add an Unconditional edge.
+        // fell through to it: finalise the current region (empty or not) with an
+        // Unconditional terminator and add an edge to the existing region.
         if let Some(&existing_region_id) = self.builder.start_addr_to_region_id.get(&addr) {
-            if self.insns.is_empty() {
-                if let Some(parent_id) = self.parent_edge {
-                    self.builder
-                        .region_graph
-                        .add_edge(parent_id, existing_region_id, ());
-                }
-                return Ok(InsnOutcome::RegionClosed);
-            }
             let region = self.finish_current_region(RegionTerminator::Unconditional)?;
             self.builder
                 .region_graph

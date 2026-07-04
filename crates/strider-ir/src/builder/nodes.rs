@@ -74,6 +74,31 @@ impl FunctionBuilder {
         Ok(())
     }
 
+    /// Terminates the current region with an `Unreachable` node, sinking the
+    /// region's control edge.
+    ///
+    /// This is the control-sink for a no-return direct `Call` — a call whose
+    /// fall-through (return address) lies outside the function bound because
+    /// the callee never returns (e.g. FreeBSD `exit1`/`__dead2`). It is the
+    /// direct-`Call` analogue of the `Unreachable` that [`Self::build_call_other`]
+    /// emits for the NoReturn `CallOther` class. The memory edge is
+    /// intentionally left dangling — `Unreachable` consumes only control.
+    ///
+    /// This method **terminates** the current region unconditionally — callers
+    /// must not terminate it again afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NoCurrentRegion` / `RegionTerminated` when there is no active
+    /// region; `ExpectedControl` or `ExpectedMemory` if the region's
+    /// snapshotted control/memory edges are mistyped (graph-construction bug).
+    pub fn build_unreachable(&mut self) -> Result<()> {
+        let res = self.terminate_cur_region()?;
+        self.require_terminator_kinds(&res)?;
+        self.create_node(NodeKind::Unreachable, [res.control], []);
+        Ok(())
+    }
+
     /// Terminates the current region with an `IndirectBranch` placeholder
     /// node anchoring `target_value`, returning the created node's
     /// [`NodeId`].  Inputs: `[control, memory, target_value]`.  Outputs:
