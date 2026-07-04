@@ -39,11 +39,6 @@ fn phi_var_limit(want: rsleigh::Vn) -> NodePredicate {
     })
 }
 
-/// The kind spec pinning a phi-family discriminant.
-fn phi_kind(exemplar: NodeKind) -> KindSpec {
-    KindSpec::Variant(std::mem::discriminant(&exemplar))
-}
-
 // ── PhiPat (tagged or any) ────────────────────────────────────────────────────
 
 /// Builder for `Phi` node patterns. Created by [`phi`].
@@ -92,7 +87,7 @@ impl PhiPat {
 pub fn phi() -> PhiPat {
     PhiPat {
         // `Phi` has a value output at slot 0 (captured/limited via it).
-        inner: NodePat::value(phi_kind(NodeKind::Phi), 0),
+        inner: NodePat::value(KindSpec::variant_of(&NodeKind::Phi), 0),
         var_filter: None,
     }
 }
@@ -140,5 +135,5 @@ impl MemPat for MemPhiPat {
 /// Construct a fresh [`MemPhiPat`].
 pub fn mem_phi() -> MemPhiPat {
     // `MemPhi` is node-rooted with a memory-token output at slot 0.
-    MemPhiPat(NodePat::node(phi_kind(NodeKind::MemPhi)).with_mem_value(0))
+    MemPhiPat(NodePat::node(KindSpec::variant_of(&NodeKind::MemPhi)).with_mem_value(0))
 }

@@ -63,21 +63,16 @@ macro_rules! variant_binary_any {
         impl<L: MatchPat, R: MatchPat> MatchPat for $struct<L, R> {
             fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
                 let exemplar = $exemplar;
-                let n = b.node(KindSpec::Variant(std::mem::discriminant(&exemplar)));
-                let l = self.lhs.compile(b);
-                let r = self.rhs.compile(b);
-                b.input(n, 0, l);
-                b.input(n, 1, r);
-                let out = b.value_output(n, 0);
                 // The optional `$pin_i1` token gates the `I1` output-type pin
                 // for the boolean / comparison families; the value families
-                // (`IntBinaryAny`, `FloatBinaryAny`) omit it. `stringify!`
-                // consumes the token without emitting any code of its own.
+                // (`IntBinaryAny`, `FloatBinaryAny`) omit it (`None`).
+                #[allow(unused_mut, unused_assignments)]
+                let mut pin: Option<ValueType> = None;
                 $(
                     let _ = stringify!($pin_i1);
-                    b.set_value_ty(out, ValueType::I1);
+                    pin = Some(ValueType::I1);
                 )?
-                out
+                compile_two_input(b, KindSpec::variant_of(&exemplar), self.lhs, self.rhs, pin)
             }
         }
 
@@ -101,8 +96,7 @@ macro_rules! variant_unary_any {
         impl<I: MatchPat> MatchPat for $struct<I> {
             fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
                 let exemplar = $exemplar;
-                let i = self.inner.compile(b);
-                b.unary(KindSpec::Variant(std::mem::discriminant(&exemplar)), i)
+                compile_unary_kind(b, KindSpec::variant_of(&exemplar), self.inner)
             }
         }
 
