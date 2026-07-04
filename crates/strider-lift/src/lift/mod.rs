@@ -120,12 +120,20 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// # Errors
     ///
     /// Propagates CFG build failures.
+    /// `per_address_ccs` seeds the CFG builder with per-address CC overrides for
+    /// call TARGETS; the builder reads their
+    /// [`no_return`](strider_target::BuiltCallingConvention::no_return) flag to
+    /// terminate a region at a no-return call.  Callers with no overrides pass
+    /// an empty map.
     pub fn build_cfg(
         &mut self,
         entry: strider_cfg::MachineInsnAddr,
         cfg_opts: &strider_cfg::CfgOptions,
+        per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<strider_cfg::Cfg> {
-        strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, entry.addr, cfg_opts).build()
+        strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, entry.addr, cfg_opts)
+            .with_per_address_ccs(per_address_ccs.clone())
+            .build()
     }
 
     /// Collects the set of all distinct varnodes referenced by any instruction

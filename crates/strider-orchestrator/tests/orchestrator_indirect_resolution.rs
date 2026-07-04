@@ -292,6 +292,7 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
         .build_cfg(
             strider_cfg::MachineInsnAddr::from(0x1000u64),
             &Default::default(),
+            &Default::default(),
         )
         .expect("cfg");
     let mut single = lifter

@@ -29,6 +29,12 @@ pub(crate) enum CcImpl {
 pub struct PyCallingConvention {
     pub(crate) inner: CcImpl,
     pub(crate) preset_name: &'static str,
+    /// `true` when this convention has been marked no-return via
+    /// [`PyCallingConvention::no_return`].  Applied to the built
+    /// [`strider_target::BuiltCallingConvention::no_return`] when this CC is
+    /// resolved as a per-address override (see `build_per_address_ccs`); a call
+    /// TARGET carrying a no-return CC terminates its calling region.
+    pub(crate) no_return: bool,
 }
 
 // `x86_64_all_preserving` stays hand-written below because it carries
@@ -67,6 +73,29 @@ impl PyCallingConvention {
         Self {
             inner: CcImpl::Preset(strider_target::CallingConvention::x86_64_all_preserving()),
             preset_name: "x86_64_all_preserving",
+            no_return: false,
+        }
+    }
+
+    /// Returns a copy of this calling convention marked **no-return** — a
+    /// callee that never returns (`exit` / `abort` / `panic` /
+    /// `__stack_chk_fail` / …).
+    ///
+    /// Use it as a per-address CC override — `CallingConvention.x86_64_systemv()
+    /// .no_return()`, or `CallingConvention.custom(...).no_return()` to also
+    /// capture the call's arguments precisely.  During analysis the CFG builder
+    /// terminates the calling region at a call to such a target (lowered to
+    /// `Call + Unreachable`), so the unreachable fall-through — including a
+    /// *mid-function* one, e.g. `if (err) panic();` followed by live code — is
+    /// not lifted as reachable.  This is the precise counterpart to the
+    /// function-end structural fallback (a call whose return address leaves the
+    /// function bound is already treated as unreachable-after without any
+    /// override).
+    fn no_return(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            preset_name: self.preset_name,
+            no_return: true,
         }
     }
 
@@ -101,6 +130,8 @@ impl PyCallingConvention {
     ///         (ARM/AArch64/MIPS/PowerPC); pass `None` on x86/x86_64.
     ///     preserves_memory: `True` for transparent hooks
     ///         (`__fentry__`/`mcount`-style) that preserve memory.
+    ///
+    /// Chain `.no_return()` on the result to mark the callee as never-returning.
     #[classmethod]
     #[pyo3(signature = (
         sleigh,
@@ -169,6 +200,7 @@ impl PyCallingConvention {
         Ok(Self {
             inner: CcImpl::Custom(Box::new(built)),
             preset_name: "custom",
+            no_return: false,
         })
     }
 

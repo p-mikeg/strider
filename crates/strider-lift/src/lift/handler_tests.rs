@@ -69,6 +69,7 @@ pub(super) fn empty_cc() -> strider_target::BuiltCallingConvention {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
+        no_return: false,
     }
 }
 

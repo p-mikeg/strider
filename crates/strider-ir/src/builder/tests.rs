@@ -38,6 +38,7 @@ fn raw_builder(
         ret_stack_pop,
         link_register_vn: None,
         preserves_memory: false,
+        no_return: false,
     };
     // Note: unlike the test-utils `RegisterSet`, this local helper does NOT
     // stamp the sentinel lift address — it mirrors the old `new_raw`, which
@@ -2294,6 +2295,7 @@ mod build_call_with_cc {
             ret_stack_pop: 0,
             link_register_vn: None,
             preserves_memory: false,
+            no_return: false,
         };
 
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
@@ -2728,6 +2730,7 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
+        no_return: false,
     };
     let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], cc, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
@@ -2773,6 +2776,7 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
+        no_return: false,
     };
     // Track only the wider container rdi (+ sp). FunctionBuilder::new seeds
     // edi (the narrow arg alias) then drops it as enclosed by rdi, so the var

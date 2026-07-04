@@ -159,8 +159,13 @@ where
         entry: u64,
         cfg_opts: &strider_cfg::CfgOptions,
     ) -> Result<strider_cfg::Cfg> {
-        self.lifter
-            .build_cfg(MachineInsnAddr::from(entry), cfg_opts)
+        // Standalone structural build: no per-address CCs (they are a lift-time
+        // ABI concept threaded only through `analyze`/`build_lift`).
+        self.lifter.build_cfg(
+            MachineInsnAddr::from(entry),
+            cfg_opts,
+            &rustc_hash::FxHashMap::default(),
+        )
     }
 
     /// Lift the function at `entry`, optimise it, resolve its indirect
@@ -339,7 +344,7 @@ where
         // No cfg-time resolver: every `BranchIndirect` not yet in
         // `known_targets` is deferred via `UnresolvedIndirectBranch` and
         // resolved at the full-function IR level by the classifier post-pass.
-        let cfg = lifter.build_cfg(start_addr, &working.cfg)?;
+        let cfg = lifter.build_cfg(start_addr, &working.cfg, &working.per_address_ccs)?;
         // `build_ir_with` takes `cc` by value (it is moved all the way into
         // `Function::default_cc` — see `strider-ir`'s `FunctionBuilder::new`).
         // `analyze`'s resolve/re-lift loop calls `build_lift` — and thus this

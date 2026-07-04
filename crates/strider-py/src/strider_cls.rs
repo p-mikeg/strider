@@ -50,7 +50,7 @@ pub(crate) fn build_per_address_ccs(
     per_address_ccs_py
         .into_iter()
         .map(|(addr, py_cc)| {
-            let built = match py_cc.inner {
+            let mut built = match py_cc.inner {
                 crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(|e| {
                     into_strider_err(anyhow::anyhow!(
                         "per-address CC at {addr:#x} unresolved: {e:?}"
@@ -58,6 +58,9 @@ pub(crate) fn build_per_address_ccs(
                 })?,
                 crate::cc::CcImpl::Custom(built) => *built,
             };
+            // The wrapper-level `.no_return()` marker is applied here, after the
+            // ABI is resolved — it works uniformly for preset and custom CCs.
+            built.no_return = py_cc.no_return;
             Ok((addr, built))
         })
         .collect::<PyResult<_>>()

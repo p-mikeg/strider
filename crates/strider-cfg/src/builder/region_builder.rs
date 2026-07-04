@@ -281,7 +281,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             }
             rsleigh::Opcode::BranchIndirect => self.process_branch_indirect(insn, addr),
             rsleigh::Opcode::CallOther => self.process_call_other(insn),
-            rsleigh::Opcode::Call => self.process_call(addr, lift_res),
+            rsleigh::Opcode::Call => self.process_call(insn, addr, lift_res),
             _ => Ok(InsnOutcome::Continue),
         }
     }
@@ -290,25 +290,43 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ///
     /// A `call` normally falls through to its return address (the next machine
     /// instruction), so it is not a terminator — return
-    /// [`InsnOutcome::Continue`] and let the decode loop keep going.  BUT when
-    /// that return address lies **outside** the function bound
-    /// `[start, start + fn_max_size)`, there is no in-function code after the
-    /// call: either the callee is no-return (e.g. FreeBSD `exit1`/`__dead2`,
-    /// so the compiler emitted no `ret` and only inter-function padding
-    /// follows) or the function's recorded extent ends at the call.  Terminate
-    /// the region with `NoReturn` instead of falling through into the padding
-    /// and tripping `detect_fallthrough_oob_tail_call`'s function-boundary
-    /// error.  The IR lifter lowers a `NoReturn` region whose trailing insn is
-    /// a direct `Call` as `Call + Unreachable`.  This mirrors the existing
-    /// `process_call_other`→`NoReturn` and OOB-`CondBranch`→stub handling: an
-    /// OOB control-transfer is a region terminator, not a decode overrun.
+    /// [`InsnOutcome::Continue`] and let the decode loop keep going.  It ends
+    /// the region in two cases:
+    ///
+    /// 1. **Known no-return callee** — the target's per-address CC override is
+    ///    flagged [`no_return`](strider_target::BuiltCallingConvention::no_return)
+    ///    (`exit`/`abort`/`panic`/…).  The call never returns, so the region
+    ///    ends here *regardless* of where the return address lands — this
+    ///    correctly kills a **mid-function** no-return call's dead fall-through,
+    ///    which case 2 cannot see.
+    /// 2. **Function-end structural fallback** — the return address lies
+    ///    **outside** the function bound `[start, start + fn_max_size)`, so
+    ///    there is no in-function code after the call (an unmarked no-return
+    ///    callee like FreeBSD `exit1`, or the function's extent ends at the
+    ///    call).  Terminating here avoids falling through into inter-function
+    ///    padding and tripping `detect_fallthrough_oob_tail_call`.
+    ///
+    /// Either way the IR lifter lowers the `NoReturn` region (trailing insn a
+    /// direct `Call`) as `Call + Unreachable`.  This mirrors the existing
+    /// `process_call_other`→`NoReturn` and OOB-`CondBranch`→stub handling: a
+    /// no-returning control transfer is a region terminator, not a decode
+    /// overrun.
     fn process_call(
         &mut self,
+        insn: &rsleigh::Insn,
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
-        let return_addr = next_pcode_addr(addr, lift_res)?;
-        if self.is_branch_tail_call_nocheck(return_addr) {
+        // A direct call's target is its first pcode input (a code/RAM-space
+        // address constant); look up its per-address CC override.
+        let target_no_return = insn.inputs.first().is_some_and(|target_vn| {
+            self.builder
+                .per_address_ccs
+                .get(&target_vn.addr_off)
+                .is_some_and(|cc| cc.no_return)
+        });
+        let return_oob = self.is_branch_tail_call_nocheck(next_pcode_addr(addr, lift_res)?);
+        if target_no_return || return_oob {
             self.finish_current_region(RegionTerminator::NoReturn)?;
             Ok(InsnOutcome::RegionClosed)
         } else {

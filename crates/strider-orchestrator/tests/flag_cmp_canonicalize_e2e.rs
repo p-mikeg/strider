@@ -34,7 +34,7 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
     let cc = cc.build(strider.sleigh_regs()).expect("build cc");
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(base), &CfgOptions::default())
+        .build_cfg(MachineInsnAddr::from(base), &CfgOptions::default(), &Default::default())
         .expect("cfg build");
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     let mut function = outcome.function;

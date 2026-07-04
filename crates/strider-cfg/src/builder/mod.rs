@@ -68,6 +68,17 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// Pending addresses to explore, together with the parent edge they
     /// should connect from. Treated as a LIFO stack (depth-first traversal).
     pub(super) work_queue: Vec<(Option<NodeIndex>, PcodeInsnAddr)>,
+    /// Per-address calling-convention overrides for CALL TARGETS, keyed by
+    /// target machine address.  The CFG builder consults only one attribute:
+    /// [`strider_target::BuiltCallingConvention::no_return`].  A direct call to
+    /// a target flagged `no_return` terminates the calling region `NoReturn`
+    /// (→ `Call + Unreachable`) regardless of where the return address lands,
+    /// so a mid-function no-return call correctly kills its fall-through.
+    /// Empty by default (the function-end structural fallback still applies);
+    /// the orchestrator seeds it from the lifter options via
+    /// [`Self::with_per_address_ccs`].
+    pub(super) per_address_ccs:
+        rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
 }
 
 impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
@@ -102,7 +113,21 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             region_graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
+            per_address_ccs: rustc_hash::FxHashMap::default(),
         }
+    }
+
+    /// Seeds the per-address call-target CC overrides (see
+    /// [`Self::per_address_ccs`]).  Called by the orchestrator with the same
+    /// map it hands the lifter, so a `no_return`-flagged target terminates its
+    /// calling region during CFG construction.  Builder-style; returns `self`.
+    #[must_use]
+    pub fn with_per_address_ccs(
+        mut self,
+        per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
+    ) -> Self {
+        self.per_address_ccs = per_address_ccs;
+        self
     }
 
     /// Inserts `region` into the graph and records its start address in the
