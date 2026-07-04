@@ -37,8 +37,7 @@ impl PySleigh {
     /// PyO3's argument-conversion path.  Builds a `Sleigh` transiently to
     /// probe the register table, then drops it.
     pub(crate) fn new_internal(arch: PySleighArch, reader: AnyMemReader) -> PyResult<Self> {
-        let sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader)
-            .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
+        let sleigh = crate::strider_cls::build_orch_sleigh(&arch, reader)?;
         let regs = sleigh
             .regs()
             .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::regs failed: {e:?}")))?;
