@@ -7,7 +7,9 @@
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
-use super::analyzer::{AddrClass, AliasVerdict, SpAnalyzer, SpExpr, SpExprMemo, alias_verdict};
+use super::analyzer::{
+    AddrClass, AliasVerdict, SizedAddr, SpAnalyzer, SpExpr, SpExprMemo, alias_verdict,
+};
 use super::mem_ssa::MemorySSAWalker;
 use super::ranges::store_value_byte_size;
 use crate::{AliasMode, MemAliasOptions};
@@ -66,10 +68,14 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_, '_> {
                 let store_class =
                     SpAnalyzer::new(function, &mut *self.cfg.sp_memo).classify_store_addr(def);
                 alias_verdict(
-                    self.load_class,
-                    self.load_size,
-                    store_class,
-                    store_size,
+                    SizedAddr {
+                        class: self.load_class,
+                        size: self.load_size,
+                    },
+                    SizedAddr {
+                        class: store_class,
+                        size: store_size,
+                    },
                     self.cfg.alias_mode,
                     self.cfg.mem.assume_distinct_sp_bases_disjoint,
                 ) != AliasVerdict::Disjoint
@@ -175,10 +181,14 @@ impl<'m> SpAliasCfg<'m> {
         let store_class = self.classify_addr(function, function.store_addr(store_node));
         let store_size = store_value_byte_size(function.graph(), function.store_data(store_node));
         alias_verdict(
-            load_class,
-            load_size,
-            store_class,
-            store_size,
+            SizedAddr {
+                class: load_class,
+                size: load_size,
+            },
+            SizedAddr {
+                class: store_class,
+                size: store_size,
+            },
             self.alias_mode,
             self.mem.assume_distinct_sp_bases_disjoint,
         )
