@@ -935,6 +935,7 @@ pub(crate) mod test_fixtures {
             ret_stack_pop: 0,
             link_register_vn: None,
             preserves_memory: false,
+            no_return: false,
         };
         let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
             .expect("FunctionBuilder::new");

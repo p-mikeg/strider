@@ -120,12 +120,20 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// # Errors
     ///
     /// Propagates CFG build failures.
+    /// `per_address_ccs` seeds the CFG builder with per-address CC overrides for
+    /// call TARGETS; the builder reads their
+    /// [`no_return`](strider_target::BuiltCallingConvention::no_return) flag to
+    /// terminate a region at a no-return call.  Callers with no overrides pass
+    /// an empty map.
     pub fn build_cfg(
         &mut self,
         entry: strider_cfg::MachineInsnAddr,
         cfg_opts: &strider_cfg::CfgOptions,
+        per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<strider_cfg::Cfg> {
-        strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, entry.addr, cfg_opts).build()
+        strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, entry.addr, cfg_opts)
+            .with_per_address_ccs(per_address_ccs.clone())
+            .build()
     }
 
     /// Collects the set of all distinct varnodes referenced by any instruction
@@ -344,6 +352,21 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                         .map(|wrapped| wrapped.addr.machine_addr.addr)
                         .max()
                 });
+            // A `NoReturn` region whose trailing insn is a DIRECT `Call` ends in
+            // a no-return call whose return address left the function bound (the
+            // cfg builder's `process_call`).  The per-insn loop already lifted
+            // the `Call` (which keeps the region's control open), so sink that
+            // control into an `Unreachable` terminator here.  A `CallOther`
+            // NoReturn region self-terminates inside `handle_call_other`
+            // (`terminate=true`), so gate on the direct-`Call` opcode to avoid
+            // double-terminating it.
+            let noreturn_direct_call = matches!(
+                region.terminator,
+                strider_cfg::RegionTerminator::NoReturn
+            ) && region
+                .insns
+                .last()
+                .is_some_and(|w| w.insn.opcode == rsleigh::Opcode::Call);
             // Per-terminator funnel: same asm-fingerprint attribution
             // pattern as `process_insn` (see `with_lift_addr`).
             self.with_lift_addr(term_addr, |s| {
@@ -357,7 +380,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                     Some(SpecialTerm::TailCall(target)) => {
                         s.handle_tail_call(target)?;
                     }
-                    None => {}
+                    None => {
+                        if noreturn_direct_call {
+                            s.builder.build_unreachable()?;
+                        }
+                    }
                 }
                 Ok(())
             })?;

@@ -24,6 +24,7 @@ fn x86_64_ud2_terminates_cleanly() {
         .build_cfg(
             MachineInsnAddr::from(entry),
             &strider_cfg::CfgOptions::default(),
+            &Default::default(),
         )
         .expect("cfg");
 
@@ -52,6 +53,7 @@ fn aarch64_brk_terminates_cleanly() {
         .build_cfg(
             MachineInsnAddr::from(entry),
             &strider_cfg::CfgOptions::default(),
+            &Default::default(),
         )
         .expect("cfg");
 

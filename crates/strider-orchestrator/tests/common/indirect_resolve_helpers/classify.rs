@@ -733,6 +733,7 @@ pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::V
         .build_cfg(
             MachineInsnAddr::from(base),
             &strider_cfg::CfgOptions::default(),
+            &Default::default(),
         )
         .expect("cfg build");
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");

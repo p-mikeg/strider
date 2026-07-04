@@ -266,7 +266,7 @@ pub(crate) fn analyze_with_known_targets(
         ..Default::default()
     };
     let cfg = driver
-        .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
+        .build_cfg(MachineInsnAddr::from(base), &cfg_opts, &Default::default())
         .expect("cfg build with Multiple known targets");
 
     // `build_ir` now takes `cc` by value; clone here so the caller still
@@ -339,7 +339,7 @@ pub(crate) fn lift_for_pipeline(
         ..Default::default()
     };
     let cfg = ana
-        .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_opts)
+        .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_opts, &Default::default())
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     // `build_ir` now takes `cc` by value; clone here so the caller still
     // gets back an owned `cc` alongside the outcome.

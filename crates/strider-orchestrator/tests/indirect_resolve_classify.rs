@@ -325,7 +325,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
     // the `br x30` reaches the IR as an UnresolvedIndirectBranch
     // placeholder for the IR-level resolver to classify.
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(base), &CfgOptions::default())
+        .build_cfg(MachineInsnAddr::from(base), &CfgOptions::default(), &Default::default())
         .expect("cfg build");
 
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");

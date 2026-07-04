@@ -35,6 +35,7 @@ fn build_ir_with_applies_per_address_override() {
         .build_cfg(
             MachineInsnAddr::from(entry),
             &strider_cfg::CfgOptions::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -100,6 +101,7 @@ fn build_ir_with_default_options_matches_build_ir() {
         .build_cfg(
             MachineInsnAddr::from(entry),
             &strider_cfg::CfgOptions::default(),
+            &Default::default(),
         )
         .unwrap();
 

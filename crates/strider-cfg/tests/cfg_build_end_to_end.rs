@@ -41,6 +41,67 @@ fn build_from_bytes_opts(bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> Cfg {
         .expect("Builder::build on synthetic bytes")
 }
 
+fn build_from_bytes_ccs(
+    bytes: Vec<u8>,
+    start: u64,
+    per_address_ccs: &FxHashMap<u64, strider_target::BuiltCallingConvention>,
+) -> Cfg {
+    let arch = SleighArch::x86_64();
+    let mut sleigh = make_sleigh_x86_64(bytes, start);
+    Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
+        .with_per_address_ccs(per_address_ccs.clone())
+        .build()
+        .expect("Builder::build on synthetic bytes")
+}
+
+/// A per-address CC map flagging each `target` address `no_return`.
+fn no_return_ccs(targets: &[u64]) -> FxHashMap<u64, strider_target::BuiltCallingConvention> {
+    targets
+        .iter()
+        .map(|&a| {
+            (
+                a,
+                strider_target::BuiltCallingConvention {
+                    no_return: true,
+                    ..Default::default()
+                },
+            )
+        })
+        .collect()
+}
+
+/// A direct `call` to a target flagged `no_return` terminates the calling
+/// region `NoReturn` even MID-function (its return address is in-bounds, so the
+/// structural function-end fallback does not fire); the unreachable
+/// fall-through is never explored.  Without the flag the same call falls
+/// through and the region runs to the trailing `ret` (`Return`).
+#[test]
+fn direct_call_to_no_return_target_terminates_region_mid_function() {
+    // 0x1000: call 0x2005 (e8 rel32=0x1000 → target 0x1005 + 0x1000 = 0x2005,
+    //         a distinct far target so it does not coincide with the
+    //         fall-through and seed a split)
+    // 0x1005: xor eax,eax   (31 c0)
+    // 0x1007: ret           (c3)
+    let bytes = vec![0xe8, 0x00, 0x10, 0x00, 0x00, 0x31, 0xc0, 0xc3];
+
+    // Baseline: the call is an ordinary mid-function call → falls through to
+    // the `ret`, so the single region terminates `Return`.
+    let cfg = build_from_bytes(bytes.clone(), 0x1000);
+    assert_eq!(
+        cfg.region_graph[cfg.entry].terminator,
+        RegionTerminator::Return,
+        "unmarked mid-function call falls through to the ret"
+    );
+
+    // Flag the call target (0x2005) `no_return`: the region ends AT the call.
+    let cfg = build_from_bytes_ccs(bytes, 0x1000, &no_return_ccs(&[0x2005]));
+    assert_eq!(
+        cfg.region_graph[cfg.entry].terminator,
+        RegionTerminator::NoReturn,
+        "a call to a no_return-flagged target terminates the region"
+    );
+}
+
 // ── single-region / smoke tests ──────────────────────────────────────────
 
 #[test]

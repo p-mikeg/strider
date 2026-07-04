@@ -36,6 +36,7 @@ macro_rules! forall_preset {
                     Self {
                         inner: crate::cc::CcImpl::Preset(<$inner_ty>::$name()),
                         preset_name: stringify!($name),
+                        no_return: false,
                     }
                 }
             )*

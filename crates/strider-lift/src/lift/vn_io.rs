@@ -34,8 +34,9 @@ use super::pcode_util::Result;
 ///   `u128::MAX`.  These widths are still valid *containers*; a full-width
 ///   access takes the direct container read/write path which never consults
 ///   the mask (`read_vn`/`write_vn` early-out when `reg` equals its own
-///   container), and a sub-register slice *within* a >16-byte container is
-///   rejected in `enter_sub_register` before any mask is computed.  So
+///   container); a sub-register *read* of a >16-byte container slices it via
+///   shift+truncate (no mask); and a sub-register *write* into a >16-byte
+///   container is rejected in `write_reg_vn` before any mask is computed.  So
 ///   `vn_mask` is only ever called for ≤16-byte registers in production, and
 ///   erroring here makes a wrong degraded mask impossible by construction
 ///   instead of relying solely on that guard.
@@ -303,6 +304,21 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             }
             SubRegOutcome::SubReg(ctx) => ctx,
         };
+        // A sub-register WRITE into a wide (>16-byte) container needs a mask in
+        // container coordinates (`build_masked_insert` → `vn_mask`), which has
+        // no `u128` representation for 32-/64-byte ymm/zmm containers.  Fail
+        // closed with a clear error rather than producing a wrong value.  (The
+        // READ counterpart needs no mask and is handled in `read_reg_vn`.)
+        if ctx.container_reg.size > 16 {
+            return Err(anyhow!(
+                "write_reg_vn: sub-register write within a wide ({}-byte) \
+                 container is not supported (a >16-byte mask has no u128 \
+                 representation) (reg {:?}, container {:?})",
+                ctx.container_reg.size,
+                reg,
+                ctx.container_reg,
+            ));
+        }
         // Coerce `val` to the sub-register's integer width through the SAME
         // prelude the direct-container arm uses (`convert_to_int_if_needed`):
         // a 1-bit `I1` flag result is zero-extended to the sub-register width,
@@ -342,32 +358,29 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     ///   container; caller takes the direct-container path (no shift / mask
     ///   needed).
     /// * `SubRegOutcome::SubReg(SubRegContext { .. })` — `reg` is a strict
-    ///   sub-slice of a ≤16-byte container; caller specialises read (shift
-    ///   right + truncate) or write (extend + shift left + mask + OR).
+    ///   sub-slice of its container; caller specialises read (shift right +
+    ///   truncate) or write (extend + shift left + mask + OR).
     ///
-    /// Surfaces typed errors for the wide-container case (>16 bytes) and the
-    /// defensive shift-bound check, both of which are correctness-critical.
-    /// `op` is the caller's function name, used as a prefix in the shift-bound
-    /// error so the failure points at the originating site.
+    /// Wide (>16-byte) containers are NOT rejected here: a read slices them via
+    /// shift+truncate on the container's `I256`/`I512` type, and the
+    /// mask-dependent write path rejects the wide-container write in
+    /// `write_reg_vn`'s own arm.  This prelude surfaces only the defensive
+    /// shift-bound check (correctness-critical).  `op` is the caller's function
+    /// name, used as a prefix in the shift-bound error so the failure points at
+    /// the originating site.
     fn enter_sub_register(&self, reg: &rsleigh::Vn, op: &'static str) -> Result<SubRegOutcome> {
         let container_reg = self.find_largest_fitting_register(reg)?;
         if container_reg == *reg {
             return Ok(SubRegOutcome::Direct { container_reg });
         }
-        // Sub-register reads/writes within a wide (>16-byte) container would
-        // need a wide mask + shift, which the current u128-mask path cannot
-        // represent.  Bail with a clear error rather than silently producing
-        // the wrong value.  Direct full-container access (above) and narrow
-        // sub-slice within a ≤16-byte container (below) work normally.
-        if container_reg.size > 16 {
-            return Err(anyhow!(
-                "{op}: sub-register aliasing within a wide ({}-byte) container \
-                 is not supported (reg {:?}, container {:?})",
-                container_reg.size,
-                reg,
-                container_reg,
-            ));
-        }
+        // A sub-slice of a WIDE (>16-byte) container is representable on the
+        // READ path — `read_reg_vn` shifts the container's wide integer value
+        // (`I256`/`I512`) right by `shift_bits` and truncates to the slice
+        // width, never consulting `vn_mask`.  Only the WRITE path needs a wide
+        // mask (which `u128` cannot represent); `write_reg_vn` rejects the
+        // wide-container write in its sub-register arm before it reaches
+        // `build_masked_insert`/`vn_mask`.  So the guard lives on the write
+        // side, and this shared prelude lets wide-container reads through.
         let container_ty: ValueType = container_reg.int_type()?;
         let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
         // Defensive bound: any shift ≥ container_bits is undefined per the

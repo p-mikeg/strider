@@ -49,6 +49,7 @@ fn narrow_alias_read_lifts_with_truncate_or_mask_shape() {
         .build_cfg(
             MachineInsnAddr::from(BASE),
             &strider_cfg::CfgOptions::default(),
+            &Default::default(),
         )
         .expect("cfg");
     let function = driver.build_ir(&cfg, cc).expect("build_ir").function;
