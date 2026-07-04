@@ -5,7 +5,7 @@ use super::FunctionBuilder;
 use crate::IRViewer;
 use crate::builder::IRBuilderExt;
 use crate::error::Result;
-use crate::node::{NodeKind, ValueId, ValueKind};
+use crate::node::{InitialVnId, NodeKind, ValueId};
 use crate::region::RegionId;
 
 impl FunctionBuilder {
@@ -89,6 +89,41 @@ impl FunctionBuilder {
         self.link_region_variables(region_id, &initial_variables)
     }
 
+    /// Pruned-SSA entry setup: like [`Self::set_entry_region`], but the entry
+    /// region carries no value phis, so its `InitialVar` values are stored
+    /// DIRECTLY as the entry region's current variable values — the
+    /// dominator-tree root every other region inherits from via
+    /// [`FunctionBuilder::inherit_variables`] — instead of being wired as phi
+    /// operands.  Used only by the lifter's pruned construction path.
+    pub fn set_entry_region_pruned(&mut self, region_id: RegionId) -> Result<()> {
+        let entry_node = self.function.entry();
+        let [entry_control] = self.function().node_outputs_exact(entry_node)?;
+        let entry_memory = self.entry_memory;
+        self.link_control_regions(region_id, entry_control)?;
+        self.link_memory_regions(region_id, entry_memory)?;
+
+        let vn_ids: Vec<_> = self.function().vn_ids().collect();
+        let mut initial_variables = SecondaryMap::new();
+        for vn_id in vn_ids {
+            let var = self.function().initial_vn(vn_id);
+            let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
+            let value =
+                self.build_single_output_pure(NodeKind::InitialVar(vn_id), [], output_type);
+            initial_variables[vn_id] = value;
+            let node_id = self.function().producer(value);
+            self.function_mut()
+                .side_tables_mut()
+                .initial_var_index
+                .insert(vn_id, node_id);
+        }
+        // The entry region has no predecessors, so the InitialVars ARE its
+        // current variable values.
+        self.set_region_variables(region_id, initial_variables.clone());
+        // Wire any phi that WAS placed at the entry (only if the entry is a
+        // join — rare, e.g. an entry that is also a loop header).
+        self.link_region_variables(region_id, &initial_variables)
+    }
+
     /// Test-only: record register-passed argument carriers on the arg table,
     /// mirroring what the LIFTER does in prod right after `set_entry_region`.
     ///
@@ -109,41 +144,23 @@ impl FunctionBuilder {
         }
     }
 
-    /// Creates a new region in the graph with fresh `Region`,
-    /// `MemPhi`, and per-variable `Phi` nodes.
-    ///
-    /// # Errors
-    ///
-    /// Returns `WrongOutputCount` if the freshly created
-    /// `Region` or `MemPhi` does not have its expected output shape
-    /// (this would indicate a graph-construction bug, not a user error).
-    /// Other variants from `build_vn_phi` propagate.
+    /// Eager region constructor: a fresh `Region` + `MemPhi` with a value `Phi`
+    /// for EVERY tracked varnode, and the current-value map seeded from those
+    /// phis (no dominator inheritance needed).  The all-variables specialization
+    /// of [`Self::create_region_with`]; see it for the error contract.
     pub fn create_region(&mut self) -> Result<RegionId> {
-        let memory_node = self.create_node(NodeKind::MemPhi, [], [ValueKind::Memory]);
-        let [memory] = self.function().node_outputs_exact(memory_node)?;
-
-        let control_node = self.create_node(
-            NodeKind::Region,
-            [],
-            [ValueKind::Control, ValueKind::PhiToken],
-        );
-        let [control, phi_token] = self.function().node_outputs_exact(control_node)?;
-
-        // Wire the PhiToken as MemPhi.inputs[0], mirroring how
-        // Phi nodes are linked.  This gives MemPhi a direct back-reference to
-        // its Region so that dead-branch elimination and redundant-phi removal
-        // can treat MemPhi and Phi identically (same positional logic, same
-        // automatic discovery via value_uses(cs_phi_out)).
-        self.function_mut()
-            .graph_mut()
-            .add_node_input(memory_node, phi_token);
-
         let vn_ids: Vec<_> = self.function().vn_ids().collect();
-        let mut variables = SecondaryMap::new();
-        for vn_id in vn_ids {
-            let var = self.function().initial_vn(vn_id);
-            variables[vn_id] = self.build_vn_phi(var, phi_token, &[])?;
-        }
-        self.create_region_helper(control_node, control, memory_node, memory, variables)
+        self.create_region_with(&vn_ids, true)
+    }
+
+    /// Pruned-SSA region constructor: creates the `Region` + `MemPhi` skeleton
+    /// and a value `Phi` ONLY for each variable in `placed` (the Cytron
+    /// IDF-placed set), instead of one per tracked varnode.  The per-region
+    /// current-value map is left empty here and filled in dominator-tree order
+    /// by [`Self::inherit_variables`] (a non-placed variable inherits its
+    /// reaching value from the immediate dominator; a placed one takes its
+    /// phi).  Used only by the lifter's pruned construction path.
+    pub fn create_region_pruned(&mut self, placed: &[InitialVnId]) -> Result<RegionId> {
+        self.create_region_with(placed, false)
     }
 }

@@ -6,7 +6,7 @@
 mod common;
 
 use common::graph;
-use graphwalk::GraphRef;
+use graph_algorithms::GraphRef;
 use std::ops::ControlFlow;
 
 #[test]

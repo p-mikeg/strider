@@ -326,7 +326,7 @@ impl Function {
     /// `None` when `vn` is not a tracked variable.  The reverse of
     /// [`Self::initial_vn`]; the [`crate::FunctionBuilder`] uses it as its
     /// variable-table lookup during construction.
-    pub(crate) fn vn_id_of(&self, vn: &rsleigh::Vn) -> Option<crate::node::InitialVnId> {
+    pub fn vn_id_of(&self, vn: &rsleigh::Vn) -> Option<crate::node::InitialVnId> {
         self.vn_interner.key_of(vn)
     }
 

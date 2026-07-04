@@ -235,7 +235,7 @@ impl FunctionBuilder {
     /// `phi_token` must be the `PhiToken` output of the owning `Region`.
     /// `incoming_values` are the data inputs, one per predecessor (may be empty
     /// when first created; filled in later via `add_region_predecessor`).
-    pub(super) fn build_vn_phi(
+    pub(crate) fn build_vn_phi(
         &mut self,
         var: rsleigh::Vn,
         phi_token: ValueId,

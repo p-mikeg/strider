@@ -5,6 +5,8 @@ edition.workspace = true
 
 [dependencies]
 strider-cfg = { workspace = true }
+petgraph.workspace = true
+graph-algorithms.workspace = true
 strider-ir = { workspace = true }
 rsleigh.workspace = true
 vn-container.workspace = true
