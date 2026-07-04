@@ -164,12 +164,12 @@ fn region_join_with_phi_validates() {
         .build_fn()
         .expect("builder");
 
-    let entry = b.create_region().expect("entry region");
-    let region_t = b.create_region().expect("true region");
-    let region_f = b.create_region().expect("false region");
-    let join = b.create_region().expect("join region");
+    let entry = b.create_region_all().expect("entry region");
+    let region_t = b.create_region_all().expect("true region");
+    let region_f = b.create_region_all().expect("false region");
+    let join = b.create_region_all().expect("join region");
 
-    b.set_entry_region(entry).expect("set entry region");
+    b.set_entry_region_all(entry).expect("set entry region");
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
@@ -254,6 +254,42 @@ fn extend_and_truncate_validate() {
         b.build_int_binary_operation(v32_zero, v32_sign, IntBinaryOp::Add, ValueType::I32)
     })
     .expect("extend_and_truncate must validate");
+}
+
+#[test]
+fn switch_target_arity_mismatch_is_rejected() {
+    use strider_ir::IRViewer;
+    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, empty_builder};
+
+    // Build a valid switch, then corrupt its side table to N-1 addresses.
+    let mut b = empty_builder().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let a = b.create_region_all().unwrap();
+    let c = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    b.build_switch(addr, &[(a, 0x1000), (c, 0x1020)]).unwrap();
+    b.set_region(a);
+    b.build_return(None, &[]).unwrap();
+    b.set_region(c);
+    b.build_return(None, &[]).unwrap();
+    let mut f = b.build().unwrap();
+    assert!(
+        strider_ir::validate::validate(&f).is_ok(),
+        "well-formed switch validates"
+    );
+    let sw = f
+        .graph()
+        .all_node_ids()
+        .find(|&n| matches!(f.node_kind(n), strider_ir::node::NodeKind::Switch))
+        .unwrap();
+    f.side_tables_mut().set_switch_targets(sw, vec![0x1000]); // now 1 addr, 2 outputs
+    assert!(
+        strider_ir::validate::validate(&f).is_err(),
+        "arity mismatch rejected"
+    );
 }
 
 #[test]

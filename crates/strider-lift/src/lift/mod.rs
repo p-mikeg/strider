@@ -276,12 +276,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 .get(&cfg_rid)
                 .map(|s| s.iter().copied().collect())
                 .unwrap_or_default();
-            region_map.insert(cfg_rid, self.builder.create_region_pruned(&placed)?);
+            region_map.insert(cfg_rid, self.builder.create_region(&placed)?);
         }
         let entry_ir = *region_map
             .get(&cfg.entry())
             .ok_or_else(|| anyhow!("entry region {:?} missing from region_map", cfg.entry()))?;
-        self.builder.set_entry_region_pruned(entry_ir)?;
+        self.builder.set_entry_region(entry_ir)?;
         self.record_register_arg_carriers();
         Ok(region_map)
     }
@@ -332,7 +332,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         for &cfg_rid in dom.preorder() {
             let ir_region = ir_region_of(region_map, cfg_rid)?;
             // Seed this region's current-value map from its immediate dominator
-            // (the entry region was seeded directly by `set_entry_region_pruned`
+            // (the entry region was seeded directly by `set_entry_region`
             // and has no idom).
             if let Some(idom_cfg) = dom.immediate_dominator(cfg_rid) {
                 let idom_ir = ir_region_of(region_map, idom_cfg)?;

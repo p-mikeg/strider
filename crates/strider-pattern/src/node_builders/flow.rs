@@ -1,6 +1,7 @@
-//! Control-flow builders: `CallPat`, `CallOtherPat`, `RetPat`, `IfPat`.
+//! Control-flow builders: `CallPat`, `CallOtherPat`, `RetPat`, `IfPat`,
+//! `IndirectBranchPat`, `UnreachablePat`, `SwitchPat`.
 //!
-//! All four accumulate sparse positional sub-pattern constraints on the
+//! They all accumulate sparse positional sub-pattern constraints on the
 //! IR's input slots and wire them at the right slot. They return a
 //! finished [`Pattern`] directly (via `.build()`) — control patterns are
 //! builder-only per the design boundary.
@@ -254,6 +255,113 @@ impl RetPat {
 /// Construct a fresh [`RetPat`].
 pub fn ret() -> RetPat {
     RetPat(NodePat::node(KindSpec::Exact(NodeKind::Return)))
+}
+
+// ── IndirectBranchPat ────────────────────────────────────────────────────────
+
+/// Builder for `IndirectBranch` node patterns. Created by
+/// [`indirect_branch`]. Inputs: `[ctrl(0), mem(1), target(2)]`; no
+/// outputs — the pattern is rooted on the node itself.
+pub struct IndirectBranchPat(NodePat);
+
+impl IndirectBranchPat {
+    /// Constrain the dispatch target (`inputs[2]`).
+    pub fn target<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input(2, p))
+    }
+
+    /// Match `p` against the node's direct ctrl predecessor
+    /// (`inputs[0]`). The sub-pattern's root produces a control edge.
+    pub fn preceded_by<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_control(0, p))
+    }
+
+    /// Constrain the node's memory predecessor (`inputs[1]`).
+    pub fn mem<M: MemPat + 'static>(self, p: M) -> Self {
+        Self(self.0.input_mem(1, p))
+    }
+
+    /// Bind the resulting `IndirectBranch` node to `c`.
+    pub fn capture(self, c: Capture) -> Self {
+        Self(self.0.capture(c))
+    }
+
+    /// Seal the builder into a finished [`Pattern`] rooted on the
+    /// `IndirectBranch` node.
+    pub fn build(self) -> Pattern {
+        self.0.build()
+    }
+}
+
+/// Construct a fresh [`IndirectBranchPat`].
+pub fn indirect_branch() -> IndirectBranchPat {
+    IndirectBranchPat(NodePat::node(KindSpec::Exact(NodeKind::IndirectBranch)))
+}
+
+// ── UnreachablePat ───────────────────────────────────────────────────────────
+
+/// Builder for `Unreachable` node patterns. Created by [`unreachable`].
+/// Inputs: `[ctrl(0)]`; no outputs.
+pub struct UnreachablePat(NodePat);
+
+impl UnreachablePat {
+    /// Match `p` against the node's direct ctrl predecessor
+    /// (`inputs[0]`). The sub-pattern's root produces a control edge.
+    pub fn preceded_by<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_control(0, p))
+    }
+
+    /// Bind the resulting `Unreachable` node to `c`.
+    pub fn capture(self, c: Capture) -> Self {
+        Self(self.0.capture(c))
+    }
+
+    /// Seal the builder into a finished [`Pattern`] rooted on the
+    /// `Unreachable` node.
+    pub fn build(self) -> Pattern {
+        self.0.build()
+    }
+}
+
+/// Construct a fresh [`UnreachablePat`].
+pub fn unreachable() -> UnreachablePat {
+    UnreachablePat(NodePat::node(KindSpec::Exact(NodeKind::Unreachable)))
+}
+
+// ── SwitchPat ────────────────────────────────────────────────────────────────
+
+/// Builder for `Switch` node patterns. Created by [`switch`]. Inputs:
+/// `[ctrl(0), address(1)]`; outputs are N control edges (one per arm) —
+/// not modelled here, so the pattern is rooted on the node itself.
+pub struct SwitchPat(NodePat);
+
+impl SwitchPat {
+    /// Constrain the dispatch address (`inputs[1]`).
+    pub fn address<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input(1, p))
+    }
+
+    /// Match `p` against the node's direct ctrl predecessor
+    /// (`inputs[0]`). The sub-pattern's root produces a control edge.
+    pub fn preceded_by<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_control(0, p))
+    }
+
+    /// Bind the resulting `Switch` node to `c`.
+    pub fn capture(self, c: Capture) -> Self {
+        Self(self.0.capture(c))
+    }
+
+    /// Seal the builder into a finished [`Pattern`] rooted on the
+    /// `Switch` node.
+    pub fn build(self) -> Pattern {
+        self.0.build()
+    }
+}
+
+/// Construct a fresh [`SwitchPat`].
+pub fn switch() -> SwitchPat {
+    SwitchPat(NodePat::node(KindSpec::Exact(NodeKind::Switch)))
 }
 
 // ── IfPat ─────────────────────────────────────────────────────────────────────

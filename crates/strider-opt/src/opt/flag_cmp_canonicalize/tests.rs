@@ -23,10 +23,10 @@ fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
     let ty = ValueType::I32;
     let mut b = RegisterSet::new().build_fn()?;
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let entry = b.create_region()?;
-    let dispatch = b.create_region()?;
-    let exit = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
 
     let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
@@ -89,10 +89,10 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
     const ADDR_TRUNC: u64 = 0x3333;
     let ty = ValueType::I32;
     let mut b = RegisterSet::new().build_fn()?;
-    let entry = b.create_region()?;
-    let dispatch = b.create_region()?;
-    let exit = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
 
     // The tested bit's comparison (and its operands) under ADDR_CMP.
@@ -168,10 +168,10 @@ fn ppc_cr_bit_test_selects_middle_eq_bit() -> Result<()> {
     let ty = ValueType::I32;
     let mut b = RegisterSet::new().build_fn()?;
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let entry = b.create_region()?;
-    let dispatch = b.create_region()?;
-    let exit = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
 
     let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;

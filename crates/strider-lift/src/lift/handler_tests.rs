@@ -136,10 +136,10 @@ pub(super) fn with_test_lifter_tracking_arch(
     // lift address so tests start from `lift_addr = None`.
     driver.builder.set_lift_addr(None);
     driver.builder.build_entry().expect("build_entry");
-    let region = driver.builder.create_region().expect("create_region");
+    let region = driver.builder.create_region_all().expect("create_region");
     driver
         .builder
-        .set_entry_region(region)
+        .set_entry_region_all(region)
         .expect("set_entry_region");
     driver.builder.set_region(region);
     f(&mut driver, region_id);
@@ -182,10 +182,10 @@ pub(super) fn with_test_lifter_cc(
         FunctionLifter::new(&lifter, cc, &cfg, all_vns, &no_overrides).expect("driver");
     driver.builder.set_lift_addr(None);
     driver.builder.build_entry().expect("build_entry");
-    let region = driver.builder.create_region().expect("create_region");
+    let region = driver.builder.create_region_all().expect("create_region");
     driver
         .builder
-        .set_entry_region(region)
+        .set_entry_region_all(region)
         .expect("set_entry_region");
     driver.builder.set_region(region);
     f(&mut driver, region_id);

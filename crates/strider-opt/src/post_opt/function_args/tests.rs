@@ -414,11 +414,11 @@ fn memphi_shadow_disqualifies() -> Result<()> {
             increment: 8,
         }))
         .build_fn()?;
-    let entry = b.create_region()?;
-    let true_br = b.create_region()?;
-    let false_br = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let true_br = b.create_region_all()?;
+    let false_br = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     // entry: if (<const true>) goto true_br else false_br
     //   (use a boolean const so the MemPhi has TWO predecessors in the
@@ -910,11 +910,11 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
             increment: 8,
         }))
         .build_fn()?;
-    let entry = b.create_region()?;
-    let then_r = b.create_region()?;
-    let else_r = b.create_region()?;
-    let merge = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let then_r = b.create_region_all()?;
+    let else_r = b.create_region_all()?;
+    let merge = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     let cond = b.build_boolean_const(true);
@@ -1214,11 +1214,11 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
             increment: 8,
         }))
         .build_fn()?;
-    let entry = b.create_region()?;
-    let then_r = b.create_region()?;
-    let else_r = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let then_r = b.create_region_all()?;
+    let else_r = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     // entry: snapshot the original SP, then if(true) goto then else else.
     b.set_region(entry);

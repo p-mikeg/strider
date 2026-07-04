@@ -443,8 +443,8 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
 /// Two-region graph: entry region runs `Call`; tail region runs `Return`.
 fn graph_ret_via_region_after_call() -> strider_ir::Function {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
-    let head = t.fb_mut().create_region().expect("head");
-    t.fb_mut().set_entry_region(head).expect("entry head");
+    let head = t.fb_mut().create_region_all().expect("head");
+    t.fb_mut().set_entry_region_all(head).expect("entry head");
     t.fb_mut().set_region(head);
 
     let target = t
@@ -453,7 +453,7 @@ fn graph_ret_via_region_after_call() -> strider_ir::Function {
         .unwrap();
     t.fb_mut().build_call_cc(target, None).expect("call");
 
-    let tail = t.fb_mut().create_region().expect("tail");
+    let tail = t.fb_mut().create_region_all().expect("tail");
     t.fb_mut().build_branch(tail).expect("branch to tail");
 
     t.fb_mut().set_region(tail);

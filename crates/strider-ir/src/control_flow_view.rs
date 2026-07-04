@@ -131,13 +131,13 @@ mod tests {
         let mut b = empty_builder()?;
 
         // Create all four regions.
-        let region_a = b.create_region()?;
-        let region_b = b.create_region()?;
-        let region_c = b.create_region()?;
-        let region_d = b.create_region()?;
+        let region_a = b.create_region_all()?;
+        let region_b = b.create_region_all()?;
+        let region_c = b.create_region_all()?;
+        let region_d = b.create_region_all()?;
 
         // Wire entry → region A.
-        b.set_entry_region(region_a)?;
+        b.set_entry_region_all(region_a)?;
 
         // In region A: emit a boolean constant as the branch condition,
         // then branch to B (true) and C (false).

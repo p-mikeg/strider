@@ -333,7 +333,7 @@ impl Function {
     /// Every tracked-varnode id, in `InitialVnId` (allocation) order.  The
     /// builder iterates this to create one `InitialVar` / `Phi` per tracked
     /// variable.
-    pub(crate) fn vn_ids(&self) -> impl Iterator<Item = crate::node::InitialVnId> + '_ {
+    pub fn vn_ids(&self) -> impl Iterator<Item = crate::node::InitialVnId> + '_ {
         self.vn_interner.keys()
     }
 
@@ -1332,5 +1332,23 @@ mod compact_tests {
         assert_eq!(f.get_cc(new_call).stack_args, cc.stack_args,);
         // The clobber tag survives the ValueId remap.
         assert_eq!(f.get_vn_for_value(new_clob), Some(clob_vn));
+    }
+
+    #[test]
+    fn switch_targets_survive_compact() {
+        // Build a minimal function with one node carrying switch targets.
+        let mut b = strider_ir_test_utils::empty_builder().unwrap();
+        let r = b.create_region_all().unwrap();
+        b.set_entry_region_all(r).unwrap();
+        b.set_region(r);
+        b.build_return(None, &[]).unwrap();
+        let mut f = b.build().unwrap();
+        let node = f.entry(); // any live NodeId
+        f.side_tables_mut().set_switch_targets(node, vec![0x1000, 0x1020]);
+        assert_eq!(f.side_tables().switch_targets(node), &[0x1000, 0x1020]);
+        f.compact().unwrap();
+        // Entry survives compact; its targets must be remapped, not dropped.
+        let new_node = f.entry();
+        assert_eq!(f.side_tables().switch_targets(new_node), &[0x1000, 0x1020]);
     }
 }

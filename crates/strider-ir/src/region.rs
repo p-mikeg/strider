@@ -41,7 +41,7 @@ pub(crate) struct Region {
     initial_variables: SecondaryMap<InitialVnId, ValueId>,
     /// The variables that actually have a `Phi` at this region.  The eager
     /// [`FunctionBuilder::create_region`] lists EVERY tracked variable here; the
-    /// pruned [`FunctionBuilder::create_region_pruned`] lists only the Cytron
+    /// pruned [`FunctionBuilder::create_region`] lists only the Cytron
     /// IDF-placed variables.  `link_region_variables` iterates exactly this set,
     /// so a non-phi variable is never linked (its value flows in by dominator
     /// inheritance instead — see [`FunctionBuilder::inherit_variables`]).
@@ -165,28 +165,28 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Single source of truth for region construction: builds the `Region` +
-    /// `MemPhi` skeleton and one value `Phi` per variable in `phi_vars`, wires
-    /// the `MemPhi`'s `phi_token` back-edge to its `Region`, and registers the
-    /// region.  The eager ([`FunctionBuilder::create_region`]) and pruned
-    /// ([`FunctionBuilder::create_region_pruned`]) constructors are thin
-    /// specializations that differ only in which variables are placed and in
-    /// `seed_current`:
-    /// - `true` (eager): seed the per-region current-value map with the fresh
-    ///   phis, so a read resolves immediately without dominator inheritance.
-    /// - `false` (pruned): leave it empty, filled in dominator-tree order by
-    ///   [`Self::inherit_variables`].
+    /// Creates a new region: a fresh `Region` + `MemPhi` skeleton and one value
+    /// `Phi` per variable in `phi_vars`, wires the `MemPhi`'s `phi_token`
+    /// back-edge to its `Region`, and registers the region.  `phi_vars` is the
+    /// Cytron IDF-placed set for a join (production), or every tracked varnode
+    /// for an ad-hoc build (the `strider-ir-test-utils` `create_region_all`
+    /// convenience).
+    ///
+    /// The freshly-built phis are recorded as the region's current variable
+    /// values, so a `read` in the region resolves to its `Phi` immediately.  The
+    /// pruned-SSA lift path then OVERWRITES this current-value map in
+    /// dominator-tree order via [`Self::inherit_variables`] (a placed variable
+    /// takes its phi; a non-placed one inherits the immediate dominator's
+    /// reaching value), so the seeding is transparent to production and only
+    /// load-bearing for callers that build a graph WITHOUT running the
+    /// inheritance walk (i.e. tests).
     ///
     /// # Errors
     ///
     /// Returns `WrongOutputCount` if the freshly created `Region` / `MemPhi`
     /// lacks its expected output shape (a graph-construction bug, not a user
     /// error).  Other variants from `build_vn_phi` propagate.
-    pub(crate) fn create_region_with(
-        &mut self,
-        phi_vars: &[InitialVnId],
-        seed_current: bool,
-    ) -> Result<RegionId> {
+    pub fn create_region(&mut self, phi_vars: &[InitialVnId]) -> Result<RegionId> {
         // Skeleton: a `MemPhi` for the memory token and a `Region` for control.
         let memory_node = self.create_node(NodeKind::MemPhi, [], [ValueKind::Memory]);
         let [memory] = self.function().node_outputs_exact(memory_node)?;
@@ -205,11 +205,9 @@ impl FunctionBuilder {
             let var = self.function().initial_vn(vn_id);
             initial_variables[vn_id] = self.build_vn_phi(var, phi_token, &[])?;
         }
-        let variables = if seed_current {
-            initial_variables.clone()
-        } else {
-            SecondaryMap::new()
-        };
+        // Seed the current-value map with the fresh phis (see the doc: the
+        // pruned lift path overwrites this via `inherit_variables`).
+        let variables = initial_variables.clone();
 
         self.require_memory_kind(memory)?;
         self.require_control_kind(control)?;

@@ -199,6 +199,7 @@ fn cast_mask_of_returns_empty_for_non_cast_kinds() {
         NodeKind::Region,
         NodeKind::MemPhi,
         NodeKind::If,
+        NodeKind::Switch,
         NodeKind::Call,
     ];
     for k in non_casts {

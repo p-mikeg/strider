@@ -38,11 +38,11 @@ fn destructive_teardown(fg: &mut strider_ir::Function) -> Result<()> {
 /// Build a function with `if(cond)`, two branches each ending in `return`.
 fn make_if_fn(cond_val: bool) -> Result<strider_ir::Function> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let true_region = b.create_region()?;
-    let false_region = b.create_region()?;
+    let entry = b.create_region_all()?;
+    let true_region = b.create_region_all()?;
+    let false_region = b.create_region_all()?;
 
-    b.set_entry_region(entry)?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(cond_val);
@@ -69,11 +69,11 @@ fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
     const COND_ADDR: u64 = 0xC0DE_0001;
 
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let true_region = b.create_region()?;
-    let false_region = b.create_region()?;
+    let entry = b.create_region_all()?;
+    let true_region = b.create_region_all()?;
+    let false_region = b.create_region_all()?;
 
-    b.set_entry_region(entry)?;
+    b.set_entry_region_all(entry)?;
     b.set_region(entry);
     // The CONDITION carries a distinct address; the `If` + control carry the
     // sentinel — so an absorbed COND_ADDR on the survivor can only have come
@@ -203,10 +203,10 @@ fn dead_branch_non_const_no_change() -> Result<()> {
     // Build if(x) where x is a non-const boolean.
     let mut fg = {
         let mut b = strider_ir_test_utils::empty_builder()?;
-        let entry = b.create_region()?;
-        let true_r = b.create_region()?;
-        let false_r = b.create_region()?;
-        b.set_entry_region(entry)?;
+        let entry = b.create_region_all()?;
+        let true_r = b.create_region_all()?;
+        let false_r = b.create_region_all()?;
+        b.set_entry_region_all(entry)?;
         b.set_region(entry);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // Non-constant condition: true & false (booleans are 1-bit ints, so
@@ -245,12 +245,12 @@ fn dead_branch_non_const_no_change() -> Result<()> {
 #[test]
 fn nested_if_true_eliminated() -> Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region()?;
-    let outer_t = b.create_region()?;
-    let outer_f = b.create_region()?;
-    let inner_t = b.create_region()?;
-    let inner_f = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let outer_t = b.create_region_all()?;
+    let outer_f = b.create_region_all()?;
+    let inner_t = b.create_region_all()?;
+    let inner_f = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -364,11 +364,11 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
 fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
     let mut fg = {
         let mut b = strider_ir_test_utils::empty_builder()?;
-        let entry = b.create_region()?;
-        let true_r = b.create_region()?;
-        let false_r = b.create_region()?;
-        let join = b.create_region()?;
-        b.set_entry_region(entry)?;
+        let entry = b.create_region_all()?;
+        let true_r = b.create_region_all()?;
+        let false_r = b.create_region_all()?;
+        let join = b.create_region_all()?;
+        b.set_entry_region_all(entry)?;
 
         b.set_region(entry);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -422,11 +422,11 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
 fn var_phi_loses_dead_slot() -> Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region()?;
-    let true_r = b.create_region()?;
-    let false_r = b.create_region()?;
-    let join = b.create_region()?;
-    b.set_entry_region(entry)?;
+    let entry = b.create_region_all()?;
+    let true_r = b.create_region_all()?;
+    let false_r = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
     let cond = b.build_boolean_const(true);
@@ -478,5 +478,77 @@ fn var_phi_loses_dead_slot() -> Result<()> {
         2,
         "phi must have exactly 1 live value after teardown"
     );
+    Ok(())
+}
+
+#[test]
+fn dead_switch_const_address_keeps_matching_arm() -> Result<()> {
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region_all()?;
+    let a0 = b.create_region_all()?;
+    let a1 = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let addr = b.build_int_const(0x1020u64, strider_ir::ValueType::I64)?; // == arm 1's case
+    b.build_switch(addr, &[(a0, 0x1000), (a1, 0x1020)])?;
+    b.set_region(a0);
+    b.build_return(None, &[])?;
+    b.set_region(a1);
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    let n_switch_before = fg
+        .graph()
+        .all_node_ids()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch))
+        .count();
+    assert_eq!(n_switch_before, 1);
+    let result = crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
+    assert!(result.changed(), "const-address switch must fold");
+    // `kill_node` detaches the folded Switch but (like the `If` fold above)
+    // leaves it in the arena untouched — only entry-reachability changes.
+    // Mirror the sibling `If` tests (`dead_branch_false`/`dead_branch_true`)
+    // and assert unreachability via `walk()` rather than an arena-wide
+    // `all_node_ids()` count.
+    let n_switch_after = fg
+        .walk()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch))
+        .count();
+    assert_eq!(n_switch_after, 0, "switch unreachable after fold");
+    Ok(())
+}
+
+/// Negative case: a `Switch` whose dispatch address is NOT a compile-time
+/// constant (here, a register read via `InitialVar`) must be left
+/// untouched — `try_rewrite`'s `int_const_u128` lookup fails and returns
+/// `NoChange`.
+#[test]
+fn dead_switch_non_const_address_no_change() -> Result<()> {
+    let var = reg_vn(0x1000, 8);
+    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
+    let entry = b.create_region_all()?;
+    let a0 = b.create_region_all()?;
+    let a1 = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let addr = b.read_variable(&var)?;
+    b.build_switch(addr, &[(a0, 0x1000), (a1, 0x1020)])?;
+    b.set_region(a0);
+    b.build_return(None, &[])?;
+    b.set_region(a1);
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let result = crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
+    assert!(!result.changed(), "non-const-address switch must not fold");
+    let n_switch_after = fg
+        .graph()
+        .all_node_ids()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch))
+        .count();
+    assert_eq!(n_switch_after, 1, "switch must survive");
     Ok(())
 }

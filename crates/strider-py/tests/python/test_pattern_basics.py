@@ -90,6 +90,13 @@ def test_ret_constructor():
     assert isinstance(ret().into_pat(), Pat)
 
 
+def test_control_node_patterns_exist():
+    import strider
+    assert strider.pattern.indirect_branch() is not None
+    assert strider.pattern.unreachable() is not None
+    assert strider.pattern.switch() is not None
+
+
 def test_if_constructor():
     # `if_else()` returns an `IfPat` typed builder (chain `.cond`,
     # `.true_branch`, `.false_branch`).

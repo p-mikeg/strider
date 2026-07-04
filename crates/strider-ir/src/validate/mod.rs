@@ -10,7 +10,9 @@
 //!     phi-token ownership, phi per-predecessor arity,
 //!     Call/Return calling-convention arity (output / input slot counts
 //!     against the calling convention, honouring per-`Call` clobber
-//!     overrides), wide-const consistency (including that an
+//!     overrides), `Switch` output/target-address arity (one recorded
+//!     `switch_targets` case address per control output), wide-const
+//!     consistency (including that an
 //!     `IntConst(Wide(..))` declares an `I80`/`I128`/`I256`/`I512`
 //!     output type matching its interned byte size), `Extend`/`Truncate`
 //!     width direction (Extend strictly widens, Truncate strictly
@@ -39,7 +41,7 @@ use graph_invariants::{
     check_graph_invariants_control_single_use, check_graph_invariants_extend_truncate,
     check_graph_invariants_memory_chain, check_graph_invariants_phis,
     check_graph_invariants_region, check_graph_invariants_side_indices,
-    check_graph_invariants_uniqueness,
+    check_graph_invariants_switch, check_graph_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 
@@ -89,6 +91,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_graph_invariants_phis(function, &reachable, &mut errs);
     check_graph_invariants_consts(function, &reachable, &mut errs);
     check_graph_invariants_extend_truncate(function, &reachable, &mut errs);
+    check_graph_invariants_switch(function, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_graph_invariants_memory_chain(function, &reachable, &mut errs);
     check_graph_invariants_side_indices(function, &reachable, &mut errs);
@@ -291,6 +294,18 @@ pub enum ValidationError {
         kind: crate::node::NodeKind,
         in_width: usize,
         out_width: usize,
+    },
+
+    #[error("Switch {node:?} has no control outputs")]
+    EmptySwitchTargets { node: NodeId },
+
+    #[error(
+        "Switch {node:?} has {outputs} control outputs but {targets} recorded target addresses"
+    )]
+    SwitchTargetArityMismatch {
+        node: NodeId,
+        outputs: usize,
+        targets: usize,
     },
 }
 

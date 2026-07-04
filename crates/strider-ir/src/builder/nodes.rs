@@ -179,6 +179,39 @@ impl FunctionBuilder {
         self.link_region(false_region, false_ctrl_id, res.memory, res.region_id)
     }
 
+    /// Terminates the current region with a `Switch`: one `Control` output per
+    /// arm, wired to that arm's target region in order, plus the per-output
+    /// case addresses recorded in `switch_targets`.  `address` is the
+    /// dispatch value (output `i` is taken when `address == arms[i].1`).
+    ///
+    /// # Errors
+    /// `NoCurrentRegion` / `RegionTerminated` if no active region;
+    /// `ExpectedValue` if `address` is not a value edge; `ExpectedControl` if
+    /// the region's snapshotted control edge is mistyped.  Requires `arms`
+    /// non-empty.
+    pub fn build_switch(&mut self, address: ValueId, arms: &[(RegionId, u64)]) -> Result<()> {
+        debug_assert!(!arms.is_empty(), "build_switch requires at least one arm");
+        let res = self.terminate_cur_region()?;
+        self.require_value_kind(address)?;
+        self.require_control_kind(res.control)?;
+
+        let sw = self.create_node(
+            NodeKind::Switch,
+            [res.control, address],
+            std::iter::repeat_n(ValueKind::Control, arms.len()),
+        );
+        // Dynamic arity: snapshot outputs, cloning to end the immutable borrow.
+        let out_ctrls: Vec<ValueId> = self.function().node_outputs(sw).to_vec();
+        for (&(region, _addr), &ctrl) in arms.iter().zip(&out_ctrls) {
+            self.link_region(region, ctrl, res.memory, res.region_id)?;
+        }
+        let targets: Vec<u64> = arms.iter().map(|&(_, a)| a).collect();
+        self.function_mut()
+            .side_tables_mut()
+            .set_switch_targets(sw, targets);
+        Ok(())
+    }
+
     /// Emits a `Store` node writing `data` to `addr` in `space` and advances
     /// the region's memory token.
     ///
