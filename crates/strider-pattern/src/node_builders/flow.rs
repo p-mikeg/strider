@@ -300,7 +300,7 @@ pub fn indirect_branch() -> IndirectBranchPat {
 
 // ── UnreachablePat ───────────────────────────────────────────────────────────
 
-/// Builder for `Unreachable` node patterns. Created by [`unreachable`].
+/// Builder for `Unreachable` node patterns. Created by `unreachable`.
 /// Inputs: `[ctrl(0)]`; no outputs.
 pub struct UnreachablePat(NodePat);
 
@@ -407,7 +407,7 @@ impl IfPat {
     /// A capture bound inside `pat` is matched against an **isolated**
     /// `Bindings` during the node-wise branch attempt: it is observable to
     /// `pat`'s own `when_match` predicates (a supported idiom) but is **not**
-    /// propagated into the outer [`Match`]. Reading such a capture from the
+    /// propagated into the outer `Match`. Reading such a capture from the
     /// outer match returns `None` — match the branch separately if you need
     /// its bindings.
     ///

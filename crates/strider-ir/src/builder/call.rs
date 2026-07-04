@@ -28,7 +28,7 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Errors when an `output_vns` varnode's byte size has no matching
-    /// [`ValueType`] (the only failure of deriving a slot kind via
+    /// `ValueType` (the only failure of deriving a slot kind via
     /// `int_for_byte_size`).
     fn emit_call_node(
         &mut self,
@@ -71,7 +71,7 @@ impl FunctionBuilder {
     /// Knows NOTHING about calling conventions: the caller (the lifter) derives
     /// the vns + `ret_stack_pop` from a CC, reads the args, and writes the
     /// outputs back.  `output_vns` are validated by
-    /// [`Self::validate_call_output_vns`].
+    /// `Self::validate_call_output_vns`.
     ///
     /// # Errors
     ///
@@ -172,7 +172,7 @@ impl FunctionBuilder {
     ///   the lifter's job).
     ///
     /// This emitter is **name-agnostic**: the caller stamps the user-op name
-    /// separately via [`crate::Function::set_call_other_name`] on the returned
+    /// separately via `crate::Function::set_call_other_name` on the returned
     /// node.
     ///
     /// `abi.implicit_reads`, `abi.implicit_writes`, and `output` must all
@@ -196,7 +196,7 @@ impl FunctionBuilder {
     ///
     /// Returns an error when any `explicit_args` entry is not a value edge,
     /// when an `output_vns` varnode is not REGISTER / UNIQUE or is duplicated,
-    /// when a varnode's byte size has no matching [`ValueType`], or when the
+    /// when a varnode's byte size has no matching `ValueType`, or when the
     /// region cannot be advanced or terminated.
     pub fn build_call_other(
         &mut self,

@@ -247,7 +247,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Re-canonicalize `node` against the dedup cache after its inputs changed.
     /// `Some(twin)` => an existing structurally-equal node the caller should
     /// merge `node` into; `None` => `node` is now the canonical representative
-    /// (or is a non-cacheable kind). See [`NodeCache::canonicalize`].
+    /// (or is a non-cacheable kind). See `NodeCache::canonicalize`.
     pub fn canonicalize_node(&mut self, node: NodeId) -> Option<NodeId>
     where
         V: Clone,
@@ -561,9 +561,9 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// follows forward-control + backward-data; a pure backward-input closure
     /// would miss a `Region` reached only via control). The caller supplies the
     /// set. It **must** be backward-input-closed: every input's producing node
-    /// must be present, or pass 2 panics on a dangling edge. Use
-    /// [`Self::reachable_by_inputs`] for the backward-input closure of some
-    /// roots when that is the reachability you want.
+    /// must be present, or pass 2 panics on a dangling edge. When that is the
+    /// reachability you want, pass a backward-input closure — each root plus the
+    /// transitive producers of its inputs.
     ///
     /// Pre-compaction `NodeId` / `ValueId` / `UseId` values are invalidated by
     /// this call; callers holding any such ids MUST rewrite them through the

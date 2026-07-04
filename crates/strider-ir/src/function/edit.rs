@@ -141,7 +141,7 @@ impl<'g> EditFunction<'g> {
     /// control-dead but not yet recognised as such).  A stale entry like that
     /// feeds the memory-SSA walk a zero-arm `MemPhi` and trips its
     /// bottoms-out-at-`InitialMemory` invariant.  This recomputes `live_nodes`
-    /// / `roots` from ground truth ([`FunctionState::populate`]) and culls the
+    /// / `roots` from ground truth (`FunctionState::populate`) and culls the
     /// detached subgraph, restoring the "every cached-live node is
     /// entry-reachable" invariant later passes rely on.  It also clears the
     /// maybe-dead queue and per-node flags — safe because the fresh walk is a
@@ -214,7 +214,7 @@ impl<'g> EditFunction<'g> {
 
     /// Entry-reachable nodes in **global reverse-post-order** (entry-first),
     /// filtered by a predicate over each node's kind.  The reachable SET
-    /// matches [`Self::walk_kind`]; only the ORDER is canonicalised to RPO
+    /// matches `Self::walk_kind`; only the ORDER is canonicalised to RPO
     /// (every producer precedes its consumers), so worklist-seeding and
     /// node scans settle in fewer iterations.
     ///
@@ -694,7 +694,7 @@ impl<'g> EditFunction<'g> {
     }
 
     /// Register an argument-carrier value under a CC argument index —
-    /// delegates to [`Function::register_arg_value`].
+    /// delegates to `Function::register_arg_value`.
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
         self.function.side_tables_mut().register_arg_value(index, value);
     }

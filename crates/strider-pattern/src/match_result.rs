@@ -122,7 +122,7 @@ impl Match {
     /// when the capture is unbound or when the bound node has no
     /// recorded contributors (legitimately empty for region / phi /
     /// initial-state kinds — see
-    /// [`strider_ir::Function::asm_fingerprint`] for the documented exempt set).
+    /// `strider_ir::Function::asm_fingerprint` for the documented exempt set).
     ///
     /// This is the proof-of-correctness aid: when a pattern query
     /// captures a value node, this slice lists the machine

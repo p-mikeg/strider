@@ -24,7 +24,7 @@ pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 pub struct Pattern {
     pub(crate) graph: PatGraph,
     pub(crate) cast_mask: CastMask,
-    /// Match-root resolution, run ONCE at seal ([`Self::from_graph`]) and
+    /// Match-root resolution, run ONCE at seal (`Self::from_graph`) and
     /// memoized: `Ok(sink)` for a matchable pattern, or `Err(message)` naming
     /// why it isn't (rootless / multi-sink / cyclic — buildable via shared
     /// captures but not matchable).  Caching the whole verdict keeps the
@@ -64,7 +64,7 @@ impl Pattern {
     /// The pattern's match root — the unique graph sink (its reachable input
     /// cone confirmed acyclic), resolved and memoized at construction.  This is
     /// an O(1) read of that memoized verdict; the derivation ran once in
-    /// [`Self::from_graph`].
+    /// `Self::from_graph`.
     ///
     /// # Errors
     /// Returns the error recorded at construction if the pattern is not a

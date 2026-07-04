@@ -11,7 +11,7 @@ impl FunctionBuilder {
     /// Builds the function's `InitialMemory` node and captures its starting
     /// memory token as the builder's `entry_memory`.
     ///
-    /// [`Function::new`] builds only the `Entry` node; the memory spine is the
+    /// `Function::new` builds only the `Entry` node; the memory spine is the
     /// builder's responsibility, so this creates the `InitialMemory` node
     /// (an asm-fingerprint-exempt initial-state kind, minted straight on the
     /// graph) and records its single `Memory` output — no graph search.
