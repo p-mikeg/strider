@@ -9,7 +9,7 @@ mod common;
 
 use common::Graph;
 use expect_test::expect;
-use graph_algorithms::entity_preorder;
+use graph_algorithms::walk::entity_preorder;
 use itertools::Itertools;
 
 macro_rules! test_preorder {

@@ -9,7 +9,7 @@ mod common;
 
 use common::Graph;
 use expect_test::expect;
-use graph_algorithms::{WalkPhase, entity_postorder};
+use graph_algorithms::walk::{WalkPhase, entity_postorder};
 use itertools::Itertools;
 use std::fmt::Write;
 
