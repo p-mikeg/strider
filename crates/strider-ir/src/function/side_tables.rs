@@ -1,6 +1,6 @@
 //! [`SideTables`] — the per-function overlay tables keyed by arena ids,
 //! grouped so [`crate::Function::new`] defaults them in one line and
-//! [`crate::Function::compact`] remaps them in one [`SideTables::remap`] call.
+//! [`crate::Function::compact`] remaps them in one `SideTables::remap` call.
 
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
@@ -36,7 +36,7 @@ where
 /// `ValueId`) or the CC arg index — data attached to the graph but not part of
 /// its structural identity.  Grouped into one struct so [`crate::Function::new`]
 /// defaults them in a single line and [`crate::Function::compact`] remaps them in a
-/// single [`SideTables::remap`] call; each is still surfaced through its own
+/// single `SideTables::remap` call; each is still surfaced through its own
 /// typed accessor on [`crate::Function`].  All entries are remapped (or dropped) when
 /// the arena is compacted.
 #[derive(Default, Clone)]

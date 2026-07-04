@@ -25,7 +25,7 @@ use super::function_lifter::FunctionLifter;
 
 /// The set of variables that need a value `Phi` at each region — the output of
 /// Cytron placement, keyed by CFG region.  This is the return type of the
-/// generic [`graph_algorithms::phi_placement`] (via [`DomInfo::iterated_frontier`]).
+/// generic [`graph_algorithms::dominance::phi_placement`] (via [`DomInfo::iterated_frontier`]).
 pub(crate) type PhiPlacement = FxHashMap<RegionId, FxHashSet<InitialVnId>>;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
@@ -79,14 +79,13 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 if let Some(out) = insn.output.as_ref() {
                     self.add_def(out, r, defs);
                 }
-                if let Ok((_, name)) = decode_user_op(insn, self.lifter.sleigh()) {
-                    if let Some(CallOtherClass::Call(abi)) =
+                if let Ok((_, name)) = decode_user_op(insn, self.lifter.sleigh())
+                    && let Some(CallOtherClass::Call(abi)) =
                         classify(self.lifter.arch.preset(), name)
-                    {
-                        for wname in abi.implicit_writes {
-                            if let Some(vn) = self.lifter.sleigh_regs().name_to_vn(wname) {
-                                self.add_def(&vn, r, defs);
-                            }
+                {
+                    for wname in abi.implicit_writes {
+                        if let Some(vn) = self.lifter.sleigh_regs().name_to_vn(wname) {
+                            self.add_def(&vn, r, defs);
                         }
                     }
                 }
@@ -127,12 +126,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// per-address override for a direct call whose target is registered, else
     /// the function default.  Mirrors `handle_call`'s CC selection.
     fn call_cc_for(&self, insn: &rsleigh::Insn) -> &strider_target::BuiltCallingConvention {
-        if insn.opcode == rsleigh::Opcode::Call {
-            if let Some(target) = insn.inputs.first().map(|v| v.addr_off) {
-                if let Some(cc) = self.per_address_ccs.get(&target) {
-                    return cc;
-                }
-            }
+        if insn.opcode == rsleigh::Opcode::Call
+            && let Some(target) = insn.inputs.first().map(|v| v.addr_off)
+            && let Some(cc) = self.per_address_ccs.get(&target)
+        {
+            return cc;
         }
         self.builder.function().default_cc()
     }
@@ -142,9 +140,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 /// `V` is placed at region `R` iff `R ∈ IDF(def-sites(V))`.
 ///
 /// The IDF worklist algorithm itself is the generic, CFG-agnostic
-/// [`graph_algorithms::phi_placement`], reached through
+/// [`graph_algorithms::dominance::phi_placement`], reached through
 /// [`DomInfo::iterated_frontier`].  The strider def-site map
-/// (`InitialVnId → regions`) satisfies `graph_algorithms::DefSites` directly, so
+/// (`InitialVnId → regions`) satisfies `graph_algorithms::dominance::DefSites` directly, so
 /// it is passed through unchanged.
 #[must_use]
 pub(crate) fn compute_phi_placement(

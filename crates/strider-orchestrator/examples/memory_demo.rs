@@ -43,7 +43,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| format!("'{symbol}' symbol not found in {binary_path}"))?
         .address();
 
-    let cfg = strider.build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_options)?;
+    let cfg = strider.build_cfg(
+        strider_cfg::MachineInsnAddr::from(addr),
+        &cfg_options,
+        &rustc_hash::FxHashMap::default(),
+    )?;
 
     let dot = dot::GraphDot::new(cfg.dot_dumper(strider.sleigh()), dot::DotStyle::dark_cfg());
     dot.dump_as_html("memory-cfg.html")?;

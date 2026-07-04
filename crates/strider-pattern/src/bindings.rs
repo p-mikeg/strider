@@ -227,7 +227,7 @@ impl Bindings {
         function.bool_const_val(self.get_value(c)?)
     }
 
-    /// Returns the output [`ValueType`] of the value bound to `c`, or
+    /// Returns the output `ValueType` of the value bound to `c`, or
     /// `None` for an unbound capture, a control-flow (`Binding::Node`)
     /// binding, or a non-value output kind (`Control` / `Memory` /
     /// `PhiToken`).

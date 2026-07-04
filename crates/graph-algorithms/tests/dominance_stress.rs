@@ -22,7 +22,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use graph_algorithms::{DomTree, dominance_frontiers, dominator_tree_preorder, phi_placement};
+use graph_algorithms::dominance::{DomTree, dominance_frontiers, dominator_tree_preorder, phi_placement};
 
 /// A concrete [`DomTree`] over `u32` nodes with explicit predecessor lists and
 /// an explicit (oracle-computed) idom map.
@@ -268,7 +268,7 @@ fn unreachable_nodes_are_skipped() {
     let df = dominance_frontiers(&mock);
     // A straight-line reachable chain has empty frontiers everywhere.
     for x in 0..5 {
-        assert!(df.get(&x).map(|v| v.is_empty()).unwrap_or(true), "DF({x}) must be empty");
+        assert!(df.get(&x).is_none_or(|v| v.is_empty()), "DF({x}) must be empty");
     }
     let order = dominator_tree_preorder(&mock, 0);
     assert_eq!(order, vec![0, 1, 2], "preorder excludes the unreachable island");

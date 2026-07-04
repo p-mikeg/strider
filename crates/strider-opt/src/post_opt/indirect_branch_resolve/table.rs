@@ -9,9 +9,9 @@
 //! 1. **Find candidate indices.**  Walk the dispatch cone for integer values
 //!    with a finite [`crate::value_range`] bound — the guard-/mask-constrained
 //!    switch variable and its value-preserving derivations
-//!    ([`find_index_candidates`]).
+//!    (`find_index_candidates`).
 //! 2. **Pin and fold.**  For each candidate, evaluate the dispatch cone under
-//!    `index = i` via the read-only [`super::eval::Evaluator`] (ConstFold
+//!    `index = i` via the read-only `super::eval::Evaluator` (ConstFold
 //!    arithmetic + `LoadReadOnly` ROM reads + `LoadForward` via
 //!    `reaching_store`) for every `i` in its proven range.  The dispatch value
 //!    is a concrete constant iff the addressing fully resolved.  The evaluator
@@ -23,7 +23,7 @@
 //!    eager than the old approach.
 //! 3. **Accept the index that folds every value.**  The candidate whose whole
 //!    range folds to constants IS the index; the folded constants are the
-//!    targets ([`enumerate_targets`]).  A wrong candidate leaves the dispatch
+//!    targets (`enumerate_targets`).  A wrong candidate leaves the dispatch
 //!    dependent on the real index and fails to fold, so it is rejected.
 //!
 //! ## Soundness

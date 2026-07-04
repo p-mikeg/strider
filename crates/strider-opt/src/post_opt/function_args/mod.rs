@@ -1,5 +1,5 @@
 //! Detects stack-passed function arguments and records them in the
-//! [`strider_ir::Function::arg_index_to_values`] side-table.
+//! `strider_ir::Function::arg_index_to_values` side-table.
 //!
 //! Runs as a post-pass after the main fixed-point loop converges.  Register-
 //! passed arg carriers are recorded unconditionally at builder entry (by
@@ -50,8 +50,8 @@ use crate::sp_expr::{SpAliasCfg, SpExpr, narrow_load_to};
 
 /// Detects stack-passed argument `Load` nodes and records their
 /// carrier nodes in
-/// [`strider_ir::Function::arg_index_to_values`] via
-/// [`strider_ir::Function::register_arg_value`].  Intended to run once, as an
+/// `strider_ir::Function::arg_index_to_values` via
+/// `strider_ir::Function::register_arg_value`.  Intended to run once, as an
 /// [`OptimizerPipeline::add_post_pass`][crate::OptimizerPipeline::add_post_pass]
 /// after the fixed-point loop has converged.
 ///

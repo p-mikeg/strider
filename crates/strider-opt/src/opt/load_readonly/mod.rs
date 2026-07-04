@@ -44,7 +44,7 @@ use crate::pipeline::OptCtx;
 /// The rom image is no longer stored on the pass: it flows through the
 /// per-run [`OptCtx`] threaded by [`crate::OptimizerPipeline::run`].
 /// When `ctx.rom` is `None` the pass short-circuits to
-/// [`OptimizationResult::NoChange`] — this is the canonical "no rom
+/// `OptimizationResult::NoChange` — this is the canonical "no rom
 /// configured" path (`strider.run(..., rom=None)`).  The orchestrator
 /// constructs the `OptCtx` rom from the analysis driver; ad-hoc callers
 /// driving the pipeline directly construct one via

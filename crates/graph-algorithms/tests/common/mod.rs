@@ -1,8 +1,8 @@
 //! Test-only graph DSL — moved inline from the standalone `graphmock`
 //! crate (which had no production consumers beyond these tests).
 //!
-//! `&Graph` implements [`graph_algorithms::GraphRef`], so it plugs straight into
-//! [`graph_algorithms::PreOrder`] / [`graph_algorithms::PostOrder`].
+//! `&Graph` implements [`graph_algorithms::walk::GraphRef`], so it plugs straight into
+//! [`graph_algorithms::walk::PreOrder`] / [`graph_algorithms::walk::PostOrder`].
 
 #![allow(
     dead_code,
@@ -15,7 +15,7 @@
 use std::ops::ControlFlow;
 
 use cranelift_entity::{PrimaryMap, entity_impl};
-use graph_algorithms::GraphRef;
+use graph_algorithms::walk::GraphRef;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(u32);

@@ -118,7 +118,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     }
 
     /// Seeds the per-address call-target CC overrides (see
-    /// [`Self::per_address_ccs`]).  Called by the orchestrator with the same
+    /// `Self::per_address_ccs`).  Called by the orchestrator with the same
     /// map it hands the lifter, so a `no_return`-flagged target terminates its
     /// calling region during CFG construction.  Builder-style; returns `self`.
     #[must_use]

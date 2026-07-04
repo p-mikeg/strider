@@ -151,7 +151,7 @@ pub struct BuiltCallingConvention {
 /// no real machine register.
 ///
 /// The synthetic SP is an 8-byte REGISTER-space varnode at the
-/// out-of-range offset [`SYNTHETIC_STACK_VN_OFFSET`].  It is a *real*
+/// out-of-range offset `SYNTHETIC_STACK_VN_OFFSET`.  It is a *real*
 /// sized register (unlike the former zero-sized const sentinel) so a
 /// `Call` built under the trivial CC can mint a well-typed
 /// `InitialVar(stack_vn)` SP anchor — a `Call` always requires a real
