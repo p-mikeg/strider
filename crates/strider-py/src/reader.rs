@@ -308,7 +308,27 @@ impl PyLoadedElf {
         f: impl FnOnce(&object::Symbol<'_, '_>) -> R,
     ) -> PyResult<R> {
         for obj in self.elfs.iter() {
-            if let Some(sym) = obj.symbol_by_name(name) {
+            // A name can be defined by more than one symbol — e.g. FreeBSD's
+            // `model_name` / `scsi_test_unit_ready`, each an STT_FUNC in `.text`
+            // AND an STT_OBJECT in `.rodata` / `.bss`.  `object::symbol_by_name`
+            // returns the FIRST symtab match regardless of kind, which can hand
+            // the lifter the address of a data object — decoding `.rodata` as
+            // code ("unable to resolve constructor") or an unmapped `.bss`
+            // address ("not mapped").  Prefer a function (`Text`) symbol; fall
+            // back to any match so pure-data names still resolve for
+            // `symbol()` / `read()`.
+            let mut fallback: Option<object::Symbol<'_, '_>> = None;
+            for sym in obj.symbols() {
+                let Ok(sym_name) = sym.name() else { continue };
+                if sym_name != name {
+                    continue;
+                }
+                if sym.kind() == object::SymbolKind::Text {
+                    return Ok(f(&sym));
+                }
+                fallback.get_or_insert(sym);
+            }
+            if let Some(sym) = fallback {
                 return Ok(f(&sym));
             }
         }

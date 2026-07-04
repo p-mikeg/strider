@@ -526,24 +526,40 @@ fn read_unique_subslice_of_tracked_unique_container() {
     });
 }
 
-/// Sub-register access inside a >16-byte (ymm-like) container fails closed on
-/// both the read and the write path.
+/// Sub-register access inside a >16-byte (ymm-like) container: the READ slices
+/// the wide container via `Truncate(ShiftRight(container, off))` (no mask
+/// needed — this is what unblocks SSE `palignr`-style low-slice Copies), while
+/// the WRITE still fails closed (a >16-byte mask has no u128 representation).
 #[test]
-fn subregister_access_within_wide_container_fails_closed() {
+fn wide_container_subregister_read_slices_but_write_fails_closed() {
     let ymm = reg_vn(0x1000, 32);
-    let low8 = reg_vn(0x1000, 8); // strict sub-slice of the 32-byte container
+    let mid8 = reg_vn(0x1008, 8); // strict sub-slice at offset 8 → LE shift 64
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![ymm], |d, _| {
-        let read_err = d
-            .read_reg_vn(&low8)
-            .expect_err("read of a ymm sub-slice must error");
-        assert!(
-            read_err.to_string().contains("wide (32-byte) container"),
-            "read error must name the wide-container limitation; got: {read_err}"
+        // READ now succeeds: the wide container is sliced via shift + truncate.
+        let read = d
+            .read_reg_vn(&mid8)
+            .expect("read of a ymm sub-slice must slice the wide container");
+        assert_eq!(
+            d.builder.function().value_type(read).unwrap(),
+            ValueType::I64
+        );
+        assert_eq!(pk(d, read), NodeKind::Truncate);
+        let [shifted] = d
+            .builder
+            .function()
+            .node_inputs_exact::<1>(d.builder.function().producer(read))
+            .unwrap();
+        assert_eq!(
+            pk(d, shifted),
+            NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight),
+            "mid-container wide slice must shift before truncating"
         );
 
+        // WRITE still fails closed: `build_masked_insert` would need a 256-bit
+        // mask, which `u128` cannot represent.
         let val = d.builder.build_int_const(1u64, ValueType::I64).unwrap();
         let write_err = d
-            .write_reg_vn(&low8, val)
+            .write_reg_vn(&mid8, val)
             .expect_err("write of a ymm sub-slice must error");
         assert!(
             write_err.to_string().contains("wide (32-byte) container"),

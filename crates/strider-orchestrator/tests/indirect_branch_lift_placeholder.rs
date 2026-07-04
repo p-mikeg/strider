@@ -54,6 +54,7 @@ fn make_unresolved_indirect_branch_cfg() -> (
         .build_cfg(
             MachineInsnAddr::from(base),
             &strider_cfg::CfgOptions::default(),
+            &Default::default(),
         )
         .expect("cfg build must succeed under the cfg-time placeholder lift deferral");
     (driver, cfg, cc)
@@ -152,7 +153,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
             ..Default::default()
         };
         let cfg_v1 = strider
-            .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
+            .build_cfg(MachineInsnAddr::from(base), &cfg_opts, &Default::default())
             .expect("initial cfg build");
         cfg_v1
             .regions()
@@ -179,7 +180,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
         ..Default::default()
     };
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(base), &cfg_opts2)
+        .build_cfg(MachineInsnAddr::from(base), &cfg_opts2, &Default::default())
         .expect("cfg with Single(oob) known_target");
 
     // Confirm the CFG-level terminator is TailCall before lifting.
@@ -259,7 +260,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
             ..Default::default()
         };
         let cfg_v1 = strider
-            .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
+            .build_cfg(MachineInsnAddr::from(base), &cfg_opts, &Default::default())
             .expect("initial cfg build");
         cfg_v1
             .regions()
@@ -285,7 +286,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
         ..Default::default()
     };
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(base), &cfg_opts2)
+        .build_cfg(MachineInsnAddr::from(base), &cfg_opts2, &Default::default())
         .expect("cfg with Single(intra) known_target");
 
     // CFG: the jump region is Unconditional (NOT a tail call), and the target

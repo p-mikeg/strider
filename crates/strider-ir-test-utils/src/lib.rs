@@ -221,6 +221,7 @@ impl RegisterSet {
             ret_stack_pop: self.ret_stack_pop,
             link_register_vn: self.link_register,
             preserves_memory: false,
+            no_return: false,
         };
         let endianness = self
             .endianness

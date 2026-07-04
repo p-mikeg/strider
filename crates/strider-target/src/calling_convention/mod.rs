@@ -126,6 +126,18 @@ pub struct BuiltCallingConvention {
     /// `build_call` to suppress the Call's Memory output so
     /// `LoadReadOnly` / `LoadForward` can forward across the call.
     pub preserves_memory: bool,
+    /// `true` when a call under this CC never returns — a `noreturn` / `__dead`
+    /// callee such as `exit`, `abort`, `panic`, or `__stack_chk_fail`.
+    ///
+    /// Attached to a call TARGET via a per-address CC override.  The CFG
+    /// builder terminates the calling region `NoReturn` (lowered to
+    /// `Call + Unreachable`) at such a call regardless of where the return
+    /// address lands, so the unreachable fall-through — including a
+    /// *mid-function* one — is never lifted as a live successor.  The default
+    /// (`false`) leaves the CFG builder's function-end structural fallback in
+    /// charge: a call whose return address leaves the function bound is treated
+    /// as unreachable-after even for an unmarked callee.
+    pub no_return: bool,
 }
 
 /// The trivial / synthetic calling convention: no real ABI.
@@ -165,6 +177,7 @@ impl Default for BuiltCallingConvention {
             ret_stack_pop: 0,
             link_register_vn: None,
             preserves_memory: false,
+            no_return: false,
         }
     }
 }
@@ -391,6 +404,7 @@ impl BuiltCallingConvention {
             ret_stack_pop,
             link_register_vn,
             preserves_memory,
+            no_return: false,
         })
     }
 }

@@ -164,29 +164,36 @@ impl Cfg {
     /// indirect-branch resolver and by `strider`'s switch handler to
     /// correlate a machine address with the region that owns it.
     ///
-    /// CORRECTNESS: only matches regions whose `start_addr.machine_addr`
-    /// equals `addr` exactly.  Mid-region matches return `None` — the
-    /// caller is interested in the canonical region whose lift would
-    /// populate the cache entry, which is the region that *starts* at
-    /// `addr`.  After a `split_region` event, the second-half region's
-    /// start is a different machine address (the split point), so this
-    /// lookup transparently distinguishes pre- and post-split halves.
+    /// CORRECTNESS: matches a region whose canonical **entry** is `addr` —
+    /// either its exact `start_addr.machine_addr`, OR its first materialised
+    /// instruction's address.  The two differ when the region's entry machine
+    /// insn lifts to zero pcode ops (an alignment `nop` / `pause` / `endbr64`
+    /// / `paciasp`): the builder keys the region at the zero-op address, but a
+    /// branch/switch **target** lands on the first *real* instruction, which is
+    /// still a valid region entry (its lift populates that address).  This is
+    /// the same containment reasoning [`Self::region_if`] uses to resolve a
+    /// `CondBranch` `true_target`.  Genuine *interior* addresses still return
+    /// `None` (they signal a missing `split_region`).  After a split, the
+    /// second-half region's start is the split point, so this lookup
+    /// transparently distinguishes pre- and post-split halves.
     pub fn region_id_at_start(&self, addr: super::types::MachineInsnAddr) -> Option<RegionId> {
         // O(log R) range query instead of an O(R) graph scan: locate the
-        // greatest start_addr ≤ (addr, pcode=u64::MAX), then verify it
-        // matches the requested machine address exactly.  The BTreeMap
-        // was promoted from the Builder at construction time.
-        let lower = super::types::PcodeInsnAddr {
-            machine_addr: addr,
-            insn_index: 0,
-        };
+        // greatest start_addr ≤ (addr, pcode=u64::MAX) — the unique region that
+        // could own `addr` as its entry — then confirm `addr` is that region's
+        // start or first-instruction address.  The BTreeMap was promoted from
+        // the Builder at construction time.
         let upper = super::types::PcodeInsnAddr {
             machine_addr: addr,
             insn_index: u64::MAX,
         };
-        let mut range = self.start_addr_to_region_id.range(lower..=upper);
-        let (_, &rid) = range.next()?;
-        Some(rid)
+        let (_, &rid) = self.start_addr_to_region_id.range(..=upper).next_back()?;
+        let region = self.region_graph.node_weight(rid)?;
+        let is_entry = region.start_addr.machine_addr == addr
+            || region
+                .insns
+                .first()
+                .is_some_and(|i| i.addr.machine_addr == addr);
+        is_entry.then_some(rid)
     }
 }
 
@@ -445,5 +452,56 @@ mod tests {
         let cfg = real_cfg("arithmetic", "add");
         let rid = cfg.region_id_at_start(MachineInsnAddr { addr: 0xdead_beef });
         assert!(rid.is_none(), "unknown addr must return None, got {rid:?}");
+    }
+
+    /// Regression (AcpiDsLoad2EndOp switch target): a region whose `start_addr`
+    /// sits BELOW its first materialised instruction — because the entry
+    /// machine insn lifted to zero pcode ops (an alignment `nop` / `pause`) —
+    /// must resolve BOTH its exact start key AND its first-instruction address
+    /// as region entries.  A jump-table case label lands on that first real
+    /// instruction, so `handle_switch`'s `region_id_at_start` lookup must find
+    /// the owning region there.  An address strictly BETWEEN the start and the
+    /// first instruction is NOT an entry (it would signal a missing split).
+    #[test]
+    fn region_id_at_start_accepts_first_insn_of_phantom_span_region() {
+        let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
+        // start_addr 0x1000 (the zero-pcode entry insn); first real insn 0x1004.
+        let region = Region {
+            start_addr: addr(0x1000, 0),
+            insns: vec![RegionInstruction {
+                addr: addr(0x1004, 0),
+                insn: fake_insn(),
+            }],
+            terminator: crate::RegionTerminator::Unconditional,
+        };
+        let rid = graph.add_node(region);
+        let mut start_map = BTreeMap::new();
+        start_map.insert(addr(0x1000, 0), rid);
+        let cfg = Cfg {
+            region_graph: graph,
+            entry: rid,
+            start_addr_to_region_id: start_map,
+        };
+
+        assert_eq!(
+            cfg.region_id_at_start(MachineInsnAddr { addr: 0x1000 }),
+            Some(rid),
+            "exact start_addr resolves"
+        );
+        assert_eq!(
+            cfg.region_id_at_start(MachineInsnAddr { addr: 0x1004 }),
+            Some(rid),
+            "first materialised instruction (phantom-span head) resolves"
+        );
+        assert!(
+            cfg.region_id_at_start(MachineInsnAddr { addr: 0x1002 })
+                .is_none(),
+            "an address between start and first insn is not a region entry"
+        );
+        assert!(
+            cfg.region_id_at_start(MachineInsnAddr { addr: 0x1008 })
+                .is_none(),
+            "an address past the region is unknown"
+        );
     }
 }

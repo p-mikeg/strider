@@ -517,6 +517,18 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         ("cpuid_brand_part3_info", PURE),
         ("cpuid_cache_tlb_info", PURE),
         ("cpuid_serial_info", PURE),
+        // x86 SSE4.1 / SSSE3 / SHA-NI pure-SIMD intrinsics — Sleigh models
+        // each as a CallOther that carries EVERY operand register as a pcode
+        // operand (the `:SHA256RNDS2 XmmReg1, XmmReg2_m128, XMM0` constructor
+        // lists the otherwise-implicit XMM0 explicitly), so the user-op has no
+        // implicit register footprint.  A memory source operand (`m128`) is a
+        // separate Sleigh `Load` ahead of the CallOther, so the op itself
+        // touches no RAM: pure compute, no memory edge.
+        ("pblendw", PURE),
+        ("pshufb", PURE),
+        ("sha256rnds2_sha", PURE),
+        ("sha256msg1_sha", PURE),
+        ("sha256msg2_sha", PURE),
         // NEON / SVE / multi-precision — Sleigh's pcode carries
         // operand regs; the user-op itself is pure compute.
         ("MP_INT_ABS", PURE),
