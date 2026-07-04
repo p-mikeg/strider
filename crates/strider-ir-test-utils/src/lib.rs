@@ -30,13 +30,13 @@ use strider_ir::{
 pub trait IrWalkerEx: IRWalker {
     /// Counts entry-reachable nodes whose [`NodeKind`] satisfies `pred`.
     fn count_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> usize {
-        self.walk().filter(|&n| pred(self.node_kind(n))).count()
+        self.walk_kind(pred).count()
     }
 
     /// Returns `true` when at least one entry-reachable node satisfies `pred`.
     /// Short-circuits at the first match.
     fn has_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> bool {
-        self.walk().any(|n| pred(self.node_kind(n)))
+        self.walk_kind(pred).next().is_some()
     }
 }
 

@@ -11,7 +11,7 @@
 //! calling-convention slots) tests reach into the underlying `FunctionBuilder`
 //! via `Tb::fb_mut`.
 
-use crate::RegisterSet;
+use crate::{IrBuilderEx, RegisterSet};
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder, IRBuilderExt, IntBinaryOp,
@@ -163,8 +163,9 @@ impl Tb {
     /// Builds the canonical lowered shape for `l - r`: `Add(l, Neg(r))`.
     /// `IntBinaryOp::Sub` is not a primitive; pcode-lift produces this shape.
     pub fn sub(&mut self, l: ValueId, r: ValueId) -> ValueId {
-        let neg = self.int_un(r, IntUnaryOp::Neg);
-        self.int_bin(l, neg, IntBinaryOp::Add)
+        self.fb
+            .build_sub_as_add_neg(l, r, ValueType::I64)
+            .expect("sub_as_add_neg")
     }
     pub fn mul(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Mul)
@@ -230,13 +231,7 @@ impl Tb {
     /// exists; the only remaining `IntUnaryOp` is `Neg`, which is
     /// semantically meaningless at I1 and was never legitimately used here.)
     pub fn bool_not(&mut self, v: ValueId) -> ValueId {
-        let one = self
-            .fb
-            .build_int_const(u128::MAX, ValueType::I1)
-            .expect("all_ones I1");
-        self.fb
-            .build_int_binary_operation(v, one, IntBinaryOp::Xor, ValueType::I1)
-            .expect("bool_not as xor")
+        self.bit_not_at(v, ValueType::I1)
     }
 
     // ── Float ops ─────────────────────────────────────────────────────────────
