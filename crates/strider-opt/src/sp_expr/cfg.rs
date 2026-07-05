@@ -147,6 +147,20 @@ impl<'m> SpAliasCfg<'m> {
         SpAnalyzer::new(function, self.sp_memo).classify_addr(addr)
     }
 
+    /// Classify a `Store`'s address, preferring the `stack_offsets` SSoT (via
+    /// [`SpAnalyzer::classify_store_addr`]).  The store-side counterpart of
+    /// [`Self::classify_addr`]: it must be used wherever the walk's
+    /// [`SpAliasOracle::def_clobbers`] uses `classify_store_addr`, so the exact
+    /// re-check in [`Self::verdict`] agrees with which stores the walk stops
+    /// at even after a rewrite leaves a store's raw address non-decomposable.
+    pub(crate) fn classify_store_addr(
+        &mut self,
+        function: &Function,
+        store_node: NodeId,
+    ) -> AddrClass {
+        SpAnalyzer::new(function, self.sp_memo).classify_store_addr(store_node)
+    }
+
     /// Decompose an address into an SP terminal through this config's shared
     /// memo.  The single decompose entry for consumers, so they no longer
     /// materialise a transient [`SpAnalyzer`] at each call site.
@@ -178,7 +192,7 @@ impl<'m> SpAliasCfg<'m> {
         store_node: NodeId,
     ) -> AliasVerdict {
         let (load_class, load_size) = self.load_class_and_size(function, load_node);
-        let store_class = self.classify_addr(function, function.store_addr(store_node));
+        let store_class = self.classify_store_addr(function, store_node);
         let store_size = store_value_byte_size(function.graph(), function.store_data(store_node));
         alias_verdict(
             SizedAddr {
@@ -308,5 +322,75 @@ impl ReachingSpStore {
     /// from this (`ceil(size / increment)`).
     pub(crate) fn size(&self, function: &Function) -> i128 {
         store_value_byte_size(function.graph(), self.data(function))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse};
+    use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{IRBuilderExt, IRViewer, IntBinaryOp};
+    use strider_ir_test_utils::{make_sp_fn, stack_vn_x86};
+
+    /// Regression for the `verdict` / `def_clobbers` SSoT divergence: after a
+    /// rewrite leaves a store's raw address non-decomposable, `stack_offsets`
+    /// still records it as `[sp+K]`.  The memory-SSA walk stops at the store
+    /// (its `def_clobbers` uses `classify_store_addr`, the SSoT), so the exact
+    /// re-check in `verdict` must classify the store the SAME way — otherwise
+    /// it falls back to `Anchor`, reports `MayAlias`, and `LoadForward`
+    /// silently misses a legal forward.
+    #[test]
+    fn verdict_uses_stack_offset_ssot_for_nondecomposable_store() {
+        let sp = stack_vn_x86();
+        let mut f = make_sp_fn(sp, |b, sp_val| {
+            let k = b.build_int_const(8u64, ValueType::I32)?;
+            // Opaque store address: `xor(sp, 8)` is not a recognised SP base,
+            // so `classify_addr` on it yields `Anchor` — standing in for an
+            // address a later rewrite folded into a non-decomposable shape.
+            let opaque =
+                b.build_int_binary_operation(sp_val, k, IntBinaryOp::Xor, ValueType::I32)?;
+            let data = b.build_int_const(0x11u64, ValueType::I32)?;
+            b.build_store(opaque, data, rsleigh::VnSpace::RAM)?;
+            // Load at the real `sp + 8` (decomposable -> SpRooted(8)).
+            let load_addr =
+                b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::I32)?;
+            let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_return(Some(loaded), &[])?;
+            Ok(())
+        })
+        .expect("build sp fn");
+
+        // Collapse the entry `read_variable(sp)` phi so SP addresses are bare
+        // `InitialVar(sp) + k` terminals the decomposer recognises.
+        let mut p = OptimizerPipeline::new();
+        p.add(PhiCollapse);
+        p.add(RegionCollapse);
+        p.run(&mut f, &mut OptCtx::new(None)).expect("collapse");
+
+        let store = f
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
+            .expect("store node");
+        let load = f
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(f.node_kind(n), NodeKind::Load(_)))
+            .expect("load node");
+        let entry_sp = f.initial_var_value(&sp).expect("entry sp value");
+
+        // Simulate `StackOffsetDetect`: the SSoT records the store as `[sp+8]`
+        // even though its raw address folded to an opaque shape.
+        f.side_tables_mut().set_stack_offset(store, entry_sp, 8);
+
+        let mut memo = SpExprMemo::default();
+        let mut cfg = SpAliasCfg::call_blocking(&mut memo, AliasMode::StackGlobalDisjoint);
+        assert_eq!(
+            cfg.verdict(&f, load, store),
+            AliasVerdict::Match,
+            "verdict must classify the store via the stack_offsets SSoT (like def_clobbers), \
+             so a non-decomposable store still verifies as an exact match"
+        );
     }
 }
