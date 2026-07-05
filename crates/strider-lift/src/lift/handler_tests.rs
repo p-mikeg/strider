@@ -320,7 +320,7 @@ fn lift_int_neg_narrow_lowers_to_xor_all_ones() {
         );
         // The I32 all-ones constant has value 0xFFFF_FFFF.
         assert!(
-            graph_has_int_const_value(&d.builder, 0xFFFF_FFFF),
+            find_int_const_node(&d.builder, 0xFFFF_FFFF).is_some(),
             "narrow IntNeg must materialise the I32 all-ones constant"
         );
     });
@@ -503,22 +503,6 @@ fn find_first_node(builder: &FunctionBuilder, target: NodeKind) -> Option<NodeId
         .find(|id| builder.function().node_kind(*id) == &target)
 }
 
-/// Returns true if the graph contains an `IntConst` node whose value (masked
-/// to width, read via `int_const_u128`) equals `expected`.  Used in tests that
-/// pin a specific small-integer constant value without depending on the opaque
-/// `ConstId` internals.
-fn graph_has_int_const_value(builder: &FunctionBuilder, expected: u128) -> bool {
-    builder.function().graph().all_node_ids().any(|id| {
-        if !matches!(builder.function().node_kind(id), NodeKind::IntConst(_)) {
-            return false;
-        }
-        let outputs = builder.function().node_outputs(id);
-        outputs
-            .iter()
-            .any(|&v| builder.function().int_const_u128(v) == Some(expected))
-    })
-}
-
 /// Returns the first `IntConst` node-id whose output value equals `expected`,
 /// or `None` if no such node is present.
 fn find_int_const_node(builder: &FunctionBuilder, expected: u128) -> Option<NodeId> {
@@ -555,7 +539,7 @@ fn signed_binary_op_sign_extends_narrower_operand() {
             "expected an Sdiv node"
         );
         assert!(
-            graph_has_int_const_value(&d.builder, 0xFFFF_FFFF),
+            find_int_const_node(&d.builder, 0xFFFF_FFFF).is_some(),
             "the 2-byte -1 dividend must be SIGN-extended to the 4-byte op width (0xFFFF_FFFF)"
         );
     });
@@ -585,7 +569,7 @@ fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
             "expected an Sless comparison node"
         );
         assert!(
-            graph_has_int_const_value(&d.builder, 0xFFFF_FFFF_FFFF_FFFF),
+            find_int_const_node(&d.builder, 0xFFFF_FFFF_FFFF_FFFF).is_some(),
             "the 4-byte -1 operand must be SIGN-extended to the 8-byte max width \
              (0xFFFF_FFFF_FFFF_FFFF) — proving max-width comparison + sign-correct extension"
         );
@@ -933,148 +917,83 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
 // none of these handlers consults it on these inputs (`CondBranch`
 // errors on its missing condition operand before any lookup).
 
-#[test]
-fn process_insn_branch_is_noop_ok() {
+/// Shared scaffold for the no-operand `process_insn` dispatch tests: lift a
+/// hand-built operand-less `Insn` for `opcode` and assert the dispatch result
+/// matches `expect_ok` (`true` = the no-operand handler succeeds; `false` =
+/// the handler reads an absent operand and surfaces a typed error).  `label`
+/// documents the routing being pinned and appears in the failure message.
+fn assert_process_insn(opcode: Opcode, expect_ok: bool, label: &str) {
     with_test_lifter(|d, rid| {
         let insn = Insn {
-            opcode: Opcode::Branch,
+            opcode,
             output: None,
             inputs: Default::default(),
         };
-        assert!(
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .is_ok(),
-            "Branch dispatches to the no-op handle_branch"
-        );
+        let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
+        assert_eq!(res.is_ok(), expect_ok, "{label}");
     });
 }
 
 #[test]
-fn process_insn_cond_branch_errors_on_missing_cond() {
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode: Opcode::CondBranch,
-            output: None,
-            inputs: Default::default(),
-        };
-        assert!(
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .is_err(),
-            "CondBranch reads its condition operand and errors when absent"
-        );
-    });
-}
-
-#[test]
-fn process_insn_branch_indirect_dispatches_to_return() {
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode: Opcode::BranchIndirect,
-            output: None,
-            inputs: Default::default(),
-        };
-        assert!(
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .is_ok(),
-            "BranchIndirect shares the CC Return handler (link-register return)"
-        );
-    });
-}
-
-#[test]
-fn process_insn_return_dispatches_to_return() {
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode: Opcode::Return,
-            output: None,
-            inputs: Default::default(),
-        };
-        assert!(
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .is_ok(),
-            "Return dispatches to the CC return handler"
-        );
-    });
-}
-
-#[test]
-fn process_insn_call_errors_on_missing_target() {
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode: Opcode::Call,
-            output: None,
-            inputs: Default::default(),
-        };
-        assert!(
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .is_err(),
-            "Call reads its target operand and errors when absent"
-        );
-    });
-}
-
-#[test]
-fn process_insn_call_indirect_errors_on_missing_target() {
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode: Opcode::CallIndirect,
-            output: None,
-            inputs: Default::default(),
-        };
-        assert!(
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .is_err(),
-            "CallIndirect reads its target operand and errors when absent"
-        );
-    });
-}
-
-#[test]
-fn process_insn_call_other_errors_on_missing_user_op_id() {
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode: Opcode::CallOther,
-            output: None,
-            inputs: Default::default(),
-        };
-        assert!(
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .is_err(),
-            "CallOther reads its user-op id operand and errors when absent"
-        );
-    });
-}
-
-#[test]
-fn process_insn_store_errors_on_missing_operands() {
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode: Opcode::Store,
-            output: None,
-            inputs: Default::default(),
-        };
-        assert!(
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .is_err(),
-            "Store reads its address/data operands and errors when absent"
-        );
-    });
-}
-
-#[test]
-fn process_insn_nop_is_ok() {
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode: Opcode::Nop,
-            output: None,
-            inputs: Default::default(),
-        };
-        assert!(
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .is_ok(),
-            "Nop dispatches to the empty arm"
-        );
-    });
+fn process_insn_no_operand_dispatch_routing() {
+    // One row per original no-operand dispatch test: (opcode, expect_ok, label).
+    // Opcodes whose handler reads operands surface a typed error on the empty
+    // (no-input) insns used here; the no-operand handlers (Nop / Branch /
+    // Return / BranchIndirect) succeed.  An empty region map is passed — none
+    // of these handlers consults it on these inputs (CondBranch errors on its
+    // missing condition operand before any lookup).  The two CallOther rows
+    // preserve the two original byte-identical tests pinning that routing.
+    let cases: &[(Opcode, bool, &str)] = &[
+        (
+            Opcode::Branch,
+            true,
+            "Branch dispatches to the no-op handle_branch",
+        ),
+        (
+            Opcode::CondBranch,
+            false,
+            "CondBranch reads its condition operand and errors when absent",
+        ),
+        (
+            Opcode::BranchIndirect,
+            true,
+            "BranchIndirect shares the CC Return handler (link-register return)",
+        ),
+        (
+            Opcode::Return,
+            true,
+            "Return dispatches to the CC return handler",
+        ),
+        (
+            Opcode::Call,
+            false,
+            "Call reads its target operand and errors when absent",
+        ),
+        (
+            Opcode::CallIndirect,
+            false,
+            "CallIndirect reads its target operand and errors when absent",
+        ),
+        (
+            Opcode::CallOther,
+            false,
+            "CallOther reads its user-op id operand and errors when absent",
+        ),
+        (
+            Opcode::Store,
+            false,
+            "Store reads its address/data operands and errors when absent",
+        ),
+        (Opcode::Nop, true, "Nop dispatches to the empty arm"),
+        (
+            Opcode::CallOther,
+            false,
+            "CallOther dispatches to handle_call_other and errors on the missing user-op id",
+        ),
+    ];
+    for &(opcode, expect_ok, label) in cases {
+        assert_process_insn(opcode, expect_ok, label);
+    }
 }
 
 // ── vn_io tests ─────────────────────────────────────────────────────────────
@@ -1206,26 +1125,6 @@ fn lift_binary_op_with_too_few_inputs_errors_not_panics() {
         assert!(
             res.is_err(),
             "binary op with too few inputs should error, not panic"
-        );
-    });
-}
-
-#[test]
-fn process_insn_call_other_dispatches_to_call_other_handler() {
-    // CallOther is dispatched to handle_call_other, which reads the user-op
-    // id operand and errors when it is absent (as here).  Pins that the
-    // unified dispatch routes CallOther to its handler rather than declining
-    // it as the pre-merge value lifter did.
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode: Opcode::CallOther,
-            output: None,
-            inputs: Default::default(),
-        };
-        assert!(
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .is_err(),
-            "CallOther dispatches to handle_call_other and errors on the missing user-op id"
         );
     });
 }

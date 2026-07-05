@@ -45,17 +45,16 @@ pub fn is_addr_tail_call(
     if target < lower {
         return true;
     }
-    if let Some(sz) = fn_max_size {
-        // `checked_add` (not `saturating_add`): an overflowing window is
-        // non-wrapping and clamps to the top of the address space, so
-        // `None` correctly disables the upper-bound check rather than
-        // mis-classifying `target == u64::MAX` as out-of-range (which a
-        // saturating bound + `target >= upper` would do).
-        if let Some(upper) = start_addr.checked_add(sz)
-            && target >= upper
-        {
-            return true;
-        }
+    // `checked_add` (not `saturating_add`): an overflowing window is
+    // non-wrapping and clamps to the top of the address space, so
+    // `None` correctly disables the upper-bound check rather than
+    // mis-classifying `target == u64::MAX` as out-of-range (which a
+    // saturating bound + `target >= upper` would do).
+    if let Some(sz) = fn_max_size
+        && let Some(upper) = start_addr.checked_add(sz)
+        && target >= upper
+    {
+        return true;
     }
     false
 }
@@ -215,6 +214,7 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
+    use crate::test_support::*;
     use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
     use crate::{Builder, CfgOptions};
 
@@ -240,39 +240,6 @@ mod tests {
             is_addr_tail_call(start - 1, start, Some(sz), false),
             "below start is still a tail call"
         );
-    }
-
-    // ── synthetic helpers ────────────────────────────────────────────────
-
-    fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
-        PcodeInsnAddr {
-            machine_addr: MachineInsnAddr { addr: machine },
-            insn_index: insn,
-        }
-    }
-
-    fn fake_insn() -> rsleigh::Insn {
-        rsleigh::Insn {
-            opcode: rsleigh::Opcode::Copy,
-            output: None,
-            inputs: vec![].into(),
-        }
-    }
-
-    fn make_region(addrs: &[(u64, u64)]) -> Region {
-        let start = addr(addrs[0].0, addrs[0].1);
-        let insns = addrs
-            .iter()
-            .map(|&(m, i)| RegionInstruction {
-                addr: addr(m, i),
-                insn: fake_insn(),
-            })
-            .collect();
-        Region {
-            start_addr: start,
-            insns,
-            terminator: crate::RegionTerminator::Unconditional,
-        }
     }
 
     // ── real-binary helpers ──────────────────────────────────────────────

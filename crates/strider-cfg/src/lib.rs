@@ -32,6 +32,8 @@ mod dot;
 mod indirect_resolver;
 mod options;
 mod query;
+#[cfg(test)]
+mod test_support;
 mod types;
 
 /// Crate-level `Result` alias. Every fallible function in this crate
@@ -67,9 +69,9 @@ pub struct Cfg {
     /// where direct map mutation produced exactly this divergence
     /// motivated the `pub(crate)` tightening on the index.  New code
     /// should read via [`Self::region_graph`].
-    pub region_graph: RegionGraph,
+    pub(crate) region_graph: RegionGraph,
     /// The [`NodeIndex`] of the function entry-point region.
-    pub entry: NodeIndex,
+    pub(crate) entry: NodeIndex,
     /// Index from a region's start address to its [`NodeIndex`], for
     /// O(log R) `region_id_at_start` lookups instead of an O(R) graph
     /// scan.  Promoted from `super::builder::Builder`'s field of the

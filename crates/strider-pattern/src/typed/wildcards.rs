@@ -152,15 +152,10 @@ pub struct InitialVar;
 
 impl MatchPat for InitialVar {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        b.leaf(KindSpec::Variant(initial_var_discriminant()))
+        let exemplar =
+            strider_ir::node::NodeKind::InitialVar(strider_ir::node::InitialVnId::from_index(0));
+        b.leaf(KindSpec::variant_of(&exemplar))
     }
-}
-
-/// The `NodeKind::InitialVar(..)` discriminant, for variant-only matching.
-fn initial_var_discriminant() -> std::mem::Discriminant<strider_ir::node::NodeKind> {
-    let exemplar =
-        strider_ir::node::NodeKind::InitialVar(strider_ir::node::InitialVnId::from_index(0));
-    std::mem::discriminant(&exemplar)
 }
 
 /// Match any `InitialVar(_)` node (any varnode).
@@ -180,7 +175,9 @@ impl MatchPat for InitialVarFor {
         // `NodeKind`.  Match any `InitialVar` by discriminant, then resolve
         // the candidate's index against the function under test at match time.
         let want = self.vn;
-        let out = b.leaf(KindSpec::Variant(initial_var_discriminant()));
+        let exemplar =
+            strider_ir::node::NodeKind::InitialVar(strider_ir::node::InitialVnId::from_index(0));
+        let out = b.leaf(KindSpec::variant_of(&exemplar));
         b.set_node_predicate(
             out,
             Box::new(move |m, node| {

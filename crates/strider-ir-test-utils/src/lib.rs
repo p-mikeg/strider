@@ -30,13 +30,13 @@ use strider_ir::{
 pub trait IrWalkerEx: IRWalker {
     /// Counts entry-reachable nodes whose [`NodeKind`] satisfies `pred`.
     fn count_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> usize {
-        self.walk().filter(|&n| pred(self.node_kind(n))).count()
+        self.walk_kind(pred).count()
     }
 
     /// Returns `true` when at least one entry-reachable node satisfies `pred`.
     /// Short-circuits at the first match.
     fn has_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> bool {
-        self.walk().any(|n| pred(self.node_kind(n)))
+        self.walk_kind(pred).next().is_some()
     }
 }
 
@@ -407,17 +407,15 @@ pub fn builder(
     ret_stack_pop: i64,
     endianness: strider_target::Endianness,
 ) -> Result<FunctionBuilder> {
-    RegisterSet {
+    tb::build_rs(
         tracked,
-        arg_passing: arg_passing.to_vec(),
-        callee_saved: callee_saved.to_vec(),
-        ret_val: ret_val.to_vec(),
-        sp: stack_vn,
+        arg_passing,
+        callee_saved,
+        ret_val,
+        stack_vn,
         ret_stack_pop,
-        stack_args: None,
-        endianness: Some(endianness),
-        link_register: None,
-    }
+    )
+    .endianness(endianness)
     .build_fn()
 }
 
@@ -555,9 +553,7 @@ impl MockRom {
                 entries,
                 size_filter,
             } => {
-                if let Some(sz) = size_filter
-                    && size != *sz
-                {
+                if size_filter.is_some_and(|sz| size != sz) {
                     return None;
                 }
                 if addr < *base {
@@ -579,11 +575,7 @@ impl MockRom {
                 size: s,
                 value,
             } => {
-                if addr == *a && size == *s {
-                    Some(*value)
-                } else {
-                    None
-                }
+                (addr == *a && size == *s).then_some(*value)
             }
             MockRomShape::AlwaysAnswer { value } => Some(*value),
         }

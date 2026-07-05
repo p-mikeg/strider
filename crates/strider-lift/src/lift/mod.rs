@@ -211,7 +211,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // dead phis); a phi is placed only where it is actually needed.
         let dom = dominance::DomInfo::compute(cfg);
         let def_sites = driver.collect_def_sites();
-        let placement = pruned_ssa::compute_phi_placement(&def_sites, &dom);
+        let placement = dom.iterated_frontier(&def_sites);
 
         // build_entry + one IR region per CFG region (each with only its placed
         // phis); returns the CFG-region → IR-region map the per-insn loop

@@ -100,6 +100,24 @@ pub(crate) struct BindingsMark {
     matched: usize,
 }
 
+// Emits a `get_*_op` extractor: look up the node bound to `c`, and return
+// the op payload iff its `NodeKind` is `$variant`.  The `NodeKind` variant
+// name doubles as the returned op type (both `IntBinaryOp`, `IntCmpOp`, …),
+// so a single `$variant` token drives both.  `get_bool_binary_op` carries an
+// extra I1 check and stays hand-written below.
+macro_rules! op_extractor {
+    ($(#[$attr:meta])* $fn:ident => $variant:ident) => {
+        $(#[$attr])*
+        pub fn $fn(&self, c: Capture, graph: &Graph) -> Option<$variant> {
+            let node = self.get_node(c, graph)?;
+            match graph.node_kind(node) {
+                NodeKind::$variant(op) => Some(*op),
+                _ => None,
+            }
+        }
+    };
+}
+
 impl Bindings {
     /// Snapshot the current state in O(1) with no allocations.
     /// Use with [`Self::restore`] to roll back failed match attempts.
@@ -249,31 +267,19 @@ impl Bindings {
         }
     }
 
-    /// If the node bound to `c` is an `IntBinaryOp`, returns the op variant.
-    pub fn get_int_binary_op(&self, c: Capture, graph: &Graph) -> Option<IntBinaryOp> {
-        let node = self.get_node(c, graph)?;
-        match graph.node_kind(node) {
-            NodeKind::IntBinaryOp(op) => Some(*op),
-            _ => None,
-        }
+    op_extractor! {
+        /// If the node bound to `c` is an `IntBinaryOp`, returns the op variant.
+        get_int_binary_op => IntBinaryOp
     }
 
-    /// If the node bound to `c` is an `IntUnaryOp`, returns the op variant.
-    pub fn get_int_unary_op(&self, c: Capture, graph: &Graph) -> Option<IntUnaryOp> {
-        let node = self.get_node(c, graph)?;
-        match graph.node_kind(node) {
-            NodeKind::IntUnaryOp(op) => Some(*op),
-            _ => None,
-        }
+    op_extractor! {
+        /// If the node bound to `c` is an `IntUnaryOp`, returns the op variant.
+        get_int_unary_op => IntUnaryOp
     }
 
-    /// If the node bound to `c` is an `IntCmpOp`, returns the op variant.
-    pub fn get_int_cmp_op(&self, c: Capture, graph: &Graph) -> Option<IntCmpOp> {
-        let node = self.get_node(c, graph)?;
-        match graph.node_kind(node) {
-            NodeKind::IntCmpOp(op) => Some(*op),
-            _ => None,
-        }
+    op_extractor! {
+        /// If the node bound to `c` is an `IntCmpOp`, returns the op variant.
+        get_int_cmp_op => IntCmpOp
     }
 
     /// If the node bound to `c` is a boolean binary op (an `IntBinaryOp`
@@ -296,31 +302,19 @@ impl Bindings {
     // "bool unary" op is recovered via [`Self::get_bool_binary_op`]
     // (returning `IntBinaryOp::Xor`).
 
-    /// If the node bound to `c` is a `FloatBinaryOp`, returns the op variant.
-    pub fn get_float_binary_op(&self, c: Capture, graph: &Graph) -> Option<FloatBinaryOp> {
-        let node = self.get_node(c, graph)?;
-        match graph.node_kind(node) {
-            NodeKind::FloatBinaryOp(op) => Some(*op),
-            _ => None,
-        }
+    op_extractor! {
+        /// If the node bound to `c` is a `FloatBinaryOp`, returns the op variant.
+        get_float_binary_op => FloatBinaryOp
     }
 
-    /// If the node bound to `c` is a `FloatUnaryOp`, returns the op variant.
-    pub fn get_float_unary_op(&self, c: Capture, graph: &Graph) -> Option<FloatUnaryOp> {
-        let node = self.get_node(c, graph)?;
-        match graph.node_kind(node) {
-            NodeKind::FloatUnaryOp(op) => Some(*op),
-            _ => None,
-        }
+    op_extractor! {
+        /// If the node bound to `c` is a `FloatUnaryOp`, returns the op variant.
+        get_float_unary_op => FloatUnaryOp
     }
 
-    /// If the node bound to `c` is a `FloatCmpOp`, returns the op variant.
-    pub fn get_float_cmp_op(&self, c: Capture, graph: &Graph) -> Option<FloatCmpOp> {
-        let node = self.get_node(c, graph)?;
-        match graph.node_kind(node) {
-            NodeKind::FloatCmpOp(op) => Some(*op),
-            _ => None,
-        }
+    op_extractor! {
+        /// If the node bound to `c` is a `FloatCmpOp`, returns the op variant.
+        get_float_cmp_op => FloatCmpOp
     }
 }
 

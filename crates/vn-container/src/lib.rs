@@ -95,8 +95,7 @@ pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsle
     all_used_variables
         .iter()
         .enumerate()
-        .filter(|(i, _)| !dropped[*i])
-        .map(|(_, v)| *v)
+        .filter_map(|(i, v)| (!dropped[i]).then_some(*v))
         .collect()
 }
 

@@ -318,16 +318,30 @@ fn offset_range_verdict(
     }
 }
 
+/// An address class paired with the byte size of the access at it — one
+/// operand (load or store) of the pairwise [`alias_verdict`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SizedAddr {
+    pub(crate) class: AddrClass,
+    pub(crate) size: i128,
+}
+
 /// Pairwise alias verdict between a load's class + size and a store's
 /// class + size under the given [`AliasMode`].
 pub(crate) fn alias_verdict(
-    load_class: AddrClass,
-    load_size: i128,
-    store_class: AddrClass,
-    store_size: i128,
+    load: SizedAddr,
+    store: SizedAddr,
     mode: AliasMode,
     distinct_sp_bases_disjoint: bool,
 ) -> AliasVerdict {
+    let SizedAddr {
+        class: load_class,
+        size: load_size,
+    } = load;
+    let SizedAddr {
+        class: store_class,
+        size: store_size,
+    } = store;
     match (load_class, store_class) {
         // Diagonal: in-class equality + range-disjoint.  Two SP-rooted
         // addresses are only comparable when they share the same base node;
@@ -968,10 +982,14 @@ mod alias_tests {
         let store_size = store_value_byte_size(f.graph(), f.store_data(store));
         let store_class = SpAnalyzer::new(f, memo).classify_store_addr(store);
         alias_verdict(
-            load_class,
-            load_size,
-            store_class,
-            store_size,
+            SizedAddr {
+                class: load_class,
+                size: load_size,
+            },
+            SizedAddr {
+                class: store_class,
+                size: store_size,
+            },
             mode,
             distinct_sp_bases_disjoint,
         )

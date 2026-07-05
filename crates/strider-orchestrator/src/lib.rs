@@ -244,6 +244,14 @@ where
 
         let (mut cfg, mut function, mut unresolved, mut resolutions) =
             self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
+        // Snapshot the live `IndirectBranch` placeholders (the classifier's
+        // `resolutions` keys) BEFORE `resolutions` is moved into
+        // `apply_resolutions` below, in lockstep with `function`.  This is the
+        // set `live_unresolved_branches` used to recover via a full
+        // `walk().filter(IndirectBranch)`; taking it from `resolutions.keys()`
+        // drops that per-iteration reachability walk.
+        let mut live_indirect: rustc_hash::FxHashSet<strider_ir::node::NodeId> =
+            resolutions.keys().copied().collect();
         // Each non-terminal iteration folds the classifier's results into
         // `known_targets` and re-lifts.  The loop terminates as soon as
         // nothing new resolves (`apply_resolutions` returns `false`).  The
@@ -268,6 +276,9 @@ where
             }
             (cfg, function, unresolved, resolutions) =
                 self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
+            // Re-snapshot in lockstep with the freshly-lifted `function`,
+            // before this iteration's `resolutions` can be moved.
+            live_indirect = resolutions.keys().copied().collect();
         }
 
         // The cap is the crate's core-invariant backstop — falling
@@ -293,7 +304,7 @@ where
         // unresolved.  This MUST run before `compact`, since `unresolved`'s
         // `NodeId`s index into the un-renumbered function.
         let unresolved_indirect_branches =
-            live_unresolved_branches(&function, &unresolved, &working.cfg.known_targets);
+            live_unresolved_branches(&live_indirect, &unresolved, &working.cfg.known_targets);
 
         if lift_opts.compact {
             function.compact()?;
@@ -443,15 +454,10 @@ fn apply_resolutions(
         let addr = node_to_addr.get(&node).copied().ok_or_else(|| {
             anyhow!("classified IndirectBranch node {node:?} has no recorded pcode address")
         })?;
-        match staged.entry(addr) {
-            std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert(targets);
-            }
-            std::collections::hash_map::Entry::Occupied(mut e) => {
-                let merged = merge_resolved(e.get(), &targets);
-                e.insert(merged);
-            }
-        }
+        staged
+            .entry(addr)
+            .and_modify(|e| *e = merge_resolved(e, &targets))
+            .or_insert(targets);
     }
     // Convergence without dropping improvements: re-deriving the SAME
     // classification for an already-present site re-inserts an equal value
@@ -520,20 +526,15 @@ fn merge_resolved(a: &ResolvedTargets, b: &ResolvedTargets) -> ResolvedTargets {
 ///     such a site as unresolved would contradict the fact that the
 ///     orchestrator did resolve it.
 fn live_unresolved_branches(
-    function: &strider_ir::Function,
+    live_indirect: &rustc_hash::FxHashSet<strider_ir::node::NodeId>,
     unresolved: &UnresolvedAnchors,
     known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
 ) -> Vec<PcodeInsnAddr> {
-    use strider_ir::node::NodeKind;
-    use strider_ir::{IRViewer, IRWalker};
-
-    // The live `IndirectBranch` placeholder nodes still reachable from the
-    // entry (one cheap reachability walk shared across every anchor).
-    let live_indirect: rustc_hash::FxHashSet<strider_ir::node::NodeId> = function
-        .walk()
-        .filter(|&n| matches!(function.node_kind(n), NodeKind::IndirectBranch))
-        .collect();
-
+    // `live_indirect` is the classifier post-pass's set of live
+    // `IndirectBranch` placeholders (`resolutions.keys()`), populated by the
+    // same `walk_kind(IndirectBranch)` this used to re-walk — so it is
+    // exactly the reachable-placeholder set, snapshotted from the same
+    // `build_lift` that produced the final function.
     let mut out: Vec<PcodeInsnAddr> = unresolved
         .iter()
         .filter(|(addr, node)| live_indirect.contains(node) && !known_targets.contains_key(addr))
@@ -671,15 +672,33 @@ mod tests {
         (function, placeholder)
     }
 
+    /// The set of live `IndirectBranch` placeholders reachable from
+    /// `function`'s entry — the set the orchestrator now snapshots from a
+    /// `build_lift`'s `resolutions.keys()` and passes to
+    /// `live_unresolved_branches`.  Recomputed here via the walk the
+    /// production snapshot replaces, so these unit tests exercise the same
+    /// filtering behaviour.
+    fn live_indirect_set(
+        function: &strider_ir::Function,
+    ) -> rustc_hash::FxHashSet<NodeId> {
+        use strider_ir::node::NodeKind;
+        use strider_ir::{IRViewer, IRWalker};
+        function
+            .walk()
+            .filter(|&n| matches!(function.node_kind(n), NodeKind::IndirectBranch))
+            .collect()
+    }
+
     #[test]
     fn live_unresolved_reports_live_unclassified_branch() {
         let (function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
         let known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        let live = live_indirect_set(&function);
         // Live placeholder, never classified → reported.
         assert_eq!(
-            live_unresolved_branches(&function, &unresolved, &known),
+            live_unresolved_branches(&live, &unresolved, &known),
             vec![addr]
         );
     }
@@ -700,8 +719,9 @@ mod tests {
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, non_indirect)];
         let known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        let live = live_indirect_set(&function);
         assert!(
-            live_unresolved_branches(&function, &unresolved, &known).is_empty(),
+            live_unresolved_branches(&live, &unresolved, &known).is_empty(),
             "a dead / non-live IndirectBranch placeholder must not be reported"
         );
     }
@@ -716,8 +736,9 @@ mod tests {
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
         let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         known.insert(addr, ResolvedTargets::Multiple(vec![0x2000, 0x9999_0000]));
+        let live = live_indirect_set(&function);
         assert!(
-            live_unresolved_branches(&function, &unresolved, &known).is_empty(),
+            live_unresolved_branches(&live, &unresolved, &known).is_empty(),
             "a classified (in known_targets) site must not be reported unresolved"
         );
     }

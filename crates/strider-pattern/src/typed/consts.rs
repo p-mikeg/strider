@@ -7,8 +7,6 @@
 //! all-ones constant. `signed_int_const` additionally recognises the
 //! zero-extended-narrow signed encoding that a strict `int_const` misses.
 
-use std::mem::{Discriminant, discriminant};
-
 use rustc_hash::FxHashSet;
 
 use strider_ir::node::{NodeId, NodeKind, ValueType};
@@ -42,17 +40,6 @@ pub struct IntConst {
     v: u128,
 }
 
-/// The `IntConst` discriminant, used as the leaf [`KindSpec::Variant`] so the
-/// matcher's kind index prefilters to integer-constant nodes BEFORE the
-/// value-comparison predicate runs — the pattern declares its expected kind
-/// structurally rather than hiding a discriminant check inside an opaque
-/// closure.
-fn int_const_discriminant() -> Discriminant<NodeKind> {
-    // ConstId::new(0) is a valid exemplar — discriminant only cares about the
-    // variant, not the payload value.
-    discriminant(&NodeKind::IntConst(ConstId::from_u32(0)))
-}
-
 /// Shared match-time read for the integer-constant predicates: finds the
 /// matched node's first value output and returns the stored value together with
 /// that output's type.  The leaf's [`KindSpec::Variant`] already guarantees the
@@ -82,7 +69,7 @@ fn int_const_leaf(
     pin: Option<ValueType>,
     pred: impl Fn(u128, ValueType) -> bool + 'static,
 ) -> PatValueRef {
-    let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
+    let o = b.leaf(KindSpec::variant_of(&NodeKind::IntConst(ConstId::from_u32(0))));
     if let Some(t) = pin {
         b.set_value_ty(o, t);
     }
@@ -297,8 +284,7 @@ pub struct AnyFloatConst;
 
 impl MatchPat for AnyFloatConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let exemplar = NodeKind::FloatConst(0);
-        b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)))
+        b.leaf(KindSpec::variant_of(&NodeKind::FloatConst(0)))
     }
 }
 

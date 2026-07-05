@@ -527,13 +527,7 @@ where
     // application for a corner case that only matters when an extender
     // produces a region we then fail to patch).  Callers that need
     // strict atomicity should re-load the binary from disk on `Err`.
-    match apply_elf_relocations(regions, obj) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            regions.truncate(base_len);
-            Err(e)
-        }
-    }
+    apply_elf_relocations(regions, obj).inspect_err(|_| regions.truncate(base_len))
 }
 
 /// Like [`apply_elf_relocations`], but pre-walks the dynamic

@@ -746,24 +746,9 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
+    use crate::test_support::addr as addr_at;
+    use crate::test_support::*;
     use crate::CfgOptions;
-
-    type TestReader = BufMemReader<Vec<u8>>;
-
-    fn addr_at(machine: u64, insn: u64) -> PcodeInsnAddr {
-        PcodeInsnAddr {
-            machine_addr: MachineInsnAddr { addr: machine },
-            insn_index: insn,
-        }
-    }
-
-    fn fake_insn() -> rsleigh::Insn {
-        rsleigh::Insn {
-            opcode: rsleigh::Opcode::Copy,
-            output: None,
-            inputs: vec![].into(),
-        }
-    }
 
     fn fake_lift_res(n: usize) -> rsleigh::LiftRes {
         fake_lift_res_with_len(n, 1)
@@ -774,28 +759,6 @@ mod tests {
             insns: (0..n).map(|_| fake_insn()).collect(),
             machine_insn_len,
         }
-    }
-
-    fn make_sleigh() -> rsleigh::Sleigh<TestReader> {
-        let arch = SleighArch::x86_64();
-        let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create empty Sleigh")
-    }
-
-    fn make_builder<'a>(
-        start_addr: u64,
-        sleigh: &'a mut rsleigh::Sleigh<TestReader>,
-    ) -> Builder<'a, TestReader> {
-        make_builder_opts(start_addr, sleigh, &CfgOptions::default())
-    }
-
-    fn make_builder_opts<'a>(
-        start_addr: u64,
-        sleigh: &'a mut rsleigh::Sleigh<TestReader>,
-        options: &CfgOptions,
-    ) -> Builder<'a, TestReader> {
-        let arch = SleighArch::x86_64();
-        Builder::for_arch(&arch, sleigh, start_addr, options)
     }
 
     fn make_region_builder<'b, 'a: 'b>(

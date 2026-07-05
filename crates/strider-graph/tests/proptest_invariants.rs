@@ -34,13 +34,34 @@ struct TestCacher;
 
 /// Hashes a `(kind, inputs, outputs)` structural key. Returns a raw `u64` with
 /// NO sentinel knowledge — sentinel avoidance is the generic cache's concern.
-fn hash_key(kind: &TestKind, inputs: &[ValueId], outputs: &[TestVal]) -> u64 {
+/// Generic over the payload types so every `NodeCacheable` policy in this file
+/// (`TestCacher`, `CacheAll`, `SentinelHashPolicy`) shares one body.
+fn hash_key<K: std::hash::Hash, V: std::hash::Hash>(
+    kind: &K,
+    inputs: &[ValueId],
+    outputs: &[V],
+) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     kind.hash(&mut h);
     inputs.hash(&mut h);
     outputs.hash(&mut h);
     h.finish()
+}
+
+/// Structural equality by re-reading a candidate's `(kind, inputs, outputs)`
+/// back out of the store. Generic counterpart to [`hash_key`], shared by every
+/// `NodeCacheable::eq` policy in this file.
+fn eq_key<K: PartialEq, V: PartialEq + Clone>(
+    store: &RawStore<K, V>,
+    cand: NodeId,
+    kind: &K,
+    inputs: &[ValueId],
+    outputs: &[V],
+) -> bool {
+    store.kind_of(cand) == kind
+        && store.input_values(cand).as_slice() == inputs
+        && store.output_kinds(cand).as_slice() == outputs
 }
 
 impl NodeCacheable<TestKind, TestVal> for TestCacher {
@@ -59,9 +80,7 @@ impl NodeCacheable<TestKind, TestVal> for TestCacher {
         inputs: &[ValueId],
         outputs: &[TestVal],
     ) -> bool {
-        store.kind_of(cand) == kind
-            && store.input_values(cand).as_slice() == inputs
-            && store.output_kinds(cand).as_slice() == outputs
+        eq_key(store, cand, kind, inputs, outputs)
     }
 }
 
@@ -826,27 +845,6 @@ fn dfs_post_order_runs_on_graph() {
 mod node_cache_hooks {
     use super::*;
 
-    fn raw_hash(kind: &u8, inputs: &[ValueId], outputs: &[u8]) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        kind.hash(&mut h);
-        inputs.hash(&mut h);
-        outputs.hash(&mut h);
-        h.finish()
-    }
-
-    fn raw_eq(
-        store: &RawStore<u8, u8>,
-        cand: NodeId,
-        kind: &u8,
-        inputs: &[ValueId],
-        outputs: &[u8],
-    ) -> bool {
-        store.kind_of(cand) == kind
-            && store.input_values(cand).as_slice() == inputs
-            && store.output_kinds(cand).as_slice() == outputs
-    }
-
     /// Caches every kind, hashes the whole tuple, eq by re-read. No
     /// canonicalization.
     struct CacheAll;
@@ -855,7 +853,7 @@ mod node_cache_hooks {
             true
         }
         fn hash(kind: &u8, inputs: &[ValueId], outputs: &[u8]) -> u64 {
-            raw_hash(kind, inputs, outputs)
+            hash_key(kind, inputs, outputs)
         }
         fn eq(
             store: &RawStore<u8, u8>,
@@ -864,7 +862,7 @@ mod node_cache_hooks {
             inputs: &[ValueId],
             outputs: &[u8],
         ) -> bool {
-            raw_eq(store, cand, kind, inputs, outputs)
+            eq_key(store, cand, kind, inputs, outputs)
         }
     }
 
@@ -886,7 +884,7 @@ mod node_cache_hooks {
             inputs: &[ValueId],
             outputs: &[u8],
         ) -> bool {
-            raw_eq(store, cand, kind, inputs, outputs)
+            eq_key(store, cand, kind, inputs, outputs)
         }
     }
 

@@ -33,6 +33,7 @@
 //!   [`IfPat::with_false`] forward-walk from the matched If's control
 //!   output to its single consumer and match there.
 
+use itertools::Itertools;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
@@ -553,13 +554,9 @@ fn match_branch_consumer(
     let Some(&out) = outputs.get(output_index) else {
         return false;
     };
-    let mut uses = f.graph().value_uses(out);
-    let Some((first, _)) = uses.next() else {
+    let Ok((first, _)) = f.graph().value_uses(out).exactly_one() else {
         return false;
     };
-    if uses.next().is_some() {
-        return false;
-    }
     // `pat` is validated single-rooted at build time, so `match_at` cannot
     // report a structural error here; an `Err` would be a real bug, hence
     // it is surfaced rather than swallowed.

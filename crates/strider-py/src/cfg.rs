@@ -70,6 +70,32 @@ impl PyCfg {
         f(lifter_borrow.sleigh())
     }
 
+    /// Borrow the parent `Lifter`'s owned `Sleigh`, build a `GraphDot` over
+    /// this CFG at `style`, and dispatch to `op`.  Centralises the
+    /// `with_sleigh` + `GraphDot::new` + terminal-render skeleton shared by
+    /// `to_html` / `to_dot` / `html_str` (mirrors `PyLifter::dispatch_dot`).
+    /// `style` is already resolved by each caller so their exact per-method
+    /// defaults are preserved.
+    fn dispatch_dot(&self, py: Python<'_>, style: &str, op: CfgDotOp<'_>) -> PyResult<CfgDotResult> {
+        self.with_sleigh(py, |sleigh| {
+            let d = dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some(style)));
+            match op {
+                CfgDotOp::ToHtml(p) => d
+                    .dump_as_html(Path::new(p))
+                    .map(|()| CfgDotResult::Unit)
+                    .map_err(into_strider_err),
+                CfgDotOp::ToDot(p) => d
+                    .dump_as_dot(Path::new(p))
+                    .map(|()| CfgDotResult::Unit)
+                    .map_err(into_strider_err),
+                CfgDotOp::HtmlStr => d
+                    .as_html_from_dot()
+                    .map(CfgDotResult::Html)
+                    .map_err(into_strider_err),
+            }
+        })
+    }
+
     /// The cached `machine_addr -> joined p-code text` map, built ONCE by
     /// a single pass over every region's `RegionInstruction`s.  Ops
     /// belonging to the same machine instruction (same `machine_addr`,
@@ -103,6 +129,24 @@ impl PyCfg {
     }
 }
 
+/// Discriminator for [`PyCfg::dispatch_dot`], mirroring
+/// [`crate::strider_cls`]'s `DotOp`.  Each variant carries the per-op
+/// arguments the public `to_html` / `to_dot` / `html_str` accessors would
+/// otherwise duplicate the sleigh-borrow / dumper-construction ritual for.
+enum CfgDotOp<'a> {
+    ToHtml(&'a str),
+    ToDot(&'a str),
+    HtmlStr,
+}
+
+/// Return shape of [`PyCfg::dispatch_dot`].  Returning a sum lets a single
+/// helper cover both the unit-returning dump methods and the
+/// string-returning `html_str` without separate variants per dispatch.
+enum CfgDotResult {
+    Unit,
+    Html(String),
+}
+
 #[pymethods]
 impl PyCfg {
     /// Render the CFG to a standalone HTML file at `path`.  `style`
@@ -110,31 +154,24 @@ impl PyCfg {
     #[pyo3(signature = (path, style=None))]
     fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
         let style = style.unwrap_or("dark_cfg");
-        self.with_sleigh(py, |sleigh| {
-            let d = dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some(style)));
-            d.dump_as_html(Path::new(path)).map_err(into_strider_err)
-        })
+        self.dispatch_dot(py, style, CfgDotOp::ToHtml(path)).map(|_| ())
     }
     /// Render the CFG to a Graphviz `.dot` file at `path`.
     #[pyo3(signature = (path,))]
     fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
-        self.with_sleigh(py, |sleigh| {
-            let d = dot::GraphDot::new(
-                self.inner.dot_dumper(sleigh),
-                dot_style_for(Some("dark_cfg")),
-            );
-            d.dump_as_dot(Path::new(path)).map_err(into_strider_err)
-        })
+        self.dispatch_dot(py, "dark_cfg", CfgDotOp::ToDot(path)).map(|_| ())
     }
     /// Return the CFG rendered as an HTML string (default `"dark_cfg"`
     /// style) instead of writing it to a file.
     #[pyo3(signature = (style=None))]
     fn html_str(&self, py: Python<'_>, style: Option<&str>) -> PyResult<String> {
         let style = style.unwrap_or("dark_cfg");
-        self.with_sleigh(py, |sleigh| {
-            let d = dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some(style)));
-            d.as_html_from_dot().map_err(into_strider_err)
-        })
+        match self.dispatch_dot(py, style, CfgDotOp::HtmlStr)? {
+            CfgDotResult::Html(s) => Ok(s),
+            CfgDotResult::Unit => Err(into_strider_err(anyhow::anyhow!(
+                "internal: CfgDotOp::HtmlStr returned CfgDotResult::Unit"
+            ))),
+        }
     }
 
     /// Look up the lifted p-code for the machine instruction at `addr`.

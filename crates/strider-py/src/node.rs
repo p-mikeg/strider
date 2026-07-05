@@ -111,6 +111,51 @@ impl PyNode {
     }
 }
 
+/// Emits the op-name accessors that are byte-identical except the
+/// `NodeKind` variant they match.  Each becomes a method on `PyNode`
+/// that returns the matched op's `Debug` name (e.g. `"Add"`) or `None`.
+/// pyo3 forbids a bare `macro_rules!` invocation *inside* a
+/// `#[pymethods]` block, so the macro emits its own such block; pyo3
+/// permits multiple (see `matcher.rs`'s `op_forwarders!`).
+macro_rules! op_name_accessors {
+    ($( $(#[doc = $doc:literal])+ $name:ident => $variant:ident; )+) => {
+        #[pymethods]
+        impl PyNode {
+            $(
+                $(#[doc = $doc])+
+                pub(crate) fn $name(&self, py: Python<'_>) -> PyResult<Option<String>> {
+                    self.with_node(py, |function, nid| match function.node_kind(nid) {
+                        NodeKind::$variant(op) => Some(format!("{op:?}")),
+                        _ => None,
+                    })
+                }
+            )+
+        }
+    };
+}
+
+op_name_accessors! {
+    /// If this node is an `IntBinaryOp`, its variant name (e.g. `"Add"`),
+    /// else `None`.
+    int_binary_op => IntBinaryOp;
+
+    /// If this node is an `IntUnaryOp`, its variant name, else `None`.
+    int_unary_op => IntUnaryOp;
+
+    /// If this node is an `IntCmpOp`, its variant name (e.g. `"Less"`,
+    /// `"Equal"`), else `None`.
+    int_cmp_op => IntCmpOp;
+
+    /// If this node is a `FloatBinaryOp`, its variant name, else `None`.
+    float_binary_op => FloatBinaryOp;
+
+    /// If this node is a `FloatUnaryOp`, its variant name, else `None`.
+    float_unary_op => FloatUnaryOp;
+
+    /// If this node is a `FloatCmpOp`, its variant name, else `None`.
+    float_cmp_op => FloatCmpOp;
+}
+
 #[pymethods]
 impl PyNode {
     /// The raw `u32` arena index of this node.  Stable for the lifetime
@@ -216,32 +261,6 @@ impl PyNode {
         Ok(vn.map(crate::sleigh::PyVn::from_inner))
     }
 
-    /// If this node is an `IntBinaryOp`, its variant name (e.g. `"Add"`),
-    /// else `None`.
-    pub(crate) fn int_binary_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        self.with_node(py, |function, nid| match function.node_kind(nid) {
-            NodeKind::IntBinaryOp(op) => Some(format!("{op:?}")),
-            _ => None,
-        })
-    }
-
-    /// If this node is an `IntUnaryOp`, its variant name, else `None`.
-    pub(crate) fn int_unary_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        self.with_node(py, |function, nid| match function.node_kind(nid) {
-            NodeKind::IntUnaryOp(op) => Some(format!("{op:?}")),
-            _ => None,
-        })
-    }
-
-    /// If this node is an `IntCmpOp`, its variant name (e.g. `"Less"`,
-    /// `"Equal"`), else `None`.
-    pub(crate) fn int_cmp_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        self.with_node(py, |function, nid| match function.node_kind(nid) {
-            NodeKind::IntCmpOp(op) => Some(format!("{op:?}")),
-            _ => None,
-        })
-    }
-
     /// If this node is a boolean binary op (an `IntBinaryOp` whose output
     /// is `I1`), its variant name, else `None`.
     ///
@@ -258,30 +277,6 @@ impl PyNode {
                 return None;
             }
             Some(format!("{op:?}"))
-        })
-    }
-
-    /// If this node is a `FloatBinaryOp`, its variant name, else `None`.
-    pub(crate) fn float_binary_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        self.with_node(py, |function, nid| match function.node_kind(nid) {
-            NodeKind::FloatBinaryOp(op) => Some(format!("{op:?}")),
-            _ => None,
-        })
-    }
-
-    /// If this node is a `FloatUnaryOp`, its variant name, else `None`.
-    pub(crate) fn float_unary_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        self.with_node(py, |function, nid| match function.node_kind(nid) {
-            NodeKind::FloatUnaryOp(op) => Some(format!("{op:?}")),
-            _ => None,
-        })
-    }
-
-    /// If this node is a `FloatCmpOp`, its variant name, else `None`.
-    pub(crate) fn float_cmp_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        self.with_node(py, |function, nid| match function.node_kind(nid) {
-            NodeKind::FloatCmpOp(op) => Some(format!("{op:?}")),
-            _ => None,
         })
     }
 

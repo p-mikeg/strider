@@ -25,7 +25,6 @@ use pyo3::prelude::*;
 #[allow(unused_imports)]
 use pyo3_stub_gen::derive::gen_stub_pyclass;
 
-use crate::errors::into_strider_err;
 use crate::pattern::{CastKind, FloatUnaryKind, IntUnaryKind, PatRepr, PyCapture};
 
 // ── Template — the build-side sealed handle ──────────────────────────────
@@ -113,11 +112,7 @@ pub fn int_const(value: i128) -> PyTemplate {
 /// `value` outside the `i64` range is rejected with `StriderError`.
 #[pyfunction]
 pub fn signed_int_const(value: i128) -> PyResult<PyTemplate> {
-    let v = i64::try_from(value).map_err(|_| {
-        into_strider_err(anyhow::anyhow!(
-            "signed_int_const value {value} does not fit in i64 (the core signed-const width)"
-        ))
-    })?;
+    let v = crate::pattern::checked_signed_i64(value)?;
     Ok(PyTemplate::from_repr(PatRepr::SignedIntConst(v)))
 }
 
@@ -350,15 +345,7 @@ tpl_fn!(unary sign_extend, Cast, CastKind::SignExtend, "Build: `Extend(SignExten
 /// "sign_extend".
 #[pyfunction]
 pub fn extend(op: &str, operand: Py<PyAny>) -> PyResult<PyTemplate> {
-    let extend_op = match op {
-        "zero" | "zero_extend" | "ZeroExtend" => strider_ir::ExtendOp::ZeroExtend,
-        "sign" | "sign_extend" | "SignExtend" => strider_ir::ExtendOp::SignExtend,
-        other => {
-            return Err(into_strider_err(anyhow::anyhow!(
-                "unknown extend op {other:?} (expected 'zero' or 'sign')"
-            )));
-        }
-    };
+    let extend_op = crate::pattern::parse_extend_op(op)?;
     Ok(PyTemplate::from_repr(PatRepr::Extend(extend_op, operand)))
 }
 

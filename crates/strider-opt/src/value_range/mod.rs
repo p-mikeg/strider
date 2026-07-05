@@ -262,10 +262,7 @@ impl<'f> RangeMap<'f> {
                     .dominating_guard(phi_value, region)
                     .unwrap_or(arm_range);
             }
-            result = Some(match result {
-                None => arm_range,
-                Some(acc) => acc.union(arm_range),
-            });
+            result = Some(result.map_or(arm_range, |acc| acc.union(arm_range)));
         }
 
         let union = result.expect("union has >= 1 arm by the guards above");

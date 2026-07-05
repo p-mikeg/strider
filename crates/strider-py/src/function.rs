@@ -275,15 +275,12 @@ impl PyFunction {
         // fresh `Pattern` per query and fold the mask onto it.
         let pattern = apply_cast_mask(pat.to_pattern(py)?, ignore_casts, ignore_casts_mask);
         let (raw, generation) = run_query(&slf, py, |matcher| matcher.find_all(&pattern))?;
-        let mut out = Vec::with_capacity(raw.len());
-        for m in raw {
-            out.push(crate::matcher::PyMatch {
-                inner: m,
-                function: slf.clone_ref(py),
-                generation,
-            });
-        }
-        Ok(out)
+        let wrap = |m| crate::matcher::PyMatch {
+            inner: m,
+            function: slf.clone_ref(py),
+            generation,
+        };
+        Ok(raw.into_iter().map(wrap).collect())
     }
 
     /// Find the first site where `pat` matches, or `None` if nothing
@@ -306,11 +303,12 @@ impl PyFunction {
         reject_conflicting_cast_flags("find_one", ignore_casts, &ignore_casts_mask)?;
         let pattern = apply_cast_mask(pat.to_pattern(py)?, ignore_casts, ignore_casts_mask);
         let (raw, generation) = run_query(&slf, py, |matcher| matcher.find_first(&pattern))?;
-        Ok(raw.map(|m| crate::matcher::PyMatch {
+        let wrap = |m| crate::matcher::PyMatch {
             inner: m,
             function: slf.clone_ref(py),
             generation,
-        }))
+        };
+        Ok(raw.map(wrap))
     }
 
     /// Run multiple patterns and intersect their matches on shared
@@ -360,19 +358,15 @@ impl PyFunction {
             .collect::<PyResult<Vec<_>>>()?;
         let pat_refs: Vec<&strider_pattern::Pattern> = owned.iter().collect();
         let (raw, generation) = run_query(&slf, py, |matcher| matcher.find_joined(&pat_refs))?;
-        let mut out: Vec<Vec<crate::matcher::PyMatch>> = Vec::with_capacity(raw.len());
-        for tuple in raw {
-            let mut py_tuple: Vec<crate::matcher::PyMatch> = Vec::with_capacity(tuple.len());
-            for m in tuple {
-                py_tuple.push(crate::matcher::PyMatch {
-                    inner: m,
-                    function: slf.clone_ref(py),
-                    generation,
-                });
-            }
-            out.push(py_tuple);
-        }
-        Ok(out)
+        let wrap = |m| crate::matcher::PyMatch {
+            inner: m,
+            function: slf.clone_ref(py),
+            generation,
+        };
+        Ok(raw
+            .into_iter()
+            .map(|t| t.into_iter().map(&wrap).collect())
+            .collect())
     }
 
     /// Apply a single `find → replace` rewrite rule across the graph.

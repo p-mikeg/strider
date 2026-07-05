@@ -18,7 +18,7 @@
 
 use entity_utils::Worklist;
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
 use crate::pipeline::OptimizationResult;
@@ -61,6 +61,28 @@ pub(crate) enum PeepholeRewrite {
     /// folds; `None` for a pure redirect/collapse to an
     /// already-existing value.
     Changed { new_node: Option<NodeId> },
+}
+
+impl PeepholeRewrite {
+    /// `Some(v)` → `Changed { new_node: Some(producer(v)) }`; `None` →
+    /// `NoChange`.  Collapses the recurring "a rule returned an
+    /// `Option<ValueId>` of the freshly-produced value" mapping.
+    pub(crate) fn from_new_value(ctx: &crate::EditFunction<'_>, v: Option<ValueId>) -> Self {
+        v.map_or(PeepholeRewrite::NoChange, |new_value| PeepholeRewrite::Changed {
+            new_node: Some(ctx.producer(new_value)),
+        })
+    }
+
+    /// `true` → `Changed { new_node: None }`; `false` → `NoChange`.
+    /// Collapses the recurring "a rule reported whether it fired" mapping
+    /// for passes that rewire to an already-existing value (no fresh node).
+    pub(crate) fn from_changed(changed: bool) -> Self {
+        if changed {
+            PeepholeRewrite::Changed { new_node: None }
+        } else {
+            PeepholeRewrite::NoChange
+        }
+    }
 }
 
 /// The order [`run_peephole`] seeds its worklist in.  The order is not
