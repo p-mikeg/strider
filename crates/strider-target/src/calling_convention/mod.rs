@@ -537,6 +537,93 @@ pub(crate) struct CcPresetRow {
     cc: CallingConvention,
 }
 
+/// Shared base for the two x86 32-bit presets (`x86_cdecl` and
+/// `x86_linux_kernel`), which differ only in `arg_passing_regs`.
+const X86_CDECL_BASE: CallingConvention = CallingConvention {
+    stack_ptr_reg_name: "ESP",
+    arg_passing_regs: &[],
+    callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
+    ret_val_regs: &["EAX", "EDX"],
+    // x86 cdecl returns floats in `ST0` (the x87 FPU's 80-bit
+    // top-of-stack).  GCC's i686 default lowers floats through
+    // x87 even when arithmetic is via SSE.  Listing ST0 here
+    // (now that the IR has F80 / I80 support) keeps the Return
+    // node connected to the float chain.
+    //
+    // XMM0 is also listed as a fallback for SSE-default builds
+    // (`-mfpmath=sse2`).  When neither is referenced by the
+    // function, `FunctionBuilder::new`'s upgrade-to-container
+    // logic skips them harmlessly.
+    ret_val_regs_float: &["ST0", "XMM0"],
+    // Offsets start at +4: the `call` instruction pushes a 4-byte
+    // return address, so SP-at-call points to the return address
+    // and arg 0 lives one slot above it.
+    stack_args: Some(StackArgs {
+        base_offset: 4,
+        increment: 4,
+    }),
+    ret_stack_pop: 4,
+    // x86 `call` pushes the return address on the stack; there is
+    // no architectural link register.
+    link_register_reg_name: None,
+    preserves_memory: false,
+};
+
+/// Shared base for the two PowerPC64 ELF presets (`powerpc64_elf_v1`
+/// and `powerpc64_elf_v2`), which differ only in `stack_args.base_offset`
+/// (48-byte ELFv1 linkage area vs 32-byte ELFv2).
+const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
+    stack_ptr_reg_name: "r1",
+    arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
+    callee_saved_regs: &[
+        "r2", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23", "r24",
+        "r25", "r26", "r27", "r28", "r29", "r30", "r31",
+        // include `LR` per the CLAUDE.md
+        // "Note (link-register handling)" deliberate tradeoff
+        // (consistent with `powerpc_sysv32`).  PPC64 ELFv1
+        // §3.4 marks LR as volatile/caller-saved, but listing
+        // it here makes `InitialVar(lr)` propagate through
+        // call sites so the indirect-branch resolver's
+        // `LinkRegister` arm fires for functions returning
+        // via the entry LR.
+        "LR",
+    ],
+    ret_val_regs: &["r3", "r4"],
+    ret_val_regs_float: &["f1"],
+    stack_args: Some(StackArgs {
+        base_offset: 48,
+        increment: 8,
+    }),
+    ret_stack_pop: 0,
+    // Same as 32-bit PPC SysV: the return address lives in `LR`.
+    link_register_reg_name: Some("LR"),
+    preserves_memory: false,
+};
+
+/// Shared base for the two MIPS presets (`mips_o32` and `mips_n64`),
+/// which differ in `arg_passing_regs` and `stack_args`.
+const MIPS_O32_BASE: CallingConvention = CallingConvention {
+    stack_ptr_reg_name: "sp",
+    arg_passing_regs: &["a0", "a1", "a2", "a3"],
+    callee_saved_regs: &[
+        "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra",
+    ],
+    ret_val_regs: &["v0", "v1"],
+    // FPU return regs (4-byte single-precision; doubles use the
+    // f0/f1 pair).  Even on soft-float builds the listing is harmless
+    // — these regs are simply unused.
+    ret_val_regs_float: &["f0", "f2"],
+    stack_args: Some(StackArgs {
+        base_offset: 16,
+        increment: 4,
+    }),
+    ret_stack_pop: 0,
+    // MIPS `jal`/`jalr` writes the return address to `$ra` (`$31`);
+    // Sleigh's mips32 register table uses lowercase `ra`.
+    link_register_reg_name: Some("ra"),
+    preserves_memory: false,
+};
+
 /// Static data table of every supported calling convention preset.
 ///
 /// Adding a new preset means appending one [`CcPresetRow`] entry — the
@@ -695,27 +782,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     //   which does not resolve in the Sleigh register table).
     CcPresetRow {
         name: "mips_o32",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "sp",
-            arg_passing_regs: &["a0", "a1", "a2", "a3"],
-            callee_saved_regs: &[
-                "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra",
-            ],
-            ret_val_regs: &["v0", "v1"],
-            // FPU return regs (4-byte single-precision; doubles use the
-            // f0/f1 pair).  Even on soft-float builds the listing is harmless
-            // — these regs are simply unused.
-            ret_val_regs_float: &["f0", "f2"],
-            stack_args: Some(StackArgs {
-                base_offset: 16,
-                increment: 4,
-            }),
-            ret_stack_pop: 0,
-            // MIPS `jal`/`jalr` writes the return address to `$ra` (`$31`);
-            // Sleigh's mips32 register table uses lowercase `ra`.
-            link_register_reg_name: Some("ra"),
-            preserves_memory: false,
-        },
+        cc: MIPS_O32_BASE,
     },
     // MIPS N64 (used by 64-bit MIPS Linux binaries on both LE and BE —
     // `mips64-linux-gnuabi64-gcc`).
@@ -730,22 +797,15 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     //   Stack args start at offset 0 from SP (no O32-style shadow space).
     CcPresetRow {
         name: "mips_n64",
+        // Same as O32 except 8 register args (adds t0–t3) and no O32-style
+        // 16-byte shadow space (stack args start at SP+0, 8-byte stride).
         cc: CallingConvention {
-            stack_ptr_reg_name: "sp",
             arg_passing_regs: &["a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"],
-            callee_saved_regs: &[
-                "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra",
-            ],
-            ret_val_regs: &["v0", "v1"],
-            ret_val_regs_float: &["f0", "f2"],
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
-            // Same as O32: the return address lives in `$ra`.
-            link_register_reg_name: Some("ra"),
-            preserves_memory: false,
+            ..MIPS_O32_BASE
         },
     },
     // PowerPC 32-bit System V ABI.  Used by `powerpc-linux-gnu-gcc` (with
@@ -795,33 +855,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     //   Stack args start at offset 48 (ELFv1 linkage area is 48 bytes).
     CcPresetRow {
         name: "powerpc64_elf_v1",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "r1",
-            arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
-            callee_saved_regs: &[
-                "r2", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23", "r24",
-                "r25", "r26", "r27", "r28", "r29", "r30", "r31",
-                // include `LR` per the CLAUDE.md
-                // "Note (link-register handling)" deliberate tradeoff
-                // (consistent with `powerpc_sysv32`).  PPC64 ELFv1
-                // §3.4 marks LR as volatile/caller-saved, but listing
-                // it here makes `InitialVar(lr)` propagate through
-                // call sites so the indirect-branch resolver's
-                // `LinkRegister` arm fires for functions returning
-                // via the entry LR.
-                "LR",
-            ],
-            ret_val_regs: &["r3", "r4"],
-            ret_val_regs_float: &["f1"],
-            stack_args: Some(StackArgs {
-                base_offset: 48,
-                increment: 8,
-            }),
-            ret_stack_pop: 0,
-            // Same as 32-bit PPC SysV: the return address lives in `LR`.
-            link_register_reg_name: Some("LR"),
-            preserves_memory: false,
-        },
+        cc: POWERPC64_ELF_BASE,
     },
     // PowerPC 64-bit ELFv2 calling convention (LE — used by
     // `powerpc64le-linux-gnu-gcc`).
@@ -835,26 +869,14 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     //   Stack args start at offset 32 (ELFv2 linkage area is 32 bytes).
     CcPresetRow {
         name: "powerpc64_elf_v2",
+        // Identical to ELFv1 except the linkage area shrinks 48 → 32 bytes,
+        // so stack args start at SP+32.
         cc: CallingConvention {
-            stack_ptr_reg_name: "r1",
-            arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
-            callee_saved_regs: &[
-                "r2", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23", "r24",
-                "r25", "r26", "r27", "r28", "r29", "r30", "r31",
-                // see powerpc64_elf_v1 above for the CLAUDE.md
-                // deliberate-tradeoff rationale.
-                "LR",
-            ],
-            ret_val_regs: &["r3", "r4"],
-            ret_val_regs_float: &["f1"],
             stack_args: Some(StackArgs {
                 base_offset: 32,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
-            // Same as ELFv1: the return address lives in `LR`.
-            link_register_reg_name: Some("LR"),
-            preserves_memory: false,
+            ..POWERPC64_ELF_BASE
         },
     },
     // x86 cdecl.  Arguments passed on the stack, so `arg_passing_regs` is
@@ -866,35 +888,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     //   shifted by `ret_stack_pop` across the call.
     CcPresetRow {
         name: "x86_cdecl",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "ESP",
-            arg_passing_regs: &[],
-            callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
-            ret_val_regs: &["EAX", "EDX"],
-            // x86 cdecl returns floats in `ST0` (the x87 FPU's 80-bit
-            // top-of-stack).  GCC's i686 default lowers floats through
-            // x87 even when arithmetic is via SSE.  Listing ST0 here
-            // (now that the IR has F80 / I80 support) keeps the Return
-            // node connected to the float chain.
-            //
-            // XMM0 is also listed as a fallback for SSE-default builds
-            // (`-mfpmath=sse2`).  When neither is referenced by the
-            // function, `FunctionBuilder::new`'s upgrade-to-container
-            // logic skips them harmlessly.
-            ret_val_regs_float: &["ST0", "XMM0"],
-            // Offsets start at +4: the `call` instruction pushes a 4-byte
-            // return address, so SP-at-call points to the return address
-            // and arg 0 lives one slot above it.
-            stack_args: Some(StackArgs {
-                base_offset: 4,
-                increment: 4,
-            }),
-            ret_stack_pop: 4,
-            // x86 `call` pushes the return address on the stack; there is
-            // no architectural link register.
-            link_register_reg_name: None,
-            preserves_memory: false,
-        },
+        cc: X86_CDECL_BASE,
     },
     // ── Linux kernel-internal preset ────────────────────────────────
     //
@@ -911,19 +905,11 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     // `arg_passing_regs`.
     CcPresetRow {
         name: "x86_linux_kernel",
+        // `-mregparm=3`: first three integer args in EAX, EDX, ECX; the rest
+        // sit on the stack at the same cdecl offsets — the only difference.
         cc: CallingConvention {
-            stack_ptr_reg_name: "ESP",
             arg_passing_regs: &["EAX", "EDX", "ECX"],
-            callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
-            ret_val_regs: &["EAX", "EDX"],
-            ret_val_regs_float: &["ST0", "XMM0"],
-            stack_args: Some(StackArgs {
-                base_offset: 4,
-                increment: 4,
-            }),
-            ret_stack_pop: 4,
-            link_register_reg_name: None,
-            preserves_memory: false,
+            ..X86_CDECL_BASE
         },
     },
 ];
@@ -945,10 +931,9 @@ pub(crate) fn lookup_preset(name: &str) -> Option<&'static CcPresetRow> {
 /// a miss is an internal-consistency failure in this source file rather
 /// than a caller error.
 fn cc_from_table(name: &'static str) -> CallingConvention {
-    match lookup_preset(name) {
-        Some(row) => row.cc,
-        None => panic!("calling-convention preset not registered: {name}"),
-    }
+    lookup_preset(name)
+        .unwrap_or_else(|| panic!("calling-convention preset not registered: {name}"))
+        .cc
 }
 
 /// Emits a named factory wrapper around [`cc_from_table`].  `$desc` is

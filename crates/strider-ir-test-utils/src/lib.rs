@@ -555,9 +555,7 @@ impl MockRom {
                 entries,
                 size_filter,
             } => {
-                if let Some(sz) = size_filter
-                    && size != *sz
-                {
+                if size_filter.is_some_and(|sz| size != sz) {
                     return None;
                 }
                 if addr < *base {
@@ -579,11 +577,7 @@ impl MockRom {
                 size: s,
                 value,
             } => {
-                if addr == *a && size == *s {
-                    Some(*value)
-                } else {
-                    None
-                }
+                (addr == *a && size == *s).then_some(*value)
             }
             MockRomShape::AlwaysAnswer { value } => Some(*value),
         }

@@ -454,15 +454,10 @@ fn apply_resolutions(
         let addr = node_to_addr.get(&node).copied().ok_or_else(|| {
             anyhow!("classified IndirectBranch node {node:?} has no recorded pcode address")
         })?;
-        match staged.entry(addr) {
-            std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert(targets);
-            }
-            std::collections::hash_map::Entry::Occupied(mut e) => {
-                let merged = merge_resolved(e.get(), &targets);
-                e.insert(merged);
-            }
-        }
+        staged
+            .entry(addr)
+            .and_modify(|e| *e = merge_resolved(e, &targets))
+            .or_insert(targets);
     }
     // Convergence without dropping improvements: re-deriving the SAME
     // classification for an already-present site re-inserts an equal value

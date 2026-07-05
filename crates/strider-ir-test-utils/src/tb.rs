@@ -32,19 +32,13 @@ fn build_rs(
     sp: Option<rsleigh::Vn>,
     ret_stack_pop: i64,
 ) -> RegisterSet {
-    let mut rs = RegisterSet::new();
-    for v in vars {
-        rs = rs.tracked(v);
-    }
-    for v in arg_passing {
-        rs = rs.arg(*v);
-    }
-    for v in callee_saved {
-        rs = rs.callee_saved(*v);
-    }
-    for v in ret_regs {
-        rs = rs.ret(*v);
-    }
+    let mut rs = vars.into_iter().fold(RegisterSet::new(), RegisterSet::tracked);
+    rs = arg_passing.iter().copied().fold(rs, RegisterSet::arg);
+    rs = callee_saved
+        .iter()
+        .copied()
+        .fold(rs, RegisterSet::callee_saved);
+    rs = ret_regs.iter().copied().fold(rs, RegisterSet::ret);
     if let Some(s) = sp {
         rs = rs.stack_vn(s);
     }
@@ -71,10 +65,7 @@ impl Tb {
     /// Function with tracked variables but no calling-convention extras.
     /// An entry region is pre-created and set active.
     pub fn with_vars(vars: &[rsleigh::Vn]) -> Self {
-        let mut rs = RegisterSet::new();
-        for v in vars {
-            rs = rs.tracked(*v);
-        }
+        let rs = vars.iter().fold(RegisterSet::new(), |rs, v| rs.tracked(*v));
         let fb = rs.build_fn_single_region().expect("build_fn_single_region");
         Self { fb }
     }
