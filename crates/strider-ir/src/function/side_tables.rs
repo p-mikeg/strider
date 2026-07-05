@@ -2,21 +2,19 @@
 //! grouped so [`crate::Function::new`] defaults them in one line and
 //! [`crate::Function::compact`] remaps them in one `SideTables::remap` call.
 
-use cranelift_entity::SecondaryMap;
 use entity_utils::UnionDag;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::graph::{NodeIdRemap, remap_node_keyed};
+use crate::graph::NodeIdRemap;
 use crate::node::{NodeId, ValueId};
 
 /// Drains an `FxHashMap` and rebuilds it through a per-entry translation,
 /// keeping only entries `f` maps to `Some((new_key, new_payload))`.
 ///
-/// The Vn-keyed / `ValueId`-keyed / index-keyed overlay maps in
-/// [`crate::Function::compact`] each remap a different facet (the key, the payload,
-/// or a payload `Vec`), so they don't fit the `NodeId`-keyed
-/// [`remap_node_keyed`] shape — this folds their shared drain-rebuild loop
-/// behind a single closure.
+/// Every `NodeId`- / `ValueId`- / Vn- / index-keyed overlay map in
+/// [`crate::Function::compact`] remaps a different facet (the key, the payload,
+/// or both), so this folds their shared drain-rebuild loop behind a single
+/// closure.
 fn remap_hashmap<K, V, NK, NV>(
     map: &mut FxHashMap<K, V>,
     mut f: impl FnMut(K, V) -> Option<(NK, NV)>,
@@ -44,7 +42,8 @@ where
 pub struct SideTables {
     /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
     /// nodes.
-    pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
+    // Sparse: only CallOther nodes carry a name.
+    pub(crate) call_other_names: FxHashMap<NodeId, String>,
     /// Per-node set of machine-instruction addresses whose lifting or rewrite
     /// contributed to the node's value.
     // A deferred-union DAG so `extend_asm_fingerprint_from` (the hot path — a
@@ -105,10 +104,15 @@ pub struct SideTables {
     /// Populated by the `StackOffsetDetect` classifier.  The phi-of-offsets
     /// case (address is a phi of different constants per branch) is not
     /// recorded — consumers can re-decompose via `decompose_sp` if needed.
-    stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>>,
+    // Sparse: only SP-relative Store/Load nodes carry a slot, so an
+    // `FxHashMap` (entries only) beats a dense per-node `SecondaryMap` on both
+    // memory and clone/remap cost (the jump-table classifier clones the whole
+    // function per candidate).
+    stack_offsets: FxHashMap<NodeId, (ValueId, i128)>,
     /// Per-output case addresses for a [`crate::node::NodeKind::Switch`]
     /// node: raw target addresses (no arena ids), one per switch output.
-    switch_targets: SecondaryMap<NodeId, Vec<u64>>,
+    // Sparse: only Switch nodes carry targets — see `stack_offsets`.
+    switch_targets: FxHashMap<NodeId, Vec<u64>>,
     /// O(1) [`crate::node::InitialVnId`] → `InitialVar(id)` node-id accelerator
     /// for indirect-resolve sites and the lifter's lazy `read_or_init_var`
     /// fallback.  Keyed by the tracked-varnode id (not the raw `rsleigh::Vn`)
@@ -139,7 +143,7 @@ impl SideTables {
     /// recorded for that node.
     #[inline]
     pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
-        self.call_other_names[node_id].as_deref()
+        self.call_other_names.get(&node_id).map(String::as_str)
     }
 
     /// Records the user-op `name` for a [`crate::node::NodeKind::CallOther`]
@@ -147,7 +151,7 @@ impl SideTables {
     /// or a test) stamps the name here after building the node.
     #[inline]
     pub fn set_call_other_name(&mut self, node_id: NodeId, name: impl Into<String>) {
-        self.call_other_names[node_id] = Some(name.into());
+        self.call_other_names.insert(node_id, name.into());
     }
 
     /// Records `cc` as the per-`Call` override calling convention for
@@ -189,27 +193,27 @@ impl SideTables {
     /// relative to; offsets compare only when their bases match.
     #[inline]
     pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i128)> {
-        self.stack_offsets[id]
+        self.stack_offsets.get(&id).copied()
     }
 
     /// Records a concrete stack slot `(base, offset)` for a Store/Load node.
     #[inline]
     pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i128) {
-        self.stack_offsets[id] = Some((base, offset));
+        self.stack_offsets.insert(id, (base, offset));
     }
 
     /// Returns the per-output case addresses recorded for a
     /// [`crate::node::NodeKind::Switch`] node, or `&[]` if none.
     #[inline]
     pub fn switch_targets(&self, id: NodeId) -> &[u64] {
-        self.switch_targets[id].as_slice()
+        self.switch_targets.get(&id).map_or(&[], Vec::as_slice)
     }
 
     /// Records the per-output case addresses for a
     /// [`crate::node::NodeKind::Switch`] node.
     #[inline]
     pub fn set_switch_targets(&mut self, id: NodeId, targets: Vec<u64>) {
-        self.switch_targets[id] = targets;
+        self.switch_targets.insert(id, targets);
     }
 
     /// Returns the asm-instruction-address fingerprint of `id` as an unordered
@@ -252,30 +256,29 @@ impl SideTables {
     /// `retain_reachable` compaction; an entry whose node or value did not
     /// survive is dropped.  Called once by [`crate::Function::compact`].
     pub(crate) fn remap(&mut self, remap: &NodeIdRemap) {
-        // NodeId-keyed tables: translate the key, drop pruned nodes.
-        remap_node_keyed(&mut self.call_other_names, remap);
+        // NodeId-keyed sparse maps: translate the key, drop pruned nodes.
         self.asm_fingerprints
             .remap(|old| remap.node_old_to_new(old));
-        remap_node_keyed(&mut self.switch_targets, remap);
+        self.call_other_names = remap_hashmap(&mut self.call_other_names, |old, name| {
+            remap.node_old_to_new(old).map(|n| (n, name))
+        });
+        self.switch_targets = remap_hashmap(&mut self.switch_targets, |old, targets| {
+            remap.node_old_to_new(old).map(|n| (n, targets))
+        });
         self.call_cc = remap_hashmap(&mut self.call_cc, |old, cc| {
             remap.node_old_to_new(old).map(|n| (n, cc))
         });
         // `stack_offsets`: the only NodeId-keyed table whose VALUE also
         // references a node (the slot `base`, a `ValueId`); remap both.
-        let mut new_stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>> =
-            SecondaryMap::new();
-        for (old_id, slot) in self.stack_offsets.iter() {
-            let Some((old_base, off)) = *slot else {
-                continue;
-            };
-            if let (Some(new_id), Some(new_base)) = (
+        self.stack_offsets = remap_hashmap(&mut self.stack_offsets, |old_id, (old_base, off)| {
+            match (
                 remap.node_old_to_new(old_id),
                 remap.value_old_to_new(old_base),
             ) {
-                new_stack_offsets[new_id] = Some((new_base, off));
+                (Some(new_id), Some(new_base)) => Some((new_id, (new_base, off))),
+                _ => None,
             }
-        }
-        self.stack_offsets = new_stack_offsets;
+        });
         // `value_vn`: ValueId-keyed (a phi / clobber output); translate keys.
         // The `InitialVnId` payload is stable across compaction, so it passes
         // through unchanged.

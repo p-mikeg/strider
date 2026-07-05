@@ -538,7 +538,7 @@ fn call_other_label_includes_resolved_name() {
         [entry_ctrl, mem],
         [ValueKind::Control, ValueKind::Memory],
     );
-    f.side_tables_mut().call_other_names[co] = Some("setISAMode".to_string());
+    f.side_tables_mut().set_call_other_name(co, "setISAMode");
     let co_ctrl = f.node_outputs(co).iter().copied().next().unwrap();
     let co_mem = f.node_outputs(co).iter().copied().nth(1).unwrap();
     f.graph_mut()

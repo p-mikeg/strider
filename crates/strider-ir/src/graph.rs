@@ -21,7 +21,6 @@
 
 use std::hash::{Hash, Hasher};
 
-use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHasher;
 use strider_graph::{NodeCacheable, RawStore, ValueId};
 
@@ -103,26 +102,6 @@ pub type Inputs<'a> = strider_graph::Inputs<'a, NodeKind, ValueKind, IrCacheable
 /// A cursor over the use-list of a single value — the IR-payload
 /// instantiation of [`strider_graph::InputCursor`].
 pub type InputCursor<'a> = strider_graph::InputCursor<'a, NodeKind, ValueKind, IrCacheable>;
-
-/// Rebuilds a `SecondaryMap<NodeId, _>`-shaped side-table in place under the
-/// old→new translation, draining the source via `std::mem::take` so the
-/// post-remap source is left at `Default::default()` for every slot.
-/// Used by [`crate::Function::compact`] to fold every `NodeId`-keyed
-/// overlay table through one iteration site.
-///
-/// The `InitialVnId`-keyed `initial_var_index` does **not** fit this shape
-/// (its key is a tracked-varnode id, not `NodeId`) and is remapped inline in
-/// `Function::compact`.
-pub(crate) fn remap_node_keyed<T: Default + Clone>(
-    map: &mut SecondaryMap<NodeId, T>,
-    remap: &NodeIdRemap,
-) {
-    let mut dst: SecondaryMap<NodeId, T> = SecondaryMap::new();
-    for (old_id, new_id) in remap.surviving_node_pairs() {
-        dst[new_id] = std::mem::take(&mut map[old_id]);
-    }
-    *map = dst;
-}
 
 #[cfg(test)]
 mod tests {
@@ -530,11 +509,15 @@ mod tests {
         );
         assert_ne!(id_a, id_b, "CallOther is non-cacheable");
         assert_eq!(function.side_tables().call_other_name(id_a), None);
-        function.side_tables_mut().call_other_names[id_a] = Some("setISAMode".to_string());
+        function
+            .side_tables_mut()
+            .set_call_other_name(id_a, "setISAMode");
         assert_eq!(function.side_tables().call_other_name(id_a), Some("setISAMode"));
         assert_eq!(function.side_tables().call_other_name(id_b), None);
         // Replacement
-        function.side_tables_mut().call_other_names[id_a] = Some("OtherName".to_string());
+        function
+            .side_tables_mut()
+            .set_call_other_name(id_a, "OtherName");
         assert_eq!(function.side_tables().call_other_name(id_a), Some("OtherName"));
     }
 
