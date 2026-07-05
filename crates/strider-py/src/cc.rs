@@ -185,16 +185,24 @@ impl PyCallingConvention {
             base_offset,
             increment: stack_arg_increment,
         });
+        // Route through the shared validating constructor via the named-field
+        // parts struct so this path can't transpose the two same-typed return
+        // lists (the whole point of the parts struct).  The Python-facing
+        // keyword signature above stays as individual PyO3 arguments — PyO3
+        // needs them named individually to preserve the public API — so this
+        // method keeps `#[allow(clippy::too_many_arguments)]`.
         let built = strider_target::BuiltCallingConvention::try_new(
-            arg_vns,
-            callee_vns,
-            ret_vns,
-            ret_float_vns,
-            sp_vn,
-            stack_args,
-            ret_stack_pop,
-            lr_vn,
-            preserves_memory,
+            strider_target::BuiltCallingConventionParts {
+                arg_passing_regs: arg_vns,
+                callee_saved_regs: callee_vns,
+                ret_val_regs: ret_vns,
+                ret_val_regs_float: ret_float_vns,
+                stack_vn: sp_vn,
+                stack_args,
+                ret_stack_pop,
+                link_register_vn: lr_vn,
+                preserves_memory,
+            },
         )
         .map_err(|e| crate::errors::into_strider_err(e.into()))?;
         Ok(Self {

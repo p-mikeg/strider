@@ -7,7 +7,9 @@
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
-use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
+use strider_target::{
+    BuiltCallingConvention, BuiltCallingConventionParts, CallingConvention, SleighArch,
+};
 
 // ── Call: build_call_with_cc records per-call override ───────────────────────
 
@@ -41,17 +43,17 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     for n in ["RDI", "RSI", "RCX", "R8", "R9"] {
         callee_saved.push(regs.name_to_vn(n).unwrap());
     }
-    let override_cc = BuiltCallingConvention::try_new(
-        vec![],       // arg_passing_regs
-        callee_saved, // callee_saved_regs (every tracked var)
-        vec![],       // ret_val_regs
-        vec![],       // ret_val_regs_float
-        rsp,          // stack_vn
-        None,         // stack_args
-        0,            // ret_stack_pop
-        None,         // link_register_vn
-        false,        // preserves_memory
-    )
+    let override_cc = BuiltCallingConvention::try_new(BuiltCallingConventionParts {
+        arg_passing_regs: vec![],
+        callee_saved_regs: callee_saved, // every tracked var
+        ret_val_regs: vec![],
+        ret_val_regs_float: vec![],
+        stack_vn: rsp,
+        stack_args: None,
+        ret_stack_pop: 0,
+        link_register_vn: None,
+        preserves_memory: false,
+    })
     .unwrap();
     let addr = b.build_int_const(0xdead_u64, ValueType::I64).unwrap();
     let _call_node = b.build_call_cc(addr, Some(&override_cc)).unwrap();

@@ -208,6 +208,39 @@ fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
         .map(|(_, vn)| vn)
 }
 
+/// Named-field parameter bundle for [`BuiltCallingConvention::try_new`].
+///
+/// Groups the constructor's inputs so each is named at the construction
+/// site.  This is what removes the transposition footgun: the two
+/// same-typed return lists (`ret_val_regs` / `ret_val_regs_float`) — and
+/// likewise the two `Option<Vn>`-adjacent scalars — can no longer be
+/// swapped by positional order, because every caller
+/// ([`CallingConvention::build`], the Python `CallingConvention.custom`,
+/// and the test fixtures) fills the struct by field name.  Each field maps
+/// 1:1 onto the identically named [`BuiltCallingConvention`] field it
+/// initialises.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuiltCallingConventionParts {
+    /// Argument-passing register varnodes, in positional order.
+    pub arg_passing_regs: Vec<rsleigh::Vn>,
+    /// Callee-saved register varnodes (excludes the stack pointer).
+    pub callee_saved_regs: Vec<rsleigh::Vn>,
+    /// Integer return-value register varnodes, in positional order.
+    pub ret_val_regs: Vec<rsleigh::Vn>,
+    /// Float return-value register varnodes, in positional order.
+    pub ret_val_regs_float: Vec<rsleigh::Vn>,
+    /// Hardware stack-pointer varnode.
+    pub stack_vn: rsleigh::Vn,
+    /// Stack-passed-argument layout, or `None` when none are passed on the stack.
+    pub stack_args: Option<StackArgs>,
+    /// Net byte change the callee's `ret` inflicts on the caller's SP.
+    pub ret_stack_pop: i64,
+    /// Link-register varnode on link-register ISAs; `None` on stack-push ISAs.
+    pub link_register_vn: Option<rsleigh::Vn>,
+    /// `true` when calls under this CC preserve memory.
+    pub preserves_memory: bool,
+}
+
 impl BuiltCallingConvention {
     /// Split this convention's clobbered registers into the ret-val group and
     /// the (non-ret) caller-clobbered group, over the given `tracked_vns`.
@@ -289,18 +322,24 @@ impl BuiltCallingConvention {
     /// debugging a typo (e.g. listing the same Vn in both
     /// `arg_passing_regs` and `callee_saved_regs`) sees the offending
     /// names rather than a downstream miscompile.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// Takes a [`BuiltCallingConventionParts`] by value so every input is
+    /// named at the call site (no positional-argument transposition of the
+    /// two same-typed return lists).
     pub fn try_new(
-        arg_passing_regs: Vec<rsleigh::Vn>,
-        callee_saved_regs: Vec<rsleigh::Vn>,
-        ret_val_regs: Vec<rsleigh::Vn>,
-        ret_val_regs_float: Vec<rsleigh::Vn>,
-        stack_vn: rsleigh::Vn,
-        stack_args: Option<StackArgs>,
-        ret_stack_pop: i64,
-        link_register_vn: Option<rsleigh::Vn>,
-        preserves_memory: bool,
+        parts: BuiltCallingConventionParts,
     ) -> std::result::Result<Self, anyhow::Error> {
+        let BuiltCallingConventionParts {
+            arg_passing_regs,
+            callee_saved_regs,
+            ret_val_regs,
+            ret_val_regs_float,
+            stack_vn,
+            stack_args,
+            ret_stack_pop,
+            link_register_vn,
+            preserves_memory,
+        } = parts;
         // Disjointness: arg-passing must not overlap callee-saved.
         if let Some(vn) = first_in_both(&arg_passing_regs, &callee_saved_regs) {
             return Err(anyhow::anyhow!(
@@ -1024,17 +1063,17 @@ impl CallingConvention {
         // future preset with a typo (SP in arg_passing_regs, missing
         // link-reg, etc.) fails at construction rather than producing
         // a downstream miscompile.
-        BuiltCallingConvention::try_new(
+        BuiltCallingConvention::try_new(BuiltCallingConventionParts {
             arg_passing_regs,
             callee_saved_regs,
             ret_val_regs,
             ret_val_regs_float,
             stack_vn,
-            self.stack_args,
-            self.ret_stack_pop,
+            stack_args: self.stack_args,
+            ret_stack_pop: self.ret_stack_pop,
             link_register_vn,
-            self.preserves_memory,
-        )
+            preserves_memory: self.preserves_memory,
+        })
     }
 }
 

@@ -1083,20 +1083,20 @@ fn stack_args_slot_math_degrades_on_overflow_not_panics() {
 fn try_new_rejects_negative_stack_arg_base_offset() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
     let sp = regs.name_to_vn("RSP").expect("x86_64 has RSP");
-    let result = BuiltCallingConvention::try_new(
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        sp,
-        Some(StackArgs {
+    let result = BuiltCallingConvention::try_new(BuiltCallingConventionParts {
+        arg_passing_regs: vec![],
+        callee_saved_regs: vec![],
+        ret_val_regs: vec![],
+        ret_val_regs_float: vec![],
+        stack_vn: sp,
+        stack_args: Some(StackArgs {
             base_offset: -8,
             increment: 8,
         }),
-        0,
-        None,
-        false,
-    );
+        ret_stack_pop: 0,
+        link_register_vn: None,
+        preserves_memory: false,
+    });
     assert!(
         result.is_err(),
         "negative stack-arg base_offset must be rejected by try_new",

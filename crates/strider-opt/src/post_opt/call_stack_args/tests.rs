@@ -1259,18 +1259,20 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     // Record an override CC whose stack_arg_offsets are [0, 4] on the Call.
     // The stack-arg-offsets override is now derived from the stored CC.
     let override_cc = strider_target::BuiltCallingConvention::try_new(
-        vec![], // arg_passing_regs
-        vec![], // callee_saved_regs
-        vec![], // ret_val_regs
-        vec![], // ret_val_regs_float
-        sp,     // stack_vn
-        Some(strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        }),
-        0,     // ret_stack_pop
-        None,  // link_register_vn
-        false, // preserves_memory
+        strider_target::BuiltCallingConventionParts {
+            arg_passing_regs: vec![],
+            callee_saved_regs: vec![],
+            ret_val_regs: vec![],
+            ret_val_regs_float: vec![],
+            stack_vn: sp,
+            stack_args: Some(strider_target::StackArgs {
+                base_offset: 0,
+                increment: 4,
+            }),
+            ret_stack_pop: 0,
+            link_register_vn: None,
+            preserves_memory: false,
+        },
     )
     .unwrap();
     let call_id = fg
