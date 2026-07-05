@@ -26,7 +26,7 @@ pub use vertex::{KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, Pos
 use std::cell::OnceCell;
 use std::mem::Discriminant;
 
-use itertools::Either;
+use itertools::{Either, Itertools};
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::node::{NodeId, NodeKind};
@@ -320,9 +320,7 @@ impl<'f> Matcher<'f> {
     /// carrier in side-table-index order.
     pub fn function_args(&self) -> impl Iterator<Item = (u32, FunctionArgHandle<'f>)> + '_ {
         let f = self.function;
-        let mut indices: Vec<u32> = f.side_tables().iter_arg_indices().collect();
-        indices.sort_unstable();
-        indices.into_iter().filter_map(move |i| {
+        f.side_tables().iter_arg_indices().sorted_unstable().filter_map(move |i| {
             f.side_tables().arg_index_to_values(i).first().copied().map(|value| {
                 (
                     i,

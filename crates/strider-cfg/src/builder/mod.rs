@@ -214,11 +214,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let (_, &region_id) = self.start_addr_to_region_id.range(..=addr).next_back()?;
 
         let region = self.region_graph.node_weight(region_id)?;
-        if region.contains_addr(addr) {
-            Some((region_id, region))
-        } else {
-            None
-        }
+        region.contains_addr(addr).then_some((region_id, region))
     }
 
     /// Returns the pcode address corresponding to the function entry point.

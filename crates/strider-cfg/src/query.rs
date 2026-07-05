@@ -45,17 +45,16 @@ pub fn is_addr_tail_call(
     if target < lower {
         return true;
     }
-    if let Some(sz) = fn_max_size {
-        // `checked_add` (not `saturating_add`): an overflowing window is
-        // non-wrapping and clamps to the top of the address space, so
-        // `None` correctly disables the upper-bound check rather than
-        // mis-classifying `target == u64::MAX` as out-of-range (which a
-        // saturating bound + `target >= upper` would do).
-        if let Some(upper) = start_addr.checked_add(sz)
-            && target >= upper
-        {
-            return true;
-        }
+    // `checked_add` (not `saturating_add`): an overflowing window is
+    // non-wrapping and clamps to the top of the address space, so
+    // `None` correctly disables the upper-bound check rather than
+    // mis-classifying `target == u64::MAX` as out-of-range (which a
+    // saturating bound + `target >= upper` would do).
+    if let Some(sz) = fn_max_size
+        && let Some(upper) = start_addr.checked_add(sz)
+        && target >= upper
+    {
+        return true;
     }
     false
 }
