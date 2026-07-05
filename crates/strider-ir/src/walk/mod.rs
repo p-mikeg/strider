@@ -98,6 +98,17 @@ pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
         .map(|(succ_node, _succ_input_idx)| succ_node)
 }
 
+/// Forward def→use successors of `node`: every node consuming one of `node`'s
+/// outputs, unrestricted by liveness.  Shared by [`RawDefUseSuccs`] (directly)
+/// and [`DefUseSuccs`] (live-filtered).
+fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    graph
+        .node_outputs(node)
+        .iter()
+        .flat_map(move |output| graph.value_uses(*output))
+        .map(|(succ, _use_idx)| succ)
+}
+
 impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 
@@ -174,13 +185,9 @@ impl graph_algorithms::walk::GraphRef for RawDefUseSuccs<'_> {
     fn try_successors(
         &self,
         node: NodeId,
-        mut f: impl FnMut(NodeId) -> ControlFlow<()>,
+        f: impl FnMut(NodeId) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
-        self.0
-            .node_outputs(node)
-            .iter()
-            .flat_map(move |output| self.0.value_uses(*output))
-            .try_for_each(|(succ, _input_idx)| f(succ))
+        def_use_succs(self.0, node).try_for_each(f)
     }
 }
 
@@ -208,14 +215,11 @@ impl graph_algorithms::walk::GraphRef for DefUseSuccs<'_> {
     fn try_successors(
         &self,
         node: NodeId,
-        mut f: impl FnMut(NodeId) -> ControlFlow<()>,
+        f: impl FnMut(NodeId) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
-        self.graph
-            .node_outputs(node)
-            .iter()
-            .flat_map(move |output| self.graph.value_uses(*output))
-            .filter(move |&(succ, _use_idx)| self.live_nodes.contains(succ))
-            .try_for_each(|(succ, _input_idx)| f(succ))
+        def_use_succs(self.graph, node)
+            .filter(|&succ| self.live_nodes.contains(succ))
+            .try_for_each(f)
     }
 }
 
