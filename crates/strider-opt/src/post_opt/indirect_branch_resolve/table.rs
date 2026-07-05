@@ -122,10 +122,7 @@ fn enumerate_targets(
     hi: u128,
     mut fold: impl FnMut(u128) -> Option<u64>,
 ) -> Option<Vec<u64>> {
-    let mut targets: Vec<u64> = Vec::new();
-    for v in lo..=hi {
-        targets.push(fold(v)?);
-    }
+    let mut targets: Vec<u64> = (lo..=hi).map(&mut fold).collect::<Option<_>>()?;
     targets.sort_unstable();
     targets.dedup();
     (!targets.is_empty()).then_some(targets)

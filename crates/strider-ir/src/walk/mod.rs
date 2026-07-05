@@ -242,12 +242,10 @@ impl GraphWalkInfo {
     /// recording the reachable `live_nodes` and the input-less `roots`.
     pub fn compute_full(graph: &Graph, entry: NodeId) -> Self {
         let mut walk = walk_graph(graph, entry);
-        let mut roots = Vec::new();
-        for node in walk.by_ref() {
-            if graph.node_inputs(node).is_empty() {
-                roots.push(node);
-            }
-        }
+        let roots: Vec<NodeId> = walk
+            .by_ref()
+            .filter(|&n| graph.node_inputs(n).is_empty())
+            .collect();
 
         Self {
             roots,

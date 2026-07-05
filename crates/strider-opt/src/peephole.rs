@@ -68,12 +68,9 @@ impl PeepholeRewrite {
     /// `NoChange`.  Collapses the recurring "a rule returned an
     /// `Option<ValueId>` of the freshly-produced value" mapping.
     pub(crate) fn from_new_value(ctx: &crate::EditFunction<'_>, v: Option<ValueId>) -> Self {
-        match v {
-            Some(new_value) => PeepholeRewrite::Changed {
-                new_node: Some(ctx.producer(new_value)),
-            },
-            None => PeepholeRewrite::NoChange,
-        }
+        v.map_or(PeepholeRewrite::NoChange, |new_value| PeepholeRewrite::Changed {
+            new_node: Some(ctx.producer(new_value)),
+        })
     }
 
     /// `true` → `Changed { new_node: None }`; `false` → `NoChange`.

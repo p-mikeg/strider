@@ -858,15 +858,12 @@ impl<'g> EditFunction<'g> {
     /// [`Graph::remove_node_inputs_batch`] (one O(degree) filter-rebuild).
     fn remove_node_inputs_batch(&mut self, node: NodeId, indices: &[u32]) {
         // Snapshot the values at the removed (in-range) slots BEFORE the edit.
-        let degree = self.node_inputs(node).len();
         let inputs: smallvec::SmallVec<[ValueId; 8]> =
             self.function.node_inputs(node).into_iter().collect();
-        let mut displaced: smallvec::SmallVec<[ValueId; 8]> = smallvec::SmallVec::new();
-        for &idx in indices {
-            if (idx as usize) < degree {
-                displaced.push(inputs[idx as usize]);
-            }
-        }
+        let displaced: smallvec::SmallVec<[ValueId; 8]> = indices
+            .iter()
+            .filter_map(|&i| inputs.get(i as usize).copied())
+            .collect();
         self.function
             .graph_mut()
             .remove_node_inputs_batch(node, indices.iter().map(|&i| i as usize));
