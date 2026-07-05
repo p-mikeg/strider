@@ -3,6 +3,7 @@
 //! [`Bindings`] journal; per-capture value reads go through
 //! [`Match::bindings`] (the typed accessors live on [`Bindings`]).
 
+use rustc_hash::FxHashSet;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Graph, IRViewer};
 
@@ -118,22 +119,21 @@ impl Match {
     }
 
     /// Returns the asm-instruction-address fingerprint of the node bound
-    /// to `c`, as a sorted-deduplicated slice.  Returns an empty slice
-    /// when the capture is unbound or when the bound node has no
-    /// recorded contributors (legitimately empty for region / phi /
-    /// initial-state kinds — see
+    /// to `c`, as an unordered set.  Returns an empty set when the capture
+    /// is unbound or when the bound node has no recorded contributors
+    /// (legitimately empty for region / phi / initial-state kinds — see
     /// `strider_ir::Function::asm_fingerprint` for the documented exempt set).
     ///
     /// This is the proof-of-correctness aid: when a pattern query
-    /// captures a value node, this slice lists the machine
+    /// captures a value node, this set lists the machine
     /// instructions whose lifting (or subsequent rewrite) contributed
     /// to that node's value.  See
     /// `docs/superpowers/specs/2026-05-03-asm-fingerprints-design.md`
     /// for the full contract.
-    pub fn asm_fingerprint<'g>(&self, c: Capture, graph: &'g strider_ir::Function) -> &'g [u64] {
+    pub fn asm_fingerprint(&self, c: Capture, graph: &strider_ir::Function) -> FxHashSet<u64> {
         match self.bindings.get_node(c, graph.graph()) {
             Some(node) => graph.side_tables().asm_fingerprint(node),
-            None => &[],
+            None => FxHashSet::default(),
         }
     }
 

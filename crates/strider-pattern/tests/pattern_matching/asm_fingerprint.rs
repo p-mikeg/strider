@@ -4,6 +4,7 @@
 //! `FunctionBuilder`, then matches a pattern with a capture and
 //! verifies the captured node's fingerprint is what we set.
 
+use rustc_hash::FxHashSet;
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a};
@@ -20,7 +21,7 @@ fn asm_fingerprint_returns_attributed_address() {
 
     let v = Capture::new();
     let m = a::first(&function, int_const(42u128).capture(v).into_pattern());
-    assert_eq!(m.asm_fingerprint(v, &function), &[0x100]);
+    assert_eq!(m.asm_fingerprint(v, &function), FxHashSet::from_iter([0x100]));
 }
 
 #[test]
@@ -34,7 +35,7 @@ fn asm_fingerprint_unbound_capture_is_empty() {
     let m = a::first(&function, int_const(7u128).capture(bound).into_pattern());
     // The match was for `int_const(7).capture(bound)`; `unbound` was
     // never declared in the pattern so the matcher has no binding for it.
-    assert_eq!(m.asm_fingerprint(unbound, &function), &[] as &[u64]);
+    assert!(m.asm_fingerprint(unbound, &function).is_empty());
 }
 
 #[test]

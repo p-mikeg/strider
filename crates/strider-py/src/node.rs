@@ -292,7 +292,14 @@ impl PyNode {
     /// can reuse the same addr-only lookup instead of duplicating the
     /// side-table read.
     pub(crate) fn fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
-        self.with_node(py, |function, nid| function.side_tables().asm_fingerprint(nid).to_vec())
+        self.with_node(py, |function, nid| {
+            // The DAG yields an unordered set; sort here so the Python-facing
+            // list stays the documented sorted, deduped order.
+            let mut addrs: Vec<u64> =
+                function.side_tables().asm_fingerprint(nid).into_iter().collect();
+            addrs.sort_unstable();
+            addrs
+        })
     }
 
     /// Raw little-endian bytes of a wide-typed integer constant (10 bytes

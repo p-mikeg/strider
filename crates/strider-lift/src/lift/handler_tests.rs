@@ -600,12 +600,22 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
         let add_node = find_first_node(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
             .expect("IntAdd lift must produce an Add node");
         let fp = d.builder.function().side_tables().asm_fingerprint(add_node);
-        assert_eq!(fp, &[0x4242], "Add node fingerprint should record 0x4242");
+        assert_eq!(
+            fp,
+            rustc_hash::FxHashSet::from_iter([0x4242]),
+            "Add node fingerprint should record 0x4242"
+        );
         // The two IntConst inputs should also carry the address.
         let const3 = find_int_const_node(&d.builder, 3).expect("IntConst(3) must be present");
         let const4 = find_int_const_node(&d.builder, 4).expect("IntConst(4) must be present");
-        assert_eq!(d.builder.function().side_tables().asm_fingerprint(const3), &[0x4242]);
-        assert_eq!(d.builder.function().side_tables().asm_fingerprint(const4), &[0x4242]);
+        assert_eq!(
+            d.builder.function().side_tables().asm_fingerprint(const3),
+            rustc_hash::FxHashSet::from_iter([0x4242])
+        );
+        assert_eq!(
+            d.builder.function().side_tables().asm_fingerprint(const4),
+            rustc_hash::FxHashSet::from_iter([0x4242])
+        );
     });
 }
 
@@ -672,7 +682,11 @@ fn lift_dedup_unions_two_addresses() {
         let add_node = find_first_node(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
             .expect("Add must dedup to a single node");
         let fp = d.builder.function().side_tables().asm_fingerprint(add_node);
-        assert_eq!(fp, &[0x1000, 0x2000], "both addresses should be unioned");
+        assert_eq!(
+            fp,
+            rustc_hash::FxHashSet::from_iter([0x1000, 0x2000]),
+            "both addresses should be unioned"
+        );
     });
 }
 

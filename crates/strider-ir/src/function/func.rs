@@ -699,7 +699,10 @@ mod function_skeleton_tests {
         let mut f = test_function();
         let n = f.entry();
         f.side_tables_mut().extend_asm_fingerprint(n, &[0xDEAD_BEEF]);
-        assert_eq!(f.side_tables().asm_fingerprint(n), &[0xDEAD_BEEF]);
+        assert_eq!(
+            f.side_tables().asm_fingerprint(n),
+            rustc_hash::FxHashSet::from_iter([0xDEAD_BEEF])
+        );
     }
 
     #[test]
@@ -939,7 +942,7 @@ mod compact_tests {
             .expect("surviving IntConst must remain after compact");
         assert_eq!(
             f.side_tables().asm_fingerprint(new_id),
-            &[0x1000, 0x1004, 0x1008],
+            rustc_hash::FxHashSet::from_iter([0x1000, 0x1004, 0x1008]),
             "surviving node's asm-fingerprint must transfer to its post-compact NodeId"
         );
     }

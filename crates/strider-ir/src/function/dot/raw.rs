@@ -93,8 +93,9 @@ impl<'a> RawFunctionDumper<'a> {
         {
             s.push_str(&format!("\ntag={}", fmt_vn(&vn)));
         }
-        let fp = f.side_tables().asm_fingerprint(node);
+        let mut fp: Vec<u64> = f.side_tables().asm_fingerprint(node).into_iter().collect();
         if !fp.is_empty() {
+            fp.sort_unstable(); // stable order for the debug dump
             let addrs: Vec<String> = fp.iter().map(|a| format!("{a:#x}")).collect();
             s.push_str(&format!("\nfp=[{}]", addrs.join(",")));
         }

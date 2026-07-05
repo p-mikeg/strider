@@ -1420,7 +1420,12 @@ mod tests {
 
         // Characterization lock: the matched root's asm-fingerprint reaches every
         // fresh interior RHS node (memory + value), stamped at creation.
-        let root_fp: Vec<u64> = ctx.function().side_tables().asm_fingerprint(load_node).to_vec();
+        let root_fp: Vec<u64> = ctx
+            .function()
+            .side_tables()
+            .asm_fingerprint(load_node)
+            .into_iter()
+            .collect();
         assert!(
             !root_fp.is_empty(),
             "fixture's matched root must carry a fingerprint"

@@ -65,7 +65,7 @@ fn arithmetic_x86_add_node_fingerprint_is_inside_function_extent() {
     let mut saw_any = false;
     for node in function.walk() {
         let fp = function.side_tables().asm_fingerprint(node);
-        for &addr in fp {
+        for addr in fp {
             assert_ne!(addr, 0, "asm-fingerprint addr 0 is suspicious");
             // x86 fixtures are linked at the default location; everything
             // we lift sits well above 64KiB.
@@ -141,7 +141,7 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
             !fp.is_empty(),
             "non-exempt {kind:?} node {node:?} must carry a fingerprint"
         );
-        for &addr in fp {
+        for addr in fp {
             assert!(
                 (base..end).contains(&addr),
                 "{kind:?} node {node:?} fingerprint addr {addr:#x} falls outside \

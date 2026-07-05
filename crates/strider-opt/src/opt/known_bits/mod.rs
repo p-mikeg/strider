@@ -1,4 +1,4 @@
-use cranelift_entity::SecondaryMap;
+use cranelift_entity::{EntityRef, SecondaryMap};
 use entity_utils::Worklist;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
@@ -572,14 +572,15 @@ impl Optimizer for KnownBits {
         // Many folds share a large upstream cone, so per-fold walking is
         // O(folds·cone).  Instead, precompute ONCE — over the pre-fold graph,
         // before the mutating `replace_value` cascade culls contributors — a
-        // memo of each cone node's fingerprint-address set.  Each fold then
-        // unions its inputs' memoized cone sets in O(arity).  The cone is
-        // acyclic (the propagates kinds are IntBinaryOp / Truncate / Extend /
-        // Popcount / Lzcount — never Phi / Region, the only sources of data
-        // cycles), so a memoized DFS needs no cycle handling.  Over-tainting
-        // WITHIN a contributor cone (e.g. both operands of `& 0`) is
-        // intentional — the fingerprint is a generous superset proof aid.
-        let cone_fps = build_cone_fingerprint_memo(ctx, &to_fold);
+        // memo of each cone node's contributor NODE set (pure graph structure —
+        // node ids + kinds, never a fingerprint read).  Each fold then absorbs
+        // its inputs' memoized cone nodes via O(1) `extend_asm_fingerprint_from`
+        // links.  The cone is acyclic (the propagates kinds are IntBinaryOp /
+        // Truncate / Extend / Popcount / Lzcount — never Phi / Region, the only
+        // sources of data cycles), so a memoized DFS needs no cycle handling.
+        // Over-tainting WITHIN a contributor cone (e.g. both operands of `& 0`)
+        // is intentional — the fingerprint is a generous superset proof aid.
+        let cone_nodes = build_cone_node_memo(ctx, &to_fold);
 
         let mut result = OptimizationResult::NoChange;
         for (value, ty, ones) in to_fold {
@@ -590,9 +591,12 @@ impl Optimizer for KnownBits {
             // absorbed by `replace_value` below).  Mirrors the previous walk's
             // seeding exactly, so the resulting fingerprint set is identical.
             for p in crate::peephole::input_producers(ctx, folded_producer) {
-                if let Some(addrs) = cone_fps.get(&p) {
-                    ctx.function_mut()
-                        .side_tables_mut().extend_asm_fingerprint(new_producer, addrs);
+                if let Some(cone) = cone_nodes.get(&p) {
+                    for &q in cone {
+                        ctx.function_mut()
+                            .side_tables_mut()
+                            .extend_asm_fingerprint_from(new_producer, q);
+                    }
                 }
             }
             // `replace_value` absorbs the rewritten node's fingerprint into
@@ -605,33 +609,32 @@ impl Optimizer for KnownBits {
     }
 }
 
-/// The per-node set of asm-fingerprint addresses in a node's known-bits
-/// contributor cone (sorted, deduplicated).
-type ConeFps = smallvec::SmallVec<[u64; 8]>;
+/// The per-node set of contributor NODE ids in a node's known-bits cone
+/// (deduplicated).
+type ConeNodes = smallvec::SmallVec<[NodeId; 8]>;
 
 /// Precomputes, for every node in the known-bits contributor cone reachable
-/// from the `to_fold` producers' inputs, the union of asm-fingerprint
-/// addresses in that node's cone:
+/// from the `to_fold` producers' inputs, the set of contributor node ids in
+/// that node's cone:
 ///
-/// `cone_fps(n) = asm_fingerprint(n) ∪ (propagates(n) ? ⋃ₚ cone_fps(p) : ∅)`
+/// `cone(n) = {n} ∪ (propagates(n) ? ⋃ₚ cone(p) : ∅)`
 ///
-/// where `p` ranges over `n`'s input producers.  This exactly mirrors the
-/// per-fold DFS it replaces — every visited node contributes its own
-/// fingerprint and recursion continues only through `propagates_known_bits`
-/// kinds — but each node's set is computed once and returned from the memo on
-/// every revisit, so F folds sharing a cone of size C cost O(C) rather than
-/// O(F·C), while every fold still receives the FULL union (no attribution
-/// lost to a cross-fold visited set).
+/// where `p` ranges over `n`'s input producers.  This reads only graph
+/// structure (node ids + kinds) — never a fingerprint — so nothing is
+/// materialised here; the caller turns each cone node into an O(1)
+/// `extend_asm_fingerprint_from` link.  Every visited node contributes itself
+/// and recursion continues only through `propagates_known_bits` kinds; each
+/// node's set is computed once, so F folds sharing a cone of size C cost O(C)
+/// rather than O(F·C).
 ///
-/// Computed over the pre-fold graph before any `replace_value` runs:
-/// contributor fingerprints don't change during folding (only new const nodes
-/// are extended), so the snapshot is correct.  The cone is acyclic, so the
+/// Computed over the pre-fold graph before any `replace_value` runs, so the
+/// cone membership is a correct snapshot.  The cone is acyclic, so the
 /// iterative postorder needs no cycle handling.
-fn build_cone_fingerprint_memo(
+fn build_cone_node_memo(
     ctx: &crate::EditFunction<'_>,
     to_fold: &[(ValueId, ValueType, u128)],
-) -> rustc_hash::FxHashMap<NodeId, ConeFps> {
-    let mut memo: rustc_hash::FxHashMap<NodeId, ConeFps> = rustc_hash::FxHashMap::default();
+) -> rustc_hash::FxHashMap<NodeId, ConeNodes> {
+    let mut memo: rustc_hash::FxHashMap<NodeId, ConeNodes> = rustc_hash::FxHashMap::default();
     // Iterative postorder: push (node, children_emitted). On first pop, push
     // the node back as `true` and push its propagates-children; on the second
     // pop, every child's set is in `memo`, so fold them in.
@@ -644,18 +647,18 @@ fn build_cone_fingerprint_memo(
     }
     while let Some((n, expanded)) = stack.pop() {
         if expanded {
-            // Children resolved — assemble this node's set.
-            let mut addrs: ConeFps = ctx.function().side_tables().asm_fingerprint(n).iter().copied().collect();
+            // Children resolved — assemble this node's cone (itself + children).
+            let mut nodes: ConeNodes = smallvec::smallvec![n];
             if propagates_known_bits(ctx.node_kind(n)) {
                 for p in crate::peephole::input_producers_iter(ctx, n) {
                     if let Some(child) = memo.get(&p) {
-                        addrs.extend_from_slice(child);
+                        nodes.extend_from_slice(child);
                     }
                 }
             }
-            addrs.sort_unstable();
-            addrs.dedup();
-            memo.insert(n, addrs);
+            nodes.sort_unstable_by_key(|id| id.index());
+            nodes.dedup();
+            memo.insert(n, nodes);
             continue;
         }
         if memo.contains_key(&n) {

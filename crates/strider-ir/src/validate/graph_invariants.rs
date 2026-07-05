@@ -303,7 +303,7 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
         if kind.asm_fingerprint_exempt() {
             continue;
         }
-        if function.side_tables().asm_fingerprint(node).is_empty() {
+        if function.side_tables().asm_fingerprint_is_empty(node) {
             errs.push(ValidationError::MissingAsmFingerprint { node, kind: *kind });
         }
     }

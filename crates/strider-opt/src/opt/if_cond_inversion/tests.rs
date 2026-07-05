@@ -271,7 +271,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     let inner_node = fg.producer(cond_value);
     let inner_fp = fg.side_tables().asm_fingerprint(inner_node);
     let bool_neg_fp = fg.side_tables().asm_fingerprint(bool_neg_node);
-    for addr in bool_neg_fp {
+    for addr in &bool_neg_fp {
         assert!(
             inner_fp.contains(addr),
             "BoolNeg's address {addr:#x} must survive into inner-cond fingerprint after \

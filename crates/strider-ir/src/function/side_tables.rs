@@ -3,7 +3,8 @@
 //! [`crate::Function::compact`] remaps them in one `SideTables::remap` call.
 
 use cranelift_entity::SecondaryMap;
-use rustc_hash::FxHashMap;
+use entity_utils::UnionDag;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::graph::{NodeIdRemap, remap_node_keyed};
 use crate::node::{NodeId, ValueId};
@@ -44,16 +45,15 @@ pub struct SideTables {
     /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
     /// nodes.
     pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
-    /// Per-node sorted-deduplicated list of machine-instruction addresses
-    /// whose lifting or rewrite contributed to the node's value.
-    // `SmallVec<[u64; 2]>` because the common case is 1–2 contributor
-    // addresses per node.  Inlining those avoids a heap allocation per
-    // non-empty entry — on graphs with thousands of nodes this drops
-    // thousands of small allocations from the lift+optimize pipeline.
-    // The mutation API (`extend_asm_fingerprint`,
-    // `extend_asm_fingerprint_from`) keeps using `&[u64]` /
-    // `impl IntoIterator<Item = u64>` so callers are unaffected.
-    asm_fingerprints: SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
+    /// Per-node set of machine-instruction addresses whose lifting or rewrite
+    /// contributed to the node's value.
+    // A deferred-union DAG so `extend_asm_fingerprint_from` (the hot path — a
+    // rewrite absorbing its matched interior's proof) is O(1): it links the two
+    // nodes instead of copying/merging address lists.  A node's full set is
+    // materialised only on the rare read (`asm_fingerprint`) by walking its
+    // ancestors.  The union count runs into the millions on large functions;
+    // the old sorted-merge storage made each absorb O(N).
+    asm_fingerprints: UnionDag<NodeId, u64>,
     /// The varnode a value *represents*, keyed by [`ValueId`].  Two
     /// disjoint populations share this one map:
     ///
@@ -212,72 +212,40 @@ impl SideTables {
         self.switch_targets[id] = targets;
     }
 
-    /// Returns the asm-instruction-address fingerprint of `id` as a
-    /// sorted-deduplicated slice (empty when nothing was recorded).
+    /// Returns the asm-instruction-address fingerprint of `id` as an unordered
+    /// set (empty when nothing was recorded).  Materialised on demand by
+    /// walking the deferred-union DAG; callers that need a stable order sort
+    /// the result themselves.
+    pub fn asm_fingerprint(&self, id: NodeId) -> FxHashSet<u64> {
+        let mut set = FxHashSet::default();
+        self.asm_fingerprints.for_each(id, |addr| {
+            set.insert(addr);
+        });
+        set
+    }
+
+    /// Whether `id` has no recorded fingerprint.  O(1) — no materialisation.
     #[inline]
-    pub fn asm_fingerprint(&self, id: NodeId) -> &[u64] {
-        self.asm_fingerprints[id].as_slice()
+    pub fn asm_fingerprint_is_empty(&self, id: NodeId) -> bool {
+        self.asm_fingerprints.is_empty(id)
     }
 
-    /// Unions `contributors` into `node_id`'s fingerprint, kept sorted and
-    /// deduplicated.  Existing entries are never removed (the no-shrink
-    /// contract).  Empty `contributors` is a no-op.
+    /// Unions `contributors` into `node_id`'s fingerprint.  Existing entries
+    /// are never removed (the no-shrink contract).  Empty `contributors` is a
+    /// no-op.
     pub fn extend_asm_fingerprint(&mut self, node_id: NodeId, contributors: &[u64]) {
-        if contributors.is_empty() {
-            return;
+        for &addr in contributors {
+            self.asm_fingerprints.extend(node_id, addr);
         }
-        // Both existing and `contributors` are tiny (a handful of addresses),
-        // so extend + sort + dedup is the right wheel.
-        let fp = &mut self.asm_fingerprints[node_id];
-        if fp.is_empty() {
-            fp.extend_from_slice(contributors);
-            fp.sort_unstable();
-            fp.dedup();
-            return;
-        }
-        // `fp` is maintained sorted + deduplicated (the invariant below), and it
-        // can grow large under superset over-tainting (thousands of addresses on
-        // a big function).  Re-sorting the whole thing on every union is
-        // O(N log N) with N climbing.  Instead sort only the (small) new
-        // contributors and two-pointer MERGE them into the already-sorted `fp` —
-        // O(N + M), no re-sort of the large existing set.
-        let mut add: smallvec::SmallVec<[u64; 8]> = contributors.iter().copied().collect();
-        add.sort_unstable();
-        add.dedup();
-        let mut merged: smallvec::SmallVec<[u64; 2]> =
-            smallvec::SmallVec::with_capacity(fp.len() + add.len());
-        let (mut i, mut j) = (0usize, 0usize);
-        while i < fp.len() && j < add.len() {
-            match fp[i].cmp(&add[j]) {
-                std::cmp::Ordering::Less => {
-                    merged.push(fp[i]);
-                    i += 1;
-                }
-                std::cmp::Ordering::Greater => {
-                    merged.push(add[j]);
-                    j += 1;
-                }
-                std::cmp::Ordering::Equal => {
-                    merged.push(fp[i]);
-                    i += 1;
-                    j += 1;
-                }
-            }
-        }
-        merged.extend_from_slice(&fp[i..]);
-        merged.extend_from_slice(&add[j..]);
-        *fp = merged;
     }
 
-    /// Unions the fingerprint of `src` into `dst`.  Self-extension
-    /// (`src == dst`) is a no-op.
+    /// Unions the fingerprint of `src` into `dst` in O(1) (a DAG link, no
+    /// copy).  Self-extension (`src == dst`) is a no-op.
     pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
         if dst == src {
             return;
         }
-        let src_slice: smallvec::SmallVec<[u64; 4]> =
-            self.asm_fingerprints[src].iter().copied().collect();
-        self.extend_asm_fingerprint(dst, &src_slice);
+        self.asm_fingerprints.union(dst, src);
     }
 
     /// Remaps every arena-id key / value through `remap` after a
@@ -286,7 +254,8 @@ impl SideTables {
     pub(crate) fn remap(&mut self, remap: &NodeIdRemap) {
         // NodeId-keyed tables: translate the key, drop pruned nodes.
         remap_node_keyed(&mut self.call_other_names, remap);
-        remap_node_keyed(&mut self.asm_fingerprints, remap);
+        self.asm_fingerprints
+            .remap(|old| remap.node_old_to_new(old));
         remap_node_keyed(&mut self.switch_targets, remap);
         self.call_cc = remap_hashmap(&mut self.call_cc, |old, cc| {
             remap.node_old_to_new(old).map(|n| (n, cc))
@@ -340,31 +309,39 @@ mod tests {
     use super::*;
     use cranelift_entity::EntityRef;
 
-    // The union keeps each node's fingerprint sorted + deduplicated regardless
-    // of the incoming order, folding new contributors into a large existing set
-    // via a sorted merge (the perf-critical path) — never dropping an entry.
+    // The union accumulates each node's fingerprint as a deduplicated set
+    // regardless of incoming order, folding new contributors into a large
+    // existing set — never dropping an entry.
     #[test]
-    fn extend_asm_fingerprint_unions_sorted_deduped() {
+    fn extend_asm_fingerprint_unions_deduped() {
         let mut st = SideTables::default();
         let n = NodeId::new(3);
 
-        // Empty → seed (the fp.is_empty() arm); contributors may arrive unsorted.
+        // Empty → seed; contributors may arrive unsorted.
         st.extend_asm_fingerprint(n, &[40, 10, 30, 20, 50]);
-        assert_eq!(st.asm_fingerprint(n), &[10, 20, 30, 40, 50]);
+        assert_eq!(st.asm_fingerprint(n), FxHashSet::from_iter([10, 20, 30, 40, 50]));
 
-        // Merge into the (now non-empty, sorted) fp: unsorted, one duplicate
-        // (20), the rest new and interleaved — result stays sorted + deduped and
-        // is the full union (no shrink).
+        // Merge into the (now non-empty) fp: unsorted, one duplicate (20), the
+        // rest new — result is the full union (no shrink).
         st.extend_asm_fingerprint(n, &[35, 20, 5, 45]);
-        assert_eq!(st.asm_fingerprint(n), &[5, 10, 20, 30, 35, 40, 45, 50]);
+        assert_eq!(
+            st.asm_fingerprint(n),
+            FxHashSet::from_iter([5, 10, 20, 30, 35, 40, 45, 50])
+        );
 
         // Merging a subset changes nothing (pure union, idempotent).
         st.extend_asm_fingerprint(n, &[10, 50]);
-        assert_eq!(st.asm_fingerprint(n), &[5, 10, 20, 30, 35, 40, 45, 50]);
+        assert_eq!(
+            st.asm_fingerprint(n),
+            FxHashSet::from_iter([5, 10, 20, 30, 35, 40, 45, 50])
+        );
 
         // Empty contributors is a no-op.
         st.extend_asm_fingerprint(n, &[]);
-        assert_eq!(st.asm_fingerprint(n), &[5, 10, 20, 30, 35, 40, 45, 50]);
+        assert_eq!(
+            st.asm_fingerprint(n),
+            FxHashSet::from_iter([5, 10, 20, 30, 35, 40, 45, 50])
+        );
     }
 }
 
