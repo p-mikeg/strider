@@ -23,8 +23,10 @@ use strider_ir::{
 /// Shared `RegisterSet` populater for [`Tb::raw`] and [`Tb::bare`].  Both
 /// constructors take the same six DTO-style parameters and feed them
 /// into `RegisterSet` field-by-field; the only difference is whether
-/// the resulting builder pre-creates an entry region or not.
-fn build_rs(
+/// the resulting builder pre-creates an entry region or not.  Also reused
+/// by the free `crate::builder` fn (which chains `.endianness(..)` before
+/// building), so the slice→`RegisterSet` mapping lives in one place.
+pub(crate) fn build_rs(
     vars: Vec<rsleigh::Vn>,
     arg_passing: &[rsleigh::Vn],
     callee_saved: &[rsleigh::Vn],

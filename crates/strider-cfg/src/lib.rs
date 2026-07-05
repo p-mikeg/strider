@@ -32,6 +32,8 @@ mod dot;
 mod indirect_resolver;
 mod options;
 mod query;
+#[cfg(test)]
+mod test_support;
 mod types;
 
 /// Crate-level `Result` alias. Every fallible function in this crate

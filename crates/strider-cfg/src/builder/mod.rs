@@ -302,61 +302,9 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use petgraph::visit::{EdgeRef, IntoEdgeReferences};
-    use rsleigh::mem_readers::BufMemReader;
-    use strider_target::SleighArch;
 
-    use super::*;
-    use crate::CfgOptions;
-    use crate::types::{
-        MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
-    };
-
-    type TestReader = BufMemReader<Vec<u8>>;
-
-    fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
-        PcodeInsnAddr {
-            machine_addr: MachineInsnAddr { addr: machine },
-            insn_index: insn,
-        }
-    }
-
-    fn fake_insn() -> rsleigh::Insn {
-        rsleigh::Insn {
-            opcode: rsleigh::Opcode::Copy,
-            output: None,
-            inputs: vec![].into(),
-        }
-    }
-
-    fn make_region(addrs: &[(u64, u64)]) -> Region {
-        let start = addr(addrs[0].0, addrs[0].1);
-        let insns = addrs
-            .iter()
-            .map(|&(m, i)| RegionInstruction {
-                addr: addr(m, i),
-                insn: fake_insn(),
-            })
-            .collect();
-        Region {
-            start_addr: start,
-            insns,
-            terminator: RegionTerminator::Unconditional,
-        }
-    }
-
-    fn make_sleigh() -> rsleigh::Sleigh<TestReader> {
-        let arch = SleighArch::x86_64();
-        let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create empty Sleigh")
-    }
-
-    fn make_builder<'a>(
-        start_addr: u64,
-        sleigh: &'a mut rsleigh::Sleigh<TestReader>,
-    ) -> Builder<'a, TestReader> {
-        let arch = SleighArch::x86_64();
-        Builder::for_arch(&arch, sleigh, start_addr, &CfgOptions::default())
-    }
+    use crate::test_support::*;
+    use crate::types::{Region, RegionTerminator};
 
     // ── add_region ───────────────────────────────────────────────────────
 

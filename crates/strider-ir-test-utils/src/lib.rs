@@ -407,17 +407,15 @@ pub fn builder(
     ret_stack_pop: i64,
     endianness: strider_target::Endianness,
 ) -> Result<FunctionBuilder> {
-    RegisterSet {
+    tb::build_rs(
         tracked,
-        arg_passing: arg_passing.to_vec(),
-        callee_saved: callee_saved.to_vec(),
-        ret_val: ret_val.to_vec(),
-        sp: stack_vn,
+        arg_passing,
+        callee_saved,
+        ret_val,
+        stack_vn,
         ret_stack_pop,
-        stack_args: None,
-        endianness: Some(endianness),
-        link_register: None,
-    }
+    )
+    .endianness(endianness)
     .build_fn()
 }
 
