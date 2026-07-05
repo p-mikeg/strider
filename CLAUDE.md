@@ -61,9 +61,11 @@ Generic helpers:
   `Worklist`, `EntityInterner`).  Use these instead of
   `std::collections::HashSet` / `HashMap` when keying by `NodeId` /
   `ValueId` and friends.
-- `graphwalk` — generic preorder / postorder graph traversal.  Test code
-  under `graphwalk/tests/common/` hosts the `graphmock` DSL for spinning
-  up synthetic graphs in unit tests.
+- `graph-algorithms` — generic graph algorithms: preorder / postorder
+  traversal (the `walk` module) plus dominance-based SSA support —
+  dominance frontiers, dominator-tree preorder, and iterated-DF φ placement
+  (the `dominance` module).  Test code under `graph-algorithms/tests/common/`
+  hosts the `graphmock` DSL for spinning up synthetic graphs in unit tests.
 - `strider-graph` — generic despite the `strider-` name (named that
   deliberately): the payload-agnostic bipartite sea-of-nodes
   `Graph<N, V, C: NodeCacheable<N, V>>` that both `strider-ir` and
@@ -118,12 +120,12 @@ depends on the external `rsleigh`.
 
   read-only-memory → (leaf — only `anyhow`)
   strider-target   → (leaf — only `rsleigh`)
-  strider-graph    → graphwalk (+ cranelift-entity, petgraph,
+  strider-graph    → (cranelift-entity, petgraph,
                      hashbrown, smallvec, rustc-hash)
   strider-ir       → strider-graph, read-only-memory, strider-target,
-                     dot, entity-utils, graphwalk
+                     dot, entity-utils, graph-algorithms
   strider-reader   → strider-ir, strider-target, read-only-memory
-  strider-cfg      → strider-target, dot, graphwalk, petgraph
+  strider-cfg      → strider-target, dot, petgraph
                      (IR-free — NO strider-ir)
   strider-lift     → strider-cfg, strider-ir, strider-target
   strider-pattern      → strider-ir, strider-graph, strider-target,
@@ -250,8 +252,8 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     fill-all-or-error (no partial fill, no truncation), copying the bytes
     **raw** — there is NO endianness swap.  Callers that need an integer
     decode the raw bytes per the target's endianness (the optimizer does
-    this via `strider_target::Endianness`).  Blanket impls for `Arc<T>`
-    and `Box<T>`.  Concrete impls live in `strider-reader`.  The
+    this via `strider_target::Endianness`).  Blanket impl for `Box<T>`.
+    Concrete impls live in `strider-reader`.  The
     optimizer's `LoadReadOnly` takes `&dyn ReadOnlyMemory` so it doesn't
     depend on the reader crate.
   - `ValueKind` — `Control`, `Memory`, `PhiToken`, or
@@ -475,13 +477,10 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     `read_vn` / `write_vn` (`lift/vn_io.rs`) own the register-aliasing
     dispatch.  There is no separate `ValueLifter` struct — value lifting
     was unified onto the per-CFG driver.
-  - `lift/pcode_util.rs` — the free decode helpers: `vn_sort_key`
-    (re-exported at `strider_lift::lift::vn_sort_key` for the
-    orchestrator's cached vn table), the checked input accessor
-    `nth_input_or_err` (every production-code varnode access returns a
-    typed error instead of panicking on an out-of-bounds index), and
-    `decode_space_id`.  See the "Register
-    Aliasing" section below.
+  - `lift/pcode_util.rs` — the free decode helpers: the checked input
+    accessor `nth_input_or_err` (every production-code varnode access
+    returns a typed error instead of panicking on an out-of-bounds index)
+    and `decode_space_id`.  See the "Register Aliasing" section below.
   - `LiftOptions` (crate root) is the whole-lift options type: it embeds
     a `strider_cfg::CfgOptions` (`cfg`, handed to
     `strider_cfg::Builder::for_arch` as `&lift_opts.cfg`) plus the IR-lift
