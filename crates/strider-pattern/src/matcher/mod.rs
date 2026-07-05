@@ -26,6 +26,7 @@ pub use vertex::{KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, Pos
 use std::cell::OnceCell;
 use std::mem::Discriminant;
 
+use itertools::Either;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::node::{NodeId, NodeKind};
@@ -121,24 +122,10 @@ impl<'f> Matcher<'f> {
     /// can handle (see [`Pattern::root`]).
     pub fn find_all(&self, pat: &Pattern) -> anyhow::Result<Vec<Match>> {
         let root = pat.root()?;
-        let mut out = Vec::new();
-        match root_kind_discriminant(pat, root) {
-            Some(d) => {
-                for &node in self.kind_index().nodes_of_kind(d) {
-                    if let Some(m) = self.try_match_at_node(node, pat, root) {
-                        out.push(m);
-                    }
-                }
-            }
-            None => {
-                for node in self.function.walk() {
-                    if let Some(m) = self.try_match_at_node(node, pat, root) {
-                        out.push(m);
-                    }
-                }
-            }
-        }
-        Ok(out)
+        Ok(self
+            .candidates(pat, root)
+            .filter_map(|node| self.try_match_at_node(node, pat, root))
+            .collect())
     }
 
     /// Find the first match of `pat` in the function, or `Ok(None)` if
@@ -150,23 +137,25 @@ impl<'f> Matcher<'f> {
     /// can handle (see [`Pattern::root`]).
     pub fn find_first(&self, pat: &Pattern) -> anyhow::Result<Option<Match>> {
         let root = pat.root()?;
+        Ok(self
+            .candidates(pat, root)
+            .find_map(|node| self.try_match_at_node(node, pat, root)))
+    }
+
+    /// The IR nodes to attempt `pat` (resolved match `root`) at, shared by
+    /// [`Self::find_all`] / [`Self::find_first`]: a discriminant-rooted pattern
+    /// scans only its matching `KindIndex` bucket (O(M) in nodes of that kind),
+    /// a kind-`Any` root the whole reachable graph.  Static-dispatch `Either`,
+    /// so neither arm allocates or pays a per-candidate virtual call.
+    fn candidates<'p>(
+        &'p self,
+        pat: &Pattern,
+        root: PatNodeId,
+    ) -> impl Iterator<Item = NodeId> + 'p {
         match root_kind_discriminant(pat, root) {
-            Some(d) => {
-                for &node in self.kind_index().nodes_of_kind(d) {
-                    if let Some(m) = self.try_match_at_node(node, pat, root) {
-                        return Ok(Some(m));
-                    }
-                }
-            }
-            None => {
-                for node in self.function.walk() {
-                    if let Some(m) = self.try_match_at_node(node, pat, root) {
-                        return Ok(Some(m));
-                    }
-                }
-            }
+            Some(d) => Either::Left(self.kind_index().nodes_of_kind(d).iter().copied()),
+            None => Either::Right(self.function.walk()),
         }
-        Ok(None)
     }
 
     /// Internal helper: attempt `pat` (whose resolved match root is `root`)
