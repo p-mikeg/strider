@@ -47,27 +47,22 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // as it constructs the Switch (see
         // `cfg/src/cfg/builder/region_builder.rs:436`), so each
         // target IS the start of a region by lift time.
-        let mut targets_and_regions: Vec<(u64, strider_ir::RegionId)> =
-            Vec::with_capacity(targets.len());
+        let mut arms: Vec<(strider_ir::RegionId, u64)> = Vec::with_capacity(targets.len());
         for &target in targets {
             let machine_addr = strider_cfg::MachineInsnAddr::from(target);
             let cfg_region = self.cfg.region_id_at_start(machine_addr).ok_or_else(|| {
                 anyhow!("switch target machine address {target:#x} has no CFG region")
             })?;
             let ir_region = super::ir_region_of(region_map, cfg_region)?;
-            targets_and_regions.push((target, ir_region));
+            arms.push((ir_region, target));
         }
         // Read the dispatch value at the region exit — the switch
         // address value.
         let idx = self.read_vn(target_vn)?;
         // n == 1 degenerates to a plain branch (unchanged behavior).
-        if targets_and_regions.len() == 1 {
-            return self.builder.build_branch(targets_and_regions[0].1);
+        if arms.len() == 1 {
+            return self.builder.build_branch(arms[0].0);
         }
-        let arms: Vec<(strider_ir::RegionId, u64)> = targets_and_regions
-            .iter()
-            .map(|&(addr, region)| (region, addr))
-            .collect();
         self.builder.build_switch(idx, &arms)
     }
 

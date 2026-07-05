@@ -67,6 +67,77 @@ fn pk(d: &FunctionLifter<'_, TestReader>, v: Value) -> NodeKind {
     *f.node_kind(f.producer(v))
 }
 
+/// Scan a merge `Or`'s two `And` arms (`lhs` / `rhs`), asserting each is an
+/// `And`, and split them into `(preserve_arm, insert_arm)`: the arm that
+/// consumes the pre-write container value `initial` preserves the container;
+/// the other inserts the shifted sub-register value.
+fn classify_preserve_insert_arms(
+    d: &FunctionLifter<'_, TestReader>,
+    lhs: Value,
+    rhs: Value,
+    initial: Value,
+) -> (Value, Value) {
+    let mut preserve_arm = None;
+    let mut insert_arm = None;
+    for and_val in [lhs, rhs] {
+        assert_eq!(
+            pk(d, and_val),
+            NodeKind::IntBinaryOp(IntBinaryOp::And),
+            "each Or operand is an And"
+        );
+        let consumes_container = d
+            .builder
+            .function()
+            .node_inputs(d.builder.function().producer(and_val))
+            .into_iter()
+            .any(|input| input == initial);
+        if consumes_container {
+            preserve_arm = Some(and_val);
+        } else {
+            insert_arm = Some(and_val);
+        }
+    }
+    (
+        preserve_arm.expect("one And arm preserves the container"),
+        insert_arm.expect("one And arm inserts the shifted value"),
+    )
+}
+
+/// Scan a merge `Or`'s two `And` arms (`lhs` / `rhs`), asserting each is an
+/// `And`, collecting every `int_const_u128` across both arms' inputs into a
+/// sorted `Vec`, and flagging whether the pre-write container value `initial`
+/// appears as an arm input.
+fn collect_and_arm_consts(
+    d: &FunctionLifter<'_, TestReader>,
+    lhs: Value,
+    rhs: Value,
+    initial: Value,
+) -> (Vec<u128>, bool) {
+    let mut consts: Vec<u128> = Vec::new();
+    let mut saw_initial = false;
+    for and_val in [lhs, rhs] {
+        assert_eq!(
+            pk(d, and_val),
+            NodeKind::IntBinaryOp(IntBinaryOp::And),
+            "each Or operand is an And"
+        );
+        for input in d
+            .builder
+            .function()
+            .node_inputs(d.builder.function().producer(and_val))
+        {
+            if let Some(c) = d.builder.function().int_const_u128(input) {
+                consts.push(c);
+            }
+            if input == initial {
+                saw_initial = true;
+            }
+        }
+    }
+    consts.sort_unstable();
+    (consts, saw_initial)
+}
+
 // ── ported tests ────────────────────────────────────────────────────────────
 
 /// Reading a sub-register when only the wider container is tracked routes
@@ -134,28 +205,7 @@ fn write_subregister_merge_preserves_container_high_bytes() {
             .node_inputs_exact::<2>(d.builder.function().producer(merged))
             .unwrap();
 
-        let mut consts: Vec<u128> = Vec::new();
-        let mut saw_initial_container = false;
-        for and_val in [lhs, rhs] {
-            assert_eq!(
-                pk(d, and_val),
-                NodeKind::IntBinaryOp(IntBinaryOp::And),
-                "each Or operand is an And"
-            );
-            for input in d
-                .builder
-                .function()
-                .node_inputs(d.builder.function().producer(and_val))
-            {
-                if let Some(c) = d.builder.function().int_const_u128(input) {
-                    consts.push(c);
-                }
-                if input == initial_rax {
-                    saw_initial_container = true;
-                }
-            }
-        }
-        consts.sort_unstable();
+        let (consts, saw_initial_container) = collect_and_arm_consts(d, lhs, rhs, initial_rax);
         assert_eq!(
             consts,
             vec![0xAB, 0xFF, 0xFFFF_FFFF_FFFF_FF00],
@@ -196,28 +246,7 @@ fn write_subregister_into_x87_80bit_container_preserves_high_bits() {
             .node_inputs_exact::<2>(d.builder.function().producer(merged))
             .unwrap();
 
-        let mut consts: Vec<u128> = Vec::new();
-        let mut saw_initial = false;
-        for and_val in [lhs, rhs] {
-            assert_eq!(
-                pk(d, and_val),
-                NodeKind::IntBinaryOp(IntBinaryOp::And),
-                "each Or operand is an And"
-            );
-            for input in d
-                .builder
-                .function()
-                .node_inputs(d.builder.function().producer(and_val))
-            {
-                if let Some(c) = d.builder.function().int_const_u128(input) {
-                    consts.push(c);
-                }
-                if input == initial {
-                    saw_initial = true;
-                }
-            }
-        }
-        consts.sort_unstable();
+        let (consts, saw_initial) = collect_and_arm_consts(d, lhs, rhs, initial);
         let container_mask = (1u128 << 80) - 1;
         let keep_mask = container_mask & !0xFFFF_FFFFu128;
         assert_eq!(
@@ -255,28 +284,7 @@ fn write_high_byte_subregister_positions_mask_and_shift() {
             .node_inputs_exact::<2>(d.builder.function().producer(merged))
             .unwrap();
 
-        let mut preserve_arm = None;
-        let mut insert_arm = None;
-        for and_val in [lhs, rhs] {
-            assert_eq!(
-                pk(d, and_val),
-                NodeKind::IntBinaryOp(IntBinaryOp::And),
-                "each Or operand is an And"
-            );
-            let consumes_container = d
-                .builder
-                .function()
-                .node_inputs(d.builder.function().producer(and_val))
-                .into_iter()
-                .any(|input| input == initial_rax);
-            if consumes_container {
-                preserve_arm = Some(and_val);
-            } else {
-                insert_arm = Some(and_val);
-            }
-        }
-        let preserve_arm = preserve_arm.expect("one And arm preserves the container");
-        let insert_arm = insert_arm.expect("one And arm inserts the shifted value");
+        let (preserve_arm, insert_arm) = classify_preserve_insert_arms(d, lhs, rhs, initial_rax);
 
         let preserve_consts: Vec<u128> = d
             .builder
@@ -353,28 +361,7 @@ fn write_high_byte_subregister_big_endian_positions_mask_and_shift() {
             .node_inputs_exact::<2>(d.builder.function().producer(merged))
             .unwrap();
 
-        let mut preserve_arm = None;
-        let mut insert_arm = None;
-        for and_val in [lhs, rhs] {
-            assert_eq!(
-                pk(d, and_val),
-                NodeKind::IntBinaryOp(IntBinaryOp::And),
-                "each Or operand is an And"
-            );
-            let consumes_container = d
-                .builder
-                .function()
-                .node_inputs(d.builder.function().producer(and_val))
-                .into_iter()
-                .any(|input| input == initial);
-            if consumes_container {
-                preserve_arm = Some(and_val);
-            } else {
-                insert_arm = Some(and_val);
-            }
-        }
-        let preserve_arm = preserve_arm.expect("one And arm preserves the container");
-        let insert_arm = insert_arm.expect("one And arm inserts the shifted value");
+        let (preserve_arm, insert_arm) = classify_preserve_insert_arms(d, lhs, rhs, initial);
 
         let preserve_consts: Vec<u128> = d
             .builder

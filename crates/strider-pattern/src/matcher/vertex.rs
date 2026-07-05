@@ -40,6 +40,11 @@ impl KindSpec {
         }
     }
 
+    /// `KindSpec::Variant` from an exemplar node kind's discriminant.
+    pub fn variant_of(exemplar: &NodeKind) -> Self {
+        Self::Variant(std::mem::discriminant(exemplar))
+    }
+
     /// Whether `kind` satisfies this spec.
     pub fn matches(&self, kind: &NodeKind) -> bool {
         match self {

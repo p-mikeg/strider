@@ -95,11 +95,9 @@ impl crate::peephole::PeepholePass for LoadReadOnly {
             // No rom configured — nothing to fold.
             return Ok(crate::peephole::PeepholeRewrite::NoChange);
         };
-        if try_fold_const_load_at(edit, root, rom)? {
-            Ok(crate::peephole::PeepholeRewrite::Changed { new_node: None })
-        } else {
-            Ok(crate::peephole::PeepholeRewrite::NoChange)
-        }
+        Ok(crate::peephole::PeepholeRewrite::from_changed(
+            try_fold_const_load_at(edit, root, rom)?,
+        ))
     }
 }
 

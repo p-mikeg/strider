@@ -72,12 +72,9 @@ impl crate::peephole::PeepholePass for LoadForward {
         // clears it after any changed pass), matching the old per-`apply`
         // local memo.
         let alias_mode = opt_ctx.options.alias_mode;
-        match try_forward_load(ctx, root, &mut opt_ctx.sp_memo, alias_mode)? {
-            OptimizationResult::Changed => {
-                Ok(crate::peephole::PeepholeRewrite::Changed { new_node: None })
-            }
-            OptimizationResult::NoChange => Ok(crate::peephole::PeepholeRewrite::NoChange),
-        }
+        Ok(crate::peephole::PeepholeRewrite::from_changed(
+            try_forward_load(ctx, root, &mut opt_ctx.sp_memo, alias_mode)?.changed(),
+        ))
     }
 }
 

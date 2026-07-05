@@ -391,6 +391,19 @@ impl<'g> EditFunction<'g> {
         self.enqueue(def);
     }
 
+    /// For each already-displaced value, enqueue its producer as maybe-dead if
+    /// that value now has zero remaining uses.  Shared by `kill_node` and
+    /// `remove_node_inputs_batch`, which both snapshot displaced inputs BEFORE
+    /// detaching, then run this O(degree) drain afterwards.
+    fn enqueue_orphaned_producers(&mut self, values: impl IntoIterator<Item = ValueId>) {
+        for value in values {
+            if self.function.graph().value_uses(value).next().is_none() {
+                let producer = self.function.producer(value);
+                self.enqueue_killed_def_node(producer);
+            }
+        }
+    }
+
     /// Enqueue a live, not-already-queued node for the maybe-dead drain.
     fn enqueue(&mut self, node: NodeId) {
         if self.state.live_nodes.contains(node)
@@ -494,12 +507,7 @@ impl<'g> EditFunction<'g> {
         self.mark_node_dead(node);
         // After the detach, any input value now at zero uses has a maybe-dead
         // producer.  `enqueue_killed_def_node` gates on `has_side_effects`.
-        for value in inputs {
-            if self.function.graph().value_uses(value).next().is_none() {
-                let producer = self.function.producer(value);
-                self.enqueue_killed_def_node(producer);
-            }
-        }
+        self.enqueue_orphaned_producers(inputs);
     }
 
     /// Drop `node` from the live set, `roots`, and clear its flags.
@@ -850,15 +858,12 @@ impl<'g> EditFunction<'g> {
     /// [`Graph::remove_node_inputs_batch`] (one O(degree) filter-rebuild).
     fn remove_node_inputs_batch(&mut self, node: NodeId, indices: &[u32]) {
         // Snapshot the values at the removed (in-range) slots BEFORE the edit.
-        let degree = self.node_inputs(node).len();
         let inputs: smallvec::SmallVec<[ValueId; 8]> =
             self.function.node_inputs(node).into_iter().collect();
-        let mut displaced: smallvec::SmallVec<[ValueId; 8]> = smallvec::SmallVec::new();
-        for &idx in indices {
-            if (idx as usize) < degree {
-                displaced.push(inputs[idx as usize]);
-            }
-        }
+        let displaced: smallvec::SmallVec<[ValueId; 8]> = indices
+            .iter()
+            .filter_map(|&i| inputs.get(i as usize).copied())
+            .collect();
         self.function
             .graph_mut()
             .remove_node_inputs_batch(node, indices.iter().map(|&i| i as usize));
@@ -866,12 +871,7 @@ impl<'g> EditFunction<'g> {
         // value appearing in several removed slots only reaches zero uses once
         // ALL its edges are gone, so a pre-removal per-slot check could miss it.
         // Enqueue each now-orphaned producer (the gate inside is side-effect-aware).
-        for value in displaced {
-            if self.function.graph().value_uses(value).next().is_none() {
-                let producer = self.function.producer(value);
-                self.enqueue_killed_def_node(producer);
-            }
-        }
+        self.enqueue_orphaned_producers(displaced);
     }
 }
 

@@ -18,7 +18,7 @@
 //! unit-testable on tiny hand-built graphs with no CFG/IR types in scope (see
 //! this module's tests).  A concrete graph implements [`DomTree`] to plug in.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash};
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -133,20 +133,13 @@ pub trait DefSites {
     fn def_nodes(&self, v: Self::Var) -> impl Iterator<Item = Self::Node> + '_;
 }
 
-impl<V: Copy + Eq + Hash, N: Copy + Eq + Hash, VH, H: BuildHasher> DefSites
-    for HashMap<V, HashSet<N, VH>, H>
+impl<V, N, C, H> DefSites for HashMap<V, C, H>
+where
+    V: Copy + Eq + Hash,
+    N: Copy + Eq + Hash + 'static,
+    H: BuildHasher,
+    for<'a> &'a C: IntoIterator<Item = &'a N>,
 {
-    type Var = V;
-    type Node = N;
-    fn vars(&self) -> impl Iterator<Item = V> + '_ {
-        self.keys().copied()
-    }
-    fn def_nodes(&self, v: V) -> impl Iterator<Item = N> + '_ {
-        self.get(&v).into_iter().flatten().copied()
-    }
-}
-
-impl<V: Copy + Eq + Hash, N: Copy + Eq + Hash, H: BuildHasher> DefSites for HashMap<V, Vec<N>, H> {
     type Var = V;
     type Node = N;
     fn vars(&self) -> impl Iterator<Item = V> + '_ {

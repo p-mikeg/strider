@@ -1,4 +1,3 @@
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
@@ -62,11 +61,7 @@ impl PeepholePass for ConstantFold {
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        Ok(match self.rules.apply_all(ctx, root)? {
-            Some(new_value) => PeepholeRewrite::Changed {
-                new_node: Some(ctx.producer(new_value)),
-            },
-            None => PeepholeRewrite::NoChange,
-        })
+        let opt = self.rules.apply_all(ctx, root)?;
+        Ok(PeepholeRewrite::from_new_value(ctx, opt))
     }
 }

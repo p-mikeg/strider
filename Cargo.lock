@@ -1491,6 +1491,7 @@ dependencies = [
  "anyhow",
  "criterion 0.5.1",
  "expect-test",
+ "itertools 0.13.0",
  "petgraph",
  "rsleigh",
  "rustc-hash",

@@ -150,6 +150,19 @@ fn is_inverted_cond_match(
     hit.value(inner_capture)
 }
 
+/// Collect the stable `UseId` of every input edge consuming `value`,
+/// resolved up front so a later `update_input` can't invalidate a
+/// half-consumed use-list iterator.
+fn input_use_ids(
+    ctx: &crate::EditFunction<'_>,
+    value: strider_ir::node::ValueId,
+) -> Result<smallvec::SmallVec<[strider_ir::node::UseId; 4]>> {
+    ctx.graph_ref()
+        .value_uses(value)
+        .map(|(consumer, idx)| ctx.graph_ref().node_input_id_at(consumer, idx as usize))
+        .collect()
+}
+
 /// Performs the inversion in place:
 ///   1. Re-points the `If`'s cond input from the `Xor(X, 1)` output to `X`.
 ///   2. Swaps the consumers of the two control outputs.
@@ -181,16 +194,8 @@ fn invert(
     // `update_input` rewrites the use-list and would invalidate any
     // half-consumed iterator.  Collect both lists before any redirect.
     let [true_value, false_value] = ctx.node_outputs_exact::<2>(if_node)?;
-    let true_use_ids: smallvec::SmallVec<[strider_ir::node::UseId; 4]> = ctx
-        .graph_ref()
-        .value_uses(true_value)
-        .map(|(consumer, idx)| ctx.graph_ref().node_input_id_at(consumer, idx as usize))
-        .collect::<Result<_>>()?;
-    let false_use_ids: smallvec::SmallVec<[strider_ir::node::UseId; 4]> = ctx
-        .graph_ref()
-        .value_uses(false_value)
-        .map(|(consumer, idx)| ctx.graph_ref().node_input_id_at(consumer, idx as usize))
-        .collect::<Result<_>>()?;
+    let true_use_ids = input_use_ids(ctx, true_value)?;
+    let false_use_ids = input_use_ids(ctx, false_value)?;
     for use_id in true_use_ids {
         ctx.update_input(use_id, false_value);
     }

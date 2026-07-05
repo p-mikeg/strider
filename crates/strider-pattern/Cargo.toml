@@ -10,6 +10,7 @@ rsleigh = { workspace = true }
 vn-container = { workspace = true }
 petgraph = { workspace = true }
 anyhow = { workspace = true }
+itertools = { workspace = true, features = ["use_alloc"] }
 rustc-hash = "2"
 
 [dev-dependencies]

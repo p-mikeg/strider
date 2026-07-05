@@ -115,16 +115,10 @@ impl PeepholePass for FlagCmpCanonicalize {
         // variable-arity OR pack `Or(ShiftLeft(ZeroExtend(cmp_i), pos_i)…)` does
         // not fit the fixed-shape `rewrite_rule` DSL.
         if let Some(cmp) = canonicalize_cr_bit_test(ctx, root)? {
-            return Ok(PeepholeRewrite::Changed {
-                new_node: Some(ctx.producer(cmp)),
-            });
+            return Ok(PeepholeRewrite::from_new_value(ctx, Some(cmp)));
         }
-        Ok(match apply_rules_in_order(&self.rules)(ctx, root)? {
-            Some(new_value) => PeepholeRewrite::Changed {
-                new_node: Some(ctx.producer(new_value)),
-            },
-            None => PeepholeRewrite::NoChange,
-        })
+        let opt = apply_rules_in_order(&self.rules)(ctx, root)?;
+        Ok(PeepholeRewrite::from_new_value(ctx, opt))
     }
 
     /// Flag-tree rules fire at the outermost root; once a tree

@@ -216,11 +216,9 @@ impl MemRegionsLookupTable {
     /// If two regions share the same start address, the later one in iteration
     /// order overwrites the earlier one.
     pub fn new<I: IntoIterator<Item = MemRegion>>(regions: I) -> Self {
-        let mut map = BTreeMap::new();
-        for region in regions {
-            map.insert(region.start_addr(), region);
+        Self {
+            regions: regions.into_iter().map(|r| (r.start_addr(), r)).collect(),
         }
-        Self { regions: map }
     }
 
     /// Reads bytes starting at `addr` from whichever region contains it.

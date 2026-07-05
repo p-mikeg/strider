@@ -137,7 +137,7 @@ pub(super) fn check_graph_invariants_extend_truncate(
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
+    for (node, kind) in function.reachable_kind_iter(reachable) {
         let widening = match kind {
             NodeKind::Extend(_) => true,
             NodeKind::Truncate => false,
@@ -186,7 +186,7 @@ pub(super) fn check_graph_invariants_switch(
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
+    for (node, kind) in function.reachable_kind_iter(reachable) {
         if !matches!(kind, NodeKind::Switch) {
             continue;
         }
@@ -219,7 +219,7 @@ pub(super) fn check_graph_invariants_phis(
     // `PhiCollapse` and `DeadBranchElimination` leave zero-input phi
     // zombies in the arena; reaching one here would falsely trip
     // `PhiTokenNotFromRegion` (input[0] is gone).
-    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
+    for (node, kind) in function.reachable_kind_iter(reachable) {
         let is_phi = matches!(kind, NodeKind::Phi | NodeKind::MemPhi);
         if !is_phi {
             continue;

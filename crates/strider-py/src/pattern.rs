@@ -1469,11 +1469,7 @@ pub fn int_const(value: i128) -> PyPat {
 /// is rejected with `StriderError` rather than silently truncated.
 #[pyfunction]
 pub fn signed_int_const(value: i128) -> PyResult<PyPat> {
-    let v = i64::try_from(value).map_err(|_| {
-        into_strider_err(anyhow::anyhow!(
-            "signed_int_const value {value} does not fit in i64 (the core signed-const width)"
-        ))
-    })?;
+    let v = checked_signed_i64(value)?;
     Ok(PyPat::from_repr(PatRepr::SignedIntConst(v)))
 }
 
@@ -1674,6 +1670,30 @@ op_parser!(
     variants = [Add, Mul, Div],
     aliases = []
 );
+
+/// Parse an extend-op name (`"zero"` / `"zero_extend"` / `"ZeroExtend"` or
+/// `"sign"` / `"sign_extend"` / `"SignExtend"`) into a `strider_ir::ExtendOp`.
+/// Shared by `pattern::extend` and `template::extend`.
+pub(crate) fn parse_extend_op(op: &str) -> PyResult<strider_ir::ExtendOp> {
+    match op {
+        "zero" | "zero_extend" | "ZeroExtend" => Ok(strider_ir::ExtendOp::ZeroExtend),
+        "sign" | "sign_extend" | "SignExtend" => Ok(strider_ir::ExtendOp::SignExtend),
+        other => Err(into_strider_err(anyhow::anyhow!(
+            "unknown extend op {other:?} (expected 'zero' or 'sign')"
+        ))),
+    }
+}
+
+/// Range-check an `i128` into the `i64` core signed-const width, rejecting an
+/// out-of-range value with a `StriderError`.  Shared by the `signed_int_const`
+/// constructors in `pattern` and `template`.
+pub(crate) fn checked_signed_i64(value: i128) -> PyResult<i64> {
+    i64::try_from(value).map_err(|_| {
+        into_strider_err(anyhow::anyhow!(
+            "signed_int_const value {value} does not fit in i64 (the core signed-const width)"
+        ))
+    })
+}
 
 // ── pat-fn thunk macro ───────────────────────────────────────────────────
 //
@@ -1960,15 +1980,7 @@ pat_fn!(unary sign_extend, Cast, CastKind::SignExtend, "Pattern: `Extend(SignExt
 /// "sign_extend".
 #[pyfunction]
 pub fn extend(op: &str, operand: Py<PyAny>) -> PyResult<PyPat> {
-    let extend_op = match op {
-        "zero" | "zero_extend" | "ZeroExtend" => strider_ir::ExtendOp::ZeroExtend,
-        "sign" | "sign_extend" | "SignExtend" => strider_ir::ExtendOp::SignExtend,
-        other => {
-            return Err(into_strider_err(anyhow::anyhow!(
-                "unknown extend op {other:?} (expected 'zero' or 'sign')"
-            )));
-        }
-    };
+    let extend_op = parse_extend_op(op)?;
     Ok(PyPat::from_repr(PatRepr::Extend(extend_op, operand)))
 }
 
