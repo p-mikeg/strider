@@ -9,7 +9,8 @@
 //! 1. **Find candidate indices.**  Walk the dispatch cone for integer values
 //!    with a finite [`crate::value_range`] bound — the guard-/mask-constrained
 //!    switch variable and its value-preserving derivations (`candidate_range`,
-//!    scanned anchor-first so the real index is found before its deep upstream).
+//!    collected over an anchor-first window then tried smallest-range-first so
+//!    the tightly-bounded real index wins over any looser impostor).
 //! 2. **Pin and fold.**  For each candidate, evaluate the dispatch cone under
 //!    `index = i` via the read-only `super::eval::Evaluator` (ConstFold
 //!    arithmetic + `LoadReadOnly` ROM reads + `LoadForward` via
@@ -112,31 +113,42 @@ pub fn classify_table_dispatch(
     let anchor_value = ctx.indirect_branch_target(branch);
 
     // The dispatch is `f(index)` for one bounded `index`.  We don't pattern-
-    // match the addressing; instead we scan the dispatch cone for a bounded
-    // candidate value and, for each, pin it to every value in its range and let
+    // match the addressing; instead we scan the dispatch cone for bounded
+    // candidate values and, for each, pin it to every value in its range and let
     // the abstract evaluator fold the dispatch.  The candidate that folds for
     // ALL its values IS the index, and the folded constants are the targets; a
     // wrong candidate leaves the dispatch dependent on the real (unseeded) index
     // and is rejected on its first fold.
     //
-    // The cone is walked ANCHOR-FIRST (reverse of the producers-before-consumers
-    // postorder, so the dispatch value comes first) and we stop at the first
-    // candidate that resolves.  On a real dispatch the index sits only a few
-    // hops below the load (`Load[base + idx*stride]`), so it is found almost
-    // immediately — while the many bounded values buried deep in the index's own
-    // upstream (its instruction-decode chain, thousands of nodes) are never
-    // reached.  Combined with pruning the per-index evaluation cone at the
-    // candidate, this keeps classification O(index→dispatch path) instead of
-    // O(full backward cone), which is what dominates on large functions.
+    // Candidate collection is ANCHOR-FIRST-windowed: walk the cone in reverse
+    // postorder (dispatch value first) and take only the first `MAX_INDEX_SCAN`
+    // nodes.  On a real dispatch the index sits a few hops below the load
+    // (`Load[base + idx*stride]`), so it is in the window; the many bounded
+    // values buried deep in the index's own upstream (its instruction-decode
+    // chain, thousands of nodes) are never reached — and their per-node
+    // `value_range` query (deep, complex expressions) is never paid.
+    //
+    // We then evaluate the collected candidates SMALLEST-RANGE-FIRST and return
+    // the first that resolves.  This is load-bearing for correctness: a wider
+    // candidate (e.g. a value_range-derived intermediate that spans more values
+    // than the real switch variable) can fold to a plausible-looking run of
+    // constants that are NOT valid targets — enumerating a table ENTRY instead
+    // of the INDEX.  The real switch index is the most tightly bounded value, so
+    // trying tightest-range first picks it before any looser impostor.  (Anchor
+    // order alone does NOT guarantee this — the impostor can sit nearer the
+    // anchor than the real index.)
     let order = super::eval::cone_order(ctx, anchor_value);
     let mut load_memo: rustc_hash::FxHashMap<ValueId, bool> = rustc_hash::FxHashMap::default();
+    let mut candidates: Vec<(ValueId, u128, u128)> = order
+        .iter()
+        .rev()
+        .take(MAX_INDEX_SCAN)
+        .filter_map(|&v| candidate_range(ctx, v, anchor_value, branch, ranges, &mut load_memo))
+        .collect();
+    candidates.sort_by_key(|&(_, lo, hi)| hi - lo);
+
     let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
-    for &v in order.iter().rev().take(MAX_INDEX_SCAN) {
-        let Some((idx_value, lo, hi)) =
-            candidate_range(ctx, v, anchor_value, branch, ranges, &mut load_memo)
-        else {
-            continue;
-        };
+    for (idx_value, lo, hi) in candidates {
         // Prune the evaluation cone at the candidate: once it is pinned to a
         // concrete constant its own upstream producers are irrelevant, so each
         // per-index fold is O(index→dispatch path), not O(full cone).
