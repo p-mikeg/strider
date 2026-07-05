@@ -1,7 +1,6 @@
 use core::iter;
 use core::ops::ControlFlow;
 
-use entity_utils::Worklist;
 pub use entity_utils::set::DenseEntitySet;
 
 use crate::graph::Graph;
@@ -26,24 +25,13 @@ pub type NodeIdSet = DenseEntitySet<NodeId>;
 /// which basic-block headers are live and which predecessor slots on `Region`,
 /// `Phi`, and `MemPhi` nodes are dead.
 pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
-    let mut visited = DenseEntitySet::new();
-    let mut worklist: Worklist<NodeId> = Worklist::new();
-    worklist.enqueue(entry);
-    while let Some(node) = worklist.dequeue() {
-        // `visited.insert` doubles as the dedup gate: when `node` was
-        // already processed via another path, `insert` returns false
-        // and we skip the successor sweep.  `Worklist` only dedups
-        // while-queued (re-enqueue after dequeue is allowed), so we
-        // still need this check to avoid quadratic re-processing on
-        // CFGs whose joins fan in from multiple predecessors.
-        if !visited.insert(node) {
-            continue;
-        }
-        for succ in cfg_succs(graph, node) {
-            worklist.enqueue(succ);
-        }
-    }
-    visited
+    // A pre-order walk over the control-only successor relation ([`CfgSuccs`])
+    // visits exactly the control-reachable nodes (the generic `PreOrder`'s
+    // `DenseEntitySet` tracker is the same insert-as-dedup gate the old
+    // hand-rolled worklist used); its visited set IS the result.
+    let mut walk = PreOrder::new(CfgSuccs(graph), iter::once(entry));
+    walk.by_ref().for_each(drop);
+    walk.into_visited()
 }
 
 /// A pre-order walk over the IR graph using a [`DenseEntitySet`] as the
@@ -119,6 +107,24 @@ impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
         f: impl FnMut(NodeId) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
         graph_walk_succs(self.0, node).try_for_each(f)
+    }
+}
+
+/// A [`graph_algorithms::walk::GraphRef`] over forward **control** edges only
+/// (via [`cfg_succs`]) — the successor relation [`cfg_reachable`] walks to find
+/// the control-live node set.
+#[derive(Clone, Copy)]
+struct CfgSuccs<'a>(&'a Graph);
+
+impl graph_algorithms::walk::GraphRef for CfgSuccs<'_> {
+    type NodeId = NodeId;
+
+    fn try_successors(
+        &self,
+        node: NodeId,
+        f: impl FnMut(NodeId) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        cfg_succs(self.0, node).try_for_each(f)
     }
 }
 
