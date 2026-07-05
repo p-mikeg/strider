@@ -229,9 +229,44 @@ impl SideTables {
         // Both existing and `contributors` are tiny (a handful of addresses),
         // so extend + sort + dedup is the right wheel.
         let fp = &mut self.asm_fingerprints[node_id];
-        fp.extend_from_slice(contributors);
-        fp.sort_unstable();
-        fp.dedup();
+        if fp.is_empty() {
+            fp.extend_from_slice(contributors);
+            fp.sort_unstable();
+            fp.dedup();
+            return;
+        }
+        // `fp` is maintained sorted + deduplicated (the invariant below), and it
+        // can grow large under superset over-tainting (thousands of addresses on
+        // a big function).  Re-sorting the whole thing on every union is
+        // O(N log N) with N climbing.  Instead sort only the (small) new
+        // contributors and two-pointer MERGE them into the already-sorted `fp` —
+        // O(N + M), no re-sort of the large existing set.
+        let mut add: smallvec::SmallVec<[u64; 8]> = contributors.iter().copied().collect();
+        add.sort_unstable();
+        add.dedup();
+        let mut merged: smallvec::SmallVec<[u64; 2]> =
+            smallvec::SmallVec::with_capacity(fp.len() + add.len());
+        let (mut i, mut j) = (0usize, 0usize);
+        while i < fp.len() && j < add.len() {
+            match fp[i].cmp(&add[j]) {
+                std::cmp::Ordering::Less => {
+                    merged.push(fp[i]);
+                    i += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    merged.push(add[j]);
+                    j += 1;
+                }
+                std::cmp::Ordering::Equal => {
+                    merged.push(fp[i]);
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+        merged.extend_from_slice(&fp[i..]);
+        merged.extend_from_slice(&add[j..]);
+        *fp = merged;
     }
 
     /// Unions the fingerprint of `src` into `dst`.  Self-extension
@@ -299,3 +334,37 @@ impl SideTables {
             });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cranelift_entity::EntityRef;
+
+    // The union keeps each node's fingerprint sorted + deduplicated regardless
+    // of the incoming order, folding new contributors into a large existing set
+    // via a sorted merge (the perf-critical path) — never dropping an entry.
+    #[test]
+    fn extend_asm_fingerprint_unions_sorted_deduped() {
+        let mut st = SideTables::default();
+        let n = NodeId::new(3);
+
+        // Empty → seed (the fp.is_empty() arm); contributors may arrive unsorted.
+        st.extend_asm_fingerprint(n, &[40, 10, 30, 20, 50]);
+        assert_eq!(st.asm_fingerprint(n), &[10, 20, 30, 40, 50]);
+
+        // Merge into the (now non-empty, sorted) fp: unsorted, one duplicate
+        // (20), the rest new and interleaved — result stays sorted + deduped and
+        // is the full union (no shrink).
+        st.extend_asm_fingerprint(n, &[35, 20, 5, 45]);
+        assert_eq!(st.asm_fingerprint(n), &[5, 10, 20, 30, 35, 40, 45, 50]);
+
+        // Merging a subset changes nothing (pure union, idempotent).
+        st.extend_asm_fingerprint(n, &[10, 50]);
+        assert_eq!(st.asm_fingerprint(n), &[5, 10, 20, 30, 35, 40, 45, 50]);
+
+        // Empty contributors is a no-op.
+        st.extend_asm_fingerprint(n, &[]);
+        assert_eq!(st.asm_fingerprint(n), &[5, 10, 20, 30, 35, 40, 45, 50]);
+    }
+}
+
