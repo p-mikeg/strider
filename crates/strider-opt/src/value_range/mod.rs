@@ -171,9 +171,9 @@ impl<'f> RangeMap<'f> {
         // Note we do NOT propagate a bound *up* a `ZeroExtend`/`Truncate` cast
         // chain (e.g. the x64 index `ZeroExtend(Truncate(rdi))` whose guard sits
         // on the inner `Truncate(rdi)`).  The only consumer — the jump-table
-        // classifier's `find_index_candidates` — already walks the whole dispatch
-        // cone and tries the inner guarded node directly (substituting it folds
-        // the dispatch), so bounding the outer cast is redundant.
+        // classifier's `candidate_range` scan — already reaches the inner guarded
+        // node directly (substituting it folds the dispatch), so bounding the
+        // outer cast is redundant.
         let result = if matches!(self.function.node_kind(producer), NodeKind::Phi) {
             self.resolve_phi(producer, region)
         } else {

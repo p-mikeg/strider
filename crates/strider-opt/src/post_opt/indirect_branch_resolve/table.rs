@@ -8,8 +8,8 @@
 //!
 //! 1. **Find candidate indices.**  Walk the dispatch cone for integer values
 //!    with a finite [`crate::value_range`] bound — the guard-/mask-constrained
-//!    switch variable and its value-preserving derivations
-//!    (`find_index_candidates`).
+//!    switch variable and its value-preserving derivations (`candidate_range`,
+//!    scanned anchor-first so the real index is found before its deep upstream).
 //! 2. **Pin and fold.**  For each candidate, evaluate the dispatch cone under
 //!    `index = i` via the read-only `super::eval::Evaluator` (ConstFold
 //!    arithmetic + `LoadReadOnly` ROM reads + `LoadForward` via
@@ -58,6 +58,36 @@ use strider_cfg::ResolvedTargets;
 use strider_ir::IRViewer;
 use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId};
 
+/// How many nodes of the anchor-first cone scan to examine before giving up on
+/// finding a table index.  A real dispatch index directly feeds the load's
+/// address (`Load[base + idx*stride]`), so it sits only a handful of hops below
+/// the dispatch value — measured at ≤ 8 even through width casts on a large x86
+/// interpreter.  Beyond that we are in the index's *own* upstream (the
+/// instruction-decode chain), where no candidate can make the dispatch fold —
+/// and, crucially, where the per-node `value_range` query is far more expensive
+/// (deep, complex expressions).  So a tight window is both sufficient and the
+/// difference between a fast reject and a 9s one on the many indirect branches
+/// that are NOT resolvable tables (function-pointer `call *[reg+off]`, etc.).
+///
+/// ponytail: fixed near-anchor scan window (64 ≈ 8× the observed max depth); it
+/// fails SAFE — a table whose index is improbably deeper is reported unresolved,
+/// never mis-resolved.  Raise it if a real dispatch is ever missed.
+const MAX_INDEX_SCAN: usize = 64;
+
+/// Largest pruned evaluation cone a candidate may have before it is rejected
+/// without folding.  A real dispatch index's pruned cone is only the address
+/// arithmetic plus the table load — a handful of nodes (observed ≤ 9), and
+/// independent of the table's entry count.  A candidate with a large pruned
+/// cone is deep in the index's own upstream: pinning it prunes almost nothing,
+/// and folding that full cone COLD (rebuilding the SP-alias memo across
+/// thousands of nodes) is what makes an unresolvable Load-dispatch cost seconds.
+/// Building the cone is a cheap graph walk, so we build it, check its size, and
+/// skip the fold when it is implausibly large.
+///
+/// ponytail: 128 ≈ 14× the observed max; well below the thousands-of-nodes
+/// cones of the spurious deep candidates.  Fails SAFE (unresolved, not wrong).
+const MAX_INDEX_CONE: usize = 128;
+
 /// Top-level classifier hook for the table-dispatch arm.  Called by
 /// [`super::classify_anchor`] when the anchor's producer is a
 /// [`NodeKind::Load`] or an `IntBinaryOp(And)` dispatch-mask wrapper.
@@ -81,32 +111,49 @@ pub fn classify_table_dispatch(
     // `IndirectBranch` that happens to share the dispatch value.
     let anchor_value = ctx.indirect_branch_target(branch);
 
-    // Evaluate the dispatch cone under each concrete index — no clone, no
-    // pipeline. The cone + its topological order are index-independent, so
-    // build them ONCE here and reuse for BOTH the candidate search and the
-    // per-index evaluation order (a single backward post-order walk).
-    let order = super::eval::cone_order(ctx, anchor_value);
-
     // The dispatch is `f(index)` for one bounded `index`.  We don't pattern-
-    // match the addressing; instead we find candidate bounded values in the
-    // dispatch cone, and for each, pin it to every value in its range and let
-    // the real optimiser fold the dispatch.  The candidate that folds for ALL
-    // its values IS the index, and the folded constants are the targets.  A
-    // wrong candidate fails to fold (the dispatch still depends on the real
-    // index) and is rejected after one or two tries.
-    let candidates = find_index_candidates(ctx, &order, anchor_value, branch, ranges);
-    if candidates.is_empty() {
-        return None;
-    }
-
-    // The candidate whose whole range collapses to constants IS the index; the
-    // constants are the targets. A wrong candidate leaves the cone dependent on
-    // a non-seeded runtime value and fails to collapse → rejected.
+    // match the addressing; instead we scan the dispatch cone for a bounded
+    // candidate value and, for each, pin it to every value in its range and let
+    // the abstract evaluator fold the dispatch.  The candidate that folds for
+    // ALL its values IS the index, and the folded constants are the targets; a
+    // wrong candidate leaves the dispatch dependent on the real (unseeded) index
+    // and is rejected on its first fold.
+    //
+    // The cone is walked ANCHOR-FIRST (reverse of the producers-before-consumers
+    // postorder, so the dispatch value comes first) and we stop at the first
+    // candidate that resolves.  On a real dispatch the index sits only a few
+    // hops below the load (`Load[base + idx*stride]`), so it is found almost
+    // immediately — while the many bounded values buried deep in the index's own
+    // upstream (its instruction-decode chain, thousands of nodes) are never
+    // reached.  Combined with pruning the per-index evaluation cone at the
+    // candidate, this keeps classification O(index→dispatch path) instead of
+    // O(full backward cone), which is what dominates on large functions.
+    let order = super::eval::cone_order(ctx, anchor_value);
+    let mut load_memo: rustc_hash::FxHashMap<ValueId, bool> = rustc_hash::FxHashMap::default();
     let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
-    for (idx_value, lo, hi) in candidates {
-        if let Some(targets) = enumerate_targets(lo, hi, |v| {
-            ev.eval_target(&order, anchor_value, idx_value, v)
-        }) {
+    for &v in order.iter().rev().take(MAX_INDEX_SCAN) {
+        let Some((idx_value, lo, hi)) =
+            candidate_range(ctx, v, anchor_value, branch, ranges, &mut load_memo)
+        else {
+            continue;
+        };
+        // Prune the evaluation cone at the candidate: once it is pinned to a
+        // concrete constant its own upstream producers are irrelevant, so each
+        // per-index fold is O(index→dispatch path), not O(full cone).
+        let pruned = super::eval::cone_order_pruned(ctx, anchor_value, idx_value);
+        // A real dispatch index sits a few hops below the load, so its pruned
+        // evaluation cone is tiny (a handful of nodes: the address arithmetic
+        // and the table load).  A candidate whose pruned cone is large is deep
+        // in the index's own upstream — pinning it prunes almost nothing, and
+        // folding its full cone (cold, per fold) is what makes an unresolvable
+        // Load-dispatch cost seconds.  Building the cone is a cheap graph walk;
+        // skip the expensive fold when it is too big to be a real index.
+        if pruned.len() > MAX_INDEX_CONE {
+            continue;
+        }
+        if let Some(targets) =
+            enumerate_targets(lo, hi, |x| ev.eval_target(&pruned, anchor_value, idx_value, x))
+        {
             return Some(ResolvedTargets::Multiple(targets));
         }
     }
@@ -128,71 +175,65 @@ fn enumerate_targets(
     (!targets.is_empty()).then_some(targets)
 }
 
-/// Candidate index values: every integer value reachable from `anchor_value`
-/// with a finite range, as `(value, lo, hi)` (inclusive), smallest range
-/// first.  `value_range` only bounds the guard-/mask-constrained switch
+/// If `v` is a valid bounded index candidate for the dispatch anchored at
+/// `anchor_value`, returns its inclusive `(value, lo, hi)` range; otherwise
+/// `None`.  `value_range` only bounds the guard-/mask-constrained switch
 /// variable and its `Add(X, const)` offset derivation, never a `Mul`-scaled
-/// address term — so every candidate is contiguous over its range and safe to
-/// enumerate.  (A guarded value wrapped in a width cast like
+/// address term — so a returned candidate is contiguous over its range and safe
+/// to enumerate.  (A guarded value wrapped in a width cast like
 /// `ZeroExtend(Truncate(x))` resolves through the cast's inner operand, which
-/// this cone walk reaches directly, not via the outer cast.)
-fn find_index_candidates(
+/// the caller's cone walk reaches directly, not via the outer cast.)
+fn candidate_range(
     ctx: &strider_ir::Function,
-    order: &[ValueId],
+    v: ValueId,
     anchor_value: ValueId,
     branch: NodeId,
     ranges: &mut crate::value_range::RangeMap<'_>,
-) -> Vec<(ValueId, u128, u128)> {
-    let mut out: Vec<(ValueId, u128, u128)> = Vec::new();
-    let mut load_memo: rustc_hash::FxHashMap<ValueId, bool> = rustc_hash::FxHashMap::default();
-    // Backward value-input cone from the anchor (producers before consumers,
-    // each value once; the `is_anchor` guard below skips the root). Caller
-    // precomputed this post-order via `cone_order` and shares it with the
-    // per-index evaluation order, so the cone is walked once per branch.
-    for &v in order {
-        if let Some(ty) = ctx.value_type_opt(v) {
-            // Never enumerate the dispatch value ITSELF as the index.  A real
-            // table dispatch reads/computes the target *from* a deeper index
-            // (`Load[base + idx*stride]` / `Load[(sp+K) + idx*stride]`), so
-            // the index is strictly inside the cone, never the anchor.
-            // Substituting the dispatch value directly with `IntConst(i)` makes
-            // the branch's target literally `i` for every `i` in the range —
-            // folding a guarded direct-load (or direct-mask) anchor into bogus
-            // sequential targets equal to the bare index values.  This is the
-            // identity-fold wrong-edge case: skip it.
-            let is_anchor = v == anchor_value;
-            // Skip constants — a literal operand (the `*2` scale, the table
-            // base) is not the index.
-            let is_const = ctx.int_const_u128(v).is_some();
-            // A loaded value is the table INDEX only when its range reflects
-            // dispatch reachability — a range-check **guard** (e.g. a
-            // stack-passed arg `Load[sp+K]` bounded by `cmp k,N`) or an explicit
-            // **mask** (`(kind & 7)` on a stack-loaded arg).  A load-derived
-            // value with only a width-derived KnownBits bound is a table ENTRY
-            // (e.g. a `tbb` byte, [0,255]); enumerating its whole width folds to
-            // a run of bogus sequential targets.  So exclude load-derived values
-            // that are neither guard-bounded nor mask-shaped.
-            let entry_load = is_load_derived(ctx, v, &mut load_memo)
-                && ranges.dominating_guard(v, branch).is_none()
-                && !is_and_masked(ctx, v);
-            if ty.is_integer() && !is_anchor && !is_const && !entry_load {
-                let iv = ranges.range_of(v, branch);
-                let mask = ty.bit_mask_u128();
-                // A finite range strictly inside the type's full width, capped
-                // to the per-table enumeration limit.
-                if iv.hi < mask && iv.hi >= iv.lo {
-                    let count = iv.hi - iv.lo + 1;
-                    if count <= u128::from(MAX_TABLE_ENTRIES) {
-                        out.push((v, iv.lo, iv.hi));
-                    }
-                }
-            }
+    load_memo: &mut rustc_hash::FxHashMap<ValueId, bool>,
+) -> Option<(ValueId, u128, u128)> {
+    let ty = ctx.value_type_opt(v)?;
+    if !ty.is_integer() {
+        return None;
+    }
+    // Never enumerate the dispatch value ITSELF as the index.  A real table
+    // dispatch reads/computes the target *from* a deeper index
+    // (`Load[base + idx*stride]`), so the index is strictly inside the cone,
+    // never the anchor.  Substituting the dispatch value directly with
+    // `IntConst(i)` makes the branch's target literally `i` for every `i` in
+    // the range — the identity-fold wrong-edge case.  Skip it.
+    if v == anchor_value {
+        return None;
+    }
+    // Skip constants — a literal operand (the `*2` scale, the table base) is
+    // not the index.
+    if ctx.int_const_u128(v).is_some() {
+        return None;
+    }
+    // A loaded value is the table INDEX only when its range reflects dispatch
+    // reachability — a range-check **guard** (e.g. a stack-passed arg
+    // `Load[sp+K]` bounded by `cmp k,N`) or an explicit **mask** (`(kind & 7)`
+    // on a stack-loaded arg).  A load-derived value with only a width-derived
+    // KnownBits bound is a table ENTRY (e.g. a `tbb` byte, [0,255]);
+    // enumerating its whole width folds to a run of bogus sequential targets.
+    // So exclude load-derived values that are neither guard-bounded nor
+    // mask-shaped.
+    let entry_load = is_load_derived(ctx, v, load_memo)
+        && ranges.dominating_guard(v, branch).is_none()
+        && !is_and_masked(ctx, v);
+    if entry_load {
+        return None;
+    }
+    let iv = ranges.range_of(v, branch);
+    let mask = ty.bit_mask_u128();
+    // A finite range strictly inside the type's full width, capped to the
+    // per-table enumeration limit.
+    if iv.hi < mask && iv.hi >= iv.lo {
+        let count = iv.hi - iv.lo + 1;
+        if count <= u128::from(MAX_TABLE_ENTRIES) {
+            return Some((v, iv.lo, iv.hi));
         }
     }
-    // Try the tightest-bounded candidates first: a wrong one fails fast, and the
-    // real index is usually the narrowest finite range in the cone.
-    out.sort_by_key(|&(_, lo, hi)| hi - lo);
-    out
+    None
 }
 
 /// Is `v` produced by an `And(_, IntConst)`?  Such a value is mask-bounded

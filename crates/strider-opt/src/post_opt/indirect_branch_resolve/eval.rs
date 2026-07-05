@@ -252,12 +252,105 @@ pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<
     graph_algorithms::walk::entity_postorder(ValueInputSuccs { function }, [root]).collect()
 }
 
+/// Like [`ValueInputSuccs`] but treats `stop` as a leaf: its value-input
+/// producers are NOT followed.  Used to prune a dispatch cone at the index
+/// value, which is pinned to a concrete constant during evaluation and so has
+/// no need of its own upstream producers.
+struct ValueInputSuccsPruned<'a> {
+    function: &'a strider_ir::Function,
+    stop: ValueId,
+}
+
+impl graph_algorithms::walk::GraphRef for ValueInputSuccsPruned<'_> {
+    type NodeId = ValueId;
+
+    fn try_successors(
+        &self,
+        value: ValueId,
+        f: impl FnMut(ValueId) -> std::ops::ControlFlow<()>,
+    ) -> std::ops::ControlFlow<()> {
+        // The pinned index is a leaf: stop the backward walk here so its
+        // (irrelevant, once-constant) producer cone is never visited.
+        if value == self.stop {
+            return std::ops::ControlFlow::Continue(());
+        }
+        value_input_producers(self.function, self.function.producer(value)).try_for_each(f)
+    }
+}
+
+/// The dispatch cone in producers-before-consumers order, **pruned at `stop`**:
+/// backward reachability from `root` over value edges, but never descending
+/// through `stop`'s own inputs.  `stop` (the index value) is pinned to a
+/// concrete constant at eval time, so its entire upstream computation — which
+/// on a real dispatch is the instruction-decode chain that produces the index,
+/// often thousands of nodes — is dead weight and must not be walked or
+/// re-evaluated per fold.  Evaluating over this pruned cone is O(nodes on the
+/// index→dispatch path) instead of O(whole backward slice from `root`).
+pub(crate) fn cone_order_pruned(
+    function: &strider_ir::Function,
+    root: ValueId,
+    stop: ValueId,
+) -> Vec<ValueId> {
+    graph_algorithms::walk::entity_postorder(ValueInputSuccsPruned { function, stop }, [root])
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Evaluator, cone_order};
+    use super::{Evaluator, cone_order, cone_order_pruned};
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
+
+    // `dispatch = (idx_raw + 5) + 100`.  Pin the INNER `idx = idx_raw + 5` as
+    // the dispatch index.  Once `idx` is a constant, its ancestor `idx_raw`
+    // (a symbolic register read) is irrelevant — the pruned cone must stop at
+    // `idx` and never walk into `idx_raw`, yet still evaluate to the right
+    // target.  This is the exact shape that made the real cone 7,101 nodes:
+    // the index's whole upstream decode chain hanging off it, dead weight once
+    // the index is pinned.
+    #[test]
+    fn pruned_cone_stops_at_index_and_evaluates_correctly() {
+        let vn = reg_vn(0x1000, 8);
+        let mut b = RegisterSet::new()
+            .tracked(vn)
+            .arg(vn)
+            .build_fn_single_region()
+            .expect("build_fn_single_region");
+        let idx_raw = b.read_variable(&vn).expect("idx_raw");
+        let c5 = b.build_int_const(5u64, ValueType::I64).expect("c5");
+        let idx = b
+            .build_int_binary_operation(idx_raw, c5, IntBinaryOp::Add, ValueType::I64)
+            .expect("idx");
+        let c100 = b.build_int_const(100u64, ValueType::I64).expect("c100");
+        let dispatch = b
+            .build_int_binary_operation(idx, c100, IntBinaryOp::Add, ValueType::I64)
+            .expect("dispatch");
+        b.build_return(Some(dispatch), &[]).expect("build_return");
+        b.set_lift_addr(None);
+        let function = b.build().expect("build");
+
+        let full = cone_order(&function, dispatch);
+        let pruned = cone_order_pruned(&function, dispatch, idx);
+
+        // The full backward cone reaches the index's ancestor; the pruned one
+        // stops at `idx` and must NOT contain it.
+        assert!(
+            full.contains(&idx_raw),
+            "full cone should include the index's ancestor"
+        );
+        assert!(
+            !pruned.contains(&idx_raw),
+            "pruned cone must stop at idx and exclude its ancestors"
+        );
+        assert!(pruned.contains(&idx), "pruned cone includes the stop node");
+        assert!(pruned.contains(&dispatch), "pruned cone includes the root");
+
+        // And it still evaluates correctly for several pinned indices.
+        let mut ev = Evaluator::new(&function, None, crate::AliasMode::default());
+        assert_eq!(ev.eval_target(&pruned, dispatch, idx, 7), Some(107));
+        assert_eq!(ev.eval_target(&pruned, dispatch, idx, 8), Some(108));
+    }
 
     // Build `Add(idx, 100):I64` where `idx` is a tracked register read
     // (non-const so leaving it unseeded genuinely fails to resolve).
