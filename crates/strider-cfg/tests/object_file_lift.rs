@@ -55,11 +55,11 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
     // expected control-flow shape" — without the section-walker
     // dispatch the CFG would be empty / single-region-trap.
     assert!(
-        cfg.region_graph.node_count() >= 1,
+        cfg.region_graph().node_count() >= 1,
         "expected at least one region after lifting tzcount; got {} \
          (an empty CFG implies the loader produced no readable bytes \
          for the .o)",
-        cfg.region_graph.node_count()
+        cfg.region_graph().node_count()
     );
     assert!(
         cfg.regions()
