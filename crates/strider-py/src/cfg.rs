@@ -33,7 +33,7 @@ use crate::strider_cls::PyLifter;
 /// / returned as element 0 of `Lifter.analyze`.  Renderable to Graphviz
 /// dot / dark-themed HTML for inspection; also the p-code audit-trail
 /// lookup (`pcode_at` / `fingerprint_pcode`).
-#[pyclass(name = "Cfg", module = "strider")]
+#[pyclass(name = "Cfg", module = "strider", unsendable)]
 pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
     /// Shared handle to the `Lifter` that built `inner`.  The `Cfg` is a

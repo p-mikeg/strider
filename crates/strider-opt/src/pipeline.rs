@@ -401,10 +401,11 @@ impl OptimizerPipeline {
                         changed = true;
                         // Drain immediately after every pass that changed the
                         // graph so the NEXT pass in this same iteration sees a
-                        // culled graph.  (SP decompositions aren't cached during
-                        // the fixed point — the read-only decomposer reads the
-                        // live graph — so there is nothing to invalidate here.)
+                        // culled graph — and invalidate the SP-decomposition
+                        // memo, since a rewrite can change (or cull) the value a
+                        // cached verdict was computed for.
                         edit.clean();
+                        edit.function().side_tables().clear_stack_slots();
                     }
                 }
                 if !changed {

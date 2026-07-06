@@ -118,19 +118,38 @@ impl<'a> SpAnalyzer<'a> {
 /// reached in practice; it guards against a malformed graph.
 const MAX_SP_SPINE: u32 = 100_000;
 
-/// The stack decomposition of `value`: a committed cache hit, else a read-only
-/// walk of just the **SP spine** — the `Add`-of-const / alignment-`And` chain
-/// down to `InitialVar(sp)` — accumulating the constant offset.
+/// The stack decomposition of `value`, MEMOIZED: a cache hit returns O(1), else
+/// it walks the SP spine and caches the verdict (positive or `NotStack`) so the
+/// next query on `value` is a hit.
 ///
-/// O(spine depth), NOT O(cone): it follows only the single SP-bearing operand at
-/// each step (the other is a constant or the alignment mask), so it never visits
-/// the off-spine ancestors a full backward sweep would.  Side-effect free — it
-/// mutates nothing — so it composes with any shared `&Function` borrow (the
-/// memory-SSA walk, the range-scoped indirect-branch classifier).  The
-/// persistent cache is populated separately by `StackOffsetDetect` once the
-/// graph is frozen; during the optimizer's fixed point the cache is empty and
-/// this walks the live spine, which is correct and cheap.
+/// The cache lives behind a `RefCell` on the function's side-tables, so this
+/// fills it through a shared `&Function` — its memory-SSA / range-scoped callers
+/// can't hand it `&mut`.  The optimizer clears the cache on every graph mutation
+/// (so a memoized verdict never outlives its graph), which is why filling here
+/// is sound during the fixed point.
 pub(crate) fn decompose_readonly(function: &Function, value: ValueId) -> Option<SpExpr> {
+    // Cache hit for the queried value → done, no re-walk.
+    match function.side_tables().stack_slot(value) {
+        SpDecomp::Stack(_) => return resolve_slot(function, value),
+        SpDecomp::NotStack => return None,
+        SpDecomp::Unknown => {}
+    }
+    // Miss: walk the spine (short-circuiting on any already-cached ancestor),
+    // then memoize `value`'s verdict.
+    let result = spine_walk(function, value);
+    match result {
+        Some(e) => function.side_tables().set_stack_slot(value, e.base, e.offset),
+        None => function.side_tables().set_stack_slot_not(value),
+    }
+    result
+}
+
+/// The read-only SP-spine walk backing [`decompose_readonly`]: the
+/// `Add`-of-const / alignment-`And` chain down to `InitialVar(sp)`, accumulating
+/// the constant offset.  O(spine depth), NOT O(cone) — it follows only the
+/// single SP-bearing operand at each step.  Mutates nothing; short-circuits on
+/// any cached ancestor slot.
+fn spine_walk(function: &Function, value: ValueId) -> Option<SpExpr> {
     let mut cur = value;
     let mut acc: i128 = 0;
     // Once an alignment-`And` is met, the base is fixed to *that* And output (an

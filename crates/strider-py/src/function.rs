@@ -6,7 +6,8 @@
 //! so the Sleigh stays alive for the graph's lifetime and is
 //! reachable through `strider_cfg::Cfg::sleigh`.
 
-use std::sync::{Arc, RwLock, TryLockError};
+use std::cell::{Ref, RefCell, RefMut};
+use std::rc::Rc;
 
 use pyo3::prelude::*;
 use strider_ir::node::NodeKind;
@@ -16,13 +17,15 @@ use crate::cfg::PyCfg;
 
 /// Opaque wrapper over `strider_ir::Function`.
 ///
-/// The graph is held in `Arc<RwLock<...>>` so optimization passes can
-/// mutate it without requiring `&mut self` on the PyFunction wrapper,
-/// and so the same graph can be shared across multiple Python
-/// references.
-#[pyclass(name = "Function", module = "strider")]
+/// The graph is held in `Rc<RefCell<...>>` so optimization passes can
+/// mutate it without requiring `&mut self` on the PyFunction wrapper, and
+/// so the same graph can be shared across multiple Python references.  `Rc`
+/// (not `Arc`) and the `unsendable` pyclass because the workspace is
+/// single-threaded and `Function` is `!Sync` (its SP-decomposition cache is a
+/// `RefCell`); Python access is GIL-serialised regardless.
+#[pyclass(name = "Function", module = "strider", unsendable)]
 pub struct PyFunction {
-    pub(crate) inner: Arc<RwLock<strider_ir::Function>>,
+    pub(crate) inner: Rc<RefCell<strider_ir::Function>>,
     /// Strong reference to the parent Cfg; keeps the Sleigh alive for
     /// dot rendering and ensures destruction order is graph-then-cfg.
     pub(crate) cfg: Py<PyCfg>,
@@ -31,39 +34,34 @@ pub struct PyFunction {
 impl PyFunction {
     pub(crate) fn new(function: strider_ir::Function, cfg: Py<PyCfg>) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(function)),
+            inner: Rc::new(RefCell::new(function)),
             cfg,
         }
     }
 
-    /// Borrow the inner graph for read.  Returns an `anyhow::Error`
-    /// when the lock is poisoned.
-    pub(crate) fn read_inner(
-        &self,
-    ) -> anyhow::Result<std::sync::RwLockReadGuard<'_, strider_ir::Function>> {
+    /// Borrow the inner graph for read.  Returns an `anyhow::Error` if the
+    /// graph is currently borrowed for mutation (a `RefCell` conflict).
+    pub(crate) fn read_inner(&self) -> anyhow::Result<Ref<'_, strider_ir::Function>> {
         self.inner
-            .read()
-            .map_err(|_| anyhow::anyhow!("Function lock poisoned"))
+            .try_borrow()
+            .map_err(|_| anyhow::anyhow!("Function is currently borrowed for mutation"))
     }
 
-    /// Try to acquire the write lock without blocking.  Used by mutating
-    /// methods (`compact`, `rewrite`, and the `run_pipeline_in_place`
-    /// helper `Lifter.optimize` drives) so that a re-entrant call from
-    /// inside a `.when()` predicate (which holds the read lock for the
-    /// duration of `find_all`) surfaces a typed error rather than
-    /// deadlocking the thread.
-    pub(crate) fn try_write_inner(
-        &self,
-    ) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
-        self.inner.try_write().map_err(|e| match e {
-            TryLockError::Poisoned(_) => anyhow::anyhow!("Function lock poisoned"),
-            TryLockError::WouldBlock => anyhow::anyhow!(
+    /// Try to borrow the inner graph mutably.  Used by mutating methods
+    /// (`compact`, `rewrite`, and the `run_pipeline_in_place` helper
+    /// `Lifter.optimize` drives) so that a re-entrant call from inside a
+    /// `.when()` predicate (which holds the read borrow for the duration of
+    /// `find_all`) surfaces a typed error rather than panicking on the
+    /// already-borrowed `RefCell`.
+    pub(crate) fn try_write_inner(&self) -> anyhow::Result<RefMut<'_, strider_ir::Function>> {
+        self.inner.try_borrow_mut().map_err(|_| {
+            anyhow::anyhow!(
                 "Function mutation rejected: the function is currently borrowed for read \
                  (typically because this call is from inside a `.when()` predicate \
                  invoked by `find_all`/`find_joined`).  Mutating the function \
                  from within a pattern predicate is not supported — collect matches \
                  first and mutate after `find_all` returns."
-            ),
+            )
         })
     }
 
@@ -243,7 +241,7 @@ impl PyFunction {
             .map_err(crate::errors::into_strider_err)?
             .clone();
         Ok(PyFunction {
-            inner: Arc::new(RwLock::new(cloned)),
+            inner: Rc::new(RefCell::new(cloned)),
             cfg: self.cfg.clone_ref(py),
         })
     }

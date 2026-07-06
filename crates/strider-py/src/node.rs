@@ -2,7 +2,7 @@
 //!
 //! Mirrors how [`crate::matcher::PyMatch`] references the function: a
 //! `PyNode` carries a `Py<PyFunction>` so accessors can re-borrow the
-//! shared `Arc<RwLock<Function>>`, plus a raw `u32` node id and a
+//! shared `Rc<RefCell<Function>>`, plus a raw `u32` node id and a
 //! generation snapshot taken at construction time.  Any arena-reshuffle
 //! op (`Function.compact`, `optimize`, …) bumps `Function::generation()`,
 //! and every accessor compares against the snapshot so a stale id
@@ -37,7 +37,7 @@ use crate::function::PyFunction;
 /// subsequent arena-reshuffling op (`Function.compact`, `optimize`, …)
 /// bumps the counter; every accessor then raises a `StriderError` rather
 /// than dereferencing a stale node id.
-#[pyclass(name = "Node", module = "strider")]
+#[pyclass(name = "Node", module = "strider", unsendable)]
 pub struct PyNode {
     pub(crate) function: Py<PyFunction>,
     /// Raw arena index of the node this handle points at.

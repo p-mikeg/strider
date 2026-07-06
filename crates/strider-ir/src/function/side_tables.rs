@@ -2,6 +2,8 @@
 //! grouped so [`crate::Function::new`] defaults them in one line and
 //! [`crate::Function::compact`] remaps them in one `SideTables::remap` call.
 
+use std::cell::RefCell;
+
 use cranelift_entity::{entity_impl, SecondaryMap};
 use entity_utils::{EntityInterner, UnionDag};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -138,12 +140,19 @@ pub struct SideTables {
     /// `decompose` writes it (caching negatives too), and the user-facing
     /// per-node accessor [`crate::Function::stack_offset`] derives a
     /// Store/Load's slot by looking up its address value here.  Volatile during
-    /// the optimizer's fixed point (cleared on graph mutation) and stably
-    /// (re)filled once the graph is frozen.
-    stack_offsets: SecondaryMap<ValueId, SpDecomp>,
+    /// the optimizer's fixed point (cleared on graph mutation via
+    /// [`Self::clear_stack_slots`]) and stably (re)filled once the graph is
+    /// frozen.
+    ///
+    /// Behind a `RefCell` so the read-only `decompose` — whose memory-SSA /
+    /// range-scoped callers hold `&Function` — can memoize each verdict on a
+    /// miss.  This is a pure cache: interior mutability changes nothing an
+    /// observer can see except query latency, so it does not make the IR itself
+    /// mutable-through-`&`.
+    stack_offsets: RefCell<SecondaryMap<ValueId, SpDecomp>>,
     /// Deduplicates the `(base, offset)` payloads that [`SpDecomp::Stack`] slots
     /// reference, so the dense `stack_offsets` map stores only a [`StackId`].
-    stack_interner: EntityInterner<StackId, (ValueId, i128)>,
+    stack_interner: RefCell<EntityInterner<StackId, (ValueId, i128)>>,
     /// Per-output case addresses for a [`crate::node::NodeKind::Switch`]
     /// node: raw target addresses (no arena ids), one per switch output.
     // Sparse: only Switch nodes carry targets — see `stack_offsets`.
@@ -227,7 +236,7 @@ impl SideTables {
     /// has not been decomposed).
     #[inline]
     pub fn stack_slot(&self, value: ValueId) -> SpDecomp {
-        self.stack_offsets[value]
+        self.stack_offsets.borrow()[value]
     }
 
     /// The resolved stack slot `(base, offset)` for `value`, or `None` when it
@@ -235,23 +244,35 @@ impl SideTables {
     /// the offset is relative to; offsets compare only when their bases match.
     #[inline]
     pub fn stack_slot_resolved(&self, value: ValueId) -> Option<(ValueId, i128)> {
-        match self.stack_offsets[value] {
-            SpDecomp::Stack(id) => self.stack_interner.get(id).copied(),
+        match self.stack_offsets.borrow()[value] {
+            SpDecomp::Stack(id) => self.stack_interner.borrow().get(id).copied(),
             SpDecomp::Unknown | SpDecomp::NotStack => None,
         }
     }
 
     /// Caches that `value` decomposes to the SP terminal `base` plus `offset`.
+    /// Takes `&self` (interior mutability) so the read-only decomposer can
+    /// memoize through a shared `&Function`.
     #[inline]
-    pub fn set_stack_slot(&mut self, value: ValueId, base: ValueId, offset: i128) {
-        let id = self.stack_interner.intern((base, offset));
-        self.stack_offsets[value] = SpDecomp::Stack(id);
+    pub fn set_stack_slot(&self, value: ValueId, base: ValueId, offset: i128) {
+        let id = self.stack_interner.borrow_mut().intern((base, offset));
+        self.stack_offsets.borrow_mut()[value] = SpDecomp::Stack(id);
     }
 
     /// Caches that `value` is provably NOT SP-rooted (a negative memo entry).
     #[inline]
-    pub fn set_stack_slot_not(&mut self, value: ValueId) {
-        self.stack_offsets[value] = SpDecomp::NotStack;
+    pub fn set_stack_slot_not(&self, value: ValueId) {
+        self.stack_offsets.borrow_mut()[value] = SpDecomp::NotStack;
+    }
+
+    /// Drops every cached decomposition — the optimizer calls this after a graph
+    /// mutation so a memoized verdict never outlives the graph it was computed
+    /// against.  The interner is reset too, since its ids are referenced only by
+    /// the now-cleared slots.
+    #[inline]
+    pub fn clear_stack_slots(&self) {
+        self.stack_offsets.borrow_mut().clear();
+        *self.stack_interner.borrow_mut() = EntityInterner::new();
     }
 
     /// Returns the per-output case addresses recorded for a
@@ -325,29 +346,34 @@ impl SideTables {
         // interner (remapping every base; dropping a slot whose base or key did
         // not survive) and the dense map together, translating each surviving
         // key.
-        let mut new_interner: EntityInterner<StackId, (ValueId, i128)> = EntityInterner::new();
-        let mut new_slots: SecondaryMap<ValueId, SpDecomp> = SecondaryMap::new();
-        for (old_value, slot) in self.stack_offsets.iter() {
-            let Some(new_value) = remap.value_old_to_new(old_value) else {
-                continue;
-            };
-            let new_slot = match *slot {
-                SpDecomp::Unknown => continue,
-                SpDecomp::NotStack => SpDecomp::NotStack,
-                SpDecomp::Stack(id) => {
-                    let Some(&(old_base, off)) = self.stack_interner.get(id) else {
-                        continue;
-                    };
-                    match remap.value_old_to_new(old_base) {
-                        Some(new_base) => SpDecomp::Stack(new_interner.intern((new_base, off))),
-                        None => continue,
+        let (new_slots, new_interner) = {
+            let old_slots = self.stack_offsets.borrow();
+            let old_interner = self.stack_interner.borrow();
+            let mut new_interner: EntityInterner<StackId, (ValueId, i128)> = EntityInterner::new();
+            let mut new_slots: SecondaryMap<ValueId, SpDecomp> = SecondaryMap::new();
+            for (old_value, slot) in old_slots.iter() {
+                let Some(new_value) = remap.value_old_to_new(old_value) else {
+                    continue;
+                };
+                let new_slot = match *slot {
+                    SpDecomp::Unknown => continue,
+                    SpDecomp::NotStack => SpDecomp::NotStack,
+                    SpDecomp::Stack(id) => {
+                        let Some(&(old_base, off)) = old_interner.get(id) else {
+                            continue;
+                        };
+                        match remap.value_old_to_new(old_base) {
+                            Some(new_base) => SpDecomp::Stack(new_interner.intern((new_base, off))),
+                            None => continue,
+                        }
                     }
-                }
-            };
-            new_slots[new_value] = new_slot;
-        }
-        self.stack_offsets = new_slots;
-        self.stack_interner = new_interner;
+                };
+                new_slots[new_value] = new_slot;
+            }
+            (new_slots, new_interner)
+        };
+        *self.stack_offsets.get_mut() = new_slots;
+        *self.stack_interner.get_mut() = new_interner;
         // `value_vn`: ValueId-keyed (a phi / clobber output); translate keys.
         // The `InitialVnId` payload is stable across compaction, so it passes
         // through unchanged.
