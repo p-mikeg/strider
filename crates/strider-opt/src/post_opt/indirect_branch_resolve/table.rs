@@ -71,11 +71,11 @@ use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId};
 ///
 /// `rom` is the binary's read-only image (rodata/text); `None` disables the
 /// absolute (rodata) arm.  The stack-pointer varnode (for the SP-rooted arm)
-/// and the target endianness (for the rodata read) are read off `ctx` —
-/// `ctx.default_cc().stack_vn` and `ctx.endianness()`.
+/// and the target endianness (for the rodata read) are read off `function` —
+/// `function.default_cc().stack_vn` and `function.endianness()`.
 #[must_use]
 pub fn classify_table_dispatch(
-    ctx: &strider_ir::Function,
+    function: &strider_ir::Function,
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &mut crate::value_range::RangeMap<'_>,
@@ -86,7 +86,7 @@ pub fn classify_table_dispatch(
     // the branch NODE (not the bare value) means the index-range query below is
     // scoped to the branch ACTUALLY being resolved, never the first
     // `IndirectBranch` that happens to share the dispatch value.
-    let target_value = ctx.indirect_branch_target(branch);
+    let target_value = function.indirect_branch_target(branch);
 
     // Find THE index: the deepest value on the dispatch's variability cone that
     // both dominates the target and carries a bounded strided range
@@ -94,7 +94,7 @@ pub fn classify_table_dispatch(
     // `x>>30` has a tight range but doesn't dominate); "deepest bounded" pins
     // the node just above the first opaque/unfoldable operand.  A `Load[reg]`
     // function pointer has no bounded dominator → `None` → deferred, no fold.
-    let (idx_value, range) = decompose_index(ctx, ranges, target_value, branch)?;
+    let (idx_value, range) = decompose_index(function, ranges, target_value, branch)?;
 
     // Pin the index over its proven strided range and let the read-only
     // evaluator fold the index-pruned dispatch cone for every value: rodata
@@ -105,8 +105,8 @@ pub fn classify_table_dispatch(
     // the evaluator identifies the SP spine structurally (no per-node cone walk),
     // so even a false-positive candidate with a large decode cone folds cheaply
     // and the fold below bails on its first non-folding value.
-    let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
-    let pruned = super::eval::cone_order_pruned(ctx, target_value, idx_value);
+    let mut ev = super::eval::Evaluator::new(function, rom, alias_mode);
+    let pruned = super::eval::cone_order_pruned(function, target_value, idx_value);
     // Enumerate the table by folding the dispatch for every value in the strided
     // range `{lo, lo+stride, … hi}`.  `stride` is a KnownBits MUST-divisor of the
     // value spacing, so stepping by it visits exactly the reachable indices (a
@@ -150,7 +150,7 @@ pub fn classify_table_dispatch(
 /// chain — the short "convergence → target" spine, not the whole cone.  The pin
 /// is still confirmed by the caller's fold (belt-and-braces).
 fn decompose_index(
-    ctx: &strider_ir::Function,
+    function: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
     target: ValueId,
     branch: NodeId,
@@ -173,14 +173,14 @@ fn decompose_index(
     let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
     let mut stack = vec![target];
     while let Some(v) = stack.pop() {
-        if ctx.int_const_u128(v).is_some() || !seen.insert(v) {
+        if function.int_const_u128(v).is_some() || !seen.insert(v) {
             continue;
         }
         let vi = node_of(&mut g, &mut nidx, v);
         // `v`'s variability inputs: the addressing arithmetic, a foldable load's
         // address, or nothing for an opaque source.
-        let inputs: Vec<ValueId> = match ctx.node_kind(ctx.producer(v)) {
-            NodeKind::Load(_) => foldable_load_address(ctx, v).into_iter().collect(),
+        let inputs: Vec<ValueId> = match function.node_kind(function.producer(v)) {
+            NodeKind::Load(_) => foldable_load_address(function, v).into_iter().collect(),
             NodeKind::InitialVar(_)
             | NodeKind::Phi
             | NodeKind::Call
@@ -188,7 +188,7 @@ fn decompose_index(
             | NodeKind::New
             | NodeKind::SegmentOp { .. }
             | NodeKind::CPoolRef => Vec::new(),
-            _ => ctx.int_inputs(v).collect(),
+            _ => function.int_inputs(v).collect(),
         };
         let mut has_var_input = false;
         for p in inputs {
@@ -202,8 +202,8 @@ fn decompose_index(
             // `sp + const` / alignment-masked shapes and (unlike a structural
             // `sp & mask` check) rejects a bit-extraction `sp & 0xF`, which is a
             // bounded *value* the walk must keep as a candidate index.
-            if ctx.int_const_u128(p).is_some()
-                || crate::sp_expr::decompose_readonly(ctx, p).is_some()
+            if function.int_const_u128(p).is_some()
+                || crate::sp_expr::decompose_readonly(function, p).is_some()
             {
                 continue;
             }
@@ -235,7 +235,7 @@ fn decompose_index(
     chain
         .into_iter()
         .rev()
-        .find_map(|v| bounded_index(ctx, ranges, branch, v, &mut load_memo))
+        .find_map(|v| bounded_index(function, ranges, branch, v, &mut load_memo))
 }
 
 /// The address of a load the abstract evaluator can fold -- one whose address is
@@ -251,10 +251,10 @@ fn decompose_index(
 /// offset)`, so we can't ask about the address as a whole — but its `sp+base`
 /// operand *does* decompose.  Hence the operand-level check: the address is
 /// foldable when it, OR any of its operands, is a base.
-fn foldable_load_address(ctx: &strider_ir::Function, load: ValueId) -> Option<ValueId> {
-    let addr = ctx.int_inputs(load).next()?;
+fn foldable_load_address(function: &strider_ir::Function, load: ValueId) -> Option<ValueId> {
+    let addr = function.int_inputs(load).next()?;
     let foldable =
-        is_base_operand(ctx, addr) || ctx.int_inputs(addr).any(|op| is_base_operand(ctx, op));
+        is_base_operand(function, addr) || function.int_inputs(addr).any(|op| is_base_operand(function, op));
     foldable.then_some(addr)
 }
 
@@ -263,8 +263,8 @@ fn foldable_load_address(ctx: &strider_ir::Function, load: ValueId) -> Option<Va
 /// is asked of the shared `decompose_readonly` (the single SSoT) — no bespoke
 /// structural SP walk — and the operand check in [`foldable_load_address`]
 /// bridges the index-dependent case that decompose returns `None` for.
-fn is_base_operand(ctx: &strider_ir::Function, v: ValueId) -> bool {
-    ctx.int_const_u128(v).is_some() || crate::sp_expr::decompose_readonly(ctx, v).is_some()
+fn is_base_operand(function: &strider_ir::Function, v: ValueId) -> bool {
+    function.int_const_u128(v).is_some() || crate::sp_expr::decompose_readonly(function, v).is_some()
 }
 
 /// `v` as a candidate index: a genuinely-bounded (guard-/mask-constrained, never
@@ -273,15 +273,15 @@ fn is_base_operand(ctx: &strider_ir::Function, v: ValueId) -> bool {
 /// spanning `[0,255]`) with no dominating guard and no explicit mask --
 /// enumerating one folds to bogus sequential targets.
 fn bounded_index(
-    ctx: &strider_ir::Function,
+    function: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
     branch: NodeId,
     v: ValueId,
     load_memo: &mut rustc_hash::FxHashMap<ValueId, bool>,
 ) -> Option<(ValueId, Interval)> {
-    let ty = ctx
+    let ty = function
         .value_type_opt(v)
-        .filter(|t| t.is_integer() && ctx.int_const_u128(v).is_none())?;
+        .filter(|t| t.is_integer() && function.int_const_u128(v).is_none())?;
     let iv = ranges.range_of(v, branch);
     // Cap on the ENTRY COUNT the classifier enumerates, not the raw span: a
     // strided `idx*8 = [0, 4800, stride 8]` is 601 entries (enumerable), while a
@@ -289,9 +289,9 @@ fn bounded_index(
     // from "opaque".
     let bounded =
         iv.hi >= iv.lo && iv.hi < ty.bit_mask_u128() && iv.count() <= u128::from(MAX_TABLE_ENTRIES);
-    let entry_load = is_load_derived(ctx, v, load_memo)
+    let entry_load = is_load_derived(function, v, load_memo)
         && ranges.dominating_guard(v, branch).is_none()
-        && !is_and_masked(ctx, v);
+        && !is_and_masked(function, v);
     (bounded && !entry_load).then_some((v, iv))
 }
 
@@ -299,7 +299,7 @@ fn bounded_index(
 /// Is `v` (transitively) the output of a `Load`?  A loaded value is a table
 /// *entry*, not the table *index*, so it must not be enumerated as one.
 fn is_load_derived(
-    ctx: &strider_ir::Function,
+    function: &strider_ir::Function,
     v: ValueId,
     memo: &mut rustc_hash::FxHashMap<ValueId, bool>,
 ) -> bool {
@@ -308,12 +308,12 @@ fn is_load_derived(
     }
     // Pre-seed `false` to break cycles (a value Phi can be self-referential).
     memo.insert(v, false);
-    let node = ctx.producer(v);
-    let result = matches!(ctx.node_kind(node), NodeKind::Load(_))
-        || ctx
+    let node = function.producer(v);
+    let result = matches!(function.node_kind(node), NodeKind::Load(_))
+        || function
             .node_inputs(node)
             .into_iter()
-            .any(|input| ctx.value_type_opt(input).is_some() && is_load_derived(ctx, input, memo));
+            .any(|input| function.value_type_opt(input).is_some() && is_load_derived(function, input, memo));
     memo.insert(v, result);
     result
 }
@@ -321,13 +321,13 @@ fn is_load_derived(
 /// Is `v` produced by an `And(_, IntConst)`?  Such a value is mask-bounded
 /// (e.g. `kind & 7`), a legitimate dispatch index even when the masked operand
 /// was loaded — unlike a table entry, whose bound is only its load width.
-fn is_and_masked(ctx: &strider_ir::Function, v: ValueId) -> bool {
-    let node = ctx.producer(v);
-    matches!(ctx.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::And))
-        && ctx
+fn is_and_masked(function: &strider_ir::Function, v: ValueId) -> bool {
+    let node = function.producer(v);
+    matches!(function.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::And))
+        && function
             .node_inputs(node)
             .into_iter()
-            .any(|input| ctx.int_const_u128(input).is_some())
+            .any(|input| function.int_const_u128(input).is_some())
 }
 
 #[cfg(test)]

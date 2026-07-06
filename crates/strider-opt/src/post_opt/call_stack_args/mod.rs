@@ -110,7 +110,7 @@ pub struct CallStackArgCollect;
 impl PostOptimizer for CallStackArgCollect {
     fn apply(
         &self,
-        ctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
         let alias_mode = opt_ctx.options.alias_mode;
@@ -118,8 +118,8 @@ impl PostOptimizer for CallStackArgCollect {
         // dependency, detection order irrelevant), so iterate the cached live
         // set directly — no graph walk — like the sibling post-passes. The
         // owned `Vec` lets the immutable borrow end before the per-call
-        // mutation loop takes `ctx` mutably.
-        let calls: Vec<NodeId> = ctx.live_of_kind(|k| matches!(k, NodeKind::Call)).collect();
+        // mutation loop takes `edit` mutably.
+        let calls: Vec<NodeId> = edit.live_of_kind(|k| matches!(k, NodeKind::Call)).collect();
         // Build the SP-alias context once for the whole pass and reuse it across
         // every call site (decompositions route through the function's cache).
         let alias_cfg = SpAliasCfg::call_blocking(alias_mode);
@@ -127,15 +127,15 @@ impl PostOptimizer for CallStackArgCollect {
             // The call's effective stack-arg layout: a per-call CC override (a
             // varargs site) if recorded, else the function-default CC.  `None`
             // means the convention passes no stack args, so skip.
-            let Some(stack_args) = ctx.function().get_cc(call_id).stack_args else {
+            let Some(stack_args) = edit.function().get_cc(call_id).stack_args else {
                 continue;
             };
             // Append each discovered stack-arg value as an extra Call input
             // (positional order); the loop is a no-op when the call passes none.
             // Single-shot post-pass, so we don't track a changed/unchanged result.
-            let args = collect_stack_args(ctx.function(), call_id, stack_args, &alias_cfg);
+            let args = collect_stack_args(edit.function(), call_id, stack_args, &alias_cfg);
             for arg_value in &args {
-                ctx.add_node_input(call_id, *arg_value)?;
+                edit.add_node_input(call_id, *arg_value)?;
             }
         }
         Ok(())

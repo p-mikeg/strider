@@ -31,7 +31,7 @@ pub struct RegionCollapse;
 impl Optimizer for RegionCollapse {
     fn apply(
         &self,
-        ctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         _opt: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // Walk the cached live `Region`s once — no worklist.  The liveness
@@ -44,12 +44,12 @@ impl Optimizer for RegionCollapse {
         // the outer fixed-point loop (RegionCollapse is a main-loop pass)
         // re-runs until nothing collapses.  `try_collapse` reads each root's
         // CURRENT inputs, so an edit earlier in the pass is observed here.
-        let regions: Vec<NodeId> = ctx
+        let regions: Vec<NodeId> = edit
             .live_of_kind(|k| matches!(k, NodeKind::Region))
             .collect();
         let mut overall = OptimizationResult::NoChange;
         for root in regions {
-            if self.try_collapse(ctx, root)?.changed() {
+            if self.try_collapse(edit, root)?.changed() {
                 overall = OptimizationResult::Changed;
             }
         }
@@ -60,13 +60,13 @@ impl Optimizer for RegionCollapse {
 impl RegionCollapse {
     fn try_collapse(
         &self,
-        ctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
         // Both the seed walk and the consumer re-enqueue filter on
         // `NodeKind::Region`, so `root` is always a `Region` here and the
         // Region output layout read below is sound.
-        let inputs = ctx.node_inputs(root);
+        let inputs = edit.node_inputs(root);
         // Only a single-predecessor join is a no-op; the entry Region
         // (0 inputs) and genuine multi-way joins are left untouched.
         if inputs.len() != 1 {
@@ -75,12 +75,12 @@ impl RegionCollapse {
         let sole_ctrl_value = inputs[0];
         // Region outputs are [control, phi_token]; the control output is
         // index 0.
-        let [ctrl_value, _phi_token] = ctx.node_outputs_exact::<2>(root)?;
+        let [ctrl_value, _phi_token] = edit.node_outputs_exact::<2>(root)?;
         // `replace_value` is the SSoT that absorbs `ctrl_value`'s producer
         // fingerprint into `sole_ctrl_value`'s producer and redirects every
         // use; map its `changed` bool to an `OptimizationResult`.
         let result =
-            OptimizationResult::from_changed(ctx.replace_value(ctrl_value, sole_ctrl_value)?);
+            OptimizationResult::from_changed(edit.replace_value(ctrl_value, sole_ctrl_value)?);
 
         // After rewiring the control consumers, detach the now-dead Region's
         // own input edge — but ONLY once BOTH of its outputs (control AND
@@ -102,18 +102,18 @@ impl RegionCollapse {
         // Region attached this iteration — `PhiCollapse` will collapse that phi,
         // after which a later iteration finds both outputs free and finishes the
         // detach.
-        let all_outputs_unused = ctx.node_outputs(root).iter().all(|&out| {
-            ctx.graph_ref()
+        let all_outputs_unused = edit.node_outputs(root).iter().all(|&out| {
+            edit.graph_ref()
                 .value_uses(out)
-                .all(|(consumer, _)| !ctx.is_live(consumer))
+                .all(|(consumer, _)| !edit.is_live(consumer))
         });
-        if all_outputs_unused && !ctx.node_inputs(root).is_empty() {
+        if all_outputs_unused && !edit.node_inputs(root).is_empty() {
             // `Region` is side-effecting, so the automatic dead-cone cull
             // never reaches it — remove it explicitly.  `kill_node` detaches
             // its lone control-input edge (matching the former
             // `detach_node_inputs`), evicts it from the live set, and
             // auto-enqueues that now-orphaned predecessor cone for `clean`.
-            ctx.kill_node(root);
+            edit.kill_node(root);
         }
         Ok(result)
     }

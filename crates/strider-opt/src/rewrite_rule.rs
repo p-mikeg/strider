@@ -132,7 +132,7 @@ fn rewrite_rule_impl(
     lhs: Pattern,
     rhs: Template,
 ) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
-    move |ctx: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
+    move |edit: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
         // 1. Match LHS. Keep the matcher borrow tight so we can mutate
         //    the wrapped function afterwards.  While the match is live,
         //    snapshot the matcher's GROUND-TRUTH structural footprint (root +
@@ -140,7 +140,7 @@ fn rewrite_rule_impl(
         //    This footprint is the rewrite's proof; the interior nodes get
         //    culled, so their asm-fingerprints must be carried onto the RHS.
         let (bindings, matched_nodes) = {
-            let matcher = Matcher::new(ctx.function());
+            let matcher = Matcher::new(edit.function());
             match matcher.match_at(node, &lhs)? {
                 Some(m) => (m.bindings_clone(), m.matched_nodes().to_vec()),
                 None => return Ok(None),
@@ -148,7 +148,7 @@ fn rewrite_rule_impl(
         };
 
         // 2. Fetch root's single value output and its type.
-        let (root_value, root_ty) = ctx.function().single_value_output(node)?;
+        let (root_value, root_ty) = edit.function().single_value_output(node)?;
 
         // 3. Materialise the RHS THROUGH the editing context, threading the
         //    matched footprint as the proof-node set so that EVERY freshly
@@ -161,7 +161,7 @@ fn rewrite_rule_impl(
         //    fingerprint). A closure inside the tree may opt out via
         //    `Err(strider_pattern::skip())`; catch the sentinel here and
         //    convert it to "no change".
-        let new_value = match instantiate(&rhs, ctx, &bindings, node, &matched_nodes, root_ty) {
+        let new_value = match instantiate(&rhs, edit, &bindings, node, &matched_nodes, root_ty) {
             Ok(value) => value,
             Err(e) if is_skip(&e) => return Ok(None),
             Err(e) => return Err(e),
@@ -178,9 +178,9 @@ fn rewrite_rule_impl(
         //     matched nodes' addresses would be lost, shrinking the survivor's
         //     fingerprint below its true ancestor set and violating the
         //     superset-only proof contract.
-        let new_producer = ctx.producer(new_value);
+        let new_producer = edit.producer(new_value);
         for &matched in &matched_nodes {
-            ctx.function_mut()
+            edit.function_mut()
                 .side_tables_mut().extend_asm_fingerprint_from(new_producer, matched);
         }
 
@@ -196,7 +196,7 @@ fn rewrite_rule_impl(
         //    `replace_value` returns `true` when at least one use was
         //    redirected; surface the RHS-built output so the peephole driver
         //    can re-examine the freshly-created node for cascading folds.
-        let changed = ctx.replace_value(root_value, new_value)?;
+        let changed = edit.replace_value(root_value, new_value)?;
         Ok(changed.then_some(new_value))
     }
 }
@@ -232,7 +232,7 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
 // ── apply_rules_count — whole-graph rewrite driver ──────────────────
 
 /// Apply a set of rewrite rules round-robin at every reachable node of
-/// the function wrapped by `ctx`, returning the total per-`(node, rule)`
+/// the function wrapped by `edit`, returning the total per-`(node, rule)`
 /// fire count.
 ///
 /// At each reachable node every rule in `rules` is tried in order; each
@@ -242,22 +242,22 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
 /// rule is just a one-element slice (`std::slice::from_ref(&rule)`); a
 /// boolean "did anything fire" is `count > 0`.
 ///
-/// The caller owns ctx construction ([`EditFunction::new`]) and any
+/// The caller owns edit construction ([`EditFunction::new`]) and any
 /// pre-pass [`EditFunction::cull_dead`] — this driver only walks and
 /// applies.
 ///
 /// # Errors
 ///
 /// Propagates the first non-skip error returned by any rule.
-pub fn apply_rules_count<R>(ctx: &mut EditFunction<'_>, rules: &[R]) -> Result<usize>
+pub fn apply_rules_count<R>(edit: &mut EditFunction<'_>, rules: &[R]) -> Result<usize>
 where
     R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
 {
-    let candidates: Vec<NodeId> = ctx.walk().collect();
+    let candidates: Vec<NodeId> = edit.walk().collect();
     let mut applied: usize = 0;
     for node in candidates {
         for r in rules {
-            if r(ctx, node)?.is_some() {
+            if r(edit, node)?.is_some() {
                 applied += 1;
             }
         }
@@ -291,10 +291,10 @@ pub fn apply_rules_in_order<R>(
 where
     R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
 {
-    move |ctx, node| {
+    move |edit, node| {
         let mut last: Option<ValueId> = None;
         for r in rules {
-            if let Some(out) = r(ctx, node)? {
+            if let Some(out) = r(edit, node)? {
                 last = Some(out);
             }
         }
@@ -355,8 +355,8 @@ mod tests {
         let new_node = function.producer(new_value);
         let sink_node = function.producer(sink);
 
-        let mut ctx = EditFunction::new(&mut function);
-        let changed = ctx.replace_value(old_value, new_value).unwrap();
+        let mut edit = EditFunction::new(&mut function);
+        let changed = edit.replace_value(old_value, new_value).unwrap();
         assert!(changed, "a live use existed → changed");
 
         // new_node absorbs old_node's fingerprint (superset) while keeping
@@ -408,8 +408,8 @@ mod tests {
 
         let new_node = function.producer(new_value);
 
-        let mut ctx = EditFunction::new(&mut function);
-        let changed = ctx.replace_value(old_value, new_value).unwrap();
+        let mut edit = EditFunction::new(&mut function);
+        let changed = edit.replace_value(old_value, new_value).unwrap();
         assert!(!changed, "no uses of old → changed must be false");
 
         // Fingerprint is still absorbed even with no uses redirected.
@@ -494,8 +494,8 @@ mod tests {
         let pred1_val = pre_phi_inputs[2];
 
         // Act: remove predecessor 0 via the EditFunction.
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.remove_region_predecessors(region, &[0])
+        let mut edit = EditFunction::new(&mut function);
+        edit.remove_region_predecessors(region, &[0])
             .expect("remove_region_predecessors must succeed");
 
         // Region drops to 1 control input.
@@ -542,16 +542,16 @@ mod tests {
         let k2_node = function.producer(k2);
         let add_node = function.producer(add);
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
-        ctx.kill_node(add_node);
-        ctx.clean();
+        edit.kill_node(add_node);
+        edit.clean();
 
-        assert!(!ctx.is_live(add_node), "add was killed");
-        assert!(!ctx.is_live(neg_node), "neg orphaned → culled");
-        assert!(!ctx.is_live(k_node), "k orphaned → culled");
-        assert!(!ctx.is_live(k2_node), "k2 orphaned → culled");
+        assert!(!edit.is_live(add_node), "add was killed");
+        assert!(!edit.is_live(neg_node), "neg orphaned → culled");
+        assert!(!edit.is_live(k_node), "k orphaned → culled");
+        assert!(!edit.is_live(k2_node), "k2 orphaned → culled");
     }
 
     /// A node holding the SAME value in two input slots (`add(k, k)`):
@@ -579,16 +579,16 @@ mod tests {
         let k_node = function.producer(k);
         let add_node = function.producer(add);
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
-        assert!(ctx.is_live(k_node), "k starts live (reachable via add)");
+        assert!(edit.is_live(k_node), "k starts live (reachable via add)");
 
-        ctx.kill_node(add_node);
-        ctx.clean();
+        edit.kill_node(add_node);
+        edit.clean();
 
-        assert!(!ctx.is_live(add_node), "add was killed");
-        assert!(!ctx.is_live(k_node), "repeated operand k must be culled");
+        assert!(!edit.is_live(add_node), "add was killed");
+        assert!(!edit.is_live(k_node), "repeated operand k must be culled");
     }
 
     /// A shared operand feeding two adds: dropping the use of ONE add must
@@ -617,22 +617,22 @@ mod tests {
         let add1_node = function.producer(add1);
         let add2_node = function.producer(add2);
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
         // `add1` was unreachable, so `new`'s initial cull already removed it,
         // detaching its operands.  `will_detach_value(k)` saw add2 still using
         // k, so k was NOT enqueued/culled.
         assert!(
-            !ctx.is_live(add1_node),
+            !edit.is_live(add1_node),
             "unreachable add1 culled by initial cull"
         );
-        assert!(ctx.is_live(add2_node), "add2 stays live (returned)");
-        assert!(ctx.is_live(k_node), "shared operand k kept live by add2");
+        assert!(edit.is_live(add2_node), "add2 stays live (returned)");
+        assert!(edit.is_live(k_node), "shared operand k kept live by add2");
 
         // A further explicit drain changes nothing — k still has add2's use.
-        ctx.clean();
-        assert!(ctx.is_live(k_node), "k still live after an extra clean");
+        edit.clean();
+        assert!(edit.is_live(k_node), "k still live after an extra clean");
     }
 
     // ── edit verbs maintain live/roots + enqueue maybe-dead ───────────
@@ -651,25 +651,25 @@ mod tests {
             b.build_return(None, &[]).unwrap();
             b.build().unwrap()
         };
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
         // Input-less const → live + root.
         use strider_ir::IRBuilderExt;
-        let kv = ctx.build_int_const(5u64, ValueType::I64).unwrap();
-        let k = ctx.producer(kv);
-        assert!(ctx.is_live(k), "fresh const is live");
-        assert!(ctx.is_root(k), "input-less const is a root");
+        let kv = edit.build_int_const(5u64, ValueType::I64).unwrap();
+        let k = edit.producer(kv);
+        assert!(edit.is_live(k), "fresh const is live");
+        assert!(edit.is_root(k), "input-less const is a root");
 
         // Another const + an Add over both → Add is live, NOT a root.
-        let k2v = ctx.build_int_const(6u64, ValueType::I64).unwrap();
-        let add = ctx.create_node(
+        let k2v = edit.build_int_const(6u64, ValueType::I64).unwrap();
+        let add = edit.create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [kv, k2v],
             [ValueKind::Typed(ValueType::I64)],
         );
-        assert!(ctx.is_live(add), "fresh Add is live");
-        assert!(!ctx.is_root(add), "Add has inputs → not a root");
+        assert!(edit.is_live(add), "fresh Add is live");
+        assert!(!edit.is_root(add), "Add has inputs → not a root");
     }
 
     /// `add_node_input` on a previously input-less node drops it from `roots`.
@@ -683,19 +683,19 @@ mod tests {
             b.build_return(None, &[]).unwrap();
             b.build().unwrap()
         };
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
         // A fresh, input-less Region → root.
-        let region = ctx.create_node(NodeKind::Region, [], [ValueKind::Control]);
-        assert!(ctx.is_root(region), "input-less Region is a root");
+        let region = edit.create_node(NodeKind::Region, [], [ValueKind::Control]);
+        assert!(edit.is_root(region), "input-less Region is a root");
 
         // Feed it a control input → no longer a root.
-        let entry = ctx.entry();
-        let entry_ctrl = ctx.node_outputs(entry)[0];
-        ctx.add_node_input(region, entry_ctrl).unwrap();
+        let entry = edit.entry();
+        let entry_ctrl = edit.node_outputs(entry)[0];
+        edit.add_node_input(region, entry_ctrl).unwrap();
         assert!(
-            !ctx.is_root(region),
+            !edit.is_root(region),
             "Region with an input is no longer a root"
         );
     }
@@ -721,30 +721,30 @@ mod tests {
         let new_node = function.producer(new);
         let k_node = function.producer(k);
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
         // Sanity: new starts dead (unreachable) — culled by the initial cull.
         assert!(
-            !ctx.is_live(new_node),
+            !edit.is_live(new_node),
             "new const was unreachable pre-replace"
         );
         // Re-create new so it's live again (the initial cull removed the
         // dangling one); a fresh const dedups back to the same node and
         // re-enters the live set.
-        let new_v: ValueId = ctx.build_int_const(9u64, ValueType::I64).unwrap();
-        let new_node = ctx.producer(new_v);
-        assert!(ctx.is_live(new_node), "re-made new const is live");
+        let new_v: ValueId = edit.build_int_const(9u64, ValueType::I64).unwrap();
+        let new_node = edit.producer(new_v);
+        assert!(edit.is_live(new_node), "re-made new const is live");
 
         // Replace every use of old with new, then drain.
-        let changed = ctx.replace_value(old, new_v).unwrap();
+        let changed = edit.replace_value(old, new_v).unwrap();
         assert!(changed, "the Return's use of old was redirected");
-        ctx.clean();
+        edit.clean();
 
         // old (and its now-orphaned operand k) are culled; new stays live.
-        assert!(!ctx.is_live(old_node), "old producer enqueued + culled");
-        assert!(!ctx.is_live(k_node), "old's orphaned operand culled too");
-        assert!(ctx.is_live(new_node), "new producer stays live");
+        assert!(!edit.is_live(old_node), "old producer enqueued + culled");
+        assert!(!edit.is_live(k_node), "old's orphaned operand culled too");
+        assert!(edit.is_live(new_node), "new producer stays live");
     }
 
     // ── cached walks (live_of_kind) ──────────────────────────────────
@@ -767,11 +767,11 @@ mod tests {
         let k1_node = function.producer(k1);
         let k2_node = function.producer(k2);
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
         use cranelift_entity::EntityRef;
-        let mut consts: Vec<_> = ctx
+        let mut consts: Vec<_> = edit
             .live_of_kind(|k| matches!(k, NodeKind::IntConst(_)))
             .collect();
         consts.sort_unstable_by_key(|n| n.index());
@@ -821,35 +821,35 @@ mod tests {
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
         );
 
-        // Mirror the pipeline construction path: build the ctx and run the
+        // Mirror the pipeline construction path: build the edit and run the
         // explicit initial cull so the cached live/roots state matches the run.
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
-        let fired = rule(&mut ctx, add_root).unwrap();
+        let fired = rule(&mut edit, add_root).unwrap();
         assert!(fired.is_some(), "3 + 4 fold must fire");
         let new_value = fired.unwrap();
-        let new_node = ctx.producer(new_value);
+        let new_node = edit.producer(new_value);
 
         // The freshly-built IntConst(7) must be live and discoverable via
         // the cache-based `live_of_kind` iterator (no graph walk).
         assert!(
-            matches!(ctx.node_kind(new_node), NodeKind::IntConst(_))
-                && ctx.int_const_u128(new_value) == Some(7),
+            matches!(edit.node_kind(new_node), NodeKind::IntConst(_))
+                && edit.int_const_u128(new_value) == Some(7),
             "RHS built IntConst(7)"
         );
         assert!(
-            ctx.is_live(new_node),
+            edit.is_live(new_node),
             "freshly-instantiated RHS node must be registered live"
         );
         assert!(
-            ctx.live_of_kind(|k| matches!(k, NodeKind::IntConst(_)))
+            edit.live_of_kind(|k| matches!(k, NodeKind::IntConst(_)))
                 .any(|n| n == new_node),
             "live_of_kind must surface the fresh node"
         );
         // It is input-less, so it must also be a cached root.
         assert!(
-            ctx.is_root(new_node),
+            edit.is_root(new_node),
             "input-less fresh const must be a cached root"
         );
     }
@@ -873,13 +873,13 @@ mod tests {
     /// nothing entry-reachable may be missing from the cache.
     ///
     /// `NodeId` is not `Ord`, so sets key on `.index()`.
-    fn assert_live_matches_reachable(ctx: &EditFunction) {
+    fn assert_live_matches_reachable(edit: &EditFunction) {
         use cranelift_entity::EntityRef;
-        let entry = ctx.entry();
-        let info = strider_ir::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
+        let entry = edit.entry();
+        let info = strider_ir::walk::GraphWalkInfo::compute_full(edit.function().graph(), entry);
 
         let fresh_live: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
-        let cached_live: BTreeSet<usize> = ctx.live_snapshot().iter().map(|n| n.index()).collect();
+        let cached_live: BTreeSet<usize> = edit.live_snapshot().iter().map(|n| n.index()).collect();
         assert_eq!(
             cached_live, fresh_live,
             "cached live_nodes must equal the entry-reachable set"
@@ -887,7 +887,7 @@ mod tests {
 
         let fresh_roots: BTreeSet<usize> = info.roots.into_iter().map(|n| n.index()).collect();
         let cached_roots: BTreeSet<usize> =
-            ctx.roots_snapshot().iter().map(|n| n.index()).collect();
+            edit.roots_snapshot().iter().map(|n| n.index()).collect();
         assert_eq!(
             cached_roots, fresh_roots,
             "cached roots must equal the input-less reachable set"
@@ -955,21 +955,21 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
-        let fired = rule(&mut ctx, root).unwrap();
+        let fired = rule(&mut edit, root).unwrap();
         assert!(fired.is_some(), "(var+1)+2 fold must fire");
-        ctx.clean();
+        edit.clean();
 
         // The folded-away nodes are gone; the fresh var+3 is live.
-        assert!(!ctx.is_live(outer_node), "old outer Add culled");
-        assert!(!ctx.is_live(inner_node), "dead inner Add culled");
-        assert!(!ctx.is_live(k1_node), "dead IntConst(1) culled");
-        let new_node = ctx.producer(fired.unwrap());
-        assert!(ctx.is_live(new_node), "fresh var+3 Add is live");
+        assert!(!edit.is_live(outer_node), "old outer Add culled");
+        assert!(!edit.is_live(inner_node), "dead inner Add culled");
+        assert!(!edit.is_live(k1_node), "dead IntConst(1) culled");
+        let new_node = edit.producer(fired.unwrap());
+        assert!(edit.is_live(new_node), "fresh var+3 Add is live");
 
-        assert_live_matches_reachable(&ctx);
+        assert_live_matches_reachable(&edit);
     }
 
     /// Test 2 — a `rewrite_rule` whose RHS materialises a brand-new
@@ -1048,26 +1048,26 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
-        let fired = rule(&mut ctx, root).unwrap();
+        let fired = rule(&mut edit, root).unwrap();
         assert!(fired.is_some(), "AND-distribution must fire");
-        ctx.clean();
+        edit.clean();
 
         // Old factored shape culled.
-        assert!(!ctx.is_live(outer_node), "old outer And culled");
-        assert!(!ctx.is_live(or_node), "old Or culled");
-        assert!(!ctx.is_live(k3_node), "old C3 const culled");
+        assert!(!edit.is_live(outer_node), "old outer And culled");
+        assert!(!edit.is_live(or_node), "old Or culled");
+        assert!(!edit.is_live(k3_node), "old C3 const culled");
         // Fresh top Or is live.
-        let new_node = ctx.producer(fired.unwrap());
-        assert!(ctx.is_live(new_node), "fresh Or is live");
+        let new_node = edit.producer(fired.unwrap());
+        assert!(edit.is_live(new_node), "fresh Or is live");
         assert!(matches!(
-            ctx.node_kind(new_node),
+            edit.node_kind(new_node),
             NodeKind::IntBinaryOp(IntBinaryOp::Or)
         ));
 
-        assert_live_matches_reachable(&ctx);
+        assert_live_matches_reachable(&edit);
     }
 
     /// Test 3 — a `rewrite_rule` whose RHS is a bare captured var
@@ -1103,18 +1103,18 @@ mod tests {
 
         let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
-        let fired = rule(&mut ctx, root).unwrap();
+        let fired = rule(&mut edit, root).unwrap();
         assert!(fired.is_some(), "x+0 fold must fire");
-        ctx.clean();
+        edit.clean();
 
-        assert!(!ctx.is_live(add_node), "old Add culled");
-        assert!(!ctx.is_live(zero_node), "dead IntConst(0) culled");
-        assert!(ctx.is_live(x_node), "captured survivor x stays live");
+        assert!(!edit.is_live(add_node), "old Add culled");
+        assert!(!edit.is_live(zero_node), "dead IntConst(0) culled");
+        assert!(edit.is_live(x_node), "captured survivor x stays live");
 
-        assert_live_matches_reachable(&ctx);
+        assert_live_matches_reachable(&edit);
     }
 
     /// Test 3b — a bare-capture identity fold (`x + 0 → x`) must carry the
@@ -1155,17 +1155,17 @@ mod tests {
         let root = match_root(&function, add(var(x), int_const_match(0u64)));
         let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
         assert!(
-            rule(&mut ctx, root).unwrap().is_some(),
+            rule(&mut edit, root).unwrap().is_some(),
             "x+0 fold must fire"
         );
-        ctx.clean();
+        edit.clean();
 
         // The survivor x must now carry the interior IntConst(0)'s address
         // (0xCC) — without the fix it would be lost when the const is culled.
-        let fp = ctx.function().side_tables().asm_fingerprint(x_node);
+        let fp = edit.function().side_tables().asm_fingerprint(x_node);
         assert!(
             fp.contains(&0xCC),
             "survivor must absorb the culled interior const's fingerprint 0xCC: {fp:?}"
@@ -1235,26 +1235,26 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
-        let fired = rule(&mut ctx, root).unwrap();
+        let fired = rule(&mut edit, root).unwrap();
         assert!(fired.is_some());
         let new_value = fired.unwrap();
-        ctx.clean();
+        edit.clean();
 
         // The fresh Add's const operand dedups to the pre-existing IntConst(3).
-        let new_add = ctx.producer(new_value);
-        let const_operand = ctx.producer(ctx.node_inputs(new_add).into_iter().nth(1).unwrap());
+        let new_add = edit.producer(new_value);
+        let const_operand = edit.producer(edit.node_inputs(new_add).into_iter().nth(1).unwrap());
         assert_eq!(
             const_operand, three_node,
             "RHS const dedup-hit the pre-existing IntConst(3)"
         );
-        assert!(ctx.is_live(three_node), "deduped const stays live");
-        assert!(!ctx.is_live(outer_node), "old outer Add culled");
-        assert!(!ctx.is_live(inner_node), "old inner Add culled");
+        assert!(edit.is_live(three_node), "deduped const stays live");
+        assert!(!edit.is_live(outer_node), "old outer Add culled");
+        assert!(!edit.is_live(inner_node), "old inner Add culled");
 
-        assert_live_matches_reachable(&ctx);
+        assert_live_matches_reachable(&edit);
     }
 
     /// Test 5 — `apply_rules_count` across a function with several
@@ -1303,22 +1303,22 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
         // Apply repeatedly to a fixed point (each call walks once).
         loop {
             let fired =
-                super::apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap() > 0;
-            ctx.clean();
+                super::apply_rules_count(&mut edit, std::slice::from_ref(&rule)).unwrap() > 0;
+            edit.clean();
             if !fired {
                 break;
             }
         }
 
-        assert!(!ctx.is_live(a1_node), "intermediate Add a1 culled");
-        assert!(!ctx.is_live(a2_node), "intermediate Add a2 culled");
-        assert_live_matches_reachable(&ctx);
+        assert!(!edit.is_live(a1_node), "intermediate Add a1 culled");
+        assert!(!edit.is_live(a2_node), "intermediate Add a2 culled");
+        assert_live_matches_reachable(&edit);
     }
 
     /// Test 6 — a multi-output template (the Store→Load shape).  The RHS
@@ -1383,44 +1383,44 @@ mod tests {
 
         let rule = rewrite_rule_runtime(lhs, rhs).unwrap();
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
-        let fired = rule(&mut ctx, load_node).unwrap();
+        let fired = rule(&mut edit, load_node).unwrap();
         assert!(fired.is_some(), "Load → Load(Store) rewrite must fire");
-        ctx.clean();
+        edit.clean();
 
-        let new_load = ctx.producer(fired.unwrap());
-        assert!(matches!(ctx.node_kind(new_load), NodeKind::Load(_)));
-        assert!(ctx.is_live(new_load), "fresh Load is live");
+        let new_load = edit.producer(fired.unwrap());
+        assert!(matches!(edit.node_kind(new_load), NodeKind::Load(_)));
+        assert!(edit.is_live(new_load), "fresh Load is live");
 
         // The fresh non-root Store feeding the Load's memory input must be
         // tracked live.
-        let mem_in = ctx.node_inputs(new_load).into_iter().nth(1).unwrap();
-        let store_node = ctx.producer(mem_in);
+        let mem_in = edit.node_inputs(new_load).into_iter().nth(1).unwrap();
+        let store_node = edit.producer(mem_in);
         assert!(
-            matches!(ctx.node_kind(store_node), NodeKind::Store(_)),
+            matches!(edit.node_kind(store_node), NodeKind::Store(_)),
             "Load's memory input is the fresh Store"
         );
         assert!(
-            ctx.is_live(store_node),
+            edit.is_live(store_node),
             "fresh interior Store is tracked live"
         );
 
         // Note: the fresh InitialMemory feeding the Store is input-less, so
         // it must be a cached root.
-        let init_mem_in = ctx.node_inputs(store_node).into_iter().nth(2).unwrap();
-        let init_mem_node = ctx.producer(init_mem_in);
+        let init_mem_in = edit.node_inputs(store_node).into_iter().nth(2).unwrap();
+        let init_mem_node = edit.producer(init_mem_in);
         assert!(
-            ctx.is_root(init_mem_node),
+            edit.is_root(init_mem_node),
             "fresh input-less InitialMemory is a cached root"
         );
 
-        assert_live_matches_reachable(&ctx);
+        assert_live_matches_reachable(&edit);
 
         // Characterization lock: the matched root's asm-fingerprint reaches every
         // fresh interior RHS node (memory + value), stamped at creation.
-        let root_fp: Vec<u64> = ctx
+        let root_fp: Vec<u64> = edit
             .function()
             .side_tables()
             .asm_fingerprint(load_node)
@@ -1430,7 +1430,7 @@ mod tests {
             !root_fp.is_empty(),
             "fixture's matched root must carry a fingerprint"
         );
-        for n in ctx.live_of_kind(|k| {
+        for n in edit.live_of_kind(|k| {
             matches!(
                 k,
                 NodeKind::IntBinaryOp(_)
@@ -1439,7 +1439,7 @@ mod tests {
                     | NodeKind::Load(_)
             )
         }) {
-            let fp = ctx.function().side_tables().asm_fingerprint(n);
+            let fp = edit.function().side_tables().asm_fingerprint(n);
             assert!(
                 root_fp.iter().all(|a| fp.contains(a)),
                 "fresh RHS node {n:?} missing root fingerprint"
@@ -1447,7 +1447,7 @@ mod tests {
         }
     }
 
-    /// Test 7 — a direct `ctx.replace_value` + `clean()` (the non-template
+    /// Test 7 — a direct `edit.replace_value` + `clean()` (the non-template
     /// path).  Sanity that the curated mutation façade already tracks
     /// correctly: after replacing old with a fresh const and draining, the
     /// cached state equals the entry-reachable walk.
@@ -1466,20 +1466,20 @@ mod tests {
         let neg_node = function.producer(neg);
         let k_node = function.producer(k);
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
-        let new_v = ctx.build_int_const(9u64, ValueType::I64).unwrap();
-        let new_node = ctx.producer(new_v);
-        let changed = ctx.replace_value(neg, new_v).unwrap();
+        let new_v = edit.build_int_const(9u64, ValueType::I64).unwrap();
+        let new_node = edit.producer(new_v);
+        let changed = edit.replace_value(neg, new_v).unwrap();
         assert!(changed);
-        ctx.clean();
+        edit.clean();
 
-        assert!(!ctx.is_live(neg_node), "old Neg culled");
-        assert!(!ctx.is_live(k_node), "Neg's orphaned operand culled");
-        assert!(ctx.is_live(new_node), "fresh const live");
+        assert!(!edit.is_live(neg_node), "old Neg culled");
+        assert!(!edit.is_live(k_node), "Neg's orphaned operand culled");
+        assert!(edit.is_live(new_node), "fresh const live");
 
-        assert_live_matches_reachable(&ctx);
+        assert_live_matches_reachable(&edit);
     }
 
     /// A `rewrite_rule` whose freshly-instantiated RHS const
@@ -1546,32 +1546,32 @@ mod tests {
             ),
         );
 
-        let mut ctx = EditFunction::new(&mut function);
-        ctx.cull_dead();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
 
         // The dangling const was culled by the initial cull.
         assert!(
-            !ctx.is_live(three_node),
+            !edit.is_live(three_node),
             "dangling IntConst(3) culled as unreachable"
         );
 
-        let fired = rule(&mut ctx, root).unwrap();
+        let fired = rule(&mut edit, root).unwrap();
         assert!(fired.is_some(), "(var+1)+2 fold must fire");
-        ctx.clean();
+        edit.clean();
 
         // The fresh var+3's const operand dedup-revives the culled IntConst(3).
-        let new_add = ctx.producer(fired.unwrap());
-        let const_operand = ctx.producer(ctx.node_inputs(new_add).into_iter().nth(1).unwrap());
+        let new_add = edit.producer(fired.unwrap());
+        let const_operand = edit.producer(edit.node_inputs(new_add).into_iter().nth(1).unwrap());
         assert_eq!(
             const_operand, three_node,
             "RHS const dedup-hit the pre-existing (culled) IntConst(3)"
         );
         // The revived, now-entry-reachable const must be live again.
         assert!(
-            ctx.is_live(three_node),
+            edit.is_live(three_node),
             "dedup-revived const must be re-registered in live_nodes"
         );
 
-        assert_live_matches_reachable(&ctx);
+        assert_live_matches_reachable(&edit);
     }
 }

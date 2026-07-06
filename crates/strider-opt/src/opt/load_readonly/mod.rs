@@ -43,7 +43,7 @@ use crate::pipeline::OptCtx;
 ///
 /// The rom image is no longer stored on the pass: it flows through the
 /// per-run [`OptCtx`] threaded by [`crate::OptimizerPipeline::run`].
-/// When `ctx.rom` is `None` the pass short-circuits to
+/// When `edit.rom` is `None` the pass short-circuits to
 /// `OptimizationResult::NoChange` — this is the canonical "no rom
 /// configured" path (`strider.run(..., rom=None)`).  The orchestrator
 /// constructs the `OptCtx` rom from the analysis driver; ad-hoc callers
@@ -64,8 +64,8 @@ use crate::pipeline::OptCtx;
 /// let mut pipeline = OptimizerPipeline::new();
 /// pipeline.add(LoadReadOnly);
 /// let rom = MyRom;
-/// let ctx = OptCtx::new(Some(&rom));
-/// # let _ = (pipeline, ctx);
+/// let edit = OptCtx::new(Some(&rom));
+/// # let _ = (pipeline, edit);
 /// ```
 #[derive(Clone, Copy)]
 pub struct LoadReadOnly;
@@ -123,32 +123,32 @@ impl crate::peephole::PeepholePass for LoadReadOnly {
 /// invariants in production, surfaced as `Err` for defensive
 /// completeness.
 pub(crate) fn try_fold_const_load_at(
-    ctx: &mut crate::EditFunction<'_>,
+    edit: &mut crate::EditFunction<'_>,
     node_id: NodeId,
     rom: &dyn ReadOnlyMemory,
 ) -> Result<bool> {
     // SSoT: fold this Load via the shared const-eval utility (constant address
     // → ROM decode), so the decode logic is not duplicated in the jump-table
     // evaluator.
-    let (data_value, ty) = ctx.single_value_output(node_id)?;
-    let resolve = |v| ctx.function().int_const_u128(v);
+    let (data_value, ty) = edit.single_value_output(node_id)?;
+    let resolve = |v| edit.function().int_const_u128(v);
     let Some(masked) =
-        crate::const_eval::eval_node_const(ctx.function(), data_value, &resolve, Some(rom))
+        crate::const_eval::eval_node_const(edit.function(), data_value, &resolve, Some(rom))
     else {
         return Ok(false);
     };
-    let new_value = ctx.build_int_const(masked, ty)?;
+    let new_value = edit.build_int_const(masked, ty)?;
     // The loaded constant is justified by the load ADDRESS — *which* byte run
     // got read depends entirely on the address cone, which is about to be
     // cascade-culled once the Load is replaced.  Absorb the address producer's
     // asm-fingerprint into the new IntConst (the proof of why this value was
     // read) before the `replace_value` below removes it.  Over-tainting is
     // intentional — the fingerprint is a generous superset proof aid.
-    let addr_value = ctx.load_addr(node_id);
-    ctx.absorb_fingerprint(new_value, addr_value);
+    let addr_value = edit.load_addr(node_id);
+    edit.absorb_fingerprint(new_value, addr_value);
     // `replace_value` absorbs the rewritten Load's asm-fingerprint into the
     // new IntConst and redirects all uses (single SSoT for the pair).
-    ctx.replace_value(data_value, new_value)
+    edit.replace_value(data_value, new_value)
 }
 
 #[cfg(test)]

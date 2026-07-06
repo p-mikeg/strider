@@ -55,7 +55,7 @@ impl ConstFoldRules {
     /// `new_out` for cascading folds.
     pub(super) fn apply_all(
         &self,
-        ctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         node: NodeId,
     ) -> Result<Option<ValueId>> {
         let mut last: Option<ValueId> = None;
@@ -66,7 +66,7 @@ impl ConstFoldRules {
             &self.reassoc_and_mask,
             &self.bitcast_extend,
         ] {
-            if let Some(out) = apply_rules_in_order(group)(ctx, node)? {
+            if let Some(out) = apply_rules_in_order(group)(edit, node)? {
                 last = Some(out);
             }
         }
@@ -165,11 +165,11 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             ),
             any_int_const().capture(c3),
         )
-        .when_match(move |ctx, _ty, binds| {
+        .when_match(move |edit, _ty, binds| {
             let (Some(v1), Some(v2), Some(v3)) = (
-                binds.get_uint(c1, ctx.function()),
-                binds.get_uint(c2, ctx.function()),
-                binds.get_uint(c3, ctx.function()),
+                binds.get_uint(c1, edit.function()),
+                binds.get_uint(c2, edit.function()),
+                binds.get_uint(c3, edit.function()),
             ) else {
                 return false;
             };
@@ -196,10 +196,10 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             or(var(x), any_int_const().capture(c1)),
             any_int_const().capture(c2),
         )
-        .when_match(move |ctx, _ty, binds| {
+        .when_match(move |edit, _ty, binds| {
             let (Some(set_bits), Some(mask)) = (
-                binds.get_uint(c1, ctx.function()),
-                binds.get_uint(c2, ctx.function()),
+                binds.get_uint(c1, edit.function()),
+                binds.get_uint(c2, edit.function()),
             ) else {
                 return false;
             };
@@ -229,7 +229,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             rewrite_rule(
                 $op(any_int_const().capture(c1), var(x))
                     .ordered()
-                    .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
+                    .when_match(move |edit, _ty, b| b.get_uint(x, edit.function()).is_none()),
                 template::$op(var(x), var(c1)),
             )
         };
@@ -303,8 +303,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // the two-fold copy (mirrors the `const_on_right!` precedent above).
     macro_rules! ext_round_trip {
         ($ext:ident) => {{
-            let pat = truncate($ext(var(x))).when_match(move |ctx, ty, bnd| {
-                bnd.get_type(x, ctx.function())
+            let pat = truncate($ext(var(x))).when_match(move |edit, ty, bnd| {
+                bnd.get_type(x, edit.function())
                     .is_some_and(|x_ty| x_ty == ty)
             });
             rewrite_rule(pat, var(x))
@@ -332,11 +332,11 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // The (SignExt, SignExt) case for Mul covers the MIPS32 shape above.
     let narrow_mul_through_sext = {
         let pat = truncate(mul(sign_extend(var(a)), sign_extend(var(b)))).when_match(
-            move |ctx, ty, bnd| {
-                bnd.get_type(a, ctx.function())
+            move |edit, ty, bnd| {
+                bnd.get_type(a, edit.function())
                     .is_some_and(|a_ty| a_ty == ty)
                     && bnd
-                        .get_type(b, ctx.function())
+                        .get_type(b, edit.function())
                         .is_some_and(|b_ty| b_ty == ty)
             },
         );
@@ -370,10 +370,10 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // `Or`'s operand order even though the guard is on the truncate ANCESTOR.
     // Regression-guarded by `test_narrow_widths::x64`.
     let mk_drop_high_half = {
-        let guard = move |ctx: &strider_pattern::Matcher,
+        let guard = move |edit: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
-            let Some(c_val) = bnd.get_uint(c, ctx.function()) else {
+            let Some(c_val) = bnd.get_uint(c, edit.function()) else {
                 return false;
             };
             let Some(low_mask) = truncate_low_mask(ty) else {
@@ -394,10 +394,10 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // `And`'s own commutative retry binds `c` to the const regardless of side
     // (and a two-const `And` is const-folded before this rule sees it).
     let mk_drop_low_mask_under_truncate = {
-        let guard = move |ctx: &strider_pattern::Matcher,
+        let guard = move |edit: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
-            let Some(c_val) = bnd.get_uint(c, ctx.function()) else {
+            let Some(c_val) = bnd.get_uint(c, edit.function()) else {
                 return false;
             };
             let Some(low_mask) = truncate_low_mask(ty) else {
@@ -455,10 +455,10 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
     // is the matched op (`and`/`or`) and the surviving operand (`x`/`c`).  The
     // guard depends on `c` and the per-match output type, so spell it once and
     // reuse it (mirrors the `const_on_right!` / `ext_round_trip!` factoring).
-    let is_all_ones = move |ctx: &strider_pattern::Matcher,
+    let is_all_ones = move |edit: &strider_pattern::Matcher,
                             ty: strider_ir::node::ValueType,
                             b: &strider_pattern::Bindings| {
-        b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
+        b.get_uint(c, edit.function()) == ty.get_unsigned_int(u128::MAX)
     };
     // x & all_ones → x  (commutative). The all-ones mask depends on the
     // output width, so the shared guard compares the captured constant against
@@ -524,15 +524,15 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
 /// from `expected`, so a width-mismatched node is left un-folded rather than
 /// folded against a silently re-masked operand value.
 fn require_operand_widths(
-    ctx: &strider_pattern::TemplateCtx<'_>,
+    edit: &strider_pattern::TemplateCtx<'_>,
     operands: &[Capture],
     expected: strider_ir::node::ValueType,
 ) -> crate::error::Result<()> {
     let expected_bits = expected.bit_width();
     for &c in operands {
-        let ty = ctx
+        let ty = edit
             .bindings
-            .get_type(c, ctx.function)
+            .get_type(c, edit.function)
             .ok_or_else(strider_pattern::skip)?;
         if ty.bit_width() != expected_bits {
             return Err(strider_pattern::skip());
@@ -569,20 +569,20 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         {
             rewrite_rule(
                 int_binary_any(any_int_const().capture(l), any_int_const().capture(r)).capture(op),
-                strider_pattern::int_const_with_fn(move |ctx| {
-                    let ty = ctx.root_ty;
-                    require_operand_widths(ctx, &[l, r], ty)?;
-                    let op = ctx
+                strider_pattern::int_const_with_fn(move |edit| {
+                    let ty = edit.root_ty;
+                    require_operand_widths(edit, &[l, r], ty)?;
+                    let op = edit
                         .bindings
-                        .get_int_binary_op(op, ctx.function.graph())
+                        .get_int_binary_op(op, edit.function.graph())
                         .ok_or_else(|| strider_pattern::missing_binding("int_binary_op"))?;
-                    let l = ctx
+                    let l = edit
                         .bindings
-                        .get_uint(l, ctx.function)
+                        .get_uint(l, edit.function)
                         .ok_or_else(strider_pattern::skip)?;
-                    let r = ctx
+                    let r = edit
                         .bindings
-                        .get_uint(r, ctx.function)
+                        .get_uint(r, edit.function)
                         .ok_or_else(strider_pattern::skip)?;
                     eval_int_binary(op, l, r, ty).ok_or_else(strider_pattern::skip)
                 }),
@@ -617,21 +617,21 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         {
             rewrite_rule(
                 int_cmp_any(any_int_const().capture(l), any_int_const().capture(r)).capture(op),
-                strider_pattern::bool_const_with_fn(move |ctx| {
-                    let input_ty = strider_pattern::first_value_input_type(ctx)
+                strider_pattern::bool_const_with_fn(move |edit| {
+                    let input_ty = strider_pattern::first_value_input_type(edit)
                         .ok_or_else(strider_pattern::skip)?;
-                    require_operand_widths(ctx, &[l, r], input_ty)?;
-                    let op = ctx
+                    require_operand_widths(edit, &[l, r], input_ty)?;
+                    let op = edit
                         .bindings
-                        .get_int_cmp_op(op, ctx.function.graph())
+                        .get_int_cmp_op(op, edit.function.graph())
                         .ok_or_else(|| strider_pattern::missing_binding("int_cmp_op"))?;
-                    let l = ctx
+                    let l = edit
                         .bindings
-                        .get_uint(l, ctx.function)
+                        .get_uint(l, edit.function)
                         .ok_or_else(strider_pattern::skip)?;
-                    let r = ctx
+                    let r = edit
                         .bindings
-                        .get_uint(r, ctx.function)
+                        .get_uint(r, edit.function)
                         .ok_or_else(strider_pattern::skip)?;
                     eval_int_cmp(op, l, r, input_ty)
                 }),

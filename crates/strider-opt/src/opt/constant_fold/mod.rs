@@ -76,11 +76,11 @@ impl PeepholePass for ConstantFold {
 
     fn try_rewrite(
         &self,
-        ctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        let opt = self.rules.apply_all(ctx, root)?;
-        Ok(PeepholeRewrite::from_new_value(ctx, opt))
+        let opt = self.rules.apply_all(edit, root)?;
+        Ok(PeepholeRewrite::from_new_value(edit, opt))
     }
 }

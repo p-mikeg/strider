@@ -107,18 +107,18 @@ impl PeepholePass for FlagCmpCanonicalize {
 
     fn try_rewrite(
         &self,
-        ctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         // PowerPC condition-register bit test: an imperative arm, because the
         // variable-arity OR pack `Or(ShiftLeft(ZeroExtend(cmp_i), pos_i)…)` does
         // not fit the fixed-shape `rewrite_rule` DSL.
-        if let Some(cmp) = canonicalize_cr_bit_test(ctx, root)? {
-            return Ok(PeepholeRewrite::from_new_value(ctx, Some(cmp)));
+        if let Some(cmp) = canonicalize_cr_bit_test(edit, root)? {
+            return Ok(PeepholeRewrite::from_new_value(edit, Some(cmp)));
         }
-        let opt = apply_rules_in_order(&self.rules)(ctx, root)?;
-        Ok(PeepholeRewrite::from_new_value(ctx, opt))
+        let opt = apply_rules_in_order(&self.rules)(edit, root)?;
+        Ok(PeepholeRewrite::from_new_value(edit, opt))
     }
 
     /// Flag-tree rules fire at the outermost root; once a tree
@@ -382,7 +382,7 @@ fn build_rules() -> Vec<BoxedRule> {
     rules.extend(ls_hi_pair!(
         int_lt(var(a), any_int_const().capture(n)),
         int_eq(add(var(a), any_int_const().capture(m)), int_const(0u128)),
-        move |ctx, _ty, binds| neg_relation(binds, ctx.function(), m, n, a),
+        move |edit, _ty, binds| neg_relation(binds, edit.function(), m, n, a),
         template::int_lt(var(n), var(a)),
     ));
     // 15. LS, offset-base:  Or(Less(Add(b, C1), N), Equal(Add(b, C2), 0))
@@ -403,7 +403,7 @@ fn build_rules() -> Vec<BoxedRule> {
             any_int_const().capture(n),
         ),
         int_eq(add(var(b), any_int_const().capture(m)), int_const(0u128)),
-        move |ctx, _ty, binds| sub_relation(binds, ctx.function(), m, n, c1, b),
+        move |edit, _ty, binds| sub_relation(binds, edit.function(), m, n, c1, b),
         template::int_lt(var(n), var(x)),
     ));
     rules
@@ -422,10 +422,10 @@ fn build_rules() -> Vec<BoxedRule> {
 /// rewrite the condition to the comparison at bit `k` and return it.  `None`
 /// (no change) on any shape it can't prove a true identity for.
 fn canonicalize_cr_bit_test(
-    ctx: &mut crate::EditFunction<'_>,
+    edit: &mut crate::EditFunction<'_>,
     root: NodeId,
 ) -> Result<Option<ValueId>> {
-    let Some((cond_out, cmp)) = cr_bit_comparison(ctx, root) else {
+    let Some((cond_out, cmp)) = cr_bit_comparison(edit, root) else {
         return Ok(None);
     };
     // The CR-pack interior nodes (`Truncate` / `ShiftRight` / the `Or` tree /
@@ -437,8 +437,8 @@ fn canonicalize_cr_bit_test(
     // superset-only asm-fingerprint contract. (The declarative flag rules get
     // this for free from the rewrite engine's matched-interior absorption; this
     // hand-written arm must do it explicitly.)
-    absorb_cr_pack_fingerprints(ctx, cond_out, cmp);
-    ctx.replace_value(cond_out, cmp)?;
+    absorb_cr_pack_fingerprints(edit, cond_out, cmp);
+    edit.replace_value(cond_out, cmp)?;
     Ok(Some(cmp))
 }
 
@@ -449,9 +449,9 @@ fn canonicalize_cr_bit_test(
 /// stopping the descent at each `IntCmpOp` — a comparison carries its
 /// instruction's address on its own node, and its operands are the unrelated
 /// compared values (often live elsewhere), not pack-building instructions.
-fn absorb_cr_pack_fingerprints(ctx: &mut crate::EditFunction<'_>, cond_out: ValueId, cmp: ValueId) {
-    let into = ctx.producer(cmp);
-    let mut stack = vec![ctx.producer(cond_out)];
+fn absorb_cr_pack_fingerprints(edit: &mut crate::EditFunction<'_>, cond_out: ValueId, cmp: ValueId) {
+    let into = edit.producer(cmp);
+    let mut stack = vec![edit.producer(cond_out)];
     // Dense visited set + ordered interior list: O(1) membership instead of the
     // former O(pack²) `Vec::contains`, honouring the "prefer entity-utils" /
     // O(n) convention for the pack-interior walk.
@@ -463,14 +463,14 @@ fn absorb_cr_pack_fingerprints(ctx: &mut crate::EditFunction<'_>, cond_out: Valu
         }
         interior.push(n);
         // A comparison term (including `cmp` itself) ends the descent.
-        if matches!(ctx.node_kind(n), NodeKind::IntCmpOp(_)) {
+        if matches!(edit.node_kind(n), NodeKind::IntCmpOp(_)) {
             continue;
         }
-        stack.extend(crate::peephole::input_producers_iter(ctx, n));
+        stack.extend(crate::peephole::input_producers_iter(edit, n));
     }
     for n in interior {
         if n != into {
-            ctx.function_mut().side_tables_mut().extend_asm_fingerprint_from(into, n);
+            edit.function_mut().side_tables_mut().extend_asm_fingerprint_from(into, n);
         }
     }
 }

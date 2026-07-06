@@ -10,7 +10,7 @@
 //!
 //! `PeepholePass` is *below* the existing [`crate::pipeline::Optimizer`]
 //! trait — concrete passes implement `PeepholePass` and provide a thin
-//! `Optimizer` impl whose body is just `run_peephole(self, ctx)`.  The
+//! `Optimizer` impl whose body is just `run_peephole(self, edit)`.  The
 //! pipeline still consumes `dyn Optimizer` exactly as before.
 //!
 //! Passes that don't fit this shape (analytic passes, multi-stage passes
@@ -28,24 +28,24 @@ use crate::pipeline::OptimizationResult;
 /// Collapses the recurring `node_inputs(n).iter().map(|i| producer(i))`
 /// micro-idiom (the input-producer cone walk) into one named helper.  Returns
 /// an owned `Vec` rather than a borrowing iterator so callers may **mutate**
-/// `ctx` while iterating the producers (e.g. extend a fingerprint per producer)
+/// `edit` while iterating the producers (e.g. extend a fingerprint per producer)
 /// — the borrow must end before the mutation.  Iterate-only callers that do not
-/// touch `ctx` in the loop body prefer the allocation-free
+/// touch `edit` in the loop body prefer the allocation-free
 /// [`input_producers_iter`].
-pub(crate) fn input_producers<V: IRViewer>(ctx: &V, node: NodeId) -> Vec<NodeId> {
-    input_producers_iter(ctx, node).collect()
+pub(crate) fn input_producers<V: IRViewer>(edit: &V, node: NodeId) -> Vec<NodeId> {
+    input_producers_iter(edit, node).collect()
 }
 
 /// Borrowing-iterator counterpart of [`input_producers`]: yields each value
 /// input's producer node without an intermediate `Vec`.  Holds an immutable
-/// borrow of `ctx` for the iterator's lifetime, so use it only where the loop
-/// body does not also borrow `ctx` mutably (the worklist / fingerprint-extend
+/// borrow of `edit` for the iterator's lifetime, so use it only where the loop
+/// body does not also borrow `edit` mutably (the worklist / fingerprint-extend
 /// callers keep the owned-`Vec` [`input_producers`] instead).
 pub(crate) fn input_producers_iter<V: IRViewer>(
-    ctx: &V,
+    edit: &V,
     node: NodeId,
 ) -> impl Iterator<Item = NodeId> + '_ {
-    ctx.node_inputs(node).into_iter().map(|v| ctx.producer(v))
+    edit.node_inputs(node).into_iter().map(|v| edit.producer(v))
 }
 
 /// Outcome of a single [`PeepholePass::try_rewrite`] attempt at one root.
@@ -67,9 +67,9 @@ impl PeepholeRewrite {
     /// `Some(v)` → `Changed { new_node: Some(producer(v)) }`; `None` →
     /// `NoChange`.  Collapses the recurring "a rule returned an
     /// `Option<ValueId>` of the freshly-produced value" mapping.
-    pub(crate) fn from_new_value(ctx: &crate::EditFunction<'_>, v: Option<ValueId>) -> Self {
+    pub(crate) fn from_new_value(edit: &crate::EditFunction<'_>, v: Option<ValueId>) -> Self {
         v.map_or(PeepholeRewrite::NoChange, |new_value| PeepholeRewrite::Changed {
-            new_node: Some(ctx.producer(new_value)),
+            new_node: Some(edit.producer(new_value)),
         })
     }
 
@@ -123,7 +123,7 @@ pub(crate) trait PeepholePass {
     /// Propagates the first error from the underlying rewrite.
     fn try_rewrite(
         &self,
-        ctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite>;
@@ -159,7 +159,7 @@ pub(crate) trait PeepholePass {
 /// Propagates the first error from `try_rewrite`.
 pub(crate) fn run_peephole<P: PeepholePass>(
     pass: &P,
-    ctx: &mut crate::EditFunction<'_>,
+    edit: &mut crate::EditFunction<'_>,
     opt_ctx: &mut crate::pipeline::OptCtx<'_>,
 ) -> Result<OptimizationResult> {
     // Seed in the pass's chosen order, computed DIRECTLY for each variant —
@@ -168,7 +168,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     // `Postorder` takes the global post-order (consumers before operands)
     // straight from the forward def→use post-order, NOT by reversing the RPO.
     //
-    // `reverse_postorder_filter`/`postorder_filter` seed from the ctx's CHEAP cached walk
+    // `reverse_postorder_filter`/`postorder_filter` seed from the edit's CHEAP cached walk
     // (the O(1)-maintained `roots` + `live_nodes`), so there is no per-seed
     // `compute_full`.  The cached `roots` iterate in ascending-`NodeId` order,
     // which differs from `compute_full`'s preorder-discovery order; this is safe
@@ -177,10 +177,10 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     // made confluent (it fires only when it strictly simplifies), so any valid
     // RPO converges.
     let seed: Vec<NodeId> = match pass.seed_order() {
-        SeedOrder::ReversePostorder => ctx
+        SeedOrder::ReversePostorder => edit
             .reverse_postorder_filter(|k| pass.matches_kind(k))
             .collect(),
-        SeedOrder::Postorder => ctx.postorder_filter(|k| pass.matches_kind(k)).collect(),
+        SeedOrder::Postorder => edit.postorder_filter(|k| pass.matches_kind(k)).collect(),
     };
     let mut work: Worklist<NodeId> = seed.into_iter().collect();
     let mut overall = OptimizationResult::NoChange;
@@ -196,15 +196,15 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     while let Some(root) = work.dequeue() {
         if propagate {
             consumers.clear();
-            for &out in ctx.node_outputs(root) {
-                for (consumer, _) in ctx.graph_ref().value_uses(out) {
-                    if pass.matches_kind(ctx.graph_ref().node_kind(consumer)) {
+            for &out in edit.node_outputs(root) {
+                for (consumer, _) in edit.graph_ref().value_uses(out) {
+                    if pass.matches_kind(edit.graph_ref().node_kind(consumer)) {
                         consumers.push(consumer);
                     }
                 }
             }
         }
-        let r = pass.try_rewrite(ctx, opt_ctx, root)?;
+        let r = pass.try_rewrite(edit, opt_ctx, root)?;
         if let PeepholeRewrite::Changed { new_node } = r {
             overall = OptimizationResult::Changed;
             // Re-examine the node the rewrite reports it freshly created
@@ -216,7 +216,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
             // it, `run_peephole` reaches a local fixpoint over the pass's
             // rule set independent of seed order.
             if let Some(n) = new_node
-                && pass.matches_kind(ctx.graph_ref().node_kind(n))
+                && pass.matches_kind(edit.graph_ref().node_kind(n))
             {
                 work.enqueue(n);
             }
@@ -240,9 +240,9 @@ impl<P: PeepholePass + Clone + 'static> crate::pipeline::Optimizer for P {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        ctx: &mut crate::pipeline::OptCtx<'_>,
+        opt_ctx: &mut crate::pipeline::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        run_peephole(self, edit, ctx)
+        run_peephole(self, edit, opt_ctx)
     }
 }
 
@@ -287,7 +287,7 @@ mod tests {
         }
         fn try_rewrite(
             &self,
-            ctx: &mut crate::EditFunction<'_>,
+            edit: &mut crate::EditFunction<'_>,
             _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
             root: NodeId,
         ) -> Result<PeepholeRewrite> {
@@ -299,11 +299,11 @@ mod tests {
             if !self.do_rewrite {
                 return Ok(PeepholeRewrite::NoChange);
             }
-            let kind = *ctx.node_kind(root);
+            let kind = *edit.node_kind(root);
             if !(self.match_kind)(&kind) {
                 return Ok(PeepholeRewrite::NoChange);
             }
-            let (root_value, ty) = ctx.single_value_output(root)?;
+            let (root_value, ty) = edit.single_value_output(root)?;
             // When scripted to do so, the first rewrite builds a fresh
             // kind-matching node (a clone of the root `Add` reusing its two
             // value inputs) instead of folding to a constant.  The fresh
@@ -314,21 +314,21 @@ mod tests {
                 // Build a genuinely fresh `Add` with a distinct cacheable key
                 // (the root's first input used twice) so the dedup cache
                 // can't collapse it onto the already-seen root node.
-                let first = ctx.node_inputs(root).iter().next().unwrap();
-                let new_node = ctx.create_node(
+                let first = edit.node_inputs(root).iter().next().unwrap();
+                let new_node = edit.create_node(
                     kind,
                     [first, first],
                     [strider_ir::node::ValueKind::Typed(ty)],
                 );
-                let [new_value] = ctx.node_outputs_exact::<1>(new_node)?;
-                ctx.replace_value(root_value, new_value)?;
+                let [new_value] = edit.node_outputs_exact::<1>(new_node)?;
+                edit.replace_value(root_value, new_value)?;
                 return Ok(PeepholeRewrite::Changed {
                     new_node: Some(new_node),
                 });
             }
-            let new_value = ctx.build_int_const(REPLACEMENT_K, ty)?;
-            let new_node = ctx.producer(new_value);
-            ctx.replace_value(root_value, new_value)?;
+            let new_value = edit.build_int_const(REPLACEMENT_K, ty)?;
+            let new_node = edit.producer(new_value);
+            edit.replace_value(root_value, new_value)?;
             Ok(PeepholeRewrite::Changed {
                 new_node: Some(new_node),
             })
@@ -371,9 +371,9 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
+        let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
     }
@@ -390,9 +390,9 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
+        let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
     }
@@ -408,9 +408,9 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
+        let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         assert!(!pass.visit_log.borrow().is_empty());
 
@@ -443,9 +443,9 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
-        let _ = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
+        let _ = run_peephole(&pass, &mut edit, &mut octx).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 2, "exactly two visits, no re-enqueue: {log:?}");
     }
@@ -468,9 +468,9 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
+        let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         // Each Add visited at least once; propagate-true allows extra
         // re-enqueue visits.  The exact count depends on worklist dedup
@@ -499,11 +499,11 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(true),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         // The id the next created node will take == the new `Add`'s id.
-        let new_node_idx = ctx.graph_ref().next_node_id().index() as u32;
-        let r = run_peephole(&pass, &mut ctx, &mut octx).unwrap();
+        let new_node_idx = edit.graph_ref().next_node_id().index() as u32;
+        let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         let log = pass.visit_log.borrow().clone();
         assert!(
@@ -523,9 +523,9 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::new(&mut fg);
+        let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut ctx, &mut octx);
+        let r = run_peephole(&pass, &mut edit, &mut octx);
         assert!(r.is_err(), "errored pass must surface error");
         let msg = format!("{:?}", r.unwrap_err());
         assert!(

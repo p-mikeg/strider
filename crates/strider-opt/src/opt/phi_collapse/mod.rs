@@ -40,14 +40,14 @@ impl PeepholePass for PhiCollapse {
 
     fn try_rewrite(
         &self,
-        ctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         // `run_peephole` only hands us nodes matching `matches_kind`
         // (`Phi`/`MemPhi`) — both the seed walk and the consumer re-enqueue
         // filter on kind — so the single-value-output assumption below holds.
-        let inputs = ctx.node_inputs(root);
+        let inputs = edit.node_inputs(root);
         // A well-formed phi has at least `[phi_token]`; without a token
         // there is nothing to collapse.
         if inputs.is_empty() {
@@ -56,7 +56,7 @@ impl PeepholePass for PhiCollapse {
 
         // The phi's own output — used to discard the loop-carried
         // self-reference (Braun's trivial-phi rule).
-        let phi_value = ctx
+        let phi_value = edit
             .node_outputs_exact::<1>(root)
             .expect("Phi / MemPhi has 1 output per node signature")[0];
 
@@ -67,7 +67,7 @@ impl PeepholePass for PhiCollapse {
         // phi.  A linear scan with an `Option` accumulator short-circuits on
         // the second distinct value and yields `unique` in the same pass.
         let mut unique: Option<ValueId> = None;
-        for value in ctx.phi_data_inputs(root) {
+        for value in edit.phi_data_inputs(root) {
             if value == phi_value {
                 continue; // loop-carried self-reference (Braun): ignore
             }
@@ -86,7 +86,7 @@ impl PeepholePass for PhiCollapse {
         // Collapse to an EXISTING value (`unique`) — no fresh node — so report
         // `new_node: None`.  Consumer re-enqueue (driven by
         // `propagate_to_consumers`) handles the cascade.
-        let changed = ctx.replace_value(phi_value, unique)?;
+        let changed = edit.replace_value(phi_value, unique)?;
         // The phi's sole output is now unused (consumers rewired to `unique`),
         // so kill it.  `Phi`/`MemPhi` are not side-effecting, so the automatic
         // cull WOULD reach the collapsed phi after the next `clean()` drain —
@@ -99,7 +99,7 @@ impl PeepholePass for PhiCollapse {
         // former `RedundantPhis` policy of unconditionally detaching the
         // collapsed phi's inputs (the trivial phi is a no-op regardless of
         // whether any consumer was actually redirected).
-        ctx.kill_node(root);
+        edit.kill_node(root);
         Ok(if changed {
             PeepholeRewrite::Changed { new_node: None }
         } else {

@@ -100,7 +100,7 @@ pub use table::classify_table_dispatch;
 /// under-approximating the target set.
 #[must_use]
 pub fn classify_target(
-    ctx: &strider_ir::Function,
+    function: &strider_ir::Function,
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &mut crate::value_range::RangeMap<'_>,
@@ -110,10 +110,10 @@ pub fn classify_target(
     // target]) is its dispatch value.  Taking the branch NODE (not the bare
     // value) keeps the table classifier's index-range query scoped to THIS
     // branch, even when several branches share one dispatch value.
-    let target_value = ctx.indirect_branch_target(branch);
-    single_const_target(ctx, target_value)
-        .or_else(|| link_register_return(ctx, target_value))
-        .or_else(|| table::classify_table_dispatch(ctx, branch, rom, ranges, alias_mode))
+    let target_value = function.indirect_branch_target(branch);
+    single_const_target(function, target_value)
+        .or_else(|| link_register_return(function, target_value))
+        .or_else(|| table::classify_table_dispatch(function, branch, rom, ranges, alias_mode))
 }
 
 /// Recognise a single constant dispatch target: the target's producer is a
@@ -126,13 +126,13 @@ pub fn classify_target(
 /// valid targets on a 64-bit ISA — defer rather than truncate to a wrong
 /// address.
 fn single_const_target(
-    ctx: &strider_ir::Function,
+    function: &strider_ir::Function,
     target_value: ValueId,
 ) -> Option<ResolvedTargets> {
-    if !matches!(ctx.kind_of_value(target_value), NodeKind::IntConst(_)) {
+    if !matches!(function.kind_of_value(target_value), NodeKind::IntConst(_)) {
         return None;
     }
-    let k = ctx.int_const_u128(target_value)?;
+    let k = function.int_const_u128(target_value)?;
     // A const whose high 64 bits are set is never a valid jump target on a
     // 64-bit ISA; `try_from` rejects it rather than silently truncating.
     Some(ResolvedTargets::Single(u64::try_from(k).ok()?))
@@ -147,12 +147,12 @@ fn single_const_target(
 /// link register — there can be no LR match without one.  This is the
 /// shape `LoadForward` produces for a properly-popped return address.
 fn link_register_return(
-    ctx: &strider_ir::Function,
+    function: &strider_ir::Function,
     target_value: ValueId,
 ) -> Option<ResolvedTargets> {
-    let lr = ctx.default_cc().link_register_vn?;
-    match *ctx.kind_of_value(target_value) {
-        NodeKind::InitialVar(id) if ctx.initial_vn(id) == lr => Some(ResolvedTargets::LinkRegister),
+    let lr = function.default_cc().link_register_vn?;
+    match *function.kind_of_value(target_value) {
+        NodeKind::InitialVar(id) if function.initial_vn(id) == lr => Some(ResolvedTargets::LinkRegister),
         _ => None,
     }
 }
@@ -243,11 +243,11 @@ mod tests {
     /// the only one that needs a branch node + dominator-scoped ranges — is
     /// covered in `table_tests` against a real `IndirectBranch`.
     fn classify_target_bare(
-        ctx: &strider_ir::Function,
+        function: &strider_ir::Function,
         target_value: ValueId,
     ) -> anyhow::Result<Option<ResolvedTargets>> {
-        Ok(single_const_target(ctx, target_value)
-            .or_else(|| link_register_return(ctx, target_value)))
+        Ok(single_const_target(function, target_value)
+            .or_else(|| link_register_return(function, target_value)))
     }
 
     /// Build a minimal `Graph` with one tracked
