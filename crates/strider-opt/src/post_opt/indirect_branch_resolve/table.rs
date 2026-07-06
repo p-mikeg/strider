@@ -260,11 +260,11 @@ fn decompose_index(
 /// stopping at an unfoldable one lets the branch defer without chasing a
 /// non-existent index.
 ///
-/// SP-relativeness is checked structurally, NOT via `stack_offsets`: that
-/// side-table records the *fixed* SP offset of scalar spills/slots, but a stack
-/// *table* load `Load[(sp+base) + idx*stride]` has an **index-dependent** offset
-/// `StackOffsetDetect` never tags, so the side-table returns `None` for exactly
-/// the loads we need to traverse.
+/// A stack *table* load `Load[(sp+base) + idx*stride]` carries an
+/// **index-dependent** address that never `decompose`s to a fixed `(base,
+/// offset)`, so we can't ask about the address as a whole — but its `sp+base`
+/// operand *does* decompose.  Hence the operand-level check: the address is
+/// foldable when it, OR any of its operands, is a base.
 fn foldable_load_address(ctx: &strider_ir::Function, load: ValueId) -> Option<ValueId> {
     let addr = int_inputs(ctx, load).first().copied()?;
     let foldable = is_base_operand(ctx, addr)
@@ -275,29 +275,12 @@ fn foldable_load_address(ctx: &strider_ir::Function, load: ValueId) -> Option<Va
 }
 
 /// A const address (rodata table base) or an SP-rooted address (stack table
-/// base) -- the two bases the evaluator can fold a `Load` through.
+/// base) -- the two bases the evaluator can fold a `Load` through.  SP-rooting
+/// is asked of the shared `decompose_readonly` (the single SSoT) — no bespoke
+/// structural SP walk — and the operand check in [`foldable_load_address`]
+/// bridges the index-dependent case that decompose returns `None` for.
 fn is_base_operand(ctx: &strider_ir::Function, v: ValueId) -> bool {
-    ctx.int_const_u128(v).is_some() || is_sp_rooted(ctx, v, 8)
-}
-
-/// Is `v` an SP-rooted address -- `InitialVar(sp)`, or an `Add`/`And` with **any**
-/// SP-rooted operand -- checked structurally with a small depth bound.  Used by
-/// [`foldable_load_address`]: a load whose address touches SP *anywhere* is
-/// foldable (the evaluator reads it via `reaching_store`), even a table load
-/// `Load[(sp+base) + idx*stride]` whose address also carries the index.
-fn is_sp_rooted(ctx: &strider_ir::Function, v: ValueId, depth: u32) -> bool {
-    if depth == 0 {
-        return false;
-    }
-    let node = ctx.producer(v);
-    match ctx.node_kind(node) {
-        NodeKind::InitialVar(id) => ctx.initial_vn(*id) == ctx.default_cc().stack_vn,
-        NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::And) => ctx
-            .node_inputs(node)
-            .into_iter()
-            .any(|i| ctx.value_type_opt(i).is_some() && is_sp_rooted(ctx, i, depth - 1)),
-        _ => false,
-    }
+    ctx.int_const_u128(v).is_some() || crate::sp_expr::decompose_readonly(ctx, v).is_some()
 }
 
 /// `v` as a candidate index: a genuinely-bounded (guard-/mask-constrained, never
