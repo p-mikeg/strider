@@ -33,7 +33,7 @@ use strider_target::Endianness;
 
 use crate::error::Result;
 use crate::pipeline::OptimizationResult;
-use crate::sp_expr::{AliasVerdict, SpAliasCfg, SpExprMemo};
+use crate::sp_expr::{AliasVerdict, SpAliasCfg};
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///
@@ -67,13 +67,12 @@ impl crate::peephole::PeepholePass for LoadForward {
         opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<crate::peephole::PeepholeRewrite> {
-        // The SP-decompose memo is `opt_ctx.sp_memo` — it persists across the
-        // loads of one driver sweep and is fresh per `apply` (the pipeline
-        // clears it after any changed pass), matching the old per-`apply`
-        // local memo.
+        // SP decompositions are recomputed read-only off the live graph (the
+        // `stack_offsets` cache is empty during the fixed point), so no memo is
+        // threaded.
         let alias_mode = opt_ctx.options.alias_mode;
         Ok(crate::peephole::PeepholeRewrite::from_changed(
-            try_forward_load(ctx, root, &mut opt_ctx.sp_memo, alias_mode)?.changed(),
+            try_forward_load(ctx, root, alias_mode)?.changed(),
         ))
     }
 }
@@ -85,7 +84,6 @@ impl crate::peephole::PeepholePass for LoadForward {
 fn try_forward_load(
     ctx: &mut crate::EditFunction<'_>,
     load: NodeId,
-    memo: &mut SpExprMemo,
     alias_mode: crate::AliasMode,
 ) -> Result<OptimizationResult> {
     // Load inputs: [memory, addr]; only the memory token is needed here — the
@@ -100,7 +98,7 @@ fn try_forward_load(
     // load_forward stays conservative on distinct SP bases (a store at a
     // different SP base may still alias the forwarded load); a `Call` always
     // blocks a forward (`call_clobbers: true`).
-    let mut alias_cfg = SpAliasCfg::call_blocking(memo, alias_mode);
+    let alias_cfg = SpAliasCfg::call_blocking(alias_mode);
 
     // 1. Find the nearest definition that may alias the load.  A clean
     //    chain returns the `InitialMemory` node (handled by the Store

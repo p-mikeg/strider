@@ -387,7 +387,7 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
     assert!(
         fg.graph()
             .all_node_ids()
-            .any(|n| fg.side_tables().stack_offset(n).is_some()),
+            .any(|n| fg.stack_offset(n).is_some()),
         "StackOffsetDetect must stamp the stack-store offset"
     );
 

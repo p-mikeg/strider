@@ -363,7 +363,7 @@ pure_pass_class!("LoadForward" => PyLoadForward,
      subsequent same-offset `Load` nodes.");
 pure_pass_class!("StackOffsetDetect" => PyStackOffsetDetect,
     "`StackOffsetDetect()` — stamps every SP-relative Store/Load's concrete \
-     offset in `Function::stack_offsets`.");
+     offset in the `stack_offsets` decomposition cache.");
 pure_pass_class!("FunctionArgDetect" => PyFunctionArgDetect,
     "Post-pass that canonicalises register / stack argument reads into the \
      `Function.arg_index_to_values` side-table (carrier `InitialVar` for \

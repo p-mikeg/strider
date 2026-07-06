@@ -203,12 +203,19 @@ fn decompose_index(
         };
         let mut has_var_input = false;
         for p in inputs {
-            // A const or a PURE SP-spine value (`sp`, `sp+K`, `(sp+K)&mask`) is a
-            // symbolic *base*, not a variable: the evaluator keeps it as `SpRel`
-            // and never enumerates it.  Skipping it (like a const) keeps `sp` from
-            // being a second root — otherwise the real index fails to dominate the
-            // target (the SP path bypasses it) and every stack table would defer.
-            if ctx.int_const_u128(p).is_some() || is_pure_sp_base(ctx, p, 8) {
+            // A const or an SP-decomposable base (`sp`, `sp+K`, alignment-masked
+            // `sp & -16`) is a symbolic *base*, not a variable: the evaluator
+            // keeps it as `SpRel` and never enumerates it.  Skipping it (like a
+            // const) keeps `sp` from being a second root — otherwise the real
+            // index fails to dominate the target (the SP path bypasses it) and
+            // every stack table would defer.  `decompose_readonly` is the single
+            // SSoT for "is this a pure SP base": it recognises exactly the
+            // `sp + const` / alignment-masked shapes and (unlike a structural
+            // `sp & mask` check) rejects a bit-extraction `sp & 0xF`, which is a
+            // bounded *value* the walk must keep as a candidate index.
+            if ctx.int_const_u128(p).is_some()
+                || crate::sp_expr::decompose_readonly(ctx, p).is_some()
+            {
                 continue;
             }
             has_var_input = true;
@@ -289,29 +296,6 @@ fn is_sp_rooted(ctx: &strider_ir::Function, v: ValueId, depth: u32) -> bool {
             .node_inputs(node)
             .into_iter()
             .any(|i| ctx.value_type_opt(i).is_some() && is_sp_rooted(ctx, i, depth - 1)),
-        _ => false,
-    }
-}
-
-/// Is `v` a **pure** SP-spine base -- `InitialVar(sp)`, `Add(sp-spine, const)`, or
-/// `And(sp-spine, const-mask)` -- i.e. SP offset by *constants only*, no index
-/// term.  Unlike [`is_sp_rooted`], `Add((sp+base), idx*stride)` is NOT a pure SP
-/// base (its non-SP operand is a variable), so the index it carries is still
-/// walked.  The dominance walk treats a pure SP base like a const: a symbolic
-/// frame anchor, never enumerated, never a variability root.
-fn is_pure_sp_base(ctx: &strider_ir::Function, v: ValueId, depth: u32) -> bool {
-    if depth == 0 {
-        return false;
-    }
-    let node = ctx.producer(v);
-    match ctx.node_kind(node) {
-        NodeKind::InitialVar(id) => ctx.initial_vn(*id) == ctx.default_cc().stack_vn,
-        NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::And) => {
-            let ins = int_inputs(ctx, v);
-            ins.len() == 2
-                && ins.iter().any(|&i| is_pure_sp_base(ctx, i, depth - 1))
-                && ins.iter().any(|&i| ctx.int_const_u128(i).is_some())
-        }
         _ => false,
     }
 }

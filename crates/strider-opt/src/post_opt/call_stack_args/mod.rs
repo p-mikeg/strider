@@ -45,7 +45,7 @@ fn collect_stack_args(
     function: &strider_ir::Function,
     call_id: NodeId,
     stack_args: strider_target::StackArgs,
-    alias_cfg: &mut SpAliasCfg<'_>,
+    alias_cfg: &SpAliasCfg,
 ) -> Vec<ValueId> {
     // Call inputs: [control, memory, target, sp, ...args]; slots 1 (memory)
     // and 3 (sp) are guaranteed by the validated Call structural invariant.
@@ -120,9 +120,9 @@ impl PostOptimizer for CallStackArgCollect {
         // owned `Vec` lets the immutable borrow end before the per-call
         // mutation loop takes `ctx` mutably.
         let calls: Vec<NodeId> = ctx.live_of_kind(|k| matches!(k, NodeKind::Call)).collect();
-        // Build the SP-alias context once for the whole pass: it owns the shared
-        // decompose memo and is reused across every call site.
-        let mut alias_cfg = SpAliasCfg::call_blocking(&mut opt_ctx.sp_memo, alias_mode);
+        // Build the SP-alias context once for the whole pass and reuse it across
+        // every call site (decompositions route through the function's cache).
+        let alias_cfg = SpAliasCfg::call_blocking(alias_mode);
         for call_id in calls {
             // The call's effective stack-arg layout: a per-call CC override (a
             // varargs site) if recorded, else the function-default CC.  `None`
@@ -133,7 +133,7 @@ impl PostOptimizer for CallStackArgCollect {
             // Append each discovered stack-arg value as an extra Call input
             // (positional order); the loop is a no-op when the call passes none.
             // Single-shot post-pass, so we don't track a changed/unchanged result.
-            let args = collect_stack_args(ctx.function(), call_id, stack_args, &mut alias_cfg);
+            let args = collect_stack_args(ctx.function(), call_id, stack_args, &alias_cfg);
             for arg_value in &args {
                 ctx.add_node_input(call_id, *arg_value)?;
             }

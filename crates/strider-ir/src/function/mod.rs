@@ -7,7 +7,7 @@ pub(crate) mod dot;
 mod edit;
 mod func;
 mod side_tables;
-pub use side_tables::SideTables;
+pub use side_tables::{SideTables, SpDecomp, StackId};
 
 pub use edit::EditFunction;
 pub use edit::FunctionState;

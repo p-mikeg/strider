@@ -22,10 +22,9 @@
 //! the latter preferring the stack-offset side-table); the pure,
 //! class-on-class verdict table is the free [`alias_verdict`].
 
-use rustc_hash::FxHashMap;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp, SpDecomp};
 
 use super::ranges::ranges_disjoint;
 use crate::AliasMode;
@@ -56,9 +55,6 @@ impl SpExpr {
         })
     }
 }
-
-/// Per-pass-call memo for `decompose`.
-pub(crate) type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
 
 /// Coarse classification of a Load / Store address.  The verdict table in
 /// [`alias_verdict`] is keyed on the `(load_class, store_class)` pair:
@@ -102,80 +98,182 @@ pub(crate) enum AliasVerdict {
     MayAlias,
 }
 
-/// Stack-pointer analyzer: holds the `function` and a per-pass-call `memo`,
-/// and merges SP decomposition, address classification, and the store-alias
-/// verdict.  The stack varnode to anchor on is the function's own
-/// `default_cc().stack_vn`, read on demand — never stored, so it cannot drift
-/// from the function under analysis.
+/// Stack-pointer analyzer over an immutable function: SP decomposition +
+/// address classification + the store-alias verdict.  The stack varnode to
+/// anchor on is the function's own `default_cc().stack_vn`, read on demand — so
+/// it cannot drift from the function under analysis.
+///
+/// Decomposition results are cached in the function's `stack_offsets`
+/// side-table, written once the graph is frozen by [`decompose_and_cache`]
+/// (the fill pass used by `StackOffsetDetect`).  This read-only analyzer
+/// consults that cache and otherwise recomputes a cone *without* mutating, so
+/// it composes with any shared `&Function` borrow (the memory-SSA walk, the
+/// range-scoped indirect-branch classifier).
 pub(crate) struct SpAnalyzer<'a> {
     function: &'a Function,
-    memo: &'a mut SpExprMemo,
 }
 
 impl<'a> SpAnalyzer<'a> {
-    pub(crate) fn new(function: &'a Function, memo: &'a mut SpExprMemo) -> Self {
-        Self { function, memo }
+    pub(crate) fn new(function: &'a Function) -> Self {
+        Self { function }
     }
 
-    /// Decomposes `value` into `InitialVar(sp) + K` (or per-branch equivalent),
-    /// caching every classified node (`Some` *and* `None`) in the memo.
-    ///
-    /// Implemented as a single defs-before-uses (reverse-post-order) sweep over
-    /// the address cone: because every operand is classified before the node
-    /// that consumes it, each arm is a local map lookup.  `Phi` nodes are not
-    /// SP terminals (they classify to `None`), so the cone the sweep traverses
-    /// is a DAG of `InitialVar` / `Add` / `And` nodes.
-    ///
-    /// Caching `None` is sound because a node's verdict is a deterministic
-    /// function of the *fixed* graph within a memo's lifetime, independent of
-    /// which `value` (call path) was queried:
-    ///
-    /// * The RPO sweep visits the queried value's entire backward operand cone
-    ///   (`compute_full` is closed under data inputs) in defs-before-uses order,
-    ///   so every `Add` / `And` arm reads its operands' *already-classified*
-    ///   memo entries — never a spuriously-absent one.  A node's verdict is
-    ///   therefore fixed by its kind, its input edges, and its operands'
-    ///   verdicts — all graph-determined.
-    /// * The only cyclic data dependency in SSA is loop-carried through
-    ///   `Phi` / `MemPhi`, which classify to `None` from their kind alone with
-    ///   no operand recursion.  There is no acyclic depth-truncation (the sweep
-    ///   has no recursion-depth budget; it visits the finite live set once), so
-    ///   no node's `None` is an artefact of where the walk started.
-    /// * Callers hold the memo only against an immutable `&Function`; the
-    ///   pipeline clears `sp_memo` after every graph mutation, so a cached
-    ///   verdict never outlives the graph it was computed against.
-    pub(crate) fn decompose(&mut self, value: ValueId) -> Option<SpExpr> {
-        if let Some(cached) = self.memo.get(&value) {
-            return *cached;
-        }
-        let graph = self.function.graph();
-        let info = self.function.walk_info(Some(graph.producer(value)));
-        let rpo = self.function.reverse_postorder(&info);
-        for node in rpo {
-            let Ok([node_out]) = self.function.node_outputs_exact::<1>(node) else {
-                continue;
-            };
-            if self.memo.contains_key(&node_out) {
-                continue;
+    /// Decomposes `value` into `InitialVar(sp) + K` (or an alignment-masked SP
+    /// base) — a cache hit when the value was already decomposed, else a
+    /// read-only recompute of its cone.  See [`decompose_readonly`].
+    pub(crate) fn decompose(&self, value: ValueId) -> Option<SpExpr> {
+        decompose_readonly(self.function, value)
+    }
+}
+
+/// Defensive backstop on the SP-spine walk length.  The spine (`InitialVar(sp)`
+/// through `Add`-of-const / alignment-`And`) is acyclic in valid SSA — data
+/// cycles pass only through `Phi`, which terminates the walk — so this is never
+/// reached in practice; it guards against a malformed graph.
+const MAX_SP_SPINE: u32 = 100_000;
+
+/// The stack decomposition of `value`: a committed cache hit, else a read-only
+/// walk of just the **SP spine** — the `Add`-of-const / alignment-`And` chain
+/// down to `InitialVar(sp)` — accumulating the constant offset.
+///
+/// O(spine depth), NOT O(cone): it follows only the single SP-bearing operand at
+/// each step (the other is a constant or the alignment mask), so it never visits
+/// the off-spine ancestors a full backward sweep would.  Side-effect free — it
+/// mutates nothing — so it composes with any shared `&Function` borrow (the
+/// memory-SSA walk, the range-scoped indirect-branch classifier).  The
+/// persistent cache is populated separately by [`decompose_fill_all`] once the
+/// graph is frozen; during the optimizer's fixed point the cache is empty and
+/// this walks the live spine, which is correct and cheap.
+pub(crate) fn decompose_readonly(function: &Function, value: ValueId) -> Option<SpExpr> {
+    let mut cur = value;
+    let mut acc: i128 = 0;
+    // Once an alignment-`And` is met, the base is fixed to *that* And output (an
+    // opaque, entry-alignment-dependent base) carrying the offset accrued above
+    // it; the rest of the walk only *confirms* the operand is SP-rooted, so
+    // offsets below the And are ignored.  Iterative (not recursive) so a deep
+    // `And`-of-`And` chain cannot overflow the stack.
+    let mut anchor: Option<SpExpr> = None;
+    for _ in 0..MAX_SP_SPINE {
+        // A committed verdict short-circuits the walk.
+        match function.side_tables().stack_slot(cur) {
+            SpDecomp::Stack(_) => {
+                let hit = resolve_slot(function, cur)?;
+                return Some(match anchor {
+                    // Below an anchor, the committed hit only confirms SP-rooting.
+                    Some(a) => a,
+                    None => SpExpr {
+                        base: hit.base,
+                        offset: hit.offset.checked_add(acc)?,
+                    },
+                });
             }
-            let expr = self.classify_sp_node(node, node_out);
-            self.memo.insert(node_out, expr);
+            SpDecomp::NotStack => return None,
+            SpDecomp::Unknown => {}
         }
-        // The sweep only inserts entries for single-output producers, so a
-        // queried `value` whose producer has ≠1 output (never an SP terminal)
-        // would otherwise stay absent and force a full re-walk on every repeat
-        // query.  Memoise its `None` so the second query is a hit; `or_insert`
-        // hands back the now-present entry, so no second lookup is needed.
-        *self.memo.entry(value).or_insert(None)
-    }
-
-    /// Classifies a single node in the address cone given that all of its
-    /// operands have already been classified into the memo (guaranteed by the
-    /// defs-before-uses `rpo` order).  `Phi` is not an SP terminal and falls
-    /// through to `None`.
-    fn classify_sp_node(&self, node: NodeId, node_value: ValueId) -> Option<SpExpr> {
-        let function = self.function;
+        let node = function.producer(cur);
         match *function.node_kind(node) {
+            NodeKind::InitialVar(id)
+                if function.initial_vn(id) == function.default_cc().stack_vn =>
+            {
+                return Some(anchor.unwrap_or(SpExpr {
+                    base: cur,
+                    offset: acc,
+                }));
+            }
+            NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
+                let [lhs, rhs] = function.node_inputs_exact::<2>(node).ok()?;
+                // SP + const in either order; the const shifts the accumulated
+                // offset (only while above the anchor) and the walk continues
+                // down the other operand.
+                let (sp_operand, c) =
+                    match (function.int_const_i128(rhs), function.int_const_i128(lhs)) {
+                        (Some(c), _) => (lhs, c),
+                        (None, Some(c)) => (rhs, c),
+                        _ => return None,
+                    };
+                if anchor.is_none() {
+                    acc = acc.checked_add(c)?; // fail-closed on overflow
+                }
+                cur = sp_operand;
+            }
+            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+                let [l, r] = function.node_inputs_exact::<2>(node).ok()?;
+                // Alignment-masked SP is a fresh opaque base (its exact value
+                // depends on entry-SP alignment).  Require the non-mask operand
+                // to be SP-rooted; fix the base to this And output the first time.
+                let sp_operand = if function.int_const_u128(r).is_some_and(is_alignment_mask) {
+                    l
+                } else if function.int_const_u128(l).is_some_and(is_alignment_mask) {
+                    r
+                } else {
+                    return None;
+                };
+                anchor.get_or_insert(SpExpr {
+                    base: cur,
+                    offset: acc,
+                });
+                cur = sp_operand;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Resolves a value's cached `(base, offset)` slot into an [`SpExpr`], or `None`
+/// when the slot is unknown / not-stack.
+fn resolve_slot(function: &Function, value: ValueId) -> Option<SpExpr> {
+    function
+        .side_tables()
+        .stack_slot_resolved(value)
+        .map(|(base, offset)| SpExpr { base, offset })
+}
+
+/// Fills the function's `stack_offsets` decomposition cache for EVERY value in a
+/// single defs-before-uses (reverse-post-order) sweep of the whole graph —
+/// O(graph), versus the O(cone) per-value walk of [`decompose_and_cache`].
+///
+/// The fill pass ([`crate::StackOffsetDetect`]) runs this once on the frozen,
+/// post-convergence graph, after which every read-only decompose query
+/// ([`decompose_readonly`], the per-node [`strider_ir::Function::stack_offset`])
+/// is an O(1) cache hit.  Each node is classified from its operands' already
+/// *committed* verdicts (guaranteed present by the defs-before-uses order), so
+/// no local memo is needed.
+pub(crate) fn decompose_fill_all(function: &mut Function) {
+    let order: Vec<NodeId> = {
+        let f = &*function;
+        let info = f.walk_info(None);
+        f.reverse_postorder(&info)
+    };
+    for node in order {
+        let Ok([node_out]) = function.node_outputs_exact::<1>(node) else {
+            continue;
+        };
+        if !matches!(function.side_tables().stack_slot(node_out), SpDecomp::Unknown) {
+            continue;
+        }
+        // Operands precede this node in RPO, so their verdicts are committed;
+        // read them straight from the cache.  The immutable borrow ends with
+        // `expr` before the commit below.
+        let expr = classify_sp_node(&*function, node, node_out, |v| resolve_slot(function, v));
+        match expr {
+            Some(e) => function.side_tables_mut().set_stack_slot(node_out, e.base, e.offset),
+            None => function.side_tables_mut().set_stack_slot_not(node_out),
+        }
+    }
+}
+
+/// Classifies a single cone node given `get`, a lookup of each operand's
+/// already-computed verdict.  `Phi` is not an SP terminal and falls through to
+/// `None`.  The lookup is a closure so the same arms serve both the per-value
+/// local-memo sweep and the whole-graph committed-cache fill.
+fn classify_sp_node(
+    function: &Function,
+    node: NodeId,
+    node_value: ValueId,
+    get: impl Fn(ValueId) -> Option<SpExpr>,
+) -> Option<SpExpr> {
+    match *function.node_kind(node) {
             NodeKind::InitialVar(id)
                 if function.initial_vn(id) == function.default_cc().stack_vn =>
             {
@@ -198,11 +296,7 @@ impl<'a> SpAnalyzer<'a> {
                         (None, Some(c)) => (rhs, c),
                         _ => return None,
                     };
-                self.memo
-                    .get(&sp_operand)
-                    .copied()
-                    .flatten()
-                    .and_then(|e| e.shifted(c))
+                get(sp_operand).and_then(|e| e.shifted(c))
             }
             // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
             // `0xfffffff0` for SSE-aligned frames).  The And's output is
@@ -238,18 +332,19 @@ impl<'a> SpAnalyzer<'a> {
                 // The And's output is a fresh opaque base (offset 0) for
                 // downstream walkers; we only require the non-mask operand to
                 // be SP-rooted, discarding its concrete decomposition.
-                self.memo.get(&sp_value).copied().flatten().map(|_| SpExpr {
+                get(sp_value).map(|_| SpExpr {
                     base: node_value,
                     offset: 0,
                 })
             }
             _ => None,
         }
-    }
+}
 
-    /// Classifies a load / store address.  Cheap: `decompose` is memoised
-    /// across the function, the `IntConst` peek is a single match.
-    pub(super) fn classify_addr(&mut self, addr: ValueId) -> AddrClass {
+impl SpAnalyzer<'_> {
+    /// Classifies a load / store address.  Cheap: `decompose` is a cache hit /
+    /// local recompute, the `IntConst` peek is a single match.
+    pub(super) fn classify_addr(&self, addr: ValueId) -> AddrClass {
         match self.decompose(addr) {
             Some(SpExpr { base, offset }) => AddrClass::SpRooted { base, offset },
             None => {
@@ -263,14 +358,14 @@ impl<'a> SpAnalyzer<'a> {
     }
 
     /// Classifies a raw `NodeKind::Store`'s address into an [`AddrClass`],
-    /// preferring the `Function::stack_offsets` side-table (the SSoT populated
-    /// by `StackOffsetDetect`) over a fresh `decompose`.  The side-table offset
+    /// preferring the `Function::stack_offset` per-node SSoT (populated by
+    /// `StackOffsetDetect`) over a fresh `decompose`.  The side-table offset
     /// survives address rewrites that leave `decompose` unable to re-derive it
     /// (an earlier pass folding the address into an opaque shape), so it is
     /// consulted first.  The store-side counterpart of [`Self::classify_addr`];
     /// callers feed the result straight into [`alias_verdict`].
-    pub(crate) fn classify_store_addr(&mut self, store_node: NodeId) -> AddrClass {
-        match self.function.side_tables().stack_offset(store_node) {
+    pub(crate) fn classify_store_addr(&self, store_node: NodeId) -> AddrClass {
+        match self.function.stack_offset(store_node) {
             Some((base, offset)) => AddrClass::SpRooted { base, offset },
             None => {
                 let addr = self.function.store_addr(store_node);
@@ -456,8 +551,7 @@ mod decompose_tests {
         // offset 0.  (Decomposing the now-detached phi output would be None.)
         collapse_phis(&mut fg);
         let live_sp = crate::test_support::return_value(fg.graph())?;
-        let mut memo = SpExprMemo::default();
-        let r = SpAnalyzer::new(&fg, &mut memo).decompose(live_sp);
+        let r = SpAnalyzer::new(&fg).decompose(live_sp);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         let _ = sp_val;
         Ok(())
@@ -477,8 +571,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let mut memo = SpExprMemo::default();
-        let r = SpAnalyzer::new(&fg, &mut memo).decompose(addr);
+        let r = SpAnalyzer::new(&fg).decompose(addr);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
@@ -500,16 +593,15 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let mut memo = SpExprMemo::default();
-        let r = SpAnalyzer::new(&fg, &mut memo).decompose(addr);
+        let r = SpAnalyzer::new(&fg).decompose(addr);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
 
     #[test]
-    fn decompose_sp_memo_hit_returns_same_result() -> crate::Result<()> {
-        // Calling decompose twice on the same out should populate the memo
-        // and return the same answer.
+    fn decompose_cache_commits_and_readonly_is_idempotent() -> crate::Result<()> {
+        // Read-only decompose is idempotent, and `decompose_and_cache` commits
+        // the verdict into the function's `stack_offsets` cache.
         let sp = sp();
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -522,11 +614,8 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let mut memo = SpExprMemo::default();
-        let r1 = SpAnalyzer::new(&fg, &mut memo).decompose(addr);
-        // Memo should now be populated.
-        assert!(memo.contains_key(&addr));
-        let r2 = SpAnalyzer::new(&fg, &mut memo).decompose(addr);
+        let r1 = SpAnalyzer::new(&fg).decompose(addr);
+        let r2 = SpAnalyzer::new(&fg).decompose(addr);
         assert!(matches!(
             (&r1, &r2),
             (
@@ -534,6 +623,13 @@ mod decompose_tests {
                 Some(SpExpr { offset: -4, .. })
             )
         ));
+        // The fill sweep populates the persistent cache.
+        decompose_fill_all(&mut fg);
+        assert_eq!(
+            fg.side_tables().stack_slot_resolved(addr).map(|(_, o)| o),
+            Some(-4),
+            "fill must commit the -4 offset"
+        );
         Ok(())
     }
 
@@ -550,19 +646,15 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let mut memo = SpExprMemo::default();
-        assert!(SpAnalyzer::new(&fg, &mut memo).decompose(c).is_none());
+        assert!(SpAnalyzer::new(&fg).decompose(c).is_none());
         Ok(())
     }
 
     #[test]
-    fn decompose_sp_memo_caches_intermediate_results() -> crate::Result<()> {
-        // Edge case: decomposing the outermost node of a deep `sp - K1 - K2 - K3`
-        // chain must populate the memo for ALL intermediate sub-expressions, so
-        // a sibling walk hitting any of them gets a cache hit. The previous
-        // `if visiting.is_empty()` predicate only fired at the outermost call
-        // frame, so intermediates were never cached and the memo was useless
-        // for cross-call sharing.
+    fn decompose_and_cache_commits_intermediate_results() -> crate::Result<()> {
+        // Committing the outermost node of a deep `sp - K1 - K2 - K3` chain must
+        // populate the cache for ALL intermediate sub-expressions, so a sibling
+        // read-only query hitting any of them is a cache hit.
         let sp = sp();
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -578,28 +670,29 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
 
-        let mut memo = SpExprMemo::default();
-        let r = SpAnalyzer::new(&fg, &mut memo).decompose(s3);
-        assert!(matches!(r, Some(SpExpr { offset: -24, .. })));
+        decompose_fill_all(&mut fg);
+        assert_eq!(
+            fg.side_tables().stack_slot_resolved(s3).map(|(_, o)| o),
+            Some(-24),
+            "outermost chain node offset"
+        );
 
-        // After one top-level walk, all three intermediate outputs must be
-        // memoized. (sp_val itself is cached too, but its ValueId is
-        // VarPhi-of-InitialVar, which we don't directly check here.)
-        assert!(memo.contains_key(&s3), "expected memo entry for s3");
-        assert!(memo.contains_key(&s2), "expected memo entry for s2");
-        assert!(memo.contains_key(&s1), "expected memo entry for s1");
+        // The fill commits all three intermediate outputs as `Stack` slots.
+        for (v, name) in [(s1, "s1"), (s2, "s2"), (s3, "s3")] {
+            assert!(
+                matches!(fg.side_tables().stack_slot(v), strider_ir::SpDecomp::Stack(_)),
+                "expected cached Stack slot for {name}"
+            );
+        }
         Ok(())
     }
 
     #[test]
-    fn decompose_sp_caches_none_results() -> crate::Result<()> {
-        // A `None` verdict is a deterministic function of the fixed graph
-        // (kind + input edges + operands' deterministic verdicts), not of the
-        // query path: the iterative RPO sweep classifies every cone node from
-        // already-classified operands and has no depth-truncation, and the
-        // memo lives only against an immutable graph.  So a `None` verdict is
-        // cached and reused, sparing the repeated cone walk for the common
-        // non-SP (constant/global/heap) address case.
+    fn decompose_and_cache_commits_none_results() -> crate::Result<()> {
+        // A `None` verdict is a deterministic function of the fixed graph, so
+        // `decompose_and_cache` commits it as an explicit `NotStack` slot —
+        // sparing the repeated cone walk for the common non-SP (constant /
+        // global / heap) address case.
         let mut b = strider_ir_test_utils::empty_builder()?;
         let region = b.create_region_all()?;
         b.set_entry_region_all(region)?;
@@ -610,17 +703,11 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let mut memo = SpExprMemo::default();
-        let r = SpAnalyzer::new(&fg, &mut memo).decompose(c);
-        assert!(r.is_none());
-        // The verdict is now cached: the key is present and maps to a `None`
-        // verdict, so a repeat query short-circuits instead of re-walking.
-        let cached = memo
-            .get(&c)
-            .expect("decompose must cache the None verdict so the cone is not re-walked");
+        decompose_fill_all(&mut fg);
+        // The negative verdict is committed, so a repeat query short-circuits.
         assert!(
-            cached.is_none(),
-            "cached verdict for a non-SP address is None"
+            matches!(fg.side_tables().stack_slot(c), strider_ir::SpDecomp::NotStack),
+            "non-SP address must be cached as NotStack"
         );
         Ok(())
     }
@@ -670,8 +757,7 @@ mod decompose_tests {
         // Compute each verdict in isolation (fresh memo per query) — the
         // ground-truth graph verdict for each value.
         let truth = |v: ValueId| -> Option<SpExpr> {
-            let mut m = SpExprMemo::default();
-            SpAnalyzer::new(&fg, &mut m).decompose(v)
+            SpAnalyzer::new(&fg).decompose(v)
         };
         let t_phi = truth(sp_phi);
         let t_dec = truth(sp_dec);
@@ -694,9 +780,8 @@ mod decompose_tests {
             [global, sp_dec, sp_phi],
             [sp_dec, global, sp_phi],
         ] {
-            let mut shared = SpExprMemo::default();
             for v in order {
-                let got = SpAnalyzer::new(&fg, &mut shared).decompose(v);
+                let got = SpAnalyzer::new(&fg).decompose(v);
                 let want = if v == sp_phi {
                     t_phi
                 } else if v == sp_dec {
@@ -764,8 +849,7 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
 
-        let mut memo = SpExprMemo::default();
-        let r = SpAnalyzer::new(&fg, &mut memo).decompose(sp_at_c);
+        let r = SpAnalyzer::new(&fg).decompose(sp_at_c);
         assert!(
             r.is_none(),
             "expected None for VarPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
@@ -798,8 +882,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let mut memo = SpExprMemo::default();
-        let r = SpAnalyzer::new(&fg, &mut memo).decompose(aligned);
+        let r = SpAnalyzer::new(&fg).decompose(aligned);
         // The aligned output is a stable opaque base.  Offset = 0
         // because the alignment can shift the value by 0..7 bytes — we
         // can't pin a constant delta, but we *can* pin a stable
@@ -845,11 +928,10 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let mut memo = SpExprMemo::default();
-        let aligned_dec = SpAnalyzer::new(&fg, &mut memo)
+        let aligned_dec = SpAnalyzer::new(&fg)
             .decompose(aligned)
             .expect("aligned must decompose");
-        let post_sub_dec = SpAnalyzer::new(&fg, &mut memo)
+        let post_sub_dec = SpAnalyzer::new(&fg)
             .decompose(post_sub)
             .expect("post_sub must decompose");
         let SpExpr {
@@ -892,10 +974,9 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let mut memo = SpExprMemo::default();
         // Iterative rpo sweep: the deep And chain re-bases at each level and
         // resolves to an opaque base without recursion, so no stack overflow.
-        let r = SpAnalyzer::new(&fg, &mut memo).decompose(current);
+        let r = SpAnalyzer::new(&fg).decompose(current);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         Ok(())
     }
@@ -924,8 +1005,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let mut memo = SpExprMemo::default();
-        let SpExpr { offset, .. } = SpAnalyzer::new(&fg, &mut memo)
+        let SpExpr { offset, .. } = SpAnalyzer::new(&fg)
             .decompose(current)
             .expect("5000-node chain must decompose without stack-overflowing");
         assert_eq!(
@@ -972,7 +1052,6 @@ mod alias_tests {
     /// `store_alias_verdict` method was dissolved into `classify_store_addr`.
     fn store_alias_verdict(
         f: &Function,
-        memo: &mut SpExprMemo,
         store: NodeId,
         load_class: AddrClass,
         load_size: i128,
@@ -980,7 +1059,7 @@ mod alias_tests {
         distinct_sp_bases_disjoint: bool,
     ) -> AliasVerdict {
         let store_size = store_value_byte_size(f.graph(), f.store_data(store));
-        let store_class = SpAnalyzer::new(f, memo).classify_store_addr(store);
+        let store_class = SpAnalyzer::new(f).classify_store_addr(store);
         alias_verdict(
             SizedAddr {
                 class: load_class,
@@ -1038,10 +1117,8 @@ mod alias_tests {
 
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
-        let mut memo = SpExprMemo::default();
         let verdict = store_alias_verdict(
             &f,
-            &mut memo,
             store,
             AddrClass::SpRooted {
                 base: query_base,
@@ -1084,10 +1161,8 @@ mod alias_tests {
 
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
-        let mut memo = SpExprMemo::default();
         let verdict = store_alias_verdict(
             &f,
-            &mut memo,
             store,
             AddrClass::SpRooted {
                 base: query_base,
@@ -1125,11 +1200,9 @@ mod alias_tests {
 
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
-        let mut memo = SpExprMemo::default();
         // store at sp+8 (size 4) vs query at sp+0 (size 4): disjoint.
         let verdict = store_alias_verdict(
             &f,
-            &mut memo,
             store,
             AddrClass::SpRooted {
                 base: query_base,
@@ -1163,11 +1236,9 @@ mod alias_tests {
 
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
-        let mut memo = SpExprMemo::default();
         // store at sp+8 (size 4) vs query at sp+8 (size 4): exact match.
         let verdict = store_alias_verdict(
             &f,
-            &mut memo,
             store,
             AddrClass::SpRooted {
                 base: query_base,

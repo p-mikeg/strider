@@ -96,8 +96,8 @@ impl PostOptimizer for FunctionArgDetect {
         // threaded down).
         let alias_mode = opt_ctx.options.alias_mode;
         let arg_alias = opt_ctx.options.arg_alias;
-        let mut alias_cfg = SpAliasCfg::new(&mut opt_ctx.sp_memo, alias_mode, arg_alias);
-        detect_stack_args(ctx, &mut alias_cfg, stack_args, first_stack_arg)?;
+        let alias_cfg = SpAliasCfg::new(alias_mode, arg_alias);
+        detect_stack_args(ctx, &alias_cfg, stack_args, first_stack_arg)?;
         // Arg detection only populates the arg_index_to_values side-table,
         // and the memory-SSA walk's narrowing only shortens stack-arg loads'
         // memory edges (idempotent, never changes which args are detected).
@@ -122,7 +122,7 @@ impl PostOptimizer for FunctionArgDetect {
 /// offsets) are all registered into the side-table for that ordinal.
 fn detect_stack_args(
     ctx: &mut crate::EditFunction<'_>,
-    alias_cfg: &mut SpAliasCfg<'_>,
+    alias_cfg: &SpAliasCfg,
     stack_args: strider_target::StackArgs,
     first_stack_arg: usize,
 ) -> Result<()> {
@@ -275,7 +275,7 @@ fn detect_stack_args(
 /// cycle-guarded, `MemPhi`-forking, and stack-safe at any chain depth.
 fn mem_chain_is_dirty(
     ctx: &mut crate::EditFunction<'_>,
-    alias_cfg: &mut SpAliasCfg<'_>,
+    alias_cfg: &SpAliasCfg,
     load: NodeId,
 ) -> bool {
     let mem_token = ctx

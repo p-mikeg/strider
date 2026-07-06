@@ -82,7 +82,7 @@ impl<'a> RawFunctionDumper<'a> {
             s.push_str(&format!("\nout: {}", outs.join(", ")));
         }
 
-        if let Some((_, off)) = f.side_tables().stack_offset(node) {
+        if let Some((_, off)) = f.stack_offset(node) {
             s.push_str(&format!("\nsp[{off}]"));
         }
         if let Some(vn) = f

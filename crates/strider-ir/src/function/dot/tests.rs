@@ -650,7 +650,8 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
 
     // ── Case 2: stack_offset present — addr edge kept, label gains offset ──
 
-    f.side_tables_mut().set_stack_offset(store, addr_value, 0x10_i128);
+    f.side_tables_mut()
+        .set_stack_slot(addr_value, addr_value, 0x10_i128);
 
     let dot_with_offset = render(&f, entry);
 
@@ -711,7 +712,8 @@ fn load_keeps_addr_edge_and_labels_base_sp_offset() {
     let edges_no_offset = edge_lines(&dot_no_offset).len();
 
     // With stack offset: addr edge kept, label gains `base sp - 8`.
-    f.side_tables_mut().set_stack_offset(load, addr_value, -8_i128);
+    f.side_tables_mut()
+        .set_stack_slot(addr_value, addr_value, -8_i128);
     let dot_with_offset = render(&f, entry);
 
     assert!(

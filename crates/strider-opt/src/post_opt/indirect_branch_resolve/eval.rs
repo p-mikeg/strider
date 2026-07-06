@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
 
-use crate::sp_expr::{SpAliasCfg, SpExprMemo};
+use crate::sp_expr::SpAliasCfg;
 
 /// Returns an iterator over the value-typed inputs of `node` — i.e., inputs
 /// whose `value_type_opt` is `Some`.  Skips control, memory, and phi-token
@@ -50,7 +50,6 @@ pub(crate) struct Evaluator<'a> {
     function: &'a strider_ir::Function,
     rom: Option<&'a dyn ReadOnlyMemory>,
     alias_mode: crate::AliasMode,
-    sp_memo: SpExprMemo,
     map: FxHashMap<ValueId, Abs>,
 }
 
@@ -64,7 +63,6 @@ impl<'a> Evaluator<'a> {
             function,
             rom,
             alias_mode,
-            sp_memo: SpExprMemo::default(),
             map: FxHashMap::default(),
         }
     }
@@ -202,7 +200,7 @@ impl<'a> Evaluator<'a> {
                 let [mem, _addr] = f.node_inputs_exact::<2>(node).ok()?;
                 let load_size = load_ty.byte_size() as i128;
                 let reaching = {
-                    let mut cfg = SpAliasCfg::call_blocking(&mut self.sp_memo, self.alias_mode);
+                    let cfg = SpAliasCfg::call_blocking(self.alias_mode);
                     cfg.reaching_store(f, mem, base, offset, load_size)
                 }?;
                 // Exact anchor: the store must sit at the probed offset.
