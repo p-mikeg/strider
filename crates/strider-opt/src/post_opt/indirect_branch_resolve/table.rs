@@ -59,6 +59,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::MAX_TABLE_ENTRIES;
+use crate::value_range::Interval;
 use crate::{AliasMode, ReadOnlyMemory};
 use strider_cfg::ResolvedTargets;
 use strider_ir::IRViewer;
@@ -109,10 +110,10 @@ pub fn classify_table_dispatch(
     // most tightly bounded one, so it wins before any looser impostor that
     // would fold to a run of bogus sequential targets.
     let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
-    for (idx_value, lo, hi) in candidates {
+    for (idx_value, range) in candidates {
         let pruned = super::eval::cone_order_pruned(ctx, target_value, idx_value);
         if let Some(targets) =
-            enumerate_targets(lo, hi, |x| ev.eval_target(&pruned, target_value, idx_value, x))
+            enumerate_targets(range, |x| ev.eval_target(&pruned, target_value, idx_value, x))
         {
             return Some(ResolvedTargets::Multiple(targets));
         }
@@ -125,11 +126,10 @@ pub fn classify_table_dispatch(
 /// fold (this candidate is not the index, or the table is not fully resolvable
 /// → fail closed).  `fold` does the per-value substitution-and-optimise.
 fn enumerate_targets(
-    lo: u128,
-    hi: u128,
+    range: Interval,
     mut fold: impl FnMut(u128) -> Option<u64>,
 ) -> Option<Vec<u64>> {
-    let mut targets: Vec<u64> = (lo..=hi).map(&mut fold).collect::<Option<_>>()?;
+    let mut targets: Vec<u64> = (range.lo..=range.hi).map(&mut fold).collect::<Option<_>>()?;
     targets.sort_unstable();
     targets.dedup();
     (!targets.is_empty()).then_some(targets)
@@ -159,7 +159,7 @@ fn decompose_indices(
     ranges: &mut crate::value_range::RangeMap<'_>,
     target: ValueId,
     branch: NodeId,
-) -> Vec<(ValueId, u128, u128)> {
+) -> Vec<(ValueId, Interval)> {
     collect_indices(ctx, ranges, target, branch, 0)
 }
 
@@ -172,7 +172,7 @@ fn collect_indices(
     target: ValueId,
     branch: NodeId,
     depth: u32,
-) -> Vec<(ValueId, u128, u128)> {
+) -> Vec<(ValueId, Interval)> {
     // A load's address can nest another load (two-level PIC / offset tables); a
     // small cap bounds the recursion.  The value graph is a DAG so it terminates
     // regardless -- this is belt-and-suspenders.
@@ -212,7 +212,7 @@ fn collect_indices(
     }
 
     let mut load_memo = rustc_hash::FxHashMap::default();
-    let mut out: Vec<(ValueId, u128, u128)> = cone
+    let mut out: Vec<(ValueId, Interval)> = cone
         .iter()
         .filter(|&&v| v != target)
         .filter_map(|&v| bounded_index(ctx, ranges, branch, v, &mut load_memo))
@@ -230,7 +230,7 @@ fn collect_indices(
         }
     }
 
-    out.sort_by_key(|&(_, lo, hi)| hi - lo);
+    out.sort_by_key(|&(_, iv)| iv.hi - iv.lo);
     out
 }
 
@@ -245,7 +245,7 @@ fn bounded_index(
     branch: NodeId,
     v: ValueId,
     load_memo: &mut rustc_hash::FxHashMap<ValueId, bool>,
-) -> Option<(ValueId, u128, u128)> {
+) -> Option<(ValueId, Interval)> {
     let ty = ctx
         .value_type_opt(v)
         .filter(|t| t.is_integer() && ctx.int_const_u128(v).is_none())?;
@@ -256,7 +256,7 @@ fn bounded_index(
     let entry_load = is_load_derived(ctx, v, load_memo)
         && ranges.dominating_guard(v, branch).is_none()
         && !is_and_masked(ctx, v);
-    (bounded && !entry_load).then_some((v, iv.lo, iv.hi))
+    (bounded && !entry_load).then_some((v, iv))
 }
 
 /// A `Load`'s address: its first (and only) integer input.
