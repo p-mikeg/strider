@@ -254,15 +254,6 @@ impl SideTables {
         self.stack_offsets[value] = SpDecomp::NotStack;
     }
 
-    /// Drops every cached decomposition (invalidation after a graph mutation).
-    /// The interner is reset too, since its ids are referenced only by the now
-    /// cleared slots.
-    #[inline]
-    pub fn clear_stack_slots(&mut self) {
-        self.stack_offsets.clear();
-        self.stack_interner = EntityInterner::new();
-    }
-
     /// Returns the per-output case addresses recorded for a
     /// [`crate::node::NodeKind::Switch`] node, or `&[]` if none.
     #[inline]

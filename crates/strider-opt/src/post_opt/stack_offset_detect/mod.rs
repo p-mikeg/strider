@@ -29,10 +29,15 @@ impl PostOptimizer for StackOffsetDetect {
         // Fills the `stack_offsets` cache for the STORE/LOAD ADDRESSES only — the
         // sparse set the user-facing per-node `Function::stack_offset` reads back
         // on the frozen, post-convergence graph.  Each address is an O(spine)
-        // `decompose_readonly` walk (not a whole-graph sweep): the other
-        // consumers (the memory-SSA walk, the indirect-branch classifier /
-        // evaluator) call `decompose_readonly` directly, which is already cheap,
-        // so there is no need to eagerly decompose every value.
+        // `decompose_readonly` walk (not a whole-graph sweep); the other
+        // consumers call `decompose_readonly` directly.
+        //
+        // BOTH verdicts are committed: an SP-rooted address caches its
+        // `(base, offset)`, a non-SP one caches the negative `NotStack`.  Since
+        // `decompose_readonly` is read-only (its memory-SSA / range-scoped
+        // callers hold `&Function`), this fill pass is the one place with `&mut`
+        // to populate the cache, so caching the negatives here lets those later
+        // read-only queries short-circuit instead of re-walking the spine.
         let candidates: Vec<NodeId> = edit
             .live_of_kind(|k| matches!(k, NodeKind::Store(_) | NodeKind::Load(_)))
             .collect();
@@ -41,10 +46,11 @@ impl PostOptimizer for StackOffsetDetect {
             let Some(addr) = edit.function().node_inputs(node).get(1).copied() else {
                 continue;
             };
-            if let Some(SpExpr { base, offset }) = decompose_readonly(edit.function(), addr) {
-                edit.function_mut()
-                    .side_tables_mut()
-                    .set_stack_slot(addr, base, offset);
+            let decomposed = decompose_readonly(edit.function(), addr);
+            let tables = edit.function_mut().side_tables_mut();
+            match decomposed {
+                Some(SpExpr { base, offset }) => tables.set_stack_slot(addr, base, offset),
+                None => tables.set_stack_slot_not(addr),
             }
         }
         Ok(())
