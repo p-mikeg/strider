@@ -160,33 +160,18 @@ fn decompose_indices(
     target: ValueId,
     branch: NodeId,
 ) -> Vec<(ValueId, Interval)> {
-    collect_indices(ctx, ranges, target, branch, 0)
-}
-
-/// One level of [`decompose_indices`]: collect the bounded, non-entry values in
-/// `target`'s variability cone; if none, recurse through the cone's load
-/// addresses (offset / pointer tables put the index behind a load).
-fn collect_indices(
-    ctx: &strider_ir::Function,
-    ranges: &mut crate::value_range::RangeMap<'_>,
-    target: ValueId,
-    branch: NodeId,
-    depth: u32,
-) -> Vec<(ValueId, Interval)> {
-    // A load's address can nest another load (two-level PIC / offset tables); a
-    // small cap bounds the recursion.  The value graph is a DAG so it terminates
-    // regardless -- this is belt-and-suspenders.
-    const MAX_LOAD_DEPTH: u32 = 16;
-    if depth > MAX_LOAD_DEPTH {
-        return Vec::new();
-    }
-
-    // Variability cone: `target`'s integer ancestors, stopping at loads (opaque
-    // entry / spill -- recursed into via their address) and opaque sources
-    // (`InitialVar` / `Phi` / `Call` / ..., which bear no index inputs).  A
-    // visited-set keeps the walk linear over the shared DAG.
+    // Variability cone: `target`'s integer ancestors.  The walk follows the
+    // addressing arithmetic and TRAVERSES THROUGH a load the evaluator can fold
+    // -- one whose address has a const (rodata, `LoadReadOnly`) or SP-rooted
+    // (stack, `reaching_store`) base -- into that address, so the index behind a
+    // pointer table `Load[base + idx*stride]` or an offset table's inner load is
+    // reached in the SAME pass (no separate recursion).  The load's SP base, if
+    // any, is an `InitialVar` leaf, so the walk never chases the SP spine.  It
+    // stops at a reg/GOT-based load (vtable / funcptr / PIC -- unfoldable) and at
+    // opaque sources (`InitialVar` / `Phi` / `Call` / ...); a visited-set keeps
+    // it linear over the shared DAG.  The load's own *value* stays in the cone
+    // but is filtered as a table entry by [`bounded_index`].
     let mut cone: Vec<ValueId> = Vec::new();
-    let mut load_roots: Vec<ValueId> = Vec::new();
     let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
     let mut stack = vec![target];
     while let Some(v) = stack.pop() {
@@ -195,7 +180,11 @@ fn collect_indices(
         }
         cone.push(v);
         match ctx.node_kind(ctx.producer(v)) {
-            NodeKind::Load(_) => load_roots.push(v),
+            NodeKind::Load(_) => {
+                if let Some(addr) = foldable_load_address(ctx, v) {
+                    stack.push(addr);
+                }
+            }
             NodeKind::InitialVar(_)
             | NodeKind::Phi
             | NodeKind::Call
@@ -217,21 +206,54 @@ fn collect_indices(
         .filter(|&&v| v != target)
         .filter_map(|&v| bounded_index(ctx, ranges, branch, v, &mut load_memo))
         .collect();
-
-    // No index directly in the cone -- the table sits behind a load (`Load[..]`
-    // / `Add(Load, base)`): recurse into each load's address until one yields an
-    // index.
-    if out.is_empty() {
-        for &load in &load_roots {
-            out = collect_indices(ctx, ranges, load_address(ctx, load), branch, depth + 1);
-            if !out.is_empty() {
-                break;
-            }
-        }
-    }
-
     out.sort_by_key(|&(_, iv)| iv.hi - iv.lo);
     out
+}
+
+/// The address of a load the abstract evaluator can fold -- one whose address is
+/// (or has an operand that is) a const (rodata, resolved by `LoadReadOnly`) or an
+/// SP-rooted address (stack, resolved by `reaching_store`) -- or `None` for a
+/// reg / GOT-based load (vtable / funcptr / PIC) it cannot.  Traversing into a
+/// foldable load's address continues the index search past a table's entry load;
+/// stopping at an unfoldable one lets the branch defer without chasing a
+/// non-existent index.
+///
+/// SP-relativeness is checked structurally, NOT via `stack_offsets`: that
+/// side-table records the *fixed* SP offset of scalar spills/slots, but a stack
+/// *table* load `Load[(sp+base) + idx*stride]` has an **index-dependent** offset
+/// `StackOffsetDetect` never tags, so the side-table returns `None` for exactly
+/// the loads we need to traverse.
+fn foldable_load_address(ctx: &strider_ir::Function, load: ValueId) -> Option<ValueId> {
+    let addr = int_inputs(ctx, load).first().copied()?;
+    let foldable = is_base_operand(ctx, addr)
+        || int_inputs(ctx, addr)
+            .iter()
+            .any(|&op| is_base_operand(ctx, op));
+    foldable.then_some(addr)
+}
+
+/// A const address (rodata table base) or an SP-rooted address (stack table
+/// base) -- the two bases the evaluator can fold a `Load` through.
+fn is_base_operand(ctx: &strider_ir::Function, v: ValueId) -> bool {
+    ctx.int_const_u128(v).is_some() || is_sp_rooted(ctx, v, 8)
+}
+
+/// Is `v` an SP-rooted address -- `InitialVar(sp)`, `Add(sp-rooted, const)`, or
+/// the alignment base `And(sp-rooted, mask)` -- checked structurally with a small
+/// depth bound (the SP spine is a short const-offset chain).
+fn is_sp_rooted(ctx: &strider_ir::Function, v: ValueId, depth: u32) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    let node = ctx.producer(v);
+    match ctx.node_kind(node) {
+        NodeKind::InitialVar(id) => ctx.initial_vn(*id) == ctx.default_cc().stack_vn,
+        NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::And) => ctx
+            .node_inputs(node)
+            .into_iter()
+            .any(|i| ctx.value_type_opt(i).is_some() && is_sp_rooted(ctx, i, depth - 1)),
+        _ => false,
+    }
 }
 
 /// `v` as a candidate index: a genuinely-bounded (guard-/mask-constrained, never
@@ -259,10 +281,6 @@ fn bounded_index(
     (bounded && !entry_load).then_some((v, iv))
 }
 
-/// A `Load`'s address: its first (and only) integer input.
-fn load_address(ctx: &strider_ir::Function, load: ValueId) -> ValueId {
-    int_inputs(ctx, load).first().copied().unwrap_or(load)
-}
 
 /// A node's integer-typed value inputs (the index-bearing dataflow edges).
 fn int_inputs(ctx: &strider_ir::Function, v: ValueId) -> Vec<ValueId> {
