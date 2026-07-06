@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
 
-use crate::sp_expr::{SpAliasCfg, SpExpr, SpExprMemo};
+use crate::sp_expr::{SpAliasCfg, SpExprMemo};
 
 /// Returns an iterator over the value-typed inputs of `node` — i.e., inputs
 /// whose `value_type_opt` is `Some`.  Skips control, memory, and phi-token
@@ -98,19 +98,22 @@ impl<'a> Evaluator<'a> {
 
     fn eval_node(&mut self, value: ValueId) -> Option<Abs> {
         let f = self.function;
-        // An sp-rooted constant expression — InitialVar(sp), an alignment-masked
-        // `(sp & mask)`, or either plus a constant `Add` chain — decomposes to
-        // its SP terminal + offset via the same `SpAliasCfg.decompose` the
-        // stores / `reaching_store` use, so the aligned base is recognized and
-        // matches the stores' base. Memoized in `sp_memo`, so the load's index-
-        // independent sp-spine is computed once and reused across indices.
-        if let Some(SpExpr { base, offset }) =
-            SpAliasCfg::call_blocking(&mut self.sp_memo, self.alias_mode).decompose(f, value)
-        {
-            return Some(Abs::SpRel { base, offset });
-        }
         let node = f.producer(value);
         let kind = *f.node_kind(node);
+        // The SP spine is identified STRUCTURALLY from the already-evaluated
+        // inputs, not by re-running `SpAliasCfg.decompose` (a full cone walk)
+        // on every node of every fold.  On the converged graph the only SP
+        // shapes are the terminal `InitialVar(sp)`, `Add(sp-rooted, const)`
+        // (handled by `eval_add` from the operands' `Abs`), and the alignment
+        // base `And(sp-rooted, alignmask)`.  `reaching_store` still owns the
+        // memory-SSA store lookup for SP-relative loads (rare); this just drops
+        // the redundant per-node classification.
+        if matches!(kind, NodeKind::InitialVar(id) if f.initial_vn(id) == f.default_cc().stack_vn) {
+            return Some(Abs::SpRel {
+                base: value,
+                offset: 0,
+            });
+        }
         let out_ty = f.value_type_opt(value);
         let ins: SmallVec<[ValueId; 2]> = value_input_producers(f, node).collect();
         match kind {
@@ -120,6 +123,26 @@ impl<'a> Evaluator<'a> {
                 self.get(*ins.get(1)?)?,
                 out_ty?,
             ),
+            // Alignment base `(sp-rooted & mask)`: a fresh opaque SP base
+            // (offset 0), matching `SpAnalyzer::classify_sp_node`'s And arm.
+            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
+                let [l, r] = [*ins.first()?, *ins.get(1)?];
+                let sp_operand = if f.int_const_u128(r).is_some_and(crate::sp_expr::is_alignment_mask)
+                {
+                    l
+                } else if f.int_const_u128(l).is_some_and(crate::sp_expr::is_alignment_mask) {
+                    r
+                } else {
+                    return self.eval_const_node(value);
+                };
+                match self.get(sp_operand) {
+                    Some(Abs::SpRel { .. }) => Some(Abs::SpRel {
+                        base: value,
+                        offset: 0,
+                    }),
+                    _ => self.eval_const_node(value),
+                }
+            }
             NodeKind::Load(_) => self.eval_load(node, value),
             NodeKind::Phi => self.eval_phi(node),
             _ => self.eval_const_node(value),

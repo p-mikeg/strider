@@ -65,19 +65,6 @@ use strider_cfg::ResolvedTargets;
 use strider_ir::IRViewer;
 use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId};
 
-/// Largest index-pruned fold cone a candidate may have before it is rejected
-/// without folding.  A real dispatch index's pruned cone is only the address
-/// arithmetic plus the table load — a handful of nodes (observed ≤ 9), and
-/// independent of the table's entry count.  A candidate with a large pruned
-/// cone is a false positive deep in the index-derivation / decode chain (the
-/// structural walk cannot always tell an index's `>>` scaling from a decode
-/// field-extract); folding its full cone cold is what an unresolvable dispatch
-/// must not pay.
-///
-/// ponytail: 128 ≈ 14× the observed max; fails SAFE (a table whose fold cone is
-/// improbably large is reported unresolved, never mis-resolved).
-const MAX_FOLD_CONE: usize = 128;
-
 /// Top-level classifier hook for the table-dispatch arm.  Called by
 /// [`super::classify_anchor`] when the anchor's producer is a
 /// [`NodeKind::Load`] or an `IntBinaryOp(And)` dispatch-mask wrapper.
@@ -113,11 +100,14 @@ pub fn classify_table_dispatch(
     let candidates = decompose_indices(ctx, ranges, anchor_value, branch);
 
     // Pin each candidate index over its proven range and let the read-only
-    // evaluator fold the (index-pruned, small-by-construction) dispatch cone
-    // for every value: rodata reads via `LoadReadOnly`, on-stack reads via
-    // `reaching_store`, arithmetic via ConstFold.  Every value must fold to a
-    // constant target (fail-closed): a dispatch whose base is symbolic — e.g. a
-    // vtable `Load[reg + idx*8]` — does not fold and the branch defers.
+    // evaluator fold the index-pruned dispatch cone for every value: rodata
+    // reads via `LoadReadOnly`, on-stack reads via `reaching_store`, arithmetic
+    // via ConstFold.  Every value must fold to a constant target (fail-closed):
+    // a dispatch whose base is symbolic — e.g. a vtable `Load[reg + idx*8]` —
+    // does not fold and the branch defers.  No size guard on the cone is needed:
+    // the evaluator identifies the SP spine structurally (no per-node cone walk),
+    // so even a false-positive candidate with a large decode cone folds cheaply
+    // and `enumerate_targets` bails on its first non-folding value.
     //
     // Candidates are tried SMALLEST-RANGE-FIRST (`decompose_indices` sorts
     // them): when the addressing exposes more than one bounded origin — a wide
@@ -127,17 +117,6 @@ pub fn classify_table_dispatch(
     let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
     for (idx_value, lo, hi) in candidates {
         let pruned = super::eval::cone_order_pruned(ctx, anchor_value, idx_value);
-        // A real dispatch index sits a few hops from the load, so its
-        // index-pruned fold cone is tiny (the address arithmetic + the table
-        // load).  A candidate whose pruned cone is large is a false positive
-        // deep in the index-derivation / decode chain (reached when the walk
-        // follows a `>>` field-extract into decode); folding that cone cold is
-        // the per-candidate cost the search must not pay.  Building the cone is
-        // a cheap graph walk, so build it, check its size, and skip the fold
-        // when it is implausibly large.
-        if pruned.len() > MAX_FOLD_CONE {
-            continue;
-        }
         if let Some(targets) =
             enumerate_targets(lo, hi, |x| ev.eval_target(&pruned, anchor_value, idx_value, x))
         {

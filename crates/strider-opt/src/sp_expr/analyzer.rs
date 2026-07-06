@@ -285,7 +285,7 @@ impl<'a> SpAnalyzer<'a> {
 /// clears only the low-order bits; a low-bit mask (`0xF`) is a bit-extraction,
 /// not a base.  `0` and all-ones masks are rejected (no alignment effect / not
 /// a low-clearing mask).
-fn is_alignment_mask(m: u128) -> bool {
+pub(crate) fn is_alignment_mask(m: u128) -> bool {
     let tz = m.trailing_zeros();
     // `tz == 0`: no low zero bits → not clearing any alignment (low mask or all-ones).
     // `tz == 128`: m is zero → all bits cleared, not a valid alignment mask.
