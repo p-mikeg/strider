@@ -340,6 +340,48 @@ fn known_bits_mask_bounds_index_everywhere() {
     assert_eq!(iv_other.hi, 7, "KnownBits bound: hi must be 7 in other");
 }
 
+/// A scaled index `(arg & 7) << 3` has its low 3 bits known-zero, so KnownBits
+/// gives it stride 8 and `count()` = 8 (not the 57-wide raw span).  This is the
+/// congruence the table-dispatch cap keys on: a wide-but-strided scaled index is
+/// enumerable, an equally-wide dense one is not.
+#[test]
+fn known_bits_scaled_index_carries_stride() {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let arg = b
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    let mask = b.build_int_const(7u64, ValueType::I32).unwrap();
+    let idx = b
+        .build_int_binary_operation(arg, mask, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    let three = b.build_int_const(3u64, ValueType::I32).unwrap();
+    // scaled = idx * 8  ⇒  values {0, 8, 16, … 56}, low 3 bits known-zero.
+    let scaled = b
+        .build_int_binary_operation(idx, three, IntBinaryOp::ShiftLeft, ValueType::I32)
+        .unwrap();
+
+    b.build_return(Some(scaled), &[]).unwrap();
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+
+    let entry_node = f.entry();
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(scaled, entry_node);
+    assert_eq!((iv.lo, iv.hi), (0, 56), "scaled index spans [0, 56]");
+    assert_eq!(iv.stride, 8, "low 3 known-zero bits ⇒ stride 8");
+    assert_eq!(iv.count(), 8, "8 distinct entries, not the 57-wide raw span");
+}
+
 // ---------------------------------------------------------------------------
 // Test 4: unguarded predecessor → top (fail-closed)
 //
