@@ -135,77 +135,110 @@ fn enumerate_targets(
     (!targets.is_empty()).then_some(targets)
 }
 
-/// The dispatch index candidates: every **genuinely-bounded** (guard- or
-/// mask-constrained — never width-only) non-constant value derived from THE one
-/// variable that controls the dispatch, **smallest-range-first**.
+/// The dispatch index candidates: the **genuinely-bounded** (guard- or
+/// mask-constrained, never width-only) non-constant values that **dominate the
+/// target** in its variability cone, **smallest-range-first**.
 ///
-/// A jump table is `branch f(index)` for a single controlling `index`, so every
-/// candidate lies in the target's **variability cone**: walk the target's
-/// backward value graph, following a node's integer inputs but STOPPING at each
-/// `Load` and at every opaque source (`InitialVar` / `Phi` / `Call` / ...).  A
-/// `Load`'s value is opaque -- a table *entry* or a spilled variable -- so when
-/// the cone yields no in-cone index the walk recurses into the load's *address*
-/// (reaching the index of a pointer table `Load[base + idx*stride]`, an offset
-/// table `Load[offtable + idx]`, and a no-load computed jump `(base+idx<<k)&mask`
-/// alike).  A plain `Load[reg]` function pointer / `Load[reg + idx*8]` vtable has
-/// no bounded value in its cone -> empty -> deferred with no fold.
+/// A jump table is `branch f(index)` for one controlling variable, so the index
+/// is a node **every** variable→target path flows through — a *value-dominator*
+/// of the target.  Restricting to dominators is what excludes a bypassed
+/// sub-branch: in a rotate `index = (x<<2) | (x>>30)`, `x>>30` has the tightest
+/// interval but does **not** dominate the target (the `x<<2` arm bypasses it), so
+/// pinning it leaves `x` free and it can never fold; `x` and the `Or` *do*
+/// dominate.  Smallest-range over the raw cone would try `x>>30` first; smallest
+/// range over the **dominators** never offers it.
 ///
-/// The candidate is only a *guess*: the caller pins each smallest-range-first
-/// and the read-only fold confirms it.  A value that isn't the true index leaves
-/// the controlling variable free (or a co-varying `reg`/`gp` unresolved) and
-/// fails to fold, so a bounded impostor is rejected rather than mis-resolved.
+/// The cone is built by walking `target`'s variability inputs, TRAVERSING THROUGH
+/// a load the evaluator can fold (const-base rodata / SP-rooted stack) into its
+/// address and stopping at a reg/GOT-based load (vtable / funcptr / PIC) and at
+/// opaque sources.  A virtual ENTRY feeds every cone root, and
+/// [`petgraph::algo::dominators::simple_fast`] yields the target's dominator
+/// chain — the short "convergence → target" spine, not the whole cone.  The pin
+/// is still confirmed by the caller's fold (belt-and-braces), but a valid table
+/// now resolves on the first candidate.
 fn decompose_indices(
     ctx: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
     target: ValueId,
     branch: NodeId,
 ) -> Vec<(ValueId, Interval)> {
-    // Variability cone: `target`'s integer ancestors.  The walk follows the
-    // addressing arithmetic and TRAVERSES THROUGH a load the evaluator can fold
-    // -- one whose address has a const (rodata, `LoadReadOnly`) or SP-rooted
-    // (stack, `reaching_store`) base -- into that address, so the index behind a
-    // pointer table `Load[base + idx*stride]` or an offset table's inner load is
-    // reached in the SAME pass (no separate recursion).  The load's SP base, if
-    // any, is an `InitialVar` leaf, so the walk never chases the SP spine.  It
-    // stops at a reg/GOT-based load (vtable / funcptr / PIC -- unfoldable) and at
-    // opaque sources (`InitialVar` / `Phi` / `Call` / ...); a visited-set keeps
-    // it linear over the shared DAG.  The load's own *value* stays in the cone
-    // but is filtered as a table entry by [`bounded_index`].
-    let mut cone: Vec<ValueId> = Vec::new();
+    use petgraph::graph::{DiGraph, NodeIndex};
+
+    // Build the value-dominance graph of the cone: a virtual ENTRY with an edge
+    // to every root, and a producer→consumer edge for every variability edge
+    // (traversing through a foldable load into its address).  Node weight
+    // `None` marks the ENTRY; `Some(v)` a cone value.
+    let mut g: DiGraph<Option<ValueId>, ()> = DiGraph::new();
+    let entry = g.add_node(None);
+    let mut nidx: rustc_hash::FxHashMap<ValueId, NodeIndex> = rustc_hash::FxHashMap::default();
+    let node_of = |g: &mut DiGraph<Option<ValueId>, ()>,
+                       nidx: &mut rustc_hash::FxHashMap<ValueId, NodeIndex>,
+                       v: ValueId| {
+        *nidx.entry(v).or_insert_with(|| g.add_node(Some(v)))
+    };
+
     let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
     let mut stack = vec![target];
     while let Some(v) = stack.pop() {
         if ctx.int_const_u128(v).is_some() || !seen.insert(v) {
             continue;
         }
-        cone.push(v);
-        match ctx.node_kind(ctx.producer(v)) {
-            NodeKind::Load(_) => {
-                if let Some(addr) = foldable_load_address(ctx, v) {
-                    stack.push(addr);
-                }
-            }
+        let vi = node_of(&mut g, &mut nidx, v);
+        // `v`'s variability inputs: the addressing arithmetic, a foldable load's
+        // address, or nothing for an opaque source.
+        let inputs: Vec<ValueId> = match ctx.node_kind(ctx.producer(v)) {
+            NodeKind::Load(_) => foldable_load_address(ctx, v).into_iter().collect(),
             NodeKind::InitialVar(_)
             | NodeKind::Phi
             | NodeKind::Call
             | NodeKind::CallOther { .. }
             | NodeKind::New
             | NodeKind::SegmentOp { .. }
-            | NodeKind::CPoolRef => {} // opaque source -- a leaf of the cone
-            _ => {
-                for i in int_inputs(ctx, v) {
-                    stack.push(i);
-                }
+            | NodeKind::CPoolRef => Vec::new(),
+            _ => int_inputs(ctx, v),
+        };
+        let mut has_var_input = false;
+        for p in inputs {
+            // A const or a PURE SP-spine value (`sp`, `sp+K`, `(sp+K)&mask`) is a
+            // symbolic *base*, not a variable: the evaluator keeps it as `SpRel`
+            // and never enumerates it.  Skipping it (like a const) keeps `sp` from
+            // being a second root — otherwise the real index fails to dominate the
+            // target (the SP path bypasses it) and every stack table would defer.
+            if ctx.int_const_u128(p).is_some() || is_pure_sp_base(ctx, p, 8) {
+                continue;
             }
+            has_var_input = true;
+            let pi = node_of(&mut g, &mut nidx, p);
+            g.add_edge(pi, vi, ());
+            stack.push(p);
+        }
+        if !has_var_input {
+            g.add_edge(entry, vi, ()); // a root of the variability cone
         }
     }
 
+    let Some(&target_idx) = nidx.get(&target) else {
+        return Vec::new();
+    };
+    let doms = petgraph::algo::dominators::simple_fast(&g, entry);
+
+    // The target's dominator chain (excluding ENTRY and the target itself), kept
+    // when a genuinely-bounded, non-entry index — smallest-range-first.
     let mut load_memo = rustc_hash::FxHashMap::default();
-    let mut out: Vec<(ValueId, Interval)> = cone
-        .iter()
-        .filter(|&&v| v != target)
-        .filter_map(|&v| bounded_index(ctx, ranges, branch, v, &mut load_memo))
-        .collect();
+    let mut out: Vec<(ValueId, Interval)> = Vec::new();
+    if let Some(chain) = doms.dominators(target_idx) {
+        for di in chain {
+            let Some(v) = *g.node_weight(di).expect("dominator is a graph node") else {
+                continue; // ENTRY
+            };
+            if v == target {
+                continue;
+            }
+            if let Some(c) = bounded_index(ctx, ranges, branch, v, &mut load_memo) {
+                out.push(c);
+            }
+        }
+    }
     out.sort_by_key(|&(_, iv)| iv.hi - iv.lo);
     out
 }
@@ -238,9 +271,11 @@ fn is_base_operand(ctx: &strider_ir::Function, v: ValueId) -> bool {
     ctx.int_const_u128(v).is_some() || is_sp_rooted(ctx, v, 8)
 }
 
-/// Is `v` an SP-rooted address -- `InitialVar(sp)`, `Add(sp-rooted, const)`, or
-/// the alignment base `And(sp-rooted, mask)` -- checked structurally with a small
-/// depth bound (the SP spine is a short const-offset chain).
+/// Is `v` an SP-rooted address -- `InitialVar(sp)`, or an `Add`/`And` with **any**
+/// SP-rooted operand -- checked structurally with a small depth bound.  Used by
+/// [`foldable_load_address`]: a load whose address touches SP *anywhere* is
+/// foldable (the evaluator reads it via `reaching_store`), even a table load
+/// `Load[(sp+base) + idx*stride]` whose address also carries the index.
 fn is_sp_rooted(ctx: &strider_ir::Function, v: ValueId, depth: u32) -> bool {
     if depth == 0 {
         return false;
@@ -252,6 +287,29 @@ fn is_sp_rooted(ctx: &strider_ir::Function, v: ValueId, depth: u32) -> bool {
             .node_inputs(node)
             .into_iter()
             .any(|i| ctx.value_type_opt(i).is_some() && is_sp_rooted(ctx, i, depth - 1)),
+        _ => false,
+    }
+}
+
+/// Is `v` a **pure** SP-spine base -- `InitialVar(sp)`, `Add(sp-spine, const)`, or
+/// `And(sp-spine, const-mask)` -- i.e. SP offset by *constants only*, no index
+/// term.  Unlike [`is_sp_rooted`], `Add((sp+base), idx*stride)` is NOT a pure SP
+/// base (its non-SP operand is a variable), so the index it carries is still
+/// walked.  The dominance walk treats a pure SP base like a const: a symbolic
+/// frame anchor, never enumerated, never a variability root.
+fn is_pure_sp_base(ctx: &strider_ir::Function, v: ValueId, depth: u32) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    let node = ctx.producer(v);
+    match ctx.node_kind(node) {
+        NodeKind::InitialVar(id) => ctx.initial_vn(*id) == ctx.default_cc().stack_vn,
+        NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::And) => {
+            let ins = int_inputs(ctx, v);
+            ins.len() == 2
+                && ins.iter().any(|&i| is_pure_sp_base(ctx, i, depth - 1))
+                && ins.iter().any(|&i| ctx.int_const_u128(i).is_some())
+        }
         _ => false,
     }
 }
