@@ -45,14 +45,33 @@ impl Default for ConstantFold {
 }
 
 impl PeepholePass for ConstantFold {
-    /// Constant-fold rule groups cover most node kinds (int / bool / float
-    /// arithmetic + cmp, casts, truncate / extend, identity rewrites on
-    /// just about any binary op).  Seeding the worklist with every
-    /// reachable node preserves the prior behaviour of the hand-written
-    /// `optimize` impl; the per-group rules already kind-filter
-    /// internally.
-    fn matches_kind(&self, _kind: &NodeKind) -> bool {
-        true
+    /// Every constant-fold rule roots at an int/float **operation** — the
+    /// arithmetic, comparison, cast, truncate/extend, and conversion kinds
+    /// below.  A rule can never fire on a `Region` / `Phi` / `Call` / `Load` /
+    /// constant / control node, so seeding those (the former `true`) just paid
+    /// ~46 failing rule attempts per node.  `run_peephole` honours `matches_kind`
+    /// for both the seed walk AND the re-enqueue of a rewrite's consumers/new
+    /// node, so narrowing to the foldable kinds cannot drop a fold — it only
+    /// stops probing nodes that never fold.
+    fn matches_kind(&self, kind: &NodeKind) -> bool {
+        matches!(
+            kind,
+            NodeKind::IntUnaryOp(_)
+                | NodeKind::IntBinaryOp(_)
+                | NodeKind::IntCmpOp(_)
+                | NodeKind::Truncate
+                | NodeKind::Popcount
+                | NodeKind::Lzcount
+                | NodeKind::Extend(_)
+                | NodeKind::FloatBinaryOp(_)
+                | NodeKind::FloatUnaryOp(_)
+                | NodeKind::FloatCmpOp(_)
+                | NodeKind::IntToFloat
+                | NodeKind::FloatToInt
+                | NodeKind::FloatToFloat
+                | NodeKind::IntBitsToFloat
+                | NodeKind::FloatBitsToInt
+        )
     }
 
     fn try_rewrite(
