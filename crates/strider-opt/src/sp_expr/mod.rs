@@ -4,7 +4,7 @@
 //! The implementation is split across focused submodules:
 //!
 //! * `analyzer` — the merged `SpAnalyzer` (SP decomposition + address
-//!   classification + store-alias verdict), plus `SpExpr`, `SpExprMemo`, the
+//!   classification + store-alias verdict), plus `SpExpr`, the
 //!   `AddrClass` taxonomy, and the pure class-on-class `alias_verdict` table.
 //!   Constant addends are read via the canonical `IRViewer::int_const_i128`;
 //!   `ConstantFold` has already collapsed any `Neg`/`Truncate`/`Extend` wrapper

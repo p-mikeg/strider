@@ -6,48 +6,42 @@
 //! indirection.  Rather than pattern-match each addressing shape, this arm
 //! **delegates the addressing to the abstract evaluator**:
 //!
-//! 1. **Find candidate indices.**  Collect the bounded values in the dispatch's
-//!    **variability cone** (`decompose_indices`): the values derived from THE one
-//!    variable that controls the branch, reached by walking the target's integer
-//!    ancestors and stopping at loads / opaque sources (recursing into a load's
-//!    *address* when the index sits behind it).  This reaches the index inside
-//!    `Load[base + idx*stride]`, the inner index of an offset table, and the
-//!    index of a no-load computed jump alike.  A plain `Load[reg]` function
-//!    pointer (no bounded value in its cone) is rejected outright.  Candidates
-//!    are tried smallest-range-first so the tightly-bounded real index wins over
-//!    a looser derived form (a `Mul`-scaled address term whose dense range would
-//!    fold to garbage).
-//! 2. **Pin and fold.**  For each candidate, evaluate the dispatch cone under
-//!    `index = i` via the read-only `super::eval::Evaluator` (ConstFold
-//!    arithmetic + `LoadReadOnly` ROM reads + `LoadForward` via
-//!    `reaching_store`) for every `i` in its proven range.  The dispatch value
-//!    is a concrete constant iff the addressing fully resolved.  The evaluator
-//!    covers *only* those three foldings — intentionally narrower than the full
-//!    `default_pipeline` the former clone-and-optimise path ran.  A cone whose
-//!    collapse to a constant would have required some other pass (e.g. a
-//!    `KnownBits` bit-lattice narrowing) resolves to `None` here and the branch
-//!    defers — sound (an unresolved branch is never a wrong edge), just less
-//!    eager than the old approach.
-//! 3. **Accept the index that folds every value.**  The candidate whose whole
-//!    range folds to constants IS the index; the folded constants are the
-//!    targets (`enumerate_targets`).  A wrong candidate leaves the dispatch
-//!    dependent on the real index and fails to fold, so it is rejected.
+//! 1. **Find THE index** (`decompose_index`).  A jump table is `f(index)` for
+//!    one controlling variable, so the index is a value every variable→target
+//!    path flows through — a *value-dominator* of the target.  Build the
+//!    dispatch's variability cone (walking the target's integer ancestors,
+//!    traversing *into* a foldable load's address and stopping at reg/GOT loads
+//!    and opaque sources), take the target's dominator chain, and pick the
+//!    DEEPEST genuinely-bounded value on it — the one just above the first
+//!    operand the cone couldn't traverse.  Dominance excludes a bypassed
+//!    sub-branch (a rotate's `x>>30`); "deepest" picks the most-refined index
+//!    (`idx` over a scaled `idx*8`).  A `Load[reg]` function pointer has no
+//!    bounded dominator → deferred, no fold.
+//! 2. **Pin and fold.**  Evaluate the dispatch cone under `index = i` via the
+//!    read-only [`super::eval::Evaluator`] (ConstFold arithmetic + `LoadReadOnly`
+//!    ROM reads + `LoadForward` via `reaching_store`) for every `i` in the
+//!    index's proven **strided** range.  The dispatch value is a concrete
+//!    constant iff the addressing fully resolved; the folded constants are the
+//!    targets.  The evaluator covers *only* those three foldings, so a cone that
+//!    would need some other pass (e.g. a `KnownBits` narrowing) resolves to
+//!    `None` and the branch defers — sound, just less eager.
 //!
 //! ## Soundness
 //!
 //! Two independent gates must hold to commit to `Multiple`:
 //!
 //! 1. **Bounded index.**  The range analysis bounds `idx` from an `if (idx < N)`
-//!    guard dominating the dispatch and/or a KnownBits mask (`idx & 0x7`).  A
-//!    sound *upper* bound; mixed-bound joins fail closed.  A `Mul`-scaled address
-//!    term has a dense range that would fold to garbage, but smallest-range-first
-//!    tries the tightest (value-preserving) derivation before any scaled one.
+//!    guard dominating the dispatch and/or a KnownBits mask (`idx & 0x7`); the
+//!    cap is on the *entry count* `(hi−lo)/stride + 1` (see [`Interval::count`]),
+//!    so a sparse scaled `idx*8` is enumerable while a dense wide range is not.
+//!    A width-only bound on a loaded table *entry* is rejected (`bounded_index`),
+//!    so a raw `[0,255]` byte is never enumerated as an index.
 //!
-//! 2. **Complete fold.**  *Every* value in `lo..=hi` must fold to a constant
-//!    target; any failure returns `None` (a `Multiple` omitting a real runtime
-//!    target would wire a CFG missing edges).  The evaluator is read-only, so
-//!    the analysed function is never mutated, and the caller's [`AliasMode`] is
-//!    threaded into the evaluator so a global-clobbered on-stack table defers
+//! 2. **Complete fold.**  *Every* value in the strided range must fold to a
+//!    constant target; any failure returns `None` (a `Multiple` omitting a real
+//!    runtime target would wire a CFG with missing edges).  The evaluator is
+//!    read-only, so the analysed function is never mutated, and the caller's
+//!    [`AliasMode`] is threaded in so a global-clobbered on-stack table defers
 //!    under `Strict` exactly as it would in the orchestrator's own run.
 //!
 //! Over-approximating the bound (extra targets) is sound — the surplus become

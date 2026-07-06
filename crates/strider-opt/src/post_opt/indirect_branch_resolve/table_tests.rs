@@ -145,7 +145,7 @@ fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
 fn classify_table_dispatch_duplicate_targets_are_deduped() {
     // idx = (load) & 0x3 → bound 4 via KnownBits.  The table's four entries
     // resolve to targets [0x10, 0x20, 0x10, 0x20] — two distinct addresses
-    // each appearing twice.  `enumerate_targets`'s `sort_unstable` + `dedup`
+    // each appearing twice.  the fold's `sort_unstable` + `dedup`
     // must collapse the four indices to a 2-element `Multiple([0x10, 0x20])`.
     let (g, _target) = build_with_target(|fb| {
         let raw = fb.build_int_const(0xffff_ffffu64, ValueType::I32).unwrap();

@@ -43,10 +43,9 @@ mod options;
 pub(crate) mod peephole;
 mod pipeline;
 pub mod rewrite_rule;
-// Crate-internal: the SP-expression decomposition cache lives on
-// `OptCtx::sp_memo` (a `pub(crate)` field) and is shared only between the
-// SP-aware passes — no downstream crate names `SpExpr` / `SpExprMemo` /
-// `ranges_disjoint`, so the whole module stays `pub(crate)`.
+// Crate-internal: the SP-expression decomposition lives here and its results
+// are cached on the function's `stack_offsets` side-table — no downstream crate
+// names `SpExpr` / `ranges_disjoint`, so the whole module stays `pub(crate)`.
 pub(crate) mod sp_expr;
 pub use error::Result;
 pub use options::{AliasMode, MemAliasOptions, OptOptions};

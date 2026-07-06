@@ -19,8 +19,7 @@ use crate::{AliasMode, MemAliasOptions};
 /// range?" for a precomputed load address class:
 ///
 /// * `Store` — classify the store address via
-///   [`SpAnalyzer::classify_store_addr`] (stack-offset SSoT before
-///   `decompose`) and run the pure [`alias_verdict`]: anything but `Disjoint`
+///   [`SpAnalyzer::classify_store_addr`] and run the pure [`alias_verdict`]: anything but `Disjoint`
 ///   clobbers (a `load_forward` caller re-checks exact-`Match` afterward).
 /// * `Call` / `CallOther` — clobbers iff `mem.calls_clobber` is set.
 ///   `load_forward` sets it (a load can never forward across a call);
@@ -58,8 +57,7 @@ impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_> {
                 if store_space != self.load_space {
                     return false;
                 }
-                // Classify the store address (stack-offset SSoT before
-                // `decompose`) and its size, then run the pure class-on-class
+                // Classify the store address and its size, then run the pure class-on-class
                 // verdict directly — anything but `Disjoint` clobbers (a
                 // `load_forward` caller re-checks exact-`Match` afterward).
                 let store_size = store_value_byte_size(function.graph(), function.store_data(def));

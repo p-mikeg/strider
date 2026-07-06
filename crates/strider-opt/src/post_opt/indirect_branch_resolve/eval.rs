@@ -117,7 +117,7 @@ impl<'a> Evaluator<'a> {
                 out_ty?,
             ),
             // Alignment base `(sp-rooted & mask)`: a fresh opaque SP base
-            // (offset 0), matching `SpAnalyzer::classify_sp_node`'s And arm.
+            // (offset 0), matching `decompose_readonly`'s And arm.
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
                 let [l, r] = [*ins.first()?, *ins.get(1)?];
                 let sp_operand = if f.int_const_u128(r).is_some_and(crate::sp_expr::is_alignment_mask)

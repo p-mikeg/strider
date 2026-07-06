@@ -1,12 +1,13 @@
 //! Stack-pointer analyzer: SP decomposition + address classification + alias
 //! verdict, merged into one [`SpAnalyzer`] type.
 //!
-//! `decompose` is the workhorse: given an output that is `InitialVar(sp)`
-//! transformed by `Add` of constants (subtraction appears as `Add(_, Neg(K))`)
-//! or anchored at an alignment-masked `sp & mask`, it returns a single
-//! `SpExpr { base, offset }` terminal (or `None`).
-//! Callers thread a per-pass-call memo through it so repeated walks over the
-//! same SP chain cost O(1) on cache hit.
+//! `decompose_readonly` is the workhorse: given an output that is
+//! `InitialVar(sp)` transformed by `Add` of constants (subtraction appears as
+//! `Add(_, Neg(K))`) or anchored at an alignment-masked `sp & mask`, it returns
+//! a single `SpExpr { base, offset }` terminal (or `None`).  It caches nothing
+//! itself but reads the function's `stack_offsets` side-table (the persistent
+//! decomposition cache, filled once the graph is frozen by `StackOffsetDetect`)
+//! before walking the live SP spine.
 //!
 //! The decomposer does **not** look through `Phi` nodes — a stack-tagged
 //! `Phi(sp)` (loop-header join, or the single-predecessor phi the lifter wraps
@@ -19,7 +20,7 @@
 //!
 //! On top of the decomposition, [`SpAnalyzer`] also classifies a load / store
 //! address into a coarse [`AddrClass`] (`classify_addr` / `classify_store_addr`,
-//! the latter preferring the stack-offset side-table); the pure,
+//! both decomposing via the cache-backed `decompose_readonly`); the pure,
 //! class-on-class verdict table is the free [`alias_verdict`].
 
 
@@ -39,9 +40,6 @@ use AddrClass::*;
 pub(crate) struct SpExpr {
     pub base: ValueId,
     pub offset: i128,
-}
-
-impl SpExpr {
 }
 
 /// Coarse classification of a Load / Store address.  The verdict table in
@@ -92,8 +90,8 @@ pub(crate) enum AliasVerdict {
 /// it cannot drift from the function under analysis.
 ///
 /// Decomposition results are cached in the function's `stack_offsets`
-/// side-table, written once the graph is frozen by [`decompose_and_cache`]
-/// (the fill pass used by `StackOffsetDetect`).  This read-only analyzer
+/// side-table, written once the graph is frozen by `StackOffsetDetect`.
+/// This read-only analyzer
 /// consults that cache and otherwise recomputes a cone *without* mutating, so
 /// it composes with any shared `&Function` borrow (the memory-SSA walk, the
 /// range-scoped indirect-branch classifier).
@@ -129,7 +127,7 @@ const MAX_SP_SPINE: u32 = 100_000;
 /// the off-spine ancestors a full backward sweep would.  Side-effect free — it
 /// mutates nothing — so it composes with any shared `&Function` borrow (the
 /// memory-SSA walk, the range-scoped indirect-branch classifier).  The
-/// persistent cache is populated separately by [`decompose_fill_all`] once the
+/// persistent cache is populated separately by `StackOffsetDetect` once the
 /// graph is frozen; during the optimizer's fixed point the cache is empty and
 /// this walks the live spine, which is correct and cheap.
 pub(crate) fn decompose_readonly(function: &Function, value: ValueId) -> Option<SpExpr> {
@@ -233,21 +231,14 @@ impl SpAnalyzer<'_> {
         }
     }
 
-    /// Classifies a raw `NodeKind::Store`'s address into an [`AddrClass`],
-    /// preferring the `Function::stack_offset` per-node SSoT (populated by
-    /// `StackOffsetDetect`) over a fresh `decompose`.  The side-table offset
-    /// survives address rewrites that leave `decompose` unable to re-derive it
-    /// (an earlier pass folding the address into an opaque shape), so it is
-    /// consulted first.  The store-side counterpart of [`Self::classify_addr`];
-    /// callers feed the result straight into [`alias_verdict`].
+    /// Classifies a raw `NodeKind::Store`'s address into an [`AddrClass`] — the
+    /// store-side counterpart of [`Self::classify_addr`], kept named so
+    /// `def_clobbers` and the exact re-check in `verdict` classify a store
+    /// identically.  `classify_addr` decomposes via `decompose_readonly`, which
+    /// consults the `stack_offsets` cache itself, so there is no separate
+    /// side-table preference here.
     pub(crate) fn classify_store_addr(&self, store_node: NodeId) -> AddrClass {
-        match self.function.stack_offset(store_node) {
-            Some((base, offset)) => AddrClass::SpRooted { base, offset },
-            None => {
-                let addr = self.function.store_addr(store_node);
-                self.classify_addr(addr)
-            }
-        }
+        self.classify_addr(self.function.store_addr(store_node))
     }
 }
 
@@ -888,7 +879,7 @@ mod alias_tests {
     }
 
     /// Test composition of the store→load alias verdict: classify the store
-    /// address (stack-offset SSoT before `decompose`), derive its size, then
+    /// address, derive its size, then
     /// run the pure class-on-class [`alias_verdict`] — exactly what the
     /// production `SpAliasOracle` Store arm does now that the bespoke
     /// `store_alias_verdict` method was dissolved into `classify_store_addr`.
