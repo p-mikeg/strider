@@ -3,6 +3,12 @@ name = "strider-opt"
 version = "0.1.0"
 edition.workspace = true
 
+[features]
+# Exposes the single-pass test runners (`run_one` / `run_post`) to downstream
+# integration tests (they compile against the non-`test` build).  Off in
+# production so those test-only helpers stay out of the public surface.
+test-util = []
+
 [dependencies]
 strider-ir = { workspace = true }
 strider-pattern = { workspace = true }

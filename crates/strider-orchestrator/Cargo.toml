@@ -26,6 +26,8 @@ cranelift-entity.workspace = true
 object.workspace = true
 # Test-only IR helpers (count_kind, has_kind, build_sub_as_add_neg, …).
 strider-ir = { workspace = true, features = ["test-util"] }
+# Test-only single-pass runners (run_one / run_post) used by integration tests.
+strider-opt = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { workspace = true }
 expect-test.workspace = true
 paste = "1"

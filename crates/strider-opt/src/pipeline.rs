@@ -192,6 +192,10 @@ pub trait Optimizer: OptimizerClone {
 /// Returns an error if `function` has not been built (no entry node — the
 /// built invariant `EditFunction::new` enforces), or the first error returned
 /// by [`Optimizer::apply`].
+/// Test-only: the production driver is [`OptimizerPipeline::run`]'s fixed-point
+/// loop; this single-pass runner exists for unit / integration tests only, so
+/// it is gated behind `test` / the `test-util` feature.
+#[cfg(any(test, feature = "test-util"))]
 pub fn run_one(
     pass: &dyn Optimizer,
     function: &mut strider_ir::Function,
@@ -216,6 +220,7 @@ pub fn run_one(
 ///
 /// Returns an error if `function` has not been built, or the first error
 /// returned by [`PostOptimizer::apply`].
+#[cfg(any(test, feature = "test-util"))]
 pub fn run_post(
     pass: &dyn PostOptimizer,
     function: &mut strider_ir::Function,
