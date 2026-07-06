@@ -17,18 +17,6 @@ use strider_ir::{IRViewer, ReadOnlyMemory};
 
 use crate::sp_expr::SpAliasCfg;
 
-/// Returns an iterator over the value-typed inputs of `node` — i.e., inputs
-/// whose `value_type_opt` is `Some`.  Skips control, memory, and phi-token
-/// slots.  Used in both the evaluator and the cone-order traversal to avoid
-/// repeating the `value_type_opt(i).is_some()` filter inline.
-pub(crate) fn value_input_producers(
-    f: &strider_ir::Function,
-    node: NodeId,
-) -> impl Iterator<Item = ValueId> + '_ {
-    f.node_inputs(node)
-        .into_iter()
-        .filter(move |&i| f.value_type_opt(i).is_some())
-}
 
 /// Abstract value: a concrete number, or `sp_base + offset`.
 #[derive(Clone, Copy, PartialEq)]
@@ -120,7 +108,7 @@ impl<'a> Evaluator<'a> {
             });
         }
         let out_ty = f.value_type_opt(value);
-        let ins: SmallVec<[ValueId; 2]> = value_input_producers(f, node).collect();
+        let ins: SmallVec<[ValueId; 2]> = f.value_inputs(node).collect();
         match kind {
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add) => self.eval_add(
                 value,
@@ -236,7 +224,7 @@ impl<'a> Evaluator<'a> {
 
     /// All-arms-agree: every value arm must resolve to the same `Abs`.
     fn eval_phi(&mut self, node: NodeId) -> Option<Abs> {
-        let arms: SmallVec<[ValueId; 4]> = value_input_producers(self.function, node).collect();
+        let arms: SmallVec<[ValueId; 4]> = self.function.value_inputs(node).collect();
         let mut agreed: Option<Abs> = None;
         for arm in arms {
             let v = self.get(arm)?;
@@ -270,7 +258,7 @@ impl graph_algorithms::walk::GraphRef for ValueInputSuccs<'_> {
         value: ValueId,
         f: impl FnMut(ValueId) -> std::ops::ControlFlow<()>,
     ) -> std::ops::ControlFlow<()> {
-        value_input_producers(self.function, self.function.producer(value)).try_for_each(f)
+        self.function.value_inputs(self.function.producer(value)).try_for_each(f)
     }
 }
 
@@ -303,7 +291,7 @@ impl graph_algorithms::walk::GraphRef for ValueInputSuccsPruned<'_> {
         if value == self.stop {
             return std::ops::ControlFlow::Continue(());
         }
-        value_input_producers(self.function, self.function.producer(value)).try_for_each(f)
+        self.function.value_inputs(self.function.producer(value)).try_for_each(f)
     }
 }
 

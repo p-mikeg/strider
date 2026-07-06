@@ -188,7 +188,7 @@ fn decompose_index(
             | NodeKind::New
             | NodeKind::SegmentOp { .. }
             | NodeKind::CPoolRef => Vec::new(),
-            _ => int_inputs(ctx, v),
+            _ => ctx.int_inputs(v).collect(),
         };
         let mut has_var_input = false;
         for p in inputs {
@@ -252,11 +252,9 @@ fn decompose_index(
 /// operand *does* decompose.  Hence the operand-level check: the address is
 /// foldable when it, OR any of its operands, is a base.
 fn foldable_load_address(ctx: &strider_ir::Function, load: ValueId) -> Option<ValueId> {
-    let addr = int_inputs(ctx, load).first().copied()?;
-    let foldable = is_base_operand(ctx, addr)
-        || int_inputs(ctx, addr)
-            .iter()
-            .any(|&op| is_base_operand(ctx, op));
+    let addr = ctx.int_inputs(load).next()?;
+    let foldable =
+        is_base_operand(ctx, addr) || ctx.int_inputs(addr).any(|op| is_base_operand(ctx, op));
     foldable.then_some(addr)
 }
 
@@ -297,14 +295,6 @@ fn bounded_index(
     (bounded && !entry_load).then_some((v, iv))
 }
 
-
-/// A node's integer-typed value inputs (the index-bearing dataflow edges).
-fn int_inputs(ctx: &strider_ir::Function, v: ValueId) -> Vec<ValueId> {
-    ctx.node_inputs(ctx.producer(v))
-        .into_iter()
-        .filter(|&i| ctx.value_type_opt(i).is_some_and(|t| t.is_integer()))
-        .collect()
-}
 
 /// Is `v` (transitively) the output of a `Load`?  A loaded value is a table
 /// *entry*, not the table *index*, so it must not be enumerated as one.

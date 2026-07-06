@@ -115,6 +115,24 @@ pub trait IRViewer {
         self.node_inputs_exact::<N>(self.producer(value))
     }
 
+    /// The **value-typed** inputs of `node` — its data operands, dropping the
+    /// structural `Control` / `Memory` / `PhiToken` edges (which carry no
+    /// [`ValueType`]).
+    fn value_inputs(&self, node: NodeId) -> impl Iterator<Item = ValueId> + '_ {
+        self.node_inputs(node)
+            .into_iter()
+            .filter(move |&i| self.value_type_opt(i).is_some())
+    }
+
+    /// The **integer-typed** value inputs of `value`'s producer — the
+    /// index-bearing dataflow edges (the value-keyed, integer-only companion of
+    /// [`Self::value_inputs`]).
+    fn int_inputs(&self, value: ValueId) -> impl Iterator<Item = ValueId> + '_ {
+        self.node_inputs(self.producer(value))
+            .into_iter()
+            .filter(move |&i| self.value_type_opt(i).is_some_and(|t| t.is_integer()))
+    }
+
     /// Returns the exactly-`N` output value edges of `node`.
     ///
     /// # Errors
