@@ -1,4 +1,4 @@
-//! Shared end-to-end pipeline runners + placeholder-anchor finders for the
+//! Shared end-to-end pipeline runners + placeholder-target finders for the
 //! IR-level fixture builders.
 //!
 //! Split out from the previous monolithic `indirect_resolve_helpers.rs` so each
@@ -22,7 +22,7 @@ use strider_target::{CallingConvention, SleighArch};
 ///
 /// The placeholder `IndirectBranch` has exactly 3 inputs:
 /// `[control, memory, target_value]`.
-pub(crate) fn anchor_value_input(function: &Function) -> Option<strider_ir::Value> {
+pub(crate) fn target_value_input(function: &Function) -> Option<strider_ir::Value> {
     let mut found: Option<strider_ir::Value> = None;
     for nid in function.walk() {
         if !matches!(function.node_kind(nid), NodeKind::IndirectBranch) {
@@ -46,7 +46,7 @@ pub(crate) fn anchor_value_input(function: &Function) -> Option<strider_ir::Valu
 /// Run `Lifter::build_ir` on a hand-assembled byte
 /// sequence + the standard SystemV-x86_64 calling convention, then run
 /// the full optimiser pipeline.  Returns the resulting graph plus the
-/// (single) IR-level placeholder anchor's `ValueId` and the
+/// (single) IR-level placeholder target's `ValueId` and the
 /// convention's link-register VN (always `None` on x86_64 — that arch
 /// pushes return addresses on the stack).
 ///
@@ -76,7 +76,7 @@ pub(crate) fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Valu
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     let mut function = outcome.function;
 
-    // Run the full optimiser pipeline so the placeholder's anchor
+    // Run the full optimiser pipeline so the placeholder's target
     // value reaches the producer-shape the classifier looks at.
     // ConstantFold collapses `mov rax, K; jmp *rax` to IntConst(K);
     // PhiCollapse simplifies the trivial Return shape we don't
@@ -93,12 +93,12 @@ pub(crate) fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Valu
         1,
         "fixture must have exactly one IR-level placeholder",
     );
-    // Resolve the *current* anchor after the optimiser ran — the
+    // Resolve the *current* target after the optimiser ran — the
     // original recorded ValueId may be orphaned if any pass
     // `replace_all_uses`-rewrote the placeholder's input slot
     // (e.g. ConstantFold rewriting a folded IntBinaryOp into an
     // IntConst).  See module-level docs for the full contract.
-    let anchor = anchor_value_input(&function)
+    let target = target_value_input(&function)
         .expect("fixture must have one IndirectBranch placeholder after optimisation");
-    (function, anchor, lr_vn)
+    (function, target, lr_vn)
 }

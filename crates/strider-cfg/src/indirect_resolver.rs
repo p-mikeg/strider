@@ -19,7 +19,7 @@
 /// The set of statically-known targets of a single `BranchIndirect`.
 ///
 /// Produced by the IR-level resolver in
-/// `strider_opt::indirect_branch_resolve::classify_anchor` and fed back
+/// `strider_opt::indirect_branch_resolve::classify_target` and fed back
 /// into the cfg build via [`crate::CfgOptions::known_targets`].
 ///
 /// ## Variants

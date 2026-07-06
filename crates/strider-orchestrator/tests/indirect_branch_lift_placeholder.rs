@@ -1,6 +1,6 @@
 //! strider lifts a `RegionTerminator::UnresolvedIndirectBranch`
 //! region by emitting a placeholder `IndirectBranch(target_value)`
-//! that anchors the dispatch varnode in the IR for the indirect-
+//! that targets the dispatch varnode in the IR for the indirect-
 //! branch resolver.
 //!
 //! The test drives a synthetic x86-64 `jmp rax` CFG (RAX is a
@@ -67,11 +67,11 @@ fn make_unresolved_indirect_branch_cfg() -> (
 /// which produced an ABI Return whose inputs were the convention's
 /// `ret_val_regs` — NOT the dispatch varnode.  Post-fix, strider
 /// inspects the region's terminator and emits an
-/// `IndirectBranch(target_value)` placeholder that anchors `target_vn`
+/// `IndirectBranch(target_value)` placeholder that targets `target_vn`
 /// in the IR.
 ///
-/// Side-effect anchor expectation: the IR's unique IndirectBranch
-/// must have a value-input slot wired (the placeholder anchors
+/// Side-effect target expectation: the IR's unique IndirectBranch
+/// must have a value-input slot wired (the placeholder targets
 /// target_value at slot 2 — slots 0/1 are control/memory).
 #[test]
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
@@ -326,7 +326,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
 
 /// Anchor-tracking contract: the strider exposes a side-table
 /// mapping each placeholder's pcode address to the `ValueId`
-/// that anchors `target_vn`.  the IR-level orchestrator resolver
+/// that targets `target_vn`.  the IR-level orchestrator resolver
 /// walks this table.
 #[test]
 fn unresolved_branches_table_tracks_each_placeholder() {

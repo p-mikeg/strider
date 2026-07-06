@@ -1,6 +1,6 @@
 //! IR-level indirect-branch resolver.
 //!
-//! Classifies placeholder anchors that the strider lifter inserts at
+//! Classifies placeholder targets that the strider lifter inserts at
 //! `BranchIndirect` sites.  The strider orchestrator drives the outer loop
 //! (CFG rebuild, cache invalidation, iteration cap) and calls into the
 //! classifier functions directly — there is no opt-pipeline pass for
@@ -8,8 +8,8 @@
 //!
 //! ## Producer-shape classifier
 //!
-//! [`classify_anchor`] recognises the dispatch value feeding a placeholder
-//! anchor as one of an ordered list of sound shapes, each a named
+//! [`classify_target`] recognises the dispatch value feeding a placeholder
+//! target as one of an ordered list of sound shapes, each a named
 //! recogniser returning `Option<ResolvedTargets>`:
 //!
 //!   * `single_const_target` — the dispatch value is a literal address
@@ -20,7 +20,7 @@
 //!   * [`table::classify_table_dispatch`] — the dispatch value is an
 //!     indexed table load (rodata jump table or on-stack label array).
 //!
-//! The first recogniser that matches wins; if none does, the anchor stays
+//! The first recogniser that matches wins; if none does, the target stays
 //! unresolved (the orchestrator retries next iteration or surfaces
 //! `UnresolvedIndirectBranch` at fixed point).
 //!
@@ -47,7 +47,7 @@
 //! Defined in `strider_cfg::indirect_resolver` (the
 //! lowest layer that needs the enum: the cfg builder consumes it via
 //! `LiftOptions::known_targets` to seat indirect-branch terminators, and
-//! it is the return type of [`classify_anchor`] itself).  Import it directly
+//! it is the return type of [`classify_target`] itself).  Import it directly
 //! from there.
 
 #![allow(clippy::module_name_repetitions)]
@@ -63,7 +63,7 @@ use crate::{EditFunction, ReadOnlyMemory};
 mod eval;
 pub mod table;
 
-/// Per-anchor enumeration cap for the table-dispatch arm
+/// Per-target enumeration cap for the table-dispatch arm
 /// (`table::classify_table_dispatch`), covering both the rodata jump-table
 /// (absolute base) and on-stack label-array (SP-rooted base) shapes.
 ///
@@ -77,7 +77,7 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 
 pub use table::classify_table_dispatch;
 
-/// Classify a placeholder anchor's dispatch value into a
+/// Classify a placeholder target's dispatch value into a
 /// [`ResolvedTargets`], or `None` when it matches no known sound shape
 /// (the orchestrator then defers the branch).
 ///
@@ -99,7 +99,7 @@ pub use table::classify_table_dispatch;
 /// Every recogniser fails closed (`None`) on any partial proof, never
 /// under-approximating the target set.
 #[must_use]
-pub fn classify_anchor(
+pub fn classify_target(
     ctx: &strider_ir::Function,
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
@@ -110,13 +110,13 @@ pub fn classify_anchor(
     // target]) is its dispatch value.  Taking the branch NODE (not the bare
     // value) keeps the table classifier's index-range query scoped to THIS
     // branch, even when several branches share one dispatch value.
-    let anchor_value = ctx.indirect_branch_target(branch);
-    single_const_target(ctx, anchor_value)
-        .or_else(|| link_register_return(ctx, anchor_value))
+    let target_value = ctx.indirect_branch_target(branch);
+    single_const_target(ctx, target_value)
+        .or_else(|| link_register_return(ctx, target_value))
         .or_else(|| table::classify_table_dispatch(ctx, branch, rom, ranges, alias_mode))
 }
 
-/// Recognise a single constant dispatch target: the anchor's producer is a
+/// Recognise a single constant dispatch target: the target's producer is a
 /// literal `IntConst(k)`, so the branch goes to exactly `k`.
 ///
 /// SOUND: a literal constant in the IR comes from a tracked `IntConst`
@@ -127,18 +127,18 @@ pub fn classify_anchor(
 /// address.
 fn single_const_target(
     ctx: &strider_ir::Function,
-    anchor_value: ValueId,
+    target_value: ValueId,
 ) -> Option<ResolvedTargets> {
-    if !matches!(ctx.kind_of_value(anchor_value), NodeKind::IntConst(_)) {
+    if !matches!(ctx.kind_of_value(target_value), NodeKind::IntConst(_)) {
         return None;
     }
-    let k = ctx.int_const_u128(anchor_value)?;
+    let k = ctx.int_const_u128(target_value)?;
     // A const whose high 64 bits are set is never a valid jump target on a
     // 64-bit ISA; `try_from` rejects it rather than silently truncating.
     Some(ResolvedTargets::Single(u64::try_from(k).ok()?))
 }
 
-/// Recognise a return-via-link-register: the anchor's producer is
+/// Recognise a return-via-link-register: the target's producer is
 /// `InitialVar(lr)`, the function-entry value of the calling convention's
 /// link register, so the branch dispatches to the caller-provided return
 /// address.
@@ -148,16 +148,16 @@ fn single_const_target(
 /// shape `LoadForward` produces for a properly-popped return address.
 fn link_register_return(
     ctx: &strider_ir::Function,
-    anchor_value: ValueId,
+    target_value: ValueId,
 ) -> Option<ResolvedTargets> {
     let lr = ctx.default_cc().link_register_vn?;
-    match *ctx.kind_of_value(anchor_value) {
+    match *ctx.kind_of_value(target_value) {
         NodeKind::InitialVar(id) if ctx.initial_vn(id) == lr => Some(ResolvedTargets::LinkRegister),
         _ => None,
     }
 }
 
-/// The post-optimization analysis pass that drives [`classify_anchor`]
+/// The post-optimization analysis pass that drives [`classify_target`]
 /// over every live `IndirectBranch` placeholder.
 ///
 /// Add it as a **post-pass** (`OptimizerPipeline::add_post_pass`) so it
@@ -190,7 +190,7 @@ impl PostOptimizer for IndirectBranchClassify {
     fn apply(&self, edit: &mut EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()> {
         let function = edit.function();
 
-        // Dominator-scoped value ranges, computed once for every anchor —
+        // Dominator-scoped value ranges, computed once for every target —
         // the graph doesn't change during this analysis-only pass.  The
         // classifier reads every other input (link-register / stack-pointer
         // varnodes, endianness) off the function itself.
@@ -204,7 +204,7 @@ impl PostOptimizer for IndirectBranchClassify {
             // `node` and scopes its range query to THIS branch.  The walk visits
             // each node once, so every key is unique.
             let resolved =
-                classify_anchor(function, node, ctx.rom, &mut ranges, ctx.options.alias_mode);
+                classify_target(function, node, ctx.rom, &mut ranges, ctx.options.alias_mode);
             resolutions.insert(node, resolved);
         }
         ctx.indirect_resolutions = resolutions;
@@ -215,7 +215,7 @@ impl PostOptimizer for IndirectBranchClassify {
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for [`classify_anchor`].
+    //! Unit tests for [`classify_target`].
     //!
     //! Each test constructs a minimal [`strider_ir::Graph`]
     //! via [`strider_ir::FunctionBuilder::new_raw`], appends nodes
@@ -234,7 +234,7 @@ mod tests {
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};
 
     /// Unit-test convenience: computes the range analysis and
-    /// calls [`classify_anchor`] with no rom.  The
+    /// calls [`classify_target`] with no rom.  The
     /// integration-style tests in `tests/indirect_resolve_classify.rs`
     /// drive the rom/SP arms; these unit tests only exercise the
     /// IntConst / InitialVar / Load-fallthrough arms.
@@ -242,12 +242,12 @@ mod tests {
     /// `link_register_return`) on a dispatch value directly.  The table arm —
     /// the only one that needs a branch node + dominator-scoped ranges — is
     /// covered in `table_tests` against a real `IndirectBranch`.
-    fn classify_anchor_bare(
+    fn classify_target_bare(
         ctx: &strider_ir::Function,
-        anchor_value: ValueId,
+        target_value: ValueId,
     ) -> anyhow::Result<Option<ResolvedTargets>> {
-        Ok(single_const_target(ctx, anchor_value)
-            .or_else(|| link_register_return(ctx, anchor_value)))
+        Ok(single_const_target(ctx, target_value)
+            .or_else(|| link_register_return(ctx, target_value)))
     }
 
     /// Build a minimal `Graph` with one tracked
@@ -256,7 +256,7 @@ mod tests {
     /// `ValueId`.  Used as a scaffold for the unit tests so
     /// the classifier sees a real, validation-passing graph.
     fn empty_graph_returning(
-        anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
+        target_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
     ) -> (strider_ir::Function, ValueId) {
         // No tracked variables, no calling convention plumbing.
         let mut builder = strider_ir_test_utils::empty_builder().expect("FunctionBuilder::new_raw");
@@ -264,31 +264,31 @@ mod tests {
         builder.set_entry_region_all(region).expect("set_entry_region");
         builder.set_region(region);
         builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let anchor = anchor_inputs(&mut builder);
-        // Re-stamp in case `anchor_inputs` cleared the lift_addr.
+        let target = target_inputs(&mut builder);
+        // Re-stamp in case `target_inputs` cleared the lift_addr.
         builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         builder
-            .build_return(Some(anchor), &[])
+            .build_return(Some(target), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
-        // Re-locate the anchor in the built graph: the build step
+        // Re-locate the target in the built graph: the build step
         // is a move, but `ValueId` is a stable cranelift-entity
         // index so the same id continues to point at the same
         // output in the resulting graph.
-        (function, anchor)
+        (function, target)
     }
 
     #[test]
     fn classify_int_const_returns_single() {
-        let (function, anchor) = empty_graph_returning(|fb| {
+        let (function, target) = empty_graph_returning(|fb| {
             // Single IntConst node.  Output type is I64 — chosen
             // because BranchIndirect targets are pointer-sized on
             // every supported 64-bit arch; smaller widths would
             // also fold via the `as u64` cast in the classifier.
             fb.build_int_const(0x1234u64, ValueType::I64).unwrap()
         });
-        let result = classify_anchor_bare(&function, anchor).expect("classify");
+        let result = classify_target_bare(&function, target).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Single(0x1234)));
     }
 
@@ -297,11 +297,11 @@ mod tests {
         // Pinned: the IntConst arm does not consult
         // `link_register_vn`.  A None lr (x86 / x86_64) must not
         // suppress IntConst classification.
-        let (function, anchor) = empty_graph_returning(|fb| {
+        let (function, target) = empty_graph_returning(|fb| {
             fb.build_int_const(0xfeed_face_u64, ValueType::I64).unwrap()
         });
         assert_eq!(
-            classify_anchor_bare(&function, anchor).expect("classify"),
+            classify_target_bare(&function, target).expect("classify"),
             Some(ResolvedTargets::Single(0xfeed_face)),
         );
     }
@@ -319,9 +319,9 @@ mod tests {
             .expect("RegisterSet::build_fn_single_region");
         // `read_variable` in the entry region's only predecessor
         // (the function entry) returns the InitialVar.
-        let anchor = builder.read_variable(&lr_vn).expect("read_variable(lr)");
+        let target = builder.read_variable(&lr_vn).expect("read_variable(lr)");
         builder
-            .build_return(Some(anchor), &[])
+            .build_return(Some(target), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
@@ -332,7 +332,7 @@ mod tests {
         // `InitialVar(lr_vn)` — we walk past a single-input
         // VarPhi in the test if we hit one, since
         // PhiCollapse would have done that in production.
-        let mut producer_value = anchor;
+        let mut producer_value = target;
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
@@ -353,7 +353,7 @@ mod tests {
             producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(&function, producer_value).expect("classify");
+        let result = classify_target_bare(&function, producer_value).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::LinkRegister));
     }
 
@@ -369,16 +369,16 @@ mod tests {
             .link_register(lr_vn)
             .build_fn_single_region()
             .expect("RegisterSet::build_fn_single_region");
-        let anchor = builder
+        let target = builder
             .read_variable(&other_vn)
             .expect("read_variable(other)");
         builder
-            .build_return(Some(anchor), &[])
+            .build_return(Some(target), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
 
-        let mut producer_value = anchor;
+        let mut producer_value = target;
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
@@ -397,7 +397,7 @@ mod tests {
             producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(&function, producer_value).expect("classify");
+        let result = classify_target_bare(&function, producer_value).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -411,14 +411,14 @@ mod tests {
             .tracked(lr_vn)
             .build_fn_single_region()
             .expect("RegisterSet::build_fn_single_region");
-        let anchor = builder.read_variable(&lr_vn).expect("read_variable(lr)");
+        let target = builder.read_variable(&lr_vn).expect("read_variable(lr)");
         builder
-            .build_return(Some(anchor), &[])
+            .build_return(Some(target), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
 
-        let mut producer_value = anchor;
+        let mut producer_value = target;
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
@@ -437,7 +437,7 @@ mod tests {
             producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(&function, producer_value).expect("classify");
+        let result = classify_target_bare(&function, producer_value).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -445,7 +445,7 @@ mod tests {
     fn classify_unrelated_node_kind_returns_none() {
         // An IntAdd node — not IntConst, not InitialVar, not
         // ValuePhi — must classify as None.
-        let (function, anchor) = empty_graph_returning(|fb| {
+        let (function, target) = empty_graph_returning(|fb| {
             let lhs = fb.build_int_const(1u64, ValueType::I64).unwrap();
             let rhs = fb.build_int_const(2u64, ValueType::I64).unwrap();
             fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, ValueType::I64)
@@ -453,15 +453,15 @@ mod tests {
         });
         // Note: ConstantFold would turn 1+2 into IntConst(3), but
         // we don't run the optimiser here — the unit tests use the
-        // raw builder output.  The returned anchor's producer is
+        // raw builder output.  The returned target's producer is
         // an IntBinaryOp node, which the `_ => None` arm catches.
-        let producer_kind = *function.kind_of_value(anchor);
+        let producer_kind = *function.kind_of_value(target);
         assert!(
             matches!(producer_kind, NodeKind::IntBinaryOp(_)),
             "fixture must produce an IntBinaryOp; got {producer_kind:?}"
         );
         assert_eq!(
-            classify_anchor_bare(&function, anchor).expect("classify"),
+            classify_target_bare(&function, target).expect("classify"),
             None
         );
     }

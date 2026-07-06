@@ -80,7 +80,7 @@ fn x86_64_indirect_jmp_to_const_bytes() -> (Vec<u8>, u64, u64) {
 
 /// Indirect-branch-via-known-targets path: the first iteration sees
 /// `jmp rax` as an `UnresolvedIndirectBranch`.  Once the orchestrator
-/// resolves `rax = 0x9000` via constant-fold + classify_anchor, the
+/// resolves `rax = 0x9000` via constant-fold + classify_target, the
 /// CFG rebuild seeds `known_targets` and the cfg builder treats the
 /// `jmp rax` as a `TailCall(0x9000)`.  The per-region driver's
 /// `handle_tail_call` then splices in `Call+Return` honouring the
@@ -152,7 +152,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
 /// resolved function, pinning that the spliced Call+Return shape (arity,
 /// vn-tagged outputs, fingerprints) is well-formed end-to-end.
 ///
-/// It also documents the SSoT split that `anchor_calling_context_for`
+/// It also documents the SSoT split that `target_calling_context_for`
 /// encodes: the spliced **Return** returns from the *current* function to
 /// *its* caller, so its ret-val slots come from the function's OWN default CC
 /// (`function.default_cc()`), NOT the per-address override (which governs only
@@ -202,7 +202,7 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
 }
 
 /// Regression for the **no-override** orchestrator tail-call path: with no
-/// per-address CC, `for_anchor` derives the effective convention from
+/// per-address CC, `for_target` derives the effective convention from
 /// `Function::default_cc()` (the SSoT) instead of a threaded `&Lifter`.
 /// The end-to-end `run` must SUCCEED (the default-CC spliced Call passes
 /// `validate` — its ret-val output group makes the arity match the

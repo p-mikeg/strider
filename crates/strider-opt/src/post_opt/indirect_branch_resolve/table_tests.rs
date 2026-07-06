@@ -57,27 +57,27 @@ impl ReadOnlyMemory for RecordingRom {
 }
 
 /// Minimal `Graph` carrying nothing but the entry
-/// region terminated by a placeholder `IndirectBranch(anchor)`.  The
-/// caller-supplied closure builds the anchor's producer subtree.
-fn build_with_anchor(
-    anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
+/// region terminated by a placeholder `IndirectBranch(target)`.  The
+/// caller-supplied closure builds the target's producer subtree.
+fn build_with_target(
+    target_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
 ) -> (Function, ValueId) {
     let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
     let region = builder.create_region_all().expect("create_region");
     builder.set_entry_region_all(region).expect("set_entry_region");
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let anchor = anchor_inputs(&mut builder);
+    let target = target_inputs(&mut builder);
     builder
-        .build_indirect_branch(anchor)
+        .build_indirect_branch(target)
         .expect("build_indirect_branch");
     builder.set_lift_addr(None);
     let function = builder.build().expect("build");
-    (function, anchor)
+    (function, target)
 }
 
 /// The function's sole `IndirectBranch` placeholder — the node the table
-/// classifier now takes directly (it derives the dispatch anchor from the
+/// classifier now takes directly (it derives the dispatch target from the
 /// branch's slot-2 input and scopes the range query to it).
 fn sole_indirect_branch(f: &Function) -> NodeId {
     f.walk()
@@ -100,7 +100,7 @@ fn build_non_const_idx(fb: &mut FunctionBuilder) -> ValueId {
 fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
     // idx = (load) & 0x7 → bound 8 via KnownBits upper bound in the range pass.
     // Load[base + idx*stride] → resolves to Multiple of table[0..8].
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         // idx side: AND-masked to 0..7.
         let raw = fb.build_int_const(0xffff_ffffu64, ValueType::I32).unwrap();
         let mask = fb.build_int_const(0x7u64, ValueType::I32).unwrap();
@@ -147,7 +147,7 @@ fn classify_table_dispatch_duplicate_targets_are_deduped() {
     // resolve to targets [0x10, 0x20, 0x10, 0x20] — two distinct addresses
     // each appearing twice.  `enumerate_targets`'s `sort_unstable` + `dedup`
     // must collapse the four indices to a 2-element `Multiple([0x10, 0x20])`.
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         let raw = fb.build_int_const(0xffff_ffffu64, ValueType::I32).unwrap();
         let mask = fb.build_int_const(0x3u64, ValueType::I32).unwrap();
         let idx = fb
@@ -194,7 +194,7 @@ fn classify_table_dispatch_single_entry_bound_returns_multiple_of_one() {
     // classifier reads exactly one entry.  Pins that a one-entry table is
     // still classified as `Multiple` (with a single target), not `Single`
     // and not a defer.
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         let idx_src = build_non_const_idx(fb);
         let mask = fb.build_int_const(0u64, ValueType::I32).unwrap();
         let idx = fb
@@ -234,7 +234,7 @@ fn classify_table_dispatch_no_rom_returns_none() {
     // Bounded shape, but no rom configured → None.  Without rom
     // we can't read entries, and producing a Multiple without
     // entries is unsound.
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         let raw = fb.build_int_const(0xffff_ffffu64, ValueType::I32).unwrap();
         let mask = fb.build_int_const(0x3u64, ValueType::I32).unwrap();
         let idx = fb
@@ -267,7 +267,7 @@ fn classify_table_dispatch_no_rom_returns_none() {
 fn classify_table_dispatch_unbounded_idx_returns_none() {
     // Shape is jt-shaped, but `idx` is a raw load with no AND mask and
     // no dominating If guard.  Must return None, not a Multiple.
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         let some_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
         let idx = fb
             .build_load(some_addr, VnSpace::RAM, ValueType::I32)
@@ -306,7 +306,7 @@ fn classify_table_dispatch_unbounded_idx_returns_none() {
 #[test]
 fn classify_table_dispatch_defers_over_cap_resolves_under_cap() {
     let build = |mask: u64| {
-        build_with_anchor(move |fb| {
+        build_with_target(move |fb| {
             let idx_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
             let idx_raw = fb
                 .build_load(idx_addr, VnSpace::RAM, ValueType::I32)
@@ -372,7 +372,7 @@ fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
     // width check (255 < 0xFFFF_FFFF), so width alone would NOT reject it — only
     // the entry_load filter does.  Enumerating it would fold to a run of 256
     // bogus sequential targets, so the classifier must return None.
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         // idx = ZeroExtend(Load[0x9000]:I8) — a width-bounded ([0,255]) table
         // entry, NOT a guarded/masked dispatch index.
         let byte_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
@@ -688,7 +688,7 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
 /// arithmetic — that *also* sits under a dominating `if (entry < 4)` guard.
 ///
 /// The concern: the `entry_load` exclusion is dropped when a dominating
-/// guard is present, so this load-derived anchor would be enumerated as the
+/// guard is present, so this load-derived target would be enumerated as the
 /// index.  Substituting it with `IntConst(0..3)` makes the branch's dispatch
 /// value literally `0,1,2,3` — bogus sequential targets that are NOT real
 /// code addresses.
@@ -697,7 +697,7 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
 /// bug.  If it returns `None`, the over-approximation safety margin holds
 /// and no change is warranted.
 #[test]
-fn classify_table_dispatch_guarded_direct_load_anchor() {
+fn classify_table_dispatch_guarded_direct_load_target() {
     use strider_ir::IntCmpOp;
     let mut b = strider_ir_test_utils::empty_builder().unwrap();
     let entry = b.create_region_all().unwrap();
@@ -747,7 +747,7 @@ fn classify_table_dispatch_guarded_direct_load_anchor() {
     // index values as targets.
     assert_eq!(
         result, None,
-        "a guarded direct-load anchor must not enumerate its index values as \
+        "a guarded direct-load target must not enumerate its index values as \
          branch targets (got {result:?})"
     );
 }
@@ -935,7 +935,7 @@ fn wire_two_target_array(
         .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .unwrap();
     // Use build_indirect_branch so the range analysis can locate the
-    // dispatch region via find_anchor_consumer_placeholder.
+    // dispatch region via find_target_consumer_placeholder.
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
 }

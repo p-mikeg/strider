@@ -8,7 +8,7 @@
 //!
 //! 1. **Find candidate indices.**  Collect the bounded values in the dispatch's
 //!    **variability cone** (`decompose_indices`): the values derived from THE one
-//!    variable that controls the branch, reached by walking the anchor's integer
+//!    variable that controls the branch, reached by walking the target's integer
 //!    ancestors and stopping at loads / opaque sources (recursing into a load's
 //!    *address* when the index sits behind it).  This reaches the index inside
 //!    `Load[base + idx*stride]`, the inner index of an offset table, and the
@@ -65,7 +65,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId};
 
 /// Top-level classifier hook for the table-dispatch arm.  Called by
-/// [`super::classify_anchor`] when the anchor's producer is a
+/// [`super::classify_target`] when the target's producer is a
 /// [`NodeKind::Load`] or an `IntBinaryOp(And)` dispatch-mask wrapper.
 ///
 /// `rom` is the binary's read-only image (rodata/text); `None` disables the
@@ -81,17 +81,17 @@ pub fn classify_table_dispatch(
     alias_mode: AliasMode,
 ) -> Option<ResolvedTargets> {
     // The `IndirectBranch` placeholder's slot-2 input ([control, memory,
-    // target]) is its current dispatch value — the anchor we analyse.  Taking
+    // target]) is its current dispatch value — the target we analyse.  Taking
     // the branch NODE (not the bare value) means the index-range query below is
     // scoped to the branch ACTUALLY being resolved, never the first
     // `IndirectBranch` that happens to share the dispatch value.
-    let anchor_value = ctx.indirect_branch_target(branch);
+    let target_value = ctx.indirect_branch_target(branch);
 
     // Collect candidate indices from the dispatch's single variability cone
     // (`decompose_indices`): the bounded values derived from THE one variable
     // that controls the branch.  A `Load[reg]` function pointer has no bounded
     // value in its cone → empty → deferred with no fold.
-    let candidates = decompose_indices(ctx, ranges, anchor_value, branch);
+    let candidates = decompose_indices(ctx, ranges, target_value, branch);
 
     // Pin each candidate index over its proven range and let the read-only
     // evaluator fold the index-pruned dispatch cone for every value: rodata
@@ -110,9 +110,9 @@ pub fn classify_table_dispatch(
     // would fold to a run of bogus sequential targets.
     let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
     for (idx_value, lo, hi) in candidates {
-        let pruned = super::eval::cone_order_pruned(ctx, anchor_value, idx_value);
+        let pruned = super::eval::cone_order_pruned(ctx, target_value, idx_value);
         if let Some(targets) =
-            enumerate_targets(lo, hi, |x| ev.eval_target(&pruned, anchor_value, idx_value, x))
+            enumerate_targets(lo, hi, |x| ev.eval_target(&pruned, target_value, idx_value, x))
         {
             return Some(ResolvedTargets::Multiple(targets));
         }
@@ -140,7 +140,7 @@ fn enumerate_targets(
 /// variable that controls the dispatch, **smallest-range-first**.
 ///
 /// A jump table is `branch f(index)` for a single controlling `index`, so every
-/// candidate lies in the anchor's **variability cone**: walk the anchor's
+/// candidate lies in the target's **variability cone**: walk the target's
 /// backward value graph, following a node's integer inputs but STOPPING at each
 /// `Load` and at every opaque source (`InitialVar` / `Phi` / `Call` / ...).  A
 /// `Load`'s value is opaque -- a table *entry* or a spilled variable -- so when
@@ -157,19 +157,19 @@ fn enumerate_targets(
 fn decompose_indices(
     ctx: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
-    anchor: ValueId,
+    target: ValueId,
     branch: NodeId,
 ) -> Vec<(ValueId, u128, u128)> {
-    collect_indices(ctx, ranges, anchor, branch, 0)
+    collect_indices(ctx, ranges, target, branch, 0)
 }
 
 /// One level of [`decompose_indices`]: collect the bounded, non-entry values in
-/// `anchor`'s variability cone; if none, recurse through the cone's load
+/// `target`'s variability cone; if none, recurse through the cone's load
 /// addresses (offset / pointer tables put the index behind a load).
 fn collect_indices(
     ctx: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
-    anchor: ValueId,
+    target: ValueId,
     branch: NodeId,
     depth: u32,
 ) -> Vec<(ValueId, u128, u128)> {
@@ -181,14 +181,14 @@ fn collect_indices(
         return Vec::new();
     }
 
-    // Variability cone: `anchor`'s integer ancestors, stopping at loads (opaque
+    // Variability cone: `target`'s integer ancestors, stopping at loads (opaque
     // entry / spill -- recursed into via their address) and opaque sources
     // (`InitialVar` / `Phi` / `Call` / ..., which bear no index inputs).  A
     // visited-set keeps the walk linear over the shared DAG.
     let mut cone: Vec<ValueId> = Vec::new();
     let mut load_roots: Vec<ValueId> = Vec::new();
     let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
-    let mut stack = vec![anchor];
+    let mut stack = vec![target];
     while let Some(v) = stack.pop() {
         if ctx.int_const_u128(v).is_some() || !seen.insert(v) {
             continue;
@@ -214,7 +214,7 @@ fn collect_indices(
     let mut load_memo = rustc_hash::FxHashMap::default();
     let mut out: Vec<(ValueId, u128, u128)> = cone
         .iter()
-        .filter(|&&v| v != anchor)
+        .filter(|&&v| v != target)
         .filter_map(|&v| bounded_index(ctx, ranges, branch, v, &mut load_memo))
         .collect();
 
