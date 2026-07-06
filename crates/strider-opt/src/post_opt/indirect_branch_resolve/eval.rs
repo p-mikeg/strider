@@ -223,14 +223,17 @@ impl<'a> Evaluator<'a> {
     }
 }
 
-/// Successor relation for the dispatch-cone walk: a value's successors are its
-/// own value-input producers (the memory token is not followed — store data is
-/// resolved at eval time via `reaching_store`).  Feeding this backward relation
-/// to a post-order walk yields producers before consumers.
+/// Successor relation for the *unpruned* dispatch-cone walk (test-only — the
+/// classifier now decomposes the addressing structurally and only ever folds
+/// over the index-pruned cone): a value's successors are its own value-input
+/// producers.  Feeding this backward relation to a post-order walk yields
+/// producers before consumers.
+#[cfg(test)]
 struct ValueInputSuccs<'a> {
     function: &'a strider_ir::Function,
 }
 
+#[cfg(test)]
 impl graph_algorithms::walk::GraphRef for ValueInputSuccs<'_> {
     type NodeId = ValueId;
 
@@ -243,11 +246,9 @@ impl graph_algorithms::walk::GraphRef for ValueInputSuccs<'_> {
     }
 }
 
-/// The dispatch cone in producers-before-consumers order: backward reachability
-/// from `root` over value edges only (see [`ValueInputSuccs`]).  Reuses the
-/// shared iterative post-order walk (`graph_algorithms::walk::PostOrder`), so a deep cone
-/// costs O(1) host stack and each value is yielded once; a cycle's back-edge
-/// input is simply absent at eval time → `None`.
+/// The full dispatch cone in producers-before-consumers order (test-only; see
+/// [`ValueInputSuccs`]).
+#[cfg(test)]
 pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<ValueId> {
     graph_algorithms::walk::entity_postorder(ValueInputSuccs { function }, [root]).collect()
 }
