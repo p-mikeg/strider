@@ -69,9 +69,17 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// Evaluate `dispatch` over `order` (from [`cone_order`]) with `idx_value`
-    /// bound to `idx`. Returns the target as `u64`, or `None` if anything fails
-    /// to collapse to a concrete number.
+    /// Evaluate `dispatch` over `order` (producers-before-consumers) with
+    /// `idx_value` bound to `idx`. Returns the target as `u64`, or `None` if
+    /// anything fails to collapse to a concrete number.
+    ///
+    /// **Fail-fast:** every node in `order` is a value-ancestor of `dispatch`
+    /// (the cone is `dispatch`'s backward slice), so the first node that does
+    /// not fold to an [`Abs`] means `dispatch` cannot be constant either —
+    /// return `None` at once rather than evaluating the rest of the cone.  A
+    /// candidate that *does* resolve never hits a `None` node, so this is exact
+    /// (same result, and it skips the bulk of a large not-a-table cone whose
+    /// index-independent leaves fail early).
     pub(crate) fn eval_target(
         &mut self,
         order: &[ValueId],
@@ -85,9 +93,8 @@ impl<'a> Evaluator<'a> {
             if self.map.contains_key(&val) {
                 continue;
             }
-            if let Some(a) = self.eval_node(val) {
-                self.map.insert(val, a);
-            }
+            let a = self.eval_node(val)?;
+            self.map.insert(val, a);
         }
         u64::try_from(self.map.get(&dispatch).copied()?.as_const()?).ok()
     }
@@ -406,7 +413,9 @@ mod tests {
     #[test]
     fn evaluates_add_under_seed() {
         let (function, idx, sum) = build_add_idx_100();
-        let order = cone_order(&function, sum);
+        // The evaluator's contract (fail-fast) is that `order` is `dispatch`'s
+        // cone pruned at the index — exactly what the classifier passes.
+        let order = cone_order_pruned(&function, sum, idx);
         let mut ev = Evaluator::new(&function, None, crate::AliasMode::default());
         assert_eq!(ev.eval_target(&order, sum, idx, 5), Some(105));
         assert_eq!(ev.eval_target(&order, sum, idx, 7), Some(107)); // re-seed, fresh map
@@ -415,12 +424,14 @@ mod tests {
     #[test]
     fn unseeded_index_is_none() {
         let (function, _idx, sum) = build_add_idx_100();
-        let order = cone_order(&function, sum);
         let mut ev = Evaluator::new(&function, None, crate::AliasMode::default());
-        // Seeding dispatch=sum directly returns the seed without evaluating the cone.
-        assert_eq!(ev.eval_target(&order, sum, sum, 5), Some(5)); // sum seeded directly
-        // A fresh eval where nothing relevant is seeded:
+        // Seeding dispatch=sum directly: its pruned-at-sum cone is just `[sum]`.
+        let order_sum = cone_order_pruned(&function, sum, sum);
+        assert_eq!(ev.eval_target(&order_sum, sum, sum, 5), Some(5));
+        // Seeding an unrelated leaf leaves the real index unresolved: the
+        // register read fails to fold, and fail-fast reports the branch `None`.
         let const_100 = sum_unrelated_leaf(&function, sum);
+        let order = cone_order_pruned(&function, sum, const_100);
         assert_eq!(ev.eval_target(&order, sum, const_100, 5), None);
     }
 
