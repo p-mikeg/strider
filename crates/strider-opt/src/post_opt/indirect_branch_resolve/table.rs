@@ -104,35 +104,24 @@ pub fn classify_table_dispatch(
     // does not fold and the branch defers.  No size guard on the cone is needed:
     // the evaluator identifies the SP spine structurally (no per-node cone walk),
     // so even a false-positive candidate with a large decode cone folds cheaply
-    // and `enumerate_targets` bails on its first non-folding value.
+    // and the fold below bails on its first non-folding value.
     let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
     let pruned = super::eval::cone_order_pruned(ctx, target_value, idx_value);
-    enumerate_targets(range, |x| {
-        ev.eval_target(&pruned, target_value, idx_value, x)
-    })
-    .map(ResolvedTargets::Multiple)
-}
-
-/// Enumerate the table by folding the dispatch for every value in the strided
-/// range `{lo, lo+stride, … hi}`.  Returns the sorted-deduplicated targets, or
-/// `None` if ANY value fails to fold (this candidate is not the index, or the
-/// table is not fully resolvable → fail closed).  `fold` does the per-value
-/// substitution-and-optimise.
-fn enumerate_targets(
-    range: Interval,
-    mut fold: impl FnMut(u128) -> Option<u64>,
-) -> Option<Vec<u64>> {
-    // `stride` is a KnownBits MUST-divisor of the value spacing, so stepping by
-    // it enumerates exactly the reachable indices (a scaled `idx*8` visits 8,16,…
-    // not the 7 misaligned values between).  `count()` already capped the total.
+    // Enumerate the table by folding the dispatch for every value in the strided
+    // range `{lo, lo+stride, … hi}`.  `stride` is a KnownBits MUST-divisor of the
+    // value spacing, so stepping by it visits exactly the reachable indices (a
+    // scaled `idx*8` hits 8,16,… not the 7 misaligned values between);
+    // `Interval::count` already capped the total.  `collect::<Option<_>>` bails to
+    // `None` the moment a value fails to fold (this candidate is not the index,
+    // or the table is not fully resolvable → fail closed).
     let step = usize::try_from(range.stride).unwrap_or(1).max(1);
     let mut targets: Vec<u64> = (range.lo..=range.hi)
         .step_by(step)
-        .map(&mut fold)
+        .map(|x| ev.eval_target(&pruned, target_value, idx_value, x))
         .collect::<Option<_>>()?;
     targets.sort_unstable();
     targets.dedup();
-    (!targets.is_empty()).then_some(targets)
+    (!targets.is_empty()).then_some(ResolvedTargets::Multiple(targets))
 }
 
 /// THE dispatch index: the **deepest** genuinely-bounded (guard- or
