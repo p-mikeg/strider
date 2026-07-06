@@ -6,17 +6,17 @@
 //! indirection.  Rather than pattern-match each addressing shape, this arm
 //! **delegates the addressing to the abstract evaluator**:
 //!
-//! 1. **Find candidate indices.**  Structurally decompose the dispatch's
-//!    addressing (`decompose_indices`): walk only the address / index-derivation
-//!    arithmetic (`+`, `*`, shifts, `&`, `|`, width casts) and, at a `Load`,
-//!    into its address — collecting every genuinely-bounded [`crate::value_range`]
-//!    value (a guard-/mask-constrained switch variable, never a width-only table
-//!    entry).  This reaches the index inside `Load[base + idx*stride]`, the inner
-//!    index of an offset table, and the index of a no-load computed jump, without
-//!    scanning the whole backward cone — so there are no bounded-but-irrelevant
-//!    impostors and a plain `Load[reg]` function pointer (no bounded index) is
-//!    rejected outright.  Candidates are tried smallest-range-first so the
-//!    tightly-bounded real index wins over any looser one.
+//! 1. **Find candidate indices.**  Collect the bounded values in the dispatch's
+//!    **variability cone** (`decompose_indices`): the values derived from THE one
+//!    variable that controls the branch, reached by walking the anchor's integer
+//!    ancestors and stopping at loads / opaque sources (recursing into a load's
+//!    *address* when the index sits behind it).  This reaches the index inside
+//!    `Load[base + idx*stride]`, the inner index of an offset table, and the
+//!    index of a no-load computed jump alike.  A plain `Load[reg]` function
+//!    pointer (no bounded value in its cone) is rejected outright.  Candidates
+//!    are tried smallest-range-first so the tightly-bounded real index wins over
+//!    a looser derived form (a `Mul`-scaled address term whose dense range would
+//!    fold to garbage).
 //! 2. **Pin and fold.**  For each candidate, evaluate the dispatch cone under
 //!    `index = i` via the read-only `super::eval::Evaluator` (ConstFold
 //!    arithmetic + `LoadReadOnly` ROM reads + `LoadForward` via
@@ -37,12 +37,11 @@
 //!
 //! Two independent gates must hold to commit to `Multiple`:
 //!
-//! 1. **Bounded index.**  The dominator-scoped range analysis bounds `idx`
-//!    from an `if (idx < N)` guard dominating the dispatch and/or a KnownBits
-//!    mask (`idx & 0x7`).  A sound *upper* bound; mixed-bound joins fail closed.
-//!    Only value-preserving derivations are bounded — never a `Mul`-scaled
-//!    address term — so every candidate's range is contiguous and safe to
-//!    enumerate.
+//! 1. **Bounded index.**  The range analysis bounds `idx` from an `if (idx < N)`
+//!    guard dominating the dispatch and/or a KnownBits mask (`idx & 0x7`).  A
+//!    sound *upper* bound; mixed-bound joins fail closed.  A `Mul`-scaled address
+//!    term has a dense range that would fold to garbage, but smallest-range-first
+//!    tries the tightest (value-preserving) derivation before any scaled one.
 //!
 //! 2. **Complete fold.**  *Every* value in `lo..=hi` must fold to a constant
 //!    target; any failure returns `None` (a `Multiple` omitting a real runtime
@@ -88,15 +87,10 @@ pub fn classify_table_dispatch(
     // `IndirectBranch` that happens to share the dispatch value.
     let anchor_value = ctx.indirect_branch_target(branch);
 
-    // Structurally decompose the dispatch's addressing to THE index: the
-    // shallowest genuinely-bounded (guard- or mask-constrained, never
-    // width-only) value inside the target/address arithmetic — reached by
-    // walking only the addressing ops (`Add`/`Mul`/`Shl`/`And`/`Or`/casts) and
-    // into load addresses.  Because it touches only the addressing (not the
-    // whole backward cone) there are no bounded-but-irrelevant impostors and no
-    // deep decode-chain values to bound with a scan/cone knob; a plain
-    // `Load[reg]` function pointer has no such index and is rejected here with
-    // no fold at all.
+    // Collect candidate indices from the dispatch's single variability cone
+    // (`decompose_indices`): the bounded values derived from THE one variable
+    // that controls the branch.  A `Load[reg]` function pointer has no bounded
+    // value in its cone → empty → deferred with no fold.
     let candidates = decompose_indices(ctx, ranges, anchor_value, branch);
 
     // Pin each candidate index over its proven range and let the read-only
@@ -142,167 +136,140 @@ fn enumerate_targets(
 }
 
 /// The dispatch index candidates: every **genuinely-bounded** (guard- or
-/// mask-constrained — never width-only) non-constant value reachable from the
-/// anchor through the target/address arithmetic and into load addresses,
-/// **smallest-range-first**.
+/// mask-constrained — never width-only) non-constant value derived from THE one
+/// variable that controls the dispatch, **smallest-range-first**.
 ///
-/// Walks only the addressing / index-derivation ops (`Add`/`Mul`/shifts/`And`/
-/// `Or`, `Extend`/`Truncate`) and, at a `Load`, its address — so it reaches the
-/// index inside `Load[base + idx*stride]`, the inner index of an offset table
-/// `Load[offtable + idx]`, and the index of a no-load computed jump
-/// `(base + idx<<k) & mask`.  A `Load`'s *output* is a table entry, never
-/// followed, so the walk cannot wander into an index loaded from memory; a
-/// visited-set keeps it linear over the (shared-DAG) arithmetic it does follow.
-/// A plain `Load[reg]` function pointer exposes no bounded index → empty.
+/// A jump table is `branch f(index)` for a single controlling `index`, so every
+/// candidate lies in the anchor's **variability cone**: walk the anchor's
+/// backward value graph, following a node's integer inputs but STOPPING at each
+/// `Load` and at every opaque source (`InitialVar` / `Phi` / `Call` / ...).  A
+/// `Load`'s value is opaque -- a table *entry* or a spilled variable -- so when
+/// the cone yields no in-cone index the walk recurses into the load's *address*
+/// (reaching the index of a pointer table `Load[base + idx*stride]`, an offset
+/// table `Load[offtable + idx]`, and a no-load computed jump `(base+idx<<k)&mask`
+/// alike).  A plain `Load[reg]` function pointer / `Load[reg + idx*8]` vtable has
+/// no bounded value in its cone -> empty -> deferred with no fold.
 ///
-/// Following `>>` reaches a legitimately shifted index but can also step into
-/// the instruction-decode chain, so this over-collects: some candidates are
-/// false positives deep in decode.  Two things make that safe and cheap —
-/// smallest-range-first (the tightly-bounded real index is tried before any
-/// looser one, which would fold to bogus sequential targets), and the caller's
-/// per-candidate fold-cone guard (a false positive has a large fold cone and is
-/// rejected without folding).
+/// The candidate is only a *guess*: the caller pins each smallest-range-first
+/// and the read-only fold confirms it.  A value that isn't the true index leaves
+/// the controlling variable free (or a co-varying `reg`/`gp` unresolved) and
+/// fails to fold, so a bounded impostor is rejected rather than mis-resolved.
 fn decompose_indices(
     ctx: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
     anchor: ValueId,
     branch: NodeId,
 ) -> Vec<(ValueId, u128, u128)> {
-    let mut out = Vec::new();
+    collect_indices(ctx, ranges, anchor, branch, 0)
+}
+
+/// One level of [`decompose_indices`]: collect the bounded, non-entry values in
+/// `anchor`'s variability cone; if none, recurse through the cone's load
+/// addresses (offset / pointer tables put the index behind a load).
+fn collect_indices(
+    ctx: &strider_ir::Function,
+    ranges: &mut crate::value_range::RangeMap<'_>,
+    anchor: ValueId,
+    branch: NodeId,
+    depth: u32,
+) -> Vec<(ValueId, u128, u128)> {
+    // A load's address can nest another load (two-level PIC / offset tables); a
+    // small cap bounds the recursion.  The value graph is a DAG so it terminates
+    // regardless -- this is belt-and-suspenders.
+    const MAX_LOAD_DEPTH: u32 = 16;
+    if depth > MAX_LOAD_DEPTH {
+        return Vec::new();
+    }
+
+    // Variability cone: `anchor`'s integer ancestors, stopping at loads (opaque
+    // entry / spill -- recursed into via their address) and opaque sources
+    // (`InitialVar` / `Phi` / `Call` / ..., which bear no index inputs).  A
+    // visited-set keeps the walk linear over the shared DAG.
+    let mut cone: Vec<ValueId> = Vec::new();
+    let mut load_roots: Vec<ValueId> = Vec::new();
+    let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
+    let mut stack = vec![anchor];
+    while let Some(v) = stack.pop() {
+        if ctx.int_const_u128(v).is_some() || !seen.insert(v) {
+            continue;
+        }
+        cone.push(v);
+        match ctx.node_kind(ctx.producer(v)) {
+            NodeKind::Load(_) => load_roots.push(v),
+            NodeKind::InitialVar(_)
+            | NodeKind::Phi
+            | NodeKind::Call
+            | NodeKind::CallOther { .. }
+            | NodeKind::New
+            | NodeKind::SegmentOp { .. }
+            | NodeKind::CPoolRef => {} // opaque source -- a leaf of the cone
+            _ => {
+                for i in int_inputs(ctx, v) {
+                    stack.push(i);
+                }
+            }
+        }
+    }
+
     let mut load_memo = rustc_hash::FxHashMap::default();
-    let mut seen = rustc_hash::FxHashSet::default();
-    collect_indices(
-        ctx, ranges, anchor, anchor, branch, &mut out, &mut load_memo, &mut seen, false,
-    );
+    let mut out: Vec<(ValueId, u128, u128)> = cone
+        .iter()
+        .filter(|&&v| v != anchor)
+        .filter_map(|&v| bounded_index(ctx, ranges, branch, v, &mut load_memo))
+        .collect();
+
+    // No index directly in the cone -- the table sits behind a load (`Load[..]`
+    // / `Add(Load, base)`): recurse into each load's address until one yields an
+    // index.
+    if out.is_empty() {
+        for &load in &load_roots {
+            out = collect_indices(ctx, ranges, load_address(ctx, load), branch, depth + 1);
+            if !out.is_empty() {
+                break;
+            }
+        }
+    }
+
     out.sort_by_key(|&(_, lo, hi)| hi - lo);
     out
 }
 
-#[allow(clippy::too_many_arguments)]
-fn collect_indices(
+/// `v` as a candidate index: a genuinely-bounded (guard-/mask-constrained, never
+/// width-only) non-constant integer.  Excludes a loaded table *entry* -- a
+/// load-derived value bounded only by its load width (`ZeroExtend(Load.byte)`
+/// spanning `[0,255]`) with no dominating guard and no explicit mask --
+/// enumerating one folds to bogus sequential targets.
+fn bounded_index(
     ctx: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
-    v: ValueId,
-    anchor: ValueId,
     branch: NodeId,
-    out: &mut Vec<(ValueId, u128, u128)>,
+    v: ValueId,
     load_memo: &mut rustc_hash::FxHashMap<ValueId, bool>,
-    seen: &mut rustc_hash::FxHashSet<ValueId>,
-    // True once the walk is inside an INDEX position: the non-base operand of an
-    // `Add(base, idx·scale)` whose `base` is a constant (rodata) or SP-rooted
-    // (stack) address.  A value reached only outside such a position — e.g. the
-    // `reg` in a `Load[reg + idx*8]` vtable / `Load[reg]` function pointer — is
-    // NOT a dispatch index and is never collected (so those defer with no fold).
-    in_index_pos: bool,
-) {
-    // Visit each value once — the addressing / decode graph is a shared DAG, so
-    // a naive DFS would re-walk shared subgraphs combinatorially.
-    if !seen.insert(v) {
-        return;
-    }
-    // The anchor itself is never the index (substituting it makes the target
-    // literally the index — the identity-fold wrong edge); constants are the
-    // base / stride, not the index.
-    if let Some(ty) = ctx.value_type_opt(v).filter(|t| {
-        in_index_pos && t.is_integer() && v != anchor && ctx.int_const_u128(v).is_none()
-    }) {
-        let iv = ranges.range_of(v, branch);
-        // A finite range strictly inside the type width, within the enumeration
-        // cap.
-        let bounded = iv.hi >= iv.lo
-            && iv.hi < ty.bit_mask_u128()
-            && iv.hi - iv.lo < u128::from(MAX_TABLE_ENTRIES);
-        // Exclude a loaded table ENTRY: a load-derived value bounded only by its
-        // load width (`ZeroExtend(Load.byte)` spanning [0,255]) whose range
-        // reflects no dispatch reachability — no dominating **guard**
-        // (`if idx < N`) and no explicit **mask** (`idx & 7`).  Enumerating an
-        // entry folds to bogus sequential targets.  Everything else finite is a
-        // candidate index.
-        let entry_load = is_load_derived(ctx, v, load_memo)
-            && ranges.dominating_guard(v, branch).is_none()
-            && !is_and_masked(ctx, v);
-        if bounded && !entry_load {
-            out.push((v, iv.lo, iv.hi));
-        }
-    }
-    // Recurse through the addressing / index-derivation arithmetic (`+`, `*`,
-    // shifts, `&`, `|`, width casts) and, at a `Load`, into its address — so the
-    // index is reached however the compiler scaled and sliced it, including a
-    // `>>` field-extract.  We deliberately do NOT follow the full integer
-    // vocabulary (`Xor`, `IntUnaryOp`, …): those pull the walk deep into the
-    // instruction-decode chain, whose bounded sub-values would flood the
-    // candidate set.  We stop at a `Load`'s *value* (its output is a table
-    // ENTRY — its address is followed instead); the visited-set keeps the walk
-    // linear over the shared DAG.
-    let node = ctx.producer(v);
-    // At an `Add(base, other)` with a const / SP-rooted `base`, the `other`
-    // operand enters INDEX position (`base + idx·scale`); the base operand does
-    // not.  Every other addressing op just carries the current position to its
-    // inputs.  This is the `base + idx·scale`, `base ∈ {const, sp}` pattern.
-    let inputs: Vec<ValueId> = ctx
-        .node_inputs(node)
+) -> Option<(ValueId, u128, u128)> {
+    let ty = ctx
+        .value_type_opt(v)
+        .filter(|t| t.is_integer() && ctx.int_const_u128(v).is_none())?;
+    let iv = ranges.range_of(v, branch);
+    let bounded = iv.hi >= iv.lo
+        && iv.hi < ty.bit_mask_u128()
+        && iv.hi - iv.lo < u128::from(MAX_TABLE_ENTRIES);
+    let entry_load = is_load_derived(ctx, v, load_memo)
+        && ranges.dominating_guard(v, branch).is_none()
+        && !is_and_masked(ctx, v);
+    (bounded && !entry_load).then_some((v, iv.lo, iv.hi))
+}
+
+/// A `Load`'s address: its first (and only) integer input.
+fn load_address(ctx: &strider_ir::Function, load: ValueId) -> ValueId {
+    int_inputs(ctx, load).first().copied().unwrap_or(load)
+}
+
+/// A node's integer-typed value inputs (the index-bearing dataflow edges).
+fn int_inputs(ctx: &strider_ir::Function, v: ValueId) -> Vec<ValueId> {
+    ctx.node_inputs(ctx.producer(v))
         .into_iter()
         .filter(|&i| ctx.value_type_opt(i).is_some_and(|t| t.is_integer()))
-        .collect();
-    let indexing_add = matches!(ctx.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Add))
-        && inputs.len() == 2
-        && (is_base_operand(ctx, inputs[0]) || is_base_operand(ctx, inputs[1]));
-    let follow = indexing_add
-        || matches!(
-            ctx.node_kind(node),
-            NodeKind::Load(_)
-                | NodeKind::Extend(_)
-                | NodeKind::Truncate
-                | NodeKind::IntBinaryOp(
-                    IntBinaryOp::Add
-                        | IntBinaryOp::Mul
-                        | IntBinaryOp::ShiftLeft
-                        | IntBinaryOp::ShiftRight
-                        | IntBinaryOp::SShiftRight
-                        | IntBinaryOp::And
-                        | IntBinaryOp::Or,
-                )
-        );
-    if !follow {
-        return;
-    }
-    for i in inputs {
-        // An indexing `Add`'s base operand stays out of index position; its
-        // other operand enters it.  All other ops propagate the current flag.
-        let child_pos = if indexing_add {
-            !is_base_operand(ctx, i)
-        } else {
-            in_index_pos
-        };
-        collect_indices(ctx, ranges, i, anchor, branch, out, load_memo, seen, child_pos);
-    }
-}
-
-/// A `base` operand of an indexing `Add(base, idx·scale)`: a constant address
-/// (rodata table base) or an SP-rooted address (stack table).  On the converged
-/// graph a foldable base is already a literal `IntConst`; a register / GOT base
-/// (function pointer, vtable, PIC) is neither, so its indexed operand never
-/// enters index position and is not collected.
-fn is_base_operand(ctx: &strider_ir::Function, v: ValueId) -> bool {
-    ctx.int_const_u128(v).is_some() || is_sp_rooted(ctx, v, 8)
-}
-
-/// Is `v` an SP-rooted address — `InitialVar(sp)`, `Add(sp-rooted, const)`, or
-/// the alignment base `And(sp-rooted, mask)` — checked structurally with a small
-/// depth bound (the SP spine is a short const-offset chain).
-fn is_sp_rooted(ctx: &strider_ir::Function, v: ValueId, depth: u32) -> bool {
-    if depth == 0 {
-        return false;
-    }
-    let node = ctx.producer(v);
-    match ctx.node_kind(node) {
-        NodeKind::InitialVar(id) => ctx.initial_vn(*id) == ctx.default_cc().stack_vn,
-        NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::And) => ctx
-            .node_inputs(node)
-            .into_iter()
-            .any(|i| ctx.value_type_opt(i).is_some() && is_sp_rooted(ctx, i, depth - 1)),
-        _ => false,
-    }
+        .collect()
 }
 
 /// Is `v` (transitively) the output of a `Load`?  A loaded value is a table
