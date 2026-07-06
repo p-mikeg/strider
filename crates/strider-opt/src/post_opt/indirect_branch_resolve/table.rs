@@ -171,7 +171,9 @@ fn decompose_indices(
     let mut out = Vec::new();
     let mut load_memo = rustc_hash::FxHashMap::default();
     let mut seen = rustc_hash::FxHashSet::default();
-    collect_indices(ctx, ranges, anchor, anchor, branch, &mut out, &mut load_memo, &mut seen);
+    collect_indices(
+        ctx, ranges, anchor, anchor, branch, &mut out, &mut load_memo, &mut seen, false,
+    );
     out.sort_by_key(|&(_, lo, hi)| hi - lo);
     out
 }
@@ -186,6 +188,12 @@ fn collect_indices(
     out: &mut Vec<(ValueId, u128, u128)>,
     load_memo: &mut rustc_hash::FxHashMap<ValueId, bool>,
     seen: &mut rustc_hash::FxHashSet<ValueId>,
+    // True once the walk is inside an INDEX position: the non-base operand of an
+    // `Add(base, idx·scale)` whose `base` is a constant (rodata) or SP-rooted
+    // (stack) address.  A value reached only outside such a position — e.g. the
+    // `reg` in a `Load[reg + idx*8]` vtable / `Load[reg]` function pointer — is
+    // NOT a dispatch index and is never collected (so those defer with no fold).
+    in_index_pos: bool,
 ) {
     // Visit each value once — the addressing / decode graph is a shared DAG, so
     // a naive DFS would re-walk shared subgraphs combinatorially.
@@ -195,18 +203,17 @@ fn collect_indices(
     // The anchor itself is never the index (substituting it makes the target
     // literally the index — the identity-fold wrong edge); constants are the
     // base / stride, not the index.
-    if let Some(ty) = ctx
-        .value_type_opt(v)
-        .filter(|t| t.is_integer() && v != anchor && ctx.int_const_u128(v).is_none())
-    {
+    if let Some(ty) = ctx.value_type_opt(v).filter(|t| {
+        in_index_pos && t.is_integer() && v != anchor && ctx.int_const_u128(v).is_none()
+    }) {
         let iv = ranges.range_of(v, branch);
         // A finite range strictly inside the type width, within the enumeration
         // cap.
         let bounded = iv.hi >= iv.lo
             && iv.hi < ty.bit_mask_u128()
             && iv.hi - iv.lo < u128::from(MAX_TABLE_ENTRIES);
-        // Exclude a loaded table ENTRY: a load-derived value bounded only by
-        // its load width (`ZeroExtend(Load.byte)` spanning [0,255]) whose range
+        // Exclude a loaded table ENTRY: a load-derived value bounded only by its
+        // load width (`ZeroExtend(Load.byte)` spanning [0,255]) whose range
         // reflects no dispatch reachability — no dominating **guard**
         // (`if idx < N`) and no explicit **mask** (`idx & 7`).  Enumerating an
         // entry folds to bogus sequential targets.  Everything else finite is a
@@ -226,31 +233,75 @@ fn collect_indices(
     // instruction-decode chain, whose bounded sub-values would flood the
     // candidate set.  We stop at a `Load`'s *value* (its output is a table
     // ENTRY — its address is followed instead); the visited-set keeps the walk
-    // linear and the per-candidate fold guard rejects the false positives that
-    // a `>>`-into-decode walk still reaches.
+    // linear over the shared DAG.
     let node = ctx.producer(v);
-    let follow = matches!(
-        ctx.node_kind(node),
-        NodeKind::Load(_)
-            | NodeKind::Extend(_)
-            | NodeKind::Truncate
-            | NodeKind::IntBinaryOp(
-                IntBinaryOp::Add
-                    | IntBinaryOp::Mul
-                    | IntBinaryOp::ShiftLeft
-                    | IntBinaryOp::ShiftRight
-                    | IntBinaryOp::SShiftRight
-                    | IntBinaryOp::And
-                    | IntBinaryOp::Or,
-            )
-    );
+    // At an `Add(base, other)` with a const / SP-rooted `base`, the `other`
+    // operand enters INDEX position (`base + idx·scale`); the base operand does
+    // not.  Every other addressing op just carries the current position to its
+    // inputs.  This is the `base + idx·scale`, `base ∈ {const, sp}` pattern.
+    let inputs: Vec<ValueId> = ctx
+        .node_inputs(node)
+        .into_iter()
+        .filter(|&i| ctx.value_type_opt(i).is_some_and(|t| t.is_integer()))
+        .collect();
+    let indexing_add = matches!(ctx.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Add))
+        && inputs.len() == 2
+        && (is_base_operand(ctx, inputs[0]) || is_base_operand(ctx, inputs[1]));
+    let follow = indexing_add
+        || matches!(
+            ctx.node_kind(node),
+            NodeKind::Load(_)
+                | NodeKind::Extend(_)
+                | NodeKind::Truncate
+                | NodeKind::IntBinaryOp(
+                    IntBinaryOp::Add
+                        | IntBinaryOp::Mul
+                        | IntBinaryOp::ShiftLeft
+                        | IntBinaryOp::ShiftRight
+                        | IntBinaryOp::SShiftRight
+                        | IntBinaryOp::And
+                        | IntBinaryOp::Or,
+                )
+        );
     if !follow {
         return;
     }
-    for i in ctx.node_inputs(node) {
-        if ctx.value_type_opt(i).is_some_and(|t| t.is_integer()) {
-            collect_indices(ctx, ranges, i, anchor, branch, out, load_memo, seen);
-        }
+    for i in inputs {
+        // An indexing `Add`'s base operand stays out of index position; its
+        // other operand enters it.  All other ops propagate the current flag.
+        let child_pos = if indexing_add {
+            !is_base_operand(ctx, i)
+        } else {
+            in_index_pos
+        };
+        collect_indices(ctx, ranges, i, anchor, branch, out, load_memo, seen, child_pos);
+    }
+}
+
+/// A `base` operand of an indexing `Add(base, idx·scale)`: a constant address
+/// (rodata table base) or an SP-rooted address (stack table).  On the converged
+/// graph a foldable base is already a literal `IntConst`; a register / GOT base
+/// (function pointer, vtable, PIC) is neither, so its indexed operand never
+/// enters index position and is not collected.
+fn is_base_operand(ctx: &strider_ir::Function, v: ValueId) -> bool {
+    ctx.int_const_u128(v).is_some() || is_sp_rooted(ctx, v, 8)
+}
+
+/// Is `v` an SP-rooted address — `InitialVar(sp)`, `Add(sp-rooted, const)`, or
+/// the alignment base `And(sp-rooted, mask)` — checked structurally with a small
+/// depth bound (the SP spine is a short const-offset chain).
+fn is_sp_rooted(ctx: &strider_ir::Function, v: ValueId, depth: u32) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    let node = ctx.producer(v);
+    match ctx.node_kind(node) {
+        NodeKind::InitialVar(id) => ctx.initial_vn(*id) == ctx.default_cc().stack_vn,
+        NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::And) => ctx
+            .node_inputs(node)
+            .into_iter()
+            .any(|i| ctx.value_type_opt(i).is_some() && is_sp_rooted(ctx, i, depth - 1)),
+        _ => false,
     }
 }
 
