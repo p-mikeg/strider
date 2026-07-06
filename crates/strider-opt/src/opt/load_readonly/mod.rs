@@ -107,7 +107,7 @@ impl crate::peephole::PeepholePass for LoadReadOnly {
 /// `Ok(true)` iff a rewrite fired.
 ///
 /// `node_id` MUST be a `Load(VnSpace::RAM)` node — the sole caller
-/// ([`LoadReadOnly::apply`]) filters to that kind/space before calling,
+/// ([`LoadReadOnly::try_rewrite`]) filters to that kind/space before calling,
 /// and the address read below relies on the `Load` two-input arity
 /// invariant.
 ///
@@ -122,7 +122,7 @@ impl crate::peephole::PeepholePass for LoadReadOnly {
 /// `Graph::replace_all_uses` — both are structural by-construction
 /// invariants in production, surfaced as `Err` for defensive
 /// completeness.
-pub(crate) fn try_fold_const_load_at(
+fn try_fold_const_load_at(
     edit: &mut crate::EditFunction<'_>,
     node_id: NodeId,
     rom: &dyn ReadOnlyMemory,

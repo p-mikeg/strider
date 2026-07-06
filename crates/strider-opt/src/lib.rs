@@ -18,7 +18,7 @@
 //! | [`LoadReadOnly`] | Folds constant-address loads via the per-run [`OptCtx`]'s [`ReadOnlyMemory`] (no-ops without a ROM) |
 //! | [`KnownBits`] | Bit-level propagation of statically known zeros/ones |
 //! | [`FlagCmpCanonicalize`] | Flag-tree → single `IntCmpOp` rewrite (AArch64 NZCV-style flag chains) |
-//! | [`IfCondInversion`] | `If(BitNot(C)){A}{B}` → `If(C){B}{A}` |
+//! | [`IfCondInversion`] | `If(Xor(C,1):I1){A}{B}` → `If(C){B}{A}` |
 //! | [`PhiCollapse`] | Braun trivial-phi elimination on `Phi` / `MemPhi` |
 //! | [`RegionCollapse`] | Collapses single-control-input `Region` joins |
 //! | [`DeadBranchElimination`] | Folds `If(const)` branches (redirect live successor + detach) |
@@ -118,11 +118,11 @@ pub use strider_ir::ReadOnlyMemory;
 /// 1. [`ConstantFold`] — constant evaluation and algebraic identities.
 /// 2. [`KnownBits`] — bit-level propagation of known zeros/ones.
 /// 3. [`FlagCmpCanonicalize`] — flag-tree → single `IntCmpOp` rewrite;
-///    runs after `ConstantFold` so `BitNot(BitNot(_))` at `I1` has
+///    runs after `ConstantFold` so the doubled `Xor(Xor(_,1),1)` at `I1` has
 ///    collapsed first.
-/// 4. [`IfCondInversion`] — `If(BitNot(C)) → If(C)` with branches
+/// 4. [`IfCondInversion`] — `If(Xor(C,1):I1) → If(C)` with branches
 ///    swapped; runs after `FlagCmpCanonicalize` so the cond it sees is
-///    at most one `BitNot`-deep, and after `ConstantFold` so a
+///    at most one `Xor(_,1)`-deep, and after `ConstantFold` so a
 ///    constant-cond `If` is already simplified (swapping branches under
 ///    a constant cond would make `DeadBranchElimination` strip the
 ///    wrong arm).

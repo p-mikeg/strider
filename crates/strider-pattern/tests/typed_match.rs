@@ -26,7 +26,7 @@ use strider_pattern::{
     float_sub, float_to_int, initial_var, initial_var_for, inputs_of_width, int_binary,
     int_binary_any, int_carry, int_cmp, int_cmp_any, int_const, int_const_any_of, int_eq, int_le,
     int_lt, int_ne, int_sborrow, int_scarry, int_sle, int_slt, int_unary_any, lzcount, mul, neg,
-    not_, or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const, srem, sshr,
+    or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const, srem, sshr,
     sub, truncate, value_of_width, var, xor, zero_extend,
 };
 
@@ -180,7 +180,7 @@ fn int_unary_family() {
         1
     );
 
-    // bit_not / not_ : xor(x, all_ones)
+    // bit_not : xor(x, all_ones)
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
         let ones = b.build_int_const(u128::MAX, T::I64)?;
         b.build_int_binary_operation(base, ones, IntBinaryOp::Xor, T::I64)
@@ -191,7 +191,6 @@ fn int_unary_family() {
         count(|| bit_not(var(Capture::new())).into_pattern(), &fx),
         1
     );
-    assert_eq!(count(|| not_(var(Capture::new())).into_pattern(), &fx), 1);
 }
 
 // ── Casts ─────────────────────────────────────────────────────────────

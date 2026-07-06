@@ -964,7 +964,7 @@ impl CallingConvention {
          sites like Linux-kernel `__fentry__` / `mcount` callbacks that \
          preserve all caller state.  Pair with the per-address override \
          map on [`crate::CallingConvention`] consumers (e.g. \
-         `strider::Config::per_address_ccs`) so the override applies only \
+         `strider_lift::LiftOptions::per_address_ccs`) so the override applies only \
          to specific Call sites; the function-default CC stays SystemV."
     );
     cc_factory!(
