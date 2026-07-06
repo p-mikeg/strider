@@ -30,29 +30,54 @@ mod tests;
 
 // ── Interval ─────────────────────────────────────────────────────────────────
 
-/// Inclusive unsigned interval `[lo, hi]` over a value's bit width.
+/// A **strided** inclusive unsigned interval: the value set
+/// `{ lo, lo+stride, lo+2·stride, … hi }`, over a value's bit width.
 ///
-/// `lo` and `hi` are unsigned (u128) regardless of whether the value's type
-/// is a signed integer.  The guard-extraction logic gates `Sless` on
-/// KnownBits sign-bit = 0, so the interval is always non-negative.
+/// `lo`/`hi` are unsigned (u128) regardless of signedness (guard extraction
+/// gates `Sless` on KnownBits sign-bit = 0, so the interval is non-negative).
+///
+/// `stride` is a **MUST**-congruence sourced from KnownBits: if the low `k`
+/// bits are known-zero the value is a multiple of `2^k`, so `stride = 2^k`.  It
+/// is always a sound divisor of the value-set spacing (default `1` = every
+/// value), so [`Self::count`] — the number of distinct values the classifier
+/// enumerates — is `(hi−lo)/stride + 1`, never an under-count.  This lets a
+/// scaled index `idx*8 = [0, 4800, stride 8]` be recognised as 601 entries, not
+/// a 4800-wide (and mis-enumerated) span.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Interval {
     pub lo: u128,
     pub hi: u128,
+    pub stride: u128,
 }
 
 impl Interval {
-    /// The top element: the full range `[0, width_mask]`.
+    /// The top element: the full range `[0, width_mask]`, stride 1.
     pub fn top(width_mask: u128) -> Self {
         Self {
             lo: 0,
             hi: width_mask,
+            stride: 1,
         }
+    }
+
+    /// A dense (stride-1) interval `[lo, hi]`.
+    pub fn dense(lo: u128, hi: u128) -> Self {
+        Self { lo, hi, stride: 1 }
     }
 
     /// Returns `true` if this interval covers the full range for `width_mask`.
     pub fn is_top(&self, width_mask: u128) -> bool {
         self.lo == 0 && self.hi >= width_mask
+    }
+
+    /// The number of distinct values `{lo, lo+stride, … hi}` — the count the
+    /// table-dispatch classifier enumerates and caps.  `0` if `hi < lo`.
+    pub fn count(&self) -> u128 {
+        if self.hi < self.lo {
+            0
+        } else {
+            (self.hi - self.lo) / self.stride.max(1) + 1
+        }
     }
 
     /// Exclusive upper bound — the "entry count" a table index may reach —
@@ -68,9 +93,21 @@ impl Interval {
     }
 
     fn intersect(self, other: Self) -> Self {
+        // Conservative on `stride`: keep it only when one side is dense (the
+        // common guard∩KnownBits case — a guard is stride 1, so the KnownBits
+        // stride survives); a genuine two-stride meet would need alignment, so
+        // fall back to stride 1 (sound: enumerate every value).
+        let stride = if self.stride == 1 {
+            other.stride
+        } else if other.stride == 1 {
+            self.stride
+        } else {
+            1
+        };
         Self {
             lo: self.lo.max(other.lo),
             hi: self.hi.min(other.hi),
+            stride,
         }
     }
 
@@ -78,6 +115,7 @@ impl Interval {
         Self {
             lo: self.lo.min(other.lo),
             hi: self.hi.max(other.hi),
+            stride: 1, // sound over-approximation for a join
         }
     }
 }
@@ -440,7 +478,7 @@ fn add_operand_shifted_interval(
     let lo = interval.lo.wrapping_sub(c) & mask;
     let hi = interval.hi.wrapping_sub(c) & mask;
     // Only a non-wrapping result is a representable `[lo, hi]` interval.
-    (lo <= hi).then_some((operand, Interval { lo, hi }))
+    (lo <= hi).then_some((operand, Interval::dense(lo, hi)))
 }
 
 /// Returns `true` when KnownBits proves the sign bit of `value` is
@@ -503,9 +541,20 @@ pub fn compute_value_ranges<'f>(
                 continue;
             };
             let max_val = kb.max_value(type_mask);
-            // Only record if strictly tighter than the full range.
-            if max_val < type_mask {
-                kb_bounds[value_id] = Some(Interval { lo: 0, hi: max_val });
+            // Trailing known-zero low bits ⇒ the value is a multiple of `2^k`:
+            // that's the interval stride (`idx*8`'s low 3 zero bits ⇒ stride 8),
+            // sourced from KnownBits for free.  Capped to the range so it stays a
+            // valid divisor.
+            let tz = kb.zeros.trailing_ones().min(127);
+            let stride = (1u128 << tz).min(max_val.max(1));
+            // Only record if strictly tighter than the full range (a smaller max
+            // OR a non-unit stride both narrow the enumerated set).
+            if max_val < type_mask || stride > 1 {
+                kb_bounds[value_id] = Some(Interval {
+                    lo: 0,
+                    hi: max_val,
+                    stride,
+                });
             }
         }
     }
@@ -670,23 +719,11 @@ fn guard_from_compare(
             if n == 0 {
                 return None;
             }
-            Some((
-                guarded,
-                Interval {
-                    lo: 0,
-                    hi: n.saturating_sub(1).min(type_mask),
-                },
-            ))
+            Some((guarded, Interval::dense(0, n.saturating_sub(1).min(type_mask))))
         }
         (false, false) => {
             // v <= N → [0, N].
-            Some((
-                guarded,
-                Interval {
-                    lo: 0,
-                    hi: n.min(type_mask),
-                },
-            ))
+            Some((guarded, Interval::dense(0, n.min(type_mask))))
         }
         // Lower-only constraints carry no useful upper bound.
         (true, false) | (false, true) => None,

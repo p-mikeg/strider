@@ -88,13 +88,15 @@ pub fn classify_table_dispatch(
     // `IndirectBranch` that happens to share the dispatch value.
     let target_value = ctx.indirect_branch_target(branch);
 
-    // Collect candidate indices from the dispatch's single variability cone
-    // (`decompose_indices`): the bounded values derived from THE one variable
-    // that controls the branch.  A `Load[reg]` function pointer has no bounded
-    // value in its cone → empty → deferred with no fold.
-    let candidates = decompose_indices(ctx, ranges, target_value, branch);
+    // Find THE index: the deepest value on the dispatch's variability cone that
+    // both dominates the target and carries a bounded strided range
+    // (`decompose_index`).  Dominance rules out structural impostors (a rotate's
+    // `x>>30` has a tight range but doesn't dominate); "deepest bounded" pins
+    // the node just above the first opaque/unfoldable operand.  A `Load[reg]`
+    // function pointer has no bounded dominator → `None` → deferred, no fold.
+    let (idx_value, range) = decompose_index(ctx, ranges, target_value, branch)?;
 
-    // Pin each candidate index over its proven range and let the read-only
+    // Pin the index over its proven strided range and let the read-only
     // evaluator fold the index-pruned dispatch cone for every value: rodata
     // reads via `LoadReadOnly`, on-stack reads via `reaching_store`, arithmetic
     // via ConstFold.  Every value must fold to a constant target (fail-closed):
@@ -103,50 +105,53 @@ pub fn classify_table_dispatch(
     // the evaluator identifies the SP spine structurally (no per-node cone walk),
     // so even a false-positive candidate with a large decode cone folds cheaply
     // and `enumerate_targets` bails on its first non-folding value.
-    //
-    // Candidates are tried SMALLEST-RANGE-FIRST (`decompose_indices` sorts
-    // them): when the addressing exposes more than one bounded origin — a wide
-    // mask around the tightly-guarded switch variable — the real index is the
-    // most tightly bounded one, so it wins before any looser impostor that
-    // would fold to a run of bogus sequential targets.
     let mut ev = super::eval::Evaluator::new(ctx, rom, alias_mode);
-    for (idx_value, range) in candidates {
-        let pruned = super::eval::cone_order_pruned(ctx, target_value, idx_value);
-        if let Some(targets) =
-            enumerate_targets(range, |x| ev.eval_target(&pruned, target_value, idx_value, x))
-        {
-            return Some(ResolvedTargets::Multiple(targets));
-        }
-    }
-    None
+    let pruned = super::eval::cone_order_pruned(ctx, target_value, idx_value);
+    enumerate_targets(range, |x| {
+        ev.eval_target(&pruned, target_value, idx_value, x)
+    })
+    .map(ResolvedTargets::Multiple)
 }
 
-/// Enumerate the table by folding the dispatch for every value in `lo..=hi`.
-/// Returns the sorted-deduplicated targets, or `None` if ANY value fails to
-/// fold (this candidate is not the index, or the table is not fully resolvable
-/// → fail closed).  `fold` does the per-value substitution-and-optimise.
+/// Enumerate the table by folding the dispatch for every value in the strided
+/// range `{lo, lo+stride, … hi}`.  Returns the sorted-deduplicated targets, or
+/// `None` if ANY value fails to fold (this candidate is not the index, or the
+/// table is not fully resolvable → fail closed).  `fold` does the per-value
+/// substitution-and-optimise.
 fn enumerate_targets(
     range: Interval,
     mut fold: impl FnMut(u128) -> Option<u64>,
 ) -> Option<Vec<u64>> {
-    let mut targets: Vec<u64> = (range.lo..=range.hi).map(&mut fold).collect::<Option<_>>()?;
+    // `stride` is a KnownBits MUST-divisor of the value spacing, so stepping by
+    // it enumerates exactly the reachable indices (a scaled `idx*8` visits 8,16,…
+    // not the 7 misaligned values between).  `count()` already capped the total.
+    let step = usize::try_from(range.stride).unwrap_or(1).max(1);
+    let mut targets: Vec<u64> = (range.lo..=range.hi)
+        .step_by(step)
+        .map(&mut fold)
+        .collect::<Option<_>>()?;
     targets.sort_unstable();
     targets.dedup();
     (!targets.is_empty()).then_some(targets)
 }
 
-/// The dispatch index candidates: the **genuinely-bounded** (guard- or
-/// mask-constrained, never width-only) non-constant values that **dominate the
-/// target** in its variability cone, **smallest-range-first**.
+/// THE dispatch index: the **deepest** genuinely-bounded (guard- or
+/// mask-constrained strided range, never width-only) non-constant value that
+/// **dominates the target** in its variability cone.
 ///
 /// A jump table is `branch f(index)` for one controlling variable, so the index
 /// is a node **every** variable→target path flows through — a *value-dominator*
-/// of the target.  Restricting to dominators is what excludes a bypassed
-/// sub-branch: in a rotate `index = (x<<2) | (x>>30)`, `x>>30` has the tightest
-/// interval but does **not** dominate the target (the `x<<2` arm bypasses it), so
-/// pinning it leaves `x` free and it can never fold; `x` and the `Or` *do*
-/// dominate.  Smallest-range over the raw cone would try `x>>30` first; smallest
-/// range over the **dominators** never offers it.
+/// of the target.  Restricting to dominators excludes a bypassed sub-branch: in
+/// a rotate `index = (x<<2) | (x>>30)`, `x>>30` has the tightest interval but
+/// does **not** dominate the target (the `x<<2` arm bypasses it); `x` and the
+/// `Or` *do*.  Among the dominators we take the **deepest** bounded one — the
+/// node sitting just above the first opaque/unfoldable operand.  That is the
+/// most-refined index: a scaled `idx*8` and its source `idx` both dominate, and
+/// `idx` (deeper) is the one to enumerate; a `Load[base+(SegmentOp(idx)&7)*8]`
+/// stops at `SegmentOp&7` because `SegmentOp` is an opaque cone leaf its input
+/// `idx` never joins.  The count-capped strided range (`bounded_index` via
+/// [`Interval::count`]) is what makes a wide-but-sparse `idx*8` (601 entries
+/// over a 4800 span) enumerable while a dense 4800-wide impostor is not.
 ///
 /// The cone is built by walking `target`'s variability inputs, TRAVERSING THROUGH
 /// a load the evaluator can fold (const-base rodata / SP-rooted stack) into its
@@ -154,14 +159,13 @@ fn enumerate_targets(
 /// opaque sources.  A virtual ENTRY feeds every cone root, and
 /// [`petgraph::algo::dominators::simple_fast`] yields the target's dominator
 /// chain — the short "convergence → target" spine, not the whole cone.  The pin
-/// is still confirmed by the caller's fold (belt-and-braces), but a valid table
-/// now resolves on the first candidate.
-fn decompose_indices(
+/// is still confirmed by the caller's fold (belt-and-braces).
+fn decompose_index(
     ctx: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
     target: ValueId,
     branch: NodeId,
-) -> Vec<(ValueId, Interval)> {
+) -> Option<(ValueId, Interval)> {
     use petgraph::graph::{DiGraph, NodeIndex};
 
     // Build the value-dominance graph of the cone: a virtual ENTRY with an edge
@@ -217,30 +221,28 @@ fn decompose_indices(
         }
     }
 
-    let Some(&target_idx) = nidx.get(&target) else {
-        return Vec::new();
-    };
+    let target_idx = *nidx.get(&target)?;
     let doms = petgraph::algo::dominators::simple_fast(&g, entry);
 
-    // The target's dominator chain (excluding ENTRY and the target itself), kept
-    // when a genuinely-bounded, non-entry index — smallest-range-first.
+    // Walk the target's dominator chain (shallow→deep: target, idom, … root) and
+    // keep the DEEPEST genuinely-bounded, non-entry value.  `dominators` yields
+    // the chain in that order, so overwriting on each hit lands on the deepest —
+    // the index just above the first opaque operand the cone couldn't traverse.
     let mut load_memo = rustc_hash::FxHashMap::default();
-    let mut out: Vec<(ValueId, Interval)> = Vec::new();
-    if let Some(chain) = doms.dominators(target_idx) {
-        for di in chain {
-            let Some(v) = *g.node_weight(di).expect("dominator is a graph node") else {
-                continue; // ENTRY
-            };
-            if v == target {
-                continue;
-            }
-            if let Some(c) = bounded_index(ctx, ranges, branch, v, &mut load_memo) {
-                out.push(c);
-            }
+    let mut best = None;
+    let chain = doms.dominators(target_idx)?;
+    for di in chain {
+        let Some(v) = *g.node_weight(di).expect("dominator is a graph node") else {
+            continue; // ENTRY
+        };
+        if v == target {
+            continue;
+        }
+        if let Some(c) = bounded_index(ctx, ranges, branch, v, &mut load_memo) {
+            best = Some(c); // deeper (later in chain) wins
         }
     }
-    out.sort_by_key(|&(_, iv)| iv.hi - iv.lo);
-    out
+    best
 }
 
 /// The address of a load the abstract evaluator can fold -- one whose address is
@@ -330,9 +332,12 @@ fn bounded_index(
         .value_type_opt(v)
         .filter(|t| t.is_integer() && ctx.int_const_u128(v).is_none())?;
     let iv = ranges.range_of(v, branch);
-    let bounded = iv.hi >= iv.lo
-        && iv.hi < ty.bit_mask_u128()
-        && iv.hi - iv.lo < u128::from(MAX_TABLE_ENTRIES);
+    // Cap on the ENTRY COUNT the classifier enumerates, not the raw span: a
+    // strided `idx*8 = [0, 4800, stride 8]` is 601 entries (enumerable), while a
+    // dense 4800-wide range is not.  This is what separates "wide but finite"
+    // from "opaque".
+    let bounded =
+        iv.hi >= iv.lo && iv.hi < ty.bit_mask_u128() && iv.count() <= u128::from(MAX_TABLE_ENTRIES);
     let entry_load = is_load_derived(ctx, v, load_memo)
         && ranges.dominating_guard(v, branch).is_none()
         && !is_and_masked(ctx, v);
