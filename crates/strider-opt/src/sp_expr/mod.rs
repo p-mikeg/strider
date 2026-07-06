@@ -27,7 +27,7 @@ mod mem_ssa;
 mod ranges;
 
 pub(crate) use analyzer::{
-    decompose_fill_all, decompose_readonly, is_alignment_mask, AliasVerdict, SpExpr,
+    decompose_readonly, is_alignment_mask, AliasVerdict, SpExpr,
 };
 pub(crate) use cfg::SpAliasCfg;
 pub(crate) use mem_ssa::narrow_load_to;

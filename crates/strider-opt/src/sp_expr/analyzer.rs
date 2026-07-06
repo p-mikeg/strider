@@ -24,7 +24,7 @@
 
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp, SpDecomp};
+use strider_ir::{Function, IRViewer, IntBinaryOp, SpDecomp};
 
 use super::ranges::ranges_disjoint;
 use crate::AliasMode;
@@ -42,18 +42,6 @@ pub(crate) struct SpExpr {
 }
 
 impl SpExpr {
-    /// Adds `delta` to the offset, returning `None` (fail-closed: opaque
-    /// base, no provable slot) on `i128` overflow rather than wrapping a deep
-    /// Add chain into a wrong concrete offset that the alias oracle would then
-    /// reason about as a valid nearby slot.  Real frames have small offsets;
-    /// the decomposer is fed arbitrary lifted arithmetic.
-    #[must_use]
-    pub(crate) fn shifted(self, delta: i128) -> Option<Self> {
-        Some(SpExpr {
-            base: self.base,
-            offset: self.offset.checked_add(delta)?,
-        })
-    }
 }
 
 /// Coarse classification of a Load / Store address.  The verdict table in
@@ -227,118 +215,6 @@ fn resolve_slot(function: &Function, value: ValueId) -> Option<SpExpr> {
         .side_tables()
         .stack_slot_resolved(value)
         .map(|(base, offset)| SpExpr { base, offset })
-}
-
-/// Fills the function's `stack_offsets` decomposition cache for EVERY value in a
-/// single defs-before-uses (reverse-post-order) sweep of the whole graph —
-/// O(graph), versus the O(cone) per-value walk of [`decompose_and_cache`].
-///
-/// The fill pass ([`crate::StackOffsetDetect`]) runs this once on the frozen,
-/// post-convergence graph, after which every read-only decompose query
-/// ([`decompose_readonly`], the per-node [`strider_ir::Function::stack_offset`])
-/// is an O(1) cache hit.  Each node is classified from its operands' already
-/// *committed* verdicts (guaranteed present by the defs-before-uses order), so
-/// no local memo is needed.
-pub(crate) fn decompose_fill_all(function: &mut Function) {
-    let order: Vec<NodeId> = {
-        let f = &*function;
-        let info = f.walk_info(None);
-        f.reverse_postorder(&info)
-    };
-    for node in order {
-        let Ok([node_out]) = function.node_outputs_exact::<1>(node) else {
-            continue;
-        };
-        if !matches!(function.side_tables().stack_slot(node_out), SpDecomp::Unknown) {
-            continue;
-        }
-        // Operands precede this node in RPO, so their verdicts are committed;
-        // read them straight from the cache.  The immutable borrow ends with
-        // `expr` before the commit below.
-        let expr = classify_sp_node(&*function, node, node_out, |v| resolve_slot(function, v));
-        match expr {
-            Some(e) => function.side_tables_mut().set_stack_slot(node_out, e.base, e.offset),
-            None => function.side_tables_mut().set_stack_slot_not(node_out),
-        }
-    }
-}
-
-/// Classifies a single cone node given `get`, a lookup of each operand's
-/// already-computed verdict.  `Phi` is not an SP terminal and falls through to
-/// `None`.  The lookup is a closure so the same arms serve both the per-value
-/// local-memo sweep and the whole-graph committed-cache fill.
-fn classify_sp_node(
-    function: &Function,
-    node: NodeId,
-    node_value: ValueId,
-    get: impl Fn(ValueId) -> Option<SpExpr>,
-) -> Option<SpExpr> {
-    match *function.node_kind(node) {
-            NodeKind::InitialVar(id)
-                if function.initial_vn(id) == function.default_cc().stack_vn =>
-            {
-                Some(SpExpr {
-                    base: node_value,
-                    offset: 0,
-                })
-            }
-            NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                // IntBinaryOp has exactly 2 inputs (validated structural invariant).
-                let [lhs, rhs] = function
-                    .node_inputs_exact::<2>(node)
-                    .expect("IntBinaryOp(Add) has 2 inputs (validated)");
-                // SP + const in either operand order; the constant shifts the
-                // other operand's decomposed offset.  Right operand checked
-                // first (post-ConstantFold an Add never carries two constants).
-                let (sp_operand, c) =
-                    match (function.int_const_i128(rhs), function.int_const_i128(lhs)) {
-                        (Some(c), _) => (lhs, c),
-                        (None, Some(c)) => (rhs, c),
-                        _ => return None,
-                    };
-                get(sp_operand).and_then(|e| e.shifted(c))
-            }
-            // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
-            // `0xfffffff0` for SSE-aligned frames).  The And's output is
-            // runtime-aligned `(SP & mask)` — its exact value depends on the
-            // entry SP's alignment, so the offset relative to `InitialVar(sp)`
-            // is unknown.  But within the function the And's output is *fixed*
-            // and serves as a stable opaque base for every subsequent stack
-            // address.  Return `Terminal { base: <And output>, offset: 0 }`
-            // so downstream Adds / Subs of constants chain through normally
-            // and `StackOffsetDetect` can classify the post-alignment stores
-            // as stack-aliased using this base.
-            //
-            // Only matches when the non-mask operand is itself an SP-rooted
-            // expression — guards against `And(rax, mask)` accidentally
-            // producing a fake stack base.
-            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-                // IntBinaryOp has exactly 2 inputs (validated structural invariant).
-                let [l, r] = function
-                    .node_inputs_exact::<2>(node)
-                    .expect("IntBinaryOp(And) has 2 inputs (validated)");
-                // Require the constant operand to be an *alignment* mask —
-                // a contiguous run of high 1-bits (e.g. 0xFFFF_FFF0).  A
-                // low-bit mask like `And(sp, 0xF)` is a bit-extraction (value
-                // in [0,15]), NOT a stack base; treating it as one would feed
-                // a bogus opaque base to `distinct_sp_bases_disjoint`.
-                let sp_value = if function.int_const_u128(r).is_some_and(is_alignment_mask) {
-                    l
-                } else if function.int_const_u128(l).is_some_and(is_alignment_mask) {
-                    r
-                } else {
-                    return None;
-                };
-                // The And's output is a fresh opaque base (offset 0) for
-                // downstream walkers; we only require the non-mask operand to
-                // be SP-rooted, discarding its concrete decomposition.
-                get(sp_value).map(|_| SpExpr {
-                    base: node_value,
-                    offset: 0,
-                })
-            }
-            _ => None,
-        }
 }
 
 impl SpAnalyzer<'_> {
@@ -599,9 +475,9 @@ mod decompose_tests {
     }
 
     #[test]
-    fn decompose_cache_commits_and_readonly_is_idempotent() -> crate::Result<()> {
-        // Read-only decompose is idempotent, and `decompose_and_cache` commits
-        // the verdict into the function's `stack_offsets` cache.
+    fn decompose_readonly_is_idempotent_and_committed_slot_round_trips() -> crate::Result<()> {
+        // Read-only decompose is idempotent, and committing a slot (as
+        // `StackOffsetDetect` does) round-trips through the cache.
         let sp = sp();
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -623,12 +499,13 @@ mod decompose_tests {
                 Some(SpExpr { offset: -4, .. })
             )
         ));
-        // The fill sweep populates the persistent cache.
-        decompose_fill_all(&mut fg);
+        if let Some(SpExpr { base, offset }) = r1 {
+            fg.side_tables_mut().set_stack_slot(addr, base, offset);
+        }
         assert_eq!(
             fg.side_tables().stack_slot_resolved(addr).map(|(_, o)| o),
             Some(-4),
-            "fill must commit the -4 offset"
+            "committed slot must round-trip"
         );
         Ok(())
     }
@@ -651,10 +528,10 @@ mod decompose_tests {
     }
 
     #[test]
-    fn decompose_and_cache_commits_intermediate_results() -> crate::Result<()> {
-        // Committing the outermost node of a deep `sp - K1 - K2 - K3` chain must
-        // populate the cache for ALL intermediate sub-expressions, so a sibling
-        // read-only query hitting any of them is a cache hit.
+    fn decompose_readonly_walks_deep_offset_chain() -> crate::Result<()> {
+        // The spine walk accumulates the constant offset down a deep
+        // `sp - 4 - 8 - 12` chain, and each intermediate decomposes to its own
+        // partial offset.
         let sp = sp();
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -670,45 +547,10 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
 
-        decompose_fill_all(&mut fg);
-        assert_eq!(
-            fg.side_tables().stack_slot_resolved(s3).map(|(_, o)| o),
-            Some(-24),
-            "outermost chain node offset"
-        );
-
-        // The fill commits all three intermediate outputs as `Stack` slots.
-        for (v, name) in [(s1, "s1"), (s2, "s2"), (s3, "s3")] {
-            assert!(
-                matches!(fg.side_tables().stack_slot(v), strider_ir::SpDecomp::Stack(_)),
-                "expected cached Stack slot for {name}"
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn decompose_and_cache_commits_none_results() -> crate::Result<()> {
-        // A `None` verdict is a deterministic function of the fixed graph, so
-        // `decompose_and_cache` commits it as an explicit `NotStack` slot —
-        // sparing the repeated cone walk for the common non-SP (constant /
-        // global / heap) address case.
-        let mut b = strider_ir_test_utils::empty_builder()?;
-        let region = b.create_region_all()?;
-        b.set_entry_region_all(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let c = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_return(Some(c), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        decompose_fill_all(&mut fg);
-        // The negative verdict is committed, so a repeat query short-circuits.
-        assert!(
-            matches!(fg.side_tables().stack_slot(c), strider_ir::SpDecomp::NotStack),
-            "non-SP address must be cached as NotStack"
-        );
+        let off = |v| SpAnalyzer::new(&fg).decompose(v).map(|e| e.offset);
+        assert_eq!(off(s1), Some(-4), "s1 = sp - 4");
+        assert_eq!(off(s2), Some(-12), "s2 = sp - 12");
+        assert_eq!(off(s3), Some(-24), "s3 = sp - 24");
         Ok(())
     }
 

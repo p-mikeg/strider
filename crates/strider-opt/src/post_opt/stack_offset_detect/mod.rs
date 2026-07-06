@@ -8,9 +8,12 @@
 //! else (Phi-of-offsets, non-SP-rooted addresses).  The offset `K` is only
 //! comparable against another access sharing the same `base`.
 
+use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::IRViewer;
+
 use crate::error::Result;
 use crate::pipeline::PostOptimizer;
-use crate::sp_expr::decompose_fill_all;
+use crate::sp_expr::{decompose_readonly, SpExpr};
 
 /// Detects SP-relative Store / Load addresses and records each one's
 /// concrete offset in the `Function::stack_offsets` side-table.
@@ -23,14 +26,27 @@ pub struct StackOffsetDetect;
 
 impl PostOptimizer for StackOffsetDetect {
     fn apply(&self, edit: &mut crate::EditFunction<'_>, _ctx: &mut crate::OptCtx<'_>) -> Result<()> {
-        // This is the FILL pass for the `stack_offsets` decomposition cache: on
-        // the frozen, post-convergence graph it decomposes EVERY value in one
-        // O(graph) defs-before-uses sweep and commits the verdicts (positives
-        // and negatives).  After it, the value-keyed cache is populated for the
-        // per-node user-facing `Function::stack_offset` and every read-only
-        // consumer (the memory-SSA walk, the indirect-branch classifier /
-        // evaluator) — each an O(1) cache hit rather than a per-query cone walk.
-        decompose_fill_all(edit.function_mut());
+        // Fills the `stack_offsets` cache for the STORE/LOAD ADDRESSES only — the
+        // sparse set the user-facing per-node `Function::stack_offset` reads back
+        // on the frozen, post-convergence graph.  Each address is an O(spine)
+        // `decompose_readonly` walk (not a whole-graph sweep): the other
+        // consumers (the memory-SSA walk, the indirect-branch classifier /
+        // evaluator) call `decompose_readonly` directly, which is already cheap,
+        // so there is no need to eagerly decompose every value.
+        let candidates: Vec<NodeId> = edit
+            .live_of_kind(|k| matches!(k, NodeKind::Store(_) | NodeKind::Load(_)))
+            .collect();
+        for node in candidates {
+            // Address is input slot 1 of both Store/Load; skip a malformed node.
+            let Some(addr) = edit.function().node_inputs(node).get(1).copied() else {
+                continue;
+            };
+            if let Some(SpExpr { base, offset }) = decompose_readonly(edit.function(), addr) {
+                edit.function_mut()
+                    .side_tables_mut()
+                    .set_stack_slot(addr, base, offset);
+            }
+        }
         Ok(())
     }
 }
