@@ -231,25 +231,22 @@ fn decompose_index(
     let target_idx = *nidx.get(&target)?;
     let doms = petgraph::algo::dominators::simple_fast(&g, entry);
 
-    // Walk the target's dominator chain (shallow→deep: target, idom, … root) and
-    // keep the DEEPEST genuinely-bounded, non-entry value.  `dominators` yields
-    // the chain in that order, so overwriting on each hit lands on the deepest —
-    // the index just above the first opaque operand the cone couldn't traverse.
+    // `dominators` yields the chain shallow→deep (target, idom, … root).  Collect
+    // the value ids (cheap), then walk them root-ward and return the FIRST
+    // genuinely-bounded one — the DEEPEST index, just above the first opaque
+    // operand the cone couldn't traverse.  Reversing (rather than a forward
+    // `.last()`) early-exits at that deepest hit, so the heavy `bounded_index`
+    // range query runs on as few nodes as possible.
     let mut load_memo = rustc_hash::FxHashMap::default();
-    let mut best = None;
-    let chain = doms.dominators(target_idx)?;
-    for di in chain {
-        let Some(v) = *g.node_weight(di).expect("dominator is a graph node") else {
-            continue; // ENTRY
-        };
-        if v == target {
-            continue;
-        }
-        if let Some(c) = bounded_index(ctx, ranges, branch, v, &mut load_memo) {
-            best = Some(c); // deeper (later in chain) wins
-        }
-    }
-    best
+    let chain: Vec<ValueId> = doms
+        .dominators(target_idx)?
+        .filter_map(|di| *g.node_weight(di).expect("dominator is a graph node"))
+        .filter(|&v| v != target)
+        .collect();
+    chain
+        .into_iter()
+        .rev()
+        .find_map(|v| bounded_index(ctx, ranges, branch, v, &mut load_memo))
 }
 
 /// The address of a load the abstract evaluator can fold -- one whose address is
