@@ -76,7 +76,12 @@ impl PyCfg {
     /// `to_html` / `to_dot` / `html_str` (mirrors `PyLifter::dispatch_dot`).
     /// `style` is already resolved by each caller so their exact per-method
     /// defaults are preserved.
-    fn dispatch_dot(&self, py: Python<'_>, style: &str, op: CfgDotOp<'_>) -> PyResult<CfgDotResult> {
+    fn dispatch_dot(
+        &self,
+        py: Python<'_>,
+        style: &str,
+        op: CfgDotOp<'_>,
+    ) -> PyResult<CfgDotResult> {
         self.with_sleigh(py, |sleigh| {
             let d = dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some(style)));
             match op {
@@ -154,12 +159,14 @@ impl PyCfg {
     #[pyo3(signature = (path, style=None))]
     fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
         let style = style.unwrap_or("dark_cfg");
-        self.dispatch_dot(py, style, CfgDotOp::ToHtml(path)).map(|_| ())
+        self.dispatch_dot(py, style, CfgDotOp::ToHtml(path))
+            .map(|_| ())
     }
     /// Render the CFG to a Graphviz `.dot` file at `path`.
     #[pyo3(signature = (path,))]
     fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
-        self.dispatch_dot(py, "dark_cfg", CfgDotOp::ToDot(path)).map(|_| ())
+        self.dispatch_dot(py, "dark_cfg", CfgDotOp::ToDot(path))
+            .map(|_| ())
     }
     /// Return the CFG rendered as an HTML string (default `"dark_cfg"`
     /// style) instead of writing it to a file.

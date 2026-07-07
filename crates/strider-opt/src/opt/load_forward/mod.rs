@@ -184,7 +184,11 @@ fn try_forward_load(
 /// holds at every intermediate node, not just the outermost — the
 /// BE-path `ShiftRight` / `IntConst` would otherwise be reachable with an
 /// empty fingerprint.
-fn narrow(edit: &mut crate::EditFunction<'_>, store_data: ValueId, load: NodeId) -> Result<ValueId> {
+fn narrow(
+    edit: &mut crate::EditFunction<'_>,
+    store_data: ValueId,
+    load: NodeId,
+) -> Result<ValueId> {
     // Both `store_data_ty` (the `Store` data input) and `load_ty` (the `Load`
     // output) are value-edge types, so derive them from the nodes the caller
     // already holds — each is an O(1) cached look-up — rather than threading
@@ -211,7 +215,8 @@ fn narrow(edit: &mut crate::EditFunction<'_>, store_data: ValueId, load: NodeId)
             // asm-fingerprint.
             let shift_const_node = edit.producer(shift_const);
             edit.function_mut()
-                .side_tables_mut().extend_asm_fingerprint_from(shift_const_node, load);
+                .side_tables_mut()
+                .extend_asm_fingerprint_from(shift_const_node, load);
             let shr = edit.create_node_attributed(
                 NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
                 [store_data, shift_const],

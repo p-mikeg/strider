@@ -449,7 +449,11 @@ fn canonicalize_cr_bit_test(
 /// stopping the descent at each `IntCmpOp` — a comparison carries its
 /// instruction's address on its own node, and its operands are the unrelated
 /// compared values (often live elsewhere), not pack-building instructions.
-fn absorb_cr_pack_fingerprints(edit: &mut crate::EditFunction<'_>, cond_out: ValueId, cmp: ValueId) {
+fn absorb_cr_pack_fingerprints(
+    edit: &mut crate::EditFunction<'_>,
+    cond_out: ValueId,
+    cmp: ValueId,
+) {
     let into = edit.producer(cmp);
     let mut stack = vec![edit.producer(cond_out)];
     // Dense visited set + ordered interior list: O(1) membership instead of the
@@ -470,7 +474,9 @@ fn absorb_cr_pack_fingerprints(edit: &mut crate::EditFunction<'_>, cond_out: Val
     }
     for n in interior {
         if n != into {
-            edit.function_mut().side_tables_mut().extend_asm_fingerprint_from(into, n);
+            edit.function_mut()
+                .side_tables_mut()
+                .extend_asm_fingerprint_from(into, n);
         }
     }
 }

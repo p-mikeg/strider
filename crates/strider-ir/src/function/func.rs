@@ -18,9 +18,11 @@
 
 use rustc_hash::FxHashMap;
 
+use crate::IRViewer;
 use crate::IRWalker;
 use crate::function::side_tables::SideTables;
 use crate::graph::{Graph, NodeIdRemap};
+use crate::node::const_value::ConstId;
 use crate::node::{NodeId, NodeKind, ValueId};
 
 /// Deterministic ordering key for a tracked varnode: `(space, offset,
@@ -148,8 +150,10 @@ pub struct Function {
     /// [`entity_utils::EntityInterner`] owns both the forward `ConstId → value`
     /// map and the reverse value-dedup index.  Rebuilt over the live ids by
     /// [`Self::compact`].
-    pub(crate) const_interner:
-        entity_utils::EntityInterner<crate::node::const_value::ConstId, crate::node::const_value::ConstValue>,
+    pub(crate) const_interner: entity_utils::EntityInterner<
+        crate::node::const_value::ConstId,
+        crate::node::const_value::ConstValue,
+    >,
 }
 
 impl Function {
@@ -433,7 +437,6 @@ impl Function {
     /// decomposed).  `base` is the SP-derived terminal the offset is relative
     /// to; offsets compare only when their bases match.
     pub fn stack_offset(&self, node: NodeId) -> Option<(ValueId, i128)> {
-        use crate::IRViewer;
         // The address is input slot 1 of both Store (`[mem, addr, data]`) and
         // Load (`[mem, addr]`).  Read it defensively (a `.get`, not the
         // arity-panicking `store_addr`/`load_addr`): this accessor is called
@@ -524,7 +527,8 @@ impl Function {
     ) -> NodeId {
         let node_id = self.graph.create_node(kind, inputs, output_kinds);
         for &src in contributors {
-            self.side_tables_mut().extend_asm_fingerprint_from(node_id, src);
+            self.side_tables_mut()
+                .extend_asm_fingerprint_from(node_id, src);
         }
         node_id
     }
@@ -611,9 +615,6 @@ impl Function {
     /// surviving nodes, so the live-id scan correctly excludes zombie
     /// references.
     fn gc_consts(&mut self) {
-        use crate::node::const_value::ConstId;
-        use crate::node::NodeKind;
-
         let mut live_old_ids: Vec<ConstId> = Vec::new();
         let mut const_nodes: Vec<NodeId> = Vec::new();
         for node in self.graph.all_node_ids() {
@@ -717,7 +718,8 @@ mod function_skeleton_tests {
     fn function_asm_fingerprint_round_trips() {
         let mut f = test_function();
         let n = f.entry();
-        f.side_tables_mut().extend_asm_fingerprint(n, &[0xDEAD_BEEF]);
+        f.side_tables_mut()
+            .extend_asm_fingerprint(n, &[0xDEAD_BEEF]);
         assert_eq!(
             f.side_tables().asm_fingerprint(n),
             rustc_hash::FxHashSet::from_iter([0xDEAD_BEEF])
@@ -839,8 +841,8 @@ mod compact_tests {
     /// payload rewrite the survivor would dangle or read the wrong constant.
     #[test]
     fn compact_gcs_and_remaps_surviving_wide_const() {
-        use crate::node::const_value::ConstValue;
         use crate::node::ValueType;
+        use crate::node::const_value::ConstValue;
 
         // Genuinely-wide I256 value (high limb set ⇒ stays `Wide`).
         const LIVE_LIMBS: [u64; 4] = [
@@ -916,7 +918,8 @@ mod compact_tests {
             [entry_ctrl, mem_value, base_value, key_value],
             [],
         );
-        f.side_tables_mut().set_stack_slot(key_value, base_value, -16);
+        f.side_tables_mut()
+            .set_stack_slot(key_value, base_value, -16);
 
         let remap = f.compact().expect("compact must succeed");
 
@@ -924,7 +927,9 @@ mod compact_tests {
             remap.node_old_to_new(zombie).is_none(),
             "zombie must be dropped"
         );
-        let new_key_value = remap.value_old_to_new(key_value).expect("key value survives");
+        let new_key_value = remap
+            .value_old_to_new(key_value)
+            .expect("key value survives");
         let new_base_value = remap
             .value_old_to_new(base_value)
             .expect("base value survives");
@@ -959,7 +964,8 @@ mod compact_tests {
                 .create_node(NodeKind::Return, [entry_ctrl, mem_value, surv_value], []);
 
         // Stamp three asm addresses on the surviving IntConst before compact.
-        f.side_tables_mut().extend_asm_fingerprint(surviving, &[0x1000, 0x1004, 0x1008]);
+        f.side_tables_mut()
+            .extend_asm_fingerprint(surviving, &[0x1000, 0x1004, 0x1008]);
 
         let remap = f.compact().expect("compact must succeed");
         let new_id = remap
@@ -1377,7 +1383,8 @@ mod compact_tests {
         b.build_return(None, &[]).unwrap();
         let mut f = b.build().unwrap();
         let node = f.entry(); // any live NodeId
-        f.side_tables_mut().set_switch_targets(node, vec![0x1000, 0x1020]);
+        f.side_tables_mut()
+            .set_switch_targets(node, vec![0x1000, 0x1020]);
         assert_eq!(f.side_tables().switch_targets(node), &[0x1000, 0x1020]);
         f.compact().unwrap();
         // Entry survives compact; its targets must be remapped, not dropped.

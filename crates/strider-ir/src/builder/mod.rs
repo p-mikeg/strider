@@ -35,7 +35,6 @@ pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()
     }
 }
 
-
 /// Incrementally constructs a sea-of-nodes IR function graph.
 ///
 /// The builder tracks SSA-style per-region variable state: each variable has
@@ -206,7 +205,9 @@ impl FunctionBuilder {
             .function_mut()
             .create_node_attributed(kind, inputs, output_kinds, &[]);
         if let Some(addr) = addr {
-            self.function_mut().side_tables_mut().extend_asm_fingerprint(node_id, &[addr]);
+            self.function_mut()
+                .side_tables_mut()
+                .extend_asm_fingerprint(node_id, &[addr]);
         }
         node_id
     }

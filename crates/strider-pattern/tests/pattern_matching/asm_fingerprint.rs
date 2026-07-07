@@ -21,7 +21,10 @@ fn asm_fingerprint_returns_attributed_address() {
 
     let v = Capture::new();
     let m = a::first(&function, int_const(42u128).capture(v).into_pattern());
-    assert_eq!(m.asm_fingerprint(v, &function), FxHashSet::from_iter([0x100]));
+    assert_eq!(
+        m.asm_fingerprint(v, &function),
+        FxHashSet::from_iter([0x100])
+    );
 }
 
 #[test]

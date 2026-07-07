@@ -449,8 +449,8 @@ mod tests {
     use super::OptCtx;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
+    use strider_ir_test_utils::IrBuilderEx;
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
-use strider_ir_test_utils::IrBuilderEx;
 
     /// Build a tiny single-region function returning `IntConst(K)`.
     fn one_const_fn(k: u64) -> strider_ir::Function {

@@ -743,9 +743,9 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
+    use crate::CfgOptions;
     use crate::test_support::addr as addr_at;
     use crate::test_support::*;
-    use crate::CfgOptions;
 
     fn fake_lift_res(n: usize) -> rsleigh::LiftRes {
         fake_lift_res_with_len(n, 1)

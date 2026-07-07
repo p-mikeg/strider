@@ -22,8 +22,8 @@ pub use value_ops::{
     float_mul, float_ne, float_neg, float_round, float_sqrt, float_sub, float_to_float,
     float_to_int, float_unary_any, int_binary, int_binary_any, int_bits_to_float, int_carry,
     int_cmp, int_cmp_any, int_eq, int_le, int_lt, int_ne, int_sborrow, int_scarry, int_sle,
-    int_slt, int_to_float, int_unary_any, lzcount, mul, neg, or, popcount, rem, sdiv, shl,
-    shr, sign_extend, srem, sshr, sub, truncate, xor, zero_extend,
+    int_slt, int_to_float, int_unary_any, lzcount, mul, neg, or, popcount, rem, sdiv, shl, shr,
+    sign_extend, srem, sshr, sub, truncate, xor, zero_extend,
 };
 pub use wildcards::{
     any, bool_inputs, bool_value, initial_var, initial_var_for, inputs_of_width, predicate,

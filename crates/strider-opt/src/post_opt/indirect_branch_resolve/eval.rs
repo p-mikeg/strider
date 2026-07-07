@@ -17,7 +17,6 @@ use strider_ir::{IRViewer, ReadOnlyMemory};
 
 use crate::sp_expr::SpAliasCfg;
 
-
 /// Abstract value: a concrete number, or `sp_base + offset`.
 #[derive(Clone, Copy, PartialEq)]
 enum Abs {
@@ -120,10 +119,15 @@ impl<'a> Evaluator<'a> {
             // (offset 0), matching `decompose_readonly`'s And arm.
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
                 let [l, r] = [*ins.first()?, *ins.get(1)?];
-                let sp_operand = if f.int_const_u128(r).is_some_and(crate::sp_expr::is_alignment_mask)
+                let sp_operand = if f
+                    .int_const_u128(r)
+                    .is_some_and(crate::sp_expr::is_alignment_mask)
                 {
                     l
-                } else if f.int_const_u128(l).is_some_and(crate::sp_expr::is_alignment_mask) {
+                } else if f
+                    .int_const_u128(l)
+                    .is_some_and(crate::sp_expr::is_alignment_mask)
+                {
                     r
                 } else {
                     return self.eval_const_node(value);
@@ -258,7 +262,9 @@ impl graph_algorithms::walk::GraphRef for ValueInputSuccs<'_> {
         value: ValueId,
         f: impl FnMut(ValueId) -> std::ops::ControlFlow<()>,
     ) -> std::ops::ControlFlow<()> {
-        self.function.value_inputs(self.function.producer(value)).try_for_each(f)
+        self.function
+            .value_inputs(self.function.producer(value))
+            .try_for_each(f)
     }
 }
 
@@ -291,7 +297,9 @@ impl graph_algorithms::walk::GraphRef for ValueInputSuccsPruned<'_> {
         if value == self.stop {
             return std::ops::ControlFlow::Continue(());
         }
-        self.function.value_inputs(self.function.producer(value)).try_for_each(f)
+        self.function
+            .value_inputs(self.function.producer(value))
+            .try_for_each(f)
     }
 }
 

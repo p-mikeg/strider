@@ -9,9 +9,9 @@
 use rsleigh::mem_readers::BufMemReader;
 use strider_target::SleighArch;
 
+use crate::CfgOptions;
 use crate::builder::Builder;
 use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator};
-use crate::CfgOptions;
 
 /// The in-memory reader used by every synthetic `Sleigh` fixture.
 pub(crate) type TestReader = BufMemReader<Vec<u8>>;

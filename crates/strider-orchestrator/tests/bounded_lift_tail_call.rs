@@ -353,7 +353,10 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
     let call =
         find_call_to(&function, OOB_TARGET).expect("the OOB arm must carry Call(IntConst(0x1080))");
     assert!(
-        function.side_tables().asm_fingerprint(call).contains(&JE_ADDR),
+        function
+            .side_tables()
+            .asm_fingerprint(call)
+            .contains(&JE_ADDR),
         "stub Call fingerprint must name the cond-branch insn at {JE_ADDR:#x}; got {:?}",
         function.side_tables().asm_fingerprint(call)
     );

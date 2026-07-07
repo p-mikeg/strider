@@ -56,6 +56,7 @@
 use super::MAX_TABLE_ENTRIES;
 use crate::value_range::Interval;
 use crate::{AliasMode, ReadOnlyMemory};
+use petgraph::graph::{DiGraph, NodeIndex};
 use strider_cfg::ResolvedTargets;
 use strider_ir::IRViewer;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId};
@@ -154,8 +155,6 @@ fn decompose_index(
     target: ValueId,
     branch: NodeId,
 ) -> Option<(ValueId, Interval)> {
-    use petgraph::graph::{DiGraph, NodeIndex};
-
     // Build the value-dominance graph of the cone: a virtual ENTRY with an edge
     // to every root, and a producer→consumer edge for every variability edge
     // (traversing through a foldable load into its address).  Node weight
@@ -163,11 +162,10 @@ fn decompose_index(
     let mut g: DiGraph<Option<ValueId>, ()> = DiGraph::new();
     let entry = g.add_node(None);
     let mut nidx: rustc_hash::FxHashMap<ValueId, NodeIndex> = rustc_hash::FxHashMap::default();
-    let node_of = |g: &mut DiGraph<Option<ValueId>, ()>,
-                       nidx: &mut rustc_hash::FxHashMap<ValueId, NodeIndex>,
-                       v: ValueId| {
-        *nidx.entry(v).or_insert_with(|| g.add_node(Some(v)))
-    };
+    let node_of =
+        |g: &mut DiGraph<Option<ValueId>, ()>,
+         nidx: &mut rustc_hash::FxHashMap<ValueId, NodeIndex>,
+         v: ValueId| { *nidx.entry(v).or_insert_with(|| g.add_node(Some(v))) };
 
     let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
     let mut stack = vec![target];
@@ -248,8 +246,10 @@ fn decompose_index(
 /// foldable when it, OR any of its operands, is a base.
 fn foldable_load_address(function: &strider_ir::Function, load: ValueId) -> Option<ValueId> {
     let addr = function.int_inputs(load).next()?;
-    let foldable =
-        is_base_operand(function, addr) || function.int_inputs(addr).any(|op| is_base_operand(function, op));
+    let foldable = is_base_operand(function, addr)
+        || function
+            .int_inputs(addr)
+            .any(|op| is_base_operand(function, op));
     foldable.then_some(addr)
 }
 
@@ -259,7 +259,8 @@ fn foldable_load_address(function: &strider_ir::Function, load: ValueId) -> Opti
 /// structural SP walk — and the operand check in [`foldable_load_address`]
 /// bridges the index-dependent case that decompose returns `None` for.
 fn is_base_operand(function: &strider_ir::Function, v: ValueId) -> bool {
-    function.int_const_u128(v).is_some() || crate::sp_expr::decompose_readonly(function, v).is_some()
+    function.int_const_u128(v).is_some()
+        || crate::sp_expr::decompose_readonly(function, v).is_some()
 }
 
 /// `v` as a candidate index: a genuinely-bounded non-constant integer whose
@@ -316,8 +317,6 @@ fn is_width_only(function: &strider_ir::Function, v: ValueId, iv: Interval) -> b
         .map(|t| t.bit_width())
         .is_some_and(|w| w < 128 && iv.count() == 1u128 << w)
 }
-
-
 
 #[cfg(test)]
 #[path = "table_tests.rs"]

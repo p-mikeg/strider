@@ -14,8 +14,8 @@ use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IntBinaryOp,
     IntCmpOp,
 };
-use strider_ir_test_utils::{make_empty_fn, reg_vn};
 use strider_ir_test_utils::IrBuilderEx;
+use strider_ir_test_utils::{make_empty_fn, reg_vn};
 
 use strider_pattern::{
     Capture, CaptureExt, MatchPat, Matcher, add, and, any, any_bool_const, any_float_const,
@@ -26,8 +26,8 @@ use strider_pattern::{
     float_sub, float_to_int, initial_var, initial_var_for, inputs_of_width, int_binary,
     int_binary_any, int_carry, int_cmp, int_cmp_any, int_const, int_const_any_of, int_eq, int_le,
     int_lt, int_ne, int_sborrow, int_scarry, int_sle, int_slt, int_unary_any, lzcount, mul, neg,
-    or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const, srem, sshr,
-    sub, truncate, value_of_width, var, xor, zero_extend,
+    or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const, srem, sshr, sub,
+    truncate, value_of_width, var, xor, zero_extend,
 };
 
 /// Build the pattern from `f` and count its matches against `fixture`.

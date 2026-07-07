@@ -111,9 +111,7 @@ pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::V
     }
     let end = end_of(vn);
     vns.iter()
-        .filter(|c| {
-            c.addr_space == vn.addr_space && c.addr_off <= vn.addr_off && end_of(c) >= end
-        })
+        .filter(|c| c.addr_space == vn.addr_space && c.addr_off <= vn.addr_off && end_of(c) >= end)
         .max_by_key(|c| c.size)
         .copied()
         .unwrap_or(*vn)
@@ -237,10 +235,10 @@ mod tests {
         assert_eq!(dedup_overlapping_largest(&[rdi, edi]), vec![rdi]);
         assert_eq!(dedup_overlapping_largest(&[edi, rdi]), vec![rdi]);
         // Partial overlap (neither encloses the other): both survive.
-        assert_eq!(dedup_overlapping_largest(&[reg(0, 8), reg(4, 8)]), vec![
-            reg(0, 8),
-            reg(4, 8)
-        ]);
+        assert_eq!(
+            dedup_overlapping_largest(&[reg(0, 8), reg(4, 8)]),
+            vec![reg(0, 8), reg(4, 8)]
+        );
         // Equal-size aliases and exact duplicates both survive.
         assert_eq!(dedup_overlapping_largest(&[reg(0, 4), reg(0, 4)]).len(), 2);
         assert!(dedup_overlapping_largest(&[]).is_empty());

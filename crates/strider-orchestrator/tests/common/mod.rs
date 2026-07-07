@@ -271,7 +271,10 @@ pub(crate) fn analyze_with_known_targets(
 
     // `build_ir` now takes `cc` by value; clone here so the caller still
     // gets back an owned `cc` alongside the lifted function.
-    let function = driver.build_ir(&cfg, cc.clone()).expect("build_ir").function;
+    let function = driver
+        .build_ir(&cfg, cc.clone())
+        .expect("build_ir")
+        .function;
     (function, driver, cc)
 }
 
@@ -339,7 +342,11 @@ pub(crate) fn lift_for_pipeline(
         ..Default::default()
     };
     let cfg = ana
-        .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_opts, &Default::default())
+        .build_cfg(
+            strider_cfg::MachineInsnAddr::from(addr),
+            &cfg_opts,
+            &Default::default(),
+        )
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     // `build_ir` now takes `cc` by value; clone here so the caller still
     // gets back an owned `cc` alongside the outcome.
@@ -390,11 +397,17 @@ use strider_ir::node::NodeKind;
 
 // Re-export the canonical `Function::count_kind` / `Function::has_kind` under
 // their bare names so existing test call-sites need no qualification.
-pub(crate) fn count_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F) -> usize {
+pub(crate) fn count_kind<F: Fn(&NodeKind) -> bool>(
+    function: &strider_ir::Function,
+    pred: F,
+) -> usize {
     function.count_kind(pred)
 }
 
-pub(crate) fn count_int_binop(function: &strider_ir::Function, op: strider_ir::IntBinaryOp) -> usize {
+pub(crate) fn count_int_binop(
+    function: &strider_ir::Function,
+    op: strider_ir::IntBinaryOp,
+) -> usize {
     count_kind(
         function,
         |k| matches!(k, NodeKind::IntBinaryOp(o) if *o == op),
@@ -409,19 +422,28 @@ pub(crate) fn count_int_unop(function: &strider_ir::Function, op: strider_ir::In
 pub(crate) fn count_int_cmp(function: &strider_ir::Function, op: strider_ir::IntCmpOp) -> usize {
     count_kind(function, |k| matches!(k, NodeKind::IntCmpOp(o) if *o == op))
 }
-pub(crate) fn count_float_binop(function: &strider_ir::Function, op: strider_ir::FloatBinaryOp) -> usize {
+pub(crate) fn count_float_binop(
+    function: &strider_ir::Function,
+    op: strider_ir::FloatBinaryOp,
+) -> usize {
     count_kind(
         function,
         |k| matches!(k, NodeKind::FloatBinaryOp(o) if *o == op),
     )
 }
-pub(crate) fn count_float_unop(function: &strider_ir::Function, op: strider_ir::FloatUnaryOp) -> usize {
+pub(crate) fn count_float_unop(
+    function: &strider_ir::Function,
+    op: strider_ir::FloatUnaryOp,
+) -> usize {
     count_kind(
         function,
         |k| matches!(k, NodeKind::FloatUnaryOp(o) if *o == op),
     )
 }
-pub(crate) fn count_float_cmp(function: &strider_ir::Function, op: strider_ir::FloatCmpOp) -> usize {
+pub(crate) fn count_float_cmp(
+    function: &strider_ir::Function,
+    op: strider_ir::FloatCmpOp,
+) -> usize {
     count_kind(
         function,
         |k| matches!(k, NodeKind::FloatCmpOp(o) if *o == op),

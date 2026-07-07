@@ -190,13 +190,18 @@ impl FunctionBuilder {
         // Skeleton: a `MemPhi` for the memory token and a `Region` for control.
         let memory_node = self.create_node(NodeKind::MemPhi, [], [ValueKind::Memory]);
         let [memory] = self.function().node_outputs_exact(memory_node)?;
-        let control_node =
-            self.create_node(NodeKind::Region, [], [ValueKind::Control, ValueKind::PhiToken]);
+        let control_node = self.create_node(
+            NodeKind::Region,
+            [],
+            [ValueKind::Control, ValueKind::PhiToken],
+        );
         let [control, phi_token] = self.function().node_outputs_exact(control_node)?;
         // Wire the PhiToken as MemPhi.inputs[0] (mirrors how Phi nodes link), a
         // back-reference so dead-branch / redundant-phi passes treat MemPhi and
         // Phi identically.
-        self.function_mut().graph_mut().add_node_input(memory_node, phi_token);
+        self.function_mut()
+            .graph_mut()
+            .add_node_input(memory_node, phi_token);
 
         // One value `Phi` per placed variable; `variables` (the current-value
         // map) is either seeded from those phis (eager) or left for inheritance.

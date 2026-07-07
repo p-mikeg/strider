@@ -16,6 +16,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::RegionId;
 
+use rsleigh::Opcode;
 use strider_ir::node::InitialVnId;
 use strider_target::call_other_abi::{CallOtherClass, classify};
 
@@ -56,7 +57,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         r: RegionId,
         defs: &mut FxHashMap<InitialVnId, FxHashSet<RegionId>>,
     ) {
-        use rsleigh::Opcode;
         match insn.opcode {
             // A direct / indirect call writes the CC's return + clobber
             // registers and adjusts the stack pointer — none of which appear as
@@ -64,10 +64,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // `build_cc_call`).
             Opcode::Call | Opcode::CallIndirect => {
                 let cc = self.call_cc_for(insn);
-                let (rets, clobbers) = cc.ret_and_clobber_vns(
-                    self.builder.function().all_vns(),
-                    |v| self.container_of(v),
-                );
+                let (rets, clobbers) = cc
+                    .ret_and_clobber_vns(self.builder.function().all_vns(), |v| {
+                        self.container_of(v)
+                    });
                 for vn in rets.iter().chain(clobbers.iter()) {
                     self.add_def(vn, r, defs);
                 }
@@ -135,4 +135,3 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.builder.function().default_cc()
     }
 }
-

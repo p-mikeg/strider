@@ -492,9 +492,7 @@ fn switch_address_matches_and_captures() {
     );
 
     let c = Capture::new();
-    let hits = matcher
-        .find_all(&switch().address(var(c)).build())
-        .unwrap();
+    let hits = matcher.find_all(&switch().address(var(c)).build()).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(hits[0].value(c).is_some());
 }
@@ -668,7 +666,9 @@ fn function_arg_handle_resolves_register_carrier() {
         .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if function.initial_vn(*vn) == rax))
         .expect("InitialVar(rax) carrier");
     let carrier_value = function.node_outputs(carrier)[0];
-    function.side_tables_mut().register_arg_value(0, carrier_value);
+    function
+        .side_tables_mut()
+        .register_arg_value(0, carrier_value);
 
     let matcher = Matcher::new(&function);
     let handle = matcher.function_arg(0).expect("arg 0 carrier");
@@ -731,7 +731,9 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     let reg_value = function.node_outputs(reg_carrier)[0];
     let stack_value = function.node_outputs(stack_carrier)[0];
     function.side_tables_mut().register_arg_value(0, reg_value);
-    function.side_tables_mut().register_arg_value(1, stack_value);
+    function
+        .side_tables_mut()
+        .register_arg_value(1, stack_value);
     (function, rax)
 }
 

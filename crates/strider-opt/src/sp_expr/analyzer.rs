@@ -23,7 +23,6 @@
 //! both decomposing via the cache-backed `decompose_readonly`); the pure,
 //! class-on-class verdict table is the free [`alias_verdict`].
 
-
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, IntBinaryOp, SpDecomp};
 
@@ -138,7 +137,9 @@ pub(crate) fn decompose_readonly(function: &Function, value: ValueId) -> Option<
     // then memoize `value`'s verdict.
     let result = spine_walk(function, value);
     match result {
-        Some(e) => function.side_tables().set_stack_slot(value, e.base, e.offset),
+        Some(e) => function
+            .side_tables()
+            .set_stack_slot(value, e.base, e.offset),
         None => function.side_tables().set_stack_slot_not(value),
     }
     result
@@ -608,9 +609,7 @@ mod decompose_tests {
 
         // Compute each verdict in isolation (fresh memo per query) — the
         // ground-truth graph verdict for each value.
-        let truth = |v: ValueId| -> Option<SpExpr> {
-            SpAnalyzer::new(&fg).decompose(v)
-        };
+        let truth = |v: ValueId| -> Option<SpExpr> { SpAnalyzer::new(&fg).decompose(v) };
         let t_phi = truth(sp_phi);
         let t_dec = truth(sp_dec);
         let t_global = truth(global);

@@ -29,7 +29,7 @@ use strider_ir_test_utils::IrBuilderEx;
 use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 
-use super::orchestrator::{target_value_input, run_pipeline_x86_64};
+use super::orchestrator::{run_pipeline_x86_64, target_value_input};
 
 /// Concatenate hand-assembled x86_64 instructions into one snippet,
 /// appending 64 × `int3` (0xcc) padding.  Each tuple pairs the
@@ -118,8 +118,8 @@ pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_i
 /// This is the headline soundness test — it pins the design's
 /// claim that the natural pop-pc shape resolves to LinkRegister
 /// via LoadForward without any special-cased heuristic.
-pub(crate) fn build_pop_pc_via_stack_load_forward_scenario() -> (Function, strider_ir::Value, rsleigh::Vn)
-{
+pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
+-> (Function, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
     use strider_orchestrator::opt::{ConstantFold, LoadForward, OptimizerPipeline};
@@ -220,7 +220,9 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario() -> (Function, strid
 /// Also returns the `lr` VN we added to the tracked-vars set so
 /// callers can pass it to `classify_target` and verify the
 /// LinkRegister arm doesn't false-positive.
-pub(crate) fn build_push_target_pop_pc_scenario(k: u64) -> (Function, strider_ir::Value, rsleigh::Vn) {
+pub(crate) fn build_push_target_pop_pc_scenario(
+    k: u64,
+) -> (Function, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
     use strider_orchestrator::opt::{ConstantFold, LoadForward, OptimizerPipeline};
@@ -632,7 +634,8 @@ pub(crate) fn build_stack_array_dispatch_scenario(
     // auto-stamping; manually attribute these nodes to the sentinel
     // lift address so Layer-C asm-fingerprint validation accepts them.
     b.function_mut()
-        .side_tables_mut().extend_asm_fingerprint(arg_u32_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        .side_tables_mut()
+        .extend_asm_fingerprint(arg_u32_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
     let mask_c = b.build_int_const(mask, ValueType::I32).unwrap();
     let masked = b
@@ -644,7 +647,8 @@ pub(crate) fn build_stack_array_dispatch_scenario(
         [ValueKind::Typed(ValueType::I64)],
     );
     b.function_mut()
-        .side_tables_mut().extend_asm_fingerprint(idx_u64_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        .side_tables_mut()
+        .extend_asm_fingerprint(idx_u64_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
     let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
     let idx_scaled = b

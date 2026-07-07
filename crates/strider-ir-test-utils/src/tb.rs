@@ -34,7 +34,9 @@ pub(crate) fn build_rs(
     sp: Option<rsleigh::Vn>,
     ret_stack_pop: i64,
 ) -> RegisterSet {
-    let mut rs = vars.into_iter().fold(RegisterSet::new(), RegisterSet::tracked);
+    let mut rs = vars
+        .into_iter()
+        .fold(RegisterSet::new(), RegisterSet::tracked);
     rs = arg_passing.iter().copied().fold(rs, RegisterSet::arg);
     rs = callee_saved
         .iter()

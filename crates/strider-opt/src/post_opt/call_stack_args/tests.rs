@@ -4,8 +4,8 @@ use crate::test_support::cf_rp_pipeline;
 use anyhow::anyhow;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Graph, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
-use strider_ir_test_utils::{RegisterSet, stack_vn_x86 as stack_vn};
 use strider_ir_test_utils::IrBuilderEx;
+use strider_ir_test_utils::{RegisterSet, stack_vn_x86 as stack_vn};
 
 /// Returns `true` when `v` is an `IntConst` whose value equals `expected`.
 fn is_const(fg: &strider_ir::Function, v: ValueId, expected: u64) -> bool {

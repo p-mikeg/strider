@@ -1125,7 +1125,10 @@ thread_local! {
 /// Push the `Py<PyFunction>` + generation for the query about to run.
 /// Must be paired with [`pop_current_query_function`] once the query
 /// (including every `.when()` predicate it invokes) has finished.
-pub(crate) fn push_current_query_function(function: Py<crate::function::PyFunction>, generation: u64) {
+pub(crate) fn push_current_query_function(
+    function: Py<crate::function::PyFunction>,
+    generation: u64,
+) {
     CURRENT_QUERY_FUNCTION.with(|c| c.borrow_mut().push((function, generation)));
 }
 

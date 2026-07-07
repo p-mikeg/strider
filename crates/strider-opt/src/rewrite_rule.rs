@@ -181,7 +181,8 @@ fn rewrite_rule_impl(
         let new_producer = edit.producer(new_value);
         for &matched in &matched_nodes {
             edit.function_mut()
-                .side_tables_mut().extend_asm_fingerprint_from(new_producer, matched);
+                .side_tables_mut()
+                .extend_asm_fingerprint_from(new_producer, matched);
         }
 
         // 4. Redirect every consumer of the old root's value output to the

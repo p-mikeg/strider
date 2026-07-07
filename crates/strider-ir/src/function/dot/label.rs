@@ -218,7 +218,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 // that bypass the name side-table.
                 let name_prefix = self
                     .function
-                    .side_tables().call_other_name(node)
+                    .side_tables()
+                    .call_other_name(node)
                     .map(|n| format!("{n} "))
                     .unwrap_or_default();
                 format!(

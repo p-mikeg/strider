@@ -308,7 +308,11 @@ impl<'f> Matcher<'f> {
     /// registered at side-table index `index`, or `None` if no such
     /// carrier exists.
     pub fn function_arg(&self, index: u32) -> Option<FunctionArgHandle<'f>> {
-        let value = *self.function.side_tables().arg_index_to_values(index).first()?;
+        let value = *self
+            .function
+            .side_tables()
+            .arg_index_to_values(index)
+            .first()?;
         let node = self.function.producer(value);
         Some(FunctionArgHandle {
             function: self.function,
@@ -320,17 +324,24 @@ impl<'f> Matcher<'f> {
     /// carrier in side-table-index order.
     pub fn function_args(&self) -> impl Iterator<Item = (u32, FunctionArgHandle<'f>)> + '_ {
         let f = self.function;
-        f.side_tables().iter_arg_indices().sorted_unstable().filter_map(move |i| {
-            f.side_tables().arg_index_to_values(i).first().copied().map(|value| {
-                (
-                    i,
-                    FunctionArgHandle {
-                        function: f,
-                        node: f.producer(value),
-                    },
-                )
+        f.side_tables()
+            .iter_arg_indices()
+            .sorted_unstable()
+            .filter_map(move |i| {
+                f.side_tables()
+                    .arg_index_to_values(i)
+                    .first()
+                    .copied()
+                    .map(|value| {
+                        (
+                            i,
+                            FunctionArgHandle {
+                                function: f,
+                                node: f.producer(value),
+                            },
+                        )
+                    })
             })
-        })
     }
 }
 

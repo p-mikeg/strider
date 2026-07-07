@@ -360,7 +360,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.outputs[value].first_use.expand()
     }
 
-
     /// Returns a cursor over the use-list of `value_id`.
     #[inline]
     pub fn value_use_cursor(&mut self, value_id: ValueId) -> InputCursor<'_, N, V, C> {

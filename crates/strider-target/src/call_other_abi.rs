@@ -4,6 +4,7 @@
 //! for the original cfg/ir consumer split).
 
 use crate::calling_convention::regs_to_vns;
+use CallOtherClass::NoOp;
 
 /// Vn-resolved form of [`CallOtherAbi`], built by the strider lifter once
 /// it has access to a `Sleigh` register table to turn name strings into
@@ -492,8 +493,6 @@ const AARCH64_BOTH: &[crate::ArchPreset] =
 /// classification fires once per CallOther at lift time, so a hash
 /// map's setup cost isn't justified.
 fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
-    use CallOtherClass::NoOp;
-
     // The two pre-canned `Call` classifications used throughout the
     // arch-independent table.  Hardcoding empty register channels here makes
     // the "arch-independent entries have empty implicit_reads/writes"
@@ -547,7 +546,10 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // EAX/EBX/ECX/EDX register writes are pcode-explicit Loads from a scratch
         // tmpptr, so `clobbers_memory` is about ORDERING, not those writes.)
         ("cpuid", MEM_CLOBBER),
-        ("cpuid_Architectural_Performance_Monitoring_info", MEM_CLOBBER),
+        (
+            "cpuid_Architectural_Performance_Monitoring_info",
+            MEM_CLOBBER,
+        ),
         ("cpuid_Deterministic_Cache_Parameters_info", MEM_CLOBBER),
         ("cpuid_Direct_Cache_Access_info", MEM_CLOBBER),
         ("cpuid_Extended_Feature_Enumeration_info", MEM_CLOBBER),

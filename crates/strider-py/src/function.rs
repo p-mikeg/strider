@@ -10,8 +10,8 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
 use pyo3::prelude::*;
-use strider_ir::node::NodeKind;
 use strider_ir::IRWalker;
+use strider_ir::node::NodeKind;
 
 use crate::cfg::PyCfg;
 
@@ -405,7 +405,10 @@ impl PyFunction {
     fn rewrite_all(
         &self,
         py: Python<'_>,
-        pairs: Vec<(crate::pattern::PatLike<'_>, crate::pattern::TemplateLike<'_>)>,
+        pairs: Vec<(
+            crate::pattern::PatLike<'_>,
+            crate::pattern::TemplateLike<'_>,
+        )>,
     ) -> PyResult<usize> {
         // Build a match `Pattern` (LHS) and a build `Template` (RHS) per
         // pair, then box each rule.

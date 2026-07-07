@@ -241,14 +241,18 @@ mod tests {
     fn cacheable_node_dedup_is_stable_across_many_calls() {
         let mut function = test_function();
         let first = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new((0xdead_beef_u64) as usize)),
+            NodeKind::IntConst(crate::node::const_value::ConstId::new(
+                (0xdead_beef_u64) as usize,
+            )),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
         let arena_after_first = function.graph().all_node_ids().count();
         for _ in 0..1000 {
             let id = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new((0xdead_beef_u64) as usize)),
+                NodeKind::IntConst(crate::node::const_value::ConstId::new(
+                    (0xdead_beef_u64) as usize,
+                )),
                 [],
                 [ValueKind::Typed(ValueType::I64)],
             );
@@ -512,13 +516,19 @@ mod tests {
         function
             .side_tables_mut()
             .set_call_other_name(id_a, "setISAMode");
-        assert_eq!(function.side_tables().call_other_name(id_a), Some("setISAMode"));
+        assert_eq!(
+            function.side_tables().call_other_name(id_a),
+            Some("setISAMode")
+        );
         assert_eq!(function.side_tables().call_other_name(id_b), None);
         // Replacement
         function
             .side_tables_mut()
             .set_call_other_name(id_a, "OtherName");
-        assert_eq!(function.side_tables().call_other_name(id_a), Some("OtherName"));
+        assert_eq!(
+            function.side_tables().call_other_name(id_a),
+            Some("OtherName")
+        );
     }
 
     /// After adding an input to a non-cacheable node the output's use-list
@@ -1327,7 +1337,9 @@ mod tests {
         let n = function
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        function.side_tables_mut().extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
+        function
+            .side_tables_mut()
+            .extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
         assert_eq!(
             function.side_tables().asm_fingerprint(n),
             FxHashSet::from_iter([0x1000, 0x1004, 0x1008])
@@ -1340,13 +1352,17 @@ mod tests {
         let n = function
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        function.side_tables_mut().extend_asm_fingerprint(n, &[0x1004, 0x1000, 0x1004]);
+        function
+            .side_tables_mut()
+            .extend_asm_fingerprint(n, &[0x1004, 0x1000, 0x1004]);
         assert_eq!(
             function.side_tables().asm_fingerprint(n),
             FxHashSet::from_iter([0x1000, 0x1004])
         );
         // Extending with one new + two duplicates yields a deduplicated set.
-        function.side_tables_mut().extend_asm_fingerprint(n, &[0x1008, 0x1000, 0x1004]);
+        function
+            .side_tables_mut()
+            .extend_asm_fingerprint(n, &[0x1008, 0x1000, 0x1004]);
         assert_eq!(
             function.side_tables().asm_fingerprint(n),
             FxHashSet::from_iter([0x1000, 0x1004, 0x1008])
@@ -1362,8 +1378,12 @@ mod tests {
         let b = function
             .graph_mut()
             .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-        function.side_tables_mut().extend_asm_fingerprint(a, &[0x1000, 0x1004]);
-        function.side_tables_mut().extend_asm_fingerprint(b, &[0x1004, 0x100C]);
+        function
+            .side_tables_mut()
+            .extend_asm_fingerprint(a, &[0x1000, 0x1004]);
+        function
+            .side_tables_mut()
+            .extend_asm_fingerprint(b, &[0x1004, 0x100C]);
         function.side_tables_mut().extend_asm_fingerprint_from(a, b);
         assert_eq!(
             function.side_tables().asm_fingerprint(a),
@@ -1382,9 +1402,13 @@ mod tests {
         let n = function
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        function.side_tables_mut().extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
+        function
+            .side_tables_mut()
+            .extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
         // Extending with a strict subset must NOT remove any existing entries.
-        function.side_tables_mut().extend_asm_fingerprint(n, &[0x1004]);
+        function
+            .side_tables_mut()
+            .extend_asm_fingerprint(n, &[0x1004]);
         assert_eq!(
             function.side_tables().asm_fingerprint(n),
             FxHashSet::from_iter([0x1000, 0x1004, 0x1008])
@@ -1403,7 +1427,9 @@ mod tests {
         let n = function
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        function.side_tables_mut().extend_asm_fingerprint(n, &[0x1000, 0x1004]);
+        function
+            .side_tables_mut()
+            .extend_asm_fingerprint(n, &[0x1000, 0x1004]);
         function.side_tables_mut().extend_asm_fingerprint_from(n, n);
         assert_eq!(
             function.side_tables().asm_fingerprint(n),
@@ -1483,14 +1509,18 @@ mod tests {
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
-        function.side_tables_mut().extend_asm_fingerprint(a, &[0x2000]);
+        function
+            .side_tables_mut()
+            .extend_asm_fingerprint(a, &[0x2000]);
         let b = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
         assert_eq!(a, b, "cacheable nodes should dedup");
-        function.side_tables_mut().extend_asm_fingerprint(b, &[0x3000]);
+        function
+            .side_tables_mut()
+            .extend_asm_fingerprint(b, &[0x3000]);
         assert_eq!(
             function.side_tables().asm_fingerprint(a),
             FxHashSet::from_iter([0x2000, 0x3000])

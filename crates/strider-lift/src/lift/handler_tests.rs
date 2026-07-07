@@ -645,7 +645,8 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
         assert!(
             d.builder
                 .function()
-                .side_tables().asm_fingerprint(outside_node)
+                .side_tables()
+                .asm_fingerprint(outside_node)
                 .is_empty(),
             "a node built after process_insn returns should have an empty fingerprint \
              (the funnel reset lift_addr to None)"

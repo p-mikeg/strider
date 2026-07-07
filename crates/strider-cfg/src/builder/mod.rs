@@ -77,8 +77,7 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// Empty by default (the function-end structural fallback still applies);
     /// the orchestrator seeds it from the lifter options via
     /// [`Self::with_per_address_ccs`].
-    pub(super) per_address_ccs:
-        rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
+    pub(super) per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
 }
 
 impl<'a, R: rsleigh::MemReader> Builder<'a, R> {

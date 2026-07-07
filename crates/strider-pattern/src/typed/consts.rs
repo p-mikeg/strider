@@ -69,7 +69,9 @@ fn int_const_leaf(
     pin: Option<ValueType>,
     pred: impl Fn(u128, ValueType) -> bool + 'static,
 ) -> PatValueRef {
-    let o = b.leaf(KindSpec::variant_of(&NodeKind::IntConst(ConstId::from_u32(0))));
+    let o = b.leaf(KindSpec::variant_of(&NodeKind::IntConst(
+        ConstId::from_u32(0),
+    )));
     if let Some(t) = pin {
         b.set_value_ty(o, t);
     }

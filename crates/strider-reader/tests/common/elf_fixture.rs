@@ -287,7 +287,11 @@ pub(crate) struct X86Pc32Fixture {
 /// Mirrors [`build_mips32be_rel32_elf_with`] but for x86-64 RELA
 /// (24-byte entries with an explicit `r_addend`) and a `Relative`
 /// (`S + A - P`) reloc kind.
-pub(crate) fn build_x86_64_pc32_rela_elf(slot_len: usize, reloc_off: u64, addend: i64) -> X86Pc32Fixture {
+pub(crate) fn build_x86_64_pc32_rela_elf(
+    slot_len: usize,
+    reloc_off: u64,
+    addend: i64,
+) -> X86Pc32Fixture {
     let endian = Endianness::Little;
     let sym_addr: u64 = 0x1000; // `.text` / `func`
     let slot_addr: u64 = 0x2000; // `.data.rel.ro` section base

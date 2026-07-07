@@ -8,7 +8,6 @@ use anyhow::{Result, anyhow};
 mod arithmetic;
 mod boolean;
 mod call;
-mod pruned_ssa;
 mod cast;
 mod cc_projection;
 mod control;
@@ -20,6 +19,7 @@ mod integer;
 mod memory;
 mod misc;
 pub(crate) mod pcode_util;
+mod pruned_ssa;
 mod vn_io;
 
 #[cfg(test)]
@@ -308,7 +308,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             if let Some(value) = self.builder.function().initial_var_value(&container) {
                 self.builder
                     .function_mut()
-                    .side_tables_mut().register_arg_value(i as u32, value);
+                    .side_tables_mut()
+                    .register_arg_value(i as u32, value);
             }
         }
     }
@@ -392,13 +393,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             // NoReturn region self-terminates inside `handle_call_other`
             // (`terminate=true`), so gate on the direct-`Call` opcode to avoid
             // double-terminating it.
-            let noreturn_direct_call = matches!(
-                region.terminator,
-                strider_cfg::RegionTerminator::NoReturn
-            ) && region
-                .insns
-                .last()
-                .is_some_and(|w| w.insn.opcode == rsleigh::Opcode::Call);
+            let noreturn_direct_call =
+                matches!(region.terminator, strider_cfg::RegionTerminator::NoReturn)
+                    && region
+                        .insns
+                        .last()
+                        .is_some_and(|w| w.insn.opcode == rsleigh::Opcode::Call);
             // Per-terminator funnel: same asm-fingerprint attribution
             // pattern as `process_insn` (see `with_lift_addr`).
             self.with_lift_addr(term_addr, |s| {

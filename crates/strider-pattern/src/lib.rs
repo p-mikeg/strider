@@ -34,6 +34,9 @@ pub mod matcher;
 pub mod template;
 pub mod typed;
 
+use strider_ir::IRViewer;
+use strider_ir::node::ValueKind;
+
 pub use bindings::Bindings;
 pub use capture::Capture;
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
@@ -60,8 +63,6 @@ pub use template::{Template, TemplateCtx, instantiate};
 /// input type (needed for signed / carry handling) differs from the
 /// root's output type (always `I1`).
 pub fn first_value_input_type(ctx: &TemplateCtx<'_>) -> Option<strider_ir::node::ValueType> {
-    use strider_ir::IRViewer;
-    use strider_ir::node::ValueKind;
     let inputs = ctx.function.node_inputs(ctx.root);
     let inp = inputs.into_iter().next()?;
     match ctx.function.value_kind(inp) {
@@ -80,6 +81,6 @@ pub use typed::{
     initial_var_for, inputs_of_width, int_binary, int_binary_any, int_bits_to_float, int_carry,
     int_cmp, int_cmp_any, int_const, int_const_any_of, int_const_with_fn, int_eq, int_le, int_lt,
     int_ne, int_sborrow, int_scarry, int_sle, int_slt, int_to_float, int_unary_any, lzcount, mul,
-    neg, or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const, srem,
-    sshr, sub, truncate, value_of_width, var, xor, zero_extend,
+    neg, or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const, srem, sshr,
+    sub, truncate, value_of_width, var, xor, zero_extend,
 };

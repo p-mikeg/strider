@@ -191,10 +191,8 @@ fn elf_to_mem_regions(
         }
         ElfRegionSource::Sections => {
             let mut regions = if apply_relocations {
-                strider_reader::elf::elf_get_loadable_regions_sections_only_including_writable(
-                    obj,
-                )
-                .map_err(into_strider_err)?
+                strider_reader::elf::elf_get_loadable_regions_sections_only_including_writable(obj)
+                    .map_err(into_strider_err)?
             } else {
                 strider_reader::elf::elf_get_loadable_regions_sections_only(obj)
                     .map_err(into_strider_err)?

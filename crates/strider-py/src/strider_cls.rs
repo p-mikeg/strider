@@ -312,7 +312,12 @@ impl PyLifter {
     /// must NOT call `_rebuild` themselves.  Deliberately left out of
     /// `strider/__init__.pyi` (underscore-private → no stub entry).
     #[pyo3(name = "_rebuild", signature = (arch, mem, rom = None))]
-    fn rebuild(&mut self, arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<()> {
+    fn rebuild(
+        &mut self,
+        arch: PySleighArch,
+        mem: MemInput,
+        rom: Option<MemInput>,
+    ) -> PyResult<()> {
         self.inner = build_strider(arch, mem, rom)?;
         Ok(())
     }
