@@ -413,6 +413,201 @@ fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
 }
 
 #[test]
+fn classify_table_dispatch_resolves_shift_narrowed_loaded_index() {
+    // x86 instruction-decoder shape: index = (loaded_byte >> 5) — the top 3 bits
+    // of a byte, range [0,7].  The value IS load-derived, but the shift narrows
+    // it strictly BELOW the byte width, so it is a real index, not a width-only
+    // table entry.  (The former `is_load_derived && !is_and_masked` gate rejected
+    // this — a shift is not an AND-mask — leaving ~70% of x86emu's tables
+    // unresolved; the width-only gate accepts it.)  Must resolve to 8 targets.
+    let (g, _target) = build_with_target(|fb| {
+        let byte_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
+        let byte = fb
+            .build_load(byte_addr, VnSpace::RAM, ValueType::I8)
+            .expect("byte load");
+        let bwide = fb
+            .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+            .expect("zext byte");
+        let five = fb.build_int_const(5u64, ValueType::I32).unwrap();
+        let idx = fb
+            .build_int_binary_operation(bwide, five, IntBinaryOp::ShiftRight, ValueType::I32)
+            .expect("byte >> 5 → [0,7]");
+        let stride_c = fb.build_int_const(4u64, ValueType::I32).unwrap();
+        let mul = fb
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+            .expect("mul");
+        let base_c = fb.build_int_const(0x4000u64, ValueType::I32).unwrap();
+        let addr = fb
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+            .expect("add");
+        fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+            .expect("dispatch load")
+    });
+    let rom = MockRom::strided(
+        0x4000,
+        4,
+        vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
+        4,
+    );
+    let (known, doms) = make_known_and_doms(&g);
+    let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
+    let result = classify_table_dispatch(
+        &g,
+        sole_indirect_branch(&g),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    match result {
+        Some(ResolvedTargets::Multiple(ts)) => {
+            assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
+        }
+        other => panic!("shift-narrowed index must resolve; got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_table_dispatch_masked_full_byte_i32_resolves() {
+    // Adversarial pair to `excludes_width_bounded_table_entry_as_index`: this
+    // value ALSO spans [0,255], but it is `reg & 0xFF` typed I32 — there is no
+    // byte-typed producer to strip to, so `[0,255]` does NOT fill its (I32) type
+    // width.  It is a genuine 256-entry index and must resolve, proving the
+    // width test keys on the extend-stripped type, not merely on a `[0,255]`
+    // range.
+    let (g, _target) = build_with_target(|fb| {
+        let raw = build_non_const_idx(fb); // Load:I32, unbounded
+        let mask = fb.build_int_const(0xFFu64, ValueType::I32).unwrap();
+        let idx = fb
+            .build_int_binary_operation(raw, mask, IntBinaryOp::And, ValueType::I32)
+            .expect("reg & 0xFF → [0,255]");
+        let stride_c = fb.build_int_const(4u64, ValueType::I32).unwrap();
+        let mul = fb
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+            .expect("mul");
+        let base_c = fb.build_int_const(0x4000u64, ValueType::I32).unwrap();
+        let addr = fb
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+            .expect("add");
+        fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+            .expect("dispatch load")
+    });
+    let entries: Vec<u64> = (0..256).map(|i| 0x5000 + i).collect();
+    let rom = MockRom::strided(0x4000, 4, entries.clone(), 4);
+    let (known, doms) = make_known_and_doms(&g);
+    let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
+    let result = classify_table_dispatch(
+        &g,
+        sole_indirect_branch(&g),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    match result {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(ts, entries),
+        other => panic!("a masked full-byte I32 index must resolve; got {other:?}"),
+    }
+}
+
+#[test]
+fn decompose_index_picks_shallowest_narrowed_index() {
+    // Two bounded, non-width-only dominators of the same dispatch: a DEEP
+    // `reg & 0x3F` ([0,63]) and the SHALLOW `(reg & 0x3F) & 0x7` ([0,7]) that the
+    // address actually scales.  The index is the fully-narrowed value entering
+    // the address arithmetic (the shallow one).  Choosing the *deeper* looser
+    // ancestor was the bug that made guard-tightened dispatches over-enumerate
+    // and defer, so `decompose_index` must return the [0,7] node, not [0,63].
+    let (g, _target) = build_with_target(|fb| {
+        let raw = build_non_const_idx(fb);
+        let m63 = fb.build_int_const(0x3Fu64, ValueType::I32).unwrap();
+        let wide = fb
+            .build_int_binary_operation(raw, m63, IntBinaryOp::And, ValueType::I32)
+            .expect("reg & 0x3F → [0,63] (deep)");
+        let m7 = fb.build_int_const(0x7u64, ValueType::I32).unwrap();
+        let narrow = fb
+            .build_int_binary_operation(wide, m7, IntBinaryOp::And, ValueType::I32)
+            .expect("& 0x7 → [0,7] (shallow, the index)");
+        let stride_c = fb.build_int_const(4u64, ValueType::I32).unwrap();
+        let mul = fb
+            .build_int_binary_operation(narrow, stride_c, IntBinaryOp::Mul, ValueType::I32)
+            .expect("mul");
+        let base_c = fb.build_int_const(0x4000u64, ValueType::I32).unwrap();
+        let addr = fb
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+            .expect("add");
+        fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+            .expect("dispatch load")
+    });
+    let branch = sole_indirect_branch(&g);
+    let target_value = g.indirect_branch_target(branch);
+    let (known, doms) = make_known_and_doms(&g);
+    let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
+    match decompose_index(&g, &mut ranges, target_value, branch) {
+        Some((_v, iv)) => assert_eq!(
+            (iv.lo, iv.hi),
+            (0, 7),
+            "must pick the shallow narrowed [0,7] index, not the deeper [0,63]"
+        ),
+        None => panic!("expected an index candidate"),
+    }
+}
+
+#[test]
+fn classify_table_dispatch_defers_nonloaded_full_byte_index_conservatively() {
+    // Documents a deliberate CONSERVATISM of the width test: a 256-case switch on
+    // a byte REGISTER — idx = ZeroExtend(bl:i8), range [0,255] — is a real index,
+    // but its `[0,255]` fills the byte width and is indistinguishable (by range)
+    // from a loaded byte *entry*.  The width test rejects it, so the dispatch
+    // DEFERS.  This is sound (deferring never wires a wrong edge) and hasn't cost
+    // real coverage (byte indices in practice come through a load/mask/shift that
+    // narrows below the width); resolving it would need a load-source signal that
+    // a pure "skip loads" rule cannot supply without dropping guarded raw-loaded
+    // indices (see `orchestrator_resolves_unmasked_switch_via_value_range_x86`).
+    let bl = rsleigh::Vn {
+        addr_off: 0x0,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 1,
+    };
+    let mut b = RegisterSet::new().tracked(bl).build_fn().unwrap();
+    let region = b.create_region_all().unwrap();
+    b.set_entry_region_all(region).unwrap();
+    b.set_region(region);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let byte = b.read_variable(&bl).unwrap();
+    let idx = b
+        .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+        .expect("zext byte register");
+    let stride_c = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let mul = b
+        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+        .unwrap();
+    let base_c = b.build_int_const(0x4000u64, ValueType::I32).unwrap();
+    let addr = b
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+        .unwrap();
+    let loaded = b.build_load(addr, VnSpace::RAM, ValueType::I32).unwrap();
+    b.build_indirect_branch(loaded).unwrap();
+    b.set_lift_addr(None);
+    let function = b.build().unwrap();
+
+    let entries: Vec<u64> = (0..256).map(|i| 0x5000 + i).collect();
+    let rom = MockRom::strided(0x4000, 4, entries.clone(), 4);
+    let (known, doms) = make_known_and_doms(&function);
+    let mut ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
+    let result = classify_table_dispatch(
+        &function,
+        sole_indirect_branch(&function),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    let _ = entries;
+    assert_eq!(
+        result, None,
+        "a width-filling byte index is conservatively deferred (indistinguishable from an entry by range)"
+    );
+}
+
+#[test]
 fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
     // Demonstrates the range-pass `If(idx < N)` guard path:
     // idx is an unmasked register read, bounded by a dominating

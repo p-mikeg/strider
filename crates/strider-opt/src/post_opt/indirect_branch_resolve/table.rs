@@ -12,11 +12,11 @@
 //!    dispatch's variability cone (walking the target's integer ancestors,
 //!    traversing *into* a foldable load's address and stopping at reg/GOT loads
 //!    and opaque sources), take the target's dominator chain, and pick the
-//!    DEEPEST genuinely-bounded value on it — the one just above the first
-//!    operand the cone couldn't traverse.  Dominance excludes a bypassed
-//!    sub-branch (a rotate's `x>>30`); "deepest" picks the most-refined index
-//!    (`idx` over a scaled `idx*8`).  A `Load[reg]` function pointer has no
-//!    bounded dominator → deferred, no fold.
+//!    SHALLOWEST genuinely-bounded value on it — the fully-narrowed index just
+//!    below the (width-only/unbounded) address arithmetic.  Dominance excludes a
+//!    bypassed sub-branch (a rotate's `x>>30`); "shallowest" picks the index
+//!    with every guard/mask/shift applied, not a looser pre-narrowing ancestor.
+//!    A `Load[reg]` function pointer has no bounded dominator → deferred, no fold.
 //! 2. **Pin and fold.**  Evaluate the dispatch cone under `index = i` via the
 //!    read-only [`super::eval::Evaluator`] (ConstFold arithmetic + `LoadReadOnly`
 //!    ROM reads + `LoadForward` via `reaching_store`) for every `i` in the
@@ -31,11 +31,12 @@
 //! Two independent gates must hold to commit to `Multiple`:
 //!
 //! 1. **Bounded index.**  The range analysis bounds `idx` from an `if (idx < N)`
-//!    guard dominating the dispatch and/or a KnownBits mask (`idx & 0x7`); the
-//!    cap is on the *entry count* `(hi−lo)/stride + 1` (see [`Interval::count`]),
-//!    so a sparse scaled `idx*8` is enumerable while a dense wide range is not.
-//!    A width-only bound on a loaded table *entry* is rejected (`bounded_index`),
-//!    so a raw `[0,255]` byte is never enumerated as an index.
+//!    guard, a mask (`idx & 0x7`), or a shift (`b >> 5`); the cap is on the
+//!    *entry count* `(hi−lo)/stride + 1` (see [`Interval::count`]), so a sparse
+//!    scaled `idx*8` is enumerable while a dense wide range is not.  A *width-only*
+//!    range — one that exactly fills its (extend-stripped) type width, i.e. a raw
+//!    loaded table *entry* like a `[0,255]` byte — is rejected (`is_width_only`),
+//!    so table *data* is never enumerated as an index.
 //!
 //! 2. **Complete fold.**  *Every* value in the strided range must fold to a
 //!    constant target; any failure returns `None` (a `Multiple` omitting a real
@@ -57,7 +58,7 @@ use crate::value_range::Interval;
 use crate::{AliasMode, ReadOnlyMemory};
 use strider_cfg::ResolvedTargets;
 use strider_ir::IRViewer;
-use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId};
+use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId};
 
 /// Top-level classifier hook for the table-dispatch arm.  Called by
 /// [`super::classify_target`] when the target's producer is a
@@ -82,11 +83,11 @@ pub fn classify_table_dispatch(
     // `IndirectBranch` that happens to share the dispatch value.
     let target_value = function.indirect_branch_target(branch);
 
-    // Find THE index: the deepest value on the dispatch's variability cone that
-    // both dominates the target and carries a bounded strided range
+    // Find THE index: the shallowest value on the dispatch's variability cone
+    // that both dominates the target and carries a bounded strided range
     // (`decompose_index`).  Dominance rules out structural impostors (a rotate's
-    // `x>>30` has a tight range but doesn't dominate); "deepest bounded" pins
-    // the node just above the first opaque/unfoldable operand.  A `Load[reg]`
+    // `x>>30` has a tight range but doesn't dominate); "shallowest bounded" pins
+    // the fully-narrowed index just below the address arithmetic.  A `Load[reg]`
     // function pointer has no bounded dominator → `None` → deferred, no fold.
     let (idx_value, range) = decompose_index(function, ranges, target_value, branch)?;
 
@@ -118,23 +119,27 @@ pub fn classify_table_dispatch(
     (!targets.is_empty()).then_some(ResolvedTargets::Multiple(targets))
 }
 
-/// THE dispatch index: the **deepest** genuinely-bounded (guard- or
-/// mask-constrained strided range, never width-only) non-constant value that
-/// **dominates the target** in its variability cone.
+/// THE dispatch index: the **shallowest** genuinely-bounded, non-width-only (see
+/// [`is_width_only`]) non-constant value that **dominates the target** in its
+/// variability cone.
 ///
 /// A jump table is `branch f(index)` for one controlling variable, so the index
 /// is a node **every** variable→target path flows through — a *value-dominator*
 /// of the target.  Restricting to dominators excludes a bypassed sub-branch: in
 /// a rotate `index = (x<<2) | (x>>30)`, `x>>30` has the tightest interval but
 /// does **not** dominate the target (the `x<<2` arm bypasses it); `x` and the
-/// `Or` *do*.  Among the dominators we take the **deepest** bounded one — the
-/// node sitting just above the first opaque/unfoldable operand.  That is the
-/// most-refined index: a scaled `idx*8` and its source `idx` both dominate, and
-/// `idx` (deeper) is the one to enumerate; a `Load[base+(SegmentOp(idx)&7)*8]`
-/// stops at `SegmentOp&7` because `SegmentOp` is an opaque cone leaf its input
-/// `idx` never joins.  The count-capped strided range (`bounded_index` via
-/// [`Interval::count`]) is what makes a wide-but-sparse `idx*8` (601 entries
-/// over a 4800 span) enumerable while a dense 4800-wide impostor is not.
+/// `Or` *do*.  Among the dominators we take the **shallowest** bounded one — the
+/// value sitting just below the address arithmetic (`zext`, `*stride`,
+/// `base + …`, all width-only/unbounded and skipped).  That is the *fully
+/// narrowed* index, with every guard/mask/shift already applied: enumerating it
+/// visits exactly the reachable table slots.  A **deeper** bounded node is an
+/// *earlier* stage of the same computation whose bound can be looser — e.g. a
+/// pre-guard `b>>5` spans `[0,7]` while the guarded value that actually indexes
+/// the table is `[0,5]`; enumerating the looser `[0,7]` reads two out-of-bounds
+/// slots and the fold fails, so the branch would wrongly defer.  The count-capped
+/// strided range (`bounded_index` via [`Interval::count`]) is what makes a
+/// wide-but-sparse `idx*8` (601 entries over a 4800 span) enumerable while a
+/// dense 4800-wide impostor is not.
 ///
 /// The cone is built by walking `target`'s variability inputs, TRAVERSING THROUGH
 /// a load the evaluator can fold (const-base rodata / SP-rooted stack) into its
@@ -214,22 +219,18 @@ fn decompose_index(
     let target_idx = *nidx.get(&target)?;
     let doms = petgraph::algo::dominators::simple_fast(&g, entry);
 
-    // `dominators` yields the chain shallow→deep (target, idom, … root).  Collect
-    // the value ids (cheap), then walk them root-ward and return the FIRST
-    // genuinely-bounded one — the DEEPEST index, just above the first opaque
-    // operand the cone couldn't traverse.  Reversing (rather than a forward
-    // `.last()`) early-exits at that deepest hit, so the heavy `bounded_index`
-    // range query runs on as few nodes as possible.
-    let mut load_memo = rustc_hash::FxHashMap::default();
-    let chain: Vec<ValueId> = doms
-        .dominators(target_idx)?
+    // `dominators` yields the chain shallow→deep (target, idom, … root).  Walk it
+    // in that order (target-ward first) and return the FIRST genuinely-bounded
+    // one — the SHALLOWEST index, sitting just below the width-only address
+    // arithmetic.  Taking the shallowest (not the deepest) picks the fully
+    // narrowed value: a deeper ancestor is an earlier stage whose bound can be
+    // looser (a pre-guard `b>>5` over `[0,7]` vs the guarded index `[0,5]`).
+    // `find_map` early-exits at the first hit, so the heavy `bounded_index` range
+    // query runs on as few nodes as possible.
+    doms.dominators(target_idx)?
         .filter_map(|di| *g.node_weight(di).expect("dominator is a graph node"))
         .filter(|&v| v != target)
-        .collect();
-    chain
-        .into_iter()
-        .rev()
-        .find_map(|v| bounded_index(function, ranges, branch, v, &mut load_memo))
+        .find_map(|v| bounded_index(function, ranges, branch, v))
 }
 
 /// The address of a load the abstract evaluator can fold -- one whose address is
@@ -261,68 +262,62 @@ fn is_base_operand(function: &strider_ir::Function, v: ValueId) -> bool {
     function.int_const_u128(v).is_some() || crate::sp_expr::decompose_readonly(function, v).is_some()
 }
 
-/// `v` as a candidate index: a genuinely-bounded (guard-/mask-constrained, never
-/// width-only) non-constant integer.  Excludes a loaded table *entry* -- a
-/// load-derived value bounded only by its load width (`ZeroExtend(Load.byte)`
-/// spanning `[0,255]`) with no dominating guard and no explicit mask --
-/// enumerating one folds to bogus sequential targets.
+/// `v` as a candidate index: a genuinely-bounded non-constant integer whose
+/// bound is a real narrowing, not just its type width.  Excludes a loaded table
+/// *entry* -- a value bounded only by its load width (`ZeroExtend(Load.byte)`
+/// spanning `[0,255]`) -- since enumerating one folds to bogus targets.
 fn bounded_index(
     function: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
     branch: NodeId,
     v: ValueId,
-    load_memo: &mut rustc_hash::FxHashMap<ValueId, bool>,
 ) -> Option<(ValueId, Interval)> {
     let ty = function
         .value_type_opt(v)
         .filter(|t| t.is_integer() && function.int_const_u128(v).is_none())?;
     let iv = ranges.range_of(v, branch);
-    // Cap on the ENTRY COUNT the classifier enumerates, not the raw span: a
-    // strided `idx*8 = [0, 4800, stride 8]` is 601 entries (enumerable), while a
-    // dense 4800-wide range is not.  This is what separates "wide but finite"
-    // from "opaque".
     let bounded =
         iv.hi >= iv.lo && iv.hi < ty.bit_mask_u128() && iv.count() <= u128::from(MAX_TABLE_ENTRIES);
-    let entry_load = is_load_derived(function, v, load_memo)
-        && ranges.dominating_guard(v, branch).is_none()
-        && !is_and_masked(function, v);
-    (bounded && !entry_load).then_some((v, iv))
+    (bounded && !is_width_only(function, v, iv)).then_some((v, iv))
 }
 
-
-/// Is `v` (transitively) the output of a `Load`?  A loaded value is a table
-/// *entry*, not the table *index*, so it must not be enumerated as one.
-fn is_load_derived(
-    function: &strider_ir::Function,
-    v: ValueId,
-    memo: &mut rustc_hash::FxHashMap<ValueId, bool>,
-) -> bool {
-    if let Some(&cached) = memo.get(&v) {
-        return cached;
+/// Is `v`'s range merely its *type width* rather than a real narrowing?  A raw
+/// byte load (or one zero-extended for addressing) has a range that exactly
+/// fills its cell width -- it is table *data*, not an *index*, and enumerating
+/// its `[0,255]` folds to bogus targets.  A value narrowed by a shift (`b>>5`),
+/// mask (`b&7`), or guard (`b<N`) instead has a range strictly *inside* its
+/// (possibly wider) integer type, so it is a real index.
+///
+/// Keying on the *range* (not on whether the value is load-derived) is load
+/// bearing: a **guarded raw load** — `if (Load < N) switch(Load)` — is a genuine
+/// index whose `[0,N-1]` bound comes from the guard, so it must be accepted even
+/// though it strips to a `Load`.  A pure "skip all loads" rule cannot tell that
+/// guard-narrowed load from a raw `[0,255]` entry; the width comparison can.
+///
+/// A `ZeroExtend` preserves the integer value, so the range is unchanged across
+/// it while the type widens (a byte's `[0,255]` reads as full-width against `i8`
+/// but narrow against `i32`).  We strip zero-extends to the originating node and
+/// compare the range against *that* node's own width.  (`bounded` already caps
+/// the count, so in practice only a full byte reaches the width test; the
+/// `w < 128` guard keeps the shift well-defined for wide types.)
+fn is_width_only(function: &strider_ir::Function, v: ValueId, iv: Interval) -> bool {
+    let mut base = v;
+    while matches!(
+        function.node_kind(function.producer(base)),
+        NodeKind::Extend(ExtendOp::ZeroExtend)
+    ) {
+        match function.int_inputs(base).next() {
+            Some(inner) => base = inner,
+            None => break,
+        }
     }
-    // Pre-seed `false` to break cycles (a value Phi can be self-referential).
-    memo.insert(v, false);
-    let node = function.producer(v);
-    let result = matches!(function.node_kind(node), NodeKind::Load(_))
-        || function
-            .node_inputs(node)
-            .into_iter()
-            .any(|input| function.value_type_opt(input).is_some() && is_load_derived(function, input, memo));
-    memo.insert(v, result);
-    result
+    function
+        .value_type_opt(base)
+        .map(|t| t.bit_width())
+        .is_some_and(|w| w < 128 && iv.count() == 1u128 << w)
 }
 
-/// Is `v` produced by an `And(_, IntConst)`?  Such a value is mask-bounded
-/// (e.g. `kind & 7`), a legitimate dispatch index even when the masked operand
-/// was loaded — unlike a table entry, whose bound is only its load width.
-fn is_and_masked(function: &strider_ir::Function, v: ValueId) -> bool {
-    let node = function.producer(v);
-    matches!(function.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::And))
-        && function
-            .node_inputs(node)
-            .into_iter()
-            .any(|input| function.int_const_u128(input).is_some())
-}
+
 
 #[cfg(test)]
 #[path = "table_tests.rs"]
