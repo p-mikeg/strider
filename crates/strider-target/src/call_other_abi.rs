@@ -141,7 +141,9 @@ impl CallOtherClass {
 /// treats `None` as "fall through to today's behaviour" (insn stays in
 /// the region) — the ir layer is the single strict gate.
 pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
-    classify_arch_specific(preset, name).or_else(|| classify_arch_independent(name))
+    classify_arch_specific(preset, name)
+        .or_else(|| classify_arch_independent(name))
+        .or_else(|| classify_prefix_family(preset, name))
 }
 
 /// Arch-specific entries — names whose ABI depends on which arch
@@ -777,30 +779,37 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         ("invlpg", MEM_CLOBBER),
         ("invpcid", MEM_CLOBBER),
     ];
-    if let Some(c) = TABLE.iter().find(|(n, _)| *n == name).map(|(_, c)| *c) {
-        return Some(c);
-    }
-    classify_prefix_family(name)
+    TABLE.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
 }
 
-/// Prefix-matched CallOther families whose member ops share a
-/// classification but have one GHIDRA user-op *per named system register /
-/// cache-maintenance target* — dozens of variants that would otherwise need
-/// a row each.  Falls through to `None` (→ `UnknownCallOtherError`) for any
-/// name outside a known family.
+/// Arch-scoped prefix-matched CallOther families.  Each covers dozens of
+/// GHIDRA user-ops — one *per named system register / cache-maintenance
+/// target / SIMD op* — that would otherwise need a table row each.  Scoped to
+/// the arch(es) that actually define the family so a same-named user-op on
+/// another arch can't silently inherit the classification.  Returns `None`
+/// (→ `UnknownCallOtherError`) for any name outside a known family.
 ///
-/// * `coproc_movefrom_*` / `coprocessor_movefrom*` — ARM `MRC`/`MRRC` reads
-///   of a coprocessor / system register into a core register.  The pcode
-///   models the destination write; the read itself is an opaque value with no
-///   RAM effect → `PURE`.
-/// * `coproc_moveto_*` / `coprocessor_*` — ARM `MCR`/`MCRR` writes to a
-///   system register (cache / TLB / MMU / control), plus the generic
-///   `coprocessor_load` / `store` / `function` ops.  A system-register write
-///   can change MMU / cache / ordering state, and the load/store variants
-///   touch RAM, so all are conservatively a memory side effect → `MEM_CLOBBER`.
-/// * `TLBI_*` / `DC_*` / `IC_*` — AArch64 TLB-invalidate and data / instruction
-///   cache-maintenance system ops.  Cache / TLB effects → `MEM_CLOBBER`.
-fn classify_prefix_family(name: &str) -> Option<CallOtherClass> {
+/// **Homogeneity is verified against the GHIDRA `.sinc` `define pcodeop`
+/// lists**, because a substring rule is only sound if EVERY member shares the
+/// classification:
+/// * `Vector*` (ARM + AArch64 NEON) — every member is register→register
+///   compute (no `VectorLoad`/`VectorStore`; memory NEON is a separate pcode
+///   Load/Store), so the whole family is `PURE`.
+/// * `TLBI_*` / `DC_*` / `IC_*` (AArch64) — every member is a TLB-invalidate
+///   or data/instruction cache-maintenance system op → `MEM_CLOBBER`.
+/// * `coproc_movefrom_*` / `coproc_moveto_*` (ARM cp15) — NOT homogeneous by
+///   direction: GHIDRA names cache / TLB / barrier / WFI maintenance ops as
+///   `coproc_movefrom_X` too (e.g. `coproc_movefrom_Data_Memory_Barrier`,
+///   `coproc_movefrom_Clean_Data_Cache_by_MVA`).  So classify by the
+///   OPERATION: a cache / barrier / sync / invalidate / flush / wait op is a
+///   memory-ordering side effect (`MEM_CLOBBER`); a plain system-register move
+///   transfers a value to/from a core register and clobbers no tracked RAM
+///   (`PURE`).
+/// * `coprocessor_*` (ARM generic cp) — `movefrom*` is a register read
+///   (`PURE`); the generic `moveto` / `load` / `store` / `function` ops go to
+///   an unknown coprocessor and may touch RAM → `MEM_CLOBBER`.
+fn classify_prefix_family(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
+    use crate::ArchPreset::*;
     const PURE: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
         implicit_reads: &[],
         implicit_writes: &[],
@@ -813,26 +822,49 @@ fn classify_prefix_family(name: &str) -> Option<CallOtherClass> {
         clobbers_memory: true,
         no_return: false,
     });
-    // Reads first — a `movefrom` name also has the `coproc`/`coprocessor`
-    // prefix, so the read rule must win over the write/opaque rule below.
-    if name.starts_with("coproc_movefrom_") || name.starts_with("coprocessor_movefrom") {
+    let is_arm32 = matches!(preset, Arm | ArmBe | ArmBeKernel | ArmThumb);
+    let is_aarch64 = matches!(preset, Aarch64 | Aarch64Be);
+
+    // NEON vector compute — ARM + AArch64.
+    if (is_arm32 || is_aarch64) && name.starts_with("Vector") {
         return Some(PURE);
     }
-    // ARM/AArch64 NEON vector compute — GHIDRA emits one `Vector*` user-op per
-    // SIMD operation (`VectorAdd`, `VectorMultiply`, `VectorShiftRight`, …),
-    // all pure register→register compute with pcode-explicit operands (like the
-    // exact `NEON_*` entries).  A memory NEON access is a separate pcode
-    // Load/Store, so the vector op itself touches no RAM → PURE.
-    if name.starts_with("Vector") {
-        return Some(PURE);
-    }
-    if name.starts_with("coproc_moveto_")
-        || name.starts_with("coprocessor_")
-        || name.starts_with("TLBI_")
-        || name.starts_with("DC_")
-        || name.starts_with("IC_")
+    // AArch64 TLB-invalidate + data/instruction cache maintenance.
+    if is_aarch64
+        && (name.starts_with("TLBI_") || name.starts_with("DC_") || name.starts_with("IC_"))
     {
         return Some(MEM_CLOBBER);
+    }
+    if is_arm32 {
+        // cp15 named coproc moves: classify by operation, not direction.  A
+        // cache/barrier/sync/invalidate/flush/wait op is memory-affecting; any
+        // other named system register is a plain PURE move.  (`TLB_Type` etc.
+        // are pure ID reads — the real TLB ops are all named `Invalidate_…`.)
+        if name.starts_with("coproc_movefrom_") || name.starts_with("coproc_moveto_") {
+            const SIDE_EFFECT_KEYS: &[&str] = &[
+                "Cache",
+                "cache",
+                "Barrier",
+                "Synchron",
+                "Invalidate",
+                "Clean",
+                "Flush",
+                "Wait_for",
+            ];
+            return Some(if SIDE_EFFECT_KEYS.iter().any(|k| name.contains(k)) {
+                MEM_CLOBBER
+            } else {
+                PURE
+            });
+        }
+        // Generic coprocessor ops: reads are pure; moveto/load/store/function
+        // to an unknown coprocessor conservatively clobber memory.
+        if name.starts_with("coprocessor_movefrom") {
+            return Some(PURE);
+        }
+        if name.starts_with("coprocessor_") {
+            return Some(MEM_CLOBBER);
+        }
     }
     None
 }
@@ -1724,5 +1756,83 @@ mod tests {
             msg.contains("NONEXISTENT_REG_XYZZY"),
             "error must name the bad register; got: {msg}",
         );
+    }
+
+    fn mem_clobbers(c: Option<CallOtherClass>) -> bool {
+        matches!(c, Some(CallOtherClass::Call(abi)) if abi.clobbers_memory)
+    }
+    fn is_pure(c: Option<CallOtherClass>) -> bool {
+        matches!(c, Some(CallOtherClass::Call(abi)) if !abi.clobbers_memory && !abi.no_return)
+    }
+
+    #[test]
+    fn coproc_family_classifies_by_operation_not_direction() {
+        use crate::ArchPreset::Arm;
+        // The MRC/MCR direction does NOT indicate a side effect: cache / TLB /
+        // barrier / WFI maintenance ops are named `coproc_movefrom_*` too and
+        // MUST clobber memory, while a plain system-register move must not.
+        for op in [
+            "coproc_movefrom_Data_Memory_Barrier",
+            "coproc_movefrom_Clean_Data_Cache_by_MVA",
+            "coproc_movefrom_Invalidate_unified_TLB_unlocked",
+            "coproc_movefrom_Data_Synchronization",
+            "coproc_movefrom_Flush_Prefetch_Buffer",
+            "coproc_movefrom_Wait_for_interrupt",
+            "coproc_moveto_Clean_Entire_Data_Cache",
+            "coproc_moveto_Invalidate_Entire_Instruction",
+        ] {
+            assert!(
+                mem_clobbers(classify(Arm, op)),
+                "{op} is a cache/TLB/barrier op — must MEM_CLOBBER",
+            );
+        }
+        for op in [
+            "coproc_movefrom_Main_ID",
+            "coproc_movefrom_User_R_Thread_and_Process_ID",
+            "coproc_movefrom_Control",
+            "coproc_moveto_Context_ID",
+            "coproc_moveto_Control",
+            "coproc_moveto_Translation_table_base_0",
+        ] {
+            assert!(
+                is_pure(classify(Arm, op)),
+                "{op} is a plain system-register move — must be PURE",
+            );
+        }
+    }
+
+    #[test]
+    fn prefix_families_are_arch_scoped() {
+        use crate::ArchPreset::{Aarch64, Arm, X86_64};
+        // NEON compute is ARM/AArch64 only.
+        assert!(is_pure(classify(Arm, "VectorMultiply")));
+        assert!(is_pure(classify(Aarch64, "VectorMultiply")));
+        assert_eq!(classify(X86_64, "VectorMultiply"), None);
+        // AArch64 cache/TLB families don't apply to 32-bit ARM (no such
+        // user-op there) or x86.
+        assert!(mem_clobbers(classify(Aarch64, "TLBI_ALLE1")));
+        assert!(mem_clobbers(classify(Aarch64, "DC_ZVA")));
+        assert!(mem_clobbers(classify(Aarch64, "IC_IALLU")));
+        assert_eq!(classify(Arm, "TLBI_ALLE1"), None);
+        assert_eq!(classify(X86_64, "DC_ZVA"), None);
+        // ARM coproc family doesn't apply to non-ARM.
+        assert_eq!(classify(X86_64, "coproc_movefrom_Main_ID"), None);
+    }
+
+    #[test]
+    fn generic_coprocessor_ops_split_read_vs_opaque() {
+        use crate::ArchPreset::ArmThumb;
+        // Reads are pure; opaque moveto/load/store/function clobber memory.
+        assert!(is_pure(classify(ArmThumb, "coprocessor_movefromRt")));
+        assert!(is_pure(classify(ArmThumb, "coprocessor_movefrom2")));
+        for op in [
+            "coprocessor_moveto",
+            "coprocessor_moveto2",
+            "coprocessor_load",
+            "coprocessor_storelong",
+            "coprocessor_function",
+        ] {
+            assert!(mem_clobbers(classify(ArmThumb, op)), "{op}");
+        }
     }
 }
