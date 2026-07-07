@@ -125,7 +125,7 @@ fn arch_independent_noop_and_noreturn_resolve_on_every_preset() {
         }
         assert_eq!(
             classify(preset, "trap"),
-            Some(CallOtherClass::NoReturn),
+            Some(CallOtherClass::NO_RETURN),
             "{preset:?}/trap",
         );
     }

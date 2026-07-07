@@ -26,23 +26,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         match class {
             strider_target::call_other_abi::CallOtherClass::NoOp => Ok(()),
 
-            strider_target::call_other_abi::CallOtherClass::NoReturn => {
-                // A NoReturn trap (Linux `BUG_ON`-class) emits a
-                // CallOther with only ctrl + mem (no args / clobbers /
-                // value).  terminate=true closes the region as part of
-                // the build_call_other call — no separate region-termination
-                // call needed.  The empty footprint
-                // carries no implicit reads/writes and does not advance
-                // memory.
-                let empty_abi = strider_target::BuiltCallOtherAbi {
-                    implicit_reads: Vec::new(),
-                    implicit_writes: Vec::new(),
-                    clobbers_memory: false,
-                };
-                self.build_abi_call_other(user_op_id, name, &[], &empty_abi, None, true)?;
-                Ok(())
-            }
-
+            // A modeled user-op.  Its register / memory footprint (possibly
+            // empty — a `BUG_ON`-class trap is just the empty-footprint,
+            // `no_return: true` case) and whether control returns are all
+            // carried by the ABI, so one path handles side-effecting and
+            // terminating ops alike.
             strider_target::call_other_abi::CallOtherClass::Call(abi) => {
                 self.handle_call_other_modeled(insn, user_op_id, name, &abi)
             }
@@ -82,7 +70,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             &explicit_args,
             &built_abi,
             output_vn,
-            false,
+            abi.no_return,
         )?;
         Ok(())
     }
@@ -140,12 +128,21 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // Writeback: clobbers then the result — both full-container writes via
         // `write_variable` (an opaque intrinsic defines the whole container; an
         // aliased clobber must not re-clobber the result, hence result last).
-        for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
-            self.builder.write_variable(vn, *v)?;
-        }
+        //
+        // Skipped entirely for a `terminate`ing op: `build_call_other` has
+        // already closed the region, so there is no successor to read these
+        // bindings and `write_variable` would insert into a terminated region.
+        // The node's output slots (result + clobbers) still exist on the node
+        // itself and simply dangle — matching a `no_return` op's semantics
+        // (control ends; the footprint is recorded but never consumed).
         let result = ret_vals.first().copied();
-        if let (Some(c), Some(v)) = (result_vn, result) {
-            self.builder.write_variable(&c, v)?;
+        if !terminate {
+            for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
+                self.builder.write_variable(vn, *v)?;
+            }
+            if let (Some(c), Some(v)) = (result_vn, result) {
+                self.builder.write_variable(&c, v)?;
+            }
         }
         Ok(result)
     }
@@ -219,6 +216,7 @@ mod tests {
             implicit_reads: &["NONEXISTENT_REG_XYZZY"],
             implicit_writes: &[],
             clobbers_memory: false,
+            no_return: false,
         };
         let result = abi.build(&regs);
         assert!(result.is_err(), "unknown register must produce an error");
