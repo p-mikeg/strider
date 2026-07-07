@@ -627,17 +627,35 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         ("FixedToFP", PURE),
         ("FloatCompareGE", PURE),
         ("PolynomialMultiply", PURE),
-        // ARM interrupt-mask / mode writes (CPSR I/F/A bits, mode field) —
-        // change privileged CPU state strider does not model; no data or RAM
-        // effect for single-threaded dataflow.
+        // ARM interrupt-mask / processor-mode writes (CPSR I/F/A bits, mode
+        // field) — change privileged CPU state strider does not model; no data
+        // or RAM effect for single-threaded dataflow.  (`setISAMode` is a
+        // Sleigh *decoder-context* switch and stays NoOp above, not here.)
+        ("disableFIQinterrupts", PURE),
         ("disableIRQinterrupts", PURE),
         ("enableDataAbortInterrupts", PURE),
         ("enableFIQinterrupts", PURE),
         ("enableIRQinterrupts", PURE),
+        ("setAbortMode", PURE),
+        ("setFIQMode", PURE),
+        ("setIRQMode", PURE),
         ("setMonitorMode", PURE),
-        // MIPS register / cp0-thread reads + TLB probe — RDHWR / MFTR / TLBP:
-        // opaque values into a register, no RAM effect.
+        ("setStackMode", PURE),
+        ("setSupervisorMode", PURE),
+        ("setSystemMode", PURE),
+        ("setThreadMode", PURE),
+        ("setUndefinedMode", PURE),
+        ("setUserMode", PURE),
+        // ARM saturation-occurred query (sets the Q flag / returns a bool) —
+        // pure compute, operands pcode-explicit.
+        ("SignedDoesSaturate", PURE),
+        ("UnsignedDoesSaturate", PURE),
+        // MIPS register / cp0-thread reads + TLB read/probe — RDHWR / MFTR /
+        // TLBP / TLBR: opaque values into a register, no RAM effect.
         ("TLB_probe_for_matching_entry", PURE),
+        ("TLB_read_indexed_entryHi", PURE),
+        ("TLB_read_indexed_entryLo", PURE),
+        ("TLB_read_indexed_entryPageMask", PURE),
         ("getHWRegister", PURE),
         ("move_from_thread_cp0", PURE),
         // MIPS PREF — prefetch hint, architectural no-op.
@@ -647,7 +665,9 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // RDSEED (random → reg + CF).
         ("rdpmc", PURE),
         ("rdrand", PURE),
+        ("rdrandIsValid", PURE),
         ("rdseed", PURE),
+        ("rdseedIsValid", PURE),
         ("verw", PURE),
         // ─── MemClobber: memory-chain markers + side-effecting ───────
 
@@ -747,10 +767,16 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         ("AT_S1E1R", MEM_CLOBBER),
         ("SysOp_W", MEM_CLOBBER),
         ("UnkSytemRegWrite", MEM_CLOBBER),
-        // MIPS cache maintenance (CACHE), low-power/sync WAIT, and coprocessor
-        // register write (MTC0 and friends via setCopReg) — external / system
-        // state effects.
+        // MIPS cache maintenance (CACHE), low-power/sync WAIT, coprocessor
+        // register write (MTC0 and friends via setCopReg), cp0-thread write
+        // (MTTR), and TLB writes / invalidation (TLBWI/TLBWR/TLBINV) — external
+        // / system state effects.  (TLB *reads* are PURE, above.)
+        ("TLB_invalidate", MEM_CLOBBER),
+        ("TLB_invalidate_flush", MEM_CLOBBER),
+        ("TLB_write_indexed_entry", MEM_CLOBBER),
+        ("TLB_write_random_entry", MEM_CLOBBER),
         ("cacheOp", MEM_CLOBBER),
+        ("move_to_thread_cp0", MEM_CLOBBER),
         ("setCopReg", MEM_CLOBBER),
         ("wait", MEM_CLOBBER),
         // x86 descriptor-table + task-register loads/stores (LGDT/SGDT,
@@ -761,8 +787,9 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         ("LocalDescriptorTableRegister", MEM_CLOBBER),
         ("TaskRegister", MEM_CLOBBER),
         // x86 FPU / extended-state save+restore to/from a memory buffer
-        // (FXSAVE/FXRSTOR, XSAVES/XRSTOR/XRSTORS and their 64-bit forms) —
-        // they read or write a large in-memory state area.
+        // (FXSAVE/FXRSTOR, and the full XSAVE / XSAVEC / XSAVEOPT / XSAVES /
+        // XRSTOR / XRSTORS family with their 64-bit forms) — they read or write
+        // a large in-memory state area.
         ("_fxrstor", MEM_CLOBBER),
         ("_fxrstor64", MEM_CLOBBER),
         ("_fxsave", MEM_CLOBBER),
@@ -771,6 +798,12 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         ("xrstor64", MEM_CLOBBER),
         ("xrstors", MEM_CLOBBER),
         ("xrstors64", MEM_CLOBBER),
+        ("xsave", MEM_CLOBBER),
+        ("xsave64", MEM_CLOBBER),
+        ("xsavec", MEM_CLOBBER),
+        ("xsavec64", MEM_CLOBBER),
+        ("xsaveopt", MEM_CLOBBER),
+        ("xsaveopt64", MEM_CLOBBER),
         ("xsaves", MEM_CLOBBER),
         ("xsaves64", MEM_CLOBBER),
         // x86 cache-line flush + TLB invalidation (CLFLUSH, INVLPG, INVPCID)
