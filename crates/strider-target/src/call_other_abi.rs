@@ -61,6 +61,15 @@ pub struct CallOtherAbi {
     /// per-query precision via address-range / memory-dependence
     /// analysis at the optimisation layer instead.
     pub clobbers_memory: bool,
+
+    /// `true` when control does not return past this op — a trap
+    /// (`BUG_ON`-class), `sysret`, or a modeled call known never to return.
+    /// Mirrors [`crate::BuiltCallingConvention::no_return`]: the op still emits
+    /// its full register / memory footprint (a no-return op can have effects),
+    /// and the lifter then terminates the region `NoReturn`.  A bare trap is
+    /// just the empty-footprint case (`implicit_reads`/`writes` empty,
+    /// `clobbers_memory: false`, `no_return: true`).
+    pub no_return: bool,
 }
 
 impl CallOtherAbi {
@@ -93,16 +102,32 @@ pub enum CallOtherClass {
     /// pcode-explicit output (if any) is ignored.
     NoOp,
 
-    /// Trap — control flow ends here.  cfg terminates the region as
-    /// `RegionTerminator::NoReturn`; the lifter emits a `[ctrl, mem]` →
-    /// `[ctrl, mem]` CallOther via `build_call_other` (no args / clobbers
-    /// / result) and then terminates the region itself; the node's
-    /// outputs dangle.
-    NoReturn,
-
-    /// Op with a precise ABI describing its register footprint and
-    /// memory effect beyond what Sleigh's pcode already encodes.
+    /// Op with a precise ABI describing its register footprint, memory
+    /// effect, and whether control returns — beyond what Sleigh's pcode
+    /// already encodes.  A trap (`CallOtherClass::NO_RETURN`) is just the
+    /// empty-footprint, `no_return: true` case: the single modeled path
+    /// covers both an ordinary side-effecting user-op and a terminating one.
     Call(CallOtherAbi),
+}
+
+impl CallOtherClass {
+    /// The bare trap classification: an empty-footprint, non-returning
+    /// `Call` (`BUG_ON` / `sysret` / `UndefinedInstruction`).  cfg terminates
+    /// the region `NoReturn` and the lifter terminates after emitting the
+    /// (empty) node.
+    pub const NO_RETURN: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &[],
+        implicit_writes: &[],
+        clobbers_memory: false,
+        no_return: true,
+    });
+
+    /// Does this classification terminate control (a trap / `sysret` / a
+    /// modeled call that never returns)?
+    #[must_use]
+    pub fn is_no_return(&self) -> bool {
+        matches!(self, CallOtherClass::Call(abi) if abi.no_return)
+    }
 }
 
 /// Look up a user-op name's classification, scoped to the given
@@ -175,6 +200,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             // any user-mode memory including the user stack.  Use the
             // full-clobber set so StackOffsetDetect breaks the Stack chain too.
             clobbers_memory: true,
+            no_return: false,
         }),
     },
     // x86 INT instruction also lifts to "swi" in some Sleigh contexts.
@@ -204,6 +230,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: true,
+            no_return: false,
         }),
     },
     // Linux x86_64 syscall ABI: RAX = syscall number, RDI/RSI/RDX/
@@ -220,6 +247,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             // Kernel entry: can read/write the user stack frame in
             // addition to heap / unknown memory.  Full clobber.
             clobbers_memory: true,
+            no_return: false,
         }),
     },
     // ARM SMCCC for HVC (CallHyperVisor) and SMC (CallSecureMonitor):
@@ -237,6 +265,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             // them to mutate the caller's stack frame.  Heap+Unknown is
             // the right clobber set.
             clobbers_memory: true,
+            no_return: false,
         }),
     },
     // x86 RDPKRU: ECX must be 0 (read by the op), writes EAX, clears
@@ -249,6 +278,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &["ECX"],
             implicit_writes: &["EAX", "EDX"],
             clobbers_memory: false,
+            no_return: false,
         }),
     },
     // x86 RDTSC.  Sleigh emits
@@ -264,6 +294,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: false,
+            no_return: false,
         }),
     },
     // x86 RDTSCP: like RDTSC but ALSO writes ECX (= IA32_TSC_AUX MSR's
@@ -277,6 +308,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &[],
             implicit_writes: &["EAX", "EDX", "ECX"],
             clobbers_memory: false,
+            no_return: false,
         }),
     },
     // x86 RDMSR — read model-specific register.  Sleigh emits
@@ -291,6 +323,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: false,
+            no_return: false,
         }),
     },
     // x86 WRMSR — write model-specific register.  Sleigh emits
@@ -307,6 +340,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: true,
+            no_return: false,
         }),
     },
     // x86_64 RDFSBASE / RDGSBASE — read FS/GS segment base into a GPR.
@@ -320,6 +354,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: false,
+            no_return: false,
         }),
     },
     // WRFSBASE / WRGSBASE — write FS/GS base from a GPR.  Sleigh emits
@@ -334,6 +369,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: true,
+            no_return: false,
         }),
     },
     // x86_64 MONITOR (0F 01 C8) — sets up address-range monitor.
@@ -352,6 +388,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &["RAX", "ECX", "EDX"],
             implicit_writes: &[],
             clobbers_memory: true,
+            no_return: false,
         }),
     },
     // x86 32-bit MONITOR / MONITORX — EAX-relative address.
@@ -362,6 +399,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &["EAX", "ECX", "EDX"],
             implicit_writes: &[],
             clobbers_memory: true,
+            no_return: false,
         }),
     },
     // x86 MWAIT (0F 01 C9) / MWAITX (0F 01 FB) — enter a low-power
@@ -377,6 +415,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &["EAX", "ECX"],
             implicit_writes: &[],
             clobbers_memory: true,
+            no_return: false,
         }),
     },
     // x86_64 SYSRET (0F 07) — fast return from a SYSCALL into ring 3.
@@ -390,7 +429,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["sysret"],
-        class: CallOtherClass::NoReturn,
+        class: CallOtherClass::NO_RETURN,
     },
     // x86 SWAPGS (0F 01 F8) — exchanges IA32_GS_BASE ↔
     // IA32_KERNEL_GS_BASE.  No GPR or RAM write on its own, but the
@@ -409,6 +448,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: true,
+            no_return: false,
         }),
     },
     // x86's INT instruction also lifts to "swi" in some Sleigh
@@ -452,7 +492,7 @@ const AARCH64_BOTH: &[crate::ArchPreset] =
 /// classification fires once per CallOther at lift time, so a hash
 /// map's setup cost isn't justified.
 fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
-    use CallOtherClass::{NoOp, NoReturn};
+    use CallOtherClass::NoOp;
 
     // The two pre-canned `Call` classifications used throughout the
     // arch-independent table.  Hardcoding empty register channels here makes
@@ -467,11 +507,13 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         implicit_reads: &[],
         implicit_writes: &[],
         clobbers_memory: false,
+        no_return: false,
     });
     const MEM_CLOBBER: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
         implicit_reads: &[],
         implicit_writes: &[],
         clobbers_memory: true,
+        no_return: false,
     });
 
     static TABLE: &[(&str, CallOtherClass)] = &[
@@ -481,10 +523,10 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // ─── NoReturn (traps; control flow ends here) ─────────────
         // x86 `sysret` lives in classify_arch_specific so a non-x86
         // user-op of the same name cannot silently inherit NoReturn.
-        ("SoftwareBreakpoint", NoReturn),
-        ("UndefinedInstructionException", NoReturn),
-        ("invalidInstructionException", NoReturn),
-        ("trap", NoReturn),
+        ("SoftwareBreakpoint", CallOtherClass::NO_RETURN),
+        ("UndefinedInstructionException", CallOtherClass::NO_RETURN),
+        ("invalidInstructionException", CallOtherClass::NO_RETURN),
+        ("trap", CallOtherClass::NO_RETURN),
         // ─── Pure: visible markers / pure compute, no memory edge ──
 
         // ARM exclusive-monitor primitives — pair with LDREX/STREX
@@ -635,6 +677,7 @@ mod tests {
             implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: false,
+            no_return: false,
         }
     }
 
@@ -783,11 +826,11 @@ mod tests {
         // Still classified on x86 / x86_64.
         assert_eq!(
             classify(crate::ArchPreset::X86, "sysret"),
-            Some(CallOtherClass::NoReturn)
+            Some(CallOtherClass::NO_RETURN)
         );
         assert_eq!(
             classify(crate::ArchPreset::X86_64, "sysret"),
-            Some(CallOtherClass::NoReturn)
+            Some(CallOtherClass::NO_RETURN)
         );
     }
 
@@ -866,7 +909,7 @@ mod tests {
         ] {
             assert_eq!(
                 classify(crate::ArchPreset::X86_64, n),
-                Some(CallOtherClass::NoReturn),
+                Some(CallOtherClass::NO_RETURN),
                 "{n}"
             );
         }
@@ -1157,7 +1200,7 @@ mod tests {
             };
             let abi = match class {
                 CallOtherClass::Call(abi) => abi,
-                _ => continue, // NoOp / NoReturn have no ABI
+                CallOtherClass::NoOp => continue, // NoOp emits no node
             };
             assert!(
                 abi.implicit_reads.is_empty(),
@@ -1228,6 +1271,7 @@ mod tests {
             implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: true,
+            no_return: false,
         });
         assert_eq!(classify(crate::ArchPreset::X86, "swi"), Some(stub));
         assert_eq!(classify(crate::ArchPreset::X86_64, "swi"), Some(stub));
@@ -1261,7 +1305,7 @@ mod tests {
             // Trap is NoReturn on every arch.
             assert_eq!(
                 classify(arch, "invalidInstructionException"),
-                Some(CallOtherClass::NoReturn),
+                Some(CallOtherClass::NO_RETURN),
                 "arch={arch:?}",
             );
         }
@@ -1296,7 +1340,7 @@ mod tests {
         for n in ["setISAMode", "invalidInstructionException", "cpuid"] {
             let class = classify(crate::ArchPreset::X86_64, n).unwrap();
             match class {
-                CallOtherClass::NoOp | CallOtherClass::NoReturn | CallOtherClass::Call(_) => {}
+                CallOtherClass::NoOp | CallOtherClass::Call(_) => {}
             }
         }
     }
@@ -1496,6 +1540,7 @@ mod tests {
             implicit_reads: &["NONEXISTENT_REG_XYZZY"],
             implicit_writes: &[],
             clobbers_memory: false,
+            no_return: false,
         };
         let result = abi.build(&regs);
         assert!(result.is_err(), "unknown register must produce an error");

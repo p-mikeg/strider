@@ -440,10 +440,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let name = self.builder.sleigh.user_op_name(id_u32);
         let preset = self.builder.arch.preset();
         let class = name.and_then(|n| strider_target::call_other_abi::classify(preset, n));
-        if matches!(
-            class,
-            Some(strider_target::call_other_abi::CallOtherClass::NoReturn)
-        ) {
+        if class.is_some_and(|c| c.is_no_return()) {
             // CallOther is already in self.insns from the
             // process_new_insn prologue push; finish_current_region
             // carries it.  Trailing BranchIndirect is never decoded.
