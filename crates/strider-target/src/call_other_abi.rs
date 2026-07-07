@@ -618,6 +618,13 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // compute; operands are pcode-explicit.
         ("SignedSaturate", PURE),
         ("UnsignedSaturate", PURE),
+        // ARM/AArch64 NEON scalar conversions + polynomial multiply + the
+        // vector float compare — pure register compute (companions to the
+        // `Vector*` prefix family), operands pcode-explicit.
+        ("FPToFixed", PURE),
+        ("FixedToFP", PURE),
+        ("FloatCompareGE", PURE),
+        ("PolynomialMultiply", PURE),
         // ARM interrupt-mask / mode writes (CPSR I/F/A bits, mode field) —
         // change privileged CPU state strider does not model; no data or RAM
         // effect for single-threaded dataflow.
@@ -809,6 +816,14 @@ fn classify_prefix_family(name: &str) -> Option<CallOtherClass> {
     // Reads first — a `movefrom` name also has the `coproc`/`coprocessor`
     // prefix, so the read rule must win over the write/opaque rule below.
     if name.starts_with("coproc_movefrom_") || name.starts_with("coprocessor_movefrom") {
+        return Some(PURE);
+    }
+    // ARM/AArch64 NEON vector compute — GHIDRA emits one `Vector*` user-op per
+    // SIMD operation (`VectorAdd`, `VectorMultiply`, `VectorShiftRight`, …),
+    // all pure register→register compute with pcode-explicit operands (like the
+    // exact `NEON_*` entries).  A memory NEON access is a separate pcode
+    // Load/Store, so the vector op itself touches no RAM → PURE.
+    if name.starts_with("Vector") {
         return Some(PURE);
     }
     if name.starts_with("coproc_moveto_")
