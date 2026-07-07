@@ -429,7 +429,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // differentiate user-mode trampolines.
     CallOtherRow {
         preset_arches: X86_BOTH,
-        op_names: &["sysret"],
+        op_names: &["sysret", "sysexit"],
         class: CallOtherClass::NO_RETURN,
     },
     // x86 SWAPGS (0F 01 F8) — exchanges IA32_GS_BASE ↔
@@ -523,6 +523,10 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // ─── NoReturn (traps; control flow ends here) ─────────────
         // x86 `sysret` lives in classify_arch_specific so a non-x86
         // user-op of the same name cannot silently inherit NoReturn.
+        // AArch64 ERET — returns from an exception, reloading PC + PSTATE
+        // from ELR/SPSR.  Control leaves the current function (like a return),
+        // so the region ends here.
+        ("ExceptionReturn", CallOtherClass::NO_RETURN),
         ("SoftwareBreakpoint", CallOtherClass::NO_RETURN),
         ("UndefinedInstructionException", CallOtherClass::NO_RETURN),
         ("invalidInstructionException", CallOtherClass::NO_RETURN),
@@ -595,6 +599,47 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // CALLOTHER + a branch to the trap handler; the user-op
         // itself doesn't touch state.
         ("software_udf", PURE),
+        // ARM exclusive-access monitor primitives (LDREX/STREX pair, like
+        // ExclusiveMonitorPass/Status above) — the monitor flag is synthetic,
+        // no RAM effect.
+        ("ExclusiveAccess", PURE),
+        ("hasExclusiveAccess", PURE),
+        // ARM CPU hints — PLD / PLDW / YIELD.  Architectural no-ops (a
+        // prefetch is a cache *hint*, not an observable memory access) modelled
+        // as visible pure markers so patterns can find them.
+        ("HintPreloadData", PURE),
+        ("HintPreloadDataForWrite", PURE),
+        ("HintYield", PURE),
+        // ARM inter-processor event signalling — SEV / SEVL set the event
+        // register on other cores; they observe no memory on this core.
+        ("SendEvent", PURE),
+        ("SendEventLocally", PURE),
+        // ARM saturating arithmetic (SSAT/USAT and the Q-flag helpers) — pure
+        // compute; operands are pcode-explicit.
+        ("SignedSaturate", PURE),
+        ("UnsignedSaturate", PURE),
+        // ARM interrupt-mask / mode writes (CPSR I/F/A bits, mode field) —
+        // change privileged CPU state strider does not model; no data or RAM
+        // effect for single-threaded dataflow.
+        ("disableIRQinterrupts", PURE),
+        ("enableDataAbortInterrupts", PURE),
+        ("enableFIQinterrupts", PURE),
+        ("enableIRQinterrupts", PURE),
+        ("setMonitorMode", PURE),
+        // MIPS register / cp0-thread reads + TLB probe — RDHWR / MFTR / TLBP:
+        // opaque values into a register, no RAM effect.
+        ("TLB_probe_for_matching_entry", PURE),
+        ("getHWRegister", PURE),
+        ("move_from_thread_cp0", PURE),
+        // MIPS PREF — prefetch hint, architectural no-op.
+        ("prefetch", PURE),
+        // x86 reads into a register with no RAM effect: VERW (writes ZF),
+        // RDPMC (perf counter → EDX:EAX, pcode-explicit like RDTSC), RDRAND /
+        // RDSEED (random → reg + CF).
+        ("rdpmc", PURE),
+        ("rdrand", PURE),
+        ("rdseed", PURE),
+        ("verw", PURE),
         // ─── MemClobber: memory-chain markers + side-effecting ───────
 
         // x86 port I/O — port + value pcode-explicit; the user-op
@@ -671,8 +716,110 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // path, kernel can do anything to memory including the user
         // stack frame.  Use the full-clobber marker.
         ("software_interrupt", MEM_CLOBBER),
+        // ARM wait-for-event / wait-for-interrupt — WFE/WFI are
+        // synchronisation / low-power wait points; a remote agent may modify
+        // shared memory (incl. an escaped stack frame) while the core waits, so
+        // treat as a full ordering barrier.
+        ("WaitForEvent", MEM_CLOBBER),
+        ("WaitForInterrupt", MEM_CLOBBER),
+        // ARM software trap / privileged calls — BKPT / HLT (debug / halt,
+        // may return via a WARN-style handler) and HVC / SMC (hypervisor /
+        // secure-monitor calls that DO return and may mutate memory).  Modelled
+        // as returning side-effecting ops (NOT NoReturn — over-terminating
+        // would truncate the function); the SMCCC register footprint is
+        // arch-specific and omitted here (memory-safe, register-imprecise).
+        ("software_bkpt", MEM_CLOBBER),
+        ("software_hlt", MEM_CLOBBER),
+        ("software_hvc", MEM_CLOBBER),
+        ("software_smc", MEM_CLOBBER),
+        // AArch64 system ops that write privileged state: an unmodeled sysreg
+        // write, the generic SYS write op, and address-translation (AT_S1E1R
+        // writes PAR and pokes the MMU).  Conservatively memory-affecting.
+        ("AT_S1E1R", MEM_CLOBBER),
+        ("SysOp_W", MEM_CLOBBER),
+        ("UnkSytemRegWrite", MEM_CLOBBER),
+        // MIPS cache maintenance (CACHE), low-power/sync WAIT, and coprocessor
+        // register write (MTC0 and friends via setCopReg) — external / system
+        // state effects.
+        ("cacheOp", MEM_CLOBBER),
+        ("setCopReg", MEM_CLOBBER),
+        ("wait", MEM_CLOBBER),
+        // x86 descriptor-table + task-register loads/stores (LGDT/SGDT,
+        // LIDT/SIDT, LLDT/SLDT, LTR/STR) — read from / write to a memory
+        // operand describing the table.
+        ("GlobalDescriptorTableRegister", MEM_CLOBBER),
+        ("InterruptDescriptorTableRegister", MEM_CLOBBER),
+        ("LocalDescriptorTableRegister", MEM_CLOBBER),
+        ("TaskRegister", MEM_CLOBBER),
+        // x86 FPU / extended-state save+restore to/from a memory buffer
+        // (FXSAVE/FXRSTOR, XSAVES/XRSTOR/XRSTORS and their 64-bit forms) —
+        // they read or write a large in-memory state area.
+        ("_fxrstor", MEM_CLOBBER),
+        ("_fxrstor64", MEM_CLOBBER),
+        ("_fxsave", MEM_CLOBBER),
+        ("_fxsave64", MEM_CLOBBER),
+        ("xrstor", MEM_CLOBBER),
+        ("xrstor64", MEM_CLOBBER),
+        ("xrstors", MEM_CLOBBER),
+        ("xrstors64", MEM_CLOBBER),
+        ("xsaves", MEM_CLOBBER),
+        ("xsaves64", MEM_CLOBBER),
+        // x86 cache-line flush + TLB invalidation (CLFLUSH, INVLPG, INVPCID)
+        // — cache / TLB maintenance, memory-ordering relevant.
+        ("clflush", MEM_CLOBBER),
+        ("invlpg", MEM_CLOBBER),
+        ("invpcid", MEM_CLOBBER),
     ];
-    TABLE.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
+    if let Some(c) = TABLE.iter().find(|(n, _)| *n == name).map(|(_, c)| *c) {
+        return Some(c);
+    }
+    classify_prefix_family(name)
+}
+
+/// Prefix-matched CallOther families whose member ops share a
+/// classification but have one GHIDRA user-op *per named system register /
+/// cache-maintenance target* — dozens of variants that would otherwise need
+/// a row each.  Falls through to `None` (→ `UnknownCallOtherError`) for any
+/// name outside a known family.
+///
+/// * `coproc_movefrom_*` / `coprocessor_movefrom*` — ARM `MRC`/`MRRC` reads
+///   of a coprocessor / system register into a core register.  The pcode
+///   models the destination write; the read itself is an opaque value with no
+///   RAM effect → `PURE`.
+/// * `coproc_moveto_*` / `coprocessor_*` — ARM `MCR`/`MCRR` writes to a
+///   system register (cache / TLB / MMU / control), plus the generic
+///   `coprocessor_load` / `store` / `function` ops.  A system-register write
+///   can change MMU / cache / ordering state, and the load/store variants
+///   touch RAM, so all are conservatively a memory side effect → `MEM_CLOBBER`.
+/// * `TLBI_*` / `DC_*` / `IC_*` — AArch64 TLB-invalidate and data / instruction
+///   cache-maintenance system ops.  Cache / TLB effects → `MEM_CLOBBER`.
+fn classify_prefix_family(name: &str) -> Option<CallOtherClass> {
+    const PURE: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &[],
+        implicit_writes: &[],
+        clobbers_memory: false,
+        no_return: false,
+    });
+    const MEM_CLOBBER: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &[],
+        implicit_writes: &[],
+        clobbers_memory: true,
+        no_return: false,
+    });
+    // Reads first — a `movefrom` name also has the `coproc`/`coprocessor`
+    // prefix, so the read rule must win over the write/opaque rule below.
+    if name.starts_with("coproc_movefrom_") || name.starts_with("coprocessor_movefrom") {
+        return Some(PURE);
+    }
+    if name.starts_with("coproc_moveto_")
+        || name.starts_with("coprocessor_")
+        || name.starts_with("TLBI_")
+        || name.starts_with("DC_")
+        || name.starts_with("IC_")
+    {
+        return Some(MEM_CLOBBER);
+    }
+    None
 }
 
 #[cfg(test)]
