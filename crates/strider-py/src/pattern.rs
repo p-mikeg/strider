@@ -1111,7 +1111,7 @@ pub(crate) fn stash_pending_control_flow(e: PyErr) {
 // this thread-local stack (a stack, not a single slot, so a predicate
 // that itself issues a nested query doesn't clobber the outer one), and
 // `run_when_predicate` peeks the top entry to build the `Match` handed to
-// the Python callback. Both share the same `Arc<RwLock<Function>>` as the
+// the Python callback. Both share the same `Rc<RefCell<Function>>` as the
 // live query, so `Match` accessors re-borrowing it (a nested `read()`
 // while `run_query`'s own read guard is still held) is a same-thread
 // recursive read lock — safe here because nothing on this thread ever

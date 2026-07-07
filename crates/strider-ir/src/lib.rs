@@ -51,7 +51,7 @@ mod control_flow_view;
 pub use control_flow_view::{control_dominators, dominates};
 pub mod error;
 mod function;
-pub use function::{EditFunction, Function, FunctionState, SideTables};
+pub use function::{EditFunction, Function, FunctionState, SideTables, SpDecomp, StackId};
 #[cfg(any(test, feature = "test-util"))]
 pub use function::cc_ret_and_clobber_vns;
 pub mod graph;

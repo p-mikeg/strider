@@ -70,14 +70,14 @@ pub struct FunctionArgDetect;
 impl PostOptimizer for FunctionArgDetect {
     fn apply(
         &self,
-        ctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
         // SSoT: derive the positional-arg layout on-demand from the function's
         // own CC.  `first_stack_arg` is the register-vs-stack boundary; the
         // ranged clear below preserves the register-arg carriers recorded at
         // builder entry.
-        let cc = ctx.function().default_cc();
+        let cc = edit.function().default_cc();
         let first_stack_arg = cc.arg_passing_regs.len();
         let maybe_stack_args = cc.stack_args;
         let Some(stack_args) = maybe_stack_args else {
@@ -96,8 +96,8 @@ impl PostOptimizer for FunctionArgDetect {
         // threaded down).
         let alias_mode = opt_ctx.options.alias_mode;
         let arg_alias = opt_ctx.options.arg_alias;
-        let mut alias_cfg = SpAliasCfg::new(&mut opt_ctx.sp_memo, alias_mode, arg_alias);
-        detect_stack_args(ctx, &mut alias_cfg, stack_args, first_stack_arg)?;
+        let alias_cfg = SpAliasCfg::new(alias_mode, arg_alias);
+        detect_stack_args(edit, &alias_cfg, stack_args, first_stack_arg)?;
         // Arg detection only populates the arg_index_to_values side-table,
         // and the memory-SSA walk's narrowing only shortens stack-arg loads'
         // memory edges (idempotent, never changes which args are detected).
@@ -121,8 +121,8 @@ impl PostOptimizer for FunctionArgDetect {
 /// Multiple `Load`s touching one argument (e.g. different widths or sub-field
 /// offsets) are all registered into the side-table for that ordinal.
 fn detect_stack_args(
-    ctx: &mut crate::EditFunction<'_>,
-    alias_cfg: &mut SpAliasCfg<'_>,
+    edit: &mut crate::EditFunction<'_>,
+    alias_cfg: &SpAliasCfg,
     stack_args: strider_target::StackArgs,
     first_stack_arg: usize,
 ) -> Result<()> {
@@ -132,17 +132,17 @@ fn detect_stack_args(
     // e.g. an alignment-masked `sp & mask`, which addresses a frame local —
     // is rejected even when its offset coincides with a convention slot.
     // With no entry-SP read there can be no stack args.
-    let Some(sp_node) = ctx.function().initial_sp() else {
+    let Some(sp_node) = edit.function().initial_sp() else {
         return Ok(());
     };
     // `initial_sp` is a raw O(1) lookup that does not filter liveness, so skip a
     // culled-but-not-compacted `InitialVar(sp)` (the function never reads SP) via
     // the optimization's live-set — no live load is rooted at a dead SP, so there
     // can be no stack args.
-    if !ctx.is_live(sp_node) {
+    if !edit.is_live(sp_node) {
         return Ok(());
     }
-    let [initial_sp] = ctx
+    let [initial_sp] = edit
         .node_outputs_exact::<1>(sp_node)
         .expect("InitialVar has 1 output per node signature");
     // Group qualifying loads by the *byte-position* slot their first byte
@@ -165,20 +165,20 @@ fn detect_stack_args(
     // One-shot scan: detection order doesn't matter (loads are grouped by
     // slot, then a cursor assigns ordinals), and the pass never re-enqueues,
     // so iterate the cached live Load set directly — no worklist, no RPO walk.
-    let loads: Vec<NodeId> = ctx
+    let loads: Vec<NodeId> = edit
         .live_of_kind(|k| matches!(k, NodeKind::Load(_)))
         .collect();
     for node_id in loads {
-        let addr = ctx.load_addr(node_id);
-        let [load_value] = ctx
+        let addr = edit.load_addr(node_id);
+        let [load_value] = edit
             .node_outputs_exact::<1>(node_id)
             .expect("Load has 1 output per node signature");
-        let Some(load_ty) = ctx.value_type_opt(load_value) else {
+        let Some(load_ty) = edit.value_type_opt(load_value) else {
             continue;
         };
         let load_size = load_ty.byte_size() as i128;
         // (a) decompose to initial_sp + K.
-        let Some(SpExpr { base, offset }) = alias_cfg.decompose(ctx.function(), addr) else {
+        let Some(SpExpr { base, offset }) = alias_cfg.decompose(edit.function(), addr) else {
             continue;
         };
         if base != initial_sp {
@@ -206,7 +206,7 @@ fn detect_stack_args(
         // (c) memory chain clean.  `mem_chain_is_dirty` walks the load's own
         // memory chain via the shared `alias_cfg`; not-dirty == the nearest
         // clobber is `InitialMemory`.
-        let dirty = mem_chain_is_dirty(ctx, alias_cfg, node_id);
+        let dirty = mem_chain_is_dirty(edit, alias_cfg, node_id);
         if dirty {
             disqualified.insert(start_slot);
             groups.remove(&start_slot);
@@ -244,18 +244,18 @@ fn detect_stack_args(
         let first_load = *arg_loads
             .first()
             .expect("a present span entry always has ≥1 anchored load");
-        let NodeKind::Load(space) = *ctx.node_kind(first_load) else {
+        let NodeKind::Load(space) = *edit.node_kind(first_load) else {
             unreachable!("group members are seeded from Load nodes");
         };
         if arg_loads
             .iter()
-            .all(|&l| matches!(*ctx.node_kind(l), NodeKind::Load(s) if s == space))
+            .all(|&l| matches!(*edit.node_kind(l), NodeKind::Load(s) if s == space))
         {
             for load in arg_loads {
-                let [load_value] = ctx
+                let [load_value] = edit
                     .node_outputs_exact::<1>(load)
                     .expect("Load has 1 output per node signature");
-                ctx.register_arg_value(index, load_value);
+                edit.register_arg_value(index, load_value);
             }
         }
         cursor += arg_span;
@@ -274,18 +274,18 @@ fn detect_stack_args(
 /// already decomposed the same address to qualify the load).  The traversal is
 /// cycle-guarded, `MemPhi`-forking, and stack-safe at any chain depth.
 fn mem_chain_is_dirty(
-    ctx: &mut crate::EditFunction<'_>,
-    alias_cfg: &mut SpAliasCfg<'_>,
+    edit: &mut crate::EditFunction<'_>,
+    alias_cfg: &SpAliasCfg,
     load: NodeId,
 ) -> bool {
-    let mem_token = ctx
+    let mem_token = edit
         .memory_input_of(load)
         .expect("a Load has a memory input (slot 0)");
-    let clobber = alias_cfg.nearest_clobber(ctx.function(), load, mem_token);
+    let clobber = alias_cfg.nearest_clobber(edit.function(), load, mem_token);
     // Caller-side narrowing: shorten this candidate load's memory edge onto its
     // nearest clobber (perf only — never changes which args are detected).
-    narrow_load_to(ctx, load, clobber);
-    !matches!(ctx.node_kind(clobber), NodeKind::InitialMemory)
+    narrow_load_to(edit, load, clobber);
+    !matches!(edit.node_kind(clobber), NodeKind::InitialMemory)
 }
 
 #[cfg(test)]

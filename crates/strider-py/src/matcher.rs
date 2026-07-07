@@ -26,7 +26,7 @@ use crate::pattern::{PyCapture, intern_str};
 /// subsequent capture accessor returns a typed `StriderError` rather
 /// than silently dereferencing a stale `ValueId` on the
 /// post-bump arena.
-#[pyclass(name = "Match", module = "strider")]
+#[pyclass(name = "Match", module = "strider", unsendable)]
 pub struct PyMatch {
     pub(crate) inner: strider_pattern::Match,
     pub(crate) function: Py<PyFunction>,

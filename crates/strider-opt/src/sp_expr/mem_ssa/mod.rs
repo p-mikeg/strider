@@ -128,9 +128,9 @@ pub(crate) trait MemorySSAWalker {
 /// single incoming memory edge is invisible to every other node.  Idempotent,
 /// and monotone-safe across fixed-point iterations (`MayAlias → Disjoint`
 /// only).  A non-`Load` handle is left untouched.
-pub(crate) fn narrow_load_to(ctx: &mut crate::EditFunction<'_>, load: NodeId, clobber: NodeId) {
+pub(crate) fn narrow_load_to(edit: &mut crate::EditFunction<'_>, load: NodeId, clobber: NodeId) {
     let rewire = {
-        let function = ctx.function();
+        let function = edit.function();
         if matches!(function.node_kind(load), NodeKind::Load(_)) {
             let target_mem = function
                 .memory_output_of(clobber)
@@ -147,7 +147,7 @@ pub(crate) fn narrow_load_to(ctx: &mut crate::EditFunction<'_>, load: NodeId, cl
         }
     };
     if let Some((mem_use, target_mem)) = rewire {
-        ctx.update_input(mem_use, target_mem);
+        edit.update_input(mem_use, target_mem);
     }
 }
 

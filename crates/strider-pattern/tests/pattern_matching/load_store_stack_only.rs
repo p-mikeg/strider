@@ -3,7 +3,7 @@
 //! pattern (capture the matched node, then read its offset off the side-table).
 //!
 //! The `Function::stack_offset` side-table is populated manually via
-//! `Function::set_stack_offset` — the same side-table that `StackOffsetDetect`
+//! `Function::set_stack_slot` — the same side-table that `StackOffsetDetect`
 //! populates in production.  We bypass `StackOffsetDetect` here so tests stay
 //! focused on the pattern-matcher behaviour rather than the optimizer.
 
@@ -53,7 +53,11 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let stack_node = stack_node.expect("stack load node");
     let heap_node = heap_node.expect("heap load node");
     let stack_base = function.node_inputs(stack_node)[1];
-    function.side_tables_mut().set_stack_offset(stack_node, stack_base, 0x10);
+    // Value-keyed: stamp the slot on the load's address value (slot 1), which the
+    // derived per-node `stack_offset(node)` looks up.
+    function
+        .side_tables_mut()
+        .set_stack_slot(stack_base, stack_base, 0x10);
     (function, stack_node, heap_node)
 }
 
@@ -94,7 +98,11 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let stack_store = stack_store.expect("stack store node");
     let heap_store = heap_store.expect("heap store node");
     let stack_base = function.node_inputs(stack_store)[1];
-    function.side_tables_mut().set_stack_offset(stack_store, stack_base, 0x10);
+    // Value-keyed: stamp the slot on the store's address value (slot 1), which
+    // the derived per-node `stack_offset(node)` looks up.
+    function
+        .side_tables_mut()
+        .set_stack_slot(stack_base, stack_base, 0x10);
     (function, stack_store, heap_store)
 }
 
@@ -177,7 +185,7 @@ fn capture_then_read_stack_offset_via_side_table() {
     let m = &hits[0];
     let bound = m.node(node_cap, g.graph()).expect("captured node");
     assert_eq!(bound, stack_store, "capture must bind the stack store");
-    let (_base, offset) = g.side_tables().stack_offset(bound).expect("side-table entry");
+    let (_base, offset) = g.stack_offset(bound).expect("side-table entry");
     assert_eq!(offset, 0x10_i128, "side-table offset must round-trip");
 }
 
@@ -193,6 +201,6 @@ fn capture_then_read_stack_offset_via_side_table_load() {
     let m = &hits[0];
     let bound = m.node(node_cap, g.graph()).expect("captured node");
     assert_eq!(bound, stack_load);
-    let (_base, offset) = g.side_tables().stack_offset(bound).expect("side-table entry");
+    let (_base, offset) = g.stack_offset(bound).expect("side-table entry");
     assert_eq!(offset, 0x10_i128);
 }

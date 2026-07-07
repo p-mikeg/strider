@@ -4,7 +4,7 @@ use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 
 /// Where a function argument originates in the calling convention.
 ///
-/// Used by the `strider-orchestrator` pattern builder `FunctionArgPat` to
+/// Used by the `strider-pattern` pattern builder `FunctionArgPat` to
 /// filter matches by ABI source — register-passed (`Register`) or
 /// stack-passed (`Stack`).  No longer embedded in a `NodeKind` variant; arg
 /// tracking lives in the `Function::arg_index_to_values` side-table.

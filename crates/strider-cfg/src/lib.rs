@@ -44,7 +44,9 @@ pub use builder::Builder;
 pub use indirect_resolver::ResolvedTargets;
 pub use options::CfgOptions;
 
-pub use query::{IfRegionSuccessors, is_addr_tail_call};
+pub use query::IfRegionSuccessors;
+// Crate-internal: the region builder classifies tail calls at the crate root.
+pub(crate) use query::is_addr_tail_call;
 pub use types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator};
 
 use types::RegionGraph;

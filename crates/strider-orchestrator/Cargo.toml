@@ -26,6 +26,8 @@ cranelift-entity.workspace = true
 object.workspace = true
 # Test-only IR helpers (count_kind, has_kind, build_sub_as_add_neg, …).
 strider-ir = { workspace = true, features = ["test-util"] }
+# Test-only single-pass runners (run_one / run_post) used by integration tests.
+strider-opt = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { workspace = true }
 expect-test.workspace = true
 paste = "1"
@@ -33,6 +35,7 @@ insta = { version = "1.40", features = ["yaml"] }
 serde = { version = "1", features = ["derive"] }
 criterion = { version = "0.7", features = ["html_reports"] }
 proptest = "1"
+dhat = "0.3"
 
 [[bench]]
 name = "scaling"

@@ -4,13 +4,13 @@
 //!
 //! | Sub-module        | Contents                                                  |
 //! |-------------------|-----------------------------------------------------------|
-//! | [`orchestrator`]  | End-to-end pipeline runners + placeholder-anchor finders. |
-//! | [`classify`]      | One fixture per producer-shape arm of `classify_anchor`.  |
+//! | [`orchestrator`]  | End-to-end pipeline runners + placeholder-target finders. |
+//! | [`classify`]      | One fixture per producer-shape arm of `classify_target`.  |
 //!
 //! The flat re-export surface in this `mod.rs` is the stable public
 //! API; tests should not import from sub-modules directly.
 //!
-//! IMPORTANT: the anchor returned is **NOT** the original
+//! IMPORTANT: the target returned is **NOT** the original
 //! `ValueId` recorded at lift time — that id can be invalidated
 //! by `ConstantFold`'s `replace_all_uses` rewires.  Instead, helpers
 //! resolve the placeholder Return's current value-input on the
@@ -36,4 +36,4 @@ pub(crate) use classify::{
     build_push_target_pop_pc_scenario, build_stack_array_dispatch_scenario,
 };
 #[allow(unused_imports)]
-pub(crate) use orchestrator::{anchor_value_input, run_pipeline_x86_64};
+pub(crate) use orchestrator::{target_value_input, run_pipeline_x86_64};

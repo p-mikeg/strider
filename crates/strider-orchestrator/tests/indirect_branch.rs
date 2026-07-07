@@ -85,7 +85,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
     let rom_for_classify: &dyn strider_orchestrator::opt::ReadOnlyMemory = &rom_for_opt;
-    for (anchor_addr, _placeholder) in &unresolved {
+    for (target_addr, _placeholder) in &unresolved {
         // Mirror the orchestrator's `IndirectBranchClassify` post-pass:
         // walk every reachable `IndirectBranch` node and classify it (the
         // classifier reads its *current* slot-2 dispatch value off the node).
@@ -113,7 +113,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         let mut ranges =
             strider_orchestrator::opt::value_range::compute_value_ranges(view, &doms, &known);
         for &branch in &live_branches {
-            let resolved = strider_orchestrator::opt::classify_anchor(
+            let resolved = strider_orchestrator::opt::classify_target(
                 view,
                 branch,
                 Some(rom_for_classify),
@@ -128,7 +128,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         if !any_resolved {
             panic!(
                 "indirect_branch_resolved on {} has unresolved indirect \
-                 branch at {anchor_addr:?} after optimisation — neither \
+                 branch at {target_addr:?} after optimisation — neither \
                  cfg-time nor IR-level (incl. stack-array classifier arm) classified \
                  the dispatch",
                 arch.name(),

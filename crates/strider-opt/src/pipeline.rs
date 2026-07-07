@@ -43,10 +43,10 @@ impl OptimizationResult {
 ///   SP-aware passes ([`crate::LoadForward`], [`crate::FunctionArgDetect`],
 ///   [`crate::CallStackArgCollect`]) read from it; set fields on
 ///   `ctx.options` after constructing via [`OptCtx::new`].
-/// * `sp_memo` — a shared `ValueId → SpExpr` decomposition cache reused
-///   across the SP-aware passes within a run.  The pipeline clears it at
-///   every drain point (graph change), so a memoised decomposition is
-///   never stale across an iteration that rewrote the graph.
+///
+/// SP decompositions are no longer cached here: they live in the function's
+/// own `stack_offsets` side-table, written by `StackOffsetDetect` once the
+/// graph is frozen and recomputed read-only during the fixed point.
 ///
 /// Passes that don't need any of this simply ignore the context
 /// (`_ctx: &mut OptCtx<'_>`).
@@ -65,11 +65,6 @@ pub struct OptCtx<'mem> {
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
     /// All per-run tuning knobs in one place.  See [`crate::OptOptions`].
     pub options: crate::OptOptions,
-    /// Shared `ValueId → SpExpr` decomposition cache.  Cleared by the
-    /// pipeline at every drain point (graph change), so a memoised entry
-    /// is valid within a pass and never stale across a changed iteration.
-    /// Crate-internal — only the SP-aware passes touch it.
-    pub(crate) sp_memo: crate::sp_expr::SpExprMemo,
     /// Output channel for the [`crate::IndirectBranchClassify`] post-pass:
     /// maps each **live** `IndirectBranch` placeholder the pass visited to
     /// its classification (`Some` when the dispatch target was recovered,
@@ -95,7 +90,6 @@ impl<'mem> OptCtx<'mem> {
         Self {
             rom,
             options: crate::OptOptions::default(),
-            sp_memo: crate::sp_expr::SpExprMemo::default(),
             indirect_resolutions: rustc_hash::FxHashMap::default(),
         }
     }
@@ -161,7 +155,7 @@ pub trait Optimizer: OptimizerClone {
     ///
     /// `edit` wraps the built function (entry is a valid `NodeId`); passes
     /// mutate through `edit`'s curated mutation-façade methods
-    /// (`create_node`, `update_input`, `set_stack_offset`, …) and read
+    /// (`create_node`, `update_input`, `set_stack_slot`, …) and read
     /// through `edit`'s deref to `Function` / `Graph`.
     ///
     /// `ctx` carries per-run state (currently the borrowed rom image);
@@ -198,6 +192,10 @@ pub trait Optimizer: OptimizerClone {
 /// Returns an error if `function` has not been built (no entry node — the
 /// built invariant `EditFunction::new` enforces), or the first error returned
 /// by [`Optimizer::apply`].
+/// Test-only: the production driver is [`OptimizerPipeline::run`]'s fixed-point
+/// loop; this single-pass runner exists for unit / integration tests only, so
+/// it is gated behind `test` / the `test-util` feature.
+#[cfg(any(test, feature = "test-util"))]
 pub fn run_one(
     pass: &dyn Optimizer,
     function: &mut strider_ir::Function,
@@ -222,6 +220,7 @@ pub fn run_one(
 ///
 /// Returns an error if `function` has not been built, or the first error
 /// returned by [`PostOptimizer::apply`].
+#[cfg(any(test, feature = "test-util"))]
 pub fn run_post(
     pass: &dyn PostOptimizer,
     function: &mut strider_ir::Function,
@@ -405,14 +404,13 @@ impl OptimizerPipeline {
                 for opt in &self.passes {
                     if opt.apply(&mut edit, ctx)?.changed() {
                         changed = true;
-                        // Drain + reset immediately after every pass that
-                        // changed the graph, so the NEXT pass in this same
-                        // iteration sees a culled graph and a fresh
-                        // SP-decomposition cache (a `ValueId → SpExpr` entry
-                        // may now be stale — its ValueId culled or its producer
-                        // rewritten).
+                        // Drain immediately after every pass that changed the
+                        // graph so the NEXT pass in this same iteration sees a
+                        // culled graph — and invalidate the SP-decomposition
+                        // memo, since a rewrite can change (or cull) the value a
+                        // cached verdict was computed for.
                         edit.clean();
-                        ctx.sp_memo.clear();
+                        edit.function().side_tables().clear_stack_slots();
                     }
                 }
                 if !changed {
@@ -427,14 +425,14 @@ impl OptimizerPipeline {
             }
             for opt in &self.post_passes {
                 // Post-passes run exactly once, in order, after convergence and
-                // return no Change/NoChange.  Drain + reset unconditionally
-                // after each one so the next post-pass sees a culled graph and
-                // a fresh SP-decomposition cache (a post-pass that edited the
-                // graph — e.g. CallStackArgCollect appending Call inputs — may
-                // have left dead nodes or stale memoised decompositions).
+                // return no Change/NoChange.  Drain after each so the next sees
+                // a culled graph.  The `stack_offsets` cache that
+                // `StackOffsetDetect` fills is NOT cleared here: later post-pass
+                // mutations (e.g. `CallStackArgCollect` appending Call inputs)
+                // don't change any address value's decomposition, so the filled
+                // slots stay valid and survive as the user-facing per-node SSoT.
                 opt.apply(&mut edit, ctx)?;
                 edit.clean();
-                ctx.sp_memo.clear();
             }
         } // edit + state dropped here → function borrow released
         strider_ir::validate::validate(function)?;

@@ -16,7 +16,7 @@
 //! which mirrors the IR's `Node → ValueData → Node` bipartite structure.
 //! `Pattern` instantiates it as `Graph<PatNode, PatValue, NeverCacheable>`
 //! (no dedup — every pattern node is distinct); `Template` as
-//! `Graph<TmplNode, TmplValue, NeverCacheable>`. The BiGraph-era read
+//! `Graph<TmplNode, TmplValue, NeverCacheable>`. The generic-graph read
 //! vocabulary the matcher / instantiation walk use is restored on top of
 //! the generic graph by `graph_ext`; the sparse per-input consumer slot
 //! rides on the node payload there.
@@ -80,6 +80,6 @@ pub use typed::{
     initial_var_for, inputs_of_width, int_binary, int_binary_any, int_bits_to_float, int_carry,
     int_cmp, int_cmp_any, int_const, int_const_any_of, int_const_with_fn, int_eq, int_le, int_lt,
     int_ne, int_sborrow, int_scarry, int_sle, int_slt, int_to_float, int_unary_any, lzcount, mul,
-    neg, not_, or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const, srem,
+    neg, or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const, srem,
     sshr, sub, truncate, value_of_width, var, xor, zero_extend,
 };

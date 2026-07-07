@@ -128,7 +128,7 @@ impl FunctionArgPat {
                         if want_space != *actual_space {
                             return false;
                         }
-                        matches!(f.side_tables().stack_offset(node), Some((_, off)) if off == want_offset)
+                        matches!(f.stack_offset(node), Some((_, off)) if off == want_offset)
                     }
                     _ => false,
                 }

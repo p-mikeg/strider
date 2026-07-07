@@ -1971,9 +1971,18 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
     let in_node = b.function().producer(inside);
     let post_node = b.function().producer(outside_post);
 
-    assert_eq!(b.function().side_tables().asm_fingerprint(pre_node), &[0x10]);
-    assert_eq!(b.function().side_tables().asm_fingerprint(in_node), &[0xC0DE]);
-    assert_eq!(b.function().side_tables().asm_fingerprint(post_node), &[0x10]);
+    assert_eq!(
+        b.function().side_tables().asm_fingerprint(pre_node),
+        rustc_hash::FxHashSet::from_iter([0x10])
+    );
+    assert_eq!(
+        b.function().side_tables().asm_fingerprint(in_node),
+        rustc_hash::FxHashSet::from_iter([0xC0DE])
+    );
+    assert_eq!(
+        b.function().side_tables().asm_fingerprint(post_node),
+        rustc_hash::FxHashSet::from_iter([0x10])
+    );
     Ok(())
 }
 

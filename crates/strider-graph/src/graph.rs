@@ -677,17 +677,6 @@ impl NodeIdRemap {
         self.nodes[old]
     }
 
-    /// Iterates over every `(old, new)` node-id pair that survived
-    /// compaction, in ascending old-id order. Dropped ids are skipped.
-    ///
-    /// Lets a consumer remap a `NodeId`-keyed side-table by draining each
-    /// surviving slot from its old key to its new key.
-    pub fn surviving_node_pairs(&self) -> impl Iterator<Item = (NodeId, NodeId)> + '_ {
-        self.nodes
-            .iter()
-            .filter_map(|(old, new)| new.map(|n| (old, n)))
-    }
-
     /// The post-compaction `ValueId` for `old`, or `None` if its producing
     /// node was dropped.
     #[inline]

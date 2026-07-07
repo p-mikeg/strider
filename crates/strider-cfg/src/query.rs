@@ -10,9 +10,8 @@ use crate::Result;
 /// Decides whether `target` is a tail call — i.e. lies outside the
 /// half-open function range `[start_addr, start_addr + fn_max_size)`.
 ///
-/// Shared by `crate::Builder::is_branch_tail_call_nocheck` (cfg-time
-/// classification) and `strider`'s orchestrator (post-cfg `Single(K)`
-/// resolution).  Both layers must agree on the predicate.
+/// Backs `crate::Builder::is_branch_tail_call_nocheck`, the cfg-time
+/// tail-call classification (`pub(crate)` — this crate is its only user).
 ///
 /// `allow_code_before_start_addr = true` disables the lower-bound check
 /// **only when `fn_max_size` is `None`** (relevant for binaries whose
@@ -29,7 +28,7 @@ use crate::Result;
 /// skipped entirely — every `target >= start_addr` (including `u64::MAX`)
 /// is in-range.  There is no address above the window to misclassify, so
 /// this is exact rather than an approximation.
-pub fn is_addr_tail_call(
+pub(crate) fn is_addr_tail_call(
     target: u64,
     start_addr: u64,
     fn_max_size: Option<u64>,

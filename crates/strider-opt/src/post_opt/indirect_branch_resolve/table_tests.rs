@@ -57,27 +57,27 @@ impl ReadOnlyMemory for RecordingRom {
 }
 
 /// Minimal `Graph` carrying nothing but the entry
-/// region terminated by a placeholder `IndirectBranch(anchor)`.  The
-/// caller-supplied closure builds the anchor's producer subtree.
-fn build_with_anchor(
-    anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
+/// region terminated by a placeholder `IndirectBranch(target)`.  The
+/// caller-supplied closure builds the target's producer subtree.
+fn build_with_target(
+    target_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
 ) -> (Function, ValueId) {
     let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
     let region = builder.create_region_all().expect("create_region");
     builder.set_entry_region_all(region).expect("set_entry_region");
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let anchor = anchor_inputs(&mut builder);
+    let target = target_inputs(&mut builder);
     builder
-        .build_indirect_branch(anchor)
+        .build_indirect_branch(target)
         .expect("build_indirect_branch");
     builder.set_lift_addr(None);
     let function = builder.build().expect("build");
-    (function, anchor)
+    (function, target)
 }
 
 /// The function's sole `IndirectBranch` placeholder — the node the table
-/// classifier now takes directly (it derives the dispatch anchor from the
+/// classifier now takes directly (it derives the dispatch target from the
 /// branch's slot-2 input and scopes the range query to it).
 fn sole_indirect_branch(f: &Function) -> NodeId {
     f.walk()
@@ -100,7 +100,7 @@ fn build_non_const_idx(fb: &mut FunctionBuilder) -> ValueId {
 fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
     // idx = (load) & 0x7 → bound 8 via KnownBits upper bound in the range pass.
     // Load[base + idx*stride] → resolves to Multiple of table[0..8].
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         // idx side: AND-masked to 0..7.
         let raw = fb.build_int_const(0xffff_ffffu64, ValueType::I32).unwrap();
         let mask = fb.build_int_const(0x7u64, ValueType::I32).unwrap();
@@ -145,9 +145,9 @@ fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
 fn classify_table_dispatch_duplicate_targets_are_deduped() {
     // idx = (load) & 0x3 → bound 4 via KnownBits.  The table's four entries
     // resolve to targets [0x10, 0x20, 0x10, 0x20] — two distinct addresses
-    // each appearing twice.  `enumerate_targets`'s `sort_unstable` + `dedup`
+    // each appearing twice.  the fold's `sort_unstable` + `dedup`
     // must collapse the four indices to a 2-element `Multiple([0x10, 0x20])`.
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         let raw = fb.build_int_const(0xffff_ffffu64, ValueType::I32).unwrap();
         let mask = fb.build_int_const(0x3u64, ValueType::I32).unwrap();
         let idx = fb
@@ -194,7 +194,7 @@ fn classify_table_dispatch_single_entry_bound_returns_multiple_of_one() {
     // classifier reads exactly one entry.  Pins that a one-entry table is
     // still classified as `Multiple` (with a single target), not `Single`
     // and not a defer.
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         let idx_src = build_non_const_idx(fb);
         let mask = fb.build_int_const(0u64, ValueType::I32).unwrap();
         let idx = fb
@@ -234,7 +234,7 @@ fn classify_table_dispatch_no_rom_returns_none() {
     // Bounded shape, but no rom configured → None.  Without rom
     // we can't read entries, and producing a Multiple without
     // entries is unsound.
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         let raw = fb.build_int_const(0xffff_ffffu64, ValueType::I32).unwrap();
         let mask = fb.build_int_const(0x3u64, ValueType::I32).unwrap();
         let idx = fb
@@ -267,7 +267,7 @@ fn classify_table_dispatch_no_rom_returns_none() {
 fn classify_table_dispatch_unbounded_idx_returns_none() {
     // Shape is jt-shaped, but `idx` is a raw load with no AND mask and
     // no dominating If guard.  Must return None, not a Multiple.
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         let some_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
         let idx = fb
             .build_load(some_addr, VnSpace::RAM, ValueType::I32)
@@ -306,7 +306,7 @@ fn classify_table_dispatch_unbounded_idx_returns_none() {
 #[test]
 fn classify_table_dispatch_defers_over_cap_resolves_under_cap() {
     let build = |mask: u64| {
-        build_with_anchor(move |fb| {
+        build_with_target(move |fb| {
             let idx_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
             let idx_raw = fb
                 .build_load(idx_addr, VnSpace::RAM, ValueType::I32)
@@ -372,7 +372,7 @@ fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
     // width check (255 < 0xFFFF_FFFF), so width alone would NOT reject it — only
     // the entry_load filter does.  Enumerating it would fold to a run of 256
     // bogus sequential targets, so the classifier must return None.
-    let (g, _anchor) = build_with_anchor(|fb| {
+    let (g, _target) = build_with_target(|fb| {
         // idx = ZeroExtend(Load[0x9000]:I8) — a width-bounded ([0,255]) table
         // entry, NOT a guarded/masked dispatch index.
         let byte_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
@@ -409,6 +409,201 @@ fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
     assert_eq!(
         result, None,
         "a width-bounded load-derived table entry must be excluded as the index"
+    );
+}
+
+#[test]
+fn classify_table_dispatch_resolves_shift_narrowed_loaded_index() {
+    // x86 instruction-decoder shape: index = (loaded_byte >> 5) — the top 3 bits
+    // of a byte, range [0,7].  The value IS load-derived, but the shift narrows
+    // it strictly BELOW the byte width, so it is a real index, not a width-only
+    // table entry.  (The former `is_load_derived && !is_and_masked` gate rejected
+    // this — a shift is not an AND-mask — leaving ~70% of x86emu's tables
+    // unresolved; the width-only gate accepts it.)  Must resolve to 8 targets.
+    let (g, _target) = build_with_target(|fb| {
+        let byte_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
+        let byte = fb
+            .build_load(byte_addr, VnSpace::RAM, ValueType::I8)
+            .expect("byte load");
+        let bwide = fb
+            .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+            .expect("zext byte");
+        let five = fb.build_int_const(5u64, ValueType::I32).unwrap();
+        let idx = fb
+            .build_int_binary_operation(bwide, five, IntBinaryOp::ShiftRight, ValueType::I32)
+            .expect("byte >> 5 → [0,7]");
+        let stride_c = fb.build_int_const(4u64, ValueType::I32).unwrap();
+        let mul = fb
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+            .expect("mul");
+        let base_c = fb.build_int_const(0x4000u64, ValueType::I32).unwrap();
+        let addr = fb
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+            .expect("add");
+        fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+            .expect("dispatch load")
+    });
+    let rom = MockRom::strided(
+        0x4000,
+        4,
+        vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
+        4,
+    );
+    let (known, doms) = make_known_and_doms(&g);
+    let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
+    let result = classify_table_dispatch(
+        &g,
+        sole_indirect_branch(&g),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    match result {
+        Some(ResolvedTargets::Multiple(ts)) => {
+            assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
+        }
+        other => panic!("shift-narrowed index must resolve; got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_table_dispatch_masked_full_byte_i32_resolves() {
+    // Adversarial pair to `excludes_width_bounded_table_entry_as_index`: this
+    // value ALSO spans [0,255], but it is `reg & 0xFF` typed I32 — there is no
+    // byte-typed producer to strip to, so `[0,255]` does NOT fill its (I32) type
+    // width.  It is a genuine 256-entry index and must resolve, proving the
+    // width test keys on the extend-stripped type, not merely on a `[0,255]`
+    // range.
+    let (g, _target) = build_with_target(|fb| {
+        let raw = build_non_const_idx(fb); // Load:I32, unbounded
+        let mask = fb.build_int_const(0xFFu64, ValueType::I32).unwrap();
+        let idx = fb
+            .build_int_binary_operation(raw, mask, IntBinaryOp::And, ValueType::I32)
+            .expect("reg & 0xFF → [0,255]");
+        let stride_c = fb.build_int_const(4u64, ValueType::I32).unwrap();
+        let mul = fb
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+            .expect("mul");
+        let base_c = fb.build_int_const(0x4000u64, ValueType::I32).unwrap();
+        let addr = fb
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+            .expect("add");
+        fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+            .expect("dispatch load")
+    });
+    let entries: Vec<u64> = (0..256).map(|i| 0x5000 + i).collect();
+    let rom = MockRom::strided(0x4000, 4, entries.clone(), 4);
+    let (known, doms) = make_known_and_doms(&g);
+    let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
+    let result = classify_table_dispatch(
+        &g,
+        sole_indirect_branch(&g),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    match result {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(ts, entries),
+        other => panic!("a masked full-byte I32 index must resolve; got {other:?}"),
+    }
+}
+
+#[test]
+fn decompose_index_picks_shallowest_narrowed_index() {
+    // Two bounded, non-width-only dominators of the same dispatch: a DEEP
+    // `reg & 0x3F` ([0,63]) and the SHALLOW `(reg & 0x3F) & 0x7` ([0,7]) that the
+    // address actually scales.  The index is the fully-narrowed value entering
+    // the address arithmetic (the shallow one).  Choosing the *deeper* looser
+    // ancestor was the bug that made guard-tightened dispatches over-enumerate
+    // and defer, so `decompose_index` must return the [0,7] node, not [0,63].
+    let (g, _target) = build_with_target(|fb| {
+        let raw = build_non_const_idx(fb);
+        let m63 = fb.build_int_const(0x3Fu64, ValueType::I32).unwrap();
+        let wide = fb
+            .build_int_binary_operation(raw, m63, IntBinaryOp::And, ValueType::I32)
+            .expect("reg & 0x3F → [0,63] (deep)");
+        let m7 = fb.build_int_const(0x7u64, ValueType::I32).unwrap();
+        let narrow = fb
+            .build_int_binary_operation(wide, m7, IntBinaryOp::And, ValueType::I32)
+            .expect("& 0x7 → [0,7] (shallow, the index)");
+        let stride_c = fb.build_int_const(4u64, ValueType::I32).unwrap();
+        let mul = fb
+            .build_int_binary_operation(narrow, stride_c, IntBinaryOp::Mul, ValueType::I32)
+            .expect("mul");
+        let base_c = fb.build_int_const(0x4000u64, ValueType::I32).unwrap();
+        let addr = fb
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+            .expect("add");
+        fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+            .expect("dispatch load")
+    });
+    let branch = sole_indirect_branch(&g);
+    let target_value = g.indirect_branch_target(branch);
+    let (known, doms) = make_known_and_doms(&g);
+    let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
+    match decompose_index(&g, &mut ranges, target_value, branch) {
+        Some((_v, iv)) => assert_eq!(
+            (iv.lo, iv.hi),
+            (0, 7),
+            "must pick the shallow narrowed [0,7] index, not the deeper [0,63]"
+        ),
+        None => panic!("expected an index candidate"),
+    }
+}
+
+#[test]
+fn classify_table_dispatch_defers_nonloaded_full_byte_index_conservatively() {
+    // Documents a deliberate CONSERVATISM of the width test: a 256-case switch on
+    // a byte REGISTER — idx = ZeroExtend(bl:i8), range [0,255] — is a real index,
+    // but its `[0,255]` fills the byte width and is indistinguishable (by range)
+    // from a loaded byte *entry*.  The width test rejects it, so the dispatch
+    // DEFERS.  This is sound (deferring never wires a wrong edge) and hasn't cost
+    // real coverage (byte indices in practice come through a load/mask/shift that
+    // narrows below the width); resolving it would need a load-source signal that
+    // a pure "skip loads" rule cannot supply without dropping guarded raw-loaded
+    // indices (see `orchestrator_resolves_unmasked_switch_via_value_range_x86`).
+    let bl = rsleigh::Vn {
+        addr_off: 0x0,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 1,
+    };
+    let mut b = RegisterSet::new().tracked(bl).build_fn().unwrap();
+    let region = b.create_region_all().unwrap();
+    b.set_entry_region_all(region).unwrap();
+    b.set_region(region);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let byte = b.read_variable(&bl).unwrap();
+    let idx = b
+        .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+        .expect("zext byte register");
+    let stride_c = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let mul = b
+        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+        .unwrap();
+    let base_c = b.build_int_const(0x4000u64, ValueType::I32).unwrap();
+    let addr = b
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+        .unwrap();
+    let loaded = b.build_load(addr, VnSpace::RAM, ValueType::I32).unwrap();
+    b.build_indirect_branch(loaded).unwrap();
+    b.set_lift_addr(None);
+    let function = b.build().unwrap();
+
+    let entries: Vec<u64> = (0..256).map(|i| 0x5000 + i).collect();
+    let rom = MockRom::strided(0x4000, 4, entries.clone(), 4);
+    let (known, doms) = make_known_and_doms(&function);
+    let mut ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
+    let result = classify_table_dispatch(
+        &function,
+        sole_indirect_branch(&function),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    let _ = entries;
+    assert_eq!(
+        result, None,
+        "a width-filling byte index is conservatively deferred (indistinguishable from an entry by range)"
     );
 }
 
@@ -688,7 +883,7 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
 /// arithmetic — that *also* sits under a dominating `if (entry < 4)` guard.
 ///
 /// The concern: the `entry_load` exclusion is dropped when a dominating
-/// guard is present, so this load-derived anchor would be enumerated as the
+/// guard is present, so this load-derived target would be enumerated as the
 /// index.  Substituting it with `IntConst(0..3)` makes the branch's dispatch
 /// value literally `0,1,2,3` — bogus sequential targets that are NOT real
 /// code addresses.
@@ -697,7 +892,7 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
 /// bug.  If it returns `None`, the over-approximation safety margin holds
 /// and no change is warranted.
 #[test]
-fn classify_table_dispatch_guarded_direct_load_anchor() {
+fn classify_table_dispatch_guarded_direct_load_target() {
     use strider_ir::IntCmpOp;
     let mut b = strider_ir_test_utils::empty_builder().unwrap();
     let entry = b.create_region_all().unwrap();
@@ -747,7 +942,7 @@ fn classify_table_dispatch_guarded_direct_load_anchor() {
     // index values as targets.
     assert_eq!(
         result, None,
-        "a guarded direct-load anchor must not enumerate its index values as \
+        "a guarded direct-load target must not enumerate its index values as \
          branch targets (got {result:?})"
     );
 }
@@ -935,7 +1130,7 @@ fn wire_two_target_array(
         .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .unwrap();
     // Use build_indirect_branch so the range analysis can locate the
-    // dispatch region via find_anchor_consumer_placeholder.
+    // dispatch region via find_target_consumer_placeholder.
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
 }

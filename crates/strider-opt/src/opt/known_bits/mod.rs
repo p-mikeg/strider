@@ -1,4 +1,4 @@
-use cranelift_entity::SecondaryMap;
+use cranelift_entity::{EntityRef, SecondaryMap};
 use entity_utils::Worklist;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
@@ -132,7 +132,7 @@ enum ShiftDir {
 /// over-width shift yields all-zeros.  Shared scaffolding for both arms — only
 /// the per-direction math differs.
 fn shift_known_bits(
-    ctx: &strider_ir::Function,
+    function: &strider_ir::Function,
     l: KnownBitsFacts,
     rhs: ValueId,
     rhs_kb: KnownBitsFacts,
@@ -143,7 +143,7 @@ fn shift_known_bits(
     // `type_mask_u128(ty)` before reaching the shift arms), so this is a
     // pure O(1) re-derivation of a value the caller already proved present.
     let type_mask = type_mask_u128(ty)?;
-    let rhs_mask = ctx
+    let rhs_mask = function
         .value_type_opt(rhs)
         .and_then(type_mask_u128)
         .unwrap_or(u128::MAX);
@@ -184,21 +184,21 @@ fn shift_known_bits(
 /// value output.  Returns `(output_id, KnownBitsFacts)` or `None` if the node has no
 /// integer value output or no useful information can be extracted.
 pub(crate) fn node_known_bits(
-    ctx: &strider_ir::Function,
+    function: &strider_ir::Function,
     node_id: NodeId,
     known: &KnownBitsMap,
 ) -> Result<Option<(ValueId, KnownBitsFacts)>> {
-    let kind = *ctx.node_kind(node_id);
+    let kind = *function.node_kind(node_id);
 
     // Find the first integer value output.
-    let Some(&out) = ctx
+    let Some(&out) = function
         .node_outputs(node_id)
         .iter()
-        .find(|&&o| ctx.value_kind(o).is_integer())
+        .find(|&&o| function.value_kind(o).is_integer())
     else {
         return Ok(None);
     };
-    let out_kind = ctx.value_kind(out);
+    let out_kind = function.value_kind(out);
     let ty = out_kind.as_value_or_err()?;
     // KnownBits tracks 64-bit masks only; types wider than I64 (I128/I256,
     // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
@@ -207,7 +207,7 @@ pub(crate) fn node_known_bits(
     };
 
     let kb = match kind {
-        NodeKind::IntConst(_) => match ctx
+        NodeKind::IntConst(_) => match function
             .int_const_u128(out)
             .and_then(|v| KnownBitsFacts::from_const(v, ty))
         {
@@ -219,7 +219,7 @@ pub(crate) fn node_known_bits(
 
         NodeKind::IntBinaryOp(op) => {
             // IntBinaryOp has exactly 2 inputs (validated structural invariant).
-            let [lhs, rhs] = ctx
+            let [lhs, rhs] = function
                 .graph()
                 .node_inputs_exact::<2>(node_id)
                 .expect("IntBinaryOp has 2 inputs per node signature");
@@ -256,7 +256,7 @@ pub(crate) fn node_known_bits(
                     // wrapped large literal shifts back into range,
                     // producing the wrong known-bits result for any
                     // literal shift at-or-past the type width.
-                    return Ok(shift_known_bits(ctx, l, rhs, r, ty, ShiftDir::Left)
+                    return Ok(shift_known_bits(function, l, rhs, r, ty, ShiftDir::Left)
                         .map(|facts| (out, facts)));
                 }
                 IntBinaryOp::ShiftRight => {
@@ -268,7 +268,7 @@ pub(crate) fn node_known_bits(
                     // `>= bit_width` returns 0 (sleigh/src/opbehavior.cc:432).
                     // Mirror that here — see the ShiftLeft arm for the
                     // pre-fix bug rationale.
-                    return Ok(shift_known_bits(ctx, l, rhs, r, ty, ShiftDir::Right)
+                    return Ok(shift_known_bits(function, l, rhs, r, ty, ShiftDir::Right)
                         .map(|facts| (out, facts)));
                 }
                 _ => return Ok(None),
@@ -289,7 +289,7 @@ pub(crate) fn node_known_bits(
         NodeKind::Truncate => {
             // Upper bits of the source are discarded; lower bits are preserved.
             // Truncate has exactly 1 input (validated structural invariant).
-            let [value] = ctx
+            let [value] = function
                 .graph()
                 .node_inputs_exact::<1>(node_id)
                 .expect("Truncate has 1 input per node signature");
@@ -303,11 +303,11 @@ pub(crate) fn node_known_bits(
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
             // Upper bits are explicitly zeroed by the extension.
             // Extend has exactly 1 input (validated structural invariant).
-            let [value] = ctx
+            let [value] = function
                 .graph()
                 .node_inputs_exact::<1>(node_id)
                 .expect("Extend has 1 input per node signature");
-            let input_kind = ctx.value_kind(value);
+            let input_kind = function.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
             // Bail when the input width is unsupported (I80/I128/I256) —
             // mirrors the SignExtend arm below.  Returning `Ok(None)`
@@ -330,11 +330,11 @@ pub(crate) fn node_known_bits(
             // is statically known, the entire upper region is determined;
             // otherwise we still pass the lower bits through.
             // Extend has exactly 1 input (validated structural invariant).
-            let [value] = ctx
+            let [value] = function
                 .graph()
                 .node_inputs_exact::<1>(node_id)
                 .expect("Extend has 1 input per node signature");
-            let input_kind = ctx.value_kind(value);
+            let input_kind = function.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
             let Some(input_mask) = type_mask_u128(input_ty) else {
                 return Ok(None);
@@ -367,11 +367,11 @@ pub(crate) fn node_known_bits(
         NodeKind::Popcount | NodeKind::Lzcount => {
             // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
             // Popcount / Lzcount have exactly 1 input (validated structural invariant).
-            let [value] = ctx
+            let [value] = function
                 .graph()
                 .node_inputs_exact::<1>(node_id)
                 .expect("Popcount / Lzcount have 1 input per node signature");
-            let input_kind = ctx.value_kind(value);
+            let input_kind = function.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
             let max_val = input_ty.bit_width() as u64;
             // `max_val == 0` ⇒ leading_zeros() == 64 ⇒ the subtraction is 0, so
@@ -452,7 +452,7 @@ fn propagates_known_bits(kind: &NodeKind) -> bool {
 /// panic-on-validator-invariant policy — the validator runs before KnownBits,
 /// so a reachable node always has its signature arity.  Well-formed graphs
 /// always converge.
-pub fn analyze(ctx: &strider_ir::Function) -> Result<KnownBitsMap> {
+pub fn analyze(function: &strider_ir::Function) -> Result<KnownBitsMap> {
     // Seed with every reachable node; consumers re-enqueue on input
     // change via `value_uses`.  `Worklist` is the shared dedup-FIFO
     // worklist used by ConstantFold and DeadBranchElimination — no
@@ -469,9 +469,9 @@ pub fn analyze(ctx: &strider_ir::Function) -> Result<KnownBitsMap> {
     // visit of each node already sees its inputs' facts — the monotone
     // worklist fixpoint converges to the same result from any seed order, but
     // RPO minimises the re-enqueue churn.
-    let mut work: Worklist<NodeId> = ctx.reverse_postorder_filter(|_| true).collect();
+    let mut work: Worklist<NodeId> = function.reverse_postorder_filter(|_| true).collect();
     while let Some(node_id) = work.dequeue() {
-        let Some((out, kb)) = node_known_bits(ctx, node_id, &known)? else {
+        let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
             continue;
         };
         // The transfer function recomputes `kb` from scratch from the
@@ -484,7 +484,7 @@ pub fn analyze(ctx: &strider_ir::Function) -> Result<KnownBitsMap> {
             continue;
         }
         known[out] = kb;
-        for (consumer, _idx) in ctx.graph().value_uses(out) {
+        for (consumer, _idx) in function.graph().value_uses(out) {
             work.enqueue(consumer);
         }
     }
@@ -507,13 +507,13 @@ pub struct KnownBits;
 impl Optimizer for KnownBits {
     fn apply(
         &self,
-        ctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &mut crate::OptCtx<'_>,
     ) -> crate::Result<OptimizationResult> {
         // Analyze pass — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).
-        let known = analyze(ctx.function())?;
+        let known = analyze(edit.function())?;
 
         // Rewrite pass — a flat iteration over the finished fixed-point map.
         // The fixpoint already happened in `analyze`, so a fully-determined
@@ -530,13 +530,13 @@ impl Optimizer for KnownBits {
         // non-zero `type_mask`.
         //
         // Collect the targets first (releasing the read borrow on `known` /
-        // `ctx`) before mutating, so the rewrite loop owns `&mut ctx`.
+        // `edit`) before mutating, so the rewrite loop owns `&mut edit`.
         let to_fold: Vec<(ValueId, ValueType, u128)> = known
             .iter()
             .filter_map(|(value, &kb)| {
                 // Skip outputs whose kind is not an integer value
                 // (control / memory / phi-token).
-                let ty = ctx.value_type_opt(value)?;
+                let ty = edit.value_type_opt(value)?;
                 if !ty.is_integer() {
                     return None;
                 }
@@ -548,8 +548,8 @@ impl Optimizer for KnownBits {
                 }
                 // Skip outputs whose producer is already an `IntConst`
                 // (folding it would be a no-op).
-                let producer = ctx.producer(value);
-                if matches!(*ctx.node_kind(producer), NodeKind::IntConst(_)) {
+                let producer = edit.producer(value);
+                if matches!(*edit.node_kind(producer), NodeKind::IntConst(_)) {
                     return None;
                 }
                 Some((value, ty, kb.ones))
@@ -572,32 +572,36 @@ impl Optimizer for KnownBits {
         // Many folds share a large upstream cone, so per-fold walking is
         // O(folds·cone).  Instead, precompute ONCE — over the pre-fold graph,
         // before the mutating `replace_value` cascade culls contributors — a
-        // memo of each cone node's fingerprint-address set.  Each fold then
-        // unions its inputs' memoized cone sets in O(arity).  The cone is
-        // acyclic (the propagates kinds are IntBinaryOp / Truncate / Extend /
-        // Popcount / Lzcount — never Phi / Region, the only sources of data
-        // cycles), so a memoized DFS needs no cycle handling.  Over-tainting
-        // WITHIN a contributor cone (e.g. both operands of `& 0`) is
-        // intentional — the fingerprint is a generous superset proof aid.
-        let cone_fps = build_cone_fingerprint_memo(ctx, &to_fold);
+        // memo of each cone node's contributor NODE set (pure graph structure —
+        // node ids + kinds, never a fingerprint read).  Each fold then absorbs
+        // its inputs' memoized cone nodes via O(1) `extend_asm_fingerprint_from`
+        // links.  The cone is acyclic (the propagates kinds are IntBinaryOp /
+        // Truncate / Extend / Popcount / Lzcount — never Phi / Region, the only
+        // sources of data cycles), so a memoized DFS needs no cycle handling.
+        // Over-tainting WITHIN a contributor cone (e.g. both operands of `& 0`)
+        // is intentional — the fingerprint is a generous superset proof aid.
+        let cone_nodes = build_cone_node_memo(edit, &to_fold);
 
         let mut result = OptimizationResult::NoChange;
         for (value, ty, ones) in to_fold {
-            let new_value = ctx.build_int_const(ones, ty)?;
-            let folded_producer = ctx.producer(value);
-            let new_producer = ctx.producer(new_value);
+            let new_value = edit.build_int_const(ones, ty)?;
+            let folded_producer = edit.producer(value);
+            let new_producer = edit.producer(new_value);
             // Seed from the producer's INPUT cones (the producer itself is
             // absorbed by `replace_value` below).  Mirrors the previous walk's
             // seeding exactly, so the resulting fingerprint set is identical.
-            for p in crate::peephole::input_producers(ctx, folded_producer) {
-                if let Some(addrs) = cone_fps.get(&p) {
-                    ctx.function_mut()
-                        .side_tables_mut().extend_asm_fingerprint(new_producer, addrs);
+            for p in crate::peephole::input_producers(edit, folded_producer) {
+                if let Some(cone) = cone_nodes.get(&p) {
+                    for &q in cone {
+                        edit.function_mut()
+                            .side_tables_mut()
+                            .extend_asm_fingerprint_from(new_producer, q);
+                    }
                 }
             }
             // `replace_value` absorbs the rewritten node's fingerprint into
             // the new const (superset-only union) and redirects every use.
-            if ctx.replace_value(value, new_value)? {
+            if edit.replace_value(value, new_value)? {
                 result = OptimizationResult::Changed;
             }
         }
@@ -605,65 +609,64 @@ impl Optimizer for KnownBits {
     }
 }
 
-/// The per-node set of asm-fingerprint addresses in a node's known-bits
-/// contributor cone (sorted, deduplicated).
-type ConeFps = smallvec::SmallVec<[u64; 8]>;
+/// The per-node set of contributor NODE ids in a node's known-bits cone
+/// (deduplicated).
+type ConeNodes = smallvec::SmallVec<[NodeId; 8]>;
 
 /// Precomputes, for every node in the known-bits contributor cone reachable
-/// from the `to_fold` producers' inputs, the union of asm-fingerprint
-/// addresses in that node's cone:
+/// from the `to_fold` producers' inputs, the set of contributor node ids in
+/// that node's cone:
 ///
-/// `cone_fps(n) = asm_fingerprint(n) ∪ (propagates(n) ? ⋃ₚ cone_fps(p) : ∅)`
+/// `cone(n) = {n} ∪ (propagates(n) ? ⋃ₚ cone(p) : ∅)`
 ///
-/// where `p` ranges over `n`'s input producers.  This exactly mirrors the
-/// per-fold DFS it replaces — every visited node contributes its own
-/// fingerprint and recursion continues only through `propagates_known_bits`
-/// kinds — but each node's set is computed once and returned from the memo on
-/// every revisit, so F folds sharing a cone of size C cost O(C) rather than
-/// O(F·C), while every fold still receives the FULL union (no attribution
-/// lost to a cross-fold visited set).
+/// where `p` ranges over `n`'s input producers.  This reads only graph
+/// structure (node ids + kinds) — never a fingerprint — so nothing is
+/// materialised here; the caller turns each cone node into an O(1)
+/// `extend_asm_fingerprint_from` link.  Every visited node contributes itself
+/// and recursion continues only through `propagates_known_bits` kinds; each
+/// node's set is computed once, so F folds sharing a cone of size C cost O(C)
+/// rather than O(F·C).
 ///
-/// Computed over the pre-fold graph before any `replace_value` runs:
-/// contributor fingerprints don't change during folding (only new const nodes
-/// are extended), so the snapshot is correct.  The cone is acyclic, so the
+/// Computed over the pre-fold graph before any `replace_value` runs, so the
+/// cone membership is a correct snapshot.  The cone is acyclic, so the
 /// iterative postorder needs no cycle handling.
-fn build_cone_fingerprint_memo(
-    ctx: &crate::EditFunction<'_>,
+fn build_cone_node_memo(
+    edit: &crate::EditFunction<'_>,
     to_fold: &[(ValueId, ValueType, u128)],
-) -> rustc_hash::FxHashMap<NodeId, ConeFps> {
-    let mut memo: rustc_hash::FxHashMap<NodeId, ConeFps> = rustc_hash::FxHashMap::default();
+) -> rustc_hash::FxHashMap<NodeId, ConeNodes> {
+    let mut memo: rustc_hash::FxHashMap<NodeId, ConeNodes> = rustc_hash::FxHashMap::default();
     // Iterative postorder: push (node, children_emitted). On first pop, push
     // the node back as `true` and push its propagates-children; on the second
     // pop, every child's set is in `memo`, so fold them in.
     let mut stack: Vec<(NodeId, bool)> = Vec::new();
     let seed_inputs = to_fold
         .iter()
-        .flat_map(|&(value, _, _)| crate::peephole::input_producers_iter(ctx, ctx.producer(value)));
+        .flat_map(|&(value, _, _)| crate::peephole::input_producers_iter(edit, edit.producer(value)));
     for n in seed_inputs {
         stack.push((n, false));
     }
     while let Some((n, expanded)) = stack.pop() {
         if expanded {
-            // Children resolved — assemble this node's set.
-            let mut addrs: ConeFps = ctx.function().side_tables().asm_fingerprint(n).iter().copied().collect();
-            if propagates_known_bits(ctx.node_kind(n)) {
-                for p in crate::peephole::input_producers_iter(ctx, n) {
+            // Children resolved — assemble this node's cone (itself + children).
+            let mut nodes: ConeNodes = smallvec::smallvec![n];
+            if propagates_known_bits(edit.node_kind(n)) {
+                for p in crate::peephole::input_producers_iter(edit, n) {
                     if let Some(child) = memo.get(&p) {
-                        addrs.extend_from_slice(child);
+                        nodes.extend_from_slice(child);
                     }
                 }
             }
-            addrs.sort_unstable();
-            addrs.dedup();
-            memo.insert(n, addrs);
+            nodes.sort_unstable_by_key(|id| id.index());
+            nodes.dedup();
+            memo.insert(n, nodes);
             continue;
         }
         if memo.contains_key(&n) {
             continue;
         }
         stack.push((n, true));
-        if propagates_known_bits(ctx.node_kind(n)) {
-            for p in crate::peephole::input_producers_iter(ctx, n) {
+        if propagates_known_bits(edit.node_kind(n)) {
+            for p in crate::peephole::input_producers_iter(edit, n) {
                 if !memo.contains_key(&p) {
                     stack.push((p, false));
                 }

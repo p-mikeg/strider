@@ -3,7 +3,7 @@
 //! [`Pattern`] wraps the generic [`strider_graph::Graph`] (with the
 //! always-allocate [`NeverCacheable`](strider_graph::NeverCacheable) policy)
 //! over the match payloads [`PatNode`] (an IR node) and [`PatValue`] (a node
-//! output), plus a cast-walk-through mask. The BiGraph-era read vocabulary
+//! output), plus a cast-walk-through mask. The generic-graph read vocabulary
 //! the matcher uses (`consumed_inputs` with per-edge slots, `derive_root`,
 //! …) is restored on the generic graph by [`crate::graph_ext`]; the
 //! imperative construction lives in

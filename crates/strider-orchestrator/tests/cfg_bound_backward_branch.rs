@@ -111,7 +111,7 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
     // remaining address MUST lie inside `target_fn`'s extent.
     let mut violators: Vec<(u64, &'static str)> = Vec::new();
     for nid in function.walk() {
-        for &addr in function.side_tables().asm_fingerprint(nid) {
+        for addr in function.side_tables().asm_fingerprint(nid) {
             if !(TARGET_FN..TARGET_FN_END).contains(&addr) {
                 let kind_label = match function.node_kind(nid) {
                     strider_ir::node::NodeKind::Call => "Call",

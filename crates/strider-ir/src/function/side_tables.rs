@@ -2,20 +2,51 @@
 //! grouped so [`crate::Function::new`] defaults them in one line and
 //! [`crate::Function::compact`] remaps them in one `SideTables::remap` call.
 
-use cranelift_entity::SecondaryMap;
-use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 
-use crate::graph::{NodeIdRemap, remap_node_keyed};
+use cranelift_entity::{entity_impl, SecondaryMap};
+use entity_utils::{EntityInterner, UnionDag};
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::graph::NodeIdRemap;
 use crate::node::{NodeId, ValueId};
+
+/// Interner key for a distinct stack-pointer decomposition `(base, offset)`.
+///
+/// The per-value [`SpDecomp`] slots store this small id instead of the
+/// `(ValueId, i128)` payload inline, so the dense `stack_offsets`
+/// [`SecondaryMap`] stays narrow (an id + tag) while the handful of genuinely
+/// distinct SP terminals live once in [`SideTables::stack_interner`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct StackId(u32);
+entity_impl!(StackId);
+
+/// Per-value stack-pointer decomposition verdict — the cached result of the
+/// optimizer's `decompose` over a value's address cone.
+///
+/// `Unknown` (the [`SecondaryMap`] default) means "not yet decomposed"; the two
+/// resolved states distinguish "provably not SP-rooted" from "SP-rooted at an
+/// interned `(base, offset)`".  Keeping all three is what lets the memo cache a
+/// negative result — a non-SP value is classified once, not re-walked on every
+/// query.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SpDecomp {
+    /// Not yet computed (the map default).
+    #[default]
+    Unknown,
+    /// Computed: the value is provably NOT an SP-rooted terminal.
+    NotStack,
+    /// Computed: the value decomposes to the interned `(base, offset)`.
+    Stack(StackId),
+}
 
 /// Drains an `FxHashMap` and rebuilds it through a per-entry translation,
 /// keeping only entries `f` maps to `Some((new_key, new_payload))`.
 ///
-/// The Vn-keyed / `ValueId`-keyed / index-keyed overlay maps in
-/// [`crate::Function::compact`] each remap a different facet (the key, the payload,
-/// or a payload `Vec`), so they don't fit the `NodeId`-keyed
-/// [`remap_node_keyed`] shape — this folds their shared drain-rebuild loop
-/// behind a single closure.
+/// Every `NodeId`- / `ValueId`- / Vn- / index-keyed overlay map in
+/// [`crate::Function::compact`] remaps a different facet (the key, the payload,
+/// or both), so this folds their shared drain-rebuild loop behind a single
+/// closure.
 fn remap_hashmap<K, V, NK, NV>(
     map: &mut FxHashMap<K, V>,
     mut f: impl FnMut(K, V) -> Option<(NK, NV)>,
@@ -43,17 +74,17 @@ where
 pub struct SideTables {
     /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
     /// nodes.
-    pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
-    /// Per-node sorted-deduplicated list of machine-instruction addresses
-    /// whose lifting or rewrite contributed to the node's value.
-    // `SmallVec<[u64; 2]>` because the common case is 1–2 contributor
-    // addresses per node.  Inlining those avoids a heap allocation per
-    // non-empty entry — on graphs with thousands of nodes this drops
-    // thousands of small allocations from the lift+optimize pipeline.
-    // The mutation API (`extend_asm_fingerprint`,
-    // `extend_asm_fingerprint_from`) keeps using `&[u64]` /
-    // `impl IntoIterator<Item = u64>` so callers are unaffected.
-    asm_fingerprints: SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
+    // Sparse: only CallOther nodes carry a name.
+    pub(crate) call_other_names: FxHashMap<NodeId, String>,
+    /// Per-node set of machine-instruction addresses whose lifting or rewrite
+    /// contributed to the node's value.
+    // A deferred-union DAG so `extend_asm_fingerprint_from` (the hot path — a
+    // rewrite absorbing its matched interior's proof) is O(1): it links the two
+    // nodes instead of copying/merging address lists.  A node's full set is
+    // materialised only on the rare read (`asm_fingerprint`) by walking its
+    // ancestors.  The union count runs into the millions on large functions;
+    // the old sorted-merge storage made each absorb O(N).
+    asm_fingerprints: UnionDag<NodeId, u64>,
     /// The varnode a value *represents*, keyed by [`ValueId`].  Two
     /// disjoint populations share this one map:
     ///
@@ -98,17 +129,34 @@ pub struct SideTables {
     /// Populated by `FunctionArgDetect`; empty until that pass runs.
     arg_index_to_values: FxHashMap<u32, Vec<ValueId>>,
     /// Stack slot for Store/Load nodes whose address decomposes to
-    /// `base + K` for a single concrete `K`, where `base` is the SP-derived
-    /// terminal node (`InitialVar(sp)` or an alignment-masked `sp & -16`).
-    /// Stored as `(base, K)`: the offset `K` is only meaningful relative to
-    /// its `base`, and two accesses are the same slot iff they share both.
-    /// Populated by the `StackOffsetDetect` classifier.  The phi-of-offsets
-    /// case (address is a phi of different constants per branch) is not
-    /// recorded — consumers can re-decompose via `decompose_sp` if needed.
-    stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>>,
+    /// The optimizer's stack-pointer decomposition memo, keyed by the *value*
+    /// whose address cone was analysed: `value → SpDecomp`, where a
+    /// [`SpDecomp::Stack`] resolves through [`Self::stack_interner`] to a
+    /// `(base, offset)` — `base` is the SP-derived terminal (`InitialVar(sp)`
+    /// or an alignment-masked `sp & -16`) and the offset is only meaningful
+    /// relative to it (two accesses are the same slot iff they share both).
+    ///
+    /// This is the single home for SP-decomposition results: the optimizer's
+    /// `decompose` writes it (caching negatives too), and the user-facing
+    /// per-node accessor [`crate::Function::stack_offset`] derives a
+    /// Store/Load's slot by looking up its address value here.  Volatile during
+    /// the optimizer's fixed point (cleared on graph mutation via
+    /// [`Self::clear_stack_slots`]) and stably (re)filled once the graph is
+    /// frozen.
+    ///
+    /// Behind a `RefCell` so the read-only `decompose` — whose memory-SSA /
+    /// range-scoped callers hold `&Function` — can memoize each verdict on a
+    /// miss.  This is a pure cache: interior mutability changes nothing an
+    /// observer can see except query latency, so it does not make the IR itself
+    /// mutable-through-`&`.
+    stack_offsets: RefCell<SecondaryMap<ValueId, SpDecomp>>,
+    /// Deduplicates the `(base, offset)` payloads that [`SpDecomp::Stack`] slots
+    /// reference, so the dense `stack_offsets` map stores only a [`StackId`].
+    stack_interner: RefCell<EntityInterner<StackId, (ValueId, i128)>>,
     /// Per-output case addresses for a [`crate::node::NodeKind::Switch`]
     /// node: raw target addresses (no arena ids), one per switch output.
-    switch_targets: SecondaryMap<NodeId, Vec<u64>>,
+    // Sparse: only Switch nodes carry targets — see `stack_offsets`.
+    switch_targets: FxHashMap<NodeId, Vec<u64>>,
     /// O(1) [`crate::node::InitialVnId`] → `InitialVar(id)` node-id accelerator
     /// for indirect-resolve sites and the lifter's lazy `read_or_init_var`
     /// fallback.  Keyed by the tracked-varnode id (not the raw `rsleigh::Vn`)
@@ -139,7 +187,7 @@ impl SideTables {
     /// recorded for that node.
     #[inline]
     pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
-        self.call_other_names[node_id].as_deref()
+        self.call_other_names.get(&node_id).map(String::as_str)
     }
 
     /// Records the user-op `name` for a [`crate::node::NodeKind::CallOther`]
@@ -147,7 +195,7 @@ impl SideTables {
     /// or a test) stamps the name here after building the node.
     #[inline]
     pub fn set_call_other_name(&mut self, node_id: NodeId, name: impl Into<String>) {
-        self.call_other_names[node_id] = Some(name.into());
+        self.call_other_names.insert(node_id, name.into());
     }
 
     /// Records `cc` as the per-`Call` override calling convention for
@@ -184,94 +232,148 @@ impl SideTables {
         self.arg_index_to_values.keys().copied()
     }
 
-    /// Returns the stack slot `(base, offset)` recorded for a Store/Load node,
-    /// or `None`.  `base` is the SP-derived terminal node the offset is
-    /// relative to; offsets compare only when their bases match.
+    /// The raw decomposition verdict cached for `value` (`Unknown` if the value
+    /// has not been decomposed).
     #[inline]
-    pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i128)> {
-        self.stack_offsets[id]
+    pub fn stack_slot(&self, value: ValueId) -> SpDecomp {
+        self.stack_offsets.borrow()[value]
     }
 
-    /// Records a concrete stack slot `(base, offset)` for a Store/Load node.
+    /// The resolved stack slot `(base, offset)` for `value`, or `None` when it
+    /// is unknown or provably not SP-rooted.  `base` is the SP-derived terminal
+    /// the offset is relative to; offsets compare only when their bases match.
     #[inline]
-    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i128) {
-        self.stack_offsets[id] = Some((base, offset));
+    pub fn stack_slot_resolved(&self, value: ValueId) -> Option<(ValueId, i128)> {
+        match self.stack_offsets.borrow()[value] {
+            SpDecomp::Stack(id) => self.stack_interner.borrow().get(id).copied(),
+            SpDecomp::Unknown | SpDecomp::NotStack => None,
+        }
+    }
+
+    /// Caches that `value` decomposes to the SP terminal `base` plus `offset`.
+    /// Takes `&self` (interior mutability) so the read-only decomposer can
+    /// memoize through a shared `&Function`.
+    #[inline]
+    pub fn set_stack_slot(&self, value: ValueId, base: ValueId, offset: i128) {
+        let id = self.stack_interner.borrow_mut().intern((base, offset));
+        self.stack_offsets.borrow_mut()[value] = SpDecomp::Stack(id);
+    }
+
+    /// Caches that `value` is provably NOT SP-rooted (a negative memo entry).
+    #[inline]
+    pub fn set_stack_slot_not(&self, value: ValueId) {
+        self.stack_offsets.borrow_mut()[value] = SpDecomp::NotStack;
+    }
+
+    /// Drops every cached decomposition — the optimizer calls this after a graph
+    /// mutation so a memoized verdict never outlives the graph it was computed
+    /// against.  The interner is reset too, since its ids are referenced only by
+    /// the now-cleared slots.
+    #[inline]
+    pub fn clear_stack_slots(&self) {
+        self.stack_offsets.borrow_mut().clear();
+        *self.stack_interner.borrow_mut() = EntityInterner::new();
     }
 
     /// Returns the per-output case addresses recorded for a
     /// [`crate::node::NodeKind::Switch`] node, or `&[]` if none.
     #[inline]
     pub fn switch_targets(&self, id: NodeId) -> &[u64] {
-        self.switch_targets[id].as_slice()
+        self.switch_targets.get(&id).map_or(&[], Vec::as_slice)
     }
 
     /// Records the per-output case addresses for a
     /// [`crate::node::NodeKind::Switch`] node.
     #[inline]
     pub fn set_switch_targets(&mut self, id: NodeId, targets: Vec<u64>) {
-        self.switch_targets[id] = targets;
+        self.switch_targets.insert(id, targets);
     }
 
-    /// Returns the asm-instruction-address fingerprint of `id` as a
-    /// sorted-deduplicated slice (empty when nothing was recorded).
+    /// Returns the asm-instruction-address fingerprint of `id` as an unordered
+    /// set (empty when nothing was recorded).  Materialised on demand by
+    /// walking the deferred-union DAG; callers that need a stable order sort
+    /// the result themselves.
+    pub fn asm_fingerprint(&self, id: NodeId) -> FxHashSet<u64> {
+        let mut set = FxHashSet::default();
+        self.asm_fingerprints.for_each(id, |addr| {
+            set.insert(addr);
+        });
+        set
+    }
+
+    /// Whether `id` has no recorded fingerprint.  O(1) — no materialisation.
     #[inline]
-    pub fn asm_fingerprint(&self, id: NodeId) -> &[u64] {
-        self.asm_fingerprints[id].as_slice()
+    pub fn asm_fingerprint_is_empty(&self, id: NodeId) -> bool {
+        self.asm_fingerprints.is_empty(id)
     }
 
-    /// Unions `contributors` into `node_id`'s fingerprint, kept sorted and
-    /// deduplicated.  Existing entries are never removed (the no-shrink
-    /// contract).  Empty `contributors` is a no-op.
+    /// Unions `contributors` into `node_id`'s fingerprint.  Existing entries
+    /// are never removed (the no-shrink contract).  Empty `contributors` is a
+    /// no-op.
     pub fn extend_asm_fingerprint(&mut self, node_id: NodeId, contributors: &[u64]) {
-        if contributors.is_empty() {
-            return;
+        for &addr in contributors {
+            self.asm_fingerprints.extend(node_id, addr);
         }
-        // Both existing and `contributors` are tiny (a handful of addresses),
-        // so extend + sort + dedup is the right wheel.
-        let fp = &mut self.asm_fingerprints[node_id];
-        fp.extend_from_slice(contributors);
-        fp.sort_unstable();
-        fp.dedup();
     }
 
-    /// Unions the fingerprint of `src` into `dst`.  Self-extension
-    /// (`src == dst`) is a no-op.
+    /// Unions the fingerprint of `src` into `dst` in O(1) (a DAG link, no
+    /// copy).  Self-extension (`src == dst`) is a no-op.
     pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
         if dst == src {
             return;
         }
-        let src_slice: smallvec::SmallVec<[u64; 4]> =
-            self.asm_fingerprints[src].iter().copied().collect();
-        self.extend_asm_fingerprint(dst, &src_slice);
+        self.asm_fingerprints.union(dst, src);
     }
 
     /// Remaps every arena-id key / value through `remap` after a
     /// `retain_reachable` compaction; an entry whose node or value did not
     /// survive is dropped.  Called once by [`crate::Function::compact`].
     pub(crate) fn remap(&mut self, remap: &NodeIdRemap) {
-        // NodeId-keyed tables: translate the key, drop pruned nodes.
-        remap_node_keyed(&mut self.call_other_names, remap);
-        remap_node_keyed(&mut self.asm_fingerprints, remap);
-        remap_node_keyed(&mut self.switch_targets, remap);
+        // NodeId-keyed sparse maps: translate the key, drop pruned nodes.
+        self.asm_fingerprints
+            .remap(|old| remap.node_old_to_new(old));
+        self.call_other_names = remap_hashmap(&mut self.call_other_names, |old, name| {
+            remap.node_old_to_new(old).map(|n| (n, name))
+        });
+        self.switch_targets = remap_hashmap(&mut self.switch_targets, |old, targets| {
+            remap.node_old_to_new(old).map(|n| (n, targets))
+        });
         self.call_cc = remap_hashmap(&mut self.call_cc, |old, cc| {
             remap.node_old_to_new(old).map(|n| (n, cc))
         });
-        // `stack_offsets`: the only NodeId-keyed table whose VALUE also
-        // references a node (the slot `base`, a `ValueId`); remap both.
-        let mut new_stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i128)>> =
-            SecondaryMap::new();
-        for (old_id, slot) in self.stack_offsets.iter() {
-            let Some((old_base, off)) = *slot else {
-                continue;
-            };
-            if let (Some(new_id), Some(new_base)) = (
-                remap.node_old_to_new(old_id),
-                remap.value_old_to_new(old_base),
-            ) {
-                new_stack_offsets[new_id] = Some((new_base, off));
+        // `stack_offsets`: ValueId-keyed, and each `Stack` slot references an
+        // interned `(base, offset)` whose `base` is also a ValueId.  Rebuild the
+        // interner (remapping every base; dropping a slot whose base or key did
+        // not survive) and the dense map together, translating each surviving
+        // key.
+        let (new_slots, new_interner) = {
+            let old_slots = self.stack_offsets.borrow();
+            let old_interner = self.stack_interner.borrow();
+            let mut new_interner: EntityInterner<StackId, (ValueId, i128)> = EntityInterner::new();
+            let mut new_slots: SecondaryMap<ValueId, SpDecomp> = SecondaryMap::new();
+            for (old_value, slot) in old_slots.iter() {
+                let Some(new_value) = remap.value_old_to_new(old_value) else {
+                    continue;
+                };
+                let new_slot = match *slot {
+                    SpDecomp::Unknown => continue,
+                    SpDecomp::NotStack => SpDecomp::NotStack,
+                    SpDecomp::Stack(id) => {
+                        let Some(&(old_base, off)) = old_interner.get(id) else {
+                            continue;
+                        };
+                        match remap.value_old_to_new(old_base) {
+                            Some(new_base) => SpDecomp::Stack(new_interner.intern((new_base, off))),
+                            None => continue,
+                        }
+                    }
+                };
+                new_slots[new_value] = new_slot;
             }
-        }
-        self.stack_offsets = new_stack_offsets;
+            (new_slots, new_interner)
+        };
+        *self.stack_offsets.get_mut() = new_slots;
+        *self.stack_interner.get_mut() = new_interner;
         // `value_vn`: ValueId-keyed (a phi / clobber output); translate keys.
         // The `InitialVnId` payload is stable across compaction, so it passes
         // through unchanged.
@@ -299,3 +401,45 @@ impl SideTables {
             });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cranelift_entity::EntityRef;
+
+    // The union accumulates each node's fingerprint as a deduplicated set
+    // regardless of incoming order, folding new contributors into a large
+    // existing set — never dropping an entry.
+    #[test]
+    fn extend_asm_fingerprint_unions_deduped() {
+        let mut st = SideTables::default();
+        let n = NodeId::new(3);
+
+        // Empty → seed; contributors may arrive unsorted.
+        st.extend_asm_fingerprint(n, &[40, 10, 30, 20, 50]);
+        assert_eq!(st.asm_fingerprint(n), FxHashSet::from_iter([10, 20, 30, 40, 50]));
+
+        // Merge into the (now non-empty) fp: unsorted, one duplicate (20), the
+        // rest new — result is the full union (no shrink).
+        st.extend_asm_fingerprint(n, &[35, 20, 5, 45]);
+        assert_eq!(
+            st.asm_fingerprint(n),
+            FxHashSet::from_iter([5, 10, 20, 30, 35, 40, 45, 50])
+        );
+
+        // Merging a subset changes nothing (pure union, idempotent).
+        st.extend_asm_fingerprint(n, &[10, 50]);
+        assert_eq!(
+            st.asm_fingerprint(n),
+            FxHashSet::from_iter([5, 10, 20, 30, 35, 40, 45, 50])
+        );
+
+        // Empty contributors is a no-op.
+        st.extend_asm_fingerprint(n, &[]);
+        assert_eq!(
+            st.asm_fingerprint(n),
+            FxHashSet::from_iter([5, 10, 20, 30, 35, 40, 45, 50])
+        );
+    }
+}
+

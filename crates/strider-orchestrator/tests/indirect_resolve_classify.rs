@@ -1,11 +1,11 @@
 //! Integration tests for
-//! [`strider_orchestrator::opt::classify_anchor`].
+//! [`strider_orchestrator::opt::classify_target`].
 //!
 //! Each test builds a real CFG from synthetic machine code, lifts it
 //! to IR via `Lifter::build_ir` (which returns an `LiftOutcome`
 //! carrying the `unresolved_branches` placeholder list), runs the
-//! strider optimiser pipeline, then calls `classify_anchor` on the
-//! placeholder anchor that was recorded at lift time.  The fixture
+//! strider optimiser pipeline, then calls `classify_target` on the
+//! placeholder target that was recorded at lift time.  The fixture
 //! builders live in `common::indirect_resolve_helpers`.
 //!
 //! These tests exercise the classifier end-to-end against optimised IR
@@ -20,10 +20,10 @@ use strider_cfg::ResolvedTargets;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
 use strider_orchestrator::opt::value_range::compute_value_ranges;
-use strider_orchestrator::opt::{AliasMode, analyze_known_bits, classify_anchor};
+use strider_orchestrator::opt::{AliasMode, analyze_known_bits, classify_target};
 
-/// The fixture's sole `IndirectBranch` placeholder — the node `classify_anchor`
-/// now takes (it derives the dispatch anchor from the branch's slot-2 input and
+/// The fixture's sole `IndirectBranch` placeholder — the node `classify_target`
+/// now takes (it derives the dispatch target from the branch's slot-2 input and
 /// scopes the range query to it).
 fn sole_branch(f: &strider_ir::Function) -> strider_ir::node::NodeId {
     f.walk()
@@ -32,12 +32,12 @@ fn sole_branch(f: &strider_ir::Function) -> strider_ir::node::NodeId {
 }
 
 /// Test helper: recomputes `analyze_known_bits`, dominators, and ranges,
-/// then calls `classify_anchor` with no rom.
-fn classify_anchor_bare(view: &strider_ir::Function) -> anyhow::Result<Option<ResolvedTargets>> {
+/// then calls `classify_target` with no rom.
+fn classify_target_bare(view: &strider_ir::Function) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
     let doms = strider_ir::control_dominators(view);
     let mut ranges = compute_value_ranges(view, &doms, &known);
-    Ok(classify_anchor(
+    Ok(classify_target(
         view,
         sole_branch(view),
         None,
@@ -63,8 +63,8 @@ use common::indirect_resolve_helpers::{
 /// then sees `IntConst(K)` and returns `Single(K)`.
 #[test]
 fn int_const_to_single() {
-    let (function, _anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
-    let result = classify_anchor_bare(&function).expect("classify");
+    let (function, _target) = build_int_const_target_scenario_via_stack(0x0000_0123);
+    let result = classify_target_bare(&function).expect("classify");
     assert_eq!(result, Some(ResolvedTargets::Single(0x0000_0123)));
 }
 
@@ -75,8 +75,8 @@ fn int_const_to_single() {
 /// exactly the shape the classifier's LinkRegister arm matches.
 #[test]
 fn initial_var_lr_to_link_register() {
-    let (function, _anchor, _lr_vn) = build_bx_lr_scenario();
-    let result = classify_anchor_bare(&function).expect("classify");
+    let (function, _target, _lr_vn) = build_bx_lr_scenario();
+    let result = classify_target_bare(&function).expect("classify");
     assert_eq!(result, Some(ResolvedTargets::LinkRegister));
 }
 
@@ -87,10 +87,10 @@ fn initial_var_lr_to_link_register() {
 /// configured — `InitialVar(rax)`'s VN cannot equal a `None` lr.
 #[test]
 fn initial_var_non_lr_returns_none() {
-    let (function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let (function, _target) = build_initial_var_target_scenario_x86_64();
     // No link register on x86_64; the classifier must not classify
     // `InitialVar(rax)` as LinkRegister.
-    let result = classify_anchor_bare(&function).expect("classify");
+    let result = classify_target_bare(&function).expect("classify");
     assert_eq!(result, None);
 }
 
@@ -117,8 +117,8 @@ fn initial_var_non_lr_returns_none() {
 /// for the full argument.
 #[test]
 fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
-    let (function, _anchor, _lr_vn) = build_pop_pc_via_stack_load_forward_scenario();
-    let result = classify_anchor_bare(&function).expect("classify");
+    let (function, _target, _lr_vn) = build_pop_pc_via_stack_load_forward_scenario();
+    let result = classify_target_bare(&function).expect("classify");
     assert_eq!(
         result,
         Some(ResolvedTargets::LinkRegister),
@@ -147,8 +147,8 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 #[test]
 fn push_target_pop_pc_does_not_resolve_to_link_register() {
     let target = 0x1000u64;
-    let (function, _anchor, _lr_vn) = build_push_target_pop_pc_scenario(target);
-    let result = classify_anchor_bare(&function).expect("classify");
+    let (function, _target, _lr_vn) = build_push_target_pop_pc_scenario(target);
+    let result = classify_target_bare(&function).expect("classify");
     assert_eq!(
         result,
         Some(ResolvedTargets::Single(target)),
@@ -167,7 +167,7 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
 //
 // The unified table-dispatch arm's SP-rooted base
 // (`strider_orchestrator::opt::classify_table_dispatch`) is reached via
-// `classify_anchor` when the anchor is a `Load`/`And` and an SP varnode
+// `classify_target` when the target is a `Load`/`And` and an SP varnode
 // is supplied.  These tests pin the
 // end-to-end shape: N constants stored at contiguous SP-relative
 // offsets, dispatch via `Load[(sp + base) + (idx & MASK) * stride]`,
@@ -182,12 +182,12 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
 #[test]
 fn stack_array_two_targets_resolves_to_multiple() {
     let targets = [0x401190u64, 0x401180u64];
-    let (function, _anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
+    let (function, _target, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
     let view: &strider_ir::Function = &function;
     let known = analyze_known_bits(view).expect("analyze_known_bits");
     let doms = strider_ir::control_dominators(view);
     let mut ranges = compute_value_ranges(view, &doms, &known);
-    let result = classify_anchor(
+    let result = classify_target(
         view,
         sole_branch(view),
         None,
@@ -206,12 +206,12 @@ fn stack_array_two_targets_resolves_to_multiple() {
 #[test]
 fn stack_array_four_targets_resolves_to_multiple() {
     let targets = [0x401_0a0u64, 0x401_0b0, 0x401_0c0, 0x401_0d0];
-    let (function, _anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
+    let (function, _target, _sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
     let view: &strider_ir::Function = &function;
     let known = analyze_known_bits(view).expect("analyze_known_bits");
     let doms = strider_ir::control_dominators(view);
     let mut ranges = compute_value_ranges(view, &doms, &known);
-    let result = classify_anchor(
+    let result = classify_target(
         view,
         sole_branch(view),
         None,
@@ -226,7 +226,7 @@ fn stack_array_four_targets_resolves_to_multiple() {
 /// Spec test #15: opaque target produces `None`/Unresolved (no
 /// error inside the resolver).  The orchestrator is responsible for
 /// surfacing `UnresolvedIndirectBranch` at fixed point if every
-/// iteration's classifier returns `None` for the same anchor.
+/// iteration's classifier returns `None` for the same target.
 ///
 /// We reuse the x86_64 `jmp *rax` fixture from
 /// `initial_var_non_lr_returns_none` — the producer is
@@ -234,8 +234,8 @@ fn stack_array_four_targets_resolves_to_multiple() {
 /// must treat as opaque (None) rather than erroring.
 #[test]
 fn opaque_target_returns_none() {
-    let (function, _anchor) = build_initial_var_target_scenario_x86_64();
-    let result = classify_anchor_bare(&function).expect("classify");
+    let (function, _target) = build_initial_var_target_scenario_x86_64();
+    let result = classify_target_bare(&function).expect("classify");
     assert_eq!(
         result, None,
         "opaque target must classify as None — no panic, no error, no \
@@ -243,26 +243,26 @@ fn opaque_target_returns_none() {
     );
 }
 
-/// Regression: calling `classify_anchor` twice on the
+/// Regression: calling `classify_target` twice on the
 /// same graph (without optimization between calls) must produce the
 /// same verdict.  Pins the invariant that no per-call state leaks
 /// between invocations — every call recomputes `analyze_known_bits`
 /// from the current graph state.
 ///
 /// Concrete failure mode this would catch: a future refactor caching
-/// the `KnownBitsMap` across `classify_anchor` calls without
+/// the `KnownBitsMap` across `classify_target` calls without
 /// invalidating the cache when the graph changes.  Two consecutive
 /// calls on an unchanged graph would still agree by luck; this test
 /// pins agreement on consecutive calls so a stale-cache bug shows up
 /// the moment someone adds the cache without proper invalidation.
 #[test]
-fn classify_anchor_is_idempotent_on_unchanged_graph() {
-    let (function, _anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
-    let first = classify_anchor_bare(&function).expect("classify #1");
-    let second = classify_anchor_bare(&function).expect("classify #2");
+fn classify_target_is_idempotent_on_unchanged_graph() {
+    let (function, _target) = build_int_const_target_scenario_via_stack(0x0000_0123);
+    let first = classify_target_bare(&function).expect("classify #1");
+    let second = classify_target_bare(&function).expect("classify #2");
     assert_eq!(
         first, second,
-        "two consecutive classify_anchor calls on an unchanged graph must agree",
+        "two consecutive classify_target calls on an unchanged graph must agree",
     );
     assert_eq!(first, Some(ResolvedTargets::Single(0x0000_0123)));
 }
@@ -279,7 +279,7 @@ fn classify_anchor_is_idempotent_on_unchanged_graph() {
 // NOT guarantee: it only saw one region's pcode and could not know that x30
 // was clobbered by a prior Call in a different (or the same) region.  The
 // rebuild-driven approach classifies at the FULL-FUNCTION IR level, so the
-// clobbered x30 value is already in the graph — `classify_anchor` naturally
+// clobbered x30 value is already in the graph — `classify_target` naturally
 // sees the Call's output rather than the function-entry value.
 
 /// Fixture builder for the LR-clobber scenario.
@@ -288,7 +288,7 @@ fn classify_anchor_is_idempotent_on_unchanged_graph() {
 ///   0x1000:  bl 0x1010    ; call (clobbers x30 = lr with return addr 0x1004)
 ///   0x1004:  br x30       ; indirect branch through x30 → placeholder
 ///
-/// After the stable optimiser runs, the placeholder's anchor value is
+/// After the stable optimiser runs, the placeholder's target value is
 /// the Call's clobber output for x30, NOT `InitialVar(x30)`.
 fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::Value, rsleigh::Vn) {
     use rsleigh::mem_readers::BufMemReader;
@@ -346,9 +346,9 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
         "lr-clobber fixture must have exactly one IR-level placeholder (the br x30)",
     );
 
-    let anchor = common::indirect_resolve_helpers::orchestrator::anchor_value_input(&function)
+    let target = common::indirect_resolve_helpers::orchestrator::target_value_input(&function)
         .expect("lr-clobber fixture must have one IndirectBranch placeholder after optimisation");
-    (function, anchor, lr_vn)
+    (function, target, lr_vn)
 }
 
 /// Soundness gate: after a `bl` (which clobbers x30/lr), a `br x30`
@@ -362,7 +362,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
 /// At the full-function IR level the Call's clobber for x30 is visible.
 /// Here, `bl 0x1010` from address 0x1000 stores the return address 0x1004
 /// in x30: after ConstantFold the Call's x30 clobber output resolves to
-/// `IntConst(0x1004)`.  `classify_anchor` then returns `Single(0x1004)`,
+/// `IntConst(0x1004)`.  `classify_target` then returns `Single(0x1004)`,
 /// correctly identifying the branch as jumping to the literal return
 /// address — NOT a return to the function's caller (LinkRegister).
 ///
@@ -372,8 +372,8 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
 /// structurally visible in the IR graph.
 #[test]
 fn bx_lr_after_call_does_not_classify_as_link_register() {
-    let (function, _anchor, _lr_vn) = build_lr_clobbered_by_call_scenario();
-    let result = classify_anchor_bare(&function).expect("classify");
+    let (function, _target, _lr_vn) = build_lr_clobbered_by_call_scenario();
+    let result = classify_target_bare(&function).expect("classify");
     // Critical invariant: must NOT be LinkRegister.
     assert_ne!(
         result,
@@ -387,7 +387,7 @@ fn bx_lr_after_call_does_not_classify_as_link_register() {
     assert_eq!(
         result,
         Some(ResolvedTargets::Single(0x1004)),
-        "classify_anchor must resolve br x30 to Single(0x1004) — the literal \
+        "classify_target must resolve br x30 to Single(0x1004) — the literal \
          return address that bl wrote into x30",
     );
 }

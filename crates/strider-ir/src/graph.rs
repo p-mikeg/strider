@@ -21,7 +21,6 @@
 
 use std::hash::{Hash, Hasher};
 
-use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHasher;
 use strider_graph::{NodeCacheable, RawStore, ValueId};
 
@@ -104,26 +103,6 @@ pub type Inputs<'a> = strider_graph::Inputs<'a, NodeKind, ValueKind, IrCacheable
 /// instantiation of [`strider_graph::InputCursor`].
 pub type InputCursor<'a> = strider_graph::InputCursor<'a, NodeKind, ValueKind, IrCacheable>;
 
-/// Rebuilds a `SecondaryMap<NodeId, _>`-shaped side-table in place under the
-/// old→new translation, draining the source via `std::mem::take` so the
-/// post-remap source is left at `Default::default()` for every slot.
-/// Used by [`crate::Function::compact`] to fold every `NodeId`-keyed
-/// overlay table through one iteration site.
-///
-/// The `InitialVnId`-keyed `initial_var_index` does **not** fit this shape
-/// (its key is a tracked-varnode id, not `NodeId`) and is remapped inline in
-/// `Function::compact`.
-pub(crate) fn remap_node_keyed<T: Default + Clone>(
-    map: &mut SecondaryMap<NodeId, T>,
-    remap: &NodeIdRemap,
-) {
-    let mut dst: SecondaryMap<NodeId, T> = SecondaryMap::new();
-    for (old_id, new_id) in remap.surviving_node_pairs() {
-        dst[new_id] = std::mem::take(&mut map[old_id]);
-    }
-    *map = dst;
-}
-
 #[cfg(test)]
 mod tests {
     //! White-box tests for the graph submodules — arena, dedup cache,
@@ -134,6 +113,7 @@ mod tests {
     use crate::function::test_function;
     use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
     use cranelift_entity::EntityRef;
+    use rustc_hash::FxHashSet;
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -529,11 +509,15 @@ mod tests {
         );
         assert_ne!(id_a, id_b, "CallOther is non-cacheable");
         assert_eq!(function.side_tables().call_other_name(id_a), None);
-        function.side_tables_mut().call_other_names[id_a] = Some("setISAMode".to_string());
+        function
+            .side_tables_mut()
+            .set_call_other_name(id_a, "setISAMode");
         assert_eq!(function.side_tables().call_other_name(id_a), Some("setISAMode"));
         assert_eq!(function.side_tables().call_other_name(id_b), None);
         // Replacement
-        function.side_tables_mut().call_other_names[id_a] = Some("OtherName".to_string());
+        function
+            .side_tables_mut()
+            .set_call_other_name(id_a, "OtherName");
         assert_eq!(function.side_tables().call_other_name(id_a), Some("OtherName"));
     }
 
@@ -1329,12 +1313,12 @@ mod tests {
     // ── asm-fingerprint side-table tests ──────────────────────────────────────
 
     #[test]
-    fn asm_fingerprint_unset_returns_empty_slice() {
+    fn asm_fingerprint_unset_returns_empty() {
         let mut function = test_function();
         let n = function
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        assert_eq!(function.side_tables().asm_fingerprint(n), &[] as &[u64]);
+        assert!(function.side_tables().asm_fingerprint(n).is_empty());
     }
 
     #[test]
@@ -1344,20 +1328,29 @@ mod tests {
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
         function.side_tables_mut().extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
-        assert_eq!(function.side_tables().asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+        assert_eq!(
+            function.side_tables().asm_fingerprint(n),
+            FxHashSet::from_iter([0x1000, 0x1004, 0x1008])
+        );
     }
 
     #[test]
-    fn asm_fingerprint_extend_sorts_and_dedupes() {
+    fn asm_fingerprint_extend_dedupes() {
         let mut function = test_function();
         let n = function
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
         function.side_tables_mut().extend_asm_fingerprint(n, &[0x1004, 0x1000, 0x1004]);
-        assert_eq!(function.side_tables().asm_fingerprint(n), &[0x1000, 0x1004]);
-        // Extending with one new + two duplicates yields a sorted, deduplicated set.
+        assert_eq!(
+            function.side_tables().asm_fingerprint(n),
+            FxHashSet::from_iter([0x1000, 0x1004])
+        );
+        // Extending with one new + two duplicates yields a deduplicated set.
         function.side_tables_mut().extend_asm_fingerprint(n, &[0x1008, 0x1000, 0x1004]);
-        assert_eq!(function.side_tables().asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+        assert_eq!(
+            function.side_tables().asm_fingerprint(n),
+            FxHashSet::from_iter([0x1000, 0x1004, 0x1008])
+        );
     }
 
     #[test]
@@ -1372,9 +1365,15 @@ mod tests {
         function.side_tables_mut().extend_asm_fingerprint(a, &[0x1000, 0x1004]);
         function.side_tables_mut().extend_asm_fingerprint(b, &[0x1004, 0x100C]);
         function.side_tables_mut().extend_asm_fingerprint_from(a, b);
-        assert_eq!(function.side_tables().asm_fingerprint(a), &[0x1000, 0x1004, 0x100C]);
+        assert_eq!(
+            function.side_tables().asm_fingerprint(a),
+            FxHashSet::from_iter([0x1000, 0x1004, 0x100C])
+        );
         // Source unaffected.
-        assert_eq!(function.side_tables().asm_fingerprint(b), &[0x1004, 0x100C]);
+        assert_eq!(
+            function.side_tables().asm_fingerprint(b),
+            FxHashSet::from_iter([0x1004, 0x100C])
+        );
     }
 
     #[test]
@@ -1386,10 +1385,16 @@ mod tests {
         function.side_tables_mut().extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
         // Extending with a strict subset must NOT remove any existing entries.
         function.side_tables_mut().extend_asm_fingerprint(n, &[0x1004]);
-        assert_eq!(function.side_tables().asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+        assert_eq!(
+            function.side_tables().asm_fingerprint(n),
+            FxHashSet::from_iter([0x1000, 0x1004, 0x1008])
+        );
         // Extending with the empty slice is a no-op.
         function.side_tables_mut().extend_asm_fingerprint(n, &[]);
-        assert_eq!(function.side_tables().asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+        assert_eq!(
+            function.side_tables().asm_fingerprint(n),
+            FxHashSet::from_iter([0x1000, 0x1004, 0x1008])
+        );
     }
 
     #[test]
@@ -1400,7 +1405,10 @@ mod tests {
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
         function.side_tables_mut().extend_asm_fingerprint(n, &[0x1000, 0x1004]);
         function.side_tables_mut().extend_asm_fingerprint_from(n, n);
-        assert_eq!(function.side_tables().asm_fingerprint(n), &[0x1000, 0x1004]);
+        assert_eq!(
+            function.side_tables().asm_fingerprint(n),
+            FxHashSet::from_iter([0x1000, 0x1004])
+        );
     }
 
     #[test]
@@ -1483,6 +1491,9 @@ mod tests {
         );
         assert_eq!(a, b, "cacheable nodes should dedup");
         function.side_tables_mut().extend_asm_fingerprint(b, &[0x3000]);
-        assert_eq!(function.side_tables().asm_fingerprint(a), &[0x2000, 0x3000]);
+        assert_eq!(
+            function.side_tables().asm_fingerprint(a),
+            FxHashSet::from_iter([0x2000, 0x3000])
+        );
     }
 }

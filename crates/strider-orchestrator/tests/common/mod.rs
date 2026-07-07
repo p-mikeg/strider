@@ -562,7 +562,7 @@ pub(crate) fn count_stack_offsets(function: &strider_ir::Function) -> usize {
     function
         .graph()
         .all_node_ids()
-        .filter(|&nid| function.side_tables().stack_offset(nid).is_some())
+        .filter(|&nid| function.stack_offset(nid).is_some())
         .count()
 }
 

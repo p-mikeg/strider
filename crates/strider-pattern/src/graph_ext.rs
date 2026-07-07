@@ -1,16 +1,16 @@
-//! BiGraph-compatible read helpers over the generic
+//! Read helpers over the generic
 //! [`strider_graph::Graph`].
 //!
 //! The match side ([`Pattern`](crate::matcher::Pattern)) and the build side
 //! ([`Template`](crate::template::Template)) both store their bipartite
 //! pattern graph as a `strider_graph::Graph<N, V, NeverCacheable>`. The
 //! generic graph exposes structural verbs (`node_inputs`, `node_outputs`,
-//! `producer`, `value_kind_ref`, …) but not the BiGraph-era vocabulary the
+//! `producer`, `value_kind_ref`, …) but not the read vocabulary the
 //! matcher / instantiation walk were written against (`consumed_inputs`
 //! with per-edge slots, `produced_outputs`, `derive_root`,
 //! `reachable_topo`). This extension trait restores that vocabulary on top
 //! of the generic graph so the two consumers read it the same way they read
-//! the old `BiGraph`.
+//! the generic `strider_graph::Graph`.
 //!
 //! ## The sparse-slot bridge
 //!
@@ -19,7 +19,7 @@
 //! original consumer slot of each input therefore rides on the node payload
 //! ([`HasInputSlots::input_slots`]) — parallel to the generic graph's input
 //! order — and [`consumed_inputs`](PatGraphRead::consumed_inputs) zips the
-//! two back together to reproduce the BiGraph `Consumes { slot }` edge.
+//! two back together to reproduce the `Consumes { slot }` edge.
 
 use anyhow::anyhow;
 use petgraph::visit::{DfsPostOrder, Reversed, Walker};
@@ -33,7 +33,7 @@ pub(crate) trait HasInputSlots {
     fn input_slots(&self) -> &[usize];
 }
 
-/// BiGraph-compatible read verbs over a generic pattern / template graph.
+/// Read verbs over a generic pattern / template graph.
 pub(crate) trait PatGraphRead<N: HasInputSlots, V> {
     /// The node payload at `node`.
     fn node_weight(&self, node: NodeId) -> &N;

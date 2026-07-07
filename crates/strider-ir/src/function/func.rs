@@ -426,6 +426,25 @@ impl Function {
 
     // ── stack_offsets accessors ───────────────────────────────────────────
 
+    /// The stack slot `(base, offset)` a Store/Load `node` accesses — the
+    /// user-facing per-node view over the value-keyed `stack_offsets` memo,
+    /// derived by looking up the node's address value.  `None` when the node is
+    /// not a Store/Load, or its address is not SP-rooted (or not yet
+    /// decomposed).  `base` is the SP-derived terminal the offset is relative
+    /// to; offsets compare only when their bases match.
+    pub fn stack_offset(&self, node: NodeId) -> Option<(ValueId, i128)> {
+        use crate::IRViewer;
+        // The address is input slot 1 of both Store (`[mem, addr, data]`) and
+        // Load (`[mem, addr]`).  Read it defensively (a `.get`, not the
+        // arity-panicking `store_addr`/`load_addr`): this accessor is called
+        // over whole-graph node sweeps that may include a malformed / dead node.
+        if !matches!(self.node_kind(node), NodeKind::Store(_) | NodeKind::Load(_)) {
+            return None;
+        }
+        let addr = self.node_inputs(node).get(1).copied()?;
+        self.side_tables().stack_slot_resolved(addr)
+    }
+
     // ── initial_var_index accessors ───────────────────────────────────────
 
     /// Iterates the `initial_var_index` as `(vn, node_id)` pairs.  Used by the
@@ -699,7 +718,10 @@ mod function_skeleton_tests {
         let mut f = test_function();
         let n = f.entry();
         f.side_tables_mut().extend_asm_fingerprint(n, &[0xDEAD_BEEF]);
-        assert_eq!(f.side_tables().asm_fingerprint(n), &[0xDEAD_BEEF]);
+        assert_eq!(
+            f.side_tables().asm_fingerprint(n),
+            rustc_hash::FxHashSet::from_iter([0xDEAD_BEEF])
+        );
     }
 
     #[test]
@@ -869,8 +891,8 @@ mod compact_tests {
     }
 
     /// A SURVIVING `stack_offsets` entry is remapped through compaction on
-    /// BOTH coordinates: its key (`NodeId`) and its value's base
-    /// (`ValueId`).  A zombie allocated before the live nodes forces a
+    /// BOTH coordinates: its key (the decomposed `ValueId`) and its interned
+    /// base (`ValueId`).  A zombie allocated before the live nodes forces a
     /// non-trivial id shift, so the test fails if either side is left
     /// unremapped.  (The drop-on-death side is pinned by
     /// `retain_reachable_drops_side_table_entry_for_dropped_node`.)
@@ -885,10 +907,16 @@ mod compact_tests {
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         let base = int_const_node(&mut f, 0x7000_u128, crate::node::ValueType::I64);
         let [base_value] = f.node_outputs_exact::<1>(base).unwrap();
-        let ret =
-            f.graph_mut()
-                .create_node(NodeKind::Return, [entry_ctrl, mem_value, base_value], []);
-        f.side_tables_mut().set_stack_offset(ret, base_value, -16);
+        let key = int_const_node(&mut f, 0x8000_u128, crate::node::ValueType::I64);
+        let [key_value] = f.node_outputs_exact::<1>(key).unwrap();
+        // Both values must survive: feed them into the Return so the walk keeps
+        // them.
+        let _ret = f.graph_mut().create_node(
+            NodeKind::Return,
+            [entry_ctrl, mem_value, base_value, key_value],
+            [],
+        );
+        f.side_tables_mut().set_stack_slot(key_value, base_value, -16);
 
         let remap = f.compact().expect("compact must succeed");
 
@@ -896,16 +924,16 @@ mod compact_tests {
             remap.node_old_to_new(zombie).is_none(),
             "zombie must be dropped"
         );
-        let new_ret = remap.node_old_to_new(ret).expect("Return survives");
+        let new_key_value = remap.value_old_to_new(key_value).expect("key value survives");
         let new_base_value = remap
             .value_old_to_new(base_value)
             .expect("base value survives");
         assert_ne!(
-            new_ret, ret,
-            "the zombie ahead of it must shift the Return's id"
+            new_key_value, key_value,
+            "the zombie ahead of it must shift the value ids"
         );
         assert_eq!(
-            f.side_tables().stack_offset(new_ret),
+            f.side_tables().stack_slot_resolved(new_key_value),
             Some((new_base_value, -16)),
             "surviving stack_offsets entry must be remapped on key AND base"
         );
@@ -939,7 +967,7 @@ mod compact_tests {
             .expect("surviving IntConst must remain after compact");
         assert_eq!(
             f.side_tables().asm_fingerprint(new_id),
-            &[0x1000, 0x1004, 0x1008],
+            rustc_hash::FxHashSet::from_iter([0x1000, 0x1004, 0x1008]),
             "surviving node's asm-fingerprint must transfer to its post-compact NodeId"
         );
     }
@@ -1019,13 +1047,14 @@ mod compact_tests {
             "tag must be set before compact"
         );
 
-        // Zombie IntConst node with a stack_offsets entry.
+        // Zombie IntConst node with a stack_offsets entry, keyed by its value.
         let zombie_stack =
             int_const_node(&mut f, (0xBEEF_u64) as u128, crate::node::ValueType::I64);
         let zombie_value = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
-        f.side_tables_mut().set_stack_offset(zombie_stack, zombie_value, -8);
+        f.side_tables_mut()
+            .set_stack_slot(zombie_value, zombie_value, -8);
         assert_eq!(
-            f.side_tables().stack_offset(zombie_stack),
+            f.side_tables().stack_slot_resolved(zombie_value),
             Some((zombie_value, -8)),
             "offset must be set before compact"
         );
@@ -1038,10 +1067,10 @@ mod compact_tests {
 
         // Side-table entries for dropped nodes must not exist.  `value_vn`
         // is a `ValueId`-keyed `FxHashMap` rebuilt over only surviving values;
-        // `stack_offset` is a `SecondaryMap<NodeId, Option<_>>` rebuilt over
-        // only surviving nodes.  In both cases the dropped zombies' entries
-        // are gone.  We verify indirectly: no surviving node carries the
-        // tag/offset.
+        // `stack_offsets` is a `ValueId`-keyed `SecondaryMap<ValueId, SpDecomp>`
+        // rebuilt over only surviving values.  In both cases the dropped
+        // zombies' entries are gone.  We verify indirectly: no surviving value
+        // carries the tag/offset.
         let surviving_with_tag = f.graph().all_node_ids().any(|n| {
             f.node_outputs(n)
                 .first()
@@ -1053,13 +1082,17 @@ mod compact_tests {
             !surviving_with_tag,
             "dead_vn value_vn tag must not survive compaction"
         );
-        let surviving_with_offset = f
-            .graph()
-            .all_node_ids()
-            .any(|n| f.side_tables().stack_offset(n).map(|(_, o)| o) == Some(-8));
+        let surviving_with_offset = f.graph().all_node_ids().any(|n| {
+            f.node_outputs(n)
+                .first()
+                .copied()
+                .and_then(|v| f.side_tables().stack_slot_resolved(v))
+                .map(|(_, o)| o)
+                == Some(-8)
+        });
         assert!(
             !surviving_with_offset,
-            "stack_offset -8 must not survive compaction on a surviving node"
+            "stack_offset -8 must not survive compaction on a surviving value"
         );
     }
 

@@ -54,28 +54,28 @@ impl PeepholePass for DeadBranchElimination {
 
     fn try_rewrite(
         &self,
-        ctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        match ctx.node_kind(root) {
+        match edit.node_kind(root) {
             NodeKind::If => {
                 // If inputs: [ctrl_in, condition] — exactly 2 (validated arity).
                 // This pass neither re-enqueues consumers nor reports a `new_node`
                 // (`propagate_to_consumers` is `false`), so a detached If is never
                 // handed back to `try_rewrite`; `root` always carries its original
                 // two inputs.
-                let [ctrl_value, cond_value] = ctx
+                let [ctrl_value, cond_value] = edit
                     .graph_ref()
                     .node_inputs_exact::<2>(root)
                     .expect("If has 2 inputs per node signature");
 
-                let Some(cond_val) = ctx.function().bool_const_val(cond_value) else {
+                let Some(cond_val) = edit.function().bool_const_val(cond_value) else {
                     return Ok(PeepholeRewrite::NoChange);
                 };
 
                 // If outputs: [ctrl_true (index 0), ctrl_false (index 1)].
-                let [ctrl_true, ctrl_false] = ctx
+                let [ctrl_true, ctrl_false] = edit
                     .node_outputs_exact::<2>(root)
                     .expect("If has 2 outputs per node signature");
                 let live_ctrl = if cond_val { ctrl_true } else { ctrl_false };
@@ -89,7 +89,7 @@ impl PeepholePass for DeadBranchElimination {
                 // `replace_value` below makes the live successor's control input).
                 // Over-tainting is intentional — the fingerprint is a superset
                 // proof-of-correctness aid, not a minimal value-determining set.
-                ctx.absorb_fingerprint(ctrl_value, cond_value);
+                edit.absorb_fingerprint(ctrl_value, cond_value);
 
                 // Redirect the live successor past the If, then explicitly kill the
                 // folded If — CfgDetach + validation (run only at pipeline
@@ -99,26 +99,26 @@ impl PeepholePass for DeadBranchElimination {
                 // now-dead pure operands (the folded `IntConst` condition cone) for
                 // `clean` to cascade-cull.  This is a pure control redirect to an
                 // EXISTING edge — no fresh node — so report `new_node: None`.
-                ctx.replace_value(live_ctrl, ctrl_value)?;
-                ctx.kill_node(root);
+                edit.replace_value(live_ctrl, ctrl_value)?;
+                edit.kill_node(root);
                 Ok(PeepholeRewrite::Changed { new_node: None })
             }
             NodeKind::Switch => {
                 // Switch inputs: [ctrl, address] (exactly 2 per node signature).
-                let [ctrl_value, addr_value] = ctx
+                let [ctrl_value, addr_value] = edit
                     .graph_ref()
                     .node_inputs_exact::<2>(root)
                     .expect("Switch has 2 inputs per node signature");
 
-                let Some(k) = ctx.function().int_const_u128(addr_value) else {
+                let Some(k) = edit.function().int_const_u128(addr_value) else {
                     return Ok(PeepholeRewrite::NoChange);
                 };
 
                 // Find the output whose case address == K (output i ↔
                 // cases[i]).  Computing the index inside this expression lets
-                // the immutable borrow of `ctx.function()` end here — before
+                // the immutable borrow of `edit.function()` end here — before
                 // the mutable calls below — without cloning the address slice.
-                let Some(i) = ctx
+                let Some(i) = edit
                     .function()
                     .side_tables()
                     .switch_targets(root)
@@ -127,16 +127,16 @@ impl PeepholePass for DeadBranchElimination {
                 else {
                     return Ok(PeepholeRewrite::NoChange); // exhaustive table => shouldn't happen
                 };
-                let live_ctrl = ctx.node_outputs(root)[i];
+                let live_ctrl = edit.node_outputs(root)[i];
 
                 // Same proof-completeness rationale as the `If` arm above:
                 // the constant dispatch address is part of the proof for
                 // killing this Switch, so absorb its fingerprint into the
                 // surviving control source before the address cone is
                 // cascade-culled by `kill_node`.
-                ctx.absorb_fingerprint(ctrl_value, addr_value);
-                ctx.replace_value(live_ctrl, ctrl_value)?;
-                ctx.kill_node(root);
+                edit.absorb_fingerprint(ctrl_value, addr_value);
+                edit.replace_value(live_ctrl, ctrl_value)?;
+                edit.kill_node(root);
                 Ok(PeepholeRewrite::Changed { new_node: None })
             }
             _ => Ok(PeepholeRewrite::NoChange),

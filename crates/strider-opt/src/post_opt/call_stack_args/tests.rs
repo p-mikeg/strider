@@ -1398,7 +1398,9 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         .next()
         .map(|n| fg.node_outputs(n).iter().copied().next().unwrap())
         .expect("InitialVar(sp) node must exist");
-    fg.side_tables_mut().set_stack_offset(arg0_store, sp_base, 4);
+    let arg0_store_addr = fg.store_addr(arg0_store);
+    fg.side_tables_mut()
+        .set_stack_slot(arg0_store_addr, sp_base, 4);
 
     // Run CallStackArgCollect with slot table [4, 8] (offset 0 = anchor).
     let pass = CallStackArgCollect;

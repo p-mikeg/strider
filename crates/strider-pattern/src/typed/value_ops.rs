@@ -606,11 +606,6 @@ macro_rules! value_op_factories {
             BitNot { inner }
         }
 
-        /// Alias for [`bit_not`] (matches the Python `not_` keyword-collision name).
-        pub fn not_<I: $bound>(inner: I) -> BitNot<I> {
-            bit_not(inner)
-        }
-
         // ── Cast / coercion factories ─────────────────────────────────
         unary_factory!($bound, Cast, kind, NodeKind::Truncate, truncate,
             concat!($verb, " a `Truncate(inner)` (integer narrowing) node."));

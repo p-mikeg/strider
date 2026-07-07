@@ -14,7 +14,7 @@ use super::FunctionLifter;
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// Resolve `vn` to its largest tracked container.
     ///
-    /// Fast path: the lifter's precomputed `vn_to_container` map (covers every
+    /// Fast path: the lifter's precomputed `container_map` (covers every
     /// raw collected varnode + every CC register).  Fallback: an on-the-fly
     /// containment scan of `all_vns` for ad-hoc REGISTER / UNIQUE varnodes not
     /// in the map.  Returns `vn` unchanged when nothing tracked contains it, or

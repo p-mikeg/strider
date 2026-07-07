@@ -92,7 +92,7 @@ pub struct PatNode {
     /// densely (index 0, 1, …); a pattern's inputs are **sparse** (e.g.
     /// `call().arg(0, …)` wires only raw slot 4), so the original consumer
     /// slot is recorded here per input and recovered by the matcher /
-    /// instantiation walk (the BiGraph-era `Consumes { slot }` edge label,
+    /// instantiation walk (the `Consumes { slot }` edge label,
     /// re-homed onto the node payload).
     pub input_slots: Vec<usize>,
 }

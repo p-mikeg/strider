@@ -2,7 +2,7 @@
 //!
 //! Mirrors how [`crate::matcher::PyMatch`] references the function: a
 //! `PyNode` carries a `Py<PyFunction>` so accessors can re-borrow the
-//! shared `Arc<RwLock<Function>>`, plus a raw `u32` node id and a
+//! shared `Rc<RefCell<Function>>`, plus a raw `u32` node id and a
 //! generation snapshot taken at construction time.  Any arena-reshuffle
 //! op (`Function.compact`, `optimize`, …) bumps `Function::generation()`,
 //! and every accessor compares against the snapshot so a stale id
@@ -37,7 +37,7 @@ use crate::function::PyFunction;
 /// subsequent arena-reshuffling op (`Function.compact`, `optimize`, …)
 /// bumps the counter; every accessor then raises a `StriderError` rather
 /// than dereferencing a stale node id.
-#[pyclass(name = "Node", module = "strider")]
+#[pyclass(name = "Node", module = "strider", unsendable)]
 pub struct PyNode {
     pub(crate) function: Py<PyFunction>,
     /// Raw arena index of the node this handle points at.
@@ -292,7 +292,14 @@ impl PyNode {
     /// can reuse the same addr-only lookup instead of duplicating the
     /// side-table read.
     pub(crate) fn fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
-        self.with_node(py, |function, nid| function.side_tables().asm_fingerprint(nid).to_vec())
+        self.with_node(py, |function, nid| {
+            // The DAG yields an unordered set; sort here so the Python-facing
+            // list stays the documented sorted, deduped order.
+            let mut addrs: Vec<u64> =
+                function.side_tables().asm_fingerprint(nid).into_iter().collect();
+            addrs.sort_unstable();
+            addrs
+        })
     }
 
     /// Raw little-endian bytes of a wide-typed integer constant (10 bytes

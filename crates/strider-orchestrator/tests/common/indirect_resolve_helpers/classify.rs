@@ -29,7 +29,7 @@ use strider_ir_test_utils::IrBuilderEx;
 use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 
-use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
+use super::orchestrator::{target_value_input, run_pipeline_x86_64};
 
 /// Concatenate hand-assembled x86_64 instructions into one snippet,
 /// appending 64 × `int3` (0xcc) padding.  Each tuple pairs the
@@ -54,7 +54,7 @@ pub(crate) fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
 // NOTE: there is no `build_int_const_target_scenario(K)` because cfg-time
 // always classifies a literal constant target — the synthetic shape
 // `mov rax, K; jmp *rax` resolves at cfg-build time before
-// `classify_anchor` ever sees it.  Tests that want the
+// `classify_target` ever sees it.  Tests that want the
 // IntConst-classifier arm route through a runtime-computed target that
 // folds to `IntConst(K)` only after the IR-level optimiser runs; see
 // [`build_int_const_target_scenario_via_stack`] below.
@@ -82,8 +82,8 @@ pub(crate) fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, st
         (&[0x58], "pop rax (rax = pushed K; rsp += 8)"),
         (&[0xff, 0xe0], "jmp rax"),
     ]);
-    let (function, anchor, _lr) = run_pipeline_x86_64(bytes);
-    (function, anchor)
+    let (function, target, _lr) = run_pipeline_x86_64(bytes);
+    (function, target)
 }
 
 /// Build a function whose only indirect branch is `jmp *rax` with no
@@ -97,8 +97,8 @@ pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_i
     // Just `jmp rax`.  RAX is a function-entry value with no constant
     // write; the placeholder's input is `InitialVar(rax)`.
     let bytes = x86_64_snippet(&[(&[0xff, 0xe0], "jmp rax")]);
-    let (function, anchor, _lr) = run_pipeline_x86_64(bytes);
-    (function, anchor)
+    let (function, target, _lr) = run_pipeline_x86_64(bytes);
+    (function, target)
 }
 
 /// Build a `Graph` modelling gcc-ARM's standard
@@ -109,7 +109,7 @@ pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_i
 ///   1. Single region.  Tracked vars: `sp`, `lr`.
 ///   2. Store `InitialVar(lr)` at `sp - 4` — this is the "push lr".
 ///   3. Load `*(sp - 4)` — this is the "pop into pc".
-///   4. Placeholder `Return(loaded)` — anchors the dispatch value.
+///   4. Placeholder `Return(loaded)` — targets the dispatch value.
 ///
 /// `LoadForward` then collapses the load directly to
 /// `InitialVar(lr)` (same offset, no aliasing stores in between).
@@ -154,7 +154,7 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario() -> (Function, strid
     b.build_store(store_addr, lr_v, rsleigh::VnSpace::RAM)
         .expect("store lr");
 
-    // Load from the same slot and use as the placeholder anchor.
+    // Load from the same slot and use as the placeholder target.
     // The address is structurally identical (sp - 4), so
     // LoadForward will fold the load directly to lr_v.
     let sp_v2 = b.read_variable(&sp).expect("read sp again");
@@ -199,8 +199,8 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario() -> (Function, strid
         assert!(found.is_none(), "multiple IndirectBranch placeholders");
         found = Some(inputs[2]);
     }
-    let anchor = found.expect("no IndirectBranch placeholder");
-    (fg, anchor, lr)
+    let target = found.expect("no IndirectBranch placeholder");
+    (fg, target, lr)
 }
 
 /// Build a `Graph` modelling the soundness-critical
@@ -218,7 +218,7 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario() -> (Function, strid
 /// Single(K).
 ///
 /// Also returns the `lr` VN we added to the tracked-vars set so
-/// callers can pass it to `classify_anchor` and verify the
+/// callers can pass it to `classify_target` and verify the
 /// LinkRegister arm doesn't false-positive.
 pub(crate) fn build_push_target_pop_pc_scenario(k: u64) -> (Function, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::ValueType;
@@ -281,8 +281,8 @@ pub(crate) fn build_push_target_pop_pc_scenario(k: u64) -> (Function, strider_ir
         assert!(found.is_none(), "multiple IndirectBranch placeholders");
         found = Some(inputs[2]);
     }
-    let anchor = found.expect("no IndirectBranch placeholder");
-    (fg, anchor, lr)
+    let target = found.expect("no IndirectBranch placeholder");
+    (fg, target, lr)
 }
 
 // ── jump-table fixtures ──────────────────────────────────────────────────
@@ -362,7 +362,7 @@ pub(crate) fn build_jump_table_known_bits_scenario(
     // and DeadBranchElim because the spec routes the jump-table
     // classifier through the same destructive-omitted pipeline that
     // intermediate iterations of the orchestrator use, so the graph
-    // shape we hand to classify_anchor here matches the orchestrator's
+    // shape we hand to classify_target here matches the orchestrator's
     // intermediate-iteration sees.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
@@ -370,8 +370,8 @@ pub(crate) fn build_jump_table_known_bits_scenario(
         .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
-    let anchor = anchor_value_input(&fg).expect("anchor");
-    (fg, anchor)
+    let target = target_value_input(&fg).expect("target");
+    (fg, target)
 }
 
 /// Build a placeholder `Return(load)` whose load is jump-table-shaped
@@ -384,7 +384,7 @@ pub(crate) fn build_jump_table_known_bits_scenario(
 ///   entry  ──[if idx < bound: true]── dispatch (loads + Returns)
 ///         └──[false]─────────────────── exit (early Return)
 ///
-/// The dispatch's placeholder Return is the anchor we return.
+/// The dispatch's placeholder Return is the target we return.
 pub(crate) fn build_jump_table_predecessor_if_scenario(
     base: u64,
     stride: u64,
@@ -453,8 +453,8 @@ pub(crate) fn build_jump_table_predecessor_if_scenario(
         .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
-    let anchor = anchor_value_input(&fg).expect("anchor");
-    (fg, anchor)
+    let target = target_value_input(&fg).expect("target");
+    (fg, target)
 }
 
 /// Build a placeholder `Return(load)` whose load is jump-table-shaped
@@ -503,8 +503,8 @@ pub(crate) fn build_jump_table_unbounded_scenario(
         .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
-    let anchor = anchor_value_input(&fg).expect("anchor");
-    (fg, anchor)
+    let target = target_value_input(&fg).expect("target");
+    (fg, target)
 }
 
 /// Build a placeholder `Return(load)` whose load is NOT jump-table-
@@ -536,8 +536,8 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Val
         .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
-    let anchor = anchor_value_input(&fg).expect("anchor");
-    (fg, anchor)
+    let target = target_value_input(&fg).expect("target");
+    (fg, target)
 }
 
 /// Build a placeholder `IndirectBranch(load)` whose load is a
@@ -551,8 +551,8 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Val
 /// `N` must be `> 0` and `< MAX_TABLE_ENTRIES` (currently 256), and
 /// must be a power of 2 so the `idx & (N - 1)` mask lets the range
 /// analysis derive bound = `N` via KnownBits.  Returns
-/// the graph, the anchor (load output), and the SP varnode the
-/// caller passes to `classify_anchor`.
+/// the graph, the target (load output), and the SP varnode the
+/// caller passes to `classify_target`.
 ///
 /// The fixture mirrors the existing `build_two_target_array`
 /// fixture in `crates/opt/src/indirect_branch_resolve/stack_array.rs`,
@@ -565,7 +565,7 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Val
 /// Pipeline run: `ConstantFold + KnownBits + PhiCollapse + RegionCollapse`.
 /// `LoadForward` is **deliberately omitted** — including it
 /// would forward the Load to the matching IntConst directly,
-/// eliminating the Load entirely and turning the anchor into an
+/// eliminating the Load entirely and turning the target into an
 /// IntConst (the Single-target arm), defeating the stack-array
 /// classifier exercise.
 pub(crate) fn build_stack_array_dispatch_scenario(
@@ -681,16 +681,16 @@ pub(crate) fn build_stack_array_dispatch_scenario(
         .expect("opt pipeline");
 
     // Locate the surviving Load from the IndirectBranch's value-input.
-    // After the partial pipeline, the placeholder's anchor IS the Load
-    // — `anchor_value_input` returns inputs[2], which is the Load output.
-    let anchor: ValueId = anchor_value_input(&fg).expect("placeholder anchor");
-    (fg, anchor, sp)
+    // After the partial pipeline, the placeholder's target IS the Load
+    // — `target_value_input` returns inputs[2], which is the Load output.
+    let target: ValueId = target_value_input(&fg).expect("placeholder target");
+    (fg, target, sp)
 }
 
 /// Build a function whose only indirect branch resolves to
 /// `InitialVar(lr_vn)` after the optimiser runs.  Returns the
 /// link-register VN as the third tuple element so the caller can
-/// pass it to `classify_anchor`.
+/// pass it to `classify_target`.
 ///
 /// We use AArch64 rather than 32-bit ARM because Sleigh's ARM
 /// (LE/BE-32) lifter wraps every register-indirect dispatch in a
@@ -750,7 +750,7 @@ pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::V
         1,
         "bx lr fixture must have exactly one IR-level placeholder",
     );
-    let anchor = anchor_value_input(&function)
+    let target = target_value_input(&function)
         .expect("bx lr fixture must have one IndirectBranch placeholder after optimisation");
-    (function, anchor, lr_vn)
+    (function, target, lr_vn)
 }

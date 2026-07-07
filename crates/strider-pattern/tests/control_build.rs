@@ -722,7 +722,12 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     // against. `function_arg_stack` only reads the offset, so any valid
     // base output handle suffices here.
     let base = function.node_outputs(stack_carrier)[0];
-    function.side_tables_mut().set_stack_offset(stack_carrier, base, 0x40);
+    // Value-keyed: the derived `stack_offset(node)` looks up the node's address
+    // value, so stamp the slot on that address (slot 1 of the Load).
+    let carrier_addr = function.node_inputs(stack_carrier)[1];
+    function
+        .side_tables_mut()
+        .set_stack_slot(carrier_addr, base, 0x40);
     let reg_value = function.node_outputs(reg_carrier)[0];
     let stack_value = function.node_outputs(stack_carrier)[0];
     function.side_tables_mut().register_arg_value(0, reg_value);
