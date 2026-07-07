@@ -18,7 +18,7 @@
 //!    with every guard/mask/shift applied, not a looser pre-narrowing ancestor.
 //!    A `Load[reg]` function pointer has no bounded dominator → deferred, no fold.
 //! 2. **Pin and fold.**  Evaluate the dispatch cone under `index = i` via the
-//!    read-only [`super::eval::Evaluator`] (ConstFold arithmetic + `LoadReadOnly`
+//!    read-only `super::eval::Evaluator` (ConstFold arithmetic + `LoadReadOnly`
 //!    ROM reads + `LoadForward` via `reaching_store`) for every `i` in the
 //!    index's proven **strided** range.  The dispatch value is a concrete
 //!    constant iff the addressing fully resolved; the folded constants are the

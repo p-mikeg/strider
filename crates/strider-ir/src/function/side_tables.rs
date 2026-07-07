@@ -16,7 +16,7 @@ use crate::node::{NodeId, ValueId};
 /// The per-value [`SpDecomp`] slots store this small id instead of the
 /// `(ValueId, i128)` payload inline, so the dense `stack_offsets`
 /// [`SecondaryMap`] stays narrow (an id + tag) while the handful of genuinely
-/// distinct SP terminals live once in [`SideTables::stack_interner`].
+/// distinct SP terminals live once in the `stack_interner`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct StackId(u32);
 entity_impl!(StackId);
