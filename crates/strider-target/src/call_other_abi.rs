@@ -468,6 +468,7 @@ const X86_BOTH: &[crate::ArchPreset] = &[crate::ArchPreset::X86, crate::ArchPres
 const ARM32_ALL: &[crate::ArchPreset] = &[
     crate::ArchPreset::Arm,
     crate::ArchPreset::ArmBe,
+    crate::ArchPreset::ArmBeKernel,
     crate::ArchPreset::ArmThumb,
 ];
 const AARCH64_BOTH: &[crate::ArchPreset] =

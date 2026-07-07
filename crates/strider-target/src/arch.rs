@@ -121,6 +121,10 @@ pub enum ArchPreset {
     X86_64,
     Arm,
     ArmBe,
+    /// BE8 ARM (little-endian instructions, big-endian data) — modern ARMv6+
+    /// big-endian.  Shares the ARM instruction set / CallOther ABI with
+    /// [`ArchPreset::Arm`]; differs only in the Sleigh spec + data endianness.
+    ArmBeKernel,
     ArmThumb,
     Aarch64,
     Aarch64Be,
@@ -286,17 +290,45 @@ impl SleighArch {
 
     arch_ctor! {
         /// Returns the big-endian ARM 32-bit (ARMv8 A-profile, non-Thumb)
-        /// architecture descriptor.
+        /// architecture descriptor — legacy **BE32** (big-endian instructions
+        /// AND data, pre-ARMv6).
         ///
         /// Uses the `ARM8_be` Sleigh spec with the `ARM_v45` processor spec —
         /// the BE-instruction-encoding mirror of [`SleighArch::arm`].  ARM
         /// AAPCS is byte-order independent, so the same `arm_aapcs` calling
         /// convention pairs with both LE and BE.
         ///
+        /// NOTE: modern ARMv6+ big-endian Linux (every kernel/userland since
+        /// ARMv6, marked `EF_ARM_BE8` in the ELF flags) is **BE8** —
+        /// little-endian instructions, big-endian data — NOT BE32.  Decoding a
+        /// BE8 binary with this BE32 spec byte-reverses every instruction word
+        /// and fails almost every decode; use [`SleighArch::arm_be_kernel`] for
+        /// BE8 targets.
+        ///
         /// Used with `clang --target=armeb-linux-gnueabi` linking via the
         /// `arm-linux-gnueabihf` GNU `ld` (lld 14 has no `armelfb_linux_eabi`
         /// emulation; the GNU linker handles `-EB` via the BE BFD target).
         arm_be => SLA_SPEC_ARM8_BE, PSPEC_ARM_V45, Big, ArmBe
+    }
+
+    arch_ctor! {
+        /// Returns the **BE8** ARM 32-bit descriptor — modern ARM big-endian:
+        /// *little-endian instructions, big-endian data* (GHIDRA's
+        /// `ARM:LEBE:32`).  This is what every ARMv6+ big-endian Linux target
+        /// (kernel + userland, marked `EF_ARM_BE8` in the ELF flags) actually
+        /// is.
+        ///
+        /// It uses the **little-endian** `ARM8_le` Sleigh spec (so instruction
+        /// words decode correctly, LE) paired with `Endianness::Big`, which
+        /// drives strider's own big-endian data decoding (`LoadReadOnly` ROM
+        /// reads and jump-table entries).  The `arm_be` (BE32) spec byte-swaps
+        /// every instruction and fails to decode a BE8 binary — the reason a
+        /// BE8 vmlinux lifted as `arm_be` errors on the vast majority of
+        /// functions.  Pairs with the byte-order-independent `arm_aapcs` CC.
+        ///
+        /// Pass it explicitly for a BE8 target:
+        /// `load_elf(vmlinux, arch=SleighArch.arm_be_kernel())`.
+        arm_be_kernel => SLA_SPEC_ARM8_LE, PSPEC_ARM_V45, Big, ArmBeKernel
     }
 
     /// Probes Sleigh against an empty memory reader to extract this arch's
