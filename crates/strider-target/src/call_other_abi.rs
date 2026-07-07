@@ -52,7 +52,7 @@ pub struct CallOtherAbi {
     pub implicit_writes: &'static [&'static str],
 
     /// Does this op clobber memory (i.e. advance the IR's memory
-    /// edge)?  Set to `false` for pure compute (cpuid, rdtsc) and
+    /// edge)?  Set to `false` for pure compute (rdtsc, NEON/SVE) and
     /// `true` for everything that touches memory — atomics, barriers,
     /// port-I/O, syscalls, kernel entries, etc.  Any op that touches
     /// memory is treated uniformly as "clobbers memory" in the IR; the
@@ -502,7 +502,7 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
     //   * `PURE` — visible marker / pure compute, no memory clobber
     //     (cpuid, NEON/SVE compute, exclusive-monitor primitives, …).
     //   * `MEM_CLOBBER` — memory-chain marker / external-state effect
-    //     (barriers, LOCK/UNLOCK, port I/O, SYSCALL, …).
+    //     (barriers, LOCK/UNLOCK, port I/O, SYSCALL, serializing CPUID, …).
     const PURE: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
         implicit_reads: &[],
         implicit_writes: &[],
@@ -537,28 +537,32 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // CPU hints — non-paired, no memory effect.
         ("Hint_Prefetch", PURE),
         ("Yield", PURE),
-        // x86 CPUID family — Sleigh's lift returns a tmpptr; the
-        // EAX/EBX/ECX/EDX writes appear as ordinary Loads from
-        // tmpptr+{0,4,8,12} in subsequent pcode.  The CallOther itself
-        // doesn't touch RAM, so memory edge stays put — opt passes can
-        // forward through it.
-        ("cpuid", PURE),
-        ("cpuid_Architectural_Performance_Monitoring_info", PURE),
-        ("cpuid_Deterministic_Cache_Parameters_info", PURE),
-        ("cpuid_Direct_Cache_Access_info", PURE),
-        ("cpuid_Extended_Feature_Enumeration_info", PURE),
-        ("cpuid_Extended_Topology_info", PURE),
-        ("cpuid_MONITOR_MWAIT_Features_info", PURE),
-        ("cpuid_Processor_Extended_States_info", PURE),
-        ("cpuid_Quality_of_Service_info", PURE),
-        ("cpuid_Thermal_Power_Management_info", PURE),
-        ("cpuid_Version_info", PURE),
-        ("cpuid_basic_info", PURE),
-        ("cpuid_brand_part1_info", PURE),
-        ("cpuid_brand_part2_info", PURE),
-        ("cpuid_brand_part3_info", PURE),
-        ("cpuid_cache_tlb_info", PURE),
-        ("cpuid_serial_info", PURE),
+        // x86 CPUID family — a *serializing* instruction (Intel SDM Vol. 3
+        // §8.3): it drains the store buffer and forces all prior memory
+        // operations to complete / become globally visible before the next
+        // instruction.  That makes it a full memory-ordering barrier — stronger
+        // than MFENCE — so it must advance the memory edge (MEM_CLOBBER): a load
+        // after CPUID may observe a concurrent agent's write that CPUID is the
+        // barrier for, and must NOT be forwarded from a store before it.  (The
+        // EAX/EBX/ECX/EDX register writes are pcode-explicit Loads from a scratch
+        // tmpptr, so `clobbers_memory` is about ORDERING, not those writes.)
+        ("cpuid", MEM_CLOBBER),
+        ("cpuid_Architectural_Performance_Monitoring_info", MEM_CLOBBER),
+        ("cpuid_Deterministic_Cache_Parameters_info", MEM_CLOBBER),
+        ("cpuid_Direct_Cache_Access_info", MEM_CLOBBER),
+        ("cpuid_Extended_Feature_Enumeration_info", MEM_CLOBBER),
+        ("cpuid_Extended_Topology_info", MEM_CLOBBER),
+        ("cpuid_MONITOR_MWAIT_Features_info", MEM_CLOBBER),
+        ("cpuid_Processor_Extended_States_info", MEM_CLOBBER),
+        ("cpuid_Quality_of_Service_info", MEM_CLOBBER),
+        ("cpuid_Thermal_Power_Management_info", MEM_CLOBBER),
+        ("cpuid_Version_info", MEM_CLOBBER),
+        ("cpuid_basic_info", MEM_CLOBBER),
+        ("cpuid_brand_part1_info", MEM_CLOBBER),
+        ("cpuid_brand_part2_info", MEM_CLOBBER),
+        ("cpuid_brand_part3_info", MEM_CLOBBER),
+        ("cpuid_cache_tlb_info", MEM_CLOBBER),
+        ("cpuid_serial_info", MEM_CLOBBER),
         // x86 SSE4.1 / SSSE3 / SHA-NI pure-SIMD intrinsics — Sleigh models
         // each as a CallOther that carries EVERY operand register as a pcode
         // operand (the `:SHA256RNDS2 XmmReg1, XmmReg2_m128, XMM0` constructor
@@ -771,13 +775,13 @@ mod tests {
 
     #[test]
     fn pure_compute_and_hints_classify_as_pure_no_mem_edge() {
-        // Pure compute (cpuid, NEON, SVE) and non-paired hints
-        // (Hint_Prefetch, Yield) — visible markers but don't advance
-        // the memory token (so opt passes can forward through).
+        // Pure compute (NEON, SVE) and non-paired hints (Hint_Prefetch, Yield) —
+        // visible markers but don't advance the memory token (so opt passes can
+        // forward through).  cpuid is NOT here: it is serializing (see
+        // `cpuid_family_has_empty_register_abi_but_clobbers_memory`).
         for n in [
             "Hint_Prefetch",
             "Yield",
-            "cpuid",
             "NEON_rev64",
             "SVE_fnmla",
             "MP_INT_ABS",
@@ -930,13 +934,15 @@ mod tests {
     }
 
     #[test]
-    fn cpuid_family_uses_empty_abi_no_memory_edge() {
-        // Sleigh's cpuid lift selects one of cpuid / cpuid_* based on
-        // EAX, returns a tmpptr, then emits Loads for EAX/EBX/EDX/ECX
-        // from the returned pointer.  The user-op itself doesn't touch
-        // RAM, so memory_edge stays at false — opt passes can forward
-        // through.  (The post-cpuid Loads on the tmpptr advance mem
-        // themselves; cpuid doesn't need to.)
+    fn cpuid_family_has_empty_register_abi_but_clobbers_memory() {
+        // Sleigh's cpuid lift selects one of cpuid / cpuid_* based on EAX,
+        // returns a tmpptr, then emits Loads for EAX/EBX/EDX/ECX from it — so the
+        // register channels are pcode-explicit and the ABI's implicit_reads /
+        // implicit_writes stay EMPTY.  But cpuid is a *serializing* instruction
+        // (SDM Vol. 3 §8.3): a full memory-ordering barrier, stronger than
+        // MFENCE, so it MUST advance the memory edge — a load after cpuid may
+        // observe a concurrent write cpuid is the barrier for and must not be
+        // forwarded across it.
         for n in [
             "cpuid",
             "cpuid_basic_info",
@@ -963,7 +969,11 @@ mod tests {
             };
             assert!(abi.implicit_reads.is_empty(), "{n}");
             assert!(abi.implicit_writes.is_empty(), "{n}");
-            assert!(!abi.clobbers_memory, "{n}: cpuid doesn't touch RAM");
+            assert!(
+                abi.clobbers_memory,
+                "{n}: cpuid is serializing — must advance the memory edge",
+            );
+            assert!(!abi.no_return, "{n}: cpuid returns");
         }
     }
 
