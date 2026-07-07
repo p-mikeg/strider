@@ -194,13 +194,13 @@ fn decompose_index(
             // keeps it as `SpRel` and never enumerates it.  Skipping it (like a
             // const) keeps `sp` from being a second root — otherwise the real
             // index fails to dominate the target (the SP path bypasses it) and
-            // every stack table would defer.  `decompose_readonly` is the single
+            // every stack table would defer.  `decompose` is the single
             // SSoT for "is this a pure SP base": it recognises exactly the
             // `sp + const` / alignment-masked shapes and (unlike a structural
             // `sp & mask` check) rejects a bit-extraction `sp & 0xF`, which is a
             // bounded *value* the walk must keep as a candidate index.
             if function.int_const_u128(p).is_some()
-                || crate::sp_expr::decompose_readonly(function, p).is_some()
+                || crate::sp_analysis::decompose(function, p).is_some()
             {
                 continue;
             }
@@ -255,12 +255,11 @@ fn foldable_load_address(function: &strider_ir::Function, load: ValueId) -> Opti
 
 /// A const address (rodata table base) or an SP-rooted address (stack table
 /// base) -- the two bases the evaluator can fold a `Load` through.  SP-rooting
-/// is asked of the shared `decompose_readonly` (the single SSoT) — no bespoke
+/// is asked of the shared `decompose` (the single SSoT) — no bespoke
 /// structural SP walk — and the operand check in [`foldable_load_address`]
 /// bridges the index-dependent case that decompose returns `None` for.
 fn is_base_operand(function: &strider_ir::Function, v: ValueId) -> bool {
-    function.int_const_u128(v).is_some()
-        || crate::sp_expr::decompose_readonly(function, v).is_some()
+    function.int_const_u128(v).is_some() || crate::sp_analysis::decompose(function, v).is_some()
 }
 
 /// `v` as a candidate index: a genuinely-bounded non-constant integer whose

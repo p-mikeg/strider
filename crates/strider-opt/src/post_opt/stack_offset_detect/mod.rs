@@ -13,7 +13,7 @@ use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
 use crate::pipeline::PostOptimizer;
-use crate::sp_expr::decompose_readonly;
+use crate::sp_analysis::decompose;
 
 /// Detects SP-relative Store / Load addresses and records each one's
 /// concrete offset in the `Function::stack_offsets` side-table.
@@ -43,7 +43,7 @@ impl PostOptimizer for StackOffsetDetect {
         for node in candidates {
             // Address is input slot 1 of both Store/Load; skip a malformed node.
             if let Some(addr) = function.node_inputs(node).get(1).copied() {
-                decompose_readonly(function, addr);
+                decompose(function, addr);
             }
         }
         Ok(())

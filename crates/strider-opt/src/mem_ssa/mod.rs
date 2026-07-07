@@ -5,7 +5,7 @@
 //! definition (a `Store` / `Call` / `CallOther` memory output, or a
 //! `MemPhi`) that **may alias** the location the load reads.  The
 //! aliasing question is delegated to a pluggable [`MemorySSAWalker`]
-//! oracle so the consumers — `function_args` (does any def shadow a
+//! walker so the consumers — `function_args` (does any def shadow a
 //! stack-arg slot?) and `load_forward` (is the live def an exact-match
 //! store I can forward?) — share the traversal plumbing while supplying
 //! their own alias predicate.
@@ -23,7 +23,7 @@
 //! backward (input slot 0 of `Load` / `Store` / `MemPhi`, the call's
 //! memory input for `Call` / `CallOther`):
 //!
-//! * if a def aliases the load (the oracle calls it a clobber) → return it
+//! * if a def aliases the load (the walker calls it a clobber) → return it
 //!   (the nearest clobber);
 //! * if it does NOT alias and is not a phi → advance the cursor to that
 //!   def's own memory input and continue;
@@ -80,18 +80,18 @@ use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
-/// Pluggable aliasing oracle for the memory-SSA walk.
+/// Pluggable aliasing walker for the memory-SSA walk.
 pub(crate) trait MemorySSAWalker {
     /// Does the memory definition `def` clobber (overlap) the location the
-    /// walk is analysing?  The oracle holds the analysed location itself
+    /// walk is analysing?  The walker holds the analysed location itself
     /// (e.g. the load's precomputed address class), so the walk does not
     /// pass it in.
     ///
     /// `def` is never a `MemPhi` or `InitialMemory`: the walker handles
     /// phis structurally (joining per-predecessor results) and treats
-    /// `InitialMemory` as the clean chain root, so the oracle classifies
+    /// `InitialMemory` as the clean chain root, so the walker classifies
     /// every other producer it meets on the chain — `Store` / `Call` /
-    /// `CallOther` and any opaque memory producer.  A conservative oracle
+    /// `CallOther` and any opaque memory producer.  A conservative walker
     /// returns `true` for producers it cannot reason about.
     ///
     /// Returning `true` terminates the branch with `def` as the nearest
@@ -106,7 +106,7 @@ pub(crate) trait MemorySSAWalker {
     /// function's `InitialMemory` node when every path is clean (callers
     /// distinguish by the returned node's kind).  Takes a shared
     /// `&Function` and performs **no narrowing**; use it from a read-only
-    /// context.  Default method: `self` is the aliasing oracle and the
+    /// context.  Default method: `self` is the aliasing walker and the
     /// traversal runs through the internal [`MemSsaWalk`] engine.
     fn find_nearest_clobber(&mut self, function: &Function, mem: NodeId) -> NodeId
     where
@@ -138,7 +138,7 @@ pub(crate) fn narrow_load_to(edit: &mut crate::EditFunction<'_>, load: NodeId, c
             let mem_use = function
                 .node_input_id_at(load, 0)
                 .expect("a Load has a memory input at slot 0");
-            let cur_mem = function.graph().value_of_use(mem_use);
+            let cur_mem = function.node_inputs(load)[0];
             // Skip the no-op move when the load already points at its nearest
             // clobber (keeps the narrowing idempotent / convergent).
             (cur_mem != target_mem).then_some((mem_use, target_mem))
@@ -196,14 +196,14 @@ enum Resolve {
 
 /// Enter/exit work-stack frame for the iterative memoized DFS.
 enum Frame {
-    /// First visit to `mem`: classify it (oracle short-circuit at an
+    /// First visit to `mem`: classify it (walker short-circuit at an
     /// aliasing def), else push an `Exit` continuation and its successors.
     Enter(ValueId),
     /// All successors of `mem` are resolved; combine and memoize.
     Exit(ValueId),
 }
 
-/// Backward memory-SSA walk bound to a `Function` + an aliasing oracle.
+/// Backward memory-SSA walk bound to a `Function` + an aliasing walker.
 /// The traversal reads `self.function` and consults `self.walker` instead
 /// of threading them through every helper.  Read-only: the narrowing
 /// rewrite is a separate caller-side mutating step (see [`narrow_load_to`]).
@@ -281,7 +281,7 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                     }
                     let node = self.function.producer(cur);
                     // Aliasing-def short-circuit: a `Store` / `Call` /
-                    // `CallOther` (or opaque producer) the oracle calls a
+                    // `CallOther` (or opaque producer) the walker calls a
                     // clobber resolves to itself with no successor walk.
                     let node_kind = self.function.node_kind(node);
                     let is_phi = matches!(node_kind, NodeKind::MemPhi);
@@ -346,7 +346,7 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
     /// Combines a node's already-resolved successor results into the node's
     /// own result.  A `MemPhi` joins (agree → pass through, disagree →
     /// boundary); a linear node forwards its single predecessor's result; a
-    /// terminal node is clean.  The oracle's per-`Store`/`Call` alias verdict
+    /// terminal node is clean.  The walker's per-`Store`/`Call` alias verdict
     /// is applied at enter-time (see [`Self::walk_from`]) and short-circuits
     /// before this combine ever runs, so here a non-phi node simply forwards.
     fn combine(&self, cur: ValueId, succ_results: &[Option<ValueId>]) -> Option<ValueId> {

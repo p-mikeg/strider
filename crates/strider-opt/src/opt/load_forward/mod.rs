@@ -3,8 +3,8 @@
 //! reaching the load is an **exact-match store** to the same location.
 //!
 //! The pass walks the memory-SSA chain backward from the load via the
-//! pass-scoped [`crate::sp_expr::SpAliasCfg`]
-//! ([`nearest_clobber`][crate::sp_expr::SpAliasCfg::nearest_clobber],
+//! pass-scoped [`crate::sp_analysis::SpOptions`]
+//! ([`nearest_clobber`][crate::sp_analysis::SpAnalyzer::nearest_clobber],
 //! `call_clobbers: true` — a load never forwards across a call), which
 //! supplies the per-def aliasing verdict.
 //! The walker returns the nearest may-aliasing definition NODE:
@@ -33,7 +33,7 @@ use strider_target::Endianness;
 
 use crate::error::Result;
 use crate::pipeline::OptimizationResult;
-use crate::sp_expr::{AliasVerdict, SpAliasCfg};
+use crate::sp_analysis::{AliasVerdict, SpAnalyzer, SpOptions};
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///
@@ -79,7 +79,7 @@ impl crate::peephole::PeepholePass for LoadForward {
 
 /// Tries to forward a single `Load` to the value of its live upstream
 /// `Store`.  Finds the nearest may-aliasing memory definition via the
-/// pass-scoped [`SpAliasCfg`]; forwards iff that definition is an
+/// pass-scoped [`SpOptions`]; forwards iff that definition is an
 /// exact-match `Store`.  Returns `Changed` iff the load's uses were rewired.
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
@@ -98,7 +98,7 @@ fn try_forward_load(
     // load_forward stays conservative on distinct SP bases (a store at a
     // different SP base may still alias the forwarded load); a `Call` always
     // blocks a forward (`call_clobbers: true`).
-    let alias_cfg = SpAliasCfg::call_blocking(alias_mode);
+    let alias_cfg = SpAnalyzer::new(SpOptions::call_blocking(alias_mode));
 
     // 1. Find the nearest definition that may alias the load.  A clean
     //    chain returns the `InitialMemory` node (handled by the Store
@@ -108,7 +108,7 @@ fn try_forward_load(
     // Narrowing is now a caller-side step: shorten this load's memory edge
     // onto its nearest clobber so future walks skip the proven-disjoint run.
     // (Harmless when the load goes on to forward — it's culled either way.)
-    crate::sp_expr::narrow_load_to(edit, load, clobber_node);
+    crate::mem_ssa::narrow_load_to(edit, load, clobber_node);
 
     // 2. The clobber must be a `Store`.  A `MemPhi` boundary (disagreeing
     //    control merge), a `Call` / `CallOther`, `InitialMemory` (clean
@@ -203,7 +203,7 @@ fn narrow(
             // SSoT for the endianness-aware byte-slice shift (shared with the
             // jump-table evaluator's symbolic `reshape`).
             let shift_bits =
-                crate::sp_expr::high_low_shift_bits(store_data_ty, load_ty, endianness);
+                crate::sp_analysis::high_low_shift_bits(store_data_ty, load_ty, endianness);
             // shift_bits is a byte-offset * 8 — always fits in u128.  Route it
             // through `build_int_const` so a wide `store_data_ty` (I80 / I128)
             // mints the interned const so it dedups correctly against any other

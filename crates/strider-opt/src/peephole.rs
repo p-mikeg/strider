@@ -316,7 +316,7 @@ mod tests {
                 // Build a genuinely fresh `Add` with a distinct cacheable key
                 // (the root's first input used twice) so the dedup cache
                 // can't collapse it onto the already-seen root node.
-                let first = edit.node_inputs(root).iter().next().unwrap();
+                let first = edit.node_inputs(root)[0];
                 let new_node = edit.create_node(
                     kind,
                     [first, first],

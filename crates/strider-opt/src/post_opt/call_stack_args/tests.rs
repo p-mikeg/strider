@@ -589,7 +589,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let before_inputs = fg.node_inputs(find_call(fg.graph())?).into_iter().count();
+    let before_inputs = fg.node_inputs(find_call(fg.graph())?).len();
 
     let mut pipeline = cf_rp_pipeline();
     // x86 cdecl-style: ret addr at offset 0 from anchor, args at +4 and +8.
@@ -598,7 +598,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let after_inputs = fg.node_inputs(find_call(fg.graph())?).into_iter().count();
+    let after_inputs = fg.node_inputs(find_call(fg.graph())?).len();
     assert_eq!(
         before_inputs, after_inputs,
         "no args should have been collected when slot 0 is missing"
@@ -627,13 +627,13 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let before_inputs = fg.node_inputs(find_call(fg.graph())?).into_iter().count();
+    let before_inputs = fg.node_inputs(find_call(fg.graph())?).len();
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    let after_inputs = fg.node_inputs(find_call(fg.graph())?).into_iter().count();
+    let after_inputs = fg.node_inputs(find_call(fg.graph())?).len();
     assert_eq!(
         before_inputs, after_inputs,
         "no args should have been collected"

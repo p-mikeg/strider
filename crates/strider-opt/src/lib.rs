@@ -39,6 +39,10 @@
 //! a pipeline pass.
 
 pub mod error;
+// Crate-internal: the payload-agnostic backward memory-SSA walk (the
+// `MemorySSAWalker` trait + DFS engine), driven by `sp_analysis`'s alias walker.
+// No downstream crate names it, so it stays `pub(crate)`.
+pub(crate) mod mem_ssa;
 mod options;
 pub(crate) mod peephole;
 mod pipeline;
@@ -46,7 +50,7 @@ pub mod rewrite_rule;
 // Crate-internal: the SP-expression decomposition lives here and its results
 // are cached on the function's `stack_offsets` side-table — no downstream crate
 // names `SpExpr` / `ranges_disjoint`, so the whole module stays `pub(crate)`.
-pub(crate) mod sp_expr;
+pub(crate) mod sp_analysis;
 pub use error::Result;
 pub use options::{AliasMode, MemAliasOptions, OptOptions};
 pub use rewrite_rule::{

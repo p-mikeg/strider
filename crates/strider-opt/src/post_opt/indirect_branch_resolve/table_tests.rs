@@ -1384,7 +1384,7 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
 ///
 /// This test verifies the tightening introduced by replacing the old
 /// bespoke backward scan (which walked past `Call` nodes as if they
-/// were non-aliasing stores) with the shared `SpAliasOracle` walker
+/// were non-aliasing stores) with the shared `SpMemWalker` walker
 /// (which treats `Call` as a memory clobber).
 #[test]
 fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_load() {

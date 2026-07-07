@@ -1,5 +1,5 @@
 //! Stack-argument collection post-pass. The shared SP-decomposition and
-//! memory-SSA machinery lives in [`crate::sp_expr`] / [`crate::sp_expr::mem_ssa`].
+//! memory-SSA machinery lives in [`crate::sp_analysis`] / [`crate::sp_analysis::mem_ssa`].
 //!
 //! `CallStackArgCollect` — post-pass that, for each `Call` node, walks the
 //! shared memory-SSA chain to find the `Store` supplying each positional
@@ -11,7 +11,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
 use crate::pipeline::PostOptimizer;
-use crate::sp_expr::{SpAliasCfg, SpExpr};
+use crate::sp_analysis::{SpAnalyzer, SpExpr, SpOptions};
 
 #[cfg(test)]
 mod tests;
@@ -22,7 +22,7 @@ mod tests;
 /// The convention's stack-arg offsets are relative to the **call-time SP**, so
 /// the origin is the `Call`'s own SP input decomposed to an entry-SP-relative
 /// `{ base, offset }`.  Starting at slot 0, each slot is probed with
-/// [`SpAliasCfg::reaching_store`] (the `MemPhi`-sound memory-SSA walker): if a `Store`
+/// [`SpAnalyzer::reaching_store`] (the `MemPhi`-sound memory-SSA walker): if a `Store`
 /// is anchored exactly at the slot's byte offset its data value is the
 /// argument.  A store wider than one slot (e.g. an 8-byte `double` on a
 /// 4-byte-stride ABI) is **one** argument occupying several slots: the cursor
@@ -45,7 +45,7 @@ fn collect_stack_args(
     function: &strider_ir::Function,
     call_id: NodeId,
     stack_args: strider_target::StackArgs,
-    alias_cfg: &SpAliasCfg,
+    alias_cfg: &SpAnalyzer,
 ) -> Vec<ValueId> {
     // Call inputs: [control, memory, target, sp, ...args]; slots 1 (memory)
     // and 3 (sp) are guaranteed by the validated Call structural invariant.
@@ -122,7 +122,7 @@ impl PostOptimizer for CallStackArgCollect {
         let calls: Vec<NodeId> = edit.live_of_kind(|k| matches!(k, NodeKind::Call)).collect();
         // Build the SP-alias context once for the whole pass and reuse it across
         // every call site (decompositions route through the function's cache).
-        let alias_cfg = SpAliasCfg::call_blocking(alias_mode);
+        let alias_cfg = SpAnalyzer::new(SpOptions::call_blocking(alias_mode));
         for call_id in calls {
             // The call's effective stack-arg layout: a per-call CC override (a
             // varargs site) if recorded, else the function-default CC.  `None`
