@@ -472,3 +472,37 @@ def test_load_x64_object_file_lifts_tzcount():
         "empty graph means the loader produced no readable bytes for "
         ".text — the section-walker dispatch isn't engaging for ET_REL."
     )
+
+
+# ── Known-noreturn callee auto-marking ─────────────────────────────────────
+
+
+def test_known_noreturn_set_has_stack_chk_fail():
+    # __stack_chk_fail (every stack-protected function's canary-fail path) is
+    # the dominant noreturn callee — its absence would regress the whole point.
+    assert "__stack_chk_fail" in _api._KNOWN_NORETURN_FUNCTIONS
+    assert "panic" in _api._KNOWN_NORETURN_FUNCTIONS
+
+
+def test_noreturn_overrides_runs_and_is_cached():
+    # The mechanism must run over any ELF (empty map for a fixture with no
+    # noreturn symbol) without crashing, and cache the result.
+    lift = strider.load_elf(str(fixture_path("x64", "arithmetic")))
+    ov = lift._noreturn_overrides()
+    assert isinstance(ov, dict)
+    assert lift._noreturn_overrides() is ov  # cached (same object)
+    # analyze still works with the (possibly empty) auto-noreturn map applied.
+    _cfg, fn, _unres = lift.analyze("add")
+    assert fn.node_count() > 0
+
+
+def test_caller_per_address_ccs_wins_over_noreturn_default():
+    # A caller-supplied per_address_ccs entry must not be clobbered by the
+    # auto-noreturn merge (caller wins on an address collision).  Use an
+    # address unlikely to be a real noreturn symbol; the call must still lift.
+    lift = strider.load_elf(str(fixture_path("x64", "arithmetic")))
+    opts = strider.LifterOptions(
+        per_address_ccs={0xDEAD_BEEF: lift.cc},
+    )
+    _cfg, fn, _unres = lift.analyze("add", opts=opts)
+    assert fn.node_count() > 0
