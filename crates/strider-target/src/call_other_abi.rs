@@ -654,7 +654,8 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // TLBP / TLBR: opaque values into a register, no RAM effect.
         ("TLB_probe_for_matching_entry", PURE),
         ("TLB_read_indexed_entryHi", PURE),
-        ("TLB_read_indexed_entryLo", PURE),
+        ("TLB_read_indexed_entryLo0", PURE),
+        ("TLB_read_indexed_entryLo1", PURE),
         ("TLB_read_indexed_entryPageMask", PURE),
         ("getHWRegister", PURE),
         ("move_from_thread_cp0", PURE),
