@@ -144,6 +144,104 @@ pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
     classify_arch_specific(preset, name)
         .or_else(|| classify_arch_independent(name))
         .or_else(|| classify_prefix_family(preset, name))
+        .or_else(|| classify_ppc(preset, name))
+}
+
+/// PowerPC user-op ABIs.  GHIDRA's PowerPC `.sinc` lifts many instructions —
+/// atomic store-conditional, cache / TLB / SLB management, Altivec/VSX vector
+/// ops, traps, and system-register moves — to named `pcodeop` CallOthers.
+/// Scoped to the four PPC presets so these names (some generic, e.g. `random`,
+/// `message`) cannot match on another arch.  Grouped by classification and
+/// ASCII-sorted within each group for diffability.
+fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
+    use crate::ArchPreset::{Ppc32Be, Ppc32Le, Ppc64Be, Ppc64Le};
+    if !matches!(preset, Ppc32Be | Ppc32Le | Ppc64Be | Ppc64Le) {
+        return None;
+    }
+    // Value-producing compute / load with no memory write; and memory-writing /
+    // barrier ops (mirrors the arch-independent PURE / MEM_CLOBBER split).
+    const PURE: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &[],
+        implicit_writes: &[],
+        clobbers_memory: false,
+        no_return: false,
+    });
+    const MEM_CLOBBER: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &[],
+        implicit_writes: &[],
+        clobbers_memory: true,
+        no_return: false,
+    });
+
+    static TABLE: &[(&str, CallOtherClass)] = &[
+        // ─── NoReturn: traps + return-from-interrupt (control ends here) ──
+        // `tw`/`td` conditional traps are the kernel's BUG()/bounds checks;
+        // GHIDRA reaches the CallOther only on the trapping path, so that path
+        // does not return.  `rfi`/`rfid` return from an exception handler.
+        ("returnFromInterrupt", CallOtherClass::NO_RETURN),
+        ("trapDoubleWordImmediate", CallOtherClass::NO_RETURN),
+        ("trapWord", CallOtherClass::NO_RETURN),
+        // ─── MEM_CLOBBER: stores, atomics, cache/TLB/SLB modification ─────
+        // Store-conditional + byte-reverse stores write RAM; dcbz zeroes a
+        // block; dcbf/dcbst/icbi and TLB/SLB management are memory / ordering
+        // barriers; icswx/copy-paste and doorbell messages have external memory
+        // effects.  All advance the memory edge.
+        ("MessageClear", MEM_CLOBBER),
+        ("MessageSend", MEM_CLOBBER),
+        ("StoreDoublewordByteReverseIndexed", MEM_CLOBBER),
+        ("TLBInvalidateEntry", MEM_CLOBBER),
+        ("TLBInvalidateEntryLocal", MEM_CLOBBER),
+        ("TLBSynchronize", MEM_CLOBBER),
+        ("TLBWrite", MEM_CLOBBER),
+        ("copytrans", MEM_CLOBBER),
+        ("dataCacheBlockClearToZero", MEM_CLOBBER),
+        ("dataCacheBlockFlush", MEM_CLOBBER),
+        ("dataCacheBlockInvalidate", MEM_CLOBBER),
+        ("dataCacheBlockStore", MEM_CLOBBER),
+        ("icswxDotOp", MEM_CLOBBER),
+        ("instructionCacheBlockInvalidate", MEM_CLOBBER),
+        ("instructionCacheCongruenceClassInvalidate", MEM_CLOBBER),
+        ("message", MEM_CLOBBER),
+        ("pastetrans", MEM_CLOBBER),
+        ("slbInvalidateAll", MEM_CLOBBER),
+        ("slbMoveToEntry", MEM_CLOBBER),
+        ("storeDoubleWordConditionalIndexed", MEM_CLOBBER),
+        ("storeWordConditionalIndexed", MEM_CLOBBER),
+        ("syscall", MEM_CLOBBER),
+        // ─── Pure: value-producing compute / load / status read ──────────
+        // Byte-reverse load + SLB reads + the hardware RNG produce a
+        // pcode-explicit output and touch no RAM.  Altivec/VSX/vector compute
+        // intrinsics are covered by the `altv`/`vsx`/`vector` prefix below.
+        ("LoadDoublewordByteReverseIndexed", PURE),
+        ("loadVectorForShiftLeft", PURE),
+        ("random", PURE),
+        ("slbMoveFromEntryESID", PURE),
+        ("slbMoveFromEntryVSID", PURE),
+        ("slbfeeDotOp", PURE),
+        // ─── NoOp: hints / system-state writes with no tracked effect ────
+        // Cache-touch + stream-stop are prefetch hints; wait/wrtee/clearHistory
+        // /mtfsf change MSR / branch-history / FPSCR state strider does not
+        // track — no memory or value effect to model.
+        ("MoveToFPSCRFields", NoOp),
+        ("WriteExternalEnable", NoOp),
+        ("WriteExternalEnableImmediate", NoOp),
+        ("clearHistory", NoOp),
+        ("dataCacheBlockTouch", NoOp),
+        ("dataCacheBlockTouchForStore", NoOp),
+        ("dataStreamStopAll", NoOp),
+        ("waitT", NoOp),
+    ];
+    if let Some(c) = TABLE.iter().find_map(|(n, c)| (*n == name).then_some(*c)) {
+        return Some(c);
+    }
+    // Altivec / VSX / named vector compute intrinsics — GHIDRA emits these as
+    // `altv207_<n>`, `vsx<ver>_<n>`, and `vector<Op>` CallOthers.  All are pure
+    // SIMD compute (operands pcode-explicit, no RAM effect); vector *loads* and
+    // *stores* lift to ordinary Load/Store pcode, not these user-ops.
+    if name.starts_with("altv") || name.starts_with("vsx") || name.starts_with("vector") {
+        return Some(PURE);
+    }
+    None
 }
 
 /// Arch-specific entries — names whose ABI depends on which arch
@@ -1147,6 +1245,48 @@ mod tests {
                 Some(CallOtherClass::NO_RETURN),
                 "{n}"
             );
+        }
+    }
+
+    #[test]
+    fn ppc_call_others_classify_by_effect() {
+        use crate::ArchPreset::{Ppc32Be, Ppc64Be, Ppc64Le};
+        let mem = |n| matches!(classify(Ppc64Be, n), Some(CallOtherClass::Call(a)) if a.clobbers_memory);
+        let pure = |n| matches!(classify(Ppc64Be, n), Some(CallOtherClass::Call(a)) if !a.clobbers_memory && !a.no_return);
+
+        // Stores / atomics / cache+TLB+SLB modification advance the memory edge.
+        for n in [
+            "storeWordConditionalIndexed",
+            "storeDoubleWordConditionalIndexed",
+            "dataCacheBlockClearToZero",
+            "dataCacheBlockInvalidate",
+            "TLBInvalidateEntry",
+            "slbMoveToEntry",
+        ] {
+            assert!(mem(n), "{n} should clobber memory");
+        }
+        // Loads / SLB reads / RNG and every Altivec/VSX/vector compute op are pure.
+        for n in [
+            "LoadDoublewordByteReverseIndexed",
+            "slbMoveFromEntryVSID",
+            "random",
+            "altv207_45",       // prefix
+            "vsx300_20",        // prefix
+            "vectorConditionalSelect", // prefix
+        ] {
+            assert!(pure(n), "{n} should be pure");
+        }
+        // Conditional traps + return-from-interrupt end control flow.
+        for n in ["trapWord", "trapDoubleWordImmediate", "returnFromInterrupt"] {
+            assert_eq!(classify(Ppc64Be, n), Some(CallOtherClass::NO_RETURN), "{n}");
+        }
+        // Prefetch / system-state hints are no-ops.
+        assert_eq!(classify(Ppc32Be, "dataCacheBlockTouch"), Some(CallOtherClass::NoOp));
+        assert_eq!(classify(Ppc64Le, "waitT"), Some(CallOtherClass::NoOp));
+
+        // Scoped to PPC: the generic-word ops must not match on another arch.
+        for n in ["random", "message", "trapWord", "vectorConditionalSelect"] {
+            assert_eq!(classify(crate::ArchPreset::Aarch64, n), None, "{n} leaked to AArch64");
         }
     }
 
