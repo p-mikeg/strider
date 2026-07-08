@@ -316,37 +316,6 @@ def load_elf(
     )
 
 
-# Known `__attribute__((noreturn))` callees.  A direct call to one of these
-# never returns, so the compiler emits no terminator after the call and the
-# following bytes are the next function / dead filler.  Marking the callee
-# no-return (via a per-address CC override) lets the CFG builder end the region
-# at the call instead of decoding past it — which otherwise walks off the
-# function (into a literal pool → `BadDataError`, or past `function_max_size` →
-# a function-boundary error).  `__stack_chk_fail` (every stack-protected
-# function's canary-fail path) dominates; the rest is the Linux objtool
-# `global_noreturns` set plus common arch panics.  Matched by exact symbol
-# name against the ELF, so a binary that lacks a symbol is simply skipped.
-_KNOWN_NORETURN_FUNCTIONS = frozenset({
-    "__stack_chk_fail",
-    "panic", "nmi_panic", "vpanic", "panic_smp_self_stop", "nmi_panic_self_stop",
-    "do_exit", "do_group_exit", "do_task_dead", "make_task_dead",
-    "rewind_stack_and_make_dead", "rewind_stack_do_exit",
-    "__ubsan_handle_builtin_unreachable", "fortify_panic", "__fortify_panic",
-    "usercopy_abort", "kunit_try_catch_throw", "__kunit_abort",
-    "cpu_startup_entry", "cpu_bringup_and_idle", "arch_cpu_idle_dead",
-    "arch_call_rest_init", "rest_init", "start_kernel",
-    "x86_64_start_kernel", "x86_64_start_reservations",
-    "stop_this_cpu", "hlt_play_dead", "machine_real_restart", "mpt_halt_firmware",
-    "kthread_exit", "kthread_complete_and_exit", "__module_put_and_kthread_exit",
-    "__x64_sys_exit", "__x64_sys_exit_group", "__ia32_sys_exit", "__ia32_sys_exit_group",
-    "__reiserfs_panic", "ex_handler_msr_mce", "sev_es_terminate", "snp_abort",
-    "hv_ghcb_terminate", "__tdx_hypercall_failed", "__cxa_throw",
-    "xen_cpu_bringup_again", "xen_start_kernel", "xen_start_reservations",
-    "die", "__die", "oops_end", "do_undefinstr",
-    "machine_halt", "machine_power_off", "machine_restart",
-})
-
-
 class ElfLifter(Lifter):
     """The loaded ELF binary as a `Lifter`: `ElfLifter` IS a `Lifter`
     (`isinstance(lift, strider.Lifter)` is true) — it carries the same
@@ -373,7 +342,7 @@ class ElfLifter(Lifter):
     ```
     """
 
-    __slots__ = ("_elf", "_arch", "_cc", "_noreturn_ccs")
+    __slots__ = ("_elf", "_arch", "_cc")
 
     def __new__(
         cls,
@@ -404,13 +373,6 @@ class ElfLifter(Lifter):
         # ELF-derived (or explicitly-passed) default here and threads it
         # into `analyze` below when the caller doesn't override it.
         self._cc = cc
-        # Lazily-built {addr: no_return CC} for the known-`__noreturn` callees
-        # present in this ELF's symbol table (see `_KNOWN_NORETURN_FUNCTIONS`).
-        # A direct `bl`/`call` to one terminates its region instead of falling
-        # through, so an `analyze` bounded by the symbol's size doesn't overrun
-        # into the next function on a canary-fail / panic path.  Built on first
-        # `analyze`, invalidated by `add_elf`.
-        self._noreturn_ccs = None
 
     # ── Properties for introspection / advanced use ─────────────────
 
@@ -490,8 +452,6 @@ class ElfLifter(Lifter):
         see the newly-added ELF."""
         self._elf.add_elf(path, apply_relocations)
         self._rebuild(self._arch, self._elf.reader(), rom=self._elf.ro_reader())
-        # New symbols may add noreturn callees; rebuild the cache lazily.
-        self._noreturn_ccs = None
 
     # ── Lift a function ──────────────────────────────────────────────
 
@@ -527,41 +487,30 @@ class ElfLifter(Lifter):
         if opts is None:
             opts = LifterOptions()
 
-        cfg_size = opts.cfg.function_max_size
         if isinstance(target, str):
             addr, sym_size = self._elf.symbol_addr_and_size(target)
             # Honour the symbol's recorded size when the caller didn't
             # provide an explicit bound (zero-size symbols surface as
             # `None`).
-            if cfg_size is None:
-                cfg_size = sym_size
+            if opts.cfg.function_max_size is None:
+                opts = LifterOptions(
+                    cfg=CfgOptions(
+                        function_max_size=sym_size,
+                        allow_code_before_start_addr=opts.cfg.allow_code_before_start_addr,
+                    ),
+                    compact=opts.compact,
+                    per_address_ccs=opts.per_address_ccs,
+                    calls_clobber=opts.calls_clobber,
+                    assume_distinct_sp_bases_disjoint=opts.assume_distinct_sp_bases_disjoint,
+                    alias_mode=opts.alias_mode,
+                    pipeline=opts.pipeline,
+                )
         elif isinstance(target, int):
             addr = target
         else:
             raise TypeError(
                 f"`target` must be a symbol name (str) or address (int), "
                 f"got {type(target).__name__}"
-            )
-
-        # Merge the known-noreturn callee overrides UNDER any the caller passed
-        # (caller wins on an address collision), and fold in the size bound.
-        # Rebuild `opts` only if either actually adds something.
-        noreturn = self._noreturn_overrides()
-        if noreturn or cfg_size is not opts.cfg.function_max_size:
-            merged = dict(noreturn)
-            if opts.per_address_ccs:
-                merged.update(opts.per_address_ccs)
-            opts = LifterOptions(
-                cfg=CfgOptions(
-                    function_max_size=cfg_size,
-                    allow_code_before_start_addr=opts.cfg.allow_code_before_start_addr,
-                ),
-                compact=opts.compact,
-                per_address_ccs=merged or None,
-                calls_clobber=opts.calls_clobber,
-                assume_distinct_sp_bases_disjoint=opts.assume_distinct_sp_bases_disjoint,
-                alias_mode=opts.alias_mode,
-                pipeline=opts.pipeline,
             )
 
         # ARM Thumb interworking: strip the low bit for an interworking
@@ -574,19 +523,3 @@ class ElfLifter(Lifter):
         if cc is None:
             cc = self._cc
         return super().analyze(addr, cc, opts)
-
-    def _noreturn_overrides(self) -> dict:
-        """`{addr: no_return CC}` for the `_KNOWN_NORETURN_FUNCTIONS` present in
-        this ELF's symbols — built once and cached.  Empty when none are
-        present (a non-kernel binary), so it costs one symbol scan."""
-        if self._noreturn_ccs is None:
-            noret_cc = self._cc.no_return()
-            syms = self._elf.symbols()
-            self._noreturn_ccs = {
-                # Strip the ARM/Thumb interworking bit so the address matches
-                # the direct-call target the CFG builder looks up.
-                (syms[n] & ~1): noret_cc
-                for n in _KNOWN_NORETURN_FUNCTIONS
-                if n in syms
-            }
-        return self._noreturn_ccs
