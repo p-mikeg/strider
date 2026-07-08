@@ -184,7 +184,7 @@ pub(crate) enum CastKind {
 /// eagerly during construction (captures, consts) plus re-finalisable
 /// child references (`Py<PyAny>`), so a fresh `DynMatch` / `DynTemplate`
 /// can be re-emitted on each compile — the same `PyPat` can drive many
-/// `find_all` / `find_one` / `find_joined` calls.
+/// `find_all` / `find_one` / `find_unique` calls.
 ///
 /// `match_only` variants return a `StriderError` from `compile_template`:
 /// they have no rewrite-RHS form.
@@ -974,6 +974,38 @@ pub enum PatLike<'py> {
     SwitchPat(Bound<'py, PySwitchPat>),
 }
 
+/// Query input for `Function.find_all` / `find_one` / `find_unique`: a
+/// single pattern or a `list` of patterns.  A list is matched as a join —
+/// every pattern runs and their captures unify on shared `Capture` objects
+/// (the former `find_joined`), collapsed to one merged `Match` per result.
+///
+/// `Single` is tried first, so a bare capture-name string (a `PatLike::Str`,
+/// itself a sequence) is taken as one pattern rather than mis-read as a list
+/// of one-character patterns; only a genuine `list`/`tuple` — which no
+/// `PatLike` variant accepts — falls through to `Many`.
+#[derive(FromPyObject)]
+pub enum PatQuery<'py> {
+    Single(PatLike<'py>),
+    Many(Vec<PatLike<'py>>),
+}
+
+impl PatQuery<'_> {
+    /// Seal each input into a finished `Pattern`.  A `Single` yields one
+    /// pattern; a `Many` yields one per element (possibly zero).
+    pub(crate) fn to_patterns(&self, py: Python<'_>) -> PyResult<Vec<Pattern>> {
+        match self {
+            PatQuery::Single(p) => Ok(vec![p.to_pattern(py)?]),
+            PatQuery::Many(ps) => ps.iter().map(|p| p.to_pattern(py)).collect(),
+        }
+    }
+}
+
+impl pyo3_stub_gen::PyStubType for PatQuery<'_> {
+    fn type_output() -> pyo3_stub_gen::TypeInfo {
+        pyo3_stub_gen::TypeInfo::with_module("strider.pattern.PatLike", "strider.pattern".into())
+    }
+}
+
 // Manual `PyStubType` impl so `pyo3-stub-gen`'s proc-macros translate
 // `PatLike` parameters to the canonical `PatLike` Python type alias.
 impl pyo3_stub_gen::PyStubType for PatLike<'_> {
@@ -1105,7 +1137,7 @@ pub(crate) fn stash_pending_control_flow(e: PyErr) {
 //
 // A `.when(f)` predicate is attached to a `Pattern` at *build* time, long
 // before any `Function` is known — patterns are reusable across many
-// `find_all` / `find_one` / `find_joined` calls, possibly against
+// `find_all` / `find_one` / `find_unique` calls, possibly against
 // different `Function`s. So the predicate closure itself can't capture a
 // `Py<PyFunction>`. Instead `Function::run_query` (`function.rs`) pushes
 // the `Py<PyFunction>` + generation for the query it's about to run onto
@@ -1188,7 +1220,7 @@ fn run_when_predicate(
         let py_match = match Py::new(
             py,
             crate::matcher::PyMatch {
-                inner: strider_pattern::Match::from_root(node, bindings.clone()),
+                inner: vec![strider_pattern::Match::from_root(node, bindings.clone())],
                 function,
                 generation,
             },

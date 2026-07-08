@@ -434,29 +434,39 @@ class Function:
         ...
     def find_all(
         self,
-        pat: Any,  # strider.pattern.PatLike
+        pat: Any,  # strider.pattern.PatLike | list[strider.pattern.PatLike]
+        ignore_root: bool = ...,
         ignore_casts: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
-    ) -> List[Match]: ...
+    ) -> List[Match]:
+        """Deduplicated `Match`es for `pat`.  `pat` is a single pattern or a
+        `list` of patterns; a list joins on shared `Capture`s (every pattern
+        matches and their captures unify), returning one merged `Match` per
+        result.  Dedup keys on captures+root(s) by default; `ignore_root=True`
+        keys on captures only (collapsing one binding reached from several
+        roots and capture-less duplicates)."""
+        ...
     def find_one(
         self,
-        pat: Any,  # strider.pattern.PatLike
+        pat: Any,  # strider.pattern.PatLike | list[strider.pattern.PatLike]
         ignore_casts: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
     ) -> Optional[Match]:
         """Return the first `Match` for `pat`, or `None` if it does not
-        match anywhere.  One-shot convenience over `find_all`."""
+        match anywhere.  One-shot convenience over `find_all`; `pat` may be a
+        list (joined, as in `find_all`)."""
         ...
-    def find_joined(
+    def find_unique(
         self,
-        pats: List[Any],  # list[strider.pattern.PatLike]
+        pat: Any,  # strider.pattern.PatLike | list[strider.pattern.PatLike]
+        ignore_root: bool = ...,
         ignore_casts: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
-    ) -> List[List[Match]]:
-        """Run multiple patterns and return matched sets joined on shared
-        `Capture`s — a cross-pattern join.  Each result is a tuple with
-        one `Match` per input pattern (in input order) where every
-        `Capture` shared between patterns binds to the same node."""
+    ) -> Match:
+        """Return the single `Match` for `pat`, raising `StriderError` if there
+        is not exactly one (distinct messages for 0 and >1).  The count is
+        taken after dedup, so `ignore_root` and a list `pat` behave as in
+        `find_all`."""
         ...
     def rewrite(self, find: _PatLike, replace: _Template) -> int:
         """Apply a single `find -> replace` rewrite rule across the graph,
@@ -488,7 +498,13 @@ class Match:
     @property
     def root(self) -> int:
         """The root node where the top-level pattern matched, as a `u32`
-        node id."""
+        node id.  Convenience for the single-pattern case — see `roots` for a
+        joined (list) query."""
+        ...
+    @property
+    def roots(self) -> List[int]:
+        """The per-input-pattern root node ids — one entry per pattern passed
+        to the query (`[root]` for a single-pattern query)."""
         ...
     def uint(self, key: Any) -> Optional[int]:
         """Thin forwarder to `Node.const_uint()`."""

@@ -33,8 +33,22 @@ forall_preset!(
     PySleighArch,
     strider_target::SleighArch,
     [
-        x86_64, x86, mipsbe32, mipsle32, mipsbe64, mipsle64, arm, arm_be, arm_be_kernel,
-        arm_thumb, aarch64, aarch64be, ppc32be, ppc32le, ppc64be, ppc64le,
+        x86_64,
+        x86,
+        mipsbe32,
+        mipsle32,
+        mipsbe64,
+        mipsle64,
+        arm,
+        arm_be,
+        arm_be_kernel,
+        arm_thumb,
+        aarch64,
+        aarch64be,
+        ppc32be,
+        ppc32le,
+        ppc64be,
+        ppc64le,
     ]
 );
 
