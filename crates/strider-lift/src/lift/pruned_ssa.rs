@@ -79,7 +79,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 if let Some(out) = insn.output.as_ref() {
                     self.add_def(out, r, defs);
                 }
-                if let Ok((_, name)) = decode_user_op(insn, self.lifter.sleigh())
+                if let Ok((_, name)) = decode_user_op(insn, self.lifter.user_op_names())
                     && let Some(CallOtherClass::Call(abi)) =
                         classify(self.lifter.arch.preset(), name)
                 {

@@ -81,6 +81,10 @@ pub struct Lifter<R: rsleigh::MemReader> {
     /// per-call cost of `Sleigh::regs()` (an "expensive operation" per its
     /// docstring).
     sleigh_regs: rsleigh::SleighRegs,
+    /// User-op name table snapshotted once at construction, indexed by
+    /// `user_op_id`.  `FunctionLifter::handle_call_other` resolves a CallOther's
+    /// name here rather than re-snapshotting the (fixed) table per instruction.
+    user_op_names: Vec<String>,
 }
 
 impl<R: rsleigh::MemReader> Lifter<R> {
@@ -92,11 +96,20 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// Returns `Err` if `Sleigh::regs()` fails.
     pub fn new(arch: strider_target::SleighArch, sleigh: rsleigh::Sleigh<R>) -> Result<Self> {
         let sleigh_regs = sleigh.regs()?;
+        let user_op_names = sleigh.user_op_names().unwrap_or_default();
         Ok(Self {
             arch,
             sleigh,
             sleigh_regs,
+            user_op_names,
         })
+    }
+
+    /// The user-op name table snapshotted at construction, indexed by
+    /// `user_op_id`.  See [`Self::user_op_names`] field docs.
+    #[must_use]
+    pub fn user_op_names(&self) -> &[String] {
+        &self.user_op_names
     }
 
     /// Read access to the owned Sleigh context (for dot rendering, and
@@ -133,6 +146,14 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         cfg_opts: &strider_cfg::CfgOptions,
         per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<strider_cfg::Cfg> {
+        // Reset the Sleigh's disassembly context before decoding this function.
+        // `Sleigh::lift_one` carries context-register state across calls, so on a
+        // reused `Lifter` a prior function's `globalset` (e.g. an ARM `bx`/`blx`
+        // switching the Thumb `TMode`) can leak into this one and mis-decode it.
+        // Each function is an independent entry point that must decode from the
+        // processor-spec defaults, so clear committed context here; cheap and a
+        // no-op for arches that never commit context.
+        self.sleigh.reset_context()?;
         strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, entry.addr, cfg_opts)
             .with_per_address_ccs(per_address_ccs.clone())
             .build()
@@ -590,6 +611,76 @@ mod tests {
         assert!(
             !function.has_kind(|k| matches!(k, NodeKind::IndirectBranch)),
             "`ret` must NOT emit an IndirectBranch placeholder"
+        );
+    }
+
+    /// A reused `Lifter` must decode each function from a clean context.
+    /// `Sleigh::lift_one` carries context-register state across calls: a Thumb
+    /// `BLX <imm>` that switches to ARM `globalset`s the `TMode` for its target,
+    /// and that commit persists.  Lifting a Thumb function A that ends in such a
+    /// `BLX` and then a Thumb function B at the `BLX` target on the SAME lifter
+    /// would, without a per-function reset, decode B as ARM — it mis-parses and
+    /// walks off into unmapped memory.  `Lifter::build_cfg` resets the context
+    /// before each function, so B decodes as Thumb identically to a fresh lift.
+    #[test]
+    fn reused_lifter_resets_thumb_context_between_functions() {
+        use strider_ir::node::NodeKind;
+        use strider_ir_test_utils::IrWalkerEx;
+
+        let arch = strider_target::SleighArch::arm_thumb();
+        let regs = strider_target::SleighArch::arm_thumb()
+            .probe_regs()
+            .expect("regs");
+        let cc = strider_target::CallingConvention::arm_aapcs()
+            .build(&regs)
+            .expect("cc");
+        // Buffer at 0x1000:
+        //   0x1000: BLX 0x1010  (Thumb T2, switches to ARM at 0x1010) = 00 F0 03 E8
+        //   0x1004: bx lr       (70 47) — ends function A
+        //   0x1006: nop ×3      (00 bf) padding up to 0x1010
+        //   0x1010: bx lr; nop; bx lr; nop — function B (a valid Thumb function)
+        let code = vec![
+            0x00, 0xf0, 0x03, 0xe8, // 0x1000 BLX 0x1010
+            0x70, 0x47, // 0x1004 bx lr
+            0x00, 0xbf, 0x00, 0xbf, 0x00, 0xbf, // 0x1006 nop padding
+            0x70, 0x47, 0x00, 0xbf, 0x70, 0x47, 0x00, 0xbf, // 0x1010 function B
+        ];
+        let empty = rustc_hash::FxHashMap::default();
+        let opts = strider_cfg::CfgOptions::default();
+        let new_lifter = || {
+            let reader = rsleigh::mem_readers::BufMemReader::new(code.clone(), 0x1000);
+            let sleigh =
+                rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+            super::Lifter::new(arch, sleigh).expect("lifter")
+        };
+
+        // Reused lifter: lift A (the BLX polluter) first, then B on the same engine.
+        let mut lifter = new_lifter();
+        let cfg_a = lifter
+            .build_cfg(0x1000u64.into(), &opts, &empty)
+            .expect("A cfg");
+        lifter.build_ir(&cfg_a, cc.clone()).expect("A ir");
+        let cfg_b = lifter.build_cfg(0x1010u64.into(), &opts, &empty).expect(
+            "reused lifter must reset context so B's Thumb decode does not inherit A's ARM mode",
+        );
+        let reused_b = lifter.build_ir(&cfg_b, cc.clone()).expect("B ir");
+        assert!(
+            reused_b
+                .function
+                .has_kind(|k| matches!(k, NodeKind::Return)),
+            "B (Thumb `bx lr`) lifted after A must decode as Thumb and emit a Return"
+        );
+
+        // Same B on a fresh lifter — the ground-truth decode to match against.
+        let mut fresh = new_lifter();
+        let cfg_fresh = fresh
+            .build_cfg(0x1010u64.into(), &opts, &empty)
+            .expect("fresh B cfg");
+        let fresh_b = fresh.build_ir(&cfg_fresh, cc).expect("fresh B ir");
+        assert_eq!(
+            reused_b.function.count_kind(|_| true),
+            fresh_b.function.count_kind(|_| true),
+            "B lifted after A must have the same node count as a fresh Thumb lift"
         );
     }
 }

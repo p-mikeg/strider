@@ -78,6 +78,12 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// the orchestrator seeds it from the lifter options via
     /// [`Self::with_per_address_ccs`].
     pub(super) per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
+    /// User-op names snapshotted from the Sleigh once at construction, indexed by
+    /// `user_op_id` (the table's order).  The `Opcode::CallOther` arm resolves a
+    /// name here rather than re-snapshotting per instruction.  Empty if the Sleigh
+    /// reports no user ops (or the snapshot fails — a CallOther then stays
+    /// unclassified, the same as an out-of-range id).
+    pub(super) user_op_names: Vec<String>,
 }
 
 impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
@@ -104,6 +110,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         if options.fn_max_size == Some(0) {
             options.fn_max_size = None;
         }
+        // Snapshot the user-op name table once (it is fixed for the Sleigh's
+        // lifetime); the CallOther arm indexes it by id.  A snapshot failure
+        // degrades to "no names" (CallOthers stay unclassified) rather than
+        // aborting CFG construction.
+        let user_op_names = sleigh.user_op_names().unwrap_or_default();
         Self {
             sleigh,
             start_addr: start_addr.into(),
@@ -113,6 +124,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
             per_address_ccs: rustc_hash::FxHashMap::default(),
+            user_op_names,
         }
     }
 

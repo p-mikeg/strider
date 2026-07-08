@@ -14,7 +14,7 @@ use super::FunctionLifter;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     pub(super) fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let (user_op_id, name) = decode_user_op(insn, self.lifter.sleigh())?;
+        let (user_op_id, name) = decode_user_op(insn, self.lifter.user_op_names())?;
         let class = strider_target::call_other_abi::classify(self.lifter.arch.preset(), name)
             .ok_or_else(|| {
                 anyhow::anyhow!(
@@ -153,18 +153,21 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
 /// Decode the user-op id + look up its name from a `CallOther` insn.
 /// Extracted from [`FunctionLifter::handle_call_other`]'s preamble.
-pub(super) fn decode_user_op<'a, R: rsleigh::MemReader>(
+pub(super) fn decode_user_op<'a>(
     insn: &rsleigh::Insn,
-    sleigh: &'a rsleigh::Sleigh<R>,
+    user_op_names: &'a [String],
 ) -> Result<(u64, &'a str)> {
     let id_vn = crate::lift::pcode_util::nth_input_or_err(insn, 0)?;
     crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
     let user_op_id = id_vn.addr_off;
     let user_op_id_u32 = u32::try_from(user_op_id)
         .map_err(|_| anyhow!("CallOther user-op id {user_op_id:#x} exceeds u32"))?;
-    let name = sleigh.user_op_name(user_op_id_u32).ok_or_else(|| {
-        anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
-    })?;
+    let name = user_op_names
+        .get(user_op_id_u32 as usize)
+        .map(String::as_str)
+        .ok_or_else(|| {
+            anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
+        })?;
     Ok((user_op_id, name))
 }
 
