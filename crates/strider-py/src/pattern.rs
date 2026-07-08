@@ -484,6 +484,7 @@ fn parse_value_ty(name: &str) -> PyResult<strider_ir::node::ValueType> {
         "i8" => T::I8,
         "i16" => T::I16,
         "i32" => T::I32,
+        "i48" => T::I48,
         "i64" => T::I64,
         "i80" => T::I80,
         "i128" => T::I128,
@@ -495,7 +496,7 @@ fn parse_value_ty(name: &str) -> PyResult<strider_ir::node::ValueType> {
         other => {
             return Err(into_strider_err(anyhow::anyhow!(
                 "unknown output type {other:?} — expected one of i1, i8, i16, \
-                 i32, i64, i80, i128, i256, i512, f32, f64, f80"
+                 i32, i48, i64, i80, i128, i256, i512, f32, f64, f80"
             )));
         }
     };

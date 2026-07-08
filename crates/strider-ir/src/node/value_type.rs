@@ -14,6 +14,10 @@ pub enum ValueType {
     I8,
     I16,
     I32,
+    /// 48-bit integer (6-byte varnode).  Fits `u64`, so it is a `Small`
+    /// integer, not a wide/interned one.  Appears on some arches (e.g. an
+    /// ARM instruction producing a 6-byte value).
+    I48,
     I64,
     /// 80-bit unsigned integer.  Models x87 ST0/STn registers'
     /// integer/bit-pattern view; values are stored in `u128` payloads
@@ -50,6 +54,7 @@ impl ValueType {
             Self::I8 => "i8",
             Self::I16 => "i16",
             Self::I32 => "i32",
+            Self::I48 => "i48",
             Self::I64 => "i64",
             Self::I80 => "i80",
             Self::I128 => "i128",
@@ -70,6 +75,7 @@ impl ValueType {
             Self::I1 | Self::I8 => 1,
             Self::I16 => 2,
             Self::I32 | Self::F32 => 4,
+            Self::I48 => 6,
             Self::I64 | Self::F64 => 8,
             Self::I80 | Self::F80 => 10,
             Self::I128 => 16,
@@ -89,6 +95,7 @@ impl ValueType {
             Self::I8 => 8,
             Self::I16 => 16,
             Self::I32 | Self::F32 => 32,
+            Self::I48 => 48,
             Self::I64 | Self::F64 => 64,
             Self::I80 | Self::F80 => 80,
             Self::I128 => 128,
@@ -220,6 +227,7 @@ impl ValueType {
             1 => Ok(Self::I8),
             2 => Ok(Self::I16),
             4 => Ok(Self::I32),
+            6 => Ok(Self::I48),
             8 => Ok(Self::I64),
             10 => Ok(Self::I80),
             16 => Ok(Self::I128),
@@ -410,9 +418,18 @@ mod tests {
     fn int_for_byte_size_maps_widths() {
         use super::ValueType as T;
         assert_eq!(T::int_for_byte_size(1).unwrap(), T::I8);
+        assert_eq!(T::int_for_byte_size(6).unwrap(), T::I48);
         assert_eq!(T::int_for_byte_size(8).unwrap(), T::I64);
         assert_eq!(T::int_for_byte_size(64).unwrap(), T::I512);
         assert!(T::int_for_byte_size(3).is_err());
+
+        // I48 is a `Small` (u64-fitting) integer, not a wide one, and its
+        // mask/sign helpers work off the generic bit_width path.
+        assert_eq!(T::I48.byte_size(), 6);
+        assert_eq!(T::I48.bit_width(), 48);
+        assert!(!T::I48.is_wide_int());
+        assert_eq!(T::I48.bit_mask_u128(), (1u128 << 48) - 1);
+        assert_eq!(T::I48.get_signed_int((1u128 << 48) - 1), Some(-1i128));
     }
 
     /// `bit_mask_u128` for `I256` and `I512` must return
