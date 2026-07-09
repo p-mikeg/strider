@@ -117,6 +117,20 @@ impl MemPat for CallPat {
     }
 }
 
+impl MatchPat for CallPat {
+    /// Nest as a **value** operand — anchor the Call's first value output
+    /// (raw slot 2, after ctrl/mem). Loose: any value output matches (the
+    /// matcher's `output_ok` checks the operand's kind, not its slot).
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.with_value_anchor(FIRST_VALUE_OUT_SLOT).compile_anchored(b)
+    }
+}
+
+/// Raw output slot of a `Call` / `CallOther`'s first value output — its
+/// outputs are `[Control(0), Memory(1), value…(2)]`, so return/clobber
+/// values start at slot 2.
+const FIRST_VALUE_OUT_SLOT: usize = 2;
+
 /// Construct a fresh [`CallPat`].
 pub fn call() -> CallPat {
     // Call clobbers memory: its memory token is output slot 1.
@@ -207,6 +221,16 @@ impl CallOtherPat {
 impl MemPat for CallOtherPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.configured().compile_anchored(b)
+    }
+}
+
+impl MatchPat for CallOtherPat {
+    /// Nest as a **value** operand — anchor the CallOther's first value output
+    /// (raw slot 2, after ctrl/mem). Loose: any value output matches.
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.configured()
+            .with_value_anchor(FIRST_VALUE_OUT_SLOT)
+            .compile_anchored(b)
     }
 }
 

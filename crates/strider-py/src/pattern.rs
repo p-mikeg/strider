@@ -366,9 +366,18 @@ pub(crate) fn compile_operand_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch>
     if let Ok(b) = ob.downcast::<PyBoolBinaryPat>() {
         return b.borrow().compile_value(py);
     }
+    // Call / CallOther nest as a value operand via their value output(s):
+    // `add(x, call_other().name("f"))`. Loose by default (any value output);
+    // `.res()` narrows to the declared result.
+    if let Ok(b) = ob.downcast::<PyCallPat>() {
+        return b.borrow().compile_value(py);
+    }
+    if let Ok(b) = ob.downcast::<PyCallOtherPat>() {
+        return b.borrow().compile_value(py);
+    }
     Err(into_strider_err(anyhow::anyhow!(
         "expected a value pattern (Pat / Capture / str / value builder); \
-         a control / variadic builder (call / store / ret / if / mem_phi) \
+         a control / variadic builder (store / ret / if / mem_phi) \
          cannot be nested as a value operand"
     )))
 }
@@ -2378,6 +2387,31 @@ macro_rules! node_builder {
             Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
         }
     };
+    (@flavor mem_value $py_name:literal $core:path) => {
+        /// Compile as a memory-token producer for a `mem_in` slot.
+        fn compile_mem(&self, py: Python<'_>) -> PyResult<DynMem> {
+            let b = self.core_builder(py)?;
+            Ok(DynMem(Box::new(move |mb| b.compile_mem(mb))))
+        }
+
+        /// Compile as a **value** operand — the call's value output (loose: any
+        /// value output; `.res()` narrows to the declared result). Lets a
+        /// `Call` / `CallOther` nest inside another node, e.g.
+        /// `add(x, call_other().name("f"))`.
+        fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
+            let b = self.core_builder(py)?;
+            let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
+            Ok(match when {
+                Some(f) => DynMatch(Box::new(move |mb| wrap_when(b, f).compile(mb))),
+                None => DynMatch(Box::new(move |mb| b.compile(mb))),
+            })
+        }
+
+        fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
+            let pat = self.core_builder(py)?.build();
+            Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
+        }
+    };
     (@flavor node $py_name:literal $core:path) => {
         fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
             let pat = self.core_builder(py)?.build();
@@ -2596,6 +2630,17 @@ impl PyCallPat {
         Ok(DynMem(Box::new(move |mb| b.compile_mem(mb))))
     }
 
+    /// Compile as a **value** operand — the Call's value output (loose: any
+    /// value output; `.res()` narrows to the declared result).
+    fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
+        let b = self.core_builder(py)?;
+        let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
+        Ok(match when {
+            Some(f) => DynMatch(Box::new(move |mb| wrap_when(b, f).compile(mb))),
+            None => DynMatch(Box::new(move |mb| b.compile(mb))),
+        })
+    }
+
     fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
         let pat = self.core_builder(py)?.build();
         Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
@@ -2653,7 +2698,7 @@ node_builder! {
     doc: "Typed builder for `CallOther` node patterns.",
     core: strider_pattern::call_other,
     core_ty: strider_pattern::CallOtherPat,
-    root: mem,
+    root: mem_value,
     fields: [
         { scalar user_op_id(u64 => u64): user_op_id
             = "Constrain the matched node's user-op id." },

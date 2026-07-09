@@ -99,6 +99,15 @@ impl NodePat {
         self
     }
 
+    /// Re-anchor onto a value output at `slot`. Used to nest a normally
+    /// memory-rooted node (`Call` / `CallOther`, whose value outputs start at
+    /// slot 2 after ctrl/mem) as a **value** operand of another node, e.g.
+    /// `add(x, call_other().name("f"))`.
+    pub(crate) fn with_value_anchor(mut self, slot: usize) -> Self {
+        self.anchor = AnchorKind::Value(slot);
+        self
+    }
+
     /// Wire a value sub-pattern into raw input `slot`. The one boxing
     /// site for value operands.
     pub(crate) fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
