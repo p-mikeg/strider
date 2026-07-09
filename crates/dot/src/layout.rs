@@ -83,8 +83,17 @@ pub fn layout(input: &LayoutInput, opts: &LayoutOptions) -> Positioned {
     }
     let forward = break_cycles(n, &input.edges);
     let rank = assign_ranks(n, &forward);
-    let mut order = order_within_ranks(n, &rank, &forward, input, opts);
-    let placed = assign_coords(input, &rank, &mut order, opts);
+    // Undirected adjacency (self-loops dropped) drives both crossing-reduction
+    // ordering and the x-coordinate barycenter refinement.
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for &(u, v) in &input.edges {
+        if u != v {
+            adj[u].push(v);
+            adj[v].push(u);
+        }
+    }
+    let ranks = order_within_ranks(n, &rank, &adj, opts);
+    let placed = assign_coords(input, &rank, &ranks, &adj, opts);
     let edges = route_straight(input, &placed);
     let width = placed.iter().map(|p| p.x + p.width).fold(0.0, f64::max);
     let height = placed.iter().map(|p| p.y + p.height).fold(0.0, f64::max);
@@ -141,8 +150,13 @@ fn break_cycles(n: usize, edges: &[(usize, usize)]) -> Vec<(usize, usize)> {
     forward
 }
 
-/// Longest-path ranking on the acyclic `forward` edges: a node's rank is one
-/// more than the max rank of its predecessors (sources get 0).
+/// Layer assignment on the acyclic `forward` edges. Uses *as-late-as-possible*
+/// ranking: each node sits one layer above its earliest successor. This pulls
+/// source nodes (constants, initial values — of which a sea-of-nodes graph has
+/// hundreds, all with no predecessors) *down* next to the consumers that use
+/// them, instead of an as-soon-as-possible scheme that would pile every source
+/// into rank 0 and make it thousands of nodes wide. Edges stay short and the
+/// widest rank shrinks dramatically. `O(V+E)`.
 fn assign_ranks(n: usize, forward: &[(usize, usize)]) -> Vec<usize> {
     let mut succ: Vec<Vec<usize>> = vec![Vec::new(); n];
     let mut indeg = vec![0usize; n];
@@ -150,89 +164,78 @@ fn assign_ranks(n: usize, forward: &[(usize, usize)]) -> Vec<usize> {
         succ[u].push(v);
         indeg[v] += 1;
     }
-    let mut rank = vec![0usize; n];
-    let mut queue: Vec<usize> = (0..n).filter(|&v| indeg[v] == 0).collect();
+    // Topological order + ASAP longest-path depth (only used to find max rank).
+    let mut asap = vec![0usize; n];
+    let mut indeg_left = indeg.clone();
+    let mut queue: Vec<usize> = (0..n).filter(|&v| indeg_left[v] == 0).collect();
+    let mut topo = Vec::with_capacity(n);
     let mut head = 0;
     while head < queue.len() {
         let u = queue[head];
         head += 1;
+        topo.push(u);
         for &v in &succ[u] {
-            if rank[u] + 1 > rank[v] {
-                rank[v] = rank[u] + 1;
-            }
-            indeg[v] -= 1;
-            if indeg[v] == 0 {
+            asap[v] = asap[v].max(asap[u] + 1);
+            indeg_left[v] -= 1;
+            if indeg_left[v] == 0 {
                 queue.push(v);
             }
+        }
+    }
+    let max_rank = asap.iter().copied().max().unwrap_or(0);
+    // ALAP: in reverse topological order, place each node just above its
+    // earliest successor; sinks stay at the bottom rank.
+    let mut rank = vec![max_rank; n];
+    for &u in topo.iter().rev() {
+        if let Some(&min_succ) = succ[u].iter().map(|v| &rank[*v]).min() {
+            rank[u] = min_succ.saturating_sub(1);
         }
     }
     rank
 }
 
-/// Assigns each node an order index within its rank. MVP = input order;
-/// `reduce_crossings` runs barycenter sweeps to shrink crossings.
+/// Builds `ranks[r]` = node ids at rank `r`, ordered within each rank to
+/// reduce edge crossings via alternating up/down barycenter sweeps.
 fn order_within_ranks(
     n: usize,
     rank: &[usize],
-    forward: &[(usize, usize)],
-    _input: &LayoutInput,
+    adj: &[Vec<usize>],
     opts: &LayoutOptions,
-) -> Vec<usize> {
+) -> Vec<Vec<usize>> {
     let max_rank = rank.iter().copied().max().unwrap_or(0);
-    // ranks[r] = node ids at rank r, in current order.
     let mut ranks: Vec<Vec<usize>> = vec![Vec::new(); max_rank + 1];
     for v in 0..n {
         ranks[rank[v]].push(v);
     }
-    if opts.reduce_crossings {
-        // Undirected adjacency for barycenter medians.
-        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
-        for &(u, v) in forward {
-            adj[u].push(v);
-            adj[v].push(u);
-        }
-        let mut pos = order_positions(&ranks);
-        for pass in 0..opts.ordering_passes {
-            let down = pass % 2 == 0;
-            let range: Vec<usize> = if down {
-                (0..=max_rank).collect()
-            } else {
-                (0..=max_rank).rev().collect()
-            };
-            for r in range {
-                let mut keyed: Vec<(f64, usize)> = ranks[r]
-                    .iter()
-                    .map(|&v| (barycenter(v, &adj, &pos), v))
-                    .collect();
-                keyed.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-                ranks[r] = keyed.into_iter().map(|(_, v)| v).collect();
-                for (i, &v) in ranks[r].iter().enumerate() {
-                    pos[v] = i as f64;
-                }
-            }
-        }
-    }
-    // Flatten ranks → per-node order index.
-    let mut order = vec![0usize; n];
+    let mut pos: Vec<f64> = vec![0.0; n];
     for rnodes in &ranks {
-        for (i, &v) in rnodes.iter().enumerate() {
-            order[v] = i;
-        }
-    }
-    order
-}
-
-fn order_positions(ranks: &[Vec<usize>]) -> Vec<f64> {
-    let n: usize = ranks.iter().map(|r| r.len()).sum();
-    let mut pos = vec![0.0f64; n];
-    for rnodes in ranks {
         for (i, &v) in rnodes.iter().enumerate() {
             pos[v] = i as f64;
         }
     }
-    pos
+    for pass in 0..opts.ordering_passes.max(1) {
+        let range: Vec<usize> = if pass % 2 == 0 {
+            (0..=max_rank).collect()
+        } else {
+            (0..=max_rank).rev().collect()
+        };
+        for r in range {
+            let mut keyed: Vec<(f64, usize)> = ranks[r]
+                .iter()
+                .map(|&v| (barycenter(v, adj, &pos), v))
+                .collect();
+            keyed.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            ranks[r] = keyed.into_iter().map(|(_, v)| v).collect();
+            for (i, &v) in ranks[r].iter().enumerate() {
+                pos[v] = i as f64;
+            }
+        }
+    }
+    ranks
 }
 
+/// Mean order-position of a node's neighbours (its current position if it has
+/// none), the barycenter used for crossing reduction.
 fn barycenter(v: usize, adj: &[Vec<usize>], pos: &[f64]) -> f64 {
     let ns = &adj[v];
     if ns.is_empty() {
@@ -241,70 +244,146 @@ fn barycenter(v: usize, adj: &[Vec<usize>], pos: &[f64]) -> f64 {
     ns.iter().map(|&u| pos[u]).sum::<f64>() / ns.len() as f64
 }
 
-/// Assigns absolute `(x, y)` top-left coordinates. Nodes are packed
-/// left-to-right within each rank (in `order`) with `node_sep` gaps; ranks
-/// stack top-to-bottom with `rank_sep` gaps, each rank as tall as its tallest
-/// node. Narrower ranks are centred against the widest.
+/// Assigns absolute `(x, y)` top-left coordinates. `y` stacks ranks
+/// top-to-bottom (each rank as tall as its tallest node, `rank_sep` between).
+/// `x` is refined by alternating sweeps: each node is pulled toward the mean
+/// centre of its neighbours, then each rank is resolved to be order-preserving
+/// and non-overlapping with minimum total displacement (isotonic regression /
+/// pool-adjacent-violators). This aligns nodes under their neighbours so edges
+/// run mostly vertical and the graph stays compact — the readable, `dot`-like
+/// shape, without `dot`'s per-rank virtual-node blow-up.
 fn assign_coords(
     input: &LayoutInput,
     rank: &[usize],
-    order: &mut [usize],
+    ranks: &[Vec<usize>],
+    adj: &[Vec<usize>],
     opts: &LayoutOptions,
 ) -> Vec<Placed> {
     let n = input.nodes.len();
-    let max_rank = rank.iter().copied().max().unwrap_or(0);
-    let mut ranks: Vec<Vec<usize>> = vec![Vec::new(); max_rank + 1];
-    for v in 0..n {
-        ranks[rank[v]].push(v);
-    }
-    for rnodes in &mut ranks {
-        rnodes.sort_by_key(|&v| order[v]);
-    }
+    let w = |v: usize| input.nodes[v].width;
 
-    // Rank widths (sum of node widths + gaps) and heights (tallest node).
-    let rank_width = |rnodes: &[usize]| -> f64 {
-        if rnodes.is_empty() {
-            return 0.0;
-        }
-        rnodes.iter().map(|&v| input.nodes[v].width).sum::<f64>()
-            + opts.node_sep * (rnodes.len() - 1) as f64
-    };
-    let total_width = ranks.iter().map(|r| rank_width(r)).fold(0.0, f64::max);
-
-    let mut placed: Vec<Placed> = vec![
-        Placed {
-            x: 0.0,
-            y: 0.0,
-            width: 0.0,
-            height: 0.0,
-            rank: 0,
-            order: 0,
-        };
-        n
-    ];
+    // Per-rank y band tops.
+    let mut y_top = vec![0.0; ranks.len()];
+    let mut band_h = vec![0.0; ranks.len()];
     let mut y = 0.0;
     for (r, rnodes) in ranks.iter().enumerate() {
-        let rw = rank_width(rnodes);
-        let rh = rnodes
+        let h = rnodes
             .iter()
             .map(|&v| input.nodes[v].height)
             .fold(0.0, f64::max);
-        let mut x = (total_width - rw) / 2.0; // centre this rank
-        for (i, &v) in rnodes.iter().enumerate() {
-            let b = input.nodes[v];
-            placed[v] = Placed {
-                x,
-                y: y + (rh - b.height) / 2.0,
-                width: b.width,
-                height: b.height,
-                rank: r,
-                order: i,
-            };
-            x += b.width + opts.node_sep;
-        }
-        y += rh + opts.rank_sep;
+        y_top[r] = y;
+        band_h[r] = h;
+        y += h + opts.rank_sep;
     }
-    placed
+
+    // Initial x centres: pack each rank left-to-right.
+    let mut cx = vec![0.0f64; n];
+    for rnodes in ranks {
+        let mut x = 0.0;
+        for &v in rnodes {
+            cx[v] = x + w(v) / 2.0;
+            x += w(v) + opts.node_sep;
+        }
+    }
+
+    // Iterative refinement: pull toward neighbour mean, then resolve each rank.
+    let passes = if opts.reduce_crossings { 12 } else { 8 };
+    for pass in 0..passes {
+        let range: Vec<usize> = if pass % 2 == 0 {
+            (0..ranks.len()).collect()
+        } else {
+            (0..ranks.len()).rev().collect()
+        };
+        for r in range {
+            let desired: Vec<f64> = ranks[r]
+                .iter()
+                .map(|&v| {
+                    if adj[v].is_empty() {
+                        cx[v]
+                    } else {
+                        adj[v].iter().map(|&u| cx[u]).sum::<f64>() / adj[v].len() as f64
+                    }
+                })
+                .collect();
+            let placed = resolve_rank(&ranks[r], &desired, input, opts.node_sep);
+            for (i, &v) in ranks[r].iter().enumerate() {
+                cx[v] = placed[i];
+            }
+        }
+    }
+
+    // Normalise so the leftmost node edge sits at x = 0.
+    let min_left = (0..n)
+        .filter(|&v| !ranks[rank[v]].is_empty())
+        .map(|v| cx[v] - w(v) / 2.0)
+        .fold(f64::INFINITY, f64::min);
+    let shift = if min_left.is_finite() { -min_left } else { 0.0 };
+
+    (0..n)
+        .map(|v| {
+            let r = rank[v];
+            let order = ranks[r].iter().position(|&u| u == v).unwrap_or(0);
+            Placed {
+                x: cx[v] - w(v) / 2.0 + shift,
+                y: y_top[r] + (band_h[r] - input.nodes[v].height) / 2.0,
+                width: input.nodes[v].width,
+                height: input.nodes[v].height,
+                rank: r,
+                order,
+            }
+        })
+        .collect()
+}
+
+/// Resolves one rank's node centres: returns centres (in `order` sequence) that
+/// are order-preserving, separated by at least the half-widths + `sep`, and as
+/// close to `desired` as possible (minimum sum of squared displacement). Solved
+/// by pool-adjacent-violators after transforming the min-gap constraints into a
+/// plain non-decreasing (isotonic) constraint.
+fn resolve_rank(order: &[usize], desired: &[f64], input: &LayoutInput, sep: f64) -> Vec<f64> {
+    let m = order.len();
+    if m == 0 {
+        return Vec::new();
+    }
+    // s[i] = minimum centre offset of node i relative to node 0.
+    let mut s = vec![0.0; m];
+    for i in 1..m {
+        s[i] = s[i - 1]
+            + input.nodes[order[i - 1]].width / 2.0
+            + input.nodes[order[i]].width / 2.0
+            + sep;
+    }
+    // Constraint centre[i+1]-centre[i] >= gap ⇔ t[i]=centre[i]-s[i] non-decreasing.
+    let target: Vec<f64> = (0..m).map(|i| desired[i] - s[i]).collect();
+    let t = pava(&target);
+    (0..m).map(|i| t[i] + s[i]).collect()
+}
+
+/// Pool-adjacent-violators: the least-squares non-decreasing fit to `y`
+/// (isotonic regression, equal weights). `O(len)`.
+fn pava(y: &[f64]) -> Vec<f64> {
+    // Stack of blocks: (mean, count).
+    let mut stack: Vec<(f64, usize)> = Vec::with_capacity(y.len());
+    for &yi in y {
+        let mut cur = (yi, 1usize);
+        while let Some(&(v, c)) = stack.last() {
+            if v <= cur.0 {
+                break;
+            }
+            let count = c + cur.1;
+            let mean = (v * c as f64 + cur.0 * cur.1 as f64) / count as f64;
+            stack.pop();
+            cur = (mean, count);
+        }
+        stack.push(cur);
+    }
+    let mut out = Vec::with_capacity(y.len());
+    for (v, c) in stack {
+        for _ in 0..c {
+            out.push(v);
+        }
+    }
+    out
 }
 
 /// One straight polyline per input edge: source bottom-centre → target

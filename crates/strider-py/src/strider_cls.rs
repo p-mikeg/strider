@@ -244,7 +244,24 @@ impl PyLifter {
                 .as_html_from_dot()
                 .map(DotResult::Html)
                 .map_err(into_strider_err),
+            DotOp::DumpLayoutHtml(p, opts) => d
+                .as_layout_html(&opts)
+                .and_then(|html| Ok(std::fs::write(p, html)?))
+                .map(|()| DotResult::Unit)
+                .map_err(into_strider_err),
+            DotOp::LayoutHtmlStr(opts) => d
+                .as_layout_html(&opts)
+                .map(DotResult::Html)
+                .map_err(into_strider_err),
         }
+    }
+}
+
+/// Native-layout options from the Python kwargs (see `dump_layout_html`).
+fn layout_opts(reduce_crossings: bool) -> dot::layout::LayoutOptions {
+    dot::layout::LayoutOptions {
+        reduce_crossings,
+        ..Default::default()
     }
 }
 
@@ -256,6 +273,8 @@ enum DotOp<'a> {
     DumpHtml(&'a str),
     DumpDot(&'a str),
     HtmlStr,
+    DumpLayoutHtml(&'a str, dot::layout::LayoutOptions),
+    LayoutHtmlStr(dot::layout::LayoutOptions),
 }
 
 /// Return shape of [`PyLifter::dispatch_dot`].  Returning a sum lets a
@@ -561,6 +580,44 @@ impl PyLifter {
             DotResult::Html(s) => Ok(s),
             DotResult::Unit => Err(into_strider_err(anyhow::anyhow!(
                 "internal: DotOp::HtmlStr returned DotResult::Unit"
+            ))),
+        }
+    }
+
+    /// Render `function`'s IR graph to a self-contained HTML file at `path`
+    /// using strider's own hierarchical layout — NOT graphviz.  Graphviz
+    /// (`dump_html`) cannot lay out large sea-of-nodes graphs (a ~1800-node
+    /// function is >1400 ranks deep and its layered layout times out), so use
+    /// this for anything non-trivial; it opens instantly at 10k+ nodes.
+    ///
+    /// `reduce_crossings=True` runs extra ordering passes for a tidier layout
+    /// at a small cost (still milliseconds).
+    #[pyo3(signature = (function, path, reduce_crossings=false))]
+    fn dump_layout_html(
+        &self,
+        function: &PyFunction,
+        path: &str,
+        reduce_crossings: bool,
+    ) -> PyResult<()> {
+        self.dispatch_dot(
+            function,
+            None,
+            DotOp::DumpLayoutHtml(path, layout_opts(reduce_crossings)),
+        )
+        .map(|_| ())
+    }
+
+    /// Like [`Self::dump_layout_html`] but returns the HTML as a string.
+    #[pyo3(signature = (function, reduce_crossings=false))]
+    fn layout_html_str(&self, function: &PyFunction, reduce_crossings: bool) -> PyResult<String> {
+        match self.dispatch_dot(
+            function,
+            None,
+            DotOp::LayoutHtmlStr(layout_opts(reduce_crossings)),
+        )? {
+            DotResult::Html(s) => Ok(s),
+            DotResult::Unit => Err(into_strider_err(anyhow::anyhow!(
+                "internal: DotOp::LayoutHtmlStr returned DotResult::Unit"
             ))),
         }
     }
