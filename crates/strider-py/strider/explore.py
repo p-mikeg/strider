@@ -54,6 +54,10 @@ _FRONTEND = r"""<!doctype html>
   .stepper button{width:24px;height:24px;border-radius:5px;border:1px solid var(--border);
        background:var(--panel2);color:var(--text);cursor:pointer;font-size:15px;line-height:1}
   .stepper button:hover{border-color:var(--accent)}
+  .navbtn{width:28px;height:26px;border-radius:5px;border:1px solid var(--border);background:var(--panel2);
+          color:var(--text);cursor:pointer;font-size:15px;line-height:1}
+  .navbtn:hover:not(:disabled){border-color:var(--accent)}
+  .navbtn:disabled{opacity:.35;cursor:default}
   .stepper #dval{min-width:16px;text-align:center;color:var(--text);font-variant-numeric:tabular-nums}
   #qwrap{position:relative;flex:1}
   #q{width:100%;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;
@@ -88,6 +92,8 @@ _FRONTEND = r"""<!doctype html>
 </style></head><body>
 <div id="bar">
   <b>strider</b>
+  <button id="back" class="navbtn" title="Back (Alt+←)">←</button>
+  <button id="fwd" class="navbtn" title="Forward (Alt+→)">→</button>
   <span class="stepper">depth <button id="dm">−</button><span id="dval">5</span><button id="dp">+</button></span>
   <div id="qwrap">
     <input id="q" type="text" spellcheck="false"
@@ -102,7 +108,7 @@ _FRONTEND = r"""<!doctype html>
   <h3 style="margin-top:14px">Edge roles</h3>
   <div class="legend" id="legend"></div>
 </div>
-<div id="hint">click node = re-center · click edge = walk · shift-click edge = mark · ctrl+wheel = zoom</div>
+<div id="hint">click node = re-center · click edge near an end = walk there · shift-click edge = mark · alt+←/→ = history · ctrl+wheel = zoom</div>
 
 <script src="viz.js"></script>
 <script>
@@ -121,8 +127,13 @@ const findNode=id=>[...curSvg.querySelectorAll("g.node")].find(g=>title(g)===id)
 
 function applyScale(){ if(!curSvg)return; curSvg.style.width=(baseW*scale)+"px"; curSvg.style.height=(baseH*scale)+"px"; }
 
+let dotCtrl=null;
 async function render(anchor){
-  const dot=await (await fetch(`/dot?center=${center}&depth=${depth}`)).text();
+  if(dotCtrl) dotCtrl.abort();               // cancel any in-flight render (single-threaded server)
+  dotCtrl=new AbortController();
+  let dot;
+  try{ dot=await (await fetch(`/dot?center=${center}&depth=${depth}`,{signal:dotCtrl.signal})).text(); }
+  catch(e){ if(e.name==="AbortError") return; throw e; }
   curSvg=viz.renderSVGElement(dot);
   curSvg.removeAttribute("width"); curSvg.removeAttribute("height");
   const vb=(curSvg.getAttribute("viewBox")||"0 0 800 600").split(/\s+/).map(Number);
@@ -131,7 +142,23 @@ async function render(anchor){
   if(anchor){ const g=findNode(anchor.id); if(g){ const r=g.getBoundingClientRect();
     wrap.scrollLeft+=(r.left+r.width/2)-anchor.x; wrap.scrollTop+=(r.top+r.height/2)-anchor.y; } }
 }
-function recenter(id,gEl){ let a=null; if(gEl){const r=gEl.getBoundingClientRect(); a={id,x:r.left+r.width/2,y:r.top+r.height/2};} center=id; render(a); }
+function centerNode(id,smooth=true){ const g=findNode(id); if(!g)return; const r=g.getBoundingClientRect(),w=wrap.getBoundingClientRect();
+  wrap.scrollTo({left:wrap.scrollLeft+(r.left+r.width/2)-(w.left+w.width/2),
+                 top:wrap.scrollTop+(r.top+r.height/2)-(w.top+w.height/2), behavior:smooth?"smooth":"auto"}); }
+/* Re-render around `id`, keeping it where it was during the swap, then glide it to the viewport center. */
+function recenter(id,gEl){ let a=null; if(gEl){const r=gEl.getBoundingClientRect(); a={id,x:r.left+r.width/2,y:r.top+r.height/2};} center=id; pushHist(); render(a).then(()=>{ if(String(center)===String(id)) centerNode(id); }); }
+
+/* ── history: back/forward across re-centers AND searches ── */
+let hist=[], hi=-1;
+function pushHist(){ hist=hist.slice(0,hi+1); hist.push({center,query:qEl.value,matches:new Set(matches)}); hi=hist.length-1; updateNav(); }
+function updateNav(){ $("back").disabled=hi<=0; $("fwd").disabled=hi>=hist.length-1; }
+function go(delta){ const n=hi+delta; if(n<0||n>=hist.length)return; hi=n; const s=hist[hi];
+  center=s.center; qEl.value=s.query; matches=new Set(s.matches); render().then(()=>centerNode(center)); updateNav(); }
+$("back").onclick=()=>go(-1); $("fwd").onclick=()=>go(1);
+document.addEventListener("keydown",e=>{ if(!e.altKey)return;
+  if(e.key==="ArrowLeft"){e.preventDefault();go(-1);} else if(e.key==="ArrowRight"){e.preventDefault();go(1);} });
+/* Apply match highlighting to the current SVG without re-rendering (no scroll jump). */
+function highlight(){ if(!curSvg)return; for(const g of curSvg.querySelectorAll("g.node")) g.classList.toggle("match",matches.has(title(g))); }
 
 function wire(){
   for(const g of curSvg.querySelectorAll("g.node")){
@@ -145,25 +172,28 @@ function wire(){
     g.addEventListener("click",e=>{
       e.stopPropagation();
       if(e.shiftKey){ marked.has(key)?marked.delete(key):marked.add(key); g.classList.toggle("marked"); return; }
-      const far = s===center?d : (d===center?s : (isReal(d)?d:s));
-      if(isReal(far)) recenter(far, findNode(far));
+      // Walk toward the endpoint you clicked nearer to: click the arrow end to
+      // go forward (to the consumer), the tail to go back (to the producer).
+      const near=nid=>{const n=findNode(nid); if(!n)return Infinity; const r=n.getBoundingClientRect(); return Math.hypot(e.clientX-(r.left+r.width/2),e.clientY-(r.top+r.height/2));};
+      let t = near(s)<=near(d)?s:d;
+      if(!isReal(t)) t = isReal(s)?s:d;   // never land on a virtual node
+      if(isReal(t)) recenter(t, findNode(t));
     });
   }
 }
 
+const NONE='<div style="color:var(--text2);font-size:11px">— none —</div>';
 async function search(){
   const q=qEl.value.trim(); msg.className=""; msg.textContent="";
-  hits.innerHTML='<div style="color:var(--text2);font-size:11px">— none —</div>';
-  matches=new Set();
-  if(!q){ if(curSvg) wire(); return; }
+  if(!q){ matches=new Set(); highlight(); hits.innerHTML=NONE; pushHist(); return; }
   const r=await fetch("/pattern?q="+encodeURIComponent(q));
   if(!r.ok){ msg.className="err"; msg.textContent=await r.text(); return; }
   const ids=await r.json(); matches=new Set(ids.map(String));
   msg.textContent=`${ids.length} match${ids.length===1?"":"es"}`;
-  hits.innerHTML = ids.length ? "" : '<div style="color:var(--text2);font-size:11px">— none —</div>';
+  hits.innerHTML = ids.length ? "" : NONE;
   for(const id of ids){ const el=document.createElement("div"); el.className="hit"; el.textContent="node "+id;
     el.onclick=()=>recenter(String(id), findNode(String(id))); hits.appendChild(el); }
-  render();
+  highlight(); pushHist();     // highlight in the current view; no re-render / no scroll jump
 }
 
 /* ── autocomplete ── */
@@ -196,14 +226,15 @@ document.addEventListener("click",e=>{ if(!qEl.contains(e.target)&&!acEl.contain
 /* ── depth + zoom ── */
 function setDepth(d){ depth=Math.max(1,Math.min(12,d)); dval.textContent=depth;
   const c=findNode(String(center)); const r=c&&c.getBoundingClientRect();
-  render(r?{id:String(center),x:r.left+r.width/2,y:r.top+r.height/2}:null); }
+  render(r?{id:String(center),x:r.left+r.width/2,y:r.top+r.height/2}:null).then(()=>centerNode(String(center))); }
 $("dp").onclick=()=>setDepth(depth+1); $("dm").onclick=()=>setDepth(depth-1);
 wrap.addEventListener("wheel",e=>{ if(!e.ctrlKey)return; e.preventDefault();
   scale=Math.max(0.2,Math.min(4,scale*(e.deltaY<0?1.12:0.89))); applyScale(); },{passive:false});
 
 Viz.instance().then(async v=>{
   viz=v; names=await (await fetch("/patterns")).json();
-  center=String(await (await fetch("/entry")).json()); render();
+  center=String(await (await fetch("/entry")).json());
+  await render(); centerNode(center,false); pushHist();
 });
 </script></body></html>"""
 
@@ -216,11 +247,14 @@ def serve(lifter, function, host="127.0.0.1", port=0, depth=5):
     class Handler(http.server.BaseHTTPRequestHandler):
         def _send(self, body, ctype="text/html", code=200):
             b = body.encode() if isinstance(body, str) else body
-            self.send_response(code)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(b)))
-            self.end_headers()
-            self.wfile.write(b)
+            try:
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+            except (BrokenPipeError, ConnectionError):
+                pass  # client cancelled the request (e.g. clicked again); nothing to do
 
         def do_GET(self):
             u = urllib.parse.urlparse(self.path)
@@ -245,8 +279,19 @@ def serve(lifter, function, host="127.0.0.1", port=0, depth=5):
                     self._send(json.dumps(ids), "application/json")
                 else:
                     self.send_error(404)
+            except (BrokenPipeError, ConnectionError):
+                pass  # client went away mid-request; not an error
             except Exception as e:  # noqa: BLE001 — surface the error to the UI
                 self._send(f"{type(e).__name__}: {e}", "text/plain", code=400)
+
+        def handle_one_request(self):
+            # Swallow the client-disconnect races the single-threaded loop hits
+            # when the browser cancels an in-flight fetch, so serve_forever keeps
+            # running instead of dumping a BrokenPipe traceback.
+            try:
+                super().handle_one_request()
+            except (BrokenPipeError, ConnectionError):
+                self.close_connection = True
 
         def log_message(self, format, *args):  # noqa: A002 — matches base signature
             pass  # quiet
