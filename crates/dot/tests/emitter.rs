@@ -75,8 +75,9 @@ fn edge_with_extra_emits_bracketed_attrs() {
     let mut e = DotEmitter::new("G", &style);
     e.edge("a", "b", &[("label", "Branch"), ("style", "dashed")]);
     let out = e.finish();
+    // `label` values are quoted+escaped (free text); other attrs stay bare.
     assert!(
-        out.contains("\"a\" -> \"b\" [label=Branch, style=dashed];\n"),
+        out.contains("\"a\" -> \"b\" [label=\"Branch\", style=dashed];\n"),
         "unexpected DOT: {out}"
     );
 }

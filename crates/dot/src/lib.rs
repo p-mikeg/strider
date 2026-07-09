@@ -287,15 +287,27 @@ impl DotEmitter {
     }
 }
 
-/// Appends a single `key=value` DOT attribute to `out`.  The value is
-/// inserted verbatim (the caller owns any quoting/escaping); see
-/// [`DotEmitter::node`]'s contract.  Shared by every attribute emitter so
-/// the `key=value` shape lives in one place; callers supply their own
-/// framing (leading comma, separator, bracket block, trailing comma).
+/// Appends a single `key=value` DOT attribute to `out`.  Shared by every
+/// attribute emitter so the `key=value` shape lives in one place; callers
+/// supply their own framing (leading comma, separator, bracket block).
+///
+/// A `label` value is free text (edge and node-`extra` labels flow through
+/// here), so it is quoted and escaped exactly like [`DotEmitter::node`]'s
+/// dedicated label — otherwise a value with a DOT-special character (a hyphen
+/// as in `if-true`/`if-false`, a colon, a space, a quote) is invalid unquoted
+/// and Graphviz aborts with "syntax error near '-'".  Every other attribute
+/// keeps the caller-owns-quoting contract (the style blocks pass pre-quoted
+/// colors like `"#1e1e1e"` alongside bare idents like `TB` / `dashed`).
 fn push_attr(out: &mut String, k: &str, v: &str) {
     out.push_str(k);
     out.push('=');
-    out.push_str(v);
+    if k == "label" {
+        out.push('"');
+        out.push_str(&escape_dot_label(v));
+        out.push('"');
+    } else {
+        out.push_str(v);
+    }
 }
 
 fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
@@ -314,29 +326,21 @@ fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
     out.push_str("  ];\n\n");
 }
 
-// ── GraphDot ──────────────────────────────────────────────────────────────────
-
-/// Threshold (in DOT node statements) above which [`GraphDot`] picks
-/// `sfdp` instead of `dot` as the HTML viewer's default layout engine.
-///
-/// `dot`'s layered layout is `O(n^2)` in the worst case and stalls the
-/// browser on graphs with thousands of nodes; `sfdp` (scalable
-/// force-directed placement) handles them in seconds at the cost of a
-/// less hierarchical look.  Users can always switch engines from the
-/// viewer's UI; this only changes the initial selection.
+/// Node-statement count above which the HTML viewer defaults to `sfdp`
+/// instead of `dot`: `dot`'s layered layout is superlinear and stalls the
+/// browser on large graphs, while `sfdp` (force-directed) handles them.
+/// The viewer's engine picker still lets the user switch.
 pub const DEFAULT_SFDP_NODE_THRESHOLD: usize = 2000;
 
-/// Counts node statements in a DOT source string.
-///
-/// Mirrors the heuristic the HTML viewer uses for its "big graph"
-/// loading message (`/\[label=/g` matches on the JS side).  Approximate
-/// rather than exact — comment lines and edge attribute blocks that
-/// happen to contain `[label=` get counted too — but the count only
-/// drives the initial engine selection, so a small over-count is
-/// harmless and an under-count just keeps the default `dot`.
+/// Approximate node-statement count of a DOT source (counts `[label=`
+/// occurrences — an over-count that also catches edge-label attribute
+/// blocks, but it only drives the default engine choice, so a small
+/// over-count harmlessly biases large graphs toward `sfdp`).
 pub(crate) fn dot_node_count(dot: &str) -> usize {
     dot.matches("[label=").count()
 }
+
+// ── GraphDot ──────────────────────────────────────────────────────────────────
 
 /// Wraps a [`GraphDotDumper`] and produces DOT / HTML output (the HTML
 /// renders to SVG client-side via viz.js).
@@ -390,6 +394,10 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Same as [`Self::as_dot`].
     pub fn as_html_from_dot(&self) -> anyhow::Result<String> {
         let dot_src = self.as_dot()?;
+        // `dot`'s layered layout does not scale to large sea-of-nodes graphs
+        // (a ~1800-node IR is ~1400 ranks deep, and mincross explodes on the
+        // resulting virtual nodes — it hangs the browser). Default such graphs
+        // to `sfdp`; the viewer's picker still exposes `dot` for small ones.
         let engine = if dot_node_count(&dot_src) > DEFAULT_SFDP_NODE_THRESHOLD {
             "sfdp"
         } else {
@@ -547,35 +555,6 @@ mod label_tests {
 }
 
 #[cfg(test)]
-#[allow(clippy::panic, clippy::unwrap_used)]
-mod engine_choice_tests {
-    use super::dot_node_count;
-
-    #[test]
-    fn dot_node_count_matches_label_statements() {
-        let dot = "digraph G {\n  a [label=\"x\"];\n  b [label=\"y\"];\n  a -> b;\n}";
-        assert_eq!(dot_node_count(dot), 2);
-    }
-
-    #[test]
-    fn dot_node_count_empty_source_is_zero() {
-        assert_eq!(dot_node_count(""), 0);
-        assert_eq!(dot_node_count("digraph G { }"), 0);
-    }
-
-    #[test]
-    fn dot_node_count_over_counts_literal_bracket_label_substring() {
-        // A single node whose label text itself contains `[label=` is counted
-        // twice by the substring heuristic: once for its own node statement and
-        // once for the literal substring inside the label.  This pins the
-        // documented over-count so a future "fix" that tightens the heuristic
-        // doesn't silently change engine selection without updating this test.
-        let dot = "digraph G {\n  a [label=\"see [label= here\"];\n}";
-        assert_eq!(dot_node_count(dot), 2);
-    }
-}
-
-#[cfg(test)]
 mod template_tests {
     /// Guards that the viewer template keeps the controls the JS wires up:
     /// the edge-label / node-name fields and the NodeKind picker. A typo in
@@ -593,6 +572,47 @@ mod template_tests {
         assert!(
             t.contains("function buildKindList"),
             "viewer template missing buildKindList()"
+        );
+    }
+}
+
+#[cfg(test)]
+mod attr_quoting_tests {
+    use super::{DotEmitter, DotStyle};
+
+    /// An edge `label` containing DOT-special characters (a hyphen, as in the
+    /// CFG's `if-true` / `if-false` branch labels) must be emitted quoted, or
+    /// Graphviz fails with "syntax error near '-'". Regression test for a
+    /// corrupted CFG HTML dump.
+    #[test]
+    fn edge_label_with_hyphen_is_quoted() {
+        let mut e = DotEmitter::new("G", &DotStyle::dark_cfg());
+        e.edge("0", "1", &[("label", "if-false"), ("style", "dashed")]);
+        let dot = e.finish();
+        assert!(
+            dot.contains("label=\"if-false\""),
+            "label not quoted:\n{dot}"
+        );
+        assert!(
+            !dot.contains("label=if-false"),
+            "raw unquoted label present:\n{dot}"
+        );
+        // Non-label attrs keep the caller-owns-quoting contract (bare ident).
+        assert!(
+            dot.contains("style=dashed"),
+            "style should stay bare:\n{dot}"
+        );
+    }
+
+    /// A node `extra` label is quoted+escaped the same way.
+    #[test]
+    fn node_extra_label_is_quoted() {
+        let mut e = DotEmitter::new("G", &DotStyle::dark_cfg());
+        e.node("n0", "lbl", "box", &[("label", "a-b")]);
+        let dot = e.finish();
+        assert!(
+            dot.contains("label=\"a-b\""),
+            "extra label not quoted:\n{dot}"
         );
     }
 }

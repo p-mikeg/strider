@@ -6,7 +6,7 @@
 //! nodes, no commutative
 //! reordering, and no Sleigh register-name translation.  Each node also
 //! shows the per-node side-table state ([`Function::stack_offset`],
-//! the `value_vn` tag (via [`Function::get_vn_for_value`]), [`Function::asm_fingerprint`],
+//! the `value_vn` tag (via [`Function::get_vn_for_value`]),
 //! [`Function::call_other_name`], a `Call`'s clobber-tag count, and
 //! its argument index).  It is purely a debugging aid for inspecting the
 //! real graph shape — pattern queries and the production pipeline use the
@@ -93,12 +93,6 @@ impl<'a> RawFunctionDumper<'a> {
         {
             s.push_str(&format!("\ntag={}", fmt_vn(&vn)));
         }
-        let mut fp: Vec<u64> = f.side_tables().asm_fingerprint(node).into_iter().collect();
-        if !fp.is_empty() {
-            fp.sort_unstable(); // stable order for the debug dump
-            let addrs: Vec<String> = fp.iter().map(|a| format!("{a:#x}")).collect();
-            s.push_str(&format!("\nfp=[{}]", addrs.join(",")));
-        }
         if let Some(name) = f.side_tables().call_other_name(node) {
             s.push_str(&format!("\nop={name}"));
         }
@@ -147,9 +141,8 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
         for (in_slot, value) in self.function.node_inputs(node).into_iter().enumerate() {
             let (producer, out_slot) = self.function.value_definition(value);
             let from = format!("n{}", producer.as_u32());
-            // Integer-only label (`out_slot:in_slot`) — safe for `edge`'s
-            // unescaped attribute channel.
-            let label = format!("\"{out_slot}:{in_slot}\"");
+            // `edge` quotes+escapes the `label` value, so pass it bare.
+            let label = format!("{out_slot}:{in_slot}");
             out.edge(&from, &dot_id, &[("label", &label)]);
         }
         Ok(())

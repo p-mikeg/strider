@@ -877,11 +877,11 @@ fn region_control_inputs_are_labelled_with_pred_index() {
     // when there are >1 predecessors.
     let dot = render_two_pred_join_with_phi_memphi();
     assert!(
-        dot.contains("label=pred0"),
+        dot.contains("label=\"pred0\""),
         "Region control input 0 must be labelled 'pred0':\n{dot}",
     );
     assert!(
-        dot.contains("label=pred1"),
+        dot.contains("label=\"pred1\""),
         "Region control input 1 must be labelled 'pred1':\n{dot}",
     );
 }

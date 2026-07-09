@@ -147,8 +147,7 @@ fn html_emit_resolves_engine_to_dot_or_sfdp() {
 
 #[test]
 fn html_emit_picks_dot_for_small_graph() {
-    // A 3-node graph is far below `DEFAULT_SFDP_NODE_THRESHOLD` (2000),
-    // so the auto policy must pick `dot`.
+    // A 3-node graph is far below the sfdp threshold, so it defaults to `dot`.
     let html = render_html(3);
     assert!(
         html.contains("const e=\"dot\""),
