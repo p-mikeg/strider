@@ -17,7 +17,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{FunctionDotDumper, edge_style, node_fillcolor, node_shape};
 use crate::function::Function;
-use crate::node::NodeId;
+use crate::node::{NodeId, NodeKind};
 use crate::{IRViewer, IRWalker};
 
 /// Maps each node to the nodes that consume one of its outputs (the forward
@@ -104,17 +104,58 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
             }
             out.node(&id, &label, node_shape(kind), &extra);
         }
-        // One edge per IR input edge whose producer is also in the set, colored
-        // and labeled by the consumer's input-slot role (control / memory /
-        // lhs / rhs / addr / data / …) — the same styling the pretty dumper
-        // uses, so an address edge reads differently from a data edge.
+        // One edge per IR input edge whose producer is in the set, colored and
+        // labeled by the consumer's input-slot role. Two producer kinds route
+        // through virtual nodes, mirroring the pretty dumper: an `If`'s control
+        // outputs go via an `if.true` / `if.false` trapezium, and a `Call`'s
+        // clobbered-register outputs (slot ≥ 2) via a dashed `Post Call\n<reg>`
+        // box. Virtual ids are `v_<valueid>` so they never collide with the
+        // integer IR-node ids (which is what the explorer navigates by).
+        let mut virt: FxHashMap<crate::node::ValueId, String> = FxHashMap::default();
         for &node in &set {
             let id = node.as_u32().to_string();
             for (idx, value) in self.function.node_inputs(node).into_iter().enumerate() {
-                let (producer, _) = self.function.value_definition(value);
+                let (producer, out_slot) = self.function.value_definition(value);
                 if !set.contains(&producer) {
                     continue;
                 }
+                let src_id = match self.function.node_kind(producer) {
+                    NodeKind::If => virt
+                        .entry(value)
+                        .or_insert_with(|| {
+                            let vid = format!("v_{}", value.as_u32());
+                            let label = if out_slot == 0 { "if.true" } else { "if.false" };
+                            out.node(&vid, label, "trapezium", &[("fillcolor", "\"#3a2a10\"")]);
+                            out.edge(
+                                &producer.as_u32().to_string(),
+                                &vid,
+                                &[("color", "\"#888888\"")],
+                            );
+                            vid
+                        })
+                        .clone(),
+                    NodeKind::Call if out_slot >= 2 => match virt.get(&value) {
+                        Some(v) => v.clone(),
+                        None => {
+                            let vid = format!("v_{}", value.as_u32());
+                            let name = self.call_clobbered_name(value)?;
+                            out.node(
+                                &vid,
+                                &format!("Post Call\n{name}"),
+                                "box",
+                                &[("fillcolor", "\"#28102a\""), ("style", "\"filled,dashed\"")],
+                            );
+                            out.edge(
+                                &producer.as_u32().to_string(),
+                                &vid,
+                                &[("color", "\"#888888\""), ("style", "dashed")],
+                            );
+                            virt.insert(value, vid.clone());
+                            vid
+                        }
+                    },
+                    _ => producer.as_u32().to_string(),
+                };
                 let (slot, color) = edge_style(self, node, idx, value);
                 let mut attrs: Vec<(&str, &str)> = vec![("color", color)];
                 if !slot.is_empty() {
@@ -122,7 +163,7 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
                     attrs.push(("fontcolor", color));
                     attrs.push(("fontsize", "9"));
                 }
-                out.edge(&producer.as_u32().to_string(), &id, &attrs);
+                out.edge(&src_id, &id, &attrs);
             }
         }
         Ok(out.finish())
