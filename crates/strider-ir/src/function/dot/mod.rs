@@ -80,7 +80,7 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
 // ── edge appearance ───────────────────────────────────────────────────────────
 
 /// Color for a slot role on edge labels.
-fn role_color(role: SlotRole) -> &'static str {
+pub(super) fn role_color(role: SlotRole) -> &'static str {
     match role {
         SlotRole::Control => "\"#00cccc\"",              // aqua
         SlotRole::Memory => "\"#cc88aa\"",               // pink

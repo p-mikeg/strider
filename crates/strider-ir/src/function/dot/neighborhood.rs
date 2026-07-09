@@ -16,9 +16,10 @@ use std::io;
 use rsleigh::MemReader;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{FunctionDotDumper, edge_style, node_fillcolor, node_shape};
+use super::{FunctionDotDumper, edge_style, node_fillcolor, node_shape, role_color};
 use crate::function::Function;
 use crate::node::{NodeId, NodeKind};
+use crate::node_signature::SlotRole;
 use crate::{IRViewer, IRWalker};
 
 /// Maps each node to the nodes that consume one of its outputs (the forward
@@ -139,10 +140,11 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
                             let vid = format!("v_{}", value.as_u32());
                             let label = if out_slot == 0 { "if.true" } else { "if.false" };
                             out.node(&vid, label, "trapezium", &[("fillcolor", "\"#3a2a10\"")]);
+                            // The If→branch stub is a control edge — colour it as one.
                             out.edge(
                                 &producer.as_u32().to_string(),
                                 &vid,
-                                &[("color", "\"#888888\"")],
+                                &[("color", role_color(SlotRole::Control))],
                             );
                             vid
                         })
