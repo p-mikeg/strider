@@ -193,12 +193,13 @@ function updateNeighbors(){
 }
 /* Side panel: the visited trail, clickable to jump anywhere. */
 function updateHistUI(){
-  const hl=$("histlist"); hl.innerHTML="";
+  const hl=$("histlist"); hl.innerHTML=""; let curEl=null;
   hist.forEach((s,i)=>{ const el=document.createElement("div"); el.className="hit"+(i===hi?" cur":"");
     el.textContent = s.query ? ("search: "+s.query) : ("node "+s.center);
     el.onclick=()=>{ if(i!==hi){ hi=i; const st=hist[hi]; center=st.center; qEl.value=st.query; matches=new Set(st.matches);
       render().then(()=>centerNode(center)); updateNav(); } };
-    hl.appendChild(el); });
+    hl.appendChild(el); if(i===hi) curEl=el; });
+  if(curEl) curEl.scrollIntoView({block:"nearest"});  // keep the current (latest by default) entry visible
 }
 
 function wire(){
