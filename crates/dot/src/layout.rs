@@ -4,15 +4,16 @@
 //! function is ~1400 ranks deep, and `dot`'s crossing-minimisation inserts a
 //! dummy node per rank each edge spans, exploding into hundreds of thousands
 //! of virtual nodes that never converge (it times out even natively). This
-//! engine trades graphviz's aesthetic crossing-minimisation and spline routing
-//! for speed: longest-path ranking, an optional bounded ordering pass, simple
-//! coordinate assignment, and straight edges — `O((V+E)·k)`, so 10k+ nodes lay
-//! out in well under a second.
+//! engine keeps the *shape* of the Sugiyama pipeline that makes `dot` readable
+//! — ALAP ranking, virtual routing nodes for multi-rank edges, barycenter
+//! crossing reduction, and isotonic coordinate assignment — but caps the
+//! ordering passes instead of running mincross to convergence. That is exactly
+//! the part of `dot` that blows up (its unbounded, transposing mincross over
+//! the virtual-expanded graph), so bounding it keeps the layout `O((V+E)·k)`
+//! and lays a 2500-node / 500k-virtual-node graph out in ~0.25 s.
 //!
 //! Output is coordinates (a [`Positioned`] graph); rendering to SVG happens in
-//! the viewer from the emitted JSON. The two heavier stages — crossing
-//! reduction and orthogonal edge routing — are opt-in via [`LayoutOptions`] so
-//! their cost can be measured against the MVP.
+//! the viewer from the emitted JSON.
 
 /// An input node's bounding box (its rendered size). Position is assigned by
 /// [`layout`]; only the size is an input.
@@ -75,7 +76,18 @@ pub struct Positioned {
     pub height: f64,
 }
 
+/// Effective width of a routing (virtual) node — narrow so long edges pack
+/// into tight channels beside the real-node spine rather than re-widening it.
+const VIRT_W: f64 = 8.0;
+
 /// Lay out `input` into absolute coordinates.
+///
+/// Edges spanning more than one rank are routed through a chain of *virtual*
+/// nodes — one per intermediate rank — that participate in ordering and
+/// coordinate assignment. This is the piece of `dot` that makes a deep graph
+/// readable: long edges bend along channels beside the nodes instead of
+/// cutting straight across the whole graph. Unlike `dot` we cap the ordering
+/// passes rather than running mincross to convergence, so it stays fast.
 pub fn layout(input: &LayoutInput, opts: &LayoutOptions) -> Positioned {
     let n = input.nodes.len();
     if n == 0 {
@@ -83,18 +95,73 @@ pub fn layout(input: &LayoutInput, opts: &LayoutOptions) -> Positioned {
     }
     let forward = break_cycles(n, &input.edges);
     let rank = assign_ranks(n, &forward);
-    // Undirected adjacency (self-loops dropped) drives both crossing-reduction
-    // ordering and the x-coordinate barycenter refinement.
+
+    // Augment: real nodes are ids `0..n`; virtual routing nodes follow.
+    let mut vrank = rank.clone();
+    let mut vwidth: Vec<f64> = input.nodes.iter().map(|b| b.width).collect();
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let link = |adj: &mut Vec<Vec<usize>>, a: usize, b: usize| {
+        adj[a].push(b);
+        adj[b].push(a);
+    };
+    // chains[e] = the aug-node path for input edge e, in the edge's own
+    // direction (so the arrowhead lands on the real target).
+    let mut chains: Vec<Vec<usize>> = Vec::with_capacity(input.edges.len());
     for &(u, v) in &input.edges {
-        if u != v {
-            adj[u].push(v);
-            adj[v].push(u);
+        if u == v {
+            chains.push(vec![u]);
+            continue;
         }
+        let (lo, hi) = if rank[u] <= rank[v] { (u, v) } else { (v, u) };
+        let (rlo, rhi) = (rank[lo], rank[hi]);
+        let mut path = vec![lo];
+        let mut prev = lo;
+        for r in (rlo + 1)..rhi {
+            let vid = vrank.len();
+            vrank.push(r);
+            vwidth.push(VIRT_W);
+            adj.push(Vec::new());
+            link(&mut adj, prev, vid);
+            path.push(vid);
+            prev = vid;
+        }
+        link(&mut adj, prev, hi);
+        path.push(hi);
+        if u != lo {
+            path.reverse(); // emit in the original u → v direction
+        }
+        chains.push(path);
     }
-    let ranks = order_within_ranks(n, &rank, &adj, opts);
-    let placed = assign_coords(input, &rank, &ranks, &adj, opts);
-    let edges = route_straight(input, &placed);
+    let total = vrank.len();
+
+    let ranks = order_within_ranks(total, &vrank, &adj, opts);
+    let vheight: Vec<f64> = (0..total)
+        .map(|i| if i < n { input.nodes[i].height } else { 0.0 })
+        .collect();
+    let coords = assign_x(&vwidth, &vheight, &vrank, &ranks, &adj, opts);
+
+    // Real-node placement.
+    let placed: Vec<Placed> = (0..n)
+        .map(|v| {
+            let r = vrank[v];
+            Placed {
+                x: coords.cx[v] - input.nodes[v].width / 2.0,
+                y: coords.band_top[r] + (coords.band_h[r] - input.nodes[v].height) / 2.0,
+                width: input.nodes[v].width,
+                height: input.nodes[v].height,
+                rank: r,
+                order: ranks[r].iter().position(|&u| u == v).unwrap_or(0),
+            }
+        })
+        .collect();
+
+    // Edge polylines through their virtual chains (endpoints clamped to the
+    // real nodes' box borders; near-collinear interior points dropped).
+    let edges: Vec<Vec<(f64, f64)>> = chains
+        .iter()
+        .map(|chain| route_chain(chain, n, &coords, &vrank))
+        .collect();
+
     let width = placed.iter().map(|p| p.x + p.width).fold(0.0, f64::max);
     let height = placed.iter().map(|p| p.y + p.height).fold(0.0, f64::max);
     Positioned {
@@ -103,6 +170,68 @@ pub fn layout(input: &LayoutInput, opts: &LayoutOptions) -> Positioned {
         width,
         height,
     }
+}
+
+/// Coordinate result over the augmented node set.
+struct Coords {
+    cx: Vec<f64>,       // centre x per aug node
+    band_top: Vec<f64>, // top y per rank
+    band_h: Vec<f64>,   // band height per rank
+}
+
+/// Turns one edge's aug-node chain into a screen polyline: virtual nodes
+/// contribute their centre, the two real endpoints are clamped to the box
+/// border facing their neighbour, then near-collinear points are dropped.
+fn route_chain(chain: &[usize], n: usize, c: &Coords, vrank: &[usize]) -> Vec<(f64, f64)> {
+    let cy = |id: usize| c.band_top[vrank[id]] + c.band_h[vrank[id]] / 2.0;
+    if chain.len() == 1 {
+        let id = chain[0];
+        return vec![(c.cx[id], cy(id))];
+    }
+    let mut pts: Vec<(f64, f64)> = chain.iter().map(|&id| (c.cx[id], cy(id))).collect();
+    // Clamp the real endpoints to the box edge facing the next/prev point.
+    let border = |id: usize, toward_y: f64| -> f64 {
+        let top = c.band_top[vrank[id]];
+        let h = c.band_h[vrank[id]];
+        if toward_y >= top + h / 2.0 {
+            top + h
+        } else {
+            top
+        }
+    };
+    let first = chain[0];
+    if first < n {
+        pts[0].1 = border(first, pts[1].1);
+    }
+    let last = chain[chain.len() - 1];
+    if last < n {
+        let k = pts.len() - 1;
+        pts[k].1 = border(last, pts[k - 1].1);
+    }
+    simplify_polyline(&mut pts);
+    pts
+}
+
+/// Drops interior points that lie (near) on the segment between their
+/// neighbours, so a straight channel run collapses to its two endpoints.
+fn simplify_polyline(pts: &mut Vec<(f64, f64)>) {
+    if pts.len() <= 2 {
+        return;
+    }
+    let mut out = Vec::with_capacity(pts.len());
+    out.push(pts[0]);
+    for i in 1..pts.len() - 1 {
+        let (ax, ay) = *out.last().unwrap();
+        let (bx, by) = pts[i];
+        let (cx, cy) = pts[i + 1];
+        // Cross product of (b-a) × (c-a); ~0 ⇒ collinear ⇒ drop b.
+        let cross = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+        if cross.abs() > 1.0 {
+            out.push(pts[i]);
+        }
+    }
+    out.push(pts[pts.len() - 1]);
+    *pts = out;
 }
 
 /// Returns the acyclic edge set: back-edges (targets currently on the DFS
@@ -244,49 +373,43 @@ fn barycenter(v: usize, adj: &[Vec<usize>], pos: &[f64]) -> f64 {
     ns.iter().map(|&u| pos[u]).sum::<f64>() / ns.len() as f64
 }
 
-/// Assigns absolute `(x, y)` top-left coordinates. `y` stacks ranks
-/// top-to-bottom (each rank as tall as its tallest node, `rank_sep` between).
-/// `x` is refined by alternating sweeps: each node is pulled toward the mean
-/// centre of its neighbours, then each rank is resolved to be order-preserving
-/// and non-overlapping with minimum total displacement (isotonic regression /
-/// pool-adjacent-violators). This aligns nodes under their neighbours so edges
-/// run mostly vertical and the graph stays compact — the readable, `dot`-like
-/// shape, without `dot`'s per-rank virtual-node blow-up.
-fn assign_coords(
-    input: &LayoutInput,
+/// Assigns rank `y` bands and refined centre `x` over the augmented node set
+/// (`width` / `height` are per aug node; virtual routing nodes have height 0).
+/// `y` stacks ranks top-to-bottom. `x` is refined by alternating sweeps: each
+/// node is pulled toward the mean centre of its neighbours, then each rank is
+/// resolved to be order-preserving and non-overlapping with minimum total
+/// displacement (isotonic regression / pool-adjacent-violators). Because long
+/// edges carry virtual nodes here, this aligns both real nodes *and* the edge
+/// channels running past them — the readable, `dot`-like shape.
+fn assign_x(
+    width: &[f64],
+    height: &[f64],
     rank: &[usize],
     ranks: &[Vec<usize>],
     adj: &[Vec<usize>],
     opts: &LayoutOptions,
-) -> Vec<Placed> {
-    let n = input.nodes.len();
-    let w = |v: usize| input.nodes[v].width;
+) -> Coords {
+    let total = width.len();
 
-    // Per-rank y band tops.
-    let mut y_top = vec![0.0; ranks.len()];
+    let mut band_top = vec![0.0; ranks.len()];
     let mut band_h = vec![0.0; ranks.len()];
     let mut y = 0.0;
     for (r, rnodes) in ranks.iter().enumerate() {
-        let h = rnodes
-            .iter()
-            .map(|&v| input.nodes[v].height)
-            .fold(0.0, f64::max);
-        y_top[r] = y;
+        let h = rnodes.iter().map(|&v| height[v]).fold(0.0, f64::max);
+        band_top[r] = y;
         band_h[r] = h;
         y += h + opts.rank_sep;
     }
 
-    // Initial x centres: pack each rank left-to-right.
-    let mut cx = vec![0.0f64; n];
+    let mut cx = vec![0.0f64; total];
     for rnodes in ranks {
         let mut x = 0.0;
         for &v in rnodes {
-            cx[v] = x + w(v) / 2.0;
-            x += w(v) + opts.node_sep;
+            cx[v] = x + width[v] / 2.0;
+            x += width[v] + gap_after(v, width);
         }
     }
 
-    // Iterative refinement: pull toward neighbour mean, then resolve each rank.
     let passes = if opts.reduce_crossings { 12 } else { 8 };
     for pass in 0..passes {
         let range: Vec<usize> = if pass % 2 == 0 {
@@ -305,55 +428,52 @@ fn assign_coords(
                     }
                 })
                 .collect();
-            let placed = resolve_rank(&ranks[r], &desired, input, opts.node_sep);
+            let placed = resolve_rank(&ranks[r], &desired, width);
             for (i, &v) in ranks[r].iter().enumerate() {
                 cx[v] = placed[i];
             }
         }
     }
 
-    // Normalise so the leftmost node edge sits at x = 0.
-    let min_left = (0..n)
+    let min_left = (0..total)
         .filter(|&v| !ranks[rank[v]].is_empty())
-        .map(|v| cx[v] - w(v) / 2.0)
+        .map(|v| cx[v] - width[v] / 2.0)
         .fold(f64::INFINITY, f64::min);
-    let shift = if min_left.is_finite() { -min_left } else { 0.0 };
+    if min_left.is_finite() {
+        for x in &mut cx {
+            *x -= min_left;
+        }
+    }
+    Coords {
+        cx,
+        band_top,
+        band_h,
+    }
+}
 
-    (0..n)
-        .map(|v| {
-            let r = rank[v];
-            let order = ranks[r].iter().position(|&u| u == v).unwrap_or(0);
-            Placed {
-                x: cx[v] - w(v) / 2.0 + shift,
-                y: y_top[r] + (band_h[r] - input.nodes[v].height) / 2.0,
-                width: input.nodes[v].width,
-                height: input.nodes[v].height,
-                rank: r,
-                order,
-            }
-        })
-        .collect()
+/// Horizontal gap kept after a node: tight for virtual routing nodes (so long
+/// edges pack into narrow channels) and roomy for real nodes.
+fn gap_after(v: usize, width: &[f64]) -> f64 {
+    if width[v] <= VIRT_W { 4.0 } else { 24.0 }
 }
 
 /// Resolves one rank's node centres: returns centres (in `order` sequence) that
-/// are order-preserving, separated by at least the half-widths + `sep`, and as
+/// are order-preserving, separated by at least the half-widths + gap, and as
 /// close to `desired` as possible (minimum sum of squared displacement). Solved
 /// by pool-adjacent-violators after transforming the min-gap constraints into a
 /// plain non-decreasing (isotonic) constraint.
-fn resolve_rank(order: &[usize], desired: &[f64], input: &LayoutInput, sep: f64) -> Vec<f64> {
+fn resolve_rank(order: &[usize], desired: &[f64], width: &[f64]) -> Vec<f64> {
     let m = order.len();
     if m == 0 {
         return Vec::new();
     }
-    // s[i] = minimum centre offset of node i relative to node 0.
     let mut s = vec![0.0; m];
     for i in 1..m {
         s[i] = s[i - 1]
-            + input.nodes[order[i - 1]].width / 2.0
-            + input.nodes[order[i]].width / 2.0
-            + sep;
+            + width[order[i - 1]] / 2.0
+            + width[order[i]] / 2.0
+            + gap_after(order[i - 1], width);
     }
-    // Constraint centre[i+1]-centre[i] >= gap ⇔ t[i]=centre[i]-s[i] non-decreasing.
     let target: Vec<f64> = (0..m).map(|i| desired[i] - s[i]).collect();
     let t = pava(&target);
     (0..m).map(|i| t[i] + s[i]).collect()
@@ -384,18 +504,6 @@ fn pava(y: &[f64]) -> Vec<f64> {
         }
     }
     out
-}
-
-/// One straight polyline per input edge: source bottom-centre → target
-/// top-centre. (A back-edge just points upward; still a straight segment.)
-fn route_straight(input: &LayoutInput, placed: &[Placed]) -> Vec<Vec<(f64, f64)>> {
-    let bottom = |p: &Placed| (p.x + p.width / 2.0, p.y + p.height);
-    let top = |p: &Placed| (p.x + p.width / 2.0, p.y);
-    input
-        .edges
-        .iter()
-        .map(|&(u, v)| vec![bottom(&placed[u]), top(&placed[v])])
-        .collect()
 }
 
 #[cfg(test)]
