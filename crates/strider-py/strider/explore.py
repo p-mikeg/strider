@@ -75,6 +75,7 @@ _FRONTEND = r"""<!doctype html>
   #side{position:fixed;top:46px;right:0;bottom:0;width:340px;background:var(--panel);
         border-left:1px solid var(--border);overflow:auto;padding:10px}
   #side h3{margin:2px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)}
+  #nb,#histlist{max-height:200px;overflow-y:auto}
   .hit{padding:5px 8px;border-radius:5px;cursor:pointer;font-family:ui-monospace,monospace;font-size:12px;
        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .hit:hover{background:var(--panel2)}
