@@ -111,6 +111,53 @@ impl<'a> RawFunctionDumper<'a> {
         }
         s
     }
+
+    /// Raw render of the depth-`depth` neighborhood around `center` — the same
+    /// BFS + `max_nodes` budget as the pretty neighborhood
+    /// ([`super::FunctionDotDumper::neighborhood_dot`]), but structure-faithful:
+    /// one `n<id>` box per node exactly as stored, edges as stored, no virtual
+    /// nodes / const duplication / Sleigh names. The debug view for when the
+    /// pretty output can't be trusted; `center` gets a bright border.
+    fn neighborhood_dot(
+        &self,
+        center: NodeId,
+        depth: usize,
+        hub_cap: usize,
+        max_nodes: usize,
+    ) -> anyhow::Result<String> {
+        let consumers = super::neighborhood::build_consumers(self.function);
+        let set = super::neighborhood::neighborhood_nodes(
+            self.function,
+            center,
+            depth,
+            hub_cap,
+            max_nodes,
+            &consumers,
+        );
+        let mut out = DotEmitter::new("G", &DotStyle::dark());
+        for &node in &set {
+            let dot_id = format!("n{}", node.as_u32());
+            let extra: &[(&str, &str)] = if node == center {
+                &[("color", "\"#ffcc00\""), ("penwidth", "2.5")]
+            } else {
+                &[]
+            };
+            out.node(&dot_id, &self.node_label(node), "box", extra);
+        }
+        for &node in &set {
+            let dot_id = format!("n{}", node.as_u32());
+            for (in_slot, value) in self.function.node_inputs(node).into_iter().enumerate() {
+                let (producer, out_slot) = self.function.value_definition(value);
+                if !set.contains(&producer) {
+                    continue;
+                }
+                let from = format!("n{}", producer.as_u32());
+                let label = format!("{out_slot}:{in_slot}");
+                out.edge(&from, &dot_id, &[("label", &label)]);
+            }
+        }
+        Ok(out.finish())
+    }
 }
 
 impl GraphDotDumper for RawFunctionDumper<'_> {
@@ -171,5 +218,22 @@ impl Function {
     /// Propagates a DOT-emit error from the renderer.
     pub fn raw_html(&self) -> crate::Result<String> {
         GraphDot::new(RawFunctionDumper::new(self), DotStyle::dark()).as_html_from_dot()
+    }
+
+    /// Raw, structure-faithful render of the depth-`depth` neighborhood around
+    /// `center` (see [`RawFunctionDumper::neighborhood_dot`]). The scale-safe
+    /// debug counterpart to the pretty explorer view — no Sleigh needed.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a DOT-emit error from the renderer.
+    pub fn raw_neighborhood_dot(
+        &self,
+        center: NodeId,
+        depth: usize,
+        hub_cap: usize,
+        max_nodes: usize,
+    ) -> crate::Result<String> {
+        RawFunctionDumper::new(self).neighborhood_dot(center, depth, hub_cap, max_nodes)
     }
 }

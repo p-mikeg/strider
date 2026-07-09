@@ -181,6 +181,30 @@ impl PyFunction {
         self.with_read_value(|function| function.entry().as_u32())
     }
 
+    /// Raw (structure-faithful) render of the depth-`depth` neighborhood around
+    /// node `center` — the same BFS/budget as the pretty explorer view, but
+    /// showing the graph exactly as stored (one `n<id>` box per IR node, edges
+    /// as stored, side-tables inline, no virtuals / const-dup / Sleigh names).
+    /// Needs no Sleigh, so it lives on `Function`; the debug view for when the
+    /// pretty output can't be trusted.
+    #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60))]
+    fn raw_neighborhood_dot(
+        &self,
+        center: u32,
+        depth: usize,
+        hub_cap: usize,
+        max_nodes: usize,
+    ) -> PyResult<String> {
+        self.with_read_value(|function| {
+            let nid = function
+                .graph()
+                .node_id_from_u32(center)
+                .ok_or_else(|| anyhow::anyhow!("invalid node id {center}"))?;
+            function.raw_neighborhood_dot(nid, depth, hub_cap, max_nodes)
+        })?
+        .map_err(crate::errors::into_strider_err)
+    }
+
     /// Returns the count of `Region` (control-flow join) nodes
     /// reachable from entry.  This is a single linear pre-order sweep
     /// using the IR's own kind-filtered walker, whose visited-set is a

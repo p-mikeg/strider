@@ -108,8 +108,14 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
 
         let mut out = ::dot::DotEmitter::new("G", &::dot::DotStyle::dark());
         for &node in &set {
-            let id = node.as_u32().to_string();
             let kind = self.function.node_kind(node);
+            // Constants are drawn per-use in the edge loop below (a hot const
+            // like 0 would otherwise be a shared multi-edge hub), so skip the
+            // shared box here — unless the const is itself the centered node.
+            if kind.is_const() && node != center {
+                continue;
+            }
+            let id = node.as_u32().to_string();
             let label = self.pretty_label(node)?;
             let mut extra: Vec<(&str, &str)> = vec![("fillcolor", node_fillcolor(kind))];
             if node == center {
@@ -133,7 +139,18 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
                 if !set.contains(&producer) {
                     continue;
                 }
-                let src_id = match self.function.node_kind(producer) {
+                let src_id = if self.function.node_kind(producer).is_const()
+                    && producer != center
+                {
+                    // Duplicate the constant per use: a fresh box keyed by this
+                    // consuming (node, slot) so it never becomes an edge hub.
+                    let pk = *self.function.node_kind(producer);
+                    let vid = format!("c{id}_{idx}");
+                    let clabel = self.pretty_label(producer)?;
+                    out.node(&vid, &clabel, node_shape(&pk), &[("fillcolor", node_fillcolor(&pk))]);
+                    vid
+                } else {
+                    match self.function.node_kind(producer) {
                     NodeKind::If => virt
                         .entry(value)
                         .or_insert_with(|| {
@@ -170,6 +187,7 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
                         }
                     },
                     _ => producer.as_u32().to_string(),
+                    }
                 };
                 let (slot, color) = edge_style(self, node, idx, value);
                 let mut attrs: Vec<(&str, &str)> = vec![("color", color)];

@@ -1004,3 +1004,61 @@ fn neighborhood_bfs_bounds_total_node_count() {
     assert_eq!(budgeted.len(), 2, "budget of 2 must cap the neighborhood at 2 nodes");
     assert!(budgeted.contains(&add), "center is always kept");
 }
+
+#[test]
+fn neighborhood_duplicates_shared_const_per_use() {
+    use crate::node::IntBinaryOp;
+
+    // const 7 feeds two Adds, both feeding the centered Add. A hot constant
+    // like this should render one private box per use (avoiding a hub), not a
+    // single shared box.
+    let mut f = test_function();
+    let k = int_const_node(&mut f, 7, ValueType::I32);
+    let a = int_const_node(&mut f, 1, ValueType::I32);
+    let b = int_const_node(&mut f, 2, ValueType::I32);
+    let kv = f.node_outputs(k)[0];
+    let av = f.node_outputs(a)[0];
+    let bv = f.node_outputs(b)[0];
+    let mk_add = |f: &mut Function, l, r| {
+        f.graph_mut().create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            [l, r],
+            [ValueKind::Typed(ValueType::I32)],
+        )
+    };
+    let add1 = mk_add(&mut f, av, kv);
+    let add2 = mk_add(&mut f, bv, kv);
+    let a1v = f.node_outputs(add1)[0];
+    let a2v = f.node_outputs(add2)[0];
+    let center = mk_add(&mut f, a1v, a2v);
+
+    let entry = f.entry();
+    let sleigh = probe_sleigh();
+    let dumper = FunctionDotDumper {
+        entry,
+        function: &f,
+        sleigh: &sleigh,
+        node_to_arg_indices: build_arg_reverse_map(&f),
+    };
+    let dot = dumper.neighborhood_dot(center, 3, 12, 100).unwrap();
+
+    // const 7 is used by add1 and add2 → two distinct boxes, not one shared.
+    let sevens = node_decls(&dot)
+        .iter()
+        .filter(|l| l.contains("const 0x7"))
+        .count();
+    assert_eq!(sevens, 2, "shared const must be duplicated per use:\n{dot}");
+
+    // The RAW neighborhood is structure-faithful: the shared const stays ONE
+    // box (n<id>), never duplicated, and the center keeps its 1:1 id.
+    let raw = f.raw_neighborhood_dot(center, 3, 12, 100).unwrap();
+    let raw_consts = node_decls(&raw)
+        .iter()
+        .filter(|l| l.contains("IntConst"))
+        .count();
+    assert_eq!(raw_consts, 3, "raw keeps one box per IR const (7,1,2):\n{raw}");
+    assert!(
+        raw.contains(&format!("n{}", center.as_u32())),
+        "raw neighborhood ids are IR node ids"
+    );
+}

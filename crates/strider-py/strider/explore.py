@@ -58,6 +58,7 @@ _FRONTEND = r"""<!doctype html>
           color:var(--text);cursor:pointer;font-size:15px;line-height:1}
   .navbtn:hover:not(:disabled){border-color:var(--accent)}
   .navbtn:disabled{opacity:.35;cursor:default}
+  .navbtn.cur{background:var(--accent);border-color:var(--accent);color:#000}
   .stepper #dval{min-width:16px;text-align:center;color:var(--text);font-variant-numeric:tabular-nums}
   #qwrap{position:relative;flex:1}
   #q{width:100%;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;
@@ -101,6 +102,7 @@ _FRONTEND = r"""<!doctype html>
   <button id="back" class="navbtn" title="Back (Alt+←)">←</button>
   <button id="fwd" class="navbtn" title="Forward (Alt+→)">→</button>
   <span class="stepper">depth <button id="dm">−</button><span id="dval">5</span><button id="dp">+</button></span>
+  <button id="raw" class="navbtn" title="Toggle raw (structure-faithful) view" style="width:auto;padding:0 8px">raw</button>
   <div id="qwrap">
     <input id="q" type="text" spellcheck="false"
       placeholder="strider pattern — e.g.  load(addr=add(initial_var(), any_int_const()))">
@@ -123,7 +125,7 @@ _FRONTEND = r"""<!doctype html>
 <script>
 const $=id=>document.getElementById(id);
 const wrap=$("wrap"), graph=$("graph"), hits=$("hits"), msg=$("msg"), qEl=$("q"), acEl=$("ac"), dval=$("dval");
-let viz, center, curSvg, depth=5, scale=1, baseW=0, baseH=0;
+let viz, center, curSvg, depth=5, scale=1, baseW=0, baseH=0, rawMode=false;
 let matches=new Set(), marked=new Set(), names=[];
 
 const ROLES=[["control","#00cccc"],["memory","#cc88aa"],["lhs","#4488ff"],["rhs","#ff4444"],
@@ -141,7 +143,7 @@ async function render(anchor){
   if(dotCtrl) dotCtrl.abort();               // cancel any in-flight render (single-threaded server)
   dotCtrl=new AbortController();
   let dot;
-  try{ dot=await (await fetch(`/dot?center=${center}&depth=${depth}`,{signal:dotCtrl.signal})).text(); }
+  try{ dot=await (await fetch(`/dot?center=${center}&depth=${depth}&raw=${rawMode?1:0}`,{signal:dotCtrl.signal})).text(); }
   catch(e){ if(e.name==="AbortError") return; throw e; }
   curSvg=viz.renderSVGElement(dot);
   curSvg.removeAttribute("width"); curSvg.removeAttribute("height");
@@ -270,6 +272,8 @@ function setDepth(d){ depth=Math.max(1,Math.min(12,d)); dval.textContent=depth;
   const c=findNode(String(center)); const r=c&&c.getBoundingClientRect();
   render(r?{id:String(center),x:r.left+r.width/2,y:r.top+r.height/2}:null).then(()=>centerNode(String(center))); }
 $("dp").onclick=()=>setDepth(depth+1); $("dm").onclick=()=>setDepth(depth-1);
+$("raw").onclick=()=>{ rawMode=!rawMode; $("raw").classList.toggle("cur",rawMode);
+  render().then(()=>centerNode(String(center))); };
 wrap.addEventListener("wheel",e=>{ if(!e.ctrlKey)return; e.preventDefault();
   scale=Math.max(0.2,Math.min(4,scale*(e.deltaY<0?1.12:0.89))); applyScale(); },{passive:false});
 
@@ -321,7 +325,13 @@ def serve(lifter, function, host="127.0.0.1", port=0, depth=5):
                 elif u.path == "/dot":
                     c = int(q.get("center", [entry])[0])
                     d = int(q.get("depth", [depth])[0])
-                    self._send(lifter.neighborhood_dot(function, c, depth=d), "text/plain")
+                    if q.get("raw", ["0"])[0] == "1":
+                        # Structure-faithful view for when the pretty output
+                        # can't be trusted (no Sleigh needed → on the Function).
+                        dot = function.raw_neighborhood_dot(c, depth=d)
+                    else:
+                        dot = lifter.neighborhood_dot(function, c, depth=d)
+                    self._send(dot, "text/plain")
                 elif u.path == "/pattern":
                     ids = _run_pattern(function, q.get("q", [""])[0])
                     self._send(json.dumps(ids), "application/json")
