@@ -75,8 +75,13 @@ _FRONTEND = r"""<!doctype html>
   #side{position:fixed;top:46px;right:0;bottom:0;width:250px;background:var(--panel);
         border-left:1px solid var(--border);overflow:auto;padding:10px}
   #side h3{margin:2px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)}
-  .hit{padding:5px 8px;border-radius:5px;cursor:pointer;font-family:ui-monospace,monospace;font-size:12px}
+  .hit{padding:5px 8px;border-radius:5px;cursor:pointer;font-family:ui-monospace,monospace;font-size:12px;
+       white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .hit:hover{background:var(--panel2)}
+  .hit.cur{background:var(--accent);color:#fff}
+  .hit .dir{color:var(--text2);margin-right:5px}
+  .hit .role{margin-right:6px}
+  .cnt{color:var(--text2);font-weight:400;font-size:10px}
   .legend div{display:flex;align-items:center;gap:7px;padding:2px 0;color:var(--text2);font-size:11px}
   .legend i{width:16px;height:3px;border-radius:2px;display:inline-block}
   /* graph node/edge states */
@@ -104,7 +109,10 @@ _FRONTEND = r"""<!doctype html>
 </div>
 <div id="wrap"><div id="graph"></div></div>
 <div id="side">
-  <h3>Matches</h3><div id="hits"><div style="color:var(--text2);font-size:11px">— none —</div></div>
+  <h3>Neighbors <span id="nbc" class="cnt"></span></h3><div id="nb"></div>
+  <h3 style="margin-top:14px">History</h3><div id="histlist"></div>
+  <h3 style="margin-top:14px">Matches <span id="hitc" class="cnt"></span></h3>
+  <div id="hits"><div style="color:var(--text2);font-size:11px">— none —</div></div>
   <h3 style="margin-top:14px">Edge roles</h3>
   <div class="legend" id="legend"></div>
 </div>
@@ -138,7 +146,7 @@ async function render(anchor){
   curSvg.removeAttribute("width"); curSvg.removeAttribute("height");
   const vb=(curSvg.getAttribute("viewBox")||"0 0 800 600").split(/\s+/).map(Number);
   baseW=vb[2]; baseH=vb[3];
-  graph.replaceChildren(curSvg); applyScale(); wire();
+  graph.replaceChildren(curSvg); applyScale(); wire(); updateNeighbors();
   if(anchor){ const g=findNode(anchor.id); if(g){ const r=g.getBoundingClientRect();
     wrap.scrollLeft+=(r.left+r.width/2)-anchor.x; wrap.scrollTop+=(r.top+r.height/2)-anchor.y; } }
 }
@@ -151,7 +159,7 @@ function recenter(id,gEl){ let a=null; if(gEl){const r=gEl.getBoundingClientRect
 /* ── history: back/forward across re-centers AND searches ── */
 let hist=[], hi=-1;
 function pushHist(){ hist=hist.slice(0,hi+1); hist.push({center,query:qEl.value,matches:new Set(matches)}); hi=hist.length-1; updateNav(); }
-function updateNav(){ $("back").disabled=hi<=0; $("fwd").disabled=hi>=hist.length-1; }
+function updateNav(){ $("back").disabled=hi<=0; $("fwd").disabled=hi>=hist.length-1; updateHistUI(); }
 function go(delta){ const n=hi+delta; if(n<0||n>=hist.length)return; hi=n; const s=hist[hi];
   center=s.center; qEl.value=s.query; matches=new Set(s.matches); render().then(()=>centerNode(center)); updateNav(); }
 $("back").onclick=()=>go(-1); $("fwd").onclick=()=>go(1);
@@ -159,6 +167,36 @@ document.addEventListener("keydown",e=>{ if(!e.altKey)return;
   if(e.key==="ArrowLeft"){e.preventDefault();go(-1);} else if(e.key==="ArrowRight"){e.preventDefault();go(1);} });
 /* Apply match highlighting to the current SVG without re-rendering (no scroll jump). */
 function highlight(){ if(!curSvg)return; for(const g of curSvg.querySelectorAll("g.node")) g.classList.toggle("match",matches.has(title(g))); }
+
+const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const nodeLabel=id=>{ const g=findNode(id); const t=g&&(g.querySelector("text tspan")||g.querySelector("text")); return t?t.textContent:("node "+id); };
+/* Follow a virtual (if.true / Post-Call) node to the real node on its far side. */
+function realEnd(vid){ for(const g of curSvg.querySelectorAll("g.edge")){ const [s,d]=title(g).split("->");
+  if(s===vid && d!==String(center) && isReal(d)) return d; if(d===vid && s!==String(center) && isReal(s)) return s; } return null; }
+/* Side panel: the center node's in/out edges, clickable to walk. */
+function updateNeighbors(){
+  const nb=$("nb"), c=String(center); nb.innerHTML=""; let n=0; const seen=new Set();
+  for(const g of curSvg.querySelectorAll("g.edge")){
+    const [s,d]=title(g).split("->"); let dir,o;
+    if(s===c){dir="→";o=isReal(d)?d:realEnd(d);} else if(d===c){dir="←";o=isReal(s)?s:realEnd(s);} else continue;
+    if(!o||seen.has(dir+o))continue; seen.add(dir+o);
+    const t=g.querySelector("text"); const role=t?t.textContent:""; const col=(t&&t.getAttribute("fill"))||"#8c8c96";
+    const el=document.createElement("div"); el.className="hit";
+    el.innerHTML=`<span class="dir">${dir}</span><span class="role" style="color:${col}">${esc(role)||"·"}</span>${esc(nodeLabel(o))}`;
+    el.title=(dir==="→"?"walk forward to ":"walk back to ")+nodeLabel(o);
+    el.onclick=()=>recenter(o, findNode(o)); nb.appendChild(el); n++;
+  }
+  if(!n) nb.innerHTML=NONE; $("nbc").textContent=n||"";
+}
+/* Side panel: the visited trail, clickable to jump anywhere. */
+function updateHistUI(){
+  const hl=$("histlist"); hl.innerHTML="";
+  hist.forEach((s,i)=>{ const el=document.createElement("div"); el.className="hit"+(i===hi?" cur":"");
+    el.textContent = s.query ? ("search: "+s.query) : ("node "+s.center);
+    el.onclick=()=>{ if(i!==hi){ hi=i; const st=hist[hi]; center=st.center; qEl.value=st.query; matches=new Set(st.matches);
+      render().then(()=>centerNode(center)); updateNav(); } };
+    hl.appendChild(el); });
+}
 
 function wire(){
   for(const g of curSvg.querySelectorAll("g.node")){
@@ -257,6 +295,12 @@ def serve(lifter, function, host="127.0.0.1", port=0, depth=5):
                 pass  # client cancelled the request (e.g. clicked again); nothing to do
 
         def do_GET(self):
+            # Close after each response. This server is single-threaded (the
+            # Function is unsendable), so it must never sit blocked in a
+            # keep-alive read waiting for the next request on an idle connection
+            # — that would stall every other request (a click) until the idle
+            # connection times out. One request per connection keeps it snappy.
+            self.close_connection = True
             u = urllib.parse.urlparse(self.path)
             q = urllib.parse.parse_qs(u.query)
             try:
