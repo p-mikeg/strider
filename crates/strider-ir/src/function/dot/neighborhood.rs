@@ -15,7 +15,7 @@ use std::io;
 use rsleigh::MemReader;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{FunctionDotDumper, node_fillcolor, node_shape};
+use super::{FunctionDotDumper, edge_style, node_fillcolor, node_shape};
 use crate::function::Function;
 use crate::node::NodeId;
 use crate::{IRViewer, IRWalker};
@@ -104,14 +104,25 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
             }
             out.node(&id, &label, node_shape(kind), &extra);
         }
-        // One edge per IR input edge whose producer is also in the set.
+        // One edge per IR input edge whose producer is also in the set, colored
+        // and labeled by the consumer's input-slot role (control / memory /
+        // lhs / rhs / addr / data / …) — the same styling the pretty dumper
+        // uses, so an address edge reads differently from a data edge.
         for &node in &set {
             let id = node.as_u32().to_string();
-            for value in self.function.node_inputs(node) {
+            for (idx, value) in self.function.node_inputs(node).into_iter().enumerate() {
                 let (producer, _) = self.function.value_definition(value);
-                if set.contains(&producer) {
-                    out.edge(&producer.as_u32().to_string(), &id, &[]);
+                if !set.contains(&producer) {
+                    continue;
                 }
+                let (slot, color) = edge_style(self, node, idx, value);
+                let mut attrs: Vec<(&str, &str)> = vec![("color", color)];
+                if !slot.is_empty() {
+                    attrs.push(("label", slot));
+                    attrs.push(("fontcolor", color));
+                    attrs.push(("fontsize", "9"));
+                }
+                out.edge(&producer.as_u32().to_string(), &id, &attrs);
             }
         }
         Ok(out.finish())
