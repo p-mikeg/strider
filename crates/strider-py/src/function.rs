@@ -175,6 +175,12 @@ impl PyFunction {
         self.with_read_value(|function| function.graph().all_node_ids().count())
     }
 
+    /// The IR node id of the function's `Entry` node — the natural starting
+    /// center for the interactive explorer's neighborhood view.
+    fn entry_node(&self) -> PyResult<u32> {
+        self.with_read_value(|function| function.entry().as_u32())
+    }
+
     /// Returns the count of `Region` (control-flow join) nodes
     /// reachable from entry.  This is a single linear pre-order sweep
     /// using the IR's own kind-filtered walker, whose visited-set is a

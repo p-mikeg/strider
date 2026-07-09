@@ -565,6 +565,33 @@ impl PyLifter {
         }
     }
 
+    /// Render the structural depth-`depth` neighborhood (inputs + outputs)
+    /// around IR node `center` to a standalone Graphviz DOT string — one DOT
+    /// node per IR node (so a DOT node id *is* the IR node id), pretty per-kind
+    /// styling and labels, `center` highlighted. A node whose degree exceeds
+    /// `hub_cap` is shown but not expanded through, so a widely-used value (the
+    /// memory token, a constant used in hundreds of places) doesn't pull the
+    /// whole function in. Drives the interactive explorer's neighborhood view.
+    #[pyo3(signature = (function, center, depth=5, hub_cap=12))]
+    fn neighborhood_dot(
+        &self,
+        function: &PyFunction,
+        center: u32,
+        depth: usize,
+        hub_cap: usize,
+    ) -> PyResult<String> {
+        let sleigh = self.sleigh();
+        let guard = function.read_inner().map_err(into_strider_err)?;
+        let nid = guard
+            .graph()
+            .node_id_from_u32(center)
+            .ok_or_else(|| into_strider_err(anyhow::anyhow!("invalid node id {center}")))?;
+        let dumper = guard.dot_dumper(sleigh).map_err(into_strider_err)?;
+        dumper
+            .neighborhood_dot(nid, depth, hub_cap)
+            .map_err(|e| into_strider_err(anyhow::anyhow!(e)))
+    }
+
     /// Decode LINEARLY from `entry`, one machine instruction at a time
     /// (advancing by each instruction's machine byte length, replaying
     /// context-register state exactly as a real lift would), until the

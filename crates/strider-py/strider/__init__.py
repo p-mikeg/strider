@@ -57,3 +57,4 @@ from ._api import (  # noqa: E402,F401
     load_elf_from_segments,
     load_elf_from_sections,
 )
+from .explore import serve  # noqa: E402,F401  — strider.serve(lifter, function)

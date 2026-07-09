@@ -940,3 +940,42 @@ fn mem_phi_value_inputs_are_labelled_with_matching_pred_index() {
         "expected pred1 on >= 3 edges (Region + Phi + MemPhi), got {pred1_count}:\n{dot}",
     );
 }
+
+// ── neighborhood BFS ────────────────────────────────────────────────────────
+
+#[test]
+fn neighborhood_bfs_bounds_depth_and_walks_both_directions() {
+    use super::neighborhood::neighborhood_nodes;
+    use crate::node::IntBinaryOp;
+    use rustc_hash::FxHashMap;
+
+    // const 5, const 8  →  Add.
+    let mut f = test_function();
+    let c1 = int_const_node(&mut f, 5, ValueType::I32);
+    let c2 = int_const_node(&mut f, 8, ValueType::I32);
+    let v1 = f.node_outputs(c1)[0];
+    let v2 = f.node_outputs(c2)[0];
+    let add = f.graph_mut().create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [v1, v2],
+        [ValueKind::Typed(ValueType::I32)],
+    );
+    // Forward (consumer) edges the IR doesn't index.
+    let mut consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
+    consumers.entry(c1).or_default().push(add);
+    consumers.entry(c2).or_default().push(add);
+
+    // Depth 0 = just the center.
+    assert_eq!(neighborhood_nodes(&f, add, 0, 12, &consumers).len(), 1);
+    // Depth 1 from Add reaches both operand producers (input edges).
+    let d1 = neighborhood_nodes(&f, add, 1, 12, &consumers);
+    assert!(d1.contains(&c1) && d1.contains(&c2) && d1.contains(&add));
+    assert_eq!(d1.len(), 3);
+    // Depth 1 from a const reaches Add (output/consumer edge) — both directions.
+    assert!(neighborhood_nodes(&f, c1, 1, 12, &consumers).contains(&add));
+    // A non-center hub is included but not expanded through: from c1 with cap 1,
+    // Add (degree 2 > 1) is reached but not walked past, so c2 is never added.
+    let capped = neighborhood_nodes(&f, c1, 3, 1, &consumers);
+    assert!(capped.contains(&c1) && capped.contains(&add) && !capped.contains(&c2));
+    assert_eq!(capped.len(), 2);
+}
