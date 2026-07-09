@@ -207,12 +207,12 @@ pub(crate) enum PatRepr {
     BoolConst(bool),
     /// `float_const(bits)`. Buildable.
     FloatConst(u64),
-    /// `any_int_const(c)` — match-only.
-    AnyIntConst(Capture),
-    /// `any_bool_const(c)` — match-only.
-    AnyBoolConst(Capture),
-    /// `any_float_const(c)` — match-only.
-    AnyFloatConst(Capture),
+    /// `any_int_const(c=None)` — match-only; capture optional.
+    AnyIntConst(Option<Capture>),
+    /// `any_bool_const(c=None)` — match-only; capture optional.
+    AnyBoolConst(Option<Capture>),
+    /// `any_float_const(c=None)` — match-only; capture optional.
+    AnyFloatConst(Option<Capture>),
     /// `initial_var()` — match-only.
     InitialVar,
     /// `initial_var_for(vn)` — match-only.
@@ -665,15 +665,24 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
         }
         PatRepr::AnyIntConst(c) => {
             let c = *c;
-            DynMatch(Box::new(move |b| mc(sp::any_int_const().capture(c), b)))
+            DynMatch(Box::new(move |b| match c {
+                Some(c) => mc(sp::any_int_const().capture(c), b),
+                None => mc(sp::any_int_const(), b),
+            }))
         }
         PatRepr::AnyBoolConst(c) => {
             let c = *c;
-            DynMatch(Box::new(move |b| mc(sp::any_bool_const().capture(c), b)))
+            DynMatch(Box::new(move |b| match c {
+                Some(c) => mc(sp::any_bool_const().capture(c), b),
+                None => mc(sp::any_bool_const(), b),
+            }))
         }
         PatRepr::AnyFloatConst(c) => {
             let c = *c;
-            DynMatch(Box::new(move |b| mc(sp::any_float_const().capture(c), b)))
+            DynMatch(Box::new(move |b| match c {
+                Some(c) => mc(sp::any_float_const().capture(c), b),
+                None => mc(sp::any_float_const(), b),
+            }))
         }
         PatRepr::InitialVar => DynMatch(Box::new(|b| mc(sp::initial_var(), b))),
         PatRepr::InitialVarFor(vn) => {
@@ -1541,22 +1550,26 @@ pub fn float_const(bits: u64) -> PyPat {
     PyPat::from_repr(PatRepr::FloatConst(bits))
 }
 
-/// Match any `IntConst` and bind its value to `c`.
+/// Match any `IntConst`, optionally binding its value to `c`.  Pass no
+/// capture to match "any integer constant" purely as a structural constraint.
 #[pyfunction]
-pub fn any_int_const(c: PyRef<'_, PyCapture>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyIntConst(c.inner))
+#[pyo3(signature = (c=None))]
+pub fn any_int_const(c: Option<PyRef<'_, PyCapture>>) -> PyPat {
+    PyPat::from_repr(PatRepr::AnyIntConst(c.map(|c| c.inner)))
 }
 
-/// Match any `I1` boolean constant and bind it to `c`.
+/// Match any `I1` boolean constant, optionally binding it to `c`.
 #[pyfunction]
-pub fn any_bool_const(c: PyRef<'_, PyCapture>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyBoolConst(c.inner))
+#[pyo3(signature = (c=None))]
+pub fn any_bool_const(c: Option<PyRef<'_, PyCapture>>) -> PyPat {
+    PyPat::from_repr(PatRepr::AnyBoolConst(c.map(|c| c.inner)))
 }
 
-/// Match any `FloatConst` and bind it to `c`.
+/// Match any `FloatConst`, optionally binding it to `c`.
 #[pyfunction]
-pub fn any_float_const(c: PyRef<'_, PyCapture>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyFloatConst(c.inner))
+#[pyo3(signature = (c=None))]
+pub fn any_float_const(c: Option<PyRef<'_, PyCapture>>) -> PyPat {
+    PyPat::from_repr(PatRepr::AnyFloatConst(c.map(|c| c.inner)))
 }
 
 /// Match any `InitialVar` node.

@@ -284,12 +284,13 @@ def bool_const(value: bool) -> Pat:
     """Match an `I1` boolean constant equal to `value`."""
 def float_const(bits: int) -> Pat:
     """Match a `FloatConst` whose raw bits equal `bits`."""
-def any_int_const(c: Capture) -> Pat:
-    """Match any `IntConst` and bind its value to `c`."""
-def any_bool_const(c: Capture) -> Pat:
-    """Match any `I1` boolean constant and bind it to `c`."""
-def any_float_const(c: Capture) -> Pat:
-    """Match any `FloatConst` and bind it to `c`."""
+def any_int_const(c: Capture | None = ...) -> Pat:
+    """Match any `IntConst`, optionally binding its value to `c`.  Omit `c` to
+    match any integer constant purely as a structural constraint."""
+def any_bool_const(c: Capture | None = ...) -> Pat:
+    """Match any `I1` boolean constant, optionally binding it to `c`."""
+def any_float_const(c: Capture | None = ...) -> Pat:
+    """Match any `FloatConst`, optionally binding it to `c`."""
 def initial_var() -> Pat:
     """Match any `InitialVar` node (an initial-state register read)."""
 def initial_var_for(vn: object) -> Pat:

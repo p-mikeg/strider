@@ -101,9 +101,9 @@ enumerates every registered name).
 | `p.int_const_any_of([…])` | `IntConst ∈ set` | `int_const_any_of(values: list[int]) -> Pat` | n/a |
 | `p.bool_const(b)` | `BoolConst(b)` | `bool_const(value: bool) -> Pat` | n/a |
 | `p.float_const(bits)` | `FloatConst(bits)` | `float_const(bits: int) -> Pat` | n/a |
-| `p.any_int_const(c)` | any `IntConst`, capture | `any_int_const(c: Capture) -> Pat` | n/a |
-| `p.any_bool_const(c)` | any `BoolConst`, capture | `any_bool_const(c) -> Pat` | n/a |
-| `p.any_float_const(c)` | any `FloatConst`, capture | `any_float_const(c) -> Pat` | n/a |
+| `p.any_int_const(c=None)` | any `IntConst`, capture optional | `any_int_const(c: Capture=None) -> Pat` | n/a |
+| `p.any_bool_const(c=None)` | any `BoolConst`, capture optional | `any_bool_const(c=None) -> Pat` | n/a |
+| `p.any_float_const(c=None)` | any `FloatConst`, capture optional | `any_float_const(c=None) -> Pat` | n/a |
 | `p.initial_var()` | any `InitialVar(_)` | `initial_var() -> Pat` | n/a |
 | `p.initial_var_for(vn)` | `InitialVar(vn)` | `initial_var_for(vn: Vn) -> Pat` | n/a |
 | `p.function_arg(i)` | `FunctionArg{index=i}` | `function_arg(i: int) -> FunctionArgPat` | n/a |
