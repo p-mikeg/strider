@@ -1,13 +1,14 @@
-//! Structural neighborhood renderer for the interactive explorer.
+//! Neighborhood renderer for the interactive explorer.
 //!
-//! Unlike the pretty [`super::FunctionDotDumper`] (which inlines constants and
-//! adds virtual If-branch / Post-Call nodes, so it is neither 1:1 nor
-//! bijective with the IR), this renders the graph **structurally**: exactly one
-//! DOT node per IR node and one edge per IR input edge, so a DOT node id *is*
-//! an IR `NodeId`. That bijection is what lets the explorer map pattern-match
-//! results onto shown nodes and compute neighborhoods that match what's drawn.
-//! It reuses the pretty styling ([`super::node_shape`] / [`super::node_fillcolor`])
-//! and labels ([`FunctionDotDumper::pretty_label`]).
+//! Renders the depth-N neighborhood around a node as DOT, reusing the pretty
+//! dumper's styling / labels / edge roles ([`super::node_shape`],
+//! [`super::node_fillcolor`], [`super::edge_style`],
+//! [`FunctionDotDumper::pretty_label`]) *and* its `if.true` / `if.false` and
+//! `Post Call` virtual nodes — but keeps every **real** node's DOT id equal to
+//! its IR `NodeId` (constants included; the pretty dumper inlines those and
+//! renumbers). Virtual nodes get `v_*` ids. That way real nodes map 1:1 to the
+//! IR, so the explorer can highlight pattern-match roots and navigate by node
+//! id, while virtual `v_*` nodes are simply not navigation targets.
 
 use std::collections::VecDeque;
 use std::io;
