@@ -52,14 +52,20 @@
       `<path d="M0,0 L7,3 L0,6 Z" fill="var(--edge)"/></marker></defs>`);
 
     // Edges first (drawn behind nodes). Each: {p:[[x,y]…], dashed?, color?}.
+    // Long-range edges (big vertical span) are faded and thinner so the local
+    // node structure reads through the long-live-range "cable" bundles.
     let eg = "";
     for (const e of data.edges) {
       const pts = e.p;
       if (!pts || pts.length < 2) continue;
+      const span = Math.abs(pts[pts.length - 1][1] - pts[0][1]);
+      const op = span > 4000 ? 0.12 : span > 800 ? 0.3 : 0.7;
+      const sw = span > 800 ? 0.6 : 1;
       const d = "M" + pts.map((p) => p[0] + "," + p[1]).join(" L");
-      const st = e.color ? `stroke:${e.color}` : "";
+      const col = e.color ? `stroke:${e.color};` : "";
       const dash = e.dashed ? ' stroke-dasharray="5,4"' : "";
-      eg += `<path class="edge" d="${d}" style="${st}"${dash} marker-end="url(#arw)"/>`;
+      eg += `<path class="edge" d="${d}" style="${col}stroke-opacity:${op};stroke-width:${sw}"${dash}` +
+        (span > 800 ? "" : ' marker-end="url(#arw)"') + "/>";
     }
     parts.push(`<g id="edges">${eg}</g>`);
 

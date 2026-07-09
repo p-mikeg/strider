@@ -78,7 +78,7 @@ pub struct Positioned {
 
 /// Effective width of a routing (virtual) node — narrow so long edges pack
 /// into tight channels beside the real-node spine rather than re-widening it.
-const VIRT_W: f64 = 8.0;
+const VIRT_W: f64 = 4.0;
 
 /// Lay out `input` into absolute coordinates.
 ///
@@ -336,41 +336,175 @@ fn order_within_ranks(
     for v in 0..n {
         ranks[rank[v]].push(v);
     }
-    let mut pos: Vec<f64> = vec![0.0; n];
-    for rnodes in &ranks {
-        for (i, &v) in rnodes.iter().enumerate() {
-            pos[v] = i as f64;
+    // Virtual-node expansion makes every augmented edge span exactly one rank,
+    // so adjacency splits cleanly into the rank above (`up`) and below (`down`).
+    let mut up: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut down: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for v in 0..n {
+        for &u in &adj[v] {
+            if rank[u] + 1 == rank[v] {
+                up[v].push(u);
+            } else if rank[v] + 1 == rank[u] {
+                down[v].push(u);
+            }
         }
     }
-    for pass in 0..opts.ordering_passes.max(1) {
-        let range: Vec<usize> = if pass % 2 == 0 {
+    let mut pos = vec![0usize; n];
+    let reindex = |ranks: &[Vec<usize>], pos: &mut [usize]| {
+        for r in ranks {
+            for (i, &v) in r.iter().enumerate() {
+                pos[v] = i;
+            }
+        }
+    };
+    reindex(&ranks, &mut pos);
+
+    let mut best = ranks.clone();
+    let mut best_cross = total_crossings(&ranks, &pos, &down);
+    // Alternating weighted-median sweeps + transpose, keeping the best. The
+    // caller's budget allows several rounds; stop early once it plateaus.
+    let max_iters = if opts.reduce_crossings { 12 } else { 6 };
+    let mut stale = 0;
+    for it in 0..max_iters {
+        let down_dir = it % 2 == 0;
+        let seq: Vec<usize> = if down_dir {
             (0..=max_rank).collect()
         } else {
             (0..=max_rank).rev().collect()
         };
-        for r in range {
+        for r in seq {
+            let nbr = if down_dir { &up } else { &down };
             let mut keyed: Vec<(f64, usize)> = ranks[r]
                 .iter()
-                .map(|&v| (barycenter(v, adj, &pos), v))
+                .map(|&v| {
+                    // No neighbour in the reference rank ⇒ keep current slot.
+                    (weighted_median(&nbr[v], &pos).unwrap_or(pos[v] as f64), v)
+                })
                 .collect();
             keyed.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
             ranks[r] = keyed.into_iter().map(|(_, v)| v).collect();
             for (i, &v) in ranks[r].iter().enumerate() {
-                pos[v] = i as f64;
+                pos[v] = i;
+            }
+        }
+        transpose(&mut ranks, &mut pos, &up, &down);
+        let c = total_crossings(&ranks, &pos, &down);
+        if c < best_cross {
+            best_cross = c;
+            best.clone_from(&ranks);
+            stale = 0;
+        } else {
+            stale += 1;
+            if stale >= 2 {
+                break;
             }
         }
     }
-    ranks
+    best
 }
 
-/// Mean order-position of a node's neighbours (its current position if it has
-/// none), the barycenter used for crossing reduction.
-fn barycenter(v: usize, adj: &[Vec<usize>], pos: &[f64]) -> f64 {
-    let ns = &adj[v];
-    if ns.is_empty() {
-        return pos[v];
+/// Weighted median of `nbr`'s positions (Gansner et al.), or `None` when the
+/// node has no neighbour in the reference rank (caller keeps its slot).
+fn weighted_median(nbr: &[usize], pos: &[usize]) -> Option<f64> {
+    if nbr.is_empty() {
+        return None;
     }
-    ns.iter().map(|&u| pos[u]).sum::<f64>() / ns.len() as f64
+    let mut ps: Vec<usize> = nbr.iter().map(|&u| pos[u]).collect();
+    ps.sort_unstable();
+    let m = ps.len() / 2;
+    Some(if ps.len() % 2 == 1 {
+        ps[m] as f64
+    } else if ps.len() == 2 {
+        (ps[0] + ps[1]) as f64 / 2.0
+    } else {
+        let left = (ps[m - 1] - ps[0]) as f64;
+        let right = (ps[ps.len() - 1] - ps[m]) as f64;
+        if left + right == 0.0 {
+            (ps[m - 1] + ps[m]) as f64 / 2.0
+        } else {
+            (ps[m - 1] as f64 * right + ps[m] as f64 * left) / (left + right)
+        }
+    })
+}
+
+/// Greedy transpose heuristic: repeatedly swap adjacent nodes in a rank when it
+/// reduces the crossings against their fixed up/down neighbours. Cheap because
+/// virtual routing nodes have degree ≤ 2.
+fn transpose(ranks: &mut [Vec<usize>], pos: &mut [usize], up: &[Vec<usize>], down: &[Vec<usize>]) {
+    let pair = |left: usize, right: usize, pos: &[usize]| -> usize {
+        let mut c = 0;
+        for nbrs in [up, down] {
+            for &a in &nbrs[left] {
+                for &b in &nbrs[right] {
+                    if pos[a] > pos[b] {
+                        c += 1;
+                    }
+                }
+            }
+        }
+        c
+    };
+    let mut improved = true;
+    let mut rounds = 0;
+    while improved && rounds < 4 {
+        improved = false;
+        rounds += 1;
+        for r in ranks.iter_mut() {
+            for i in 0..r.len().saturating_sub(1) {
+                let (v, w) = (r[i], r[i + 1]);
+                if pair(w, v, pos) < pair(v, w, pos) {
+                    r.swap(i, i + 1);
+                    pos[v] = i + 1;
+                    pos[w] = i;
+                    improved = true;
+                }
+            }
+        }
+    }
+}
+
+/// Total edge crossings summed over every adjacent rank pair, via inversion
+/// counting on the lower-rank endpoint order (Barth–Mutzel).
+fn total_crossings(ranks: &[Vec<usize>], pos: &[usize], down: &[Vec<usize>]) -> u64 {
+    let mut total = 0u64;
+    for rnodes in ranks {
+        // Edges to the next rank as (upper-pos, lower-pos), read in upper order.
+        let mut targets: Vec<usize> = Vec::new();
+        for &u in rnodes {
+            let mut ds: Vec<usize> = down[u].iter().map(|&w| pos[w]).collect();
+            ds.sort_unstable();
+            targets.extend(ds);
+        }
+        total += count_inversions(&targets);
+    }
+    total
+}
+
+/// Number of inversions in `a` (pairs i<j with a[i]>a[j]) via a Fenwick tree.
+fn count_inversions(a: &[usize]) -> u64 {
+    if a.is_empty() {
+        return 0;
+    }
+    let max = a.iter().copied().max().unwrap() + 2;
+    let mut bit = vec![0u64; max + 1];
+    let mut inv = 0u64;
+    for (seen, &x) in a.iter().enumerate() {
+        // Of the `seen` already-inserted values, subtract those ≤ x to get the
+        // count strictly greater than x — i.e. the inversions x introduces.
+        let mut le = 0u64;
+        let mut i = x + 1;
+        while i > 0 {
+            le += bit[i];
+            i &= i - 1;
+        }
+        inv += seen as u64 - le;
+        let mut i = x + 1;
+        while i <= max {
+            bit[i] += 1;
+            i += i & i.wrapping_neg();
+        }
+    }
+    inv
 }
 
 /// Assigns rank `y` bands and refined centre `x` over the augmented node set
@@ -454,7 +588,7 @@ fn assign_x(
 /// Horizontal gap kept after a node: tight for virtual routing nodes (so long
 /// edges pack into narrow channels) and roomy for real nodes.
 fn gap_after(v: usize, width: &[f64]) -> f64 {
-    if width[v] <= VIRT_W { 4.0 } else { 24.0 }
+    if width[v] <= VIRT_W { 2.0 } else { 24.0 }
 }
 
 /// Resolves one rank's node centres: returns centres (in `order` sequence) that
