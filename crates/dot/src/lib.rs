@@ -26,6 +26,8 @@ use std::path::Path;
 /// this type.
 pub type Result<T> = anyhow::Result<T>;
 
+pub mod layout;
+
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
 
 /// Vendored `@viz-js/viz` v3.5.0 standalone build (Graphviz 11.x compiled
