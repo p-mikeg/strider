@@ -966,16 +966,41 @@ fn neighborhood_bfs_bounds_depth_and_walks_both_directions() {
     consumers.entry(c2).or_default().push(add);
 
     // Depth 0 = just the center.
-    assert_eq!(neighborhood_nodes(&f, add, 0, 12, &consumers).len(), 1);
+    assert_eq!(neighborhood_nodes(&f, add, 0, 12, usize::MAX, &consumers).len(), 1);
     // Depth 1 from Add reaches both operand producers (input edges).
-    let d1 = neighborhood_nodes(&f, add, 1, 12, &consumers);
+    let d1 = neighborhood_nodes(&f, add, 1, 12, usize::MAX, &consumers);
     assert!(d1.contains(&c1) && d1.contains(&c2) && d1.contains(&add));
     assert_eq!(d1.len(), 3);
     // Depth 1 from a const reaches Add (output/consumer edge) — both directions.
-    assert!(neighborhood_nodes(&f, c1, 1, 12, &consumers).contains(&add));
+    assert!(neighborhood_nodes(&f, c1, 1, 12, usize::MAX, &consumers).contains(&add));
     // A non-center hub is included but not expanded through: from c1 with cap 1,
     // Add (degree 2 > 1) is reached but not walked past, so c2 is never added.
-    let capped = neighborhood_nodes(&f, c1, 3, 1, &consumers);
+    let capped = neighborhood_nodes(&f, c1, 3, 1, usize::MAX, &consumers);
     assert!(capped.contains(&c1) && capped.contains(&add) && !capped.contains(&c2));
     assert_eq!(capped.len(), 2);
+}
+
+#[test]
+fn neighborhood_bfs_bounds_total_node_count() {
+    use super::neighborhood::neighborhood_nodes;
+    use crate::node::IntBinaryOp;
+    use rustc_hash::FxHashMap;
+
+    // const 5, const 8  →  Add. Depth 1 from Add reaches all 3 nodes (proven
+    // by the sibling test), so a max_nodes budget of 2 must clamp it to 2.
+    let mut f = test_function();
+    let c1 = int_const_node(&mut f, 5, ValueType::I32);
+    let c2 = int_const_node(&mut f, 8, ValueType::I32);
+    let v1 = f.node_outputs(c1)[0];
+    let v2 = f.node_outputs(c2)[0];
+    let add = f.graph_mut().create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [v1, v2],
+        [ValueKind::Typed(ValueType::I32)],
+    );
+    let consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
+
+    let budgeted = neighborhood_nodes(&f, add, 1, 12, 2, &consumers);
+    assert_eq!(budgeted.len(), 2, "budget of 2 must cap the neighborhood at 2 nodes");
+    assert!(budgeted.contains(&add), "center is always kept");
 }

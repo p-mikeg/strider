@@ -69,10 +69,10 @@ _FRONTEND = r"""<!doctype html>
   #ac div.sel,#ac div:hover{background:var(--accent);color:#fff}
   #msg{color:var(--text2);white-space:nowrap;font-variant-numeric:tabular-nums}
   #msg.err{color:var(--match)}
-  #wrap{position:fixed;top:46px;left:0;bottom:0;right:250px;overflow:auto;background:
+  #wrap{position:fixed;top:46px;left:0;bottom:0;right:340px;overflow:auto;background:
         radial-gradient(circle at 20px 20px,#1a1a1f 1px,transparent 0) 0 0/22px 22px,var(--bg)}
   #graph{transform-origin:0 0}
-  #side{position:fixed;top:46px;right:0;bottom:0;width:250px;background:var(--panel);
+  #side{position:fixed;top:46px;right:0;bottom:0;width:340px;background:var(--panel);
         border-left:1px solid var(--border);overflow:auto;padding:10px}
   #side h3{margin:2px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)}
   .hit{padding:5px 8px;border-radius:5px;cursor:pointer;font-family:ui-monospace,monospace;font-size:12px;
@@ -158,7 +158,9 @@ function recenter(id,gEl){ let a=null; if(gEl){const r=gEl.getBoundingClientRect
 
 /* ── history: back/forward across re-centers AND searches ── */
 let hist=[], hi=-1;
-function pushHist(){ hist=hist.slice(0,hi+1); hist.push({center,query:qEl.value,matches:new Set(matches)}); hi=hist.length-1; updateNav(); }
+const HIST_MAX=50;
+function pushHist(){ hist=hist.slice(0,hi+1); hist.push({center,query:qEl.value,matches:new Set(matches)});
+  if(hist.length>HIST_MAX) hist=hist.slice(hist.length-HIST_MAX); hi=hist.length-1; updateNav(); }
 function updateNav(){ $("back").disabled=hi<=0; $("fwd").disabled=hi>=hist.length-1; updateHistUI(); }
 function go(delta){ const n=hi+delta; if(n<0||n>=hist.length)return; hi=n; const s=hist[hi];
   center=s.center; qEl.value=s.query; matches=new Set(s.matches); render().then(()=>centerNode(center)); updateNav(); }

@@ -47,18 +47,26 @@ fn producers(f: &Function, node: NodeId) -> Vec<NodeId> {
 /// output edges. A node whose total degree exceeds `hub_cap` is included but
 /// not expanded *through* (a value like the memory token or a constant used in
 /// hundreds of places would otherwise pull the whole function in at hop 1);
-/// `center` always expands. Returns the set of nodes to draw.
+/// `center` always expands.
+///
+/// `max_nodes` bounds the total node count: because BFS visits in level order,
+/// the budget keeps the *nearest* `max_nodes` nodes and stops. Depth alone
+/// doesn't bound size — a densely-connected region blows up to hundreds of
+/// nodes, which the browser's synchronous Graphviz layout can't render without
+/// freezing — so the count cap is what actually keeps a neighborhood renderable.
+/// Returns the set of nodes to draw.
 pub(super) fn neighborhood_nodes(
     f: &Function,
     center: NodeId,
     depth: usize,
     hub_cap: usize,
+    max_nodes: usize,
     consumers: &FxHashMap<NodeId, Vec<NodeId>>,
 ) -> FxHashSet<NodeId> {
     let mut seen = FxHashSet::default();
     seen.insert(center);
     let mut queue = VecDeque::from([(center, 0usize)]);
-    while let Some((node, dist)) = queue.pop_front() {
+    'bfs: while let Some((node, dist)) = queue.pop_front() {
         if dist >= depth {
             continue;
         }
@@ -68,6 +76,9 @@ pub(super) fn neighborhood_nodes(
             continue; // don't expand through a hub
         }
         for nb in prod.into_iter().chain(cons) {
+            if seen.len() >= max_nodes {
+                break 'bfs; // budget reached — keep the nearest max_nodes
+            }
             if seen.insert(nb) {
                 queue.push_back((nb, dist + 1));
             }
@@ -89,9 +100,10 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
         center: NodeId,
         depth: usize,
         hub_cap: usize,
+        max_nodes: usize,
     ) -> io::Result<String> {
         let consumers = build_consumers(self.function);
-        let set = neighborhood_nodes(self.function, center, depth, hub_cap, &consumers);
+        let set = neighborhood_nodes(self.function, center, depth, hub_cap, max_nodes, &consumers);
 
         let mut out = ::dot::DotEmitter::new("G", &::dot::DotStyle::dark());
         for &node in &set {

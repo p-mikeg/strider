@@ -572,13 +572,17 @@ impl PyLifter {
     /// `hub_cap` is shown but not expanded through, so a widely-used value (the
     /// memory token, a constant used in hundreds of places) doesn't pull the
     /// whole function in. Drives the interactive explorer's neighborhood view.
-    #[pyo3(signature = (function, center, depth=5, hub_cap=12))]
+    /// `max_nodes` caps the total node count (the nearest ones win). Depth alone
+    /// doesn't bound size — a dense region blows up to hundreds of nodes, which
+    /// the browser's synchronous Graphviz layout can't render without freezing.
+    #[pyo3(signature = (function, center, depth=5, hub_cap=12, max_nodes=60))]
     fn neighborhood_dot(
         &self,
         function: &PyFunction,
         center: u32,
         depth: usize,
         hub_cap: usize,
+        max_nodes: usize,
     ) -> PyResult<String> {
         let sleigh = self.sleigh();
         let guard = function.read_inner().map_err(into_strider_err)?;
@@ -588,7 +592,7 @@ impl PyLifter {
             .ok_or_else(|| into_strider_err(anyhow::anyhow!("invalid node id {center}")))?;
         let dumper = guard.dot_dumper(sleigh).map_err(into_strider_err)?;
         dumper
-            .neighborhood_dot(nid, depth, hub_cap)
+            .neighborhood_dot(nid, depth, hub_cap, max_nodes)
             .map_err(|e| into_strider_err(anyhow::anyhow!(e)))
     }
 
