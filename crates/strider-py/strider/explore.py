@@ -54,7 +54,7 @@ _FRONTEND = r"""<!doctype html>
 </div>
 <div id="wrap"><div id="graph"></div></div>
 <div id="side"><div id="hits"></div></div>
-<script src="https://cdn.jsdelivr.net/npm/@viz-js/viz@3.5.0/lib/viz-standalone.js"></script>
+<script src="viz.js"></script>
 <script>
 let viz, center, matches = new Set();
 const graph = document.getElementById("graph"), hits = document.getElementById("hits"), msg = document.getElementById("msg");
@@ -119,6 +119,10 @@ def serve(lifter, function, host="127.0.0.1", port=0, depth=5):
             try:
                 if u.path == "/":
                     self._send(_FRONTEND)
+                elif u.path == "/viz.js":
+                    import strider
+
+                    self._send(strider.viz_standalone_js(), "application/javascript")
                 elif u.path == "/entry":
                     self._send(json.dumps(entry), "application/json")
                 elif u.path == "/dot":
@@ -136,8 +140,14 @@ def serve(lifter, function, host="127.0.0.1", port=0, depth=5):
         def log_message(self, format, *args):  # noqa: A002 — matches base signature
             pass  # quiet
 
-    srv = socketserver.ThreadingTCPServer((host, port), Handler)
-    srv.daemon_threads = True
+    # Single-threaded on purpose: `Function` is a PyO3 `unsendable` object, so
+    # every request must be handled on the same thread that created it — the
+    # caller's thread, which blocks here in `serve_forever`. A local single-user
+    # explorer serialises its handful of requests just fine.
+    class Server(socketserver.TCPServer):
+        allow_reuse_address = True
+
+    srv = Server((host, port), Handler)
     url = f"http://{host}:{srv.server_address[1]}/"
     print(f"strider explorer → {url}  (Ctrl-C to stop)")
     webbrowser.open(url)

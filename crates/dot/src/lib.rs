@@ -34,6 +34,13 @@ const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html"
 /// self-contained — no CDN fetch, no `.wasm` side-load.
 const VIZ_STANDALONE_JS: &str = include_str!("../assets/vendored/viz-standalone.js");
 
+/// The vendored `@viz-js/viz` standalone JS (Graphviz-in-Wasm). Exposed so a
+/// host (e.g. the interactive explorer's local server) can serve it directly,
+/// keeping the whole tool offline — no CDN fetch.
+pub fn viz_standalone_js() -> &'static str {
+    VIZ_STANDALONE_JS
+}
+
 /// Vendored `svg-pan-zoom` v3.6.1 minified build.  Same rationale as
 /// [`VIZ_STANDALONE_JS`].
 const SVG_PAN_ZOOM_JS: &str = include_str!("../assets/vendored/svg-pan-zoom.min.js");

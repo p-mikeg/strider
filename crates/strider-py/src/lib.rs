@@ -87,10 +87,18 @@ fn force_anyhow_backtrace_capture() {
 // collected per-rlib, so the gatherer must be in the same crate.
 pyo3_stub_gen::define_stub_info_gatherer!(stub_info);
 
+/// The vendored viz.js (Graphviz-in-Wasm) source, so the interactive explorer's
+/// local server can serve it and stay fully offline (no CDN).
+#[pyfunction]
+fn viz_standalone_js() -> &'static str {
+    ::dot::viz_standalone_js()
+}
+
 #[pymodule]
 fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     force_anyhow_backtrace_capture();
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_function(pyo3::wrap_pyfunction!(viz_standalone_js, m)?)?;
     errors::register(py, m)?;
     arch::register(py, m)?;
     cc::register(py, m)?;
