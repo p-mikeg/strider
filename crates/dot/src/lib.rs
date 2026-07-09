@@ -26,13 +26,7 @@ use std::path::Path;
 /// this type.
 pub type Result<T> = anyhow::Result<T>;
 
-pub mod layout;
-
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
-
-/// Viewer for the native-layout path: draws pre-computed coordinates as SVG
-/// (no graphviz). `__LAYOUT_JSON__` and `__SVG_PAN_ZOOM_JS__` are substituted.
-const LAYOUT_HTML_TEMPLATE: &str = include_str!("../assets/graph_template_layout.html");
 
 /// Vendored `@viz-js/viz` v3.5.0 standalone build (Graphviz 11.x compiled
 /// to Wasm, with the Wasm itself base64-embedded in the JS).  Inlined at
@@ -204,119 +198,11 @@ fn json_quote(s: &str) -> String {
     out
 }
 
-/// Serialises a native [`layout::Positioned`] result — with the captured
-/// per-node appearance (`nodes[i]` ↔ `pos.nodes[i]`) and per-edge appearance
-/// (`edges[i]` ↔ `pos.edges[i]`) — to the compact JSON the viewer consumes:
-/// `{width,height,nodes:[{id,label,shape,fill?,stroke?,x,y,w,h}],
-/// edges:[{p:[[x,y]…],dashed?,color?}]}`. Coordinates are rounded to whole
-/// pixels to keep the payload small; strings go through [`json_quote`] (which
-/// escapes `<` so the payload can't break out of its `<script>` host).
-fn layout_json_str(pos: &layout::Positioned, nodes: &[&CapNode], edges: &[&CapEdge]) -> String {
-    let mut s = String::with_capacity(pos.nodes.len() * 128);
-    let num = |s: &mut String, v: f64| {
-        let _ = write!(s, "{}", v.round() as i64);
-    };
-    s.push_str("{\"width\":");
-    num(&mut s, pos.width);
-    s.push_str(",\"height\":");
-    num(&mut s, pos.height);
-    s.push_str(",\"nodes\":[");
-    for (i, n) in pos.nodes.iter().enumerate() {
-        if i != 0 {
-            s.push(',');
-        }
-        let cn = nodes[i];
-        s.push_str("{\"id\":");
-        s.push_str(&json_quote(&cn.id));
-        s.push_str(",\"label\":");
-        s.push_str(&json_quote(&cn.label));
-        s.push_str(",\"shape\":");
-        s.push_str(&json_quote(&cn.shape));
-        if let Some(f) = &cn.fill {
-            s.push_str(",\"fill\":");
-            s.push_str(&json_quote(f));
-        }
-        if let Some(st) = &cn.stroke {
-            s.push_str(",\"stroke\":");
-            s.push_str(&json_quote(st));
-        }
-        s.push_str(",\"x\":");
-        num(&mut s, n.x);
-        s.push_str(",\"y\":");
-        num(&mut s, n.y);
-        s.push_str(",\"w\":");
-        num(&mut s, n.width);
-        s.push_str(",\"h\":");
-        num(&mut s, n.height);
-        s.push('}');
-    }
-    s.push_str("],\"edges\":[");
-    for (i, poly) in pos.edges.iter().enumerate() {
-        if i != 0 {
-            s.push(',');
-        }
-        s.push_str("{\"p\":[");
-        for (j, &(x, y)) in poly.iter().enumerate() {
-            if j != 0 {
-                s.push(',');
-            }
-            s.push('[');
-            num(&mut s, x);
-            s.push(',');
-            num(&mut s, y);
-            s.push(']');
-        }
-        s.push(']');
-        let em = edges[i];
-        if em.dashed {
-            s.push_str(",\"dashed\":true");
-        }
-        if let Some(c) = &em.color {
-            s.push_str(",\"color\":");
-            s.push_str(&json_quote(c));
-        }
-        s.push('}');
-    }
-    s.push_str("]}");
-    s
-}
-
 // ── DotEmitter ────────────────────────────────────────────────────────────────
 
 /// Low-level builder that accumulates a Graphviz `digraph { … }` string.
-///
-/// Alongside the DOT string it records the graph *structure* — `(id, label)`
-/// per node and `(from, to)` per edge — so the same dumper run can feed the
-/// native [`layout`] engine (via [`DotEmitter::to_layout_input`]) without a
-/// second pass or DOT re-parse.
 pub struct DotEmitter {
     out: String,
-    nodes: Vec<CapNode>,
-    edges: Vec<CapEdge>,
-}
-
-/// Captured node appearance for the native-layout viewer (mirrors what the
-/// DOT node statement encodes: shape + fill/stroke overrides).
-struct CapNode {
-    id: String,
-    label: String,
-    shape: String,
-    fill: Option<String>,
-    stroke: Option<String>,
-}
-
-/// Captured edge appearance for the native-layout viewer.
-struct CapEdge {
-    from: String,
-    to: String,
-    dashed: bool,
-    color: Option<String>,
-}
-
-/// Strips the surrounding DOT double-quotes a caller wraps a value in
-/// (e.g. `"\"#3a2a10\""` → `#3a2a10`); leaves bare identifiers untouched.
-fn unquote_attr(v: &str) -> String {
-    v.trim_matches('"').to_string()
 }
 
 impl DotEmitter {
@@ -336,11 +222,7 @@ impl DotEmitter {
         emit_attr_block(&mut s, "node", &style.node);
         emit_attr_block(&mut s, "edge", &style.edge);
 
-        Self {
-            out: s,
-            nodes: Vec::new(),
-            edges: Vec::new(),
-        }
+        Self { out: s }
     }
 
     /// Emits a node statement. Both `id` and `label` are escaped via
@@ -352,19 +234,6 @@ impl DotEmitter {
     /// (e.g. `("fillcolor", "\"#3a2a10\"")` for a hex colour, or
     /// `("style", "dashed")` for a bare identifier).
     pub fn node(&mut self, id: &str, label: &str, shape: &str, extra: &[(&str, &str)]) {
-        let find = |k: &str| {
-            extra
-                .iter()
-                .find(|(a, _)| *a == k)
-                .map(|(_, v)| unquote_attr(v))
-        };
-        self.nodes.push(CapNode {
-            id: id.to_string(),
-            label: label.to_string(),
-            shape: shape.to_string(),
-            fill: find("fillcolor"),
-            stroke: find("color"),
-        });
         let id = escape_dot_label(id);
         let label = escape_dot_label(label);
         self.out.push_str("  \"");
@@ -389,18 +258,6 @@ impl DotEmitter {
     /// `extra` attributes follow the same caller-quotes-the-value contract
     /// as [`DotEmitter::node`] — they are inserted verbatim as `key=value`.
     pub fn edge(&mut self, from: &str, to: &str, extra: &[(&str, &str)]) {
-        let find = |k: &str| {
-            extra
-                .iter()
-                .find(|(a, _)| *a == k)
-                .map(|(_, v)| unquote_attr(v))
-        };
-        self.edges.push(CapEdge {
-            from: from.to_string(),
-            to: to.to_string(),
-            dashed: find("style").as_deref() == Some("dashed"),
-            color: find("color"),
-        });
         let from = escape_dot_label(from);
         let to = escape_dot_label(to);
         self.out.push_str("  \"");
@@ -428,94 +285,6 @@ impl DotEmitter {
         self.out.push_str("}\n");
         self.out
     }
-
-    /// Deduplicated captured nodes (first declaration of an id wins) paired
-    /// with an `id → index` map for resolving edge endpoints.
-    fn dedup_nodes(&self) -> (Vec<&CapNode>, std::collections::HashMap<&str, usize>) {
-        let mut index = std::collections::HashMap::with_capacity(self.nodes.len());
-        let mut refs = Vec::with_capacity(self.nodes.len());
-        for cn in &self.nodes {
-            if index.contains_key(cn.id.as_str()) {
-                continue;
-            }
-            index.insert(cn.id.as_str(), refs.len());
-            refs.push(cn);
-        }
-        (refs, index)
-    }
-
-    /// Builds a [`layout::LayoutInput`] from the captured structure. Node box
-    /// sizes are estimated from each label (monospace metrics); edges whose
-    /// endpoint id was never declared as a node are dropped.
-    pub fn to_layout_input(&self) -> layout::LayoutInput {
-        let (refs, index) = self.dedup_nodes();
-        let nodes = refs
-            .iter()
-            .map(|cn| {
-                let (width, height) = estimate_node_size(&cn.label);
-                layout::NodeBox { width, height }
-            })
-            .collect();
-        let edges = self
-            .edges
-            .iter()
-            .filter_map(|e| Some((*index.get(e.from.as_str())?, *index.get(e.to.as_str())?)))
-            .collect();
-        layout::LayoutInput { nodes, edges }
-    }
-
-    /// Lays the captured graph out and serialises it (with per-node shape /
-    /// fill / stroke and per-edge dashed / colour, so the viewer matches the
-    /// DOT rendering) to the JSON the layout viewer consumes.
-    pub fn layout_json(&self, opts: &layout::LayoutOptions) -> String {
-        let (refs, index) = self.dedup_nodes();
-        let boxes = refs
-            .iter()
-            .map(|cn| {
-                let (width, height) = estimate_node_size(&cn.label);
-                layout::NodeBox { width, height }
-            })
-            .collect();
-        let mut edges = Vec::with_capacity(self.edges.len());
-        let mut edge_meta = Vec::with_capacity(self.edges.len());
-        for e in &self.edges {
-            if let (Some(&f), Some(&t)) = (index.get(e.from.as_str()), index.get(e.to.as_str())) {
-                edges.push((f, t));
-                edge_meta.push(e);
-            }
-        }
-        let pos = layout::layout(
-            &layout::LayoutInput {
-                nodes: boxes,
-                edges,
-            },
-            opts,
-        );
-        layout_json_str(&pos, &refs, &edge_meta)
-    }
-}
-
-/// Estimates a rendered node box `(width, height)` in px from its label,
-/// assuming a monospace font. Counts visual lines by splitting on real
-/// newlines and the DOT line-break escapes (`\n` / `\l` / `\r`); width follows
-/// the widest line. Padding matches the viewer's node chrome.
-fn estimate_node_size(label: &str) -> (f64, f64) {
-    const CHAR_W: f64 = 7.0;
-    const LINE_H: f64 = 15.0;
-    const PAD_X: f64 = 16.0;
-    const PAD_Y: f64 = 12.0;
-    // Normalise the DOT break escapes to '\n' so one split handles all forms.
-    let normalized = label
-        .replace("\\l", "\n")
-        .replace("\\n", "\n")
-        .replace("\\r", "\n");
-    let lines: Vec<&str> = normalized.split('\n').collect();
-    let widest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-    let n_lines = lines.iter().filter(|l| !l.is_empty()).count().max(1);
-    (
-        widest as f64 * CHAR_W + PAD_X,
-        n_lines as f64 * LINE_H + PAD_Y,
-    )
 }
 
 /// Appends a single `key=value` DOT attribute to `out`.  Shared by every
@@ -599,13 +368,6 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Forwards any `Self::Error` returned by the underlying
     /// [`GraphDotDumper::dump_as_dot`] for any node.
     pub fn as_dot(&self) -> anyhow::Result<String> {
-        Ok(self.run_dumper()?.finish())
-    }
-
-    /// Runs the dumper over every node into a fresh [`DotEmitter`], capturing
-    /// both the DOT string and the graph structure. Shared by [`Self::as_dot`]
-    /// and the native-layout path.
-    fn run_dumper(&self) -> anyhow::Result<DotEmitter> {
         let mut dot = DotEmitter::new(&self.name, &self.style);
         let mut state = self.dumper.create_initial_state();
         for node in self.dumper.iter_nodes() {
@@ -613,38 +375,8 @@ impl<G: GraphDotDumper> GraphDot<G> {
                 .dump_as_dot(node, &mut dot, &mut state)
                 .map_err(|e| anyhow::anyhow!("dot dump error: {e}"))?;
         }
-        Ok(dot)
-    }
 
-    /// Lays the graph out with the native [`layout`] engine (no graphviz).
-    ///
-    /// # Errors
-    /// Same as [`Self::as_dot`].
-    pub fn as_layout(&self, opts: &layout::LayoutOptions) -> anyhow::Result<layout::Positioned> {
-        Ok(layout::layout(&self.run_dumper()?.to_layout_input(), opts))
-    }
-
-    /// Serialises the native layout (with node/edge appearance) to the JSON the
-    /// viewer consumes.
-    ///
-    /// # Errors
-    /// Same as [`Self::as_dot`].
-    pub fn as_layout_json(&self, opts: &layout::LayoutOptions) -> anyhow::Result<String> {
-        Ok(self.run_dumper()?.layout_json(opts))
-    }
-
-    /// Produces a self-contained interactive HTML page that draws the native
-    /// layout as SVG (pan/zoom via the vendored `svg-pan-zoom`). Unlike
-    /// [`Self::as_html_from_dot`] this does no in-browser graphviz layout, so
-    /// it opens instantly even for graphs graphviz can't lay out at all.
-    ///
-    /// # Errors
-    /// Same as [`Self::as_dot`].
-    pub fn as_layout_html(&self, opts: &layout::LayoutOptions) -> anyhow::Result<String> {
-        let json = self.as_layout_json(opts)?;
-        Ok(LAYOUT_HTML_TEMPLATE
-            .replace("__SVG_PAN_ZOOM_JS__", SVG_PAN_ZOOM_JS)
-            .replace("__LAYOUT_JSON__", &json))
+        Ok(dot.finish())
     }
 
     /// Produces an interactive HTML page that renders the DOT source
