@@ -61,6 +61,11 @@ pub(crate) struct NodePat {
     /// input slots (`(slot, bits)`); applied during `lower` to the
     /// compiled sub-pattern's output before it is wired into the slot.
     input_widths: Vec<(usize, u32)>,
+    /// When `true` and the anchor is a value output, enforce that the matched
+    /// value is produced at exactly the anchor slot (see
+    /// [`PatValue::match_slot`]). Set by `.res()` on Call/CallOther to pin the
+    /// declared result output and exclude clobbers.
+    pin_anchor_slot: bool,
 }
 
 impl NodePat {
@@ -74,6 +79,7 @@ impl NodePat {
             anchor: AnchorKind::None,
             output_width: None,
             input_widths: Vec::new(),
+            pin_anchor_slot: false,
         }
     }
 
@@ -105,6 +111,14 @@ impl NodePat {
     /// `add(x, call_other().name("f"))`.
     pub(crate) fn with_value_anchor(mut self, slot: usize) -> Self {
         self.anchor = AnchorKind::Value(slot);
+        self
+    }
+
+    /// Enforce the anchor value output's slot at match time (see
+    /// [`crate::matcher::PatValue::match_slot`]). Only takes effect when the
+    /// anchor is [`AnchorKind::Value`]. Set by `.res()` on Call/CallOther.
+    pub(crate) fn pin_anchor_slot(mut self) -> Self {
+        self.pin_anchor_slot = true;
         self
     }
 
@@ -176,10 +190,17 @@ impl NodePat {
             anchor,
             output_width,
             input_widths,
+            pin_anchor_slot,
         } = self;
         let node = b.node(kind);
         let anchor_out = match anchor {
-            AnchorKind::Value(slot) => Some(b.value_output(node, slot)),
+            AnchorKind::Value(slot) => {
+                let out = b.value_output(node, slot);
+                if pin_anchor_slot {
+                    b.set_value_out_slot(out, slot);
+                }
+                Some(out)
+            }
             AnchorKind::Memory(slot) => Some(b.memory_output(node, slot)),
             AnchorKind::None => None,
         };

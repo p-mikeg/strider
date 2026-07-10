@@ -158,6 +158,13 @@ impl MatcherBuilder {
         self.out_of(out).width = Some(bits);
     }
 
+    /// Enforces that the matched value is produced at output slot `slot`
+    /// (see [`PatValue::match_slot`]). Used to pin a nested Call/CallOther
+    /// value operand to a specific output (`.res()`).
+    pub fn set_value_out_slot(&mut self, out: PatValueRef, slot: usize) {
+        self.out_of(out).match_slot = Some(slot);
+    }
+
     /// Captures the output vertex `out` — a value capture, bound to the
     /// matched output's value (`Binding::Value`). This is the common case:
     /// `add(var(x), …)` captures `x`'s *value*, not its node.

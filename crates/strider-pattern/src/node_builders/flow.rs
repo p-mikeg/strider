@@ -99,6 +99,14 @@ impl CallPat {
         Self(self.0.input_mem(1, p))
     }
 
+    /// When nested as a value operand, pin the operand to the Call's declared
+    /// **result** output (raw slot 2) rather than any value output — so a
+    /// caller-saved clobber output won't match. No effect when the Call is used
+    /// as a root / memory producer.
+    pub fn res(self) -> Self {
+        Self(self.0.pin_anchor_slot())
+    }
+
     /// Bind the resulting `Call` node to `c`.
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
@@ -186,6 +194,15 @@ impl CallOtherPat {
     /// Convenience: match the memory input (`inputs[1]`).
     pub fn mem<M: MemPat + 'static>(mut self, p: M) -> Self {
         self.inner = self.inner.input_mem(1, p);
+        self
+    }
+
+    /// When nested as a value operand, pin the operand to the CallOther's
+    /// declared **result** output (raw slot 2) rather than any value output —
+    /// so an implicit-write clobber output won't match. No effect when used as
+    /// a root / memory producer.
+    pub fn res(mut self) -> Self {
+        self.inner = self.inner.pin_anchor_slot();
         self
     }
 

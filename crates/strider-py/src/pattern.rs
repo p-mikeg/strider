@@ -2565,6 +2565,9 @@ struct CallInner {
     target: Option<Py<PyAny>>,
     args: Vec<(usize, Py<PyAny>)>,
     mem: Option<Py<PyAny>>,
+    /// `.res()` — pin a nested value operand to the Call's declared result
+    /// output (excludes caller-saved clobber outputs).
+    res: bool,
 }
 
 /// Typed builder for `Call` node patterns. Chain `.at(addr)`,
@@ -2618,6 +2621,9 @@ impl PyCallPat {
         }
         if let Some(m) = clone_opt(py, &self.inner.borrow().mem) {
             b = b.mem(compile_operand_mem(m.bind(py))?);
+        }
+        if self.inner.borrow().res {
+            b = b.res();
         }
         if let Some(c) = self.common.borrow().capture {
             b = b.capture(c);
@@ -2675,6 +2681,12 @@ impl PyCallPat {
         slf.inner.borrow_mut().mem = Some(p);
         slf
     }
+    /// When nested as a value operand, pin it to the Call's declared result
+    /// output (excludes caller-saved clobber outputs).
+    fn res(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf.inner.borrow_mut().res = true;
+        slf
+    }
 }
 builder_common_methods!(PyCallPat);
 
@@ -2711,6 +2723,9 @@ node_builder! {
                takes a memory producer (store / mem_phi / call / call_other)." },
         { multi_match args(usize): arg
             = "Constrain raw `inputs[idx]` of the matched CallOther." },
+        { flag res: res
+            = "When nested as a value operand, pin it to the declared result \
+               output (excludes implicit-write clobber outputs)." },
     ],
 }
 

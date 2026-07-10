@@ -151,6 +151,14 @@ pub struct PatValue {
     /// Optional bit-width constraint on the matched output's value
     /// type.
     pub width: Option<u32>,
+    /// Optional **enforced** producer output-slot constraint. `None` (the
+    /// default) leaves the slot unchecked — the structural `slot` above is
+    /// just where the anchor sits, not a match filter, so any output kind-ok
+    /// against `kind` matches (this is what makes a nested Call/CallOther
+    /// value operand match *any* value output). `Some(s)` additionally
+    /// requires the matched value to be produced at output slot `s` — used by
+    /// `call_other().res()` to pin the declared result and exclude clobbers.
+    pub match_slot: Option<usize>,
     /// Optional capture binding the matched output value (`Binding::Value`).
     ///
     /// This is where value captures live — `add(var(x), …)` captures `x`'s
@@ -168,6 +176,7 @@ impl PatValue {
             slot,
             kind: OutputKindSpec::AnyValue,
             width: None,
+            match_slot: None,
             capture: None,
         }
     }
@@ -178,6 +187,7 @@ impl PatValue {
             slot,
             kind: OutputKindSpec::Control,
             width: None,
+            match_slot: None,
             capture: None,
         }
     }
@@ -190,6 +200,7 @@ impl PatValue {
             slot,
             kind: OutputKindSpec::Memory,
             width: None,
+            match_slot: None,
             capture: None,
         }
     }

@@ -31,3 +31,18 @@ def test_call_other_value_operand_matches_real_graph():
 
     # A wrong user-op name must not match.
     assert fn.find_all(p.add(p.anything(), p.call_other().name("nope")), ignore_casts=True) == []
+
+
+def test_res_selector_is_chainable_and_matches_result():
+    # `.res()` pins a nested value operand to the call's declared result output
+    # (excluding clobbers — the exclusion is covered by the Rust unit test). It
+    # must be chainable on both call() and call_other(), and not over-restrict
+    # the common single-result case.
+    assert p.add(p.anything(), p.call_other().name("f").res()) is not None
+    assert p.add(p.anything(), p.call().res()) is not None
+
+    code = b"\x0f\x31\x83\xc0\x05\xc3"  # rdtsc; add eax,5; ret
+    mem = strider.BufferReader(0x1000, code)
+    lift = strider.lifter(strider.SleighArch.x86_64(), mem)
+    _cfg, fn, _unresolved = lift.analyze(0x1000, strider.CallingConvention.x86_64_systemv())
+    assert len(fn.find_all(p.add(p.anything(), p.call_other().res()), ignore_casts=True)) == 1

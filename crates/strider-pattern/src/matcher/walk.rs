@@ -399,4 +399,6 @@ fn output_ok(o: &PatValue, f: &strider_ir::Function, value: ValueId) -> bool {
     kind_ok
         && o.width
             .is_none_or(|w| val.is_some_and(|t| t.bit_width() == w as usize))
+        && o.match_slot
+            .is_none_or(|s| f.value_definition(value).1 as usize == s)
 }
