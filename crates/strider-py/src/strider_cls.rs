@@ -666,6 +666,34 @@ impl PyLifter {
             cur = next;
         }
     }
+
+    /// Start the interactive explorer for `target` — a `Function`
+    /// (returned by `analyze`) or a `Cfg` (returned by `build_cfg` /
+    /// `analyze`). Dispatches to `strider.explore.visualize`, which picks
+    /// `_IrVisualizer` or `_CfgVisualizer` by `type(target).__name__`.
+    ///
+    /// Prints the local URL to stdout and BLOCKS serving requests on this
+    /// thread until interrupted (Ctrl-C) — same contract as
+    /// `strider.serve(lifter, function)`, generalised to also accept a
+    /// `Cfg`. `host`/`port`/`depth` mirror `explore.visualize`'s kwargs
+    /// (`port=0` picks an ephemeral port).
+    #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=5))]
+    fn visualize(
+        slf: Py<Self>,
+        py: Python<'_>,
+        target: Py<PyAny>,
+        host: String,
+        port: u16,
+        depth: usize,
+    ) -> PyResult<()> {
+        let explore = py.import_bound("strider.explore")?;
+        let kwargs = pyo3::types::PyDict::new_bound(py);
+        kwargs.set_item("host", host)?;
+        kwargs.set_item("port", port)?;
+        kwargs.set_item("depth", depth)?;
+        explore.call_method("visualize", (slf, target), Some(&kwargs))?;
+        Ok(())
+    }
 }
 
 /// Construct the single lift+optimise+resolve handle over `mem` for

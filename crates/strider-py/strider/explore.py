@@ -313,6 +313,55 @@ class _IrVisualizer:
         return _pattern_names()
 
 
+class _CfgVisualizer:
+    """Adapts a `Cfg` to the `_Visualizer` protocol `_serve` expects:
+    `entry()`, `dot(center, depth, raw)`, `search(query)`,
+    `completions()`."""
+
+    def __init__(self, cfg):
+        self._cfg = cfg
+        # Disassembly text per region, built once (Sleigh-backed — not
+        # cheap per call) and reused for every text search.
+        self._texts = cfg.region_texts()
+
+    def entry(self):
+        return self._cfg.entry()
+
+    def dot(self, center, depth, raw):
+        if raw:
+            return self._cfg.raw_neighborhood_dot(center, depth=depth)
+        return self._cfg.neighborhood_dot(center, depth=depth)
+
+    def search(self, query):
+        q = query.strip()
+        try:
+            addr = int(q, 0)  # bare address -> center the containing block
+            blk = self._cfg.block_at(addr)
+            return {"center": blk} if blk is not None else {"highlight": []}
+        except ValueError:
+            ql = q.lower()
+            hits = sorted(rid for rid, txt in self._texts.items() if ql in txt.lower())
+            return {"highlight": hits}
+
+    def completions(self):
+        return []  # (block-start addresses can be added later)
+
+
+def visualize(lifter, target, *, host="127.0.0.1", port=0, depth=5):
+    """Start the explorer for `target` — a `Function` (from `analyze`) or a
+    `Cfg` (from `build_cfg`/`analyze`), dispatching on `type(target).__name__`
+    to avoid importing the pyclass types here. Blocks serving requests until
+    interrupted."""
+    tn = type(target).__name__
+    if tn == "Function":
+        vis = _IrVisualizer(lifter, target)
+    elif tn == "Cfg":
+        vis = _CfgVisualizer(target)
+    else:
+        raise TypeError(f"visualize expects a Function or Cfg, got {tn}")
+    return _serve(vis, host=host, port=port, depth=depth)
+
+
 def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
     """Start the explorer server over any `_Visualizer`-shaped object. Prints
     the URL to stdout (never opens a browser). Blocks serving requests until

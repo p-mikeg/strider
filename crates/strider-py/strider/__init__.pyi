@@ -205,6 +205,31 @@ class Cfg:
         nodes with no fingerprint (Entry, InitialMemory, InitialVar,
         Region, phis)."""
         ...
+    def entry(self) -> int:
+        """The region index of the CFG entry — the default explorer
+        center."""
+        ...
+    def neighborhood_dot(
+        self, center: int, depth: int = ..., max_nodes: int = ...
+    ) -> str:
+        """Pretty neighborhood DOT around region `center` (BFS over
+        predecessor+successor blocks, capped at `max_nodes`; needs the
+        Lifter's Sleigh to resolve register names)."""
+        ...
+    def raw_neighborhood_dot(
+        self, center: int, depth: int = ..., max_nodes: int = ...
+    ) -> str:
+        """Structure-faithful neighborhood DOT around region `center`
+        (no Sleigh — one `n<idx>` box per region, edges as stored)."""
+        ...
+    def block_at(self, addr: int) -> Optional[int]:
+        """The region index whose instruction range contains `addr`,
+        else `None`."""
+        ...
+    def region_texts(self) -> dict:
+        """Disassembly text for every region, keyed by region index —
+        the text-search corpus for the CFG explorer's search bar."""
+        ...
 
 class CfgOptions:
     """Mirrors `strider_cfg::CfgOptions` (the user-facing subset — the
@@ -315,6 +340,19 @@ class Lifter:
 
         Raises `StriderError` if `addr < entry`, or if the sweep steps
         PAST `addr` without landing exactly on it (misaligned target)."""
+        ...
+    def visualize(
+        self,
+        target: Any,  # Function | Cfg
+        *,
+        host: str = ...,
+        port: int = ...,
+        depth: int = ...,
+    ) -> None:
+        """Start the interactive explorer for `target` — a `Function`
+        (from `analyze`) or a `Cfg` (from `build_cfg`/`analyze`).
+        Prints the local URL to stdout and BLOCKS serving requests on
+        this thread until interrupted (Ctrl-C)."""
         ...
 
 def lifter(

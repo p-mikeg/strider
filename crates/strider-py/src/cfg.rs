@@ -276,6 +276,36 @@ impl PyCfg {
             .map_err(into_strider_err)
     }
 
+    /// Disassembly text for every region, keyed by region index — the
+    /// text-search corpus for the CFG explorer's search bar
+    /// (`_CfgVisualizer.search` in `explore.py`). Mirrors the dot
+    /// renderer's per-block text (`CfgDotDumper::dump_as_dot`): for each
+    /// region, each instruction's `ctx_fmt(sleigh, &regs)`, joined here
+    /// with `"\n"` (the dot renderer uses `"\\l"`, a DOT-label
+    /// left-justified newline — not meaningful outside a label string).
+    fn region_texts(&self, py: Python<'_>) -> PyResult<HashMap<u32, String>> {
+        self.with_sleigh(py, |sleigh| {
+            let regs = sleigh
+                .regs()
+                .map_err(|e| into_strider_err(anyhow::anyhow!("{e:?}")))?;
+            let g = self.inner.region_graph();
+            let mut out = HashMap::new();
+            for idx in g.node_indices() {
+                let region = g
+                    .node_weight(idx)
+                    .expect("node_indices() only yields present nodes");
+                let text = region
+                    .insns
+                    .iter()
+                    .map(|ri| ri.insn.ctx_fmt(sleigh, &regs).to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                out.insert(idx.index() as u32, text);
+            }
+            Ok(out)
+        })
+    }
+
     /// The region index whose instruction range contains `addr`, if any.
     /// Returns the first containing region (regions don't overlap in
     /// practice, so "first" is also "only").
