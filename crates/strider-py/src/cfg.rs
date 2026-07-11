@@ -236,6 +236,66 @@ impl PyCfg {
         out.sort_by_key(|(addr, _)| *addr);
         Ok(out)
     }
+
+    /// The region index of the CFG entry — the default explorer center.
+    fn entry(&self) -> u32 {
+        self.inner.entry().index() as u32
+    }
+
+    /// Pretty neighborhood DOT around region `center` (BFS over
+    /// predecessor+successor blocks, capped at `max_nodes`; needs the
+    /// Lifter's Sleigh to resolve register names).
+    #[pyo3(signature = (center, depth=5, max_nodes=60))]
+    fn neighborhood_dot(
+        &self,
+        py: Python<'_>,
+        center: u32,
+        depth: usize,
+        max_nodes: usize,
+    ) -> PyResult<String> {
+        let node = strider_cfg::RegionId::new(center as usize);
+        self.with_sleigh(py, |sleigh| {
+            self.inner
+                .neighborhood_dot(sleigh, node, depth, max_nodes)
+                .map_err(into_strider_err)
+        })
+    }
+
+    /// Structure-faithful neighborhood DOT around region `center` (no
+    /// Sleigh — one `n<idx>` box per region, edges as stored).
+    #[pyo3(signature = (center, depth=5, max_nodes=60))]
+    fn raw_neighborhood_dot(
+        &self,
+        center: u32,
+        depth: usize,
+        max_nodes: usize,
+    ) -> PyResult<String> {
+        let node = strider_cfg::RegionId::new(center as usize);
+        self.inner
+            .raw_neighborhood_dot(node, depth, max_nodes)
+            .map_err(into_strider_err)
+    }
+
+    /// The region index whose instruction range contains `addr`, if any.
+    /// Returns the first containing region (regions don't overlap in
+    /// practice, so "first" is also "only").
+    fn block_at(&self, addr: u64) -> Option<u32> {
+        let g = self.inner.region_graph();
+        for idx in g.node_indices() {
+            let region = g
+                .node_weight(idx)
+                .expect("node_indices() only yields present nodes");
+            let start = region.start_addr.machine_addr.addr;
+            let last = region
+                .insns
+                .last()
+                .map_or(start, |i| i.addr.machine_addr.addr);
+            if start <= addr && addr <= last {
+                return Some(idx.index() as u32);
+            }
+        }
+        None
+    }
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
