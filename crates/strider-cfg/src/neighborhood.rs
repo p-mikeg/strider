@@ -10,9 +10,6 @@ use crate::Cfg;
 /// BFS the depth-`depth` neighborhood around `center` over **both** edge
 /// directions (predecessor + successor blocks), capped at `max_nodes`. BFS
 /// visits in level order, so the budget keeps the nearest `max_nodes` regions.
-// Not yet called outside this module's tests: the DOT renderer and Python
-// bindings that consume it land in later tasks of the CFG-explorer feature.
-#[allow(dead_code)]
 pub(crate) fn neighborhood_regions(
     cfg: &Cfg,
     center: NodeIndex,
@@ -40,6 +37,115 @@ pub(crate) fn neighborhood_regions(
         }
     }
     seen
+}
+
+impl Cfg {
+    /// Pretty render of the depth-`depth` neighborhood around region
+    /// `center` (BFS over predecessor+successor blocks, `max_nodes`
+    /// budget), reusing the full-CFG block styling (see
+    /// `CfgDotDumper::dump_as_dot` in `dot.rs`, whose per-block label
+    /// logic this mirrors). DOT node ids are region indices; `center`
+    /// gets a gold border.
+    ///
+    /// `::dot` (leading `::`) is required here, not a plain `dot::` path:
+    /// this crate also has a private sibling module named `dot`
+    /// (`crate::dot`), so an unqualified `dot::` path would be ambiguous
+    /// between that module and the external `dot` crate.
+    ///
+    /// # Errors
+    /// Returns an error if `center` (or any region reachable within the
+    /// neighborhood) is missing from the graph, or if resolving the
+    /// Sleigh register table fails.
+    pub fn neighborhood_dot<R: rsleigh::MemReader>(
+        &self,
+        sleigh: &rsleigh::Sleigh<R>,
+        center: NodeIndex,
+        depth: usize,
+        max_nodes: usize,
+    ) -> crate::Result<String> {
+        let set = neighborhood_regions(self, center, depth, max_nodes);
+        let regs = sleigh.regs()?;
+        let g = self.region_graph();
+        let mut out = ::dot::DotEmitter::new("G", &::dot::DotStyle::dark_cfg());
+        for &node in &set {
+            let region = g
+                .node_weight(node)
+                .ok_or_else(|| anyhow::anyhow!("invalid region index {node:?}"))?;
+            let start = region.start_addr.machine_addr.addr;
+            let mut label = format!("Instruction(addr={start:#x})");
+            for insn in &region.insns {
+                let a = insn.addr.machine_addr.addr;
+                let pretty = insn.insn.ctx_fmt(sleigh, &regs);
+                label.push_str(&format!("\\l{a:#x}: {pretty}"));
+            }
+            label.push_str("\\l");
+            let id = node.index().to_string();
+            let extra: &[(&str, &str)] = if node == center {
+                &[("color", "\"#ffcc00\""), ("penwidth", "2.5")]
+            } else {
+                &[]
+            };
+            out.node(&id, &label, "box", extra);
+        }
+        // ponytail: v1 simplification — control edges within the
+        // neighborhood are plain (no if-true/if-false labels like the
+        // full-CFG dumper). Recovering that polarity here means resolving
+        // `region_if` per source, which is a follow-up if the explorer
+        // needs it.
+        for &node in &set {
+            for succ in g.neighbors_directed(node, Direction::Outgoing) {
+                if set.contains(&succ) {
+                    out.edge(&node.index().to_string(), &succ.index().to_string(), &[]);
+                }
+            }
+        }
+        Ok(out.finish())
+    }
+
+    /// Structure-faithful render of the neighborhood: one `n<idx>` box per
+    /// region (start addr + instruction count), edges as stored, no Sleigh.
+    ///
+    /// # Errors
+    /// Returns an error if `center` (or any region reachable within the
+    /// neighborhood) is missing from the graph.
+    pub fn raw_neighborhood_dot(
+        &self,
+        center: NodeIndex,
+        depth: usize,
+        max_nodes: usize,
+    ) -> crate::Result<String> {
+        let set = neighborhood_regions(self, center, depth, max_nodes);
+        let g = self.region_graph();
+        let mut out = ::dot::DotEmitter::new("G", &::dot::DotStyle::dark_cfg());
+        for &node in &set {
+            let region = g
+                .node_weight(node)
+                .ok_or_else(|| anyhow::anyhow!("invalid region index {node:?}"))?;
+            let start = region.start_addr.machine_addr.addr;
+            let label = format!("n{}  {start:#x}\\l{} insns", node.index(), region.insns.len());
+            let id = format!("n{}", node.index());
+            let extra: &[(&str, &str)] = if node == center {
+                &[("color", "\"#ffcc00\""), ("penwidth", "2.5")]
+            } else {
+                &[]
+            };
+            out.node(&id, &label, "box", extra);
+        }
+        // ponytail: v1 simplification — same plain-edge note as
+        // `neighborhood_dot` above.
+        for &node in &set {
+            for succ in g.neighbors_directed(node, Direction::Outgoing) {
+                if set.contains(&succ) {
+                    out.edge(
+                        &format!("n{}", node.index()),
+                        &format!("n{}", succ.index()),
+                        &[],
+                    );
+                }
+            }
+        }
+        Ok(out.finish())
+    }
 }
 
 #[cfg(test)]
@@ -103,5 +209,34 @@ mod tests {
                  (proves the Incoming traversal fires): {around:?}"
             );
         }
+    }
+
+    #[test]
+    fn neighborhood_dot_ids_are_region_indices_and_center_highlighted() {
+        let cfg = two_way_cfg();
+        let entry = cfg.entry();
+
+        // Fresh Sleigh for the render call, matching the `dot_string` harness
+        // in `dot.rs` (the CFG doesn't own the Sleigh that built it).
+        let bytes = vec![0x75, 0x01, 0x90, 0xc3];
+        let start = 0x1000;
+        let arch = SleighArch::x86_64();
+        let reader = BufMemReader::new(bytes, start);
+        let sleigh =
+            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+
+        let dot = cfg
+            .neighborhood_dot(&sleigh, entry, 1, 999)
+            .expect("neighborhood_dot");
+        // real dot node id == region index of the center
+        assert!(dot.contains(&format!("\"{}\"", entry.index())), "dot:\n{dot}");
+        // center carries the gold highlight border
+        assert!(dot.contains("#ffcc00"), "dot:\n{dot}");
+
+        // raw: one n<idx> box per region, no Sleigh, edges as stored
+        let raw = cfg
+            .raw_neighborhood_dot(entry, 1, 999)
+            .expect("raw_neighborhood_dot");
+        assert!(raw.contains(&format!("n{}", entry.index())), "raw:\n{raw}");
     }
 }
