@@ -18,7 +18,6 @@ import http.server
 import json
 import socketserver
 import urllib.parse
-import webbrowser
 
 
 def _pattern_names():
@@ -232,7 +231,11 @@ async function search(){
   if(!q){ matches=new Set(); highlight(); hits.innerHTML=NONE; pushHist(); return; }
   const r=await fetch("/pattern?q="+encodeURIComponent(q));
   if(!r.ok){ msg.className="err"; msg.textContent=await r.text(); return; }
-  const ids=await r.json(); matches=new Set(ids.map(String));
+  const res=await r.json();
+  if(res && typeof res==="object" && !Array.isArray(res) && "center" in res){
+    recenter(String(res.center)); return;
+  }
+  const ids=res.highlight; matches=new Set(ids.map(String));
   msg.textContent=`${ids.length} match${ids.length===1?"":"es"}`;
   hits.innerHTML = ids.length ? "" : NONE;
   for(const id of ids){ const el=document.createElement("div"); el.className="hit"; el.textContent="node "+id;
@@ -285,10 +288,36 @@ Viz.instance().then(async v=>{
 </script></body></html>"""
 
 
-def serve(lifter, function, host="127.0.0.1", port=0, depth=5):
-    """Start the explorer server for `function` (lifted via `lifter`) and open a
-    browser tab. Blocks serving requests until interrupted."""
-    entry = function.entry_node()
+class _IrVisualizer:
+    """Adapts a `(lifter, function)` pair to the `_Visualizer` protocol
+    `_serve` expects: `entry()`, `dot(center, depth, raw)`, `search(query)`,
+    `completions()`."""
+
+    def __init__(self, lifter, function):
+        self._lifter, self._fn = lifter, function
+
+    def entry(self):
+        return self._fn.entry_node()
+
+    def dot(self, center, depth, raw):
+        if raw:
+            # Structure-faithful view for when the pretty output can't be
+            # trusted (no Sleigh needed → on the Function).
+            return self._fn.raw_neighborhood_dot(center, depth=depth)
+        return self._lifter.neighborhood_dot(self._fn, center, depth=depth)
+
+    def search(self, query):
+        return {"highlight": _run_pattern(self._fn, query)}
+
+    def completions(self):
+        return _pattern_names()
+
+
+def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
+    """Start the explorer server over any `_Visualizer`-shaped object. Prints
+    the URL to stdout (never opens a browser). Blocks serving requests until
+    interrupted."""
+    entry = visualizer.entry()
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _send(self, body, ctype="text/html", code=200):
@@ -321,20 +350,16 @@ def serve(lifter, function, host="127.0.0.1", port=0, depth=5):
                 elif u.path == "/entry":
                     self._send(json.dumps(entry), "application/json")
                 elif u.path == "/patterns":
-                    self._send(json.dumps(_pattern_names()), "application/json")
+                    self._send(json.dumps(visualizer.completions()), "application/json")
                 elif u.path == "/dot":
                     c = int(q.get("center", [entry])[0])
                     d = int(q.get("depth", [depth])[0])
-                    if q.get("raw", ["0"])[0] == "1":
-                        # Structure-faithful view for when the pretty output
-                        # can't be trusted (no Sleigh needed → on the Function).
-                        dot = function.raw_neighborhood_dot(c, depth=d)
-                    else:
-                        dot = lifter.neighborhood_dot(function, c, depth=d)
+                    raw = q.get("raw", ["0"])[0] == "1"
+                    dot = visualizer.dot(c, d, raw)
                     self._send(dot, "text/plain")
                 elif u.path == "/pattern":
-                    ids = _run_pattern(function, q.get("q", [""])[0])
-                    self._send(json.dumps(ids), "application/json")
+                    result = visualizer.search(q.get("q", [""])[0])
+                    self._send(json.dumps(result), "application/json")
                 else:
                     self.send_error(404)
             except (BrokenPipeError, ConnectionError):
@@ -364,8 +389,14 @@ def serve(lifter, function, host="127.0.0.1", port=0, depth=5):
     srv = Server((host, port), Handler)
     url = f"http://{host}:{srv.server_address[1]}/"
     print(f"strider explorer → {url}  (Ctrl-C to stop)")
-    webbrowser.open(url)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         srv.shutdown()
+
+
+def serve(lifter, function, host="127.0.0.1", port=0, depth=5):
+    """Start the explorer server for `function` (lifted via `lifter`). Blocks
+    serving requests until interrupted. Back-compat alias over `_serve` +
+    `_IrVisualizer`."""
+    return _serve(_IrVisualizer(lifter, function), host=host, port=port, depth=depth)
