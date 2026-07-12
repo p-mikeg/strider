@@ -6,11 +6,13 @@
 //! restate the same shape under a `TemplatePat` bound later. Finalise a
 //! built pattern with `.into_pattern()`.
 
+pub mod alternation;
 pub mod builder_like;
 pub mod consts;
 pub mod value_ops;
 pub mod wildcards;
 
+pub use alternation::{BoxedAlt, OneOf, boxed_alt};
 pub use consts::{
     any_bool_const, any_float_const, any_int_const, bool_const, bool_const_with_fn, float_const,
     float_const_with_fn, int_const, int_const_any_of, int_const_with_fn, signed_int_const,

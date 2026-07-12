@@ -110,6 +110,21 @@ impl MatcherBuilder {
         self.stage(PatNode::from_kind(kind))
     }
 
+    /// An **alternation** (`one_of`) over the pre-compiled alternative outputs:
+    /// matches a value if ANY alternative matches it. The alternatives are wired
+    /// as this node's inputs, but the matcher tries each against the *same* IR
+    /// node (not as operands) and accepts the first that matches. Returns the
+    /// alternation node's single value output. An empty `alts` matches nothing.
+    pub fn one_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
+        let mut alt_node = PatNode::from_kind(KindSpec::Any);
+        alt_node.alternation = true;
+        let n = self.stage(alt_node);
+        for (slot, alt) in alts.iter().enumerate() {
+            self.input(n, slot, *alt);
+        }
+        self.value_output(n, 0)
+    }
+
     /// Wires `prod` into `node`'s input `slot`.
     pub fn input(&mut self, node: PatNodeRef, slot: usize, prod: PatValueRef) {
         self.core.add_input(node.0, slot, prod.node, prod.output);

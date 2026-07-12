@@ -87,6 +87,14 @@ pub struct PatNode {
     /// When `true`, the matcher must not try commutative operand
     /// reorderings for this node.
     pub force_ordered: bool,
+    /// When `true`, this is an **alternation** node (`one_of`): its inputs are
+    /// not operands to match against the IR node's operands, but independent
+    /// alternative sub-patterns to try against the *same* IR node. The matcher
+    /// tries each in order and accepts the first that matches (with the usual
+    /// backtracking), so `one_of([add(..), and(..)])` matches whichever shape
+    /// the value has. The node's own kind is [`KindSpec::Any`] — the
+    /// alternatives carry the real kind checks.
+    pub alternation: bool,
     /// The consumer input slot of each of this node's inputs, parallel to
     /// the generic graph's input order. The generic graph stores inputs
     /// densely (index 0, 1, …); a pattern's inputs are **sparse** (e.g.
@@ -117,6 +125,7 @@ impl PatNode {
             node_predicate: None,
             post_match: None,
             force_ordered: false,
+            alternation: false,
             input_slots: Vec::new(),
         }
     }

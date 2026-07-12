@@ -217,6 +217,9 @@ pub(crate) enum PatRepr {
     InitialVar,
     /// `initial_var_for(vn)` — match-only.
     InitialVarFor(rsleigh::Vn),
+    /// `one_of([a, b, …])` — alternation; matches a value if any alternative
+    /// matches it. Match-only (a rewrite RHS must build one concrete shape).
+    OneOf(Vec<Py<PyAny>>),
     /// A fixed integer binary op (`add`, `mul`, …). Buildable.
     IntBinary(strider_ir::IntBinaryOp, Py<PyAny>, Py<PyAny>),
     /// A subtraction `sub(l, r)` → `add(l, neg(r))`. Buildable.
@@ -698,6 +701,16 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let vn = *vn;
             DynMatch(Box::new(move |b| mc(sp::initial_var_for(vn), b)))
         }
+        PatRepr::OneOf(alts) => {
+            // Compile each alternative to a DynMatch (whose inner box IS a
+            // `BoxedAlt`), then feed them to `sp::OneOf`, which lowers to one
+            // alternation node the matcher tries each alternative against.
+            let boxed: Vec<sp::BoxedAlt> = alts
+                .iter()
+                .map(|a| op_match(py, a).map(|d| d.0))
+                .collect::<PyResult<_>>()?;
+            DynMatch(Box::new(move |b| mc(sp::OneOf::new(boxed), b)))
+        }
         PatRepr::IntBinary(op, l, r) => m_binop!(sp::int_binary, op, l, r),
         PatRepr::Sub(l, r) => m_bin!(sp::sub, l, r),
         PatRepr::BitNot(x) => m_un!(sp::bit_not, x),
@@ -909,6 +922,7 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
         PatRepr::AnyFloatConst(_) => return Err(rhs_error("any_float_const")),
         PatRepr::InitialVar => return Err(rhs_error("initial_var")),
         PatRepr::InitialVarFor(_) => return Err(rhs_error("initial_var_for")),
+        PatRepr::OneOf(_) => return Err(rhs_error("one_of")),
         PatRepr::IntNe(..) => return Err(rhs_error("int_ne")),
         PatRepr::IntLe(..) => return Err(rhs_error("int_le")),
         PatRepr::IntSle(..) => return Err(rhs_error("int_sle")),
@@ -1591,6 +1605,21 @@ pub fn initial_var() -> PyPat {
 #[pyfunction]
 pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
     PyPat::from_repr(PatRepr::InitialVarFor(vn.inner))
+}
+
+/// Match a value if **any** of the listed sub-patterns matches it — an
+/// alternation, for the "optional wrapper" case (e.g. an address that may or
+/// may not be masked: `one_of([add(base, off), int_and(add(base, off), mask)])`).
+/// Alternatives are tried in order. Match-only (not usable as a rewrite RHS).
+/// Requires at least one alternative.
+#[pyfunction]
+pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyResult<PyPat> {
+    if patterns.is_empty() {
+        return Err(into_strider_err(anyhow::anyhow!(
+            "one_of requires at least one alternative"
+        )));
+    }
+    Ok(PyPat::from_repr(PatRepr::OneOf(patterns)))
 }
 
 /// Match any node, subject to a Python predicate. Shorthand for
@@ -3264,6 +3293,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(any_float_const);
     add_fn!(initial_var);
     add_fn!(initial_var_for);
+    add_fn!(one_of);
     add_fn!(function_arg);
     add_fn!(function_arg_any);
     add_fn!(function_arg_reg);

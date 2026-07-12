@@ -82,5 +82,5 @@ pub use typed::{
     int_cmp, int_cmp_any, int_const, int_const_any_of, int_const_with_fn, int_eq, int_le, int_lt,
     int_ne, int_sborrow, int_scarry, int_sle, int_slt, int_to_float, int_unary_any, lzcount, mul,
     neg, or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const, srem, sshr,
-    sub, truncate, value_of_width, var, xor, zero_extend,
+    sub, truncate, value_of_width, var, xor, zero_extend, BoxedAlt, OneOf, boxed_alt,
 };

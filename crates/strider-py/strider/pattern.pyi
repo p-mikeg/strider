@@ -297,6 +297,14 @@ def initial_var() -> Pat:
     """Match any `InitialVar` node (an initial-state register read)."""
 def initial_var_for(vn: object) -> Pat:
     """Match `InitialVar(vn)` for a specific varnode."""
+def one_of(patterns: List[PatLike]) -> Pat:
+    """Match a value if **any** of the listed sub-patterns matches it.
+
+    An alternation, for the "optional wrapper" case — e.g. an address that may
+    or may not be masked:
+    `one_of([add(base, off), int_and(add(base, off), mask)])`. Alternatives are
+    tried in order. Match-only (not usable as a rewrite replacement); requires
+    at least one alternative."""
 def function_arg(i: int) -> FunctionArgPat:
     """Start a function-argument pattern constrained to argument index `i`."""
 def function_arg_any() -> FunctionArgPat:

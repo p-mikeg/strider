@@ -236,6 +236,40 @@ fn try_match_at(
         None => nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
     };
 
+    // Alternation (`one_of`): `inputs` are independent alternative sub-patterns,
+    // not operands. Bind this node's own capture (the matched value) once, then
+    // try each alternative against the SAME `ir_node`, accepting the first whose
+    // whole configuration (its own guards + the ancestor continuation `k`)
+    // succeeds. Each alternative's `try_match_at` handles its captures / guard /
+    // footprint, so the alternation node records nothing itself.
+    if nd.alternation {
+        let mark = bindings.mark();
+        if let Some((cap, binding)) = cap_binding
+            && !bindings.bind_capture(cap, binding)
+        {
+            bindings.restore(mark);
+            return false;
+        }
+        for alt in &inputs {
+            let inner = bindings.mark();
+            if try_match_at(
+                matcher,
+                pat,
+                alt.producer,
+                ir_node,
+                root_value,
+                Some(alt.out_vertex),
+                bindings,
+                k,
+            ) {
+                return true;
+            }
+            bindings.restore(inner);
+        }
+        bindings.restore(mark);
+        return false;
+    }
+
     let mark = bindings.mark();
     let orders: &[bool] = if commutative {
         &[false, true]
