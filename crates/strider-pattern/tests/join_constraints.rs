@@ -107,6 +107,27 @@ fn reaches_and_not_reaches_isolate_the_true_arm_only() {
 }
 
 #[test]
+fn dominated_by_branch_isolates_the_true_arm_in_one_constraint() {
+    let (function, _) = diamond_with_calls();
+    let m = Matcher::new(&function);
+    let (t, c) = (Capture::new(), Capture::new());
+    let guard = if_node().capture_true(t).build();
+    let callp = call().capture(c).build();
+
+    let tuples = m
+        .find_joined_constrained(
+            &[&guard, &callp],
+            &[JoinConstraint::DominatedByBranch { branch: t, node: c }],
+        )
+        .unwrap();
+    let addrs: Vec<u64> = tuples.iter().map(|tp| call_addr(tp, c, &function)).collect();
+    // Only the true-arm call (AAAA): the merge (CCCC) is reachable from the
+    // false edge too, so it is NOT dominated by the true edge's target. One
+    // constraint does what reaches + not_reaches did.
+    assert_eq!(addrs, vec![0xAAAA]);
+}
+
+#[test]
 fn dominates_if_selects_all_three_calls() {
     let (function, if_id) = diamond_with_calls();
     let m = Matcher::new(&function);

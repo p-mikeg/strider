@@ -323,6 +323,10 @@ def reaches(src: Capture, dst: Capture) -> JoinConstraint:
 def not_reaches(src: Capture, dst: Capture) -> JoinConstraint:
     """The negation of `reaches`. Pair `reaches(true_edge, c)` with
     `not_reaches(false_edge, c)` to select exclusively-true-arm nodes."""
+def dominated_by_branch(branch: Capture, node: Capture) -> JoinConstraint:
+    """`node` is dominated by the target of branch edge `branch` — in that
+    block exclusively. A single `dominated_by_branch(true_edge, c)` means
+    "`c` is in the true block" (no paired `not_reaches` needed)."""
 def function_arg(i: int) -> FunctionArgPat:
     """Start a function-argument pattern constrained to argument index `i`."""
 def function_arg_any() -> FunctionArgPat:

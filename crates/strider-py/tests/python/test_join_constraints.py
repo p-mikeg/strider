@@ -37,7 +37,7 @@ def _diamond_with_calls():
 
 def _call_count(fn, constraints):
     g, t, f, c = p.Capture(), p.Capture(), p.Capture(), p.Capture()
-    guard = p.if_else().capture(g).capture_true(t).capture_false(f)
+    guard = p.if_else().capture_true(t).capture_false(f).capture(g)
     call = p.call().capture(c)
     return len(fn.find_all([guard, call], constraints=constraints(t, f, c, g)))
 
@@ -54,6 +54,17 @@ def test_reaches_and_not_reaches_isolate_the_true_arm():
 
     assert reach_true > true_only, "adding not_reaches(false) must drop the merge tail"
     assert true_only >= 1, "the true-arm call survives"
+
+
+def test_dominated_by_branch_isolates_true_arm_in_one_constraint():
+    fn = _diamond_with_calls()
+    g, t, f, c = p.Capture(), p.Capture(), p.Capture(), p.Capture()
+    guard = p.if_else().capture_true(t).capture_false(f).capture(g)
+    call = p.call().capture(c)
+    # One constraint = "call in the true block" (excludes false arm AND merge).
+    one = len(fn.find_all([guard, call], constraints=[p.dominated_by_branch(t, c)]))
+    two = len(fn.find_all([guard, call], constraints=[p.reaches(t, c), p.not_reaches(f, c)]))
+    assert one == two >= 1, "one dominated_by_branch equals reaches+not_reaches"
 
 
 def test_dominates_if_selects_every_call():

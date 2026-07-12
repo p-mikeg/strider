@@ -3042,6 +3042,24 @@ pub fn not_reaches(src: PyRef<'_, PyCapture>, dst: PyRef<'_, PyCapture>) -> PyJo
     }
 }
 
+/// `node` sits in the block the branch edge `branch` leads into, *exclusively*
+/// — `node` is dominated by that edge's target. Unlike `reaches` (which also
+/// admits the shared post-merge tail), a single `dominated_by_branch(true_edge,
+/// c)` means "`c` is in the true block", no paired `not_reaches` needed.
+/// `branch` must bind an `If`'s `capture_true`/`capture_false` value.
+#[pyfunction]
+pub fn dominated_by_branch(
+    branch: PyRef<'_, PyCapture>,
+    node: PyRef<'_, PyCapture>,
+) -> PyJoinConstraint {
+    PyJoinConstraint {
+        inner: JoinConstraint::DominatedByBranch {
+            branch: branch.inner,
+            node: node.inner,
+        },
+    }
+}
+
 // ── PhiPat (node-rooted; rejects value nesting) ──────────────────────────
 
 node_builder! {
@@ -3471,6 +3489,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(dominates);
     add_fn!(reaches);
     add_fn!(not_reaches);
+    add_fn!(dominated_by_branch);
     add_fn!(int_binary);
     add_fn!(bool_binary);
     add_fn!(float_binary);

@@ -440,6 +440,14 @@ pub enum JoinConstraint {
     /// The logical negation of [`Reaches`](Self::Reaches). An ill-typed `from`
     /// makes `Reaches` false, hence `NotReaches` vacuously true.
     NotReaches { from: crate::Capture, to: crate::Capture },
+    /// `node` is dominated by the consumer of the branch edge `branch` — i.e.
+    /// `node` sits in the block that edge leads into, *exclusively*. Unlike
+    /// [`Reaches`](Self::Reaches) (which also admits the shared post-merge tail),
+    /// this is true only where every path to `node` traverses the edge's target,
+    /// so a single `dominated_by_branch(true_edge, c)` expresses "`c` is in the
+    /// true block" without a paired `not_reaches`. `branch` must bind a
+    /// control-output value; an ill-typed `branch` or an absent node fails it.
+    DominatedByBranch { branch: crate::Capture, node: crate::Capture },
 }
 
 impl JoinConstraint {
@@ -451,6 +459,7 @@ impl JoinConstraint {
             JoinConstraint::Reaches { from, to } | JoinConstraint::NotReaches { from, to } => {
                 (from, to)
             }
+            JoinConstraint::DominatedByBranch { branch, node } => (branch, node),
         }
     }
 }
@@ -513,6 +522,20 @@ impl<'f> ConstraintEval<'f> {
             }
             JoinConstraint::Reaches { from, to } => self.reaches(tuple, from, to),
             JoinConstraint::NotReaches { from, to } => !self.reaches(tuple, from, to),
+            JoinConstraint::DominatedByBranch { branch, node } => {
+                let (Some(edge), Some(target)) =
+                    (self.value_of(tuple, branch), self.node_of(tuple, node))
+                else {
+                    return false;
+                };
+                // The branch edge's consumer (its target node); a control edge
+                // has exactly one consumer in well-formed IR.
+                let Some((consumer, _)) = self.function.graph().value_uses(edge).next() else {
+                    return false;
+                };
+                let doms = self.doms.get_or_init(|| control_dominators(self.function));
+                dominates(doms, consumer, target)
+            }
         }
     }
 }
