@@ -302,6 +302,28 @@ fn try_match_at(
                 b.restore(inner);
                 return false;
             }
+            // Bind captures on this node's SECONDARY (non-anchor) output
+            // vertices to the matched IR node's output value at each vertex's
+            // slot — how `If::capture_true` / `capture_false` bind their
+            // control-output values (the matcher never descends into a node's
+            // outputs otherwise). The anchor output's capture is handled by
+            // `cap_binding` above.
+            for &ov_idx in pat.graph.produced_outputs(pat_node).iter() {
+                if Some(ov_idx) == out_vertex {
+                    continue;
+                }
+                let ov = pat.graph.output_weight(ov_idx);
+                if let Some(cap) = ov.capture {
+                    let Some(&val) = matcher.function().node_outputs(ir_node).get(ov.slot) else {
+                        b.restore(inner);
+                        return false;
+                    };
+                    if !b.bind_capture(cap, Binding::Value(val)) {
+                        b.restore(inner);
+                        return false;
+                    }
+                }
+            }
             if let Some(pm) = &nd.post_match {
                 let ty = root_value
                     .and_then(|value| matcher.function().value_kind(value).as_value())

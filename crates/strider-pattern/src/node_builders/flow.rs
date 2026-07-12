@@ -424,6 +424,8 @@ pub struct IfPat {
     true_branch: Option<BranchWalk>,
     false_branch: Option<BranchWalk>,
     capture: Option<Capture>,
+    capture_true: Option<Capture>,
+    capture_false: Option<Capture>,
 }
 
 impl IfPat {
@@ -497,6 +499,22 @@ impl IfPat {
         self
     }
 
+    /// Bind the If's **true** control-output value (slot 0) to `c`, propagated
+    /// into the outer `Match`. Unlike the successor `Region`, this value
+    /// survives single-input-region collapse, so it is the stable handle for a
+    /// `reaches` / `not_reaches` join constraint discriminating the true path.
+    pub fn capture_true(mut self, c: Capture) -> Self {
+        self.capture_true = Some(c);
+        self
+    }
+
+    /// Bind the If's **false** control-output value (slot 1) to `c`. See
+    /// [`capture_true`](Self::capture_true).
+    pub fn capture_false(mut self, c: Capture) -> Self {
+        self.capture_false = Some(c);
+        self
+    }
+
     /// Seal the builder into a finished [`Pattern`] rooted on the `If`
     /// node.
     pub fn build(self) -> Pattern {
@@ -505,13 +523,21 @@ impl IfPat {
             true_branch,
             false_branch,
             capture,
+            capture_true,
+            capture_false,
         } = self;
         let mut b = MatcherBuilder::new();
         let node = b.node(KindSpec::Exact(NodeKind::If));
         // Representation invariant: the If carries two genuine
         // control-output vertices — true at slot 0, false at slot 1.
         let true_out = b.control_output(node, 0);
-        let _false_out = b.control_output(node, 1);
+        let false_out = b.control_output(node, 1);
+        if let Some(c) = capture_true {
+            b.capture_output(true_out, c);
+        }
+        if let Some(c) = capture_false {
+            b.capture_output(false_out, c);
+        }
 
         if let Some(cond) = cond {
             let c = cond(&mut b);

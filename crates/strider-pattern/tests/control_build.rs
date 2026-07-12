@@ -565,6 +565,23 @@ fn if_captures_node() {
     );
 }
 
+#[test]
+fn if_capture_true_false_bind_distinct_control_outputs() {
+    let (function, if_id) = if_then_else();
+    let t = Capture::new();
+    let f = Capture::new();
+    let hits = Matcher::new(&function)
+        .find_all(&if_node().capture_true(t).capture_false(f).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    let tv = hits[0].value(t).expect("true control output bound");
+    let fv = hits[0].value(f).expect("false control output bound");
+    assert_ne!(tv, fv, "true and false outputs are distinct values");
+    // Both control outputs belong to the same If node.
+    assert_eq!(function.graph().producer(tv), if_id);
+    assert_eq!(function.graph().producer(fv), if_id);
+}
+
 // ── Phi / MemPhi / ValuePhi ───────────────────────────────────────────────────
 
 #[test]
