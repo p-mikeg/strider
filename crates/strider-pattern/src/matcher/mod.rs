@@ -37,8 +37,10 @@ use std::mem::Discriminant;
 use itertools::{Either, Itertools};
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
-use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{Function, Graph, IRViewer, IRWalker};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{
+    Function, Graph, IRViewer, IRWalker, control_dominators, control_reachable_from, dominates,
+};
 
 use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
@@ -256,6 +258,21 @@ impl<'f> Matcher<'f> {
     /// matcher can handle (see [`Pattern::root`]), or if a capture-bearing
     /// pattern shares no capture with the patterns before it.
     pub fn find_joined(&self, pats: &[&Pattern]) -> anyhow::Result<Vec<Vec<Match>>> {
+        self.find_joined_constrained(pats, &[])
+    }
+
+    /// Like [`find_joined`](Self::find_joined), but additionally filters the
+    /// joined tuples by CFG [`JoinConstraint`]s (control dominance / forward
+    /// control reachability) over captured entities. Each constraint is a
+    /// **post-correlation** predicate: a tuple survives iff every constraint
+    /// holds on the entities its captures bind. A constraint referencing a
+    /// capture no tuple binds, or one whose captured node has no CFG position,
+    /// simply fails (the tuple is dropped) — never an error.
+    pub fn find_joined_constrained(
+        &self,
+        pats: &[&Pattern],
+        constraints: &[JoinConstraint],
+    ) -> anyhow::Result<Vec<Vec<Match>>> {
         if pats.is_empty() {
             return Ok(Vec::new());
         }
@@ -291,6 +308,18 @@ impl<'f> Matcher<'f> {
             }
             if has_cap {
                 capture_bearing.push(i);
+            }
+        }
+        // Constraints correlate patterns too: two patterns linked by a
+        // constraint whose captures live one in each are connected even with no
+        // shared capture (the common case — `guard` captures `t`, `call`
+        // captures `c`, joined by `reaches(t, c)`). Union their owners so the
+        // connectivity check accepts a constraint-correlated join.
+        for con in constraints {
+            let (x, y) = con.captures();
+            if let (Some(&i), Some(&j)) = (cap_owner.get(&x), cap_owner.get(&y)) {
+                let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
+                parent[ri] = rj;
             }
         }
         if let Some((&first, rest)) = capture_bearing.split_first() {
@@ -338,6 +367,11 @@ impl<'f> Matcher<'f> {
             }
         }
 
+        if !constraints.is_empty() {
+            let mut eval = ConstraintEval::new(self.function());
+            acc.retain(|tuple| constraints.iter().all(|c| eval.holds(c, tuple)));
+        }
+
         dedup_on_shared_captures(&mut acc, self.function().graph());
         Ok(acc)
     }
@@ -380,6 +414,101 @@ impl<'f> Matcher<'f> {
                         )
                     })
             })
+    }
+}
+
+/// A CFG relation between two captured entities, applied by
+/// [`Matcher::find_joined_constrained`] as a post-correlation filter over
+/// joined tuples. Captured entities are resolved to control nodes; a value
+/// capture resolves to its producer node (for `Dominates`) or is used directly
+/// (the branch-edge value for `Reaches`).
+#[derive(Clone, Copy, Debug)]
+pub enum JoinConstraint {
+    /// The node bound to `a` dominates the node bound to `b` in the control
+    /// subgraph. A capture absent from the control subgraph fails it.
+    Dominates { a: crate::Capture, b: crate::Capture },
+    /// The node bound to `to` is forward-control-reachable from the branch edge
+    /// bound to `from`. `from` must bind a control-output *value* (e.g. via
+    /// [`IfPat::capture_true`](crate::IfPat::capture_true)); reachability starts
+    /// at that value's consumer. A non-value `from` fails it.
+    Reaches { from: crate::Capture, to: crate::Capture },
+    /// The logical negation of [`Reaches`](Self::Reaches). An ill-typed `from`
+    /// makes `Reaches` false, hence `NotReaches` vacuously true.
+    NotReaches { from: crate::Capture, to: crate::Capture },
+}
+
+impl JoinConstraint {
+    /// The two captures this constraint correlates (used to link their owner
+    /// patterns for the `find_joined` connectivity check).
+    fn captures(&self) -> (crate::Capture, crate::Capture) {
+        match *self {
+            JoinConstraint::Dominates { a, b } => (a, b),
+            JoinConstraint::Reaches { from, to } | JoinConstraint::NotReaches { from, to } => {
+                (from, to)
+            }
+        }
+    }
+}
+
+/// Evaluates [`JoinConstraint`]s against joined tuples, memoising the control
+/// dominators and per-branch-edge reachable sets across one
+/// `find_joined_constrained` call.
+struct ConstraintEval<'f> {
+    function: &'f Function,
+    doms: OnceCell<petgraph::algo::dominators::Dominators<NodeId>>,
+    reach: FxHashMap<ValueId, FxHashSet<NodeId>>,
+}
+
+impl<'f> ConstraintEval<'f> {
+    fn new(function: &'f Function) -> Self {
+        Self {
+            function,
+            doms: OnceCell::new(),
+            reach: FxHashMap::default(),
+        }
+    }
+
+    /// Resolve a capture to a control node across the tuple's matches.
+    fn node_of(&self, tuple: &[Match], c: crate::Capture) -> Option<NodeId> {
+        tuple.iter().find_map(|m| m.node(c, self.function.graph()))
+    }
+
+    /// Resolve a capture to the value it binds across the tuple's matches.
+    fn value_of(&self, tuple: &[Match], c: crate::Capture) -> Option<ValueId> {
+        tuple.iter().find_map(|m| m.value(c))
+    }
+
+    /// `to`'s node is forward-control-reachable from the branch edge `from`.
+    fn reaches(&mut self, tuple: &[Match], from: crate::Capture, to: crate::Capture) -> bool {
+        let (Some(edge), Some(target)) = (self.value_of(tuple, from), self.node_of(tuple, to))
+        else {
+            return false;
+        };
+        let function = self.function;
+        let set = self.reach.entry(edge).or_insert_with(|| {
+            // BFS from every consumer of the branch-edge value (exactly one in
+            // well-formed IR; union anyway to stay robust to forks).
+            let mut acc = FxHashSet::default();
+            for (consumer, _) in function.graph().value_uses(edge) {
+                acc.extend(control_reachable_from(function, consumer));
+            }
+            acc
+        });
+        set.contains(&target)
+    }
+
+    fn holds(&mut self, c: &JoinConstraint, tuple: &[Match]) -> bool {
+        match *c {
+            JoinConstraint::Dominates { a, b } => {
+                let (Some(na), Some(nb)) = (self.node_of(tuple, a), self.node_of(tuple, b)) else {
+                    return false;
+                };
+                let doms = self.doms.get_or_init(|| control_dominators(self.function));
+                dominates(doms, na, nb)
+            }
+            JoinConstraint::Reaches { from, to } => self.reaches(tuple, from, to),
+            JoinConstraint::NotReaches { from, to } => !self.reaches(tuple, from, to),
+        }
     }
 }
 

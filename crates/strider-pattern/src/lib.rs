@@ -44,7 +44,7 @@ pub use match_result::Match;
 pub use matcher::match_pat::{
     CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, ValueTy,
 };
-pub use matcher::{CastMask, Matcher, Pattern, PostMatchFn};
+pub use matcher::{CastMask, JoinConstraint, Matcher, Pattern, PostMatchFn};
 pub use node_builders::{
     CallOtherPat, CallPat, FunctionArgPat, IfPat, IndirectBranchPat, LoadPat, MemPat, MemPhiPat,
     PhiPat, RetPat, StorePat, SwitchPat, UnreachablePat, call, call_other, function_arg,
