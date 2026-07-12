@@ -476,13 +476,17 @@ class Function:
         ignore_root: bool = ...,
         ignore_casts: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
+        constraints: Optional[List[Any]] = ...,  # list[strider.pattern.JoinConstraint]
     ) -> List[Match]:
         """Deduplicated `Match`es for `pat`.  `pat` is a single pattern or a
         `list` of patterns; a list joins on shared `Capture`s (every pattern
         matches and their captures unify), returning one merged `Match` per
         result.  Dedup keys on captures+root(s) by default; `ignore_root=True`
         keys on captures only (collapsing one binding reached from several
-        roots and capture-less duplicates)."""
+        roots and capture-less duplicates).  `constraints` filters a joined
+        result by CFG relations (`dominates` / `reaches` / `not_reaches`) over
+        captured entities; patterns linked only by a constraint still count as
+        correlated for the shared-capture connectivity check."""
         ...
     def find_one(
         self,

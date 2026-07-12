@@ -45,7 +45,8 @@ use strider_pattern as sp;
 use strider_pattern::matcher::{MatcherBuilder, PatValueRef};
 use strider_pattern::template::{TemplateBuilder, TmplValueRef};
 use strider_pattern::{
-    Capture, CaptureExt, MatchPat, MemPat, Pattern, Template, TemplatePat, template as tpl,
+    Capture, CaptureExt, JoinConstraint, MatchPat, MemPat, Pattern, Template, TemplatePat,
+    template as tpl,
 };
 
 use crate::errors::into_strider_err;
@@ -2866,6 +2867,8 @@ struct IfInner {
     cond: Option<Py<PyAny>>,
     true_branch: Option<Py<PyAny>>,
     false_branch: Option<Py<PyAny>>,
+    capture_true: Option<Capture>,
+    capture_false: Option<Capture>,
 }
 
 /// Typed builder for `If` node patterns.
@@ -2902,6 +2905,12 @@ impl PyIfPat {
         if let Some(c) = self.common.borrow().capture {
             b = b.capture(c);
         }
+        if let Some(c) = self.inner.borrow().capture_true {
+            b = b.capture_true(c);
+        }
+        if let Some(c) = self.inner.borrow().capture_false {
+            b = b.capture_false(c);
+        }
         Ok(apply_when_to_pattern(py, &self.common.borrow(), b.build()))
     }
 }
@@ -2924,6 +2933,18 @@ impl PyIfPat {
         slf.inner.borrow_mut().false_branch = Some(p);
         slf
     }
+    /// Bind the If's true control-output value to `c` (propagated to the outer
+    /// match; stable under region collapse — the handle for a `reaches` join
+    /// constraint).
+    fn capture_true<'py>(slf: PyRef<'py, Self>, c: PyRef<'py, PyCapture>) -> PyRef<'py, Self> {
+        slf.inner.borrow_mut().capture_true = Some(c.inner);
+        slf
+    }
+    /// Bind the If's false control-output value to `c`. See `capture_true`.
+    fn capture_false<'py>(slf: PyRef<'py, Self>, c: PyRef<'py, PyCapture>) -> PyRef<'py, Self> {
+        slf.inner.borrow_mut().capture_false = Some(c.inner);
+        slf
+    }
 }
 builder_common_methods!(PyIfPat);
 
@@ -2944,6 +2965,57 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
         b.inner.borrow_mut().cond = Some(c);
     }
     b
+}
+
+// ── JoinConstraint (CFG relations for find_all([...], constraints=[...])) ─
+
+/// A CFG relation between two captured entities, passed to
+/// `Function.find_all([...], constraints=[...])` to filter joined tuples.
+/// Construct via `dominates` / `reaches` / `not_reaches`.
+#[gen_stub_pyclass]
+#[pyclass(name = "JoinConstraint", module = "strider.pattern", frozen)]
+pub struct PyJoinConstraint {
+    pub(crate) inner: JoinConstraint,
+}
+
+/// `a` dominates `b` in the control subgraph (every path from entry to `b`
+/// passes through `a`). A capture with no control-flow position fails it.
+#[pyfunction]
+pub fn dominates(a: PyRef<'_, PyCapture>, b: PyRef<'_, PyCapture>) -> PyJoinConstraint {
+    PyJoinConstraint {
+        inner: JoinConstraint::Dominates {
+            a: a.inner,
+            b: b.inner,
+        },
+    }
+}
+
+/// `dst` is forward-control-reachable from the branch edge `src` — `src` must
+/// bind an `If`'s control-output value (`if_else(...).capture_true(src)`).
+/// Reachability starts at that edge's successor, so it isolates one arm (plus
+/// the shared post-merge tail).
+#[pyfunction]
+pub fn reaches(src: PyRef<'_, PyCapture>, dst: PyRef<'_, PyCapture>) -> PyJoinConstraint {
+    PyJoinConstraint {
+        inner: JoinConstraint::Reaches {
+            from: src.inner,
+            to: dst.inner,
+        },
+    }
+}
+
+/// The negation of `reaches`: `dst` is NOT reachable from the branch edge
+/// `src`. Pairing `reaches(true_edge, c)` with `not_reaches(false_edge, c)`
+/// selects the exclusively-true-arm nodes (the post-merge tail, reachable from
+/// both edges, is dropped).
+#[pyfunction]
+pub fn not_reaches(src: PyRef<'_, PyCapture>, dst: PyRef<'_, PyCapture>) -> PyJoinConstraint {
+    PyJoinConstraint {
+        inner: JoinConstraint::NotReaches {
+            from: src.inner,
+            to: dst.inner,
+        },
+    }
 }
 
 // ── PhiPat (node-rooted; rejects value nesting) ──────────────────────────
@@ -3275,6 +3347,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMemPhiPat>()?;
     m.add_class::<PyFunctionArgPat>()?;
     m.add_class::<PyCastMask>()?;
+    m.add_class::<PyJoinConstraint>()?;
 
     macro_rules! add_fn {
         ($name:ident) => {
@@ -3370,6 +3443,9 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(unreachable);
     add_fn!(switch);
     add_fn!(if_);
+    add_fn!(dominates);
+    add_fn!(reaches);
+    add_fn!(not_reaches);
     add_fn!(int_binary);
     add_fn!(bool_binary);
     add_fn!(float_binary);

@@ -582,6 +582,28 @@ fn if_capture_true_false_bind_distinct_control_outputs() {
     assert_eq!(function.graph().producer(fv), if_id);
 }
 
+#[test]
+fn if_node_capture_and_control_output_captures_coexist() {
+    // A node capture (`capture`) and output-vertex captures (`capture_true` /
+    // `capture_false`) on the same If must ALL bind — the anchor-vs-node capture
+    // used to be either/or, silently dropping the node capture.
+    let (function, if_id) = if_then_else();
+    let (g, t, f) = (Capture::new(), Capture::new(), Capture::new());
+    let hits = Matcher::new(&function)
+        .find_all(
+            &if_node()
+                .capture(g)
+                .capture_true(t)
+                .capture_false(f)
+                .build(),
+        )
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].node(g, function.graph()).unwrap(), if_id);
+    assert!(hits[0].value(t).is_some(), "true output still binds");
+    assert!(hits[0].value(f).is_some(), "false output still binds");
+}
+
 // ── Phi / MemPhi / ValuePhi ───────────────────────────────────────────────────
 
 #[test]

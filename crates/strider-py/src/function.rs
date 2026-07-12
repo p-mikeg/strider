@@ -290,7 +290,7 @@ impl PyFunction {
     ///   Compose via `CastMask.extend() | CastMask.truncate()`.
     ///   Mutually exclusive with `ignore_casts`; passing both is an
     ///   error.
-    #[pyo3(signature = (pat, ignore_root=false, ignore_casts=false, ignore_casts_mask=None))]
+    #[pyo3(signature = (pat, ignore_root=false, ignore_casts=false, ignore_casts_mask=None, constraints=None))]
     fn find_all(
         slf: Py<Self>,
         py: Python<'_>,
@@ -298,10 +298,12 @@ impl PyFunction {
         ignore_root: bool,
         ignore_casts: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
+        constraints: Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
         reject_conflicting_cast_flags("find_all", ignore_casts, &ignore_casts_mask)?;
         let patterns = build_query_patterns(py, pat, ignore_casts, ignore_casts_mask)?;
-        let (raw, generation) = run_pattern_query(&slf, py, &patterns)?;
+        let constraints = collect_constraints(constraints);
+        let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
         dedup_matches(&slf, py, raw, generation, ignore_root)
     }
 
@@ -360,7 +362,7 @@ impl PyFunction {
     ) -> PyResult<crate::matcher::PyMatch> {
         reject_conflicting_cast_flags("find_unique", ignore_casts, &ignore_casts_mask)?;
         let patterns = build_query_patterns(py, pat, ignore_casts, ignore_casts_mask)?;
-        let (raw, generation) = run_pattern_query(&slf, py, &patterns)?;
+        let (raw, generation) = run_pattern_query(&slf, py, &patterns, &[])?;
         let mut matches = dedup_matches(&slf, py, raw, generation, ignore_root)?;
         match matches.len() {
             1 => Ok(matches.pop().unwrap()),
@@ -564,21 +566,35 @@ fn build_query_patterns(
 /// a single pattern maps each `find_all` hit to a one-element group; several
 /// patterns join on shared captures (each group holds one sub-match per
 /// pattern, which `PyMatch` presents as a merged binding).
+/// Flatten the optional Python constraint list into owned `JoinConstraint`s
+/// (each is `Copy`).
+fn collect_constraints(
+    constraints: Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
+) -> Vec<strider_pattern::JoinConstraint> {
+    constraints
+        .map(|v| v.iter().map(|c| c.inner).collect())
+        .unwrap_or_default()
+}
+
 fn run_pattern_query(
     slf: &Py<PyFunction>,
     py: Python<'_>,
     patterns: &[strider_pattern::Pattern],
+    constraints: &[strider_pattern::JoinConstraint],
 ) -> PyResult<(Vec<Vec<strider_pattern::Match>>, u64)> {
     let refs: Vec<&strider_pattern::Pattern> = patterns.iter().collect();
     run_query(slf, py, |matcher| {
-        if refs.len() == 1 {
+        // Single pattern with no constraints: the fast `find_all` path. Any
+        // constraint (even over one pattern's own captures) routes through the
+        // constrained join so the CFG filter runs.
+        if refs.len() == 1 && constraints.is_empty() {
             Ok(matcher
                 .find_all(refs[0])?
                 .into_iter()
                 .map(|m| vec![m])
                 .collect())
         } else {
-            matcher.find_joined(&refs)
+            matcher.find_joined_constrained(&refs, constraints)
         }
     })
 }

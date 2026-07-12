@@ -223,13 +223,16 @@ fn try_match_at(
     // node-declared capture (control nodes like `If`) binds the matched NODE.
     // Picking the kind from `root_value` alone used to mis-bind a node capture
     // on `If` as `Binding::Value`.
-    let ov_capture = out_vertex
-        .map(|ov| pat.graph.output_weight(ov))
-        .and_then(|ov| ov.capture);
-    let cap_binding = match ov_capture {
-        Some(cap) => root_value.map(|value| (cap, Binding::Value(value))),
-        None => nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
-    };
+    // Both may be present and are independent captures: e.g. an `If` with
+    // `capture_true(t)` (an output-vertex value capture) AND `capture(g)` (the
+    // node capture). Binding only one — the old either/or — silently dropped the
+    // other. `[anchor_output_value_capture, node_capture]`.
+    let cap_bindings = [
+        out_vertex
+            .and_then(|ov| pat.graph.output_weight(ov).capture)
+            .and_then(|cap| root_value.map(|value| (cap, Binding::Value(value)))),
+        nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
+    ];
 
     // Alternation (`one_of`): `inputs` are independent alternative sub-patterns,
     // not operands. Bind this node's own capture (the matched value) once, then
@@ -239,11 +242,11 @@ fn try_match_at(
     // footprint, so the alternation node records nothing itself.
     if nd.alternation {
         let mark = bindings.mark();
-        if let Some((cap, binding)) = cap_binding
-            && !bindings.bind_capture(cap, binding)
-        {
-            bindings.restore(mark);
-            return false;
+        for &(cap, binding) in cap_bindings.iter().flatten() {
+            if !bindings.bind_capture(cap, binding) {
+                bindings.restore(mark);
+                return false;
+            }
         }
         for alt in &inputs {
             let inner = bindings.mark();
@@ -296,11 +299,11 @@ fn try_match_at(
         // surfaced through `k` re-drives this node and everything beneath it.
         let mut finalize = |b: &mut Bindings| -> bool {
             let inner = b.mark();
-            if let Some((cap, binding)) = cap_binding
-                && !b.bind_capture(cap, binding)
-            {
-                b.restore(inner);
-                return false;
+            for &(cap, binding) in cap_bindings.iter().flatten() {
+                if !b.bind_capture(cap, binding) {
+                    b.restore(inner);
+                    return false;
+                }
             }
             // Bind captures on this node's SECONDARY (non-anchor) output
             // vertices to the matched IR node's output value at each vertex's
