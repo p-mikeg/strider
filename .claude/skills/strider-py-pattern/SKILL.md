@@ -302,6 +302,10 @@ hits = graph.find_all([guard, call], constraints=[p.reaches(t, c), p.not_reaches
   shared post-merge tail.
 - `p.not_reaches(src, dst)` — negation; pair with `reaches` to drop the merge tail
   (reachable from both edges) and isolate the exclusively-true-arm nodes.
+- `p.dominated_by_branch(branch, node)` — `node` is dominated by the branch edge's
+  target, i.e. in that block *exclusively*. One `dominated_by_branch(true_edge, c)`
+  = "`c` is in the true block" — the single-constraint equivalent of
+  `reaches(true_edge, c) + not_reaches(false_edge, c)`.
 
 Constraints range over **control nodes** (`Call`/`Store`/`Region`/`If`/…); a
 captured value resolves to its producer node. Prefer `capture_true`/`capture_false`
