@@ -23,6 +23,14 @@ pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
 pub use vertex::{KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn};
 
+/// Sentinel consumer slot marking an **existential** (`any_input`) input edge:
+/// its sub-pattern is not wired to a fixed IR input slot but matched against
+/// *some* value input of the consumer node (e.g. `phi().any_input(p)` matches
+/// a `Phi` one of whose data inputs matches `p`, without knowing which
+/// predecessor). Recognised by [`walk::try_match_at`], which routes these edges
+/// through the existential search instead of the fixed-slot `match_inputs`.
+pub(crate) const ANY_INPUT_SLOT: usize = usize::MAX;
+
 use std::cell::OnceCell;
 use std::mem::Discriminant;
 

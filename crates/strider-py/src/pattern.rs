@@ -2961,6 +2961,10 @@ node_builder! {
             = "Restrict the match to phi nodes for varnode `vn`." },
         { multi_match inputs(usize): input
             = "Constrain the value arriving from predecessor slot `idx`." },
+        { pat any_input: any_input
+            = "Require SOME data input of the phi to match `p`, without pinning \
+               which predecessor slot (a phi's incoming values are usually \
+               order-irrelevant). Captures inside `p` bind out normally." },
     ],
 }
 

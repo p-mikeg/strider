@@ -110,7 +110,7 @@ enumerates every registered name).
 | `p.function_arg_any()` | any `FunctionArg` | `function_arg_any() -> FunctionArgPat` | n/a |
 | `p.function_arg_reg(vn)` | `FunctionArg` for register `vn` | `function_arg_reg(vn: Vn) -> FunctionArgPat` | n/a |
 | `p.function_arg_stack(s, off)` | `FunctionArg` for stack arg | `function_arg_stack(space: VnSpace, offset: int) -> FunctionArgPat` | n/a |
-| `p.phi()` | any `Phi` (tagged or anonymous) | builder w/ `.for_vn(vn)` `.input(idx, p)` | n/a |
+| `p.phi()` | any `Phi` (tagged or anonymous) | builder w/ `.for_vn(vn)` `.input(idx, p)` `.any_input(p)` | n/a |
 | `p.phi_for(vn)` | `Phi` tagged with `vn` | `phi_for(vn: Vn) -> PhiPat` | n/a |
 | `p.mem_phi()` | `MemPhi` | `mem_phi() -> MemPhiPat` | n/a |
 | `p.value_phi()` | `Phi(None)` (anonymous, from `LoadForward`) | `value_phi() -> ValuePhiPat` | n/a |

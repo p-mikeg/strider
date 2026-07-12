@@ -59,6 +59,15 @@ impl PhiPat {
         self
     }
 
+    /// Require that *some* data input of the `Phi` matches `p`, without
+    /// pinning which predecessor slot. A `Phi`'s incoming values are one per
+    /// predecessor and usually order-irrelevant, so this is the common way to
+    /// constrain a phi operand. Captures inside `p` bind out normally.
+    pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
+        self.inner = self.inner.input_any(p);
+        self
+    }
+
     /// Restrict the match to lifter-emitted SSA φ nodes whose
     /// `value_vn` entry (via `Function::get_vn_for_value`) is `Some(vn)`.
     pub fn for_vn(mut self, vn: rsleigh::Vn) -> Self {

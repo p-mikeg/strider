@@ -218,11 +218,6 @@ fn try_match_at(
         })
         .collect();
 
-    // Commutativity: arity-2, IR kind commutative, not force_ordered.
-    let commutative = !nd.force_ordered
-        && inputs.len() == 2
-        && matcher.function().node_kind(ir_node).is_commutative();
-
     // Capture to bind for THIS node, independent of operand ordering: an
     // output-vertex capture (value positions) binds the matched VALUE; a
     // node-declared capture (control nodes like `If`) binds the matched NODE.
@@ -270,6 +265,19 @@ fn try_match_at(
         return false;
     }
 
+    // Partition inputs into fixed-slot operands and existential (`any_input`)
+    // sub-patterns. A fixed input matches its own IR slot; an existential input
+    // matches SOME value input of `ir_node` (see `match_existential`).
+    let (existential, fixed): (Vec<InputEdge>, Vec<InputEdge>) = inputs
+        .into_iter()
+        .partition(|e| e.consumer_slot == crate::matcher::ANY_INPUT_SLOT);
+
+    // Commutativity: exactly two fixed operands, IR kind commutative, not
+    // force_ordered. (Existential inputs never participate in reordering.)
+    let commutative = !nd.force_ordered
+        && fixed.len() == 2
+        && matcher.function().node_kind(ir_node).is_commutative();
+
     let mark = bindings.mark();
     let orders: &[bool] = if commutative {
         &[false, true]
@@ -278,15 +286,15 @@ fn try_match_at(
     };
 
     for &swap in orders {
-        // `done` finishes THIS node once an operand ordering has fully matched
-        // its inputs: bind the node's capture (capture-equality is enforced
+        // `finalize` finishes THIS node once every input (fixed + existential)
+        // has matched: bind the node's capture (capture-equality is enforced
         // here against deeper bindings), run its guard, record it into the
         // footprint, then hand off to the parent continuation `k`. Returning
         // `false` makes the input enumeration try its next configuration (a
-        // deeper commutative swap), and exhausting those makes the ordering
-        // loop try the swap — so an ANCESTOR guard failure surfaced through `k`
-        // re-drives the operand order of this node and everything beneath it.
-        let mut done = |b: &mut Bindings| -> bool {
+        // deeper commutative swap or existential slot), and exhausting those
+        // makes the ordering loop try the swap — so an ANCESTOR guard failure
+        // surfaced through `k` re-drives this node and everything beneath it.
+        let mut finalize = |b: &mut Bindings| -> bool {
             let inner = b.mark();
             if let Some((cap, binding)) = cap_binding
                 && !b.bind_capture(cap, binding)
@@ -310,7 +318,53 @@ fn try_match_at(
             b.restore(inner);
             false
         };
-        if match_inputs(matcher, pat, &inputs, swap, ir_node, 0, bindings, &mut done) {
+        // After the fixed slots match, satisfy each existential input against
+        // some value input of `ir_node`, then finalize.
+        let mut done = |b: &mut Bindings| -> bool {
+            match_existential(matcher, pat, &existential, 0, ir_node, b, &mut finalize)
+        };
+        if match_inputs(matcher, pat, &fixed, swap, ir_node, 0, bindings, &mut done) {
+            return true;
+        }
+        bindings.restore(mark);
+    }
+    false
+}
+
+/// Continuation-passing match of a node's **existential** (`any_input`) inputs:
+/// each `exts[j]` must match SOME value input of `ir_node`. For input `ei` it
+/// tries the sub-pattern against every value input in turn (backtracking via
+/// [`Bindings::mark`] / [`Bindings::restore`]), and on a hit recurses into the
+/// next existential input; with all satisfied it invokes `done`. Non-value
+/// inputs (a `Phi`'s `PhiToken` slot, control / memory edges) are rejected by
+/// the sub-pattern's own output-kind check, so no explicit slot filtering is
+/// needed here.
+fn match_existential(
+    matcher: &Matcher,
+    pat: &Pattern,
+    exts: &[InputEdge],
+    ei: usize,
+    ir_node: NodeId,
+    bindings: &mut Bindings,
+    done: &mut dyn FnMut(&mut Bindings) -> bool,
+) -> bool {
+    let Some(edge) = exts.get(ei) else {
+        return done(bindings);
+    };
+    let values: Vec<ValueId> = matcher.function().node_inputs(ir_node).into_iter().collect();
+    for producer_value in values {
+        let mark = bindings.mark();
+        let producer_ir = matcher.function().producer(producer_value);
+        if try_match_at(
+            matcher,
+            pat,
+            edge.producer,
+            producer_ir,
+            Some(producer_value),
+            Some(edge.out_vertex),
+            bindings,
+            &mut |b| match_existential(matcher, pat, exts, ei + 1, ir_node, b, done),
+        ) {
             return true;
         }
         bindings.restore(mark);

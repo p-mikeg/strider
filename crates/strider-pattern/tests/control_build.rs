@@ -12,8 +12,8 @@ use strider_ir::node::ValueType;
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    Capture, MatchPat, Matcher, any, call, call_other, if_node, indirect_branch, int_const, load,
-    mem_phi, phi, ret, switch, unreachable, var,
+    Capture, CaptureExt, MatchPat, Matcher, any, call, call_other, if_node, indirect_branch,
+    int_const, load, mem_phi, phi, ret, switch, unreachable, var,
 };
 
 // ── Call ──────────────────────────────────────────────────────────────────────
@@ -616,6 +616,90 @@ fn phi_capture_binds_value_output() {
     assert!(
         hits[0].value(c).is_some(),
         "phi().capture(c) must bind the matched phi's output"
+    );
+}
+
+/// Diamond join: `if(true){ var=1 } else { var=2 }` then read `var` — the join
+/// carries a `Phi` whose data inputs are `IntConst(1)` (slot 1) and
+/// `IntConst(2)` (slot 2). Returns the function.
+fn phi_over_two_consts() -> strider_ir::Function {
+    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+
+    let entry = b.create_region_all().unwrap();
+    let region_t = b.create_region_all().unwrap();
+    let region_f = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
+
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, region_t, region_f).unwrap();
+
+    b.set_region(region_t);
+    let v1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+    b.write_variable(&var_vn, v1).unwrap();
+    b.build_branch(join).unwrap();
+
+    b.set_region(region_f);
+    let v2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+    b.write_variable(&var_vn, v2).unwrap();
+    b.build_branch(join).unwrap();
+
+    b.set_region(join);
+    let phi_val = b.read_variable(&var_vn).unwrap();
+    b.build_return(Some(phi_val), &[]).unwrap();
+    b.set_lift_addr(None);
+    b.build().unwrap()
+}
+
+#[test]
+fn phi_any_input_matches_a_data_input_regardless_of_slot() {
+    let function = phi_over_two_consts();
+    let matcher = Matcher::new(&function);
+    // `IntConst(2)` sits at the second data slot, so a slot-agnostic
+    // `any_input` must still find it.
+    assert_eq!(
+        matcher
+            .find_all(&phi().any_input(int_const(2u128)).build())
+            .unwrap()
+            .len(),
+        1,
+        "any_input finds the const at a non-first data slot"
+    );
+    // `IntConst(1)` is the first data slot.
+    assert_eq!(
+        matcher
+            .find_all(&phi().any_input(int_const(1u128)).build())
+            .unwrap()
+            .len(),
+        1,
+    );
+    // A value present on no input matches nothing.
+    assert_eq!(
+        matcher
+            .find_all(&phi().any_input(int_const(99u128)).build())
+            .unwrap()
+            .len(),
+        0,
+        "any_input over an absent value matches nothing"
+    );
+}
+
+#[test]
+fn phi_any_input_binds_captures_out() {
+    let function = phi_over_two_consts();
+    let matcher = Matcher::new(&function);
+    let c = Capture::new();
+    // Capture whichever data input is the const 2 — the capture must flow out.
+    let hits = matcher
+        .find_all(&phi().any_input(int_const(2u128).capture(c)).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(
+        hits[0].value(c).is_some(),
+        "a capture inside any_input binds out"
     );
 }
 

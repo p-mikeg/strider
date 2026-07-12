@@ -129,6 +129,16 @@ impl NodePat {
         self
     }
 
+    /// Wire an **existential** value sub-pattern: it matches *some* value
+    /// input of the node rather than a fixed slot (the `any_input` verb).
+    /// Recorded at the [`ANY_INPUT_SLOT`] sentinel slot; the matcher routes
+    /// it through its existential search.
+    pub(crate) fn input_any<P: MatchPat + 'static>(mut self, p: P) -> Self {
+        self.inputs
+            .push((crate::matcher::ANY_INPUT_SLOT, Box::new(move |b| p.compile(b))));
+        self
+    }
+
     /// Wire a control-predecessor sub-pattern into raw input `slot`
     /// (relaxing its root output to a control edge).
     pub(crate) fn input_control<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
