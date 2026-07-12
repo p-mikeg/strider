@@ -42,6 +42,19 @@ def test_one_of_nested_as_an_operand():
     assert fn.find_all(p.add(p.one_of([p.int_const(0), p.int_const(7)]), p.anything())) == []
 
 
+def test_one_of_nested():
+    # add rax,rbx (48 01 d8); imul rax,rbx (48 0f af c3); xor rax,rbx (48 31 d8); ret
+    fn = _lift(b"\x48\x01\xd8\x48\x0f\xaf\xc3\x48\x31\xd8\xc3")
+    add_p = p.add(p.anything(), p.anything())
+    mul_p = p.mul(p.anything(), p.anything())
+    xor_p = p.int_xor(p.anything(), p.anything())
+    # one_of[ add , one_of[ mul , xor ] ] — the flattened union of all three.
+    pat = p.one_of([add_p, p.one_of([mul_p, xor_p])])
+    total = len(fn.find_all(add_p)) + len(fn.find_all(mul_p)) + len(fn.find_all(xor_p))
+    assert total >= 3
+    assert len(fn.find_all(pat)) == total
+
+
 def test_one_of_empty_raises():
     with pytest.raises(strider.errors.StriderError):
         p.one_of([])

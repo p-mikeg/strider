@@ -5,7 +5,7 @@
 use strider_ir::{IntBinaryOp, IntUnaryOp};
 use strider_ir_test_utils::Tb;
 use strider_pattern::{
-    Capture, MatchPat, Matcher, add, and, any_int_const, int_const, mul, neg, one_of, var,
+    Capture, MatchPat, Matcher, add, and, any_int_const, int_const, mul, neg, one_of, var, xor,
 };
 
 /// At the root, `one_of` matches every node matching any alternative.
@@ -72,4 +72,33 @@ fn one_of_matches_optionally_masked_inner_with_shared_capture() {
     // the shared capture is bound in whichever branch fired (both matches).
     let bound = hits.iter().filter(|h| h.value(base).is_some()).count();
     assert_eq!(bound, 2, "base captured in each match");
+}
+
+/// `one_of` nests: an alternative may itself be a `one_of`, and the whole thing
+/// matches the flattened union of the leaf alternatives.
+#[test]
+fn one_of_nests_recursively() {
+    // A graph with add(5,3), mul(5,3), and xor(5,3).
+    let mut t = Tb::empty();
+    let a = t.u64(5);
+    let b = t.u64(3);
+    let sum = t.add(a, b);
+    let prod = t.mul(a, b);
+    let xored = t.bxor(a, b);
+    let ab = t.add(sum, prod);
+    let root = t.add(ab, xored); // keep all three reachable
+    let f = t.ret_val(root);
+    let m = Matcher::new(&f);
+
+    // one_of[ add , one_of[ mul , xor ] ] — matches all three leaf ops.
+    let pat = one_of![
+        add(int_const(5u128), int_const(3u128)),
+        one_of![
+            mul(int_const(5u128), int_const(3u128)),
+            xor(int_const(5u128), int_const(3u128)),
+        ],
+    ]
+    .into_pattern();
+
+    assert_eq!(m.find_all(&pat).unwrap().len(), 3);
 }
