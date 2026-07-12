@@ -67,6 +67,20 @@ def test_dominated_by_branch_isolates_true_arm_in_one_constraint():
     assert one == two >= 1, "one dominated_by_branch equals reaches+not_reaches"
 
 
+def test_find_one_and_find_unique_accept_constraints():
+    fn = _diamond_with_calls()
+    g, t, f, c = p.Capture(), p.Capture(), p.Capture(), p.Capture()
+    guard = p.if_else().capture_true(t).capture_false(f).capture(g)
+    call = p.call().capture(c)
+    cons = [p.dominated_by_branch(t, c)]
+    # find_one returns the (only) true-arm hit; find_unique agrees it's unique.
+    assert fn.find_one([guard, call], constraints=cons) is not None
+    m = fn.find_unique([guard, call], constraints=cons)
+    assert m is not None
+    # Same target as find_all under the same constraint.
+    assert len(fn.find_all([guard, call], constraints=cons)) == 1
+
+
 def test_dominates_if_selects_every_call():
     fn = _diamond_with_calls()
     all_calls = len(fn.find_all(p.call()))

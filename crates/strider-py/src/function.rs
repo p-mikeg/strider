@@ -316,24 +316,30 @@ impl PyFunction {
     /// `pat` is a single `Pattern` or a `list[Pattern]` (a list joins on
     /// shared captures, as in `find_all`); the matcher options
     /// (`ignore_casts`, `ignore_casts_mask`) mirror `find_all`.
-    #[pyo3(signature = (pat, ignore_casts=false, ignore_casts_mask=None))]
+    #[pyo3(signature = (pat, ignore_casts=false, ignore_casts_mask=None, constraints=None))]
     fn find_one(
         slf: Py<Self>,
         py: Python<'_>,
         pat: crate::pattern::PatQuery<'_>,
         ignore_casts: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
+        constraints: Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
     ) -> PyResult<Option<crate::matcher::PyMatch>> {
         reject_conflicting_cast_flags("find_one", ignore_casts, &ignore_casts_mask)?;
         let patterns = build_query_patterns(py, pat, ignore_casts, ignore_casts_mask)?;
+        let constraints = collect_constraints(constraints);
         let refs: Vec<&strider_pattern::Pattern> = patterns.iter().collect();
-        // A single pattern streams via `find_first`; a join takes the first
-        // joined result.  Either way the answer is one sub-match group.
+        // A single unconstrained pattern streams via `find_first`; anything else
+        // (a join, or a constraint that must filter) takes the first constrained
+        // joined result — mirror `run_pattern_query`'s fast-path gate.
         let (first, generation) = run_query(&slf, py, |matcher| {
-            let group = if refs.len() == 1 {
+            let group = if refs.len() == 1 && constraints.is_empty() {
                 matcher.find_first(refs[0])?.map(|m| vec![m])
             } else {
-                matcher.find_joined(&refs)?.into_iter().next()
+                matcher
+                    .find_joined_constrained(&refs, &constraints)?
+                    .into_iter()
+                    .next()
             };
             Ok(group)
         })?;
@@ -351,7 +357,7 @@ impl PyFunction {
     /// `pat`, `ignore_root`, and the matcher options mirror `find_all` — the
     /// count is taken *after* deduplication, so `ignore_root` controls whether
     /// distinct roots binding the same captures count as one or many.
-    #[pyo3(signature = (pat, ignore_root=false, ignore_casts=false, ignore_casts_mask=None))]
+    #[pyo3(signature = (pat, ignore_root=false, ignore_casts=false, ignore_casts_mask=None, constraints=None))]
     fn find_unique(
         slf: Py<Self>,
         py: Python<'_>,
@@ -359,10 +365,12 @@ impl PyFunction {
         ignore_root: bool,
         ignore_casts: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
+        constraints: Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
     ) -> PyResult<crate::matcher::PyMatch> {
         reject_conflicting_cast_flags("find_unique", ignore_casts, &ignore_casts_mask)?;
         let patterns = build_query_patterns(py, pat, ignore_casts, ignore_casts_mask)?;
-        let (raw, generation) = run_pattern_query(&slf, py, &patterns, &[])?;
+        let constraints = collect_constraints(constraints);
+        let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
         let mut matches = dedup_matches(&slf, py, raw, generation, ignore_root)?;
         match matches.len() {
             1 => Ok(matches.pop().unwrap()),

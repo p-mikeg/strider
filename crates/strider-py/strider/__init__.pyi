@@ -493,10 +493,12 @@ class Function:
         pat: Any,  # strider.pattern.PatLike | list[strider.pattern.PatLike]
         ignore_casts: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
+        constraints: Optional[List[Any]] = ...,  # list[strider.pattern.JoinConstraint]
     ) -> Optional[Match]:
         """Return the first `Match` for `pat`, or `None` if it does not
         match anywhere.  One-shot convenience over `find_all`; `pat` may be a
-        list (joined, as in `find_all`)."""
+        list (joined, as in `find_all`) and `constraints` filters it the same
+        way."""
         ...
     def find_unique(
         self,
@@ -504,11 +506,12 @@ class Function:
         ignore_root: bool = ...,
         ignore_casts: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
+        constraints: Optional[List[Any]] = ...,  # list[strider.pattern.JoinConstraint]
     ) -> Match:
         """Return the single `Match` for `pat`, raising `StriderError` if there
         is not exactly one (distinct messages for 0 and >1).  The count is
-        taken after dedup, so `ignore_root` and a list `pat` behave as in
-        `find_all`."""
+        taken after dedup, so `ignore_root`, a list `pat`, and `constraints`
+        behave as in `find_all`."""
         ...
     def rewrite(self, find: _PatLike, replace: _Template) -> int:
         """Apply a single `find -> replace` rewrite rule across the graph,
