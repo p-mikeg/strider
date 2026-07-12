@@ -377,6 +377,7 @@ fn try_match_at(
 /// output-kind check, so no explicit kind filtering is needed here. Distinctness
 /// is by slot index, not value, so `any_input(1).any_input(1)` still matches a
 /// phi with two separate `1` predecessors.
+#[allow(clippy::too_many_arguments)]
 fn match_existential(
     matcher: &Matcher,
     pat: &Pattern,
