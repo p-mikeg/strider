@@ -281,6 +281,15 @@ fn try_match_at(
         && fixed.len() == 2
         && matcher.function().node_kind(ir_node).is_commutative();
 
+    // `ir_node`'s inputs are invariant across the whole existential search, so
+    // collect them once here (empty in the common no-`any_input` case) rather
+    // than re-collecting at every `match_existential` recursion level.
+    let ext_values: Vec<ValueId> = if existential.is_empty() {
+        Vec::new()
+    } else {
+        matcher.function().node_inputs(ir_node).into_iter().collect()
+    };
+
     let mark = bindings.mark();
     let orders: &[bool] = if commutative {
         &[false, true]
@@ -309,8 +318,8 @@ fn try_match_at(
             // vertices to the matched IR node's output value at each vertex's
             // slot — how `If::capture_true` / `capture_false` bind their
             // control-output values (the matcher never descends into a node's
-            // outputs otherwise). The anchor output's capture is handled by
-            // `cap_binding` above.
+            // outputs otherwise). The anchor output's capture (and the node
+            // capture) are handled by the `cap_bindings` loop above.
             for &ov_idx in pat.graph.produced_outputs(pat_node).iter() {
                 if Some(ov_idx) == out_vertex {
                     continue;
@@ -347,7 +356,7 @@ fn try_match_at(
         // some value input of `ir_node` — each against a DISTINCT slot — then
         // finalize.
         let mut done = |b: &mut Bindings| -> bool {
-            match_existential(matcher, pat, &existential, 0, ir_node, &[], b, &mut finalize)
+            match_existential(matcher, pat, &existential, 0, &ext_values, &[], b, &mut finalize)
         };
         if match_inputs(matcher, pat, &fixed, swap, ir_node, 0, bindings, &mut done) {
             return true;
@@ -373,7 +382,7 @@ fn match_existential(
     pat: &Pattern,
     exts: &[InputEdge],
     ei: usize,
-    ir_node: NodeId,
+    values: &[ValueId],
     used: &[usize],
     bindings: &mut Bindings,
     done: &mut dyn FnMut(&mut Bindings) -> bool,
@@ -381,8 +390,7 @@ fn match_existential(
     let Some(edge) = exts.get(ei) else {
         return done(bindings);
     };
-    let values: Vec<ValueId> = matcher.function().node_inputs(ir_node).into_iter().collect();
-    for (idx, producer_value) in values.into_iter().enumerate() {
+    for (idx, &producer_value) in values.iter().enumerate() {
         if used.contains(&idx) {
             continue;
         }
@@ -400,7 +408,7 @@ fn match_existential(
             Some(producer_value),
             Some(edge.out_vertex),
             bindings,
-            &mut |b| match_existential(matcher, pat, exts, ei + 1, ir_node, &next_used, b, done),
+            &mut |b| match_existential(matcher, pat, exts, ei + 1, values, &next_used, b, done),
         ) {
             return true;
         }
