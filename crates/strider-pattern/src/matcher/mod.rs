@@ -268,6 +268,11 @@ impl<'f> Matcher<'f> {
     /// holds on the entities its captures bind. A constraint referencing a
     /// capture no tuple binds, or one whose captured node has no CFG position,
     /// simply fails (the tuple is dropped) — never an error.
+    ///
+    /// # Errors
+    /// Same as [`find_joined`](Self::find_joined): a malformed pattern, or a
+    /// capture-bearing pattern connected to the rest by neither a shared capture
+    /// nor a constraint.
     pub fn find_joined_constrained(
         &self,
         pats: &[&Pattern],
