@@ -2224,6 +2224,9 @@ macro_rules! node_builder {
     (@members $inner:ident [ $($acc:tt)* ] { mem $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Option<Py<PyAny>>, ] $($rest)*);
     };
+    (@members $inner:ident [ $($acc:tt)* ] { multi_pat $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@members $inner [ $($acc)* $name: Vec<Py<PyAny>>, ] $($rest)*);
+    };
     (@members $inner:ident [ $($acc:tt)* ] { multi_match $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Vec<($idx, Py<PyAny>)>, ] $($rest)*);
     };
@@ -2252,6 +2255,18 @@ macro_rules! node_builder {
     (@apply $self:ident, $py:ident, $b:ident, { mem $name:ident: $m:ident = $doc:literal }) => {
         if let Some(__p) = clone_opt($py, &$self.inner.borrow().$name) {
             $b = $b.$m(compile_operand_mem(__p.bind($py))?);
+        }
+    };
+    (@apply $self:ident, $py:ident, $b:ident, { multi_pat $name:ident: $m:ident = $doc:literal }) => {
+        let __items: Vec<Py<PyAny>> = $self
+            .inner
+            .borrow()
+            .$name
+            .iter()
+            .map(|p| p.clone_ref($py))
+            .collect();
+        for __p in __items {
+            $b = $b.$m(compile_operand_match(__p.bind($py))?);
         }
     };
     (@apply $self:ident, $py:ident, $b:ident, { multi_match $name:ident($idx:ty): $m:ident = $doc:literal }) => {
@@ -2330,6 +2345,15 @@ macro_rules! node_builder {
             #[doc = $doc]
             fn $name<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
                 slf.inner.borrow_mut().$name = Some(p);
+                slf
+            }
+        ] $($rest)*);
+    };
+    (@setters $ty:ident [ $($acc:tt)* ] { multi_pat $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@setters $ty [ $($acc)*
+            #[doc = $doc]
+            fn $m<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name.push(p);
                 slf
             }
         ] $($rest)*);
@@ -3033,10 +3057,11 @@ node_builder! {
             = "Restrict the match to phi nodes for varnode `vn`." },
         { multi_match inputs(usize): input
             = "Constrain the value arriving from predecessor slot `idx`." },
-        { pat any_input: any_input
+        { multi_pat any_input: any_input
             = "Require SOME data input of the phi to match `p`, without pinning \
                which predecessor slot (a phi's incoming values are usually \
-               order-irrelevant). Captures inside `p` bind out normally." },
+               order-irrelevant). Repeatable: each call adds a constraint bound \
+               to a DISTINCT input slot. Captures inside `p` bind out normally." },
     ],
 }
 

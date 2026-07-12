@@ -12,8 +12,8 @@ use strider_ir::node::ValueType;
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    Capture, CaptureExt, MatchPat, Matcher, any, call, call_other, if_node, indirect_branch,
-    int_const, load, mem_phi, phi, ret, switch, unreachable, var,
+    Capture, CaptureExt, MatchPat, Matcher, any, any_int_const, call, call_other, if_node,
+    indirect_branch, int_const, load, mem_phi, phi, ret, switch, unreachable, var,
 };
 
 // ── Call ──────────────────────────────────────────────────────────────────────
@@ -723,6 +723,51 @@ fn phi_any_input_matches_a_data_input_regardless_of_slot() {
             .len(),
         0,
         "any_input over an absent value matches nothing"
+    );
+}
+
+#[test]
+fn phi_multiple_any_input_bind_distinct_slots() {
+    // Phi inputs are the constants 1 and 2 (one slot each).
+    let function = phi_over_two_consts();
+    let m = Matcher::new(&function);
+    // 1 and 2 live on different slots -> distinct match.
+    assert_eq!(
+        m.find_all(
+            &phi()
+                .any_input(int_const(1u128))
+                .any_input(int_const(2u128))
+                .build()
+        )
+        .unwrap()
+        .len(),
+        1,
+    );
+    // Two `any_input(1)` need TWO distinct inputs equal to 1, but only one
+    // exists — distinct semantics reject the same-slot reuse.
+    assert_eq!(
+        m.find_all(
+            &phi()
+                .any_input(int_const(1u128))
+                .any_input(int_const(1u128))
+                .build()
+        )
+        .unwrap()
+        .len(),
+        0,
+        "two any_input must bind two DIFFERENT slots",
+    );
+    // 1 on one slot, any-const on the OTHER (the 2) -> distinct match.
+    assert_eq!(
+        m.find_all(
+            &phi()
+                .any_input(int_const(1u128))
+                .any_input(any_int_const())
+                .build()
+        )
+        .unwrap()
+        .len(),
+        1,
     );
 }
 

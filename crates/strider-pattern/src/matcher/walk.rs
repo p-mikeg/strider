@@ -344,9 +344,10 @@ fn try_match_at(
             false
         };
         // After the fixed slots match, satisfy each existential input against
-        // some value input of `ir_node`, then finalize.
+        // some value input of `ir_node` — each against a DISTINCT slot — then
+        // finalize.
         let mut done = |b: &mut Bindings| -> bool {
-            match_existential(matcher, pat, &existential, 0, ir_node, b, &mut finalize)
+            match_existential(matcher, pat, &existential, 0, ir_node, &[], b, &mut finalize)
         };
         if match_inputs(matcher, pat, &fixed, swap, ir_node, 0, bindings, &mut done) {
             return true;
@@ -357,19 +358,23 @@ fn try_match_at(
 }
 
 /// Continuation-passing match of a node's **existential** (`any_input`) inputs:
-/// each `exts[j]` must match SOME value input of `ir_node`. For input `ei` it
-/// tries the sub-pattern against every value input in turn (backtracking via
-/// [`Bindings::mark`] / [`Bindings::restore`]), and on a hit recurses into the
-/// next existential input; with all satisfied it invokes `done`. Non-value
-/// inputs (a `Phi`'s `PhiToken` slot, control / memory edges) are rejected by
-/// the sub-pattern's own output-kind check, so no explicit slot filtering is
-/// needed here.
+/// each `exts[j]` must match SOME value input of `ir_node`, and each on a
+/// DISTINCT input slot (`used` holds the slot indices already claimed by
+/// earlier existentials). For input `ei` it tries the sub-pattern against every
+/// not-yet-used value input in turn (backtracking via [`Bindings::mark`] /
+/// [`Bindings::restore`]), and on a hit recurses into the next existential;
+/// with all satisfied it invokes `done`. Non-value inputs (a `Phi`'s `PhiToken`
+/// slot, control / memory edges) are rejected by the sub-pattern's own
+/// output-kind check, so no explicit kind filtering is needed here. Distinctness
+/// is by slot index, not value, so `any_input(1).any_input(1)` still matches a
+/// phi with two separate `1` predecessors.
 fn match_existential(
     matcher: &Matcher,
     pat: &Pattern,
     exts: &[InputEdge],
     ei: usize,
     ir_node: NodeId,
+    used: &[usize],
     bindings: &mut Bindings,
     done: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
@@ -377,9 +382,16 @@ fn match_existential(
         return done(bindings);
     };
     let values: Vec<ValueId> = matcher.function().node_inputs(ir_node).into_iter().collect();
-    for producer_value in values {
+    for (idx, producer_value) in values.into_iter().enumerate() {
+        if used.contains(&idx) {
+            continue;
+        }
         let mark = bindings.mark();
         let producer_ir = matcher.function().producer(producer_value);
+        // Small arity (a phi's predecessor count); a fresh Vec per candidate is
+        // cheap and sidesteps threading a &mut set through the continuation.
+        let mut next_used = used.to_vec();
+        next_used.push(idx);
         if try_match_at(
             matcher,
             pat,
@@ -388,7 +400,7 @@ fn match_existential(
             Some(producer_value),
             Some(edge.out_vertex),
             bindings,
-            &mut |b| match_existential(matcher, pat, exts, ei + 1, ir_node, b, done),
+            &mut |b| match_existential(matcher, pat, exts, ei + 1, ir_node, &next_used, b, done),
         ) {
             return true;
         }

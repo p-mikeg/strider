@@ -40,6 +40,16 @@ def test_any_input_matches_either_branch_value_regardless_of_slot():
     assert fn.find_all(p.phi().any_input(p.int_const(99))) == []
 
 
+def test_multiple_any_input_bind_distinct_slots():
+    fn = _diamond_phi()  # phi over the constants 1 and 2
+    # 1 and 2 sit on different slots -> distinct match.
+    assert len(fn.find_all(p.phi().any_input(p.int_const(1)).any_input(p.int_const(2)))) == 1
+    # two any_input(1) need two DIFFERENT inputs equal to 1; only one exists.
+    assert fn.find_all(p.phi().any_input(p.int_const(1)).any_input(p.int_const(1))) == []
+    # 1 on one slot, any const on the other -> distinct match.
+    assert len(fn.find_all(p.phi().any_input(p.int_const(1)).any_input(p.any_int_const()))) == 1
+
+
 def test_any_input_binds_captures_out():
     fn = _diamond_phi()
     c = p.Capture()
