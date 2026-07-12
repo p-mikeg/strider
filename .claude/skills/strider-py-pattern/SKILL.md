@@ -148,7 +148,7 @@ enumerates every registered name).
 | `p.call(at=…)` | `Call` builder | `.at(addr) .at_any([…]) .target(p) .arg(idx, p) .ret_output(idx, p)` | n/a |
 | `p.call_other()` | `CallOther` builder | `.user_op_id(v) .name(s) .arg(i, p) .ret(i, p) .ctrl .mem .ctrl_out .mem_out .next_ctrl .next_mem` | n/a |
 | `p.ret()` | `Return` builder | `.preceded_by(p) .ret_val(idx, p)` | n/a |
-| `p.if_else(cond=…)` | `If` builder | `.cond(p) .true_branch(p) .false_branch(p)` — tries compiler-inverted layout too | n/a |
+| `p.if_else(cond=…)` | `If` builder | `.cond(p) .true_branch(p) .false_branch(p) .capture_true(c) .capture_false(c)` — tries compiler-inverted layout too | n/a |
 | `p.int_binary("Op", l, r)` | dispatch w/ chainable `.ordered()` | typed builder | per op |
 | `p.bool_binary("Op", l, r)` | dispatch w/ `.ordered()` | typed builder | per op |
 | `p.float_binary("Op", l, r)` | dispatch w/ `.ordered()` | typed builder | per op |
@@ -275,13 +275,39 @@ graph.find_all(pat, ignore_casts_mask=p.CastMask.zero_extend() | p.CastMask.trun
 graph.find_all(pat, ignore_regions=True)
 ```
 
-Multi-pattern join on shared captures:
+Multi-pattern join on shared captures (pass a `list` to `find_all`):
 
 ```python
-hits = graph.find_joined([pat_a, pat_b, pat_c])
+hits = graph.find_all([pat_a, pat_b, pat_c])
 ```
 
-Walk-through flags also apply to `find_joined`; all flags apply uniformly to all patterns.
+Walk-through flags also apply to a joined `find_all`; all flags apply uniformly to all patterns.
+
+**CFG relational join constraints** — filter a joined result by control-flow
+relations between captured entities (in addition to shared-capture equality):
+
+```python
+g, t, f, c = p.Capture(), p.Capture(), p.Capture(), p.Capture()
+guard = p.if_else(cond=p.int_ne(p.load(p.add(p.var("fop"), p.any_int_const())), p.int_const(0))) \
+         .capture(g).capture_true(t).capture_false(f)
+call  = p.call().capture(c)
+
+# "call gated on the TRUE branch of the guard, exclusively":
+hits = graph.find_all([guard, call], constraints=[p.reaches(t, c), p.not_reaches(f, c)])
+```
+
+- `p.dominates(a, b)` — node `a` dominates node `b` in the control subgraph.
+- `p.reaches(src, dst)` — `dst` is forward-control-reachable from the branch edge
+  `src` (an `If`'s `capture_true`/`capture_false` value). Isolates one arm + the
+  shared post-merge tail.
+- `p.not_reaches(src, dst)` — negation; pair with `reaches` to drop the merge tail
+  (reachable from both edges) and isolate the exclusively-true-arm nodes.
+
+Constraints range over **control nodes** (`Call`/`Store`/`Region`/`If`/…); a
+captured value resolves to its producer node. Prefer `capture_true`/`capture_false`
+(the branch-edge *value*, stable under region collapse) over anchoring on the
+successor region. Two patterns linked only by a constraint still count as
+correlated for the connectivity check.
 
 ## Worked examples
 
