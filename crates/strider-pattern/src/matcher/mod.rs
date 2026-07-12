@@ -252,20 +252,50 @@ impl<'f> Matcher<'f> {
             return Ok(Vec::new());
         }
 
-        // Reject a capture-bearing pattern that shares no capture with the
-        // accumulated prefix (a mis-wired correlation that would explode
-        // into a cartesian product). A capture-free pattern is exempt.
-        let mut seen_captures: FxHashSet<crate::Capture> = pats[0].bound_captures().collect();
-        for (i, p) in pats.iter().enumerate().skip(1) {
-            let own: Vec<crate::Capture> = p.bound_captures().collect();
-            if !own.is_empty() && !own.iter().any(|c| seen_captures.contains(c)) {
-                anyhow::bail!(
-                    "find_joined: pattern {i} shares no capture with the others — \
-                     a join correlates on shared captures (use a capture-free \
-                     pattern for an intentional cross-product)"
-                );
+        // A join correlates patterns on shared captures, so the set of
+        // capture-bearing patterns must form ONE connected component under the
+        // "shares a capture" relation — otherwise the join is a cartesian
+        // product across an unrelated group. Check connectivity over ALL
+        // patterns via union-find, which is ORDER-INDEPENDENT: a pattern that
+        // shares a capture only with a *later* pattern (e.g. `call` bridging to
+        // `guard` through a `load` pattern listed after it) is still connected.
+        // A capture-free pattern is exempt (an intentional cross-product).
+        fn find(parent: &mut [usize], mut x: usize) -> usize {
+            while parent[x] != x {
+                parent[x] = parent[parent[x]]; // path halving
+                x = parent[x];
             }
-            seen_captures.extend(own);
+            x
+        }
+        let mut parent: Vec<usize> = (0..pats.len()).collect();
+        let mut cap_owner: FxHashMap<crate::Capture, usize> = FxHashMap::default();
+        let mut capture_bearing: Vec<usize> = Vec::new();
+        for (i, p) in pats.iter().enumerate() {
+            let mut has_cap = false;
+            for c in p.bound_captures() {
+                has_cap = true;
+                if let Some(&j) = cap_owner.get(&c) {
+                    let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
+                    parent[ri] = rj;
+                } else {
+                    cap_owner.insert(c, i);
+                }
+            }
+            if has_cap {
+                capture_bearing.push(i);
+            }
+        }
+        if let Some((&first, rest)) = capture_bearing.split_first() {
+            let root0 = find(&mut parent, first);
+            for &i in rest {
+                if find(&mut parent, i) != root0 {
+                    anyhow::bail!(
+                        "find_joined: pattern {i} shares no capture (even transitively) \
+                         with the others — a join correlates on shared captures (use a \
+                         capture-free pattern for an intentional cross-product)"
+                    );
+                }
+            }
         }
 
         let per_pat: Vec<Vec<Match>> = pats

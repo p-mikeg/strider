@@ -679,6 +679,60 @@ fn find_joined_three_patterns_one_disagrees_yields_empty() {
     assert!(req.is_empty(), "third pattern's shared binding disagrees");
 }
 
+/// find_joined connectivity is ORDER-INDEPENDENT: a pattern that bridges to the
+/// rest only through a pattern listed *after* it must not be spuriously
+/// rejected. Regression for the old prefix-only check, which rejected e.g. the
+/// kernel `guard(var(fop))` + `call(var(fv))` + `load(...).capture(fop, fv)`
+/// join whenever the bridging capturing pattern wasn't listed first.
+#[test]
+fn find_joined_connectivity_is_order_independent() {
+    let mut t = Tb::empty();
+    let base = t.u64(0xAAAA);
+    let off8 = t.u64(8);
+    let off16 = t.u64(16);
+    let data = t.u64(0xD);
+    let a1 = t.add(base, off8);
+    let a2 = t.add(base, off16);
+    t.store_ram(a1, data);
+    t.store_ram(a2, data);
+    let function = t.ret_nothing();
+    let mr = Matcher::new(&function);
+
+    let x = Capture::new(); // shared base
+    let d = Capture::new(); // shared data
+    // `bridge` binds both x and d; `by_base` binds only x; `by_data` binds only
+    // d — so `by_base` and `by_data` share nothing directly and connect ONLY
+    // through `bridge`.
+    let bridge = store()
+        .addr(add(var(x), int_const(8u128)).ordered())
+        .data(var(d))
+        .build();
+    let by_base = store()
+        .addr(add(var(x), int_const(16u128)).ordered())
+        .build();
+    let by_data = store().data(var(d)).build();
+
+    // Every order is accepted, including the ones where the bridge is last.
+    for order in [
+        [&by_base, &by_data, &bridge],
+        [&by_data, &by_base, &bridge],
+        [&bridge, &by_base, &by_data],
+    ] {
+        assert!(
+            mr.find_joined(&order).is_ok(),
+            "connected patterns must join regardless of order",
+        );
+    }
+
+    // A genuinely disconnected capture group still errors (unchanged).
+    let z = Capture::new();
+    let disjoint = store().data(var(z)).build();
+    assert!(
+        mr.find_joined(&[&bridge, &disjoint]).is_err(),
+        "patterns sharing no capture even transitively are still rejected",
+    );
+}
+
 /// A pattern that does NOT mention the shared capture imposes no
 /// constraint: the join degrades to a cross product against its matches.
 #[test]
