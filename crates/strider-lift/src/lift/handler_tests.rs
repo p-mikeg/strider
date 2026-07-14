@@ -1474,3 +1474,105 @@ fn load_odd_byte_width_errors_with_asm_context() {
         );
     });
 }
+
+// ── Multiply-by-power-of-two strength reduction (lift-time canonicalization) ──
+
+/// `mul reg, 8` strength-reduces to a left shift at construction:
+/// `ShiftLeft(reg, 3)`, not `Mul(reg, 8)`.  Keeps the canonical query shape
+/// uniform with an actual `shl` the compiler could equally have emitted.
+#[test]
+fn lift_int_mul_by_pow2_lowers_to_shift() {
+    let r = reg(4);
+    with_test_lifter_tracking(vec![reg(0), r], |d, rid| {
+        let insn = Insn {
+            opcode: Opcode::IntMul,
+            output: Some(reg(0)),
+            inputs: vec![r, const_vn(8, 4)].into(),
+        };
+        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+            .unwrap();
+        assert!(
+            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft)),
+            "mul by power-of-two must lower to a left shift"
+        );
+        assert!(
+            !graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Mul)),
+            "the Mul must be replaced by the shift, not kept"
+        );
+        assert!(
+            find_int_const_node(&d.builder, 3).is_some(),
+            "shift amount must be log2(8) = 3"
+        );
+    });
+}
+
+/// A non-power-of-two multiplier stays a `Mul` — only pow2 is strength-reduced.
+#[test]
+fn lift_int_mul_by_non_pow2_stays_mul() {
+    let r = reg(4);
+    with_test_lifter_tracking(vec![reg(0), r], |d, rid| {
+        let insn = Insn {
+            opcode: Opcode::IntMul,
+            output: Some(reg(0)),
+            inputs: vec![r, const_vn(6, 4)].into(),
+        };
+        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+            .unwrap();
+        assert!(
+            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Mul)),
+            "mul by non-power-of-two must stay a Mul"
+        );
+    });
+}
+
+/// Unsigned `div reg, 8` strength-reduces to a LOGICAL right shift:
+/// `ShiftRight(reg, 3)`, not `Div(reg, 8)`.
+#[test]
+fn lift_udiv_by_pow2_lowers_to_shift() {
+    let r = reg(4);
+    with_test_lifter_tracking(vec![reg(0), r], |d, rid| {
+        let insn = Insn {
+            opcode: Opcode::IntDiv,
+            output: Some(reg(0)),
+            inputs: vec![r, const_vn(8, 4)].into(),
+        };
+        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+            .unwrap();
+        assert!(
+            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight)),
+            "unsigned div by power-of-two must lower to a logical right shift"
+        );
+        assert!(
+            !graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Div)),
+            "the Div must be replaced by the shift, not kept"
+        );
+        assert!(
+            find_int_const_node(&d.builder, 3).is_some(),
+            "shift amount must be log2(8) = 3"
+        );
+    });
+}
+
+/// SIGNED `sdiv reg, 8` must NOT become a shift — signed division by a power
+/// of two rounds toward zero and needs a bias correction, so it stays `Sdiv`.
+#[test]
+fn lift_sdiv_by_pow2_stays_sdiv() {
+    let r = reg(4);
+    with_test_lifter_tracking(vec![reg(0), r], |d, rid| {
+        let insn = Insn {
+            opcode: Opcode::IntSdiv,
+            output: Some(reg(0)),
+            inputs: vec![r, const_vn(8, 4)].into(),
+        };
+        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+            .unwrap();
+        assert!(
+            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Sdiv)),
+            "signed div by power-of-two must stay Sdiv (arithmetic-shift rounding differs)"
+        );
+        assert!(
+            !graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight)),
+            "signed div must not be strength-reduced to a logical shift"
+        );
+    });
+}
