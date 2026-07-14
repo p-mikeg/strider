@@ -365,10 +365,35 @@ impl TemplatePat for ConstWith {
         match self.ty {
             TemplateTy::Fixed(t) => b.set_value_ty(o, t),
             TemplateTy::InheritInput => b.set_value_ty_inherit_input(o),
+            TemplateTy::InheritBinding(cap) => b.set_value_ty_of_binding(o, cap),
             TemplateTy::InheritRoot => {}
         }
         o
     }
+}
+
+/// Types the wrapped template node's value output to the width of a bound LHS
+/// capture (see [`TemplateTy::InheritBinding`]).  Use when a materialised
+/// interior node's width comes from a captured operand that the rewrite root's
+/// shape does not expose — e.g. the `And(x, mask)` / `mask` in
+/// `Sless(x<<C, 0) → Xor(Equal(And(x,mask),0),1)`, whose `I1` root has no
+/// `x`-wide input for [`ConstWith::of_input_type`] to inherit.
+pub struct CaptureTyped<P> {
+    cap: crate::Capture,
+    inner: P,
+}
+
+impl<P: TemplatePat> TemplatePat for CaptureTyped<P> {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
+        let out = self.inner.compile(b);
+        b.set_value_ty_of_binding(out, self.cap);
+        out
+    }
+}
+
+/// Type `inner`'s output to the width of capture `cap`'s matched value.
+pub fn capture_typed<P: TemplatePat>(cap: crate::Capture, inner: P) -> CaptureTyped<P> {
+    CaptureTyped { cap, inner }
 }
 
 /// Builds an `IntConst` node whose value is computed by `f` at rewrite

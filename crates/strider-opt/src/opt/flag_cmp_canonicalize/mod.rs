@@ -57,9 +57,9 @@ use crate::{BoxedRule, apply_rules_in_order, rewrite_rule};
 use strider_ir::IRViewer;
 use strider_ir::node::{ExtendOp, IntBinaryOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_pattern::{
-    Bindings, Capture, CaptureExt, add, any_int_const, bool_and, bool_not, bool_or, int_const,
-    int_const_with, int_eq, int_lt, int_sborrow, int_slt, neg, one_of, template, var, xor,
-    zero_extend,
+    Bindings, Capture, CaptureExt, add, any_int_const, bool_and, bool_not, bool_or, capture_typed,
+    int_const, int_const_with, int_eq, int_lt, int_sborrow, int_slt, neg, one_of, shl, template,
+    var, xor, zero_extend,
 };
 
 use crate::error::Result;
@@ -448,6 +448,43 @@ fn build_rules() -> Vec<BoxedRule> {
             var(a),
             int_const_with!([m: uint] => m.wrapping_neg()).of_input_type(),
         ),
+    ));
+
+    // `Sless(ShiftLeft(x, C), 0):I1 → Xor(Equal(And(x, mask), 0), 1):I1`,
+    // mask = 1 << (W-1-C).  A signed `< 0` on a left-shifted value tests the
+    // sign bit of `x << C`, which is bit (W-1-C) of `x`; canonicalising to the
+    // explicit single-bit mask test makes it match the shape a plain
+    // `if (x & mask)` lifts to.  The `And`/mask/`0` are width `W` (from
+    // `capture_typed(x, ..)` — the `Xor` root is `I1` and exposes no `x`-wide
+    // input), the `Xor`/`1` are `I1`.  Guarded to a constant `C < W` (else
+    // `x << C` is 0 and the test is const-false — a different rewrite).
+    rules.push(rewrite_rule(
+        int_slt(shl(var(x), any_int_const().capture(n)), int_const(0u128)).when_match(
+            move |edit, _ty, b| {
+                let (Some(c), Some(ty)) =
+                    (b.get_uint(n, edit.function()), b.get_type(x, edit.function()))
+                else {
+                    return false;
+                };
+                c < ty.bit_width() as u128
+            },
+        ),
+        template::bool_not(template::int_eq(
+            capture_typed(
+                x,
+                template::and(
+                    var(x),
+                    capture_typed(
+                        x,
+                        int_const_with!([n: uint, in_ty] => {
+                            let w = in_ty.ok_or_else(strider_pattern::skip)?.bit_width() as u128;
+                            1u128 << (w - 1 - n)
+                        }),
+                    ),
+                ),
+            ),
+            capture_typed(x, int_const(0u128)),
+        )),
     ));
 
     rules

@@ -1344,3 +1344,108 @@ fn eq_neg_solves_for_x() -> Result<()> {
     strider_ir::validate::validate(&fg)?;
     Ok(())
 }
+
+/// `Sless(x << C, 0):I1 → Xor(Equal(And(x, mask), 0), 1):I1`, mask=1<<(W-1-C).
+/// A signed `<0` on a left-shifted value tests the sign bit — bit W-1-C of x —
+/// so it canonicalises to the explicit single-bit mask test (the shape a plain
+/// `if (x & mask)` lifts to).  W=32, C=3 → mask = 1<<28 = 0x1000_0000.
+#[test]
+fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let c3 = b.build_int_const(3u64, ty)?;
+    let shl = b.build_int_binary_operation(x, c3, IntBinaryOp::ShiftLeft, ty)?;
+    let zero = b.build_int_const(0u64, ty)?;
+    let sless = b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ty)?;
+    b.build_if(sless, dispatch, exit)?;
+    b.set_region(dispatch);
+    b.build_return(Some(x), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(x), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+
+    let if_node = fg.walk().find(|&n| matches!(fg.node_kind(n), NodeKind::If)).expect("If");
+    // cond = Xor(Equal(And(x, 0x1000_0000), 0), IntConst(1))
+    let xor = fg.producer(fg.if_cond(if_node));
+    assert!(
+        matches!(fg.node_kind(xor), NodeKind::IntBinaryOp(IntBinaryOp::Xor)),
+        "cond must be an Xor, got {:?}",
+        fg.node_kind(xor)
+    );
+    let xor_in: Vec<_> = fg.node_inputs(xor).into_iter().collect();
+    assert!(xor_in.iter().any(|&o| fg.int_const_u128(o) == Some(1)), "xor with 1");
+    let eq = xor_in
+        .iter()
+        .find_map(|&o| {
+            matches!(fg.kind_of_value(o), NodeKind::IntCmpOp(IntCmpOp::Equal)).then(|| fg.producer(o))
+        })
+        .expect("Equal operand of Xor");
+    let eq_in: Vec<_> = fg.node_inputs(eq).into_iter().collect();
+    assert!(eq_in.iter().any(|&o| fg.int_const_u128(o) == Some(0)), "eq to 0");
+    let and = eq_in
+        .iter()
+        .find_map(|&o| {
+            matches!(fg.kind_of_value(o), NodeKind::IntBinaryOp(IntBinaryOp::And))
+                .then(|| fg.producer(o))
+        })
+        .expect("And operand of Equal");
+    let and_in: Vec<_> = fg.node_inputs(and).into_iter().collect();
+    assert!(and_in.contains(&x), "And on x");
+    assert!(
+        and_in.iter().any(|&o| fg.int_const_u128(o) == Some(0x1000_0000)),
+        "mask must be 1<<(31-3) = 0x1000_0000"
+    );
+    strider_ir::validate::validate(&fg)?;
+    Ok(())
+}
+
+/// The sign-bit canonicalization must NOT fire when the shift amount is ≥ the
+/// width (`x << 40` at I32 is 0, so `Sless(0,0)` is const-false, a different
+/// rewrite) — the `Sless` is left intact.
+#[test]
+fn sless_of_oversized_left_shift_is_not_a_sign_bit_test() -> Result<()> {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let c40 = b.build_int_const(40u64, ty)?;
+    let shl = b.build_int_binary_operation(x, c40, IntBinaryOp::ShiftLeft, ty)?;
+    let zero = b.build_int_const(0u64, ty)?;
+    let sless = b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ty)?;
+    b.build_if(sless, dispatch, exit)?;
+    b.set_region(dispatch);
+    b.build_return(Some(x), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(x), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    let if_node = fg.walk().find(|&n| matches!(fg.node_kind(n), NodeKind::If)).expect("If");
+    assert!(
+        matches!(
+            fg.node_kind(fg.producer(fg.if_cond(if_node))),
+            NodeKind::IntCmpOp(IntCmpOp::Sless)
+        ),
+        "oversized-shift Sless must be left intact"
+    );
+    Ok(())
+}

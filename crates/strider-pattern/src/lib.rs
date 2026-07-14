@@ -74,7 +74,8 @@ pub fn first_value_input_type(ctx: &TemplateCtx<'_>) -> Option<strider_ir::node:
 pub use typed::{
     add, and, any, any_bool_const, any_float_const, any_int_const, bit_not, bool_and, bool_bin_any,
     bool_binary, bool_const, bool_const_with_fn, bool_inputs, bool_not, bool_or, bool_value,
-    bool_xor, div, extend, float_abs, float_add, float_binary, float_binary_any, float_bits_to_int,
+    bool_xor, capture_typed, div, extend, float_abs, float_add, float_binary, float_binary_any,
+    float_bits_to_int,
     float_ceil, float_cmp, float_cmp_any, float_const, float_const_with_fn, float_div, float_eq,
     float_floor, float_is_nan, float_le, float_lt, float_mul, float_ne, float_neg, float_round,
     float_sqrt, float_sub, float_to_float, float_to_int, float_unary_any, initial_var,
