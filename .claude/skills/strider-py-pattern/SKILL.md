@@ -306,6 +306,14 @@ hits = graph.find_all([guard, call], constraints=[p.reaches(t, c), p.not_reaches
   target, i.e. in that block *exclusively*. One `dominated_by_branch(true_edge, c)`
   = "`c` is in the true block" — the single-constraint equivalent of
   `reaches(true_edge, c) + not_reaches(false_edge, c)`.
+- `p.phi_input_from_edge(phi, edge, value)` — the `phi` capture's data input on the
+  predecessor fed by control `edge` equals `value`: "the value merged from THIS
+  branch is X". `edge` binds an `If`'s `capture_true`/`capture_false`; direct-edge,
+  so it keys on the converged/collapsed IR (the `If` edge as the phi region's direct
+  predecessor) and won't match through nested control between branch and merge.
+  E.g. `find_all([if_else().capture_true(t), phi().capture(ph), any_int_const(v)],
+  constraints=[phi_input_from_edge(ph, t, v)])` finds "the phi value on the true
+  branch".
 
 Constraints range over **control nodes** (`Call`/`Store`/`Region`/`If`/…); a
 captured value resolves to its producer node. Prefer `capture_true`/`capture_false`

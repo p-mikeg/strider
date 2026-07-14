@@ -87,3 +87,32 @@ def test_dominates_if_selects_every_call():
     dominated = _call_count(fn, lambda t, f, c, g: [p.dominates(g, c)])
     # The If dominates both arms and the merge — every call is dominated by it.
     assert dominated == all_calls
+
+
+def test_phi_input_from_edge_ties_value_to_its_branch():
+    """`phi_input_from_edge(phi, edge, value)` — the phi's data input on the
+    predecessor fed by `edge` equals `value`.  A distinct-const diamond:
+    the two branches assign different constants, so each If edge selects its
+    own branch's merged value.
+    """
+    # test edi,edi; je (eax=2); mov eax,1; jmp; mov eax,2; ret
+    code = bytes([0x85, 0xFF, 0x74, 0x07, 0xB8, 0x01, 0, 0, 0,
+                  0xEB, 0x05, 0xB8, 0x02, 0, 0, 0, 0xC3])
+    mem = strider.BufferReader(0x1000, code)
+    _cfg, fn, _u = strider.lifter(
+        strider.SleighArch.x86_64(), mem
+    ).analyze(0x1000, strider.CallingConvention.x86_64_systemv())
+
+    t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
+    guard = p.if_else().capture_true(t).capture_false(f)
+    phi = p.phi().capture(ph)
+    val = p.any_int_const(v)
+
+    th = fn.find_all([guard, phi, val], constraints=[p.phi_input_from_edge(ph, t, v)])
+    fh = fn.find_all([guard, phi, val], constraints=[p.phi_input_from_edge(ph, f, v)])
+
+    assert len(th) == 1 and len(fh) == 1
+    true_val, false_val = th[0].uint(v), fh[0].uint(v)
+    # Each edge picks its OWN branch's merged constant, and they differ.
+    assert {true_val, false_val} == {1, 2}
+    assert true_val != false_val

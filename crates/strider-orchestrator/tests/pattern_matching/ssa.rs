@@ -282,3 +282,56 @@ fn arg_indices_iterator_sorted() {
     };
     assert_eq!(indices, vec![0], "only arg 0 should be registered");
 }
+
+/// `JoinConstraint::PhiInputFromEdge` ties a phi's per-branch data input to the
+/// control edge that leads into that predecessor.  On the collapsed diamond
+/// `if (reg==0){reg=1}else{reg=2}`, the true edge selects one merged constant
+/// and the false edge the other.
+#[test]
+fn phi_input_from_edge_ties_value_to_its_branch() {
+    let (mut function, _reg) = graph_phi_for_reg();
+    // Collapse the single-predecessor arms so the If's true/false outputs
+    // become the merge region's DIRECT predecessors (the converged shape the
+    // direct-edge constraint keys on).
+    let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
+    pre.add(strider_orchestrator::opt::PhiCollapse);
+    pre.add(strider_orchestrator::opt::RegionCollapse);
+    pre.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
+        .expect("collapse");
+
+    let m = Matcher::new(&function);
+    let (t, f, ph, v) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
+    let guard = if_node().capture_true(t).capture_false(f).build();
+    let phi_p = phi().capture(ph).build();
+    let val = any_int_const().capture(v).into_pattern();
+
+    let read = |edge: Capture| -> u128 {
+        let hits = m
+            .find_joined_constrained(
+                &[&guard, &phi_p, &val],
+                &[JoinConstraint::PhiInputFromEdge {
+                    phi: ph,
+                    edge,
+                    value: v,
+                }],
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 1, "exactly one branch value per edge");
+        let value = hits[0].iter().find_map(|mm| mm.value(v)).unwrap();
+        function.int_const_u128(value).unwrap()
+    };
+
+    let (true_val, false_val) = (read(t), read(f));
+    assert_ne!(true_val, false_val, "each edge selects its own branch value");
+    assert_eq!(
+        [true_val, false_val]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [1u128, 2].into_iter().collect()
+    );
+}

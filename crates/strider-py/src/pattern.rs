@@ -3060,6 +3060,28 @@ pub fn dominated_by_branch(
     }
 }
 
+/// The `Phi` bound to `phi` merges, on the predecessor whose control edge is
+/// `edge`, the value bound to `value` — "the value merged from THIS branch is
+/// X".  `edge` must bind an `If`'s `capture_true`/`capture_false` value; on the
+/// converged IR that edge is the phi region's direct predecessor.  `phi` binds
+/// a `phi()` value, `value` binds whatever pattern matched the expected merged
+/// value.  Direct-edge: no match when nested control sits between the branch
+/// and the merge.
+#[pyfunction]
+pub fn phi_input_from_edge(
+    phi: PyRef<'_, PyCapture>,
+    edge: PyRef<'_, PyCapture>,
+    value: PyRef<'_, PyCapture>,
+) -> PyJoinConstraint {
+    PyJoinConstraint {
+        inner: JoinConstraint::PhiInputFromEdge {
+            phi: phi.inner,
+            edge: edge.inner,
+            value: value.inner,
+        },
+    }
+}
+
 // ── PhiPat (value-rooted: a Phi produces a value output) ─────────────────
 
 node_builder! {
@@ -3490,6 +3512,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(reaches);
     add_fn!(not_reaches);
     add_fn!(dominated_by_branch);
+    add_fn!(phi_input_from_edge);
     add_fn!(int_binary);
     add_fn!(bool_binary);
     add_fn!(float_binary);

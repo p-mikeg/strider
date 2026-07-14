@@ -321,10 +321,17 @@ impl<'f> Matcher<'f> {
         // captures `c`, joined by `reaches(t, c)`). Union their owners so the
         // connectivity check accepts a constraint-correlated join.
         for con in constraints {
-            let (x, y) = con.captures();
-            if let (Some(&i), Some(&j)) = (cap_owner.get(&x), cap_owner.get(&y)) {
-                let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
-                parent[ri] = rj;
+            // Union the owners of ALL of a constraint's captures into one
+            // component (a 3-capture constraint links three patterns).
+            let mut owners = con
+                .captures()
+                .into_iter()
+                .filter_map(|c| cap_owner.get(&c).copied());
+            if let Some(first) = owners.next() {
+                for j in owners {
+                    let (ri, rj) = (find(&mut parent, first), find(&mut parent, j));
+                    parent[ri] = rj;
+                }
             }
         }
         if let Some((&first, rest)) = capture_bearing.split_first() {
@@ -448,18 +455,34 @@ pub enum JoinConstraint {
     /// true block" without a paired `not_reaches`. `branch` must bind a
     /// control-output value; an ill-typed `branch` or an absent node fails it.
     DominatedByBranch { branch: crate::Capture, node: crate::Capture },
+    /// The `Phi` bound to `phi` merges, on the predecessor whose owning
+    /// `Region` control input equals the branch edge `edge`, the value bound to
+    /// `value`.  Ties a phi's per-branch data input to the control edge that
+    /// leads into that predecessor, so a pattern can say "the value merged from
+    /// THIS branch is X" without a slot index.  Direct-edge: `edge` must be a
+    /// *literal* control input of the phi's region (the converged/collapsed IR
+    /// makes an `If`'s true/false output the join region's direct predecessor).
+    /// `edge` must bind a control-output value; `phi` / `value` bind values.
+    PhiInputFromEdge {
+        phi: crate::Capture,
+        edge: crate::Capture,
+        value: crate::Capture,
+    },
 }
 
 impl JoinConstraint {
-    /// The two captures this constraint correlates (used to link their owner
+    /// Every capture this constraint correlates (used to link their owner
     /// patterns for the `find_joined` connectivity check).
-    fn captures(&self) -> (crate::Capture, crate::Capture) {
+    fn captures(&self) -> Vec<crate::Capture> {
         match *self {
-            JoinConstraint::Dominates { a, b } => (a, b),
+            JoinConstraint::Dominates { a, b } => vec![a, b],
             JoinConstraint::Reaches { from, to } | JoinConstraint::NotReaches { from, to } => {
-                (from, to)
+                vec![from, to]
             }
-            JoinConstraint::DominatedByBranch { branch, node } => (branch, node),
+            JoinConstraint::DominatedByBranch { branch, node } => vec![branch, node],
+            JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
+                vec![phi, edge, value]
+            }
         }
     }
 }
@@ -536,7 +559,49 @@ impl<'f> ConstraintEval<'f> {
                 let doms = self.doms.get_or_init(|| control_dominators(self.function));
                 dominates(doms, consumer, target)
             }
+            JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
+                let (Some(phi_v), Some(edge_v), Some(val_v)) = (
+                    self.value_of(tuple, phi),
+                    self.value_of(tuple, edge),
+                    self.value_of(tuple, value),
+                ) else {
+                    return false;
+                };
+                self.phi_input_from_edge(phi_v, edge_v, val_v)
+            }
         }
+    }
+
+    /// The `Phi` producing `phi_v` merges `val_v` on the predecessor whose
+    /// owning `Region` control input is exactly `edge_v` (direct-edge).
+    ///
+    /// Slot alignment: a `Phi`'s inputs are `[PhiToken, v0, v1, …]` — data
+    /// input `i+1` is predecessor `i`'s value — and its owning `Region` (the
+    /// `PhiToken`'s producer) has control input `i` for predecessor `i`.  So the
+    /// region slot matching `edge_v` maps to the phi input one slot over.
+    fn phi_input_from_edge(&self, phi_v: ValueId, edge_v: ValueId, val_v: ValueId) -> bool {
+        let f = self.function;
+        let phi_node = f.producer(phi_v);
+        if !matches!(f.node_kind(phi_node), NodeKind::Phi) {
+            return false;
+        }
+        let inputs: Vec<ValueId> = f.node_inputs(phi_node).into_iter().collect();
+        // Slot 0 is the PhiToken; its producer is the owning Region.
+        let Some(&token) = inputs.first() else {
+            return false;
+        };
+        let region = f.producer(token);
+        if !matches!(f.node_kind(region), NodeKind::Region) {
+            return false;
+        }
+        let Some(slot) = f
+            .node_inputs(region)
+            .into_iter()
+            .position(|c| c == edge_v)
+        else {
+            return false;
+        };
+        inputs.get(slot + 1).is_some_and(|&v| v == val_v)
     }
 }
 
