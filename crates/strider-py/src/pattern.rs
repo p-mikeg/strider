@@ -3060,7 +3060,7 @@ pub fn dominated_by_branch(
     }
 }
 
-// ── PhiPat (node-rooted; rejects value nesting) ──────────────────────────
+// ── PhiPat (value-rooted: a Phi produces a value output) ─────────────────
 
 node_builder! {
     ty: PyPhiPat,
@@ -3069,7 +3069,7 @@ node_builder! {
     doc: "Typed builder for tagged-`Phi` patterns.",
     core: strider_pattern::phi,
     core_ty: strider_pattern::PhiPat,
-    root: value_err,
+    root: value,
     fields: [
         { scalar_inner for_vn(crate::sleigh::PyVn => rsleigh::Vn): for_vn
             = "Restrict the match to phi nodes for varnode `vn`." },

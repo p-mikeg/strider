@@ -12,7 +12,7 @@ use strider_ir::node::ValueType;
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    Capture, CaptureExt, MatchPat, Matcher, any, any_int_const, call, call_other, if_node,
+    Capture, CaptureExt, MatchPat, Matcher, add, any, any_int_const, call, call_other, if_node,
     indirect_branch, int_const, load, mem_phi, phi, ret, switch, unreachable, var,
 };
 
@@ -691,6 +691,66 @@ fn phi_over_two_consts() -> strider_ir::Function {
     b.build_return(Some(phi_val), &[]).unwrap();
     b.set_lift_addr(None);
     b.build().unwrap()
+}
+
+/// Diamond join whose `Phi` value feeds `Add(phi, 10)` (then returned), so the
+/// phi appears as a **value operand** — the shape `phi()` must nest into.
+fn phi_feeding_add() -> strider_ir::Function {
+    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let region_t = b.create_region_all().unwrap();
+    let region_f = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, region_t, region_f).unwrap();
+    b.set_region(region_t);
+    let v1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+    b.write_variable(&var_vn, v1).unwrap();
+    b.build_branch(join).unwrap();
+    b.set_region(region_f);
+    let v2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+    b.write_variable(&var_vn, v2).unwrap();
+    b.build_branch(join).unwrap();
+    b.set_region(join);
+    let phi_val = b.read_variable(&var_vn).unwrap();
+    let ten = b.build_int_const(10u64, ValueType::I64).unwrap();
+    let sum = b
+        .build_int_binary_operation(phi_val, ten, strider_ir::IntBinaryOp::Add, ValueType::I64)
+        .unwrap();
+    b.build_return(Some(sum), &[]).unwrap();
+    b.set_lift_addr(None);
+    b.build().unwrap()
+}
+
+/// A `Phi` produces a value output, so `phi()` must nest as a value operand
+/// (regression: it used to be node-rooted only — `add(x, phi())` / a Python
+/// `store(data=phi())` errored "cannot be nested as a value operand").
+#[test]
+fn phi_nests_as_a_value_operand() {
+    let function = phi_feeding_add();
+    let m = Matcher::new(&function);
+    // `Add(phi, 10)` — phi nested as the add's operand.
+    assert_eq!(
+        m.find_all(&add(phi(), int_const(10u128)).into_pattern())
+            .unwrap()
+            .len(),
+        1,
+        "phi must match nested as a value operand of Add"
+    );
+    // Capture through the nesting binds the phi node out.
+    let c = Capture::new();
+    let hits = m
+        .find_all(&add(phi().capture(c), any()).into_pattern())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(
+        hits[0].node(c, function.graph()).is_some(),
+        "captured phi binds out"
+    );
 }
 
 #[test]

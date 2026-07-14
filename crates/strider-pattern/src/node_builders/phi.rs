@@ -81,14 +81,27 @@ impl PhiPat {
         self
     }
 
-    /// Seal the builder into a finished [`Pattern`].
-    pub fn build(self) -> Pattern {
+    /// Apply the `for_vn` filter (if any) to the inner [`NodePat`].
+    fn configured(self) -> NodePat {
         let PhiPat { inner, var_filter } = self;
         match var_filter {
             Some(vn) => inner.with_node_predicate(move || phi_var_limit(vn)),
             None => inner,
         }
-        .build()
+    }
+
+    /// Seal the builder into a finished [`Pattern`].
+    pub fn build(self) -> Pattern {
+        self.configured().build()
+    }
+}
+
+impl MatchPat for PhiPat {
+    /// A `Phi` produces a value output (slot 0), so it nests as a value
+    /// operand — `store(data=phi())`, `add(x, phi())` — anchored at that
+    /// output.  (`MemPhi`, a memory token, implements [`MemPat`] instead.)
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.configured().compile_anchored(b)
     }
 }
 
