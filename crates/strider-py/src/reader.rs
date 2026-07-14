@@ -317,7 +317,8 @@ impl PyLoadedElf {
             // back to any match so pure-data names still resolve for
             // `symbol()` / `read()`.
             let mut fallback: Option<object::Symbol<'_, '_>> = None;
-            for sym in obj.file().symbols() {
+            let file = obj.file();
+            for sym in file.symbols() {
                 let Ok(sym_name) = sym.name() else { continue };
                 if sym_name != name {
                     continue;
@@ -395,7 +396,8 @@ impl PyLoadedElf {
     fn symbols(&self) -> HashMap<String, u64> {
         let mut out: HashMap<String, u64> = HashMap::new();
         for obj in self.elfs.iter() {
-            for sym in obj.file().symbols() {
+            let file = obj.file();
+            for sym in file.symbols() {
                 let Ok(name) = sym.name() else { continue };
                 if name.is_empty() || sym.address() == 0 {
                     continue;
@@ -434,8 +436,9 @@ impl PyLoadedElf {
     #[pyo3(signature = (path, apply_relocations=false))]
     fn add_elf(&mut self, path: &str, apply_relocations: bool) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-        let mem_regions = elf_to_mem_regions(obj.file(), self.source, apply_relocations)?;
-        let rom_regions = elf_to_rom_regions(obj.file(), self.source, apply_relocations)?;
+        let file = obj.file();
+        let mem_regions = elf_to_mem_regions(&file, self.source, apply_relocations)?;
+        let rom_regions = elf_to_rom_regions(&file, self.source, apply_relocations)?;
         invalidate_and_extend(&self.mem, mem_regions);
         invalidate_and_extend(&self.rom, rom_regions);
         self.elfs.push(obj);
@@ -452,8 +455,9 @@ fn load_elf_impl(
     apply_relocations: bool,
 ) -> PyResult<PyLoadedElf> {
     let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-    let mem = PyBufferReader::from_regions(elf_to_mem_regions(obj.file(), source, apply_relocations)?);
-    let rom = PyBufferReader::from_regions(elf_to_rom_regions(obj.file(), source, apply_relocations)?);
+    let file = obj.file();
+    let mem = PyBufferReader::from_regions(elf_to_mem_regions(&file, source, apply_relocations)?);
+    let rom = PyBufferReader::from_regions(elf_to_rom_regions(&file, source, apply_relocations)?);
     Ok(PyLoadedElf {
         elfs: vec![obj],
         mem,

@@ -98,26 +98,21 @@ pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<OwnedElf> {
     OwnedElf::parse(data)
 }
 
-/// An owned, parsed ELF: the backing file bytes and the [`object::File`]
-/// view over them are stored together and **freed together** when the
-/// `OwnedElf` drops.
+/// An owned ELF: the backing file bytes, freed on drop.
 ///
 /// This replaces the historical `Box::leak` loader, which fabricated a
 /// `'static` `object::File` by leaking the whole file — fine for a
 /// short-lived CLI, but an unbounded per-call leak in a long-lived process
-/// (the strider-py `load_elf` / `_LoadedElf` path).  Access the parsed file
-/// through [`file`](Self::file); the borrow is reborrowed to `&self`, so no
-/// view can outlive the bytes it reads.
+/// (the strider-py `load_elf` / `_LoadedElf` path).
+///
+/// Only the bytes are stored; the parsed [`object::File`] is a borrowing view
+/// with no owned variant, so keeping one alongside the bytes it reads would be
+/// a self-referential struct.  Instead [`file`](Self::file) re-parses on each
+/// call — `object::File::parse` is a lazy, header-only parse (it records
+/// section/segment table offsets rather than copying the file), and callers
+/// resolve `file()` once per load in cold setup code, so the cost is
+/// negligible.  This keeps the type safe (no `unsafe`, no self-reference).
 pub struct OwnedElf {
-    // DROP ORDER IS LOAD-BEARING: `file` borrows from `*backing`.  Struct
-    // fields drop in declaration order, so `file` (a borrowed view) is
-    // destroyed BEFORE `backing` frees the bytes — no dangling borrow exists.
-    file: object::File<'static>,
-    // Heap-stable backing store.  A `Box<[u8]>`'s heap allocation address is
-    // fixed for its lifetime and does NOT move when the `OwnedElf` moves, so
-    // the borrow `file` holds into it stays valid across moves of `Self`.
-    // Its value is otherwise touched only to own the bytes and free them on
-    // drop (and to report its length in `Debug`).
     backing: Box<[u8]>,
 }
 
@@ -131,30 +126,30 @@ impl std::fmt::Debug for OwnedElf {
 }
 
 impl OwnedElf {
-    /// Parse owned `bytes` into an `OwnedElf`.  On a parse error the bytes
-    /// are dropped normally (no allocation retained).
+    /// Parse owned `bytes` into an `OwnedElf`, validating them as a well-formed
+    /// ELF up front.  On a parse error the bytes are dropped normally (no
+    /// allocation retained).
     ///
     /// # Errors
     ///
     /// Returns an error if `bytes` do not parse as a valid ELF.
     pub fn parse(bytes: Vec<u8>) -> Result<Self> {
-        let backing = bytes.into_boxed_slice();
-        // SAFETY: we extend the borrow to `'static` only to store the
-        // `object::File` alongside the `backing` it reads from.  Sound
-        // because (1) `file` is declared before `backing`, so it is dropped
-        // first and never outlives the bytes; (2) `backing`'s heap data is
-        // address-stable across moves of `Self`.  The `'static` never
-        // escapes: `file()` hands it out reborrowed to `&self`.
-        let static_bytes: &'static [u8] =
-            unsafe { std::mem::transmute::<&[u8], &'static [u8]>(&backing[..]) };
-        let file = object::File::parse(static_bytes).context("failed to parse ELF")?;
-        Ok(Self { file, backing })
+        // Validate now so `file()` can re-parse the identical bytes infallibly.
+        object::File::parse(&bytes[..]).context("failed to parse ELF")?;
+        Ok(Self {
+            backing: bytes.into_boxed_slice(),
+        })
     }
 
     /// The parsed ELF, borrowed for no longer than `self` — so views it
     /// yields (symbols, sections, …) cannot escape past the backing bytes.
+    ///
+    /// Re-parses the backing bytes each call; see the type docs for why that
+    /// is cheap.  Infallible: the bytes were validated in [`parse`](Self::parse)
+    /// and are immutable, so this re-parse of identical bytes cannot fail.
     #[inline]
-    pub fn file(&self) -> &object::File<'_> {
-        &self.file
+    pub fn file(&self) -> object::File<'_> {
+        object::File::parse(&self.backing[..])
+            .expect("bytes were validated as ELF at construction")
     }
 }
