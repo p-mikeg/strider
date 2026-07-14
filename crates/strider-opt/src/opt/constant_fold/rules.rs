@@ -7,7 +7,7 @@ use super::eval_int::{eval_int_binary, eval_int_cmp};
 
 use crate::{apply_rules_in_order, rewrite_rule};
 use strider_pattern::{
-    Capture, CaptureExt, add, and, any_float_const, any_int_const, bool_const_with, bool_not,
+    Capture, CaptureExt, add, and, any_float_const, any_int_const, bool_const_with, bool_not, div,
     float_binary_any, float_bits_to_int, float_cmp_any, float_const_with, float_unary_any,
     int_binary_any, int_bits_to_float, int_cmp_any, int_const, int_const_with, int_unary_any,
     lzcount, mul, or, popcount, shl, shr, sign_extend, sshr, sub, template, truncate, var, xor,
@@ -234,6 +234,39 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             )
         };
     }
+    // Strength-reduce power-of-two scaling to shifts, so a query sees ONE
+    // canonical shape whether the compiler emitted an imul/udiv or a shift.
+    //
+    // `mul(x, 2^k) → shl(x, k)`  (k ≥ 1).  Sound signed + unsigned (both wrap
+    // mod 2^width).  Multiplier `1`/`0` stay `Mul` for the identity rules; the
+    // shift amount `k` inherits the `Mul`'s output width via the shl root.
+    // Commutative, so the const matches on either side.
+    let rule_mul_pow2 = rewrite_rule(
+        mul(var(x), any_int_const().capture(c1)).when_match(move |edit, _ty, b| {
+            b.get_uint(c1, edit.function())
+                .is_some_and(|k| k >= 2 && k.is_power_of_two())
+        }),
+        template::shl(
+            var(x),
+            int_const_with!([c1: uint] => u128::from(c1.trailing_zeros())),
+        ),
+    );
+
+    // `udiv(x, 2^k) → shr(x, k)`  (LOGICAL right shift; k ≥ 1).  UNSIGNED only —
+    // signed `sdiv` by a power of two rounds toward zero (needs a bias
+    // correction), so it stays `Sdiv`.  `Div` is not commutative: the divisor is
+    // the right operand, which `div(var(x), const)` binds structurally.
+    let rule_udiv_pow2 = rewrite_rule(
+        div(var(x), any_int_const().capture(c1)).when_match(move |edit, _ty, b| {
+            b.get_uint(c1, edit.function())
+                .is_some_and(|k| k >= 2 && k.is_power_of_two())
+        }),
+        template::shr(
+            var(x),
+            int_const_with!([c1: uint] => u128::from(c1.trailing_zeros())),
+        ),
+    );
+
     let const_on_right_add = const_on_right!(add);
     let const_on_right_mul = const_on_right!(mul);
     let const_on_right_and = const_on_right!(and);
@@ -248,6 +281,8 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         rule_and_merge,
         rule_and_dist,
         rule_align_or_removal,
+        rule_mul_pow2,
+        rule_udiv_pow2,
         const_on_right_add,
         const_on_right_mul,
         const_on_right_and,

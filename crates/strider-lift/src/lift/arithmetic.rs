@@ -20,10 +20,7 @@
 //! handlers live in [`super::cast`] (they manipulate bit positions
 //! rather than computing arithmetic).
 
-use strider_ir::node::ValueId;
-use strider_ir::{
-    ExtendOp, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType, VnTypeExt,
-};
+use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType, VnTypeExt};
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
@@ -217,81 +214,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 self.builder.convert_to_int_if_needed(rhs, out_ty)?,
             ),
         };
-        // Strength-reduce `mul(x, 2^k)` (k ≥ 1) to `shl(x, k)` at construction,
-        // so a pattern query sees ONE canonical shape whether the compiler
-        // emitted an `imul` or a `shl` for the same scaling.  Sound for
-        // signed + unsigned in two's complement (both wrap mod 2^width).
-        let result = match op {
-            IntBinaryOp::Mul => self.build_mul_or_pow2_shift(lhs, rhs, out_ty)?,
-            IntBinaryOp::Div => self.build_udiv_or_pow2_shift(lhs, rhs, out_ty)?,
-            _ => self
-                .builder
-                .build_int_binary_operation(lhs, rhs, op, out_ty)?,
-        };
+        let result = self
+            .builder
+            .build_int_binary_operation(lhs, rhs, op, out_ty)?;
         self.write_vn(out_vn, result)
-    }
-
-    /// `udiv(x, 2^k)` with `k ≥ 1` → `ShiftRight(x, k)` (LOGICAL right shift);
-    /// any other unsigned divide is built verbatim.  Divide is NOT commutative,
-    /// so only the DIVISOR (`rhs`) is tested — and only the unsigned `Div`:
-    /// signed `Sdiv` by a power of two rounds toward zero and needs a bias
-    /// correction (`(x + (2^k - 1)) >> k` for negatives), so it stays `Sdiv`.
-    /// Divisor `1` (`div(x,1)→x`) stays `Div` for ConstantFold's identity.
-    fn build_udiv_or_pow2_shift(
-        &mut self,
-        lhs: ValueId,
-        rhs: ValueId,
-        out_ty: ValueType,
-    ) -> Result<ValueId> {
-        if let Some(k) = self.builder.int_const_u128(rhs)
-            && k >= 2
-            && k.is_power_of_two()
-        {
-            let amount = self
-                .builder
-                .build_int_const(u128::from(k.trailing_zeros()), out_ty)?;
-            return self.builder.build_int_binary_operation(
-                lhs,
-                amount,
-                IntBinaryOp::ShiftRight,
-                out_ty,
-            );
-        }
-        self.builder
-            .build_int_binary_operation(lhs, rhs, IntBinaryOp::Div, out_ty)
-    }
-
-    /// `mul(x, 2^k)` with `k ≥ 1` → `ShiftLeft(x, k)`; any other multiply is
-    /// built verbatim.  `Mul` is commutative, so the constant is accepted on
-    /// either side.  Multiplier `1` (`mul(x,1)→x`) and `0` (`mul(x,0)→0`) are
-    /// deliberately left as `Mul` for ConstantFold's identities — only true
-    /// scaling (`≥ 2`) becomes a shift.  A wider-than-`u128` constant does not
-    /// fit `int_const_u128`, so it also stays a `Mul` (acceptable — pow2
-    /// scaling constants are small).
-    fn build_mul_or_pow2_shift(
-        &mut self,
-        lhs: ValueId,
-        rhs: ValueId,
-        out_ty: ValueType,
-    ) -> Result<ValueId> {
-        for (konst, var) in [(rhs, lhs), (lhs, rhs)] {
-            let Some(k) = self.builder.int_const_u128(konst) else {
-                continue;
-            };
-            if k >= 2 && k.is_power_of_two() {
-                let amount = self
-                    .builder
-                    .build_int_const(u128::from(k.trailing_zeros()), out_ty)?;
-                return self.builder.build_int_binary_operation(
-                    var,
-                    amount,
-                    IntBinaryOp::ShiftLeft,
-                    out_ty,
-                );
-            }
-        }
-        self.builder
-            .build_int_binary_operation(lhs, rhs, IntBinaryOp::Mul, out_ty)
     }
 
     /// Translates a p-code integer comparison instruction into an IR
