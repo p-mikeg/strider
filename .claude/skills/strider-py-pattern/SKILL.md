@@ -313,7 +313,8 @@ hits = graph.find_all([guard, call], constraints=[p.reaches(t, c), p.not_reaches
   predecessor) and won't match through nested control between branch and merge.
   E.g. `find_all([if_else().capture_true(t), phi().capture(ph), any_int_const(v)],
   constraints=[phi_input_from_edge(ph, t, v)])` finds "the phi value on the true
-  branch".
+  branch". Also works for a `mem_phi()` — bind `value` to a memory token (e.g. a
+  `store().capture(sv)` output) to ask "the memory merged from THIS branch".
 
 Constraints range over **control nodes** (`Call`/`Store`/`Region`/`If`/…); a
 captured value resolves to its producer node. Prefer `capture_true`/`capture_false`

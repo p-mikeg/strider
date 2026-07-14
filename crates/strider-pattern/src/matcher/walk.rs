@@ -376,7 +376,9 @@ fn try_match_at(
 /// slot, control / memory edges) are rejected by the sub-pattern's own
 /// output-kind check, so no explicit kind filtering is needed here. Distinctness
 /// is by slot index, not value, so `any_input(1).any_input(1)` still matches a
-/// phi with two separate `1` predecessors.
+/// phi with two separate `1` predecessors. Honours `ignore_casts` like the
+/// fixed-slot [`match_inputs`] path: a predecessor that is a registered cast is
+/// retried unwrapped when the pattern's `cast_mask` permits.
 #[allow(clippy::too_many_arguments)]
 fn match_existential(
     matcher: &Matcher,
@@ -407,6 +409,37 @@ fn match_existential(
             edge.producer,
             producer_ir,
             Some(producer_value),
+            Some(edge.out_vertex),
+            bindings,
+            &mut |b| match_existential(matcher, pat, exts, ei + 1, values, &next_used, b, done),
+        ) {
+            return true;
+        }
+        bindings.restore(mark);
+
+        // Cast walk-through fallback, mirroring the fixed-slot `match_inputs`
+        // path so `any_input` honours `ignore_casts` like every other input:
+        // if this predecessor is a registered cast, retry the sub-pattern
+        // against the unwrapped value, journaling the skipped casts.
+        let cast_mask = pat.cast_mask;
+        if cast_mask.is_empty() {
+            continue;
+        }
+        let mut skipped = Vec::new();
+        let unwrapped = skip_casts(matcher, producer_value, cast_mask, &mut skipped);
+        if unwrapped == producer_value {
+            continue;
+        }
+        for &cast in &skipped {
+            bindings.record_matched(cast);
+        }
+        let unwrapped_ir = matcher.function().producer(unwrapped);
+        if try_match_at(
+            matcher,
+            pat,
+            edge.producer,
+            unwrapped_ir,
+            Some(unwrapped),
             Some(edge.out_vertex),
             bindings,
             &mut |b| match_existential(matcher, pat, exts, ei + 1, values, &next_used, b, done),

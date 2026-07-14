@@ -9,11 +9,11 @@
 )]
 
 use strider_ir::node::ValueType;
-use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
+use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    Capture, CaptureExt, MatchPat, Matcher, add, any, any_int_const, call, call_other, if_node,
-    indirect_branch, int_const, load, mem_phi, phi, ret, switch, unreachable, var,
+    CastMask, Capture, CaptureExt, MatchPat, Matcher, add, any, any_int_const, call, call_other,
+    if_node, indirect_branch, int_const, load, mem_phi, phi, ret, switch, unreachable, var,
 };
 
 // ── Call ──────────────────────────────────────────────────────────────────────
@@ -750,6 +750,77 @@ fn phi_nests_as_a_value_operand() {
     assert!(
         hits[0].node(c, function.graph()).is_some(),
         "captured phi binds out"
+    );
+}
+
+/// A two-input phi whose every data input is a `ZeroExtend` of an I32 `Load`
+/// from a constant address.  The `Load` is a real interior node carried by no
+/// per-region trivial phi, so `any_input(load())` is a clean cast-walk-through
+/// discriminator (a bare `InitialVar` would be shadowed by the trivial
+/// single-predecessor phis the builder emits for each tracked-var read).
+fn phi_over_casts_of_load() -> strider_ir::Function {
+    let phi_reg = strider_ir_test_utils::reg_vn(0x10, 8); // I64 phi'd var
+    let mut b = RegisterSet::new().tracked(phi_reg).build_fn().unwrap();
+
+    let entry = b.create_region_all().unwrap();
+    let region_t = b.create_region_all().unwrap();
+    let region_f = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
+
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, region_t, region_f).unwrap();
+
+    for region in [region_t, region_f] {
+        b.set_region(region);
+        let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+        let loaded = b
+            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
+            .unwrap();
+        let z = b
+            .extend_if_needed(loaded, ValueType::I64, ExtendOp::ZeroExtend)
+            .unwrap();
+        b.write_variable(&phi_reg, z).unwrap();
+        b.build_branch(join).unwrap();
+    }
+
+    b.set_region(join);
+    let phi_val = b.read_variable(&phi_reg).unwrap();
+    b.build_return(Some(phi_val), &[]).unwrap();
+    b.set_lift_addr(None);
+    b.build().unwrap()
+}
+
+#[test]
+fn phi_any_input_honours_ignore_casts() {
+    let function = phi_over_casts_of_load();
+    let matcher = Matcher::new(&function);
+    // Every phi data input is an I64 `ZeroExtend`; the `Load` sits one cast
+    // down.  Without walk-through, `any_input(load())` finds nothing.
+    assert_eq!(
+        matcher
+            .find_all(&phi().any_input(load()).build())
+            .unwrap()
+            .len(),
+        0,
+        "any_input must not reach through a cast by default",
+    );
+    // With `ignore_casts`, the extend is skipped and the `Load` matches — the
+    // same walk-through the fixed-slot inputs already honour.
+    assert_eq!(
+        matcher
+            .find_all(
+                &phi()
+                    .any_input(load())
+                    .build()
+                    .ignore_casts_mask(CastMask::EXTEND)
+            )
+            .unwrap()
+            .len(),
+        1,
+        "any_input honours ignore_casts like fixed-slot inputs",
     );
 }
 

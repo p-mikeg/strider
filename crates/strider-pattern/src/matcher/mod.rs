@@ -455,14 +455,16 @@ pub enum JoinConstraint {
     /// true block" without a paired `not_reaches`. `branch` must bind a
     /// control-output value; an ill-typed `branch` or an absent node fails it.
     DominatedByBranch { branch: crate::Capture, node: crate::Capture },
-    /// The `Phi` bound to `phi` merges, on the predecessor whose owning
+    /// The `Phi`/`MemPhi` bound to `phi` merges, on the predecessor whose owning
     /// `Region` control input equals the branch edge `edge`, the value bound to
     /// `value`.  Ties a phi's per-branch data input to the control edge that
     /// leads into that predecessor, so a pattern can say "the value merged from
-    /// THIS branch is X" without a slot index.  Direct-edge: `edge` must be a
-    /// *literal* control input of the phi's region (the converged/collapsed IR
-    /// makes an `If`'s true/false output the join region's direct predecessor).
-    /// `edge` must bind a control-output value; `phi` / `value` bind values.
+    /// THIS branch is X" without a slot index.  Works for a value `Phi` (`value`
+    /// binds the merged value) and a `MemPhi` (`value` binds the merged memory
+    /// token).  Direct-edge: `edge` must be a *literal* control input of the
+    /// phi's region (the converged/collapsed IR makes an `If`'s true/false
+    /// output the join region's direct predecessor).  `edge` must bind a
+    /// control-output value; `phi` / `value` bind values.
     PhiInputFromEdge {
         phi: crate::Capture,
         edge: crate::Capture,
@@ -572,17 +574,18 @@ impl<'f> ConstraintEval<'f> {
         }
     }
 
-    /// The `Phi` producing `phi_v` merges `val_v` on the predecessor whose
-    /// owning `Region` control input is exactly `edge_v` (direct-edge).
+    /// The `Phi`/`MemPhi` producing `phi_v` merges `val_v` on the predecessor
+    /// whose owning `Region` control input is exactly `edge_v` (direct-edge).
     ///
-    /// Slot alignment: a `Phi`'s inputs are `[PhiToken, v0, v1, …]` — data
-    /// input `i+1` is predecessor `i`'s value — and its owning `Region` (the
-    /// `PhiToken`'s producer) has control input `i` for predecessor `i`.  So the
-    /// region slot matching `edge_v` maps to the phi input one slot over.
+    /// Slot alignment: a `Phi`/`MemPhi`'s inputs are `[PhiToken, v0, v1, …]` —
+    /// data input `i+1` is predecessor `i`'s value (a `Memory` token for
+    /// `MemPhi`) — and its owning `Region` (the `PhiToken`'s producer) has
+    /// control input `i` for predecessor `i`.  So the region slot matching
+    /// `edge_v` maps to the phi input one slot over.
     fn phi_input_from_edge(&self, phi_v: ValueId, edge_v: ValueId, val_v: ValueId) -> bool {
         let f = self.function;
         let phi_node = f.producer(phi_v);
-        if !matches!(f.node_kind(phi_node), NodeKind::Phi) {
+        if !matches!(f.node_kind(phi_node), NodeKind::Phi | NodeKind::MemPhi) {
             return false;
         }
         let inputs: Vec<ValueId> = f.node_inputs(phi_node).into_iter().collect();
