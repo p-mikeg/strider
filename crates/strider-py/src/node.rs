@@ -158,6 +158,14 @@ op_name_accessors! {
 
 #[pymethods]
 impl PyNode {
+    /// Expose the strong `Py<PyFunction>` back-reference to Python's cyclic
+    /// GC so a cycle routed through a `Node` is detectable (broken at the
+    /// reader's `__dict__` / `PyLifter::__clear__`; the `function` handle is
+    /// load-bearing while the `Node` is alive, so no `__clear__` here).
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        visit.call(&self.function)
+    }
+
     /// The raw `u32` arena index of this node.  Stable for the lifetime
     /// of the function unless an arena-reshuffling op (`compact`,
     /// `optimize`) runs, which invalidates outstanding ids.

@@ -126,6 +126,14 @@ fn write_to(path: &str, contents: String) -> PyResult<()> {
 
 #[pymethods]
 impl PyFunction {
+    /// Expose the strong `Py<PyCfg>` back-reference to Python's cyclic GC
+    /// so a cycle routed through a `Function` is detectable (broken at the
+    /// reader's `__dict__` / `PyLifter::__clear__`; the `cfg` handle is
+    /// load-bearing while the `Function` is alive, so no `__clear__` here).
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        visit.call(&self.cfg)
+    }
+
     /// The snapshot `Cfg` this function was lifted from — kept alive for
     /// dot rendering (its `Sleigh` resolves register names).  Combine
     /// with `Lifter.dump_html(function, path)` (or the `Cfg`'s own

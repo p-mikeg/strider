@@ -29,6 +29,7 @@ fn run_orchestrator_on(
         panic!("missing test binary {path:?}; run `make -C fixtures`");
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.file();
     let sleigh_arch = arch.sleigh();
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)

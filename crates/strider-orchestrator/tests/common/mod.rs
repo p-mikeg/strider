@@ -320,6 +320,7 @@ pub(crate) fn lift_for_pipeline(
     }
     let obj = strider_reader::load_elf(&path)
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
+    let obj = obj.file();
     let sleigh_arch = arch.sleigh();
     // The driver OWNS the Sleigh built from the ELF memory reader and
     // builds the CFG itself.

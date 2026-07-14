@@ -154,6 +154,15 @@ enum CfgDotResult {
 
 #[pymethods]
 impl PyCfg {
+    /// Expose the strong `Py<PyLifter>` back-reference to Python's cyclic
+    /// GC so a cycle routed through a `Cfg` (and on to the Lifter's Python
+    /// reader) is detectable.  The cycle is broken at the reader's `__dict__`
+    /// or `PyLifter::__clear__`, so this class needs no `__clear__` of its
+    /// own (the `lifter` handle is load-bearing while the `Cfg` is alive).
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        visit.call(&self.lifter)
+    }
+
     /// Render the CFG to a standalone HTML file at `path`.  `style`
     /// selects the dot theme (default `"dark_cfg"`).
     #[pyo3(signature = (path, style=None))]

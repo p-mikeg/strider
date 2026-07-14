@@ -22,6 +22,7 @@ fn load_elf_parses_valid_tempfile() {
     f.flush().unwrap();
 
     let obj = strider_reader::load_elf(f.path()).unwrap();
+    let obj = obj.file();
     assert_eq!(obj.endianness(), Endianness::Little);
 
     // `.text` is present at 0x1000.

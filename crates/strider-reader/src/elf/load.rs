@@ -1,8 +1,7 @@
 //! Top-level convenience entries:
 //!
-//! - [`load_elf`] — read + parse an ELF from disk into a
-//!   `'static`-lifetime [`object::File`] (intentionally leaks the
-//!   backing bytes; suitable for tests and short-lived CLI tools).
+//! - [`load_elf`] — read + parse an ELF from disk into an [`OwnedElf`]
+//!   that owns its backing bytes and frees them on drop (no leak).
 //! - [`elf_load_with_relocations`] — load every allocatable file-backed
 //!   section and apply dynamic relocations in one call, returning the
 //!   patched regions.
@@ -94,18 +93,68 @@ pub fn elf_load_readonly_with_relocations(obj: &object::File<'_>) -> Result<Vec<
 ///
 /// Returns an error if the file cannot be read from disk or if
 /// the bytes fail to parse as a valid ELF.
-pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<object::File<'static>> {
+pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<OwnedElf> {
     let data = std::fs::read(path).context("failed to read file")?;
-    // Validate the parse on a borrowed view BEFORE leaking. If the bytes
-    // don't parse as ELF, we drop `data` normally instead of leaking it
-    // onto the heap forever for nothing — the leak only pays for itself
-    // when we actually return an `object::File<'static>`.
-    object::File::parse(&data[..]).context("failed to parse ELF")?;
-    let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());
-    // Re-parse the (now `'static`) bytes.  The first parse above already
-    // validated these exact bytes, so this parse is expected to succeed;
-    // we still propagate via `?` rather than `expect`/`unwrap` (forbidden
-    // in this crate) so any unforeseen non-determinism surfaces as a
-    // normal `Err` instead of a panic.
-    object::File::parse(leaked).context("failed to parse ELF")
+    OwnedElf::parse(data)
+}
+
+/// An owned, parsed ELF: the backing file bytes and the [`object::File`]
+/// view over them are stored together and **freed together** when the
+/// `OwnedElf` drops.
+///
+/// This replaces the historical `Box::leak` loader, which fabricated a
+/// `'static` `object::File` by leaking the whole file — fine for a
+/// short-lived CLI, but an unbounded per-call leak in a long-lived process
+/// (the strider-py `load_elf` / `_LoadedElf` path).  Access the parsed file
+/// through [`file`](Self::file); the borrow is reborrowed to `&self`, so no
+/// view can outlive the bytes it reads.
+pub struct OwnedElf {
+    // DROP ORDER IS LOAD-BEARING: `file` borrows from `*backing`.  Struct
+    // fields drop in declaration order, so `file` (a borrowed view) is
+    // destroyed BEFORE `backing` frees the bytes — no dangling borrow exists.
+    file: object::File<'static>,
+    // Heap-stable backing store.  A `Box<[u8]>`'s heap allocation address is
+    // fixed for its lifetime and does NOT move when the `OwnedElf` moves, so
+    // the borrow `file` holds into it stays valid across moves of `Self`.
+    // Its value is otherwise touched only to own the bytes and free them on
+    // drop (and to report its length in `Debug`).
+    backing: Box<[u8]>,
+}
+
+impl std::fmt::Debug for OwnedElf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never dump the backing bytes (an ELF can be hundreds of MB).
+        f.debug_struct("OwnedElf")
+            .field("backing_len", &self.backing.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl OwnedElf {
+    /// Parse owned `bytes` into an `OwnedElf`.  On a parse error the bytes
+    /// are dropped normally (no allocation retained).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `bytes` do not parse as a valid ELF.
+    pub fn parse(bytes: Vec<u8>) -> Result<Self> {
+        let backing = bytes.into_boxed_slice();
+        // SAFETY: we extend the borrow to `'static` only to store the
+        // `object::File` alongside the `backing` it reads from.  Sound
+        // because (1) `file` is declared before `backing`, so it is dropped
+        // first and never outlives the bytes; (2) `backing`'s heap data is
+        // address-stable across moves of `Self`.  The `'static` never
+        // escapes: `file()` hands it out reborrowed to `&self`.
+        let static_bytes: &'static [u8] =
+            unsafe { std::mem::transmute::<&[u8], &'static [u8]>(&backing[..]) };
+        let file = object::File::parse(static_bytes).context("failed to parse ELF")?;
+        Ok(Self { file, backing })
+    }
+
+    /// The parsed ELF, borrowed for no longer than `self` — so views it
+    /// yields (symbols, sections, …) cannot escape past the backing bytes.
+    #[inline]
+    pub fn file(&self) -> &object::File<'_> {
+        &self.file
+    }
 }

@@ -177,7 +177,7 @@ pub(crate) enum ElfRegionSource {
 /// requested.  Shared by `load_elf_from_segments` /
 /// `load_elf_from_sections` and `_LoadedElf::add_elf`.
 fn elf_to_mem_regions(
-    obj: &object::File<'static>,
+    obj: &object::File<'_>,
     source: ElfRegionSource,
     apply_relocations: bool,
 ) -> PyResult<Vec<MemRegion>> {
@@ -219,7 +219,7 @@ fn elf_to_mem_regions(
 /// regions: relocations targeting absent writable sections are skipped,
 /// relocations into `.rodata` are applied.
 fn elf_to_rom_regions(
-    obj: &object::File<'static>,
+    obj: &object::File<'_>,
     source: ElfRegionSource,
     apply_relocations: bool,
 ) -> PyResult<Vec<MemRegion>> {
@@ -261,9 +261,10 @@ fn elf_to_rom_regions(
 #[pyclass(name = "_LoadedElf", module = "strider", unsendable)]
 pub struct PyLoadedElf {
     /// Loaded ELF objects, in `load_elf` / `add_elf` insertion order.
-    /// `object::File<'static>` borrows from a leaked byte slice (see
-    /// `strider_reader::load_elf`), so storing it here is sound.
-    elfs: Vec<object::File<'static>>,
+    /// Each [`strider_reader::OwnedElf`] owns its backing bytes and frees
+    /// them on drop, so a `_LoadedElf` reclaims all its memory when the
+    /// Python object is collected (no leak).
+    elfs: Vec<strider_reader::OwnedElf>,
     /// Instruction-fetch / raw-read reader assembled from the ELF
     /// sections (writable sections included when relocations are
     /// applied).  Handed to `strider.lifter(arch, mem=…)` via `reader()`.
@@ -316,7 +317,7 @@ impl PyLoadedElf {
             // back to any match so pure-data names still resolve for
             // `symbol()` / `read()`.
             let mut fallback: Option<object::Symbol<'_, '_>> = None;
-            for sym in obj.symbols() {
+            for sym in obj.file().symbols() {
                 let Ok(sym_name) = sym.name() else { continue };
                 if sym_name != name {
                     continue;
@@ -394,7 +395,7 @@ impl PyLoadedElf {
     fn symbols(&self) -> HashMap<String, u64> {
         let mut out: HashMap<String, u64> = HashMap::new();
         for obj in self.elfs.iter() {
-            for sym in obj.symbols() {
+            for sym in obj.file().symbols() {
                 let Ok(name) = sym.name() else { continue };
                 if name.is_empty() || sym.address() == 0 {
                     continue;
@@ -409,7 +410,7 @@ impl PyLoadedElf {
     fn entry_point(&self) -> u64 {
         // `load_elf` always pushes at least one ELF before handing back
         // a `_LoadedElf`, so `first()` is always `Some`.
-        self.elfs.first().map_or(0, |o| o.entry())
+        self.elfs.first().map_or(0, |o| o.file().entry())
     }
 
     /// Read up to `size` raw bytes starting at `addr` from the loaded
@@ -433,8 +434,8 @@ impl PyLoadedElf {
     #[pyo3(signature = (path, apply_relocations=false))]
     fn add_elf(&mut self, path: &str, apply_relocations: bool) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-        let mem_regions = elf_to_mem_regions(&obj, self.source, apply_relocations)?;
-        let rom_regions = elf_to_rom_regions(&obj, self.source, apply_relocations)?;
+        let mem_regions = elf_to_mem_regions(obj.file(), self.source, apply_relocations)?;
+        let rom_regions = elf_to_rom_regions(obj.file(), self.source, apply_relocations)?;
         invalidate_and_extend(&self.mem, mem_regions);
         invalidate_and_extend(&self.rom, rom_regions);
         self.elfs.push(obj);
@@ -451,8 +452,8 @@ fn load_elf_impl(
     apply_relocations: bool,
 ) -> PyResult<PyLoadedElf> {
     let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-    let mem = PyBufferReader::from_regions(elf_to_mem_regions(&obj, source, apply_relocations)?);
-    let rom = PyBufferReader::from_regions(elf_to_rom_regions(&obj, source, apply_relocations)?);
+    let mem = PyBufferReader::from_regions(elf_to_mem_regions(obj.file(), source, apply_relocations)?);
+    let rom = PyBufferReader::from_regions(elf_to_rom_regions(obj.file(), source, apply_relocations)?);
     Ok(PyLoadedElf {
         elfs: vec![obj],
         mem,
@@ -586,26 +587,20 @@ where
     }
 }
 
-/// Internal adapter: holds a `Py<PyAny>` (the user's Python subclass)
-/// and implements `rsleigh::MemReader` by `Python::with_gil` per call.
+/// Internal adapter: holds the user's Python reader object and implements
+/// `rsleigh::MemReader` by `Python::with_gil` per call.
+///
+/// The `Py<PyAny>` is held behind an `Arc` so a `Lifter` can share the
+/// SAME `Py<>` for cyclic-GC traversal (see `PyLifter::__traverse__`):
+/// there is exactly one `Py<PyAny>` per Python reader, so the reader's
+/// Python refcount rises by one — not once per adapter clone — and the
+/// Lifter's `__traverse__` visiting that shared reference zeroes the GC's
+/// accounting so a `reader ↔ lifter` cycle is collectable.  `Arc` (not
+/// `Rc`) keeps the adapter `Send + Sync`, matching `PyBufferReaderView`'s
+/// `Arc` and the `Sleigh<R>: Send` contract.
+#[derive(Clone)]
 pub struct PyMemReaderAdapter {
-    pub py_obj: Py<PyAny>,
-}
-
-/// Manual (not `#[derive]`) `Clone`: `Py<T>: Clone` requires the
-/// `py-clone` pyo3 feature (not enabled here), so cloning the
-/// underlying `Py<PyAny>` needs a `Python::with_gil` (the same pattern
-/// this struct's own `MemReader::read` impl below already uses).  This
-/// is what makes `AnyMemReader: Clone`, which in turn lets
-/// `rsleigh::Sleigh<AnyMemReader>: Clone` mint a fresh, independent
-/// Sleigh context (fresh underlying engine state, cloned reader) — see
-/// `PyLifter::pcode_at`'s throwaway-Sleigh build.
-impl Clone for PyMemReaderAdapter {
-    fn clone(&self) -> Self {
-        Python::with_gil(|py| Self {
-            py_obj: self.py_obj.clone_ref(py),
-        })
-    }
+    pub py_obj: std::sync::Arc<Py<PyAny>>,
 }
 
 impl rsleigh::MemReader for PyMemReaderAdapter {
@@ -685,9 +680,12 @@ impl PyReadOnlyMemory {
     }
 }
 
-/// Internal adapter wrapping a Python `ReadOnlyMemory` subclass.
+/// Internal adapter wrapping a Python `ReadOnlyMemory` subclass.  Holds the
+/// `Py<PyAny>` behind an `Arc` for the same cyclic-GC-traversal reason as
+/// [`PyMemReaderAdapter`] (the `Lifter` shares the one `Py<>` so a
+/// `rom ↔ lifter` cycle is collectable).
 pub struct PyReadOnlyMemoryAdapter {
-    pub py_obj: Py<PyAny>,
+    pub py_obj: std::sync::Arc<Py<PyAny>>,
 }
 
 impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
@@ -812,7 +810,7 @@ impl ReadOnlyMemory for PyBufferReaderView {
 ///   `AnyMemReader` (used to build a `Sleigh`).
 pub enum MemInput {
     Buffer(PyBufferReader),
-    Cb(Py<PyAny>),
+    Cb(std::sync::Arc<Py<PyAny>>),
 }
 
 impl<'py> FromPyObject<'py> for MemInput {
@@ -821,11 +819,27 @@ impl<'py> FromPyObject<'py> for MemInput {
             return Ok(MemInput::Buffer(m));
         }
         if ob.hasattr("read")? {
-            return Ok(MemInput::Cb(ob.clone().unbind()));
+            return Ok(MemInput::Cb(std::sync::Arc::new(ob.clone().unbind())));
         }
         Err(pyo3::exceptions::PyTypeError::new_err(
             "expected a BufferReader or an object with a `read(...)` method",
         ))
+    }
+}
+
+impl MemInput {
+    /// The Python callback object backing this input, if it is a Python
+    /// `read()`-callback reader (not the owned-data `BufferReader` path).
+    ///
+    /// Returns a clone of the SHARED `Arc<Py<PyAny>>` — the exact same
+    /// `Py<>` the Sleigh's / rom's adapter will hold — so a `Lifter` can
+    /// register it for cyclic-GC traversal without inflating the Python
+    /// object's refcount past one.
+    pub fn py_callback(&self) -> Option<std::sync::Arc<Py<PyAny>>> {
+        match self {
+            MemInput::Cb(obj) => Some(std::sync::Arc::clone(obj)),
+            MemInput::Buffer(_) => None,
+        }
     }
 }
 

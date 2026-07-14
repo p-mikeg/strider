@@ -39,7 +39,7 @@ pub mod reader;
 pub mod relocations;
 pub mod sections;
 
-pub use load::{elf_load_readonly_with_relocations, elf_load_with_relocations, load_elf};
+pub use load::{OwnedElf, elf_load_readonly_with_relocations, elf_load_with_relocations, load_elf};
 pub use reader::ElfFileMemReader;
 pub use relocations::{apply_elf_relocations, apply_elf_relocations_autoload};
 pub use sections::{

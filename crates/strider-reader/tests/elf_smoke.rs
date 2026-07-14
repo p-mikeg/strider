@@ -40,6 +40,7 @@ fn assert_smoke(arch: &str) {
 
     // load_elf round-trip
     let obj = strider_reader::load_elf(&path).unwrap();
+    let obj = obj.file();
     assert_eq!(
         obj.endianness(),
         object::Endianness::Little,

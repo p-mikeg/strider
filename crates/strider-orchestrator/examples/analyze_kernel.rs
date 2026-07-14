@@ -15,6 +15,7 @@ const SYMBOL: &str = "x86emu_exec";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let obj = strider_reader::load_elf(KERNEL)?;
+    let obj = obj.file();
     let mem_reader = strider_reader::ElfFileMemReader::from_object(&obj)?;
     let rom = strider_reader::ElfFileMemReader::from_object(&obj)?;
 

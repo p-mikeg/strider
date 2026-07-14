@@ -198,6 +198,31 @@ pub struct PyLifter {
     /// `Cfg` (no separate snapshot rebuild is needed — it already matches
     /// the returned `Function` exactly).
     inner: strider_orchestrator::Strider<AnyMemReader>,
+    /// Shared handles to the Python `read()`-callback objects (mem reader
+    /// and/or rom) this handle's Sleigh / rom hold internally via Rust
+    /// adapters.  Each is the SAME `Arc<Py<PyAny>>` the adapter holds, so
+    /// the Python object's refcount is one — and `__traverse__` visiting
+    /// these makes the otherwise-buried `lifter → reader` edge visible to
+    /// Python's cyclic GC, so a `reader ↔ lifter` cycle is collectable
+    /// instead of leaking.  Empty for the owned-data `BufferReader` / ELF
+    /// path (no `Py<>` reaches the Sleigh).
+    py_deps: Vec<std::sync::Arc<Py<PyAny>>>,
+}
+
+/// The Python callback objects (mem, then rom) backing a build, shared
+/// with the Sleigh / rom adapters for cyclic-GC traversal.
+fn collect_py_deps(
+    mem: &MemInput,
+    rom: Option<&MemInput>,
+) -> Vec<std::sync::Arc<Py<PyAny>>> {
+    let mut deps = Vec::new();
+    if let Some(o) = mem.py_callback() {
+        deps.push(o);
+    }
+    if let Some(o) = rom.and_then(MemInput::py_callback) {
+        deps.push(o);
+    }
+    deps
 }
 
 impl PyLifter {
@@ -278,9 +303,26 @@ impl PyLifter {
     #[new]
     #[pyo3(signature = (arch, mem, rom = None))]
     fn new(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<Self> {
+        let py_deps = collect_py_deps(&mem, rom.as_ref());
         Ok(PyLifter {
             inner: build_strider(arch, mem, rom)?,
+            py_deps,
         })
+    }
+
+    /// Expose the buried Python reader / rom callbacks to Python's cyclic
+    /// GC.  Without this, a cycle from a user's `read()`-callback object
+    /// back to the `Lifter` (the object the Sleigh holds internally) is
+    /// invisible to the collector and leaks.
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        for dep in &self.py_deps {
+            visit.call(&**dep)?;
+        }
+        Ok(())
+    }
+
+    fn __clear__(&mut self) {
+        self.py_deps.clear();
     }
 
     /// Replace this handle's inner orchestrator state in place — the
@@ -318,7 +360,9 @@ impl PyLifter {
         mem: MemInput,
         rom: Option<MemInput>,
     ) -> PyResult<()> {
+        let py_deps = collect_py_deps(&mem, rom.as_ref());
         self.inner = build_strider(arch, mem, rom)?;
+        self.py_deps = py_deps;
         Ok(())
     }
 
@@ -713,8 +757,10 @@ impl PyLifter {
 #[pyfunction]
 #[pyo3(name = "lifter", signature = (arch, mem, rom = None))]
 pub fn lifter(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<PyLifter> {
+    let py_deps = collect_py_deps(&mem, rom.as_ref());
     Ok(PyLifter {
         inner: build_strider(arch, mem, rom)?,
+        py_deps,
     })
 }
 
