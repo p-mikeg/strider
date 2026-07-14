@@ -1177,11 +1177,87 @@ fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
         })
         .map(|(fg, _, ())| fg)?;
 
-    let r = crate::pipeline::run_one(
+    crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
         &mut crate::OptCtx::new(None),
     )?;
-    assert!(!r.changed(), "a wrong offset must not be canonicalized");
+    // The wrong-offset LS tree must NOT collapse to a single comparison — the
+    // `sub_relation` guard rejects it, so the cond stays an `Or`.  (The inner
+    // `Equal(Add(b,C2),0)` is separately canonicalized to `Equal(b,-C2)` by the
+    // compare-with-const rule — a value-preserving reshape, not the LS fold —
+    // so a blanket "nothing changed" no longer holds; assert the idiom itself
+    // survived instead.)
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If node");
+    let cond_node = fg.producer(fg.if_cond(if_node));
+    assert!(
+        matches!(fg.node_kind(cond_node), NodeKind::IntBinaryOp(IntBinaryOp::Or)),
+        "wrong-offset LS tree must NOT fold to a single comparison; got {:?}",
+        fg.node_kind(cond_node)
+    );
+    Ok(())
+}
+
+/// `Equal(Add(x, C1), C2) → Equal(x, C2 - C1)` — the comparison-with-const
+/// canonicalization.  Uses a `Load` as the variable `x`.  Verifies the fold
+/// fires, the operand is `x`, and the fresh const has the OPERAND width (I32),
+/// not the `Equal` root's `I1` output width (the `of_input_type` path).
+#[test]
+fn eq_add_const_solves_for_x() -> Result<()> {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let c3 = b.build_int_const(3u64, ty)?;
+    let c4 = b.build_int_const(4u64, ty)?;
+    let add = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, ty)?;
+    let eq = b.build_int_cmp_operation(add, c4, IntCmpOp::Equal, ty)?;
+    b.build_if(eq, dispatch, exit)?;
+    b.set_region(dispatch);
+    b.build_return(Some(x), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(x), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If node");
+    let cond = fg.if_cond(if_node);
+    let cond_node = fg.producer(cond);
+    assert!(
+        matches!(fg.node_kind(cond_node), NodeKind::IntCmpOp(IntCmpOp::Equal)),
+        "cond must stay an Equal, got {:?}",
+        fg.node_kind(cond_node)
+    );
+    let inputs = fg.node_inputs(cond_node);
+    let (l, r) = (inputs[0], inputs[1]);
+    // One operand is x; the other is IntConst(1) at operand width I32.
+    let const_is_one_i32 = |o: ValueId| {
+        matches!(fg.kind_of_value(o), NodeKind::IntConst(_))
+            && fg.int_const_u128(o) == Some(1)
+            && fg.value_type_opt(o) == Some(ValueType::I32)
+    };
+    let ok = (l == x && const_is_one_i32(r)) || (r == x && const_is_one_i32(l));
+    assert!(
+        ok,
+        "expected Equal(x, IntConst(1):I32); got lhs={:?}, rhs={:?}",
+        fg.kind_of_value(l),
+        fg.kind_of_value(r)
+    );
+    strider_ir::validate::validate(&fg)?;
     Ok(())
 }

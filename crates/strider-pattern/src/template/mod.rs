@@ -84,6 +84,11 @@ pub enum TemplateTy {
     /// Inherit the rewrite root's output type (resolved at
     /// instantiation time).
     InheritRoot,
+    /// Inherit the rewrite root's *first value input* type.  Needed when a
+    /// materialised operand must take the operand width, not the root's
+    /// output width — e.g. a comparison root (`I1` output) whose fresh
+    /// constant operand must match the compared values' width.
+    InheritInput,
     /// A fixed output type, independent of the root.
     Fixed(ValueType),
 }
@@ -140,6 +145,21 @@ pub fn instantiate<B: IRBuilder>(
     let root = template.root()?;
     let order = reachable_topo(&template.graph, root)?;
 
+    // The rewrite root's first value-input type, for `TemplateTy::InheritInput`
+    // nodes (a materialised operand whose width must match the root's operands
+    // rather than its output — e.g. a comparison root's `I1` output vs its
+    // wider operands).  Falls back to `root_ty` when there is no typed input.
+    let root_in_ty = builder
+        .function()
+        .node_inputs(lhs_root)
+        .into_iter()
+        .next()
+        .and_then(|inp| match builder.function().value_kind(inp) {
+            ValueKind::Typed(t) => Some(t),
+            _ => None,
+        })
+        .unwrap_or(root_ty);
+
     // Map from a template *output vertex* (a generic-graph ValueId) → its
     // materialised IR ValueId. Keying on the output vertex (not the producer
     // node) lets a multi-output interior node feed the right slot to each
@@ -182,7 +202,7 @@ pub fn instantiate<B: IRBuilder>(
                 // the rewrite root for `InheritRoot`), read from the node's
                 // value output vertex. Exposed to the dynamic closure as
                 // the `root_ty` it computes its constant against.
-                let value_ty = node_value_ty(template, vtx, root_ty);
+                let value_ty = node_value_ty(template, vtx, root_ty, root_in_ty);
                 let ctx = TemplateCtx {
                     function: builder.function(),
                     bindings,
@@ -194,7 +214,7 @@ pub fn instantiate<B: IRBuilder>(
             TmplNodeKind::Build(TemplateKind::FnIntConst(f)) => {
                 // Compute the u128 value via the closure, then intern it
                 // (see `intern_fn_int_const` for the per-width interning).
-                let value_ty = node_value_ty(template, vtx, root_ty);
+                let value_ty = node_value_ty(template, vtx, root_ty, root_in_ty);
                 let ctx = TemplateCtx {
                     function: builder.function(),
                     bindings,
@@ -213,7 +233,7 @@ pub fn instantiate<B: IRBuilder>(
         // multi-output node (e.g. a `Store` declaring a memory output a
         // later node consumes) declares that signature instead. Each value
         // output resolves its own [`TemplateTy`] against the rewrite root.
-        let outputs = output_kinds_for(template, vtx, root_ty);
+        let outputs = output_kinds_for(template, vtx, root_ty, root_in_ty);
 
         let node = builder.create_node_attributed(kind, inputs, outputs, proof_nodes);
 
@@ -249,10 +269,11 @@ pub fn instantiate<B: IRBuilder>(
 }
 
 /// Resolve a build [`TemplateTy`] against the rewrite root's output type.
-fn resolve_ty(ty: TemplateTy, root_ty: ValueType) -> ValueType {
+fn resolve_ty(ty: TemplateTy, root_ty: ValueType, root_in_ty: ValueType) -> ValueType {
     match ty {
         TemplateTy::Fixed(t) => t,
         TemplateTy::InheritRoot => root_ty,
+        TemplateTy::InheritInput => root_in_ty,
     }
 }
 
@@ -316,7 +337,7 @@ fn collect_inputs(
 /// [`TemplateTy`]) into the concrete IR [`ValueKind`], against `root_ty`.
 /// Single source of truth for the `OutputKindSpec → ValueKind` mapping
 /// shared by [`node_value_ty`] and [`output_kinds_for`].
-fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType) -> ValueKind {
+fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType, root_in_ty: ValueType) -> ValueKind {
     match o.kind {
         OutputKindSpec::Memory => ValueKind::Memory,
         OutputKindSpec::Control => ValueKind::Control,
@@ -325,7 +346,7 @@ fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType) -> ValueKind {
         // unconstrained `Any` wildcard is a match-only kind (no template
         // builder emits it); resolve it defensively.
         OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
-            ValueKind::Typed(resolve_ty(o.ty, root_ty))
+            ValueKind::Typed(resolve_ty(o.ty, root_ty, root_in_ty))
         }
     }
 }
@@ -334,7 +355,7 @@ fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType) -> ValueKind {
 /// [`TemplateTy`] of its first value output vertex, resolved against
 /// `root_ty`. Falls back to `root_ty` when the node has no value output
 /// vertex (the dynamic-`Fn` `root_ty` for such a node is then the root's).
-fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> ValueType {
+fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType, root_in_ty: ValueType) -> ValueType {
     template
         .graph
         .produced_outputs(node_vtx)
@@ -344,7 +365,7 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> V
             let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
                 return None;
             };
-            match resolved_output_kind(o, root_ty) {
+            match resolved_output_kind(o, root_ty, root_in_ty) {
                 ValueKind::Typed(t) => Some(t),
                 _ => None,
             }
@@ -357,11 +378,11 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> V
 /// [`TemplateTy`] against `root_ty`. Falls back to a single value output
 /// of the root's type when the node has no explicit output vertex (the
 /// common value-expression case).
-fn output_kinds_for(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> Vec<ValueKind> {
+fn output_kinds_for(template: &Template, node_vtx: NodeId, root_ty: ValueType, root_in_ty: ValueType) -> Vec<ValueKind> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.produced_outputs(node_vtx).iter().copied() {
         if let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) {
-            by_slot.insert(o.slot, resolved_output_kind(o, root_ty));
+            by_slot.insert(o.slot, resolved_output_kind(o, root_ty, root_in_ty));
         }
     }
     if by_slot.is_empty() {

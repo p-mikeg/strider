@@ -340,6 +340,18 @@ pub struct ConstWith {
     ty: TemplateTy,
 }
 
+impl ConstWith {
+    /// Types the materialised const from the rewrite root's *first value
+    /// input* instead of its output.  Use on a rule whose root's output
+    /// width differs from its operand width — e.g. `eq(add(x, C1), C2) →
+    /// eq(x, C2 - C1)`, where the fresh `C2 - C1` const must take the
+    /// operand width (`x`'s), not the comparison's `I1` output width.
+    pub fn of_input_type(mut self) -> Self {
+        self.ty = TemplateTy::InheritInput;
+        self
+    }
+}
+
 impl TemplatePat for ConstWith {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // Materialise a leaf whose kind is computed at instantiation.
@@ -349,9 +361,11 @@ impl TemplatePat for ConstWith {
         let o = b.leaf(KindSpec::Any);
         b.set_template_kind(o, self.kind);
         // `InheritRoot` is the leaf's default (stamped by `TmplOutput::value`),
-        // so only a `Fixed` type needs an explicit override.
-        if let TemplateTy::Fixed(t) = self.ty {
-            b.set_value_ty(o, t);
+        // so only a non-default type needs an explicit override.
+        match self.ty {
+            TemplateTy::Fixed(t) => b.set_value_ty(o, t),
+            TemplateTy::InheritInput => b.set_value_ty_inherit_input(o),
+            TemplateTy::InheritRoot => {}
         }
         o
     }

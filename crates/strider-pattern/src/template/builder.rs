@@ -158,6 +158,12 @@ impl TemplateBuilder {
         self.out_data_of(out).ty = TemplateTy::Fixed(ty);
     }
 
+    /// Types `out`'s value output from the rewrite root's *first value
+    /// input* rather than its output (see [`TemplateTy::InheritInput`]).
+    pub fn set_value_ty_inherit_input(&mut self, out: TmplValueRef) {
+        self.out_data_of(out).ty = TemplateTy::InheritInput;
+    }
+
     /// Overwrites the build spec of the node producing `out` with a
     /// dynamic-kind closure (the `*_const_with` materialiser path).
     pub fn set_template_kind(&mut self, out: TmplValueRef, kind: TemplateKind) {

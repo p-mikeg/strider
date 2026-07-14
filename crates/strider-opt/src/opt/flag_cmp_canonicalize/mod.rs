@@ -58,7 +58,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{ExtendOp, IntBinaryOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_pattern::{
     Bindings, Capture, CaptureExt, add, any_int_const, bool_and, bool_not, bool_or, int_const,
-    int_eq, int_lt, int_sborrow, int_slt, neg, one_of, template, var, zero_extend,
+    int_const_with, int_eq, int_lt, int_sborrow, int_slt, neg, one_of, template, var, zero_extend,
 };
 
 use crate::error::Result;
@@ -395,6 +395,33 @@ fn build_rules() -> Vec<BoxedRule> {
         move |edit, _ty, binds| sub_relation(binds, edit.function(), m, n, c1, b),
         template::int_lt(var(n), var(x)),
     ));
+
+    // Comparison-with-constant canonicalisation: `Equal(Add(x, C1), C2) →
+    // Equal(x, C2 - C1)` ("solve for x").  Sound for any width/signedness —
+    // fixed-width add wraps mod 2^W and `Equal` tests that residue, so
+    // `x + C1 ≡ C2` iff `x ≡ C2 - C1 (mod 2^W)`.  `Equal`/`Add` are commutative,
+    // so the matcher also covers the `C2 == Add(x, C1)` / `Add(C1, x)` orderings.
+    //
+    // Placed in FlagCmp — not ConstantFold — because ConstantFold runs it too
+    // early and starves the `Or(Less, Equal(diff, 0))` flag-idiom (rules 15/17
+    // above) of the `Equal(diff, 0)` shape.  Here it is safe: FlagCmp seeds
+    // OUTERMOST-first (see `seed_order`), so on an `idx ≤ N` flag idiom the `Or`
+    // root is rewritten by the LS rule (which consumes the inner `Equal`) BEFORE
+    // this rule can reach that `Equal`.  A standalone `Equal(Add(x,C1),C2)` — not
+    // under such an `Or` — folds here as intended.
+    rules.push(rewrite_rule(
+        int_eq(
+            add(var(a), any_int_const().capture(n)),
+            any_int_const().capture(m),
+        ),
+        template::int_eq(
+            var(a),
+            // `of_input_type`: the fresh `C2 - C1` const takes the operand
+            // width, not the `Equal` root's `I1` output width.
+            int_const_with!([n: uint, m: uint] => m.wrapping_sub(n)).of_input_type(),
+        ),
+    ));
+
     rules
 }
 
