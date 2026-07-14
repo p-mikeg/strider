@@ -417,14 +417,14 @@ fn build_rules() -> Vec<BoxedRule> {
         ),
         template::int_eq(
             var(a),
-            // `of_input_type`: the fresh `C2 - C1` const takes the operand
-            // width, not the `Equal` root's `I1` output width.
-            int_const_with!([n: uint, m: uint] => m.wrapping_sub(n)).of_input_type(),
+            // `capture_typed(a, ..)`: the fresh `C2 - C1` const takes the operand
+            // `a`'s width, not the `Equal` root's `I1` output width.
+            capture_typed(a, int_const_with!([n: uint, m: uint] => m.wrapping_sub(n))),
         ),
     ));
 
     // Sibling "solve for x" canonicalisations across `Equal`, same seed-order
-    // safety and `of_input_type` width handling as the `Add` rule above.
+    // safety and `capture_typed` width handling as the `Add` rule above.
     //
     // `Equal(Xor(x, C1), C2) → Equal(x, C1 ^ C2)` — xor-with-C1 is a bijection,
     // so applying it to both sides is value-preserving.  `Xor` is commutative,
@@ -436,7 +436,7 @@ fn build_rules() -> Vec<BoxedRule> {
         ),
         template::int_eq(
             var(a),
-            int_const_with!([n: uint, m: uint] => n ^ m).of_input_type(),
+            capture_typed(a, int_const_with!([n: uint, m: uint] => n ^ m)),
         ),
     ));
 
@@ -446,7 +446,7 @@ fn build_rules() -> Vec<BoxedRule> {
         int_eq(neg(var(a)), any_int_const().capture(m)),
         template::int_eq(
             var(a),
-            int_const_with!([m: uint] => m.wrapping_neg()).of_input_type(),
+            capture_typed(a, int_const_with!([m: uint] => m.wrapping_neg())),
         ),
     ));
 

@@ -1204,7 +1204,7 @@ fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
 /// `Equal(Add(x, C1), C2) → Equal(x, C2 - C1)` — the comparison-with-const
 /// canonicalization.  Uses a `Load` as the variable `x`.  Verifies the fold
 /// fires, the operand is `x`, and the fresh const has the OPERAND width (I32),
-/// not the `Equal` root's `I1` output width (the `of_input_type` path).
+/// not the `Equal` root's `I1` output width (the `capture_typed` path).
 #[test]
 fn eq_add_const_solves_for_x() -> Result<()> {
     let ty = ValueType::I32;

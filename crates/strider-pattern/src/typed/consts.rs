@@ -340,18 +340,6 @@ pub struct ConstWith {
     ty: TemplateTy,
 }
 
-impl ConstWith {
-    /// Types the materialised const from the rewrite root's *first value
-    /// input* instead of its output.  Use on a rule whose root's output
-    /// width differs from its operand width — e.g. `eq(add(x, C1), C2) →
-    /// eq(x, C2 - C1)`, where the fresh `C2 - C1` const must take the
-    /// operand width (`x`'s), not the comparison's `I1` output width.
-    pub fn of_input_type(mut self) -> Self {
-        self.ty = TemplateTy::InheritInput;
-        self
-    }
-}
-
 impl TemplatePat for ConstWith {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // Materialise a leaf whose kind is computed at instantiation.
@@ -364,7 +352,6 @@ impl TemplatePat for ConstWith {
         // so only a non-default type needs an explicit override.
         match self.ty {
             TemplateTy::Fixed(t) => b.set_value_ty(o, t),
-            TemplateTy::InheritInput => b.set_value_ty_inherit_input(o),
             TemplateTy::InheritBinding(cap) => b.set_value_ty_of_binding(o, cap),
             TemplateTy::InheritRoot => {}
         }
@@ -377,7 +364,7 @@ impl TemplatePat for ConstWith {
 /// interior node's width comes from a captured operand that the rewrite root's
 /// shape does not expose — e.g. the `And(x, mask)` / `mask` in
 /// `Sless(x<<C, 0) → Xor(Equal(And(x,mask),0),1)`, whose `I1` root has no
-/// `x`-wide input for [`ConstWith::of_input_type`] to inherit.
+/// `x`-wide input for a root-relative type to inherit.
 pub struct CaptureTyped<P> {
     cap: crate::Capture,
     inner: P,

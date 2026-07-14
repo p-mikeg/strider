@@ -158,12 +158,6 @@ impl TemplateBuilder {
         self.out_data_of(out).ty = TemplateTy::Fixed(ty);
     }
 
-    /// Types `out`'s value output from the rewrite root's *first value
-    /// input* rather than its output (see [`TemplateTy::InheritInput`]).
-    pub fn set_value_ty_inherit_input(&mut self, out: TmplValueRef) {
-        self.out_data_of(out).ty = TemplateTy::InheritInput;
-    }
-
     /// Types `out`'s value output from the width of a bound LHS capture
     /// (see [`TemplateTy::InheritBinding`]).
     pub fn set_value_ty_of_binding(&mut self, out: TmplValueRef, cap: crate::Capture) {
