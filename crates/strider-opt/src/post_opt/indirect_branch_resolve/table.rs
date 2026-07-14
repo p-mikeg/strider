@@ -58,7 +58,7 @@ use crate::value_range::Interval;
 use crate::{AliasMode, ReadOnlyMemory};
 use petgraph::graph::{DiGraph, NodeIndex};
 use strider_cfg::ResolvedTargets;
-use strider_ir::{IRViewer, IntBinaryOp};
+use strider_ir::IRViewer;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId};
 
 /// Top-level classifier hook for the table-dispatch arm.  Called by
@@ -302,29 +302,13 @@ fn bounded_index(
 /// `w < 128` guard keeps the shift well-defined for wide types.)
 fn is_width_only(function: &strider_ir::Function, v: ValueId, iv: Interval) -> bool {
     let mut base = v;
-    loop {
-        match function.node_kind(function.producer(base)) {
-            // A `ZeroExtend` preserves the integer value (range unchanged, type
-            // widens) — strip to the originating node and test its own width.
-            NodeKind::Extend(ExtendOp::ZeroExtend) => match function.int_inputs(base).next() {
-                Some(inner) => base = inner,
-                None => break,
-            },
-            // A CONSTANT left-shift SCALES a value (`table_byte << 1` for a
-            // halfword-offset TBB/TBH table) — a bijection into the low bits, so
-            // it preserves the value COUNT (`{0,2,…,2·255}` still has 256 values,
-            // just stride 2).  The lifter canonicalises `mul(x, 2^k)` to this
-            // shape, so a table-DATA byte scaled by the entry size now reaches
-            // here as `ShiftLeft(zext(load), k)`; peel it so its `[0,(2^w-1)·2^k]`
-            // range is recognised as the byte's own width, not a real index.
-            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
-                let mut it = function.int_inputs(base);
-                match (it.next(), it.next()) {
-                    (Some(lhs), Some(rhs)) if function.int_const_u128(rhs).is_some() => base = lhs,
-                    _ => break,
-                }
-            }
-            _ => break,
+    while matches!(
+        function.node_kind(function.producer(base)),
+        NodeKind::Extend(ExtendOp::ZeroExtend)
+    ) {
+        match function.int_inputs(base).next() {
+            Some(inner) => base = inner,
+            None => break,
         }
     }
     function
