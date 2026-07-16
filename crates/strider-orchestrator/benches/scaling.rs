@@ -458,7 +458,7 @@ fn bench_find_joined_shared_capture(c: &mut Criterion) {
                 let m = Matcher::new(&fg);
                 let pat_refs: Vec<&strider_pattern::Pattern> = vec![&pat1, &pat2];
                 let result = m
-                    .find_joined(&pat_refs)
+                    .find_joined_constrained(&pat_refs, &[])
                     .expect("bench patterns are single-rooted");
                 black_box(result);
             });

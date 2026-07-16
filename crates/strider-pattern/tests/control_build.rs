@@ -975,46 +975,6 @@ fn phi_for_vn_filters() {
     );
 }
 
-// ── function_arg ──────────────────────────────────────────────────────────────
-
-#[test]
-fn function_arg_handle_resolves_register_carrier() {
-    // The `arg_index_to_values` side-table is normally populated by the
-    // `FunctionArgDetect` post-pass; in this raw-build unit test we
-    // register the carrier directly to exercise the matcher's
-    // `function_arg` handle API + Register/Stack source dispatch.
-    use strider_ir::node::NodeKind;
-    let rax = strider_ir_test_utils::reg_vn(0, 8);
-    let mut b: FunctionBuilder = RegisterSet::new()
-        .tracked(rax)
-        .arg(rax)
-        .build_fn_single_region()
-        .unwrap();
-    let v = b.read_variable(&rax).unwrap();
-    b.build_return(Some(v), &[]).unwrap();
-    let mut function = b.build().unwrap();
-    // Find the InitialVar(rax) carrier and register it at arg index 0.
-    let carrier = function
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if function.initial_vn(*vn) == rax))
-        .expect("InitialVar(rax) carrier");
-    let carrier_value = function.node_outputs(carrier)[0];
-    function
-        .side_tables_mut()
-        .register_arg_value(0, carrier_value);
-
-    let matcher = Matcher::new(&function);
-    let handle = matcher.function_arg(0).expect("arg 0 carrier");
-    assert!(matches!(
-        function.node_kind(handle.node()),
-        NodeKind::InitialVar(_)
-    ));
-    use strider_pattern::matcher::ArgSource;
-    assert_eq!(handle.source(), ArgSource::Register(rax));
-    assert_eq!(matcher.function_args().count(), 1);
-}
-
 /// Build a function with a register-passed arg carrier (`InitialVar(rax)`
 /// at index 0) and a stack-passed arg carrier (a `Load` at index 1), with
 /// the carriers registered directly in `arg_index_to_values` (as the

@@ -193,17 +193,6 @@ fn kind_index_reused_across_queries() {
     );
 }
 
-// ── function_arg*: empty graph ───────────────────────────────────────────────
-
-#[test]
-fn function_arg_apis_on_graph_without_args() {
-    let function = shapes::add_consts(5, 3);
-    let matcher = Matcher::new(&function);
-
-    assert!(matcher.function_arg(0).is_none());
-    assert_eq!(matcher.function_args().count(), 0);
-}
-
 // ── Multi-match iteration & distinct bindings ────────────────────────────────
 
 /// Graph with three distinct Add nodes at different operand values.
@@ -524,7 +513,7 @@ fn find_first_no_match_returns_none() {
 fn find_joined_empty_input() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::new(&function);
-    let results = m.find_joined(&[]).unwrap();
+    let results = m.find_joined_constrained(&[], &[]).unwrap();
     assert!(results.is_empty());
 }
 
@@ -533,7 +522,7 @@ fn find_joined_single_pattern_equivalent_to_find_all() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::new(&function);
     let p = add(any(), any()).into_pattern();
-    let req = m.find_joined(&[&p]).unwrap();
+    let req = m.find_joined_constrained(&[&p], &[]).unwrap();
     let direct = m.find_all(&p).unwrap();
     assert_eq!(req.len(), direct.len());
     for (mr, dr) in req.iter().zip(direct.iter()) {
@@ -548,7 +537,7 @@ fn find_joined_no_matches_for_a_pattern_yields_empty() {
     let m = Matcher::new(&function);
     let p_add = add(any(), any()).into_pattern();
     let p_call = call().build();
-    let req = m.find_joined(&[&p_add, &p_call]).unwrap();
+    let req = m.find_joined_constrained(&[&p_add, &p_call], &[]).unwrap();
     assert!(req.is_empty());
 }
 
@@ -582,7 +571,7 @@ fn find_joined_intersects_on_shared_capture_node_id() {
         .data(int_const(99u128))
         .build();
 
-    let req = mr.find_joined(&[&p_zero, &p_99]).unwrap();
+    let req = mr.find_joined_constrained(&[&p_zero, &p_99], &[]).unwrap();
     assert_eq!(req.len(), 1);
     let inner = &req[0];
     assert_eq!(inner.len(), 2);
@@ -631,7 +620,7 @@ fn find_joined_three_patterns_all_agree_on_shared_capture() {
     let p1 = store_pat(16, 99);
     let p2 = store_pat(24, 7);
 
-    let req = mr.find_joined(&[&p0, &p1, &p2]).unwrap();
+    let req = mr.find_joined_constrained(&[&p0, &p1, &p2], &[]).unwrap();
     assert_eq!(req.len(), 1, "one fully-agreeing triple");
     let inner = &req[0];
     assert_eq!(inner.len(), 3, "one Match per pattern");
@@ -675,7 +664,7 @@ fn find_joined_three_patterns_one_disagrees_yields_empty() {
     let p1 = store_pat(16, 99);
     let p2 = store_pat(24, 7);
 
-    let req = mr.find_joined(&[&p0, &p1, &p2]).unwrap();
+    let req = mr.find_joined_constrained(&[&p0, &p1, &p2], &[]).unwrap();
     assert!(req.is_empty(), "third pattern's shared binding disagrees");
 }
 
@@ -719,7 +708,7 @@ fn find_joined_connectivity_is_order_independent() {
         [&bridge, &by_base, &by_data],
     ] {
         assert!(
-            mr.find_joined(&order).is_ok(),
+            mr.find_joined_constrained(&order, &[]).is_ok(),
             "connected patterns must join regardless of order",
         );
     }
@@ -728,7 +717,7 @@ fn find_joined_connectivity_is_order_independent() {
     let z = Capture::new();
     let disjoint = store().data(var(z)).build();
     assert!(
-        mr.find_joined(&[&bridge, &disjoint]).is_err(),
+        mr.find_joined_constrained(&[&bridge, &disjoint], &[]).is_err(),
         "patterns sharing no capture even transitively are still rejected",
     );
 }
@@ -760,7 +749,7 @@ fn find_joined_pattern_without_shared_capture_cross_products() {
         .build();
     let p_call = call().at(0x1234).build();
 
-    let req = mr.find_joined(&[&p_store, &p_call]).unwrap();
+    let req = mr.find_joined_constrained(&[&p_store, &p_call], &[]).unwrap();
     assert_eq!(req.len(), 2, "no shared capture in B: pure cross product");
     for tuple in &req {
         assert_eq!(tuple.len(), 2);
@@ -783,7 +772,7 @@ fn find_joined_zero_match_first_pattern_yields_empty() {
     let m = Matcher::new(&function);
     let p_call = call().build(); // no Call in the graph
     let p_add = add(any(), any()).into_pattern();
-    let req = m.find_joined(&[&p_call, &p_add]).unwrap();
+    let req = m.find_joined_constrained(&[&p_call, &p_add], &[]).unwrap();
     assert!(req.is_empty());
 }
 
@@ -811,7 +800,7 @@ fn find_joined_disagreement_on_shared_capture_yields_empty() {
         .addr(add(var(shared), int_const(16u128)).ordered())
         .data(int_const(0u128))
         .build();
-    let req = mr.find_joined(&[&p_8, &p_16]).unwrap();
+    let req = mr.find_joined_constrained(&[&p_8, &p_16], &[]).unwrap();
     assert!(req.is_empty());
 }
 
@@ -833,7 +822,7 @@ fn find_joined_disjoint_captures_is_rejected() {
     let b1 = Capture::new();
     let p_a = add(any().capture(a0), any().capture(a1)).into_pattern();
     let p_b = add(any().capture(b0), any().capture(b1)).into_pattern();
-    let Err(err) = mr.find_joined(&[&p_a, &p_b]) else {
+    let Err(err) = mr.find_joined_constrained(&[&p_a, &p_b], &[]) else {
         panic!("disjoint-capture join must error, not return tuples");
     };
     let msg = err.to_string();
@@ -878,7 +867,7 @@ fn find_joined_dedups_tuples_equivalent_on_shared_captures() {
         .data(int_const(0u128))
         .build();
 
-    let req = mr.find_joined(&[&p0, &p1]).unwrap();
+    let req = mr.find_joined_constrained(&[&p0, &p1], &[]).unwrap();
     assert_eq!(
         req.len(),
         1,

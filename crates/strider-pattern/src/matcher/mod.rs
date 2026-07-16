@@ -34,7 +34,7 @@ pub(crate) const ANY_INPUT_SLOT: usize = usize::MAX;
 use std::cell::OnceCell;
 use std::mem::Discriminant;
 
-use itertools::{Either, Itertools};
+use itertools::Either;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -253,26 +253,21 @@ impl<'f> Matcher<'f> {
     /// internal binding are equivalent for any correlated-site consumer,
     /// so only the first is kept.
     ///
+    /// # Constraints
+    ///
+    /// `constraints` further filters the joined tuples by CFG
+    /// [`JoinConstraint`]s (control dominance) over captured entities. Each is
+    /// a **post-correlation** predicate: a tuple survives iff every constraint
+    /// holds on the entities its captures bind. A constraint referencing a
+    /// capture no tuple binds, or one whose captured node has no CFG position,
+    /// simply fails (the tuple is dropped) — never an error. Pass `&[]` for an
+    /// unconstrained join.
+    ///
     /// # Errors
     /// Errors if any pattern is not a single-rooted, acyclic graph the
     /// matcher can handle (see [`Pattern::root`]), or if a capture-bearing
-    /// pattern shares no capture with the patterns before it.
-    pub fn find_joined(&self, pats: &[&Pattern]) -> anyhow::Result<Vec<Vec<Match>>> {
-        self.find_joined_constrained(pats, &[])
-    }
-
-    /// Like [`find_joined`](Self::find_joined), but additionally filters the
-    /// joined tuples by CFG [`JoinConstraint`]s (control dominance / forward
-    /// control reachability) over captured entities. Each constraint is a
-    /// **post-correlation** predicate: a tuple survives iff every constraint
-    /// holds on the entities its captures bind. A constraint referencing a
-    /// capture no tuple binds, or one whose captured node has no CFG position,
-    /// simply fails (the tuple is dropped) — never an error.
-    ///
-    /// # Errors
-    /// Same as [`find_joined`](Self::find_joined): a malformed pattern, or a
-    /// capture-bearing pattern connected to the rest by neither a shared capture
-    /// nor a constraint.
+    /// pattern is connected to the rest by neither a shared capture nor a
+    /// constraint.
     pub fn find_joined_constrained(
         &self,
         pats: &[&Pattern],
@@ -388,45 +383,6 @@ impl<'f> Matcher<'f> {
         Ok(acc)
     }
 
-    /// Returns a [`FunctionArgHandle`] for the first carrier node
-    /// registered at side-table index `index`, or `None` if no such
-    /// carrier exists.
-    pub fn function_arg(&self, index: u32) -> Option<FunctionArgHandle<'f>> {
-        let value = *self
-            .function
-            .side_tables()
-            .arg_index_to_values(index)
-            .first()?;
-        let node = self.function.producer(value);
-        Some(FunctionArgHandle {
-            function: self.function,
-            node,
-        })
-    }
-
-    /// Iterate `(index, handle)` for every registered function-arg
-    /// carrier in side-table-index order.
-    pub fn function_args(&self) -> impl Iterator<Item = (u32, FunctionArgHandle<'f>)> + '_ {
-        let f = self.function;
-        f.side_tables()
-            .iter_arg_indices()
-            .sorted_unstable()
-            .filter_map(move |i| {
-                f.side_tables()
-                    .arg_index_to_values(i)
-                    .first()
-                    .copied()
-                    .map(|value| {
-                        (
-                            i,
-                            FunctionArgHandle {
-                                function: f,
-                                node: f.producer(value),
-                            },
-                        )
-                    })
-            })
-    }
 }
 
 /// A CFG relation between two captured entities, applied by
@@ -571,43 +527,6 @@ impl<'f> ConstraintEval<'f> {
             return false;
         };
         inputs.get(slot + 1).is_some_and(|&v| v == val_v)
-    }
-}
-
-/// Returned by [`FunctionArgHandle::source`] when the caller needs to
-/// distinguish register- vs stack-passed args.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ArgSource {
-    /// Register-passed arg: carrier is an `InitialVar(vn)`.
-    Register(rsleigh::Vn),
-    /// Stack-passed arg: carrier is a `Load` node.
-    Stack,
-    /// Other kinds (defensive — should not occur in well-formed IR).
-    Other,
-}
-
-/// Handle to a single function-arg carrier registered in
-/// `Function::arg_index_to_values`. Returned by
-/// [`Matcher::function_arg`] / [`Matcher::function_args`].
-#[derive(Clone, Copy)]
-pub struct FunctionArgHandle<'g> {
-    function: &'g Function,
-    node: NodeId,
-}
-
-impl FunctionArgHandle<'_> {
-    /// Carrier [`NodeId`].
-    pub fn node(&self) -> NodeId {
-        self.node
-    }
-
-    /// Classify the carrier's source (register vs stack vs other).
-    pub fn source(&self) -> ArgSource {
-        match self.function.node_kind(self.node) {
-            NodeKind::InitialVar(id) => ArgSource::Register(self.function.initial_vn(*id)),
-            NodeKind::Load(_) => ArgSource::Stack,
-            _ => ArgSource::Other,
-        }
     }
 }
 
