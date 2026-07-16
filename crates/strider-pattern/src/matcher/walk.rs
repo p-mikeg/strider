@@ -284,10 +284,22 @@ fn try_match_at(
     // `ir_node`'s inputs are invariant across the whole existential search, so
     // collect them once here (empty in the common no-`any_input` case) rather
     // than re-collecting at every `match_existential` recursion level.
+    //
+    // A `Phi`/`MemPhi`'s slot-0 `PhiToken` is the owning `Region`'s bookkeeping
+    // edge, not a predecessor: `any_input` ranges over data inputs only. It must
+    // be dropped here rather than left to the sub-pattern's own output-kind
+    // check, because the kind-unconstrained wildcards (`any()` / `var(c)`) carry
+    // `OutputKindSpec::Any` and would bind the token — and being slot 0, it
+    // would shadow every real data input.
     let ext_values: Vec<ValueId> = if existential.is_empty() {
         Vec::new()
     } else {
-        matcher.function().node_inputs(ir_node).into_iter().collect()
+        matcher
+            .function()
+            .node_inputs(ir_node)
+            .into_iter()
+            .filter(|&v| !matches!(matcher.function().value_kind(v), ValueKind::PhiToken))
+            .collect()
     };
 
     let mark = bindings.mark();
@@ -372,9 +384,9 @@ fn try_match_at(
 /// earlier existentials). For input `ei` it tries the sub-pattern against every
 /// not-yet-used value input in turn (backtracking via [`Bindings::mark`] /
 /// [`Bindings::restore`]), and on a hit recurses into the next existential;
-/// with all satisfied it invokes `done`. Non-value inputs (a `Phi`'s `PhiToken`
-/// slot, control / memory edges) are rejected by the sub-pattern's own
-/// output-kind check, so no explicit kind filtering is needed here. Distinctness
+/// with all satisfied it invokes `done`. `values` has already had any
+/// `PhiToken` edge filtered out by the caller (see `match_inputs`), since the
+/// kind-unconstrained wildcards would otherwise bind it. Distinctness
 /// is by slot index, not value, so `any_input(1).any_input(1)` still matches a
 /// phi with two separate `1` predecessors. Honours `ignore_casts` like the
 /// fixed-slot [`match_inputs`] path: a predecessor that is a registered cast is

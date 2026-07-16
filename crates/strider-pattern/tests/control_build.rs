@@ -8,7 +8,7 @@
     clippy::unreachable
 )]
 
-use strider_ir::node::ValueType;
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
@@ -855,6 +855,41 @@ fn phi_any_input_matches_a_data_input_regardless_of_slot() {
         0,
         "any_input over an absent value matches nothing"
     );
+}
+
+/// A kind-unconstrained `any_input` sub-pattern (`var` / `any`) must bind one
+/// of the phi's DATA inputs, never its slot-0 `PhiToken` — the token is the
+/// owning `Region`'s bookkeeping edge, not a predecessor value.
+#[test]
+fn phi_any_input_binds_a_data_input_not_the_phi_token() {
+    let function = phi_over_two_consts();
+    let m = Matcher::new(&function);
+
+    let x = Capture::new();
+    let hits = m.find_all(&phi().any_input(var(x)).build()).unwrap();
+    assert_eq!(hits.len(), 1, "the phi matches once");
+    let bound = hits[0].node(x, function.graph()).unwrap();
+    assert!(
+        matches!(function.node_kind(bound), NodeKind::IntConst(_)),
+        "any_input(var) must bind a data input (IntConst), got {:?}",
+        function.node_kind(bound)
+    );
+
+    // Two kind-unconstrained existentials must claim the two DATA slots, so
+    // both bind constants rather than one silently taking the phi-token.
+    let (a, c) = (Capture::new(), Capture::new());
+    let hits = m
+        .find_all(&phi().any_input(var(a)).any_input(var(c)).build())
+        .unwrap();
+    assert!(!hits.is_empty(), "two any_input match the two data slots");
+    for cap in [a, c] {
+        let n = hits[0].node(cap, function.graph()).unwrap();
+        assert!(
+            matches!(function.node_kind(n), NodeKind::IntConst(_)),
+            "each any_input(var) binds a data input, got {:?}",
+            function.node_kind(n)
+        );
+    }
 }
 
 #[test]
