@@ -32,6 +32,15 @@ fn probe_sleigh() -> rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<Vec<u8>>
 
 /// Renders every node reachable from `entry` and returns the DOT string.
 fn render(function: &Function, entry: NodeId) -> String {
+    render_with_state(function, entry).0
+}
+
+/// Renders every node reachable from `entry`, returning the DOT string and the
+/// dumper state that produced it (for the `dot id -> NodeId` mapping).
+fn render_with_state(
+    function: &Function,
+    entry: NodeId,
+) -> (String, super::FunctionDotDumperState) {
     let sleigh = probe_sleigh();
     let dumper = FunctionDotDumper {
         entry,
@@ -41,7 +50,7 @@ fn render(function: &Function, entry: NodeId) -> String {
     };
     use ::dot::GraphDot;
     GraphDot::new(dumper, ::dot::DotStyle::empty())
-        .as_dot()
+        .as_dot_with_state()
         .expect("render must succeed")
 }
 
@@ -326,6 +335,71 @@ fn if_node_produces_exactly_two_branch_virtual_nodes() {
         if_false_count, 1,
         "exactly one if.false declaration:\n{dot}"
     );
+}
+
+// ── dot id -> NodeId mapping ──────────────────────────────────────────────
+
+/// Every emitted DOT id that stands for an IR node resolves back to exactly
+/// one node — including a constant, which is deliberately re-emitted as a
+/// fresh box per use so a hot value never becomes an edge hub.  The mapping is
+/// many-to-one, and that is the contract: `visited_node_id` (NodeId -> id) is
+/// only a memo and keeps a const's LAST id, so it cannot answer this.
+#[test]
+fn dot_id_maps_back_to_its_ir_node_including_duplicated_consts() {
+    let mut f = test_function();
+    let entry = f
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+
+    // ONE const feeding THREE consumers -> three dot boxes, one NodeId.
+    // The adds must be REACHABLE (the dumper walks from entry), so the Return
+    // consumes each one.
+    let k = int_const_node(&mut f, 7_u128, ValueType::I64);
+    let [kv] = f.node_outputs_exact::<1>(k).unwrap();
+    let mut adds = Vec::new();
+    let mut add_values = vec![ctrl];
+    for _ in 0..3 {
+        let a = f.graph_mut().create_node(
+            NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
+            [kv, kv],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let [av] = f.node_outputs_exact::<1>(a).unwrap();
+        adds.push(a);
+        add_values.push(av);
+    }
+    f.graph_mut().create_node(NodeKind::Return, add_values, []);
+
+    let (dot, state) = render_with_state(&f, entry);
+
+    // The const really is duplicated (otherwise this test proves nothing).
+    let const_ids: Vec<&str> = state
+        .dot_to_node()
+        .filter(|&(_, n)| n == k)
+        .map(|(id, _)| id)
+        .collect();
+    assert!(
+        const_ids.len() > 1,
+        "the const must render as several boxes, got {}:\n{dot}",
+        const_ids.len()
+    );
+    // ...and every one of them resolves back to that same const node.
+    for id in &const_ids {
+        assert_eq!(state.node_of_dot_id(id), Some(k), "dot id {id} -> the const");
+    }
+
+    // Every non-const node resolves too.
+    for n in adds {
+        assert!(
+            state.dot_to_node().any(|(_, m)| m == n),
+            "every rendered node is in the map"
+        );
+    }
+
+    // A virtual / unknown id has no NodeId — absent, not wrong.
+    assert_eq!(state.node_of_dot_id("v99"), None, "virtuals are not mapped");
+    assert_eq!(state.node_of_dot_id("nope"), None);
 }
 
 // ── label content ─────────────────────────────────────────────────────────

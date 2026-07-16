@@ -150,10 +150,28 @@ pub(crate) fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Ve
 }
 
 pub struct FunctionDotDumperState {
+    /// Memo: the DOT id already emitted for a node, so a node reached from
+    /// several edges renders as ONE box.  Deliberately NOT the inverse of
+    /// [`dot_to_node`](Self::dot_to_node) — a constant is re-`alloc_id`'d per
+    /// use (see [`get_dot_id`](Self::get_dot_id)), so this only remembers its
+    /// most recent id.  Reverse lookups must go through `dot_to_node`.
     pub(super) visited_node_id: FxHashMap<NodeId, String>,
     /// Synthetic (virtual) DOT nodes inserted between a producer output and
     /// its consumers.  Keyed by the `ValueId` they represent.
     pub(super) virtual_nodes: FxHashMap<ValueId, String>,
+    /// Every emitted DOT id that stands for an IR node, mapped back to it.
+    ///
+    /// Many-to-one, and that is the point: a constant renders as a fresh box
+    /// per use so a hot `0` never becomes an edge hub, and every one of those
+    /// boxes maps to the same `NodeId`.  Total over NodeId-backed nodes by
+    /// construction — [`alloc_id`](Self::alloc_id) is the only way such an id
+    /// is minted, and it is the only writer here.
+    ///
+    /// Virtual nodes are deliberately ABSENT: an `If`'s `if.true` box or a
+    /// `Call`'s clobber box is not an IR node and has no `NodeId`, so a
+    /// reverse lookup on one yields `None` (they are already non-navigable —
+    /// the `v` prefix keeps them from colliding with node ids).
+    pub(super) dot_to_node: FxHashMap<String, NodeId>,
     pub(super) next_unique_id: u32,
 }
 
@@ -162,12 +180,26 @@ impl FunctionDotDumperState {
         let id = self.next_unique_id;
         let s = id.to_string();
         self.visited_node_id.insert(node_id, s.clone());
+        self.dot_to_node.insert(s.clone(), node_id);
         self.next_unique_id += 1;
         s
     }
 
+    /// The IR node a rendered DOT id stands for, or `None` for a virtual
+    /// (`If` branch / `Call` clobber) box, which has no `NodeId`.
+    pub fn node_of_dot_id(&self, dot_id: &str) -> Option<NodeId> {
+        self.dot_to_node.get(dot_id).copied()
+    }
+
+    /// Every `(dot id, node)` pair emitted, for callers that want the whole
+    /// mapping (the explorer) rather than a point lookup.
+    pub fn dot_to_node(&self) -> impl Iterator<Item = (&str, NodeId)> {
+        self.dot_to_node.iter().map(|(k, &v)| (k.as_str(), v))
+    }
+
     /// Allocates a fresh DOT node id that is NOT associated with any graph
-    /// `NodeId` (used for virtual / synthetic nodes).
+    /// `NodeId` (used for virtual / synthetic nodes).  Intentionally absent
+    /// from [`dot_to_node`](Self::dot_to_node) — see its docs.
     pub(super) fn alloc_virtual_id(&mut self) -> String {
         let id = self.next_unique_id;
         self.next_unique_id += 1;

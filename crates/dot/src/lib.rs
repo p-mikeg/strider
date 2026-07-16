@@ -375,6 +375,21 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Forwards any `Self::Error` returned by the underlying
     /// [`GraphDotDumper::dump_as_dot`] for any node.
     pub fn as_dot(&self) -> anyhow::Result<String> {
+        self.as_dot_with_state().map(|(dot, _)| dot)
+    }
+
+    /// The DOT source plus the dumper state that produced it.
+    ///
+    /// The state is what a dumper accumulates *while* rendering — notably, for
+    /// dumpers whose DOT ids are not the node ids themselves, the mapping back
+    /// from an emitted id to the graph node it stands for. [`as_dot`](Self::as_dot)
+    /// drops it; take this instead when you need to resolve ids the render
+    /// chose (an explorer turning a clicked box back into a node).
+    ///
+    /// # Errors
+    /// Forwards any `Self::Error` returned by the underlying
+    /// [`GraphDotDumper::dump_as_dot`] for any node.
+    pub fn as_dot_with_state(&self) -> anyhow::Result<(String, G::State)> {
         let mut dot = DotEmitter::new(&self.name, &self.style);
         let mut state = self.dumper.create_initial_state();
         for node in self.dumper.iter_nodes() {
@@ -383,7 +398,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
                 .map_err(|e| anyhow::anyhow!("dot dump error: {e}"))?;
         }
 
-        Ok(dot.finish())
+        Ok((dot.finish(), state))
     }
 
     /// Produces an interactive HTML page that renders the DOT source

@@ -26,6 +26,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
         Self::State {
             visited_node_id: FxHashMap::default(),
             virtual_nodes: FxHashMap::default(),
+            dot_to_node: FxHashMap::default(),
             next_unique_id: 0,
         }
     }
