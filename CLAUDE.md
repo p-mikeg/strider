@@ -50,7 +50,7 @@ from Rust or Python.  The pipeline is:
 
 ### Crate Inventory
 
-The workspace splits into **five generic utility crates** (not tied to
+The workspace splits into **six generic utility crates** (not tied to
 strider's domain) and **nine strider-specific crates** (plus the
 `strider-ir-test-utils` dev-dependency):
 
@@ -75,6 +75,11 @@ Generic helpers:
   statically-known memory region) extracted into its own tiny crate so
   the optimizer / lifter / reader can each depend on it one-way without
   back-edging through the ELF-parsing reader crate.
+- `vn-container` — varnode container geometry (`vn_contains`,
+  `dedup_overlapping_largest`, `largest_container_in`, and the O(1)
+  `ContainerMap`).  Depends only on `rsleigh`, so `strider-ir` /
+  `strider-lift` / `strider-pattern` share one implementation of
+  "which tracked varnode contains this one" instead of three.
 
 Strider crates:
 
@@ -395,11 +400,6 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     size)` is the strict within-one-slot index; `slot_of(off)` floors a
     byte offset onto its containing slot (no size bound — a wider-than-slot
     argument anchors at the slot its first byte lands in).
-  - `PositionalArgLayout { registers: Vec<Vn>, stack: Option<StackArgs> }`
-    — positional-arg layout derived via `cc.positional_arg_layout()`
-    (register slots `0..registers.len()`, then unbounded stack slots);
-    `first_stack_index()` / `stack_offset_of(index)`.  `None` stack =
-    no stack args.
   - **Stack-arg passes (incoming + outgoing) classify any number of
     slots:** `FunctionArgDetect` floors each entry-SP load onto its slot
     (`slot_of`) and runs a width-aware cursor that maps each anchored
@@ -407,12 +407,12 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     consumes the slots it spans but advances the ordinal by one).
     `CallStackArgCollect` mirrors it for a `Call`: a slot cursor anchored
     at the call-time SP probes each slot via the shared
-    `crate::sp_expr::reaching_sp_store` (the `MemPhi`-sound memory-SSA
-    walker `find_nearest_clobber` + `SpAliasOracle`), appending one Call
+    `crate::sp_analysis::SpAnalyzer::reaching_store` (the `MemPhi`-sound
+    memory-SSA walker, driven by `SpMemWalker`), appending one Call
     input per anchored store and advancing past its slot span; collection
     is intentionally **over-inclusive** (incidental in-window stack writes
     are indistinguishable from arg pushes once lowered, so every plausible
-    reaching store is collected).  `reaching_sp_store` is the one SP-store
+    reaching store is collected).  `reaching_store` is the one SP-store
     lookup shared with the indirect-branch stack-array classifier
     (`indirect_branch_resolve::table`), which probes typed table entries.
     `store_alias_verdict` consults `Function::stack_offsets` (the SSoT for
@@ -830,13 +830,12 @@ truth for every node's input/output shape.  Node kinds, grouped:
 
 Overlapping registers (x86 `rax`/`eax`/`ax`/`al`/`ah`, AArch64
 `q0`/`d0`/`s0`, x87 `ST*`, etc.) are dispatched by the lifter's
-`read_vn` / `write_vn` (`FunctionLifter` methods in
-`crates/strider-lift/src/lift/vn_io.rs`), which route REGISTER / UNIQUE
-varnodes to the IR builder's `read_reg_vn` / `write_reg_vn`.  The
-aliasing logic itself lives on the `strider_ir::FunctionBuilder`
-(`crates/strider-ir/src/builder/vn_io.rs`): all reads and writes go
-through the largest containing register, with shift / mask operations
-inserted for sub-register slices.  `find_largest_fitting_register` is
+`read_vn` / `write_vn`, which route REGISTER / UNIQUE varnodes to
+`read_reg_vn` / `write_reg_vn`.  All of it — the dispatch and the aliasing
+logic itself — lives on `FunctionLifter` in
+`crates/strider-lift/src/lift/vn_io.rs`: reads and writes go through the
+largest containing register, with shift / mask operations inserted for
+sub-register slices.  `find_largest_fitting_register` is
 the entry point — it delegates to the persisted `Function::container_of`
 (there is no builder-lifetime container cache).  `vn_mask` enumerates
 supported widths: 1, 2, 4, 8, 10 (x87 80-bit extended), 16 (XMM /
