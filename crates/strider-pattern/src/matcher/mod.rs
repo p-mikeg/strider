@@ -480,7 +480,7 @@ impl<'f> ConstraintEval<'f> {
                 };
                 // The branch edge's consumer (its target node); a control edge
                 // has exactly one consumer in well-formed IR.
-                let Some((consumer, _)) = self.function.graph().value_uses(edge).next() else {
+                let Some((consumer, _)) = self.function.value_uses(edge).next() else {
                     return false;
                 };
                 let doms = self.doms.get_or_init(|| control_dominators(self.function));

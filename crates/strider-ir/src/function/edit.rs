@@ -275,20 +275,23 @@ impl<'g> EditFunction<'g> {
 
     /// Whether `node` is currently a cached root (live and input-less).
     ///
-    /// Exposes the cached `roots` membership so downstream tests and passes
-    /// can assert root-set invariants without re-walking the graph.
+    /// Exposes the cached `roots` membership so tests can assert root-set
+    /// invariants without re-walking the graph.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn is_root(&self, node: NodeId) -> bool {
         self.state.roots.contains(node)
     }
 
-    /// A clone of the cached live-node set — a snapshot for downstream
-    /// comparison against a fresh entry-reachable walk.
+    /// A clone of the cached live-node set — a snapshot for comparison against
+    /// a fresh entry-reachable walk.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn live_snapshot(&self) -> DenseEntitySet<NodeId> {
         self.state.live_nodes.clone()
     }
 
-    /// A clone of the cached `roots` set — a snapshot for downstream
-    /// comparison against a fresh entry-reachable walk.
+    /// A clone of the cached `roots` set — a snapshot for comparison against a
+    /// fresh entry-reachable walk.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn roots_snapshot(&self) -> DenseEntitySet<NodeId> {
         self.state.roots.clone()
     }
@@ -301,7 +304,7 @@ impl<'g> EditFunction<'g> {
         // `nth(1).is_none()` ⟺ at most one use remains — the one we're about
         // to detach.  (Zero uses → nothing to do, but enqueueing a producer
         // with no remaining uses is harmless: `is_node_dead` confirms it.)
-        if self.function.graph().value_uses(value).nth(1).is_none() {
+        if self.value_uses(value).nth(1).is_none() {
             let def = self.function.producer(value);
             self.enqueue_killed_def_node(def);
         }
@@ -397,7 +400,7 @@ impl<'g> EditFunction<'g> {
     /// detaching, then run this O(degree) drain afterwards.
     fn enqueue_orphaned_producers(&mut self, values: impl IntoIterator<Item = ValueId>) {
         for value in values {
-            if self.function.graph().value_uses(value).next().is_none() {
+            if self.value_uses(value).next().is_none() {
                 let producer = self.function.producer(value);
                 self.enqueue_killed_def_node(producer);
             }
@@ -477,7 +480,7 @@ impl<'g> EditFunction<'g> {
         self.function
             .node_outputs(node)
             .iter()
-            .all(|&out| self.function.graph().value_uses(out).next().is_none())
+            .all(|&out| self.value_uses(out).next().is_none())
     }
 
     /// Remove `node` from the live graph: detach its inputs (enqueuing each
@@ -691,7 +694,7 @@ impl<'g> EditFunction<'g> {
         };
         // The redirect attaches `new` wherever `old` was used; with no uses
         // to move there is nothing to attach (and nothing to resurrect).
-        if old != new && self.function.graph().value_uses(old).next().is_some() {
+        if old != new && self.value_uses(old).next().is_some() {
             self.will_attach_value(new);
         }
         let changed = self.function.graph_mut().replace_all_uses(old, new);
@@ -777,9 +780,8 @@ impl<'g> EditFunction<'g> {
     pub fn redirect_input(&mut self, input_id: UseId, new: ValueId) {
         let old_value = self.graph_ref().value_of_use(input_id);
         // `input_id` itself is one use of `old_value`, so "exactly one use"
-        // means this edge is the only one — bounded at 2 to avoid scanning a
-        // long use-list.
-        let only_use = self.graph_ref().value_uses(old_value).take(2).count() == 1;
+        // means this edge is the only one.
+        let only_use = self.value_has_one_use(old_value);
         self.update_input(input_id, new);
         if only_use {
             // `old_value` is the displaced producer's output; absorb its
@@ -1890,7 +1892,7 @@ mod function_state_tests {
         let dangling_node = function.producer(dangling);
         let entry = function.entry();
 
-        let state = FunctionState::populate(&function);
+        let mut state = FunctionState::populate(&function);
 
         // Every root is input-less.
         for r in state.roots.iter() {
@@ -1917,6 +1919,6 @@ mod function_state_tests {
         );
 
         // The queue and flags start empty.
-        assert!(state.queue.is_empty(), "queue starts empty");
+        assert_eq!(state.queue.dequeue(), None, "queue starts empty");
     }
 }

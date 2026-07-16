@@ -621,7 +621,7 @@ fn match_branch_consumer(
     let Some(&out) = outputs.get(output_index) else {
         return false;
     };
-    let Ok((first, _)) = f.graph().value_uses(out).exactly_one() else {
+    let Ok((first, _)) = f.value_uses(out).exactly_one() else {
         return false;
     };
     // `pat` is validated single-rooted at build time, so `match_at` cannot

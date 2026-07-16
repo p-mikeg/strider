@@ -24,22 +24,6 @@ impl<E: EntityRef> Worklist<E> {
         }
     }
 
-    /// Returns `true` if the worklist contains no pending entities.
-    pub fn is_empty(&self) -> bool {
-        self.worklist.is_empty()
-    }
-
-    /// Number of entities currently queued.
-    pub fn len(&self) -> usize {
-        self.worklist.len()
-    }
-
-    /// Removes every queued entity.
-    pub fn clear(&mut self) {
-        self.worklist.clear();
-        self.workset.clear();
-    }
-
     /// Adds `entity` to the back of the queue.
     ///
     /// Has no effect if `entity` is already queued.
@@ -114,25 +98,20 @@ mod tests {
 
     #[test]
     fn new_and_default_are_empty() {
-        let wl: Worklist<Id> = Worklist::new();
-        assert!(wl.is_empty());
-        assert_eq!(wl.len(), 0);
+        let mut wl: Worklist<Id> = Worklist::new();
+        assert_eq!(wl.dequeue(), None);
 
-        let wl: Worklist<Id> = Worklist::default();
-        assert!(wl.is_empty());
-        assert_eq!(wl.len(), 0);
+        let mut wl: Worklist<Id> = Worklist::default();
+        assert_eq!(wl.dequeue(), None);
     }
 
     #[test]
     fn enqueue_dequeue_roundtrip() {
         let mut wl: Worklist<Id> = Worklist::new();
         wl.enqueue(Id(0));
-        assert!(!wl.is_empty());
-        assert_eq!(wl.len(), 1);
         assert!(wl.workset.contains(Id(0)));
 
         assert_eq!(wl.dequeue(), Some(Id(0)));
-        assert!(wl.is_empty());
         assert!(!wl.workset.contains(Id(0)));
         assert_eq!(wl.dequeue(), None);
     }
@@ -165,25 +144,9 @@ mod tests {
     fn extend_dedups() {
         let mut wl: Worklist<Id> = Worklist::new();
         wl.extend([Id(1), Id(2), Id(1)]);
-        assert_eq!(wl.len(), 2);
         assert_eq!(wl.dequeue(), Some(Id(1)));
         assert_eq!(wl.dequeue(), Some(Id(2)));
         assert_eq!(wl.dequeue(), None);
-    }
-
-    #[test]
-    fn clear_empties_both_queue_and_set() {
-        let mut wl: Worklist<Id> = Worklist::new();
-        wl.extend([Id(1), Id(2), Id(3)]);
-        wl.clear();
-        assert!(wl.is_empty());
-        assert_eq!(wl.len(), 0);
-        assert!(!wl.workset.contains(Id(1)));
-
-        // After clear, re-enqueue still works (workset must really be empty,
-        // not just have stale entries).
-        wl.enqueue(Id(1));
-        assert_eq!(wl.dequeue(), Some(Id(1)));
     }
 
     #[test]
@@ -214,16 +177,15 @@ mod tests {
         for i in 0..n {
             wl.enqueue(Id(i));
         }
-        assert_eq!(wl.len(), n as usize);
         for i in 0..n {
             wl.enqueue(Id(i));
         }
-        assert_eq!(wl.len(), n as usize, "no duplicates after re-enqueue");
+        // Draining yields exactly `n`, not `2n` — the re-enqueue deduped.
         let mut count = 0usize;
         while wl.dequeue().is_some() {
             count += 1;
         }
-        assert_eq!(count, n as usize);
-        assert!(wl.is_empty());
+        assert_eq!(count, n as usize, "no duplicates after re-enqueue");
+        assert_eq!(wl.dequeue(), None);
     }
 }

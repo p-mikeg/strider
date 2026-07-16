@@ -538,18 +538,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.outputs[value].first_use = None.into();
     }
 
-    /// Forcibly retargets `use_id` to reference `new_target` WITHOUT updating
-    /// either the old or new value's use-list. Leaves the graph in a
-    /// deliberately inconsistent state for use-list-consistency tests.
-    ///
-    /// `#[doc(hidden)]`: see [`Self::corrupt_clear_first_use`] — a test-only
-    /// corruption injector, hidden from docs and gated behind `test-injectors`.
-    #[doc(hidden)]
-    #[cfg(any(test, feature = "test-injectors"))]
-    pub fn corrupt_retarget_input(&mut self, use_id: UseId, new_target: ValueId) {
-        self.store.inputs[use_id].value_id = new_target;
-    }
-
     // ── compaction ──────────────────────────────────────────────────────────
 
     /// Rebuilds the arena to retain exactly the nodes in `reachable`, dropping

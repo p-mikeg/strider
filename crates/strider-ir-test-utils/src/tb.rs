@@ -263,13 +263,6 @@ impl Tb {
             .build_float_bits_to_int(v, ty)
             .expect("float_bits_to_int")
     }
-    pub fn cast_to_float(&mut self, v: ValueId, ty: ValueType) -> ValueId {
-        // No CastToFloat node: an int→float cast is a same-width bitcast.
-        self.fb
-            .build_int_bits_to_float(v, ty)
-            .expect("int_bits_to_float")
-    }
-
     // ── Casts / coercions ─────────────────────────────────────────────────────
 
     pub fn zext_to(&mut self, v: ValueId, ty: ValueType) -> ValueId {

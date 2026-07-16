@@ -351,7 +351,7 @@ mod tests {
             if function.node_inputs(pid).len() != 2 {
                 break;
             }
-            let Some(slot1) = function.graph().nth_input(pid, 1) else {
+            let Some(slot1) = function.nth_input(pid, 1) else {
                 break;
             };
             producer_value = slot1;
@@ -395,7 +395,7 @@ mod tests {
             if function.node_inputs(pid).len() != 2 {
                 break;
             }
-            let Some(slot1) = function.graph().nth_input(pid, 1) else {
+            let Some(slot1) = function.nth_input(pid, 1) else {
                 break;
             };
             producer_value = slot1;
@@ -435,7 +435,7 @@ mod tests {
             if function.node_inputs(pid).len() != 2 {
                 break;
             }
-            let Some(slot1) = function.graph().nth_input(pid, 1) else {
+            let Some(slot1) = function.nth_input(pid, 1) else {
                 break;
             };
             producer_value = slot1;

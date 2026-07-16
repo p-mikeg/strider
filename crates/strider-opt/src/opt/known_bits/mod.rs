@@ -484,7 +484,7 @@ pub fn analyze(function: &strider_ir::Function) -> Result<KnownBitsMap> {
             continue;
         }
         known[out] = kb;
-        for (consumer, _idx) in function.graph().value_uses(out) {
+        for (consumer, _idx) in function.value_uses(out) {
             work.enqueue(consumer);
         }
     }

@@ -165,6 +165,27 @@ pub trait IRViewer {
         self.function().graph().node_input_id_at(node, idx)
     }
 
+    /// The [`ValueId`] feeding `node`'s input slot `idx`, or `None` when `idx`
+    /// is past the node's input count.  The `Option`-returning counterpart to
+    /// [`Self::node_input_id_at`]: use this when a short node is an expected,
+    /// non-error outcome rather than a structural violation.
+    fn nth_input(&self, node: NodeId, idx: usize) -> Option<ValueId> {
+        self.function().graph().nth_input(node, idx)
+    }
+
+    /// The `(consumer, input_index)` pairs consuming `value_id` — the forward
+    /// use-list, walked in O(uses).
+    fn value_uses(&self, value_id: ValueId) -> impl Iterator<Item = (NodeId, u32)> + '_ {
+        self.function().graph().value_uses(value_id)
+    }
+
+    /// Whether `value_id` is consumed by exactly one input.  Stops after two
+    /// steps, so it stays O(1) on a hot value with a long use-list — prefer it
+    /// over counting [`Self::value_uses`].
+    fn value_has_one_use(&self, value_id: ValueId) -> bool {
+        self.function().graph().value_has_one_use(value_id)
+    }
+
     /// Returns the [`ValueKind`](crate::node::ValueKind) of `value_id`.
     fn value_kind(&self, value_id: ValueId) -> crate::node::ValueKind {
         self.function().graph().value_kind(value_id)

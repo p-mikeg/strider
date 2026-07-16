@@ -199,8 +199,8 @@ pub(crate) fn run_peephole<P: PeepholePass>(
         if propagate {
             consumers.clear();
             for &out in edit.node_outputs(root) {
-                for (consumer, _) in edit.graph_ref().value_uses(out) {
-                    if pass.matches_kind(edit.graph_ref().node_kind(consumer)) {
+                for (consumer, _) in edit.value_uses(out) {
+                    if pass.matches_kind(edit.node_kind(consumer)) {
                         consumers.push(consumer);
                     }
                 }
