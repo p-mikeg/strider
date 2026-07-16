@@ -147,7 +147,7 @@ pub(crate) fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Ve
     let mut map: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
     for idx in function.side_tables().iter_arg_indices() {
         for &value in function.side_tables().arg_index_to_values(idx) {
-            let node = function.graph().producer(value);
+            let node = function.producer(value);
             map.entry(node).or_default().push(idx);
         }
     }

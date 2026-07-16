@@ -547,7 +547,7 @@ fn match_inputs(
     } else {
         edge.consumer_slot
     };
-    let Ok(use_id) = ctx.function().graph().node_input_id_at(ir_node, ir_slot) else {
+    let Ok(use_id) = ctx.function().node_input_id_at(ir_node, ir_slot) else {
         return false;
     };
     let producer_value = ctx.function().graph().value_of_use(use_id);

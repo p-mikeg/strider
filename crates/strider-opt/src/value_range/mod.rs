@@ -339,14 +339,14 @@ impl<'f> RangeMap<'f> {
     /// Given a `Phi` node, find the `Region` node whose PhiToken is this
     /// Phi's first input (slot 0).
     fn find_joining_region(&self, phi_node: NodeId) -> Option<NodeId> {
-        let g = self.function.graph();
+        let f = self.function;
         // Phi's slot 0 is the PhiToken.
-        let phi_token_val = g.nth_input(phi_node, 0)?;
-        if g.value_kind(phi_token_val) != ValueKind::PhiToken {
+        let phi_token_val = f.nth_input(phi_node, 0)?;
+        if f.value_kind(phi_token_val) != ValueKind::PhiToken {
             return None;
         }
-        let region_node = g.producer(phi_token_val);
-        if matches!(g.node_kind(region_node), NodeKind::Region) {
+        let region_node = f.producer(phi_token_val);
+        if matches!(f.node_kind(region_node), NodeKind::Region) {
             Some(region_node)
         } else {
             None
@@ -403,15 +403,15 @@ impl<'f> RangeMap<'f> {
     /// control passes through an `If` output (the `If`'s own input is a
     /// Region control output).
     fn ctrl_source_region(&self, ctrl_val: ValueId) -> NodeId {
-        let g = self.function.graph();
-        let mut curr = g.producer(ctrl_val);
+        let f = self.function;
+        let mut curr = f.producer(ctrl_val);
         // Walk through branching control-consumer nodes back to the nearest Region.
         loop {
-            match g.node_kind(curr) {
+            match f.node_kind(curr) {
                 NodeKind::If | NodeKind::Call | NodeKind::CallOther { .. } => {
                     // The controlling predecessor is the first input.
-                    if let Some(pred_ctrl) = g.nth_input(curr, 0) {
-                        curr = g.producer(pred_ctrl);
+                    if let Some(pred_ctrl) = f.nth_input(curr, 0) {
+                        curr = f.producer(pred_ctrl);
                     } else {
                         return curr;
                     }

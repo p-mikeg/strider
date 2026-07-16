@@ -166,9 +166,12 @@ pub trait IRViewer {
     }
 
     /// The [`ValueId`] feeding `node`'s input slot `idx`, or `None` when `idx`
-    /// is past the node's input count.  The `Option`-returning counterpart to
-    /// [`Self::node_input_id_at`]: use this when a short node is an expected,
-    /// non-error outcome rather than a structural violation.
+    /// is past the node's input count.
+    ///
+    /// Not to be confused with [`Self::node_input_id_at`], which answers a
+    /// different question: that returns the slot's `UseId` (the edge), this
+    /// returns the value on it.  Reach for this when a short node is an
+    /// expected outcome rather than a structural violation.
     fn nth_input(&self, node: NodeId, idx: usize) -> Option<ValueId> {
         self.function().graph().nth_input(node, idx)
     }

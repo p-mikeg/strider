@@ -218,7 +218,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
             // it, `run_peephole` reaches a local fixpoint over the pass's
             // rule set independent of seed order.
             if let Some(n) = new_node
-                && pass.matches_kind(edit.graph_ref().node_kind(n))
+                && pass.matches_kind(edit.node_kind(n))
             {
                 work.enqueue(n);
             }

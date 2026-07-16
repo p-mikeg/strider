@@ -157,9 +157,8 @@ fn input_use_ids(
     edit: &crate::EditFunction<'_>,
     value: strider_ir::node::ValueId,
 ) -> Result<smallvec::SmallVec<[strider_ir::node::UseId; 4]>> {
-    edit.graph_ref()
-        .value_uses(value)
-        .map(|(consumer, idx)| edit.graph_ref().node_input_id_at(consumer, idx as usize))
+    edit.value_uses(value)
+        .map(|(consumer, idx)| edit.node_input_id_at(consumer, idx as usize))
         .collect()
 }
 
@@ -183,7 +182,7 @@ fn invert(
     // this inversion needs.  When the Xor keeps other live uses, no
     // absorption happens, so `inner`'s fingerprint is never contaminated
     // with addresses that don't contribute to its value.
-    let cond_use_id = edit.graph_ref().node_input_id_at(if_node, 1)?;
+    let cond_use_id = edit.node_input_id_at(if_node, 1)?;
     edit.redirect_input(cond_use_id, inner);
 
     // Swap consumers between output[0] (true) and output[1] (false).

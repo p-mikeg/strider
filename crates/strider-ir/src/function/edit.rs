@@ -579,7 +579,7 @@ impl<'g> EditFunction<'g> {
     /// itself idempotent, so no `contains` guard is needed.
     fn track_created(&mut self, node: NodeId) {
         self.state.live_nodes.insert(node);
-        if self.function.graph().node_inputs(node).is_empty() {
+        if self.node_inputs(node).is_empty() {
             self.state.roots.insert(node);
         }
     }
@@ -657,7 +657,7 @@ impl<'g> EditFunction<'g> {
     /// Never — always `Ok(())`; the `Result` keeps the edit-verb surface
     /// uniform.
     pub fn add_node_input(&mut self, node: NodeId, output_id: ValueId) -> crate::error::Result<()> {
-        let was_input_less = self.function.graph().node_inputs(node).is_empty();
+        let was_input_less = self.node_inputs(node).is_empty();
         self.will_attach_value(output_id);
         self.function.graph_mut().add_node_input(node, output_id);
         if was_input_less {

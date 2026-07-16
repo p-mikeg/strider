@@ -119,7 +119,9 @@ def test_with_cfg_carries_over_every_other_field():
     assert out.calls_clobber is True
     assert out.assume_distinct_sp_bases_disjoint is True
     assert out.alias_mode == "strict"
-    assert out.pipeline is not None
+    # Identity, not just presence: the carried-over pipeline must be the
+    # SAME object, matching what passing `pipeline=opts.pipeline` did.
+    assert out.pipeline is pipeline
 
     # The receiver is untouched — `with_cfg` copies, it does not mutate.
     assert opts.cfg.function_max_size == 64
