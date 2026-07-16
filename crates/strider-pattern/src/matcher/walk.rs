@@ -43,9 +43,6 @@ use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
 use crate::matcher::{Matcher, OutputKindSpec, PatValue, Pattern, skip_casts};
 
-/// Entry point for a value-rooted attempt: try `pat`'s root pat node
-/// against the IR node producing `root_value`, with `root_value` available
-/// for the root output's declarative constraints and the root capture.
 /// Invariant context threaded by `&` through the entire recursive match.
 ///
 /// `matcher` (IR access + the match-time predicate closures) and `pat` (the
@@ -67,6 +64,9 @@ impl Ctx<'_> {
     }
 }
 
+/// Entry point for a value-rooted attempt: try `pat`'s root pat node
+/// against the IR node producing `root_value`, with `root_value` available
+/// for the root output's declarative constraints and the root capture.
 pub(crate) fn try_match(
     matcher: &Matcher,
     pat: &Pattern,
@@ -133,7 +133,7 @@ fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
 ///
 /// A value root declares exactly one output vertex (the value / memory /
 /// wildcard it produces). Its `kind` / `width` constraint applies to
-/// *whichever* output is being matched — [`Matcher::find_all`] iterates
+/// *whichever* output is being matched — [`Matcher::matches`] iterates
 /// every IR output of a node and roots an attempt at each — so it is
 /// checked against `root_value` directly, with no slot matching. (Matching
 /// by slot would silently skip the constraint whenever a multi-output
@@ -145,7 +145,7 @@ fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
 /// branch node-limit on the slot-0 control output. Returns `None` when
 /// the root pat node declares no output vertex (no constraint).
 ///
-/// [`Matcher::find_all`]: crate::Matcher::find_all
+/// [`Matcher::matches`]: crate::Matcher::matches
 fn root_output_vertex_for(
     pat: &Pattern,
     root: PatNodeId,
@@ -309,6 +309,16 @@ fn try_match_at(
     // check, because the kind-unconstrained wildcards (`any()` / `var(c)`) carry
     // `OutputKindSpec::Any` and would bind the token — and being slot 0, it
     // would shadow every real data input.
+    //
+    // Dropping the phi-token suffices only because `any_input` is exposed on
+    // `PhiPat` alone, whose fixed prefix is exactly `[PhiToken]` (see
+    // `node_signature`). A builder that exposed `any_input` on a kind with
+    // control / memory prefix slots (`Call`'s `[ctrl, mem, target]`, say) would
+    // let a bare `var(c)` bind one of those, so this must then become
+    // prefix-aware — range over the kind's variadic TAIL rather than filter one
+    // kind out. The wildcards' `Any` output kind is deliberate and load-bearing
+    // elsewhere (`with_true(any())` matches a `Region`; a bare `any()` root
+    // matches zero-output nodes), so the guard belongs here, not on them.
     let ext_values: Vec<ValueId> = if existential.is_empty() {
         Vec::new()
     } else {

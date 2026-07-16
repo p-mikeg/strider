@@ -56,14 +56,10 @@ fn root_kind_discriminant(pat: &Pattern, root: PatNodeId) -> Option<Discriminant
 
 /// Top-level matcher. Owns no per-match state.
 ///
-/// Caches a lazy `KindIndex` (built on first [`find_all`](Self::find_all) /
-/// [`find_first`](Self::find_first) query) that buckets reachable IR nodes by
-/// `NodeKind` discriminant. Subsequent queries with a
-/// discriminant-rooted pattern iterate just the matching bucket
+/// Caches a lazy `KindIndex` (built on first [`matches`](Self::matches) query)
+/// that buckets reachable IR nodes by `NodeKind` discriminant. Subsequent
+/// queries with a discriminant-rooted pattern iterate just the matching bucket
 /// instead of walking every reachable node.
-///
-/// [`find_all`]: Self::find_all
-/// [`find_first`]: Self::find_first
 pub struct Matcher<'f> {
     pub(crate) function: &'f Function,
     kind_index: OnceCell<KindIndex>,
@@ -119,7 +115,12 @@ impl<'f> Matcher<'f> {
         self.function
     }
 
-    /// Find every match for `pat` in the function.
+    /// Every match for `pat` in the function, lazily.
+    ///
+    /// The single-pattern query primitive: `.collect()` for all matches,
+    /// `.next()` to stop at the first (the iterator is lazy, so `next` does no
+    /// work beyond the first hit). [`find_joined_constrained`] is built on this
+    /// too, one pass per pattern.
     ///
     /// The match root is resolved once up front via [`Pattern::root`]; a
     /// discriminant-rooted pattern then tries only the matching `KindIndex`
@@ -130,32 +131,34 @@ impl<'f> Matcher<'f> {
     /// # Errors
     /// Errors if `pat` is not a single-rooted, acyclic graph the matcher
     /// can handle (see [`Pattern::root`]).
-    pub fn find_all(&self, pat: &Pattern) -> anyhow::Result<Vec<Match>> {
+    ///
+    /// [`find_joined_constrained`]: Self::find_joined_constrained
+    pub fn matches<'p>(
+        &'p self,
+        pat: &'p Pattern,
+    ) -> anyhow::Result<impl Iterator<Item = Match> + 'p> {
         let root = pat.root()?;
         Ok(self
             .candidates(pat, root)
-            .filter_map(|node| self.try_match_at_node(node, pat, root))
-            .collect())
+            .filter_map(move |node| self.try_match_at_node(node, pat, root)))
     }
 
-    /// Find the first match of `pat` in the function, or `Ok(None)` if
-    /// `pat` doesn't match anywhere. Streamed variant of
-    /// [`Self::find_all`] that stops at the first hit.
+    /// Every match for `pat`, collected. Sugar for
+    /// [`matches`](Self::matches)`.collect()` — the eager form is what nearly
+    /// every caller wants, so it is spelled once here rather than at each site.
+    /// Reach for `matches` directly to stop early or to avoid the `Vec`.
     ///
     /// # Errors
     /// Errors if `pat` is not a single-rooted, acyclic graph the matcher
     /// can handle (see [`Pattern::root`]).
-    pub fn find_first(&self, pat: &Pattern) -> anyhow::Result<Option<Match>> {
-        let root = pat.root()?;
-        Ok(self
-            .candidates(pat, root)
-            .find_map(|node| self.try_match_at_node(node, pat, root)))
+    pub fn find_all(&self, pat: &Pattern) -> anyhow::Result<Vec<Match>> {
+        Ok(self.matches(pat)?.collect())
     }
 
-    /// The IR nodes to attempt `pat` (resolved match `root`) at, shared by
-    /// [`Self::find_all`] / [`Self::find_first`]: a discriminant-rooted pattern
-    /// scans only its matching `KindIndex` bucket (O(M) in nodes of that kind),
-    /// a kind-`Any` root the whole reachable graph.  Static-dispatch `Either`,
+    /// The IR nodes to attempt `pat` (resolved match `root`) at: a
+    /// discriminant-rooted pattern scans only its matching `KindIndex` bucket
+    /// (O(M) in nodes of that kind), a kind-`Any` root the whole reachable
+    /// graph.  Static-dispatch `Either`,
     /// so neither arm allocates or pays a per-candidate virtual call.
     fn candidates<'p>(
         &'p self,
@@ -171,7 +174,7 @@ impl<'f> Matcher<'f> {
     /// Internal helper: attempt `pat` (whose resolved match root is `root`)
     /// at `node`, returning the first successful match if any (iterates
     /// value outputs for value-producing nodes, falls back to a node-rooted
-    /// attempt for zero-output kinds). Shared between [`Self::find_first`]
+    /// attempt for zero-output kinds). Shared between [`Self::matches`]
     /// and [`Self::match_at`].
     fn try_match_at_node(&self, node: NodeId, pat: &Pattern, root: PatNodeId) -> Option<Match> {
         let outputs = self.function.node_outputs(node);
@@ -205,7 +208,7 @@ impl<'f> Matcher<'f> {
         // before `try_match_at_node` iterates outputs, allocates a `Bindings`
         // per output, and walks in only to bail on the first kind check.  This
         // is what makes `match_at` cheap to call at every node (the rewrite
-        // driver's usage); `find_all` gets the same prefilter from its
+        // driver's usage); `matches` gets the same prefilter from its
         // `KindIndex` bucket.  A kind-`Any` root has no discriminant and skips
         // the gate.
         if let Some(rk) = root_kind_discriminant(pat, root)

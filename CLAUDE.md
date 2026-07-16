@@ -578,12 +578,16 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     rebuild-driven — there is no cfg-time resolver callback and no
     in-place IR editor.
   - `apply_rules_count(ctx: &mut EditFunction, rules: &[R]) -> Result<usize>`
-    — the whole-graph rewrite driver: walks every reachable node and tries
+    — a whole-graph rewrite driver: walks every reachable node and tries
     each rule (round-robin) at it, returning the total per-`(node, rule)`
     fire count.  The caller owns ctx construction (`EditFunction::new`); a
     single rule is `std::slice::from_ref(&rule)` and a boolean is
     `count > 0`.  (Replaces the former `GraphRewriter` façade and the
     `GraphEditFunctionExt::with_rewrite_ctx` extension trait, both removed.)
+    NOT the driver the Rust passes use — they all go through the
+    worklist-based `run_peephole` (`peephole.rs`) plus
+    `apply_rules_in_order`.  `apply_rules_count`'s only non-test caller is
+    strider-py's `Function.rewrite_all`, i.e. it is the Python-facing driver.
   - Error handling — fallible operations return `anyhow::Result`
     (`opt::Result` aliases it; `pattern::error` adds only the internal
     `RewriteSkip` / `PatternBuildError` sentinels).  There is no bespoke

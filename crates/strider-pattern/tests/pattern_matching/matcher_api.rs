@@ -471,40 +471,41 @@ fn ret_call_does_not_match_through_region_by_default() {
     assert!(hits.is_empty());
 }
 
-// ── find_first: short-circuiting single-match query ──────────────────────────
+// ── matches().next(): short-circuiting single-match query ───────────────────
 
 #[test]
-fn find_first_concrete_kind_equals_find_all_first() {
+fn matches_next_concrete_kind_equals_find_all_first() {
     let function = shapes::add_nested_3(2, 3, 5);
     let m = Matcher::new(&function);
     let p = add(any(), any()).into_pattern();
     let all = m.find_all(&p).unwrap();
     assert!(!all.is_empty(), "fixture has Add nodes");
-    let first = m.find_first(&p).unwrap().expect("at least one Add matches");
+    let first = m.matches(&p).unwrap().next().expect("at least one Add matches");
     assert_eq!(first.root(), all[0].root());
 }
 
 #[test]
-fn find_first_wildcard_equals_find_all_first() {
+fn matches_next_wildcard_equals_find_all_first() {
     let function = shapes::add_consts(1, 2);
     let m = Matcher::new(&function);
     let p = any().into_pattern();
     let all = m.find_all(&p).unwrap();
     assert!(!all.is_empty());
     let first = m
-        .find_first(&p)
+        .matches(&p)
         .unwrap()
+        .next()
         .expect("wildcard matches some node");
     assert_eq!(first.root(), all[0].root());
 }
 
 #[test]
-fn find_first_no_match_returns_none() {
+fn matches_next_no_match_returns_none() {
     let function = shapes::add_consts(5, 3);
     let m = Matcher::new(&function);
     // No Load node in an arithmetic-only graph.
-    assert!(m.find_first(&load().build()).unwrap().is_none());
-    assert!(m.find_first(&call().build()).unwrap().is_none());
+    assert!(m.matches(&load().build()).unwrap().next().is_none());
+    assert!(m.matches(&call().build()).unwrap().next().is_none());
 }
 
 // ── find_joined: shared-capture cross-pattern intersection ──────────

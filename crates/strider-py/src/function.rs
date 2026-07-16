@@ -337,12 +337,12 @@ impl PyFunction {
         let patterns = build_query_patterns(py, pat, ignore_casts, ignore_casts_mask)?;
         let constraints = collect_constraints(constraints);
         let refs: Vec<&strider_pattern::Pattern> = patterns.iter().collect();
-        // A single unconstrained pattern streams via `find_first`; anything else
+        // A single unconstrained pattern streams via `matches().next()`; anything else
         // (a join, or a constraint that must filter) takes the first constrained
         // joined result — mirror `run_pattern_query`'s fast-path gate.
         let (first, generation) = run_query(&slf, py, |matcher| {
             let group = if refs.len() == 1 && constraints.is_empty() {
-                matcher.find_first(refs[0])?.map(|m| vec![m])
+                matcher.matches(refs[0])?.next().map(|m| vec![m])
             } else {
                 matcher
                     .find_joined_constrained(&refs, &constraints)?
@@ -605,8 +605,7 @@ fn run_pattern_query(
         // constrained join so the CFG filter runs.
         if refs.len() == 1 && constraints.is_empty() {
             Ok(matcher
-                .find_all(refs[0])?
-                .into_iter()
+                .matches(refs[0])?
                 .map(|m| vec![m])
                 .collect())
         } else {
