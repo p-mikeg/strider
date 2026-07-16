@@ -1,5 +1,5 @@
 use rsleigh::MemReader;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::IRViewer;
 use crate::function::Function;
@@ -129,6 +129,15 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
     /// O(1).  Empty when `FunctionArgDetect` has not yet run (the underlying
     /// `Function::arg_index_to_values` table is empty).
     pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<u32>>,
+    /// Restrict the render to these nodes; `None` renders everything reachable
+    /// from `entry`.  An edge whose producer falls outside the set is dropped,
+    /// so the result is the induced subgraph.  This is what makes the
+    /// neighbourhood view the SAME renderer as the full view rather than a
+    /// parallel one (see [`FunctionDotDumper::neighborhood_dot`]).
+    pub(crate) nodes: Option<FxHashSet<NodeId>>,
+    /// Draw this node with a highlight border — the focus of a neighbourhood
+    /// render.  `None` for a full render.
+    pub(crate) center: Option<NodeId>,
 }
 
 /// Build the `node_to_arg_indices` reverse map from `function.side_tables().iter_arg_indices()`.
@@ -150,12 +159,6 @@ pub(crate) fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Ve
 }
 
 pub struct FunctionDotDumperState {
-    /// Memo: the DOT id already emitted for a node, so a node reached from
-    /// several edges renders as ONE box.  Deliberately NOT the inverse of
-    /// [`dot_to_node`](Self::dot_to_node) — a constant is re-`alloc_id`'d per
-    /// use (see [`get_dot_id`](Self::get_dot_id)), so this only remembers its
-    /// most recent id.  Reverse lookups must go through `dot_to_node`.
-    pub(super) visited_node_id: FxHashMap<NodeId, String>,
     /// Synthetic (virtual) DOT nodes inserted between a producer output and
     /// its consumers.  Keyed by the `ValueId` they represent.
     pub(super) virtual_nodes: FxHashMap<ValueId, String>,
@@ -164,27 +167,21 @@ pub struct FunctionDotDumperState {
     /// Many-to-one, and that is the point: a constant renders as a fresh box
     /// per use so a hot `0` never becomes an edge hub, and every one of those
     /// boxes maps to the same `NodeId`.  Total over NodeId-backed nodes by
-    /// construction — [`alloc_id`](Self::alloc_id) is the only way such an id
-    /// is minted, and it is the only writer here.
+    /// construction — [`get_dot_id`](Self::get_dot_id) is the only way such an
+    /// id is minted, and it is the only writer here.
     ///
     /// Virtual nodes are deliberately ABSENT: an `If`'s `if.true` box or a
     /// `Call`'s clobber box is not an IR node and has no `NodeId`, so a
-    /// reverse lookup on one yields `None` (they are already non-navigable —
-    /// the `v` prefix keeps them from colliding with node ids).
+    /// reverse lookup on one yields `None`.
     pub(super) dot_to_node: FxHashMap<String, NodeId>,
     pub(super) next_unique_id: u32,
+    /// The neighbourhood centre, mirrored from [`FunctionDotDumper::center`]
+    /// so [`get_dot_id`](Self::get_dot_id) can keep it addressable.  `None`
+    /// for a full render.
+    pub(super) center: Option<NodeId>,
 }
 
 impl FunctionDotDumperState {
-    fn alloc_id(&mut self, node_id: NodeId) -> String {
-        let id = self.next_unique_id;
-        let s = id.to_string();
-        self.visited_node_id.insert(node_id, s.clone());
-        self.dot_to_node.insert(s.clone(), node_id);
-        self.next_unique_id += 1;
-        s
-    }
-
     /// The IR node a rendered DOT id stands for, or `None` for a virtual
     /// (`If` branch / `Call` clobber) box, which has no `NodeId`.
     pub fn node_of_dot_id(&self, dot_id: &str) -> Option<NodeId> {
@@ -206,16 +203,42 @@ impl FunctionDotDumperState {
         format!("v{id}")
     }
 
+    /// Whether `node` draws a private box beside each of its consumers instead
+    /// of one shared box the whole graph points at.
+    ///
+    /// True for a constant: a hot `0` used in fifty places would otherwise be a
+    /// fifty-edge hub that drags the layout into a hairball.  The neighbourhood
+    /// centre is the one exception — it is what the explorer re-centres and
+    /// searches on, so it stays a single addressable box even when const.
+    pub(super) fn renders_per_use(&self, graph: &Graph, node: NodeId) -> bool {
+        graph.node_kind(node).is_const() && self.center != Some(node)
+    }
+
+    /// The DOT id for `node`.
+    ///
+    /// A real node's id IS its `NodeId`, which makes it directly addressable
+    /// (the explorer navigates by it) and self-memoizing: a node reached from
+    /// several edges resolves to the same id, so it renders as one box with no
+    /// bookkeeping.  The CFG dumper already works this way; this is the IR
+    /// side agreeing with it.
+    ///
+    /// A [per-use](Self::renders_per_use) constant is the exception: since it
+    /// draws a fresh box at each consumer, its id must be unique per use.  Those
+    /// get a `c`-prefixed counter — not a navigation target, but still mapped
+    /// back to the node in [`dot_to_node`](Self::dot_to_node).  The `c` / `v`
+    /// prefixes keep both off the integer id space.
+    ///
+    /// `graph` is used for the node-kind lookup only; callers pass
+    /// `dumper.function.graph()` or a deref of the function.
     pub(super) fn get_dot_id(&mut self, graph: &Graph, node_id: NodeId) -> String {
-        // Constants are always given a fresh id so they render as separate nodes.
-        // Note: `graph` here is used for structural node-kind lookup only;
-        // callers pass `dumper.function.graph()` or a deref of the function.
-        if graph.node_kind(node_id).is_const() {
-            return self.alloc_id(node_id);
-        }
-        if let Some(s) = self.visited_node_id.get(&node_id) {
-            return s.clone();
-        }
-        self.alloc_id(node_id)
+        let s = if self.renders_per_use(graph, node_id) {
+            let id = self.next_unique_id;
+            self.next_unique_id += 1;
+            format!("c{id}")
+        } else {
+            node_id.as_u32().to_string()
+        };
+        self.dot_to_node.insert(s.clone(), node_id);
+        s
     }
 }

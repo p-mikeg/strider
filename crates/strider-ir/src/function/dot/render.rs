@@ -24,16 +24,28 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
 
     fn create_initial_state(&self) -> Self::State {
         Self::State {
-            visited_node_id: FxHashMap::default(),
             virtual_nodes: FxHashMap::default(),
             dot_to_node: FxHashMap::default(),
             next_unique_id: 0,
+            center: self.center,
         }
     }
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
-        // Every node reachable from `entry`, in walk order.
-        crate::walk::walk_graph(self.function.graph(), self.entry).collect::<Vec<_>>()
+        match &self.nodes {
+            // Restricted render: the set itself, sorted by `NodeId` so the
+            // output is deterministic (the set is unordered). NOT the walk
+            // filtered to the set — a neighbourhood is BFS'd over producer /
+            // consumer edges from its centre and need not be reachable from
+            // `entry` at all, so filtering the walk would silently drop it.
+            Some(set) => {
+                let mut v: Vec<NodeId> = set.iter().copied().collect();
+                v.sort_unstable_by_key(|n| n.as_u32());
+                v
+            }
+            // Full render: every node reachable from `entry`, in walk order.
+            None => crate::walk::walk_graph(self.function.graph(), self.entry).collect::<Vec<_>>(),
+        }
     }
 
     fn dump_as_dot(
@@ -80,7 +92,9 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         state: &mut FunctionDotDumperState,
     ) -> std::io::Result<Option<String>> {
         let kind = *self.function.node_kind(node);
-        if kind.is_const() {
+        // A per-use node draws its boxes beside its consumers instead, so there
+        // is no shared box to declare here.
+        if state.renders_per_use(self.function.graph(), node) {
             return Ok(None);
         }
         // An `InitialVar` with no uses is rendered as floating edgeless,
@@ -113,6 +127,11 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         let mut extra: Vec<(&str, &str)> = vec![("fillcolor", fillcolor)];
         if is_arg_node {
             extra.push(("peripheries", "2"));
+        }
+        // The focus of a neighbourhood render gets a bright border.
+        if self.center == Some(node) {
+            extra.push(("color", "\"#ffcc00\""));
+            extra.push(("penwidth", "2.5"));
         }
 
         out.node(&cur_id, &label, node_shape(&kind), &extra);
@@ -194,6 +213,16 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         state: &mut FunctionDotDumperState,
     ) -> core::result::Result<(), std::io::Error> {
         let parent_id = self.function.producer(parent_value);
+        // Restricted (neighbourhood) render: an edge whose producer is out of
+        // view is dropped, so what remains is the induced subgraph rather than
+        // edges dangling off nodes that were never declared.
+        if self
+            .nodes
+            .as_ref()
+            .is_some_and(|set| !set.contains(&parent_id))
+        {
+            return Ok(());
+        }
         let parent_kind = *self.function.node_kind(parent_id);
 
         // If the producing output has a virtual node, connect from
@@ -284,7 +313,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 
         out.edge(&parent_dot_id, cur_id, &extra);
 
-        if self.function.node_kind(parent_id).is_const() {
+        if state.renders_per_use(self.function.graph(), parent_id) {
             self.emit_const_node(parent_id, &parent_dot_id, out);
         }
         Ok(())

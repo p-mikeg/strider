@@ -663,6 +663,8 @@ impl Function {
             function: self,
             sleigh,
             node_to_arg_indices,
+            nodes: None,
+            center: None,
         })
     }
 }

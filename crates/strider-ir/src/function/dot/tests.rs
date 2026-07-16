@@ -47,6 +47,8 @@ fn render_with_state(
         function,
         sleigh: &sleigh,
         node_to_arg_indices: build_arg_reverse_map(function),
+        nodes: None,
+        center: None,
     };
     use ::dot::GraphDot;
     GraphDot::new(dumper, ::dot::DotStyle::empty())
@@ -342,8 +344,8 @@ fn if_node_produces_exactly_two_branch_virtual_nodes() {
 /// Every emitted DOT id that stands for an IR node resolves back to exactly
 /// one node — including a constant, which is deliberately re-emitted as a
 /// fresh box per use so a hot value never becomes an edge hub.  The mapping is
-/// many-to-one, and that is the contract: `visited_node_id` (NodeId -> id) is
-/// only a memo and keeps a const's LAST id, so it cannot answer this.
+/// many-to-one, and that is the contract: a real node's id IS its NodeId, while
+/// each const box gets a fresh `c`-prefixed id that still resolves back to it.
 #[test]
 fn dot_id_maps_back_to_its_ir_node_including_duplicated_consts() {
     let mut f = test_function();
@@ -504,6 +506,8 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
         function: &f,
         sleigh: &sleigh,
         node_to_arg_indices: build_arg_reverse_map(&f),
+        nodes: None,
+        center: None,
     };
 
     let style = ::dot::DotStyle::empty();
@@ -1079,6 +1083,82 @@ fn neighborhood_bfs_bounds_total_node_count() {
     assert!(budgeted.contains(&add), "center is always kept");
 }
 
+/// The centred node is highlighted and keeps its navigable `NodeId` id — even
+/// when it is a constant.  A const normally renders as a fresh `c*` box per use
+/// so a hot value never becomes an edge hub, but the centre is what the explorer
+/// re-centres and searches on, so it must stay addressable: one shared box that
+/// every in-view consumer points at.
+#[test]
+fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
+    use crate::node::IntBinaryOp;
+
+    let mut f = test_function();
+    let k = int_const_node(&mut f, 7, ValueType::I32);
+    let a = int_const_node(&mut f, 1, ValueType::I32);
+    let kv = f.node_outputs(k)[0];
+    let av = f.node_outputs(a)[0];
+    let mk_add = |f: &mut Function, l, r| {
+        f.graph_mut().create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            [l, r],
+            [ValueKind::Typed(ValueType::I32)],
+        )
+    };
+    let add1 = mk_add(&mut f, av, kv);
+    let a1v = f.node_outputs(add1)[0];
+    let add2 = mk_add(&mut f, a1v, kv);
+    let a2v = f.node_outputs(add2)[0];
+
+    // The consumer index is built by walking from `entry`, so the adds have to
+    // be reachable for the const to have any recorded consumer at all.
+    let entry = f.entry();
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let mem = crate::function::test_initial_memory(&f);
+    let [memv] = f.node_outputs_exact::<1>(mem).unwrap();
+    f.graph_mut()
+        .create_node(NodeKind::Return, [ctrl, memv, a2v], []);
+
+    let sleigh = probe_sleigh();
+    let dumper = FunctionDotDumper {
+        entry,
+        function: &f,
+        sleigh: &sleigh,
+        node_to_arg_indices: build_arg_reverse_map(&f),
+        nodes: None,
+        center: None,
+    };
+
+    // A plain (non-const) centre: highlighted, id is its NodeId.
+    let dot = dumper.neighborhood_dot(add1, 3, 12, 100).unwrap();
+    let decl = node_decls(&dot)
+        .into_iter()
+        .find(|l| l.trim_start().starts_with(&format!("\"{}\" ", add1.as_u32())))
+        .unwrap_or_else(|| panic!("centre must render under its NodeId:\n{dot}"));
+    assert!(decl.contains("#ffcc00"), "centre must be highlighted: {decl}");
+
+    // A const centre: the SAME box for both consumers (add1, add2), under its
+    // NodeId — not one private `c*` box per use.
+    let dot = dumper.neighborhood_dot(k, 3, 12, 100).unwrap();
+    let kid = k.as_u32().to_string();
+    let decls: Vec<_> = node_decls(&dot)
+        .into_iter()
+        .filter(|l| l.contains("const 0x7"))
+        .collect();
+    assert_eq!(decls.len(), 1, "centred const stays one shared box:\n{dot}");
+    assert!(
+        decls[0].trim_start().starts_with(&format!("\"{kid}\" ")),
+        "centred const keeps its navigable NodeId id:\n{dot}"
+    );
+    assert!(decls[0].contains("#ffcc00"), "centre must be highlighted:\n{dot}");
+    for consumer in [add1, add2] {
+        assert!(
+            dot.contains(&format!("\"{kid}\" -> \"{}\"", consumer.as_u32())),
+            "consumer {} must point at the centred const box:\n{dot}",
+            consumer.as_u32()
+        );
+    }
+}
+
 #[test]
 fn neighborhood_duplicates_shared_const_per_use() {
     use crate::node::IntBinaryOp;
@@ -1113,6 +1193,8 @@ fn neighborhood_duplicates_shared_const_per_use() {
         function: &f,
         sleigh: &sleigh,
         node_to_arg_indices: build_arg_reverse_map(&f),
+        nodes: None,
+        center: None,
     };
     let dot = dumper.neighborhood_dot(center, 3, 12, 100).unwrap();
 
