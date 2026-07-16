@@ -166,6 +166,25 @@ impl PyLifterOptions {
         })
     }
 
+    /// These options with `cfg` replaced and every other field carried over.
+    ///
+    /// The supported way to override the nested `CfgOptions`, since the fields
+    /// are read-only. Rebuilding `LifterOptions(...)` by hand from Python
+    /// instead means every field must be re-listed, and any option added later
+    /// is silently dropped back to its default at that call site; this carries
+    /// them over in one place the compiler checks.
+    fn with_cfg(&self, py: Python<'_>, cfg: Py<PyCfgOptions>) -> Self {
+        Self {
+            cfg,
+            compact: self.compact,
+            per_address_ccs: self.per_address_ccs.clone(),
+            calls_clobber: self.calls_clobber,
+            assume_distinct_sp_bases_disjoint: self.assume_distinct_sp_bases_disjoint,
+            alias_mode: self.alias_mode.clone(),
+            pipeline: self.pipeline.as_ref().map(|p| p.clone_ref(py)),
+        }
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let cfg_repr = self.cfg.borrow(py).__repr__();
         Ok(format!(

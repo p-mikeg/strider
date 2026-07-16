@@ -1389,11 +1389,6 @@ forall_castmask!(none => fn empty);
 
 #[pymethods]
 impl PyCastMask {
-    /// Alias for `none()` — mirrors Rust's `CastMask::empty()`.
-    #[classmethod]
-    fn empty(cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self::none(cls)
-    }
     /// Union of two masks (`a | b`).
     fn __or__(&self, other: &Self) -> Self {
         Self {

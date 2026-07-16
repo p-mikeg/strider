@@ -87,3 +87,39 @@ def test_pipeline_override_runs_custom_pipeline():
     # ids than the fully-optimised default pipeline.
     assert empty_fn.node_count() >= default_fn.node_count()
     assert empty_fn.node_count() > default_fn.node_count()
+
+
+def test_with_cfg_carries_over_every_other_field():
+    """`with_cfg` replaces only `cfg`.
+
+    The fields are read-only, so overriding the nested `CfgOptions` used to
+    mean re-listing all seven from Python — and anything the caller had set
+    but forgot to re-list silently reverted to its default.  Every non-cfg
+    field here is deliberately set away from its default, so a carry-over
+    that drops one fails loudly.
+    """
+    pipeline = strider.OptimizerPipeline.empty()
+    opts = strider.LifterOptions(
+        cfg=strider.CfgOptions(function_max_size=64),
+        compact=False,
+        per_address_ccs={0x1000: strider.CallingConvention.x86_64_systemv()},
+        calls_clobber=True,
+        assume_distinct_sp_bases_disjoint=True,
+        alias_mode="strict",
+        pipeline=pipeline,
+    )
+
+    out = opts.with_cfg(strider.CfgOptions(function_max_size=128))
+
+    # The replaced field.
+    assert out.cfg.function_max_size == 128
+    # ...and every other one, carried over intact.
+    assert out.compact is False
+    assert out.per_address_ccs is not None and 0x1000 in out.per_address_ccs
+    assert out.calls_clobber is True
+    assert out.assume_distinct_sp_bases_disjoint is True
+    assert out.alias_mode == "strict"
+    assert out.pipeline is not None
+
+    # The receiver is untouched — `with_cfg` copies, it does not mutate.
+    assert opts.cfg.function_max_size == 64

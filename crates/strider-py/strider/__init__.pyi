@@ -272,6 +272,10 @@ class LifterOptions:
         alias_mode: str = ...,
         pipeline: Optional[OptimizerPipeline] = ...,
     ) -> None: ...
+    def with_cfg(self, cfg: CfgOptions) -> LifterOptions:
+        """These options with `cfg` replaced and every other field carried
+        over — the supported way to override the nested `CfgOptions`, whose
+        fields are read-only."""
 
 class Lifter:
     """The single lift+optimise+resolve handle.  Build one with

@@ -1,6 +1,6 @@
 """Interactive IR explorer: a tiny local server + graphviz (viz.js) frontend.
 
-`strider.serve(lifter, function)` opens a browser tab showing the depth-N
+`Lifter.visualize(target)` opens a browser tab showing the depth-N
 neighborhood (inputs + outputs) around the entry node, rendered by graphviz.
 Click a node to re-center on it (the clicked node stays put); click an edge to
 walk along it, shift-click to mark it. A search bar runs a strider pattern
@@ -8,8 +8,9 @@ walk along it, shift-click to mark it. A search bar runs a strider pattern
 
 The graph is never rendered whole — only a small neighborhood — so graphviz is
 always fast and pretty. Real DOT node ids are IR node ids, so pattern matches
-(`find_all(...).root`) line up 1:1 with what's drawn; virtual nodes (if.true /
-if.false / Post Call) use `v_*` ids and aren't navigation targets.
+(`find_all(...).root`) line up 1:1 with what's drawn. Per-use constant boxes
+(`c*`) and virtual nodes (`v*`: if.true / if.false / Post Call) aren't
+navigation targets.
 """
 
 from __future__ import annotations
@@ -442,10 +443,3 @@ def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
         srv.serve_forever()
     except KeyboardInterrupt:
         srv.shutdown()
-
-
-def serve(lifter, function, host="127.0.0.1", port=0, depth=5):
-    """Start the explorer server for `function` (lifted via `lifter`). Blocks
-    serving requests until interrupted. Back-compat alias over `_serve` +
-    `_IrVisualizer`."""
-    return _serve(_IrVisualizer(lifter, function), host=host, port=port, depth=depth)

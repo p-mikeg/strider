@@ -493,17 +493,11 @@ class ElfLifter(Lifter):
             # provide an explicit bound (zero-size symbols surface as
             # `None`).
             if opts.cfg.function_max_size is None:
-                opts = LifterOptions(
-                    cfg=CfgOptions(
+                opts = opts.with_cfg(
+                    CfgOptions(
                         function_max_size=sym_size,
                         allow_code_before_start_addr=opts.cfg.allow_code_before_start_addr,
-                    ),
-                    compact=opts.compact,
-                    per_address_ccs=opts.per_address_ccs,
-                    calls_clobber=opts.calls_clobber,
-                    assume_distinct_sp_bases_disjoint=opts.assume_distinct_sp_bases_disjoint,
-                    alias_mode=opts.alias_mode,
-                    pipeline=opts.pipeline,
+                    )
                 )
         elif isinstance(target, int):
             addr = target
