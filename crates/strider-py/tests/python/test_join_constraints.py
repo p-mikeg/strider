@@ -2,7 +2,7 @@
 
 The motivating query: a call gated on the TRUE branch of a guard, not the false
 branch and not after the merge — expressed region-independently via the If's
-control-output values plus reaches / not_reaches.
+control-output values plus dominated_by_branch.
 """
 
 import strider
@@ -42,29 +42,29 @@ def _call_count(fn, constraints):
     return len(fn.find_all([guard, call], constraints=constraints(t, f, c, g)))
 
 
-def test_reaches_and_not_reaches_isolate_the_true_arm():
+def test_dominated_by_branch_isolates_true_arm_in_one_constraint():
     fn = _diamond_with_calls()
     all_calls = len(fn.find_all(p.call()))
     assert all_calls >= 3, f"expected >=3 calls, got {all_calls}"
 
-    # reaches(true) alone: true arm + merge.
-    reach_true = _call_count(fn, lambda t, f, c, g: [p.reaches(t, c)])
-    # + not_reaches(false): drops the merge (reachable from both) -> true only.
-    true_only = _call_count(fn, lambda t, f, c, g: [p.reaches(t, c), p.not_reaches(f, c)])
-
-    assert reach_true > true_only, "adding not_reaches(false) must drop the merge tail"
-    assert true_only >= 1, "the true-arm call survives"
-
-
-def test_dominated_by_branch_isolates_true_arm_in_one_constraint():
-    fn = _diamond_with_calls()
     g, t, f, c = p.Capture(), p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f).capture(g)
     call = p.call().capture(c)
-    # One constraint = "call in the true block" (excludes false arm AND merge).
-    one = len(fn.find_all([guard, call], constraints=[p.dominated_by_branch(t, c)]))
-    two = len(fn.find_all([guard, call], constraints=[p.reaches(t, c), p.not_reaches(f, c)]))
-    assert one == two >= 1, "one dominated_by_branch equals reaches+not_reaches"
+
+    # Edge polarity is the IR's, not the C source's: `je 0x100b` lifts to
+    # `CBRANCH 0x100b, ZF`, so the If's TRUE output is the jump-taken edge
+    # (0x100b) and its FALSE output is the fallthrough (0x1004).
+    #
+    # One constraint = "the call in the block this edge leads into": it excludes
+    # the sibling arm AND the merge tail at 0x1010 (the merge is dominated by
+    # the If itself, not by either of its edges).
+    hits = fn.find_all([guard, call], constraints=[p.dominated_by_branch(t, c)])
+    assert len(hits) == 1, "only one call is dominated by the true edge"
+    assert 0x100B in hits[0].asm_fingerprint(c), "true edge -> the jump-taken call"
+
+    fhits = fn.find_all([guard, call], constraints=[p.dominated_by_branch(f, c)])
+    assert len(fhits) == 1, "only one call is dominated by the false edge"
+    assert 0x1004 in fhits[0].asm_fingerprint(c), "false edge -> the fallthrough call"
 
 
 def test_find_one_and_find_unique_accept_constraints():

@@ -484,9 +484,10 @@ class Function:
         result.  Dedup keys on captures+root(s) by default; `ignore_root=True`
         keys on captures only (collapsing one binding reached from several
         roots and capture-less duplicates).  `constraints` filters a joined
-        result by CFG relations (`dominates` / `reaches` / `not_reaches`) over
-        captured entities; patterns linked only by a constraint still count as
-        correlated for the shared-capture connectivity check."""
+        result by CFG relations (`dominates` / `dominated_by_branch` /
+        `phi_input_from_edge`) over captured entities; patterns linked only by a
+        constraint still count as correlated for the shared-capture
+        connectivity check."""
         ...
     def find_one(
         self,

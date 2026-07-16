@@ -90,24 +90,6 @@ pub fn dominates(
     doms.dominators(b).is_some_and(|mut it| it.any(|d| d == a))
 }
 
-/// The set of control nodes forward-reachable from `start` (inclusive),
-/// following control edges only. `start` must be a control node; a non-control
-/// or unreached `start` yields just `{start}` (it has no control successors).
-///
-/// Used to discriminate branch paths: BFS from the consumer of an `If`'s true
-/// control output reaches only the true-side body plus the post-merge tail
-/// (the merge is reachable from both edges), so intersecting with the
-/// false-side's reachable set isolates the shared tail.
-pub fn control_reachable_from(function: &Function, start: NodeId) -> FxHashSet<NodeId> {
-    let view = ControlFlowView::new(function);
-    let mut bfs = petgraph::visit::Bfs::new(&view, start);
-    let mut reached = FxHashSet::default();
-    while let Some(n) = bfs.next(&view) {
-        reached.insert(n);
-    }
-    reached
-}
-
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -206,33 +188,6 @@ mod tests {
         );
     }
 
-    // ── control_reachable_from_isolates_a_branch ──────────────────────────────
-
-    #[test]
-    fn control_reachable_from_isolates_a_branch() {
-        let f = diamond().expect("diamond() should build without errors");
-        let if_node = f
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(f.node_kind(n), NodeKind::If))
-            .expect("diamond must have an If node");
-        // The If's two control successors are the branch regions B and C.
-        let view = ControlFlowView::new(&f);
-        let branches: Vec<NodeId> = view.neighbors(if_node).collect();
-        assert_eq!(branches.len(), 2);
-        let (b, c) = (branches[0], branches[1]);
-
-        let from_b = control_reachable_from(&f, b);
-        let from_c = control_reachable_from(&f, c);
-
-        // Each branch reaches itself but not its sibling; the join tail is
-        // reachable from both, so the intersection excludes both branch heads.
-        assert!(from_b.contains(&b) && !from_b.contains(&c));
-        assert!(from_c.contains(&c) && !from_c.contains(&b));
-        let shared: FxHashSet<_> = from_b.intersection(&from_c).copied().collect();
-        assert!(!shared.contains(&b) && !shared.contains(&c));
-        assert!(!shared.is_empty(), "the join tail is reachable from both");
-    }
 
     // ── simple_fast_join_idom_is_branch_region ────────────────────────────────
 

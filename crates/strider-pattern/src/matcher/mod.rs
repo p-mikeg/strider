@@ -39,7 +39,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
-    Function, Graph, IRViewer, IRWalker, control_dominators, control_reachable_from, dominates,
+    Function, Graph, IRViewer, IRWalker, control_dominators, dominates,
 };
 
 use crate::bindings::{Binding, Bindings};
@@ -318,8 +318,8 @@ impl<'f> Matcher<'f> {
         // Constraints correlate patterns too: two patterns linked by a
         // constraint whose captures live one in each are connected even with no
         // shared capture (the common case — `guard` captures `t`, `call`
-        // captures `c`, joined by `reaches(t, c)`). Union their owners so the
-        // connectivity check accepts a constraint-correlated join.
+        // captures `c`, joined by `dominated_by_branch(t, c)`). Union their
+        // owners so the connectivity check accepts a constraint-correlated join.
         for con in constraints {
             // Union the owners of ALL of a constraint's captures into one
             // component (a 3-capture constraint links three patterns).
@@ -439,21 +439,13 @@ pub enum JoinConstraint {
     /// The node bound to `a` dominates the node bound to `b` in the control
     /// subgraph. A capture absent from the control subgraph fails it.
     Dominates { a: crate::Capture, b: crate::Capture },
-    /// The node bound to `to` is forward-control-reachable from the branch edge
-    /// bound to `from`. `from` must bind a control-output *value* (e.g. via
-    /// [`IfPat::capture_true`](crate::IfPat::capture_true)); reachability starts
-    /// at that value's consumer. A non-value `from` fails it.
-    Reaches { from: crate::Capture, to: crate::Capture },
-    /// The logical negation of [`Reaches`](Self::Reaches). An ill-typed `from`
-    /// makes `Reaches` false, hence `NotReaches` vacuously true.
-    NotReaches { from: crate::Capture, to: crate::Capture },
     /// `node` is dominated by the consumer of the branch edge `branch` — i.e.
-    /// `node` sits in the block that edge leads into, *exclusively*. Unlike
-    /// [`Reaches`](Self::Reaches) (which also admits the shared post-merge tail),
-    /// this is true only where every path to `node` traverses the edge's target,
-    /// so a single `dominated_by_branch(true_edge, c)` expresses "`c` is in the
-    /// true block" without a paired `not_reaches`. `branch` must bind a
-    /// control-output value; an ill-typed `branch` or an absent node fails it.
+    /// `node` sits in the block that edge leads into, *exclusively*: true only
+    /// where every path to `node` traverses the edge's target, so a single
+    /// `dominated_by_branch(true_edge, c)` expresses "`c` is in the true block".
+    /// `branch` must bind a control-output value (e.g. via
+    /// [`IfPat::capture_true`](crate::IfPat::capture_true)); an ill-typed
+    /// `branch` or an absent node fails it.
     DominatedByBranch { branch: crate::Capture, node: crate::Capture },
     /// The `Phi`/`MemPhi` bound to `phi` merges, on the predecessor whose owning
     /// `Region` control input equals the branch edge `edge`, the value bound to
@@ -478,9 +470,6 @@ impl JoinConstraint {
     fn captures(&self) -> Vec<crate::Capture> {
         match *self {
             JoinConstraint::Dominates { a, b } => vec![a, b],
-            JoinConstraint::Reaches { from, to } | JoinConstraint::NotReaches { from, to } => {
-                vec![from, to]
-            }
             JoinConstraint::DominatedByBranch { branch, node } => vec![branch, node],
             JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
                 vec![phi, edge, value]
@@ -495,7 +484,6 @@ impl JoinConstraint {
 struct ConstraintEval<'f> {
     function: &'f Function,
     doms: OnceCell<petgraph::algo::dominators::Dominators<NodeId>>,
-    reach: FxHashMap<ValueId, FxHashSet<NodeId>>,
 }
 
 impl<'f> ConstraintEval<'f> {
@@ -503,7 +491,6 @@ impl<'f> ConstraintEval<'f> {
         Self {
             function,
             doms: OnceCell::new(),
-            reach: FxHashMap::default(),
         }
     }
 
@@ -517,25 +504,6 @@ impl<'f> ConstraintEval<'f> {
         tuple.iter().find_map(|m| m.value(c))
     }
 
-    /// `to`'s node is forward-control-reachable from the branch edge `from`.
-    fn reaches(&mut self, tuple: &[Match], from: crate::Capture, to: crate::Capture) -> bool {
-        let (Some(edge), Some(target)) = (self.value_of(tuple, from), self.node_of(tuple, to))
-        else {
-            return false;
-        };
-        let function = self.function;
-        let set = self.reach.entry(edge).or_insert_with(|| {
-            // BFS from every consumer of the branch-edge value (exactly one in
-            // well-formed IR; union anyway to stay robust to forks).
-            let mut acc = FxHashSet::default();
-            for (consumer, _) in function.graph().value_uses(edge) {
-                acc.extend(control_reachable_from(function, consumer));
-            }
-            acc
-        });
-        set.contains(&target)
-    }
-
     fn holds(&mut self, c: &JoinConstraint, tuple: &[Match]) -> bool {
         match *c {
             JoinConstraint::Dominates { a, b } => {
@@ -545,8 +513,6 @@ impl<'f> ConstraintEval<'f> {
                 let doms = self.doms.get_or_init(|| control_dominators(self.function));
                 dominates(doms, na, nb)
             }
-            JoinConstraint::Reaches { from, to } => self.reaches(tuple, from, to),
-            JoinConstraint::NotReaches { from, to } => !self.reaches(tuple, from, to),
             JoinConstraint::DominatedByBranch { branch, node } => {
                 let (Some(edge), Some(target)) =
                     (self.value_of(tuple, branch), self.node_of(tuple, node))

@@ -46,7 +46,7 @@ class CastMask:
 
 class JoinConstraint:
     """A CFG relation between two captured entities. Construct via
-    `dominates` / `reaches` / `not_reaches`; pass to
+    `dominates` / `dominated_by_branch` / `phi_input_from_edge`; pass to
     `Function.find_all([...], constraints=[...])`."""
     def bits(self) -> int: ...
     def __or__(self, other: CastMask) -> CastMask: ...
@@ -316,17 +316,10 @@ def one_of(patterns: List[PatLike]) -> Pat:
 def dominates(a: Capture, b: Capture) -> JoinConstraint:
     """`a` dominates `b` in the control subgraph. Pass to
     `Function.find_all([...], constraints=[...])`."""
-def reaches(src: Capture, dst: Capture) -> JoinConstraint:
-    """`dst` is forward-control-reachable from the branch edge `src` (an `If`'s
-    `capture_true`/`capture_false` value). Isolates one arm plus the shared
-    post-merge tail."""
-def not_reaches(src: Capture, dst: Capture) -> JoinConstraint:
-    """The negation of `reaches`. Pair `reaches(true_edge, c)` with
-    `not_reaches(false_edge, c)` to select exclusively-true-arm nodes."""
 def dominated_by_branch(branch: Capture, node: Capture) -> JoinConstraint:
-    """`node` is dominated by the target of branch edge `branch` — in that
-    block exclusively. A single `dominated_by_branch(true_edge, c)` means
-    "`c` is in the true block" (no paired `not_reaches` needed)."""
+    """`node` is dominated by the target of branch edge `branch` (an `If`'s
+    `capture_true`/`capture_false` value) — in that block exclusively, so
+    `dominated_by_branch(true_edge, c)` means "`c` is in the true block"."""
 def phi_input_from_edge(
     phi: Capture, edge: Capture, value: Capture
 ) -> JoinConstraint:

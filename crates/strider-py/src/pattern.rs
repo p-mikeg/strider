@@ -2995,7 +2995,7 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
 
 /// A CFG relation between two captured entities, passed to
 /// `Function.find_all([...], constraints=[...])` to filter joined tuples.
-/// Construct via `dominates` / `reaches` / `not_reaches`.
+/// Construct via `dominates` / `dominated_by_branch` / `phi_input_from_edge`.
 #[gen_stub_pyclass]
 #[pyclass(name = "JoinConstraint", module = "strider.pattern", frozen)]
 pub struct PyJoinConstraint {
@@ -3014,39 +3014,12 @@ pub fn dominates(a: PyRef<'_, PyCapture>, b: PyRef<'_, PyCapture>) -> PyJoinCons
     }
 }
 
-/// `dst` is forward-control-reachable from the branch edge `src` — `src` must
-/// bind an `If`'s control-output value (`if_else(...).capture_true(src)`).
-/// Reachability starts at that edge's successor, so it isolates one arm (plus
-/// the shared post-merge tail).
-#[pyfunction]
-pub fn reaches(src: PyRef<'_, PyCapture>, dst: PyRef<'_, PyCapture>) -> PyJoinConstraint {
-    PyJoinConstraint {
-        inner: JoinConstraint::Reaches {
-            from: src.inner,
-            to: dst.inner,
-        },
-    }
-}
-
-/// The negation of `reaches`: `dst` is NOT reachable from the branch edge
-/// `src`. Pairing `reaches(true_edge, c)` with `not_reaches(false_edge, c)`
-/// selects the exclusively-true-arm nodes (the post-merge tail, reachable from
-/// both edges, is dropped).
-#[pyfunction]
-pub fn not_reaches(src: PyRef<'_, PyCapture>, dst: PyRef<'_, PyCapture>) -> PyJoinConstraint {
-    PyJoinConstraint {
-        inner: JoinConstraint::NotReaches {
-            from: src.inner,
-            to: dst.inner,
-        },
-    }
-}
-
 /// `node` sits in the block the branch edge `branch` leads into, *exclusively*
-/// — `node` is dominated by that edge's target. Unlike `reaches` (which also
-/// admits the shared post-merge tail), a single `dominated_by_branch(true_edge,
-/// c)` means "`c` is in the true block", no paired `not_reaches` needed.
-/// `branch` must bind an `If`'s `capture_true`/`capture_false` value.
+/// — `node` is dominated by that edge's target, so a single
+/// `dominated_by_branch(true_edge, c)` means "`c` is in the true block" (the
+/// shared post-merge tail is dominated by the `If` itself, not by either edge,
+/// so it is excluded).  `branch` must bind an `If`'s
+/// `capture_true`/`capture_false` value.
 #[pyfunction]
 pub fn dominated_by_branch(
     branch: PyRef<'_, PyCapture>,
@@ -3509,8 +3482,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(switch);
     add_fn!(if_);
     add_fn!(dominates);
-    add_fn!(reaches);
-    add_fn!(not_reaches);
     add_fn!(dominated_by_branch);
     add_fn!(phi_input_from_edge);
     add_fn!(int_binary);

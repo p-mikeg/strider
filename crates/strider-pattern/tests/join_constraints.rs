@@ -66,47 +66,6 @@ fn call_addr(tuple: &[strider_pattern::Match], c: Capture, f: &strider_ir::Funct
 }
 
 #[test]
-fn reaches_selects_true_arm_and_merge() {
-    let (function, _) = diamond_with_calls();
-    let m = Matcher::new(&function);
-    let (t, c) = (Capture::new(), Capture::new());
-    let guard = if_node().capture_true(t).build();
-    let callp = call().capture(c).build();
-
-    let tuples = m
-        .find_joined_constrained(&[&guard, &callp], &[JoinConstraint::Reaches { from: t, to: c }])
-        .unwrap();
-    let mut addrs: Vec<u64> = tuples.iter().map(|tp| call_addr(tp, c, &function)).collect();
-    addrs.sort_unstable();
-    // The true arm (AAAA) and the merge (CCCC) are reachable from the true
-    // edge; the false arm (BBBB) is not.
-    assert_eq!(addrs, vec![0xAAAA, 0xCCCC]);
-}
-
-#[test]
-fn reaches_and_not_reaches_isolate_the_true_arm_only() {
-    let (function, _) = diamond_with_calls();
-    let m = Matcher::new(&function);
-    let (t, f, c) = (Capture::new(), Capture::new(), Capture::new());
-    let guard = if_node().capture_true(t).capture_false(f).build();
-    let callp = call().capture(c).build();
-
-    let tuples = m
-        .find_joined_constrained(
-            &[&guard, &callp],
-            &[
-                JoinConstraint::Reaches { from: t, to: c },
-                JoinConstraint::NotReaches { from: f, to: c },
-            ],
-        )
-        .unwrap();
-    let addrs: Vec<u64> = tuples.iter().map(|tp| call_addr(tp, c, &function)).collect();
-    // Merge (CCCC) is reachable from the false edge too, so not_reaches(f) drops
-    // it; only the true-arm call (AAAA) survives — exclusively true.
-    assert_eq!(addrs, vec![0xAAAA]);
-}
-
-#[test]
 fn dominated_by_branch_isolates_the_true_arm_in_one_constraint() {
     let (function, _) = diamond_with_calls();
     let m = Matcher::new(&function);

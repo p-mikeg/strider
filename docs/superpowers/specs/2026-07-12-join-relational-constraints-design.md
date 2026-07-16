@@ -1,5 +1,15 @@
 # find_joined relational constraints (dominance + control reachability) — design
 
+> **Superseded in part (2026-07-16).** The `reaches` / `not_reaches` constraints
+> described below were shipped and then removed before merge to master. Each
+> `reaches` query costs a control-BFS per branch edge (O(n)) where the
+> dominance-based constraints answer from one shared dominator tree (O(1) per
+> query), and the `reaches(t,c) ∧ ¬reaches(f,c)` pairing is easy to get subtly
+> wrong — a lone `reaches(t,c)` silently admits the post-merge tail. The single
+> `dominated_by_branch(edge, node)` expresses the motivating query below
+> directly, so it plus `dominates` / `phi_input_from_edge` is the whole surface.
+> Everything else in this document still describes the shipped design.
+
 ## Goal
 
 Let `find_joined` correlate matches not only by shared-capture *equality* but by
