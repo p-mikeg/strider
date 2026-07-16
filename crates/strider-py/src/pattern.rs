@@ -1611,8 +1611,31 @@ pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
 /// Match a value if **any** of the listed sub-patterns matches it — an
 /// alternation, for the "optional wrapper" case (e.g. an address that may or
 /// may not be masked: `one_of([add(base, off), int_and(add(base, off), mask)])`).
-/// Alternatives are tried in order. Match-only (not usable as a rewrite RHS).
-/// Requires at least one alternative.
+/// Match-only (not usable as a rewrite RHS). Requires at least one alternative.
+///
+/// **Order the alternatives most-specific first.** They are tried in order and
+/// the first match wins, so a permissive alternative placed before a narrower
+/// one shadows it — and since the shadowing arm still matches, the query
+/// silently returns the wrong binding instead of failing. `anything()` /
+/// `var(c)` match ANY node, including the operator a later arm was meant to
+/// catch:
+///
+/// ```python
+/// # WRONG: var(base) also matches the Add, so `off` never binds and every
+/// # `base + K` load silently looks like a bare `base`.
+/// load(addr=one_of([var(base), add(var(base), any_int_const(off))]))
+///
+/// # RIGHT: specific shape first, bare fallback last.
+/// load(addr=one_of([add(var(base), any_int_const(off)), var(base)]))
+/// ```
+///
+/// Captures under an alternative that did not fire are left UNBOUND (not
+/// defaulted), so `Match.has(c)` / a `None` from `Match.uint(c)` tells you
+/// which arm matched — and lets you supply your own default for the other:
+///
+/// ```python
+/// offset = h.uint(off) if h.has(off) else 0
+/// ```
 #[pyfunction]
 pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyResult<PyPat> {
     if patterns.is_empty() {

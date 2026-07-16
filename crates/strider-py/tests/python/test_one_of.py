@@ -55,6 +55,50 @@ def test_one_of_nested():
     assert len(fn.find_all(pat)) == total
 
 
+def test_one_of_alternative_order_decides_which_arm_binds():
+    """First-match-wins, so a permissive arm SHADOWS narrower arms after it.
+
+    This is the documented ordering rule on `one_of`, pinned: a wildcard also
+    matches the operator a later arm was meant to catch, and because it still
+    *matches*, the wrong binding is returned silently rather than failing.
+    """
+    # mov rax,[rdi] ; mov rdx,[rsi+8] ; add rax,rdx ; ret
+    fn = _lift(bytes([0x48, 0x8B, 0x07, 0x48, 0x8B, 0x56, 0x08, 0x48, 0x01, 0xD0, 0xC3]))
+    base, off = p.Capture(), p.Capture()
+
+    def offsets(pat):
+        return sorted(
+            (h.uint(off) if h.has(off) else 0) for h in fn.find_all(p.load(addr=pat))
+        )
+
+    # Specific first: the +8 load binds `off`; the bare load leaves it unbound.
+    good = p.one_of([p.add(p.var(base), p.any_int_const(off)), p.var(base)])
+    assert offsets(good) == [0, 8]
+
+    # Permissive first: `var(base)` swallows the Add too, so `off` never binds
+    # and the +8 load is indistinguishable from the bare one.
+    bad = p.one_of([p.var(base), p.add(p.var(base), p.any_int_const(off))])
+    assert offsets(bad) == [0, 0], "a leading wildcard arm shadows the specific arm"
+
+
+def test_one_of_leaves_captures_of_the_unfired_arm_unbound():
+    """`has()` is how a caller tells which alternative matched."""
+    # mov rax,rdi ; shl rax,3 ; imul rdx,rsi,12 ; add rax,rdx ; ret
+    fn = _lift(
+        bytes([0x48, 0x89, 0xF8, 0x48, 0xC1, 0xE0, 0x03,
+               0x48, 0x6B, 0xD6, 0x0C, 0x48, 0x01, 0xD0, 0xC3])
+    )
+    m, s = p.Capture(), p.Capture()
+    pat = p.one_of([p.mul(p.anything(), p.any_int_const(m)),
+                    p.shl(p.anything(), p.any_int_const(s))])
+    seen = set()
+    for h in fn.find_all(pat):
+        # Exactly one arm binds per match — never both, never neither.
+        assert h.has(m) != h.has(s)
+        seen.add(h.uint(m) if h.has(m) else ("shl", h.uint(s)))
+    assert seen == {12, ("shl", 3)}
+
+
 def test_one_of_empty_raises():
     with pytest.raises(strider.errors.StriderError):
         p.one_of([])

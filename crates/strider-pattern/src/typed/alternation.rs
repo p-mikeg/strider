@@ -10,6 +10,27 @@
 //! let inner = || add(var(base), var(off));
 //! load().addr(one_of![inner(), int_and(inner(), any_int_const(k))])
 //! ```
+//!
+//! # Order the alternatives most-specific first
+//!
+//! First-match wins, so a **permissive** alternative placed before a narrower
+//! one shadows it: the narrower arm is never tried, and — because the shadowing
+//! arm still *matches* — the query silently returns the wrong binding rather
+//! than failing. The wildcards (`any()` / `var(c)`) match ANY node, including
+//! the very operator a later arm was meant to recognise:
+//!
+//! ```ignore
+//! // WRONG: `var(base)` also matches the `Add`, so `off` never binds and
+//! // every `base + K` load silently reports no offset.
+//! load().addr(one_of![var(base), add(var(base), any_int_const(off))])
+//!
+//! // RIGHT: the specific shape first, the bare fallback last.
+//! load().addr(one_of![add(var(base), any_int_const(off)), var(base)])
+//! ```
+//!
+//! An alternative that does not bind is left unbound rather than defaulted, so
+//! `Match::value`/`node` returns `None` for its captures — that is how a caller
+//! tells which arm fired (and supplies its own default for the absent one).
 
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{MatcherBuilder, PatValueRef};

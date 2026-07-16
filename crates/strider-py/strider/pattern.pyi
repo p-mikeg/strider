@@ -310,9 +310,26 @@ def one_of(patterns: List[PatLike]) -> Pat:
 
     An alternation, for the "optional wrapper" case — e.g. an address that may
     or may not be masked:
-    `one_of([add(base, off), int_and(add(base, off), mask)])`. Alternatives are
-    tried in order. Match-only (not usable as a rewrite replacement); requires
-    at least one alternative."""
+    `one_of([add(base, off), int_and(add(base, off), mask)])`. Match-only (not
+    usable as a rewrite replacement); requires at least one alternative.
+
+    **Order the alternatives most-specific first.** They are tried in order and
+    the first match wins, so a permissive alternative placed before a narrower
+    one shadows it — and because the shadowing arm still matches, the query
+    silently returns the wrong binding rather than failing. `anything()` /
+    `var(c)` match ANY node, including the operator a later arm was meant to
+    catch::
+
+        # WRONG: var(base) also matches the Add, so `off` never binds and
+        # every `base + K` load silently looks like a bare `base`.
+        load(addr=one_of([var(base), add(var(base), any_int_const(off))]))
+
+        # RIGHT: specific shape first, bare fallback last.
+        load(addr=one_of([add(var(base), any_int_const(off)), var(base)]))
+
+    Captures under an alternative that did not fire are left UNBOUND (not
+    defaulted), so `Match.has(c)` tells you which arm fired and lets you supply
+    your own default: `off = h.uint(o) if h.has(o) else 0`."""
 def dominates(a: Capture, b: Capture) -> JoinConstraint:
     """`a` dominates `b` in the control subgraph. Pass to
     `Function.find_all([...], constraints=[...])`."""
