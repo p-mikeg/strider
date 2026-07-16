@@ -2,7 +2,7 @@
 name: strider-py-pattern
 description: Use when a Python user wants to write a strider pattern (strider.pattern.*) to match
   an IR shape on a lifted binary — produces correct Python pattern code given a natural-language
-  description. Knows the full Python builder surface (including OffsetCapture, stack_only,
+  description. Knows the full Python builder surface (including stack_only, stack_offset,
   CastMask), lift-time canonicalisations, and commutative ops so the generated pattern matches
   the canonical IR shape rather than the source-level shape.
 ---
@@ -11,6 +11,12 @@ description: Use when a Python user wants to write a strider pattern (strider.pa
 
 Generate idiomatic `strider.pattern` Python code from a natural-language description of an IR
 shape.
+
+> Every builder, flag and `Match` accessor named below was executed against the built extension on
+> 2026-07-17.  If you add to this file, run the snippet — the drift this replaced included an
+> `OffsetCapture` / `offset_capture` / `captured_offset` API that never existed, an
+> `ignore_regions` flag, `cast_to_int` / `cast_to_bool` / `cast_to_float` builders, and
+> `reaches` / `not_reaches` constraints that were removed.
 
 **Use when** the user asks "give me a pattern that matches X" / "how do I find all loads where the
 address is sp+const" / "write a pattern for the indexed-array-load shape" and similar.
@@ -30,8 +36,7 @@ address is sp+const" / "write a pattern for the indexed-array-load shape" and si
 3. Choose the right builder for each level.  Use the `### Available builders` cheat sheet.
 4. Decide between **string-shorthand captures** ("x" auto-interns to a `Capture`) and explicit
    `Capture()` objects (when you need the capture passed to multiple places or to `var(c)`).  Use
-   `OffsetCapture()` specifically for SP-relative offset binding from `LoadPat.offset_capture` /
-   `StorePat.offset_capture`.
+   Filter SP-relative accesses with `LoadPat`/`StorePat`'s `stack_only()` / `stack_offset(K)`.
 5. Mention **commutativity** if it affects the spec — commutative ops automatically try both
    operand orderings.  Use `.ordered()` on a typed builder to suppress this.
 6. Emit the code as a single Python snippet, plus a 1-2 line explanation of why the canonical form
@@ -42,7 +47,7 @@ address is sp+const" / "write a pattern for the indexed-array-load shape" and si
 ### Captures
 
 ```python
-from strider.pattern import Capture, OffsetCapture, var, any_int_const, int_xor
+from strider.pattern import Capture, var, any_int_const, int_xor
 
 # Explicit Capture — use when the same capture appears in multiple slots or
 # you need it as a back-reference.
@@ -52,20 +57,15 @@ pat = add(var(c), int_const(8))           # later: h.uint(c)
 # String shorthand — each unique string interns to the same Capture per process.
 pat = int_xor("v", "v")                    # zero-idiom: must be same value
 
-# OffsetCapture — binds the i64 SP-relative offset of a matched stack Load/Store.
-# Use with LoadPat.offset_capture(oc) or StorePat.offset_capture(oc); retrieve via
-# match_.captured_offset(oc) -> int | None.
-oc = OffsetCapture()
-pat = load().stack_only().offset_capture(oc)
-# after match: h.captured_offset(oc) -> int
 
 # Reading captures back from a Match `h`:
 h.uint(c)           # → int  (None if not bound or not an IntConst)
-h.int_(c)           # → int  (signed i128 interpretation)
-h.bool_(c)          # → bool
+h.int(c)            # → int  (signed i128 interpretation)
+h.bool(c)           # → bool
 h.float_bits(c)     # → u64 bits of a FloatConst
 h.vn(c)             # → Vn of captured InitialVar / tagged Phi / FunctionArg
 h.has(c)            # → True/False whether the capture is bound
+h.node(c)           # → Node | None
 h.root              # → NodeId (u32) of the top-level match root (getter)
 h.asm_fingerprint(c) # → list[int] of asm addresses
 
@@ -79,13 +79,10 @@ h.float_binary_op(c)# → "Add" / "Mul" / etc.
 h.float_unary_op(c) # → "Neg" / "Abs" / etc.
 h.float_cmp_op(c)   # → "Equal" / "Less"
 
-# OffsetCapture retrieval (NOT a Capture — different method):
-h.captured_offset(oc) # → int | None  (requires OffsetCapture, not Capture)
 ```
 
-Note: there is no `h.stack_offset` or `h.stack_phi_offsets` method on `Match`.  The offset of a
-matched stack Load/Store is retrieved exclusively via `captured_offset(oc)` where `oc` is an
-`OffsetCapture` bound in the pattern.
+Note: `Match` has no stack-offset accessor.  Filter stack accesses in the PATTERN —
+`load().stack_only()` or `load().stack_offset(K)`.
 
 ### Available builders
 
@@ -95,6 +92,7 @@ enumerates every registered name).
 | Builder | Rust IR shape produced | Python signature | Commutative? |
 |---|---|---|---|
 | `p.anything()` | wildcard | `anything() -> Pat` | n/a |
+| `p.one_of([a, b])` | alternation (first match wins) | `one_of(pats: list[PatLike]) -> Pat` | n/a |
 | `p.var(c)` | wildcard + capture | `var(c: Capture) -> Pat` | n/a |
 | `p.int_const(K)` | `IntConst(K)` (strict width) | `int_const(value: int) -> Pat` | n/a |
 | `p.signed_int_const(K)` | `IntConst` re-interpreted as signed across widths | `signed_int_const(value: int) -> Pat` | n/a |
@@ -113,7 +111,6 @@ enumerates every registered name).
 | `p.phi()` | any `Phi` (tagged or anonymous) | builder w/ `.for_vn(vn)` `.input(idx, p)` `.any_input(p)` | n/a |
 | `p.phi_for(vn)` | `Phi` tagged with `vn` | `phi_for(vn: Vn) -> PhiPat` | n/a |
 | `p.mem_phi()` | `MemPhi` | `mem_phi() -> MemPhiPat` | n/a |
-| `p.value_phi()` | `Phi(None)` (anonymous, from `LoadForward`) | `value_phi() -> ValuePhiPat` | n/a |
 | `p.predicate(f)` | match-any + Python guard | `predicate(f) -> Pat` | n/a |
 | `p.add(a, b)` | `IntBinaryOp(Add)` | `add(l, r) -> Pat` | **yes** |
 | `p.sub(a, b)` | `Add(a, Neg(b))` lowered | `sub(l, r) -> Pat` | no (lowered) |
@@ -139,12 +136,11 @@ enumerates every registered name).
 | `p.float_eq` / `p.float_ne` / `p.float_lt` / `p.float_le` | float cmp | binary | Equal commutative; le lowered |
 | `p.int_to_float` / `p.float_to_int` / `p.float_to_float` | conversions | unary | n/a |
 | `p.int_bits_to_float` / `p.float_bits_to_int` | bit-cast | unary | n/a |
-| `p.cast_to_int` / `p.cast_to_bool` / `p.cast_to_float` | cast nodes | unary | n/a |
 | `p.truncate(x)` | `Truncate` | unary | n/a |
 | `p.popcount(x)` / `p.lzcount(x)` | popcount / lzcnt | unary | n/a |
 | `p.zero_extend(x)` / `p.sign_extend(x)` / `p.extend("zero"\|"sign", x)` | width-extend | unary | n/a |
-| `p.load(addr=…)` | `Load(_)` typed builder | `.addr(p) .space(s) .mem_in(p) .bit_width(n) .stack_only() .offset_capture(oc)` | n/a |
-| `p.store(addr=…, data=…)` | `Store(_)` typed builder | `.addr .data .space .mem_in .next_mem .bit_width .stack_only() .offset_capture(oc)` | n/a |
+| `p.load(addr=…)` | `Load(_)` typed builder | `.addr(p) .space(s) .mem_in(p) .bit_width(n) .stack_only() .stack_offset(k)` | n/a |
+| `p.store(addr=…, data=…)` | `Store(_)` typed builder | `.addr .data .space .mem_in .next_mem .bit_width .stack_only() .stack_offset(k)` | n/a |
 | `p.call(at=…)` | `Call` builder | `.at(addr) .at_any([…]) .target(p) .arg(idx, p) .ret_output(idx, p)` | n/a |
 | `p.call_other()` | `CallOther` builder | `.user_op_id(v) .name(s) .arg(i, p) .ret(i, p) .ctrl .mem .ctrl_out .mem_out .next_ctrl .next_mem` | n/a |
 | `p.ret()` | `Return` builder | `.preceded_by(p) .ret_val(idx, p)` | n/a |
@@ -154,23 +150,21 @@ enumerates every registered name).
 | `p.float_binary("Op", l, r)` | dispatch w/ `.ordered()` | typed builder | per op |
 | `p.int_bin_any(c, l, r)` / `p.int_un_any(c, x)` / `p.int_cmp_any(c, l, r)` / `p.bool_bin_any` / `p.bool_un_any` / `p.float_bin_any` / `p.float_un_any` / `p.float_cmp_any` | variant-agnostic, captures the op | takes a Capture for the op | per concrete variant |
 
-**LoadPat and StorePat — stack filter and offset capture:**
+**LoadPat and StorePat — stack filters:**
 
 ```python
-from strider.pattern import OffsetCapture
-
-oc = OffsetCapture()
-
 # Match only stack-relative loads (Function.stack_offset(node) is Some).
 p.load().stack_only()
 
-# Match stack-relative loads and bind the offset for retrieval.
-pat = p.load().offset_capture(oc)   # implies stack_only
-# after match: h.captured_offset(oc) -> int | None
+# Match only the stack-relative load at exactly SP+K.
+p.load().stack_offset(0x10)
 
-# Same for stores:
-pat = p.store().stack_only().offset_capture(oc)
+# Same verbs on stores:
+p.store().stack_only()
+p.store().stack_offset(0x10)
 ```
+
+There is no offset-*capture*: the offset is a filter you supply, not a value bound out.
 
 **CastMask — granular cast walk-through:**
 
@@ -179,15 +173,15 @@ from strider.pattern import CastMask
 
 # Walk through zero-extend and truncate casts, but not sign-extend:
 mask = CastMask.zero_extend() | CastMask.truncate()
-hits = graph.find_all(pat, ignore_casts_mask=mask)
+hits = fn.find_all(pat, ignore_casts_mask=mask)
 
 # Walk through all cast kinds (equivalent to ignore_casts=True):
-hits = graph.find_all(pat, ignore_casts_mask=CastMask.all())
+hits = fn.find_all(pat, ignore_casts_mask=CastMask.all())
 
 # Available factory classmethods:
 # CastMask.zero_extend(), .sign_extend(), .extend() (= zext|sext),
-# .truncate(), .cast_to_int(), .cast_to_bool(), .cast_to_float(),
-# .int_bits_to_float(), .float_bits_to_int(), .all(), .none() / .empty()
+# .truncate(), .int_bits_to_float(), .float_bits_to_int(),
+# .all(), .none() / .empty()
 ```
 
 **Universal builder methods** (every typed builder has these):
@@ -223,9 +217,10 @@ form before writing the pattern.
 - `Load(IntConst(addr))` may fold to a value via `LoadReadOnly` if a ROM was passed.
 - SP-relative `Store` / `Load` annotation lives in `Function::stack_offsets` after
   `StackOffsetDetect`; for `Load`/`Store`, use `p.load().stack_only()` / `p.store().stack_only()`
-  or `.offset_capture(oc)` to filter to stack-relative ops without hard-coding the SP varnode.
-- After `LoadForward`, a same-offset load-after-store may become a `Phi(None)` (`value_phi`)
-  when the forwarding crossed a `MemPhi`.
+  or `.stack_offset(K)` to filter to stack-relative ops without hard-coding the SP varnode.
+- After `LoadForward`, a same-offset load-after-store may become an anonymous `Phi(None)`
+  when the forwarding crossed a `MemPhi`.  There is no `value_phi()` builder — use `p.phi()`,
+  which matches both the tagged and anonymous forms.
 
 ### Commutative ops (matcher tries both operand orderings)
 
@@ -253,11 +248,11 @@ import strider
 from strider import pattern as p
 
 lift = strider.lifter(arch=…, mem=…)
-graph, unresolved = lift.analyze(entry=…, cc=…)
+cfg, fn, unresolved = lift.analyze(entry=…, cc=…)   # THREE values
 
 c = p.Capture()
 pat = p.add(p.var(c), p.int_const(8))
-hits = graph.find_all(pat)            # list[Match]
+hits = fn.find_all(pat)            # list[Match]
 for h in hits:
     print(h.uint(c) if h.uint(c) is not None else h.vn(c))
 ```
@@ -266,19 +261,16 @@ Walk-through flags on `find_all` / `find_joined`:
 
 ```python
 # Skip intervening cast nodes (all kinds):
-graph.find_all(pat, ignore_casts=True)
+fn.find_all(pat, ignore_casts=True)
 
 # Skip specific cast kinds only:
-graph.find_all(pat, ignore_casts_mask=p.CastMask.zero_extend() | p.CastMask.truncate())
-
-# Skip phi/region nodes (match across control-flow joins):
-graph.find_all(pat, ignore_regions=True)
+fn.find_all(pat, ignore_casts_mask=p.CastMask.zero_extend() | p.CastMask.truncate())
 ```
 
 Multi-pattern join on shared captures (pass a `list` to `find_all`):
 
 ```python
-hits = graph.find_all([pat_a, pat_b, pat_c])
+hits = fn.find_all([pat_a, pat_b, pat_c])
 ```
 
 Walk-through flags also apply to a joined `find_all`; all flags apply uniformly to all patterns.
@@ -293,19 +285,17 @@ guard = p.if_else(cond=p.int_ne(p.load(p.add(p.var("fop"), p.any_int_const())), 
 call  = p.call().capture(c)
 
 # "call gated on the TRUE branch of the guard, exclusively":
-hits = graph.find_all([guard, call], constraints=[p.reaches(t, c), p.not_reaches(f, c)])
+hits = fn.find_all([guard, call], constraints=[p.dominated_by_branch(t, c)])
 ```
 
 - `p.dominates(a, b)` — node `a` dominates node `b` in the control subgraph.
-- `p.reaches(src, dst)` — `dst` is forward-control-reachable from the branch edge
-  `src` (an `If`'s `capture_true`/`capture_false` value). Isolates one arm + the
-  shared post-merge tail.
-- `p.not_reaches(src, dst)` — negation; pair with `reaches` to drop the merge tail
-  (reachable from both edges) and isolate the exclusively-true-arm nodes.
 - `p.dominated_by_branch(branch, node)` — `node` is dominated by the branch edge's
-  target, i.e. in that block *exclusively*. One `dominated_by_branch(true_edge, c)`
-  = "`c` is in the true block" — the single-constraint equivalent of
-  `reaches(true_edge, c) + not_reaches(false_edge, c)`.
+  target, i.e. in that block *exclusively*: the sibling arm AND the post-merge tail
+  are both excluded (the merge is dominated by the `If` itself, not by either edge).
+  One `dominated_by_branch(true_edge, c)` = "`c` is in the true block".
+  NOTE the polarity is the IR's, not the C source's: `je L` lifts to `CBRANCH L, ZF`,
+  so the `If`'s TRUE edge is the jump-TAKEN edge and the fallthrough is the FALSE
+  edge — the opposite of the source-level `if` body.
 - `p.phi_input_from_edge(phi, edge, value)` — the `phi` capture's data input on the
   predecessor fed by control `edge` equals `value`: "the value merged from THIS
   branch is X". `edge` binds an `If`'s `capture_true`/`capture_false`; direct-edge,
@@ -338,20 +328,16 @@ Notes:
   `p.initial_var_for(sleigh.reg("RSP"))` (x86_64).
 - `add` is commutative — also matches `Load(Add(IntConst(K), InitialVar(sp)))`.
 
-### Example 2: "match stack-relative loads and retrieve the offset"
+### Example 2: "match stack-relative loads"
 
-The SP-offset annotation lives in `Function::stack_offsets` after `StackOffsetDetect`.  Use
-`stack_only()` to filter and `offset_capture` to retrieve the SP-relative offset:
+The SP-offset annotation lives in `Function::stack_offsets` after `StackOffsetDetect`.  Filter to
+SP-relative accesses with `stack_only()`, or pin a specific slot with `stack_offset(K)`:
 
 ```python
 from strider import pattern as p
 
-oc = p.OffsetCapture()
-pat = p.load().stack_only().offset_capture(oc)  # offset_capture implies stack_only
-hits = graph.find_all(pat)
-for h in hits:
-    offset = h.captured_offset(oc)  # int | None — always int here (offset_capture implies stack)
-    print(f"stack load at sp+{offset}")
+hits = fn.find_all(p.load().stack_only())        # every SP-relative load
+at_10 = fn.find_all(p.load().stack_offset(0x10)) # only the load at SP+0x10
 ```
 
 ### Example 3: "Load where address is sp+K, result is then truncated"
@@ -434,15 +420,14 @@ When the architecture emits width casts between a load and its consumer, use `ig
 or `ignore_casts=True` so the pattern matches the load regardless of intervening cast nodes:
 
 ```python
-oc = p.OffsetCapture()
-load_pat = p.load().offset_capture(oc)
-hits = graph.find_all(load_pat, ignore_casts=True)
+load_pat = p.load().stack_only()
+hits = fn.find_all(load_pat, ignore_casts=True)
 ```
 
 ## Anti-patterns
 
-- **`h.stack_offset` / `h.stack_phi_offsets` don't exist.**  Use `h.captured_offset(oc)` where
-  `oc` is an `OffsetCapture` bound in the pattern via `.offset_capture(oc)`.
+- **`h.stack_offset` / `h.captured_offset` / `OffsetCapture` don't exist.**  The SP offset is a
+  pattern-side FILTER, not a bound value: `load().stack_only()` / `load().stack_offset(K)`.
 - **Writing the source-level shape.** `p.int_cmp("LessEqual", a, b)` raises — use `p.int_le`.
 - **Manually trying both commutative orderings.** `add` already tries both.
 - **Forgetting `.into_pat()` when chaining.** Typed builders are `PatLike` — pass them straight.
@@ -451,9 +436,9 @@ hits = graph.find_all(load_pat, ignore_casts=True)
 - **Matching post-optimization shapes when running pre-opt.**  `sub(x, K)` produces
   `Add(x, Neg(IntConst(K)))` pre-opt; after `ConstantFold`, `Neg(IntConst(K))` folds to
   `IntConst(-K)`.  Match with `add(x, signed_int_const(-K))` against optimised graphs.
-- **Confusing `OffsetCapture` with `Capture`.**  They are different types.  `OffsetCapture` is
-  used exclusively with `.offset_capture(oc)` on `LoadPat`/`StorePat`; retrieved via
-  `h.captured_offset(oc)`.  `Capture` is used everywhere else.
+- **Assuming a cast/bool cast builder exists.**  There is no `cast_to_int` / `cast_to_bool` /
+  `cast_to_float`: booleans are the 1-bit integer `I1`, so a bool→int widening is
+  `zero_extend(x)` and there is no int→bool cast.
 
 ## When to defer to other skills
 

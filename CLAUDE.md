@@ -603,7 +603,8 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   The repetitive `Py*Pat` builders are generated in-crate by local
   `macro_rules!` in `pattern.rs` (there is no separate proc-macro crate):
   `node_builder!` emits the node-rooted builders (`Load` / `Store` /
-  `Ret` / `Phi` / `MemPhi` / `ValuePhi` / `CallOther`) from a compact
+  `Ret` / `Phi` / `MemPhi` / `CallOther` / `IndirectBranch` / `Unreachable`
+  / `Switch`) from a compact
   field-set spec (operand kind, slot, root flavor), and
   `binary_op_builder!` emits the binary-op builders (`PyIntBinaryPat` /
   `PyFloatBinaryPat` / `PyBoolBinaryPat`).  The `.when()` wiring and
