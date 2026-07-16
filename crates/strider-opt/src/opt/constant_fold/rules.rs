@@ -1,11 +1,7 @@
-use strider_ir::node::{NodeId, ValueId};
-
-use crate::error::Result;
-
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 use super::eval_int::{eval_int_binary, eval_int_cmp};
 
-use crate::{apply_rules_in_order, rewrite_rule};
+use crate::rewrite_rule;
 use strider_pattern::{
     Capture, CaptureExt, add, and, any_float_const, any_int_const, bool_const_with, bool_not,
     float_binary_any, float_bits_to_int, float_cmp_any, float_const_with, float_unary_any,
@@ -14,69 +10,33 @@ use strider_pattern::{
     zero_extend,
 };
 
-/// The five constant-fold rule groups, built once and owned by a
+/// Every constant-fold rule, in application order, built once and owned by a
 /// [`super::ConstantFold`] instance.
 ///
-/// The groups keep their semantic grouping (identity / const-eval /
-/// bool-float / reassoc-and-mask / bitcast-extend) for readers.  The
-/// bitcast-extend group includes the `IntBitsToFloat`/`FloatBitsToInt`
-/// round-trip identities, so int↔float bitcasts are folded inline; there
-/// is no separate lowering step.
+/// The semantic groups (identity / const-eval / bool-float / reassoc-and-mask
+/// / bitcast-extend) survive as the builders below and the order they are
+/// concatenated in — they were never dispatched on.  The bitcast-extend rules
+/// include the `IntBitsToFloat`/`FloatBitsToInt` round-trip identities, so
+/// int↔float bitcasts are folded inline; there is no separate lowering step.
 ///
 /// A [`crate::BoxedRule`] captures patterns whose inner
 /// [`strider_pattern::Pattern`] is `!Send + !Sync` (strider runs
 /// single-threaded), and the boxed rule closures are not `Clone`.  The
 /// owning pass holds this set behind an [`std::rc::Rc`] so the pass stays
 /// cheaply `Clone` while building the rule closures only once.
-pub(super) struct ConstFoldRules {
-    identity: Vec<crate::BoxedRule>,
-    const_eval: Vec<crate::BoxedRule>,
-    bool_float: Vec<crate::BoxedRule>,
-    reassoc_and_mask: Vec<crate::BoxedRule>,
-    bitcast_extend: Vec<crate::BoxedRule>,
-}
-
-impl ConstFoldRules {
-    /// Builds every rule group once.  Called from [`super::ConstantFold::new`].
-    pub(super) fn build() -> Self {
-        Self {
-            identity: build_identity_rules(),
-            const_eval: build_const_eval_rules(),
-            bool_float: build_bool_float_rules(),
-            reassoc_and_mask: build_reassoc_and_mask_rules(),
-            bitcast_extend: build_bitcast_extend_rules(),
-        }
-    }
-
-    /// Runs every constant-fold rule group on `node`.  Returns
-    /// `Some(new_out)` — the output produced by the **last** group to
-    /// fire (the surviving redirect) — when any group fired, else
-    /// `None`.  The peephole driver re-examines the node behind
-    /// `new_out` for cascading folds.
-    pub(super) fn apply_all(
-        &self,
-        edit: &mut crate::EditFunction<'_>,
-        node: NodeId,
-    ) -> Result<Option<ValueId>> {
-        let mut last: Option<ValueId> = None;
-        for group in [
-            &self.identity,
-            &self.const_eval,
-            &self.bool_float,
-            &self.reassoc_and_mask,
-            &self.bitcast_extend,
-        ] {
-            if let Some(out) = apply_rules_in_order(group)(edit, node)? {
-                last = Some(out);
-            }
-        }
-        Ok(last)
-    }
+pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
+    let mut rules = build_identity_rules();
+    rules.extend(build_const_eval_rules());
+    rules.extend(build_bool_float_rules());
+    rules.extend(build_reassoc_and_mask_rules());
+    rules.extend(build_bitcast_extend_rules());
+    rules
 }
 
 // ── per-node folding ──────────────────────────────────────────────────────────
 
-/// Builds the rule vec for [`REASSOC_AND_MASK_RULES`].
+/// Reassociation and mask-merging: constant-folding across nested
+/// `Add`/`Sub`/`And`, mask distribution, and const-on-right canonicalisation.
 fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     // Shared captures: every rule here is matched as an independent query (its
     // own fresh `Bindings`), so reusing one pool carries no cross-rule state.

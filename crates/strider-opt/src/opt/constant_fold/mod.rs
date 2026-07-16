@@ -9,7 +9,6 @@ mod rules;
 #[cfg(test)]
 mod tests;
 
-use rules::ConstFoldRules;
 use std::rc::Rc;
 
 // ── Public optimizer ──────────────────────────────────────────────────────────
@@ -26,14 +25,14 @@ use std::rc::Rc;
 /// not `Clone`); cloning the pass shares the same rule set.
 #[derive(Clone)]
 pub struct ConstantFold {
-    rules: Rc<ConstFoldRules>,
+    rules: Rc<Vec<crate::BoxedRule>>,
 }
 
 impl ConstantFold {
     /// Builds the constant-fold rule set once and returns a pass that owns it.
     pub fn new() -> Self {
         Self {
-            rules: Rc::new(ConstFoldRules::build()),
+            rules: Rc::new(rules::build_rules()),
         }
     }
 }
@@ -80,7 +79,7 @@ impl PeepholePass for ConstantFold {
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        let opt = self.rules.apply_all(edit, root)?;
+        let opt = crate::apply_rules_in_order(&self.rules)(edit, root)?;
         Ok(PeepholeRewrite::from_new_value(edit, opt))
     }
 }
