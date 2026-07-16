@@ -22,7 +22,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use graph_algorithms::dominance::{DomTree, dominance_frontiers, dominator_tree_preorder, phi_placement};
+use graph_algorithms::dominance::{
+    DomTree, dominance_frontiers, dominator_tree_preorder, phi_placement,
+};
 
 /// A concrete [`DomTree`] over `u32` nodes with explicit predecessor lists and
 /// an explicit (oracle-computed) idom map.
@@ -196,8 +198,10 @@ fn dominance_frontiers_match_definition_over_random_cfgs() {
         // DF: implementation vs definitional oracle, node by node.
         let df_impl = dominance_frontiers(&mock);
         // Same DF in the oracle's std representation, for the IDF fixpoint below.
-        let df_std: HashMap<u32, HashSet<u32>> =
-            df_impl.iter().map(|(&k, v)| (k, v.iter().copied().collect())).collect();
+        let df_std: HashMap<u32, HashSet<u32>> = df_impl
+            .iter()
+            .map(|(&k, v)| (k, v.iter().copied().collect()))
+            .collect();
         let df_oracle = oracle_df(n, &preds, &dom);
         for x in 0..n {
             let got = df_impl.get(&x).map(|v| as_set(v)).unwrap_or_default();
@@ -211,7 +215,11 @@ fn dominance_frontiers_match_definition_over_random_cfgs() {
         let order = dominator_tree_preorder(&mock, 0);
         assert_eq!(order[0], 0, "iter {iter}: preorder must start at root");
         let pos: HashMap<u32, usize> = order.iter().enumerate().map(|(i, &nn)| (nn, i)).collect();
-        assert_eq!(pos.len(), order.len(), "iter {iter}: preorder has duplicates");
+        assert_eq!(
+            pos.len(),
+            order.len(),
+            "iter {iter}: preorder has duplicates"
+        );
         for (&node, &id) in &idom {
             assert!(
                 pos[&id] < pos[&node],
@@ -254,7 +262,7 @@ fn unreachable_nodes_are_skipped() {
         (0, vec![]),
         (1, vec![0]),
         (2, vec![1]),
-        (3, vec![]),   // island root, not reachable from 0
+        (3, vec![]), // island root, not reachable from 0
         (4, vec![3]),
     ]);
     // Only reachable nodes get an idom; 3 and 4 are unreachable → None.
@@ -268,8 +276,15 @@ fn unreachable_nodes_are_skipped() {
     let df = dominance_frontiers(&mock);
     // A straight-line reachable chain has empty frontiers everywhere.
     for x in 0..5 {
-        assert!(df.get(&x).is_none_or(|v| v.is_empty()), "DF({x}) must be empty");
+        assert!(
+            df.get(&x).is_none_or(|v| v.is_empty()),
+            "DF({x}) must be empty"
+        );
     }
     let order = dominator_tree_preorder(&mock, 0);
-    assert_eq!(order, vec![0, 1, 2], "preorder excludes the unreachable island");
+    assert_eq!(
+        order,
+        vec![0, 1, 2],
+        "preorder excludes the unreachable island"
+    );
 }

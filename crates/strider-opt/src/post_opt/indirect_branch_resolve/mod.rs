@@ -152,7 +152,9 @@ fn link_register_return(
 ) -> Option<ResolvedTargets> {
     let lr = function.default_cc().link_register_vn?;
     match *function.kind_of_value(target_value) {
-        NodeKind::InitialVar(id) if function.initial_vn(id) == lr => Some(ResolvedTargets::LinkRegister),
+        NodeKind::InitialVar(id) if function.initial_vn(id) == lr => {
+            Some(ResolvedTargets::LinkRegister)
+        }
         _ => None,
     }
 }
@@ -261,7 +263,9 @@ mod tests {
         // No tracked variables, no calling convention plumbing.
         let mut builder = strider_ir_test_utils::empty_builder().expect("FunctionBuilder::new_raw");
         let region = builder.create_region_all().expect("create_region");
-        builder.set_entry_region_all(region).expect("set_entry_region");
+        builder
+            .set_entry_region_all(region)
+            .expect("set_entry_region");
         builder.set_region(region);
         builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let target = target_inputs(&mut builder);

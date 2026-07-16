@@ -4,8 +4,8 @@ use crate::pipeline::OptCtx;
 use crate::test_support::{assert_returns_const, make_fn};
 use strider_ir::IRWalker;
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::IrBuilderEx;
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{MockRom, make_empty_fn_endian};
 use strider_target::Endianness;
 
@@ -88,7 +88,9 @@ fn load_fold_absorbs_address_fingerprint() -> Result<()> {
 
     let folded = fg.producer(crate::test_support::return_value(fg.graph())?);
     assert!(
-        fg.side_tables().asm_fingerprint(folded).contains(&ADDR_ADDR),
+        fg.side_tables()
+            .asm_fingerprint(folded)
+            .contains(&ADDR_ADDR),
         "LoadReadOnly must absorb the load address's asm-fingerprint into the \
          folded constant (proof of which bytes were read); got {:?}",
         fg.side_tables().asm_fingerprint(folded)

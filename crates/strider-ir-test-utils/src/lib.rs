@@ -276,8 +276,6 @@ impl RegisterSet {
     where
         F: FnOnce(&mut FunctionBuilder) -> Result<(strider_ir::Value, T)>,
     {
-        use strider_ir::node::{NodeKind, ValueType};
-
         let mut b = self.build_fn()?;
         let entry = b.create_region_all()?;
         let t = b.create_region_all()?;
@@ -453,7 +451,9 @@ pub fn sentinel_node(
     outputs: impl IntoIterator<Item = strider_ir::node::ValueKind>,
 ) -> strider_ir::node::NodeId {
     let n = function.graph_mut().create_node(kind, inputs, outputs);
-    function.side_tables_mut().extend_asm_fingerprint(n, &[SENTINEL_LIFT_ADDR]);
+    function
+        .side_tables_mut()
+        .extend_asm_fingerprint(n, &[SENTINEL_LIFT_ADDR]);
     n
 }
 
@@ -574,9 +574,7 @@ impl MockRom {
                 addr: a,
                 size: s,
                 value,
-            } => {
-                (addr == *a && size == *s).then_some(*value)
-            }
+            } => (addr == *a && size == *s).then_some(*value),
             MockRomShape::AlwaysAnswer { value } => Some(*value),
         }
     }

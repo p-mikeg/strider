@@ -87,8 +87,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         "Call's outputs = Control + Memory + tagged ret-val/clobber slots"
     );
     // The override total must be strictly smaller than the default total.
-    let (default_ret, default_clob) =
-        strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
+    let (default_ret, default_clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
     let default_total = default_ret.len() + default_clob.len();
     assert!(
         tagged_outputs < default_total,

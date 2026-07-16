@@ -68,8 +68,10 @@ impl PeepholeRewrite {
     /// `NoChange`.  Collapses the recurring "a rule returned an
     /// `Option<ValueId>` of the freshly-produced value" mapping.
     pub(crate) fn from_new_value(edit: &crate::EditFunction<'_>, v: Option<ValueId>) -> Self {
-        v.map_or(PeepholeRewrite::NoChange, |new_value| PeepholeRewrite::Changed {
-            new_node: Some(edit.producer(new_value)),
+        v.map_or(PeepholeRewrite::NoChange, |new_value| {
+            PeepholeRewrite::Changed {
+                new_node: Some(edit.producer(new_value)),
+            }
         })
     }
 
@@ -314,7 +316,7 @@ mod tests {
                 // Build a genuinely fresh `Add` with a distinct cacheable key
                 // (the root's first input used twice) so the dedup cache
                 // can't collapse it onto the already-seen root node.
-                let first = edit.node_inputs(root).iter().next().unwrap();
+                let first = edit.node_inputs(root)[0];
                 let new_node = edit.create_node(
                     kind,
                     [first, first],

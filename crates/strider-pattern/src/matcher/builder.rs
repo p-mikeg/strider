@@ -110,6 +110,21 @@ impl MatcherBuilder {
         self.stage(PatNode::from_kind(kind))
     }
 
+    /// An **alternation** (`one_of`) over the pre-compiled alternative outputs:
+    /// matches a value if ANY alternative matches it. The alternatives are wired
+    /// as this node's inputs, but the matcher tries each against the *same* IR
+    /// node (not as operands) and accepts the first that matches. Returns the
+    /// alternation node's single value output. An empty `alts` matches nothing.
+    pub fn one_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
+        let mut alt_node = PatNode::from_kind(KindSpec::Any);
+        alt_node.alternation = true;
+        let n = self.stage(alt_node);
+        for (slot, alt) in alts.iter().enumerate() {
+            self.input(n, slot, *alt);
+        }
+        self.value_output(n, 0)
+    }
+
     /// Wires `prod` into `node`'s input `slot`.
     pub fn input(&mut self, node: PatNodeRef, slot: usize, prod: PatValueRef) {
         self.core.add_input(node.0, slot, prod.node, prod.output);
@@ -156,6 +171,13 @@ impl MatcherBuilder {
     /// Pins `out`'s value-output bit width.
     pub fn set_value_width(&mut self, out: PatValueRef, bits: u32) {
         self.out_of(out).width = Some(bits);
+    }
+
+    /// Enforces that the matched value is produced at output slot `slot`
+    /// (see [`PatValue::match_slot`]). Used to pin a nested Call/CallOther
+    /// value operand to a specific output (`.res()`).
+    pub fn set_value_out_slot(&mut self, out: PatValueRef, slot: usize) {
+        self.out_of(out).match_slot = Some(slot);
     }
 
     /// Captures the output vertex `out` — a value capture, bound to the

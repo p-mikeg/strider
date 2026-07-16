@@ -379,7 +379,11 @@ fn known_bits_scaled_index_carries_stride() {
     let iv = ranges.range_of(scaled, entry_node);
     assert_eq!((iv.lo, iv.hi), (0, 56), "scaled index spans [0, 56]");
     assert_eq!(iv.stride, 8, "low 3 known-zero bits ⇒ stride 8");
-    assert_eq!(iv.count(), 8, "8 distinct entries, not the 57-wide raw span");
+    assert_eq!(
+        iv.count(),
+        8,
+        "8 distinct entries, not the 57-wide raw span"
+    );
 }
 
 // ---------------------------------------------------------------------------

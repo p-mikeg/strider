@@ -57,8 +57,9 @@ use crate::{BoxedRule, apply_rules_in_order, rewrite_rule};
 use strider_ir::IRViewer;
 use strider_ir::node::{ExtendOp, IntBinaryOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_pattern::{
-    Bindings, Capture, CaptureExt, add, any_int_const, bool_and, bool_not, bool_or, int_const,
-    int_eq, int_lt, int_sborrow, int_slt, neg, template, var, zero_extend,
+    Bindings, Capture, CaptureExt, add, any_int_const, bool_and, bool_not, bool_or, capture_typed,
+    int_const, int_const_with, int_eq, int_lt, int_sborrow, int_slt, neg, one_of, shl, template,
+    var, xor, zero_extend,
 };
 
 use crate::error::Result;
@@ -228,22 +229,38 @@ fn build_rules() -> Vec<BoxedRule> {
             int_eq(add(var(a), neg(var(b))), int_const(0u128)),
             template::int_eq(var(a), var(b)),
         ),
-        // 2. HI:  BoolAnd(BitNot(IntLess(a, b)), BitNot(Equal(diff, 0))) → IntLess(b, a)
+        // 2+12. HI → IntLess(b, a), whichever arch shape the flag tree has:
+        //    raw NZCV:    BoolAnd(BitNot(IntLess(a, b)), BitNot(Equal(diff, 0)))
+        //    decomposed:  BoolAnd(BitNot(Equal(a, b)), BitNot(IntLess(a, b)))
+        //    (ARM/Thumb + post-ConstantFold leave the decomposed form; both are
+        //    sound HI ≡ b<a identities, so one rule with a `one_of` LHS covers
+        //    both — the raw and decomposed shapes are structurally disjoint.)
         rewrite_rule(
-            bool_and(
-                bool_not(int_lt(var(a), var(b))),
-                bool_not(int_eq(add(var(a), neg(var(b))), int_const(0u128))),
-            ),
+            one_of![
+                bool_and(
+                    bool_not(int_lt(var(a), var(b))),
+                    bool_not(int_eq(add(var(a), neg(var(b))), int_const(0u128))),
+                ),
+                bool_and(
+                    bool_not(int_eq(var(a), var(b))),
+                    bool_not(int_lt(var(a), var(b))),
+                ),
+            ],
             template::int_lt(var(b), var(a)),
         ),
-        // 3. LS:  BoolOr(IntLess(a, b), Equal(diff, 0)) → BitNot(IntLess(b, a))
-        //    Assumes ConstantFold has cancelled the `BitNot(BitNot(IntLess(a, b)))`
-        //    chain that `BitNot(CY)` produces.
+        // 3+13. LS → BitNot(IntLess(b, a)), whichever arch shape:
+        //    raw NZCV:    BoolOr(IntLess(a, b), Equal(diff, 0))
+        //    decomposed:  BoolOr(Equal(a, b), IntLess(a, b))
+        //    (raw assumes ConstantFold cancelled the `BitNot(BitNot(IntLess))`
+        //    chain that `BitNot(CY)` produces.)
         rewrite_rule(
-            bool_or(
-                int_lt(var(a), var(b)),
-                int_eq(add(var(a), neg(var(b))), int_const(0u128)),
-            ),
+            one_of![
+                bool_or(
+                    int_lt(var(a), var(b)),
+                    int_eq(add(var(a), neg(var(b))), int_const(0u128)),
+                ),
+                bool_or(int_eq(var(a), var(b)), int_lt(var(a), var(b))),
+            ],
             template::bool_not(template::int_lt(var(b), var(a))),
         ),
         // 4. LT:  BitNot(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))) → IntSless(a, b)
@@ -262,30 +279,42 @@ fn build_rules() -> Vec<BoxedRule> {
             ),
             template::bool_not(template::int_slt(var(a), var(b))),
         ),
-        // 6. GT:  BoolAnd(BitNot(Equal(diff, 0)),
-        //                 Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))))
-        //         → IntSless(b, a)
+        // 6+10. GT → IntSless(b, a), whichever arch shape:
+        //    raw NZCV:    BoolAnd(BitNot(Equal(diff, 0)),
+        //                    Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))))
+        //    decomposed:  BoolAnd(BitNot(Equal(a, b)), BitNot(IntSless(a, b)))
+        //                    ≡ (a≠b) ∧ ¬(a<b) ≡ a>b ≡ b<a
         rewrite_rule(
-            bool_and(
-                bool_not(int_eq(add(var(a), neg(var(b))), int_const(0u128))),
-                int_eq(
-                    zero_extend(int_slt(add(var(a), neg(var(b))), int_const(0u128))),
-                    zero_extend(int_sborrow(var(a), var(b))),
+            one_of![
+                bool_and(
+                    bool_not(int_eq(add(var(a), neg(var(b))), int_const(0u128))),
+                    int_eq(
+                        zero_extend(int_slt(add(var(a), neg(var(b))), int_const(0u128))),
+                        zero_extend(int_sborrow(var(a), var(b))),
+                    ),
                 ),
-            ),
+                bool_and(
+                    bool_not(int_eq(var(a), var(b))),
+                    bool_not(int_slt(var(a), var(b))),
+                ),
+            ],
             template::int_slt(var(b), var(a)),
         ),
-        // 7. LE:  BoolOr(Equal(diff, 0),
-        //                BitNot(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))))
-        //         → BitNot(IntSless(b, a))
+        // 7+11. LE → BitNot(IntSless(b, a)), whichever arch shape:
+        //    raw NZCV:    BoolOr(Equal(diff, 0),
+        //                    BitNot(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))))
+        //    decomposed:  BoolOr(Equal(a, b), IntSless(a, b))  ≡ (a=b) ∨ (a<b) ≡ a≤b ≡ ¬(b<a)
         rewrite_rule(
-            bool_or(
-                int_eq(add(var(a), neg(var(b))), int_const(0u128)),
-                bool_not(int_eq(
-                    zero_extend(int_slt(add(var(a), neg(var(b))), int_const(0u128))),
-                    zero_extend(int_sborrow(var(a), var(b))),
-                )),
-            ),
+            one_of![
+                bool_or(
+                    int_eq(add(var(a), neg(var(b))), int_const(0u128)),
+                    bool_not(int_eq(
+                        zero_extend(int_slt(add(var(a), neg(var(b))), int_const(0u128))),
+                        zero_extend(int_sborrow(var(a), var(b))),
+                    )),
+                ),
+                bool_or(int_eq(var(a), var(b)), int_slt(var(a), var(b))),
+            ],
             template::bool_not(template::int_slt(var(b), var(a))),
         ),
         // 8. Thumb "false" flag test:  IntEqual(ZeroExtend(b), 0)  →  BitNot(b)
@@ -309,50 +338,11 @@ fn build_rules() -> Vec<BoxedRule> {
             bool_not(int_eq(zero_extend(var(b).of_width(1)), int_const(0u128))),
             var(b),
         ),
-        // ── Decomposed flag-tree shapes ──────────────────────────────────
-        //
-        // Rules 2/3/6/7 match the *raw* flag tree (with `Equal(diff, 0)` and
-        // `Equal(zext(Sless), zext(Sborrow))`).  When the branch is lifted with
-        // inverted sense (ARM/Thumb wrap the tree in an outer `BitNot`), this
-        // pass can't fire until `IfCondInversion` strips that `BitNot`, and by
-        // then ConstantFold rule 1 (`Equal(a-b,0) → Equal(a,b)`) has already
-        // simplified the difference sub-term, and this pass's own rules 2/3/6/7
-        // have already matched and decomposed the NZCV `Equal(zext(Sless),
-        // zext(Sborrow))` tree into direct comparisons on `(a, b)`.
-        // ConstantFold does NOT pre-decompose symbolic flag trees — that
-        // decomposition is performed entirely by `FlagCmpCanonicalize`.  These
-        // four rules canonicalise the resulting decomposed form.  They are sound
-        // arch-independent identities, so they are harmless where the raw rules
-        // already fired (the decomposed shape simply never appears).
-        //
-        // 10. GT (signed):  And(BitNot(Equal(a,b)), BitNot(Sless(a,b))) → Sless(b,a)
-        //     (a≠b) ∧ ¬(a<b)  ≡  a>b  ≡  b<a
-        rewrite_rule(
-            bool_and(
-                bool_not(int_eq(var(a), var(b))),
-                bool_not(int_slt(var(a), var(b))),
-            ),
-            template::int_slt(var(b), var(a)),
-        ),
-        // 11. LE (signed):  Or(Equal(a,b), Sless(a,b)) → BitNot(Sless(b,a))
-        //     (a=b) ∨ (a<b)  ≡  a≤b  ≡  ¬(b<a)
-        rewrite_rule(
-            bool_or(int_eq(var(a), var(b)), int_slt(var(a), var(b))),
-            template::bool_not(template::int_slt(var(b), var(a))),
-        ),
-        // 12. HI (unsigned):  And(BitNot(Equal(a,b)), BitNot(Less(a,b))) → Less(b,a)
-        rewrite_rule(
-            bool_and(
-                bool_not(int_eq(var(a), var(b))),
-                bool_not(int_lt(var(a), var(b))),
-            ),
-            template::int_lt(var(b), var(a)),
-        ),
-        // 13. LS (unsigned):  Or(Equal(a,b), Less(a,b)) → BitNot(Less(b,a))
-        rewrite_rule(
-            bool_or(int_eq(var(a), var(b)), int_lt(var(a), var(b))),
-            template::bool_not(template::int_lt(var(b), var(a))),
-        ),
+        // (The decomposed `(a≠b)∧¬(a<b)` / `(a=b)∨(a<b)` flag-tree shapes that
+        // ARM/Thumb and post-ConstantFold trees leave are folded into rules
+        // 2/3/6/7 above as the second `one_of` alternative — see the note there.
+        // ConstantFold does NOT pre-decompose symbolic flag trees; that
+        // decomposition is performed entirely by `FlagCmpCanonicalize`.)
     ];
 
     // 14/16 and 15/17 are exact De-Morgan duals: the LS form is
@@ -406,6 +396,97 @@ fn build_rules() -> Vec<BoxedRule> {
         move |edit, _ty, binds| sub_relation(binds, edit.function(), m, n, c1, b),
         template::int_lt(var(n), var(x)),
     ));
+
+    // Comparison-with-constant canonicalisation: `Equal(Add(x, C1), C2) →
+    // Equal(x, C2 - C1)` ("solve for x").  Sound for any width/signedness —
+    // fixed-width add wraps mod 2^W and `Equal` tests that residue, so
+    // `x + C1 ≡ C2` iff `x ≡ C2 - C1 (mod 2^W)`.  `Equal`/`Add` are commutative,
+    // so the matcher also covers the `C2 == Add(x, C1)` / `Add(C1, x)` orderings.
+    //
+    // Placed in FlagCmp — not ConstantFold — because ConstantFold runs it too
+    // early and starves the `Or(Less, Equal(diff, 0))` flag-idiom (rules 15/17
+    // above) of the `Equal(diff, 0)` shape.  Here it is safe: FlagCmp seeds
+    // OUTERMOST-first (see `seed_order`), so on an `idx ≤ N` flag idiom the `Or`
+    // root is rewritten by the LS rule (which consumes the inner `Equal`) BEFORE
+    // this rule can reach that `Equal`.  A standalone `Equal(Add(x,C1),C2)` — not
+    // under such an `Or` — folds here as intended.
+    rules.push(rewrite_rule(
+        int_eq(
+            add(var(a), any_int_const().capture(n)),
+            any_int_const().capture(m),
+        ),
+        template::int_eq(
+            var(a),
+            // `capture_typed(a, ..)`: the fresh `C2 - C1` const takes the operand
+            // `a`'s width, not the `Equal` root's `I1` output width.
+            capture_typed(a, int_const_with!([n: uint, m: uint] => m.wrapping_sub(n))),
+        ),
+    ));
+
+    // Sibling "solve for x" canonicalisations across `Equal`, same seed-order
+    // safety and `capture_typed` width handling as the `Add` rule above.
+    //
+    // `Equal(Xor(x, C1), C2) → Equal(x, C1 ^ C2)` — xor-with-C1 is a bijection,
+    // so applying it to both sides is value-preserving.  `Xor` is commutative,
+    // so `C1` on either operand of the xor matches.
+    rules.push(rewrite_rule(
+        int_eq(
+            xor(var(a), any_int_const().capture(n)),
+            any_int_const().capture(m),
+        ),
+        template::int_eq(
+            var(a),
+            capture_typed(a, int_const_with!([n: uint, m: uint] => n ^ m)),
+        ),
+    ));
+
+    // `Equal(Neg(x), C) → Equal(x, -C)` — two's-complement negation is a
+    // bijection, so it moves across `Equal` value-preservingly.
+    rules.push(rewrite_rule(
+        int_eq(neg(var(a)), any_int_const().capture(m)),
+        template::int_eq(
+            var(a),
+            capture_typed(a, int_const_with!([m: uint] => m.wrapping_neg())),
+        ),
+    ));
+
+    // `Sless(ShiftLeft(x, C), 0):I1 → Xor(Equal(And(x, mask), 0), 1):I1`,
+    // mask = 1 << (W-1-C).  A signed `< 0` on a left-shifted value tests the
+    // sign bit of `x << C`, which is bit (W-1-C) of `x`; canonicalising to the
+    // explicit single-bit mask test makes it match the shape a plain
+    // `if (x & mask)` lifts to.  The `And`/mask/`0` are width `W` (from
+    // `capture_typed(x, ..)` — the `Xor` root is `I1` and exposes no `x`-wide
+    // input), the `Xor`/`1` are `I1`.  Guarded to a constant `C < W` (else
+    // `x << C` is 0 and the test is const-false — a different rewrite).
+    rules.push(rewrite_rule(
+        int_slt(shl(var(x), any_int_const().capture(n)), int_const(0u128)).when_match(
+            move |edit, _ty, b| {
+                let (Some(c), Some(ty)) =
+                    (b.get_uint(n, edit.function()), b.get_type(x, edit.function()))
+                else {
+                    return false;
+                };
+                c < ty.bit_width() as u128
+            },
+        ),
+        template::bool_not(template::int_eq(
+            capture_typed(
+                x,
+                template::and(
+                    var(x),
+                    capture_typed(
+                        x,
+                        int_const_with!([n: uint, in_ty] => {
+                            let w = in_ty.ok_or_else(strider_pattern::skip)?.bit_width() as u128;
+                            1u128 << (w - 1 - n)
+                        }),
+                    ),
+                ),
+            ),
+            capture_typed(x, int_const(0u128)),
+        )),
+    ));
+
     rules
 }
 
@@ -449,7 +530,11 @@ fn canonicalize_cr_bit_test(
 /// stopping the descent at each `IntCmpOp` — a comparison carries its
 /// instruction's address on its own node, and its operands are the unrelated
 /// compared values (often live elsewhere), not pack-building instructions.
-fn absorb_cr_pack_fingerprints(edit: &mut crate::EditFunction<'_>, cond_out: ValueId, cmp: ValueId) {
+fn absorb_cr_pack_fingerprints(
+    edit: &mut crate::EditFunction<'_>,
+    cond_out: ValueId,
+    cmp: ValueId,
+) {
     let into = edit.producer(cmp);
     let mut stack = vec![edit.producer(cond_out)];
     // Dense visited set + ordered interior list: O(1) membership instead of the
@@ -470,7 +555,9 @@ fn absorb_cr_pack_fingerprints(edit: &mut crate::EditFunction<'_>, cond_out: Val
     }
     for n in interior {
         if n != into {
-            edit.function_mut().side_tables_mut().extend_asm_fingerprint_from(into, n);
+            edit.function_mut()
+                .side_tables_mut()
+                .extend_asm_fingerprint_from(into, n);
         }
     }
 }

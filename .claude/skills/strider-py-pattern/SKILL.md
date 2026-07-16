@@ -101,16 +101,16 @@ enumerates every registered name).
 | `p.int_const_any_of([…])` | `IntConst ∈ set` | `int_const_any_of(values: list[int]) -> Pat` | n/a |
 | `p.bool_const(b)` | `BoolConst(b)` | `bool_const(value: bool) -> Pat` | n/a |
 | `p.float_const(bits)` | `FloatConst(bits)` | `float_const(bits: int) -> Pat` | n/a |
-| `p.any_int_const(c)` | any `IntConst`, capture | `any_int_const(c: Capture) -> Pat` | n/a |
-| `p.any_bool_const(c)` | any `BoolConst`, capture | `any_bool_const(c) -> Pat` | n/a |
-| `p.any_float_const(c)` | any `FloatConst`, capture | `any_float_const(c) -> Pat` | n/a |
+| `p.any_int_const(c=None)` | any `IntConst`, capture optional | `any_int_const(c: Capture=None) -> Pat` | n/a |
+| `p.any_bool_const(c=None)` | any `BoolConst`, capture optional | `any_bool_const(c=None) -> Pat` | n/a |
+| `p.any_float_const(c=None)` | any `FloatConst`, capture optional | `any_float_const(c=None) -> Pat` | n/a |
 | `p.initial_var()` | any `InitialVar(_)` | `initial_var() -> Pat` | n/a |
 | `p.initial_var_for(vn)` | `InitialVar(vn)` | `initial_var_for(vn: Vn) -> Pat` | n/a |
 | `p.function_arg(i)` | `FunctionArg{index=i}` | `function_arg(i: int) -> FunctionArgPat` | n/a |
 | `p.function_arg_any()` | any `FunctionArg` | `function_arg_any() -> FunctionArgPat` | n/a |
 | `p.function_arg_reg(vn)` | `FunctionArg` for register `vn` | `function_arg_reg(vn: Vn) -> FunctionArgPat` | n/a |
 | `p.function_arg_stack(s, off)` | `FunctionArg` for stack arg | `function_arg_stack(space: VnSpace, offset: int) -> FunctionArgPat` | n/a |
-| `p.phi()` | any `Phi` (tagged or anonymous) | builder w/ `.for_vn(vn)` `.input(idx, p)` | n/a |
+| `p.phi()` | any `Phi` (tagged or anonymous) | builder w/ `.for_vn(vn)` `.input(idx, p)` `.any_input(p)` | n/a |
 | `p.phi_for(vn)` | `Phi` tagged with `vn` | `phi_for(vn: Vn) -> PhiPat` | n/a |
 | `p.mem_phi()` | `MemPhi` | `mem_phi() -> MemPhiPat` | n/a |
 | `p.value_phi()` | `Phi(None)` (anonymous, from `LoadForward`) | `value_phi() -> ValuePhiPat` | n/a |
@@ -148,7 +148,7 @@ enumerates every registered name).
 | `p.call(at=…)` | `Call` builder | `.at(addr) .at_any([…]) .target(p) .arg(idx, p) .ret_output(idx, p)` | n/a |
 | `p.call_other()` | `CallOther` builder | `.user_op_id(v) .name(s) .arg(i, p) .ret(i, p) .ctrl .mem .ctrl_out .mem_out .next_ctrl .next_mem` | n/a |
 | `p.ret()` | `Return` builder | `.preceded_by(p) .ret_val(idx, p)` | n/a |
-| `p.if_else(cond=…)` | `If` builder | `.cond(p) .true_branch(p) .false_branch(p)` — tries compiler-inverted layout too | n/a |
+| `p.if_else(cond=…)` | `If` builder | `.cond(p) .true_branch(p) .false_branch(p) .capture_true(c) .capture_false(c)` — tries compiler-inverted layout too | n/a |
 | `p.int_binary("Op", l, r)` | dispatch w/ chainable `.ordered()` | typed builder | per op |
 | `p.bool_binary("Op", l, r)` | dispatch w/ `.ordered()` | typed builder | per op |
 | `p.float_binary("Op", l, r)` | dispatch w/ `.ordered()` | typed builder | per op |
@@ -275,13 +275,52 @@ graph.find_all(pat, ignore_casts_mask=p.CastMask.zero_extend() | p.CastMask.trun
 graph.find_all(pat, ignore_regions=True)
 ```
 
-Multi-pattern join on shared captures:
+Multi-pattern join on shared captures (pass a `list` to `find_all`):
 
 ```python
-hits = graph.find_joined([pat_a, pat_b, pat_c])
+hits = graph.find_all([pat_a, pat_b, pat_c])
 ```
 
-Walk-through flags also apply to `find_joined`; all flags apply uniformly to all patterns.
+Walk-through flags also apply to a joined `find_all`; all flags apply uniformly to all patterns.
+
+**CFG relational join constraints** — filter a joined result by control-flow
+relations between captured entities (in addition to shared-capture equality):
+
+```python
+g, t, f, c = p.Capture(), p.Capture(), p.Capture(), p.Capture()
+guard = p.if_else(cond=p.int_ne(p.load(p.add(p.var("fop"), p.any_int_const())), p.int_const(0))) \
+         .capture(g).capture_true(t).capture_false(f)
+call  = p.call().capture(c)
+
+# "call gated on the TRUE branch of the guard, exclusively":
+hits = graph.find_all([guard, call], constraints=[p.reaches(t, c), p.not_reaches(f, c)])
+```
+
+- `p.dominates(a, b)` — node `a` dominates node `b` in the control subgraph.
+- `p.reaches(src, dst)` — `dst` is forward-control-reachable from the branch edge
+  `src` (an `If`'s `capture_true`/`capture_false` value). Isolates one arm + the
+  shared post-merge tail.
+- `p.not_reaches(src, dst)` — negation; pair with `reaches` to drop the merge tail
+  (reachable from both edges) and isolate the exclusively-true-arm nodes.
+- `p.dominated_by_branch(branch, node)` — `node` is dominated by the branch edge's
+  target, i.e. in that block *exclusively*. One `dominated_by_branch(true_edge, c)`
+  = "`c` is in the true block" — the single-constraint equivalent of
+  `reaches(true_edge, c) + not_reaches(false_edge, c)`.
+- `p.phi_input_from_edge(phi, edge, value)` — the `phi` capture's data input on the
+  predecessor fed by control `edge` equals `value`: "the value merged from THIS
+  branch is X". `edge` binds an `If`'s `capture_true`/`capture_false`; direct-edge,
+  so it keys on the converged/collapsed IR (the `If` edge as the phi region's direct
+  predecessor) and won't match through nested control between branch and merge.
+  E.g. `find_all([if_else().capture_true(t), phi().capture(ph), any_int_const(v)],
+  constraints=[phi_input_from_edge(ph, t, v)])` finds "the phi value on the true
+  branch". Also works for a `mem_phi()` — bind `value` to a memory token (e.g. a
+  `store().capture(sv)` output) to ask "the memory merged from THIS branch".
+
+Constraints range over **control nodes** (`Call`/`Store`/`Region`/`If`/…); a
+captured value resolves to its producer node. Prefer `capture_true`/`capture_false`
+(the branch-edge *value*, stable under region collapse) over anchoring on the
+successor region. Two patterns linked only by a constraint still count as
+correlated for the connectivity check.
 
 ## Worked examples
 

@@ -59,6 +59,15 @@ impl PhiPat {
         self
     }
 
+    /// Require that *some* data input of the `Phi` matches `p`, without
+    /// pinning which predecessor slot. A `Phi`'s incoming values are one per
+    /// predecessor and usually order-irrelevant, so this is the common way to
+    /// constrain a phi operand. Captures inside `p` bind out normally.
+    pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
+        self.inner = self.inner.input_any(p);
+        self
+    }
+
     /// Restrict the match to lifter-emitted SSA φ nodes whose
     /// `value_vn` entry (via `Function::get_vn_for_value`) is `Some(vn)`.
     pub fn for_vn(mut self, vn: rsleigh::Vn) -> Self {
@@ -72,14 +81,27 @@ impl PhiPat {
         self
     }
 
-    /// Seal the builder into a finished [`Pattern`].
-    pub fn build(self) -> Pattern {
+    /// Apply the `for_vn` filter (if any) to the inner [`NodePat`].
+    fn configured(self) -> NodePat {
         let PhiPat { inner, var_filter } = self;
         match var_filter {
             Some(vn) => inner.with_node_predicate(move || phi_var_limit(vn)),
             None => inner,
         }
-        .build()
+    }
+
+    /// Seal the builder into a finished [`Pattern`].
+    pub fn build(self) -> Pattern {
+        self.configured().build()
+    }
+}
+
+impl MatchPat for PhiPat {
+    /// A `Phi` produces a value output (slot 0), so it nests as a value
+    /// operand — `store(data=phi())`, `add(x, phi())` — anchored at that
+    /// output.  (`MemPhi`, a memory token, implements [`MemPat`] instead.)
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.configured().compile_anchored(b)
     }
 }
 

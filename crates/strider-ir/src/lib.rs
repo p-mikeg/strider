@@ -51,9 +51,9 @@ mod control_flow_view;
 pub use control_flow_view::{control_dominators, dominates};
 pub mod error;
 mod function;
-pub use function::{EditFunction, Function, FunctionState, SideTables, SpDecomp, StackId};
 #[cfg(any(test, feature = "test-util"))]
 pub use function::cc_ret_and_clobber_vns;
+pub use function::{EditFunction, Function, FunctionState, SideTables, SpDecomp, StackId};
 pub mod graph;
 pub use graph::Graph;
 pub mod node;
@@ -65,8 +65,8 @@ pub mod validate;
 mod viewer;
 pub mod walk;
 
-pub use crate::node::const_value::{ConstId, ConstValue};
 pub use crate::error::Result;
+pub use crate::node::const_value::{ConstId, ConstValue};
 pub use builder::{FunctionBuilder, IRBuilder, IRBuilderExt};
 pub use node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, VnTypeExt,

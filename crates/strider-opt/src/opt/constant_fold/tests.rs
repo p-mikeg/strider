@@ -5,8 +5,8 @@ use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
 };
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::IrBuilderEx;
+use strider_ir_test_utils::IrWalkerEx;
 
 use crate::test_support::{
     assert_return_kind, assert_returns_const, make_fn, make_fn_with_var, return_kind, return_value,
@@ -1605,12 +1605,14 @@ fn build_unary_with_wide_const_input(
         [ValueKind::Typed(wide_ty)],
     );
     // Stamp the asm fingerprint on the new node (required by the validator).
-    fg.side_tables_mut().extend_asm_fingerprint(wide_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+    fg.side_tables_mut()
+        .extend_asm_fingerprint(wide_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let wide_const = fg.node_outputs_exact::<1>(wide_node)?[0];
     let unary_node = fg
         .graph_mut()
         .create_node(kind, [wide_const], [ValueKind::Typed(out_ty)]);
-    fg.side_tables_mut().extend_asm_fingerprint(unary_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+    fg.side_tables_mut()
+        .extend_asm_fingerprint(unary_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let unary_value = fg.node_outputs_exact::<1>(unary_node)?[0];
     fg.graph_mut().replace_all_uses(placeholder, unary_value);
     Ok(fg)

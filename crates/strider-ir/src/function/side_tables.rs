@@ -4,7 +4,7 @@
 
 use std::cell::RefCell;
 
-use cranelift_entity::{entity_impl, SecondaryMap};
+use cranelift_entity::{SecondaryMap, entity_impl};
 use entity_utils::{EntityInterner, UnionDag};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -16,7 +16,7 @@ use crate::node::{NodeId, ValueId};
 /// The per-value [`SpDecomp`] slots store this small id instead of the
 /// `(ValueId, i128)` payload inline, so the dense `stack_offsets`
 /// [`SecondaryMap`] stays narrow (an id + tag) while the handful of genuinely
-/// distinct SP terminals live once in [`SideTables::stack_interner`].
+/// distinct SP terminals live once in the `stack_interner`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct StackId(u32);
 entity_impl!(StackId);
@@ -417,7 +417,10 @@ mod tests {
 
         // Empty → seed; contributors may arrive unsorted.
         st.extend_asm_fingerprint(n, &[40, 10, 30, 20, 50]);
-        assert_eq!(st.asm_fingerprint(n), FxHashSet::from_iter([10, 20, 30, 40, 50]));
+        assert_eq!(
+            st.asm_fingerprint(n),
+            FxHashSet::from_iter([10, 20, 30, 40, 50])
+        );
 
         // Merge into the (now non-empty) fp: unsorted, one duplicate (20), the
         // rest new — result is the full union (no shrink).
@@ -442,4 +445,3 @@ mod tests {
         );
     }
 }
-

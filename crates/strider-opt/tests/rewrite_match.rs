@@ -490,8 +490,15 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
         hits[0].root()
     };
     const SOURCE_ADDR: u64 = 0xFEED_CAFE_0000_1111;
-    function.side_tables_mut().extend_asm_fingerprint(add_node, &[SOURCE_ADDR]);
-    assert!(function.side_tables().asm_fingerprint(add_node).contains(&SOURCE_ADDR));
+    function
+        .side_tables_mut()
+        .extend_asm_fingerprint(add_node, &[SOURCE_ADDR]);
+    assert!(
+        function
+            .side_tables()
+            .asm_fingerprint(add_node)
+            .contains(&SOURCE_ADDR)
+    );
 
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
     let mut ctx = EditFunction::new(&mut function);

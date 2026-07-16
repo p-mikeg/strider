@@ -136,8 +136,8 @@ fn captured_if_node_id_works_after_canonicalisation() {
 // TODO: re-enable after strider-pattern IfPat threads captures through the
 // branch-walk post_match.  Current impl evaluates the branch sub-pattern
 // against a throwaway `Bindings`, so a capture shared between `cond` and
-// `true_branch` never collides at match time (see IfPat::From comment in
-// strider-pattern/src/builders/control.rs).
+// `true_branch` never collides at match time (see the IfPat branch-capture
+// isolation docs in strider-pattern/src/node_builders/flow.rs).
 #[ignore]
 #[test]
 fn shared_capture_across_cond_and_branch_must_agree() {

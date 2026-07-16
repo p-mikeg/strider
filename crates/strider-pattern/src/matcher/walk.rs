@@ -218,22 +218,88 @@ fn try_match_at(
         })
         .collect();
 
-    // Commutativity: arity-2, IR kind commutative, not force_ordered.
-    let commutative = !nd.force_ordered
-        && inputs.len() == 2
-        && matcher.function().node_kind(ir_node).is_commutative();
-
     // Capture to bind for THIS node, independent of operand ordering: an
     // output-vertex capture (value positions) binds the matched VALUE; a
     // node-declared capture (control nodes like `If`) binds the matched NODE.
     // Picking the kind from `root_value` alone used to mis-bind a node capture
     // on `If` as `Binding::Value`.
-    let ov_capture = out_vertex
-        .map(|ov| pat.graph.output_weight(ov))
-        .and_then(|ov| ov.capture);
-    let cap_binding = match ov_capture {
-        Some(cap) => root_value.map(|value| (cap, Binding::Value(value))),
-        None => nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
+    // Both may be present and are independent captures: e.g. an `If` with
+    // `capture_true(t)` (an output-vertex value capture) AND `capture(g)` (the
+    // node capture). Binding only one — the old either/or — silently dropped the
+    // other. `[anchor_output_value_capture, node_capture]`.
+    let cap_bindings = [
+        out_vertex
+            .and_then(|ov| pat.graph.output_weight(ov).capture)
+            .and_then(|cap| root_value.map(|value| (cap, Binding::Value(value)))),
+        nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
+    ];
+
+    // Alternation (`one_of`): `inputs` are independent alternative sub-patterns,
+    // not operands. Bind this node's own capture (the matched value) once, then
+    // try each alternative against the SAME `ir_node`, accepting the first whose
+    // whole configuration (its own guards + the ancestor continuation `k`)
+    // succeeds. Each alternative's `try_match_at` handles its captures / guard /
+    // footprint, so the alternation node records nothing itself.
+    if nd.alternation {
+        let mark = bindings.mark();
+        for &(cap, binding) in cap_bindings.iter().flatten() {
+            if !bindings.bind_capture(cap, binding) {
+                bindings.restore(mark);
+                return false;
+            }
+        }
+        for alt in &inputs {
+            let inner = bindings.mark();
+            if try_match_at(
+                matcher,
+                pat,
+                alt.producer,
+                ir_node,
+                root_value,
+                Some(alt.out_vertex),
+                bindings,
+                k,
+            ) {
+                return true;
+            }
+            bindings.restore(inner);
+        }
+        bindings.restore(mark);
+        return false;
+    }
+
+    // Partition inputs into fixed-slot operands and existential (`any_input`)
+    // sub-patterns. A fixed input matches its own IR slot; an existential input
+    // matches SOME value input of `ir_node` (see `match_existential`).
+    let (existential, fixed): (Vec<InputEdge>, Vec<InputEdge>) = inputs
+        .into_iter()
+        .partition(|e| e.consumer_slot == crate::matcher::ANY_INPUT_SLOT);
+
+    // Commutativity: exactly two fixed operands, IR kind commutative, not
+    // force_ordered. (Existential inputs never participate in reordering.)
+    let commutative = !nd.force_ordered
+        && fixed.len() == 2
+        && matcher.function().node_kind(ir_node).is_commutative();
+
+    // `ir_node`'s inputs are invariant across the whole existential search, so
+    // collect them once here (empty in the common no-`any_input` case) rather
+    // than re-collecting at every `match_existential` recursion level.
+    //
+    // A `Phi`/`MemPhi`'s slot-0 `PhiToken` is the owning `Region`'s bookkeeping
+    // edge, not a predecessor: `any_input` ranges over data inputs only. It must
+    // be dropped here rather than left to the sub-pattern's own output-kind
+    // check, because the kind-unconstrained wildcards (`any()` / `var(c)`) carry
+    // `OutputKindSpec::Any` and would bind the token — and being slot 0, it
+    // would shadow every real data input.
+    let ext_values: Vec<ValueId> = if existential.is_empty() {
+        Vec::new()
+    } else {
+        matcher
+            .function()
+            .node_inputs(ir_node)
+            .into_iter()
+            .filter(|&v| !matches!(matcher.function().value_kind(v), ValueKind::PhiToken))
+            .collect()
     };
 
     let mark = bindings.mark();
@@ -244,21 +310,43 @@ fn try_match_at(
     };
 
     for &swap in orders {
-        // `done` finishes THIS node once an operand ordering has fully matched
-        // its inputs: bind the node's capture (capture-equality is enforced
+        // `finalize` finishes THIS node once every input (fixed + existential)
+        // has matched: bind the node's capture (capture-equality is enforced
         // here against deeper bindings), run its guard, record it into the
         // footprint, then hand off to the parent continuation `k`. Returning
         // `false` makes the input enumeration try its next configuration (a
-        // deeper commutative swap), and exhausting those makes the ordering
-        // loop try the swap — so an ANCESTOR guard failure surfaced through `k`
-        // re-drives the operand order of this node and everything beneath it.
-        let mut done = |b: &mut Bindings| -> bool {
+        // deeper commutative swap or existential slot), and exhausting those
+        // makes the ordering loop try the swap — so an ANCESTOR guard failure
+        // surfaced through `k` re-drives this node and everything beneath it.
+        let mut finalize = |b: &mut Bindings| -> bool {
             let inner = b.mark();
-            if let Some((cap, binding)) = cap_binding
-                && !b.bind_capture(cap, binding)
-            {
-                b.restore(inner);
-                return false;
+            for &(cap, binding) in cap_bindings.iter().flatten() {
+                if !b.bind_capture(cap, binding) {
+                    b.restore(inner);
+                    return false;
+                }
+            }
+            // Bind captures on this node's SECONDARY (non-anchor) output
+            // vertices to the matched IR node's output value at each vertex's
+            // slot — how `If::capture_true` / `capture_false` bind their
+            // control-output values (the matcher never descends into a node's
+            // outputs otherwise). The anchor output's capture (and the node
+            // capture) are handled by the `cap_bindings` loop above.
+            for &ov_idx in pat.graph.produced_outputs(pat_node).iter() {
+                if Some(ov_idx) == out_vertex {
+                    continue;
+                }
+                let ov = pat.graph.output_weight(ov_idx);
+                if let Some(cap) = ov.capture {
+                    let Some(&val) = matcher.function().node_outputs(ir_node).get(ov.slot) else {
+                        b.restore(inner);
+                        return false;
+                    };
+                    if !b.bind_capture(cap, Binding::Value(val)) {
+                        b.restore(inner);
+                        return false;
+                    }
+                }
             }
             if let Some(pm) = &nd.post_match {
                 let ty = root_value
@@ -276,7 +364,98 @@ fn try_match_at(
             b.restore(inner);
             false
         };
-        if match_inputs(matcher, pat, &inputs, swap, ir_node, 0, bindings, &mut done) {
+        // After the fixed slots match, satisfy each existential input against
+        // some value input of `ir_node` — each against a DISTINCT slot — then
+        // finalize.
+        let mut done = |b: &mut Bindings| -> bool {
+            match_existential(matcher, pat, &existential, 0, &ext_values, &[], b, &mut finalize)
+        };
+        if match_inputs(matcher, pat, &fixed, swap, ir_node, 0, bindings, &mut done) {
+            return true;
+        }
+        bindings.restore(mark);
+    }
+    false
+}
+
+/// Continuation-passing match of a node's **existential** (`any_input`) inputs:
+/// each `exts[j]` must match SOME value input of `ir_node`, and each on a
+/// DISTINCT input slot (`used` holds the slot indices already claimed by
+/// earlier existentials). For input `ei` it tries the sub-pattern against every
+/// not-yet-used value input in turn (backtracking via [`Bindings::mark`] /
+/// [`Bindings::restore`]), and on a hit recurses into the next existential;
+/// with all satisfied it invokes `done`. `values` has already had any
+/// `PhiToken` edge filtered out by the caller (see `match_inputs`), since the
+/// kind-unconstrained wildcards would otherwise bind it. Distinctness
+/// is by slot index, not value, so `any_input(1).any_input(1)` still matches a
+/// phi with two separate `1` predecessors. Honours `ignore_casts` like the
+/// fixed-slot [`match_inputs`] path: a predecessor that is a registered cast is
+/// retried unwrapped when the pattern's `cast_mask` permits.
+#[allow(clippy::too_many_arguments)]
+fn match_existential(
+    matcher: &Matcher,
+    pat: &Pattern,
+    exts: &[InputEdge],
+    ei: usize,
+    values: &[ValueId],
+    used: &[usize],
+    bindings: &mut Bindings,
+    done: &mut dyn FnMut(&mut Bindings) -> bool,
+) -> bool {
+    let Some(edge) = exts.get(ei) else {
+        return done(bindings);
+    };
+    for (idx, &producer_value) in values.iter().enumerate() {
+        if used.contains(&idx) {
+            continue;
+        }
+        let mark = bindings.mark();
+        let producer_ir = matcher.function().producer(producer_value);
+        // Small arity (a phi's predecessor count); a fresh Vec per candidate is
+        // cheap and sidesteps threading a &mut set through the continuation.
+        let mut next_used = used.to_vec();
+        next_used.push(idx);
+        if try_match_at(
+            matcher,
+            pat,
+            edge.producer,
+            producer_ir,
+            Some(producer_value),
+            Some(edge.out_vertex),
+            bindings,
+            &mut |b| match_existential(matcher, pat, exts, ei + 1, values, &next_used, b, done),
+        ) {
+            return true;
+        }
+        bindings.restore(mark);
+
+        // Cast walk-through fallback, mirroring the fixed-slot `match_inputs`
+        // path so `any_input` honours `ignore_casts` like every other input:
+        // if this predecessor is a registered cast, retry the sub-pattern
+        // against the unwrapped value, journaling the skipped casts.
+        let cast_mask = pat.cast_mask;
+        if cast_mask.is_empty() {
+            continue;
+        }
+        let mut skipped = Vec::new();
+        let unwrapped = skip_casts(matcher, producer_value, cast_mask, &mut skipped);
+        if unwrapped == producer_value {
+            continue;
+        }
+        for &cast in &skipped {
+            bindings.record_matched(cast);
+        }
+        let unwrapped_ir = matcher.function().producer(unwrapped);
+        if try_match_at(
+            matcher,
+            pat,
+            edge.producer,
+            unwrapped_ir,
+            Some(unwrapped),
+            Some(edge.out_vertex),
+            bindings,
+            &mut |b| match_existential(matcher, pat, exts, ei + 1, values, &next_used, b, done),
+        ) {
             return true;
         }
         bindings.restore(mark);
@@ -399,4 +578,6 @@ fn output_ok(o: &PatValue, f: &strider_ir::Function, value: ValueId) -> bool {
     kind_ok
         && o.width
             .is_none_or(|w| val.is_some_and(|t| t.bit_width() == w as usize))
+        && o.match_slot
+            .is_none_or(|s| f.value_definition(value).1 as usize == s)
 }

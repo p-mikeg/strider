@@ -78,6 +78,7 @@ fn binary_path(arch_name: &str, case: &str) -> PathBuf {
 fn analyze_case(c: Case) -> strider_ir::Function {
     let path = binary_path(c.arch_name, c.case);
     let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.file();
     let sleigh_arch = match c.arch_name {
         "x86" => strider_target::SleighArch::x86(),
         "x64" => strider_target::SleighArch::x86_64(),
@@ -108,7 +109,11 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         ..Default::default()
     };
     let cfg = ana
-        .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_opts, &Default::default())
+        .build_cfg(
+            strider_cfg::MachineInsnAddr::from(addr),
+            &cfg_opts,
+            &Default::default(),
+        )
         .expect("Cfg build");
     let mut function = ana.build_ir(&cfg, cc).expect("build_ir").function;
     let rom_for_opt =

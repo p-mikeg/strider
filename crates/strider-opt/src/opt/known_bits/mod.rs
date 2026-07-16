@@ -639,9 +639,9 @@ fn build_cone_node_memo(
     // the node back as `true` and push its propagates-children; on the second
     // pop, every child's set is in `memo`, so fold them in.
     let mut stack: Vec<(NodeId, bool)> = Vec::new();
-    let seed_inputs = to_fold
-        .iter()
-        .flat_map(|&(value, _, _)| crate::peephole::input_producers_iter(edit, edit.producer(value)));
+    let seed_inputs = to_fold.iter().flat_map(|&(value, _, _)| {
+        crate::peephole::input_producers_iter(edit, edit.producer(value))
+    });
     for n in seed_inputs {
         stack.push((n, false));
     }

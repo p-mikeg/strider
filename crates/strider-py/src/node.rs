@@ -19,8 +19,8 @@ use std::hash::{Hash, Hasher};
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 
-use strider_ir::node::NodeKind;
 use strider_ir::IRViewer;
+use strider_ir::node::NodeKind;
 
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
@@ -158,6 +158,14 @@ op_name_accessors! {
 
 #[pymethods]
 impl PyNode {
+    /// Expose the strong `Py<PyFunction>` back-reference to Python's cyclic
+    /// GC so a cycle routed through a `Node` is detectable (broken at the
+    /// reader's `__dict__` / `PyLifter::__clear__`; the `function` handle is
+    /// load-bearing while the `Node` is alive, so no `__clear__` here).
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        visit.call(&self.function)
+    }
+
     /// The raw `u32` arena index of this node.  Stable for the lifetime
     /// of the function unless an arena-reshuffling op (`compact`,
     /// `optimize`) runs, which invalidates outstanding ids.
@@ -247,8 +255,10 @@ impl PyNode {
     /// Returns `None` for any other node kind.
     pub(crate) fn vn(&self, py: Python<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
         let vn = self.with_node(py, |function, nid| {
-            if matches!(function.node_kind(nid), NodeKind::Call | NodeKind::CallOther { .. })
-                && let Some(value) = Self::value_output(function, nid)
+            if matches!(
+                function.node_kind(nid),
+                NodeKind::Call | NodeKind::CallOther { .. }
+            ) && let Some(value) = Self::value_output(function, nid)
                 && let Some(vn) = function.get_vn_for_value(value)
             {
                 return Some(vn);
@@ -295,8 +305,11 @@ impl PyNode {
         self.with_node(py, |function, nid| {
             // The DAG yields an unordered set; sort here so the Python-facing
             // list stays the documented sorted, deduped order.
-            let mut addrs: Vec<u64> =
-                function.side_tables().asm_fingerprint(nid).into_iter().collect();
+            let mut addrs: Vec<u64> = function
+                .side_tables()
+                .asm_fingerprint(nid)
+                .into_iter()
+                .collect();
             addrs.sort_unstable();
             addrs
         })
@@ -315,7 +328,10 @@ impl PyNode {
     /// for any other node kind.
     fn call_other_name(&self, py: Python<'_>) -> PyResult<Option<String>> {
         self.with_node(py, |function, nid| {
-            function.side_tables().call_other_name(nid).map(str::to_owned)
+            function
+                .side_tables()
+                .call_other_name(nid)
+                .map(str::to_owned)
         })
     }
 

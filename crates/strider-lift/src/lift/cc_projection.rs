@@ -8,7 +8,6 @@
 //! `container_of`) before membership / exclusion so a narrower ABI register
 //! (`eax`) matches the wider tracked container (`rax`).
 
-
 use super::FunctionLifter;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {

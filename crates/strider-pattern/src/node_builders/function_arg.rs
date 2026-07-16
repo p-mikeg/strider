@@ -95,7 +95,8 @@ impl FunctionArgPat {
                     }
                     None => {
                         let any = f.side_tables().iter_arg_indices().any(|i| {
-                            f.side_tables().arg_index_to_values(i)
+                            f.side_tables()
+                                .arg_index_to_values(i)
                                 .iter()
                                 .any(|&v| f.producer(v) == node)
                         });

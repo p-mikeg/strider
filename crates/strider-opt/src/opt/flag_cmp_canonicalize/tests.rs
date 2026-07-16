@@ -1177,11 +1177,275 @@ fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
         })
         .map(|(fg, _, ())| fg)?;
 
-    let r = crate::pipeline::run_one(
+    crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
         &mut crate::OptCtx::new(None),
     )?;
-    assert!(!r.changed(), "a wrong offset must not be canonicalized");
+    // The wrong-offset LS tree must NOT collapse to a single comparison — the
+    // `sub_relation` guard rejects it, so the cond stays an `Or`.  (The inner
+    // `Equal(Add(b,C2),0)` is separately canonicalized to `Equal(b,-C2)` by the
+    // compare-with-const rule — a value-preserving reshape, not the LS fold —
+    // so a blanket "nothing changed" no longer holds; assert the idiom itself
+    // survived instead.)
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If node");
+    let cond_node = fg.producer(fg.if_cond(if_node));
+    assert!(
+        matches!(fg.node_kind(cond_node), NodeKind::IntBinaryOp(IntBinaryOp::Or)),
+        "wrong-offset LS tree must NOT fold to a single comparison; got {:?}",
+        fg.node_kind(cond_node)
+    );
+    Ok(())
+}
+
+/// `Equal(Add(x, C1), C2) → Equal(x, C2 - C1)` — the comparison-with-const
+/// canonicalization.  Uses a `Load` as the variable `x`.  Verifies the fold
+/// fires, the operand is `x`, and the fresh const has the OPERAND width (I32),
+/// not the `Equal` root's `I1` output width (the `capture_typed` path).
+#[test]
+fn eq_add_const_solves_for_x() -> Result<()> {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let c3 = b.build_int_const(3u64, ty)?;
+    let c4 = b.build_int_const(4u64, ty)?;
+    let add = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, ty)?;
+    let eq = b.build_int_cmp_operation(add, c4, IntCmpOp::Equal, ty)?;
+    b.build_if(eq, dispatch, exit)?;
+    b.set_region(dispatch);
+    b.build_return(Some(x), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(x), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If node");
+    let cond = fg.if_cond(if_node);
+    let cond_node = fg.producer(cond);
+    assert!(
+        matches!(fg.node_kind(cond_node), NodeKind::IntCmpOp(IntCmpOp::Equal)),
+        "cond must stay an Equal, got {:?}",
+        fg.node_kind(cond_node)
+    );
+    let inputs = fg.node_inputs(cond_node);
+    let (l, r) = (inputs[0], inputs[1]);
+    // One operand is x; the other is IntConst(1) at operand width I32.
+    let const_is_one_i32 = |o: ValueId| {
+        matches!(fg.kind_of_value(o), NodeKind::IntConst(_))
+            && fg.int_const_u128(o) == Some(1)
+            && fg.value_type_opt(o) == Some(ValueType::I32)
+    };
+    let ok = (l == x && const_is_one_i32(r)) || (r == x && const_is_one_i32(l));
+    assert!(
+        ok,
+        "expected Equal(x, IntConst(1):I32); got lhs={:?}, rhs={:?}",
+        fg.kind_of_value(l),
+        fg.kind_of_value(r)
+    );
+    strider_ir::validate::validate(&fg)?;
+    Ok(())
+}
+
+/// `Equal(Xor(x, C1), C2) → Equal(x, C1 ^ C2)`.  `xor(x,3) == 5` → `x == 6`.
+#[test]
+fn eq_xor_const_solves_for_x() -> Result<()> {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let c3 = b.build_int_const(3u64, ty)?;
+    let c5 = b.build_int_const(5u64, ty)?;
+    let xored = b.build_int_binary_operation(x, c3, IntBinaryOp::Xor, ty)?;
+    let eq = b.build_int_cmp_operation(xored, c5, IntCmpOp::Equal, ty)?;
+    b.build_if(eq, dispatch, exit)?;
+    b.set_region(dispatch);
+    b.build_return(Some(x), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(x), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+
+    let if_node = fg.walk().find(|&n| matches!(fg.node_kind(n), NodeKind::If)).expect("If");
+    let cond_node = fg.producer(fg.if_cond(if_node));
+    assert!(matches!(
+        fg.node_kind(cond_node),
+        NodeKind::IntCmpOp(IntCmpOp::Equal)
+    ));
+    let inputs: Vec<_> = fg.node_inputs(cond_node).into_iter().collect();
+    assert!(inputs.contains(&x), "operand must be x (xor stripped)");
+    assert!(
+        inputs.iter().any(|&o| fg.int_const_u128(o) == Some(6)),
+        "const must be 3 ^ 5 = 6"
+    );
+    strider_ir::validate::validate(&fg)?;
+    Ok(())
+}
+
+/// `Equal(Neg(x), C) → Equal(x, -C)`.  `-x == 5` → `x == -5` (0xFFFF_FFFB:I32).
+#[test]
+fn eq_neg_solves_for_x() -> Result<()> {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let c5 = b.build_int_const(5u64, ty)?;
+    let negated = b.build_int_unary_operation(x, IntUnaryOp::Neg, ty)?;
+    let eq = b.build_int_cmp_operation(negated, c5, IntCmpOp::Equal, ty)?;
+    b.build_if(eq, dispatch, exit)?;
+    b.set_region(dispatch);
+    b.build_return(Some(x), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(x), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+
+    let if_node = fg.walk().find(|&n| matches!(fg.node_kind(n), NodeKind::If)).expect("If");
+    let cond_node = fg.producer(fg.if_cond(if_node));
+    let inputs: Vec<_> = fg.node_inputs(cond_node).into_iter().collect();
+    assert!(inputs.contains(&x), "operand must be x (neg stripped)");
+    assert!(
+        inputs.iter().any(|&o| fg.int_const_u128(o) == Some(0xFFFF_FFFB)),
+        "const must be -5 masked to I32 = 0xFFFF_FFFB"
+    );
+    strider_ir::validate::validate(&fg)?;
+    Ok(())
+}
+
+/// `Sless(x << C, 0):I1 → Xor(Equal(And(x, mask), 0), 1):I1`, mask=1<<(W-1-C).
+/// A signed `<0` on a left-shifted value tests the sign bit — bit W-1-C of x —
+/// so it canonicalises to the explicit single-bit mask test (the shape a plain
+/// `if (x & mask)` lifts to).  W=32, C=3 → mask = 1<<28 = 0x1000_0000.
+#[test]
+fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let c3 = b.build_int_const(3u64, ty)?;
+    let shl = b.build_int_binary_operation(x, c3, IntBinaryOp::ShiftLeft, ty)?;
+    let zero = b.build_int_const(0u64, ty)?;
+    let sless = b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ty)?;
+    b.build_if(sless, dispatch, exit)?;
+    b.set_region(dispatch);
+    b.build_return(Some(x), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(x), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+
+    let if_node = fg.walk().find(|&n| matches!(fg.node_kind(n), NodeKind::If)).expect("If");
+    // cond = Xor(Equal(And(x, 0x1000_0000), 0), IntConst(1))
+    let xor = fg.producer(fg.if_cond(if_node));
+    assert!(
+        matches!(fg.node_kind(xor), NodeKind::IntBinaryOp(IntBinaryOp::Xor)),
+        "cond must be an Xor, got {:?}",
+        fg.node_kind(xor)
+    );
+    let xor_in: Vec<_> = fg.node_inputs(xor).into_iter().collect();
+    assert!(xor_in.iter().any(|&o| fg.int_const_u128(o) == Some(1)), "xor with 1");
+    let eq = xor_in
+        .iter()
+        .find_map(|&o| {
+            matches!(fg.kind_of_value(o), NodeKind::IntCmpOp(IntCmpOp::Equal)).then(|| fg.producer(o))
+        })
+        .expect("Equal operand of Xor");
+    let eq_in: Vec<_> = fg.node_inputs(eq).into_iter().collect();
+    assert!(eq_in.iter().any(|&o| fg.int_const_u128(o) == Some(0)), "eq to 0");
+    let and = eq_in
+        .iter()
+        .find_map(|&o| {
+            matches!(fg.kind_of_value(o), NodeKind::IntBinaryOp(IntBinaryOp::And))
+                .then(|| fg.producer(o))
+        })
+        .expect("And operand of Equal");
+    let and_in: Vec<_> = fg.node_inputs(and).into_iter().collect();
+    assert!(and_in.contains(&x), "And on x");
+    assert!(
+        and_in.iter().any(|&o| fg.int_const_u128(o) == Some(0x1000_0000)),
+        "mask must be 1<<(31-3) = 0x1000_0000"
+    );
+    strider_ir::validate::validate(&fg)?;
+    Ok(())
+}
+
+/// The sign-bit canonicalization must NOT fire when the shift amount is ≥ the
+/// width (`x << 40` at I32 is 0, so `Sless(0,0)` is const-false, a different
+/// rewrite) — the `Sless` is left intact.
+#[test]
+fn sless_of_oversized_left_shift_is_not_a_sign_bit_test() -> Result<()> {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let c40 = b.build_int_const(40u64, ty)?;
+    let shl = b.build_int_binary_operation(x, c40, IntBinaryOp::ShiftLeft, ty)?;
+    let zero = b.build_int_const(0u64, ty)?;
+    let sless = b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ty)?;
+    b.build_if(sless, dispatch, exit)?;
+    b.set_region(dispatch);
+    b.build_return(Some(x), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(x), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    let if_node = fg.walk().find(|&n| matches!(fg.node_kind(n), NodeKind::If)).expect("If");
+    assert!(
+        matches!(
+            fg.node_kind(fg.producer(fg.if_cond(if_node))),
+            NodeKind::IntCmpOp(IntCmpOp::Sless)
+        ),
+        "oversized-shift Sless must be left intact"
+    );
     Ok(())
 }

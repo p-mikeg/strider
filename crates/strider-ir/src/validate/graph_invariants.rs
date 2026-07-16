@@ -436,7 +436,6 @@ pub(super) fn check_graph_invariants_consts(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    use crate::node::NodeKind;
     let graph = function.graph();
     for (node, kind) in function.reachable_kind_iter(reachable) {
         let NodeKind::IntConst(id) = *kind else {

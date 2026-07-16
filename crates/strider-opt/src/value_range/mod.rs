@@ -241,7 +241,13 @@ impl<'f> RangeMap<'f> {
         // A Phi has exactly one output — its value — so derive it here rather
         // than taking it as a (redundant) parameter.  Empty outputs ⇒ degenerate
         // phi, resolve to top.
-        let Some(phi_value) = self.function.graph().node_outputs(phi_node).first().copied() else {
+        let Some(phi_value) = self
+            .function
+            .graph()
+            .node_outputs(phi_node)
+            .first()
+            .copied()
+        else {
             return Interval::top(u128::MAX);
         };
         let ty = self.function.value_type_opt(phi_value);
@@ -719,7 +725,10 @@ fn guard_from_compare(
             if n == 0 {
                 return None;
             }
-            Some((guarded, Interval::dense(0, n.saturating_sub(1).min(type_mask))))
+            Some((
+                guarded,
+                Interval::dense(0, n.saturating_sub(1).min(type_mask)),
+            ))
         }
         (false, false) => {
             // v <= N → [0, N].

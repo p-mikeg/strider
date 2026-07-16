@@ -31,7 +31,7 @@ strategy explicitly (PT_LOAD program headers vs section headers);
 For non-ELF / firmware / custom-source cases, build a `Lifter`
 directly with `strider.lifter(arch, mem, rom=None)` (the native
 Rust handle) and call its `analyze(addr, cc, ...)`.  Pattern queries
-(`find_all` / `find_one` / `find_joined`) and the addr-only
+(`find_all` / `find_one` / `find_unique`) and the addr-only
 `fingerprint`/`asm_fingerprint` live directly on the returned
 `Function`/`Node` (no Sleigh needed); the Sleigh-needing pretty
 renders (`dump_html` / `dump_dot` / `html_str`) live on the `Lifter`
@@ -514,10 +514,10 @@ class ElfLifter(Lifter):
             )
 
         # ARM Thumb interworking: strip the low bit for an interworking
-        # entry; non-ARM arches pass through verbatim.  The base
-        # `Lifter`'s Sleigh was built with the base arch, so — as before
-        # this refactor — the lift itself follows that base-arch Sleigh;
-        # only the address is adjusted here.
+        # entry; non-ARM arches pass through verbatim.  The lift decodes with
+        # this handle's base-arch Sleigh, so a Thumb binary must be loaded with
+        # `arch=SleighArch.arm_thumb()` (a Thumb kernel is not distinguishable
+        # from an ARM one at the ELF-header level — pass the arch explicitly).
         _eff_arch, addr = _effective_arch_and_addr(self._arch, addr)
 
         if cc is None:

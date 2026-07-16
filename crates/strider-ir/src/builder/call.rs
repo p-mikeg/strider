@@ -277,7 +277,9 @@ impl FunctionBuilder {
         }
 
         if let Some(cc) = override_cc {
-            self.function_mut().side_tables_mut().set_call_cc(call, cc.clone());
+            self.function_mut()
+                .side_tables_mut()
+                .set_call_cc(call, cc.clone());
         }
         Ok(call)
     }
@@ -351,7 +353,9 @@ impl FunctionBuilder {
             abi.clobbers_memory,
             terminate,
         )?;
-        self.function_mut().side_tables_mut().set_call_other_name(node, name);
+        self.function_mut()
+            .side_tables_mut()
+            .set_call_other_name(node, name);
         let (ret_val_values, clobber_values) = output_values.split_at(result_vn.iter().count());
 
         // Writeback: clobbers then the result — both full-container writes via

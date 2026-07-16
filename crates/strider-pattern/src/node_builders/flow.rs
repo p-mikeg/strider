@@ -99,6 +99,14 @@ impl CallPat {
         Self(self.0.input_mem(1, p))
     }
 
+    /// When nested as a value operand, pin the operand to the Call's declared
+    /// **result** output (raw slot 2) rather than any value output — so a
+    /// caller-saved clobber output won't match. No effect when the Call is used
+    /// as a root / memory producer.
+    pub fn res(self) -> Self {
+        Self(self.0.pin_anchor_slot())
+    }
+
     /// Bind the resulting `Call` node to `c`.
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
@@ -116,6 +124,20 @@ impl MemPat for CallPat {
         self.0.compile_anchored(b)
     }
 }
+
+impl MatchPat for CallPat {
+    /// Nest as a **value** operand — anchor the Call's first value output
+    /// (raw slot 2, after ctrl/mem). Loose: any value output matches (the
+    /// matcher's `output_ok` checks the operand's kind, not its slot).
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.with_value_anchor(FIRST_VALUE_OUT_SLOT).compile_anchored(b)
+    }
+}
+
+/// Raw output slot of a `Call` / `CallOther`'s first value output — its
+/// outputs are `[Control(0), Memory(1), value…(2)]`, so return/clobber
+/// values start at slot 2.
+const FIRST_VALUE_OUT_SLOT: usize = 2;
 
 /// Construct a fresh [`CallPat`].
 pub fn call() -> CallPat {
@@ -175,6 +197,15 @@ impl CallOtherPat {
         self
     }
 
+    /// When nested as a value operand, pin the operand to the CallOther's
+    /// declared **result** output (raw slot 2) rather than any value output —
+    /// so an implicit-write clobber output won't match. No effect when used as
+    /// a root / memory producer.
+    pub fn res(mut self) -> Self {
+        self.inner = self.inner.pin_anchor_slot();
+        self
+    }
+
     /// Bind the resulting `CallOther` node to `c`.
     pub fn capture(mut self, c: Capture) -> Self {
         self.inner = self.inner.capture(c);
@@ -207,6 +238,16 @@ impl CallOtherPat {
 impl MemPat for CallOtherPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.configured().compile_anchored(b)
+    }
+}
+
+impl MatchPat for CallOtherPat {
+    /// Nest as a **value** operand — anchor the CallOther's first value output
+    /// (raw slot 2, after ctrl/mem). Loose: any value output matches.
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.configured()
+            .with_value_anchor(FIRST_VALUE_OUT_SLOT)
+            .compile_anchored(b)
     }
 }
 
@@ -383,6 +424,8 @@ pub struct IfPat {
     true_branch: Option<BranchWalk>,
     false_branch: Option<BranchWalk>,
     capture: Option<Capture>,
+    capture_true: Option<Capture>,
+    capture_false: Option<Capture>,
 }
 
 impl IfPat {
@@ -456,6 +499,22 @@ impl IfPat {
         self
     }
 
+    /// Bind the If's **true** control-output value (slot 0) to `c`, propagated
+    /// into the outer `Match`. Unlike the successor `Region`, this value
+    /// survives single-input-region collapse, so it is the stable handle for a
+    /// `reaches` / `not_reaches` join constraint discriminating the true path.
+    pub fn capture_true(mut self, c: Capture) -> Self {
+        self.capture_true = Some(c);
+        self
+    }
+
+    /// Bind the If's **false** control-output value (slot 1) to `c`. See
+    /// [`capture_true`](Self::capture_true).
+    pub fn capture_false(mut self, c: Capture) -> Self {
+        self.capture_false = Some(c);
+        self
+    }
+
     /// Seal the builder into a finished [`Pattern`] rooted on the `If`
     /// node.
     pub fn build(self) -> Pattern {
@@ -464,13 +523,21 @@ impl IfPat {
             true_branch,
             false_branch,
             capture,
+            capture_true,
+            capture_false,
         } = self;
         let mut b = MatcherBuilder::new();
         let node = b.node(KindSpec::Exact(NodeKind::If));
         // Representation invariant: the If carries two genuine
         // control-output vertices — true at slot 0, false at slot 1.
         let true_out = b.control_output(node, 0);
-        let _false_out = b.control_output(node, 1);
+        let false_out = b.control_output(node, 1);
+        if let Some(c) = capture_true {
+            b.capture_output(true_out, c);
+        }
+        if let Some(c) = capture_false {
+            b.capture_output(false_out, c);
+        }
 
         if let Some(cond) = cond {
             let c = cond(&mut b);

@@ -11,7 +11,7 @@
 //! pattern: absorb is on the hot path, materialise is off it.
 
 use cranelift_entity::packed_option::PackedOption;
-use cranelift_entity::{entity_impl, EntityList, EntityRef, ListPool, PrimaryMap, SecondaryMap};
+use cranelift_entity::{EntityList, EntityRef, ListPool, PrimaryMap, SecondaryMap, entity_impl};
 
 use crate::DenseEntitySet;
 
@@ -268,7 +268,13 @@ mod tests {
         dag.extend(Key(0), 1);
         dag.extend(Key(2), 3);
         // Key(0) -> Key(5); Key(2) culled.
-        dag.remap(|k| if k == Key(2) { None } else { Some(Key(k.index() as u32 + 5)) });
+        dag.remap(|k| {
+            if k == Key(2) {
+                None
+            } else {
+                Some(Key(k.index() as u32 + 5))
+            }
+        });
         assert_eq!(set_of(&dag, Key(5)), FxHashSet::from_iter([1]));
         assert!(dag.is_empty(Key(7))); // old Key(2)+5, was culled
     }

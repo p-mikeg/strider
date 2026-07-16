@@ -576,8 +576,8 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
     stack_ptr_reg_name: "r1",
     arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
     callee_saved_regs: &[
-        "r2", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23", "r24",
-        "r25", "r26", "r27", "r28", "r29", "r30", "r31",
+        "r2", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23", "r24", "r25",
+        "r26", "r27", "r28", "r29", "r30", "r31",
         // include `LR` per the CLAUDE.md
         // "Note (link-register handling)" deliberate tradeoff
         // (consistent with `powerpc_sysv32`).  PPC64 ELFv1

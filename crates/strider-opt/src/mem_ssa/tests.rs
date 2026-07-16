@@ -3,7 +3,7 @@
 //! [`narrow_load_to`] step.
 //!
 //! Construct synthetic memory chains (`InitialMemory`, `Store`,
-//! `MemPhi`) and drive the walker with stub [`MemorySSAWalker`] oracles
+//! `MemPhi`) and drive the walk with stub [`MemorySSAWalker`] walkers
 //! whose alias verdict each test pins.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -13,7 +13,7 @@ use strider_ir::node::{NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir_test_utils::make_empty_fn;
 
-/// Oracle that classifies a specific set of store memory outputs as
+/// Walker that classifies a specific set of store memory outputs as
 /// aliasing; every other def is non-aliasing.
 struct AliasSet {
     aliasing: Vec<ValueId>,
@@ -27,7 +27,7 @@ impl MemorySSAWalker for AliasSet {
     }
 }
 
-/// Oracle that never aliases — drives the "reaches InitialMemory clean"
+/// Walker that never aliases — drives the "reaches InitialMemory clean"
 /// path.
 struct NeverAlias;
 impl MemorySSAWalker for NeverAlias {
@@ -40,9 +40,9 @@ impl MemorySSAWalker for NeverAlias {
 /// narrowing — the read-only walk never mutates — so only the returned clobber
 /// node is exercised.  Returns the clobber node, or the `InitialMemory` root
 /// for a clean chain.
-fn run<W: MemorySSAWalker>(fg: &mut Function, oracle: &mut W, start_mem: ValueId) -> NodeId {
+fn run<W: MemorySSAWalker>(fg: &mut Function, walker: &mut W, start_mem: ValueId) -> NodeId {
     let start = fg.producer(start_mem);
-    oracle.find_nearest_clobber(fg, start)
+    walker.find_nearest_clobber(fg, start)
 }
 
 /// Asserts the walk bottomed out cleanly at the `InitialMemory` root.
@@ -140,10 +140,10 @@ fn linear_chain_with_load(depth: usize) -> (Function, NodeId, ValueId, Vec<Value
 /// Runs the read-only walk + the caller-side narrowing step with a real
 /// `Load` node so the narrowing rewrite is exercised: `mem` is the load's own
 /// memory input.  Returns the clobber.
-fn run_load<W: MemorySSAWalker>(fg: &mut Function, oracle: &mut W, load: NodeId) -> NodeId {
+fn run_load<W: MemorySSAWalker>(fg: &mut Function, walker: &mut W, load: NodeId) -> NodeId {
     let mem = fg.node_inputs(load)[0];
     let mem_node = fg.producer(mem);
-    let clobber = oracle.find_nearest_clobber(fg, mem_node);
+    let clobber = walker.find_nearest_clobber(fg, mem_node);
     let mut ctx = crate::EditFunction::new(fg);
     super::narrow_load_to(&mut ctx, load, clobber);
     clobber
@@ -162,10 +162,10 @@ fn narrows_load_past_disjoint_prefix() {
     );
     let furthest = *store_mems.last().unwrap();
 
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![furthest],
     };
-    let r = run_load(&mut fg, &mut oracle, load);
+    let r = run_load(&mut fg, &mut walker, load);
     assert_eq!(
         r,
         fg.producer(furthest),
@@ -187,13 +187,13 @@ fn narrowing_is_idempotent() {
     // second walk returns the same clobber and moves nothing.
     let (mut fg, load, _head, store_mems) = linear_chain_with_load(3);
     let furthest = *store_mems.last().unwrap();
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![furthest],
     };
 
-    let r1 = run_load(&mut fg, &mut oracle, load);
+    let r1 = run_load(&mut fg, &mut walker, load);
     assert_eq!(fg.node_inputs(load)[0], furthest, "narrowed on first walk");
-    let r2 = run_load(&mut fg, &mut oracle, load);
+    let r2 = run_load(&mut fg, &mut walker, load);
     assert_eq!(r1, r2, "same nearest clobber on the second walk");
     assert_eq!(fg.node_inputs(load)[0], furthest, "no further movement");
 }
@@ -262,7 +262,7 @@ fn mk_load(fg: &mut Function, mem: ValueId, addr: ValueId) -> NodeId {
 
 /// Grafts a `CallOther(control, mem)` and returns its memory output (the
 /// node's slot-1 output).  Models a memory-clobbering call sitting on the
-/// chain — the walk reaches it via `memory_input_of` (slot 1) and the oracle
+/// chain — the walk reaches it via `memory_input_of` (slot 1) and the walker
 /// classifies it by its memory output, exactly like a `Store`.
 fn mk_call_other(fg: &mut Function, control: ValueId, mem: ValueId) -> ValueId {
     let n = strider_ir_test_utils::sentinel_node(
@@ -305,10 +305,10 @@ fn narrowing_jumps_past_transparent_phi_with_disjoint_prefix() {
     let load = mk_load(&mut fg, store_outer_mem, a3);
 
     // store_dom aliases; store_outer is disjoint.
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![store_dom_mem],
     };
-    let r = run_load(&mut fg, &mut oracle, load);
+    let r = run_load(&mut fg, &mut walker, load);
     assert_eq!(
         r,
         fg.producer(store_dom_mem),
@@ -336,10 +336,10 @@ fn narrowing_stops_at_disagreeing_phi_skipping_disjoint_prefix() {
     let load = mk_load(&mut fg, store_outer_mem, a3);
 
     // Only the inner (phi-arm) store aliases; the outer store is disjoint.
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![store_inner_mem],
     };
-    let r = run_load(&mut fg, &mut oracle, load);
+    let r = run_load(&mut fg, &mut walker, load);
     assert_eq!(
         r,
         fg.producer(phi_mem),
@@ -366,10 +366,10 @@ fn linear_chain_finds_nearest_aliasing_store() {
     // Mark the SECOND-from-head store as aliasing; the walk must return
     // it (the nearest clobber), skipping the first non-aliasing store.
     let nearest = store_mems[1];
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![nearest],
     };
-    let r = run(&mut fg, &mut oracle, head);
+    let r = run(&mut fg, &mut walker, head);
     assert_eq!(
         r,
         fg.producer(nearest),
@@ -384,10 +384,10 @@ fn non_aliasing_store_is_skipped() {
     // aliasing; the walk must skip the two nearer non-aliasing stores
     // and still find it.
     let furthest = *store_mems.last().unwrap();
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![furthest],
     };
-    let r = run(&mut fg, &mut oracle, head);
+    let r = run(&mut fg, &mut walker, head);
     assert_eq!(r, fg.producer(furthest), "walk skips non-aliasing stores");
 }
 
@@ -445,7 +445,7 @@ fn mem_phi_all_arms_clean_returns_none() {
 #[test]
 fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     // Build a MemPhi with two arms: one through a Store (which the
-    // oracle marks aliasing), one through InitialMemory.  Because one
+    // walker marks aliasing), one through InitialMemory.  Because one
     // predecessor reaches a clobber, the phi is a clobber boundary.
     let mut fg = make_empty_fn(|b| {
         let addr = b.build_int_const(0x200u64, ValueType::I64)?;
@@ -477,14 +477,14 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     );
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
-    // Oracle marks the store-arm's store as aliasing.  One arm clobbers
+    // Walker marks the store-arm's store as aliasing.  One arm clobbers
     // (the store) and the other is clean (InitialMemory) → the arms
     // DISAGREE, so the MemPhi itself is the boundary clobber: the walk
     // returns the phi's own output, NOT the inner store.
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![store_mem],
     };
-    let r = run(&mut fg, &mut oracle, phi_value);
+    let r = run(&mut fg, &mut walker, phi_value);
     assert_eq!(
         r,
         fg.producer(phi_value),
@@ -528,10 +528,10 @@ fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     );
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![store_mem],
     };
-    let r = run(&mut fg, &mut oracle, phi_value);
+    let r = run(&mut fg, &mut walker, phi_value);
     assert_eq!(
         r,
         fg.producer(store_mem),
@@ -566,10 +566,10 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
 
     // Mark BOTH stores aliasing: each arm resolves to its own (different)
     // store → the arms disagree → boundary.
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![arm_a, arm_b],
     };
-    let r = run(&mut fg, &mut oracle, phi_value);
+    let r = run(&mut fg, &mut walker, phi_value);
     assert_eq!(
         r,
         fg.producer(phi_value),
@@ -578,7 +578,7 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
 }
 
 /// A memory-clobbering `CallOther` sits on the chain between the load's
-/// memory input and `InitialMemory`; the oracle classifies the call as
+/// memory input and `InitialMemory`; the walker classifies the call as
 /// clobbering.  The walk must return the Call node (the nearest clobber),
 /// proving the engine reaches a Call's memory output via `memory_input_of`
 /// (slot 1) and short-circuits on it exactly as it does a `Store`.
@@ -596,12 +596,12 @@ fn call_on_chain_is_the_nearest_clobber() {
     let a = mk_const(&mut fg, 0x40);
     let load = mk_load(&mut fg, call_mem, a);
 
-    // The oracle marks ONLY the CallOther's memory output as clobbering; the
+    // The walker marks ONLY the CallOther's memory output as clobbering; the
     // disjoint store underneath is clean.
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![call_mem],
     };
-    let r = run_load(&mut fg, &mut oracle, load);
+    let r = run_load(&mut fg, &mut walker, load);
     assert_eq!(
         r,
         fg.producer(call_mem),
@@ -629,10 +629,10 @@ fn mem_phi_call_arm_disagrees_returns_phi_boundary() {
     let call_mem = mk_call_other(&mut fg, control, im);
     let phi_mem = mk_mem_phi(&mut fg, phi_token, &[call_mem, im]);
 
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![call_mem],
     };
-    let r = run(&mut fg, &mut oracle, phi_mem);
+    let r = run(&mut fg, &mut walker, phi_mem);
     assert_eq!(
         r,
         fg.producer(phi_mem),
@@ -698,10 +698,10 @@ fn cyclic_loop_header_phi_terminates() {
     // nearest clobber — proving termination with a real clobber present, not
     // just on the clean path.
     let (mut fg, entry_store_mem, load, _phi_value) = cyclic_loop_chain();
-    let mut oracle = AliasSet {
+    let mut walker = AliasSet {
         aliasing: vec![entry_store_mem],
     };
-    let r = run_load(&mut fg, &mut oracle, load);
+    let r = run_load(&mut fg, &mut walker, load);
     assert_eq!(
         r,
         fg.producer(entry_store_mem),

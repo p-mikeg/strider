@@ -16,7 +16,7 @@
 //! # Detection rules
 //!
 //! * **Stack args** (strict contiguity + no-shadow).  Collect all `Load`
-//!   nodes whose address decomposes (via [`sp_expr::decompose_sp`]) to
+//!   nodes whose address decomposes (via [`sp_analysis::decompose_sp`]) to
 //!   `InitialVar(sp) + K` where `K` falls in a stack slot under the
 //!   convention's [`strider_target::StackArgs`] formula (`StackArgs::slot_of`
 //!   floors the load's first byte onto its containing slot — a wider-than-slot
@@ -45,8 +45,9 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
+use crate::mem_ssa::narrow_load_to;
 use crate::pipeline::PostOptimizer;
-use crate::sp_expr::{SpAliasCfg, SpExpr, narrow_load_to};
+use crate::sp_analysis::{SpAnalyzer, SpExpr, SpOptions};
 
 /// Detects stack-passed argument `Load` nodes and records their
 /// carrier nodes in
@@ -96,7 +97,7 @@ impl PostOptimizer for FunctionArgDetect {
         // threaded down).
         let alias_mode = opt_ctx.options.alias_mode;
         let arg_alias = opt_ctx.options.arg_alias;
-        let alias_cfg = SpAliasCfg::new(alias_mode, arg_alias);
+        let alias_cfg = SpAnalyzer::new(SpOptions::new(alias_mode, arg_alias));
         detect_stack_args(edit, &alias_cfg, stack_args, first_stack_arg)?;
         // Arg detection only populates the arg_index_to_values side-table,
         // and the memory-SSA walk's narrowing only shortens stack-arg loads'
@@ -122,7 +123,7 @@ impl PostOptimizer for FunctionArgDetect {
 /// offsets) are all registered into the side-table for that ordinal.
 fn detect_stack_args(
     edit: &mut crate::EditFunction<'_>,
-    alias_cfg: &SpAliasCfg,
+    alias_cfg: &SpAnalyzer,
     stack_args: strider_target::StackArgs,
     first_stack_arg: usize,
 ) -> Result<()> {
@@ -151,7 +152,7 @@ fn detect_stack_args(
     //   (a) its address decomposes to `initial_sp + K`,
     //   (b) `K` is at or above the first stack slot (StackArgs::slot_of), and
     //   (c) nothing on its memory chain clobbers the slot (mem_chain_is_dirty
-    //       resolves the nearest clobber via the SpAliasCfg + the knobs;
+    //       resolves the nearest clobber via the SpOptions + the knobs;
     //       not-dirty == the nearest clobber is InitialMemory).
     // `slot_of` floors a wider-than-slot argument (a 32-bit-ABI `double`, an
     // x86-64 `long double`) onto the slot its first byte occupies; the cursor
@@ -270,12 +271,12 @@ fn detect_stack_args(
 /// but the clean `InitialMemory` root.
 ///
 /// The load's address class / byte size are re-derived from the node inside
-/// [`SpAliasCfg::nearest_clobber`] (the SP decompose is a memo hit — the caller
+/// [`SpAnalyzer::nearest_clobber`] (the SP decompose is a memo hit — the caller
 /// already decomposed the same address to qualify the load).  The traversal is
 /// cycle-guarded, `MemPhi`-forking, and stack-safe at any chain depth.
 fn mem_chain_is_dirty(
     edit: &mut crate::EditFunction<'_>,
-    alias_cfg: &SpAliasCfg,
+    alias_cfg: &SpAnalyzer,
     load: NodeId,
 ) -> bool {
     let mem_token = edit

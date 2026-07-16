@@ -10,7 +10,9 @@ const SENTINEL: u64 = 0xDEAD_BEEF_0000_0001;
 /// mock graphs.  Exempt kinds (`Entry`, `InitialMemory`, phis, etc.) can
 /// be stamped harmlessly — the check skips them.
 fn stamp(function: &mut Function, id: NodeId) {
-    function.side_tables_mut().extend_asm_fingerprint(id, &[SENTINEL]);
+    function
+        .side_tables_mut()
+        .extend_asm_fingerprint(id, &[SENTINEL]);
 }
 
 /// The shared corruption-test prelude: a fresh [`Function`] with the
@@ -719,7 +721,8 @@ fn asm_fingerprint_check_accepts_when_fingerprint_present() {
         [s.entry_ctrl, s.mem_value, const_value],
         [],
     );
-    s.f.side_tables_mut().extend_asm_fingerprint(int_const_node, &[0x1000]);
+    s.f.side_tables_mut()
+        .extend_asm_fingerprint(int_const_node, &[0x1000]);
     s.f.side_tables_mut().extend_asm_fingerprint(ret, &[0x1004]);
     validate(&s.f).expect("populated fingerprints validate");
 }

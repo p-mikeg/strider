@@ -76,7 +76,12 @@ impl PyCfg {
     /// `to_html` / `to_dot` / `html_str` (mirrors `PyLifter::dispatch_dot`).
     /// `style` is already resolved by each caller so their exact per-method
     /// defaults are preserved.
-    fn dispatch_dot(&self, py: Python<'_>, style: &str, op: CfgDotOp<'_>) -> PyResult<CfgDotResult> {
+    fn dispatch_dot(
+        &self,
+        py: Python<'_>,
+        style: &str,
+        op: CfgDotOp<'_>,
+    ) -> PyResult<CfgDotResult> {
         self.with_sleigh(py, |sleigh| {
             let d = dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some(style)));
             match op {
@@ -149,17 +154,28 @@ enum CfgDotResult {
 
 #[pymethods]
 impl PyCfg {
+    /// Expose the strong `Py<PyLifter>` back-reference to Python's cyclic
+    /// GC so a cycle routed through a `Cfg` (and on to the Lifter's Python
+    /// reader) is detectable.  The cycle is broken at the reader's `__dict__`
+    /// or `PyLifter::__clear__`, so this class needs no `__clear__` of its
+    /// own (the `lifter` handle is load-bearing while the `Cfg` is alive).
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        visit.call(&self.lifter)
+    }
+
     /// Render the CFG to a standalone HTML file at `path`.  `style`
     /// selects the dot theme (default `"dark_cfg"`).
     #[pyo3(signature = (path, style=None))]
     fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
         let style = style.unwrap_or("dark_cfg");
-        self.dispatch_dot(py, style, CfgDotOp::ToHtml(path)).map(|_| ())
+        self.dispatch_dot(py, style, CfgDotOp::ToHtml(path))
+            .map(|_| ())
     }
     /// Render the CFG to a Graphviz `.dot` file at `path`.
     #[pyo3(signature = (path,))]
     fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
-        self.dispatch_dot(py, "dark_cfg", CfgDotOp::ToDot(path)).map(|_| ())
+        self.dispatch_dot(py, "dark_cfg", CfgDotOp::ToDot(path))
+            .map(|_| ())
     }
     /// Return the CFG rendered as an HTML string (default `"dark_cfg"`
     /// style) instead of writing it to a file.
@@ -228,6 +244,96 @@ impl PyCfg {
             .collect();
         out.sort_by_key(|(addr, _)| *addr);
         Ok(out)
+    }
+
+    /// The region index of the CFG entry — the default explorer center.
+    fn entry(&self) -> u32 {
+        self.inner.entry().index() as u32
+    }
+
+    /// Pretty neighborhood DOT around region `center` (BFS over
+    /// predecessor+successor blocks, capped at `max_nodes`; needs the
+    /// Lifter's Sleigh to resolve register names).
+    #[pyo3(signature = (center, depth=5, max_nodes=60))]
+    fn neighborhood_dot(
+        &self,
+        py: Python<'_>,
+        center: u32,
+        depth: usize,
+        max_nodes: usize,
+    ) -> PyResult<String> {
+        let node = strider_cfg::RegionId::new(center as usize);
+        self.with_sleigh(py, |sleigh| {
+            self.inner
+                .neighborhood_dot(sleigh, node, depth, max_nodes)
+                .map_err(into_strider_err)
+        })
+    }
+
+    /// Structure-faithful neighborhood DOT around region `center` (no
+    /// Sleigh — one `n<idx>` box per region, edges as stored).
+    #[pyo3(signature = (center, depth=5, max_nodes=60))]
+    fn raw_neighborhood_dot(
+        &self,
+        center: u32,
+        depth: usize,
+        max_nodes: usize,
+    ) -> PyResult<String> {
+        let node = strider_cfg::RegionId::new(center as usize);
+        self.inner
+            .raw_neighborhood_dot(node, depth, max_nodes)
+            .map_err(into_strider_err)
+    }
+
+    /// Disassembly text for every region, keyed by region index — the
+    /// text-search corpus for the CFG explorer's search bar
+    /// (`_CfgVisualizer.search` in `explore.py`). Mirrors the dot
+    /// renderer's per-block text (`CfgDotDumper::dump_as_dot`): for each
+    /// region, each instruction's `ctx_fmt(sleigh, &regs)`, joined here
+    /// with `"\n"` (the dot renderer uses `"\\l"`, a DOT-label
+    /// left-justified newline — not meaningful outside a label string).
+    fn region_texts(&self, py: Python<'_>) -> PyResult<HashMap<u32, String>> {
+        self.with_sleigh(py, |sleigh| {
+            let regs = sleigh
+                .regs()
+                .map_err(|e| into_strider_err(anyhow::anyhow!("{e:?}")))?;
+            let g = self.inner.region_graph();
+            let mut out = HashMap::new();
+            for idx in g.node_indices() {
+                let region = g
+                    .node_weight(idx)
+                    .expect("node_indices() only yields present nodes");
+                let text = region
+                    .insns
+                    .iter()
+                    .map(|ri| ri.insn.ctx_fmt(sleigh, &regs).to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                out.insert(idx.index() as u32, text);
+            }
+            Ok(out)
+        })
+    }
+
+    /// The region index whose instruction range contains `addr`, if any.
+    /// Returns the first containing region (regions don't overlap in
+    /// practice, so "first" is also "only").
+    fn block_at(&self, addr: u64) -> Option<u32> {
+        let g = self.inner.region_graph();
+        for idx in g.node_indices() {
+            let region = g
+                .node_weight(idx)
+                .expect("node_indices() only yields present nodes");
+            let start = region.start_addr.machine_addr.addr;
+            let last = region
+                .insns
+                .last()
+                .map_or(start, |i| i.addr.machine_addr.addr);
+            if start <= addr && addr <= last {
+                return Some(idx.index() as u32);
+            }
+        }
+        None
     }
 }
 

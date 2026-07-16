@@ -216,6 +216,7 @@ fn apply_elf_relocations_patches_dispatch_table_x86_64() {
         panic!("missing {path:?}; run `make -C fixtures CASE=elf_relocs ARCH=x64`");
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.file();
     // dispatch_table lives in `.data.rel.ro` (writable section that
     // gets relro-protected at runtime).  The default
     // code-and-readonly loader skips it; the wider loader picks it
@@ -249,6 +250,7 @@ fn default_loader_omits_data_rel_ro() {
         return;
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.file();
     let regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
     let table_addr = sym_addr(&obj, "dispatch_table");
     assert!(
@@ -269,6 +271,7 @@ fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
         return; // skip if fixture not built
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.file();
     let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
     // ET_EXEC with no dynamic relocations: the applier is a no-op (any
     // GLOB_DAT / JUMP_SLOT entries target undefined externs and are
@@ -293,6 +296,7 @@ fn apply_elf_relocations_autoload_pulls_in_missing_site_sections() {
         return;
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.file();
     let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
     let regions_before = regions.len();
 
@@ -321,6 +325,7 @@ fn apply_elf_relocations_idempotent() {
         return;
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.file();
     let mut regions =
         strider_reader::elf::elf_get_loadable_regions_including_writable(&obj).unwrap();
     strider_reader::elf::apply_elf_relocations(&mut regions, &obj).unwrap();
@@ -340,6 +345,7 @@ fn apply_elf_relocations_autoload_is_idempotent() {
         return;
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.file();
     let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
 
     strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
@@ -375,6 +381,7 @@ fn apply_elf_relocations_autoload_does_not_fabricate_values_for_undefined_extern
         return;
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.file();
     let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
     let regions_before = regions.len();
 
@@ -412,6 +419,7 @@ fn apply_elf_relocations_autoload_preserves_preloaded_bytes_on_pre_resolved_bina
         return;
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.file();
     let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
     let before: Vec<(u64, Vec<u8>)> = regions
         .iter()

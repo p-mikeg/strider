@@ -159,4 +159,24 @@ impl Match {
     pub fn matched_nodes(&self) -> &[NodeId] {
         self.bindings.matched_nodes()
     }
+
+    /// Sorted, deduplicated `(capture-id, bound-node-id)` pairs — a stable
+    /// structural signature over this match's captured bindings.  Language
+    /// bindings use it to deduplicate matches by *what they bind* rather than
+    /// by root identity (the sea-of-nodes shape can reach one binding from
+    /// several roots).
+    pub fn capture_signature(&self, graph: &Graph) -> Vec<(u32, u32)> {
+        let mut sig: Vec<(u32, u32)> = self
+            .bindings
+            .iter()
+            .filter_map(|(c, _)| {
+                self.bindings
+                    .get_node(c, graph)
+                    .map(|n| (c.id(), n.as_u32()))
+            })
+            .collect();
+        sig.sort_unstable();
+        sig.dedup();
+        sig
+    }
 }

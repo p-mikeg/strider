@@ -34,6 +34,9 @@ pub mod matcher;
 pub mod template;
 pub mod typed;
 
+use strider_ir::IRViewer;
+use strider_ir::node::ValueKind;
+
 pub use bindings::Bindings;
 pub use capture::Capture;
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
@@ -41,7 +44,7 @@ pub use match_result::Match;
 pub use matcher::match_pat::{
     CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, ValueTy,
 };
-pub use matcher::{CastMask, Matcher, Pattern, PostMatchFn};
+pub use matcher::{CastMask, JoinConstraint, Matcher, Pattern, PostMatchFn};
 pub use node_builders::{
     CallOtherPat, CallPat, FunctionArgPat, IfPat, IndirectBranchPat, LoadPat, MemPat, MemPhiPat,
     PhiPat, RetPat, StorePat, SwitchPat, UnreachablePat, call, call_other, function_arg,
@@ -60,8 +63,6 @@ pub use template::{Template, TemplateCtx, instantiate};
 /// input type (needed for signed / carry handling) differs from the
 /// root's output type (always `I1`).
 pub fn first_value_input_type(ctx: &TemplateCtx<'_>) -> Option<strider_ir::node::ValueType> {
-    use strider_ir::IRViewer;
-    use strider_ir::node::ValueKind;
     let inputs = ctx.function.node_inputs(ctx.root);
     let inp = inputs.into_iter().next()?;
     match ctx.function.value_kind(inp) {
@@ -73,13 +74,14 @@ pub fn first_value_input_type(ctx: &TemplateCtx<'_>) -> Option<strider_ir::node:
 pub use typed::{
     add, and, any, any_bool_const, any_float_const, any_int_const, bit_not, bool_and, bool_bin_any,
     bool_binary, bool_const, bool_const_with_fn, bool_inputs, bool_not, bool_or, bool_value,
-    bool_xor, div, extend, float_abs, float_add, float_binary, float_binary_any, float_bits_to_int,
+    bool_xor, capture_typed, div, extend, float_abs, float_add, float_binary, float_binary_any,
+    float_bits_to_int,
     float_ceil, float_cmp, float_cmp_any, float_const, float_const_with_fn, float_div, float_eq,
     float_floor, float_is_nan, float_le, float_lt, float_mul, float_ne, float_neg, float_round,
     float_sqrt, float_sub, float_to_float, float_to_int, float_unary_any, initial_var,
     initial_var_for, inputs_of_width, int_binary, int_binary_any, int_bits_to_float, int_carry,
     int_cmp, int_cmp_any, int_const, int_const_any_of, int_const_with_fn, int_eq, int_le, int_lt,
     int_ne, int_sborrow, int_scarry, int_sle, int_slt, int_to_float, int_unary_any, lzcount, mul,
-    neg, or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const, srem,
-    sshr, sub, truncate, value_of_width, var, xor, zero_extend,
+    neg, or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const, srem, sshr,
+    sub, truncate, value_of_width, var, xor, zero_extend, BoxedAlt, OneOf, boxed_alt,
 };

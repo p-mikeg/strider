@@ -3,8 +3,8 @@ use crate::error::Result;
 use crate::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::IrBuilderEx;
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{
     RegisterSet, SENTINEL_LIFT_ADDR, reg_vn, stack_vn_aarch64, stack_vn_x86 as sp32_vn,
     stack_vn_x86_64 as stack_vn,
@@ -1382,7 +1382,10 @@ fn callother_on_chain_gated_only_by_calls_clobber() -> Result<()> {
     octx_conservative.options.arg_alias.calls_clobber = true;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
-        fg_conservative.side_tables().arg_index_to_values(0).is_empty(),
+        fg_conservative
+            .side_tables()
+            .arg_index_to_values(0)
+            .is_empty(),
         "calls_clobber=true: the CallOther on the chain marks the slot dirty",
     );
     Ok(())
@@ -1458,7 +1461,10 @@ fn calls_clobber_toggle_gates_arg_across_call() -> Result<()> {
     octx_conservative.options.arg_alias.calls_clobber = true;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
-        fg_conservative.side_tables().arg_index_to_values(0).is_empty(),
+        fg_conservative
+            .side_tables()
+            .arg_index_to_values(0)
+            .is_empty(),
         "calls_clobber=true: the Call on the chain marks the slot dirty, \
          so Load[sp+4] is NOT registered as an arg",
     );

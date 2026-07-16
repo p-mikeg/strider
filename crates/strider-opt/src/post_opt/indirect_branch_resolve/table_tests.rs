@@ -20,8 +20,8 @@ use strider_ir::node::ValueType;
 use strider_ir::{
     ExtendOp, Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
 };
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::IrBuilderEx;
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{
     MockRom, RegisterSet, stack_vn_aarch64 as sp64, stack_vn_x86 as sp32_vn,
 };
@@ -64,7 +64,9 @@ fn build_with_target(
 ) -> (Function, ValueId) {
     let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
     let region = builder.create_region_all().expect("create_region");
-    builder.set_entry_region_all(region).expect("set_entry_region");
+    builder
+        .set_entry_region_all(region)
+        .expect("set_entry_region");
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let target = target_inputs(&mut builder);
@@ -1382,7 +1384,7 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
 ///
 /// This test verifies the tightening introduced by replacing the old
 /// bespoke backward scan (which walked past `Call` nodes as if they
-/// were non-aliasing stores) with the shared `SpAliasOracle` walker
+/// were non-aliasing stores) with the shared `SpMemWalker` walker
 /// (which treats `Call` as a memory clobber).
 #[test]
 fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_load() {

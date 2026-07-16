@@ -132,8 +132,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
         "Call output count = 2 (ctrl + mem) + tagged ret-val/clobber count"
     );
     // The override total must be strictly smaller than the default total.
-    let (default_ret, default_clob) =
-        strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
+    let (default_ret, default_clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
     let default_total = default_ret.len() + default_clob.len();
     assert!(
         tagged_outputs < default_total,
@@ -325,8 +324,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
         "every spliced ret-val / clobber output must carry its varnode tag"
     );
     assert_eq!(outs.len(), 2 + tagged_outputs);
-    let (default_ret, default_clob) =
-        strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
+    let (default_ret, default_clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
     let default_total = default_ret.len() + default_clob.len();
     assert!(
         tagged_outputs < default_total,

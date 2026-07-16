@@ -97,7 +97,7 @@ impl Optimizer for CfgDetach {
         let mut emptied_a_region = false;
         for (region, idxs) in dead {
             edit.remove_region_predecessors(region, &idxs)?;
-            emptied_a_region |= edit.node_inputs(region).into_iter().next().is_none();
+            emptied_a_region |= edit.node_inputs(region).is_empty();
         }
         if emptied_a_region {
             edit.resync_live_set();

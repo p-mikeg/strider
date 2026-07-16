@@ -678,9 +678,7 @@ mod tests {
     /// `live_unresolved_branches`.  Recomputed here via the walk the
     /// production snapshot replaces, so these unit tests exercise the same
     /// filtering behaviour.
-    fn live_indirect_set(
-        function: &strider_ir::Function,
-    ) -> rustc_hash::FxHashSet<NodeId> {
+    fn live_indirect_set(function: &strider_ir::Function) -> rustc_hash::FxHashSet<NodeId> {
         use strider_ir::node::NodeKind;
         use strider_ir::{IRViewer, IRWalker};
         function

@@ -95,7 +95,10 @@ impl DomInfo {
     /// `def_sites` is any [`DefSites`] over `RegionId` nodes (e.g. the lifter's
     /// `FxHashMap<InitialVnId, FxHashSet<RegionId>>`).
     #[must_use]
-    pub(crate) fn iterated_frontier<D>(&self, def_sites: &D) -> FxHashMap<RegionId, FxHashSet<D::Var>>
+    pub(crate) fn iterated_frontier<D>(
+        &self,
+        def_sites: &D,
+    ) -> FxHashMap<RegionId, FxHashSet<D::Var>>
     where
         D: DefSites<Node = RegionId>,
     {

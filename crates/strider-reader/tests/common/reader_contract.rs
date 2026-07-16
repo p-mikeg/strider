@@ -70,8 +70,12 @@ where
 
 /// Asserts that a partial read (buf larger than region suffix) returns
 /// `Ok(expected_n)`, documenting MemReader's permissive partial-read contract.
-pub(crate) fn assert_mem_reader_partial_read_ok<R>(r: &R, addr: u64, buf_len: usize, expected_n: usize)
-where
+pub(crate) fn assert_mem_reader_partial_read_ok<R>(
+    r: &R,
+    addr: u64,
+    buf_len: usize,
+    expected_n: usize,
+) where
     R: MemReader,
     R::Err: std::fmt::Debug,
 {

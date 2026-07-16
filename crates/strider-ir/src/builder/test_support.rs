@@ -66,7 +66,9 @@ impl FunctionBuilder {
         for (i, reg) in arg_regs.iter().enumerate() {
             let container = vn_container::largest_container_in(self.function.all_vns(), reg);
             if let Some(value) = self.function.initial_var_value(&container) {
-                self.function_mut().side_tables_mut().register_arg_value(i as u32, value);
+                self.function_mut()
+                    .side_tables_mut()
+                    .register_arg_value(i as u32, value);
             }
         }
     }

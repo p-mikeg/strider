@@ -88,7 +88,9 @@ pub trait IRBuilderExt: IRBuilder {
         let curr_output_type = self.value_type(value_id)?;
 
         if !output_type.is_integer() {
-            return Err(anyhow!("output {value_id:?} target is not an integer value"));
+            return Err(anyhow!(
+                "output {value_id:?} target is not an integer value"
+            ));
         }
         // Booleans are I1 (integer); the only non-integer input here would be
         // a float, which cannot be width-extended as an integer — it needs an

@@ -30,6 +30,7 @@
 mod builder;
 mod dot;
 mod indirect_resolver;
+mod neighborhood;
 mod options;
 mod query;
 #[cfg(test)]

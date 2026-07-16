@@ -36,7 +36,7 @@ use anyhow::anyhow;
 use rustc_hash::FxHashMap;
 use strider_graph::ValueId as TmplValueId;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
-use strider_ir::{IRBuilder, IRViewer};
+use strider_ir::{Function, IRBuilder, IRViewer};
 
 use crate::bindings::Bindings;
 use crate::graph_ext::{PatGraphRead, reachable_topo};
@@ -84,6 +84,14 @@ pub enum TemplateTy {
     /// Inherit the rewrite root's output type (resolved at
     /// instantiation time).
     InheritRoot,
+    /// Inherit the width of a **bound LHS capture**, resolved at
+    /// instantiation time from the value the capture matched.  Binding-relative
+    /// (not root-relative like [`InheritRoot`]): use it when a materialised
+    /// interior node's width comes from a captured operand that the rewrite
+    /// root's shape does not expose — e.g. the `And(x, mask)` / mask in
+    /// `Sless(x<<C, 0) → Xor(Equal(And(x,mask),0),1)`, whose `I1` `Xor` root has
+    /// no `x`-wide input.
+    InheritBinding(crate::Capture),
     /// A fixed output type, independent of the root.
     Fixed(ValueType),
 }
@@ -140,6 +148,12 @@ pub fn instantiate<B: IRBuilder>(
     let root = template.root()?;
     let order = reachable_topo(&template.graph, root)?;
 
+    // Widths for `TemplateTy::InheritBinding(cap)` nodes: resolved once from the
+    // value each referenced capture matched.  Scanned before the mutating build
+    // loop (needs an immutable `function` borrow).  A capture bound to a
+    // non-typed value simply doesn't enter the map and falls back to `root_ty`.
+    let binding_tys = resolve_binding_tys(template, bindings, builder.function());
+
     // Map from a template *output vertex* (a generic-graph ValueId) → its
     // materialised IR ValueId. Keying on the output vertex (not the producer
     // node) lets a multi-output interior node feed the right slot to each
@@ -182,7 +196,7 @@ pub fn instantiate<B: IRBuilder>(
                 // the rewrite root for `InheritRoot`), read from the node's
                 // value output vertex. Exposed to the dynamic closure as
                 // the `root_ty` it computes its constant against.
-                let value_ty = node_value_ty(template, vtx, root_ty);
+                let value_ty = node_value_ty(template, vtx, root_ty, &binding_tys);
                 let ctx = TemplateCtx {
                     function: builder.function(),
                     bindings,
@@ -194,7 +208,7 @@ pub fn instantiate<B: IRBuilder>(
             TmplNodeKind::Build(TemplateKind::FnIntConst(f)) => {
                 // Compute the u128 value via the closure, then intern it
                 // (see `intern_fn_int_const` for the per-width interning).
-                let value_ty = node_value_ty(template, vtx, root_ty);
+                let value_ty = node_value_ty(template, vtx, root_ty, &binding_tys);
                 let ctx = TemplateCtx {
                     function: builder.function(),
                     bindings,
@@ -213,7 +227,7 @@ pub fn instantiate<B: IRBuilder>(
         // multi-output node (e.g. a `Store` declaring a memory output a
         // later node consumes) declares that signature instead. Each value
         // output resolves its own [`TemplateTy`] against the rewrite root.
-        let outputs = output_kinds_for(template, vtx, root_ty);
+        let outputs = output_kinds_for(template, vtx, root_ty, &binding_tys);
 
         let node = builder.create_node_attributed(kind, inputs, outputs, proof_nodes);
 
@@ -248,12 +262,49 @@ pub fn instantiate<B: IRBuilder>(
     root_value.ok_or_else(|| anyhow!("root template node never materialised"))
 }
 
-/// Resolve a build [`TemplateTy`] against the rewrite root's output type.
-fn resolve_ty(ty: TemplateTy, root_ty: ValueType) -> ValueType {
+/// Resolve a build [`TemplateTy`] against the rewrite root's output type
+/// (`root_ty`) and the per-capture width map (`binding_tys`).  An
+/// `InheritBinding` whose capture didn't resolve to a typed value falls back
+/// to `root_ty`.
+fn resolve_ty(
+    ty: TemplateTy,
+    root_ty: ValueType,
+    binding_tys: &FxHashMap<crate::Capture, ValueType>,
+) -> ValueType {
     match ty {
         TemplateTy::Fixed(t) => t,
         TemplateTy::InheritRoot => root_ty,
+        TemplateTy::InheritBinding(cap) => binding_tys.get(&cap).copied().unwrap_or(root_ty),
     }
+}
+
+/// Resolve the width of every `InheritBinding(cap)` referenced anywhere in
+/// `template`, once, from the value each capture matched in `bindings`.  A
+/// capture bound to a non-typed value (or unbound) is simply omitted — the
+/// consumer falls back to the root type.
+fn resolve_binding_tys(
+    template: &Template,
+    bindings: &Bindings,
+    function: &Function,
+) -> FxHashMap<crate::Capture, ValueType> {
+    let mut out: FxHashMap<crate::Capture, ValueType> = FxHashMap::default();
+    for vtx in template.graph.all_node_ids() {
+        for out_vtx in template.graph.produced_outputs(vtx).iter().copied() {
+            let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
+                continue;
+            };
+            let TemplateTy::InheritBinding(cap) = o.ty else {
+                continue;
+            };
+            if let std::collections::hash_map::Entry::Vacant(e) = out.entry(cap)
+                && let Some(v) = bindings.get_value(cap)
+                && let ValueKind::Typed(t) = function.value_kind(v)
+            {
+                e.insert(t);
+            }
+        }
+    }
+    out
 }
 
 /// Intern a dynamic-`FnIntConst` value `v` as an `IntConst` of `value_ty`.
@@ -316,7 +367,7 @@ fn collect_inputs(
 /// [`TemplateTy`]) into the concrete IR [`ValueKind`], against `root_ty`.
 /// Single source of truth for the `OutputKindSpec → ValueKind` mapping
 /// shared by [`node_value_ty`] and [`output_kinds_for`].
-fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType) -> ValueKind {
+fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType, binding_tys: &FxHashMap<crate::Capture, ValueType>) -> ValueKind {
     match o.kind {
         OutputKindSpec::Memory => ValueKind::Memory,
         OutputKindSpec::Control => ValueKind::Control,
@@ -325,7 +376,7 @@ fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType) -> ValueKind {
         // unconstrained `Any` wildcard is a match-only kind (no template
         // builder emits it); resolve it defensively.
         OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
-            ValueKind::Typed(resolve_ty(o.ty, root_ty))
+            ValueKind::Typed(resolve_ty(o.ty, root_ty, binding_tys))
         }
     }
 }
@@ -334,7 +385,7 @@ fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType) -> ValueKind {
 /// [`TemplateTy`] of its first value output vertex, resolved against
 /// `root_ty`. Falls back to `root_ty` when the node has no value output
 /// vertex (the dynamic-`Fn` `root_ty` for such a node is then the root's).
-fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> ValueType {
+fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType, binding_tys: &FxHashMap<crate::Capture, ValueType>) -> ValueType {
     template
         .graph
         .produced_outputs(node_vtx)
@@ -344,7 +395,7 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> V
             let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
                 return None;
             };
-            match resolved_output_kind(o, root_ty) {
+            match resolved_output_kind(o, root_ty, binding_tys) {
                 ValueKind::Typed(t) => Some(t),
                 _ => None,
             }
@@ -357,11 +408,11 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> V
 /// [`TemplateTy`] against `root_ty`. Falls back to a single value output
 /// of the root's type when the node has no explicit output vertex (the
 /// common value-expression case).
-fn output_kinds_for(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> Vec<ValueKind> {
+fn output_kinds_for(template: &Template, node_vtx: NodeId, root_ty: ValueType, binding_tys: &FxHashMap<crate::Capture, ValueType>) -> Vec<ValueKind> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.produced_outputs(node_vtx).iter().copied() {
         if let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) {
-            by_slot.insert(o.slot, resolved_output_kind(o, root_ty));
+            by_slot.insert(o.slot, resolved_output_kind(o, root_ty, binding_tys));
         }
     }
     if by_slot.is_empty() {

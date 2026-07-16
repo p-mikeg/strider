@@ -437,7 +437,11 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let Ok(id_u32) = u32::try_from(id_vn.addr_off) else {
             return Ok(InsnOutcome::Continue);
         };
-        let name = self.builder.sleigh.user_op_name(id_u32);
+        let name = self
+            .builder
+            .user_op_names
+            .get(id_u32 as usize)
+            .map(String::as_str);
         let preset = self.builder.arch.preset();
         let class = name.and_then(|n| strider_target::call_other_abi::classify(preset, n));
         if class.is_some_and(|c| c.is_no_return()) {
@@ -743,9 +747,9 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
+    use crate::CfgOptions;
     use crate::test_support::addr as addr_at;
     use crate::test_support::*;
-    use crate::CfgOptions;
 
     fn fake_lift_res(n: usize) -> rsleigh::LiftRes {
         fake_lift_res_with_len(n, 1)

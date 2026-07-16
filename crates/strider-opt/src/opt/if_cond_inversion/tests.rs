@@ -330,9 +330,21 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     // 0x804 (the Xor-with-1's address) must be present on the Xor pre-pass,
     // absent on inner_producer_pre, and absent on if_node_pre.  Sanity-check
     // the fixture before running the pass.
-    assert!(fg.side_tables().asm_fingerprint(bool_neg_node).contains(&0x804));
-    assert!(!fg.side_tables().asm_fingerprint(inner_producer_pre).contains(&0x804));
-    assert!(!fg.side_tables().asm_fingerprint(if_node_pre).contains(&0x804));
+    assert!(
+        fg.side_tables()
+            .asm_fingerprint(bool_neg_node)
+            .contains(&0x804)
+    );
+    assert!(
+        !fg.side_tables()
+            .asm_fingerprint(inner_producer_pre)
+            .contains(&0x804)
+    );
+    assert!(
+        !fg.side_tables()
+            .asm_fingerprint(if_node_pre)
+            .contains(&0x804)
+    );
 
     let r = crate::pipeline::run_one(
         &IfCondInversion::new(),
@@ -345,11 +357,15 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     // the inner producer — NOT on the If, and NOT on any sibling
     // reachable node that wasn't an ancestor of the cond input.
     assert!(
-        fg.side_tables().asm_fingerprint(inner_producer_pre).contains(&0x804),
+        fg.side_tables()
+            .asm_fingerprint(inner_producer_pre)
+            .contains(&0x804),
         "Xor-with-1's address 0x804 must be absorbed into the inner cond producer"
     );
     assert!(
-        !fg.side_tables().asm_fingerprint(if_node_pre).contains(&0x804),
+        !fg.side_tables()
+            .asm_fingerprint(if_node_pre)
+            .contains(&0x804),
         "Xor-with-1's address 0x804 must NOT be absorbed into the If node"
     );
 
@@ -428,7 +444,11 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
         2,
         "fixture must have the first Xor(_, 1) with 2 consumers (If + second Xor)"
     );
-    assert!(!fg.side_tables().asm_fingerprint(inner_producer_pre).contains(&0x904));
+    assert!(
+        !fg.side_tables()
+            .asm_fingerprint(inner_producer_pre)
+            .contains(&0x904)
+    );
 
     let r = crate::pipeline::run_one(
         &IfCondInversion::new(),
@@ -445,13 +465,17 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     // Xor is still live (consumed by second_neg_node), so the
     // attribution must stay on the Xor itself.
     assert!(
-        !fg.side_tables().asm_fingerprint(inner_producer_pre).contains(&0x904),
+        !fg.side_tables()
+            .asm_fingerprint(inner_producer_pre)
+            .contains(&0x904),
         "Xor-with-1's address 0x904 must NOT leak into inner_producer when Xor has \
          remaining consumers (Xor is still live; would be false-positive attribution)"
     );
     // Inversely: the Xor's own fingerprint must still carry 0x904.
     assert!(
-        fg.side_tables().asm_fingerprint(bool_neg_node).contains(&0x904),
+        fg.side_tables()
+            .asm_fingerprint(bool_neg_node)
+            .contains(&0x904),
         "Xor-with-1's own fingerprint must still carry its address"
     );
     Ok(())

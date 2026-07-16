@@ -8,12 +8,12 @@
     clippy::unreachable
 )]
 
-use strider_ir::node::ValueType;
-use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
+use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    Capture, MatchPat, Matcher, any, call, call_other, if_node, indirect_branch, int_const, load,
-    mem_phi, phi, ret, switch, unreachable, var,
+    CastMask, Capture, CaptureExt, MatchPat, Matcher, add, any, any_int_const, call, call_other,
+    if_node, indirect_branch, int_const, load, mem_phi, phi, ret, switch, unreachable, var,
 };
 
 // ── Call ──────────────────────────────────────────────────────────────────────
@@ -492,9 +492,7 @@ fn switch_address_matches_and_captures() {
     );
 
     let c = Capture::new();
-    let hits = matcher
-        .find_all(&switch().address(var(c)).build())
-        .unwrap();
+    let hits = matcher.find_all(&switch().address(var(c)).build()).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(hits[0].value(c).is_some());
 }
@@ -567,6 +565,45 @@ fn if_captures_node() {
     );
 }
 
+#[test]
+fn if_capture_true_false_bind_distinct_control_outputs() {
+    let (function, if_id) = if_then_else();
+    let t = Capture::new();
+    let f = Capture::new();
+    let hits = Matcher::new(&function)
+        .find_all(&if_node().capture_true(t).capture_false(f).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    let tv = hits[0].value(t).expect("true control output bound");
+    let fv = hits[0].value(f).expect("false control output bound");
+    assert_ne!(tv, fv, "true and false outputs are distinct values");
+    // Both control outputs belong to the same If node.
+    assert_eq!(function.graph().producer(tv), if_id);
+    assert_eq!(function.graph().producer(fv), if_id);
+}
+
+#[test]
+fn if_node_capture_and_control_output_captures_coexist() {
+    // A node capture (`capture`) and output-vertex captures (`capture_true` /
+    // `capture_false`) on the same If must ALL bind — the anchor-vs-node capture
+    // used to be either/or, silently dropping the node capture.
+    let (function, if_id) = if_then_else();
+    let (g, t, f) = (Capture::new(), Capture::new(), Capture::new());
+    let hits = Matcher::new(&function)
+        .find_all(
+            &if_node()
+                .capture(g)
+                .capture_true(t)
+                .capture_false(f)
+                .build(),
+        )
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].node(g, function.graph()).unwrap(), if_id);
+    assert!(hits[0].value(t).is_some(), "true output still binds");
+    assert!(hits[0].value(f).is_some(), "false output still binds");
+}
+
 // ── Phi / MemPhi / ValuePhi ───────────────────────────────────────────────────
 
 #[test]
@@ -621,6 +658,301 @@ fn phi_capture_binds_value_output() {
     );
 }
 
+/// Diamond join: `if(true){ var=1 } else { var=2 }` then read `var` — the join
+/// carries a `Phi` whose data inputs are `IntConst(1)` (slot 1) and
+/// `IntConst(2)` (slot 2). Returns the function.
+fn phi_over_two_consts() -> strider_ir::Function {
+    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+
+    let entry = b.create_region_all().unwrap();
+    let region_t = b.create_region_all().unwrap();
+    let region_f = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
+
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, region_t, region_f).unwrap();
+
+    b.set_region(region_t);
+    let v1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+    b.write_variable(&var_vn, v1).unwrap();
+    b.build_branch(join).unwrap();
+
+    b.set_region(region_f);
+    let v2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+    b.write_variable(&var_vn, v2).unwrap();
+    b.build_branch(join).unwrap();
+
+    b.set_region(join);
+    let phi_val = b.read_variable(&var_vn).unwrap();
+    b.build_return(Some(phi_val), &[]).unwrap();
+    b.set_lift_addr(None);
+    b.build().unwrap()
+}
+
+/// Diamond join whose `Phi` value feeds `Add(phi, 10)` (then returned), so the
+/// phi appears as a **value operand** — the shape `phi()` must nest into.
+fn phi_feeding_add() -> strider_ir::Function {
+    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let region_t = b.create_region_all().unwrap();
+    let region_f = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, region_t, region_f).unwrap();
+    b.set_region(region_t);
+    let v1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+    b.write_variable(&var_vn, v1).unwrap();
+    b.build_branch(join).unwrap();
+    b.set_region(region_f);
+    let v2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+    b.write_variable(&var_vn, v2).unwrap();
+    b.build_branch(join).unwrap();
+    b.set_region(join);
+    let phi_val = b.read_variable(&var_vn).unwrap();
+    let ten = b.build_int_const(10u64, ValueType::I64).unwrap();
+    let sum = b
+        .build_int_binary_operation(phi_val, ten, strider_ir::IntBinaryOp::Add, ValueType::I64)
+        .unwrap();
+    b.build_return(Some(sum), &[]).unwrap();
+    b.set_lift_addr(None);
+    b.build().unwrap()
+}
+
+/// A `Phi` produces a value output, so `phi()` must nest as a value operand
+/// (regression: it used to be node-rooted only — `add(x, phi())` / a Python
+/// `store(data=phi())` errored "cannot be nested as a value operand").
+#[test]
+fn phi_nests_as_a_value_operand() {
+    let function = phi_feeding_add();
+    let m = Matcher::new(&function);
+    // `Add(phi, 10)` — phi nested as the add's operand.
+    assert_eq!(
+        m.find_all(&add(phi(), int_const(10u128)).into_pattern())
+            .unwrap()
+            .len(),
+        1,
+        "phi must match nested as a value operand of Add"
+    );
+    // Capture through the nesting binds the phi node out.
+    let c = Capture::new();
+    let hits = m
+        .find_all(&add(phi().capture(c), any()).into_pattern())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(
+        hits[0].node(c, function.graph()).is_some(),
+        "captured phi binds out"
+    );
+}
+
+/// A two-input phi whose every data input is a `ZeroExtend` of an I32 `Load`
+/// from a constant address.  The `Load` is a real interior node carried by no
+/// per-region trivial phi, so `any_input(load())` is a clean cast-walk-through
+/// discriminator (a bare `InitialVar` would be shadowed by the trivial
+/// single-predecessor phis the builder emits for each tracked-var read).
+fn phi_over_casts_of_load() -> strider_ir::Function {
+    let phi_reg = strider_ir_test_utils::reg_vn(0x10, 8); // I64 phi'd var
+    let mut b = RegisterSet::new().tracked(phi_reg).build_fn().unwrap();
+
+    let entry = b.create_region_all().unwrap();
+    let region_t = b.create_region_all().unwrap();
+    let region_f = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
+
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, region_t, region_f).unwrap();
+
+    for region in [region_t, region_f] {
+        b.set_region(region);
+        let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+        let loaded = b
+            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
+            .unwrap();
+        let z = b
+            .extend_if_needed(loaded, ValueType::I64, ExtendOp::ZeroExtend)
+            .unwrap();
+        b.write_variable(&phi_reg, z).unwrap();
+        b.build_branch(join).unwrap();
+    }
+
+    b.set_region(join);
+    let phi_val = b.read_variable(&phi_reg).unwrap();
+    b.build_return(Some(phi_val), &[]).unwrap();
+    b.set_lift_addr(None);
+    b.build().unwrap()
+}
+
+#[test]
+fn phi_any_input_honours_ignore_casts() {
+    let function = phi_over_casts_of_load();
+    let matcher = Matcher::new(&function);
+    // Every phi data input is an I64 `ZeroExtend`; the `Load` sits one cast
+    // down.  Without walk-through, `any_input(load())` finds nothing.
+    assert_eq!(
+        matcher
+            .find_all(&phi().any_input(load()).build())
+            .unwrap()
+            .len(),
+        0,
+        "any_input must not reach through a cast by default",
+    );
+    // With `ignore_casts`, the extend is skipped and the `Load` matches — the
+    // same walk-through the fixed-slot inputs already honour.
+    assert_eq!(
+        matcher
+            .find_all(
+                &phi()
+                    .any_input(load())
+                    .build()
+                    .ignore_casts_mask(CastMask::EXTEND)
+            )
+            .unwrap()
+            .len(),
+        1,
+        "any_input honours ignore_casts like fixed-slot inputs",
+    );
+}
+
+#[test]
+fn phi_any_input_matches_a_data_input_regardless_of_slot() {
+    let function = phi_over_two_consts();
+    let matcher = Matcher::new(&function);
+    // `IntConst(2)` sits at the second data slot, so a slot-agnostic
+    // `any_input` must still find it.
+    assert_eq!(
+        matcher
+            .find_all(&phi().any_input(int_const(2u128)).build())
+            .unwrap()
+            .len(),
+        1,
+        "any_input finds the const at a non-first data slot"
+    );
+    // `IntConst(1)` is the first data slot.
+    assert_eq!(
+        matcher
+            .find_all(&phi().any_input(int_const(1u128)).build())
+            .unwrap()
+            .len(),
+        1,
+    );
+    // A value present on no input matches nothing.
+    assert_eq!(
+        matcher
+            .find_all(&phi().any_input(int_const(99u128)).build())
+            .unwrap()
+            .len(),
+        0,
+        "any_input over an absent value matches nothing"
+    );
+}
+
+/// A kind-unconstrained `any_input` sub-pattern (`var` / `any`) must bind one
+/// of the phi's DATA inputs, never its slot-0 `PhiToken` — the token is the
+/// owning `Region`'s bookkeeping edge, not a predecessor value.
+#[test]
+fn phi_any_input_binds_a_data_input_not_the_phi_token() {
+    let function = phi_over_two_consts();
+    let m = Matcher::new(&function);
+
+    let x = Capture::new();
+    let hits = m.find_all(&phi().any_input(var(x)).build()).unwrap();
+    assert_eq!(hits.len(), 1, "the phi matches once");
+    let bound = hits[0].node(x, function.graph()).unwrap();
+    assert!(
+        matches!(function.node_kind(bound), NodeKind::IntConst(_)),
+        "any_input(var) must bind a data input (IntConst), got {:?}",
+        function.node_kind(bound)
+    );
+
+    // Two kind-unconstrained existentials must claim the two DATA slots, so
+    // both bind constants rather than one silently taking the phi-token.
+    let (a, c) = (Capture::new(), Capture::new());
+    let hits = m
+        .find_all(&phi().any_input(var(a)).any_input(var(c)).build())
+        .unwrap();
+    assert!(!hits.is_empty(), "two any_input match the two data slots");
+    for cap in [a, c] {
+        let n = hits[0].node(cap, function.graph()).unwrap();
+        assert!(
+            matches!(function.node_kind(n), NodeKind::IntConst(_)),
+            "each any_input(var) binds a data input, got {:?}",
+            function.node_kind(n)
+        );
+    }
+}
+
+#[test]
+fn phi_multiple_any_input_bind_distinct_slots() {
+    // Phi inputs are the constants 1 and 2 (one slot each).
+    let function = phi_over_two_consts();
+    let m = Matcher::new(&function);
+    // 1 and 2 live on different slots -> distinct match.
+    assert_eq!(
+        m.find_all(
+            &phi()
+                .any_input(int_const(1u128))
+                .any_input(int_const(2u128))
+                .build()
+        )
+        .unwrap()
+        .len(),
+        1,
+    );
+    // Two `any_input(1)` need TWO distinct inputs equal to 1, but only one
+    // exists — distinct semantics reject the same-slot reuse.
+    assert_eq!(
+        m.find_all(
+            &phi()
+                .any_input(int_const(1u128))
+                .any_input(int_const(1u128))
+                .build()
+        )
+        .unwrap()
+        .len(),
+        0,
+        "two any_input must bind two DIFFERENT slots",
+    );
+    // 1 on one slot, any-const on the OTHER (the 2) -> distinct match.
+    assert_eq!(
+        m.find_all(
+            &phi()
+                .any_input(int_const(1u128))
+                .any_input(any_int_const())
+                .build()
+        )
+        .unwrap()
+        .len(),
+        1,
+    );
+}
+
+#[test]
+fn phi_any_input_binds_captures_out() {
+    let function = phi_over_two_consts();
+    let matcher = Matcher::new(&function);
+    let c = Capture::new();
+    // Capture whichever data input is the const 2 — the capture must flow out.
+    let hits = matcher
+        .find_all(&phi().any_input(int_const(2u128).capture(c)).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(
+        hits[0].value(c).is_some(),
+        "a capture inside any_input binds out"
+    );
+}
+
 #[test]
 fn phi_for_vn_filters() {
     let rax = strider_ir_test_utils::reg_vn(0, 8);
@@ -668,7 +1000,9 @@ fn function_arg_handle_resolves_register_carrier() {
         .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if function.initial_vn(*vn) == rax))
         .expect("InitialVar(rax) carrier");
     let carrier_value = function.node_outputs(carrier)[0];
-    function.side_tables_mut().register_arg_value(0, carrier_value);
+    function
+        .side_tables_mut()
+        .register_arg_value(0, carrier_value);
 
     let matcher = Matcher::new(&function);
     let handle = matcher.function_arg(0).expect("arg 0 carrier");
@@ -731,7 +1065,9 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     let reg_value = function.node_outputs(reg_carrier)[0];
     let stack_value = function.node_outputs(stack_carrier)[0];
     function.side_tables_mut().register_arg_value(0, reg_value);
-    function.side_tables_mut().register_arg_value(1, stack_value);
+    function
+        .side_tables_mut()
+        .register_arg_value(1, stack_value);
     (function, rax)
 }
 

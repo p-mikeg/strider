@@ -198,6 +198,31 @@ pub struct PyLifter {
     /// `Cfg` (no separate snapshot rebuild is needed — it already matches
     /// the returned `Function` exactly).
     inner: strider_orchestrator::Strider<AnyMemReader>,
+    /// Shared handles to the Python `read()`-callback objects (mem reader
+    /// and/or rom) this handle's Sleigh / rom hold internally via Rust
+    /// adapters.  Each is the SAME `Arc<Py<PyAny>>` the adapter holds, so
+    /// the Python object's refcount is one — and `__traverse__` visiting
+    /// these makes the otherwise-buried `lifter → reader` edge visible to
+    /// Python's cyclic GC, so a `reader ↔ lifter` cycle is collectable
+    /// instead of leaking.  Empty for the owned-data `BufferReader` / ELF
+    /// path (no `Py<>` reaches the Sleigh).
+    py_deps: Vec<std::sync::Arc<Py<PyAny>>>,
+}
+
+/// The Python callback objects (mem, then rom) backing a build, shared
+/// with the Sleigh / rom adapters for cyclic-GC traversal.
+fn collect_py_deps(
+    mem: &MemInput,
+    rom: Option<&MemInput>,
+) -> Vec<std::sync::Arc<Py<PyAny>>> {
+    let mut deps = Vec::new();
+    if let Some(o) = mem.py_callback() {
+        deps.push(o);
+    }
+    if let Some(o) = rom.and_then(MemInput::py_callback) {
+        deps.push(o);
+    }
+    deps
 }
 
 impl PyLifter {
@@ -278,9 +303,26 @@ impl PyLifter {
     #[new]
     #[pyo3(signature = (arch, mem, rom = None))]
     fn new(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<Self> {
+        let py_deps = collect_py_deps(&mem, rom.as_ref());
         Ok(PyLifter {
             inner: build_strider(arch, mem, rom)?,
+            py_deps,
         })
+    }
+
+    /// Expose the buried Python reader / rom callbacks to Python's cyclic
+    /// GC.  Without this, a cycle from a user's `read()`-callback object
+    /// back to the `Lifter` (the object the Sleigh holds internally) is
+    /// invisible to the collector and leaks.
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        for dep in &self.py_deps {
+            visit.call(&**dep)?;
+        }
+        Ok(())
+    }
+
+    fn __clear__(&mut self) {
+        self.py_deps.clear();
     }
 
     /// Replace this handle's inner orchestrator state in place — the
@@ -312,8 +354,15 @@ impl PyLifter {
     /// must NOT call `_rebuild` themselves.  Deliberately left out of
     /// `strider/__init__.pyi` (underscore-private → no stub entry).
     #[pyo3(name = "_rebuild", signature = (arch, mem, rom = None))]
-    fn rebuild(&mut self, arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<()> {
+    fn rebuild(
+        &mut self,
+        arch: PySleighArch,
+        mem: MemInput,
+        rom: Option<MemInput>,
+    ) -> PyResult<()> {
+        let py_deps = collect_py_deps(&mem, rom.as_ref());
         self.inner = build_strider(arch, mem, rom)?;
+        self.py_deps = py_deps;
         Ok(())
     }
 
@@ -560,6 +609,37 @@ impl PyLifter {
         }
     }
 
+    /// Render the structural depth-`depth` neighborhood (inputs + outputs)
+    /// around IR node `center` to a standalone Graphviz DOT string — one DOT
+    /// node per IR node (so a DOT node id *is* the IR node id), pretty per-kind
+    /// styling and labels, `center` highlighted. A node whose degree exceeds
+    /// `hub_cap` is shown but not expanded through, so a widely-used value (the
+    /// memory token, a constant used in hundreds of places) doesn't pull the
+    /// whole function in. Drives the interactive explorer's neighborhood view.
+    /// `max_nodes` caps the total node count (the nearest ones win). Depth alone
+    /// doesn't bound size — a dense region blows up to hundreds of nodes, which
+    /// the browser's synchronous Graphviz layout can't render without freezing.
+    #[pyo3(signature = (function, center, depth=5, hub_cap=12, max_nodes=60))]
+    fn neighborhood_dot(
+        &self,
+        function: &PyFunction,
+        center: u32,
+        depth: usize,
+        hub_cap: usize,
+        max_nodes: usize,
+    ) -> PyResult<String> {
+        let sleigh = self.sleigh();
+        let guard = function.read_inner().map_err(into_strider_err)?;
+        let nid = guard
+            .graph()
+            .node_id_from_u32(center)
+            .ok_or_else(|| into_strider_err(anyhow::anyhow!("invalid node id {center}")))?;
+        let dumper = guard.dot_dumper(sleigh).map_err(into_strider_err)?;
+        dumper
+            .neighborhood_dot(nid, depth, hub_cap, max_nodes)
+            .map_err(|e| into_strider_err(anyhow::anyhow!(e)))
+    }
+
     /// Decode LINEARLY from `entry`, one machine instruction at a time
     /// (advancing by each instruction's machine byte length, replaying
     /// context-register state exactly as a real lift would), until the
@@ -630,6 +710,34 @@ impl PyLifter {
             cur = next;
         }
     }
+
+    /// Start the interactive explorer for `target` — a `Function`
+    /// (returned by `analyze`) or a `Cfg` (returned by `build_cfg` /
+    /// `analyze`). Dispatches to `strider.explore.visualize`, which picks
+    /// `_IrVisualizer` or `_CfgVisualizer` by `type(target).__name__`.
+    ///
+    /// Prints the local URL to stdout and BLOCKS serving requests on this
+    /// thread until interrupted (Ctrl-C) — same contract as
+    /// `strider.serve(lifter, function)`, generalised to also accept a
+    /// `Cfg`. `host`/`port`/`depth` mirror `explore.visualize`'s kwargs
+    /// (`port=0` picks an ephemeral port).
+    #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=5))]
+    fn visualize(
+        slf: Py<Self>,
+        py: Python<'_>,
+        target: Py<PyAny>,
+        host: String,
+        port: u16,
+        depth: usize,
+    ) -> PyResult<()> {
+        let explore = py.import_bound("strider.explore")?;
+        let kwargs = pyo3::types::PyDict::new_bound(py);
+        kwargs.set_item("host", host)?;
+        kwargs.set_item("port", port)?;
+        kwargs.set_item("depth", depth)?;
+        explore.call_method("visualize", (slf, target), Some(&kwargs))?;
+        Ok(())
+    }
 }
 
 /// Construct the single lift+optimise+resolve handle over `mem` for
@@ -649,8 +757,10 @@ impl PyLifter {
 #[pyfunction]
 #[pyo3(name = "lifter", signature = (arch, mem, rom = None))]
 pub fn lifter(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<PyLifter> {
+    let py_deps = collect_py_deps(&mem, rom.as_ref());
     Ok(PyLifter {
         inner: build_strider(arch, mem, rom)?,
+        py_deps,
     })
 }
 

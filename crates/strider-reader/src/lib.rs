@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 pub type Result<T> = anyhow::Result<T>;
 
 pub mod elf;
-pub use elf::{ElfFileMemReader, load_elf};
+pub use elf::{ElfFileMemReader, OwnedElf, load_elf};
 
 // ── MemReadError ─────────────────────────────────────────────────────────────
 //

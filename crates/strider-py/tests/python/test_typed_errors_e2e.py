@@ -115,17 +115,19 @@ def test_rewrite_error_via_multi_output_lhs_root():
 
 # ── UnknownCallOther category ──────────────────────────────────────────────
 
-def test_unknown_call_other_via_x86_clflush_instruction():
-    """Trigger an unknown-CallOther error by lifting x86 `clflush [eax]`
-    (opcode `0F AE 38`) — Sleigh emits a CallOther named `"clflush"`
+def test_unknown_call_other_via_x86_clflushopt_instruction():
+    """Trigger an unknown-CallOther error by lifting x86 `clflushopt [eax]`
+    (opcode `66 0F AE 38`) — Sleigh emits a CallOther named `"clflushopt"`
     which is **not** classified in `target::call_other_abi::classify`.
     The strict-on-emission policy raises rather than silently producing
     an empty CallOther.
 
-    If a future contributor adds `clflush` to the table this test must
-    be ported to a new uncovered user-op (e.g. `clflushopt`, `clwb`).
+    (Plain `clflush` used to be the example here, but it is now classified as
+    a cache-maintenance `MEM_CLOBBER`.)  If a future contributor adds
+    `clflushopt` to the table this test must be ported to a new uncovered
+    user-op (e.g. `clwb`).
     """
-    bytes_ = b"\x0f\xae\x38\xc3"
+    bytes_ = b"\x66\x0f\xae\x38\xc3"
     mem = strider.BufferReader(0x1000, bytes_)
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()

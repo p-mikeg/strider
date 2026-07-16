@@ -10,8 +10,8 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
 use pyo3::prelude::*;
-use strider_ir::node::NodeKind;
 use strider_ir::IRWalker;
+use strider_ir::node::NodeKind;
 
 use crate::cfg::PyCfg;
 
@@ -58,7 +58,7 @@ impl PyFunction {
             anyhow::anyhow!(
                 "Function mutation rejected: the function is currently borrowed for read \
                  (typically because this call is from inside a `.when()` predicate \
-                 invoked by `find_all`/`find_joined`).  Mutating the function \
+                 invoked by `find_all`/`find_unique`).  Mutating the function \
                  from within a pattern predicate is not supported — collect matches \
                  first and mutate after `find_all` returns."
             )
@@ -126,6 +126,14 @@ fn write_to(path: &str, contents: String) -> PyResult<()> {
 
 #[pymethods]
 impl PyFunction {
+    /// Expose the strong `Py<PyCfg>` back-reference to Python's cyclic GC
+    /// so a cycle routed through a `Function` is detectable (broken at the
+    /// reader's `__dict__` / `PyLifter::__clear__`; the `cfg` handle is
+    /// load-bearing while the `Function` is alive, so no `__clear__` here).
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        visit.call(&self.cfg)
+    }
+
     /// The snapshot `Cfg` this function was lifted from — kept alive for
     /// dot rendering (its `Sleigh` resolves register names).  Combine
     /// with `Lifter.dump_html(function, path)` (or the `Cfg`'s own
@@ -173,6 +181,36 @@ impl PyFunction {
     /// against [`count_regions`], which walks from entry) to exclude them.
     fn node_count(&self) -> PyResult<usize> {
         self.with_read_value(|function| function.graph().all_node_ids().count())
+    }
+
+    /// The IR node id of the function's `Entry` node — the natural starting
+    /// center for the interactive explorer's neighborhood view.
+    fn entry_node(&self) -> PyResult<u32> {
+        self.with_read_value(|function| function.entry().as_u32())
+    }
+
+    /// Raw (structure-faithful) render of the depth-`depth` neighborhood around
+    /// node `center` — the same BFS/budget as the pretty explorer view, but
+    /// showing the graph exactly as stored (one `n<id>` box per IR node, edges
+    /// as stored, side-tables inline, no virtuals / const-dup / Sleigh names).
+    /// Needs no Sleigh, so it lives on `Function`; the debug view for when the
+    /// pretty output can't be trusted.
+    #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60))]
+    fn raw_neighborhood_dot(
+        &self,
+        center: u32,
+        depth: usize,
+        hub_cap: usize,
+        max_nodes: usize,
+    ) -> PyResult<String> {
+        self.with_read_value(|function| {
+            let nid = function
+                .graph()
+                .node_id_from_u32(center)
+                .ok_or_else(|| anyhow::anyhow!("invalid node id {center}"))?;
+            function.raw_neighborhood_dot(nid, depth, hub_cap, max_nodes)
+        })?
+        .map_err(crate::errors::into_strider_err)
     }
 
     /// Returns the count of `Region` (control-flow join) nodes
@@ -260,111 +298,97 @@ impl PyFunction {
     ///   Compose via `CastMask.extend() | CastMask.truncate()`.
     ///   Mutually exclusive with `ignore_casts`; passing both is an
     ///   error.
-    #[pyo3(signature = (pat, ignore_casts=false, ignore_casts_mask=None))]
+    #[pyo3(signature = (pat, ignore_root=false, ignore_casts=false, ignore_casts_mask=None, constraints=None))]
     fn find_all(
         slf: Py<Self>,
         py: Python<'_>,
-        pat: crate::pattern::PatLike<'_>,
+        pat: crate::pattern::PatQuery<'_>,
+        ignore_root: bool,
         ignore_casts: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
+        constraints: Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
         reject_conflicting_cast_flags("find_all", ignore_casts, &ignore_casts_mask)?;
-        // The cast-walk-through mask now lives on the `Pattern`; build a
-        // fresh `Pattern` per query and fold the mask onto it.
-        let pattern = apply_cast_mask(pat.to_pattern(py)?, ignore_casts, ignore_casts_mask);
-        let (raw, generation) = run_query(&slf, py, |matcher| matcher.find_all(&pattern))?;
-        let wrap = |m| crate::matcher::PyMatch {
-            inner: m,
-            function: slf.clone_ref(py),
-            generation,
-        };
-        Ok(raw.into_iter().map(wrap).collect())
+        let patterns = build_query_patterns(py, pat, ignore_casts, ignore_casts_mask)?;
+        let constraints = collect_constraints(constraints);
+        let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
+        dedup_matches(&slf, py, raw, generation, ignore_root)
     }
 
-    /// Find the first site where `pat` matches, or `None` if nothing
-    /// matches.  A one-shot convenience over `find_all` for the common
-    /// `hits = find_all(p); hits[0] if hits else None` idiom — it
-    /// short-circuits on the first match in the Rust matcher rather than
-    /// collecting every hit.
+    /// Find the first binding of `pat`, or `None` if nothing matches.  A
+    /// one-shot convenience over `find_all` for the common
+    /// `hits = find_all(p); hits[0] if hits else None` idiom — a single
+    /// pattern short-circuits on the first match in the Rust matcher rather
+    /// than collecting every hit.
     ///
-    /// `pat` and the matcher options (`ignore_casts`,
-    /// `ignore_casts_mask`) mirror `find_all`.  The returned `Match`
-    /// is the same as `find_all`'s first element.
-    #[pyo3(signature = (pat, ignore_casts=false, ignore_casts_mask=None))]
+    /// `pat` is a single `Pattern` or a `list[Pattern]` (a list joins on
+    /// shared captures, as in `find_all`); the matcher options
+    /// (`ignore_casts`, `ignore_casts_mask`) mirror `find_all`.
+    #[pyo3(signature = (pat, ignore_casts=false, ignore_casts_mask=None, constraints=None))]
     fn find_one(
         slf: Py<Self>,
         py: Python<'_>,
-        pat: crate::pattern::PatLike<'_>,
+        pat: crate::pattern::PatQuery<'_>,
         ignore_casts: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
+        constraints: Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
     ) -> PyResult<Option<crate::matcher::PyMatch>> {
         reject_conflicting_cast_flags("find_one", ignore_casts, &ignore_casts_mask)?;
-        let pattern = apply_cast_mask(pat.to_pattern(py)?, ignore_casts, ignore_casts_mask);
-        let (raw, generation) = run_query(&slf, py, |matcher| matcher.find_first(&pattern))?;
-        let wrap = |m| crate::matcher::PyMatch {
-            inner: m,
+        let patterns = build_query_patterns(py, pat, ignore_casts, ignore_casts_mask)?;
+        let constraints = collect_constraints(constraints);
+        let refs: Vec<&strider_pattern::Pattern> = patterns.iter().collect();
+        // A single unconstrained pattern streams via `find_first`; anything else
+        // (a join, or a constraint that must filter) takes the first constrained
+        // joined result — mirror `run_pattern_query`'s fast-path gate.
+        let (first, generation) = run_query(&slf, py, |matcher| {
+            let group = if refs.len() == 1 && constraints.is_empty() {
+                matcher.find_first(refs[0])?.map(|m| vec![m])
+            } else {
+                matcher
+                    .find_joined_constrained(&refs, &constraints)?
+                    .into_iter()
+                    .next()
+            };
+            Ok(group)
+        })?;
+        Ok(first.map(|inner| crate::matcher::PyMatch {
+            inner,
             function: slf.clone_ref(py),
             generation,
-        };
-        Ok(raw.map(wrap))
+        }))
     }
 
-    /// Run multiple patterns and intersect their matches on shared
-    /// `Capture` objects.  Returns one tuple per joined match — each
-    /// tuple holds one `Match` per input pattern (in input order),
-    /// where every `Capture` appearing in more than one pattern binds
-    /// to the same node (and value output, when applicable) across
-    /// every pattern in which it appears.
+    /// Find the single binding of `pat`, erroring if there is not exactly
+    /// one.  Replaces the `hits = find_all(p); assert len(hits) == 1; hits[0]`
+    /// idiom with distinct error messages for the 0-match and >1-match cases.
     ///
-    /// Use case: `find K and shared such that store(<shared>+K, 0)
-    /// AND call(at=F).arg(0, <shared>) both match with the same
-    /// <shared> binding`.  Today an equivalent query requires
-    /// post-filtering the cross-product of two `find_all` calls in
-    /// Python; this routes it to the matcher in one pass with
-    /// shared-capture filtering done at the binding level.
-    ///
-    /// Edge cases:
-    ///
-    /// * Empty `pats` → empty list.
-    /// * Single pattern → equivalent to wrapping each `find_all` hit
-    ///   in a one-element tuple.
-    /// * Any pattern with zero matches → empty result.
-    ///
-    /// The matcher walk-through flags (`ignore_casts`,
-    /// `ignore_casts_mask`) apply uniformly to every pattern, mirroring
-    /// `find_all`.
-    #[pyo3(signature = (pats, ignore_casts=false, ignore_casts_mask=None))]
-    fn find_joined(
+    /// `pat`, `ignore_root`, and the matcher options mirror `find_all` — the
+    /// count is taken *after* deduplication, so `ignore_root` controls whether
+    /// distinct roots binding the same captures count as one or many.
+    #[pyo3(signature = (pat, ignore_root=false, ignore_casts=false, ignore_casts_mask=None, constraints=None))]
+    fn find_unique(
         slf: Py<Self>,
         py: Python<'_>,
-        pats: Vec<crate::pattern::PatLike<'_>>,
+        pat: crate::pattern::PatQuery<'_>,
+        ignore_root: bool,
         ignore_casts: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
-    ) -> PyResult<Vec<Vec<crate::matcher::PyMatch>>> {
-        reject_conflicting_cast_flags("find_joined", ignore_casts, &ignore_casts_mask)?;
-        // Build a fresh `Pattern` per input (the cast mask is folded onto
-        // each), then pass `&[&Pattern]` to the matcher.
-        let owned: Vec<strider_pattern::Pattern> = pats
-            .iter()
-            .map(|p| {
-                Ok(apply_cast_mask(
-                    p.to_pattern(py)?,
-                    ignore_casts,
-                    ignore_casts_mask,
-                ))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-        let pat_refs: Vec<&strider_pattern::Pattern> = owned.iter().collect();
-        let (raw, generation) = run_query(&slf, py, |matcher| matcher.find_joined(&pat_refs))?;
-        let wrap = |m| crate::matcher::PyMatch {
-            inner: m,
-            function: slf.clone_ref(py),
-            generation,
-        };
-        Ok(raw
-            .into_iter()
-            .map(|t| t.into_iter().map(&wrap).collect())
-            .collect())
+        constraints: Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
+    ) -> PyResult<crate::matcher::PyMatch> {
+        reject_conflicting_cast_flags("find_unique", ignore_casts, &ignore_casts_mask)?;
+        let patterns = build_query_patterns(py, pat, ignore_casts, ignore_casts_mask)?;
+        let constraints = collect_constraints(constraints);
+        let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
+        let mut matches = dedup_matches(&slf, py, raw, generation, ignore_root)?;
+        match matches.len() {
+            1 => Ok(matches.pop().unwrap()),
+            0 => Err(crate::errors::into_strider_err(anyhow::anyhow!(
+                "find_unique: expected exactly one match, found none"
+            ))),
+            n => Err(crate::errors::into_strider_err(anyhow::anyhow!(
+                "find_unique: expected exactly one match, found {n}"
+            ))),
+        }
     }
 
     /// Apply a single `find → replace` rewrite rule across the graph.
@@ -405,7 +429,10 @@ impl PyFunction {
     fn rewrite_all(
         &self,
         py: Python<'_>,
-        pairs: Vec<(crate::pattern::PatLike<'_>, crate::pattern::TemplateLike<'_>)>,
+        pairs: Vec<(
+            crate::pattern::PatLike<'_>,
+            crate::pattern::TemplateLike<'_>,
+        )>,
     ) -> PyResult<usize> {
         // Build a match `Pattern` (LHS) and a build `Template` (RHS) per
         // pair, then box each rule.
@@ -439,7 +466,7 @@ impl PyFunction {
 
 /// Reject the mutually-exclusive `ignore_casts` + `ignore_casts_mask`
 /// combination, naming `op` (`"find_all"` / `"find_one"` /
-/// `"find_joined"`) in the error so the message points at the caller.
+/// `"find_unique"`) in the error so the message points at the caller.
 fn reject_conflicting_cast_flags(
     op: &str,
     ignore_casts: bool,
@@ -471,7 +498,7 @@ impl Drop for QueryFunctionGuard {
 /// Run a matcher query and snapshot the generation, collapsing the
 /// borrow → `read_inner` → `Matcher::new` → run → generation-snapshot
 /// → drop-guards → pending-control-flow scaffold the three query entry
-/// points (`find_all` / `find_one` / `find_joined`) share.
+/// points (`find_all` / `find_one` / `find_unique`) share.
 ///
 /// `run` receives the freshly-built `Matcher` and produces the raw match
 /// payload; the returned `generation` is what each raw `Match` must be
@@ -533,6 +560,85 @@ fn apply_cast_mask(
     } else {
         pattern
     }
+}
+
+/// Seal a query input into one `Pattern` per pattern, folding the shared
+/// cast-walk-through mask onto each.  A single pattern yields one; a list
+/// yields one per element (empty list → no patterns).
+fn build_query_patterns(
+    py: Python<'_>,
+    pat: crate::pattern::PatQuery<'_>,
+    ignore_casts: bool,
+    ignore_casts_mask: Option<crate::pattern::PyCastMask>,
+) -> PyResult<Vec<strider_pattern::Pattern>> {
+    Ok(pat
+        .to_patterns(py)?
+        .into_iter()
+        .map(|p| apply_cast_mask(p, ignore_casts, ignore_casts_mask))
+        .collect())
+}
+
+/// Run the matcher for `patterns`, returning one sub-match group per result:
+/// a single pattern maps each `find_all` hit to a one-element group; several
+/// patterns join on shared captures (each group holds one sub-match per
+/// pattern, which `PyMatch` presents as a merged binding).
+/// Flatten the optional Python constraint list into owned `JoinConstraint`s
+/// (each is `Copy`).
+fn collect_constraints(
+    constraints: Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
+) -> Vec<strider_pattern::JoinConstraint> {
+    constraints
+        .map(|v| v.iter().map(|c| c.inner).collect())
+        .unwrap_or_default()
+}
+
+fn run_pattern_query(
+    slf: &Py<PyFunction>,
+    py: Python<'_>,
+    patterns: &[strider_pattern::Pattern],
+    constraints: &[strider_pattern::JoinConstraint],
+) -> PyResult<(Vec<Vec<strider_pattern::Match>>, u64)> {
+    let refs: Vec<&strider_pattern::Pattern> = patterns.iter().collect();
+    run_query(slf, py, |matcher| {
+        // Single pattern with no constraints: the fast `find_all` path. Any
+        // constraint (even over one pattern's own captures) routes through the
+        // constrained join so the CFG filter runs.
+        if refs.len() == 1 && constraints.is_empty() {
+            Ok(matcher
+                .find_all(refs[0])?
+                .into_iter()
+                .map(|m| vec![m])
+                .collect())
+        } else {
+            matcher.find_joined_constrained(&refs, constraints)
+        }
+    })
+}
+
+/// Wrap each raw sub-match group as a `PyMatch` and deduplicate.  The dedup
+/// key is `(roots, capture-signatures)` — or capture-signatures alone when
+/// `ignore_root` — so commutative-symmetry and multi-path hits collapse, and
+/// `ignore_root` additionally collapses one binding reached from several roots.
+fn dedup_matches(
+    slf: &Py<PyFunction>,
+    py: Python<'_>,
+    raw: Vec<Vec<strider_pattern::Match>>,
+    generation: u64,
+    ignore_root: bool,
+) -> PyResult<Vec<crate::matcher::PyMatch>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for inner in raw {
+        let m = crate::matcher::PyMatch {
+            inner,
+            function: slf.clone_ref(py),
+            generation,
+        };
+        if seen.insert(m.dedup_key(py, ignore_root)?) {
+            out.push(m);
+        }
+    }
+    Ok(out)
 }
 
 /// Drive a slice of rewrite rules round-robin across every reachable

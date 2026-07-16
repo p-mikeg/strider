@@ -36,4 +36,4 @@ pub(crate) use classify::{
     build_push_target_pop_pc_scenario, build_stack_array_dispatch_scenario,
 };
 #[allow(unused_imports)]
-pub(crate) use orchestrator::{target_value_input, run_pipeline_x86_64};
+pub(crate) use orchestrator::{run_pipeline_x86_64, target_value_input};

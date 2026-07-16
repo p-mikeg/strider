@@ -53,7 +53,9 @@ pub(crate) fn target_value_input(function: &Function) -> Option<strider_ir::Valu
 /// Panics if the synthetic CFG produces zero or multiple
 /// `UnresolvedIndirectBranch` placeholders — every fixture in this
 /// module is supposed to have exactly one indirect branch.
-pub(crate) fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Option<rsleigh::Vn>) {
+pub(crate) fn run_pipeline_x86_64(
+    bytes: Vec<u8>,
+) -> (Function, strider_ir::Value, Option<rsleigh::Vn>) {
     let base = 0x1000u64;
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);

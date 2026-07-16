@@ -645,7 +645,8 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
         assert!(
             d.builder
                 .function()
-                .side_tables().asm_fingerprint(outside_node)
+                .side_tables()
+                .asm_fingerprint(outside_node)
                 .is_empty(),
             "a node built after process_insn returns should have an empty fingerprint \
              (the funnel reset lift_addr to None)"
@@ -1437,32 +1438,32 @@ fn subpiece_ymm_high_lane() {
 
 // ── Odd-width load asm-attribution (MED-1) ───────────────────────────────────
 
-/// A 6-byte load (e.g. an x86 far-pointer `lds`/`les`) has no supported
-/// integer `ValueType`, so `int_for_byte_size` hard-errors.  The lifter
-/// cannot widen that type, but the lift error must name the offending
-/// machine instruction (its address / opcode) so a failed lift is
+/// A 7-byte load has no supported integer `ValueType`, so
+/// `int_for_byte_size` hard-errors.  (6-byte is `I48`; 7 remains unsupported.)
+/// The lifter cannot widen that type, but the lift error must name the
+/// offending machine instruction (its address / opcode) so a failed lift is
 /// debuggable instead of being a bare "unsupported node output size".
 #[test]
 fn load_odd_byte_width_errors_with_asm_context() {
     with_test_lifter(|d, rid| {
-        // A 6-byte output varnode — no supported integer type.  Use a Copy
-        // from a 6-byte CONST so the size flows through `int_type`/output.
+        // A 7-byte output varnode — no supported integer type.  Use a Copy
+        // from a 7-byte CONST so the size flows through `int_type`/output.
         let insn = Insn {
             opcode: Opcode::Copy,
             output: Some(Vn {
-                size: 6,
+                size: 7,
                 addr_off: 0,
                 addr_space: VnSpace::REGISTER,
             }),
-            inputs: vec![const_vn(0, 6)].into(),
+            inputs: vec![const_vn(0, 7)].into(),
         };
         let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
-        let err = res.expect_err("6-byte output must error (unsupported width)");
+        let err = res.expect_err("7-byte output must error (unsupported width)");
         // `{:#}` renders the full anyhow cause chain — both the asm context
         // (outer) and the inner unsupported-width cause.
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("unsupported node output size") || msg.contains("6 bytes"),
+            msg.contains("unsupported node output size") || msg.contains("7 bytes"),
             "error must still describe the unsupported width; got: {msg}"
         );
         // The machine address (0x1000, from `test_addr`) and/or opcode must

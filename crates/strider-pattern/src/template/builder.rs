@@ -158,6 +158,12 @@ impl TemplateBuilder {
         self.out_data_of(out).ty = TemplateTy::Fixed(ty);
     }
 
+    /// Types `out`'s value output from the width of a bound LHS capture
+    /// (see [`TemplateTy::InheritBinding`]).
+    pub fn set_value_ty_of_binding(&mut self, out: TmplValueRef, cap: crate::Capture) {
+        self.out_data_of(out).ty = TemplateTy::InheritBinding(cap);
+    }
+
     /// Overwrites the build spec of the node producing `out` with a
     /// dynamic-kind closure (the `*_const_with` materialiser path).
     pub fn set_template_kind(&mut self, out: TmplValueRef, kind: TemplateKind) {

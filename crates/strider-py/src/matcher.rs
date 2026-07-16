@@ -9,7 +9,7 @@
 //! - A `Py<PyFunction>` reference so accessors like `get_uint` can
 //!   re-borrow the function and call `Match::get_uint(c, &function)`.
 //!
-//! The `Function.find_all` / `Function.find_one` / `Function.find_joined`
+//! The `Function.find_all` / `Function.find_one` / `Function.find_unique`
 //! entry points live on PyFunction in `function.rs`.
 
 use pyo3::prelude::*;
@@ -28,7 +28,12 @@ use crate::pattern::{PyCapture, intern_str};
 /// post-bump arena.
 #[pyclass(name = "Match", module = "strider", unsendable)]
 pub struct PyMatch {
-    pub(crate) inner: strider_pattern::Match,
+    /// The per-input-pattern sub-matches (non-empty).  A single-pattern
+    /// query yields a one-element vec; a list (join) query yields one entry
+    /// per pattern, whose shared captures the matcher already unified.  A
+    /// capture accessor reads the first sub-match that binds it, so the
+    /// `Match` presents the *union* of every pattern's captures.
+    pub(crate) inner: Vec<strider_pattern::Match>,
     pub(crate) function: Py<PyFunction>,
     /// Generation counter sampled at `PyMatch` construction time.
     /// Compared against `Function::generation()` on every accessor; a
@@ -36,6 +41,11 @@ pub struct PyMatch {
     /// match was created and the stored `ValueId`s are stale.
     pub(crate) generation: u64,
 }
+
+/// Deduplication key for a `Match`: the per-pattern roots (empty when
+/// `ignore_root`) paired with each sub-match's `(capture-id, node-id)`
+/// signature.  `Hash + Eq` via its component `Vec`s.
+type DedupKey = (Vec<u32>, Vec<Vec<(u32, u32)>>);
 
 /// Polymorphic capture key: a `Capture` instance or a string name
 /// (looked up in the global intern table).
@@ -104,6 +114,38 @@ impl PyMatch {
             )));
         }
         Ok(())
+    }
+
+    /// The first sub-match that binds `cap`, if any.  Shared captures agree
+    /// across sub-matches (the join unified them), so "first" is well-defined.
+    fn binding_for(&self, cap: strider_pattern::Capture) -> Option<&strider_pattern::Match> {
+        self.inner.iter().find(|m| m.is_bound(cap))
+    }
+
+    /// Whether any sub-match binds `cap`.
+    fn is_bound(&self, cap: strider_pattern::Capture) -> bool {
+        self.inner.iter().any(|m| m.is_bound(cap))
+    }
+
+    /// Dedup key for `find_all`.  With `ignore_root == false` the per-pattern
+    /// roots are part of the key (distinct sites stay apart); with `true` only
+    /// the captured bindings matter (collapses diamonds and capture-less hits).
+    /// Reads the function once to resolve capture signatures.
+    pub(crate) fn dedup_key(&self, py: Python<'_>, ignore_root: bool) -> PyResult<DedupKey> {
+        let function = self.function.borrow(py);
+        let function = function.read_inner().map_err(into_strider_err)?;
+        self.assert_generation(&function)?;
+        let roots = if ignore_root {
+            Vec::new()
+        } else {
+            self.inner.iter().map(|m| m.root().as_u32()).collect()
+        };
+        let sigs = self
+            .inner
+            .iter()
+            .map(|m| m.capture_signature(function.graph()))
+            .collect();
+        Ok((roots, sigs))
     }
 }
 
@@ -175,7 +217,15 @@ impl PyMatch {
     /// capture binding).
     #[getter]
     fn root(&self) -> u32 {
-        self.inner.root().as_u32()
+        self.inner[0].root().as_u32()
+    }
+
+    /// The per-input-pattern root node ids as a `list[int]` — one entry per
+    /// pattern passed to the query (a single-pattern query yields `[root]`).
+    /// `root` is the convenience accessor for the first (single-pattern) case.
+    #[getter]
+    fn roots(&self) -> Vec<u32> {
+        self.inner.iter().map(|m| m.root().as_u32()).collect()
     }
 
     /// `m["name"]` / `m[capture]` — best-effort: integer if value
@@ -195,7 +245,7 @@ impl PyMatch {
     /// a binding in this match.
     fn __contains__(&self, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
-        Ok(self.inner.is_bound(cap))
+        Ok(self.is_bound(cap))
     }
 
     /// The capture's value as an unsigned `int`, or `None` when the
@@ -242,7 +292,7 @@ impl PyMatch {
     /// Returns True if the capture has a binding.
     fn has(&self, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
-        Ok(self.inner.is_bound(cap))
+        Ok(self.is_bound(cap))
     }
 
     // ── Op-variant accessors (for *_any captures) ───────────────────
@@ -303,7 +353,8 @@ impl PyMatch {
             let function = self.function.borrow(py);
             let function = function.read_inner().map_err(into_strider_err)?;
             self.assert_generation(&function)?;
-            self.inner.node(cap, function.graph())
+            self.binding_for(cap)
+                .and_then(|m| m.node(cap, function.graph()))
         };
         match nid {
             Some(nid) => {

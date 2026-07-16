@@ -100,14 +100,18 @@ fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
         .expect("if");
     let survivor = fg.producer(fg.node_inputs(if_node)[0]);
     assert!(
-        !fg.side_tables().asm_fingerprint(survivor).contains(&COND_ADDR),
+        !fg.side_tables()
+            .asm_fingerprint(survivor)
+            .contains(&COND_ADDR),
         "precondition: the control source must not already carry the condition's addr"
     );
 
     crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
 
     assert!(
-        fg.side_tables().asm_fingerprint(survivor).contains(&COND_ADDR),
+        fg.side_tables()
+            .asm_fingerprint(survivor)
+            .contains(&COND_ADDR),
         "DBE must absorb the condition's asm-fingerprint into the surviving \
          control source (proof of why the branch was taken); got {:?}",
         fg.side_tables().asm_fingerprint(survivor)

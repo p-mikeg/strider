@@ -110,7 +110,16 @@ impl PyLifterOptions {
     /// `opts=None` sentinel fallback in `Lifter.analyze` /
     /// `ElfLifter.analyze`.
     pub(crate) fn new_default(py: Python<'_>) -> PyResult<Self> {
-        Self::new(py, None, true, None, false, false, "stack_global_disjoint", None)
+        Self::new(
+            py,
+            None,
+            true,
+            None,
+            false,
+            false,
+            "stack_global_disjoint",
+            None,
+        )
     }
 }
 
@@ -172,7 +181,11 @@ impl PyLifterOptions {
             self.calls_clobber,
             self.assume_distinct_sp_bases_disjoint,
             self.alias_mode,
-            if self.pipeline.is_some() { "<...>" } else { "None" },
+            if self.pipeline.is_some() {
+                "<...>"
+            } else {
+                "None"
+            },
         ))
     }
 }

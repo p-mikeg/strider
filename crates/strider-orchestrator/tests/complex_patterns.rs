@@ -111,7 +111,10 @@ fn field_load_at_offset(base: Capture, offset: Capture) -> impl MatchPat {
 fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> impl MatchPat + 'static {
     use strider_ir::node::ValueId;
     // The side-table already stores each carrier's primary output value.
-    let carrier_outputs: Vec<ValueId> = function.side_tables().arg_index_to_values(arg_index).to_vec();
+    let carrier_outputs: Vec<ValueId> = function
+        .side_tables()
+        .arg_index_to_values(arg_index)
+        .to_vec();
     let cap = Capture::new();
     any().capture(cap).when_match(move |_ctx, _ty, b| {
         b.get_value(cap)

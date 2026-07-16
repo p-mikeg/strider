@@ -23,14 +23,24 @@ pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
 pub use vertex::{KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn};
 
+/// Sentinel consumer slot marking an **existential** (`any_input`) input edge:
+/// its sub-pattern is not wired to a fixed IR input slot but matched against
+/// *some* value input of the consumer node (e.g. `phi().any_input(p)` matches
+/// a `Phi` one of whose data inputs matches `p`, without knowing which
+/// predecessor). Recognised by [`walk::try_match_at`], which routes these edges
+/// through the existential search instead of the fixed-slot `match_inputs`.
+pub(crate) const ANY_INPUT_SLOT: usize = usize::MAX;
+
 use std::cell::OnceCell;
 use std::mem::Discriminant;
 
 use itertools::{Either, Itertools};
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
-use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{Function, Graph, IRViewer, IRWalker};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{
+    Function, Graph, IRViewer, IRWalker, control_dominators, dominates,
+};
 
 use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
@@ -248,24 +258,93 @@ impl<'f> Matcher<'f> {
     /// matcher can handle (see [`Pattern::root`]), or if a capture-bearing
     /// pattern shares no capture with the patterns before it.
     pub fn find_joined(&self, pats: &[&Pattern]) -> anyhow::Result<Vec<Vec<Match>>> {
+        self.find_joined_constrained(pats, &[])
+    }
+
+    /// Like [`find_joined`](Self::find_joined), but additionally filters the
+    /// joined tuples by CFG [`JoinConstraint`]s (control dominance / forward
+    /// control reachability) over captured entities. Each constraint is a
+    /// **post-correlation** predicate: a tuple survives iff every constraint
+    /// holds on the entities its captures bind. A constraint referencing a
+    /// capture no tuple binds, or one whose captured node has no CFG position,
+    /// simply fails (the tuple is dropped) — never an error.
+    ///
+    /// # Errors
+    /// Same as [`find_joined`](Self::find_joined): a malformed pattern, or a
+    /// capture-bearing pattern connected to the rest by neither a shared capture
+    /// nor a constraint.
+    pub fn find_joined_constrained(
+        &self,
+        pats: &[&Pattern],
+        constraints: &[JoinConstraint],
+    ) -> anyhow::Result<Vec<Vec<Match>>> {
         if pats.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Reject a capture-bearing pattern that shares no capture with the
-        // accumulated prefix (a mis-wired correlation that would explode
-        // into a cartesian product). A capture-free pattern is exempt.
-        let mut seen_captures: FxHashSet<crate::Capture> = pats[0].bound_captures().collect();
-        for (i, p) in pats.iter().enumerate().skip(1) {
-            let own: Vec<crate::Capture> = p.bound_captures().collect();
-            if !own.is_empty() && !own.iter().any(|c| seen_captures.contains(c)) {
-                anyhow::bail!(
-                    "find_joined: pattern {i} shares no capture with the others — \
-                     a join correlates on shared captures (use a capture-free \
-                     pattern for an intentional cross-product)"
-                );
+        // A join correlates patterns on shared captures, so the set of
+        // capture-bearing patterns must form ONE connected component under the
+        // "shares a capture" relation — otherwise the join is a cartesian
+        // product across an unrelated group. Check connectivity over ALL
+        // patterns via union-find, which is ORDER-INDEPENDENT: a pattern that
+        // shares a capture only with a *later* pattern (e.g. `call` bridging to
+        // `guard` through a `load` pattern listed after it) is still connected.
+        // A capture-free pattern is exempt (an intentional cross-product).
+        fn find(parent: &mut [usize], mut x: usize) -> usize {
+            while parent[x] != x {
+                parent[x] = parent[parent[x]]; // path halving
+                x = parent[x];
             }
-            seen_captures.extend(own);
+            x
+        }
+        let mut parent: Vec<usize> = (0..pats.len()).collect();
+        let mut cap_owner: FxHashMap<crate::Capture, usize> = FxHashMap::default();
+        let mut capture_bearing: Vec<usize> = Vec::new();
+        for (i, p) in pats.iter().enumerate() {
+            let mut has_cap = false;
+            for c in p.bound_captures() {
+                has_cap = true;
+                if let Some(&j) = cap_owner.get(&c) {
+                    let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
+                    parent[ri] = rj;
+                } else {
+                    cap_owner.insert(c, i);
+                }
+            }
+            if has_cap {
+                capture_bearing.push(i);
+            }
+        }
+        // Constraints correlate patterns too: two patterns linked by a
+        // constraint whose captures live one in each are connected even with no
+        // shared capture (the common case — `guard` captures `t`, `call`
+        // captures `c`, joined by `dominated_by_branch(t, c)`). Union their
+        // owners so the connectivity check accepts a constraint-correlated join.
+        for con in constraints {
+            // Union the owners of ALL of a constraint's captures into one
+            // component (a 3-capture constraint links three patterns).
+            let mut owners = con
+                .captures()
+                .into_iter()
+                .filter_map(|c| cap_owner.get(&c).copied());
+            if let Some(first) = owners.next() {
+                for j in owners {
+                    let (ri, rj) = (find(&mut parent, first), find(&mut parent, j));
+                    parent[ri] = rj;
+                }
+            }
+        }
+        if let Some((&first, rest)) = capture_bearing.split_first() {
+            let root0 = find(&mut parent, first);
+            for &i in rest {
+                if find(&mut parent, i) != root0 {
+                    anyhow::bail!(
+                        "find_joined: pattern {i} shares no capture (even transitively) \
+                         with the others — a join correlates on shared captures (use a \
+                         capture-free pattern for an intentional cross-product)"
+                    );
+                }
+            }
         }
 
         let per_pat: Vec<Vec<Match>> = pats
@@ -300,6 +379,11 @@ impl<'f> Matcher<'f> {
             }
         }
 
+        if !constraints.is_empty() {
+            let mut eval = ConstraintEval::new(self.function());
+            acc.retain(|tuple| constraints.iter().all(|c| eval.holds(c, tuple)));
+        }
+
         dedup_on_shared_captures(&mut acc, self.function().graph());
         Ok(acc)
     }
@@ -308,7 +392,11 @@ impl<'f> Matcher<'f> {
     /// registered at side-table index `index`, or `None` if no such
     /// carrier exists.
     pub fn function_arg(&self, index: u32) -> Option<FunctionArgHandle<'f>> {
-        let value = *self.function.side_tables().arg_index_to_values(index).first()?;
+        let value = *self
+            .function
+            .side_tables()
+            .arg_index_to_values(index)
+            .first()?;
         let node = self.function.producer(value);
         Some(FunctionArgHandle {
             function: self.function,
@@ -320,17 +408,169 @@ impl<'f> Matcher<'f> {
     /// carrier in side-table-index order.
     pub fn function_args(&self) -> impl Iterator<Item = (u32, FunctionArgHandle<'f>)> + '_ {
         let f = self.function;
-        f.side_tables().iter_arg_indices().sorted_unstable().filter_map(move |i| {
-            f.side_tables().arg_index_to_values(i).first().copied().map(|value| {
-                (
-                    i,
-                    FunctionArgHandle {
-                        function: f,
-                        node: f.producer(value),
-                    },
-                )
+        f.side_tables()
+            .iter_arg_indices()
+            .sorted_unstable()
+            .filter_map(move |i| {
+                f.side_tables()
+                    .arg_index_to_values(i)
+                    .first()
+                    .copied()
+                    .map(|value| {
+                        (
+                            i,
+                            FunctionArgHandle {
+                                function: f,
+                                node: f.producer(value),
+                            },
+                        )
+                    })
             })
-        })
+    }
+}
+
+/// A CFG relation between two captured entities, applied by
+/// [`Matcher::find_joined_constrained`] as a post-correlation filter over
+/// joined tuples. Captured entities are resolved to control nodes; a value
+/// capture resolves to its producer node (for `Dominates`) or is used directly
+/// (the branch-edge value for `Reaches`).
+#[derive(Clone, Copy, Debug)]
+pub enum JoinConstraint {
+    /// The node bound to `a` dominates the node bound to `b` in the control
+    /// subgraph. A capture absent from the control subgraph fails it.
+    Dominates { a: crate::Capture, b: crate::Capture },
+    /// `node` is dominated by the consumer of the branch edge `branch` — i.e.
+    /// `node` sits in the block that edge leads into, *exclusively*: true only
+    /// where every path to `node` traverses the edge's target, so a single
+    /// `dominated_by_branch(true_edge, c)` expresses "`c` is in the true block".
+    /// `branch` must bind a control-output value (e.g. via
+    /// [`IfPat::capture_true`](crate::IfPat::capture_true)); an ill-typed
+    /// `branch` or an absent node fails it.
+    DominatedByBranch { branch: crate::Capture, node: crate::Capture },
+    /// The `Phi`/`MemPhi` bound to `phi` merges, on the predecessor whose owning
+    /// `Region` control input equals the branch edge `edge`, the value bound to
+    /// `value`.  Ties a phi's per-branch data input to the control edge that
+    /// leads into that predecessor, so a pattern can say "the value merged from
+    /// THIS branch is X" without a slot index.  Works for a value `Phi` (`value`
+    /// binds the merged value) and a `MemPhi` (`value` binds the merged memory
+    /// token).  Direct-edge: `edge` must be a *literal* control input of the
+    /// phi's region (the converged/collapsed IR makes an `If`'s true/false
+    /// output the join region's direct predecessor).  `edge` must bind a
+    /// control-output value; `phi` / `value` bind values.
+    PhiInputFromEdge {
+        phi: crate::Capture,
+        edge: crate::Capture,
+        value: crate::Capture,
+    },
+}
+
+impl JoinConstraint {
+    /// Every capture this constraint correlates (used to link their owner
+    /// patterns for the `find_joined` connectivity check).
+    fn captures(&self) -> Vec<crate::Capture> {
+        match *self {
+            JoinConstraint::Dominates { a, b } => vec![a, b],
+            JoinConstraint::DominatedByBranch { branch, node } => vec![branch, node],
+            JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
+                vec![phi, edge, value]
+            }
+        }
+    }
+}
+
+/// Evaluates [`JoinConstraint`]s against joined tuples, memoising the control
+/// dominators and per-branch-edge reachable sets across one
+/// `find_joined_constrained` call.
+struct ConstraintEval<'f> {
+    function: &'f Function,
+    doms: OnceCell<petgraph::algo::dominators::Dominators<NodeId>>,
+}
+
+impl<'f> ConstraintEval<'f> {
+    fn new(function: &'f Function) -> Self {
+        Self {
+            function,
+            doms: OnceCell::new(),
+        }
+    }
+
+    /// Resolve a capture to a control node across the tuple's matches.
+    fn node_of(&self, tuple: &[Match], c: crate::Capture) -> Option<NodeId> {
+        tuple.iter().find_map(|m| m.node(c, self.function.graph()))
+    }
+
+    /// Resolve a capture to the value it binds across the tuple's matches.
+    fn value_of(&self, tuple: &[Match], c: crate::Capture) -> Option<ValueId> {
+        tuple.iter().find_map(|m| m.value(c))
+    }
+
+    fn holds(&mut self, c: &JoinConstraint, tuple: &[Match]) -> bool {
+        match *c {
+            JoinConstraint::Dominates { a, b } => {
+                let (Some(na), Some(nb)) = (self.node_of(tuple, a), self.node_of(tuple, b)) else {
+                    return false;
+                };
+                let doms = self.doms.get_or_init(|| control_dominators(self.function));
+                dominates(doms, na, nb)
+            }
+            JoinConstraint::DominatedByBranch { branch, node } => {
+                let (Some(edge), Some(target)) =
+                    (self.value_of(tuple, branch), self.node_of(tuple, node))
+                else {
+                    return false;
+                };
+                // The branch edge's consumer (its target node); a control edge
+                // has exactly one consumer in well-formed IR.
+                let Some((consumer, _)) = self.function.graph().value_uses(edge).next() else {
+                    return false;
+                };
+                let doms = self.doms.get_or_init(|| control_dominators(self.function));
+                dominates(doms, consumer, target)
+            }
+            JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
+                let (Some(phi_v), Some(edge_v), Some(val_v)) = (
+                    self.value_of(tuple, phi),
+                    self.value_of(tuple, edge),
+                    self.value_of(tuple, value),
+                ) else {
+                    return false;
+                };
+                self.phi_input_from_edge(phi_v, edge_v, val_v)
+            }
+        }
+    }
+
+    /// The `Phi`/`MemPhi` producing `phi_v` merges `val_v` on the predecessor
+    /// whose owning `Region` control input is exactly `edge_v` (direct-edge).
+    ///
+    /// Slot alignment: a `Phi`/`MemPhi`'s inputs are `[PhiToken, v0, v1, …]` —
+    /// data input `i+1` is predecessor `i`'s value (a `Memory` token for
+    /// `MemPhi`) — and its owning `Region` (the `PhiToken`'s producer) has
+    /// control input `i` for predecessor `i`.  So the region slot matching
+    /// `edge_v` maps to the phi input one slot over.
+    fn phi_input_from_edge(&self, phi_v: ValueId, edge_v: ValueId, val_v: ValueId) -> bool {
+        let f = self.function;
+        let phi_node = f.producer(phi_v);
+        if !matches!(f.node_kind(phi_node), NodeKind::Phi | NodeKind::MemPhi) {
+            return false;
+        }
+        let inputs: Vec<ValueId> = f.node_inputs(phi_node).into_iter().collect();
+        // Slot 0 is the PhiToken; its producer is the owning Region.
+        let Some(&token) = inputs.first() else {
+            return false;
+        };
+        let region = f.producer(token);
+        if !matches!(f.node_kind(region), NodeKind::Region) {
+            return false;
+        }
+        let Some(slot) = f
+            .node_inputs(region)
+            .into_iter()
+            .position(|c| c == edge_v)
+        else {
+            return false;
+        };
+        inputs.get(slot + 1).is_some_and(|&v| v == val_v)
     }
 }
 

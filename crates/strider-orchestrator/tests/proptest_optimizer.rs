@@ -318,7 +318,16 @@ fn collect_fingerprints(function: &strider_ir::Function) -> HashMap<NodeId, Vec<
     function
         .graph()
         .all_node_ids()
-        .map(|id| (id, function.side_tables().asm_fingerprint(id).into_iter().collect()))
+        .map(|id| {
+            (
+                id,
+                function
+                    .side_tables()
+                    .asm_fingerprint(id)
+                    .into_iter()
+                    .collect(),
+            )
+        })
         .collect()
 }
 

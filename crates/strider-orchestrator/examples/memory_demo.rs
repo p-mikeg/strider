@@ -24,6 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let symbol = "main";
 
     let obj = strider_reader::load_elf(binary_path)?;
+    let obj = obj.file();
     let mem_reader = strider_reader::ElfFileMemReader::from_object(&obj)?;
     let rom = strider_reader::ElfFileMemReader::from_object(&obj)?;
 

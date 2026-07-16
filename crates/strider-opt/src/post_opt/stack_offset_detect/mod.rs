@@ -8,12 +8,12 @@
 //! else (Phi-of-offsets, non-SP-rooted addresses).  The offset `K` is only
 //! comparable against another access sharing the same `base`.
 
-use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::IRViewer;
+use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
 use crate::pipeline::PostOptimizer;
-use crate::sp_expr::decompose_readonly;
+use crate::sp_analysis::decompose;
 
 /// Detects SP-relative Store / Load addresses and records each one's
 /// concrete offset in the `Function::stack_offsets` side-table.
@@ -25,7 +25,11 @@ use crate::sp_expr::decompose_readonly;
 pub struct StackOffsetDetect;
 
 impl PostOptimizer for StackOffsetDetect {
-    fn apply(&self, edit: &mut crate::EditFunction<'_>, _ctx: &mut crate::OptCtx<'_>) -> Result<()> {
+    fn apply(
+        &self,
+        edit: &mut crate::EditFunction<'_>,
+        _ctx: &mut crate::OptCtx<'_>,
+    ) -> Result<()> {
         // Ensures the `stack_offsets` cache is populated for every STORE/LOAD
         // ADDRESS on the frozen, post-convergence graph — the sparse set the
         // user-facing per-node `Function::stack_offset` reads back.  `decompose`
@@ -39,7 +43,7 @@ impl PostOptimizer for StackOffsetDetect {
         for node in candidates {
             // Address is input slot 1 of both Store/Load; skip a malformed node.
             if let Some(addr) = function.node_inputs(node).get(1).copied() {
-                decompose_readonly(function, addr);
+                decompose(function, addr);
             }
         }
         Ok(())

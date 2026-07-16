@@ -57,6 +57,12 @@ mod call_other_arg_ret_slots;
 #[path = "pattern_matching/call_other_name_filter.rs"]
 mod call_other_name_filter;
 
+#[path = "pattern_matching/call_other_value_operand.rs"]
+mod call_other_value_operand;
+
+#[path = "pattern_matching/one_of_alternation.rs"]
+mod one_of_alternation;
+
 #[path = "pattern_matching/memory_chain.rs"]
 mod memory_chain;
 

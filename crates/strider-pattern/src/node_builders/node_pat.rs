@@ -61,6 +61,11 @@ pub(crate) struct NodePat {
     /// input slots (`(slot, bits)`); applied during `lower` to the
     /// compiled sub-pattern's output before it is wired into the slot.
     input_widths: Vec<(usize, u32)>,
+    /// When `true` and the anchor is a value output, enforce that the matched
+    /// value is produced at exactly the anchor slot (see
+    /// [`PatValue::match_slot`]). Set by `.res()` on Call/CallOther to pin the
+    /// declared result output and exclude clobbers.
+    pin_anchor_slot: bool,
 }
 
 impl NodePat {
@@ -74,6 +79,7 @@ impl NodePat {
             anchor: AnchorKind::None,
             output_width: None,
             input_widths: Vec::new(),
+            pin_anchor_slot: false,
         }
     }
 
@@ -99,10 +105,37 @@ impl NodePat {
         self
     }
 
+    /// Re-anchor onto a value output at `slot`. Used to nest a normally
+    /// memory-rooted node (`Call` / `CallOther`, whose value outputs start at
+    /// slot 2 after ctrl/mem) as a **value** operand of another node, e.g.
+    /// `add(x, call_other().name("f"))`.
+    pub(crate) fn with_value_anchor(mut self, slot: usize) -> Self {
+        self.anchor = AnchorKind::Value(slot);
+        self
+    }
+
+    /// Enforce the anchor value output's slot at match time (see
+    /// [`crate::matcher::PatValue::match_slot`]). Only takes effect when the
+    /// anchor is [`AnchorKind::Value`]. Set by `.res()` on Call/CallOther.
+    pub(crate) fn pin_anchor_slot(mut self) -> Self {
+        self.pin_anchor_slot = true;
+        self
+    }
+
     /// Wire a value sub-pattern into raw input `slot`. The one boxing
     /// site for value operands.
     pub(crate) fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
         self.inputs.push((slot, Box::new(move |b| p.compile(b))));
+        self
+    }
+
+    /// Wire an **existential** value sub-pattern: it matches *some* value
+    /// input of the node rather than a fixed slot (the `any_input` verb).
+    /// Recorded at the [`ANY_INPUT_SLOT`] sentinel slot; the matcher routes
+    /// it through its existential search.
+    pub(crate) fn input_any<P: MatchPat + 'static>(mut self, p: P) -> Self {
+        self.inputs
+            .push((crate::matcher::ANY_INPUT_SLOT, Box::new(move |b| p.compile(b))));
         self
     }
 
@@ -167,10 +200,17 @@ impl NodePat {
             anchor,
             output_width,
             input_widths,
+            pin_anchor_slot,
         } = self;
         let node = b.node(kind);
         let anchor_out = match anchor {
-            AnchorKind::Value(slot) => Some(b.value_output(node, slot)),
+            AnchorKind::Value(slot) => {
+                let out = b.value_output(node, slot);
+                if pin_anchor_slot {
+                    b.set_value_out_slot(out, slot);
+                }
+                Some(out)
+            }
             AnchorKind::Memory(slot) => Some(b.memory_output(node, slot)),
             AnchorKind::None => None,
         };

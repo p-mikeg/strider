@@ -9,8 +9,8 @@
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{Function, IRBuilderExt, IRViewer, IntBinaryOp};
-use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 use strider_ir_test_utils::IrBuilderEx;
+use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
 use crate::StackOffsetDetect;
 

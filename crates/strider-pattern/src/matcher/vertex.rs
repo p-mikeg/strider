@@ -87,6 +87,14 @@ pub struct PatNode {
     /// When `true`, the matcher must not try commutative operand
     /// reorderings for this node.
     pub force_ordered: bool,
+    /// When `true`, this is an **alternation** node (`one_of`): its inputs are
+    /// not operands to match against the IR node's operands, but independent
+    /// alternative sub-patterns to try against the *same* IR node. The matcher
+    /// tries each in order and accepts the first that matches (with the usual
+    /// backtracking), so `one_of([add(..), and(..)])` matches whichever shape
+    /// the value has. The node's own kind is [`KindSpec::Any`] — the
+    /// alternatives carry the real kind checks.
+    pub alternation: bool,
     /// The consumer input slot of each of this node's inputs, parallel to
     /// the generic graph's input order. The generic graph stores inputs
     /// densely (index 0, 1, …); a pattern's inputs are **sparse** (e.g.
@@ -117,6 +125,7 @@ impl PatNode {
             node_predicate: None,
             post_match: None,
             force_ordered: false,
+            alternation: false,
             input_slots: Vec::new(),
         }
     }
@@ -151,6 +160,14 @@ pub struct PatValue {
     /// Optional bit-width constraint on the matched output's value
     /// type.
     pub width: Option<u32>,
+    /// Optional **enforced** producer output-slot constraint. `None` (the
+    /// default) leaves the slot unchecked — the structural `slot` above is
+    /// just where the anchor sits, not a match filter, so any output kind-ok
+    /// against `kind` matches (this is what makes a nested Call/CallOther
+    /// value operand match *any* value output). `Some(s)` additionally
+    /// requires the matched value to be produced at output slot `s` — used by
+    /// `call_other().res()` to pin the declared result and exclude clobbers.
+    pub match_slot: Option<usize>,
     /// Optional capture binding the matched output value (`Binding::Value`).
     ///
     /// This is where value captures live — `add(var(x), …)` captures `x`'s
@@ -168,6 +185,7 @@ impl PatValue {
             slot,
             kind: OutputKindSpec::AnyValue,
             width: None,
+            match_slot: None,
             capture: None,
         }
     }
@@ -178,6 +196,7 @@ impl PatValue {
             slot,
             kind: OutputKindSpec::Control,
             width: None,
+            match_slot: None,
             capture: None,
         }
     }
@@ -190,6 +209,7 @@ impl PatValue {
             slot,
             kind: OutputKindSpec::Memory,
             width: None,
+            match_slot: None,
             capture: None,
         }
     }

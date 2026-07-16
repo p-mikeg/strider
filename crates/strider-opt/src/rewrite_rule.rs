@@ -181,7 +181,8 @@ fn rewrite_rule_impl(
         let new_producer = edit.producer(new_value);
         for &matched in &matched_nodes {
             edit.function_mut()
-                .side_tables_mut().extend_asm_fingerprint_from(new_producer, matched);
+                .side_tables_mut()
+                .extend_asm_fingerprint_from(new_producer, matched);
         }
 
         // 4. Redirect every consumer of the old root's value output to the
@@ -1245,7 +1246,7 @@ mod tests {
 
         // The fresh Add's const operand dedups to the pre-existing IntConst(3).
         let new_add = edit.producer(new_value);
-        let const_operand = edit.producer(edit.node_inputs(new_add).into_iter().nth(1).unwrap());
+        let const_operand = edit.producer(edit.node_inputs(new_add)[1]);
         assert_eq!(
             const_operand, three_node,
             "RHS const dedup-hit the pre-existing IntConst(3)"
@@ -1396,7 +1397,7 @@ mod tests {
 
         // The fresh non-root Store feeding the Load's memory input must be
         // tracked live.
-        let mem_in = edit.node_inputs(new_load).into_iter().nth(1).unwrap();
+        let mem_in = edit.node_inputs(new_load)[1];
         let store_node = edit.producer(mem_in);
         assert!(
             matches!(edit.node_kind(store_node), NodeKind::Store(_)),
@@ -1409,7 +1410,7 @@ mod tests {
 
         // Note: the fresh InitialMemory feeding the Store is input-less, so
         // it must be a cached root.
-        let init_mem_in = edit.node_inputs(store_node).into_iter().nth(2).unwrap();
+        let init_mem_in = edit.node_inputs(store_node)[2];
         let init_mem_node = edit.producer(init_mem_in);
         assert!(
             edit.is_root(init_mem_node),
@@ -1561,7 +1562,7 @@ mod tests {
 
         // The fresh var+3's const operand dedup-revives the culled IntConst(3).
         let new_add = edit.producer(fired.unwrap());
-        let const_operand = edit.producer(edit.node_inputs(new_add).into_iter().nth(1).unwrap());
+        let const_operand = edit.producer(edit.node_inputs(new_add)[1]);
         assert_eq!(
             const_operand, three_node,
             "RHS const dedup-hit the pre-existing (culled) IntConst(3)"

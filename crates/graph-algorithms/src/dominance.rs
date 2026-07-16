@@ -237,7 +237,10 @@ mod tests {
 
     /// Build a [`DefSites`] map (`var → defining nodes`) for the φ-placement tests.
     fn defs(pairs: &[(char, &[u32])]) -> FxHashMap<char, Vec<u32>> {
-        pairs.iter().map(|(v, sites)| (*v, sites.to_vec())).collect()
+        pairs
+            .iter()
+            .map(|(v, sites)| (*v, sites.to_vec()))
+            .collect()
     }
 
     /// Diamond: 0 → {1,2} → 3.  A def in either arm needs a φ at the join 3;

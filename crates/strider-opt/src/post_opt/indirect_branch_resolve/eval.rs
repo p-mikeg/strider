@@ -15,8 +15,7 @@ use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
 
-use crate::sp_expr::SpAliasCfg;
-
+use crate::sp_analysis::{SpAnalyzer, SpOptions};
 
 /// Abstract value: a concrete number, or `sp_base + offset`.
 #[derive(Clone, Copy, PartialEq)]
@@ -94,7 +93,7 @@ impl<'a> Evaluator<'a> {
         let node = f.producer(value);
         let kind = *f.node_kind(node);
         // The SP spine is identified STRUCTURALLY from the already-evaluated
-        // inputs, not by re-running `SpAliasCfg.decompose` (a full cone walk)
+        // inputs, not by re-running `SpOptions.decompose` (a full cone walk)
         // on every node of every fold.  On the converged graph the only SP
         // shapes are the terminal `InitialVar(sp)`, `Add(sp-rooted, const)`
         // (handled by `eval_add` from the operands' `Abs`), and the alignment
@@ -117,13 +116,18 @@ impl<'a> Evaluator<'a> {
                 out_ty?,
             ),
             // Alignment base `(sp-rooted & mask)`: a fresh opaque SP base
-            // (offset 0), matching `decompose_readonly`'s And arm.
+            // (offset 0), matching `decompose`'s And arm.
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
                 let [l, r] = [*ins.first()?, *ins.get(1)?];
-                let sp_operand = if f.int_const_u128(r).is_some_and(crate::sp_expr::is_alignment_mask)
+                let sp_operand = if f
+                    .int_const_u128(r)
+                    .is_some_and(crate::sp_analysis::is_alignment_mask)
                 {
                     l
-                } else if f.int_const_u128(l).is_some_and(crate::sp_expr::is_alignment_mask) {
+                } else if f
+                    .int_const_u128(l)
+                    .is_some_and(crate::sp_analysis::is_alignment_mask)
+                {
                     r
                 } else {
                     return self.eval_const_node(value);
@@ -188,7 +192,7 @@ impl<'a> Evaluator<'a> {
                 let [mem, _addr] = f.node_inputs_exact::<2>(node).ok()?;
                 let load_size = load_ty.byte_size() as i128;
                 let reaching = {
-                    let cfg = SpAliasCfg::call_blocking(self.alias_mode);
+                    let cfg = SpAnalyzer::new(SpOptions::call_blocking(self.alias_mode));
                     cfg.reaching_store(f, mem, base, offset, load_size)
                 }?;
                 // Exact anchor: the store must sit at the probed offset.
@@ -215,8 +219,11 @@ impl<'a> Evaluator<'a> {
         {
             // SSoT for the endianness-aware byte-slice shift (shared with
             // `LoadForward::narrow`); LE → 0, so the low bytes pass through.
-            let shift_bits =
-                crate::sp_expr::high_low_shift_bits(data_ty, load_ty, self.function.endianness());
+            let shift_bits = crate::sp_analysis::high_low_shift_bits(
+                data_ty,
+                load_ty,
+                self.function.endianness(),
+            );
             return load_ty.get_unsigned_int(v >> shift_bits);
         }
         None
@@ -258,7 +265,9 @@ impl graph_algorithms::walk::GraphRef for ValueInputSuccs<'_> {
         value: ValueId,
         f: impl FnMut(ValueId) -> std::ops::ControlFlow<()>,
     ) -> std::ops::ControlFlow<()> {
-        self.function.value_inputs(self.function.producer(value)).try_for_each(f)
+        self.function
+            .value_inputs(self.function.producer(value))
+            .try_for_each(f)
     }
 }
 
@@ -291,7 +300,9 @@ impl graph_algorithms::walk::GraphRef for ValueInputSuccsPruned<'_> {
         if value == self.stop {
             return std::ops::ControlFlow::Continue(());
         }
-        self.function.value_inputs(self.function.producer(value)).try_for_each(f)
+        self.function
+            .value_inputs(self.function.producer(value))
+            .try_for_each(f)
     }
 }
 

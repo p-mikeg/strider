@@ -1014,7 +1014,10 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
 
     // The ABI footprint is consumed inline (clobbers/reads/memory checked
     // above); it is not stored, so only the user-op name is recorded.
-    assert_eq!(b.function().side_tables().call_other_name(node), Some("syscall"));
+    assert_eq!(
+        b.function().side_tables().call_other_name(node),
+        Some("syscall")
+    );
     Ok(())
 }
 
@@ -1677,7 +1680,11 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
     // ret reg; r1 the non-ret caller-clobbered; r2 (callee-saved) and sp excluded.
     let (ret_group, clobber_group) =
         crate::cc_ret_and_clobber_vns(b.function(), b.function().default_cc());
-    assert_eq!(ret_group, vec![r0], "ret group is the ret-val register (r0)");
+    assert_eq!(
+        ret_group,
+        vec![r0],
+        "ret group is the ret-val register (r0)"
+    );
     assert_eq!(
         clobber_group,
         vec![r1],
@@ -2131,7 +2138,8 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
         [],
     );
     b.function_mut()
-        .side_tables_mut().extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
+        .side_tables_mut()
+        .extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
     let function = b.function();
     validate(function).expect("genuinely-wide IntConst must validate clean");
     Ok(())
@@ -2185,7 +2193,8 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         [],
     );
     b.function_mut()
-        .side_tables_mut().extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
+        .side_tables_mut()
+        .extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
 
     let pre = b.function().const_interner.len();
     assert_eq!(
@@ -2667,7 +2676,6 @@ fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
 }
 
 // ── register-aliasing read/write edge cases ────────────────────────────────
-
 
 // ── IR-6: symmetric sub-register write coercion ─────────────────────────────
 
