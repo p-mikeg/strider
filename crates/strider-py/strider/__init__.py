@@ -58,3 +58,8 @@ from ._api import (  # noqa: E402,F401
     load_elf_from_sections,
 )
 from .explore import serve  # noqa: E402,F401  — strider.serve(lifter, function)
+
+# `strider.idioms` — pure-Python query-side wrappers over `strider.pattern`
+# (`OptionalOffset`, `DirectScale`).  Composed from the stable pattern API;
+# each wrapper is deliberately partial and names its own coverage limits.
+from . import idioms as idioms  # noqa: E402,F401

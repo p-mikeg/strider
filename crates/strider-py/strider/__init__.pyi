@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Iterable, List, Optional, Tuple
 
+from . import idioms as idioms
 from .pattern import PatLike as _PatLike
 from .template import Template as _Template
 
