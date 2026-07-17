@@ -190,6 +190,28 @@ impl Bindings {
         }
     }
 
+    /// The capture-to-binding MAP as a canonical, order-independent key —
+    /// the identity of a match for [`crate::Matcher::find_all`]'s dedup.
+    ///
+    /// The matcher enumerates every operand ordering of every commutative
+    /// node, so one root can be reached by several configurations. Two that
+    /// bind the same captures to the same things are the SAME match and must
+    /// be reported once (`add(x, x)` swapped is one match, not two); two that
+    /// bind a capture to different operands are genuinely distinct and must
+    /// both be reported. Keying on the bindings alone — not the root, not the
+    /// `matched` footprint, not `entries` order — is what draws that line:
+    /// a capture-free pattern collapses to the empty key, so it can never
+    /// duplicate.
+    ///
+    /// Sorted by capture id, so the key is independent of the order the
+    /// captures happened to bind in during the walk.
+    pub(crate) fn binding_signature(&self) -> Vec<(u32, Binding)> {
+        let mut sig: Vec<(u32, Binding)> =
+            self.entries.iter().map(|&(c, b)| (c.id(), b)).collect();
+        sig.sort_unstable_by_key(|&(id, _)| id);
+        sig
+    }
+
     /// Whether `c` was bound in this match (either variant of
     /// `Binding`).  Graph-free — useful when the only question is
     /// "did this capture fire?" and a `&Graph` isn't already in scope.

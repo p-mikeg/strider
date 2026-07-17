@@ -510,7 +510,20 @@ class Function:
         result by CFG relations (`dominates` / `dominated_by_branch` /
         `phi_input_from_edge`) over captured entities; patterns linked only by a
         constraint still count as correlated for the shared-capture
-        connectivity check."""
+        connectivity check.
+
+        A single root can yield SEVERAL `Match`es — one per distinct
+        capture-to-binding map.  A commutative node (`add`, `mul`, `int_and`,
+        ...) whose operands both satisfy a captured sub-pattern binds that
+        capture to each operand in turn, and every such binding is reported:
+        `add(anything().capture(k), anything())` on `add(x, y)` returns TWO
+        matches, `k=x` and `k=y`.  Patterns that bind identically under both
+        orderings (`add(var(x), var(x))`) or that capture nothing on the
+        operands collapse to one, so a capture-free pattern never duplicates.
+        Use `.ordered()` on a binary builder to pin operand slots and suppress
+        the commutative alternative.  Ordering is deterministic: natural operand
+        order before swapped.  `one_of` stays first-match-wins — the arms are an
+        ordered choice, so a later arm never adds a second binding."""
         ...
     def find_one(
         self,
@@ -522,7 +535,9 @@ class Function:
         """Return the first `Match` for `pat`, or `None` if it does not
         match anywhere.  One-shot convenience over `find_all`; `pat` may be a
         list (joined, as in `find_all`) and `constraints` filters it the same
-        way."""
+        way.  Stops at the first hit rather than enumerating the rest, so where
+        `find_all` reports every distinct binding of a commutative node this
+        returns only the natural-operand-order one."""
         ...
     def find_unique(
         self,
@@ -535,7 +550,13 @@ class Function:
         """Return the single `Match` for `pat`, raising `StriderError` if there
         is not exactly one (distinct messages for 0 and >1).  The count is
         taken after dedup, so `ignore_root`, a list `pat`, and `constraints`
-        behave as in `find_all`."""
+        behave as in `find_all`.
+
+        Fail-closed: because `find_all` reports EVERY distinct binding, an
+        ambiguous pattern raises here instead of silently returning one of
+        several.  `add(anything().capture(k), anything())` binds `k` to either
+        operand and so is ambiguous — pin the intent with `.ordered()`, or
+        narrow the operand sub-patterns, to make it unique."""
         ...
     def rewrite(self, find: _PatLike, replace: _Template) -> int:
         """Apply a single `find -> replace` rewrite rule across the graph,

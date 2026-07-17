@@ -219,10 +219,13 @@ fn find_all_returns_distinct_matches_with_distinct_roots() {
     let rhs = Capture::new();
     let pat = add(any_int_const().capture(lhs), any_int_const().capture(rhs)).into_pattern();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    assert_eq!(hits.len(), 3);
+    // Three `add` roots, each with two DISTINCT bindings — `add` is
+    // commutative and both captures sit on operands, so each root matches
+    // once as (lhs←a, rhs←b) and once as (lhs←b, rhs←a).
+    assert_eq!(hits.len(), 6);
 
     let roots: std::collections::HashSet<NodeId> = hits.iter().map(|m| m.root()).collect();
-    assert_eq!(roots.len(), 3);
+    assert_eq!(roots.len(), 3, "the six matches sit on three distinct roots");
 }
 
 #[test]
@@ -232,9 +235,11 @@ fn each_match_has_its_own_bindings() {
     let rhs = Capture::new();
     let pat = add(any_int_const().capture(lhs), any_int_const().capture(rhs)).into_pattern();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    assert_eq!(hits.len(), 3);
+    // Two operand orderings per root (see
+    // `find_all_returns_distinct_matches_with_distinct_roots`).
+    assert_eq!(hits.len(), 6);
 
-    let mut got: Vec<(u128, u128)> = hits
+    let raw: Vec<(u128, u128)> = hits
         .iter()
         .map(|m| {
             (
@@ -242,10 +247,19 @@ fn each_match_has_its_own_bindings() {
                 m.bindings().get_uint(rhs, &function).unwrap(),
             )
         })
+        .collect();
+    // Every match carries its OWN bindings: no two hits agree on both captures.
+    let distinct: std::collections::HashSet<(u128, u128)> = raw.iter().copied().collect();
+    assert_eq!(distinct.len(), 6, "each match has its own bindings: {raw:?}");
+
+    // Normalised by operand order, the three source `add`s come back — each
+    // contributing its pair twice, once per ordering.
+    let mut got: Vec<(u128, u128)> = raw
+        .into_iter()
         .map(|(l, r)| if l < r { (l, r) } else { (r, l) })
         .collect();
     got.sort();
-    assert_eq!(got, vec![(1, 2), (3, 4), (5, 6)]);
+    assert_eq!(got, vec![(1, 2), (1, 2), (3, 4), (3, 4), (5, 6), (5, 6)]);
 }
 
 // ── Match::bindings_clone ────────────────────────────────────────────────────

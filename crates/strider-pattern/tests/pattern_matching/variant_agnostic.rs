@@ -355,19 +355,27 @@ fn variant_any_composes_with_value_capture() {
     let ov = Capture::new();
     let lv = Capture::new();
     let rv = Capture::new();
-    let m = a::unique(
+    // `Mul` is commutative and both value captures sit on operands, so the two
+    // operand orderings are two DISTINCT bindings — natural order first.
+    let hits = a::matches(
         &function,
         int_binary_any(any_int_const().capture(lv), any_int_const().capture(rv))
             .capture(ov)
             .into_pattern(),
+        2,
     );
 
-    assert_eq!(
-        m.bindings().get_int_binary_op(ov, function.graph()),
-        Some(IntBinaryOp::Mul)
-    );
-    assert_eq!(m.bindings().get_uint(lv, &function), Some(100));
-    assert_eq!(m.bindings().get_uint(rv, &function), Some(50));
+    for m in &hits {
+        assert_eq!(
+            m.bindings().get_int_binary_op(ov, function.graph()),
+            Some(IntBinaryOp::Mul),
+            "the op-variant capture composes with the value captures either way",
+        );
+    }
+    assert_eq!(hits[0].bindings().get_uint(lv, &function), Some(100));
+    assert_eq!(hits[0].bindings().get_uint(rv, &function), Some(50));
+    assert_eq!(hits[1].bindings().get_uint(lv, &function), Some(50));
+    assert_eq!(hits[1].bindings().get_uint(rv, &function), Some(100));
 }
 
 #[test]

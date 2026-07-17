@@ -24,8 +24,11 @@
 //! `k` returns `false`), a commutative node BELOW it re-drives its operand
 //! order to find one the ancestor accepts — e.g. a `when_match` guard on a
 //! unary parent picks which operand of a commutative child binds. The root
-//! continuation is `|_| true`, so the first fully guard-satisfying
-//! configuration in DFS order wins.
+//! continuation is supplied by the caller ([`Matcher`]): a first-hit collector
+//! returns `true` and stops at the first fully guard-satisfying configuration
+//! in DFS order, while `find_all`'s collector records each and returns `false`
+//! to enumerate the rest — so several distinct bindings per root are reported
+//! instead of silently dropping all but the first.
 //!
 //! On a sub-pattern mismatch at a producer output, if the pattern's
 //! [`CastMask`](crate::matcher::CastMask) is non-empty the matcher
@@ -67,12 +70,19 @@ impl Ctx<'_> {
 /// Entry point for a value-rooted attempt: try `pat`'s root pat node
 /// against the IR node producing `root_value`, with `root_value` available
 /// for the root output's declarative constraints and the root capture.
+///
+/// `k` is the root continuation, invoked once per fully guard-satisfying
+/// configuration (each operand ordering × every descendant configuration).
+/// Returning `true` accepts that configuration and stops the search (the
+/// first-hit collector); returning `false` drives the next one, which is how a
+/// caller ENUMERATES every distinct binding rather than only the first.
 pub(crate) fn try_match(
     matcher: &Matcher,
     pat: &Pattern,
     root: PatNodeId,
     root_value: ValueId,
     bindings: &mut Bindings,
+    k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
     // The root output vertex (if the root pat node declares one) carries
     // the root-level output constraints. For a value root — exactly one
@@ -81,9 +91,9 @@ pub(crate) fn try_match(
     let root_out_vertex = root_output_vertex_for(pat, root, matcher, root_value);
     let root_node = matcher.function().producer(root_value);
     let ctx = Ctx { matcher, pat };
-    // The root accepts the first full solution whose every guard (root +
-    // descendants) passed — `try_match_at` enumerates configurations and the
-    // `|_| true` continuation stops at the first that reaches the root.
+    // `try_match_at` enumerates every configuration whose every guard (root +
+    // descendants) passed and hands each to `k`, which decides whether to
+    // accept-and-stop or record-and-continue.
     try_match_at(
         &ctx,
         root,
@@ -91,7 +101,7 @@ pub(crate) fn try_match(
         Some(root_value),
         root_out_vertex,
         bindings,
-        &mut |_| true,
+        k,
     )
 }
 
@@ -104,18 +114,21 @@ pub(crate) fn try_match(
 /// that requires a value output — a pinned `Value` kind or any `width` —
 /// is rejected here rather than silently skipping the constraint (which
 /// is how `bool_value()` used to wrongly match `Return`).
+///
+/// `k` is the root continuation; see [`try_match`].
 pub(crate) fn try_match_node(
     matcher: &Matcher,
     pat: &Pattern,
     root: PatNodeId,
     node: NodeId,
     bindings: &mut Bindings,
+    k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
     if root_requires_value_output(pat, root) {
         return false;
     }
     let ctx = Ctx { matcher, pat };
-    try_match_at(&ctx, root, node, None, None, bindings, &mut |_| true)
+    try_match_at(&ctx, root, node, None, None, bindings, k)
 }
 
 /// Whether the root pat node declares an output vertex that demands a
@@ -259,6 +272,15 @@ fn try_match_at(
     // whole configuration (its own guards + the ancestor continuation `k`)
     // succeeds. Each alternative's `try_match_at` handles its captures / guard /
     // footprint, so the alternation node records nothing itself.
+    //
+    // `one_of` is an ORDERED CHOICE (first-match-wins), not a union: once an arm
+    // matches, the later arms are shadowed by design — a permissive leading arm
+    // deliberately swallows what a narrower later arm would have caught. So the
+    // enumeration runs WITHIN the winning arm (every operand ordering it
+    // admits), never ACROSS arms; otherwise a trailing wildcard arm would add a
+    // spurious second binding to every hit of a specific earlier arm. As in
+    // `try_operand`, an enumerating `k` makes `try_match_at`'s return value
+    // useless for "did this arm match", hence the explicit `reached` flag.
     if nd.alternation {
         let mark = bindings.mark();
         for &(cap, binding) in cap_bindings.iter().flatten() {
@@ -269,18 +291,30 @@ fn try_match_at(
         }
         for alt in &inputs {
             let inner = bindings.mark();
-            if try_match_at(
-                ctx,
-                alt.producer,
-                ir_node,
-                root_value,
-                Some(alt.out_vertex),
-                bindings,
-                k,
-            ) {
-                return true;
+            let mut reached = false;
+            {
+                let mut k_alt = |b: &mut Bindings| -> bool {
+                    reached = true;
+                    k(b)
+                };
+                if try_match_at(
+                    ctx,
+                    alt.producer,
+                    ir_node,
+                    root_value,
+                    Some(alt.out_vertex),
+                    bindings,
+                    &mut k_alt,
+                ) {
+                    return true;
+                }
             }
             bindings.restore(inner);
+            if reached {
+                // This arm matched and every configuration of it went through
+                // `k`; first-match-wins means the remaining arms are shadowed.
+                break;
+            }
         }
         bindings.restore(mark);
         return false;
@@ -461,6 +495,17 @@ fn match_existential(
 /// caller may retry without cleaning up. The skipped casts are journaled BEFORE
 /// the retry, so a failure rolls them back while a success keeps them — which is
 /// what holds the asm-fingerprint superset contract.
+///
+/// The cast walk-through is a **fallback**, not an alternative: it engages only
+/// when the direct sub-pattern yields NO configuration at all, never to offer a
+/// second binding alongside a direct one that already matched. `try_match_at`'s
+/// return value can't decide that under an enumerating `k` (which returns
+/// `false` for every configuration, so the call always reports `false`), hence
+/// the explicit `reached` flag — "did any configuration reach the
+/// continuation", which is what "mismatch" has always meant here. Keeping this a
+/// fallback also keeps enumeration bounded by the PATTERN's commutative nodes:
+/// offering the cast-peeled value as an extra binding would instead multiply
+/// matches by the GRAPH's cast-chain depth.
 fn try_operand(
     ctx: &Ctx,
     edge: &InputEdge,
@@ -470,18 +515,30 @@ fn try_operand(
 ) -> bool {
     let mark = bindings.mark();
     let producer_ir = ctx.function().producer(value);
-    if try_match_at(
-        ctx,
-        edge.producer,
-        producer_ir,
-        Some(value),
-        Some(edge.out_vertex),
-        bindings,
-        k,
-    ) {
-        return true;
+    let mut reached = false;
+    {
+        let mut k_direct = |b: &mut Bindings| -> bool {
+            reached = true;
+            k(b)
+        };
+        if try_match_at(
+            ctx,
+            edge.producer,
+            producer_ir,
+            Some(value),
+            Some(edge.out_vertex),
+            bindings,
+            &mut k_direct,
+        ) {
+            return true;
+        }
     }
     bindings.restore(mark);
+    if reached {
+        // The direct producer matched (and every configuration was enumerated
+        // through `k`); the fallback exists for a mismatch, so stop here.
+        return false;
+    }
 
     // Cast walk-through fallback.
     if ctx.pat.cast_mask.is_empty() {

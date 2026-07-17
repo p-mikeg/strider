@@ -865,30 +865,39 @@ fn phi_any_input_binds_a_data_input_not_the_phi_token() {
     let function = phi_over_two_consts();
     let m = Matcher::new(&function);
 
+    // `any_input` is existential: `x` can bind EITHER data input, and both are
+    // genuinely distinct bindings, so both are reported (one per data slot —
+    // never three, which would mean the phi-token leaked in as a third).
     let x = Capture::new();
     let hits = m.find_all(&phi().any_input(var(x)).build()).unwrap();
-    assert_eq!(hits.len(), 1, "the phi matches once");
-    let bound = hits[0].node(x, function.graph()).unwrap();
-    assert!(
-        matches!(function.node_kind(bound), NodeKind::IntConst(_)),
-        "any_input(var) must bind a data input (IntConst), got {:?}",
-        function.node_kind(bound)
-    );
+    assert_eq!(hits.len(), 2, "one match per bindable DATA input");
+    for hit in &hits {
+        let bound = hit.node(x, function.graph()).unwrap();
+        assert!(
+            matches!(function.node_kind(bound), NodeKind::IntConst(_)),
+            "any_input(var) must bind a data input (IntConst), got {:?}",
+            function.node_kind(bound)
+        );
+    }
 
     // Two kind-unconstrained existentials must claim the two DATA slots, so
     // both bind constants rather than one silently taking the phi-token.
+    // Distinctness is by slot, so the two assignments (a←1,c←2 and a←2,c←1)
+    // are both reported.
     let (a, c) = (Capture::new(), Capture::new());
     let hits = m
         .find_all(&phi().any_input(var(a)).any_input(var(c)).build())
         .unwrap();
-    assert!(!hits.is_empty(), "two any_input match the two data slots");
-    for cap in [a, c] {
-        let n = hits[0].node(cap, function.graph()).unwrap();
-        assert!(
-            matches!(function.node_kind(n), NodeKind::IntConst(_)),
-            "each any_input(var) binds a data input, got {:?}",
-            function.node_kind(n)
-        );
+    assert_eq!(hits.len(), 2, "both slot assignments of the two data inputs");
+    for hit in &hits {
+        for cap in [a, c] {
+            let n = hit.node(cap, function.graph()).unwrap();
+            assert!(
+                matches!(function.node_kind(n), NodeKind::IntConst(_)),
+                "each any_input(var) binds a data input, got {:?}",
+                function.node_kind(n)
+            );
+        }
     }
 }
 

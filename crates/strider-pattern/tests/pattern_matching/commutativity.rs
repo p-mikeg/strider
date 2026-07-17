@@ -114,6 +114,93 @@ fn commutative_match_with_identical_operands_emits_one() {
     );
 }
 
+// ── Every DISTINCT binding is reported, not just the first ───────────────────
+//
+// `find_all` enumerates every operand ordering that matches, deduplicated by
+// the resulting capture->binding MAP.  So a capture on one operand of a
+// commutative node yields one match PER operand it can bind (the orderings
+// produce different maps), while a capture-free or identically-bound pattern
+// still yields exactly one (the orderings produce the SAME map).
+
+/// A capture on one operand of a commutative node binds to EACH operand in
+/// turn — both bindings are valid and both must be reported.  Reporting only
+/// the first is what made "one hit ⇒ unambiguous" a lie.
+#[test]
+fn commutative_capture_reports_both_operand_bindings() {
+    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
+    let k = Capture::new();
+    let hits = a::matches(&function, add(any().capture(k), any()).into_pattern(), 2);
+    let mut bound: Vec<Option<u128>> = hits
+        .iter()
+        .map(|m| m.bindings().get_uint(k, &function))
+        .collect();
+    // Natural ordering first, then swapped — the enumeration order is pinned.
+    assert_eq!(bound, vec![Some(5), Some(3)], "both operands must bind");
+    bound.sort_unstable();
+    bound.dedup();
+    assert_eq!(bound.len(), 2, "the two bindings must be DISTINCT");
+}
+
+/// Dedup is by the capture->binding MAP, not by root: when both operands are
+/// the SAME value the two orderings produce an IDENTICAL map, so it is ONE
+/// match, not two.
+#[test]
+fn commutative_capture_identical_operands_dedups_to_one() {
+    // add(5, 5) — constant dedup makes both operands share one ValueId.
+    let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
+    let k = Capture::new();
+    let hits = a::matches(&function, add(any().capture(k), any()).into_pattern(), 1);
+    assert_eq!(hits[0].bindings().get_uint(k, &function), Some(5));
+}
+
+/// `.ordered()` suppresses the commutative retry entirely, so a capture-bearing
+/// pattern yields exactly the one ordering it pins.
+#[test]
+fn ordered_capture_reports_only_the_pinned_ordering() {
+    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
+    let k = Capture::new();
+    let hits = a::matches(
+        &function,
+        add(any().capture(k), any()).ordered().into_pattern(),
+        1,
+    );
+    assert_eq!(
+        hits[0].bindings().get_uint(k, &function),
+        Some(5),
+        "ordered() pins the capture to operand slot 0",
+    );
+}
+
+/// A capture on a NON-commutative node has only one ordering, so it stays at
+/// one hit — the enumeration must not manufacture duplicates.
+#[test]
+fn non_commutative_capture_stays_single() {
+    let function = shapes::int_bin(20, 4, IntBinaryOp::Div);
+    let k = Capture::new();
+    let hits = a::matches(&function, div(any().capture(k), any()).into_pattern(), 1);
+    assert_eq!(hits[0].bindings().get_uint(k, &function), Some(20));
+}
+
+/// `matches()` is lazy and `.next()` stops at the first hit — the natural
+/// ordering — without enumerating the swapped one.  This is `find_one`'s
+/// contract and its performance story.
+#[test]
+fn matches_iterator_yields_natural_ordering_first() {
+    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
+    let k = Capture::new();
+    let pat = add(any().capture(k), any()).into_pattern();
+    let first = Matcher::new(&function)
+        .matches(&pat)
+        .expect("matches")
+        .next()
+        .expect("at least one hit");
+    assert_eq!(
+        first.bindings().get_uint(k, &function),
+        Some(5),
+        "the first hit must be the natural operand ordering",
+    );
+}
+
 // ── Non-commutative ops REJECT swap ──────────────────────────────────────────
 
 #[test]

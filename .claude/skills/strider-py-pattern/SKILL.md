@@ -38,7 +38,9 @@ address is sp+const" / "write a pattern for the indexed-array-load shape" and si
    `Capture()` objects (when you need the capture passed to multiple places or to `var(c)`).  Use
    Filter SP-relative accesses with `LoadPat`/`StorePat`'s `stack_only()` / `stack_offset(K)`.
 5. Mention **commutativity** if it affects the spec — commutative ops automatically try both
-   operand orderings.  Use `.ordered()` on a typed builder to suppress this.
+   operand orderings.  Use `.ordered()` on a typed builder to suppress this.  Note that a capture
+   on a commutative operand therefore yields one hit PER operand it can bind (and makes
+   `find_unique` raise); `.ordered()` is the fix when the spec wants a specific slot.
 6. Emit the code as a single Python snippet, plus a 1-2 line explanation of why the canonical form
    differs from the source.
 
@@ -248,6 +250,28 @@ operand ambiguity lives) and composes with `.capture()` / `.when()`:
 ```python
 p.store(data=p.int_binary("And", p.var(x), p.any_int_const()).ordered().capture(c))
 ```
+
+#### A commutative op can yield MORE THAN ONE hit per root
+
+Because both orderings are tried, a capture on an operand binds to **each**
+operand in turn, and `find_all` reports every distinct binding:
+
+```python
+k = p.Capture()
+fn.find_all(p.add(p.anything().capture(k), p.anything()))   # TWO hits on add(x, y):
+                                                            #   k = x  (natural order)
+                                                            #   k = y  (swapped)
+```
+
+Dedup is by the capture->binding **map**, so this only happens when the
+orderings actually bind differently: `p.add(p.var(x), p.var(x))` and any
+pattern with no captures on the operands stay at ONE hit.  Consequences:
+
+- `find_unique` **raises** on the ambiguous pattern above — that is the point.
+  Pin the intent with `.ordered()`, or narrow the operands, to make it unique.
+- `find_one` still returns just the first hit (natural operand order).
+- `one_of` is unaffected: its arms are an ordered choice (first match wins), so
+  a later arm never contributes a second binding.
 
 ### Running a pattern
 

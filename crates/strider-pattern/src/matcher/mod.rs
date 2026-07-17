@@ -118,9 +118,20 @@ impl<'f> Matcher<'f> {
     /// Every match for `pat` in the function, lazily.
     ///
     /// The single-pattern query primitive: `.collect()` for all matches,
-    /// `.next()` to stop at the first (the iterator is lazy, so `next` does no
-    /// work beyond the first hit). [`find_joined_constrained`] is built on this
-    /// too, one pass per pattern.
+    /// `.next()` to stop at the first (the iterator is lazy per CANDIDATE, so
+    /// `next` walks no further than the first matching node).
+    /// [`find_joined_constrained`] is built on this too, one pass per pattern.
+    ///
+    /// # Several matches per root
+    ///
+    /// A root can match in more than one way — most often a commutative node
+    /// whose two operands each satisfy a captured sub-pattern. Every DISTINCT
+    /// way is yielded, deduplicated by the capture-to-binding map (see
+    /// [`Bindings::binding_signature`]): `add(var(x), var(x))` matched swapped
+    /// binds `x` identically and is ONE match, while `add(any().capture(k),
+    /// any())` binds `k` to each operand in turn and is TWO. A pattern with no
+    /// captures on commutative operands therefore never duplicates. Ordering is
+    /// deterministic: natural operand order before swapped.
     ///
     /// The match root is resolved once up front via [`Pattern::root`]; a
     /// discriminant-rooted pattern then tries only the matching `KindIndex`
@@ -140,7 +151,7 @@ impl<'f> Matcher<'f> {
         let root = pat.root()?;
         Ok(self
             .candidates(pat, root)
-            .filter_map(move |node| self.try_match_at_node(node, pat, root)))
+            .flat_map(move |node| self.matches_at_node(node, pat, root, false)))
     }
 
     /// Every match for `pat`, collected. Sugar for
@@ -172,26 +183,57 @@ impl<'f> Matcher<'f> {
     }
 
     /// Internal helper: attempt `pat` (whose resolved match root is `root`)
-    /// at `node`, returning the first successful match if any (iterates
-    /// value outputs for value-producing nodes, falls back to a node-rooted
-    /// attempt for zero-output kinds). Shared between [`Self::matches`]
-    /// and [`Self::match_at`].
-    fn try_match_at_node(&self, node: NodeId, pat: &Pattern, root: PatNodeId) -> Option<Match> {
-        let outputs = self.function.node_outputs(node);
-        if outputs.is_empty() {
-            let mut bindings = Bindings::default();
-            if walk::try_match_node(self, pat, root, node, &mut bindings) {
-                return Some(Match::from_root(node, bindings));
+    /// at `node`, returning its matches (iterates value outputs for
+    /// value-producing nodes, falls back to a node-rooted attempt for
+    /// zero-output kinds). Shared between [`Self::matches`] and
+    /// [`Self::match_at`].
+    ///
+    /// `first_only` stops at the first match ([`Self::match_at`]'s contract,
+    /// and what keeps it cheap enough to call at every node from the rewrite
+    /// driver); otherwise every DISTINCT match at this root is enumerated,
+    /// deduplicated by capture-to-binding map. The dedup set is per-node: two
+    /// different roots are different matches regardless of their bindings, and
+    /// the outputs of one node share the set so a pattern reachable through
+    /// several outputs doesn't double-report an identical binding.
+    fn matches_at_node(
+        &self,
+        node: NodeId,
+        pat: &Pattern,
+        root: PatNodeId,
+        first_only: bool,
+    ) -> Vec<Match> {
+        let mut hits: Vec<Match> = Vec::new();
+        let mut seen: FxHashSet<Vec<(u32, Binding)>> = FxHashSet::default();
+        // Records each fully guard-satisfying configuration the walk reaches.
+        // Returning `false` (the `find_all` case) rejects it *as a stopping
+        // point* only — the match is already banked in `hits` — which drives
+        // the engine's existing backtracking on to the next operand ordering /
+        // existential slot. Returning `true` accepts and stops.
+        {
+            let mut collect = |b: &mut Bindings| -> bool {
+                if seen.insert(b.binding_signature()) {
+                    hits.push(Match::from_root(node, b.clone()));
+                }
+                first_only
+            };
+
+            let outputs = self.function.node_outputs(node);
+            if outputs.is_empty() {
+                let mut bindings = Bindings::default();
+                walk::try_match_node(self, pat, root, node, &mut bindings, &mut collect);
+            } else {
+                for &out_id in outputs {
+                    let mut bindings = Bindings::default();
+                    // `try_match` returns `true` only when `collect` accepted,
+                    // i.e. `first_only` — so this stops after the first hit
+                    // there and sweeps every output otherwise.
+                    if walk::try_match(self, pat, root, out_id, &mut bindings, &mut collect) {
+                        break;
+                    }
+                }
             }
-            return None;
         }
-        for &out_id in outputs {
-            let mut bindings = Bindings::default();
-            if walk::try_match(self, pat, root, out_id, &mut bindings) {
-                return Some(Match::from_root(node, bindings));
-            }
-        }
-        None
+        hits
     }
 
     /// Try `pat` at a specific IR node; returns the first match if any
@@ -216,7 +258,7 @@ impl<'f> Matcher<'f> {
         {
             return Ok(None);
         }
-        Ok(self.try_match_at_node(node, pat, root))
+        Ok(self.matches_at_node(node, pat, root, true).into_iter().next())
     }
 
     /// Run several patterns over the graph and return only the joined
