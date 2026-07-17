@@ -46,7 +46,7 @@ use strider_pattern::matcher::{MatcherBuilder, PatValueRef};
 use strider_pattern::template::{TemplateBuilder, TmplValueRef};
 use strider_pattern::{
     Capture, CaptureExt, JoinConstraint, MatchPat, MemPat, Pattern, Template, TemplatePat,
-    ValueSpec, template as tpl,
+    template as tpl,
 };
 
 use crate::errors::into_strider_err;
@@ -3025,7 +3025,7 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
 #[pyclass(
     name = "JoinConstraint",
     module = "strider.pattern.constraints",
-    unsendable
+    frozen
 )]
 pub struct PyJoinConstraint {
     pub(crate) inner: JoinConstraint,
@@ -3069,34 +3069,30 @@ pub fn dominated_by_branch(
 /// a `phi()` value.  Direct-edge: no match when nested control sits between the
 /// branch and the merge.
 ///
-/// `value` is either:
+/// `value` is a `Capture`, bound by another pattern in the same `find_all` list;
+/// the constraint compares it by identity.  Bind it on the PHI PATTERN itself
+/// with `.any_input(...)` rather than as an independent root — `any_input` is
+/// anchored at the phi's own inputs, so it costs O(arity) and never ranges over
+/// the whole function:
 ///
-/// * a `Capture` — it must be bound by another pattern in the same `find_all`
-///   list, and the constraint compares it by identity; or
-/// * a **pattern**, matched INLINE at the phi's arm value.  This states the fact
-///   locally: no independent root ranging over the whole function, and no
-///   cartesian product against it.  Captures inside the inline pattern bind and
-///   are readable off the returned match, unifying with (never overwriting) any
-///   binding the rest of the join already made.
+/// ```python
+/// v, ph = Capture(), Capture()
+/// find_all([guard, phi().any_input(int_const(1).capture(v)).capture(ph)],
+///          constraints=[phi_input_from_edge(ph, t, v)])
+/// ```
 #[pyfunction]
 pub fn phi_input_from_edge(
     phi: PyRef<'_, PyCapture>,
     edge: PyRef<'_, PyCapture>,
-    value: &Bound<'_, PyAny>,
-) -> PyResult<PyJoinConstraint> {
-    // A `Capture` keeps the identity-compare form; anything pattern-like is
-    // built into a `Pattern` and matched at the arm value.
-    let spec = match value.extract::<PyRef<'_, PyCapture>>() {
-        Ok(c) => ValueSpec::Capture(c.inner),
-        Err(_) => ValueSpec::Pattern(Box::new(pattern_for_operand(value)?)),
-    };
-    Ok(PyJoinConstraint {
+    value: PyRef<'_, PyCapture>,
+) -> PyJoinConstraint {
+    PyJoinConstraint {
         inner: JoinConstraint::PhiInputFromEdge {
             phi: phi.inner,
             edge: edge.inner,
-            value: spec,
+            value: value.inner,
         },
-    })
+    }
 }
 
 /// The negation of a join constraint: a tuple survives iff `c` does NOT hold.
@@ -3107,58 +3103,13 @@ pub fn phi_input_from_edge(
 /// under negation to a vacuous "true" and match everything; `find_all` rejects
 /// that with a `StriderError` instead of matching blindly.
 ///
-/// `negate` of a `phi_input_from_edge` with an *inline value pattern* is also
-/// rejected: that form BINDS captures rather than deciding a predicate, so
-/// there is nothing to bind on the false branch.  Spell the negated fact with
-/// a `Capture` value instead.  Nesting (`negate(negate(c))`) is allowed and is
-/// the identity.
+/// Every constraint is negatable.  Nesting (`negate(negate(c))`) is allowed and
+/// is the identity.
 #[pyfunction]
-pub fn negate(c: PyRef<'_, PyJoinConstraint>) -> PyResult<PyJoinConstraint> {
-    Ok(PyJoinConstraint {
-        inner: JoinConstraint::Not(Box::new(rebuild_negatable(&c.inner)?)),
-    })
-}
-
-/// Rebuild a negatable `JoinConstraint` by value.
-///
-/// `JoinConstraint` is deliberately not `Clone` — an inline
-/// [`ValueSpec::Pattern`] owns match-time closures — but Python hands `negate` a
-/// borrowed `PyJoinConstraint`, so the wrapped constraint has to be rebuilt from
-/// its parts.  That is total over exactly the forms `negate` accepts: every one is
-/// captures-only, so nothing here ever needs to clone a `Pattern`.  The inline
-/// form is rejected on the same grounds the matcher rejects it (it binds), and
-/// the two rules coincide by construction rather than by coincidence.
-fn rebuild_negatable(c: &JoinConstraint) -> PyResult<JoinConstraint> {
-    Ok(match c {
-        JoinConstraint::Dominates { a, b } => JoinConstraint::Dominates { a: *a, b: *b },
-        JoinConstraint::DominatedByBranch { branch, node } => JoinConstraint::DominatedByBranch {
-            branch: *branch,
-            node: *node,
-        },
-        JoinConstraint::PhiInputFromEdge {
-            phi,
-            edge,
-            value: ValueSpec::Capture(v),
-        } => JoinConstraint::PhiInputFromEdge {
-            phi: *phi,
-            edge: *edge,
-            value: ValueSpec::Capture(*v),
-        },
-        // Nesting: `negate(negate(c))` rebuilds to `Not(Not(c))`, which the
-        // matcher evaluates as `c` — the identity, not a special case.
-        JoinConstraint::Not(inner) => JoinConstraint::Not(Box::new(rebuild_negatable(inner)?)),
-        JoinConstraint::PhiInputFromEdge {
-            value: ValueSpec::Pattern(_),
-            ..
-        } => {
-            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                "negate cannot negate a binding constraint (phi_input_from_edge with \
-                 an inline value pattern binds captures rather than deciding a \
-                 predicate, so there is nothing to bind on the false branch) — spell \
-                 the negated fact with a capture value instead"
-            )));
-        }
-    })
+pub fn negate(c: PyRef<'_, PyJoinConstraint>) -> PyJoinConstraint {
+    PyJoinConstraint {
+        inner: JoinConstraint::Not(Box::new(c.inner.clone())),
+    }
 }
 
 // ── PhiPat (value-rooted: a Phi produces a value output) ─────────────────

@@ -317,10 +317,10 @@ fn phi_input_from_edge_ties_value_to_its_branch() {
         let hits = m
             .find_joined_constrained(
                 &[&guard, &phi_p, &val],
-                &[&JoinConstraint::PhiInputFromEdge {
+                &[JoinConstraint::PhiInputFromEdge {
                     phi: ph,
                     edge,
-                    value: ValueSpec::Capture(v),
+                    value: v,
                 }],
             )
             .unwrap();
@@ -400,7 +400,12 @@ fn graph_guarded_loop() -> (strider_ir::Function, rsleigh::Vn) {
 fn phi_input_from_edge_reaches_into_a_guarded_loop() {
     let (function, _reg) = graph_guarded_loop();
     let m = Matcher::new(&function);
-    let (t, f, ph) = (Capture::new(), Capture::new(), Capture::new());
+    let (t, f, ph, v) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
     // Pin the OUTER guard via its condition (`== 7`), so the latch `If`
     // (`== 0`) cannot stand in for it.
     let guard = if_node()
@@ -408,17 +413,20 @@ fn phi_input_from_edge_reaches_into_a_guarded_loop() {
         .capture_true(t)
         .capture_false(f)
         .build();
-    let phi_p = phi().capture(ph).build();
+    let phi_p = phi()
+        .any_input(add(any(), any_int_const()).capture(v))
+        .capture(ph)
+        .build();
 
     // The loop-carried value `reg + 1` arrives at the exit phi from inside the
     // guarded loop — i.e. via the guard's TRUE edge.
     let hits = |edge: Capture| -> usize {
         m.find_joined_constrained(
             &[&guard, &phi_p],
-            &[&JoinConstraint::PhiInputFromEdge {
+            &[JoinConstraint::PhiInputFromEdge {
                 phi: ph,
                 edge,
-                value: ValueSpec::Pattern(Box::new(add(any(), any_int_const()).into_pattern())),
+                value: v,
             }],
         )
         .unwrap()
@@ -512,10 +520,10 @@ fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
         let hits = m
             .find_joined_constrained(
                 &[&guard, &mphi, &st],
-                &[&JoinConstraint::PhiInputFromEdge {
+                &[JoinConstraint::PhiInputFromEdge {
                     phi: mp,
                     edge,
-                    value: ValueSpec::Capture(sv),
+                    value: sv,
                 }],
             )
             .unwrap();
@@ -537,10 +545,10 @@ fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
     );
 }
 
-// ── PhiInputFromEdge: inline value pattern ───────────────────────────────────
+// ── PhiInputFromEdge: the arm value bound by `any_input` ─────────────────────
 
 /// The collapsed `if (reg==0){reg=1}else{reg=2}` diamond, shared by the
-/// inline-`value` tests below.
+/// `any_input` tests below.
 fn collapsed_phi_diamond() -> strider_ir::Function {
     let (mut function, _reg) = graph_phi_for_reg();
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
@@ -554,24 +562,29 @@ fn collapsed_phi_diamond() -> strider_ir::Function {
     function
 }
 
-/// The inline-pattern `value` spec selects the SAME arm the two-root capture
-/// spelling does, without the value floating as an independent root.
+/// An `any_input`-bound arm value selects the SAME arm the free-floating
+/// two-root capture spelling does, without the value ranging over the function.
 #[test]
-fn phi_input_from_edge_inline_pattern_matches_same_arm() {
+fn phi_input_from_edge_any_input_matches_same_arm() {
     let function = collapsed_phi_diamond();
     let m = Matcher::new(&function);
-    let (t, f, ph) = (Capture::new(), Capture::new(), Capture::new());
+    let (t, f, ph, v) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
     let guard = if_node().capture_true(t).capture_false(f).build();
-    let phi_p = phi().capture(ph).build();
 
-    // Which edge carries the constant 1? Exactly one of the two, inline.
+    // Which edge carries the constant 1? Exactly one of the two.
     let hits_for = |edge: Capture, k: u64| -> usize {
+        let phi_p = phi().any_input(int_const(k).capture(v)).capture(ph).build();
         m.find_joined_constrained(
             &[&guard, &phi_p],
-            &[&JoinConstraint::PhiInputFromEdge {
+            &[JoinConstraint::PhiInputFromEdge {
                 phi: ph,
                 edge,
-                value: ValueSpec::Pattern(Box::new(int_const(k).into_pattern())),
+                value: v,
             }],
         )
         .unwrap()
@@ -596,9 +609,9 @@ fn phi_input_from_edge_inline_pattern_matches_same_arm() {
     );
 }
 
-/// A capture INSIDE the inline pattern binds and is readable from the Match.
+/// A capture bound by `any_input` on the phi pattern is readable from the Match.
 #[test]
-fn phi_input_from_edge_inline_capture_is_readable() {
+fn phi_input_from_edge_any_input_capture_is_readable() {
     let function = collapsed_phi_diamond();
     let m = Matcher::new(&function);
     let (t, f, ph, v) = (
@@ -608,16 +621,19 @@ fn phi_input_from_edge_inline_capture_is_readable() {
         Capture::new(),
     );
     let guard = if_node().capture_true(t).capture_false(f).build();
-    let phi_p = phi().capture(ph).build();
+    let phi_p = phi()
+        .any_input(any_int_const().capture(v))
+        .capture(ph)
+        .build();
 
     let read = |edge: Capture| -> u128 {
         let hits = m
             .find_joined_constrained(
                 &[&guard, &phi_p],
-                &[&JoinConstraint::PhiInputFromEdge {
+                &[JoinConstraint::PhiInputFromEdge {
                     phi: ph,
                     edge,
-                    value: ValueSpec::Pattern(Box::new(any_int_const().capture(v).into_pattern())),
+                    value: v,
                 }],
             )
             .unwrap();
@@ -625,7 +641,7 @@ fn phi_input_from_edge_inline_capture_is_readable() {
         let value = hits[0]
             .iter()
             .find_map(|mm| mm.value(v))
-            .expect("inline capture must be readable from the Match");
+            .expect("the any_input capture must be readable from the Match");
         function.int_const_u128(value).unwrap()
     };
 
@@ -639,33 +655,36 @@ fn phi_input_from_edge_inline_capture_is_readable() {
     );
 }
 
-/// The inline pattern does NOT match when the arm is a different value.
+/// No match when the arm value is a different constant.
 #[test]
-fn phi_input_from_edge_inline_pattern_negative() {
+fn phi_input_from_edge_any_input_negative() {
     let function = collapsed_phi_diamond();
     let m = Matcher::new(&function);
-    let (t, ph) = (Capture::new(), Capture::new());
+    let (t, ph, v) = (Capture::new(), Capture::new(), Capture::new());
     let guard = if_node().capture_true(t).build();
-    let phi_p = phi().capture(ph).build();
-
     // 0xDEAD is on neither arm.
+    let phi_p = phi()
+        .any_input(int_const(0xDEADu64).capture(v))
+        .capture(ph)
+        .build();
+
     let hits = m
         .find_joined_constrained(
             &[&guard, &phi_p],
-            &[&JoinConstraint::PhiInputFromEdge {
+            &[JoinConstraint::PhiInputFromEdge {
                 phi: ph,
                 edge: t,
-                value: ValueSpec::Pattern(Box::new(int_const(0xDEADu64).into_pattern())),
+                value: v,
             }],
         )
         .unwrap();
     assert!(hits.is_empty(), "no arm merges 0xDEAD");
 }
 
-/// A capture bound BOTH in the joined tuple and inside the inline pattern must
-/// AGREE — the inline match unifies with the tuple's bindings, never overwrites.
+/// A capture bound BOTH by a free-floating root and by `any_input` on the phi
+/// must AGREE — the join unifies the two bindings, it never overwrites.
 #[test]
-fn phi_input_from_edge_inline_capture_unifies_with_tuple() {
+fn phi_input_from_edge_any_input_capture_unifies_with_tuple() {
     let function = collapsed_phi_diamond();
     let m = Matcher::new(&function);
     let (t, f, ph, v) = (
@@ -675,26 +694,29 @@ fn phi_input_from_edge_inline_capture_unifies_with_tuple() {
         Capture::new(),
     );
     let guard = if_node().capture_true(t).capture_false(f).build();
-    let phi_p = phi().capture(ph).build();
-    // `v` is bound by a real root too — the classic two-root spelling.
+    let phi_p = phi()
+        .any_input(any_int_const().capture(v))
+        .capture(ph)
+        .build();
+    // `v` is bound by a free-floating root too — the classic two-root spelling.
     let val_root = any_int_const().capture(v).into_pattern();
 
     let count = |edge: Capture| -> usize {
         m.find_joined_constrained(
             &[&guard, &phi_p, &val_root],
-            &[&JoinConstraint::PhiInputFromEdge {
+            &[JoinConstraint::PhiInputFromEdge {
                 phi: ph,
                 edge,
-                value: ValueSpec::Pattern(Box::new(any_int_const().capture(v).into_pattern())),
+                value: v,
             }],
         )
         .unwrap()
         .len()
     };
 
-    // The tuple's `v` root ranges over every int const; the inline pattern also
-    // binds `v`. Unification must collapse this to the ONE arm value per edge —
-    // if the inline match overwrote instead, every const would survive.
+    // The `val_root` root ranges over every int const; the phi's `any_input`
+    // also binds `v`. Unification must collapse this to the ONE arm value per
+    // edge — if either binding overwrote the other, every const would survive.
     assert_eq!(count(t), 1, "unification pins `v` to the true arm's value");
     assert_eq!(count(f), 1, "unification pins `v` to the false arm's value");
 }
@@ -770,10 +792,10 @@ fn phi_input_from_edge_reaches_through_intervening_call() {
         let hits = m
             .find_joined_constrained(
                 &[&guard, &phi_p, &val],
-                &[&JoinConstraint::PhiInputFromEdge {
+                &[JoinConstraint::PhiInputFromEdge {
                     phi: ph,
                     edge,
-                    value: ValueSpec::Capture(v),
+                    value: v,
                 }],
             )
             .unwrap();
@@ -799,10 +821,10 @@ fn phi_input_from_edge_reaches_through_intervening_call() {
     );
 }
 
-/// The inline-`value` spelling works through intervening control too, and a
-/// capture inside it still binds.
+/// The `any_input` spelling works through intervening control too, and its
+/// capture still binds.
 #[test]
-fn phi_input_from_edge_inline_pattern_reaches_through_call() {
+fn phi_input_from_edge_any_input_reaches_through_call() {
     let (function, _reg) = graph_phi_across_call();
     let m = Matcher::new(&function);
     let (t, f, ph, v) = (
@@ -815,16 +837,18 @@ fn phi_input_from_edge_inline_pattern_reaches_through_call() {
     // Pin the MERGE phi (the one the Return consumes): the builder mints a phi
     // per region, and `phi()` alone would also match the branch regions' own
     // single-predecessor phis — whose direct predecessor IS the branch edge.
-    let phi_p = ret().ret_val(0, phi().capture(ph)).build();
+    let phi_p = ret()
+        .ret_val(0, phi().any_input(any_int_const().capture(v)).capture(ph))
+        .build();
 
     let read = |edge: Capture| -> u128 {
         let hits = m
             .find_joined_constrained(
                 &[&guard, &phi_p],
-                &[&JoinConstraint::PhiInputFromEdge {
+                &[JoinConstraint::PhiInputFromEdge {
                     phi: ph,
                     edge,
-                    value: ValueSpec::Pattern(Box::new(any_int_const().capture(v).into_pattern())),
+                    value: v,
                 }],
             )
             .unwrap();
@@ -832,7 +856,7 @@ fn phi_input_from_edge_inline_pattern_reaches_through_call() {
         let value = hits[0]
             .iter()
             .find_map(|mm| mm.value(v))
-            .expect("inline capture must bind through intervening control");
+            .expect("the any_input capture must bind through intervening control");
         function.int_const_u128(value).unwrap()
     };
 
@@ -929,10 +953,10 @@ fn phi_input_from_edge_rejects_arm_reachable_from_both_branches() {
         let hits = m
             .find_joined_constrained(
                 &[&outer, &phi_p, &val],
-                &[&JoinConstraint::PhiInputFromEdge {
+                &[JoinConstraint::PhiInputFromEdge {
                     phi: ph,
                     edge,
-                    value: ValueSpec::Capture(v),
+                    value: v,
                 }],
             )
             .unwrap();
@@ -953,17 +977,24 @@ fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
     // Visible: the across-a-call diamond — a wildcard hits on both edges.
     let (function, _reg) = graph_phi_across_call();
     let m = Matcher::new(&function);
-    let (t, f, ph) = (Capture::new(), Capture::new(), Capture::new());
+    let (t, f, ph, v) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
     let guard = if_node().capture_true(t).capture_false(f).build();
-    let phi_p = ret().ret_val(0, phi().capture(ph)).build();
+    let probe = ret()
+        .ret_val(0, phi().any_input(any().capture(v)).capture(ph))
+        .build();
     for edge in [t, f] {
         let hits = m
             .find_joined_constrained(
-                &[&guard, &phi_p],
-                &[&JoinConstraint::PhiInputFromEdge {
+                &[&guard, &probe],
+                &[JoinConstraint::PhiInputFromEdge {
                     phi: ph,
                     edge,
-                    value: ValueSpec::Pattern(Box::new(any().into_pattern())),
+                    value: v,
                 }],
             )
             .unwrap();
@@ -975,13 +1006,19 @@ fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
 
     // ...yet a value that is on no arm still gives ∅ — a real mismatch, which
     // the wildcard probe above distinguishes from blindness.
+    let dead = ret()
+        .ret_val(
+            0,
+            phi().any_input(int_const(0xDEADu64).capture(v)).capture(ph),
+        )
+        .build();
     let mismatch = m
         .find_joined_constrained(
-            &[&guard, &phi_p],
-            &[&JoinConstraint::PhiInputFromEdge {
+            &[&guard, &dead],
+            &[JoinConstraint::PhiInputFromEdge {
                 phi: ph,
                 edge: t,
-                value: ValueSpec::Pattern(Box::new(int_const(0xDEADu64).into_pattern())),
+                value: v,
             }],
         )
         .unwrap();
@@ -991,29 +1028,38 @@ fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
     // wildcard is empty — that is what blindness looks like.
     let (function2, reg2) = graph_stacked_diamonds();
     let m2 = Matcher::new(&function2);
-    let (ot, of, ph2) = (Capture::new(), Capture::new(), Capture::new());
+    let (ot, of, ph2, v2) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
     let outer = if_node()
         .cond(int_cmp(IntCmpOp::Equal, any(), any()))
         .capture_true(ot)
         .capture_false(of)
         .build();
-    let phi2 = ret().ret_val(0, phi_for(reg2).capture(ph2)).build();
+    let phi2 = ret()
+        .ret_val(0, phi_for(reg2).any_input(any().capture(v2)).capture(ph2))
+        .build();
     // The probe itself must match — otherwise ∅ would be vacuous, which is
-    // precisely the confusion the wildcard probe exists to resolve.
+    // precisely the confusion the wildcard probe exists to resolve.  The phi
+    // probe matches once per ARM (its `any_input` binds `v2` to each in turn,
+    // the `find_all` enumeration contract), so assert non-vacuity rather than
+    // an arity-coupled count.
     assert_eq!(m2.find_all(&outer).unwrap().len(), 1, "outer if must match");
-    assert_eq!(
-        m2.find_all(&phi2).unwrap().len(),
-        1,
+    assert!(
+        !m2.find_all(&phi2).unwrap().is_empty(),
         "inner merge phi must match"
     );
     for edge in [ot, of] {
         let hits = m2
             .find_joined_constrained(
                 &[&outer, &phi2],
-                &[&JoinConstraint::PhiInputFromEdge {
+                &[JoinConstraint::PhiInputFromEdge {
                     phi: ph2,
                     edge,
-                    value: ValueSpec::Pattern(Box::new(any().into_pattern())),
+                    value: v2,
                 }],
             )
             .unwrap();
@@ -1090,10 +1136,10 @@ fn phi_input_from_edge_enumerates_every_qualifying_arm() {
     let vals = |edge: Capture| -> std::collections::BTreeSet<u128> {
         m.find_joined_constrained(
             &[&outer, &phi_p, &val],
-            &[&JoinConstraint::PhiInputFromEdge {
+            &[JoinConstraint::PhiInputFromEdge {
                 phi: ph,
                 edge,
-                value: ValueSpec::Capture(v),
+                value: v,
             }],
         )
         .unwrap()
@@ -1172,10 +1218,10 @@ fn phi_input_from_edge_rejects_empty_branch_criss_cross() {
     let hits = m
         .find_joined_constrained(
             &[&outer, &phi_p, &val],
-            &[&JoinConstraint::PhiInputFromEdge {
+            &[JoinConstraint::PhiInputFromEdge {
                 phi: ph,
                 edge: c0_t,
-                value: ValueSpec::Capture(v),
+                value: v,
             }],
         )
         .unwrap();

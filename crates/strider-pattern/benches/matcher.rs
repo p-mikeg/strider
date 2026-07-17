@@ -13,8 +13,8 @@ use strider_ir::node::ValueType;
 use strider_ir::{FunctionBuilder, IRBuilderExt};
 use strider_ir_test_utils::{RegisterSet, Tb};
 use strider_pattern::{
-    Capture, JoinConstraint, MatchPat, Matcher, add, any, any_int_const, call, if_node, int_const,
-    shl,
+    Capture, CaptureExt, JoinConstraint, MatchPat, Matcher, add, any, any_int_const, call, if_node,
+    int_const, phi, shl,
 };
 
 /// Builds one long value chain: starting from a constant, 1000 iterations
@@ -102,7 +102,7 @@ fn join_constraint_benches(c: &mut Criterion) {
         let callp = call().capture(cap).build();
         let cons = JoinConstraint::Dominates { a: g, b: cap };
         let hits = Matcher::new(&function)
-            .find_joined_constrained(&[&guard, &callp], &[&cons])
+            .find_joined_constrained(&[&guard, &callp], std::slice::from_ref(&cons))
             .unwrap();
         assert!(
             !hits.is_empty(),
@@ -111,7 +111,7 @@ fn join_constraint_benches(c: &mut Criterion) {
         c.bench_function("join_dominates_only", |b| {
             b.iter(|| {
                 let hits = Matcher::new(black_box(&function))
-                    .find_joined_constrained(&[&guard, &callp], &[&cons])
+                    .find_joined_constrained(&[&guard, &callp], std::slice::from_ref(&cons))
                     .unwrap();
                 black_box(hits)
             });
@@ -128,7 +128,7 @@ fn join_constraint_benches(c: &mut Criterion) {
             node: cap,
         };
         let hits = Matcher::new(&function)
-            .find_joined_constrained(&[&guard, &callp], &[&dom, &branch])
+            .find_joined_constrained(&[&guard, &callp], &[dom.clone(), branch.clone()])
             .unwrap();
         assert!(
             !hits.is_empty(),
@@ -137,7 +137,7 @@ fn join_constraint_benches(c: &mut Criterion) {
         c.bench_function("join_dominates_and_branch", |b| {
             b.iter(|| {
                 let hits = Matcher::new(black_box(&function))
-                    .find_joined_constrained(&[&guard, &callp], &[&dom, &branch])
+                    .find_joined_constrained(&[&guard, &callp], &[dom.clone(), branch.clone()])
                     .unwrap();
                 black_box(hits)
             });
@@ -176,5 +176,114 @@ fn matcher_benches(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, matcher_benches, join_constraint_benches);
+/// A chain of `n` diamonds, each arm writing a distinct constant to `reg`, so
+/// every merge region carries a value `Phi` — the shape
+/// `JoinConstraint::PhiInputFromEdge` is about.  The bare `build_diamond_chain`
+/// writes no vars and so has no phis at all.
+fn build_phi_diamond_chain(n: u64) -> strider_ir::Function {
+    let reg = strider_ir_test_utils::reg_vn(0, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(reg)
+        .callee_saved(reg)
+        .build_fn()
+        .unwrap();
+
+    let mut regions = Vec::new();
+    for _ in 0..n {
+        regions.push((
+            b.create_region_all().unwrap(),
+            b.create_region_all().unwrap(),
+            b.create_region_all().unwrap(),
+        ));
+    }
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(regions[0].0).unwrap();
+
+    for (i, &(head, t_arm, f_arm)) in regions.iter().enumerate() {
+        let merge = regions.get(i + 1).map_or(exit, |r| r.0);
+        let base = 0x1_0000 + (i as u64) * 0x100;
+
+        b.set_region(head);
+        b.set_lift_addr(Some(base));
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, t_arm, f_arm).unwrap();
+        b.set_lift_addr(None);
+
+        for (arm, k) in [(t_arm, 1u64), (f_arm, 2u64)] {
+            b.set_region(arm);
+            b.set_lift_addr(Some(base + k * 0x10));
+            let v = b.build_int_const(k, ValueType::I64).unwrap();
+            b.write_variable(&reg, v).unwrap();
+            b.build_branch(merge).unwrap();
+            b.set_lift_addr(None);
+        }
+    }
+
+    b.set_region(exit);
+    b.set_lift_addr(Some(0xF_0000));
+    let merged = b.read_variable(&reg).unwrap();
+    b.build_return(None, &[merged]).unwrap();
+    b.set_lift_addr(None);
+
+    b.build().unwrap()
+}
+
+/// `phi_input_from_edge` with the arm value bound by `any_input` on the phi
+/// pattern (anchored at the phi's inputs, O(arity)) as the phi count rises.
+fn phi_input_from_edge_benches(c: &mut Criterion) {
+    for n in [6u64, 60] {
+        let function = build_phi_diamond_chain(n);
+        let (t, ph, v) = (Capture::new(), Capture::new(), Capture::new());
+        let guard = if_node().capture_true(t).build();
+        let phi_p = phi()
+            .any_input(any_int_const().capture(v))
+            .capture(ph)
+            .build();
+        let cons = JoinConstraint::PhiInputFromEdge {
+            phi: ph,
+            edge: t,
+            value: v,
+        };
+        let hits = Matcher::new(&function)
+            .find_joined_constrained(&[&guard, &phi_p], std::slice::from_ref(&cons))
+            .unwrap();
+        assert!(
+            !hits.is_empty(),
+            "phi_input_from_edge join must have hits, else this benchmark measures nothing"
+        );
+        c.bench_function(&format!("phi_input_from_edge_any_input/{n}"), |b| {
+            b.iter(|| {
+                let hits = Matcher::new(black_box(&function))
+                    .find_joined_constrained(&[&guard, &phi_p], std::slice::from_ref(&cons))
+                    .unwrap();
+                black_box(hits)
+            });
+        });
+
+        // The BASELINE the inline form was originally measured against: the arm
+        // value as its own free-floating root, searched over the whole graph and
+        // joined as a cross-product against the phi.  `any_input` must stay in
+        // the same class as (or beat) this, exactly as the inline form did.
+        let bare_phi = phi().capture(ph).build();
+        let val_root = any_int_const().capture(v).into_pattern();
+        c.bench_function(&format!("phi_input_from_edge_floating_root/{n}"), |b| {
+            b.iter(|| {
+                let hits = Matcher::new(black_box(&function))
+                    .find_joined_constrained(
+                        &[&guard, &bare_phi, &val_root],
+                        std::slice::from_ref(&cons),
+                    )
+                    .unwrap();
+                black_box(hits)
+            });
+        });
+    }
+}
+
+criterion_group!(
+    benches,
+    matcher_benches,
+    join_constraint_benches,
+    phi_input_from_edge_benches
+);
 criterion_main!(benches);

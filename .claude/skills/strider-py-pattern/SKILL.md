@@ -370,44 +370,51 @@ hits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
 
   ```python
   # Is this phi/edge pair even related? A wildcard cannot fail on value grounds.
-  visible = fn.find_all([guard, phi], constraints=[
-      cons.phi_input_from_edge(ph, t, p.anything())])
+  v = p.Capture()
+  probe = p.phi().any_input(p.anything().capture(v)).capture(ph)
+  visible = fn.find_all([guard, probe], constraints=[
+      cons.phi_input_from_edge(ph, t, v)])
   if not visible:
       ...  # the edge does not reach this phi AT ALL — not a value mismatch
   ```
 
   Do this before concluding anything from a negative result.
 
-  `value` takes either spelling:
+  **`value` is a `Capture`** that some pattern in the list must bind. Bind it on
+  the PHI PATTERN itself with `.any_input(...)` — the fact then stays local:
 
-  * **A pattern, matched inline at the arm value — prefer this.** The fact stays
-    local: `find_all([if_else().capture_true(t), phi().capture(ph)],
-    constraints=[phi_input_from_edge(ph, t, int_const(K))])`. Captures inside it
-    bind and read back off the match (`any_int_const(v)` inline still gives
-    `hit.uint(v)`), unifying with — never overwriting — anything the rest of the
-    join already bound.
-  * **A `Capture`**, which some other pattern in the list must bind; compared by
-    identity: `find_all([if_else().capture_true(t), phi().capture(ph),
-    any_int_const(v)], constraints=[phi_input_from_edge(ph, t, v)])`.
+  ```python
+  v, ph, t = p.Capture(), p.Capture(), p.Capture()
+  fn.find_all(
+      [p.if_else().capture_true(t),
+       p.phi().any_input(p.int_const(K).capture(v)).capture(ph)],
+      constraints=[cons.phi_input_from_edge(ph, t, v)])
+  ```
 
-  Reach for the capture form only when the value genuinely IS a separate site you
-  want matched in its own right. Otherwise it costs you: the extra root floats free,
-  matching anywhere in the function and joining as a cartesian product against the
-  phi (`find_all` enumerates all distinct bindings), with the constraint pruning
-  only afterwards — plus each extra root needs its own capture hygiene. The inline
-  form replaces that whole-graph root search with one match at a known value.
+  `any_input` is anchored at the phi's own inputs, so it costs O(arity) and never
+  ranges over the whole function; captures inside it read back off the match
+  (`any_int_const(v)` still gives `hit.uint(v)`), and a phi whose edge reaches
+  several arms still enumerates one match per arm.
+
+  Give the value its own free-floating root only when it genuinely IS a separate
+  site you want matched in its own right: `find_all([if_else().capture_true(t),
+  phi().capture(ph), any_int_const(v)], constraints=[phi_input_from_edge(ph, t,
+  v)])`. That costs you — the extra root matches anywhere in the function and
+  joins as a cartesian product against the phi, with the constraint pruning only
+  afterwards — plus each extra root needs its own capture hygiene.
 
 - `cons.negate(c)` — the negation of any constraint: a tuple survives iff `c` does
   NOT hold. (`negate`, not `not_` — the Python surface has no trailing-underscore
   keyword dodges, and a boolean-connective name would read as a sibling of the
   IR value ops `int_and` / `int_or` / `int_not`, which it is not.)
 
-  **RANGE RESTRICTION — the rule that makes it sound.** Every capture `c`
-  mentions must be bound by a *positive* pattern in the same `find_all` list.
-  This is not a style rule; it is what stops negation from lying. A constraint
-  fails when a capture is unbound — it never saw anything — and under negation
-  that failure would flip to a vacuous TRUE and match EVERYTHING. So a `negate`
-  over an unbound capture raises `StriderError` rather than silently matching:
+  **RANGE RESTRICTION — the rule that makes it sound.** Every capture ANY
+  constraint mentions must be bound by a *positive* pattern in the same
+  `find_all` list. This is not a style rule; it is what stops a constraint from
+  lying. A constraint fails when a capture is unbound — it never saw anything —
+  which in a positive constraint silently drops every tuple (the ambiguous `[]`),
+  and under negation flips to a vacuous TRUE that matches EVERYTHING. Either way
+  `find_all` raises `StriderError` rather than answering blindly:
 
   ```python
   # Exactly the calls NOT gated on the true edge (false arm + post-merge tail):
@@ -419,10 +426,8 @@ hits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
               constraints=[cons.negate(cons.dominated_by_branch(t, p.Capture()))])
   ```
 
-  `negate(negate(c))` is the identity. `negate` of a `phi_input_from_edge` whose
-  `value` is an **inline pattern** is rejected: that form BINDS captures rather
-  than deciding a predicate, and there is nothing to bind on the false branch —
-  use the `Capture` value spelling if you need to negate such a fact.
+  `negate(negate(c))` is the identity. Every constraint is a pure filter, so
+  every constraint is negatable.
 
   Note this does NOT resolve the "empty result is ambiguous" trap above: `negate`
   negates the *constraint*, not the *visibility* of the edge. Probe with

@@ -112,7 +112,7 @@ fn dominated_by_branch_rejects_calls_past_a_join_with_an_empty_arm() {
     let tuples = m
         .find_joined_constrained(
             &[&guard, &callp],
-            &[&JoinConstraint::DominatedByBranch { branch: t, node: c }],
+            &[JoinConstraint::DominatedByBranch { branch: t, node: c }],
         )
         .unwrap();
     let addrs: Vec<u64> = tuples
@@ -149,7 +149,7 @@ fn dominated_by_branch_isolates_the_true_arm_in_one_constraint() {
     let tuples = m
         .find_joined_constrained(
             &[&guard, &callp],
-            &[&JoinConstraint::DominatedByBranch { branch: t, node: c }],
+            &[JoinConstraint::DominatedByBranch { branch: t, node: c }],
         )
         .unwrap();
     let addrs: Vec<u64> = tuples
@@ -172,7 +172,7 @@ fn dominates_if_selects_all_three_calls() {
     let tuples = m
         .find_joined_constrained(
             &[&guard, &callp],
-            &[&JoinConstraint::Dominates { a: g, b: c }],
+            &[JoinConstraint::Dominates { a: g, b: c }],
         )
         .unwrap();
     // The If dominates both arms and the merge — every call.
@@ -191,7 +191,7 @@ fn negate_inverts_dominated_by_branch() {
 
     let inner = JoinConstraint::DominatedByBranch { branch: t, node: c };
     let tuples = m
-        .find_joined_constrained(&[&guard, &callp], &[&JoinConstraint::Not(Box::new(inner))])
+        .find_joined_constrained(&[&guard, &callp], &[JoinConstraint::Not(Box::new(inner))])
         .unwrap();
     let mut addrs: Vec<u64> = tuples
         .iter()
@@ -213,13 +213,42 @@ fn double_negation_is_the_identity() {
     let inner = JoinConstraint::DominatedByBranch { branch: t, node: c };
     let double = JoinConstraint::Not(Box::new(JoinConstraint::Not(Box::new(inner))));
     let tuples = m
-        .find_joined_constrained(&[&guard, &callp], &[&double])
+        .find_joined_constrained(&[&guard, &callp], &[double])
         .unwrap();
     let addrs: Vec<u64> = tuples
         .iter()
         .map(|tp| call_addr(tp, c, &function))
         .collect();
     assert_eq!(addrs, vec![0xAAAA]);
+}
+
+/// Range restriction is ONE rule over every constraint, not a negation
+/// carve-out: an unbound capture in a POSITIVE constraint could never be
+/// satisfied, so it would silently drop every tuple and return the ambiguous ∅
+/// that reads as "no such shape". Reject it loudly instead.
+#[test]
+fn a_positive_constraint_with_an_unbound_capture_is_rejected_not_silently_empty() {
+    let (function, _) = diamond_with_calls();
+    let m = Matcher::new(&function);
+    let (t, c, unbound) = (Capture::new(), Capture::new(), Capture::new());
+    let guard = if_node().capture_true(t).build();
+    let callp = call().capture(c).build();
+
+    let err = m
+        .find_joined_constrained(
+            &[&guard, &callp],
+            &[JoinConstraint::DominatedByBranch {
+                branch: t,
+                node: unbound,
+            }],
+        )
+        .err()
+        .expect("must be rejected, not silently empty")
+        .to_string();
+    assert!(
+        err.contains("no pattern in the join binds"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -238,28 +267,7 @@ fn negating_an_unbound_capture_is_rejected_not_vacuously_true() {
         node: unbound,
     };
     let err = m
-        .find_joined_constrained(&[&guard, &callp], &[&JoinConstraint::Not(Box::new(inner))])
-        .err()
-        .expect("must be rejected, not vacuously true")
-        .to_string();
-    assert!(err.contains("negate"), "unexpected error: {err}");
-}
-
-#[test]
-fn negating_a_binding_constraint_is_rejected() {
-    let (function, _) = diamond_with_calls();
-    let m = Matcher::new(&function);
-    let (t, c) = (Capture::new(), Capture::new());
-    let guard = if_node().capture_true(t).build();
-    let callp = call().capture(c).build();
-
-    let inner = JoinConstraint::PhiInputFromEdge {
-        phi: c,
-        edge: t,
-        value: strider_pattern::ValueSpec::Pattern(Box::new(call().build())),
-    };
-    let err = m
-        .find_joined_constrained(&[&guard, &callp], &[&JoinConstraint::Not(Box::new(inner))])
+        .find_joined_constrained(&[&guard, &callp], &[JoinConstraint::Not(Box::new(inner))])
         .err()
         .expect("must be rejected, not vacuously true")
         .to_string();

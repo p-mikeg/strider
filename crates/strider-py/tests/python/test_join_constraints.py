@@ -132,17 +132,17 @@ def _const_diamond():
     return fn
 
 
-def test_phi_input_from_edge_accepts_inline_value_pattern():
-    """`value` may be a PATTERN matched inline at the arm — no floating root."""
+def test_phi_input_from_edge_with_any_input_bound_value():
+    """The arm value is bound by `any_input` on the phi — no floating root."""
     fn = _const_diamond()
-    t, f, ph = p.Capture(), p.Capture(), p.Capture()
+    t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f)
-    phi = p.phi().capture(ph)
 
     def hits(edge, k):
+        phi = p.phi().any_input(p.int_const(k).capture(v)).capture(ph)
         return len(fn.find_all(
             [guard, phi],
-            constraints=[cons.phi_input_from_edge(ph, edge, p.int_const(k))],
+            constraints=[cons.phi_input_from_edge(ph, edge, v)],
         ))
 
     # Each edge merges exactly one of {1, 2}, and the two edges disagree.
@@ -151,17 +151,17 @@ def test_phi_input_from_edge_accepts_inline_value_pattern():
     assert hits(t, 1) != hits(f, 1)
 
 
-def test_inline_pattern_capture_is_readable():
-    """A capture INSIDE the inline pattern binds and reads back off the Match."""
+def test_any_input_capture_is_readable():
+    """A capture bound by `any_input` reads back off the Match."""
     fn = _const_diamond()
     t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f)
-    phi = p.phi().capture(ph)
+    phi = p.phi().any_input(p.any_int_const(v)).capture(ph)
 
     def read(edge):
         hits = fn.find_all(
             [guard, phi],
-            constraints=[cons.phi_input_from_edge(ph, edge, p.any_int_const(v))],
+            constraints=[cons.phi_input_from_edge(ph, edge, v)],
         )
         assert len(hits) == 1, f"expected one arm value, got {len(hits)}"
         return hits[0].uint(v)
@@ -171,23 +171,24 @@ def test_inline_pattern_capture_is_readable():
     assert true_val != false_val
 
 
-def test_inline_pattern_negative_when_arm_differs():
+def test_any_input_negative_when_arm_differs():
     fn = _const_diamond()
-    t, ph = p.Capture(), p.Capture()
+    t, ph, v = p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t)
-    phi = p.phi().capture(ph)
+    phi = p.phi().any_input(p.int_const(0xDEAD).capture(v)).capture(ph)
     hits = fn.find_all(
         [guard, phi],
-        constraints=[cons.phi_input_from_edge(ph, t, p.int_const(0xDEAD))],
+        constraints=[cons.phi_input_from_edge(ph, t, v)],
     )
     assert hits == [], "no arm merges 0xDEAD"
 
 
-def test_inline_equivalent_to_capture_spelling():
-    """The inline form and today's two-root capture form agree on the arm."""
+def test_any_input_equivalent_to_floating_root_spelling():
+    """Binding the arm value with `any_input` agrees with the floating-root
+    spelling, where the value ranges over the whole function as its own root."""
     fn = _const_diamond()
 
-    def via_capture(pick_true):
+    def via_floating_root(pick_true):
         t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
         guard = p.if_else().capture_true(t).capture_false(f)
         edge = t if pick_true else f
@@ -198,33 +199,33 @@ def test_inline_equivalent_to_capture_spelling():
         assert len(hits) == 1
         return hits[0].uint(v)
 
-    def via_inline(pick_true):
+    def via_any_input(pick_true):
         t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
         guard = p.if_else().capture_true(t).capture_false(f)
         edge = t if pick_true else f
         hits = fn.find_all(
-            [guard, p.phi().capture(ph)],
-            constraints=[cons.phi_input_from_edge(ph, edge, p.any_int_const(v))],
+            [guard, p.phi().any_input(p.any_int_const(v)).capture(ph)],
+            constraints=[cons.phi_input_from_edge(ph, edge, v)],
         )
         assert len(hits) == 1
         return hits[0].uint(v)
 
-    assert via_capture(True) == via_inline(True)
-    assert via_capture(False) == via_inline(False)
+    assert via_floating_root(True) == via_any_input(True)
+    assert via_floating_root(False) == via_any_input(False)
 
 
-def test_inline_capture_unifies_with_tuple_binding():
-    """`v` bound BOTH by a real root and inside the inline pattern must AGREE."""
+def test_any_input_capture_unifies_with_tuple_binding():
+    """`v` bound BOTH by a floating root and by `any_input` must AGREE."""
     fn = _const_diamond()
     t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f)
-    phi = p.phi().capture(ph)
+    phi = p.phi().any_input(p.any_int_const(v)).capture(ph)
     val_root = p.any_int_const(v)
 
     def count(edge):
         return len(fn.find_all(
             [guard, phi, val_root],
-            constraints=[cons.phi_input_from_edge(ph, edge, p.any_int_const(v))],
+            constraints=[cons.phi_input_from_edge(ph, edge, v)],
         ))
 
     # The root ranges over every int const; unification must pin `v` to the arm.
@@ -278,25 +279,22 @@ def test_phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch():
     """A `[]` result is AMBIGUOUS: either the edge reaches no arm of this phi, or
     it does and the arm merges a different value.  Re-probe with `anything()` —
     a wildcard cannot fail on value grounds, so `[]` from it proves the edge is
-    not visible.  This is the discriminator, and it needs no dedicated API.
+    not visible.  This is the discriminator, and it needs no dedicated API — the
+    wildcard is bound by `any_input` on the phi, like any other arm value.
     """
     fn = _across_call_diamond()
-    t, ph = p.Capture(), p.Capture()
+    t, ph, v = p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t)
-    phi = p.phi().capture(ph)
 
     # The edge IS visible — even across the call — so the wildcard hits.
-    visible = fn.find_all(
-        [guard, phi], constraints=[cons.phi_input_from_edge(ph, t, p.anything())]
-    )
+    probe = p.phi().any_input(p.anything().capture(v)).capture(ph)
+    visible = fn.find_all([guard, probe], constraints=[cons.phi_input_from_edge(ph, t, v)])
     assert len(visible) >= 1
 
     # ...yet no arm merges 0xDEAD.  Same `[]`, but the wildcard probe above
     # proves this one is a real mismatch, not blindness.
-    mismatch = fn.find_all(
-        [guard, phi],
-        constraints=[cons.phi_input_from_edge(ph, t, p.int_const(0xDEAD))],
-    )
+    dead = p.phi().any_input(p.int_const(0xDEAD).capture(v)).capture(ph)
+    mismatch = fn.find_all([guard, dead], constraints=[cons.phi_input_from_edge(ph, t, v)])
     assert mismatch == []
 
 
@@ -353,15 +351,6 @@ def test_negate_with_an_unbound_capture_does_not_vacuously_match():
             [guard, call],
             constraints=[cons.negate(cons.dominated_by_branch(t, unbound))],
         )
-    assert "negate" in str(ei.value)
-
-
-def test_negate_of_a_binding_constraint_is_rejected_at_construction():
-    """An inline value pattern BINDS rather than deciding a predicate; there is
-    nothing to bind on the false branch, so negating it is rejected."""
-    ph, e = p.Capture(), p.Capture()
-    with pytest.raises(strider.errors.StriderError) as ei:
-        cons.negate(cons.phi_input_from_edge(ph, e, p.anything()))
     assert "negate" in str(ei.value)
 
 

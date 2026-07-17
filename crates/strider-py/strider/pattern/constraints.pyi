@@ -9,7 +9,7 @@ two kinds cannot be mistaken for one another.
 
 from __future__ import annotations
 
-from . import Capture, Pat
+from . import Capture
 
 class JoinConstraint:
     """A CFG relation between captured entities. Construct via
@@ -24,7 +24,7 @@ def dominated_by_branch(branch: Capture, node: Capture) -> JoinConstraint:
     `capture_true`/`capture_false` value) — in that block exclusively, so
     `dominated_by_branch(true_edge, c)` means "`c` is in the true block"."""
 def phi_input_from_edge(
-    phi: Capture, edge: Capture, value: Capture | Pat
+    phi: Capture, edge: Capture, value: Capture
 ) -> JoinConstraint:
     """`phi`'s data input on the predecessor fed by control edge `edge` is
     `value` — "the value merged from THIS branch is X". `edge` binds an `If`'s
@@ -38,19 +38,24 @@ def phi_input_from_edge(
 
     An empty result is AMBIGUOUS: either `edge` reaches no arm of `phi`, or it
     does and the arm merges a different value. Re-probe with `anything()` as the
-    value to tell them apart — a wildcard cannot fail on value grounds, so an
-    empty result from it proves the edge is not visible:
+    bound value to tell them apart — a wildcard cannot fail on value grounds, so
+    an empty result from it proves the edge is not visible:
 
-        if not fn.find_all([g, ph_p], constraints=[
-                p.phi_input_from_edge(ph, e, p.anything())]):
+        v = Capture()
+        probe = p.phi().any_input(p.anything().capture(v)).capture(ph)
+        if not fn.find_all([g, probe], constraints=[
+                p.phi_input_from_edge(ph, e, v)]):
             ...  # the edge does not reach this phi at all — not a mismatch
 
-    `value` is either a `Capture` (bound by another pattern in the same
-    `find_all` list; compared by identity) or a **pattern** matched inline at the
-    arm value. The inline form states the fact locally — no independent root
-    ranging over the whole function and no cartesian product against it — and it
-    binds: captures inside it read back off the match, unifying with (never
-    overwriting) whatever the rest of the join already bound."""
+    `value` is a `Capture`, bound by another pattern in the same `find_all` list
+    and compared by identity. Bind it on the PHI PATTERN with `.any_input(...)`
+    rather than as an independent root: `any_input` is anchored at the phi's own
+    inputs, so it costs O(arity) and never ranges over the whole function, and it
+    still enumerates one match per qualifying arm:
+
+        v, ph = Capture(), Capture()
+        fn.find_all([guard, p.phi().any_input(p.int_const(1).capture(v)).capture(ph)],
+                    constraints=[p.phi_input_from_edge(ph, t, v)])"""
 
 def negate(c: JoinConstraint) -> JoinConstraint:
     """The negation of `c`: a tuple survives iff `c` does NOT hold.
@@ -59,9 +64,9 @@ def negate(c: JoinConstraint) -> JoinConstraint:
     pattern in the same `find_all` list.  An unbound capture makes `c` fail for
     want of a binding, which under negation would flip to a vacuous "true" and
     match everything; `find_all` raises `StriderError` instead of matching
-    blindly.
+    blindly.  This holds for EVERY constraint, not just negated ones — an
+    unbound capture in a positive constraint could never be satisfied and would
+    silently return `[]`.
 
-    `negate` of a `phi_input_from_edge` with an inline value *pattern* is
-    rejected — that form binds captures rather than deciding a predicate, so
-    there is nothing to bind on the false branch; use a `Capture` value instead.
+    Every constraint is a pure filter, so every constraint is negatable.
     `negate(negate(c))` is allowed and is the identity."""
