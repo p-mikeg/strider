@@ -455,7 +455,7 @@ impl<'f> Matcher<'f> {
                 let plan = ConstraintPlan::compile(c)?;
                 let mut next: Vec<Vec<Match>> = Vec::with_capacity(acc.len());
                 for tuple in acc {
-                    plan.expand(self, &eval, tuple, &mut next);
+                    next.extend(plan.apply(self, &eval, tuple));
                 }
                 acc = next;
                 if acc.is_empty() {
@@ -489,40 +489,43 @@ impl<'f> Matcher<'f> {
         eval: &ConstraintEval,
         plan: &PhiInlinePlan,
         tuple: Vec<Match>,
-        out: &mut Vec<Vec<Match>>,
-    ) {
+    ) -> Vec<Vec<Match>> {
         let &PhiInlinePlan {
             phi,
             edge,
             pat,
             root,
-            ref caps,
         } = plan;
         let (Some(phi_v), Some(edge_v)) = (eval.value_of(&tuple, phi), eval.value_of(&tuple, edge))
         else {
-            return;
+            return Vec::new();
         };
         // Pull the first qualifying arm to bail out before the per-tuple seed
         // build below, then chain it back on — still lazy, nothing collected.
         let mut arms = eval.phi_arms_from_edge(phi_v, edge_v);
         let Some(first_arm) = arms.next() else {
-            return;
+            return Vec::new();
         };
         let arms = std::iter::once(first_arm).chain(arms);
         // The inline bindings are merged into the match that bound `phi` — the
         // constraint's anchor — so a caller reads them off the tuple exactly as
         // it would a real root's.
         let Some(anchor) = tuple.iter().position(|m| m.is_bound(phi)) else {
-            return;
+            return Vec::new();
         };
 
+        // Seed with EVERY capture the tuple binds, not just the ones the inline
+        // pattern mentions: an unmentioned capture is inert (the pattern never
+        // rebinds it), so filtering them out bought nothing and cost the plan a
+        // capture list to carry. `Bindings::bind_capture`'s rebind-conflict
+        // detection then unifies the mentioned ones for free.
         let mut seed = Bindings::default();
         for m in &tuple {
             for (cap, b) in m.bindings.iter() {
                 // First binding wins, matching `value_of`'s `find_map`; a tuple
                 // agrees on shared captures already, but may spell one as a
                 // `Node` and another as a `Value` of the same node.
-                if caps.contains(&cap) && !seed.is_bound(cap) {
+                if !seed.is_bound(cap) {
                     seed.bind_capture(cap, b);
                 }
             }
@@ -547,31 +550,32 @@ impl<'f> Matcher<'f> {
             walk::try_match(self, pat, root, arm, &mut arm_seed, &mut collect);
         }
 
-        for b in hits {
-            let mut t = tuple.clone();
-            for (cap, bind) in b.iter() {
-                // Already in the tuple (seeded, hence already unified) — skip.
-                if t.iter().any(|m| m.is_bound(cap)) {
-                    continue;
+        hits.into_iter()
+            .map(|b| {
+                let mut t = tuple.clone();
+                for (cap, bind) in b.iter() {
+                    // Already in the tuple (seeded, hence already unified) — skip.
+                    if t.iter().any(|m| m.is_bound(cap)) {
+                        continue;
+                    }
+                    t[anchor].bindings.bind_capture(cap, bind);
                 }
-                t[anchor].bindings.bind_capture(cap, bind);
-            }
-            out.push(t);
-        }
+                t
+            })
+            .collect()
     }
 }
 
 /// The per-constraint prep an inline-pattern `PhiInputFromEdge` needs, hoisted
-/// OUT of the per-tuple loop: the `value` pattern's root resolution and capture
-/// list are fixed for the whole pass, so the per-tuple cost stays at one match
-/// attempt at one known value — strictly less work than the whole-graph root
-/// search the capture spelling needs.
+/// OUT of the per-tuple loop: the `value` pattern's root resolution is fixed for
+/// the whole pass, so the per-tuple cost stays at one match attempt at one known
+/// value — strictly less work than the whole-graph root search the capture
+/// spelling needs.
 struct PhiInlinePlan<'c> {
     phi: crate::Capture,
     edge: crate::Capture,
     pat: &'c Pattern,
     root: PatNodeId,
-    caps: Vec<crate::Capture>,
 }
 
 /// One [`JoinConstraint`] compiled for a pass over the accumulator.
@@ -608,28 +612,28 @@ impl<'c> ConstraintPlan<'c> {
                 edge: *edge,
                 pat: p,
                 root: p.root()?,
-                caps: p.bound_captures().collect(),
             })),
             _ => Ok(Self::Predicate(c)),
         }
     }
 
-    /// Apply this constraint to one joined `tuple`, pushing its 0..n survivors
-    /// onto `out`. A filter is just the expansion that yields 0 or 1.
-    fn expand(
+    /// Apply this constraint to one joined `tuple`, returning its 0..n
+    /// survivors. A filter is just the application that yields 0 or 1.
+    fn apply(
         &self,
         matcher: &Matcher<'_>,
         eval: &ConstraintEval,
         tuple: Vec<Match>,
-        out: &mut Vec<Vec<Match>>,
-    ) {
+    ) -> Vec<Vec<Match>> {
         match self {
             Self::Predicate(c) => {
                 if eval.holds(c, &tuple) {
-                    out.push(tuple);
+                    vec![tuple]
+                } else {
+                    Vec::new()
                 }
             }
-            Self::PhiInline(plan) => matcher.expand_phi_inline(eval, plan, tuple, out),
+            Self::PhiInline(plan) => matcher.expand_phi_inline(eval, plan, tuple),
         }
     }
 }
