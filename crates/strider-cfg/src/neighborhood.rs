@@ -122,7 +122,11 @@ impl Cfg {
                 .node_weight(node)
                 .ok_or_else(|| anyhow::anyhow!("invalid region index {node:?}"))?;
             let start = region.start_addr.machine_addr.addr;
-            let label = format!("n{}  {start:#x}\\l{} insns", node.index(), region.insns.len());
+            let label = format!(
+                "n{}  {start:#x}\\l{} insns",
+                node.index(),
+                region.insns.len()
+            );
             let id = format!("n{}", node.index());
             let extra: &[(&str, &str)] = if node == center {
                 &[("color", "\"#ffcc00\""), ("penwidth", "2.5")]
@@ -182,7 +186,11 @@ mod tests {
         assert_eq!(neighborhood_regions(&cfg, entry, 0, 999).len(), 1);
         // depth 1 from entry reaches its successor block(s)
         let d1 = neighborhood_regions(&cfg, entry, 1, 999);
-        assert!(d1.len() >= 2, "depth 1 must reach a successor: {}", d1.len());
+        assert!(
+            d1.len() >= 2,
+            "depth 1 must reach a successor: {}",
+            d1.len()
+        );
         assert!(d1.contains(&entry));
         // budget caps the set
         assert!(neighborhood_regions(&cfg, entry, 5, 1).len() <= 1);
@@ -229,7 +237,10 @@ mod tests {
             .neighborhood_dot(&sleigh, entry, 1, 999)
             .expect("neighborhood_dot");
         // real dot node id == region index of the center
-        assert!(dot.contains(&format!("\"{}\"", entry.index())), "dot:\n{dot}");
+        assert!(
+            dot.contains(&format!("\"{}\"", entry.index())),
+            "dot:\n{dot}"
+        );
         // center carries the gold highlight border
         assert!(dot.contains("#ffcc00"), "dot:\n{dot}");
 

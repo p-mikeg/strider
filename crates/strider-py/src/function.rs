@@ -315,7 +315,6 @@ impl PyFunction {
         dedup_matches(&slf, py, raw, generation, ignore_root)
     }
 
-
     /// Find the single binding of `pat`, erroring if there is not exactly
     /// one.  Replaces the `hits = find_all(p); assert len(hits) == 1; hits[0]`
     /// idiom with distinct error messages for the 0-match and >1-match cases.
@@ -562,10 +561,7 @@ fn run_pattern_query(
         // constraint (even over one pattern's own captures) routes through the
         // constrained join so the CFG filter runs.
         if refs.len() == 1 && constraints.is_empty() {
-            Ok(matcher
-                .matches(refs[0])?
-                .map(|m| vec![m])
-                .collect())
+            Ok(matcher.matches(refs[0])?.map(|m| vec![m]).collect())
         } else {
             matcher.find_joined_constrained(&refs, constraints)
         }

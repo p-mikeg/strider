@@ -188,7 +188,6 @@ mod tests {
         );
     }
 
-
     // ── simple_fast_join_idom_is_branch_region ────────────────────────────────
 
     #[test]

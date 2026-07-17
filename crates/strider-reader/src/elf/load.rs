@@ -149,7 +149,6 @@ impl OwnedElf {
     /// and are immutable, so this re-parse of identical bytes cannot fail.
     #[inline]
     pub fn file(&self) -> object::File<'_> {
-        object::File::parse(&self.backing[..])
-            .expect("bytes were validated as ELF at construction")
+        object::File::parse(&self.backing[..]).expect("bytes were validated as ELF at construction")
     }
 }

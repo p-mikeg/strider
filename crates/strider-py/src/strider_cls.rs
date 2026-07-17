@@ -211,10 +211,7 @@ pub struct PyLifter {
 
 /// The Python callback objects (mem, then rom) backing a build, shared
 /// with the Sleigh / rom adapters for cyclic-GC traversal.
-fn collect_py_deps(
-    mem: &MemInput,
-    rom: Option<&MemInput>,
-) -> Vec<std::sync::Arc<Py<PyAny>>> {
+fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc<Py<PyAny>>> {
     let mut deps = Vec::new();
     if let Some(o) = mem.py_callback() {
         deps.push(o);

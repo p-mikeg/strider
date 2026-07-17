@@ -1251,7 +1251,8 @@ mod tests {
     #[test]
     fn ppc_call_others_classify_by_effect() {
         use crate::ArchPreset::{Ppc32Be, Ppc64Be, Ppc64Le};
-        let mem = |n| matches!(classify(Ppc64Be, n), Some(CallOtherClass::Call(a)) if a.clobbers_memory);
+        let mem =
+            |n| matches!(classify(Ppc64Be, n), Some(CallOtherClass::Call(a)) if a.clobbers_memory);
         let pure = |n| matches!(classify(Ppc64Be, n), Some(CallOtherClass::Call(a)) if !a.clobbers_memory && !a.no_return);
 
         // Stores / atomics / cache+TLB+SLB modification advance the memory edge.
@@ -1270,8 +1271,8 @@ mod tests {
             "LoadDoublewordByteReverseIndexed",
             "slbMoveFromEntryVSID",
             "random",
-            "altv207_45",       // prefix
-            "vsx300_20",        // prefix
+            "altv207_45",              // prefix
+            "vsx300_20",               // prefix
             "vectorConditionalSelect", // prefix
         ] {
             assert!(pure(n), "{n} should be pure");
@@ -1281,12 +1282,19 @@ mod tests {
             assert_eq!(classify(Ppc64Be, n), Some(CallOtherClass::NO_RETURN), "{n}");
         }
         // Prefetch / system-state hints are no-ops.
-        assert_eq!(classify(Ppc32Be, "dataCacheBlockTouch"), Some(CallOtherClass::NoOp));
+        assert_eq!(
+            classify(Ppc32Be, "dataCacheBlockTouch"),
+            Some(CallOtherClass::NoOp)
+        );
         assert_eq!(classify(Ppc64Le, "waitT"), Some(CallOtherClass::NoOp));
 
         // Scoped to PPC: the generic-word ops must not match on another arch.
         for n in ["random", "message", "trapWord", "vectorConditionalSelect"] {
-            assert_eq!(classify(crate::ArchPreset::Aarch64, n), None, "{n} leaked to AArch64");
+            assert_eq!(
+                classify(crate::ArchPreset::Aarch64, n),
+                None,
+                "{n} leaked to AArch64"
+            );
         }
     }
 

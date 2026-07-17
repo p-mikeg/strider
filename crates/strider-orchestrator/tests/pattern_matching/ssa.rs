@@ -296,8 +296,11 @@ fn phi_input_from_edge_ties_value_to_its_branch() {
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
     pre.add(strider_orchestrator::opt::PhiCollapse);
     pre.add(strider_orchestrator::opt::RegionCollapse);
-    pre.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .expect("collapse");
+    pre.run(
+        &mut function,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .expect("collapse");
 
     let m = Matcher::new(&function);
     let (t, f, ph, v) = (
@@ -327,7 +330,10 @@ fn phi_input_from_edge_ties_value_to_its_branch() {
     };
 
     let (true_val, false_val) = (read(t), read(f));
-    assert_ne!(true_val, false_val, "each edge selects its own branch value");
+    assert_ne!(
+        true_val, false_val,
+        "each edge selects its own branch value"
+    );
     assert_eq!(
         [true_val, false_val]
             .into_iter()
@@ -380,8 +386,11 @@ fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
     pre.add(strider_orchestrator::opt::PhiCollapse);
     pre.add(strider_orchestrator::opt::RegionCollapse);
-    pre.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .expect("collapse");
+    pre.run(
+        &mut function,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .expect("collapse");
 
     let m = Matcher::new(&function);
     let (t, f, mp, sv, dv) = (
@@ -418,7 +427,10 @@ fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
     };
 
     let (true_val, false_val) = (read(t), read(f));
-    assert_ne!(true_val, false_val, "each edge selects its own branch store");
+    assert_ne!(
+        true_val, false_val,
+        "each edge selects its own branch store"
+    );
     assert_eq!(
         [true_val, false_val]
             .into_iter()

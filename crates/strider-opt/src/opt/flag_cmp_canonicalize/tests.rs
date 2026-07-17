@@ -1194,7 +1194,10 @@ fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
         .expect("If node");
     let cond_node = fg.producer(fg.if_cond(if_node));
     assert!(
-        matches!(fg.node_kind(cond_node), NodeKind::IntBinaryOp(IntBinaryOp::Or)),
+        matches!(
+            fg.node_kind(cond_node),
+            NodeKind::IntBinaryOp(IntBinaryOp::Or)
+        ),
         "wrong-offset LS tree must NOT fold to a single comparison; got {:?}",
         fg.node_kind(cond_node)
     );
@@ -1230,7 +1233,11 @@ fn eq_add_const_solves_for_x() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        &mut fg,
+        &mut crate::OptCtx::new(None),
+    )?;
 
     let if_node = fg
         .walk()
@@ -1288,9 +1295,16 @@ fn eq_xor_const_solves_for_x() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        &mut fg,
+        &mut crate::OptCtx::new(None),
+    )?;
 
-    let if_node = fg.walk().find(|&n| matches!(fg.node_kind(n), NodeKind::If)).expect("If");
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If");
     let cond_node = fg.producer(fg.if_cond(if_node));
     assert!(matches!(
         fg.node_kind(cond_node),
@@ -1331,14 +1345,23 @@ fn eq_neg_solves_for_x() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        &mut fg,
+        &mut crate::OptCtx::new(None),
+    )?;
 
-    let if_node = fg.walk().find(|&n| matches!(fg.node_kind(n), NodeKind::If)).expect("If");
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If");
     let cond_node = fg.producer(fg.if_cond(if_node));
     let inputs: Vec<_> = fg.node_inputs(cond_node).into_iter().collect();
     assert!(inputs.contains(&x), "operand must be x (neg stripped)");
     assert!(
-        inputs.iter().any(|&o| fg.int_const_u128(o) == Some(0xFFFF_FFFB)),
+        inputs
+            .iter()
+            .any(|&o| fg.int_const_u128(o) == Some(0xFFFF_FFFB)),
         "const must be -5 masked to I32 = 0xFFFF_FFFB"
     );
     strider_ir::validate::validate(&fg)?;
@@ -1374,9 +1397,16 @@ fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        &mut fg,
+        &mut crate::OptCtx::new(None),
+    )?;
 
-    let if_node = fg.walk().find(|&n| matches!(fg.node_kind(n), NodeKind::If)).expect("If");
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If");
     // cond = Xor(Equal(And(x, 0x1000_0000), 0), IntConst(1))
     let xor = fg.producer(fg.if_cond(if_node));
     assert!(
@@ -1385,15 +1415,22 @@ fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
         fg.node_kind(xor)
     );
     let xor_in: Vec<_> = fg.node_inputs(xor).into_iter().collect();
-    assert!(xor_in.iter().any(|&o| fg.int_const_u128(o) == Some(1)), "xor with 1");
+    assert!(
+        xor_in.iter().any(|&o| fg.int_const_u128(o) == Some(1)),
+        "xor with 1"
+    );
     let eq = xor_in
         .iter()
         .find_map(|&o| {
-            matches!(fg.kind_of_value(o), NodeKind::IntCmpOp(IntCmpOp::Equal)).then(|| fg.producer(o))
+            matches!(fg.kind_of_value(o), NodeKind::IntCmpOp(IntCmpOp::Equal))
+                .then(|| fg.producer(o))
         })
         .expect("Equal operand of Xor");
     let eq_in: Vec<_> = fg.node_inputs(eq).into_iter().collect();
-    assert!(eq_in.iter().any(|&o| fg.int_const_u128(o) == Some(0)), "eq to 0");
+    assert!(
+        eq_in.iter().any(|&o| fg.int_const_u128(o) == Some(0)),
+        "eq to 0"
+    );
     let and = eq_in
         .iter()
         .find_map(|&o| {
@@ -1404,7 +1441,9 @@ fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
     let and_in: Vec<_> = fg.node_inputs(and).into_iter().collect();
     assert!(and_in.contains(&x), "And on x");
     assert!(
-        and_in.iter().any(|&o| fg.int_const_u128(o) == Some(0x1000_0000)),
+        and_in
+            .iter()
+            .any(|&o| fg.int_const_u128(o) == Some(0x1000_0000)),
         "mask must be 1<<(31-3) = 0x1000_0000"
     );
     strider_ir::validate::validate(&fg)?;
@@ -1438,8 +1477,15 @@ fn sless_of_oversized_left_shift_is_not_a_sign_bit_test() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    crate::pipeline::run_one(&FlagCmpCanonicalize::new(), &mut fg, &mut crate::OptCtx::new(None))?;
-    let if_node = fg.walk().find(|&n| matches!(fg.node_kind(n), NodeKind::If)).expect("If");
+    crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        &mut fg,
+        &mut crate::OptCtx::new(None),
+    )?;
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If");
     assert!(
         matches!(
             fg.node_kind(fg.producer(fg.if_cond(if_node))),

@@ -327,10 +327,13 @@ fn try_match_at(
         .into_iter()
         .partition(|e| e.consumer_slot == crate::matcher::ANY_INPUT_SLOT);
 
-    // Commutativity: exactly two fixed operands, IR kind commutative, not
-    // force_ordered. (Existential inputs never participate in reordering.)
+    // Commutativity: exactly two fixed operands, at slots {0,1} (the shape of
+    // every commutative IR kind's signature), IR kind commutative, not
+    // force_ordered. `.ordered()` sets `force_ordered`, which leaves both
+    // operands on `Candidates::Only` — one ordering, exactly as before.
     let commutative = !nd.force_ordered
         && fixed.len() == 2
+        && fixed.iter().all(|e| e.consumer_slot < COMM_ORDER.len())
         && ctx.function().node_kind(ir_node).is_commutative();
 
     // `ir_node`'s inputs are invariant across the whole existential search, so
@@ -353,32 +356,48 @@ fn try_match_at(
     // kind out. The wildcards' `Any` output kind is deliberate and load-bearing
     // elsewhere (`with_true(any())` matches a `Region`; a bare `any()` root
     // matches zero-output nodes), so the guard belongs here, not on them.
-    let ext_values: Vec<ValueId> = if existential.is_empty() {
+    let ext_slots: Vec<usize> = if existential.is_empty() {
         Vec::new()
     } else {
         ctx.function()
             .node_inputs(ir_node)
             .into_iter()
-            .filter(|&v| !matches!(ctx.function().value_kind(v), ValueKind::PhiToken))
+            .enumerate()
+            .filter(|&(_, v)| !matches!(ctx.function().value_kind(v), ValueKind::PhiToken))
+            .map(|(slot, _)| slot)
             .collect()
     };
 
-    let mark = bindings.mark();
-    let orders: &[bool] = if commutative {
-        &[false, true]
-    } else {
-        &[false]
-    };
+    // The one enumeration problem: assign each pattern input an IR input slot
+    // from its own candidate set, injectively. The fixed operands come first
+    // (their candidate sets are the pinned slots, or the commutative pair), then
+    // the existentials — the same order the two hand-rolled enumerators ran in.
+    let assigns: Vec<Assign> = fixed
+        .into_iter()
+        .map(|edge| {
+            let cands = if commutative {
+                Candidates::OneOf(&COMM_ORDER[edge.consumer_slot])
+            } else {
+                Candidates::Only(edge.consumer_slot)
+            };
+            Assign { edge, cands }
+        })
+        .chain(existential.into_iter().map(|edge| Assign {
+            edge,
+            cands: Candidates::OneOf(&ext_slots),
+        }))
+        .collect();
 
-    for &swap in orders {
-        // `finalize` finishes THIS node once every input (fixed + existential)
-        // has matched: bind the node's capture (capture-equality is enforced
-        // here against deeper bindings), run its guard, record it into the
-        // footprint, then hand off to the parent continuation `k`. Returning
-        // `false` makes the input enumeration try its next configuration (a
-        // deeper commutative swap or existential slot), and exhausting those
-        // makes the ordering loop try the swap — so an ANCESTOR guard failure
-        // surfaced through `k` re-drives this node and everything beneath it.
+    let mark = bindings.mark();
+    {
+        // `finalize` finishes THIS node once every input has been assigned a
+        // slot and matched there: bind the node's capture (capture-equality is
+        // enforced here against deeper bindings), run its guard, record it into
+        // the footprint, then hand off to the parent continuation `k`. Returning
+        // `false` makes the assignment enumeration try its next configuration (a
+        // deeper commutative swap, this node's swap, or an existential's next
+        // slot) — so an ANCESTOR guard failure surfaced through `k` re-drives
+        // this node and everything beneath it.
         let mut finalize = |b: &mut Bindings| -> bool {
             let inner = b.mark();
             for &(cap, binding) in cap_bindings.iter().flatten() {

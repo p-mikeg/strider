@@ -388,7 +388,11 @@ fn dot_id_maps_back_to_its_ir_node_including_duplicated_consts() {
     );
     // ...and every one of them resolves back to that same const node.
     for id in &const_ids {
-        assert_eq!(state.node_of_dot_id(id), Some(k), "dot id {id} -> the const");
+        assert_eq!(
+            state.node_of_dot_id(id),
+            Some(k),
+            "dot id {id} -> the const"
+        );
     }
 
     // Every non-const node resolves too.
@@ -1044,7 +1048,10 @@ fn neighborhood_bfs_bounds_depth_and_walks_both_directions() {
     consumers.entry(c2).or_default().push(add);
 
     // Depth 0 = just the center.
-    assert_eq!(neighborhood_nodes(&f, add, 0, 12, usize::MAX, &consumers).len(), 1);
+    assert_eq!(
+        neighborhood_nodes(&f, add, 0, 12, usize::MAX, &consumers).len(),
+        1
+    );
     // Depth 1 from Add reaches both operand producers (input edges).
     let d1 = neighborhood_nodes(&f, add, 1, 12, usize::MAX, &consumers);
     assert!(d1.contains(&c1) && d1.contains(&c2) && d1.contains(&add));
@@ -1079,7 +1086,11 @@ fn neighborhood_bfs_bounds_total_node_count() {
     let consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
 
     let budgeted = neighborhood_nodes(&f, add, 1, 12, 2, &consumers);
-    assert_eq!(budgeted.len(), 2, "budget of 2 must cap the neighborhood at 2 nodes");
+    assert_eq!(
+        budgeted.len(),
+        2,
+        "budget of 2 must cap the neighborhood at 2 nodes"
+    );
     assert!(budgeted.contains(&add), "center is always kept");
 }
 
@@ -1132,9 +1143,15 @@ fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
     let dot = dumper.neighborhood_dot(add1, 3, 12, 100).unwrap();
     let decl = node_decls(&dot)
         .into_iter()
-        .find(|l| l.trim_start().starts_with(&format!("\"{}\" ", add1.as_u32())))
+        .find(|l| {
+            l.trim_start()
+                .starts_with(&format!("\"{}\" ", add1.as_u32()))
+        })
         .unwrap_or_else(|| panic!("centre must render under its NodeId:\n{dot}"));
-    assert!(decl.contains("#ffcc00"), "centre must be highlighted: {decl}");
+    assert!(
+        decl.contains("#ffcc00"),
+        "centre must be highlighted: {decl}"
+    );
 
     // A const centre: the SAME box for both consumers (add1, add2), under its
     // NodeId — not one private `c*` box per use.
@@ -1149,7 +1166,10 @@ fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
         decls[0].trim_start().starts_with(&format!("\"{kid}\" ")),
         "centred const keeps its navigable NodeId id:\n{dot}"
     );
-    assert!(decls[0].contains("#ffcc00"), "centre must be highlighted:\n{dot}");
+    assert!(
+        decls[0].contains("#ffcc00"),
+        "centre must be highlighted:\n{dot}"
+    );
     for consumer in [add1, add2] {
         assert!(
             dot.contains(&format!("\"{kid}\" -> \"{}\"", consumer.as_u32())),
@@ -1212,7 +1232,10 @@ fn neighborhood_duplicates_shared_const_per_use() {
         .iter()
         .filter(|l| l.contains("IntConst"))
         .count();
-    assert_eq!(raw_consts, 3, "raw keeps one box per IR const (7,1,2):\n{raw}");
+    assert_eq!(
+        raw_consts, 3,
+        "raw keeps one box per IR const (7,1,2):\n{raw}"
+    );
     assert!(
         raw.contains(&format!("n{}", center.as_u32())),
         "raw neighborhood ids are IR node ids"

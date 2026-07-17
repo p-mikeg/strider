@@ -461,9 +461,10 @@ fn build_rules() -> Vec<BoxedRule> {
     rules.push(rewrite_rule(
         int_slt(shl(var(x), any_int_const().capture(n)), int_const(0u128)).when_match(
             move |edit, _ty, b| {
-                let (Some(c), Some(ty)) =
-                    (b.get_uint(n, edit.function()), b.get_type(x, edit.function()))
-                else {
+                let (Some(c), Some(ty)) = (
+                    b.get_uint(n, edit.function()),
+                    b.get_type(x, edit.function()),
+                ) else {
                     return false;
                 };
                 c < ty.bit_width() as u128
