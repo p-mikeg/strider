@@ -66,12 +66,16 @@ def test_ordered_suppresses_commutative_retry(add_fn):
     assert hits[0].node(k) == add_fn.node(_add_node(add_fn)).inputs()[0]
 
 
-def test_find_one_returns_first_hit(add_fn):
-    """`find_one` keeps its early exit: the natural ordering wins."""
+def test_find_all_first_hit_is_the_natural_ordering(add_fn):
+    """Enumeration order is deterministic: natural operand order first.
+
+    `find_all(...)[0]` is the idiom that replaced `find_one`, so which
+    binding lands at index 0 is now part of the contract, not an accident.
+    """
     k = p.Capture()
-    hit = add_fn.find_one(p.add(p.anything().capture(k), p.anything()))
-    assert hit is not None
-    assert hit.node(k) == add_fn.node(_add_node(add_fn)).inputs()[0]
+    hits = add_fn.find_all(p.add(p.anything().capture(k), p.anything()))
+    assert hits
+    assert hits[0].node(k) == add_fn.node(_add_node(add_fn)).inputs()[0]
 
 
 def test_find_unique_raises_on_genuine_ambiguity(add_fn):

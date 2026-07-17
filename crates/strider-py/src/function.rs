@@ -315,48 +315,6 @@ impl PyFunction {
         dedup_matches(&slf, py, raw, generation, ignore_root)
     }
 
-    /// Find the first binding of `pat`, or `None` if nothing matches.  A
-    /// one-shot convenience over `find_all` for the common
-    /// `hits = find_all(p); hits[0] if hits else None` idiom — a single
-    /// pattern short-circuits on the first match in the Rust matcher rather
-    /// than collecting every hit.
-    ///
-    /// `pat` is a single `Pattern` or a `list[Pattern]` (a list joins on
-    /// shared captures, as in `find_all`); the matcher options
-    /// (`ignore_casts`, `ignore_casts_mask`) mirror `find_all`.
-    #[pyo3(signature = (pat, ignore_casts=false, ignore_casts_mask=None, constraints=None))]
-    fn find_one(
-        slf: Py<Self>,
-        py: Python<'_>,
-        pat: crate::pattern::PatQuery<'_>,
-        ignore_casts: bool,
-        ignore_casts_mask: Option<crate::pattern::PyCastMask>,
-        constraints: Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
-    ) -> PyResult<Option<crate::matcher::PyMatch>> {
-        reject_conflicting_cast_flags("find_one", ignore_casts, &ignore_casts_mask)?;
-        let patterns = build_query_patterns(py, pat, ignore_casts, ignore_casts_mask)?;
-        let constraints = collect_constraints(constraints);
-        let refs: Vec<&strider_pattern::Pattern> = patterns.iter().collect();
-        // A single unconstrained pattern streams via `matches().next()`; anything else
-        // (a join, or a constraint that must filter) takes the first constrained
-        // joined result — mirror `run_pattern_query`'s fast-path gate.
-        let (first, generation) = run_query(&slf, py, |matcher| {
-            let group = if refs.len() == 1 && constraints.is_empty() {
-                matcher.matches(refs[0])?.next().map(|m| vec![m])
-            } else {
-                matcher
-                    .find_joined_constrained(&refs, &constraints)?
-                    .into_iter()
-                    .next()
-            };
-            Ok(group)
-        })?;
-        Ok(first.map(|inner| crate::matcher::PyMatch {
-            inner,
-            function: slf.clone_ref(py),
-            generation,
-        }))
-    }
 
     /// Find the single binding of `pat`, erroring if there is not exactly
     /// one.  Replaces the `hits = find_all(p); assert len(hits) == 1; hits[0]`
@@ -465,7 +423,7 @@ impl PyFunction {
 }
 
 /// Reject the mutually-exclusive `ignore_casts` + `ignore_casts_mask`
-/// combination, naming `op` (`"find_all"` / `"find_one"` /
+/// combination, naming `op` (`"find_all"` /
 /// `"find_unique"`) in the error so the message points at the caller.
 fn reject_conflicting_cast_flags(
     op: &str,
@@ -498,7 +456,7 @@ impl Drop for QueryFunctionGuard {
 /// Run a matcher query and snapshot the generation, collapsing the
 /// borrow → `read_inner` → `Matcher::new` → run → generation-snapshot
 /// → drop-guards → pending-control-flow scaffold the three query entry
-/// points (`find_all` / `find_one` / `find_unique`) share.
+/// points (`find_all` / `find_unique`) share.
 ///
 /// `run` receives the freshly-built `Matcher` and produces the raw match
 /// payload; the returned `generation` is what each raw `Match` must be

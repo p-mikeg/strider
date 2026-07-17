@@ -335,7 +335,7 @@ function.find_all(predicate(lambda m: True))
 ```
 
 The callback receives a `Match` — the same owned handle `find_all` /
-`find_one` / `find_joined` hand back for a completed match, with the
+`find_all` / `find_joined` hand back for a completed match, with the
 same accessor set (`uint` / `int` / `bool` / `float_bits` / `has` /
 `[]` / `in`).  Returning `False` (or raising) fails the match; for
 commutative binary ops this triggers the swapped-operand retry

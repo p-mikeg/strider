@@ -185,7 +185,7 @@ pub(crate) enum CastKind {
 /// eagerly during construction (captures, consts) plus re-finalisable
 /// child references (`Py<PyAny>`), so a fresh `DynMatch` / `DynTemplate`
 /// can be re-emitted on each compile — the same `PyPat` can drive many
-/// `find_all` / `find_one` / `find_unique` calls.
+/// `find_all` / `find_unique` calls.
 ///
 /// `match_only` variants return a `StriderError` from `compile_template`:
 /// they have no rewrite-RHS form.
@@ -1007,7 +1007,7 @@ pub enum PatLike<'py> {
     SwitchPat(Bound<'py, PySwitchPat>),
 }
 
-/// Query input for `Function.find_all` / `find_one` / `find_unique`: a
+/// Query input for `Function.find_all` / `find_unique`: a
 /// single pattern or a `list` of patterns.  A list is matched as a join —
 /// every pattern runs and their captures unify on shared `Capture` objects
 /// (the former `find_joined`), collapsed to one merged `Match` per result.
@@ -1170,7 +1170,7 @@ pub(crate) fn stash_pending_control_flow(e: PyErr) {
 //
 // A `.when(f)` predicate is attached to a `Pattern` at *build* time, long
 // before any `Function` is known — patterns are reusable across many
-// `find_all` / `find_one` / `find_unique` calls, possibly against
+// `find_all` / `find_unique` calls, possibly against
 // different `Function`s. So the predicate closure itself can't capture a
 // `Py<PyFunction>`. Instead `Function::run_query` (`function.rs`) pushes
 // the `Py<PyFunction>` + generation for the query it's about to run onto

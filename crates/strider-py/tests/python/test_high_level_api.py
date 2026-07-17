@@ -235,24 +235,8 @@ def test_find_against_pattern_returns_list():
     assert len(matches) >= 1, "expected at least one Add node in add(a,b)"
 
 
-def test_find_one_returns_match_when_present():
-    """`Function.find_one(pat)` returns the first `Match` when the
-    pattern matches at least once, equal to `find_all(pat)[0]`."""
-    elf = fixture_path("x64", "arithmetic")
-    s = strider.load_elf(str(elf))
-    _cfg, function, _unresolved = s.analyze("add")
-    pat = strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
-    matches = function.find_all(pat)
-    assert matches, "fixture has no Add nodes — investigate"
-    one = function.find_one(pat)
-    assert one is not None
-    assert isinstance(one, strider.Match)
-    # `find_one` is the first `find_all` hit (same preorder).
-    assert one.root == matches[0].root
-
-
-def test_find_one_returns_none_when_absent():
-    """`Function.find_one(pat)` returns `None` when the pattern has no
+def test_find_all_returns_empty_when_absent():
+    """`Function.find_all(pat)` returns `[]` when the pattern has no
     match anywhere in the graph."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load_elf(str(elf))
@@ -260,22 +244,6 @@ def test_find_one_returns_none_when_absent():
     # An impossible IntConst literal that cannot occur in `add(a, b)`.
     impossible = strider.pattern.int_const(0xDEAD_BEEF_CAFE_BABE)
     assert function.find_all(impossible) == []
-    assert function.find_one(impossible) is None
-
-
-def test_function_find_one_matches_find_all_first():
-    """`Function.find_one(pat)` mirrors `find_all(pat)[0]` (or `None`)."""
-    elf = fixture_path("x64", "arithmetic")
-    s = strider.load_elf(str(elf))
-    _cfg, g, _unresolved = s.analyze("add")
-    pat = strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
-    all_hits = g.find_all(pat)
-    one = g.find_one(pat)
-    assert all_hits, "fixture has no Add nodes — investigate"
-    assert one is not None
-    assert one.root == all_hits[0].root
-    # Negative: an unmatched pattern yields None.
-    assert g.find_one(strider.pattern.int_const(0xDEAD_BEEF_CAFE_BABE)) is None
 
 
 def test_fingerprint_returns_machine_addresses():

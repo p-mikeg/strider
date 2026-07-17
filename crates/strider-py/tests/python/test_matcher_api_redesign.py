@@ -3,7 +3,7 @@
 - `find_all(pat, ...)` accepts a single `Pattern` *or* a `list[Pattern]`
   (a list behaves like the old `find_joined`, returning merged bindings),
   and returns a deduplicated `list[Match]`.
-- `find_one(pat, ...)` returns the first binding or `None`.
+- `find_all(pat, ...)[0]` is the first binding; `[]` means no match.
 - `find_unique(pat, ...)` returns the single binding, erroring on 0 and >1.
 
 Dedup is controlled by `ignore_root`: default keys on captures+root(s);
@@ -78,9 +78,9 @@ def test_find_unique_raises_on_many():
         g.find_unique(load())
 
 
-def test_find_one_returns_none_when_no_match():
+def test_find_all_returns_empty_when_no_match():
     g = _switch_graph()
-    assert g.find_one(int_const(0xDEAD_BEEF_CAFE_BABE)) is None
+    assert g.find_all(int_const(0xDEAD_BEEF_CAFE_BABE)) == []
 
 
 def test_find_all_list_merges_shared_capture():

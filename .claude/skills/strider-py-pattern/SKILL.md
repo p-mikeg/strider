@@ -269,7 +269,8 @@ pattern with no captures on the operands stay at ONE hit.  Consequences:
 
 - `find_unique` **raises** on the ambiguous pattern above — that is the point.
   Pin the intent with `.ordered()`, or narrow the operands, to make it unique.
-- `find_one` still returns just the first hit (natural operand order).
+- `find_all(...)[0]` is the first hit, and the natural operand order is pinned,
+  so index 0 is deterministic rather than incidental.
 - `one_of` is unaffected: its arms are an ordered choice (first match wins), so
   a later arm never contributes a second binding.
 

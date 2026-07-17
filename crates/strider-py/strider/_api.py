@@ -31,7 +31,7 @@ strategy explicitly (PT_LOAD program headers vs section headers);
 For non-ELF / firmware / custom-source cases, build a `Lifter`
 directly with `strider.lifter(arch, mem, rom=None)` (the native
 Rust handle) and call its `analyze(addr, cc, ...)`.  Pattern queries
-(`find_all` / `find_one` / `find_unique`) and the addr-only
+(`find_all` / `find_unique`) and the addr-only
 `fingerprint`/`asm_fingerprint` live directly on the returned
 `Function`/`Node` (no Sleigh needed); the Sleigh-needing pretty
 renders (`dump_html` / `dump_dot` / `html_str`) live on the `Lifter`

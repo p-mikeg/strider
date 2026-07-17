@@ -181,9 +181,9 @@ fn non_commutative_capture_stays_single() {
     assert_eq!(hits[0].bindings().get_uint(k, &function), Some(20));
 }
 
-/// `matches()` is lazy and `.next()` stops at the first hit — the natural
-/// ordering — without enumerating the swapped one.  This is `find_one`'s
-/// contract and its performance story.
+/// `matches()` is lazy: `.next()` yields the natural ordering without
+/// enumerating the swapped one.  `find_all` collects this iterator, so this
+/// is what pins `find_all(..)[0]` to the natural ordering.
 #[test]
 fn matches_iterator_yields_natural_ordering_first() {
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);

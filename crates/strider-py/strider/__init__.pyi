@@ -525,20 +525,6 @@ class Function:
         order before swapped.  `one_of` stays first-match-wins — the arms are an
         ordered choice, so a later arm never adds a second binding."""
         ...
-    def find_one(
-        self,
-        pat: Any,  # strider.pattern.PatLike | list[strider.pattern.PatLike]
-        ignore_casts: bool = ...,
-        ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
-        constraints: Optional[List[Any]] = ...,  # list[strider.pattern.JoinConstraint]
-    ) -> Optional[Match]:
-        """Return the first `Match` for `pat`, or `None` if it does not
-        match anywhere.  One-shot convenience over `find_all`; `pat` may be a
-        list (joined, as in `find_all`) and `constraints` filters it the same
-        way.  Stops at the first hit rather than enumerating the rest, so where
-        `find_all` reports every distinct binding of a commutative node this
-        returns only the natural-operand-order one."""
-        ...
     def find_unique(
         self,
         pat: Any,  # strider.pattern.PatLike | list[strider.pattern.PatLike]
