@@ -66,6 +66,10 @@ from .strider import (  # noqa: E402
     SleighArch,
 )
 
+#: What the loaders accept as a filesystem path: a `str`, a `pathlib.Path`,
+#: or any object implementing `__fspath__`.
+StrPath = Union[str, "os.PathLike[str]"]
+
 
 # ── ELF header parsing ────────────────────────────────────────────────────
 
@@ -201,18 +205,25 @@ def _effective_arch_and_addr(
 
 def _load_elf_with(
     loader,
-    path: str,
+    path: StrPath,
     *,
     apply_relocations: bool,
     arch: Optional[SleighArch],
     cc: Optional[CallingConvention],
 ) -> "ElfLifter":
     """Shared body of `load_elf_from_segments` / `load_elf_from_sections`:
-    validates `path`, auto-detects `arch`/`cc` from the ELF header when
-    either is omitted, calls the Rust `loader(path, apply_relocations)`
-    (one of `_ext.load_elf_from_segments` / `_ext.load_elf_from_sections`)
-    to build the `_LoadedElf` backend, and wraps it in an `ElfLifter`.
+    normalises `path`, validates it, auto-detects `arch`/`cc` from the ELF
+    header when either is omitted, calls the Rust `loader(path,
+    apply_relocations)` (one of `_ext.load_elf_from_segments` /
+    `_ext.load_elf_from_sections`) to build the `_LoadedElf` backend, and
+    wraps it in an `ElfLifter`.
+
+    `os.fspath` is the one place a caller's `pathlib.Path` (or any
+    `__fspath__` object) becomes the `str` the Rust boundary takes, and it
+    is what makes a non-path argument fail as a `TypeError` here rather
+    than as a confusing `FileNotFoundError` further down.
     """
+    path = os.fspath(path)
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     header = _ElfHeader(path)
@@ -228,7 +239,7 @@ def _load_elf_with(
 
 
 def load_elf_from_segments(
-    path: str,
+    path: StrPath,
     *,
     apply_relocations: bool = True,
     arch: Optional[SleighArch] = None,
@@ -277,7 +288,7 @@ def load_elf_from_segments(
 
 
 def load_elf_from_sections(
-    path: str,
+    path: StrPath,
     *,
     apply_relocations: bool = True,
     arch: Optional[SleighArch] = None,
@@ -303,7 +314,7 @@ def load_elf_from_sections(
 
 
 def load_elf(
-    path: str,
+    path: StrPath,
     *,
     apply_relocations: bool = True,
     arch: Optional[SleighArch] = None,

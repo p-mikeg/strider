@@ -7,10 +7,16 @@ the README/usage examples.  Expand as the API grows.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Iterable, List, Optional, Tuple
+from typing import Any, ClassVar, Iterable, List, Optional, Tuple, Union
+
+import os
 
 from .pattern import PatLike as _PatLike
 from .template import Template as _Template
+
+#: What the loaders accept as a filesystem path: a `str`, a `pathlib.Path`,
+#: or any object implementing `__fspath__`.
+StrPath = Union[str, "os.PathLike[str]"]
 
 __version__: str
 
@@ -681,7 +687,7 @@ class ElfLifter(Lifter):
     def __repr__(self) -> str: ...
 
 def load_elf_from_segments(
-    path: str,
+    path: StrPath,
     *,
     apply_relocations: bool = ...,
     arch: Optional[SleighArch] = ...,
@@ -695,7 +701,7 @@ def load_elf_from_segments(
     ...
 
 def load_elf_from_sections(
-    path: str,
+    path: StrPath,
     *,
     apply_relocations: bool = ...,
     arch: Optional[SleighArch] = ...,
@@ -707,7 +713,7 @@ def load_elf_from_sections(
     ...
 
 def load_elf(
-    path: str,
+    path: StrPath,
     *,
     apply_relocations: bool = ...,
     arch: Optional[SleighArch] = ...,

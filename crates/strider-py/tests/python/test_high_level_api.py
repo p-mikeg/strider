@@ -71,6 +71,39 @@ def test_load_returns_elf_lifter():
     assert s.cc.name() == "x86_64_systemv"
 
 
+def test_load_elf_accepts_os_pathlike():
+    """Every loader takes an `os.PathLike`, not just `str`.
+
+    `fixture_path` (and `pathlib.Path` generally) is what callers actually
+    have in hand; requiring `str(path)` at every call site is friction the
+    stdlib already solves with `os.fspath`.  A custom `__fspath__` object
+    must work too — that is the whole point of the protocol.
+    """
+    elf = fixture_path("x64", "arithmetic")
+    if not elf.exists():
+        pytest.skip("fixture not built")
+
+    class Wrapper:
+        def __fspath__(self) -> str:
+            return str(elf)
+
+    for arg in (elf, Wrapper()):
+        for loader in (
+            strider.load_elf,
+            strider.load_elf_from_segments,
+            strider.load_elf_from_sections,
+        ):
+            lift = loader(arg)
+            assert isinstance(lift, strider.Lifter)
+            assert lift.arch.name() == "x86_64"
+
+
+def test_load_elf_rejects_non_path():
+    """A non-path argument still fails loudly rather than being coerced."""
+    with pytest.raises(TypeError):
+        strider.load_elf(1234)
+
+
 def test_load_x86_32bit():
     """x86 (32-bit) fixtures pick the `x86` arch + `x86_cdecl` cc."""
     elf = fixture_path("x86", "arithmetic")
