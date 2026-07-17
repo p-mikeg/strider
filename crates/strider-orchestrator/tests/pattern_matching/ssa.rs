@@ -342,6 +342,104 @@ fn phi_input_from_edge_ties_value_to_its_branch() {
     );
 }
 
+// ── Guarded loop: the sole-entry gate's false negative ───────────────────────
+
+/// `if (reg == 0) { do { reg = reg + 1 } while (reg != 0) }` — a GUARDED LOOP.
+///
+/// The guarded block's header has TWO control predecessors: the guard's true
+/// edge AND the loop's own back-edge (the latch).  At the exit, a phi merges the
+/// untouched `reg` (arriving on the guard's FALSE edge) with the loop's
+/// `reg + 1` (arriving on the loop-exit edge).
+///
+/// Every path that reaches the loop-exit edge went through the guard's true
+/// edge — so the guard's true edge DOES dominate that arm.  The old sole-entry
+/// gate could not see this: it anchored dominance at the edge's consumer (the
+/// loop header) and disabled the clause entirely because that header has two
+/// predecessors, leaving only the direct `==` test, which fails.
+fn graph_guarded_loop() -> (strider_ir::Function, rsleigh::Vn) {
+    let reg = reg_vn(0, 8);
+    let mut t = Tb::bare(vec![reg], &[], &[reg], &[], None, 0);
+    let entry = t.region();
+    let head = t.region();
+    let exit = t.region();
+    t.set_entry(entry);
+
+    t.enter(entry);
+    let reg_v = t.read_var(&reg);
+    // The guard compares against 7; the latch against 0.  The two constants
+    // make the two `If`s tellable apart by `cond`, so the test can pin the
+    // OUTER guard rather than accidentally matching the latch.
+    let seven = t.u64(7);
+    let cmp = t.int_cmp(reg_v, seven, IntCmpOp::Equal);
+    // TRUE enters the guarded loop; FALSE skips it.
+    t.build_if(cmp, head, exit);
+
+    // The loop header: predecessors are the guard's true edge AND its own latch.
+    t.enter(head);
+    let cur = t.read_var(&reg);
+    let one = t.u64(1);
+    let next = t.add(cur, one);
+    t.write_var(&reg, next);
+    let zero = t.u64(0);
+    let done = t.int_cmp(next, zero, IntCmpOp::Equal);
+    t.build_if(done, exit, head); // latch: back to `head`
+
+    t.enter(exit);
+    let out = t.read_var(&reg);
+    (t.ret_val(out), reg)
+}
+
+/// The guarded-loop FALSE NEGATIVE.  The exit phi's loop-side arm is reached
+/// only through the guard's true edge, so `phi_input_from_edge` must find it.
+///
+/// Under the old `dom_anchor` sole-entry gate this returned nothing: the loop
+/// header's second predecessor (its own latch) disabled the dominance clause,
+/// and the direct `==` clause cannot see an arm merged across the loop body.
+/// Edge dominance has no such gate — a latch does not make the guard optional.
+#[test]
+fn phi_input_from_edge_reaches_into_a_guarded_loop() {
+    let (function, _reg) = graph_guarded_loop();
+    let m = Matcher::new(&function);
+    let (t, f, ph) = (Capture::new(), Capture::new(), Capture::new());
+    // Pin the OUTER guard via its condition (`== 7`), so the latch `If`
+    // (`== 0`) cannot stand in for it.
+    let guard = if_node()
+        .cond(int_cmp(IntCmpOp::Equal, any(), int_const(7u64)))
+        .capture_true(t)
+        .capture_false(f)
+        .build();
+    let phi_p = phi().capture(ph).build();
+
+    // The loop-carried value `reg + 1` arrives at the exit phi from inside the
+    // guarded loop — i.e. via the guard's TRUE edge.
+    let hits = |edge: Capture| -> usize {
+        m.find_joined_constrained(
+            &[&guard, &phi_p],
+            &[&JoinConstraint::PhiInputFromEdge {
+                phi: ph,
+                edge,
+                value: ValueSpec::Pattern(Box::new(add(any(), any_int_const()).into_pattern())),
+            }],
+        )
+        .unwrap()
+        .len()
+    };
+
+    assert!(
+        hits(t) > 0,
+        "the exit phi's loop-side arm (`reg + 1`) is reached ONLY through the \
+         guard's true edge, so phi_input_from_edge must find it — the loop \
+         header having a second predecessor (its own latch) does not make the \
+         guard optional"
+    );
+    assert_eq!(
+        hits(f),
+        0,
+        "the guard's FALSE edge skips the loop entirely, so it never merges the \
+         loop-carried `reg + 1`"
+    );
+}
+
 /// `if (reg == 0) { *p = 1 } else { *p = 2 }` — after merge a `MemPhi` merges
 /// the two branch stores' memory tokens.
 fn graph_memphi_diamond() -> strider_ir::Function {

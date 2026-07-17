@@ -332,10 +332,12 @@ hits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
 ```
 
 - `cons.dominates(a, b)` — node `a` dominates node `b` in the control subgraph.
-- `cons.dominated_by_branch(branch, node)` — `node` is dominated by the branch edge's
-  target, i.e. in that block *exclusively*: the sibling arm AND the post-merge tail
-  are both excluded (the merge is dominated by the `If` itself, not by either edge).
+- `cons.dominated_by_branch(branch, node)` — every path from the function entry to
+  `node` traverses the branch EDGE, i.e. `node` is in that block *exclusively*: the
+  sibling arm AND the post-merge tail are both excluded.
   One `dominated_by_branch(true_edge, c)` = "`c` is in the true block".
+  `node` must be a CONTROL node (a `call()`, region, return — not a data value):
+  data nodes are absent from the control subgraph and so match nothing.
   NOTE the polarity is the IR's, not the C source's: `je L` lifts to `CBRANCH L, ZF`,
   so the `If`'s TRUE edge is the jump-TAKEN edge and the fallthrough is the FALSE
   edge — the opposite of the source-level `if` body.
@@ -345,11 +347,15 @@ hits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
   Also works for a `mem_phi()` — a memory token (e.g. a `store().capture(sv)`
   output) to ask "the memory merged from THIS branch".
 
-  **Which arms an edge reaches.** An arm qualifies when its predecessor IS the
-  edge, *or* is reached exclusively through it. So a merge across a `call` — or
-  any other intervening block between the branch and the join — still pins, which
-  is the common shape in real code (a call terminates its basic block, so the
-  `If`'s edge is usually *not* the merge region's direct predecessor).
+  **Which arms an edge reaches.** An arm qualifies when the branch edge DOMINATES
+  its predecessor's control edge — every path traversing that predecessor first
+  traversed the branch edge. The arm's predecessor simply BEING the edge is the
+  same rule (a zero-length path), so a merge across a `call` — or any other
+  intervening block between the branch and the join — still pins, which is the
+  common shape in real code (a call terminates its basic block, so the `If`'s edge
+  is usually *not* the merge region's direct predecessor). A **guarded loop**
+  (`if (c) { while (...) {...} }`) pins too: the loop header having a second
+  predecessor (its own back-edge) does not make the guard optional.
   Reach is **exclusive**: an arm reachable from BOTH sides of the branch belongs
   to neither edge. A branch whose block splits and reaches the merge twice yields
   one match **per qualifying arm** — `find_all` enumerates them, it never picks one.

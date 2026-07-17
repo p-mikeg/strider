@@ -7,7 +7,7 @@ use petgraph::visit::{GraphBase, IntoNeighbors, Visitable};
 use rustc_hash::FxHashSet;
 
 use crate::function::Function;
-use crate::node::NodeId;
+use crate::node::{NodeId, ValueId};
 
 // ── ControlFlowView ───────────────────────────────────────────────────────────
 
@@ -75,19 +75,153 @@ pub fn control_dominators(function: &Function) -> petgraph::algo::dominators::Do
     petgraph::algo::dominators::simple_fast(&ControlFlowView::new(function), entry)
 }
 
-/// Returns `true` if node `a` dominates node `b` in the control subgraph
-/// (i.e. every path from the entry to `b` passes through `a`).
+/// Returns `true` if `a` dominates `b` in whichever graph `doms` was computed
+/// over (i.e. every path from that graph's entry to `b` passes through `a`).
 ///
 /// A node trivially dominates itself.
-pub fn dominates(
-    doms: &petgraph::algo::dominators::Dominators<NodeId>,
-    a: NodeId,
-    b: NodeId,
+///
+/// Generic over the dominator-tree's node type so the same relation serves both
+/// [`control_dominators`] (keyed by [`NodeId`]) and [`control_edge_dominators`]
+/// (keyed by [`CtrlKey`], where it additionally expresses EDGE dominance).
+pub fn dominates<N: Copy + Eq + std::hash::Hash>(
+    doms: &petgraph::algo::dominators::Dominators<N>,
+    a: N,
+    b: N,
 ) -> bool {
     if a == b {
         return true;
     }
     doms.dominators(b).is_some_and(|mut it| it.any(|d| d == a))
+}
+
+// ── ControlSplitView ──────────────────────────────────────────────────────────
+
+/// A vertex of the EDGE-SPLIT control graph: either an IR control node or one
+/// of its outgoing control edges, reified as a vertex of its own.
+///
+/// The split graph is the classic edge-splitting construction — but it needs no
+/// synthetic vertices, because this IR's control edges are ALREADY first-class:
+/// each control edge is a [`ValueId`] with exactly one consumer.  So dominance
+/// over `Edge(v)` is exactly EDGE dominance over `v` in the ordinary CFG.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum CtrlKey {
+    /// An IR control node.
+    Node(NodeId),
+    /// A control edge (a `Control`-kind output value).
+    Edge(ValueId),
+}
+
+/// A petgraph-compatible view over the IR's control subgraph with every control
+/// edge SPLIT into a vertex.
+///
+/// This is [`ControlFlowView`]'s relation with
+/// [`cfg_succs`](crate::walk::cfg_succs)'s two-stage composition unfolded:
+/// stage 1 (node → its `Control` outputs) stops at [`CtrlKey::Edge`], and stage
+/// 2 (output → its consumers) resumes from it.  Composing the two therefore
+/// reproduces `cfg_succs` exactly — the property
+/// `split_view_composes_to_cfg_succs` pins.
+#[derive(Clone, Copy)]
+pub(crate) struct ControlSplitView<'a> {
+    function: &'a Function,
+}
+
+impl<'a> ControlSplitView<'a> {
+    /// Creates a view over `function`'s edge-split control subgraph.
+    pub(crate) fn new(function: &'a Function) -> Self {
+        Self { function }
+    }
+}
+
+impl GraphBase for ControlSplitView<'_> {
+    type NodeId = CtrlKey;
+    type EdgeId = (CtrlKey, CtrlKey);
+}
+
+impl<'a> IntoNeighbors for &'a ControlSplitView<'a> {
+    type Neighbors = std::vec::IntoIter<CtrlKey>;
+
+    fn neighbors(self, a: CtrlKey) -> Self::Neighbors {
+        let graph = self.function.graph();
+        match a {
+            // Stage 1 of `cfg_succs`, stopping at the output.
+            CtrlKey::Node(node) => crate::walk::cfg_outputs(graph, node)
+                .map(CtrlKey::Edge)
+                .collect::<Vec<_>>()
+                .into_iter(),
+            // Stage 2 of `cfg_succs`, resuming from the output.  A control edge
+            // has exactly one consumer in well-formed IR — that is what makes
+            // this a true edge split rather than a hyper-edge.
+            CtrlKey::Edge(value) => {
+                let succs: Vec<CtrlKey> = graph
+                    .value_uses(value)
+                    .map(|(succ, _)| CtrlKey::Node(succ))
+                    .collect();
+                debug_assert_eq!(
+                    succs.len(),
+                    1,
+                    "control edge {value:?} has {} consumers; every control edge \
+                     has exactly one.  Zero is a dangling control path — the \
+                     validator rejects it as `UnusedControlOutput`, since every \
+                     control edge must reach a terminator (`Return` / \
+                     `IndirectBranch` / `Unreachable`) — and it would make this \
+                     edge-split vertex a DEAD END, so `simple_fast` would treat \
+                     everything past it as unreachable and every dominance query \
+                     beyond it would silently answer `false` instead of failing.",
+                    succs.len()
+                );
+                succs.into_iter()
+            }
+        }
+    }
+}
+
+/// The visit map for `ControlSplitView`: an `FxHashSet<CtrlKey>`, mirroring
+/// [`ControlFlowView`]'s.
+impl Visitable for ControlSplitView<'_> {
+    type Map = FxHashSet<CtrlKey>;
+
+    fn visit_map(&self) -> Self::Map {
+        FxHashSet::default()
+    }
+
+    fn reset_map(&self, map: &mut Self::Map) {
+        map.clear();
+    }
+}
+
+/// Computes dominators of the EDGE-SPLIT control subgraph.
+///
+/// Strictly more expensive than [`control_dominators`] (the split graph has
+/// roughly twice the vertices, hence longer dominator chains), so callers keep
+/// this in a separate lazy cell and only pay for it on edge queries.
+///
+/// The entry key is `CtrlKey::Node(function.entry())`; a mismatch would yield an
+/// empty dominator tree, silently making every query `false`.
+pub fn control_edge_dominators(
+    function: &Function,
+) -> petgraph::algo::dominators::Dominators<CtrlKey> {
+    petgraph::algo::dominators::simple_fast(
+        &ControlSplitView::new(function),
+        CtrlKey::Node(function.entry()),
+    )
+}
+
+/// Returns `true` if the control edge `edge` dominates `node` — i.e. every path
+/// from the entry to `node` traverses that EDGE.
+///
+/// This is the real relation `dominated_by_branch` wants.  It is strictly
+/// stronger than `dominates(consumer(edge), node)`: dominating the edge's
+/// TARGET only implies traversing the edge when the edge is the target's sole
+/// way in.  For `if (c) {} else { X }`, the true edge runs straight into the
+/// join, so the join dominates everything after it while the true edge does not.
+///
+/// `doms` must come from [`control_edge_dominators`].
+pub fn edge_dominates(
+    doms: &petgraph::algo::dominators::Dominators<CtrlKey>,
+    edge: ValueId,
+    node: NodeId,
+) -> bool {
+    dominates(doms, CtrlKey::Edge(edge), CtrlKey::Node(node))
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -257,6 +391,267 @@ mod tests {
         assert!(
             dominates(&doms, entry, if_node),
             "entry should dominate If node"
+        );
+    }
+
+    // ── ControlSplitView ──────────────────────────────────────────────────────
+
+    /// Builds `if (c) {} else { X }` — an EMPTY true arm — then a join and a
+    /// tail:
+    ///
+    /// ```text
+    ///       Entry
+    ///         |
+    ///     Region A
+    ///       If(cond)
+    ///      /        \
+    ///  (true edge)  Region E   (the else block: non-empty)
+    ///      \        /
+    ///       Region J  (join — the true edge's DIRECT target)
+    ///         |
+    ///       Region T  (tail: after the merge, reachable via BOTH arms)
+    ///         |
+    ///       Return
+    /// ```
+    ///
+    /// Returns `(function, true_edge_value, region_j, region_t)`.
+    fn empty_true_arm() -> crate::error::Result<(Function, ValueId, NodeId, NodeId)> {
+        let mut b = empty_builder()?;
+
+        let region_a = b.create_region_all()?;
+        let region_e = b.create_region_all()?;
+        let region_j = b.create_region_all()?;
+        let region_t = b.create_region_all()?;
+
+        b.set_entry_region_all(region_a)?;
+
+        // Region A: branch — TRUE goes straight to the join (empty arm),
+        // FALSE goes to the else block.
+        b.set_region(region_a);
+        b.set_lift_addr(Some(0x2000));
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, region_j, region_e)?;
+        b.set_lift_addr(None);
+
+        // Region E (the else block): branch to the join.
+        b.set_region(region_e);
+        b.set_lift_addr(Some(0x2010));
+        b.build_branch(region_j)?;
+        b.set_lift_addr(None);
+
+        // Region J (join): branch to the tail.
+        b.set_region(region_j);
+        b.set_lift_addr(Some(0x2020));
+        b.build_branch(region_t)?;
+        b.set_lift_addr(None);
+
+        // Region T (tail): return.
+        b.set_region(region_t);
+        b.set_lift_addr(Some(0x2030));
+        b.build_function_return()?;
+        b.set_lift_addr(None);
+
+        let f = b.build()?;
+
+        let if_node = f
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(f.node_kind(n), NodeKind::If))
+            .expect("must contain an If node");
+        // The If's first Control output is the TRUE edge.
+        let [true_edge, _false_edge] = f.graph().node_outputs_exact::<2>(if_node).unwrap();
+
+        // With an empty true arm the true edge's sole consumer IS the join; the
+        // tail is the join's sole control successor.  (Derived from the graph
+        // rather than the builder's `RegionId`s, which are not `NodeId`s.)
+        let join = f
+            .graph()
+            .value_uses(true_edge)
+            .next()
+            .expect("the true edge has a consumer")
+            .0;
+        let tail = crate::walk::cfg_succs(f.graph(), join)
+            .next()
+            .expect("the join has a control successor");
+
+        Ok((f, true_edge, join, tail))
+    }
+
+    /// THE load-bearing property: `Node(n) -> Edge(v) -> Node(c)` in the split
+    /// view must compose to EXACTLY `cfg_succs(n)` for every reachable node.
+    ///
+    /// If the two views ever disagreed about the CFG, `Dominates` (which reads
+    /// the node tree) and `DominatedByBranch` (which reads the split tree) would
+    /// start answering from different graphs — silently.
+    #[test]
+    fn split_view_composes_to_cfg_succs() {
+        for (name, f) in [
+            ("diamond", diamond().expect("diamond builds")),
+            (
+                "empty_true_arm",
+                empty_true_arm().expect("empty_true_arm builds").0,
+            ),
+        ] {
+            let view = ControlSplitView::new(&f);
+            let plain = ControlFlowView::new(&f);
+
+            for node in f.graph().all_node_ids() {
+                // Restrict to the control-reachable nodes: the split view and
+                // `cfg_succs` are only ever consulted there.
+                if !crate::walk::cfg_reachable(f.graph(), f.entry()).contains(node) {
+                    continue;
+                }
+
+                let composed: std::collections::BTreeSet<usize> = view
+                    .neighbors(CtrlKey::Node(node))
+                    .flat_map(|edge| view.neighbors(edge))
+                    .map(|k| match k {
+                        CtrlKey::Node(n) => n.index(),
+                        CtrlKey::Edge(_) => panic!("Edge -> Edge must be impossible"),
+                    })
+                    .collect();
+
+                let direct: std::collections::BTreeSet<usize> =
+                    crate::walk::cfg_succs(f.graph(), node)
+                        .map(|n| n.index())
+                        .collect();
+
+                assert_eq!(
+                    composed, direct,
+                    "{name}: split view Node->Edge->Node must compose to exactly \
+                     cfg_succs for {node:?}"
+                );
+
+                // …and to exactly what the un-split view reports, which is the
+                // graph `Dominates` answers from.
+                let plain_succs: std::collections::BTreeSet<usize> =
+                    plain.neighbors(node).map(|n| n.index()).collect();
+                assert_eq!(
+                    composed, plain_succs,
+                    "{name}: split view must agree with ControlFlowView for {node:?}"
+                );
+            }
+        }
+    }
+
+    /// The bug: with an EMPTY true arm, the true edge runs straight into the
+    /// join, so the join dominates the tail — but the tail is reachable through
+    /// BOTH arms, so the true edge does NOT dominate it.
+    ///
+    /// The old node-dominance proxy `dominates(consumer(edge), node)` answers
+    /// TRUE here (a silent false positive); `edge_dominates` answers FALSE.
+    #[test]
+    fn edge_dominates_is_false_past_a_join_with_an_empty_arm() {
+        let (f, true_edge, region_j, region_t) = empty_true_arm().expect("empty_true_arm builds");
+
+        let split = control_edge_dominators(&f);
+        let node_doms = control_dominators(&f);
+
+        // The proxy the old code used: the true edge's consumer IS the join.
+        let consumer = f
+            .graph()
+            .value_uses(true_edge)
+            .next()
+            .expect("true edge has a consumer")
+            .0;
+        assert_eq!(
+            consumer, region_j,
+            "with an empty true arm the true edge's consumer is the join itself"
+        );
+        assert!(
+            dominates(&node_doms, consumer, region_t),
+            "the join DOES dominate the tail — which is exactly why the old \
+             node-dominance proxy wrongly claimed the tail was in the true block"
+        );
+
+        // The real relation.
+        assert!(
+            !edge_dominates(&split, true_edge, region_t),
+            "the tail is past the merge and reachable through BOTH arms, so the \
+             true EDGE must not dominate it"
+        );
+        assert!(
+            !edge_dominates(&split, true_edge, region_j),
+            "the join is reachable through the false arm too, so the true edge \
+             does not dominate it either"
+        );
+    }
+
+    /// Regression: a node genuinely inside a non-empty arm IS edge-dominated by
+    /// that arm's edge — the relation must not be vacuously false.
+    #[test]
+    fn edge_dominates_is_true_inside_a_non_empty_arm() {
+        let f = diamond().expect("diamond builds");
+        let split = control_edge_dominators(&f);
+
+        let if_node = f
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(f.node_kind(n), NodeKind::If))
+            .expect("diamond has an If");
+        let [true_edge, false_edge] = f.graph().node_outputs_exact::<2>(if_node).unwrap();
+
+        let true_block = f.graph().value_uses(true_edge).next().unwrap().0;
+        let false_block = f.graph().value_uses(false_edge).next().unwrap().0;
+
+        assert!(
+            edge_dominates(&split, true_edge, true_block),
+            "the true block is in the true block"
+        );
+        assert!(
+            !edge_dominates(&split, true_edge, false_block),
+            "the false block is NOT in the true block"
+        );
+        assert!(
+            edge_dominates(&split, false_edge, false_block),
+            "the false block is in the false block"
+        );
+
+        // The join is reachable from both arms: neither edge dominates it.
+        let join = f
+            .graph()
+            .all_node_ids()
+            .filter(|&n| matches!(f.node_kind(n), NodeKind::Region))
+            .find(|&n| {
+                f.graph()
+                    .node_inputs(n)
+                    .into_iter()
+                    .filter(|&v| f.graph().value_kind(v).is_control())
+                    .count()
+                    > 1
+            })
+            .expect("diamond has a join");
+        assert!(
+            !edge_dominates(&split, true_edge, join),
+            "the join is past the merge: no branch edge dominates it"
+        );
+        assert!(!edge_dominates(&split, false_edge, join));
+    }
+
+    /// An edge trivially dominates itself — the zero-length path.  This is what
+    /// makes the DIRECT case of `phi_input_from_edge` work as plain edge-vs-edge
+    /// dominance, with no `==` special case.
+    #[test]
+    fn edge_dominates_itself_via_zero_length_path() {
+        let f = diamond().expect("diamond builds");
+        let split = control_edge_dominators(&f);
+        let if_node = f
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(f.node_kind(n), NodeKind::If))
+            .expect("diamond has an If");
+        let [true_edge, _] = f.graph().node_outputs_exact::<2>(if_node).unwrap();
+
+        assert!(
+            dominates(&split, CtrlKey::Edge(true_edge), CtrlKey::Edge(true_edge)),
+            "an edge dominates itself (zero-length path) — the direct case"
+        );
+        // THE TRAP: the edge does NOT dominate the If that PRODUCES it.  Testing
+        // edge-against-producer(c_i) instead of edge-against-edge would break
+        // exactly the direct case.
+        assert!(
+            !edge_dominates(&split, true_edge, if_node),
+            "an edge cannot dominate its own producer — the If precedes it"
         );
     }
 }

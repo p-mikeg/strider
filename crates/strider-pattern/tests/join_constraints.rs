@@ -57,6 +57,79 @@ fn diamond_with_calls() -> (strider_ir::Function, NodeId) {
     (function, if_id)
 }
 
+/// `if (cond) { } else { call 0xBBBB }` — an EMPTY true arm, so the `If`'s true
+/// output runs STRAIGHT into the merge region, which calls `0xCCCC`.
+///
+/// The shape that breaks node-dominance-as-edge-dominance: the true edge's
+/// consumer IS the merge, and the merge dominates everything after it.
+fn empty_true_arm_with_calls() -> strider_ir::Function {
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
+    let region_a = b.create_region_all().unwrap();
+    let region_c = b.create_region_all().unwrap();
+    let region_d = b.create_region_all().unwrap();
+    b.set_entry_region_all(region_a).unwrap();
+
+    b.set_region(region_a);
+    b.set_lift_addr(Some(0x1000));
+    let cond = b.build_boolean_const(true);
+    // TRUE goes straight to the merge (the empty arm); FALSE runs the else.
+    b.build_if(cond, region_d, region_c).unwrap();
+    b.set_lift_addr(None);
+
+    b.set_region(region_c); // false arm
+    b.set_lift_addr(Some(0x1020));
+    let t2 = b.build_int_const(0xBBBBu64, ValueType::I64).unwrap();
+    b.build_call_cc(t2, None).unwrap();
+    b.build_branch(region_d).unwrap();
+    b.set_lift_addr(None);
+
+    b.set_region(region_d); // merge — reachable through BOTH arms
+    b.set_lift_addr(Some(0x1030));
+    let t3 = b.build_int_const(0xCCCCu64, ValueType::I64).unwrap();
+    b.build_call_cc(t3, None).unwrap();
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+
+    b.build().unwrap()
+}
+
+/// THE BUG.  With an empty true arm nothing is in the true block, so
+/// `dominated_by_branch(true_edge, ..)` must select NOTHING.
+///
+/// The old proxy asked "does the edge's TARGET dominate the node?"  Here the
+/// target IS the merge, and the merge dominates the `0xCCCC` call after it — so
+/// the proxy claimed a post-merge call sat "in the true block", silently.  Edge
+/// dominance asks the real question ("does every path traverse the EDGE?") and
+/// answers no: `0xCCCC` is reachable through the false arm too.
+#[test]
+fn dominated_by_branch_rejects_calls_past_a_join_with_an_empty_arm() {
+    let function = empty_true_arm_with_calls();
+    let m = Matcher::new(&function);
+    let (t, c) = (Capture::new(), Capture::new());
+    let guard = if_node().capture_true(t).build();
+    let callp = call().capture(c).build();
+
+    let tuples = m
+        .find_joined_constrained(
+            &[&guard, &callp],
+            &[&JoinConstraint::DominatedByBranch { branch: t, node: c }],
+        )
+        .unwrap();
+    let addrs: Vec<u64> = tuples
+        .iter()
+        .map(|tp| call_addr(tp, c, &function))
+        .collect();
+
+    assert_eq!(
+        addrs,
+        Vec::<u64>::new(),
+        "the true arm is EMPTY, so no call is in the true block. 0xCCCC sits \
+         past the merge and is reachable through the false arm too; only the \
+         true edge's target (the merge itself) dominates it, which is exactly \
+         the confusion the old node-dominance proxy made."
+    );
+}
+
 /// The call-target address bound to a joined tuple's `call` match (position 1).
 fn call_addr(tuple: &[strider_pattern::Match], c: Capture, f: &strider_ir::Function) -> u64 {
     let call_node = tuple[1].node(c, f.graph()).expect("call node");
@@ -84,8 +157,7 @@ fn dominated_by_branch_isolates_the_true_arm_in_one_constraint() {
         .map(|tp| call_addr(tp, c, &function))
         .collect();
     // Only the true-arm call (AAAA): the merge (CCCC) is reachable from the
-    // false edge too, so it is NOT dominated by the true edge's target. One
-    // constraint does what reaches + not_reaches did.
+    // false edge too, so the true EDGE does not dominate it.
     assert_eq!(addrs, vec![0xAAAA]);
 }
 

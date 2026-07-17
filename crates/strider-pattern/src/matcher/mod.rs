@@ -38,7 +38,10 @@ use itertools::Either;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{Function, Graph, IRViewer, IRWalker, control_dominators, dominates};
+use strider_ir::{
+    CtrlKey, Function, Graph, IRViewer, IRWalker, control_dominators, control_edge_dominators,
+    dominates, edge_dominates,
+};
 
 use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
@@ -583,7 +586,8 @@ impl<'f> Matcher<'f> {
 /// [`Matcher::find_joined_constrained`] as a post-correlation filter over
 /// joined tuples. Captured entities are resolved to control nodes; a value
 /// capture resolves to its producer node (for `Dominates`) or is used directly
-/// (the branch-edge value for `Reaches`).
+/// as the branch-edge value (for the edge constraints, `DominatedByBranch` and
+/// `PhiInputFromEdge`).
 ///
 /// Not `Clone`: [`ValueSpec::Pattern`] owns a [`Pattern`], which holds match-time
 /// closures and so cannot be cloned. Constraints are passed by reference
@@ -596,13 +600,23 @@ pub enum JoinConstraint {
         a: crate::Capture,
         b: crate::Capture,
     },
-    /// `node` is dominated by the consumer of the branch edge `branch` — i.e.
-    /// `node` sits in the block that edge leads into, *exclusively*: true only
-    /// where every path to `node` traverses the edge's target, so a single
-    /// `dominated_by_branch(true_edge, c)` expresses "`c` is in the true block".
+    /// `node` is dominated by the branch EDGE `branch` — i.e. every path from
+    /// the entry to `node` traverses that edge, so `node` sits in the block that
+    /// edge leads into, *exclusively*.  A single
+    /// `dominated_by_branch(true_edge, c)` therefore expresses "`c` is in the
+    /// true block".
+    ///
+    /// This is EDGE dominance (evaluated on the edge-split control graph), not
+    /// dominance by the edge's target.  The distinction is not academic: with an
+    /// empty arm (`if (c) {} else { X }`) the edge runs straight into the join,
+    /// and the join dominates everything past the merge — so target-dominance
+    /// would claim post-merge nodes sit inside the branch.
+    ///
     /// `branch` must bind a control-output value (e.g. via
     /// [`IfPat::capture_true`](crate::IfPat::capture_true)); an ill-typed
-    /// `branch` or an absent node fails it.
+    /// `branch` or an absent node fails it.  `node` must resolve to a node of
+    /// the CONTROL subgraph (a `Call`, `Region`, `Return`, …): a data node is
+    /// absent from that graph and so is never dominated by anything.
     DominatedByBranch {
         branch: crate::Capture,
         node: crate::Capture,
@@ -613,12 +627,18 @@ pub enum JoinConstraint {
     /// leads into that predecessor, so a pattern can say "the value merged from
     /// THIS branch is X" without a slot index.  Works for a value `Phi` (`value`
     /// binds the merged value) and a `MemPhi` (`value` binds the merged memory
-    /// token).  Direct-edge: `edge` must be a *literal* control input of the
-    /// phi's region (the converged/collapsed IR makes an `If`'s true/false
-    /// output the join region's direct predecessor).  `edge` must bind a
-    /// control-output value; `phi` binds a value; `value` is a [`ValueSpec`] —
-    /// either a capture bound elsewhere in the join, or a pattern matched
-    /// INLINE at the arm value.
+    /// token).
+    ///
+    /// A predecessor qualifies when `edge` dominates its control input as an
+    /// EDGE — every path traversing that predecessor first traversed `edge`.
+    /// This covers both the direct case (`edge` IS the region's control input;
+    /// see [`ConstraintEval::phi_arms_from_edge`] on why that is a zero-length
+    /// path rather than a special case) and an arm merged across intervening
+    /// control — a `Call`, or a whole guarded loop.
+    ///
+    /// `edge` must bind a control-output value; `phi` binds a value; `value` is
+    /// a [`ValueSpec`] — either a capture bound elsewhere in the join, or a
+    /// pattern matched INLINE at the arm value.
     PhiInputFromEdge {
         phi: crate::Capture,
         edge: crate::Capture,
@@ -728,12 +748,23 @@ impl JoinConstraint {
     }
 }
 
-/// Evaluates [`JoinConstraint`]s against joined tuples, memoising the control
-/// dominators and per-branch-edge reachable sets across one
-/// `find_joined_constrained` call.
+/// Evaluates [`JoinConstraint`]s against joined tuples, memoising the two
+/// dominator trees across one `find_joined_constrained` call — each is built at
+/// most once, never per tuple and never per arm.
+///
+/// The trees are kept SEPARATE rather than collapsed into the split one alone:
+/// the edge-split graph has roughly twice the vertices and hence longer
+/// dominator chains, so making [`JoinConstraint::Dominates`] read it would make
+/// every node-dominance query pay for a relation it does not need.  Node queries
+/// use `doms`; only the edge queries ([`JoinConstraint::DominatedByBranch`] and
+/// [`JoinConstraint::PhiInputFromEdge`]) build and walk `split_doms`.
 struct ConstraintEval<'f> {
     function: &'f Function,
+    /// Dominators of the plain control subgraph, keyed by `NodeId`.
     doms: OnceCell<petgraph::algo::dominators::Dominators<NodeId>>,
+    /// Dominators of the EDGE-SPLIT control subgraph, keyed by `CtrlKey`. Lazy:
+    /// a join with no edge constraint never builds it.
+    split_doms: OnceCell<petgraph::algo::dominators::Dominators<CtrlKey>>,
 }
 
 impl<'f> ConstraintEval<'f> {
@@ -741,7 +772,14 @@ impl<'f> ConstraintEval<'f> {
         Self {
             function,
             doms: OnceCell::new(),
+            split_doms: OnceCell::new(),
         }
+    }
+
+    /// The edge-split dominator tree, built on first use.
+    fn split_doms(&self) -> &petgraph::algo::dominators::Dominators<CtrlKey> {
+        self.split_doms
+            .get_or_init(|| control_edge_dominators(self.function))
     }
 
     /// Resolve a capture to a control node across the tuple's matches.
@@ -795,13 +833,14 @@ impl<'f> ConstraintEval<'f> {
                 else {
                     return false;
                 };
-                // The branch edge's consumer (its target node); a control edge
-                // has exactly one consumer in well-formed IR.
-                let Some((consumer, _)) = self.function.value_uses(edge).next() else {
-                    return false;
-                };
-                let doms = self.doms.get_or_init(|| control_dominators(self.function));
-                dominates(doms, consumer, target)
+                // EDGE dominance — the real relation.  Asking instead whether
+                // the edge's TARGET dominates `target` (as this once did) is a
+                // strictly weaker proxy: it coincides only when the edge is its
+                // target's sole entry.  With an empty arm the edge runs straight
+                // into the join, and the join dominates everything past the
+                // merge — so the proxy silently claimed post-merge nodes were
+                // inside the branch.
+                edge_dominates(self.split_doms(), edge, target)
             }
             // Sound because `find_joined_constrained` has already range-checked
             // `inner`'s captures against the positive patterns and rejected a
@@ -829,20 +868,27 @@ impl<'f> ConstraintEval<'f> {
     /// Predecessor `i` (control input `c_i`) comes from `edge_v` when
     ///
     /// ```text
-    /// c_i == edge_v                                  // direct: the edge IS the predecessor
-    /// || dominates(consumer(edge_v), producer(c_i))  // through intervening control
+    /// dominates(split_doms, Edge(edge_v), Edge(c_i))
     /// ```
     ///
-    /// The two clauses are a UNION — neither subsumes the other.  In the direct
-    /// case `consumer(edge_v)` is the join region itself and `producer(c_i)` is
-    /// the `If`, so the dominance clause would ask "does the join dominate the
-    /// `If`?" — backwards, and false.  Conversely the `==` clause cannot see an
-    /// arm merged across a `Call` or any other intervening block, which is the
-    /// common shape in real lifted code.
+    /// One clause, EDGE against EDGE.  Both `edge_v` and `c_i` are control
+    /// edges, so in the edge-split graph this is plain dominance: "every path
+    /// that traverses `c_i` first traversed `edge_v`".
     ///
-    /// The dominance clause is EXCLUSIVE: it holds only where every path from
-    /// the entry to that predecessor traverses the edge's target, so an arm
-    /// reachable from both sides of the branch belongs to neither edge.
+    /// **The direct case is a zero-length path, not a special case.** When the
+    /// edge IS the predecessor (`c_i == edge_v`) this holds because
+    /// `dominates(x, x)` is true — which is why there is no `||` union with an
+    /// `==` test.  Do not "simplify" this into edge-against-`producer(c_i)`:
+    /// `producer(c_i)` is the `If`, which PRECEDES the edge, so the edge cannot
+    /// dominate it and the direct case would break.  (That trap has bitten
+    /// twice; the direct-case tests are what catch it.)
+    ///
+    /// The relation is EXCLUSIVE: it holds only where every path traverses
+    /// `edge_v`, so an arm reachable from both sides of the branch belongs to
+    /// neither edge.  Unlike the old node-dominance proxy it needs no sole-entry
+    /// gate: a guarded loop's header has two predecessors (the guard's edge and
+    /// its own latch), and edge dominance still correctly reports that every
+    /// path into the loop traverses the guard's edge.
     ///
     /// Yields arms LAZILY so both `value` spellings share one scan without
     /// materialising it: the capture form `.any(..)`s over it and short-circuits
@@ -851,7 +897,7 @@ impl<'f> ConstraintEval<'f> {
     ///
     /// A branch whose block splits and reaches the join more than once yields one
     /// arm per qualifying predecessor — the caller enumerates them rather than
-    /// picking one.  (Under the old direct-only `==` at most one arm could ever
+    /// picking one.  (Under a direct-only `==` at most one arm could ever
     /// qualify, which is why a single `Option` used to be total; dominance can
     /// qualify several, and choosing among them would be a silent coin-flip.)
     fn phi_arms_from_edge(
@@ -859,46 +905,31 @@ impl<'f> ConstraintEval<'f> {
         phi_v: ValueId,
         edge_v: ValueId,
     ) -> impl Iterator<Item = ValueId> + '_ {
-        let f = self.function;
-        // All per-(phi, edge) work — phi node, region, dominance anchor — is
-        // resolved ONCE here; the per-arm body below is just the two clauses.
-        self.arm_scan(phi_v, edge_v).into_iter().flat_map(
-            move |(phi_inputs, region_inputs, dom_anchor)| {
+        // All per-(phi, edge) work — phi node, region — is resolved ONCE here;
+        // the per-arm body below is the single dominance clause.
+        self.arm_scan(phi_v)
+            .into_iter()
+            .flat_map(move |(phi_inputs, region_inputs)| {
                 region_inputs
                     .into_iter()
                     .enumerate()
                     .filter(move |(_, c)| {
-                        *c == edge_v
-                            || dom_anchor.is_some_and(|anchor| {
-                                // Dominators are memoised across the whole
-                                // `find_joined_constrained` call — never rebuilt
-                                // per arm or per tuple.
-                                let doms =
-                                    self.doms.get_or_init(|| control_dominators(self.function));
-                                dominates(doms, anchor, f.producer(*c))
-                            })
+                        // Edge against EDGE.  The split dominator tree is
+                        // memoised across the whole `find_joined_constrained`
+                        // call — never rebuilt per arm or per tuple.
+                        dominates(self.split_doms(), CtrlKey::Edge(edge_v), CtrlKey::Edge(*c))
                     })
                     // Region control input `i` ⇒ phi data input `i + 1`.
                     .filter_map(move |(i, _)| phi_inputs.get(i + 1).copied())
-            },
-        )
+            })
     }
 
-    /// Resolve the per-`(phi, edge)` scan state for [`Self::phi_arms_from_edge`]
-    /// once: the phi's inputs, its region's control inputs, and the node the
-    /// dominance clause anchors at (`None` = clause disabled, direct-only).
+    /// Resolve the per-`phi` scan state for [`Self::phi_arms_from_edge`] once:
+    /// the phi's inputs and its region's control inputs.
     ///
     /// `Inputs` is a `Copy` borrow of the graph's use-list, so carrying the two
     /// input views costs no allocation.
-    fn arm_scan(
-        &self,
-        phi_v: ValueId,
-        edge_v: ValueId,
-    ) -> Option<(
-        strider_ir::Inputs<'f>,
-        strider_ir::Inputs<'f>,
-        Option<NodeId>,
-    )> {
+    fn arm_scan(&self, phi_v: ValueId) -> Option<(strider_ir::Inputs<'f>, strider_ir::Inputs<'f>)> {
         let f = self.function;
         let phi_node = f.producer(phi_v);
         if !matches!(f.node_kind(phi_node), NodeKind::Phi | NodeKind::MemPhi) {
@@ -910,28 +941,7 @@ impl<'f> ConstraintEval<'f> {
         if !matches!(f.node_kind(region), NodeKind::Region) {
             return None;
         }
-        // The branch edge's consumer (the block it leads into); a control edge
-        // has exactly one consumer in well-formed IR.
-        //
-        // The dominance clause reasons "dominated by the edge's TARGET", which
-        // only implies "reached through the EDGE" when the edge is the target's
-        // sole way in.  Where the target is a `Region` with several predecessors
-        // — the `if (c) {} else { … }` shape, whose empty arm sends the edge
-        // straight to the join — paths through the OTHER edge reach it too, and
-        // dominance would mis-pin every arm below the join to both edges.  So the
-        // clause is gated on sole entry; the direct `==` clause still handles
-        // that shape exactly.
-        let dom_anchor =
-            f.value_uses(edge_v)
-                .next()
-                .map(|(n, _)| n)
-                .filter(|con| match f.node_kind(*con) {
-                    // All of a Region's inputs are control predecessors.
-                    NodeKind::Region => f.node_inputs(*con).len() == 1,
-                    // Any other consumer has a single control predecessor.
-                    _ => true,
-                });
-        Some((phi_inputs, f.node_inputs(region), dom_anchor))
+        Some((phi_inputs, f.node_inputs(region)))
     }
 }
 

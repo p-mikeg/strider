@@ -2976,8 +2976,8 @@ impl PyIfPat {
         slf
     }
     /// Bind the If's true control-output value to `c` (propagated to the outer
-    /// match; stable under region collapse — the handle for a `reaches` join
-    /// constraint).
+    /// match; stable under region collapse — the handle for the edge join
+    /// constraints, `dominated_by_branch` / `phi_input_from_edge`).
     fn capture_true<'py>(slf: PyRef<'py, Self>, c: PyRef<'py, PyCapture>) -> PyRef<'py, Self> {
         slf.inner.borrow_mut().capture_true = Some(c.inner);
         slf
