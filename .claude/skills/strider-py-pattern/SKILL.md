@@ -309,27 +309,37 @@ hits = fn.find_all([pat_a, pat_b, pat_c])
 Walk-through flags also apply to a joined `find_all`; all flags apply uniformly to all patterns.
 
 **CFG relational join constraints** — filter a joined result by control-flow
-relations between captured entities (in addition to shared-capture equality):
+relations between captured entities (in addition to shared-capture equality).
+
+They live in their own namespace, **`strider.pattern.constraints`** — NOT in
+`strider.pattern`. A *pattern* describes graph SHAPE and goes in the first
+argument (`find_all(pats, ...)`); a *constraint* is a relational predicate over
+the captures those patterns bind, evaluated after the join and passed as
+`constraints=[...]`. There are no back-compat aliases: `p.dominates` does not
+exist.
 
 ```python
+from strider import pattern as p
+from strider.pattern import constraints as cons
+
 g, t, f, c, fop = (p.Capture() for _ in range(5))
 guard = p.if_else(cond=p.int_ne(p.load(p.add(p.var(fop), p.any_int_const())), p.int_const(0))) \
          .capture(g).capture_true(t).capture_false(f)
 call  = p.call().capture(c)
 
 # "call gated on the TRUE branch of the guard, exclusively":
-hits = fn.find_all([guard, call], constraints=[p.dominated_by_branch(t, c)])
+hits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
 ```
 
-- `p.dominates(a, b)` — node `a` dominates node `b` in the control subgraph.
-- `p.dominated_by_branch(branch, node)` — `node` is dominated by the branch edge's
+- `cons.dominates(a, b)` — node `a` dominates node `b` in the control subgraph.
+- `cons.dominated_by_branch(branch, node)` — `node` is dominated by the branch edge's
   target, i.e. in that block *exclusively*: the sibling arm AND the post-merge tail
   are both excluded (the merge is dominated by the `If` itself, not by either edge).
   One `dominated_by_branch(true_edge, c)` = "`c` is in the true block".
   NOTE the polarity is the IR's, not the C source's: `je L` lifts to `CBRANCH L, ZF`,
   so the `If`'s TRUE edge is the jump-TAKEN edge and the fallthrough is the FALSE
   edge — the opposite of the source-level `if` body.
-- `p.phi_input_from_edge(phi, edge, value)` — the `phi` capture's data input on the
+- `cons.phi_input_from_edge(phi, edge, value)` — the `phi` capture's data input on the
   predecessor fed by control `edge` is `value`: "the value merged from THIS
   branch is X". `edge` binds an `If`'s `capture_true`/`capture_false`.
   Also works for a `mem_phi()` — a memory token (e.g. a `store().capture(sv)`
@@ -355,7 +365,7 @@ hits = fn.find_all([guard, call], constraints=[p.dominated_by_branch(t, c)])
   ```python
   # Is this phi/edge pair even related? A wildcard cannot fail on value grounds.
   visible = fn.find_all([guard, phi], constraints=[
-      p.phi_input_from_edge(ph, t, p.anything())])
+      cons.phi_input_from_edge(ph, t, p.anything())])
   if not visible:
       ...  # the edge does not reach this phi AT ALL — not a value mismatch
   ```
@@ -380,6 +390,37 @@ hits = fn.find_all([guard, call], constraints=[p.dominated_by_branch(t, c)])
   phi (`find_all` enumerates all distinct bindings), with the constraint pruning
   only afterwards — plus each extra root needs its own capture hygiene. The inline
   form replaces that whole-graph root search with one match at a known value.
+
+- `cons.negate(c)` — the negation of any constraint: a tuple survives iff `c` does
+  NOT hold. (`negate`, not `not_` — the Python surface has no trailing-underscore
+  keyword dodges, and a boolean-connective name would read as a sibling of the
+  IR value ops `int_and` / `int_or` / `int_not`, which it is not.)
+
+  **RANGE RESTRICTION — the rule that makes it sound.** Every capture `c`
+  mentions must be bound by a *positive* pattern in the same `find_all` list.
+  This is not a style rule; it is what stops negation from lying. A constraint
+  fails when a capture is unbound — it never saw anything — and under negation
+  that failure would flip to a vacuous TRUE and match EVERYTHING. So a `negate`
+  over an unbound capture raises `StriderError` rather than silently matching:
+
+  ```python
+  # Exactly the calls NOT gated on the true edge (false arm + post-merge tail):
+  fn.find_all([guard, call], constraints=[cons.negate(cons.dominated_by_branch(t, c))])
+
+  # StriderError: `unbound` is bound by no pattern, so this would be vacuously
+  # true for every tuple.
+  fn.find_all([guard, call],
+              constraints=[cons.negate(cons.dominated_by_branch(t, p.Capture()))])
+  ```
+
+  `negate(negate(c))` is the identity. `negate` of a `phi_input_from_edge` whose
+  `value` is an **inline pattern** is rejected: that form BINDS captures rather
+  than deciding a predicate, and there is nothing to bind on the false branch —
+  use the `Capture` value spelling if you need to negate such a fact.
+
+  Note this does NOT resolve the "empty result is ambiguous" trap above: `negate`
+  negates the *constraint*, not the *visibility* of the edge. Probe with
+  `anything()` first, then negate.
 
 Constraints range over **control nodes** (`Call`/`Store`/`Region`/`If`/…); a
 captured value resolves to its producer node. Prefer `capture_true`/`capture_false`

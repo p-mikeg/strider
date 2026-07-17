@@ -3010,12 +3010,23 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
 }
 
 // ── JoinConstraint (CFG relations for find_all([...], constraints=[...])) ─
+//
+// These live in the `strider.pattern.constraints` submodule, NOT in
+// `strider.pattern` itself: a pattern describes graph SHAPE and is passed as
+// `find_all(pats, ...)`, whereas a constraint is a relational predicate over
+// captures, evaluated post-join and passed as `find_all(..., constraints=[..])`.
+// One namespace for both hid that split behind identically-spelled calls.
 
-/// A CFG relation between two captured entities, passed to
+/// A CFG relation between captured entities, passed to
 /// `Function.find_all([...], constraints=[...])` to filter joined tuples.
-/// Construct via `dominates` / `dominated_by_branch` / `phi_input_from_edge`.
+/// Construct via `dominates` / `dominated_by_branch` / `phi_input_from_edge`,
+/// and negate with `negate`.
 #[gen_stub_pyclass]
-#[pyclass(name = "JoinConstraint", module = "strider.pattern", unsendable)]
+#[pyclass(
+    name = "JoinConstraint",
+    module = "strider.pattern.constraints",
+    unsendable
+)]
 pub struct PyJoinConstraint {
     pub(crate) inner: JoinConstraint,
 }
@@ -3085,6 +3096,68 @@ pub fn phi_input_from_edge(
             edge: edge.inner,
             value: spec,
         },
+    })
+}
+
+/// The negation of a join constraint: a tuple survives iff `c` does NOT hold.
+///
+/// **Range restriction.** Negation is only sound when every capture `c`
+/// mentions is bound by a *positive* pattern in the same `find_all` list.
+/// An unbound capture makes `c` fail for want of a binding, which would flip
+/// under negation to a vacuous "true" and match everything; `find_all` rejects
+/// that with a `StriderError` instead of matching blindly.
+///
+/// `negate` of a `phi_input_from_edge` with an *inline value pattern* is also
+/// rejected: that form BINDS captures rather than deciding a predicate, so
+/// there is nothing to bind on the false branch.  Spell the negated fact with
+/// a `Capture` value instead.  Nesting (`negate(negate(c))`) is allowed and is
+/// the identity.
+#[pyfunction]
+pub fn negate(c: PyRef<'_, PyJoinConstraint>) -> PyResult<PyJoinConstraint> {
+    Ok(PyJoinConstraint {
+        inner: JoinConstraint::Not(Box::new(rebuild_negatable(&c.inner)?)),
+    })
+}
+
+/// Rebuild a negatable `JoinConstraint` by value.
+///
+/// `JoinConstraint` is deliberately not `Clone` — an inline
+/// [`ValueSpec::Pattern`] owns match-time closures — but Python hands `negate` a
+/// borrowed `PyJoinConstraint`, so the wrapped constraint has to be rebuilt from
+/// its parts.  That is total over exactly the forms `negate` accepts: every one is
+/// captures-only, so nothing here ever needs to clone a `Pattern`.  The inline
+/// form is rejected on the same grounds the matcher rejects it (it binds), and
+/// the two rules coincide by construction rather than by coincidence.
+fn rebuild_negatable(c: &JoinConstraint) -> PyResult<JoinConstraint> {
+    Ok(match c {
+        JoinConstraint::Dominates { a, b } => JoinConstraint::Dominates { a: *a, b: *b },
+        JoinConstraint::DominatedByBranch { branch, node } => JoinConstraint::DominatedByBranch {
+            branch: *branch,
+            node: *node,
+        },
+        JoinConstraint::PhiInputFromEdge {
+            phi,
+            edge,
+            value: ValueSpec::Capture(v),
+        } => JoinConstraint::PhiInputFromEdge {
+            phi: *phi,
+            edge: *edge,
+            value: ValueSpec::Capture(*v),
+        },
+        // Nesting: `negate(negate(c))` rebuilds to `Not(Not(c))`, which the
+        // matcher evaluates as `c` — the identity, not a special case.
+        JoinConstraint::Not(inner) => JoinConstraint::Not(Box::new(rebuild_negatable(inner)?)),
+        JoinConstraint::PhiInputFromEdge {
+            value: ValueSpec::Pattern(_),
+            ..
+        } => {
+            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
+                "negate cannot negate a binding constraint (phi_input_from_edge with \
+                 an inline value pattern binds captures rather than deciding a \
+                 predicate, so there is nothing to bind on the false branch) — spell \
+                 the negated fact with a capture value instead"
+            )));
+        }
     })
 }
 
@@ -3423,7 +3496,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMemPhiPat>()?;
     m.add_class::<PyFunctionArgPat>()?;
     m.add_class::<PyCastMask>()?;
-    m.add_class::<PyJoinConstraint>()?;
 
     macro_rules! add_fn {
         ($name:ident) => {
@@ -3519,9 +3591,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(unreachable);
     add_fn!(switch);
     add_fn!(if_);
-    add_fn!(dominates);
-    add_fn!(dominated_by_branch);
-    add_fn!(phi_input_from_edge);
     add_fn!(int_binary);
     add_fn!(bool_binary);
     add_fn!(float_binary);
@@ -3533,8 +3602,38 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(float_un_any);
     add_fn!(float_cmp_any);
 
+    register_constraints(py, &m)?;
+
     parent.add_submodule(&m)?;
     let sys = py.import_bound("sys")?;
     sys.getattr("modules")?.set_item("strider.pattern", &m)?;
+    Ok(())
+}
+
+/// Register `strider.pattern.constraints` — the join CONSTRAINTS, kept out of
+/// `strider.pattern` proper because they are relational predicates over
+/// captures (`find_all(..., constraints=[...])`), not graph shapes
+/// (`find_all(pats, ...)`).  `parent` is the `pattern` module, so the
+/// `sys.modules` key is the full dotted path — without it
+/// `from strider.pattern import constraints` fails even though attribute
+/// access works.
+fn register_constraints(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
+    let m = PyModule::new_bound(py, "constraints")?;
+    m.add_class::<PyJoinConstraint>()?;
+
+    macro_rules! add_fn {
+        ($name:ident) => {
+            m.add_function(wrap_pyfunction!($name, &m)?)?;
+        };
+    }
+    add_fn!(dominates);
+    add_fn!(dominated_by_branch);
+    add_fn!(phi_input_from_edge);
+    add_fn!(negate);
+
+    parent.add_submodule(&m)?;
+    let sys = py.import_bound("sys")?;
+    sys.getattr("modules")?
+        .set_item("strider.pattern.constraints", &m)?;
     Ok(())
 }

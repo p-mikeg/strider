@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, List, Optional, Union
 
-from . import Match
+from .. import Match
 
 class Capture:
     """Opaque capture variable; bind a matched node and read it back
@@ -41,11 +41,6 @@ class CastMask:
     def all(cls) -> CastMask: ...
     @classmethod
     def none(cls) -> CastMask: ...
-
-class JoinConstraint:
-    """A CFG relation between two captured entities. Construct via
-    `dominates` / `dominated_by_branch` / `phi_input_from_edge`; pass to
-    `Function.find_all([...], constraints=[...])`."""
     def bits(self) -> int: ...
     def __or__(self, other: CastMask) -> CastMask: ...
     def __and__(self, other: CastMask) -> CastMask: ...
@@ -331,41 +326,6 @@ def one_of(patterns: List[PatLike]) -> Pat:
     Captures under an alternative that did not fire are left UNBOUND (not
     defaulted), so `Match.has(c)` tells you which arm fired and lets you supply
     your own default: `off = h.uint(o) if h.has(o) else 0`."""
-def dominates(a: Capture, b: Capture) -> JoinConstraint:
-    """`a` dominates `b` in the control subgraph. Pass to
-    `Function.find_all([...], constraints=[...])`."""
-def dominated_by_branch(branch: Capture, node: Capture) -> JoinConstraint:
-    """`node` is dominated by the target of branch edge `branch` (an `If`'s
-    `capture_true`/`capture_false` value) — in that block exclusively, so
-    `dominated_by_branch(true_edge, c)` means "`c` is in the true block"."""
-def phi_input_from_edge(
-    phi: Capture, edge: Capture, value: Capture | Pat
-) -> JoinConstraint:
-    """`phi`'s data input on the predecessor fed by control edge `edge` is
-    `value` — "the value merged from THIS branch is X". `edge` binds an `If`'s
-    `capture_true`/`capture_false` value.
-
-    An arm qualifies when its predecessor IS the edge, or is reached exclusively
-    through it — so a merge across a `call` or any other intervening block still
-    pins. Exclusive: an arm reachable from both sides of the branch belongs to
-    neither edge. A branch whose block splits and reaches the merge twice yields
-    one match PER qualifying arm.
-
-    An empty result is AMBIGUOUS: either `edge` reaches no arm of `phi`, or it
-    does and the arm merges a different value. Re-probe with `anything()` as the
-    value to tell them apart — a wildcard cannot fail on value grounds, so an
-    empty result from it proves the edge is not visible:
-
-        if not fn.find_all([g, ph_p], constraints=[
-                p.phi_input_from_edge(ph, e, p.anything())]):
-            ...  # the edge does not reach this phi at all — not a mismatch
-
-    `value` is either a `Capture` (bound by another pattern in the same
-    `find_all` list; compared by identity) or a **pattern** matched inline at the
-    arm value. The inline form states the fact locally — no independent root
-    ranging over the whole function and no cartesian product against it — and it
-    binds: captures inside it read back off the match, unifying with (never
-    overwriting) whatever the rest of the join already bound."""
 def function_arg(i: int) -> FunctionArgPat:
     """Start a function-argument pattern constrained to argument index `i`."""
 def function_arg_any() -> FunctionArgPat:

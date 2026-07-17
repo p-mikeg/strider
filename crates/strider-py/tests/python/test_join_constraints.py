@@ -5,8 +5,12 @@ branch and not after the merge — expressed region-independently via the If's
 control-output values plus dominated_by_branch.
 """
 
+import pytest
+
 import strider
+import strider.errors
 from strider import pattern as p
+from strider.pattern import constraints as cons
 
 
 def _diamond_with_calls():
@@ -58,11 +62,11 @@ def test_dominated_by_branch_isolates_true_arm_in_one_constraint():
     # One constraint = "the call in the block this edge leads into": it excludes
     # the sibling arm AND the merge tail at 0x1010 (the merge is dominated by
     # the If itself, not by either of its edges).
-    hits = fn.find_all([guard, call], constraints=[p.dominated_by_branch(t, c)])
+    hits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
     assert len(hits) == 1, "only one call is dominated by the true edge"
     assert 0x100B in hits[0].asm_fingerprint(c), "true edge -> the jump-taken call"
 
-    fhits = fn.find_all([guard, call], constraints=[p.dominated_by_branch(f, c)])
+    fhits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(f, c)])
     assert len(fhits) == 1, "only one call is dominated by the false edge"
     assert 0x1004 in fhits[0].asm_fingerprint(c), "false edge -> the fallthrough call"
 
@@ -72,18 +76,18 @@ def test_find_unique_accepts_constraints():
     g, t, f, c = p.Capture(), p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f).capture(g)
     call = p.call().capture(c)
-    cons = [p.dominated_by_branch(t, c)]
+    cs = [cons.dominated_by_branch(t, c)]
     # find_unique agrees the constrained true-arm hit is unique.
-    m = fn.find_unique([guard, call], constraints=cons)
+    m = fn.find_unique([guard, call], constraints=cs)
     assert m is not None
     # Same target as find_all under the same constraint.
-    assert len(fn.find_all([guard, call], constraints=cons)) == 1
+    assert len(fn.find_all([guard, call], constraints=cs)) == 1
 
 
 def test_dominates_if_selects_every_call():
     fn = _diamond_with_calls()
     all_calls = len(fn.find_all(p.call()))
-    dominated = _call_count(fn, lambda t, f, c, g: [p.dominates(g, c)])
+    dominated = _call_count(fn, lambda t, f, c, g: [cons.dominates(g, c)])
     # The If dominates both arms and the merge — every call is dominated by it.
     assert dominated == all_calls
 
@@ -107,8 +111,8 @@ def test_phi_input_from_edge_ties_value_to_its_branch():
     phi = p.phi().capture(ph)
     val = p.any_int_const(v)
 
-    th = fn.find_all([guard, phi, val], constraints=[p.phi_input_from_edge(ph, t, v)])
-    fh = fn.find_all([guard, phi, val], constraints=[p.phi_input_from_edge(ph, f, v)])
+    th = fn.find_all([guard, phi, val], constraints=[cons.phi_input_from_edge(ph, t, v)])
+    fh = fn.find_all([guard, phi, val], constraints=[cons.phi_input_from_edge(ph, f, v)])
 
     assert len(th) == 1 and len(fh) == 1
     true_val, false_val = th[0].uint(v), fh[0].uint(v)
@@ -138,7 +142,7 @@ def test_phi_input_from_edge_accepts_inline_value_pattern():
     def hits(edge, k):
         return len(fn.find_all(
             [guard, phi],
-            constraints=[p.phi_input_from_edge(ph, edge, p.int_const(k))],
+            constraints=[cons.phi_input_from_edge(ph, edge, p.int_const(k))],
         ))
 
     # Each edge merges exactly one of {1, 2}, and the two edges disagree.
@@ -157,7 +161,7 @@ def test_inline_pattern_capture_is_readable():
     def read(edge):
         hits = fn.find_all(
             [guard, phi],
-            constraints=[p.phi_input_from_edge(ph, edge, p.any_int_const(v))],
+            constraints=[cons.phi_input_from_edge(ph, edge, p.any_int_const(v))],
         )
         assert len(hits) == 1, f"expected one arm value, got {len(hits)}"
         return hits[0].uint(v)
@@ -174,7 +178,7 @@ def test_inline_pattern_negative_when_arm_differs():
     phi = p.phi().capture(ph)
     hits = fn.find_all(
         [guard, phi],
-        constraints=[p.phi_input_from_edge(ph, t, p.int_const(0xDEAD))],
+        constraints=[cons.phi_input_from_edge(ph, t, p.int_const(0xDEAD))],
     )
     assert hits == [], "no arm merges 0xDEAD"
 
@@ -189,7 +193,7 @@ def test_inline_equivalent_to_capture_spelling():
         edge = t if pick_true else f
         hits = fn.find_all(
             [guard, p.phi().capture(ph), p.any_int_const(v)],
-            constraints=[p.phi_input_from_edge(ph, edge, v)],
+            constraints=[cons.phi_input_from_edge(ph, edge, v)],
         )
         assert len(hits) == 1
         return hits[0].uint(v)
@@ -200,7 +204,7 @@ def test_inline_equivalent_to_capture_spelling():
         edge = t if pick_true else f
         hits = fn.find_all(
             [guard, p.phi().capture(ph)],
-            constraints=[p.phi_input_from_edge(ph, edge, p.any_int_const(v))],
+            constraints=[cons.phi_input_from_edge(ph, edge, p.any_int_const(v))],
         )
         assert len(hits) == 1
         return hits[0].uint(v)
@@ -220,7 +224,7 @@ def test_inline_capture_unifies_with_tuple_binding():
     def count(edge):
         return len(fn.find_all(
             [guard, phi, val_root],
-            constraints=[p.phi_input_from_edge(ph, edge, p.any_int_const(v))],
+            constraints=[cons.phi_input_from_edge(ph, edge, p.any_int_const(v))],
         ))
 
     # The root ranges over every int const; unification must pin `v` to the arm.
@@ -263,8 +267,8 @@ def test_phi_input_from_edge_reaches_through_intervening_call():
     phi = p.phi().capture(ph)
     val = p.any_int_const(v)
 
-    th = fn.find_all([guard, phi, val], constraints=[p.phi_input_from_edge(ph, t, v)])
-    fh = fn.find_all([guard, phi, val], constraints=[p.phi_input_from_edge(ph, f, v)])
+    th = fn.find_all([guard, phi, val], constraints=[cons.phi_input_from_edge(ph, t, v)])
+    fh = fn.find_all([guard, phi, val], constraints=[cons.phi_input_from_edge(ph, f, v)])
 
     assert len(th) == 1 and len(fh) == 1
     assert {th[0].uint(v), fh[0].uint(v)} == {1, 2}
@@ -283,7 +287,7 @@ def test_phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch():
 
     # The edge IS visible — even across the call — so the wildcard hits.
     visible = fn.find_all(
-        [guard, phi], constraints=[p.phi_input_from_edge(ph, t, p.anything())]
+        [guard, phi], constraints=[cons.phi_input_from_edge(ph, t, p.anything())]
     )
     assert len(visible) >= 1
 
@@ -291,6 +295,76 @@ def test_phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch():
     # proves this one is a real mismatch, not blindness.
     mismatch = fn.find_all(
         [guard, phi],
-        constraints=[p.phi_input_from_edge(ph, t, p.int_const(0xDEAD))],
+        constraints=[cons.phi_input_from_edge(ph, t, p.int_const(0xDEAD))],
     )
     assert mismatch == []
+
+
+# ── negate ─────────────────────────────────────────────────────────────────
+
+
+def test_negate_is_the_exact_complement_of_dominated_by_branch():
+    """`negate(dominated_by_branch(t, c))` holds exactly where the positive
+    constraint does not — on a diamond where both cases occur."""
+    fn = _diamond_with_calls()
+    t, f, c = p.Capture(), p.Capture(), p.Capture()
+    guard = p.if_else().capture_true(t).capture_false(f)
+    call = p.call().capture(c)
+
+    pos = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
+    neg = fn.find_all([guard, call], constraints=[cons.negate(cons.dominated_by_branch(t, c))])
+    # One call per region (true arm / false arm / merge); the positive picks
+    # exactly the true-arm one, so the negation must pick the other two.
+    assert len(pos) == 1
+    assert len(neg) == 2
+    pos_nodes = {h.node(c).id for h in pos}
+    neg_nodes = {h.node(c).id for h in neg}
+    assert not (pos_nodes & neg_nodes)
+    assert len(pos_nodes | neg_nodes) == 3
+
+
+def test_double_negate_is_the_identity():
+    fn = _diamond_with_calls()
+    t, c = p.Capture(), p.Capture()
+    guard = p.if_else().capture_true(t)
+    call = p.call().capture(c)
+
+    once = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
+    twice = fn.find_all(
+        [guard, call],
+        constraints=[cons.negate(cons.negate(cons.dominated_by_branch(t, c)))],
+    )
+    assert len(twice) == len(once) == 1
+    assert {h.node(c).id for h in twice} == {h.node(c).id for h in once}
+
+
+def test_negate_with_an_unbound_capture_does_not_vacuously_match():
+    """Range restriction. `unbound` is bound by no pattern, so the inner
+    constraint fails for want of a binding — under a naive negation-as-failure
+    that flips to a VACUOUS true and matches every tuple. It must be rejected
+    loudly instead."""
+    fn = _diamond_with_calls()
+    t, c, unbound = p.Capture(), p.Capture(), p.Capture()
+    guard = p.if_else().capture_true(t)
+    call = p.call().capture(c)
+
+    with pytest.raises(strider.errors.StriderError) as ei:
+        fn.find_all(
+            [guard, call],
+            constraints=[cons.negate(cons.dominated_by_branch(t, unbound))],
+        )
+    assert "negate" in str(ei.value)
+
+
+def test_negate_of_a_binding_constraint_is_rejected_at_construction():
+    """An inline value pattern BINDS rather than deciding a predicate; there is
+    nothing to bind on the false branch, so negating it is rejected."""
+    ph, e = p.Capture(), p.Capture()
+    with pytest.raises(strider.errors.StriderError) as ei:
+        cons.negate(cons.phi_input_from_edge(ph, e, p.anything()))
+    assert "negate" in str(ei.value)
+
+
+def test_negate_of_phi_input_from_edge_with_a_capture_value_is_allowed():
+    ph, e, v = p.Capture(), p.Capture(), p.Capture()
+    assert cons.negate(cons.phi_input_from_edge(ph, e, v)) is not None

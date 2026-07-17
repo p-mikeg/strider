@@ -499,7 +499,7 @@ class Function:
         ignore_root: bool = ...,
         ignore_casts: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
-        constraints: Optional[List[Any]] = ...,  # list[strider.pattern.JoinConstraint]
+        constraints: Optional[List[Any]] = ...,  # list[strider.pattern.constraints.JoinConstraint]
     ) -> List[Match]:
         """Deduplicated `Match`es for `pat`.  `pat` is a single pattern or a
         `list` of patterns; a list joins on shared `Capture`s (every pattern
@@ -531,7 +531,7 @@ class Function:
         ignore_root: bool = ...,
         ignore_casts: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
-        constraints: Optional[List[Any]] = ...,  # list[strider.pattern.JoinConstraint]
+        constraints: Optional[List[Any]] = ...,  # list[strider.pattern.constraints.JoinConstraint]
     ) -> Match:
         """Return the single `Match` for `pat`, raising `StriderError` if there
         is not exactly one (distinct messages for 0 and >1).  The count is

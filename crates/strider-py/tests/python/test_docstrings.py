@@ -3,7 +3,8 @@
 PyO3 turns a Rust ``///`` doc comment into the Python ``__doc__`` of the
 generated class / method / function, and a ``#[pyo3(get)]`` field's
 doc comment into its getset-descriptor ``__doc__``.  This test walks the
-public surface of ``strider``, ``strider.pattern``, and ``strider.opt``
+public surface of ``strider``, ``strider.pattern``,
+``strider.pattern.constraints``, and ``strider.opt``
 and asserts each public binding is documented, so a future binding added
 without a doc comment trips here rather than shipping undocumented.
 
@@ -22,6 +23,7 @@ import types
 import strider
 import strider.opt
 import strider.pattern
+import strider.pattern.constraints
 
 
 # Tiny, justified allow-list of public bindings exempt from the
@@ -85,6 +87,7 @@ def test_every_public_binding_has_a_docstring():
     for modname, mod in (
         ("strider", strider),
         ("strider.pattern", strider.pattern),
+        ("strider.pattern.constraints", strider.pattern.constraints),
         ("strider.opt", strider.opt),
     ):
         missing.extend(_collect_missing(modname, mod))

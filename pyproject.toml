@@ -48,5 +48,10 @@ python-source = "crates/strider-py"
 module-name = "strider.strider"
 include = [
     { path = "crates/strider-py/strider/*.pyi", format = "wheel" },
+    # `strider/pattern/` is a stub PACKAGE (`__init__.pyi` + `constraints.pyi`)
+    # rather than a flat `pattern.pyi`, because a file cannot host a submodule
+    # stub.  The glob above is one level deep, so the nested stubs need their
+    # own entry or the wheel ships `strider.pattern` untyped.
+    { path = "crates/strider-py/strider/pattern/*.pyi", format = "wheel" },
     { path = "crates/strider-py/strider/py.typed", format = "wheel" },
 ]

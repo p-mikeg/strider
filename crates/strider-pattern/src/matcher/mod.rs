@@ -362,6 +362,32 @@ impl<'f> Matcher<'f> {
         // captures `c`, joined by `dominated_by_branch(t, c)`). Union their
         // owners so the connectivity check accepts a constraint-correlated join.
         for con in constraints {
+            // RANGE RESTRICTION for negation. `cap_owner` only records captures
+            // some pattern BINDS, and the union below silently skips a capture
+            // it has no owner for — fine for a positive constraint (an unbound
+            // capture just fails it, dropping the tuple) but catastrophic under
+            // negation, where that failure would flip to a vacuous TRUE and
+            // match everything. So a `Not` must have every capture bound by a
+            // positive pattern; reject loudly otherwise.
+            if let JoinConstraint::Not(inner) = con {
+                if inner.is_binding() {
+                    anyhow::bail!(
+                        "find_joined: cannot negate a binding constraint \
+                         (phi_input_from_edge with an inline value pattern binds \
+                         captures rather than deciding a predicate, so there is \
+                         nothing to bind on the false branch) — spell the negated \
+                         fact with a capture value instead"
+                    );
+                }
+                if let Some(c) = inner.captures().iter().find(|c| !cap_owner.contains_key(c)) {
+                    anyhow::bail!(
+                        "find_joined: cannot negate a constraint mentioning capture \
+                         {c:?}, which no pattern in the join binds — negating an unbound \
+                         capture would hold vacuously (true because nothing was seen) \
+                         rather than meaningfully; bind it with a positive pattern"
+                    );
+                }
+            }
             // Union the owners of ALL of a constraint's captures into one
             // component (a 3-capture constraint links three patterns).
             let mut owners = con
@@ -598,6 +624,24 @@ pub enum JoinConstraint {
         edge: crate::Capture,
         value: ValueSpec,
     },
+    /// The negation of `inner`: a tuple survives iff `inner` does NOT hold on
+    /// it.
+    ///
+    /// Negation-as-failure is only sound under RANGE RESTRICTION: every capture
+    /// `inner` mentions must be bound by a *positive* pattern in the same join.
+    /// Otherwise `inner` would fail merely for want of a binding and the
+    /// negation would hold VACUOUSLY — "true because it could not see
+    /// anything". [`Matcher::find_joined_constrained`] enforces this and
+    /// rejects a range-unrestricted `Not` with an error rather than matching
+    /// everything.
+    ///
+    /// Negating a BINDING constraint (a [`PhiInputFromEdge`] whose `value` is
+    /// an inline [`ValueSpec::Pattern`]) is likewise rejected: such a
+    /// constraint enumerates bindings rather than deciding a predicate, and
+    /// there is nothing to bind on the false branch.
+    ///
+    /// [`PhiInputFromEdge`]: JoinConstraint::PhiInputFromEdge
+    Not(Box<JoinConstraint>),
 }
 
 /// How [`JoinConstraint::PhiInputFromEdge`] names the merged arm value.
@@ -663,7 +707,24 @@ impl JoinConstraint {
                 }
                 caps
             }
+            // A negation correlates exactly what it negates: contributing these
+            // links the owner patterns AND is what the range-restriction check
+            // in `find_joined_constrained` tests for boundness.
+            JoinConstraint::Not(inner) => inner.captures(),
         }
+    }
+
+    /// Whether this constraint BINDS captures rather than deciding a predicate
+    /// — true only for an inline-pattern [`JoinConstraint::PhiInputFromEdge`],
+    /// which [`Matcher::expand_phi_inline`] expands into 0..n tuples.
+    fn is_binding(&self) -> bool {
+        matches!(
+            self,
+            JoinConstraint::PhiInputFromEdge {
+                value: ValueSpec::Pattern(_),
+                ..
+            }
+        )
     }
 }
 
@@ -742,6 +803,12 @@ impl<'f> ConstraintEval<'f> {
                 let doms = self.doms.get_or_init(|| control_dominators(self.function));
                 dominates(doms, consumer, target)
             }
+            // Sound because `find_joined_constrained` has already range-checked
+            // `inner`'s captures against the positive patterns and rejected a
+            // binding `inner`, so a `false` here means "`inner` is false", never
+            // "`inner` could not see its captures". Reuses the same memoised
+            // `doms`, so a negation costs no extra walk.
+            JoinConstraint::Not(ref inner) => !self.holds(inner, tuple),
         }
     }
 

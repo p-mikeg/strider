@@ -108,3 +108,88 @@ fn dominates_if_selects_all_three_calls() {
     // Sanity: g really bound the If.
     assert_eq!(tuples[0][0].node(g, function.graph()).unwrap(), if_id);
 }
+
+#[test]
+fn negate_inverts_dominated_by_branch() {
+    let (function, _) = diamond_with_calls();
+    let m = Matcher::new(&function);
+    let (t, c) = (Capture::new(), Capture::new());
+    let guard = if_node().capture_true(t).build();
+    let callp = call().capture(c).build();
+
+    let inner = JoinConstraint::DominatedByBranch { branch: t, node: c };
+    let tuples = m
+        .find_joined_constrained(&[&guard, &callp], &[&JoinConstraint::Not(Box::new(inner))])
+        .unwrap();
+    let mut addrs: Vec<u64> = tuples
+        .iter()
+        .map(|tp| call_addr(tp, c, &function))
+        .collect();
+    addrs.sort_unstable();
+    // Exactly the complement of the positive constraint's `[0xAAAA]`.
+    assert_eq!(addrs, vec![0xBBBB, 0xCCCC]);
+}
+
+#[test]
+fn double_negation_is_the_identity() {
+    let (function, _) = diamond_with_calls();
+    let m = Matcher::new(&function);
+    let (t, c) = (Capture::new(), Capture::new());
+    let guard = if_node().capture_true(t).build();
+    let callp = call().capture(c).build();
+
+    let inner = JoinConstraint::DominatedByBranch { branch: t, node: c };
+    let double = JoinConstraint::Not(Box::new(JoinConstraint::Not(Box::new(inner))));
+    let tuples = m
+        .find_joined_constrained(&[&guard, &callp], &[&double])
+        .unwrap();
+    let addrs: Vec<u64> = tuples
+        .iter()
+        .map(|tp| call_addr(tp, c, &function))
+        .collect();
+    assert_eq!(addrs, vec![0xAAAA]);
+}
+
+#[test]
+fn negating_an_unbound_capture_is_rejected_not_vacuously_true() {
+    let (function, _) = diamond_with_calls();
+    let m = Matcher::new(&function);
+    let (t, c, unbound) = (Capture::new(), Capture::new(), Capture::new());
+    let guard = if_node().capture_true(t).build();
+    let callp = call().capture(c).build();
+
+    // `unbound` is bound by no pattern in the join. A naive negation-as-failure
+    // would make this hold VACUOUSLY for every tuple; range restriction must
+    // reject it instead.
+    let inner = JoinConstraint::DominatedByBranch {
+        branch: t,
+        node: unbound,
+    };
+    let err = m
+        .find_joined_constrained(&[&guard, &callp], &[&JoinConstraint::Not(Box::new(inner))])
+        .err()
+        .expect("must be rejected, not vacuously true")
+        .to_string();
+    assert!(err.contains("negate"), "unexpected error: {err}");
+}
+
+#[test]
+fn negating_a_binding_constraint_is_rejected() {
+    let (function, _) = diamond_with_calls();
+    let m = Matcher::new(&function);
+    let (t, c) = (Capture::new(), Capture::new());
+    let guard = if_node().capture_true(t).build();
+    let callp = call().capture(c).build();
+
+    let inner = JoinConstraint::PhiInputFromEdge {
+        phi: c,
+        edge: t,
+        value: strider_pattern::ValueSpec::Pattern(Box::new(call().build())),
+    };
+    let err = m
+        .find_joined_constrained(&[&guard, &callp], &[&JoinConstraint::Not(Box::new(inner))])
+        .err()
+        .expect("must be rejected, not vacuously true")
+        .to_string();
+    assert!(err.contains("negate"), "unexpected error: {err}");
+}
