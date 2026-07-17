@@ -132,134 +132,52 @@ pub(crate) struct Signature {
 use ExpectedValueKind::*;
 use SlotRole as R;
 
-const CTRL: Slot = Slot {
-    kind: Control,
-    name: "ctrl",
-    role: R::Control,
-};
-const MEM: Slot = Slot {
-    kind: Memory,
-    name: "mem",
-    role: R::Memory,
-};
-const PHI: Slot = Slot {
-    kind: PhiToken,
-    name: "phi",
-    role: R::Phi,
-};
-const COND: Slot = Slot {
-    kind: Bool,
-    name: "cond",
-    role: R::Cond,
-};
-const LHS: Slot = Slot {
-    kind: AnyInt,
-    name: "lhs",
-    role: R::Lhs,
-};
-const RHS: Slot = Slot {
-    kind: AnyInt,
-    name: "rhs",
-    role: R::Rhs,
-};
-const FLHS: Slot = Slot {
-    kind: AnyFloat,
-    name: "lhs",
-    role: R::Lhs,
-};
-const FRHS: Slot = Slot {
-    kind: AnyFloat,
-    name: "rhs",
-    role: R::Rhs,
-};
-const INT_VAL: Slot = Slot {
-    kind: AnyInt,
-    name: "val",
-    role: R::Val,
-};
-const FLOAT_VAL: Slot = Slot {
-    kind: AnyFloat,
-    name: "val",
-    role: R::Val,
-};
-const BOOL_VAL: Slot = Slot {
-    kind: Bool,
-    name: "val",
-    role: R::Val,
-};
-const ANY_VAL: Slot = Slot {
-    kind: AnyValue,
-    name: "val",
-    role: R::Val,
-};
-const ADDR: Slot = Slot {
-    kind: AnyInt,
-    name: "addr",
-    role: R::Addr,
-};
-const DATA: Slot = Slot {
-    kind: AnyInt,
-    name: "data",
-    role: R::Data,
-};
-const TARGET: Slot = Slot {
-    kind: AnyInt,
-    name: "target",
-    role: R::Target,
-};
+/// Terse constructor for the slot table below.
+///
+/// A `Slot { kind, name, role }` literal is under rustfmt's struct-lit width,
+/// so it formats across five lines; that turns a 23-row table into 130 lines
+/// you have to scroll. A `const fn` keeps each row on one scannable line and
+/// stays a compile-time constant.
+const fn slot(kind: ExpectedValueKind, name: &'static str, role: SlotRole) -> Slot {
+    Slot { kind, name, role }
+}
+
+const CTRL: Slot = slot(Control, "ctrl", R::Control);
+const MEM: Slot = slot(Memory, "mem", R::Memory);
+const PHI: Slot = slot(PhiToken, "phi", R::Phi);
+const COND: Slot = slot(Bool, "cond", R::Cond);
+const LHS: Slot = slot(AnyInt, "lhs", R::Lhs);
+const RHS: Slot = slot(AnyInt, "rhs", R::Rhs);
+const FLHS: Slot = slot(AnyFloat, "lhs", R::Lhs);
+const FRHS: Slot = slot(AnyFloat, "rhs", R::Rhs);
+const INT_VAL: Slot = slot(AnyInt, "val", R::Val);
+const FLOAT_VAL: Slot = slot(AnyFloat, "val", R::Val);
+const BOOL_VAL: Slot = slot(Bool, "val", R::Val);
+const ANY_VAL: Slot = slot(AnyValue, "val", R::Val);
+const ADDR: Slot = slot(AnyInt, "addr", R::Addr);
+const DATA: Slot = slot(AnyInt, "data", R::Data);
+const TARGET: Slot = slot(AnyInt, "target", R::Target);
 // Stack-pointer input for `Call`, wired ahead of the args.  Same
 // integer relaxation as `TARGET` — SP is an integer pointer value of
 // the target's word width.
-const SP: Slot = Slot {
-    kind: AnyInt,
-    name: "sp",
-    role: R::Sp,
-};
+const SP: Slot = slot(AnyInt, "sp", R::Sp);
 // `ARG` and `RET` are AnyValue, not AnyInt: registers used for argument
 // passing or return values can hold integer or float values (e.g. the x86
 // flag registers CF/ZF/SF, modelled as I1 in the IR, are caller-clobbered
 // and therefore appear in Call / Return tails on real binaries — AnyInt
 // accepts them, but float-holding registers do not, so AnyValue is needed).
-const ARG: Slot = Slot {
-    kind: AnyValue,
-    name: "arg",
-    role: R::Arg,
-};
-const RET: Slot = Slot {
-    kind: AnyValue,
-    name: "ret",
-    role: R::Ret,
-};
+const ARG: Slot = slot(AnyValue, "arg", R::Arg);
+const RET: Slot = slot(AnyValue, "ret", R::Ret);
 /// Call output tail: clobbered-register outputs. Same any-value relaxation
 /// as `ARG`/`RET` — flag registers are Bool-typed and routinely appear here.
-const CALL_OUT: Slot = Slot {
-    kind: AnyValue,
-    name: "val",
-    role: R::Val,
-};
-const SEG: Slot = Slot {
-    kind: AnyInt,
-    name: "seg",
-    role: R::Seg,
-};
-const OFF: Slot = Slot {
-    kind: AnyInt,
-    name: "off",
-    role: R::Off,
-};
-const REF: Slot = Slot {
-    kind: AnyInt,
-    name: "ref",
-    role: R::Ref,
-};
+const CALL_OUT: Slot = slot(AnyValue, "val", R::Val);
+const SEG: Slot = slot(AnyInt, "seg", R::Seg);
+const OFF: Slot = slot(AnyInt, "off", R::Off);
+const REF: Slot = slot(AnyInt, "ref", R::Ref);
 // Per-predecessor value input for Phi nodes (both Vn-tagged and
 // anonymous).  AnyValue (not AnyInt) because flag-register phis are
 // routinely Bool-typed — same rationale as ARG / RET / CALL_OUT above.
-const IN_PHI: Slot = Slot {
-    kind: AnyValue,
-    name: "in",
-    role: R::In,
-};
+const IN_PHI: Slot = slot(AnyValue, "in", R::In);
 
 // ── Signatures ────────────────────────────────────────────────────────────────
 
