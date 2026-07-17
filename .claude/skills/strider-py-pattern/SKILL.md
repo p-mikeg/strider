@@ -279,8 +279,8 @@ Walk-through flags also apply to a joined `find_all`; all flags apply uniformly 
 relations between captured entities (in addition to shared-capture equality):
 
 ```python
-g, t, f, c = p.Capture(), p.Capture(), p.Capture(), p.Capture()
-guard = p.if_else(cond=p.int_ne(p.load(p.add(p.var("fop"), p.any_int_const())), p.int_const(0))) \
+g, t, f, c, fop = (p.Capture() for _ in range(5))
+guard = p.if_else(cond=p.int_ne(p.load(p.add(p.var(fop), p.any_int_const())), p.int_const(0))) \
          .capture(g).capture_true(t).capture_false(f)
 call  = p.call().capture(c)
 
@@ -431,8 +431,11 @@ hits = fn.find_all(load_pat, ignore_casts=True)
 - **Writing the source-level shape.** `p.int_cmp("LessEqual", a, b)` raises — use `p.int_le`.
 - **Manually trying both commutative orderings.** `add` already tries both.
 - **Forgetting `.into_pat()` when chaining.** Typed builders are `PatLike` — pass them straight.
-- **Using `capture` as a back-reference key.**  String back-references go through the **same
-  string**: `p.int_xor("v", "v")` enforces same-value.  `p.int_xor(p.var(c), p.var(c))` does NOT.
+- **Passing a string where a `Capture` is required.**  Strings are accepted in *operand*
+  positions (`p.add("x", "y")`), NOT as the capture argument of `p.var(...)` /
+  `p.any_int_const(...)` / `.capture(...)` — those take a `Capture()` and raise `TypeError`
+  on a string.  Both back-reference forms work and are equivalent: `p.int_xor("v", "v")` and
+  `p.int_xor(p.var(c), p.var(c))` each enforce same-value.
 - **Matching post-optimization shapes when running pre-opt.**  `sub(x, K)` produces
   `Add(x, Neg(IntConst(K)))` pre-opt; after `ConstantFold`, `Neg(IntConst(K))` folds to
   `IntConst(-K)`.  Match with `add(x, signed_int_const(-K))` against optimised graphs.
