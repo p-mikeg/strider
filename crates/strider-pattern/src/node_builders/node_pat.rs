@@ -134,8 +134,10 @@ impl NodePat {
     /// Recorded at the [`ANY_INPUT_SLOT`] sentinel slot; the matcher routes
     /// it through its existential search.
     pub(crate) fn input_any<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inputs
-            .push((crate::matcher::ANY_INPUT_SLOT, Box::new(move |b| p.compile(b))));
+        self.inputs.push((
+            crate::matcher::ANY_INPUT_SLOT,
+            Box::new(move |b| p.compile(b)),
+        ));
         self
     }
 

@@ -12,7 +12,7 @@ use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    CastMask, Capture, CaptureExt, MatchPat, Matcher, add, any, any_int_const, call, call_other,
+    Capture, CaptureExt, CastMask, MatchPat, Matcher, add, any, any_int_const, call, call_other,
     if_node, indirect_branch, int_const, load, mem_phi, phi, ret, switch, unreachable, var,
 };
 
@@ -888,7 +888,11 @@ fn phi_any_input_binds_a_data_input_not_the_phi_token() {
     let hits = m
         .find_all(&phi().any_input(var(a)).any_input(var(c)).build())
         .unwrap();
-    assert_eq!(hits.len(), 2, "both slot assignments of the two data inputs");
+    assert_eq!(
+        hits.len(),
+        2,
+        "both slot assignments of the two data inputs"
+    );
     for hit in &hits {
         for cap in [a, c] {
             let n = hit.node(cap, function.graph()).unwrap();

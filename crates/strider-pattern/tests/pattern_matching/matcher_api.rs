@@ -225,7 +225,11 @@ fn find_all_returns_distinct_matches_with_distinct_roots() {
     assert_eq!(hits.len(), 6);
 
     let roots: std::collections::HashSet<NodeId> = hits.iter().map(|m| m.root()).collect();
-    assert_eq!(roots.len(), 3, "the six matches sit on three distinct roots");
+    assert_eq!(
+        roots.len(),
+        3,
+        "the six matches sit on three distinct roots"
+    );
 }
 
 #[test]
@@ -250,7 +254,11 @@ fn each_match_has_its_own_bindings() {
         .collect();
     // Every match carries its OWN bindings: no two hits agree on both captures.
     let distinct: std::collections::HashSet<(u128, u128)> = raw.iter().copied().collect();
-    assert_eq!(distinct.len(), 6, "each match has its own bindings: {raw:?}");
+    assert_eq!(
+        distinct.len(),
+        6,
+        "each match has its own bindings: {raw:?}"
+    );
 
     // Normalised by operand order, the three source `add`s come back — each
     // contributing its pair twice, once per ordering.
@@ -494,7 +502,11 @@ fn matches_next_concrete_kind_equals_find_all_first() {
     let p = add(any(), any()).into_pattern();
     let all = m.find_all(&p).unwrap();
     assert!(!all.is_empty(), "fixture has Add nodes");
-    let first = m.matches(&p).unwrap().next().expect("at least one Add matches");
+    let first = m
+        .matches(&p)
+        .unwrap()
+        .next()
+        .expect("at least one Add matches");
     assert_eq!(first.root(), all[0].root());
 }
 
@@ -732,7 +744,8 @@ fn find_joined_connectivity_is_order_independent() {
     let z = Capture::new();
     let disjoint = store().data(var(z)).build();
     assert!(
-        mr.find_joined_constrained(&[&bridge, &disjoint], &[]).is_err(),
+        mr.find_joined_constrained(&[&bridge, &disjoint], &[])
+            .is_err(),
         "patterns sharing no capture even transitively are still rejected",
     );
 }
@@ -764,7 +777,9 @@ fn find_joined_pattern_without_shared_capture_cross_products() {
         .build();
     let p_call = call().at(0x1234).build();
 
-    let req = mr.find_joined_constrained(&[&p_store, &p_call], &[]).unwrap();
+    let req = mr
+        .find_joined_constrained(&[&p_store, &p_call], &[])
+        .unwrap();
     assert_eq!(req.len(), 2, "no shared capture in B: pure cross product");
     for tuple in &req {
         assert_eq!(tuple.len(), 2);

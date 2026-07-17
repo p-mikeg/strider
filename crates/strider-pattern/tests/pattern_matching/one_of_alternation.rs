@@ -68,7 +68,11 @@ fn one_of_matches_optionally_masked_inner_with_shared_capture() {
     .into_pattern();
 
     let hits = m.find_all(&pat).unwrap();
-    assert_eq!(hits.len(), 2, "both the masked and unmasked negs should match");
+    assert_eq!(
+        hits.len(),
+        2,
+        "both the masked and unmasked negs should match"
+    );
     // the shared capture is bound in whichever branch fired (both matches).
     let bound = hits.iter().filter(|h| h.value(base).is_some()).count();
     assert_eq!(bound, 2, "base captured in each match");

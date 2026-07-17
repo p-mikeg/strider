@@ -38,9 +38,7 @@ use itertools::Either;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{
-    Function, Graph, IRViewer, IRWalker, control_dominators, dominates,
-};
+use strider_ir::{Function, Graph, IRViewer, IRWalker, control_dominators, dominates};
 
 use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
@@ -258,7 +256,10 @@ impl<'f> Matcher<'f> {
         {
             return Ok(None);
         }
-        Ok(self.matches_at_node(node, pat, root, true).into_iter().next())
+        Ok(self
+            .matches_at_node(node, pat, root, true)
+            .into_iter()
+            .next())
     }
 
     /// Run several patterns over the graph and return only the joined
@@ -427,7 +428,6 @@ impl<'f> Matcher<'f> {
         dedup_on_shared_captures(&mut acc, self.function().graph());
         Ok(acc)
     }
-
 }
 
 /// A CFG relation between two captured entities, applied by
@@ -439,7 +439,10 @@ impl<'f> Matcher<'f> {
 pub enum JoinConstraint {
     /// The node bound to `a` dominates the node bound to `b` in the control
     /// subgraph. A capture absent from the control subgraph fails it.
-    Dominates { a: crate::Capture, b: crate::Capture },
+    Dominates {
+        a: crate::Capture,
+        b: crate::Capture,
+    },
     /// `node` is dominated by the consumer of the branch edge `branch` — i.e.
     /// `node` sits in the block that edge leads into, *exclusively*: true only
     /// where every path to `node` traverses the edge's target, so a single
@@ -447,7 +450,10 @@ pub enum JoinConstraint {
     /// `branch` must bind a control-output value (e.g. via
     /// [`IfPat::capture_true`](crate::IfPat::capture_true)); an ill-typed
     /// `branch` or an absent node fails it.
-    DominatedByBranch { branch: crate::Capture, node: crate::Capture },
+    DominatedByBranch {
+        branch: crate::Capture,
+        node: crate::Capture,
+    },
     /// The `Phi`/`MemPhi` bound to `phi` merges, on the predecessor whose owning
     /// `Region` control input equals the branch edge `edge`, the value bound to
     /// `value`.  Ties a phi's per-branch data input to the control edge that
@@ -564,11 +570,7 @@ impl<'f> ConstraintEval<'f> {
         if !matches!(f.node_kind(region), NodeKind::Region) {
             return false;
         }
-        let Some(slot) = f
-            .node_inputs(region)
-            .into_iter()
-            .position(|c| c == edge_v)
-        else {
+        let Some(slot) = f.node_inputs(region).into_iter().position(|c| c == edge_v) else {
             return false;
         };
         inputs.get(slot + 1).is_some_and(|&v| v == val_v)

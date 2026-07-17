@@ -206,8 +206,7 @@ impl Bindings {
     /// Sorted by capture id, so the key is independent of the order the
     /// captures happened to bind in during the walk.
     pub(crate) fn binding_signature(&self) -> Vec<(u32, Binding)> {
-        let mut sig: Vec<(u32, Binding)> =
-            self.entries.iter().map(|&(c, b)| (c.id(), b)).collect();
+        let mut sig: Vec<(u32, Binding)> = self.entries.iter().map(|&(c, b)| (c.id(), b)).collect();
         sig.sort_unstable_by_key(|&(id, _)| id);
         sig
     }

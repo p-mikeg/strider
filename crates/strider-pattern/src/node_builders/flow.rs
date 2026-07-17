@@ -130,7 +130,9 @@ impl MatchPat for CallPat {
     /// (raw slot 2, after ctrl/mem). Loose: any value output matches (the
     /// matcher's `output_ok` checks the operand's kind, not its slot).
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.with_value_anchor(FIRST_VALUE_OUT_SLOT).compile_anchored(b)
+        self.0
+            .with_value_anchor(FIRST_VALUE_OUT_SLOT)
+            .compile_anchored(b)
     }
 }
 

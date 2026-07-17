@@ -11,11 +11,16 @@
 //! [`PatValue`]'s declarative constraints (kind + width +
 //! `value_predicate`) and recurses into the producer pat node.
 //!
-//! For arity-2 pat nodes whose IR kind is commutative (per
-//! `NodeKind::is_commutative()`) the matcher tries the natural operand
-//! order first, then the swapped order (a node may opt out via
-//! `force_ordered`), rolling back via [`Bindings::mark`] /
-//! [`Bindings::restore`] between attempts.
+//! Matching a node's inputs is ONE problem — an injective assignment of the pat
+//! node's inputs to the IR node's input slots, each input drawing from its own
+//! [`Candidates`] set — solved by the single enumerator [`match_assignments`].
+//! A fixed operand's candidate set is the singleton `{its own slot}` (a direct
+//! index); an arity-2 pat node whose IR kind is commutative (per
+//! `NodeKind::is_commutative()`, unless it opted out via `force_ordered`) gives
+//! BOTH operands the candidate set `{0, 1}`, so injectivity yields exactly the
+//! natural ordering then the swapped one; an `any_input` existential draws from
+//! every non-`PhiToken` value slot. Backtracking rolls back via
+//! [`Bindings::mark`] / [`Bindings::restore`] between attempts.
 //!
 //! The engine is continuation-passing: [`try_match_at`] ENUMERATES a pat
 //! node's matches (each operand ordering × every descendant configuration)
@@ -235,7 +240,7 @@ fn try_match_at(
     // Collect this pat node's inputs: each incoming `Consumes{slot}` edge
     // source is a PatValue vertex; that vertex's incoming `Produces`
     // edge source is the producer pat node.
-    let inputs: Vec<InputEdge> = ctx
+    let mut inputs: Vec<InputEdge> = ctx
         .pat
         .graph
         .consumed_inputs(pat_node)
@@ -320,25 +325,29 @@ fn try_match_at(
         return false;
     }
 
-    // Partition inputs into fixed-slot operands and existential (`any_input`)
-    // sub-patterns. A fixed input matches its own IR slot; an existential input
-    // matches SOME value input of `ir_node` (see `match_existential`).
-    let (existential, fixed): (Vec<InputEdge>, Vec<InputEdge>) = inputs
-        .into_iter()
-        .partition(|e| e.consumer_slot == crate::matcher::ANY_INPUT_SLOT);
+    // Order the fixed-slot operands ahead of the existential (`any_input`) ones
+    // — a stable sort, so each group keeps its relative order — and count them:
+    // the fixed operands are assigned their slots first, as before.
+    inputs.sort_by_key(|e| e.consumer_slot == crate::matcher::ANY_INPUT_SLOT);
+    let n_fixed = inputs
+        .iter()
+        .filter(|e| e.consumer_slot != crate::matcher::ANY_INPUT_SLOT)
+        .count();
 
     // Commutativity: exactly two fixed operands, at slots {0,1} (the shape of
     // every commutative IR kind's signature), IR kind commutative, not
     // force_ordered. `.ordered()` sets `force_ordered`, which leaves both
     // operands on `Candidates::Only` — one ordering, exactly as before.
     let commutative = !nd.force_ordered
-        && fixed.len() == 2
-        && fixed.iter().all(|e| e.consumer_slot < COMM_ORDER.len())
+        && n_fixed == 2
+        && inputs[..2]
+            .iter()
+            .all(|e| e.consumer_slot < COMM_ORDER.len())
         && ctx.function().node_kind(ir_node).is_commutative();
 
-    // `ir_node`'s inputs are invariant across the whole existential search, so
-    // collect them once here (empty in the common no-`any_input` case) rather
-    // than re-collecting at every `match_existential` recursion level.
+    // The existential candidate set: `ir_node`'s value input slots. Invariant
+    // across the whole search, so collect it once here (empty in the common
+    // no-`any_input` case) rather than at every recursion level.
     //
     // A `Phi`/`MemPhi`'s slot-0 `PhiToken` is the owning `Region`'s bookkeeping
     // edge, not a predecessor: `any_input` ranges over data inputs only. It must
@@ -356,7 +365,7 @@ fn try_match_at(
     // kind out. The wildcards' `Any` output kind is deliberate and load-bearing
     // elsewhere (`with_true(any())` matches a `Region`; a bare `any()` root
     // matches zero-output nodes), so the guard belongs here, not on them.
-    let ext_slots: Vec<usize> = if existential.is_empty() {
+    let ext_slots: Vec<usize> = if n_fixed == inputs.len() {
         Vec::new()
     } else {
         ctx.function()
@@ -369,23 +378,19 @@ fn try_match_at(
     };
 
     // The one enumeration problem: assign each pattern input an IR input slot
-    // from its own candidate set, injectively. The fixed operands come first
-    // (their candidate sets are the pinned slots, or the commutative pair), then
-    // the existentials — the same order the two hand-rolled enumerators ran in.
-    let assigns: Vec<Assign> = fixed
+    // drawn from its own candidate set, injectively.
+    let assigns: Vec<Assign> = inputs
         .into_iter()
         .map(|edge| {
-            let cands = if commutative {
+            let cands = if edge.consumer_slot == crate::matcher::ANY_INPUT_SLOT {
+                Candidates::OneOf(&ext_slots)
+            } else if commutative {
                 Candidates::OneOf(&COMM_ORDER[edge.consumer_slot])
             } else {
                 Candidates::Only(edge.consumer_slot)
             };
             Assign { edge, cands }
         })
-        .chain(existential.into_iter().map(|edge| Assign {
-            edge,
-            cands: Candidates::OneOf(&ext_slots),
-        }))
         .collect();
 
     let mark = bindings.mark();
@@ -444,71 +449,20 @@ fn try_match_at(
             b.restore(inner);
             false
         };
-        // After the fixed slots match, satisfy each existential input against
-        // some value input of `ir_node` — each against a DISTINCT slot — then
-        // finalize.
-        let mut done = |b: &mut Bindings| -> bool {
-            match_existential(ctx, &existential, 0, &ext_values, &[], b, &mut finalize)
-        };
-        if match_inputs(ctx, &fixed, swap, ir_node, 0, bindings, &mut done) {
+        if match_assignments(ctx, &assigns, 0, ir_node, None, bindings, &mut finalize) {
             return true;
         }
-        bindings.restore(mark);
     }
-    false
-}
-
-/// Continuation-passing match of a node's **existential** (`any_input`) inputs:
-/// each `exts[j]` must match SOME value input of `ir_node`, and each on a
-/// DISTINCT input slot (`used` holds the slot indices already claimed by
-/// earlier existentials). For input `ei` it tries the sub-pattern against every
-/// not-yet-used value input in turn (backtracking via [`Bindings::mark`] /
-/// [`Bindings::restore`]), and on a hit recurses into the next existential;
-/// with all satisfied it invokes `done`. `values` has already had any
-/// `PhiToken` edge filtered out by the caller (see `match_inputs`), since the
-/// kind-unconstrained wildcards would otherwise bind it. Distinctness
-/// is by slot index, not value, so `any_input(1).any_input(1)` still matches a
-/// phi with two separate `1` predecessors. Each candidate goes through the
-/// shared [`try_operand`], so `any_input` honours `ignore_casts` exactly like
-/// the fixed-slot [`match_inputs`] path.
-fn match_existential(
-    ctx: &Ctx,
-    exts: &[InputEdge],
-    ei: usize,
-    values: &[ValueId],
-    used: &[usize],
-    bindings: &mut Bindings,
-    done: &mut dyn FnMut(&mut Bindings) -> bool,
-) -> bool {
-    let Some(edge) = exts.get(ei) else {
-        return done(bindings);
-    };
-    for (idx, &producer_value) in values.iter().enumerate() {
-        if used.contains(&idx) {
-            continue;
-        }
-        // Small arity (a phi's predecessor count); a fresh Vec per candidate is
-        // cheap and sidesteps threading a &mut set through the continuation.
-        let mut next_used = used.to_vec();
-        next_used.push(idx);
-        if try_operand(ctx, edge, producer_value, bindings, &mut |b| {
-            match_existential(ctx, exts, ei + 1, values, &next_used, b, done)
-        }) {
-            return true;
-        }
-        // This candidate slot didn't work out (bindings already restored) — try
-        // the next one, unlike `match_inputs`, whose slot is fixed.
-    }
+    bindings.restore(mark);
     false
 }
 
 /// Try `edge`'s sub-pattern against the operand `value`, then — if the pattern's
 /// cast mask permits and `value` is a registered cast — against the unwrapped
-/// value. `k` continues the enclosing match (the remaining fixed inputs, or the
-/// next existential). Shared by the fixed-slot [`match_inputs`] and the
-/// existential [`match_existential`], which differ only in what they do when
-/// this returns `false`: the former fails its slot, the latter tries its next
-/// candidate.
+/// value. `k` continues the enclosing match (the remaining input
+/// assignments). Shared by both [`Candidates`] arms, which differ only
+/// in what they do when this returns `false`: a singleton fails its pinned slot,
+/// a multi-candidate set tries its next slot.
 ///
 /// On every failure path `bindings` is restored to its state at entry, so a
 /// caller may retry without cleaning up. The skipped casts are journaled BEFORE
@@ -595,44 +549,134 @@ struct InputEdge {
     producer: PatNodeId,
 }
 
-/// Continuation-passing match of a consumer's inputs: match `inputs[i..]` (in
-/// operand order `swap`) against `ir_node`'s slots, then invoke `done`. Each
-/// input's sub-match recurses with a continuation that matches the REMAINING
-/// inputs, so when a later stage rejects (`done`, or a deeper continuation,
-/// returns `false`) an earlier input's sub-match is asked for its next
-/// configuration before this call fails — the backtracking that lets a parent
-/// guard re-drive a child's commutative ordering.
-fn match_inputs(
+/// The IR input slots ONE pattern input is allowed to occupy.
+///
+/// This is the whole abstraction: matching a consumer's inputs is an injective
+/// assignment of its pattern inputs to `ir_node`'s input slots, and the three
+/// disciplines the matcher needs differ only in this candidate set —
+///
+/// | pattern input | candidate set |
+/// |---|---|
+/// | fixed, non-commutative | `Only(its own consumer slot)` |
+/// | fixed, commutative pair | `OneOf([own slot, the other])` — injectivity yields exactly the 2 orderings |
+/// | existential (`any_input`) | `OneOf(every non-`PhiToken` value slot)` |
+#[derive(Clone, Copy)]
+enum Candidates<'a> {
+    /// Exactly one slot. This is the COMMON case (most patterns are all
+    /// fixed-slot), and it is why this is an enum rather than a uniform slice:
+    /// [`match_assignments`] serves it with a single direct `node_input_id_at`
+    /// index — no candidate loop, no injectivity check, no allocation. Modelling
+    /// it as a one-element `OneOf` would be correct but would trade an indexed
+    /// lookup for a scan, so a singleton MUST stay its own arm.
+    Only(usize),
+    /// An ordered candidate list; the input takes the first slot that is both
+    /// unclaimed by an enclosing assignment and matches the sub-pattern.
+    OneOf(&'a [usize]),
+}
+
+/// Candidate slots for a commutative operand pair, indexed by the pattern
+/// input's OWN consumer slot: each operand tries its own slot first, so
+/// injectivity enumerates the natural ordering before the swapped one no matter
+/// which of the two operands the assignment visits first.
+const COMM_ORDER: [[usize; 2]; 2] = [[0, 1], [1, 0]];
+
+/// One pattern input plus the slots it may be assigned to.
+struct Assign<'a> {
+    edge: InputEdge,
+    cands: Candidates<'a>,
+}
+
+/// The slots already claimed by the enclosing [`Candidates::OneOf`]
+/// assignments, as a borrowed cons list rooted in the recursion's own stack
+/// frames: the chain is bounded by the input count and each link lives in the
+/// frame that claimed it, so injectivity costs no allocation and nothing has to
+/// be threaded back out through the continuation closures.
+///
+/// Distinctness is a property of the ASSIGNMENT — by slot index, never by value
+/// — so `any_input(1).any_input(1)` still matches a phi with two separate `1`
+/// predecessors.
+struct Claimed<'a> {
+    slot: usize,
+    prev: Option<&'a Claimed<'a>>,
+}
+
+impl Claimed<'_> {
+    fn contains(chain: Option<&Claimed>, slot: usize) -> bool {
+        let mut cur = chain;
+        while let Some(c) = cur {
+            if c.slot == slot {
+                return true;
+            }
+            cur = c.prev;
+        }
+        false
+    }
+}
+
+/// The one enumerator: continuation-passing injective assignment of
+/// `assigns[i..]` to `ir_node`'s input slots, invoking `done` once every input
+/// is placed and matched.
+///
+/// Each input's sub-match recurses with a continuation that assigns the
+/// REMAINING inputs, so when a later stage rejects (`done`, or a deeper
+/// continuation, returns `false`) an earlier input is asked for its next
+/// candidate before this call fails — the backtracking that lets a parent guard
+/// re-drive a child's commutative ordering. Every candidate goes through the
+/// shared [`try_operand`], so an existential honours `ignore_casts` exactly like
+/// a fixed slot.
+fn match_assignments(
     ctx: &Ctx,
-    inputs: &[InputEdge],
-    swap: bool,
-    ir_node: NodeId,
+    assigns: &[Assign],
     i: usize,
+    ir_node: NodeId,
+    claimed: Option<&Claimed>,
     bindings: &mut Bindings,
     done: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
-    let Some(edge) = inputs.get(i) else {
+    let Some(a) = assigns.get(i) else {
         return done(bindings);
     };
-    let ir_slot = if swap {
-        match edge.consumer_slot {
-            0 => 1,
-            1 => 0,
-            other => other,
+    match a.cands {
+        // Singleton: a direct index, no search and no injectivity bookkeeping.
+        // The slot is pinned, so a failed operand fails the whole slot.
+        Candidates::Only(slot) => {
+            let Some(value) = input_at(ctx, ir_node, slot) else {
+                return false;
+            };
+            try_operand(ctx, &a.edge, value, bindings, &mut |b| {
+                match_assignments(ctx, assigns, i + 1, ir_node, claimed, b, done)
+            })
         }
-    } else {
-        edge.consumer_slot
-    };
-    let Ok(use_id) = ctx.function().node_input_id_at(ir_node, ir_slot) else {
-        return false;
-    };
-    let producer_value = ctx.function().graph().value_of_use(use_id);
+        Candidates::OneOf(slots) => {
+            for &slot in slots {
+                if Claimed::contains(claimed, slot) {
+                    continue;
+                }
+                let Some(value) = input_at(ctx, ir_node, slot) else {
+                    continue;
+                };
+                let next = Claimed {
+                    slot,
+                    prev: claimed,
+                };
+                if try_operand(ctx, &a.edge, value, bindings, &mut |b| {
+                    match_assignments(ctx, assigns, i + 1, ir_node, Some(&next), b, done)
+                }) {
+                    return true;
+                }
+                // This candidate didn't work out (bindings already restored) —
+                // try the next slot.
+            }
+            false
+        }
+    }
+}
 
-    // This input's slot is fixed, so a failed operand fails the whole slot —
-    // unlike `match_existential`, which moves on to its next candidate.
-    try_operand(ctx, edge, producer_value, bindings, &mut |b| {
-        match_inputs(ctx, inputs, swap, ir_node, i + 1, b, done)
-    })
+/// The value feeding `ir_node`'s input slot `slot`, or `None` when it has no
+/// such slot.
+fn input_at(ctx: &Ctx, ir_node: NodeId, slot: usize) -> Option<ValueId> {
+    let use_id = ctx.function().node_input_id_at(ir_node, slot).ok()?;
+    Some(ctx.function().graph().value_of_use(use_id))
 }
 
 /// Whether the IR output `value` satisfies the pat output's declarative

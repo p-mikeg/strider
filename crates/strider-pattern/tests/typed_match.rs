@@ -805,10 +805,7 @@ fn combinators_filter_and_guard() {
     let pat = add(var(c), any()).into_pattern();
     let hits = Matcher::new(&fx).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 2);
-    let bound: Vec<Option<u128>> = hits
-        .iter()
-        .map(|m| m.bindings().get_uint(c, &fx))
-        .collect();
+    let bound: Vec<Option<u128>> = hits.iter().map(|m| m.bindings().get_uint(c, &fx)).collect();
     assert_eq!(bound, vec![Some(5), Some(1)], "natural ordering first");
 }
 

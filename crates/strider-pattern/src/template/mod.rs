@@ -367,7 +367,11 @@ fn collect_inputs(
 /// [`TemplateTy`]) into the concrete IR [`ValueKind`], against `root_ty`.
 /// Single source of truth for the `OutputKindSpec → ValueKind` mapping
 /// shared by [`node_value_ty`] and [`output_kinds_for`].
-fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType, binding_tys: &FxHashMap<crate::Capture, ValueType>) -> ValueKind {
+fn resolved_output_kind(
+    o: &TmplOutput,
+    root_ty: ValueType,
+    binding_tys: &FxHashMap<crate::Capture, ValueType>,
+) -> ValueKind {
     match o.kind {
         OutputKindSpec::Memory => ValueKind::Memory,
         OutputKindSpec::Control => ValueKind::Control,
@@ -385,7 +389,12 @@ fn resolved_output_kind(o: &TmplOutput, root_ty: ValueType, binding_tys: &FxHash
 /// [`TemplateTy`] of its first value output vertex, resolved against
 /// `root_ty`. Falls back to `root_ty` when the node has no value output
 /// vertex (the dynamic-`Fn` `root_ty` for such a node is then the root's).
-fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType, binding_tys: &FxHashMap<crate::Capture, ValueType>) -> ValueType {
+fn node_value_ty(
+    template: &Template,
+    node_vtx: NodeId,
+    root_ty: ValueType,
+    binding_tys: &FxHashMap<crate::Capture, ValueType>,
+) -> ValueType {
     template
         .graph
         .produced_outputs(node_vtx)
@@ -408,7 +417,12 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType, bind
 /// [`TemplateTy`] against `root_ty`. Falls back to a single value output
 /// of the root's type when the node has no explicit output vertex (the
 /// common value-expression case).
-fn output_kinds_for(template: &Template, node_vtx: NodeId, root_ty: ValueType, binding_tys: &FxHashMap<crate::Capture, ValueType>) -> Vec<ValueKind> {
+fn output_kinds_for(
+    template: &Template,
+    node_vtx: NodeId,
+    root_ty: ValueType,
+    binding_tys: &FxHashMap<crate::Capture, ValueType>,
+) -> Vec<ValueKind> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.produced_outputs(node_vtx).iter().copied() {
         if let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) {

@@ -6,7 +6,7 @@
 
 use strider_ir::Function;
 use strider_ir_test_utils::{Tb, reg_vn};
-use strider_pattern::{Matcher, MatchPat, add, any, call_other, int_const};
+use strider_pattern::{MatchPat, Matcher, add, any, call_other, int_const};
 
 /// `getval()` (a user-op producing a value in an I64 register) feeding
 /// `add(getval(), 5)`, returned so the `add` is reachable.
