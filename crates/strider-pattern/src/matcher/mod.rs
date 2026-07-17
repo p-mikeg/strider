@@ -452,33 +452,10 @@ impl<'f> Matcher<'f> {
         if !constraints.is_empty() {
             let eval = ConstraintEval::new(self.function());
             for c in constraints.iter().copied() {
-                // Per-CONSTRAINT prep, hoisted OUT of the per-tuple loop: an
-                // inline `value` pattern's root resolution and capture list are
-                // fixed for the whole pass, so the per-tuple cost stays at one
-                // match attempt at one known value — strictly less work than the
-                // whole-graph root search the capture spelling needs.
-                let inline = match c {
-                    JoinConstraint::PhiInputFromEdge {
-                        value: ValueSpec::Pattern(p),
-                        ..
-                    } => Some((p, p.root()?, p.bound_captures().collect::<Vec<_>>())),
-                    _ => None,
-                };
+                let plan = ConstraintPlan::compile(c)?;
                 let mut next: Vec<Vec<Match>> = Vec::with_capacity(acc.len());
                 for tuple in acc {
-                    match (c, &inline) {
-                        (
-                            JoinConstraint::PhiInputFromEdge { phi, edge, .. },
-                            Some((pat, root, caps)),
-                        ) => self.expand_phi_inline(
-                            &eval, tuple, *phi, *edge, pat, *root, caps, &mut next,
-                        ),
-                        _ => {
-                            if eval.holds(c, &tuple) {
-                                next.push(tuple);
-                            }
-                        }
-                    }
+                    plan.expand(self, &eval, tuple, &mut next);
                 }
                 acc = next;
                 if acc.is_empty() {
@@ -507,18 +484,20 @@ impl<'f> Matcher<'f> {
     /// existing rebind-conflict detection then does the unification for free: an
     /// inline capture that disagrees with the tuple rejects that configuration
     /// instead of overwriting it.
-    #[allow(clippy::too_many_arguments)]
     fn expand_phi_inline(
         &self,
         eval: &ConstraintEval,
+        plan: &PhiInlinePlan,
         tuple: Vec<Match>,
-        phi: crate::Capture,
-        edge: crate::Capture,
-        pat: &Pattern,
-        root: PatNodeId,
-        caps: &[crate::Capture],
         out: &mut Vec<Vec<Match>>,
     ) {
+        let &PhiInlinePlan {
+            phi,
+            edge,
+            pat,
+            root,
+            ref caps,
+        } = plan;
         let (Some(phi_v), Some(edge_v)) = (eval.value_of(&tuple, phi), eval.value_of(&tuple, edge))
         else {
             return;
@@ -578,6 +557,79 @@ impl<'f> Matcher<'f> {
                 t[anchor].bindings.bind_capture(cap, bind);
             }
             out.push(t);
+        }
+    }
+}
+
+/// The per-constraint prep an inline-pattern `PhiInputFromEdge` needs, hoisted
+/// OUT of the per-tuple loop: the `value` pattern's root resolution and capture
+/// list are fixed for the whole pass, so the per-tuple cost stays at one match
+/// attempt at one known value — strictly less work than the whole-graph root
+/// search the capture spelling needs.
+struct PhiInlinePlan<'c> {
+    phi: crate::Capture,
+    edge: crate::Capture,
+    pat: &'c Pattern,
+    root: PatNodeId,
+    caps: Vec<crate::Capture>,
+}
+
+/// One [`JoinConstraint`] compiled for a pass over the accumulator.
+///
+/// A `JoinConstraint` is really TWO kinds of thing, and this is the one place
+/// the difference matters — evaluation:
+///
+/// * **Filter** ([`Self::Predicate`]) — decides a tuple: 1 in, 0 or 1 out.
+///   Every variant but one, plus `Not` of any of them.
+/// * **Binder** ([`Self::PhiInline`]) — produces NEW bindings: 1 in, 0..n out,
+///   one per distinct inline binding. A `bool` cannot express it, which is why
+///   [`ConstraintEval::holds`] does not answer for this form.
+///
+/// Compiling the distinction ONCE per constraint (rather than re-deciding it
+/// per tuple) is what lets the fold below be a single uniform call, and is why
+/// `find_joined_constrained` never has to look inside a `ValueSpec` again.
+enum ConstraintPlan<'c> {
+    Predicate(&'c JoinConstraint),
+    PhiInline(PhiInlinePlan<'c>),
+}
+
+impl<'c> ConstraintPlan<'c> {
+    /// # Errors
+    /// Errors if an inline `value` pattern is not a single-rooted, acyclic
+    /// graph (see [`Pattern::root`]).
+    fn compile(c: &'c JoinConstraint) -> anyhow::Result<Self> {
+        match c {
+            JoinConstraint::PhiInputFromEdge {
+                phi,
+                edge,
+                value: ValueSpec::Pattern(p),
+            } => Ok(Self::PhiInline(PhiInlinePlan {
+                phi: *phi,
+                edge: *edge,
+                pat: p,
+                root: p.root()?,
+                caps: p.bound_captures().collect(),
+            })),
+            _ => Ok(Self::Predicate(c)),
+        }
+    }
+
+    /// Apply this constraint to one joined `tuple`, pushing its 0..n survivors
+    /// onto `out`. A filter is just the expansion that yields 0 or 1.
+    fn expand(
+        &self,
+        matcher: &Matcher<'_>,
+        eval: &ConstraintEval,
+        tuple: Vec<Match>,
+        out: &mut Vec<Vec<Match>>,
+    ) {
+        match self {
+            Self::Predicate(c) => {
+                if eval.holds(c, &tuple) {
+                    out.push(tuple);
+                }
+            }
+            Self::PhiInline(plan) => matcher.expand_phi_inline(eval, plan, tuple, out),
         }
     }
 }
