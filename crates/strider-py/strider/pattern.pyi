@@ -339,13 +339,20 @@ def dominated_by_branch(branch: Capture, node: Capture) -> JoinConstraint:
     `capture_true`/`capture_false` value) — in that block exclusively, so
     `dominated_by_branch(true_edge, c)` means "`c` is in the true block"."""
 def phi_input_from_edge(
-    phi: Capture, edge: Capture, value: Capture
+    phi: Capture, edge: Capture, value: Capture | Pat
 ) -> JoinConstraint:
-    """`phi`'s data input on the predecessor fed by control edge `edge` equals
+    """`phi`'s data input on the predecessor fed by control edge `edge` is
     `value` — "the value merged from THIS branch is X". `edge` binds an `If`'s
     `capture_true`/`capture_false` value; on the converged IR that edge is the
     phi region's direct predecessor. Direct-edge: no match when nested control
-    sits between the branch and the merge."""
+    sits between the branch and the merge.
+
+    `value` is either a `Capture` (bound by another pattern in the same
+    `find_all` list; compared by identity) or a **pattern** matched inline at the
+    arm value. The inline form states the fact locally — no independent root
+    ranging over the whole function and no cartesian product against it — and it
+    binds: captures inside it read back off the match, unifying with (never
+    overwriting) whatever the rest of the join already bound."""
 def function_arg(i: int) -> FunctionArgPat:
     """Start a function-argument pattern constrained to argument index `i`."""
 def function_arg_any() -> FunctionArgPat:

@@ -310,7 +310,7 @@ impl PyFunction {
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
         reject_conflicting_cast_flags("find_all", ignore_casts, &ignore_casts_mask)?;
         let patterns = build_query_patterns(py, pat, ignore_casts, ignore_casts_mask)?;
-        let constraints = collect_constraints(constraints);
+        let constraints = collect_constraints(&constraints);
         let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
         dedup_matches(&slf, py, raw, generation, ignore_root)
     }
@@ -334,7 +334,7 @@ impl PyFunction {
     ) -> PyResult<crate::matcher::PyMatch> {
         reject_conflicting_cast_flags("find_unique", ignore_casts, &ignore_casts_mask)?;
         let patterns = build_query_patterns(py, pat, ignore_casts, ignore_casts_mask)?;
-        let constraints = collect_constraints(constraints);
+        let constraints = collect_constraints(&constraints);
         let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
         let mut matches = dedup_matches(&slf, py, raw, generation, ignore_root)?;
         match matches.len() {
@@ -539,13 +539,17 @@ fn build_query_patterns(
 /// a single pattern maps each `find_all` hit to a one-element group; several
 /// patterns join on shared captures (each group holds one sub-match per
 /// pattern, which `PyMatch` presents as a merged binding).
-/// Flatten the optional Python constraint list into owned `JoinConstraint`s
-/// (each is `Copy`).
-fn collect_constraints(
-    constraints: Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
-) -> Vec<strider_pattern::JoinConstraint> {
+/// Borrow the optional Python constraint list as `&JoinConstraint`s.
+///
+/// By reference, not owned: a `JoinConstraint` can hold an inline `Pattern`
+/// (`ValueSpec::Pattern`), which owns match-time closures and is not `Clone`.
+/// The `PyRef` guards in the caller's `Option<Vec<..>>` keep them alive.
+fn collect_constraints<'a>(
+    constraints: &'a Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
+) -> Vec<&'a strider_pattern::JoinConstraint> {
     constraints
-        .map(|v| v.iter().map(|c| c.inner).collect())
+        .as_deref()
+        .map(|v| v.iter().map(|c| &c.inner).collect())
         .unwrap_or_default()
 }
 
@@ -553,7 +557,7 @@ fn run_pattern_query(
     slf: &Py<PyFunction>,
     py: Python<'_>,
     patterns: &[strider_pattern::Pattern],
-    constraints: &[strider_pattern::JoinConstraint],
+    constraints: &[&strider_pattern::JoinConstraint],
 ) -> PyResult<(Vec<Vec<strider_pattern::Match>>, u64)> {
     let refs: Vec<&strider_pattern::Pattern> = patterns.iter().collect();
     run_query(slf, py, |matcher| {

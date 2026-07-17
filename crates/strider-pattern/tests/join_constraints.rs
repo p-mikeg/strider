@@ -76,7 +76,7 @@ fn dominated_by_branch_isolates_the_true_arm_in_one_constraint() {
     let tuples = m
         .find_joined_constrained(
             &[&guard, &callp],
-            &[JoinConstraint::DominatedByBranch { branch: t, node: c }],
+            &[&JoinConstraint::DominatedByBranch { branch: t, node: c }],
         )
         .unwrap();
     let addrs: Vec<u64> = tuples
@@ -100,7 +100,7 @@ fn dominates_if_selects_all_three_calls() {
     let tuples = m
         .find_joined_constrained(
             &[&guard, &callp],
-            &[JoinConstraint::Dominates { a: g, b: c }],
+            &[&JoinConstraint::Dominates { a: g, b: c }],
         )
         .unwrap();
     // The If dominates both arms and the merge — every call.

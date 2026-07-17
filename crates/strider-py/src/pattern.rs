@@ -46,7 +46,7 @@ use strider_pattern::matcher::{MatcherBuilder, PatValueRef};
 use strider_pattern::template::{TemplateBuilder, TmplValueRef};
 use strider_pattern::{
     Capture, CaptureExt, JoinConstraint, MatchPat, MemPat, Pattern, Template, TemplatePat,
-    template as tpl,
+    ValueSpec, template as tpl,
 };
 
 use crate::errors::into_strider_err;
@@ -3015,7 +3015,7 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
 /// `Function.find_all([...], constraints=[...])` to filter joined tuples.
 /// Construct via `dominates` / `dominated_by_branch` / `phi_input_from_edge`.
 #[gen_stub_pyclass]
-#[pyclass(name = "JoinConstraint", module = "strider.pattern", frozen)]
+#[pyclass(name = "JoinConstraint", module = "strider.pattern", unsendable)]
 pub struct PyJoinConstraint {
     pub(crate) inner: JoinConstraint,
 }
@@ -3052,25 +3052,40 @@ pub fn dominated_by_branch(
 }
 
 /// The `Phi` bound to `phi` merges, on the predecessor whose control edge is
-/// `edge`, the value bound to `value` — "the value merged from THIS branch is
+/// `edge`, the value given by `value` — "the value merged from THIS branch is
 /// X".  `edge` must bind an `If`'s `capture_true`/`capture_false` value; on the
 /// converged IR that edge is the phi region's direct predecessor.  `phi` binds
-/// a `phi()` value, `value` binds whatever pattern matched the expected merged
-/// value.  Direct-edge: no match when nested control sits between the branch
-/// and the merge.
+/// a `phi()` value.  Direct-edge: no match when nested control sits between the
+/// branch and the merge.
+///
+/// `value` is either:
+///
+/// * a `Capture` — it must be bound by another pattern in the same `find_all`
+///   list, and the constraint compares it by identity; or
+/// * a **pattern**, matched INLINE at the phi's arm value.  This states the fact
+///   locally: no independent root ranging over the whole function, and no
+///   cartesian product against it.  Captures inside the inline pattern bind and
+///   are readable off the returned match, unifying with (never overwriting) any
+///   binding the rest of the join already made.
 #[pyfunction]
 pub fn phi_input_from_edge(
     phi: PyRef<'_, PyCapture>,
     edge: PyRef<'_, PyCapture>,
-    value: PyRef<'_, PyCapture>,
-) -> PyJoinConstraint {
-    PyJoinConstraint {
+    value: &Bound<'_, PyAny>,
+) -> PyResult<PyJoinConstraint> {
+    // A `Capture` keeps the identity-compare form; anything pattern-like is
+    // built into a `Pattern` and matched at the arm value.
+    let spec = match value.extract::<PyRef<'_, PyCapture>>() {
+        Ok(c) => ValueSpec::Capture(c.inner),
+        Err(_) => ValueSpec::Pattern(Box::new(pattern_for_operand(value)?)),
+    };
+    Ok(PyJoinConstraint {
         inner: JoinConstraint::PhiInputFromEdge {
             phi: phi.inner,
             edge: edge.inner,
-            value: value.inner,
+            value: spec,
         },
-    }
+    })
 }
 
 // ── PhiPat (value-rooted: a Phi produces a value output) ─────────────────

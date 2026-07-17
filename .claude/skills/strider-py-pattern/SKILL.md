@@ -330,14 +330,31 @@ hits = fn.find_all([guard, call], constraints=[p.dominated_by_branch(t, c)])
   so the `If`'s TRUE edge is the jump-TAKEN edge and the fallthrough is the FALSE
   edge — the opposite of the source-level `if` body.
 - `p.phi_input_from_edge(phi, edge, value)` — the `phi` capture's data input on the
-  predecessor fed by control `edge` equals `value`: "the value merged from THIS
+  predecessor fed by control `edge` is `value`: "the value merged from THIS
   branch is X". `edge` binds an `If`'s `capture_true`/`capture_false`; direct-edge,
   so it keys on the converged/collapsed IR (the `If` edge as the phi region's direct
   predecessor) and won't match through nested control between branch and merge.
-  E.g. `find_all([if_else().capture_true(t), phi().capture(ph), any_int_const(v)],
-  constraints=[phi_input_from_edge(ph, t, v)])` finds "the phi value on the true
-  branch". Also works for a `mem_phi()` — bind `value` to a memory token (e.g. a
-  `store().capture(sv)` output) to ask "the memory merged from THIS branch".
+  Also works for a `mem_phi()` — a memory token (e.g. a `store().capture(sv)`
+  output) to ask "the memory merged from THIS branch".
+
+  `value` takes either spelling:
+
+  * **A pattern, matched inline at the arm value — prefer this.** The fact stays
+    local: `find_all([if_else().capture_true(t), phi().capture(ph)],
+    constraints=[phi_input_from_edge(ph, t, int_const(K))])`. Captures inside it
+    bind and read back off the match (`any_int_const(v)` inline still gives
+    `hit.uint(v)`), unifying with — never overwriting — anything the rest of the
+    join already bound.
+  * **A `Capture`**, which some other pattern in the list must bind; compared by
+    identity: `find_all([if_else().capture_true(t), phi().capture(ph),
+    any_int_const(v)], constraints=[phi_input_from_edge(ph, t, v)])`.
+
+  Reach for the capture form only when the value genuinely IS a separate site you
+  want matched in its own right. Otherwise it costs you: the extra root floats free,
+  matching anywhere in the function and joining as a cartesian product against the
+  phi (`find_all` enumerates all distinct bindings), with the constraint pruning
+  only afterwards — plus each extra root needs its own capture hygiene. The inline
+  form replaces that whole-graph root search with one match at a known value.
 
 Constraints range over **control nodes** (`Call`/`Store`/`Region`/`If`/…); a
 captured value resolves to its producer node. Prefer `capture_true`/`capture_false`

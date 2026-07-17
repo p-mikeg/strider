@@ -317,7 +317,7 @@ impl<'f> Matcher<'f> {
     pub fn find_joined_constrained(
         &self,
         pats: &[&Pattern],
-        constraints: &[JoinConstraint],
+        constraints: &[&JoinConstraint],
     ) -> anyhow::Result<Vec<Vec<Match>>> {
         if pats.is_empty() {
             return Ok(Vec::new());
@@ -421,12 +421,126 @@ impl<'f> Matcher<'f> {
         }
 
         if !constraints.is_empty() {
-            let mut eval = ConstraintEval::new(self.function());
-            acc.retain(|tuple| constraints.iter().all(|c| eval.holds(c, tuple)));
+            let eval = ConstraintEval::new(self.function());
+            for c in constraints.iter().copied() {
+                // Per-CONSTRAINT prep, hoisted OUT of the per-tuple loop: an
+                // inline `value` pattern's root resolution and capture list are
+                // fixed for the whole pass, so the per-tuple cost stays at one
+                // match attempt at one known value — strictly less work than the
+                // whole-graph root search the capture spelling needs.
+                let inline = match c {
+                    JoinConstraint::PhiInputFromEdge {
+                        value: ValueSpec::Pattern(p),
+                        ..
+                    } => Some((p, p.root()?, p.bound_captures().collect::<Vec<_>>())),
+                    _ => None,
+                };
+                let mut next: Vec<Vec<Match>> = Vec::with_capacity(acc.len());
+                for tuple in acc {
+                    match (c, &inline) {
+                        (
+                            JoinConstraint::PhiInputFromEdge { phi, edge, .. },
+                            Some((pat, root, caps)),
+                        ) => self.expand_phi_inline(
+                            &eval, tuple, *phi, *edge, pat, *root, caps, &mut next,
+                        ),
+                        _ => {
+                            if eval.holds(c, &tuple) {
+                                next.push(tuple);
+                            }
+                        }
+                    }
+                }
+                acc = next;
+                if acc.is_empty() {
+                    break;
+                }
+            }
         }
 
         dedup_on_shared_captures(&mut acc, self.function().graph());
         Ok(acc)
+    }
+
+    /// Evaluate a `PhiInputFromEdge` whose `value` is an INLINE pattern against
+    /// one joined `tuple`, pushing a tuple per surviving binding onto `out`.
+    ///
+    /// Unlike a pure predicate this can also BIND, so it emits 0..n tuples
+    /// rather than a `bool`. The sub-pattern is anchored at the arm VALUE
+    /// (`inputs[slot+1]`) via the ordinary [`walk::try_match`] entry point — not
+    /// at its producer node, which would bind the wrong output on a multi-output
+    /// producer.
+    ///
+    /// # Unification
+    ///
+    /// The engine's `Bindings` is SEEDED with whatever the tuple already bound
+    /// for the captures the inline pattern mentions. `Bindings::bind_capture`'s
+    /// existing rebind-conflict detection then does the unification for free: an
+    /// inline capture that disagrees with the tuple rejects that configuration
+    /// instead of overwriting it.
+    #[allow(clippy::too_many_arguments)]
+    fn expand_phi_inline(
+        &self,
+        eval: &ConstraintEval,
+        tuple: Vec<Match>,
+        phi: crate::Capture,
+        edge: crate::Capture,
+        pat: &Pattern,
+        root: PatNodeId,
+        caps: &[crate::Capture],
+        out: &mut Vec<Vec<Match>>,
+    ) {
+        let (Some(phi_v), Some(edge_v)) = (eval.value_of(&tuple, phi), eval.value_of(&tuple, edge))
+        else {
+            return;
+        };
+        let Some(arm) = eval.phi_arm_value(phi_v, edge_v) else {
+            return;
+        };
+        // The inline bindings are merged into the match that bound `phi` — the
+        // constraint's anchor — so a caller reads them off the tuple exactly as
+        // it would a real root's.
+        let Some(anchor) = tuple.iter().position(|m| m.is_bound(phi)) else {
+            return;
+        };
+
+        let mut seed = Bindings::default();
+        for m in &tuple {
+            for (cap, b) in m.bindings.iter() {
+                // First binding wins, matching `value_of`'s `find_map`; a tuple
+                // agrees on shared captures already, but may spell one as a
+                // `Node` and another as a `Value` of the same node.
+                if caps.contains(&cap) && !seed.is_bound(cap) {
+                    seed.bind_capture(cap, b);
+                }
+            }
+        }
+
+        let mut seen: FxHashSet<Vec<(u32, Binding)>> = FxHashSet::default();
+        let mut hits: Vec<Bindings> = Vec::new();
+        {
+            // `false` = record and keep enumerating, so every DISTINCT inline
+            // binding yields its own tuple (the `find_all` enumeration contract).
+            let mut collect = |b: &mut Bindings| -> bool {
+                if seen.insert(b.binding_signature()) {
+                    hits.push(b.clone());
+                }
+                false
+            };
+            walk::try_match(self, pat, root, arm, &mut seed, &mut collect);
+        }
+
+        for b in hits {
+            let mut t = tuple.clone();
+            for (cap, bind) in b.iter() {
+                // Already in the tuple (seeded, hence already unified) — skip.
+                if t.iter().any(|m| m.is_bound(cap)) {
+                    continue;
+                }
+                t[anchor].bindings.bind_capture(cap, bind);
+            }
+            out.push(t);
+        }
     }
 }
 
@@ -435,7 +549,11 @@ impl<'f> Matcher<'f> {
 /// joined tuples. Captured entities are resolved to control nodes; a value
 /// capture resolves to its producer node (for `Dominates`) or is used directly
 /// (the branch-edge value for `Reaches`).
-#[derive(Clone, Copy, Debug)]
+///
+/// Not `Clone`: [`ValueSpec::Pattern`] owns a [`Pattern`], which holds match-time
+/// closures and so cannot be cloned. Constraints are passed by reference
+/// (`&[&JoinConstraint]`), symmetric with the patterns themselves.
+#[derive(Debug)]
 pub enum JoinConstraint {
     /// The node bound to `a` dominates the node bound to `b` in the control
     /// subgraph. A capture absent from the control subgraph fails it.
@@ -463,23 +581,78 @@ pub enum JoinConstraint {
     /// token).  Direct-edge: `edge` must be a *literal* control input of the
     /// phi's region (the converged/collapsed IR makes an `If`'s true/false
     /// output the join region's direct predecessor).  `edge` must bind a
-    /// control-output value; `phi` / `value` bind values.
+    /// control-output value; `phi` binds a value; `value` is a [`ValueSpec`] —
+    /// either a capture bound elsewhere in the join, or a pattern matched
+    /// INLINE at the arm value.
     PhiInputFromEdge {
         phi: crate::Capture,
         edge: crate::Capture,
-        value: crate::Capture,
+        value: ValueSpec,
     },
+}
+
+/// How [`JoinConstraint::PhiInputFromEdge`] names the merged arm value.
+///
+/// [`Capture`](ValueSpec::Capture) is the pure-predicate form: the value must
+/// already be bound by some pattern in the join, and the constraint only
+/// compares. [`Pattern`](ValueSpec::Pattern) states the fact LOCALLY — the
+/// sub-pattern is matched at the arm value itself, so it needs no independent
+/// root floating over the whole function, and it BINDS: captures inside it are
+/// merged into the joined tuple (unifying with, never overwriting, whatever the
+/// tuple already bound).
+pub enum ValueSpec {
+    /// A capture bound by another pattern in the join; compared by identity.
+    Capture(crate::Capture),
+    /// A pattern matched inline at the phi's arm value.
+    ///
+    /// Boxed: a `Pattern` is a whole match graph with closures in it, so an
+    /// unboxed variant would make every `JoinConstraint` — including the
+    /// capture-only ones — as large as a `Pattern`.
+    Pattern(Box<Pattern>),
+}
+
+// `Pattern` is a graph with closures in it and so is not `Debug`; print the
+// variant and let the capture form show its capture (all `JoinConstraint`'s
+// other fields are captures, and it has always been `Debug`).
+impl std::fmt::Debug for ValueSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValueSpec::Capture(c) => f.debug_tuple("Capture").field(c).finish(),
+            ValueSpec::Pattern(_) => f.write_str("Pattern(..)"),
+        }
+    }
+}
+
+impl From<crate::Capture> for ValueSpec {
+    fn from(c: crate::Capture) -> Self {
+        ValueSpec::Capture(c)
+    }
+}
+
+impl From<Pattern> for ValueSpec {
+    fn from(p: Pattern) -> Self {
+        ValueSpec::Pattern(Box::new(p))
+    }
 }
 
 impl JoinConstraint {
     /// Every capture this constraint correlates (used to link their owner
     /// patterns for the `find_joined` connectivity check).
+    ///
+    /// An inline `value` pattern contributes the captures INSIDE it rather than
+    /// a `value` capture of its own: those are exactly the captures it can
+    /// correlate with (and unify against) the rest of the join.
     fn captures(&self) -> Vec<crate::Capture> {
-        match *self {
-            JoinConstraint::Dominates { a, b } => vec![a, b],
-            JoinConstraint::DominatedByBranch { branch, node } => vec![branch, node],
+        match self {
+            JoinConstraint::Dominates { a, b } => vec![*a, *b],
+            JoinConstraint::DominatedByBranch { branch, node } => vec![*branch, *node],
             JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
-                vec![phi, edge, value]
+                let mut caps = vec![*phi, *edge];
+                match value {
+                    ValueSpec::Capture(v) => caps.push(*v),
+                    ValueSpec::Pattern(p) => caps.extend(p.bound_captures()),
+                }
+                caps
             }
         }
     }
@@ -511,8 +684,31 @@ impl<'f> ConstraintEval<'f> {
         tuple.iter().find_map(|m| m.value(c))
     }
 
-    fn holds(&mut self, c: &JoinConstraint, tuple: &[Match]) -> bool {
+    /// Pure-predicate constraints. The inline-pattern `PhiInputFromEdge` is NOT
+    /// evaluated here — it can bind, so it goes through
+    /// [`Matcher::expand_phi_inline`] instead.
+    fn holds(&self, c: &JoinConstraint, tuple: &[Match]) -> bool {
         match *c {
+            JoinConstraint::PhiInputFromEdge {
+                phi,
+                edge,
+                value: ValueSpec::Capture(value),
+            } => {
+                let (Some(phi_v), Some(edge_v), Some(val_v)) = (
+                    self.value_of(tuple, phi),
+                    self.value_of(tuple, edge),
+                    self.value_of(tuple, value),
+                ) else {
+                    return false;
+                };
+                self.phi_arm_value(phi_v, edge_v) == Some(val_v)
+            }
+            // Handled by `Matcher::expand_phi_inline` (it binds, so it cannot be
+            // a predicate); unreachable via this entry point.
+            JoinConstraint::PhiInputFromEdge {
+                value: ValueSpec::Pattern(_),
+                ..
+            } => false,
             JoinConstraint::Dominates { a, b } => {
                 let (Some(na), Some(nb)) = (self.node_of(tuple, a), self.node_of(tuple, b)) else {
                     return false;
@@ -534,20 +730,10 @@ impl<'f> ConstraintEval<'f> {
                 let doms = self.doms.get_or_init(|| control_dominators(self.function));
                 dominates(doms, consumer, target)
             }
-            JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
-                let (Some(phi_v), Some(edge_v), Some(val_v)) = (
-                    self.value_of(tuple, phi),
-                    self.value_of(tuple, edge),
-                    self.value_of(tuple, value),
-                ) else {
-                    return false;
-                };
-                self.phi_input_from_edge(phi_v, edge_v, val_v)
-            }
         }
     }
 
-    /// The `Phi`/`MemPhi` producing `phi_v` merges `val_v` on the predecessor
+    /// The value the `Phi`/`MemPhi` producing `phi_v` merges on the predecessor
     /// whose owning `Region` control input is exactly `edge_v` (direct-edge).
     ///
     /// Slot alignment: a `Phi`/`MemPhi`'s inputs are `[PhiToken, v0, v1, …]` —
@@ -555,25 +741,27 @@ impl<'f> ConstraintEval<'f> {
     /// `MemPhi`) — and its owning `Region` (the `PhiToken`'s producer) has
     /// control input `i` for predecessor `i`.  So the region slot matching
     /// `edge_v` maps to the phi input one slot over.
-    fn phi_input_from_edge(&self, phi_v: ValueId, edge_v: ValueId, val_v: ValueId) -> bool {
+    ///
+    /// Returns the arm VALUE so both `value` spellings share one lookup: the
+    /// capture form compares it by identity, the inline-pattern form anchors its
+    /// sub-pattern at it.
+    fn phi_arm_value(&self, phi_v: ValueId, edge_v: ValueId) -> Option<ValueId> {
         let f = self.function;
         let phi_node = f.producer(phi_v);
         if !matches!(f.node_kind(phi_node), NodeKind::Phi | NodeKind::MemPhi) {
-            return false;
+            return None;
         }
         let inputs: Vec<ValueId> = f.node_inputs(phi_node).into_iter().collect();
         // Slot 0 is the PhiToken; its producer is the owning Region.
-        let Some(&token) = inputs.first() else {
-            return false;
-        };
-        let region = f.producer(token);
+        let region = f.producer(*inputs.first()?);
         if !matches!(f.node_kind(region), NodeKind::Region) {
-            return false;
+            return None;
         }
-        let Some(slot) = f.node_inputs(region).into_iter().position(|c| c == edge_v) else {
-            return false;
-        };
-        inputs.get(slot + 1).is_some_and(|&v| v == val_v)
+        let slot = f
+            .node_inputs(region)
+            .into_iter()
+            .position(|c| c == edge_v)?;
+        inputs.get(slot + 1).copied()
     }
 }
 
