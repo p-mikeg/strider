@@ -752,12 +752,38 @@ impl JoinConstraint {
 /// dominator trees across one `find_joined_constrained` call — each is built at
 /// most once, never per tuple and never per arm.
 ///
-/// The trees are kept SEPARATE rather than collapsed into the split one alone:
-/// the edge-split graph has roughly twice the vertices and hence longer
-/// dominator chains, so making [`JoinConstraint::Dominates`] read it would make
-/// every node-dominance query pay for a relation it does not need.  Node queries
-/// use `doms`; only the edge queries ([`JoinConstraint::DominatedByBranch`] and
-/// [`JoinConstraint::PhiInputFromEdge`]) build and walk `split_doms`.
+/// # Why TWO trees, when one would do
+///
+/// The split tree SUBSUMES the node tree: `dominates(split_doms, Node(a),
+/// Node(b))` equals `dominates(doms, a, b)` exactly, because edge-splitting
+/// preserves paths 1:1 (`strider-ir`'s `split_dominance_subsumes_node_dominance`
+/// pins this over every ordered node pair of a diamond, a guarded loop, and an
+/// empty arm).  So `doms` is deletable on correctness grounds — it is kept on
+/// MEASURED performance grounds alone.
+///
+/// Collapsing onto `split_doms` was benchmarked (`benches/matcher.rs`,
+/// `join_dominates_only` / `join_dominates_and_branch` over a 60-diamond chain):
+///
+/// ```text
+///                        two trees   one tree
+/// Dominates-only          4.18 ms     5.80 ms   +39%   (60 diamonds)
+/// Dominates-only         33.6  µs    44.2  µs   +31%   ( 6 diamonds)
+/// mixed (Dominates+edge)  8.06 ms     9.68 ms   +20%   (60 diamonds)
+/// mixed (Dominates+edge) 52.4  µs    46.7  µs   -11%   ( 6 diamonds)
+/// ```
+///
+/// The cost that matters is the PER-TUPLE chain walk, not the one-off build:
+/// `Edge` vertices interleave, so a node-dominance chain in the split tree is
+/// ~2x longer, and `Dominates` is re-evaluated for every joined tuple (a join of
+/// K guards and M calls is K*M).  Saving a build is a constant; doubling the
+/// walk scales with tuples * depth.  That is why the mixed shape — which saves
+/// one whole build — still WINS at 6 diamonds and LOSES at 60: past a few
+/// hundred tuples the walk dominates the build it saved.
+///
+/// So: node queries use `doms`; only the edge queries
+/// ([`JoinConstraint::DominatedByBranch`] and [`JoinConstraint::PhiInputFromEdge`])
+/// build and walk `split_doms`.  Both stay lazy, so a join pays for exactly the
+/// relations it asks for.
 struct ConstraintEval<'f> {
     function: &'f Function,
     /// Dominators of the plain control subgraph, keyed by `NodeId`.

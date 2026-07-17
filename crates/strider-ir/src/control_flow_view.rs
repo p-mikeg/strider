@@ -191,9 +191,13 @@ impl Visitable for ControlSplitView<'_> {
 
 /// Computes dominators of the EDGE-SPLIT control subgraph.
 ///
-/// Strictly more expensive than [`control_dominators`] (the split graph has
-/// roughly twice the vertices, hence longer dominator chains), so callers keep
-/// this in a separate lazy cell and only pay for it on edge queries.
+/// Costlier to build than [`control_dominators`] (the split graph has roughly
+/// twice the vertices, hence longer dominator chains), so callers keep it lazy.
+///
+/// It SUBSUMES [`control_dominators`]: querying it with [`CtrlKey::Node`] keys
+/// answers node dominance identically, because edge-splitting preserves paths
+/// 1:1 (see `split_dominance_subsumes_node_dominance`).  A caller needing both
+/// relations therefore builds only this one.
 ///
 /// The entry key is `CtrlKey::Node(function.entry())`; a mismatch would yield an
 /// empty dominator tree, silently making every query `false`.
@@ -475,6 +479,183 @@ mod tests {
             .expect("the join has a control successor");
 
         Ok((f, true_edge, join, tail))
+    }
+
+    /// Builds a fixture combining ALL THREE shapes that could break the
+    /// node/split dominance correspondence, in one function:
+    ///
+    /// ```text
+    ///       Entry
+    ///         |
+    ///     Region A
+    ///       If(c)          ── the DIAMOND
+    ///      /      \
+    ///  Region B  Region C
+    ///      \      /
+    ///     Region D  (join)
+    ///       If(c)          ── the EMPTY ARM: true runs straight into the join
+    ///      /      \
+    ///  (true)   Region E
+    ///      \      /
+    ///     Region G  (join — the true edge's DIRECT target)
+    ///       If(c)          ── the GUARDED LOOP's guard
+    ///      /      \
+    ///  Region H   \        (loop header: preds = the guard's edge + the latch)
+    ///    If(c)     \
+    ///    /    \     \
+    /// Region L  \    \     (latch: back-edge to H)
+    ///    |       \    \
+    ///    +--> H   \    \
+    ///              \    |
+    ///              Region X  (exit: reachable from the guard AND the loop)
+    ///                |
+    ///              Return
+    /// ```
+    fn diamond_loop_and_empty_arm() -> crate::error::Result<Function> {
+        let mut b = empty_builder()?;
+
+        let (a, c_b, c_c, d) = (
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+        );
+        let (e, g, h, l, x) = (
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+        );
+
+        b.set_entry_region_all(a)?;
+
+        // A: the diamond's branch.
+        b.set_region(a);
+        b.set_lift_addr(Some(0x3000));
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, c_b, c_c)?;
+        b.set_lift_addr(None);
+
+        // B / C: the diamond's arms, both into D.
+        for (region, addr) in [(c_b, 0x3010), (c_c, 0x3020)] {
+            b.set_region(region);
+            b.set_lift_addr(Some(addr));
+            b.build_branch(d)?;
+            b.set_lift_addr(None);
+        }
+
+        // D: the EMPTY-ARM branch — true goes straight to the join G.
+        b.set_region(d);
+        b.set_lift_addr(Some(0x3030));
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, g, e)?;
+        b.set_lift_addr(None);
+
+        // E: the non-empty else arm.
+        b.set_region(e);
+        b.set_lift_addr(Some(0x3040));
+        b.build_branch(g)?;
+        b.set_lift_addr(None);
+
+        // G: the loop GUARD — enter the loop, or skip straight to the exit.
+        b.set_region(g);
+        b.set_lift_addr(Some(0x3050));
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, h, x)?;
+        b.set_lift_addr(None);
+
+        // H: the loop header — two preds (the guard's edge, and L's back edge).
+        b.set_region(h);
+        b.set_lift_addr(Some(0x3060));
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, l, x)?;
+        b.set_lift_addr(None);
+
+        // L: the latch — back-edge to the header.
+        b.set_region(l);
+        b.set_lift_addr(Some(0x3070));
+        b.build_branch(h)?;
+        b.set_lift_addr(None);
+
+        // X: the exit.
+        b.set_region(x);
+        b.set_lift_addr(Some(0x3080));
+        b.build_function_return()?;
+        b.set_lift_addr(None);
+
+        b.build()
+    }
+
+    /// THE subsumption property, pinned directly: the edge-split dominator tree
+    /// answers NODE dominance exactly as the node tree does, for EVERY ordered
+    /// pair of control-reachable nodes.
+    ///
+    /// This is what lets [`ConstraintEval`](../../../strider_pattern) keep ONE
+    /// tree.  Edge-splitting inserts a vertex on every edge, so paths correspond
+    /// 1:1: `Entry→…→b` maps to `Entry→…→Node(b)` with `Edge(v)` vertices
+    /// interleaved, and `Node(a)` lies on the split path IFF `a` lies on the
+    /// original.  Dominance is a statement about ALL paths, so the two agree.
+    ///
+    /// If this ever diverges, the split tree is not a conservative extension of
+    /// the node tree and everything built on it is suspect — not just the
+    /// single-tree cleanup.
+    #[test]
+    fn split_dominance_subsumes_node_dominance() {
+        for (name, f) in [
+            ("diamond", diamond().expect("diamond builds")),
+            (
+                "empty_true_arm",
+                empty_true_arm().expect("empty_true_arm builds").0,
+            ),
+            (
+                "diamond_loop_and_empty_arm",
+                diamond_loop_and_empty_arm().expect("combined fixture builds"),
+            ),
+        ] {
+            let node_doms = control_dominators(&f);
+            let split = control_edge_dominators(&f);
+
+            let reachable = crate::walk::cfg_reachable(f.graph(), f.entry());
+            let nodes: Vec<NodeId> = f
+                .graph()
+                .all_node_ids()
+                .filter(|&n| reachable.contains(n))
+                .collect();
+
+            // A fixture that walked no nodes would pass vacuously.
+            assert!(
+                nodes.len() >= 4,
+                "{name}: fixture must have control-reachable nodes to compare, got {}",
+                nodes.len()
+            );
+
+            let mut agreed_true = 0usize;
+            for &a in &nodes {
+                for &b in &nodes {
+                    let via_nodes = dominates(&node_doms, a, b);
+                    let via_split = dominates(&split, CtrlKey::Node(a), CtrlKey::Node(b));
+                    assert_eq!(
+                        via_nodes, via_split,
+                        "{name}: node tree and split tree disagree on \
+                         dominates({a:?}, {b:?}): {via_nodes} vs {via_split}"
+                    );
+                    if via_nodes {
+                        agreed_true += 1;
+                    }
+                }
+            }
+
+            // Guards against a vacuous pass where BOTH trees answered `false`
+            // everywhere (e.g. an entry-key mismatch yielding an empty tree):
+            // every node dominates itself, and the entry dominates every node.
+            assert!(
+                agreed_true >= 2 * nodes.len() - 1,
+                "{name}: expected at least the reflexive pairs plus the entry's \
+                 row to hold, got {agreed_true} true pairs over {} nodes",
+                nodes.len()
+            );
+        }
     }
 
     /// THE load-bearing property: `Node(n) -> Edge(v) -> Node(c)` in the split
