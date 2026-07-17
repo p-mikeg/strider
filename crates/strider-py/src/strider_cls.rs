@@ -640,6 +640,27 @@ impl PyLifter {
             .map_err(|e| into_strider_err(anyhow::anyhow!(e)))
     }
 
+    /// Look up a register by Sleigh name and return its varnode, or
+    /// `None` when the name is not in this arch's register table.
+    /// Mirrors `Sleigh.reg` — the `Lifter` already owns a register
+    /// table, so callers holding one need not build a second `Sleigh`.
+    fn reg(&self, name: &str) -> Option<crate::sleigh::PyVn> {
+        self.inner
+            .sleigh_regs()
+            .name_to_vn(name)
+            .map(crate::sleigh::PyVn::from_inner)
+    }
+
+    /// Look up a varnode's Sleigh register name — the reverse of
+    /// `reg(...)`.  Returns `None` when `vn` names no register (a
+    /// non-REGISTER space, or an offset/size not in the table); never
+    /// raises.  Mirrors `Sleigh.reg_name`, so a varnode reached from a
+    /// function this `Lifter` analysed can be decoded without
+    /// constructing a separate `Sleigh`.
+    fn reg_name(&self, vn: &crate::sleigh::PyVn) -> Option<&str> {
+        self.inner.sleigh_regs().vn_to_name(vn.inner)
+    }
+
     /// Decode LINEARLY from `entry`, one machine instruction at a time
     /// (advancing by each instruction's machine byte length, replaying
     /// context-register state exactly as a real lift would), until the

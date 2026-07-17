@@ -178,6 +178,11 @@ class Sleigh:
     def reg(self, name: str) -> Optional[Vn]:
         """Look up a register by Sleigh name; `None` when not a register."""
         ...
+    def reg_name(self, vn: Vn) -> Optional[str]:
+        """Reverse of `reg`: a varnode's Sleigh register name, or `None`
+        when it names no register (non-REGISTER space, or an
+        offset/size absent from this arch's table)."""
+        ...
 
 class Cfg:
     """Control-flow graph of a single function, produced by
@@ -329,6 +334,17 @@ class Lifter:
     def html_str(self, function: Function, style: Optional[str] = ...) -> str:
         """Return `function`'s IR graph rendered as an HTML string
         instead of writing it to a file."""
+        ...
+    def reg(self, name: str) -> Optional[Vn]:
+        """Look up a register by Sleigh name; `None` when not a
+        register.  Mirrors `Sleigh.reg`, using the register table this
+        `Lifter` already owns."""
+        ...
+    def reg_name(self, vn: Vn) -> Optional[str]:
+        """Reverse of `reg`: a varnode's Sleigh register name, or `None`
+        when it names no register.  Decodes a varnode reached from a
+        function this `Lifter` analysed (`function.node(m.root).vn()`)
+        without constructing a separate `Sleigh`."""
         ...
     def pcode_at(self, entry: int, addr: int) -> str:
         """Decode LINEARLY from `entry`, one machine instruction at a

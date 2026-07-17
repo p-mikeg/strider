@@ -74,6 +74,19 @@ impl PySleigh {
         self.regs.name_to_vn(name).map(PyVn::from_inner)
     }
 
+    /// Look up a varnode's Sleigh register name — the reverse of
+    /// `reg(...)`.  Returns `None` when `vn` names no register: a
+    /// non-REGISTER space (RAM / CONST / UNIQUE), or a REGISTER-space
+    /// offset/size pair that isn't an entry in this arch's table.
+    /// Never raises.
+    ///
+    /// Use this to decode a varnode reached from a lifted function
+    /// (`function.node(m.root).vn()`), which otherwise reprs as a raw
+    /// `%[0x20]:8` that is easy to misread as a stack slot.
+    fn reg_name(&self, vn: &PyVn) -> Option<&str> {
+        self.regs.vn_to_name(vn.inner)
+    }
+
     /// `Sleigh(arch=<preset>)`.
     fn __repr__(&self) -> String {
         format!("Sleigh(arch={})", self.arch_name)
