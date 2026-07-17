@@ -153,6 +153,68 @@ fn commutative_capture_identical_operands_dedups_to_one() {
     assert_eq!(hits[0].bindings().get_uint(k, &function), Some(5));
 }
 
+/// Arrangements MULTIPLY across nested commutative nodes.
+///
+/// `add(add(5,3), add(7,9))` matched by `add(add(w,x), add(y,z))` has three
+/// independent commutative choices — the outer node and each inner node — so
+/// the enumeration must report 2*2*2 = 8 distinct binding maps rather than
+/// collapsing to one node's worth. This is what "find_all reports every
+/// arrangement" means once a pattern is deeper than a single node, which the
+/// tests above cannot observe.
+#[test]
+fn nested_commutative_arrangements_multiply() {
+    let mut t = Tb::empty();
+    let (c5, c3) = (t.u64(5), t.u64(3));
+    let (c7, c9) = (t.u64(7), t.u64(9));
+    let lhs = t.int_bin(c5, c3, IntBinaryOp::Add);
+    let rhs = t.int_bin(c7, c9, IntBinaryOp::Add);
+    let root = t.int_bin(lhs, rhs, IntBinaryOp::Add);
+    let function = t.ret_val(root);
+
+    let (w, x, y, z) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
+    let pat = add(
+        add(any().capture(w), any().capture(x)),
+        add(any().capture(y), any().capture(z)),
+    )
+    .into_pattern();
+    let hits = a::matches(&function, pat, 8);
+
+    // Every hit is a DISTINCT (w,x,y,z) tuple — the dedup key is the binding
+    // map, so 8 hits must mean 8 different maps, not one map reported 8 times.
+    let mut seen: Vec<(u128, u128, u128, u128)> = hits
+        .iter()
+        .map(|m| {
+            let g = |c| m.bindings().get_uint(c, &function).expect("bound const");
+            (g(w), g(x), g(y), g(z))
+        })
+        .collect();
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(
+        seen.len(),
+        8,
+        "all 8 arrangements must be distinct: {seen:?}"
+    );
+
+    // Each inner pair stays together: {w,x} is always {5,3} and {y,z} always
+    // {7,9}, or the outer swap carries both — never a cross-node mix.
+    for (wv, xv, yv, zv) in &seen {
+        let mut left = [*wv, *xv];
+        let mut right = [*yv, *zv];
+        left.sort_unstable();
+        right.sort_unstable();
+        assert!(
+            (left == [3, 5] && right == [7, 9]) || (left == [7, 9] && right == [3, 5]),
+            "operands must not migrate across the inner nodes: {wv},{xv} / {yv},{zv}"
+        );
+    }
+}
+
 /// `.ordered()` suppresses the commutative retry entirely, so a capture-bearing
 /// pattern yields exactly the one ordering it pins.
 #[test]
