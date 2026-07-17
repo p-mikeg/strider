@@ -321,7 +321,7 @@ impl<'f> Matcher<'f> {
         &self,
         pats: &[&Pattern],
         constraints: &[&JoinConstraint],
-    ) -> anyhow::Result<Vec<Vec<Match>>> {
+    ) -> anyhow::Result<Vec<Tuple>> {
         if pats.is_empty() {
             return Ok(Vec::new());
         }
@@ -417,7 +417,7 @@ impl<'f> Matcher<'f> {
             }
         }
 
-        let per_pat: Vec<Vec<Match>> = pats
+        let per_pat: Vec<Tuple> = pats
             .iter()
             .map(|p| self.find_all(p))
             .collect::<anyhow::Result<_>>()?;
@@ -427,13 +427,13 @@ impl<'f> Matcher<'f> {
 
         // Seed the accumulator with single-element tuples from the
         // first pattern's hits.
-        let mut acc: Vec<Vec<Match>> = per_pat[0].iter().cloned().map(|m| vec![m]).collect();
+        let mut acc: Vec<Tuple> = per_pat[0].iter().cloned().map(|m| vec![m]).collect();
 
         // Incrementally cross-product with each subsequent pattern's
         // matches, filtering on shared-capture agreement against the
         // accumulated prefix.
         for next in per_pat.iter().skip(1) {
-            let mut new_acc: Vec<Vec<Match>> = Vec::new();
+            let mut new_acc: Vec<Tuple> = Vec::new();
             for prefix in &acc {
                 for m in next {
                     if prefix_agrees(prefix, m, self.function().graph()) {
@@ -453,7 +453,7 @@ impl<'f> Matcher<'f> {
             let eval = ConstraintEval::new(self.function());
             for c in constraints.iter().copied() {
                 let plan = ConstraintPlan::compile(c)?;
-                let mut next: Vec<Vec<Match>> = Vec::with_capacity(acc.len());
+                let mut next: Vec<Tuple> = Vec::with_capacity(acc.len());
                 for tuple in acc {
                     next.extend(plan.apply(self, &eval, tuple));
                 }
@@ -488,8 +488,8 @@ impl<'f> Matcher<'f> {
         &self,
         eval: &ConstraintEval,
         plan: &PhiInlinePlan,
-        tuple: Vec<Match>,
-    ) -> Vec<Vec<Match>> {
+        tuple: Tuple,
+    ) -> Vec<Tuple> {
         let &PhiInlinePlan {
             phi,
             edge,
@@ -619,12 +619,7 @@ impl<'c> ConstraintPlan<'c> {
 
     /// Apply this constraint to one joined `tuple`, returning its 0..n
     /// survivors. A filter is just the application that yields 0 or 1.
-    fn apply(
-        &self,
-        matcher: &Matcher<'_>,
-        eval: &ConstraintEval,
-        tuple: Vec<Match>,
-    ) -> Vec<Vec<Match>> {
+    fn apply(&self, matcher: &Matcher<'_>, eval: &ConstraintEval, tuple: Tuple) -> Vec<Tuple> {
         match self {
             Self::Predicate(c) => {
                 if eval.holds(c, &tuple) {
@@ -804,6 +799,15 @@ impl JoinConstraint {
     }
 }
 
+/// One row of a join: exactly one [`Match`] per pattern in the query, in the
+/// order the patterns were given.
+///
+/// Named because a bare `Vec<Match>` means something DIFFERENT 150 lines up —
+/// [`Matcher::find_all`] returns a list of independent matches, whereas here a
+/// `Vec<Match>` is a single row and the list of them is `Vec<Tuple>`. Same
+/// type, opposite meanings; the alias is what tells them apart at a glance.
+pub type Tuple = Vec<Match>;
+
 /// Evaluates [`JoinConstraint`]s against joined tuples, memoising the two
 /// dominator trees across one `find_joined_constrained` call — each is built at
 /// most once, never per tuple and never per arm.
@@ -865,19 +869,19 @@ impl<'f> ConstraintEval<'f> {
     }
 
     /// Resolve a capture to a control node across the tuple's matches.
-    fn node_of(&self, tuple: &[Match], c: crate::Capture) -> Option<NodeId> {
+    fn node_of(&self, tuple: &Tuple, c: crate::Capture) -> Option<NodeId> {
         tuple.iter().find_map(|m| m.node(c, self.function.graph()))
     }
 
     /// Resolve a capture to the value it binds across the tuple's matches.
-    fn value_of(&self, tuple: &[Match], c: crate::Capture) -> Option<ValueId> {
+    fn value_of(&self, tuple: &Tuple, c: crate::Capture) -> Option<ValueId> {
         tuple.iter().find_map(|m| m.value(c))
     }
 
     /// Pure-predicate constraints. The inline-pattern `PhiInputFromEdge` is NOT
     /// evaluated here — it can bind, so it goes through
     /// [`Matcher::expand_phi_inline`] instead.
-    fn holds(&self, c: &JoinConstraint, tuple: &[Match]) -> bool {
+    fn holds(&self, c: &JoinConstraint, tuple: &Tuple) -> bool {
         match *c {
             JoinConstraint::PhiInputFromEdge {
                 phi,
@@ -1039,7 +1043,7 @@ impl<'f> ConstraintEval<'f> {
 /// A tuple whose signature is **empty** (no capture bound anywhere) is
 /// always kept: that is the documented capture-free cross-product, whose
 /// tuples are intentionally distinct even though they bind nothing.
-fn dedup_on_shared_captures(acc: &mut Vec<Vec<Match>>, graph: &Graph) {
+fn dedup_on_shared_captures(acc: &mut Vec<Tuple>, graph: &Graph) {
     let mut seen: FxHashSet<Vec<(u32, NodeId)>> = FxHashSet::default();
     acc.retain(|tuple| {
         let mut sig: Vec<(u32, NodeId)> = Vec::new();
