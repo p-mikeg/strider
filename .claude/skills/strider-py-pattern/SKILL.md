@@ -331,11 +331,36 @@ hits = fn.find_all([guard, call], constraints=[p.dominated_by_branch(t, c)])
   edge — the opposite of the source-level `if` body.
 - `p.phi_input_from_edge(phi, edge, value)` — the `phi` capture's data input on the
   predecessor fed by control `edge` is `value`: "the value merged from THIS
-  branch is X". `edge` binds an `If`'s `capture_true`/`capture_false`; direct-edge,
-  so it keys on the converged/collapsed IR (the `If` edge as the phi region's direct
-  predecessor) and won't match through nested control between branch and merge.
+  branch is X". `edge` binds an `If`'s `capture_true`/`capture_false`.
   Also works for a `mem_phi()` — a memory token (e.g. a `store().capture(sv)`
   output) to ask "the memory merged from THIS branch".
+
+  **Which arms an edge reaches.** An arm qualifies when its predecessor IS the
+  edge, *or* is reached exclusively through it. So a merge across a `call` — or
+  any other intervening block between the branch and the join — still pins, which
+  is the common shape in real code (a call terminates its basic block, so the
+  `If`'s edge is usually *not* the merge region's direct predecessor).
+  Reach is **exclusive**: an arm reachable from BOTH sides of the branch belongs
+  to neither edge. A branch whose block splits and reaches the merge twice yields
+  one match **per qualifying arm** — `find_all` enumerates them, it never picks one.
+
+  **An empty result is AMBIGUOUS — this bites people.** `[]` means EITHER
+  *`edge` reaches no arm of this phi* OR *it does, and the arm merges a different
+  value*. The two are indistinguishable from the result alone, so a probe that
+  reads like real discrimination ("the true edge merges 12, the false edge
+  doesn't") may just be blind on both. Re-probe with `anything()` as the value:
+  a wildcard **cannot fail on value grounds**, so `[]` from it proves the edge is
+  not visible.
+
+  ```python
+  # Is this phi/edge pair even related? A wildcard cannot fail on value grounds.
+  visible = fn.find_all([guard, phi], constraints=[
+      p.phi_input_from_edge(ph, t, p.anything())])
+  if not visible:
+      ...  # the edge does not reach this phi AT ALL — not a value mismatch
+  ```
+
+  Do this before concluding anything from a negative result.
 
   `value` takes either spelling:
 

@@ -343,9 +343,22 @@ def phi_input_from_edge(
 ) -> JoinConstraint:
     """`phi`'s data input on the predecessor fed by control edge `edge` is
     `value` — "the value merged from THIS branch is X". `edge` binds an `If`'s
-    `capture_true`/`capture_false` value; on the converged IR that edge is the
-    phi region's direct predecessor. Direct-edge: no match when nested control
-    sits between the branch and the merge.
+    `capture_true`/`capture_false` value.
+
+    An arm qualifies when its predecessor IS the edge, or is reached exclusively
+    through it — so a merge across a `call` or any other intervening block still
+    pins. Exclusive: an arm reachable from both sides of the branch belongs to
+    neither edge. A branch whose block splits and reaches the merge twice yields
+    one match PER qualifying arm.
+
+    An empty result is AMBIGUOUS: either `edge` reaches no arm of `phi`, or it
+    does and the arm merges a different value. Re-probe with `anything()` as the
+    value to tell them apart — a wildcard cannot fail on value grounds, so an
+    empty result from it proves the edge is not visible:
+
+        if not fn.find_all([g, ph_p], constraints=[
+                p.phi_input_from_edge(ph, e, p.anything())]):
+            ...  # the edge does not reach this phi at all — not a mismatch
 
     `value` is either a `Capture` (bound by another pattern in the same
     `find_all` list; compared by identity) or a **pattern** matched inline at the

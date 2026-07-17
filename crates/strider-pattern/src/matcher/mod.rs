@@ -494,9 +494,13 @@ impl<'f> Matcher<'f> {
         else {
             return;
         };
-        let Some(arm) = eval.phi_arm_value(phi_v, edge_v) else {
+        // Pull the first qualifying arm to bail out before the per-tuple seed
+        // build below, then chain it back on — still lazy, nothing collected.
+        let mut arms = eval.phi_arms_from_edge(phi_v, edge_v);
+        let Some(first_arm) = arms.next() else {
             return;
         };
+        let arms = std::iter::once(first_arm).chain(arms);
         // The inline bindings are merged into the match that bound `phi` — the
         // constraint's anchor — so a caller reads them off the tuple exactly as
         // it would a real root's.
@@ -518,7 +522,12 @@ impl<'f> Matcher<'f> {
 
         let mut seen: FxHashSet<Vec<(u32, Binding)>> = FxHashSet::default();
         let mut hits: Vec<Bindings> = Vec::new();
-        {
+        // One attempt per QUALIFYING arm (a split branch can reach the join more
+        // than once), each from a fresh copy of the seed so one arm's bindings
+        // never leak into the next.  `seen` spans the arms, so two arms that
+        // yield an identical binding collapse to one tuple.
+        for arm in arms {
+            let mut arm_seed = seed.clone();
             // `false` = record and keep enumerating, so every DISTINCT inline
             // binding yields its own tuple (the `find_all` enumeration contract).
             let mut collect = |b: &mut Bindings| -> bool {
@@ -527,7 +536,7 @@ impl<'f> Matcher<'f> {
                 }
                 false
             };
-            walk::try_match(self, pat, root, arm, &mut seed, &mut collect);
+            walk::try_match(self, pat, root, arm, &mut arm_seed, &mut collect);
         }
 
         for b in hits {
@@ -701,7 +710,10 @@ impl<'f> ConstraintEval<'f> {
                 ) else {
                     return false;
                 };
-                self.phi_arm_value(phi_v, edge_v) == Some(val_v)
+                // Short-circuits on the first qualifying arm: a pure predicate
+                // never needs to see the rest.
+                self.phi_arms_from_edge(phi_v, edge_v)
+                    .any(|arm| arm == val_v)
             }
             // Handled by `Matcher::expand_phi_inline` (it binds, so it cannot be
             // a predicate); unreachable via this entry point.
@@ -733,35 +745,126 @@ impl<'f> ConstraintEval<'f> {
         }
     }
 
-    /// The value the `Phi`/`MemPhi` producing `phi_v` merges on the predecessor
-    /// whose owning `Region` control input is exactly `edge_v` (direct-edge).
+    /// Every value the `Phi`/`MemPhi` producing `phi_v` merges on a predecessor
+    /// that comes from the branch edge `edge_v`.
+    ///
+    /// Internal to [`ConstraintEval`] — shared by the two `value` spellings of
+    /// [`JoinConstraint::PhiInputFromEdge`], which stays the only public surface.
     ///
     /// Slot alignment: a `Phi`/`MemPhi`'s inputs are `[PhiToken, v0, v1, …]` —
     /// data input `i+1` is predecessor `i`'s value (a `Memory` token for
     /// `MemPhi`) — and its owning `Region` (the `PhiToken`'s producer) has
-    /// control input `i` for predecessor `i`.  So the region slot matching
-    /// `edge_v` maps to the phi input one slot over.
+    /// control input `i` for predecessor `i`.  So a qualifying region slot maps
+    /// to the phi input one slot over.
     ///
-    /// Returns the arm VALUE so both `value` spellings share one lookup: the
-    /// capture form compares it by identity, the inline-pattern form anchors its
-    /// sub-pattern at it.
-    fn phi_arm_value(&self, phi_v: ValueId, edge_v: ValueId) -> Option<ValueId> {
+    /// # Which arms come from an edge
+    ///
+    /// Predecessor `i` (control input `c_i`) comes from `edge_v` when
+    ///
+    /// ```text
+    /// c_i == edge_v                                  // direct: the edge IS the predecessor
+    /// || dominates(consumer(edge_v), producer(c_i))  // through intervening control
+    /// ```
+    ///
+    /// The two clauses are a UNION — neither subsumes the other.  In the direct
+    /// case `consumer(edge_v)` is the join region itself and `producer(c_i)` is
+    /// the `If`, so the dominance clause would ask "does the join dominate the
+    /// `If`?" — backwards, and false.  Conversely the `==` clause cannot see an
+    /// arm merged across a `Call` or any other intervening block, which is the
+    /// common shape in real lifted code.
+    ///
+    /// The dominance clause is EXCLUSIVE: it holds only where every path from
+    /// the entry to that predecessor traverses the edge's target, so an arm
+    /// reachable from both sides of the branch belongs to neither edge.
+    ///
+    /// Yields arms LAZILY so both `value` spellings share one scan without
+    /// materialising it: the capture form `.any(..)`s over it and short-circuits
+    /// on the first qualifying arm, the inline-pattern form matches at each arm
+    /// as it comes.  Allocates nothing.
+    ///
+    /// A branch whose block splits and reaches the join more than once yields one
+    /// arm per qualifying predecessor — the caller enumerates them rather than
+    /// picking one.  (Under the old direct-only `==` at most one arm could ever
+    /// qualify, which is why a single `Option` used to be total; dominance can
+    /// qualify several, and choosing among them would be a silent coin-flip.)
+    fn phi_arms_from_edge(
+        &self,
+        phi_v: ValueId,
+        edge_v: ValueId,
+    ) -> impl Iterator<Item = ValueId> + '_ {
+        let f = self.function;
+        // All per-(phi, edge) work — phi node, region, dominance anchor — is
+        // resolved ONCE here; the per-arm body below is just the two clauses.
+        self.arm_scan(phi_v, edge_v).into_iter().flat_map(
+            move |(phi_inputs, region_inputs, dom_anchor)| {
+                region_inputs
+                    .into_iter()
+                    .enumerate()
+                    .filter(move |(_, c)| {
+                        *c == edge_v
+                            || dom_anchor.is_some_and(|anchor| {
+                                // Dominators are memoised across the whole
+                                // `find_joined_constrained` call — never rebuilt
+                                // per arm or per tuple.
+                                let doms =
+                                    self.doms.get_or_init(|| control_dominators(self.function));
+                                dominates(doms, anchor, f.producer(*c))
+                            })
+                    })
+                    // Region control input `i` ⇒ phi data input `i + 1`.
+                    .filter_map(move |(i, _)| phi_inputs.get(i + 1).copied())
+            },
+        )
+    }
+
+    /// Resolve the per-`(phi, edge)` scan state for [`Self::phi_arms_from_edge`]
+    /// once: the phi's inputs, its region's control inputs, and the node the
+    /// dominance clause anchors at (`None` = clause disabled, direct-only).
+    ///
+    /// `Inputs` is a `Copy` borrow of the graph's use-list, so carrying the two
+    /// input views costs no allocation.
+    fn arm_scan(
+        &self,
+        phi_v: ValueId,
+        edge_v: ValueId,
+    ) -> Option<(
+        strider_ir::Inputs<'f>,
+        strider_ir::Inputs<'f>,
+        Option<NodeId>,
+    )> {
         let f = self.function;
         let phi_node = f.producer(phi_v);
         if !matches!(f.node_kind(phi_node), NodeKind::Phi | NodeKind::MemPhi) {
             return None;
         }
-        let inputs: Vec<ValueId> = f.node_inputs(phi_node).into_iter().collect();
+        let phi_inputs = f.node_inputs(phi_node);
         // Slot 0 is the PhiToken; its producer is the owning Region.
-        let region = f.producer(*inputs.first()?);
+        let region = f.producer(*phi_inputs.get(0)?);
         if !matches!(f.node_kind(region), NodeKind::Region) {
             return None;
         }
-        let slot = f
-            .node_inputs(region)
-            .into_iter()
-            .position(|c| c == edge_v)?;
-        inputs.get(slot + 1).copied()
+        // The branch edge's consumer (the block it leads into); a control edge
+        // has exactly one consumer in well-formed IR.
+        //
+        // The dominance clause reasons "dominated by the edge's TARGET", which
+        // only implies "reached through the EDGE" when the edge is the target's
+        // sole way in.  Where the target is a `Region` with several predecessors
+        // — the `if (c) {} else { … }` shape, whose empty arm sends the edge
+        // straight to the join — paths through the OTHER edge reach it too, and
+        // dominance would mis-pin every arm below the join to both edges.  So the
+        // clause is gated on sole entry; the direct `==` clause still handles
+        // that shape exactly.
+        let dom_anchor =
+            f.value_uses(edge_v)
+                .next()
+                .map(|(n, _)| n)
+                .filter(|con| match f.node_kind(*con) {
+                    // All of a Region's inputs are control predecessors.
+                    NodeKind::Region => f.node_inputs(*con).len() == 1,
+                    // Any other consumer has a single control predecessor.
+                    _ => true,
+                });
+        Some((phi_inputs, f.node_inputs(region), dom_anchor))
     }
 }
 

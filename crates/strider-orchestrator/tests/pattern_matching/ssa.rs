@@ -600,3 +600,490 @@ fn phi_input_from_edge_inline_capture_unifies_with_tuple() {
     assert_eq!(count(t), 1, "unification pins `v` to the true arm's value");
     assert_eq!(count(f), 1, "unification pins `v` to the false arm's value");
 }
+
+// ── PhiInputFromEdge: control-flow reach (not just the direct edge) ───────────
+
+/// `if (reg == 0) { f(); reg = 1 } else { f(); reg = 2 }` — the motivating
+/// shape.  A `Call` terminates its basic block, so each branch's edge leads
+/// into a region that is NOT the merge region's predecessor: an intervening
+/// region sits between the `If`'s true/false output and the join.  This is the
+/// shape behind every `__netdev_update_features` / `inet_sock_destruct` /
+/// `__d_alloc` fixture, where a direct-edge-only constraint sees nothing.
+fn graph_phi_across_call() -> (strider_ir::Function, rsleigh::Vn) {
+    let reg = reg_vn(0, 8);
+    let mut t = Tb::bare(vec![reg], &[], &[reg], &[], None, 0);
+    let entry = t.region();
+    let (a_r, a_tail) = (t.region(), t.region());
+    let (b_r, b_tail) = (t.region(), t.region());
+    let merge = t.region();
+    t.set_entry(entry);
+
+    t.enter(entry);
+    let reg_v = t.read_var(&reg);
+    let zero = t.u64(0);
+    let cond = t.int_cmp(reg_v, zero, IntCmpOp::Equal);
+    t.build_if(cond, a_r, b_r);
+
+    // True side: the call splits the block, so `a_tail` — not `a_r` — is the
+    // merge's predecessor, and the If's true edge feeds `a_r`.
+    t.enter(a_r);
+    t.call_at(0x1000);
+    t.branch(a_tail);
+    t.enter(a_tail);
+    let one = t.u64(1);
+    t.write_var(&reg, one);
+    t.branch(merge);
+
+    t.enter(b_r);
+    t.call_at(0x1000);
+    t.branch(b_tail);
+    t.enter(b_tail);
+    let two = t.u64(2);
+    t.write_var(&reg, two);
+    t.branch(merge);
+
+    t.enter(merge);
+    let merged = t.read_var(&reg);
+    (t.ret_val(merged), reg)
+}
+
+/// THE motivating test: the phi's arms merge ACROSS A CALL, so neither branch
+/// edge is a literal control input of the join region.  Direct-edge-only
+/// matching returns nothing here; reaching through the intervening control must
+/// still pin each arm to its branch.
+#[test]
+fn phi_input_from_edge_reaches_through_intervening_call() {
+    let (function, _reg) = graph_phi_across_call();
+    let m = Matcher::new(&function);
+    let (t, f, ph, v) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
+    let guard = if_node().capture_true(t).capture_false(f).build();
+    // Pin the MERGE phi (the one the Return consumes): the builder mints a phi
+    // per region, and `phi()` alone would also match the branch regions' own
+    // single-predecessor phis — whose direct predecessor IS the branch edge.
+    let phi_p = ret().ret_val(0, phi().capture(ph)).build();
+    let val = any_int_const().capture(v).into_pattern();
+
+    let read = |edge: Capture| -> u128 {
+        let hits = m
+            .find_joined_constrained(
+                &[&guard, &phi_p, &val],
+                &[&JoinConstraint::PhiInputFromEdge {
+                    phi: ph,
+                    edge,
+                    value: ValueSpec::Capture(v),
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            hits.len(),
+            1,
+            "the arm reached through the call must still be pinned to its edge"
+        );
+        let value = hits[0].iter().find_map(|mm| mm.value(v)).unwrap();
+        function.int_const_u128(value).unwrap()
+    };
+
+    let (true_val, false_val) = (read(t), read(f));
+    assert_ne!(
+        true_val, false_val,
+        "each edge selects its own branch value"
+    );
+    assert_eq!(
+        [true_val, false_val]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [1u128, 2].into_iter().collect()
+    );
+}
+
+/// The inline-`value` spelling works through intervening control too, and a
+/// capture inside it still binds.
+#[test]
+fn phi_input_from_edge_inline_pattern_reaches_through_call() {
+    let (function, _reg) = graph_phi_across_call();
+    let m = Matcher::new(&function);
+    let (t, f, ph, v) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
+    let guard = if_node().capture_true(t).capture_false(f).build();
+    // Pin the MERGE phi (the one the Return consumes): the builder mints a phi
+    // per region, and `phi()` alone would also match the branch regions' own
+    // single-predecessor phis — whose direct predecessor IS the branch edge.
+    let phi_p = ret().ret_val(0, phi().capture(ph)).build();
+
+    let read = |edge: Capture| -> u128 {
+        let hits = m
+            .find_joined_constrained(
+                &[&guard, &phi_p],
+                &[&JoinConstraint::PhiInputFromEdge {
+                    phi: ph,
+                    edge,
+                    value: ValueSpec::Pattern(Box::new(any_int_const().capture(v).into_pattern())),
+                }],
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 1, "exactly one arm per edge, through the call");
+        let value = hits[0]
+            .iter()
+            .find_map(|mm| mm.value(v))
+            .expect("inline capture must bind through intervening control");
+        function.int_const_u128(value).unwrap()
+    };
+
+    let (true_val, false_val) = (read(t), read(f));
+    assert_ne!(true_val, false_val);
+    assert_eq!(
+        [true_val, false_val]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [1u128, 2].into_iter().collect()
+    );
+}
+
+/// Two stacked diamonds: `if (c0) {..} else {..}` merges at `m1`, then
+/// `if (c1) {reg=1} else {reg=2}` merges at `m2`.  The phi at `m2` has arms
+/// whose predecessors are reachable from BOTH of the OUTER if's edges, so
+/// neither outer edge dominates them.  Reach is exclusive: neither outer edge
+/// may pin an arm of the `m2` phi.
+fn graph_stacked_diamonds() -> (strider_ir::Function, rsleigh::Vn) {
+    let reg = reg_vn(0, 8);
+    let flag = reg_vn(0x40, 8);
+    let mut t = Tb::bare(vec![reg, flag], &[], &[reg, flag], &[], None, 0);
+    let entry = t.region();
+    let (a_r, b_r, m1) = (t.region(), t.region(), t.region());
+    let (c_r, d_r, m2) = (t.region(), t.region(), t.region());
+    t.set_entry(entry);
+
+    t.enter(entry);
+    let reg_v = t.read_var(&reg);
+    let zero = t.u64(0);
+    let c0 = t.int_cmp(reg_v, zero, IntCmpOp::Equal);
+    t.build_if(c0, a_r, b_r);
+
+    t.enter(a_r);
+    let ten = t.u64(10);
+    t.write_var(&flag, ten);
+    t.branch(m1);
+    t.enter(b_r);
+    let twenty = t.u64(20);
+    t.write_var(&flag, twenty);
+    t.branch(m1);
+
+    // Inner diamond — reachable from both outer branches.
+    t.enter(m1);
+    let flag_v = t.read_var(&flag);
+    let fifteen = t.u64(15);
+    // `Less`, so a pattern can pin the OUTER (`Equal`) if unambiguously.
+    let c1 = t.int_cmp(flag_v, fifteen, IntCmpOp::Less);
+    t.build_if(c1, c_r, d_r);
+
+    t.enter(c_r);
+    let one = t.u64(1);
+    t.write_var(&reg, one);
+    t.branch(m2);
+    t.enter(d_r);
+    let two = t.u64(2);
+    t.write_var(&reg, two);
+    t.branch(m2);
+
+    t.enter(m2);
+    let merged = t.read_var(&reg);
+    (t.ret_val(merged), reg)
+}
+
+/// The exclusivity negative: an arm reachable from BOTH branch edges is pinned
+/// to NEITHER.  Dominance means "every path goes through it" — a merged arm has
+/// paths through both edges, so it belongs to neither.
+#[test]
+fn phi_input_from_edge_rejects_arm_reachable_from_both_branches() {
+    let (function, reg) = graph_stacked_diamonds();
+    let m = Matcher::new(&function);
+    let (c0_t, c0_f, ph, v) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
+    // Pin the guard to the OUTER if by its condition operand (a read of `reg`).
+    let outer = if_node()
+        .cond(int_cmp(IntCmpOp::Equal, any(), any()))
+        .capture_true(c0_t)
+        .capture_false(c0_f)
+        .build();
+    // The phi of `reg` at m2 — the one merging 1 and 2.
+    let phi_p = ret().ret_val(0, phi_for(reg).capture(ph)).build();
+    let val = any_int_const().capture(v).into_pattern();
+
+    // Guard against a VACUOUS pass: an unmatched probe would also give ∅.  The
+    // outer `If` and the merge phi must both really be there.
+    assert_eq!(m.find_all(&outer).unwrap().len(), 1, "outer if must match");
+    assert_eq!(m.find_all(&phi_p).unwrap().len(), 1, "merge phi must match");
+
+    for edge in [c0_t, c0_f] {
+        let hits = m
+            .find_joined_constrained(
+                &[&outer, &phi_p, &val],
+                &[&JoinConstraint::PhiInputFromEdge {
+                    phi: ph,
+                    edge,
+                    value: ValueSpec::Capture(v),
+                }],
+            )
+            .unwrap();
+        assert!(
+            hits.is_empty(),
+            "an arm reachable from both outer branches belongs to neither edge"
+        );
+    }
+}
+
+/// The WILDCARD PROBE, which is how you tell the two ∅s apart.  A `∅` from
+/// `PhiInputFromEdge` is ambiguous: EITHER the edge reaches no arm of this phi,
+/// OR it does and the arm merges a different value.  A wildcard `value` cannot
+/// fail on value grounds, so an empty result from it proves the edge is not
+/// visible — the discriminator, spelled `anything()` rather than named.
+#[test]
+fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
+    // Visible: the across-a-call diamond — a wildcard hits on both edges.
+    let (function, _reg) = graph_phi_across_call();
+    let m = Matcher::new(&function);
+    let (t, f, ph) = (Capture::new(), Capture::new(), Capture::new());
+    let guard = if_node().capture_true(t).capture_false(f).build();
+    let phi_p = ret().ret_val(0, phi().capture(ph)).build();
+    for edge in [t, f] {
+        let hits = m
+            .find_joined_constrained(
+                &[&guard, &phi_p],
+                &[&JoinConstraint::PhiInputFromEdge {
+                    phi: ph,
+                    edge,
+                    value: ValueSpec::Pattern(Box::new(any().into_pattern())),
+                }],
+            )
+            .unwrap();
+        assert!(
+            !hits.is_empty(),
+            "a wildcard cannot fail on value grounds: the edge IS visible"
+        );
+    }
+
+    // ...yet a value that is on no arm still gives ∅ — a real mismatch, which
+    // the wildcard probe above distinguishes from blindness.
+    let mismatch = m
+        .find_joined_constrained(
+            &[&guard, &phi_p],
+            &[&JoinConstraint::PhiInputFromEdge {
+                phi: ph,
+                edge: t,
+                value: ValueSpec::Pattern(Box::new(int_const(0xDEADu64).into_pattern())),
+            }],
+        )
+        .unwrap();
+    assert!(mismatch.is_empty(), "no arm merges 0xDEAD");
+
+    // Invisible: the OUTER if's edges reach no arm of the inner phi, so even a
+    // wildcard is empty — that is what blindness looks like.
+    let (function2, reg2) = graph_stacked_diamonds();
+    let m2 = Matcher::new(&function2);
+    let (ot, of, ph2) = (Capture::new(), Capture::new(), Capture::new());
+    let outer = if_node()
+        .cond(int_cmp(IntCmpOp::Equal, any(), any()))
+        .capture_true(ot)
+        .capture_false(of)
+        .build();
+    let phi2 = ret().ret_val(0, phi_for(reg2).capture(ph2)).build();
+    // The probe itself must match — otherwise ∅ would be vacuous, which is
+    // precisely the confusion the wildcard probe exists to resolve.
+    assert_eq!(m2.find_all(&outer).unwrap().len(), 1, "outer if must match");
+    assert_eq!(
+        m2.find_all(&phi2).unwrap().len(),
+        1,
+        "inner merge phi must match"
+    );
+    for edge in [ot, of] {
+        let hits = m2
+            .find_joined_constrained(
+                &[&outer, &phi2],
+                &[&JoinConstraint::PhiInputFromEdge {
+                    phi: ph2,
+                    edge,
+                    value: ValueSpec::Pattern(Box::new(any().into_pattern())),
+                }],
+            )
+            .unwrap();
+        assert!(
+            hits.is_empty(),
+            "wildcard ∅ proves the edge is not visible — the blind case"
+        );
+    }
+}
+
+/// `if (c0) { if (c1) {reg=1} else {reg=2} } else { reg=3 }` — the true branch's
+/// block SPLITS and reaches the merge TWICE, so two arms qualify for the true
+/// edge.  Enumerate one binding per qualifying arm; never silently pick one.
+fn graph_split_branch() -> (strider_ir::Function, rsleigh::Vn) {
+    let reg = reg_vn(0, 8);
+    let flag = reg_vn(0x40, 8);
+    let mut t = Tb::bare(vec![reg, flag], &[], &[reg, flag], &[], None, 0);
+    let entry = t.region();
+    let (a_r, b_r, merge) = (t.region(), t.region(), t.region());
+    let (a1, a2) = (t.region(), t.region());
+    t.set_entry(entry);
+
+    t.enter(entry);
+    let reg_v = t.read_var(&reg);
+    let zero = t.u64(0);
+    let c0 = t.int_cmp(reg_v, zero, IntCmpOp::Equal);
+    t.build_if(c0, a_r, b_r);
+
+    // The true block splits in two, and BOTH halves reach the merge.
+    t.enter(a_r);
+    let flag_v = t.read_var(&flag);
+    // `Less`, so a pattern can pin the OUTER (`Equal`) if unambiguously.
+    let c1 = t.int_cmp(flag_v, zero, IntCmpOp::Less);
+    t.build_if(c1, a1, a2);
+    t.enter(a1);
+    let one = t.u64(1);
+    t.write_var(&reg, one);
+    t.branch(merge);
+    t.enter(a2);
+    let two = t.u64(2);
+    t.write_var(&reg, two);
+    t.branch(merge);
+
+    t.enter(b_r);
+    let three = t.u64(3);
+    t.write_var(&reg, three);
+    t.branch(merge);
+
+    t.enter(merge);
+    let merged = t.read_var(&reg);
+    (t.ret_val(merged), reg)
+}
+
+/// A split branch reaching the merge twice yields ONE BINDING PER QUALIFYING
+/// ARM — the `find_all` enumeration contract, not an arbitrary pick.
+#[test]
+fn phi_input_from_edge_enumerates_every_qualifying_arm() {
+    let (function, reg) = graph_split_branch();
+    let m = Matcher::new(&function);
+    let (t, f, ph, v) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
+    let outer = if_node()
+        .cond(int_cmp(IntCmpOp::Equal, any(), any()))
+        .capture_true(t)
+        .capture_false(f)
+        .build();
+    let phi_p = ret().ret_val(0, phi_for(reg).capture(ph)).build();
+    let val = any_int_const().capture(v).into_pattern();
+
+    let vals = |edge: Capture| -> std::collections::BTreeSet<u128> {
+        m.find_joined_constrained(
+            &[&outer, &phi_p, &val],
+            &[&JoinConstraint::PhiInputFromEdge {
+                phi: ph,
+                edge,
+                value: ValueSpec::Capture(v),
+            }],
+        )
+        .unwrap()
+        .iter()
+        .map(|h| {
+            let value = h.iter().find_map(|mm| mm.value(v)).unwrap();
+            function.int_const_u128(value).unwrap()
+        })
+        .collect()
+    };
+
+    // The true edge's block splits: BOTH 1 and 2 are exclusively reached
+    // through it, so both bind — one tuple each.
+    assert_eq!(
+        vals(t),
+        [1u128, 2].into_iter().collect(),
+        "both split-half arms qualify for the true edge"
+    );
+    // The false edge stays single.
+    assert_eq!(vals(f), [3u128].into_iter().collect());
+}
+
+/// `if (c0) {} else { flag = 20 }` — the EMPTY-ARM shape.  The true edge's
+/// consumer IS the join `m1`, so a later phi's arms are dominated by `m1` while
+/// `m1` is reachable from BOTH edges.  Attributing those arms to the true edge
+/// would be a false positive: reach must stay exclusive, so the dominance
+/// clause only applies where the edge is its target's SOLE entry.
+#[test]
+fn phi_input_from_edge_rejects_empty_branch_criss_cross() {
+    let reg = reg_vn(0, 8);
+    let flag = reg_vn(0x40, 8);
+    let mut t = Tb::bare(vec![reg, flag], &[], &[reg, flag], &[], None, 0);
+    let entry = t.region();
+    let (b_r, m1) = (t.region(), t.region());
+    let (c_r, d_r, m2) = (t.region(), t.region(), t.region());
+    t.set_entry(entry);
+
+    t.enter(entry);
+    let reg_v = t.read_var(&reg);
+    let zero = t.u64(0);
+    let c0 = t.int_cmp(reg_v, zero, IntCmpOp::Equal);
+    // TRUE goes straight to the join: the then-arm is empty.
+    t.build_if(c0, m1, b_r);
+    t.enter(b_r);
+    let twenty = t.u64(20);
+    t.write_var(&flag, twenty);
+    t.branch(m1);
+
+    t.enter(m1);
+    let flag_v = t.read_var(&flag);
+    let c1 = t.int_cmp(flag_v, zero, IntCmpOp::Less);
+    t.build_if(c1, c_r, d_r);
+    t.enter(c_r);
+    let one = t.u64(1);
+    t.write_var(&reg, one);
+    t.branch(m2);
+    t.enter(d_r);
+    let two = t.u64(2);
+    t.write_var(&reg, two);
+    t.branch(m2);
+    t.enter(m2);
+    let merged = t.read_var(&reg);
+    let function = t.ret_val(merged);
+
+    let m = Matcher::new(&function);
+    let (c0_t, ph, v) = (Capture::new(), Capture::new(), Capture::new());
+    let outer = if_node()
+        .cond(int_cmp(IntCmpOp::Equal, any(), any()))
+        .capture_true(c0_t)
+        .build();
+    let phi_p = ret().ret_val(0, phi_for(reg).capture(ph)).build();
+    let val = any_int_const().capture(v).into_pattern();
+    assert_eq!(m.find_all(&outer).unwrap().len(), 1, "outer if must match");
+    assert_eq!(m.find_all(&phi_p).unwrap().len(), 1, "merge phi must match");
+
+    let hits = m
+        .find_joined_constrained(
+            &[&outer, &phi_p, &val],
+            &[&JoinConstraint::PhiInputFromEdge {
+                phi: ph,
+                edge: c0_t,
+                value: ValueSpec::Capture(v),
+            }],
+        )
+        .unwrap();
+    assert!(
+        hits.is_empty(),
+        "arms below a join reachable from both edges belong to neither: the \
+         edge's target is not entered exclusively through the edge"
+    );
+}

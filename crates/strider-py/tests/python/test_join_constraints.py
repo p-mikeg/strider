@@ -226,3 +226,71 @@ def test_inline_capture_unifies_with_tuple_binding():
     # The root ranges over every int const; unification must pin `v` to the arm.
     assert count(t) == 1
     assert count(f) == 1
+
+
+def _across_call_diamond():
+    """`if (edi==0) { f(); eax=2 } else { f(); eax=1 }` — a CALL splits each
+    branch's block, so the If's edges are not the merge region's direct
+    predecessors.  This is the shape real kernel code merges across.
+    """
+    code = bytes([
+        0x85, 0xFF,                    # 1000: test edi,edi
+        0x74, 0x0C,                    # 1002: je 1010
+        0xE8, 0x17, 0, 0, 0,           # 1004: call 1020
+        0xB8, 0x01, 0, 0, 0,           # 1009: mov eax,1
+        0xEB, 0x0C,                    # 100e: jmp 101c
+        0xE8, 0x0B, 0, 0, 0,           # 1010: call 1020
+        0xB8, 0x02, 0, 0, 0,           # 1015: mov eax,2
+        0xEB, 0x00,                    # 101a: jmp 101c
+        0xC3,                          # 101c: ret
+        0x90, 0x90, 0x90,              # padding
+        0xC3,                          # 1020: callee
+    ])
+    mem = strider.BufferReader(0x1000, code)
+    _cfg, fn, _u = strider.lifter(
+        strider.SleighArch.x86_64(), mem
+    ).analyze(0x1000, strider.CallingConvention.x86_64_systemv())
+    return fn
+
+
+def test_phi_input_from_edge_reaches_through_intervening_call():
+    """The motivating case: the arms merge ACROSS A CALL, so neither edge is a
+    literal predecessor of the join.  Each arm must still pin to its branch.
+    """
+    fn = _across_call_diamond()
+    t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
+    guard = p.if_else().capture_true(t).capture_false(f)
+    phi = p.phi().capture(ph)
+    val = p.any_int_const(v)
+
+    th = fn.find_all([guard, phi, val], constraints=[p.phi_input_from_edge(ph, t, v)])
+    fh = fn.find_all([guard, phi, val], constraints=[p.phi_input_from_edge(ph, f, v)])
+
+    assert len(th) == 1 and len(fh) == 1
+    assert {th[0].uint(v), fh[0].uint(v)} == {1, 2}
+
+
+def test_phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch():
+    """A `[]` result is AMBIGUOUS: either the edge reaches no arm of this phi, or
+    it does and the arm merges a different value.  Re-probe with `anything()` —
+    a wildcard cannot fail on value grounds, so `[]` from it proves the edge is
+    not visible.  This is the discriminator, and it needs no dedicated API.
+    """
+    fn = _across_call_diamond()
+    t, ph = p.Capture(), p.Capture()
+    guard = p.if_else().capture_true(t)
+    phi = p.phi().capture(ph)
+
+    # The edge IS visible — even across the call — so the wildcard hits.
+    visible = fn.find_all(
+        [guard, phi], constraints=[p.phi_input_from_edge(ph, t, p.anything())]
+    )
+    assert len(visible) >= 1
+
+    # ...yet no arm merges 0xDEAD.  Same `[]`, but the wildcard probe above
+    # proves this one is a real mismatch, not blindness.
+    mismatch = fn.find_all(
+        [guard, phi],
+        constraints=[p.phi_input_from_edge(ph, t, p.int_const(0xDEAD))],
+    )
+    assert mismatch == []
