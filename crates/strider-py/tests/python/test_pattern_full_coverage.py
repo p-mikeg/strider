@@ -201,12 +201,15 @@ def test_when_returning_false_filters_out_matches():
 
 # ── .ordered on typed builders ───────────────────────────────────────
 
-def test_add_ordered_chain_returns_pat():
+def test_add_ordered_chain_returns_builder():
     # The typed builder lets you call .ordered() to disable the
-    # automatic-commutative-retry behaviour.
-    from strider.pattern import int_binary
-    p = int_binary("Add", "x", "y").ordered()
-    assert isinstance(p, Pat)
+    # automatic-commutative-retry behaviour.  `.ordered()` is chainable,
+    # not terminal: it returns the same lazy builder (so it can nest as a
+    # value operand); `.into_pat()` finalises.
+    from strider.pattern import int_binary, IntBinaryPat
+    b = int_binary("Add", "x", "y").ordered()
+    assert isinstance(b, IntBinaryPat)
+    assert isinstance(b.into_pat(), Pat)
 
 
 # ── binary-op builder chaining contract (int / float / bool) ────────
@@ -257,12 +260,23 @@ def test_binary_builder_when_chains_to_pat(make, builder_cls):
     assert isinstance(b.into_pat(), Pat)
 
 
-def test_bool_binary_ordered_chain_returns_pat():
-    # `.ordered()` is the terminal that disables commutative matching and
-    # finalises to a Pat — exactly as for int_binary(...).ordered().
-    from strider.pattern import bool_binary
-    p = bool_binary("And", "x", "y").ordered()
-    assert isinstance(p, Pat)
+def test_bool_binary_ordered_chain_returns_builder():
+    # `.ordered()` disables commutative matching and returns the same
+    # chainable builder — exactly as for int_binary(...).ordered().
+    from strider.pattern import bool_binary, BoolBinaryPat
+    b = bool_binary("And", "x", "y").ordered()
+    assert isinstance(b, BoolBinaryPat)
+    assert isinstance(b.into_pat(), Pat)
+
+
+@pytest.mark.parametrize("make,builder_cls", _binary_builder_params())
+def test_binary_builder_ordered_chains_like_capture(make, builder_cls):
+    # `.ordered()` obeys the same builder-chain contract as `.capture(c)` /
+    # `.when(f)`: same builder back, still finalisable, still nestable.
+    b = make().ordered()
+    assert isinstance(b, builder_cls)
+    assert isinstance(b.into_pat(), Pat)
+    assert isinstance(b.capture(Capture()), builder_cls)
 
 
 def test_bool_binary_usable_as_subpattern():

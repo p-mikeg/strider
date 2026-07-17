@@ -3309,14 +3309,19 @@ macro_rules! binary_op_builder {
         #[gen_stub_pymethods]
         #[pymethods]
         impl $ty {
-            /// Force left-to-right operand matching (disable commutativity);
-            /// terminal — finalises to a `Pat`.
-            fn ordered(&self, py: Python<'_>) -> PyResult<PyPat> {
-                self.ordered.set(true);
-                let pat = self.build_pattern_py(py)?;
-                Ok(PyPat::from_repr(PatRepr::Finished(Box::new(
-                    std::cell::RefCell::new(Some(pat)),
-                ))))
+            /// Force left-to-right operand matching (disable commutativity).
+            ///
+            /// Chainable, NOT terminal: it only flips the builder's
+            /// `ordered` flag and hands the builder back, so the result
+            /// stays lazy and nests as a value operand
+            /// (`store(data=int_binary("And", …).ordered())`) exactly like
+            /// the bare commutative builder.  `compile_value` honours the
+            /// flag at seal time.  (Sealing here instead — into a
+            /// `PatRepr::Finished` — is what used to make `.ordered()`
+            /// un-nestable.)
+            fn ordered(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+                slf.ordered.set(true);
+                slf
             }
         }
 

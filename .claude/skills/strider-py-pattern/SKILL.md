@@ -241,6 +241,14 @@ use the typed family dispatcher with `.ordered()`:
 p.int_binary("Add", p.int_const(5), p.var(c)).ordered()
 ```
 
+`.ordered()` is chainable, not terminal — it returns the same builder, so it
+nests as a value operand anywhere a bare builder does (which is exactly where
+operand ambiguity lives) and composes with `.capture()` / `.when()`:
+
+```python
+p.store(data=p.int_binary("And", p.var(x), p.any_int_const()).ordered().capture(c))
+```
+
 ### Running a pattern
 
 ```python
