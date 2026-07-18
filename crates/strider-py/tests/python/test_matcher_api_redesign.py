@@ -87,7 +87,7 @@ def test_find_all_list_merges_shared_capture():
     # Two patterns share `target`; a list input returns MERGED bindings —
     # each Match reads the shared capture directly (no per-pattern tuple).
     elf = fixture_path("x86", "switch")
-    f_addr = strider.load_elf(str(elf)).symbol("f")
+    f_addr = strider.lift.load_elf(str(elf)).symbol("f")
     g = _switch_graph()
 
     target = Capture()

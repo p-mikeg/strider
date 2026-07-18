@@ -18,18 +18,18 @@ from .conftest import fixture_path
 
 def test_analyze_takes_lifter_options():
     fixture = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf(str(fixture))
+    lift = strider.lift.load_elf(str(fixture))
     _cfg, g, unresolved = lift.analyze(
-        "add", opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=4096))
+        "add", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4096))
     )
     assert g.node_count() > 0
 
 
 def test_build_cfg_takes_cfg_options():
     fixture = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf(str(fixture))
+    lift = strider.lift.load_elf(str(fixture))
     cfg = lift.build_cfg(
-        lift.symbol("add"), strider.CfgOptions(allow_code_before_start_addr=True)
+        lift.symbol("add"), strider.cfg.CfgOptions(allow_code_before_start_addr=True)
     )
     assert cfg is not None
 
@@ -37,34 +37,34 @@ def test_build_cfg_takes_cfg_options():
 def test_analyze_default_opts_when_omitted():
     """Omitting `opts` entirely behaves like the all-defaults struct."""
     fixture = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf(str(fixture))
+    lift = strider.lift.load_elf(str(fixture))
     _cfg, g, unresolved = lift.analyze("add")
     assert g.node_count() > 0
 
 
 def test_build_cfg_default_opts_when_omitted():
     fixture = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf(str(fixture))
+    lift = strider.lift.load_elf(str(fixture))
     cfg = lift.build_cfg(lift.symbol("add"))
     assert cfg is not None
 
 
 def test_cfg_options_rejects_zero_function_max_size():
     with pytest.raises(ValueError):
-        strider.CfgOptions(function_max_size=0)
+        strider.cfg.CfgOptions(function_max_size=0)
 
 
 def test_lifter_options_rejects_bad_alias_mode():
     with pytest.raises(ValueError, match="alias_mode"):
-        strider.LifterOptions(alias_mode="nonsense")
+        strider.lift.LifterOptions(alias_mode="nonsense")
 
 
 def test_lifter_options_defaults_are_not_shared_mutable():
     """Two default `LifterOptions()`/`CfgOptions()` instances must be
     independent — no shared mutable default object leaking across
     construction sites."""
-    a = strider.LifterOptions()
-    b = strider.LifterOptions()
+    a = strider.lift.LifterOptions()
+    b = strider.lift.LifterOptions()
     assert a.cfg is not b.cfg
 
 
@@ -73,13 +73,13 @@ def test_pipeline_override_runs_custom_pipeline():
     this call only: an empty pipeline leaves the graph much less folded
     (more node ids) than the default pipeline does."""
     fixture = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf(str(fixture))
+    lift = strider.lift.load_elf(str(fixture))
 
     _cfg, default_fn, _unresolved = lift.analyze("add")
 
     _cfg, empty_fn, _unresolved2 = lift.analyze(
         "add",
-        opts=strider.LifterOptions(pipeline=strider.OptimizerPipeline.empty()),
+        opts=strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty()),
     )
 
     # The empty pipeline runs no fixed-point passes at all, so it should
@@ -98,18 +98,18 @@ def test_with_cfg_carries_over_every_other_field():
     field here is deliberately set away from its default, so a carry-over
     that drops one fails loudly.
     """
-    pipeline = strider.OptimizerPipeline.empty()
-    opts = strider.LifterOptions(
-        cfg=strider.CfgOptions(function_max_size=64),
+    pipeline = strider.opt.OptimizerPipeline.empty()
+    opts = strider.lift.LifterOptions(
+        cfg=strider.cfg.CfgOptions(function_max_size=64),
         compact=False,
-        per_address_ccs={0x1000: strider.CallingConvention.x86_64_systemv()},
+        per_address_ccs={0x1000: strider.sleigh.CallingConvention.x86_64_systemv()},
         calls_clobber=True,
         assume_distinct_sp_bases_disjoint=True,
         alias_mode="strict",
         pipeline=pipeline,
     )
 
-    out = opts.with_cfg(strider.CfgOptions(function_max_size=128))
+    out = opts.with_cfg(strider.cfg.CfgOptions(function_max_size=128))
 
     # The replaced field.
     assert out.cfg.function_max_size == 128

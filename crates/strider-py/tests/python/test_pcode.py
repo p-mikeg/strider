@@ -27,7 +27,7 @@ from .conftest import fixture_path
 def _load_memory():
     """Load the x86_64 `memory.elf` fixture (carries `array_sum`)."""
     elf = fixture_path("x64", "memory")
-    return strider.load_elf(str(elf))
+    return strider.lift.load_elf(str(elf))
 
 
 # ── Cfg.pcode_at / Cfg.fingerprint_pcode ─────────────────────────────────
@@ -154,7 +154,7 @@ def test_lifter_pcode_at_matches_cfg_lookup_for_a_real_pcode_address():
     first fingerprinted address is reachable via a pure linear sweep
     from entry with no context-register divergence."""
     elf = fixture_path("x64", "arithmetic")
-    prog = strider.load_elf(str(elf))
+    prog = strider.lift.load_elf(str(elf))
     entry = prog.symbol("add")
     cfg, function, _unresolved = prog.analyze("add")
     matches = function.find_all(

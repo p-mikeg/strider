@@ -22,11 +22,11 @@ def _wide_const_function():
     buf = bytearray(0x1000 + 16)
     buf[: len(code)] = code
     buf[0x1000 : 0x1000 + 16] = WIDE.to_bytes(16, "little")
-    mem = strider.BufferReader(0x1000, bytes(buf))
-    lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
+    mem = strider.reader.BufferReader(0x1000, bytes(buf))
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
-        0x1000, strider.CallingConvention.x86_64_systemv(),
-        opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
+        0x1000, strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=len(code))),
     )
     return function
 
@@ -108,11 +108,11 @@ def _i80_const_function():
     buf = bytearray(0x1000 + 10)
     buf[: len(code)] = code
     buf[0x1000 : 0x1000 + 10] = I80_VALUE.to_bytes(10, "little")
-    mem = strider.BufferReader(0x1000, bytes(buf))
-    lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
+    mem = strider.reader.BufferReader(0x1000, bytes(buf))
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
-        0x1000, strider.CallingConvention.x86_64_systemv(),
-        opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
+        0x1000, strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=len(code))),
     )
     return function
 
@@ -157,11 +157,11 @@ def test_small_const_node_const_int_exact_value():
     # through the return-value register.
     value = 0x1122_3344_5566_7788
     code = bytes([0x48, 0xB8]) + value.to_bytes(8, "little") + bytes([0xC3])
-    mem = strider.BufferReader(0x1000, code)
-    lift = strider.lifter(strider.SleighArch.x86_64(), mem, rom=mem)
+    mem = strider.reader.BufferReader(0x1000, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem, rom=mem)
     _cfg, f, _unresolved = lift.analyze(
-        0x1000, strider.CallingConvention.x86_64_systemv(),
-        opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=len(code))),
+        0x1000, strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=len(code))),
     )
     consts = [
         n

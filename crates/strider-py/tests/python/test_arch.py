@@ -10,12 +10,12 @@ import strider
     "ppc32be", "ppc32le", "ppc64be", "ppc64le",
 ])
 def test_sleigh_arch_presets(name):
-    arch = getattr(strider.SleighArch, name)()
-    assert isinstance(arch, strider.SleighArch)
+    arch = getattr(strider.sleigh.SleighArch, name)()
+    assert isinstance(arch, strider.sleigh.SleighArch)
     assert arch.name() == name
 
 
 def test_sleigh_arch_repr():
-    a = strider.SleighArch.x86_64()
+    a = strider.sleigh.SleighArch.x86_64()
     assert "SleighArch" in repr(a)
     assert "x86_64" in repr(a)

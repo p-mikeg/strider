@@ -8,9 +8,9 @@ userland preset (callers use that directly), and syscall ABIs are
 
 The test:
 
-  1. Calls `strider.CallingConvention.x86_linux_kernel()`.
+  1. Calls `strider.sleigh.CallingConvention.x86_linux_kernel()`.
   2. Asserts the returned object has `name() == "x86_linux_kernel"`.
-  3. Builds a `strider.lifter(arch, mem)` against an x86 fixture ELF and
+  3. Builds a `strider.lift.lifter(arch, mem)` against an x86 fixture ELF and
      calls `analyze(entry, cc)` — the smoke check that the regparm-3
      arg registers (EAX, EDX, ECX) all resolve through the Python
      binding (a typo would fail CC resolution inside `analyze`).
@@ -24,8 +24,8 @@ from .conftest import fixture_path
 
 
 def test_x86_linux_kernel_exists_and_name_round_trips():
-    cc = strider.CallingConvention.x86_linux_kernel()
-    assert isinstance(cc, strider.CallingConvention)
+    cc = strider.sleigh.CallingConvention.x86_linux_kernel()
+    assert isinstance(cc, strider.sleigh.CallingConvention)
     assert cc.name() == "x86_linux_kernel"
 
 
@@ -38,13 +38,13 @@ def test_x86_linux_kernel_constructs_strider(x86_indirect_branch_elf):
     # smoke check drives an actual `analyze` call rather than just
     # construction.
     elf = fixture_path("x86", "indirect_branch")
-    loaded = strider.load_elf(str(elf))
+    loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
     addr = loaded.symbol("indirect_branch_resolved")
-    s = strider.lifter(strider.SleighArch.x86(), mem)
+    s = strider.lift.lifter(strider.sleigh.SleighArch.x86(), mem)
     _cfg, function, _unresolved = s.analyze(
         addr,
-        strider.CallingConvention.x86_linux_kernel(),
-        opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
+        strider.sleigh.CallingConvention.x86_linux_kernel(),
+        opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
     )
     assert function is not None

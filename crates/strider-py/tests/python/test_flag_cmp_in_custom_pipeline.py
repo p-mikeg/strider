@@ -47,16 +47,16 @@ def test_list_empty_pattern_matches_under_custom_pipeline_with_fcc():
     `head->next == &head` shape so it is matchable as
     `int_eq(load(<base>+K), add(<base>, K))`."""
     elf = fixture_path("x64", "list_empty")
-    loaded = strider.load_elf(str(elf))
+    loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
-    sleigh = strider.SleighArch.x86_64()
-    cc = strider.CallingConvention.x86_64_systemv()
+    sleigh = strider.sleigh.SleighArch.x86_64()
+    cc = strider.sleigh.CallingConvention.x86_64_systemv()
 
     entry, max_size = loaded._elf.symbol_addr_and_size("is_thread_group_empty")
 
-    lift = strider.lifter(sleigh, mem, rom=mem)
+    lift = strider.lift.lifter(sleigh, mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
-        entry, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=max_size))
+        entry, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=max_size))
     )
 
     o = Capture()

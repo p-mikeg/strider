@@ -3,7 +3,7 @@
 adapter rather than being swallowed and surfaced as a generic
 `StriderError`.
 
-The exercise path: pass the rom into `strider.lifter(..., rom=...)`;
+The exercise path: pass the rom into `strider.lift.lifter(..., rom=...)`;
 `LoadReadOnly` (part of the canonical default pipeline `Lifter.analyze`
 always runs) then consults the rom via the orchestrator's `OptCtx`,
 forcing a callback into the Python rom on the constant-address load
@@ -27,12 +27,12 @@ import pytest
 import strider
 
 
-class _KbdRom(strider.ReadOnlyMemory):
+class _KbdRom(strider.reader.ReadOnlyMemory):
     def read(self, addr: int, size: int) -> bytes:
         raise KeyboardInterrupt("interrupted")
 
 
-class _SysExitRom(strider.ReadOnlyMemory):
+class _SysExitRom(strider.reader.ReadOnlyMemory):
     def read(self, addr: int, size: int) -> bytes:
         raise SystemExit(42)
 
@@ -42,26 +42,26 @@ class _SysExitRom(strider.ReadOnlyMemory):
 _BYTES = bytes.fromhex("8b042500200000c3")
 
 
-def _build_mem() -> strider.BufferReader:
-    mem = strider.BufferReader(0x1000, _BYTES)
+def _build_mem() -> strider.reader.BufferReader:
+    mem = strider.reader.BufferReader(0x1000, _BYTES)
     return mem
 
 
 def test_keyboard_interrupt_in_rom_read_propagates():
-    arch = strider.SleighArch.x86_64()
-    cc = strider.CallingConvention.x86_64_systemv()
+    arch = strider.sleigh.SleighArch.x86_64()
+    cc = strider.sleigh.CallingConvention.x86_64_systemv()
     mem = _build_mem()
     rom = _KbdRom()
-    lift = strider.lifter(arch, mem, rom=rom)
+    lift = strider.lift.lifter(arch, mem, rom=rom)
     with pytest.raises(KeyboardInterrupt):
-        lift.analyze(0x1000, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)))
+        lift.analyze(0x1000, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)))
 
 
 def test_system_exit_in_rom_read_propagates():
-    arch = strider.SleighArch.x86_64()
-    cc = strider.CallingConvention.x86_64_systemv()
+    arch = strider.sleigh.SleighArch.x86_64()
+    cc = strider.sleigh.CallingConvention.x86_64_systemv()
     mem = _build_mem()
     rom = _SysExitRom()
-    lift = strider.lifter(arch, mem, rom=rom)
+    lift = strider.lift.lifter(arch, mem, rom=rom)
     with pytest.raises(SystemExit):
-        lift.analyze(0x1000, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)))
+        lift.analyze(0x1000, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)))

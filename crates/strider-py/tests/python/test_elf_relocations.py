@@ -1,4 +1,4 @@
-"""Tests for `strider.load_elf(path, apply_relocations=True)`.
+"""Tests for `strider.lift.load_elf(path, apply_relocations=True)`.
 
 The `fixtures/cases/elf_relocs.c` shared library is built with
 `-shared -fPIC`, producing an ET_DYN ELF whose `dispatch_table` is a
@@ -39,18 +39,18 @@ def _read_u64_le(elf, addr):
 
 
 def test_default_load_applies_relocations():
-    # The high-level `strider.load_elf` defaults to
+    # The high-level `strider.lift.load_elf` defaults to
     # `apply_relocations=True`: it widens the loaded sections
     # (`.data.rel.ro`) and patches the dispatch table, so the slots read
     # the real helper addresses out of the box.
-    elf = strider.load_elf(str(X64_RELOCS()))  # apply_relocations=True (default)
+    elf = strider.lift.load_elf(str(X64_RELOCS()))  # apply_relocations=True (default)
     table_addr = elf.symbol("dispatch_table")
     helper_a = elf.symbol("helper_a")
     assert _read_u64_le(elf, table_addr) == helper_a
 
 
 def test_apply_relocations_true_populates_dispatch_table():
-    elf = strider.load_elf(str(X64_RELOCS()), apply_relocations=True)
+    elf = strider.lift.load_elf(str(X64_RELOCS()), apply_relocations=True)
     table_addr = elf.symbol("dispatch_table")
     helper_a = elf.symbol("helper_a")
     helper_b = elf.symbol("helper_b")
@@ -70,7 +70,7 @@ def test_apply_relocations_idempotent():
     """Loading the same ELF twice with apply_relocations=True (the
     second via add_elf) must leave the merged map's slots reading the
     same value — relocation application is a deterministic write."""
-    elf = strider.load_elf(str(X64_RELOCS()), apply_relocations=True)
+    elf = strider.lift.load_elf(str(X64_RELOCS()), apply_relocations=True)
     helper_a = elf.symbol("helper_a")
     table_addr = elf.symbol("dispatch_table")
     first = _read_u64_le(elf, table_addr)
@@ -87,11 +87,11 @@ def test_apply_relocations_default_argument_is_true():
     applies relocations unless the caller opts out with
     `apply_relocations=False`."""
     import inspect
-    sig = inspect.signature(strider.load_elf)
+    sig = inspect.signature(strider.lift.load_elf)
     p = sig.parameters.get("apply_relocations")
     assert p is not None, "load_elf must accept apply_relocations"
     assert p.default is True, "load_elf default must be apply_relocations=True"
     # Runtime confirmation: the default path patches the dispatch table.
-    elf = strider.load_elf(str(X64_RELOCS()))
+    elf = strider.lift.load_elf(str(X64_RELOCS()))
     table_addr = elf.symbol("dispatch_table")
     assert _read_u64_le(elf, table_addr) == elf.symbol("helper_a")

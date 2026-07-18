@@ -1,4 +1,4 @@
-"""Reverse varnode -> register-name lookup on `strider.Sleigh`.
+"""Reverse varnode -> register-name lookup on `strider.sleigh.Sleigh`.
 
 `Sleigh.reg(name)` is the forward direction (name -> Vn).  Without a
 reverse lookup, a REGISTER-space `Vn` reached from a lifted function
@@ -13,9 +13,9 @@ from .conftest import fixture_path
 
 
 def _x86_64_sleigh():
-    arch = strider.SleighArch.x86_64()
-    mem = strider.BufferReader(0x1000, b"\x90")
-    return strider.Sleigh(arch, mem)
+    arch = strider.sleigh.SleighArch.x86_64()
+    mem = strider.reader.BufferReader(0x1000, b"\x90")
+    return strider.sleigh.Sleigh(arch, mem)
 
 
 def test_reg_name_round_trips_forward_lookup():
@@ -28,16 +28,16 @@ def test_reg_name_round_trips_forward_lookup():
 def test_reg_name_none_for_non_register_space():
     sleigh = _x86_64_sleigh()
     # CONST-space varnodes are not registers — no name, and no error.
-    assert sleigh.reg_name(strider.Vn(strider.VnSpace.CONST, 0x42, 4)) is None
+    assert sleigh.reg_name(strider.sleigh.Vn(strider.sleigh.VnSpace.CONST, 0x42, 4)) is None
     # A RAM address (e.g. a real stack slot) likewise has no register name.
-    assert sleigh.reg_name(strider.Vn(strider.VnSpace.RAM, 0x1000, 8)) is None
+    assert sleigh.reg_name(strider.sleigh.Vn(strider.sleigh.VnSpace.RAM, 0x1000, 8)) is None
     # An unallocated REGISTER offset is still in REGISTER space but names
     # nothing in the table.
-    assert sleigh.reg_name(strider.Vn(strider.VnSpace.REGISTER, 0xDEAD00, 8)) is None
+    assert sleigh.reg_name(strider.sleigh.Vn(strider.sleigh.VnSpace.REGISTER, 0xDEAD00, 8)) is None
 
 
 def test_reg_name_decodes_initial_var_varnodes_of_a_lifted_function():
-    lifter = strider.load_elf(str(fixture_path("x64", "arithmetic")))
+    lifter = strider.lift.load_elf(str(fixture_path("x64", "arithmetic")))
     _cfg, fn, _unresolved = lifter.analyze("add")
 
     names = set()

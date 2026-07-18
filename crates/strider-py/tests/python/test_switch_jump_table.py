@@ -28,14 +28,14 @@ from strider.pattern import Capture, var, add, call, int_const, load
 
 
 def _run(elf_path):
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    loaded = strider.load_elf(str(elf_path))
+    arch = strider.sleigh.SleighArch.x86()
+    cc = strider.sleigh.CallingConvention.x86_cdecl()
+    loaded = strider.lift.load_elf(str(elf_path))
     mem = loaded.reader()
     addr = loaded.symbol("dispatch_value")
-    lift = strider.lifter(arch, mem, rom=mem)
+    lift = strider.lift.lifter(arch, mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
-        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+        addr, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
     )
     return lift, function
 

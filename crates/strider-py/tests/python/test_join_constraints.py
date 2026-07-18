@@ -32,9 +32,9 @@ def _diamond_with_calls():
         0xe8, 0xeb, 0x2f, 0x00, 0x00,  # call 0x4000 (merge)
         0xc3,                          # ret
     ])
-    mem = strider.BufferReader(0x1000, code)
-    lift = strider.lifter(strider.SleighArch.x86_64(), mem)
-    _cfg, fn, _u = lift.analyze(0x1000, strider.CallingConvention.x86_64_systemv())
+    mem = strider.reader.BufferReader(0x1000, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    _cfg, fn, _u = lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())
     return fn
 
 
@@ -121,10 +121,10 @@ def test_phi_input_from_edge_ties_value_to_its_branch():
     # test edi,edi; je (eax=2); mov eax,1; jmp; mov eax,2; ret
     code = bytes([0x85, 0xFF, 0x74, 0x07, 0xB8, 0x01, 0, 0, 0,
                   0xEB, 0x05, 0xB8, 0x02, 0, 0, 0, 0xC3])
-    mem = strider.BufferReader(0x1000, code)
-    _cfg, fn, _u = strider.lifter(
-        strider.SleighArch.x86_64(), mem
-    ).analyze(0x1000, strider.CallingConvention.x86_64_systemv())
+    mem = strider.reader.BufferReader(0x1000, code)
+    _cfg, fn, _u = strider.lift.lifter(
+        strider.sleigh.SleighArch.x86_64(), mem
+    ).analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())
 
     t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f)
@@ -145,10 +145,10 @@ def _const_diamond():
     """`if (edi==0) eax=2 else eax=1` — the two arms merge distinct constants."""
     code = bytes([0x85, 0xFF, 0x74, 0x07, 0xB8, 0x01, 0, 0, 0,
                   0xEB, 0x05, 0xB8, 0x02, 0, 0, 0, 0xC3])
-    mem = strider.BufferReader(0x1000, code)
-    _cfg, fn, _u = strider.lifter(
-        strider.SleighArch.x86_64(), mem
-    ).analyze(0x1000, strider.CallingConvention.x86_64_systemv())
+    mem = strider.reader.BufferReader(0x1000, code)
+    _cfg, fn, _u = strider.lift.lifter(
+        strider.sleigh.SleighArch.x86_64(), mem
+    ).analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())
     return fn
 
 
@@ -271,10 +271,10 @@ def _across_call_diamond():
         0x90, 0x90, 0x90,              # padding
         0xC3,                          # 1020: callee
     ])
-    mem = strider.BufferReader(0x1000, code)
-    _cfg, fn, _u = strider.lifter(
-        strider.SleighArch.x86_64(), mem
-    ).analyze(0x1000, strider.CallingConvention.x86_64_systemv())
+    mem = strider.reader.BufferReader(0x1000, code)
+    _cfg, fn, _u = strider.lift.lifter(
+        strider.sleigh.SleighArch.x86_64(), mem
+    ).analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())
     return fn
 
 

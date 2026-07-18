@@ -25,11 +25,11 @@ class _Reader:
 
 
 def test_custom_reader_lifter_cycle_is_collectable():
-    class L(strider.Lifter):  # Python subclass => weakref-able
+    class L(strider.lift.Lifter):  # Python subclass => weakref-able
         pass
 
     r = _Reader()
-    lift = L(strider.SleighArch.x86_64(), r)
+    lift = L(strider.sleigh.SleighArch.x86_64(), r)
     r.back = lift  # cycle: reader -> lifter -> (Rust Sleigh holds Py<reader>) -> reader
 
     wl, wr = weakref.ref(lift), weakref.ref(r)
@@ -41,16 +41,16 @@ def test_custom_reader_lifter_cycle_is_collectable():
 
 
 def test_custom_rom_lifter_cycle_is_collectable():
-    class L(strider.Lifter):
+    class L(strider.lift.Lifter):
         pass
 
     class _Rom:
         def read(self, addr, size):
             return bytes(size)
 
-    mem = strider.BufferReader(0x1000, _CODE)
+    mem = strider.reader.BufferReader(0x1000, _CODE)
     rom = _Rom()
-    lift = L(strider.SleighArch.x86_64(), mem, rom=rom)
+    lift = L(strider.sleigh.SleighArch.x86_64(), mem, rom=rom)
     rom.back = lift  # cycle through the rom callback
 
     wl, wr = weakref.ref(lift), weakref.ref(rom)

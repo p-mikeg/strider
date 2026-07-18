@@ -6,7 +6,7 @@ accessors (`id`, `kind()`, `inputs()`, `const_int()`, `const_uint()`,
 `Node` is the single source of truth for per-node reads — `Function`
 does not duplicate the id-keyed readers, and `Match`'s value/op readers
 are thin forwarders onto `Match.node(key)`.  Built on the high-level
-`strider.load_elf(...).analyze(...)` facade against the
+`strider.lift.load_elf(...).analyze(...)` facade against the
 `x64/arithmetic.elf` fixture so the test exercises a real lifted graph.
 """
 
@@ -22,7 +22,7 @@ from .conftest import fixture_path
 
 def _analyze_add():
     elf = fixture_path("x64", "arithmetic")
-    _cfg, function, _unresolved = strider.load_elf(str(elf)).analyze("add")
+    _cfg, function, _unresolved = strider.lift.load_elf(str(elf)).analyze("add")
     return function
 
 
@@ -34,7 +34,7 @@ def test_function_node_returns_node():
     a = _analyze_add()
     some_id = a.node_ids()[0]
     n = a.node(some_id)
-    assert isinstance(n, strider.Node)
+    assert isinstance(n, strider.ir.Node)
     assert n.id == some_id
 
 
@@ -77,7 +77,7 @@ def test_node_inputs_returns_nodes():
         ins = n.inputs()
         assert isinstance(ins, list)
         for child in ins:
-            assert isinstance(child, strider.Node)
+            assert isinstance(child, strider.ir.Node)
             # The child must itself be a valid, kind-readable node.
             assert isinstance(child.kind(), str)
         if ins:
@@ -194,7 +194,7 @@ def test_match_node_returns_node_for_bound_capture():
     hits = a.find_all(add(c, anything()))
     assert hits
     child = hits[0].node(c)
-    assert isinstance(child, strider.Node)
+    assert isinstance(child, strider.ir.Node)
     # The bound node id must be a valid node in the function.
     assert child.id in set(a.node_ids())
 

@@ -24,9 +24,9 @@ def _diamond_phi():
         0xb8, 0x02, 0x00, 0x00, 0x00,  # mov eax, 2
         0xc3,                          # ret
     ])
-    mem = strider.BufferReader(0x1000, code)
-    lift = strider.lifter(strider.SleighArch.x86_64(), mem)
-    _cfg, fn, _unresolved = lift.analyze(0x1000, strider.CallingConvention.x86_64_systemv())
+    mem = strider.reader.BufferReader(0x1000, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    _cfg, fn, _unresolved = lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())
     return fn
 
 

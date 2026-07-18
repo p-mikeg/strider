@@ -35,12 +35,12 @@ from .conftest import symbol_addr, fixture_path
 
 def _build_graph(elf_path, symbol):
     addr = symbol_addr(elf_path, symbol)
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(elf_path)).reader()
-    s = strider.lifter(arch, mem)
+    arch = strider.sleigh.SleighArch.x86()
+    cc = strider.sleigh.CallingConvention.x86_cdecl()
+    mem = strider.lift.load_elf(str(elf_path)).reader()
+    s = strider.lift.lifter(arch, mem)
     _cfg, g, _unresolved = s.analyze(
-        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+        addr, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
     )
     return g
 

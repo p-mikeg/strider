@@ -62,7 +62,7 @@ def test_elf_lifter_inherits_to_dot_to_html_not_dump_methods():
     """`ElfLifter` is a pure-Python `Lifter` subclass, so it inherits
     `to_dot`/`to_html` from the Rust base and loses `dump_dot`/
     `dump_html`/`html_str` along with it."""
-    prog = strider.load_elf(str(fixture_path("x86", "memory")))
+    prog = strider.lift.load_elf(str(fixture_path("x86", "memory")))
     assert hasattr(prog, "to_dot") and hasattr(prog, "to_html")
     for gone in ("dump_html", "dump_dot", "html_str"):
         assert not hasattr(prog, gone)

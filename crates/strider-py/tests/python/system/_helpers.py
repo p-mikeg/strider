@@ -29,27 +29,27 @@ from strider.pattern import anything, var, Capture
 @dataclass(frozen=True)
 class ArchSpec:
     id: str
-    arch_factory: Callable[[], "strider.SleighArch"]
-    cc_factory: Callable[[], "strider.CallingConvention"]
+    arch_factory: Callable[[], "strider.sleigh.SleighArch"]
+    cc_factory: Callable[[], "strider.sleigh.CallingConvention"]
     thumb_mask: bool = False  # ARM-Thumb symbol address has its LSB set
 
 
 ARCHES: list[ArchSpec] = [
-    ArchSpec("x86", strider.SleighArch.x86, strider.CallingConvention.x86_cdecl),
+    ArchSpec("x86", strider.sleigh.SleighArch.x86, strider.sleigh.CallingConvention.x86_cdecl),
     # x86_kernel: same Sleigh as x86, but the fixtures live in a
     # separate directory (`fixtures/out/x86_kernel/`) where every case
     # is compiled with `-mregparm=3` and analysed under
     # `x86_linux_kernel`.  Mirrors the Rust `Arch::X86Kernel`
     # variant in crates/strider/tests/common/mod.rs.
-    ArchSpec("x86_kernel", strider.SleighArch.x86, strider.CallingConvention.x86_linux_kernel),
-    ArchSpec("x64", strider.SleighArch.x86_64, strider.CallingConvention.x86_64_systemv),
-    ArchSpec("aarch64", strider.SleighArch.aarch64, strider.CallingConvention.aarch64_aapcs64),
-    ArchSpec("aarch64be", strider.SleighArch.aarch64be, strider.CallingConvention.aarch64_aapcs64),
-    ArchSpec("arm", strider.SleighArch.arm, strider.CallingConvention.arm_aapcs),
-    ArchSpec("arm_be", strider.SleighArch.arm_be, strider.CallingConvention.arm_aapcs),
-    ArchSpec("arm_thumb", strider.SleighArch.arm_thumb, strider.CallingConvention.arm_aapcs, thumb_mask=True),
-    ArchSpec("mips32le", strider.SleighArch.mipsle32, strider.CallingConvention.mips_o32),
-    ArchSpec("mips32be", strider.SleighArch.mipsbe32, strider.CallingConvention.mips_o32),
+    ArchSpec("x86_kernel", strider.sleigh.SleighArch.x86, strider.sleigh.CallingConvention.x86_linux_kernel),
+    ArchSpec("x64", strider.sleigh.SleighArch.x86_64, strider.sleigh.CallingConvention.x86_64_systemv),
+    ArchSpec("aarch64", strider.sleigh.SleighArch.aarch64, strider.sleigh.CallingConvention.aarch64_aapcs64),
+    ArchSpec("aarch64be", strider.sleigh.SleighArch.aarch64be, strider.sleigh.CallingConvention.aarch64_aapcs64),
+    ArchSpec("arm", strider.sleigh.SleighArch.arm, strider.sleigh.CallingConvention.arm_aapcs),
+    ArchSpec("arm_be", strider.sleigh.SleighArch.arm_be, strider.sleigh.CallingConvention.arm_aapcs),
+    ArchSpec("arm_thumb", strider.sleigh.SleighArch.arm_thumb, strider.sleigh.CallingConvention.arm_aapcs, thumb_mask=True),
+    ArchSpec("mips32le", strider.sleigh.SleighArch.mipsle32, strider.sleigh.CallingConvention.mips_o32),
+    ArchSpec("mips32be", strider.sleigh.SleighArch.mipsbe32, strider.sleigh.CallingConvention.mips_o32),
 ]
 
 # Lookup helper: id → spec.
@@ -92,7 +92,7 @@ def analyze(
     elf = fixtures_dir / arch_id / f"{case}.elf"
     if not elf.exists():
         pytest.skip(f"fixture missing: {elf}")
-    loaded = strider.load_elf(str(elf))
+    loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
     try:
         addr = loaded.symbol(fn_name)
@@ -103,12 +103,12 @@ def analyze(
     arch = spec.arch_factory()
     cc = spec.cc_factory()
 
-    lift = strider.lifter(arch, mem, rom=mem)
+    lift = strider.lift.lifter(arch, mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
         addr,
         cc,
-        opts=strider.LifterOptions(
-            cfg=strider.CfgOptions(allow_code_before_start_addr=True)
+        opts=strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
         ),
     )
     return function

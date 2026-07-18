@@ -24,32 +24,32 @@ def _load_fixture(arch_dir: str, case: str = "arithmetic"):
     return fixture_path(arch_dir, case)
 
 
-def _lift_add(arch: strider.SleighArch, cc: strider.CallingConvention, elf_path):
+def _lift_add(arch: strider.sleigh.SleighArch, cc: strider.sleigh.CallingConvention, elf_path):
     from .conftest import symbol_addr  # type: ignore
 
-    mem = strider.load_elf(str(elf_path)).reader()
+    mem = strider.lift.load_elf(str(elf_path)).reader()
     entry = symbol_addr(elf_path, "add")
-    lift = strider.lifter(arch, mem)
+    lift = strider.lift.lifter(arch, mem)
     _cfg, function, _unresolved = lift.analyze(entry, cc)
     return function
 
 
 def test_aarch64_arithmetic_add_lifts_cleanly():
     elf = _load_fixture("aarch64")
-    g = _lift_add(strider.SleighArch.aarch64(), strider.CallingConvention.aarch64_aapcs64(), elf)
+    g = _lift_add(strider.sleigh.SleighArch.aarch64(), strider.sleigh.CallingConvention.aarch64_aapcs64(), elf)
     matches = g.find_all(pat.add(pat.anything(), pat.anything()))
     assert matches, "AArch64 add() must lift to at least one Add node"
 
 
 def test_mips32le_arithmetic_add_lifts_cleanly():
     elf = _load_fixture("mips32le")
-    g = _lift_add(strider.SleighArch.mipsle32(), strider.CallingConvention.mips_o32(), elf)
+    g = _lift_add(strider.sleigh.SleighArch.mipsle32(), strider.sleigh.CallingConvention.mips_o32(), elf)
     matches = g.find_all(pat.add(pat.anything(), pat.anything()))
     assert matches, "MIPS32LE add() must lift to at least one Add node"
 
 
 def test_mips32be_arithmetic_add_lifts_cleanly():
     elf = _load_fixture("mips32be")
-    g = _lift_add(strider.SleighArch.mipsbe32(), strider.CallingConvention.mips_o32(), elf)
+    g = _lift_add(strider.sleigh.SleighArch.mipsbe32(), strider.sleigh.CallingConvention.mips_o32(), elf)
     matches = g.find_all(pat.add(pat.anything(), pat.anything()))
     assert matches, "MIPS32BE add() must lift to at least one Add node"

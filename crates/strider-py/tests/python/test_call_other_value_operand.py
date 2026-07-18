@@ -21,9 +21,9 @@ def test_call_other_value_operand_matches_real_graph():
     # (83 C0 05) consumes its result. x86 register aliasing (EAX↔RAX) inserts a
     # truncate between the two, so match through casts.
     code = b"\x0f\x31\x83\xc0\x05\xc3"  # rdtsc; add eax,5; ret
-    mem = strider.BufferReader(0x1000, code)
-    lift = strider.lifter(strider.SleighArch.x86_64(), mem)
-    _cfg, fn, _unresolved = lift.analyze(0x1000, strider.CallingConvention.x86_64_systemv())
+    mem = strider.reader.BufferReader(0x1000, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    _cfg, fn, _unresolved = lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())
 
     # add whose operand is a value output of the rdtsc CallOther.
     hits = fn.find_all(p.add(p.anything(), p.call_other()), ignore_casts=True)
@@ -42,7 +42,7 @@ def test_res_selector_is_chainable_and_matches_result():
     assert p.add(p.anything(), p.call().res()) is not None
 
     code = b"\x0f\x31\x83\xc0\x05\xc3"  # rdtsc; add eax,5; ret
-    mem = strider.BufferReader(0x1000, code)
-    lift = strider.lifter(strider.SleighArch.x86_64(), mem)
-    _cfg, fn, _unresolved = lift.analyze(0x1000, strider.CallingConvention.x86_64_systemv())
+    mem = strider.reader.BufferReader(0x1000, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    _cfg, fn, _unresolved = lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())
     assert len(fn.find_all(p.add(p.anything(), p.call_other().res()), ignore_casts=True)) == 1

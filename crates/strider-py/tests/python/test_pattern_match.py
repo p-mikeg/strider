@@ -97,7 +97,7 @@ def test_match_const_readers_align_with_node():
     # expect_branch` carries a surviving I1 `IntConst` under the default
     # pipeline.
     elf = fixture_path("aarch64", "builtins")
-    lift = strider.load_elf(str(elf))
+    lift = strider.lift.load_elf(str(elf))
     _cfg, g, _u = lift.analyze("expect_branch")
     c = Capture()
 
@@ -165,7 +165,7 @@ def test_partial_and_post_match_getitem_agree_on_bool_type():
     # exercises the contract for real instead of skipping — array_sum's
     # `Xor(_, 1:i1)` NOT-lowering no longer survives `IfCondInversion`.
     elf = fixture_path("aarch64", "builtins")
-    lift = strider.load_elf(str(elf))
+    lift = strider.lift.load_elf(str(elf))
     _cfg, g, _u = lift.analyze("expect_branch")
     c = Capture()
 
@@ -192,7 +192,7 @@ def test_partial_and_post_match_getitem_agree_on_bool_type():
 
 
 def test_when_receives_match():
-    """`.when(f)` must call `f` with a genuine `strider.Match` — not a
+    """`.when(f)` must call `f` with a genuine `strider.pattern.Match` — not a
     separate partial-match proxy type.  `Match` already returns
     `None`/`False` for captures unbound at predicate-eval time, so no
     partial type is needed (Task 6 of the strider-py API redesign).
@@ -211,7 +211,7 @@ def test_when_receives_match():
     g.find_all(pat)
     assert seen, "predicate must have been invoked at least once"
     assert seen["t"].__name__ == "Match"
-    assert seen["t"] is strider.Match
+    assert seen["t"] is strider.pattern.Match
 
 
 def test_find_all_with_when_predicate_mutating_graph_is_safe():

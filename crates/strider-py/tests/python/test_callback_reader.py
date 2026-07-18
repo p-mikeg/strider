@@ -18,7 +18,8 @@ import threading
 import pytest
 
 import strider
-from strider import MemReader, BufferReader, ReadOnlyMemory, SleighArch, CallingConvention
+from strider.reader import MemReader, BufferReader, ReadOnlyMemory
+from strider.sleigh import SleighArch, CallingConvention
 from strider.opt import LoadReadOnly
 from strider.pattern import any_int_const, Capture, load
 
@@ -54,15 +55,15 @@ def test_mem_reader_subclass_default_raises():
 
 
 def test_callback_reader_lifts_array_sum(x86_memory_elf):
-    inner = strider.load_elf(str(x86_memory_elf)).reader()
+    inner = strider.lift.load_elf(str(x86_memory_elf)).reader()
     reader = make_counting_reader(inner)
     addr = symbol_addr(x86_memory_elf, "array_sum")
 
     arch = SleighArch.x86()
     cc = CallingConvention.x86_cdecl()
-    s = strider.lifter(arch, reader)
+    s = strider.lift.lifter(arch, reader)
     _cfg, g, _unresolved = s.analyze(
-        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+        addr, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
     )
 
     # The lifted graph should include at least one Return.
@@ -75,18 +76,18 @@ def test_callback_reader_lifts_array_sum(x86_memory_elf):
 
 
 def test_run_via_callback_reader(x86_memory_elf):
-    """End-to-end: `strider.lifter(...).analyze(...)` with a callback
+    """End-to-end: `strider.lift.lifter(...).analyze(...)` with a callback
     reader should drive the orchestrator's indirect-branch fixed-point
     loop and produce an optimised graph.
     """
-    inner = strider.load_elf(str(x86_memory_elf)).reader()
+    inner = strider.lift.load_elf(str(x86_memory_elf)).reader()
     reader = make_counting_reader(inner)
     addr = symbol_addr(x86_memory_elf, "array_sum")
 
-    lift = strider.lifter(SleighArch.x86(), reader)
+    lift = strider.lift.lifter(SleighArch.x86(), reader)
     _cfg, function, _unresolved = lift.analyze(
         addr, CallingConvention.x86_cdecl(),
-        opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
+        opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
     )
     assert function.node_count() > 0
     assert reader.calls > 0
@@ -131,7 +132,7 @@ def test_read_only_memory_subclass_default_raises():
 
 def test_load_readonly_accepts_callback_subclass():
     # Just confirm we can build a `LoadReadOnly` pass.  The rom flows
-    # through `strider.lifter(..., rom=...)` rather than being attached
+    # through `strider.lift.lifter(..., rom=...)` rather than being attached
     # to the pass instance, so the constructor takes no arguments.
     _ = ConstReadOnlyMemory()
     pipe = LoadReadOnly()
@@ -139,16 +140,16 @@ def test_load_readonly_accepts_callback_subclass():
 
 
 def test_run_with_callback_rom_doesnt_crash(x86_memory_elf):
-    """Plug a callback ROM into `strider.lifter` — even if no loads
+    """Plug a callback ROM into `strider.lift.lifter` — even if no loads
     actually fold, the pipeline must not crash.
     """
-    inner = strider.load_elf(str(x86_memory_elf)).reader()
+    inner = strider.lift.load_elf(str(x86_memory_elf)).reader()
     addr = symbol_addr(x86_memory_elf, "array_sum")
     rom = ConstReadOnlyMemory()
 
-    lift = strider.lifter(SleighArch.x86(), inner, rom=rom)
+    lift = strider.lift.lifter(SleighArch.x86(), inner, rom=rom)
     _cfg, function, _unresolved = lift.analyze(
         addr, CallingConvention.x86_cdecl(),
-        opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
+        opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
     )
     assert function.node_count() > 0

@@ -26,11 +26,11 @@ _TRIGGER = textwrap.dedent(
     """\
     import strider
 
-    mem = strider.BufferReader(0x1000, b"\\x00" * 4)
-    arch = strider.SleighArch.aarch64()
-    cc = strider.CallingConvention.aarch64_aapcs64()
+    mem = strider.reader.BufferReader(0x1000, b"\\x00" * 4)
+    arch = strider.sleigh.SleighArch.aarch64()
+    cc = strider.sleigh.CallingConvention.aarch64_aapcs64()
     try:
-        strider.lifter(arch, mem, rom=mem).analyze(0x10000, cc)
+        strider.lift.lifter(arch, mem, rom=mem).analyze(0x10000, cc)
     except strider.StriderError as e:
         # Print to stdout so the parent test can read it back without
         # reassembling captured stderr/traceback frames.

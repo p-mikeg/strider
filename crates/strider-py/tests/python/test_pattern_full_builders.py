@@ -145,12 +145,12 @@ def test_call_other_pat_name_smoke():
 
 
 def test_load_pat_space_constraint_compiles():
-    p = load().space(strider.VnSpace.RAM)
+    p = load().space(strider.sleigh.VnSpace.RAM)
     assert isinstance(p.into_pat(), Pat)
 
 
 def test_store_pat_full_chain():
-    p = store().addr("p").data(int_const(0)).space(strider.VnSpace.RAM)
+    p = store().addr("p").data(int_const(0)).space(strider.sleigh.VnSpace.RAM)
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -187,8 +187,8 @@ def test_phi_pat_input_chain():
 
 def test_phi_for_takes_vn_from_sleigh():
     elf = fixture_path("x86", "patterns")
-    mem = strider.load_elf(str(elf)).reader()
-    sleigh = strider.Sleigh(strider.SleighArch.x86(), mem)
+    mem = strider.lift.load_elf(str(elf)).reader()
+    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86(), mem)
     eax_vn = sleigh.reg("EAX")
     assert eax_vn is not None
     p = phi_for(eax_vn)
@@ -197,8 +197,8 @@ def test_phi_for_takes_vn_from_sleigh():
 
 def test_initial_var_for_constructs():
     elf = fixture_path("x86", "patterns")
-    mem = strider.load_elf(str(elf)).reader()
-    sleigh = strider.Sleigh(strider.SleighArch.x86(), mem)
+    mem = strider.lift.load_elf(str(elf)).reader()
+    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86(), mem)
     eax = sleigh.reg("EAX")
     p = initial_var_for(eax)
     assert isinstance(p, Pat)
@@ -214,8 +214,8 @@ def test_function_arg_pat_index_chain():
 
 def test_function_arg_reg_constructor():
     elf = fixture_path("x64", "patterns")
-    mem = strider.load_elf(str(elf)).reader()
-    sleigh = strider.Sleigh(strider.SleighArch.x86_64(), mem)
+    mem = strider.lift.load_elf(str(elf)).reader()
+    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86_64(), mem)
     rdi = sleigh.reg("RDI")
     assert rdi is not None
     p = function_arg_reg(rdi)
@@ -223,7 +223,7 @@ def test_function_arg_reg_constructor():
 
 
 def test_function_arg_stack_constructor():
-    p = function_arg_stack(strider.VnSpace.RAM, 16)
+    p = function_arg_stack(strider.sleigh.VnSpace.RAM, 16)
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -395,17 +395,17 @@ def test_find_all_rejects_both_ignore_casts_options():
 
 
 def test_vn_space_constants_round_trip():
-    assert strider.VnSpace.RAM.name() == "RAM"
-    assert strider.VnSpace.REGISTER.name() == "REGISTER"
-    assert strider.VnSpace.CONST.name() == "CONST"
-    assert strider.VnSpace.UNIQUE.name() == "UNIQUE"
+    assert strider.sleigh.VnSpace.RAM.name() == "RAM"
+    assert strider.sleigh.VnSpace.REGISTER.name() == "REGISTER"
+    assert strider.sleigh.VnSpace.CONST.name() == "CONST"
+    assert strider.sleigh.VnSpace.UNIQUE.name() == "UNIQUE"
     # Equality + hash work.
-    assert strider.VnSpace.RAM == strider.VnSpace.RAM
+    assert strider.sleigh.VnSpace.RAM == strider.sleigh.VnSpace.RAM
 
 
 def test_vn_constructor_and_repr():
-    vn = strider.Vn(strider.VnSpace.REGISTER, 0x10, 4)
-    assert vn.space == strider.VnSpace.REGISTER
+    vn = strider.sleigh.Vn(strider.sleigh.VnSpace.REGISTER, 0x10, 4)
+    assert vn.space == strider.sleigh.VnSpace.REGISTER
     assert vn.off == 0x10
     assert vn.size == 4
     # `repr(vn)` delegates to rsleigh's `impl Display for Vn`
@@ -418,8 +418,8 @@ def test_vn_constructor_and_repr():
 
 def test_sleigh_reg_returns_vn_or_none():
     elf = fixture_path("x86", "patterns")
-    mem = strider.load_elf(str(elf)).reader()
-    sleigh = strider.Sleigh(strider.SleighArch.x86(), mem)
+    mem = strider.lift.load_elf(str(elf)).reader()
+    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86(), mem)
     eax = sleigh.reg("EAX")
     assert eax is not None
     assert eax.size == 4

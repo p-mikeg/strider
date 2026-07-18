@@ -36,17 +36,17 @@ from .conftest import fixture_path
 
 
 def _lift_aarch64(elf_path: pathlib.Path, symbol: str):
-    loaded = strider.load_elf(str(elf_path))
+    loaded = strider.lift.load_elf(str(elf_path))
     mem = loaded.reader()
     entry, size = loaded._elf.symbol_addr_and_size(symbol)
-    sleigh_arch = strider.SleighArch.aarch64()
-    cc = strider.CallingConvention.aarch64_aapcs64()
-    lift = strider.lifter(sleigh_arch, mem, rom=mem)
+    sleigh_arch = strider.sleigh.SleighArch.aarch64()
+    cc = strider.sleigh.CallingConvention.aarch64_aapcs64()
+    lift = strider.lift.lifter(sleigh_arch, mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
         entry,
         cc,
-        opts=strider.LifterOptions(
-            cfg=strider.CfgOptions(function_max_size=size, allow_code_before_start_addr=True)
+        opts=strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(function_max_size=size, allow_code_before_start_addr=True)
         ),
     )
     return function

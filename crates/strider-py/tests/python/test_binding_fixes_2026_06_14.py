@@ -42,10 +42,10 @@ ENTRY = 0x1000
 
 
 def _cpuid_function():
-    mem = strider.BufferReader(ENTRY, CPUID_BYTES)
-    lift = strider.lifter(strider.SleighArch.x86_64(), mem)
+    mem = strider.reader.BufferReader(ENTRY, CPUID_BYTES)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     _cfg, function, _unresolved = lift.analyze(
-        ENTRY, strider.CallingConvention.x86_64_systemv()
+        ENTRY, strider.sleigh.CallingConvention.x86_64_systemv()
     )
     return function
 
@@ -101,7 +101,7 @@ def test_deeply_nested_typed_builder_raises_not_aborts():
 # ── PY-4 — MemReader over-long return is rejected ─────────────────────
 
 
-class _OverLongReader(strider.MemReader):
+class _OverLongReader(strider.reader.MemReader):
     def read(self, addr, size):  # noqa: ARG002 - mirrors the ABC sig
         # Return MORE bytes than requested — a Python bug that used to be
         # silently truncated.
@@ -110,9 +110,9 @@ class _OverLongReader(strider.MemReader):
 
 def test_mem_reader_over_long_return_errors():
     reader = _OverLongReader()
-    lift = strider.lifter(strider.SleighArch.x86_64(), reader)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), reader)
     with pytest.raises(strider.StriderError):
-        lift.analyze(ENTRY, strider.CallingConvention.x86_64_systemv())
+        lift.analyze(ENTRY, strider.sleigh.CallingConvention.x86_64_systemv())
 
 
 # PY-5 ("reusing one pipeline across two `run(rom=...)` calls behaves
@@ -148,7 +148,7 @@ def test_optimize_invalidates_outstanding_handles(x86_memory_elf):
     # Sanity: the graph-deref accessor works before optimize.
     assert handle.node(c) is not None
 
-    pipe = strider.OptimizerPipeline.empty()
+    pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
     lift.optimize(fn, pipe)
 
@@ -160,11 +160,11 @@ def test_optimize_invalidates_outstanding_handles(x86_memory_elf):
 
 def _analysis(elf_path, sym):
     addr = symbol_addr(elf_path, sym)
-    mem = strider.load_elf(str(elf_path)).reader()
-    lift = strider.lifter(strider.SleighArch.x86(), mem)
+    mem = strider.lift.load_elf(str(elf_path)).reader()
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86(), mem)
     _cfg, function, _unresolved = lift.analyze(
-        addr, strider.CallingConvention.x86_cdecl(),
-        opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
+        addr, strider.sleigh.CallingConvention.x86_cdecl(),
+        opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
     )
     return lift, function
 
@@ -201,7 +201,7 @@ def test_load_stack_offset_filters(x86_memory_elf):
 
 
 def test_buffer_reader_read_huge_size_does_not_oom():
-    r = strider.BufferReader(0x1000, b"\x01\x02\x03\x04")
+    r = strider.reader.BufferReader(0x1000, b"\x01\x02\x03\x04")
     # An enormous Python-supplied size must not trigger a multi-exabyte
     # allocation; the read is clamped to the mapped region.
     out = r.read(0x1000, 2 ** 60)
@@ -209,6 +209,6 @@ def test_buffer_reader_read_huge_size_does_not_oom():
 
 
 def test_buffer_reader_read_huge_size_unmapped():
-    r = strider.BufferReader(0x1000, b"\x01\x02\x03\x04")
+    r = strider.reader.BufferReader(0x1000, b"\x01\x02\x03\x04")
     # Unmapped base — clamp must not allocate, returns None.
     assert r.read(0x9000, 2 ** 60) is None

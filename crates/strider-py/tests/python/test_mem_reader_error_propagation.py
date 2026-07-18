@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import pytest
 import strider
-from strider import MemReader, SleighArch, CallingConvention
+from strider.reader import MemReader
+from strider.sleigh import SleighArch, CallingConvention
 from strider import StriderError
 
 
@@ -33,7 +34,7 @@ def test_mem_reader_python_exception_text_propagates_into_reader_error():
     # Any entry will do — the first read attempt triggers the
     # Python exception immediately.
     with pytest.raises(StriderError) as excinfo:
-        strider.lifter(arch, reader).analyze(0x1000, cc)
+        strider.lift.lifter(arch, reader).analyze(0x1000, cc)
 
     msg = str(excinfo.value)
     assert _SENTINEL in msg, (

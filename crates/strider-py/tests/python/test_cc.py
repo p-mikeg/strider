@@ -12,12 +12,12 @@ import strider
     "x86_linux_kernel",
 ])
 def test_cc_presets(name):
-    cc = getattr(strider.CallingConvention, name)()
-    assert isinstance(cc, strider.CallingConvention)
+    cc = getattr(strider.sleigh.CallingConvention, name)()
+    assert isinstance(cc, strider.sleigh.CallingConvention)
     assert cc.name() == name
 
 
 def test_cc_repr():
-    cc = strider.CallingConvention.x86_cdecl()
+    cc = strider.sleigh.CallingConvention.x86_cdecl()
     assert "CallingConvention" in repr(cc)
     assert "x86_cdecl" in repr(cc)

@@ -4,10 +4,10 @@ import strider
 
 def _serve_bg(target_kind, port):
     def run():
-        lift = strider.lifter(strider.SleighArch.x86_64(),
-                              strider.BufferReader(0x1000, b"\x75\x01\x90\xc3"))
+        lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(),
+                              strider.reader.BufferReader(0x1000, b"\x75\x01\x90\xc3"))
         cfg = lift.build_cfg(0x1000)
-        target = cfg if target_kind == "cfg" else lift.analyze(0x1000, strider.CallingConvention.x86_64_systemv())[1]
+        target = cfg if target_kind == "cfg" else lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())[1]
         lift.visualize(target, port=port)
     threading.Thread(target=run, daemon=True).start()
 

@@ -4,13 +4,13 @@ from .conftest import symbol_addr
 
 
 def test_empty_pipeline():
-    pipe = strider.OptimizerPipeline.empty()
+    pipe = strider.opt.OptimizerPipeline.empty()
     assert len(pipe.passes) == 0
     assert len(pipe.post_passes) == 0
 
 
 def test_default_pipeline_pass_names():
-    p = strider.OptimizerPipeline.default()
+    p = strider.opt.OptimizerPipeline.default()
     names = p.passes
     assert isinstance(names, list) and all(isinstance(n, str) for n in names)
     assert len(names) == 10
@@ -25,17 +25,17 @@ def test_python_default_pipeline_matches_rust_pinned_count():
     crates/strider-py/src/opt.rs would make the Python pipeline a
     behaviourally-different subset of the Rust one — silent drift.
     """
-    assert len(strider.OptimizerPipeline.default().passes) == 10
-    assert len(strider.OptimizerPipeline.default().post_passes) == 3
+    assert len(strider.opt.OptimizerPipeline.default().passes) == 10
+    assert len(strider.opt.OptimizerPipeline.default().post_passes) == 3
 
 
 def test_default_pipeline_nonempty():
-    pipe = strider.OptimizerPipeline.default()
+    pipe = strider.opt.OptimizerPipeline.default()
     assert len(pipe.passes) > 0
 
 
 def test_add_pure_pass():
-    pipe = strider.OptimizerPipeline.empty()
+    pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
     pipe.add(strider.opt.KnownBits())
     pipe.add(strider.opt.PhiCollapse())
@@ -54,7 +54,7 @@ def test_flag_cmp_canonicalize_pass_exposed():
     loops).  The pass is in the Rust `opt::default_pipeline()`; the
     Python wrapper must mirror it.
     """
-    pipe = strider.OptimizerPipeline.empty()
+    pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add(strider.opt.FlagCmpCanonicalize())
     assert len(pipe.passes) == 1
 
@@ -65,7 +65,7 @@ def test_if_cond_inversion_pass_exposed():
     Required for `IfPat` to match — that pattern depends on every `If`
     being in canonical (non-`BoolNeg`) form.
     """
-    pipe = strider.OptimizerPipeline.empty()
+    pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add(strider.opt.IfCondInversion())
     assert len(pipe.passes) == 1
 
@@ -85,8 +85,8 @@ def test_default_pipeline_mirrors_rust_default():
     pattern queries that work under the orchestrator path (which uses the Rust
     default) fail under the custom-pipeline path.
     """
-    assert len(strider.OptimizerPipeline.default().passes) == 10
-    assert len(strider.OptimizerPipeline.default().post_passes) == 3
+    assert len(strider.opt.OptimizerPipeline.default().passes) == 10
+    assert len(strider.opt.OptimizerPipeline.default().post_passes) == 3
 
 
 def test_cc_aware_passes_construct(x86_memory_elf):
@@ -96,12 +96,12 @@ def test_cc_aware_passes_construct(x86_memory_elf):
     # zero-arg constructors work.  The calling convention is read from the
     # function under analysis at run time, so these passes carry no
     # per-instance state.  `LoadReadOnly()` is a marker too — its rom
-    # flows via `strider.lifter(..., rom=mem)`.
+    # flows via `strider.lift.lifter(..., rom=mem)`.
     b = strider.opt.LoadForward()
     c = strider.opt.FunctionArgDetect()
     d = strider.opt.CallStackArgCollect()
     e = strider.opt.LoadReadOnly()
-    pipe = strider.OptimizerPipeline.empty()
+    pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add(b)
     pipe.add(e)
     pipe.add_post(c)
@@ -111,11 +111,11 @@ def test_cc_aware_passes_construct(x86_memory_elf):
 
 
 def test_default_optimizer_pipeline_nonempty_pre_and_post():
-    # `strider.OptimizerPipeline.default()` is the canonical default
+    # `strider.opt.OptimizerPipeline.default()` is the canonical default
     # pipeline (the one `Lifter.analyze` drives internally); the
     # low-level `Lifter.build_optimizer_pipeline()` this test used to
     # exercise was removed by the single-`Lifter` collapse.
-    pipe = strider.OptimizerPipeline.default()
+    pipe = strider.opt.OptimizerPipeline.default()
     assert len(pipe.passes) > 0
     assert len(pipe.post_passes) > 0
 
@@ -125,16 +125,16 @@ def test_optimize_on_lifter_mutates(x86_memory_elf):
     (no pipeline) runs the default pipeline in place, and neither
     `optimize` nor `reoptimize` exist on `Function` any more."""
     addr = symbol_addr(x86_memory_elf, "array_sum")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).reader()
-    lift = strider.lifter(arch, mem)
+    arch = strider.sleigh.SleighArch.x86()
+    cc = strider.sleigh.CallingConvention.x86_cdecl()
+    mem = strider.lift.load_elf(str(x86_memory_elf)).reader()
+    lift = strider.lift.lifter(arch, mem)
     _cfg, g, _unresolved = lift.analyze(
         addr,
         cc,
-        opts=strider.LifterOptions(
-            cfg=strider.CfgOptions(allow_code_before_start_addr=True),
-            pipeline=strider.OptimizerPipeline.empty(),
+        opts=strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True),
+            pipeline=strider.opt.OptimizerPipeline.empty(),
         ),
     )
     assert g.node_count() >= 1  # sanity: something to optimize
@@ -150,12 +150,12 @@ def test_optimize_on_lifter_mutates(x86_memory_elf):
 
 def test_graph_reoptimize(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.lifter(arch, mem)
+    arch = strider.sleigh.SleighArch.x86()
+    cc = strider.sleigh.CallingConvention.x86_cdecl()
+    mem = strider.lift.load_elf(str(x86_memory_elf)).reader()
+    s = strider.lift.lifter(arch, mem)
     _cfg, g, _unresolved = s.analyze(
-        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+        addr, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
     )
     s.optimize(g)
     assert g.node_count() > 0
@@ -163,16 +163,16 @@ def test_graph_reoptimize(x86_memory_elf):
 
 def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.lifter(arch, mem)
+    arch = strider.sleigh.SleighArch.x86()
+    cc = strider.sleigh.CallingConvention.x86_cdecl()
+    mem = strider.lift.load_elf(str(x86_memory_elf)).reader()
+    s = strider.lift.lifter(arch, mem)
     _cfg, g, _unresolved = s.analyze(
-        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+        addr, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
     )
     pre = g.node_count()
 
-    pipe = strider.OptimizerPipeline.empty()
+    pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
     pipe.add(strider.opt.KnownBits())
     s.optimize(g, pipe)
@@ -192,15 +192,15 @@ def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
     import pytest
 
     addr = symbol_addr(x86_memory_elf, "array_sum")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).reader()
-    s = strider.lifter(arch, mem)
+    arch = strider.sleigh.SleighArch.x86()
+    cc = strider.sleigh.CallingConvention.x86_cdecl()
+    mem = strider.lift.load_elf(str(x86_memory_elf)).reader()
+    s = strider.lift.lifter(arch, mem)
     _cfg, g, _unresolved = s.analyze(
-        addr, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+        addr, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
     )
 
-    pipe = strider.OptimizerPipeline.empty()
+    pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
     s.optimize(g, pipe)  # drains pipe
     # Second call: must raise StriderError, not silently succeed.

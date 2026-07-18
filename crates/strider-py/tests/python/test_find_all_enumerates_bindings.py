@@ -16,7 +16,7 @@ from strider import pattern as p
 
 @pytest.fixture(scope="module")
 def add_fn():
-    lift = strider.load_elf("fixtures/out/x64/arithmetic.elf")
+    lift = strider.lift.load_elf("fixtures/out/x64/arithmetic.elf")
     _cfg, fn, _unresolved = lift.analyze("add")
     return fn
 

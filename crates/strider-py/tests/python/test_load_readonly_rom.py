@@ -29,7 +29,7 @@ def test_rom_reader_excludes_writable_sections():
     # `dispatch_table` (0x3ea0) is in `.data.rel.ro` — SHF_WRITE, hence
     # runtime-mutable and forbidden from the rom.  `helper_a` (0x1030)
     # is in `.text` — immutable, allowed.
-    es = strider.load_elf(str(X64_RELOCS()))
+    es = strider.lift.load_elf(str(X64_RELOCS()))
     elf = es._elf
     table = es.symbol("dispatch_table")
     helper = es.symbol("helper_a")
@@ -52,7 +52,7 @@ def test_mem_reader_still_includes_writable_sections():
     # The instruction-fetch / raw-read `mem` reader is unchanged: it
     # still includes writable sections (relocations are applied there)
     # so reading the (relocated) dispatch table by hand keeps working.
-    es = strider.load_elf(str(X64_RELOCS()))
+    es = strider.lift.load_elf(str(X64_RELOCS()))
     elf = es._elf
     table = es.symbol("dispatch_table")
     assert elf.read(table, 8) is not None, (

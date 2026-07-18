@@ -115,7 +115,7 @@ def test_find_all_accepts_unfinalised_builder():
 def test_call_at_address_matches_known_target():
     # Look up f's address; assert call(at=f_addr) finds the case-5 site.
     elf = fixture_path("x86", "switch")
-    loaded = strider.load_elf(str(elf))
+    loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
     f_addr = loaded.symbol("f")
     g = _switch_graph()
@@ -128,7 +128,7 @@ def test_call_at_any_matches_when_target_in_set():
     # the list — natural for queries that look for "any of these
     # known callees" (e.g. multiple lock-acquire helpers).
     elf = fixture_path("x86", "switch")
-    loaded = strider.load_elf(str(elf))
+    loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
     f_addr = loaded.symbol("f")
     g = _switch_graph()
@@ -156,7 +156,7 @@ def test_int_const_any_of_standalone():
     # The underlying primitive — usable independently of CallPat.
     from strider.pattern import int_const_any_of
     elf = fixture_path("x86", "switch")
-    loaded = strider.load_elf(str(elf))
+    loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
     f_addr = loaded.symbol("f")
     g = _switch_graph()
@@ -191,7 +191,7 @@ def test_call_target_capture_round_trips():
     assert len(hits) >= 1
     # At least one match's target binding must round-trip to f's address.
     elf = fixture_path("x86", "switch")
-    loaded = strider.load_elf(str(elf))
+    loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
     f_addr = loaded.symbol("f")
     seen_f = False

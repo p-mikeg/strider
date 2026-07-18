@@ -1,4 +1,4 @@
-"""Regression: `strider.load_elf` must not leak its backing bytes.
+"""Regression: `strider.lift.load_elf` must not leak its backing bytes.
 
 The loader used to `Box::leak` the whole file to fabricate a `'static`
 `object::File`, so every `load_elf` call retained one file-sized buffer that
@@ -32,14 +32,14 @@ def test_load_elf_does_not_leak_backing_bytes():
 
     # Warm up so the baseline is steady (allocator arenas, one-time tables).
     for _ in range(10):
-        del_target = strider.load_elf(path)
+        del_target = strider.lift.load_elf(path)
         del del_target
     gc.collect()
     base = _rss_bytes()
 
     iters = 300
     for _ in range(iters):
-        elf = strider.load_elf(path)
+        elf = strider.lift.load_elf(path)
         del elf
         gc.collect()
     growth = _rss_bytes() - base

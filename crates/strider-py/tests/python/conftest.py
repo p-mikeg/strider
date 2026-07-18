@@ -60,8 +60,8 @@ def symbol_addr(elf_path: pathlib.Path, name: str) -> int:
 # Arch presets for `built_function`, keyed by the fixtures/out/<arch>
 # directory name.
 _ARCH_PRESETS = {
-    "x86": (strider.SleighArch.x86, strider.CallingConvention.x86_cdecl),
-    "x64": (strider.SleighArch.x86_64, strider.CallingConvention.x86_64_systemv),
+    "x86": (strider.sleigh.SleighArch.x86, strider.sleigh.CallingConvention.x86_cdecl),
+    "x64": (strider.sleigh.SleighArch.x86_64, strider.sleigh.CallingConvention.x86_64_systemv),
 }
 
 
@@ -88,15 +88,15 @@ def built_lifter_and_function(
     del optimize
     arch_ctor, cc_ctor = _ARCH_PRESETS[arch_name]
     arch, cc = arch_ctor(), cc_ctor()
-    loaded = strider.load_elf(str(fixture_path(arch_name, case)))
+    loaded = strider.lift.load_elf(str(fixture_path(arch_name, case)))
     mem = loaded.reader()
     addr = loaded.symbol(symbol)
-    lift = strider.lifter(arch, mem, rom=mem)
+    lift = strider.lift.lifter(arch, mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
         addr,
         cc,
-        opts=strider.LifterOptions(
-            cfg=strider.CfgOptions(allow_code_before_start_addr=True)
+        opts=strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
         ),
     )
     return lift, function
