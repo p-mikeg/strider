@@ -94,7 +94,7 @@ def test_deeply_nested_typed_builder_raises_not_aborts():
     deep = load()
     for _ in range(5000):
         deep = load().addr(deep)
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         fn.find_all(deep)
 
 
@@ -111,7 +111,7 @@ class _OverLongReader(strider.MemReader):
 def test_mem_reader_over_long_return_errors():
     reader = _OverLongReader()
     lift = strider.lifter(strider.SleighArch.x86_64(), reader)
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         lift.analyze(ENTRY, strider.CallingConvention.x86_64_systemv())
 
 
@@ -154,7 +154,7 @@ def test_optimize_invalidates_outstanding_handles(x86_memory_elf):
 
     # The handle is now stale (generation bumped): a graph-dereferencing
     # accessor must raise rather than read the mutated arena.
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         handle.node(c)
 
 

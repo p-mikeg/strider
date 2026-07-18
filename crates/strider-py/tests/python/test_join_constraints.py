@@ -8,7 +8,6 @@ control-output values plus edge-operand dominates.
 import pytest
 
 import strider
-import strider.errors
 from strider import pattern as p
 from strider.pattern import constraints as cons
 
@@ -367,7 +366,7 @@ def test_negate_with_an_unbound_capture_does_not_vacuously_match():
     guard = p.if_else().capture_true(t)
     call = p.call().capture(c)
 
-    with pytest.raises(strider.errors.StriderError) as ei:
+    with pytest.raises(strider.StriderError) as ei:
         fn.find_all(
             [guard, call],
             constraints=[cons.negate(cons.dominates(t, unbound))],

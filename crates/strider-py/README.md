@@ -399,12 +399,12 @@ prefer `BufferReader` for in-process bulk data.
 ```python
 try:
     strider.load_elf("/nonexistent/path.elf")
-except strider.errors.StriderError as e:
+except strider.StriderError as e:
     print(e)
 ```
 
 Every error from the Rust layer surfaces as a single
-`strider.errors.StriderError` carrying an informative message; the
+`strider.StriderError` carrying an informative message; the
 hierarchy is intentionally flat (no typed subclasses).
 
 ## What's NOT in v1

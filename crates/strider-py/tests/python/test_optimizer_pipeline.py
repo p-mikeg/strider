@@ -204,5 +204,5 @@ def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
     pipe.add(strider.opt.ConstantFold())
     s.optimize(g, pipe)  # drains pipe
     # Second call: must raise StriderError, not silently succeed.
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         s.optimize(g, pipe)

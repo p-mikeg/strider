@@ -22,7 +22,7 @@ def test_symbol_returns_address(x86_memory_elf):
 
 def test_symbol_unknown_raises_reader_error(x86_memory_elf):
     elf = strider.load_elf(str(x86_memory_elf))
-    with pytest.raises(strider.errors.StriderError) as excinfo:
+    with pytest.raises(strider.StriderError) as excinfo:
         elf.symbol("definitely_not_a_real_symbol_xyz")
     assert "not found" in str(excinfo.value).lower()
 

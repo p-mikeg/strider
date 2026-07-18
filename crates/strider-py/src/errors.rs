@@ -9,7 +9,7 @@ use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 
 create_exception!(
-    strider.errors,
+    strider,
     StriderError,
     PyException,
     "The single exception type raised by strider.  Every Rust error \
@@ -36,15 +36,8 @@ pub fn into_strider_err(e: anyhow::Error) -> PyErr {
     StriderError::new_err(format!("{e:?}"))
 }
 
-/// Register the `strider.errors` submodule on the parent module.
+/// Register `StriderError` on the top-level `strider` module.
 pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new_bound(py, "errors")?;
-    m.add("StriderError", py.get_type_bound::<StriderError>())?;
-    parent.add_submodule(&m)?;
     parent.add("StriderError", py.get_type_bound::<StriderError>())?;
-    // Allow `from strider import errors` and `from strider.errors import StriderError`.
-    let sys = py.import_bound("sys")?;
-    let modules = sys.getattr("modules")?;
-    modules.set_item("strider.errors", &m)?;
     Ok(())
 }

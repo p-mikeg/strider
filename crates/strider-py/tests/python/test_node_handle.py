@@ -42,7 +42,7 @@ def test_function_node_invalid_id_raises():
     """An out-of-range node id surfaces as `StriderError`."""
     a = _analyze_add()
     bad = max(a.node_ids()) + 10_000
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         a.node(bad)
 
 
@@ -213,7 +213,7 @@ def test_function_node_invalid_id_message_names_the_id():
     """The out-of-range error message names the offending id."""
     a = _analyze_add()
     bad = max(a.node_ids()) + 10_000
-    with pytest.raises(strider.errors.StriderError, match=f"no node with id {bad}"):
+    with pytest.raises(strider.StriderError, match=f"no node with id {bad}"):
         a.node(bad)
 
 

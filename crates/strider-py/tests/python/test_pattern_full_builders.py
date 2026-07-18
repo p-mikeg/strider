@@ -296,7 +296,7 @@ def test_int_cmp_concrete_op():
 
 
 def test_int_cmp_unknown_op_raises():
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         int_cmp("NotARealOp", "x", "y")
 
 
@@ -304,7 +304,7 @@ def test_int_cmp_no_not_equal_op():
     # The IR doesn't have a NotEqual variant — the lifter expresses
     # `a != b` as `BoolNeg(IntEqual(a, b))`.  `int_cmp("NotEqual",
     # ...)` must therefore raise rather than silently accepting.
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         int_cmp("NotEqual", "x", "y")
 
 
@@ -383,7 +383,7 @@ def test_find_all_accepts_ignore_casts_mask():
 
 def test_find_all_rejects_both_ignore_casts_options():
     g = _patterns_graph()
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         g.find_all(
             add(anything(), anything()),
             ignore_casts=True,
@@ -461,13 +461,13 @@ def test_load_addr_with_raw_int_rejected_at_finalise():
     # returned; the type error surfaces at finalisation as a
     # StriderError, not a TypeError.
     b = load().addr(123)  # chain itself does not raise
-    with pytest.raises(strider.errors.StriderError, match="expected a value pattern"):
+    with pytest.raises(strider.StriderError, match="expected a value pattern"):
         b.into_pat()
 
 
 def test_store_data_with_raw_int_rejected_at_finalise():
     b = store().data(123)
-    with pytest.raises(strider.errors.StriderError, match="expected a value pattern"):
+    with pytest.raises(strider.StriderError, match="expected a value pattern"):
         b.into_pat()
 
 
@@ -476,7 +476,7 @@ def test_mem_in_rejects_value_operand():
     # producer (a bare load(), which produces a value, not a memory token)
     # builds a pattern that can never match a real IR memory chain, so the
     # builder must reject it instead of silently producing a dead pattern.
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         store().addr(int_const(0x100)).mem_in(load().addr(int_const(0x200))).into_pat()
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         load().addr(int_const(0x100)).mem_in(var(Capture())).into_pat()

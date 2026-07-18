@@ -1,5 +1,5 @@
 """The Rust stack trace must always be present in
-``strider.errors.StriderError`` messages, regardless of whether the
+``strider.StriderError`` messages, regardless of whether the
 caller set ``RUST_LIB_BACKTRACE`` or ``RUST_BACKTRACE`` themselves.
 
 When chasing failures across a large kernel-symbol corpus the lift
@@ -31,7 +31,7 @@ _TRIGGER = textwrap.dedent(
     cc = strider.CallingConvention.aarch64_aapcs64()
     try:
         strider.lifter(arch, mem, rom=mem).analyze(0x10000, cc)
-    except strider.errors.StriderError as e:
+    except strider.StriderError as e:
         # Print to stdout so the parent test can read it back without
         # reassembling captured stderr/traceback frames.
         print(str(e))

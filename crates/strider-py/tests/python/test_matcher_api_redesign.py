@@ -68,13 +68,13 @@ def test_find_unique_returns_the_single_binding():
 def test_find_unique_raises_on_zero():
     g = _switch_graph()
     impossible = int_const(0xDEAD_BEEF_CAFE_BABE)
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         g.find_unique(impossible)
 
 
 def test_find_unique_raises_on_many():
     g = _switch_graph()  # 5 loads
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         g.find_unique(load())
 
 

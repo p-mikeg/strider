@@ -81,7 +81,7 @@ def test_find_all_first_hit_is_the_natural_ordering(add_fn):
 def test_find_unique_raises_on_genuine_ambiguity(add_fn):
     """`find_unique` is fail-closed: a second DISTINCT binding must raise."""
     k = p.Capture()
-    with pytest.raises(strider.errors.StriderError, match="exactly one match"):
+    with pytest.raises(strider.StriderError, match="exactly one match"):
         add_fn.find_unique(p.add(p.anything().capture(k), p.anything()))
 
 

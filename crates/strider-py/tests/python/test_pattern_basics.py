@@ -58,9 +58,9 @@ def test_underscore_string_means_wildcard():
 
 
 def test_reserved_name_via_cap_raises():
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         add("x", "y").cap("_")
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         add("x", "y").cap("any_")
 
 
@@ -154,7 +154,7 @@ def test_pyat_ordered_on_finalized_pat_raises():
     """Pat.ordered() on a finalized Pat (e.g. add(...)) used to silently
     return self; it now raises PatternError, pointing users to the typed
     builder (int_binary(...).ordered())."""
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         add(var(Capture()), var(Capture())).ordered()
 
 

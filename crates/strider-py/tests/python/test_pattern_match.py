@@ -230,7 +230,7 @@ def test_find_all_with_when_predicate_mutating_graph_is_safe():
             # Mutating call from inside the predicate — must raise,
             # NOT deadlock.
             lift.optimize(g)
-        except strider.errors.StriderError as e:
+        except strider.StriderError as e:
             errors_caught.append(str(e))
         return True
 
@@ -379,5 +379,5 @@ def test_output_ty_exact_type():
     # Case-insensitive.
     assert len(g.find_all(anything().value_ty("I1"))) == len(by_type)
     # Unknown type name is rejected.
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         anything().value_ty("i7")

@@ -15,12 +15,10 @@ _ext = _importlib.import_module("strider.strider")
 from .strider import *  # noqa: F401,F403,E402
 
 # Hoist the submodules registered by the Rust side into Python so
-# `from strider import errors` works whether the extension was loaded
+# `from strider import opt` works whether the extension was loaded
 # directly or from inside a package.
 import sys as _sys
 
-if hasattr(_ext, "errors"):
-    _sys.modules["strider.errors"] = _ext.errors
 if hasattr(_ext, "opt"):
     _sys.modules["strider.opt"] = _ext.opt
 if hasattr(_ext, "pattern"):

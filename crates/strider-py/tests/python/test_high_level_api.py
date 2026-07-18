@@ -220,7 +220,7 @@ def test_analyze_unknown_symbol_raises():
     """An undefined symbol surfaces as ReaderError."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load_elf(str(elf))
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         s.analyze("definitely_not_a_real_function_xyz")
 
 
@@ -344,7 +344,7 @@ def test_analyze_many_reuse():
             continue
         try:
             _cfg, other_function, _unresolved = s.analyze(name)
-        except strider.errors.StriderError:
+        except strider.StriderError:
             # Data symbols / non-code names may not lift; skip them.
             continue
         assert other_function.node_count() >= 0
@@ -361,7 +361,7 @@ def test_analyze_function_max_size_clips_mid_function():
     _cfg, function, _unresolved = s.analyze("add")
     assert function.node_count() > 0
     # A per-call bound of 4 clips mid-function -> function-boundary error.
-    with pytest.raises(strider.errors.StriderError) as exc:
+    with pytest.raises(strider.StriderError) as exc:
         s.analyze("add", opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=4)))
     assert "function-boundary error" in str(exc.value)
 
@@ -374,7 +374,7 @@ def test_analyze_explicit_none_lifts_whole_function():
     s = strider.load_elf(str(elf))
     addr = s.symbol("add")
     # A tiny bound (4) -> sequential overflow error.
-    with pytest.raises(strider.errors.StriderError) as exc:
+    with pytest.raises(strider.StriderError) as exc:
         s.analyze(addr, opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=4)))
     assert "function-boundary error" in str(exc.value)
     # Explicit None -> unbounded -> lifts cleanly.

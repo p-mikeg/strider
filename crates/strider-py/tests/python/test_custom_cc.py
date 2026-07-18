@@ -18,7 +18,6 @@ from __future__ import annotations
 import pytest
 
 import strider
-from strider import errors
 
 
 def _mem_with_func_bytes() -> tuple[strider.BufferReader, int]:
@@ -68,7 +67,7 @@ def test_custom_cc_rejects_unknown_register_name():
     mem, _ = _mem_with_func_bytes()
     arch = strider.SleighArch.x86_64()
     sleigh = strider.Sleigh(arch, mem)
-    with pytest.raises(errors.StriderError, match=r"(?i)unknown register"):
+    with pytest.raises(strider.StriderError, match=r"(?i)unknown register"):
         strider.CallingConvention.custom(
             sleigh=sleigh,
             arg_passing_regs=["DEFINITELY_NOT_A_REG"],
@@ -93,7 +92,7 @@ def test_custom_cc_rejects_invariant_violation_lr_not_in_callee_saved():
     sleigh = strider.Sleigh(arch, mem)
     # Set link_register=x30 but do NOT include x30 in callee_saved.
     # try_new must reject this.
-    with pytest.raises(errors.StriderError):
+    with pytest.raises(strider.StriderError):
         strider.CallingConvention.custom(
             sleigh=sleigh,
             arg_passing_regs=["x0", "x1"],

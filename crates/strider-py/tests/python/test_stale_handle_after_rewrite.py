@@ -33,9 +33,9 @@ def test_match_handle_stale_after_rewrite():
     fired = g.rewrite(find=add(var(x), var(y)), replace=var(x))
     assert fired > 0, "the rewrite must actually mutate the graph"
 
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         stale_match.const_uint(x)
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         stale_match.node(x)
 
 
@@ -50,7 +50,7 @@ def test_node_handle_stale_after_rewrite():
     fired = g.rewrite(find=add(var(x), var(y)), replace=var(x))
     assert fired > 0
 
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         stale_node.kind()
 
 
@@ -65,7 +65,7 @@ def test_node_handle_stale_after_rewrite_all():
     fired = g.rewrite_all([(add(var(x), var(y)), var(x))])
     assert fired > 0
 
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         stale_node.kind()
 
 

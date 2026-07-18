@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 import strider
 from strider import MemReader, SleighArch, CallingConvention
-from strider.errors import StriderError
+from strider import StriderError
 
 
 _SENTINEL = "T-12-canary-this-string-must-survive"

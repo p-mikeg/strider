@@ -172,7 +172,7 @@ def test_lifter_pcode_at_matches_cfg_lookup_for_a_real_pcode_address():
 def test_lifter_pcode_at_rejects_addr_before_entry():
     prog = _load_memory()
     entry = prog.symbol("array_sum")
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         prog.pcode_at(entry, entry - 4)
 
 
@@ -182,5 +182,5 @@ def test_lifter_pcode_at_rejects_misaligned_target():
     enclosing instruction's text."""
     prog = _load_memory()
     entry = prog.symbol("array_sum")
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         prog.pcode_at(entry, entry + 1)

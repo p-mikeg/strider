@@ -1,4 +1,4 @@
-"""End-to-end tests for `strider.errors.StriderError`.
+"""End-to-end tests for `strider.StriderError`.
 
 The Python error surface is a single `StriderError` class.  Rust-side
 `anyhow::Error` chains land here, formatted with the caused-by chain
@@ -19,7 +19,6 @@ from __future__ import annotations
 import pytest
 
 import strider
-from strider import errors
 
 
 # ── ReaderError category ───────────────────────────────────────────────────
@@ -28,7 +27,7 @@ def test_reader_error_on_overflowing_region_addr():
     """`BufferReader(base_addr, data)` overflows when
     `base_addr + data.len() > u64::MAX`.  Surfaces as `StriderError` with
     overflow text in the message."""
-    with pytest.raises(errors.StriderError, match=r"(?i)overflow"):
+    with pytest.raises(strider.StriderError, match=r"(?i)overflow"):
         # 0xFFFFFFFFFFFFFFFE + 4 bytes overflows u64.
         strider.BufferReader(0xFFFF_FFFF_FFFF_FFFE, b"\x00\x00\x00\x00")
 
@@ -44,7 +43,7 @@ def test_reader_error_on_unknown_symbol(x86_memory_elf):
     """`ElfStrider.symbol("...")` for a name not in any loaded ELF must
     raise a typed error, not KeyError or panic."""
     elf = strider.load_elf(str(x86_memory_elf))
-    with pytest.raises(errors.StriderError):
+    with pytest.raises(strider.StriderError):
         elf.symbol("definitely_not_a_real_symbol_xyz")
 
 
@@ -55,9 +54,9 @@ def test_pattern_error_on_reserved_capture_name():
     free constructors; passing them as a `.cap(name)` string raises."""
     from strider.pattern import anything
     p = anything()
-    with pytest.raises(errors.StriderError):
+    with pytest.raises(strider.StriderError):
         p.cap("_")
-    with pytest.raises(errors.StriderError):
+    with pytest.raises(strider.StriderError):
         p.cap("any_")
 
 
@@ -67,7 +66,7 @@ def test_pattern_error_on_ordered_finalized_pat():
     from strider.pattern import add, var, Capture
     x, y = Capture(), Capture()
     pat = add(var(x), var(y))  # finalized Pat from free ctor
-    with pytest.raises(errors.StriderError):
+    with pytest.raises(strider.StriderError):
         pat.ordered()
 
 
@@ -80,7 +79,7 @@ def test_lift_error_on_unmapped_entry_address():
     mem = strider.BufferReader(0x9000, b"\x00")  # entry 0x1000 stays unmapped
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
-    with pytest.raises(errors.StriderError):
+    with pytest.raises(strider.StriderError):
         strider.lifter(arch, mem).analyze(
             0x1000, cc, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
         )
@@ -109,7 +108,7 @@ def test_rewrite_error_via_multi_output_lhs_root():
 
     from strider.pattern import call, int_const
 
-    with pytest.raises(errors.StriderError):
+    with pytest.raises(strider.StriderError):
         g.rewrite(find=call(), replace=int_const(0))
 
 
@@ -133,7 +132,7 @@ def test_unknown_call_other_via_x86_clflushopt_instruction():
     cc = strider.CallingConvention.x86_64_systemv()
     s = strider.lifter(arch, mem)
 
-    with pytest.raises(errors.StriderError):
+    with pytest.raises(strider.StriderError):
         s.analyze(0x1000, cc)
 
 
@@ -170,7 +169,7 @@ def test_strider_error_catches_every_error_category():
     raised: BaseException | None = None
     try:
         strider.BufferReader(0xFFFF_FFFF_FFFF_FFFF, b"\x00\x00")
-    except errors.StriderError as e:
+    except strider.StriderError as e:
         raised = e
     assert raised is not None, "expected StriderError from overflowing BufferReader"
-    assert isinstance(raised, errors.StriderError)
+    assert isinstance(raised, strider.StriderError)

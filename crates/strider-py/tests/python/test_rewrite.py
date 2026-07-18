@@ -84,5 +84,5 @@ def test_match_only_pat_rejected_as_replace():
     `Pat` path still runs through the same build-valid-subset check."""
     g = _build_graph()
     x = Capture()
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         g.rewrite(find=add(var(x), int_const(0)), replace=strider.pattern.anything())

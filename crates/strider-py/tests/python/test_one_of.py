@@ -100,13 +100,13 @@ def test_one_of_leaves_captures_of_the_unfired_arm_unbound():
 
 
 def test_one_of_empty_raises():
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         p.one_of([])
 
 
 def test_one_of_is_match_only_as_rewrite_rhs():
     # one_of can't be a rewrite replacement (it doesn't build one concrete shape).
     fn = _lift(b"\x01\xd8\xc3")
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         fn.rewrite(find=p.add(p.anything(), p.anything()),
                    replace=p.one_of([p.int_const(0), p.int_const(1)]))

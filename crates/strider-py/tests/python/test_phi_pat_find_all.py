@@ -52,5 +52,5 @@ def test_phi_nests_as_a_value_operand():
     # A MemPhi is a memory token, not a value — still rejected as `data=`.
     import pytest
 
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         g.find_all(pat.store(data=pat.mem_phi()))

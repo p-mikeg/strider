@@ -116,7 +116,7 @@ def test_extend_with_op_string():
 
 
 def test_extend_with_invalid_op_raises():
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         extend("nope", var(Capture()))
 
 
@@ -290,13 +290,13 @@ def test_bool_binary_usable_as_subpattern():
 
 def test_bool_binary_invalid_op_raises():
     from strider.pattern import bool_binary
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         bool_binary("NopeOp", "x", "y")
 
 
 def test_int_binary_invalid_op_raises():
     from strider.pattern import int_binary
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         int_binary("NopeOp", "x", "y")
 
 

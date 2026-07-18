@@ -28,7 +28,7 @@ def test_symbol_size_returns_known_function_size():
 
 def test_symbol_size_raises_on_unknown_symbol():
     elf = strider.load_elf(str(fixture_path("x64", "elf_relocs")))
-    with pytest.raises(strider.errors.StriderError):
+    with pytest.raises(strider.StriderError):
         elf.symbol_size("definitely_not_a_symbol")
 
 
