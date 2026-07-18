@@ -142,9 +142,9 @@ on the one `Lifter`.
 import strider
 from strider.pattern import Capture, var, add, load
 
-# 1. Build a raw code reader. For an ELF, `strider.load_elf(path)` (or
-#    the lower-level `load_elf_from_segments` / `load_elf_from_sections`)
-#    parses sections + symbols + relocations and answers `.symbol(name)`;
+# 1. Build a raw code reader. For an ELF, `strider.load_elf(path,
+#    from_segments=True)` parses sections + symbols + relocations and
+#    answers `.symbol(name)`;
 #    for a firmware blob / custom source, use a `BufferReader` (or
 #    subclass `strider.MemReader` for a Python-served source).
 elf = strider.load_elf("fixtures/out/x86/memory.elf")

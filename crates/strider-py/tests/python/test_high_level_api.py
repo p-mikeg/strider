@@ -1,7 +1,7 @@
 """Tests for the high-level Python API facade.
 
-Covers `strider.load_elf(path)` / `load_elf_from_segments` /
-`load_elf_from_sections`, `ElfLifter.analyze(name)` (returns the same
+Covers `strider.load_elf(path)` / `load_elf(path, from_segments=False)`,
+`ElfLifter.analyze(name)` (returns the same
 `(Cfg, Function, unresolved)` tuple as the base `Lifter.analyze`), and the
 `ElfLifter.functions()` iterator.  Each test skips cleanly when the
 required fixture isn't built so a fresh checkout doesn't fail.
@@ -88,12 +88,8 @@ def test_load_elf_accepts_os_pathlike():
             return str(elf)
 
     for arg in (elf, Wrapper()):
-        for loader in (
-            strider.load_elf,
-            strider.load_elf_from_segments,
-            strider.load_elf_from_sections,
-        ):
-            lift = loader(arg)
+        for from_segments in (True, False):
+            lift = strider.load_elf(arg, from_segments=from_segments)
             assert isinstance(lift, strider.Lifter)
             assert lift.arch.name() == "x86_64"
 
@@ -145,11 +141,12 @@ def test_functions_iterator_lists_add():
 
 
 def test_load_elf_from_segments_symbol_analyze():
-    """`strider.load_elf_from_segments(path)` returns an `ElfLifter`
-    (an `ElfLifter` IS a `Lifter`); `symbol()` resolves a name and
-    `analyze(name)` returns the base `(Cfg, Function, unresolved)` tuple."""
+    """`strider.load_elf(path)` (segments, the default) returns an
+    `ElfLifter` (an `ElfLifter` IS a `Lifter`); `symbol()` resolves a
+    name and `analyze(name)` returns the base `(Cfg, Function,
+    unresolved)` tuple."""
     elf = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf_from_segments(str(elf))
+    lift = strider.load_elf(str(elf))
     assert isinstance(lift, strider.Lifter)
     addr = lift.symbol("add")
     assert isinstance(addr, int)
@@ -159,10 +156,11 @@ def test_load_elf_from_segments_symbol_analyze():
 
 
 def test_load_elf_from_sections_symbol_analyze():
-    """`strider.load_elf_from_sections(path)` forces the section-walk
-    region strategy but produces an equally-usable `ElfLifter`."""
+    """`strider.load_elf(path, from_segments=False)` forces the
+    section-walk region strategy but produces an equally-usable
+    `ElfLifter`."""
     elf = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf_from_sections(str(elf))
+    lift = strider.load_elf(str(elf), from_segments=False)
     assert isinstance(lift, strider.Lifter)
     addr = lift.symbol("add")
     assert isinstance(addr, int)
@@ -171,11 +169,24 @@ def test_load_elf_from_sections_symbol_analyze():
     assert isinstance(unresolved, list)
 
 
+def test_load_elf_flag_selects_strategy():
+    """`from_segments` picks the ELF region-collection strategy, and the
+    old `load_elf_from_segments`/`load_elf_from_sections` top-level names
+    no longer exist."""
+    elf = fixture_path("x64", "arithmetic")
+    a = strider.load_elf(str(elf))
+    b = strider.load_elf(str(elf), from_segments=False)
+    assert isinstance(a, strider.ElfLifter)
+    assert isinstance(b, strider.ElfLifter)
+    assert not hasattr(strider, "load_elf_from_segments")
+    assert not hasattr(strider, "load_elf_from_sections")
+
+
 def test_analyze_returns_cfg_first():
     """`analyze` returns the final CFG as the FIRST tuple element,
     followed by `Function` then the unresolved-indirect-branch list."""
     elf = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf_from_segments(str(elf))
+    lift = strider.load_elf(str(elf))
     cfg, function, unresolved = lift.analyze("add")
     assert isinstance(cfg, strider.Cfg)
     assert function.node_count() > 0 and isinstance(unresolved, list)

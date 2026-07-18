@@ -22,11 +22,9 @@ point, raw reads, and a name-aware `analyze(target)` that resolves a
 `str` symbol name (or accepts an address) and returns the same
 `(Cfg, Function, unresolved_addrs)` tuple as the base `Lifter.analyze`.
 
-`strider.load_elf_from_segments(path)` and
-`strider.load_elf_from_sections(path)` pick the ELF region-collection
-strategy explicitly (PT_LOAD program headers vs section headers);
-`strider.load_elf(path)` is a thin convenience that delegates to
-`load_elf_from_segments`.
+`strider.load_elf(path, from_segments=True)` picks the ELF
+region-collection strategy explicitly (PT_LOAD program headers when
+`from_segments=True`, the default; section headers when `False`).
 
 For non-ELF / firmware / custom-source cases, build a `Lifter`
 directly with `strider.lifter(arch, mem, rom=None)` (the native
@@ -211,11 +209,11 @@ def _load_elf_with(
     arch: Optional[SleighArch],
     cc: Optional[CallingConvention],
 ) -> "ElfLifter":
-    """Shared body of `load_elf_from_segments` / `load_elf_from_sections`:
+    """Shared body of `load_elf`'s two region-collection strategies:
     normalises `path`, validates it, auto-detects `arch`/`cc` from the ELF
     header when either is omitted, calls the Rust `loader(path,
-    apply_relocations)` (one of `_ext.load_elf_from_segments` /
-    `_ext.load_elf_from_sections`) to build the `_LoadedElf` backend, and
+    apply_relocations)` (one of `_ext._load_elf_from_segments` /
+    `_ext._load_elf_from_sections`) to build the `_LoadedElf` backend, and
     wraps it in an `ElfLifter`.
 
     `os.fspath` is the one place a caller's `pathlib.Path` (or any
@@ -238,9 +236,10 @@ def _load_elf_with(
     return ElfLifter(elf, arch, cc, elf.reader(), rom=elf.ro_reader())
 
 
-def load_elf_from_segments(
+def load_elf(
     path: StrPath,
     *,
+    from_segments: bool = True,
     apply_relocations: bool = True,
     arch: Optional[SleighArch] = None,
     cc: Optional[CallingConvention] = None,
@@ -249,18 +248,22 @@ def load_elf_from_segments(
     `Lifter` (`isinstance(lift, strider.Lifter)` is true), with the arch
     and userland calling convention auto-picked from the ELF header.
 
-    Regions are collected by walking **PT_LOAD program headers** (the
-    runtime memory layout) for ET_EXEC / ET_DYN binaries, falling back to
-    the section-walker (first-wins VMA dedup) for ET_REL objects, which
-    carry no program headers at all.  This is the strategy strider has
-    always used; see `load_elf_from_sections` to force section-header
-    walking even for a linked binary.
+    `from_segments=True` (the default) walks **PT_LOAD program headers**
+    (the runtime memory layout) for ET_EXEC / ET_DYN binaries, falling
+    back to the section-walker (first-wins VMA dedup) for ET_REL objects,
+    which carry no program headers at all.  This is the strategy strider
+    has always used.  Pass `from_segments=False` to FORCE the
+    section-header-walk region-collection strategy (first-wins VMA
+    dedup) even for a linked ET_EXEC / ET_DYN binary that does carry
+    PT_LOAD segments — useful when you want section-granular regions
+    (`.text` / `.rodata` / `.plt` as separate mappings) instead of the
+    segment loader's coalesced PT_LOAD ranges.
 
     For non-userland workflows (Linux kernel, syscall stubs, embedded
     firmware with a custom CC) pass an explicit `arch=` / `cc=`, e.g.:
 
     ```python
-    lift = strider.load_elf_from_segments(
+    lift = strider.load_elf(
         "vmlinux-i386",
         arch=strider.SleighArch.x86(),
         cc=strider.CallingConvention.x86_linux_kernel(),
@@ -278,52 +281,9 @@ def load_elf_from_segments(
         of the supported architectures (only when `arch`/`cc` aren't
         both supplied).
     """
+    loader = _ext._load_elf_from_segments if from_segments else _ext._load_elf_from_sections
     return _load_elf_with(
-        _ext.load_elf_from_segments,
-        path,
-        apply_relocations=apply_relocations,
-        arch=arch,
-        cc=cc,
-    )
-
-
-def load_elf_from_sections(
-    path: StrPath,
-    *,
-    apply_relocations: bool = True,
-    arch: Optional[SleighArch] = None,
-    cc: Optional[CallingConvention] = None,
-) -> "ElfLifter":
-    """Like `load_elf_from_segments`, but FORCES the section-header-walk
-    region-collection strategy (first-wins VMA dedup) — even for a linked
-    ET_EXEC / ET_DYN binary that does carry PT_LOAD segments.  Use this
-    when you want section-granular regions (`.text` / `.rodata` / `.plt`
-    as separate mappings) instead of the segment loader's coalesced
-    PT_LOAD ranges.
-
-    Same arguments, auto-detection, and error contract as
-    `load_elf_from_segments`.
-    """
-    return _load_elf_with(
-        _ext.load_elf_from_sections,
-        path,
-        apply_relocations=apply_relocations,
-        arch=arch,
-        cc=cc,
-    )
-
-
-def load_elf(
-    path: StrPath,
-    *,
-    apply_relocations: bool = True,
-    arch: Optional[SleighArch] = None,
-    cc: Optional[CallingConvention] = None,
-) -> "ElfLifter":
-    """Convenience: delegates to `load_elf_from_segments` — the
-    region-collection strategy strider has always used."""
-    return load_elf_from_segments(
-        path, apply_relocations=apply_relocations, arch=arch, cc=cc
+        loader, path, apply_relocations=apply_relocations, arch=arch, cc=cc
     )
 
 
@@ -339,8 +299,8 @@ class ElfLifter(Lifter):
     override that resolves a `str` symbol to an address before delegating
     to the base `Lifter.analyze`.
 
-    Constructed via `strider.load_elf(path)` / `load_elf_from_segments`
-    / `load_elf_from_sections` — for the auto-detected common case, or
+    Constructed via `strider.load_elf(path)` / `load_elf(path,
+    from_segments=False)` — for the auto-detected common case, or
     with explicit `arch=` / `cc=` for kernel / syscall / custom-ABI
     workflows.  Never construct `ElfLifter(...)` directly.  Analyse many
     functions by calling `analyze` repeatedly:

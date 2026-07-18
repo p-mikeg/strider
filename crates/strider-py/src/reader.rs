@@ -480,7 +480,7 @@ fn load_elf_impl(
 /// widened section coverage (`.data.rel.ro`, `.got`, …) is loaded and
 /// every understood relocation is patched in-place.
 #[pyfunction]
-#[pyo3(signature = (path, apply_relocations=false))]
+#[pyo3(name = "_load_elf_from_segments", signature = (path, apply_relocations=false))]
 pub fn load_elf_from_segments(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
     load_elf_impl(path, ElfRegionSource::Segments, apply_relocations)
 }
@@ -495,7 +495,7 @@ pub fn load_elf_from_segments(path: &str, apply_relocations: bool) -> PyResult<P
 /// `apply_relocations` defaults to `False`, with the same semantics as
 /// `load_elf_from_segments`.
 #[pyfunction]
-#[pyo3(signature = (path, apply_relocations=false))]
+#[pyo3(name = "_load_elf_from_sections", signature = (path, apply_relocations=false))]
 pub fn load_elf_from_sections(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
     load_elf_impl(path, ElfRegionSource::Sections, apply_relocations)
 }

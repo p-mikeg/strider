@@ -32,11 +32,9 @@ if hasattr(_ext, "template"):
 __version__ = _ext.__version__
 
 # High-level Python facade.  Adds:
-#   * `strider.load_elf(path)` → `ElfLifter` (delegates to
-#     `load_elf_from_segments`)
-#   * `strider.load_elf_from_segments(path)` / `load_elf_from_sections(path)`
-#     — explicit ELF region-collection strategy (PT_LOAD segments vs
-#     section headers)
+#   * `strider.load_elf(path, from_segments=True)` → `ElfLifter` — the
+#     `from_segments` flag picks the ELF region-collection strategy
+#     explicitly (PT_LOAD segments, the default, vs section headers)
 #   * `strider.ElfLifter` — an `ElfLifter` IS a `Lifter`
 #     (`isinstance(x, strider.Lifter)` is true), plus the ELF symbol
 #     backend and a name-aware `analyze(target)`
@@ -54,6 +52,4 @@ from . import _api as _api  # noqa: E402,F401
 from ._api import (  # noqa: E402,F401
     ElfLifter,
     load_elf,
-    load_elf_from_segments,
-    load_elf_from_sections,
 )

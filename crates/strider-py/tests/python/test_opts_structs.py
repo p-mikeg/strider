@@ -18,7 +18,7 @@ from .conftest import fixture_path
 
 def test_analyze_takes_lifter_options():
     fixture = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf_from_segments(str(fixture))
+    lift = strider.load_elf(str(fixture))
     _cfg, g, unresolved = lift.analyze(
         "add", opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=4096))
     )
@@ -27,7 +27,7 @@ def test_analyze_takes_lifter_options():
 
 def test_build_cfg_takes_cfg_options():
     fixture = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf_from_segments(str(fixture))
+    lift = strider.load_elf(str(fixture))
     cfg = lift.build_cfg(
         lift.symbol("add"), strider.CfgOptions(allow_code_before_start_addr=True)
     )
@@ -37,14 +37,14 @@ def test_build_cfg_takes_cfg_options():
 def test_analyze_default_opts_when_omitted():
     """Omitting `opts` entirely behaves like the all-defaults struct."""
     fixture = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf_from_segments(str(fixture))
+    lift = strider.load_elf(str(fixture))
     _cfg, g, unresolved = lift.analyze("add")
     assert g.node_count() > 0
 
 
 def test_build_cfg_default_opts_when_omitted():
     fixture = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf_from_segments(str(fixture))
+    lift = strider.load_elf(str(fixture))
     cfg = lift.build_cfg(lift.symbol("add"))
     assert cfg is not None
 
@@ -73,7 +73,7 @@ def test_pipeline_override_runs_custom_pipeline():
     this call only: an empty pipeline leaves the graph much less folded
     (more node ids) than the default pipeline does."""
     fixture = fixture_path("x64", "arithmetic")
-    lift = strider.load_elf_from_segments(str(fixture))
+    lift = strider.load_elf(str(fixture))
 
     _cfg, default_fn, _unresolved = lift.analyze("add")
 
