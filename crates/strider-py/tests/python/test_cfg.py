@@ -81,6 +81,19 @@ def test_cfg_region_texts_renamed_private(x86_memory_elf):
     assert isinstance(texts, dict) and len(texts) > 0
 
 
+def test_cfg_region_at(x86_memory_elf):
+    """`block_at` was renamed `region_at` — the codebase's CFG unit is a
+    Region, there is no "block" type."""
+    addr = symbol_addr(x86_memory_elf, "array_sum")
+    arch = strider.SleighArch.x86()
+    mem = strider.load_elf(str(x86_memory_elf)).reader()
+    s = strider.lifter(arch, mem)
+    cfg = s.build_cfg(addr, strider.CfgOptions(allow_code_before_start_addr=True))
+    region_idx = cfg.region_at(addr)
+    assert isinstance(region_idx, int)
+    assert not hasattr(cfg, "block_at")
+
+
 def test_build_cfg_leaves_lifter_reusable(x86_memory_elf):
     """Lifter.build_cfg borrows the Lifter's owned Sleigh mutably for the
     duration of the build; the same Lifter stays usable for the next

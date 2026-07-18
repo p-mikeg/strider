@@ -266,7 +266,7 @@ impl PyCfg {
     }
 
     /// Pretty neighborhood DOT around region `center` (BFS over
-    /// predecessor+successor blocks, capped at `max_nodes`; needs the
+    /// predecessor+successor regions, capped at `max_nodes`; needs the
     /// Lifter's Sleigh to resolve register names).
     #[pyo3(signature = (center, depth=5, max_nodes=60))]
     fn neighborhood_dot(
@@ -287,7 +287,7 @@ impl PyCfg {
     /// Disassembly text for every region, keyed by region index — the
     /// text-search corpus for the CFG explorer's search bar
     /// (`_CfgVisualizer.search` in `explore.py`). Mirrors the dot
-    /// renderer's per-block text (`CfgDotDumper::dump_as_dot`): for each
+    /// renderer's per-region text (`CfgDotDumper::dump_as_dot`): for each
     /// region, each instruction's `ctx_fmt(sleigh, &regs)`, joined here
     /// with `"\n"` (the dot renderer uses `"\\l"`, a DOT-label
     /// left-justified newline — not meaningful outside a label string).
@@ -318,7 +318,7 @@ impl PyCfg {
     /// The region index whose instruction range contains `addr`, if any.
     /// Returns the first containing region (regions don't overlap in
     /// practice, so "first" is also "only").
-    fn block_at(&self, addr: u64) -> Option<u32> {
+    fn region_at(&self, addr: u64) -> Option<u32> {
         let g = self.inner.region_graph();
         for idx in g.node_indices() {
             let region = g

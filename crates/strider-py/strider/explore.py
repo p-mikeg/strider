@@ -340,8 +340,8 @@ class _CfgVisualizer:
     def search(self, query):
         q = query.strip()
         try:
-            addr = int(q, 0)  # bare address -> center the containing block
-            blk = self._cfg.block_at(addr)
+            addr = int(q, 0)  # bare address -> center the containing region
+            blk = self._cfg.region_at(addr)
             return {"center": blk} if blk is not None else {"highlight": []}
         except ValueError:
             ql = q.lower()
@@ -349,7 +349,7 @@ class _CfgVisualizer:
             return {"highlight": hits}
 
     def completions(self):
-        return []  # (block-start addresses can be added later)
+        return []  # (region-start addresses can be added later)
 
 
 def visualize(lifter, target, *, host="127.0.0.1", port=0, depth=5):

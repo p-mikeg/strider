@@ -228,10 +228,10 @@ class Cfg:
         self, center: int, depth: int = ..., max_nodes: int = ...
     ) -> str:
         """Pretty neighborhood DOT around region `center` (BFS over
-        predecessor+successor blocks, capped at `max_nodes`; needs the
+        predecessor+successor regions, capped at `max_nodes`; needs the
         Lifter's Sleigh to resolve register names)."""
         ...
-    def block_at(self, addr: int) -> Optional[int]:
+    def region_at(self, addr: int) -> Optional[int]:
         """The region index whose instruction range contains `addr`,
         else `None`."""
         ...
