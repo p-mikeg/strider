@@ -655,6 +655,52 @@ fn phi_input_from_edge_any_input_capture_is_readable() {
     );
 }
 
+/// Regression: three-valued (Kleene) evaluation. A `Not` over a constraint
+/// whose capture is UNBOUND in a row must DROP that row, not vacuously keep it.
+///
+/// `ph` is captured only in the phi arm of a `one_of`, so it is absent in the
+/// bare-const rows. `dominates(ph, ph)` is always true where `ph` is bound, so
+/// `negate(dominates(ph, ph))` is `Some(false)` there. In the `ph`-absent rows
+/// the relation is UNANSWERABLE (`None`), and `Not(None) == None` — so under
+/// Kleene EVERY row drops. The pre-fix two-valued code read the absent capture
+/// as `false`, flipped it to a vacuous `true`, and kept exactly those rows.
+#[test]
+fn negate_over_an_unbound_capture_drops_every_row() {
+    let function = collapsed_phi_diamond();
+    let m = Matcher::new(&function);
+    let (ph, v) = (Capture::new(), Capture::new());
+    // `ph` binds only in the first arm; the bare-const second arm leaves it
+    // absent, so the pattern matches the phi (ph bound) AND every const (ph not).
+    let operand = one_of![
+        phi().any_input(any_int_const().capture(v)).capture(ph),
+        any_int_const().capture(v),
+    ]
+    .into_pattern();
+
+    let unconstrained = m.find_joined_constrained(&[&operand], &[]).unwrap().len();
+    assert!(
+        unconstrained > 0,
+        "some rows exist, including bare-const rows where `ph` is unbound"
+    );
+
+    // `dominates(ph, ph)` is self-domination — always true where `ph` is bound.
+    let negated = m
+        .find_joined_constrained(
+            &[&operand],
+            &[JoinConstraint::Not(Box::new(JoinConstraint::Dominates {
+                a: ph,
+                b: ph,
+            }))],
+        )
+        .unwrap()
+        .len();
+    assert_eq!(
+        negated, 0,
+        "negate(dominates(ph, ph)) drops the ph-bound rows (Some(false)) AND the \
+         ph-unbound rows (None) — the bug kept the latter vacuously"
+    );
+}
+
 /// No match when the arm value is a different constant.
 #[test]
 fn phi_input_from_edge_any_input_negative() {

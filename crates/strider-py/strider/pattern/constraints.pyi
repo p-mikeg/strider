@@ -9,6 +9,8 @@ two kinds cannot be mistaken for one another.
 
 from __future__ import annotations
 
+from typing import List
+
 from . import Capture
 
 class JoinConstraint:
@@ -70,3 +72,20 @@ def negate(c: JoinConstraint) -> JoinConstraint:
 
     Every constraint is a pure filter, so every constraint is negatable.
     `negate(negate(c))` is allowed and is the identity."""
+
+def any_of(constraints: List[JoinConstraint]) -> JoinConstraint:
+    """Disjunction: a tuple survives iff it passes ANY listed constraint. An
+    empty list passes nothing.
+
+    The top-level `constraints=[...]` list is already an implicit AND, so `any_of`
+    is how you reach a disjunction — `any_of([rel_a, rel_b])`, "either holds".
+    Evaluation is three-valued (Kleene): unknown (drops the row) when no listed
+    constraint is true and at least one references a capture unbound in that
+    row."""
+
+def all_of(constraints: List[JoinConstraint]) -> JoinConstraint:
+    """Conjunction: a tuple survives iff it passes EVERY listed constraint. An
+    empty list passes everything. Use it to AND constraints INSIDE an `any_of`
+    (the flat top-level list cannot nest). Evaluation is three-valued (Kleene):
+    unknown (drops the row) when no listed constraint is false and at least one
+    references a capture unbound in that row."""

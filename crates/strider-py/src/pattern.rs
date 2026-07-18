@@ -3112,6 +3112,33 @@ pub fn negate(c: PyRef<'_, PyJoinConstraint>) -> PyJoinConstraint {
     }
 }
 
+/// Disjunction: a tuple survives iff it passes ANY listed constraint. An empty
+/// list passes nothing.
+///
+/// The top-level `constraints=[...]` list is already an implicit AND, so `any_of`
+/// is how you reach a disjunction — most usefully `any_of([rel_a, rel_b])`,
+/// "either `rel_a` or `rel_b` holds". Evaluation is three-valued (Kleene): the
+/// disjunction is unknown (drops the row) when no listed constraint is true and
+/// at least one references a capture unbound in that row.
+#[pyfunction]
+pub fn any_of(constraints: Vec<PyRef<'_, PyJoinConstraint>>) -> PyJoinConstraint {
+    PyJoinConstraint {
+        inner: JoinConstraint::Or(constraints.iter().map(|c| c.inner.clone()).collect()),
+    }
+}
+
+/// Conjunction: a tuple survives iff it passes EVERY listed constraint. An empty
+/// list passes everything. Use it to AND constraints INSIDE an `any_of` (the
+/// flat top-level list cannot nest). Evaluation is three-valued (Kleene): the
+/// conjunction is unknown (drops the row) when no listed constraint is false and
+/// at least one references a capture unbound in that row.
+#[pyfunction]
+pub fn all_of(constraints: Vec<PyRef<'_, PyJoinConstraint>>) -> PyJoinConstraint {
+    PyJoinConstraint {
+        inner: JoinConstraint::And(constraints.iter().map(|c| c.inner.clone()).collect()),
+    }
+}
+
 // ── PhiPat (value-rooted: a Phi produces a value output) ─────────────────
 
 node_builder! {
@@ -3581,6 +3608,8 @@ fn register_constraints(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResul
     add_fn!(dominated_by_branch);
     add_fn!(phi_input_from_edge);
     add_fn!(negate);
+    add_fn!(any_of);
+    add_fn!(all_of);
 
     parent.add_submodule(&m)?;
     let sys = py.import_bound("sys")?;

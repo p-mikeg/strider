@@ -433,6 +433,22 @@ hits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
   negates the *constraint*, not the *visibility* of the edge. Probe with
   `anything()` first, then negate.
 
+- `cons.any_of([...])`, `cons.all_of([...])` — the boolean COMBINATORS for
+  building a compound constraint tree. The top-level `constraints=[...]` list is
+  an implicit AND, so `any_of` is how you reach a disjunction and `all_of` nests
+  an AND inside one. Identities: `any_of([])` drops every row, `all_of([])` keeps
+  every row.
+
+  **Optionally-bound captures need no special handling.** Evaluation is
+  three-valued (Kleene): a constraint whose capture is UNBOUND in a row returns
+  *unknown*, and an unknown drops the row at the root just like a genuine false —
+  so a capture inside a `one_of` arm that did not fire is simply excluded, never
+  vacuously kept. `negate(unknown)` is `unknown` too (it never flips to a
+  spurious true), which is what makes `negate` sound per-row. `any_of`/`all_of`
+  propagate unknown the Kleene way: `any_of` is true if any arm is true, else
+  unknown if any arm is unknown; `all_of` is false if any arm is false, else
+  unknown if any arm is unknown.
+
 Constraints range over **control nodes** (`Call`/`Store`/`Region`/`If`/…); a
 captured value resolves to its producer node. Prefer `capture_true`/`capture_false`
 (the branch-edge *value*, stable under region collapse) over anchoring on the

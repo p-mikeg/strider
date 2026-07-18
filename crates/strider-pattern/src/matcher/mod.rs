@@ -446,7 +446,14 @@ impl<'f> Matcher<'f> {
 
         if !constraints.is_empty() {
             let eval = ConstraintEval::new(self.function());
-            acc.retain(|tuple| constraints.iter().all(|c| eval.passes(c, tuple)));
+            // A row survives iff EVERY constraint returns a real `Some(true)`.
+            // `Some(false)` (a genuine no) and `None` (a capture was unbound in
+            // this row, so the relation is unanswerable) both drop it.
+            acc.retain(|tuple| {
+                constraints
+                    .iter()
+                    .all(|c| eval.passes(c, tuple) == Some(true))
+            });
         }
 
         dedup_on_shared_captures(&mut acc, self.function().graph());
@@ -522,13 +529,24 @@ pub enum JoinConstraint {
     /// The negation of `inner`: a tuple survives iff `inner` does NOT hold on
     /// it.
     ///
-    /// Negation-as-failure would be unsound without RANGE RESTRICTION: an
-    /// unbound capture makes `inner` fail merely for want of a binding, and the
-    /// negation would then hold VACUOUSLY — "true because it could not see
-    /// anything". [`Matcher::find_joined_constrained`] enforces boundness for
-    /// EVERY constraint, positive or negated, so that vacuity is impossible
-    /// here by construction rather than by a check specific to this variant.
+    /// Two independent guards keep this sound, on different axes:
+    ///   * DECLARED-ness (static): [`Matcher::find_joined_constrained`] rejects
+    ///     a constraint mentioning a capture NO pattern binds — that could never
+    ///     be satisfied, and under `Not` would match everything.
+    ///   * BOUND-ness (per-tuple): evaluation is three-valued (see
+    ///     [`ConstraintEval::passes`]). An unbound capture in THIS row makes
+    ///     `inner` return `None`, and `Not(None) == None` drops the row — never
+    ///     the vacuous `true` a two-valued `!false` would produce.
     Not(Box<JoinConstraint>),
+    /// Disjunction — a tuple passes iff it passes ANY listed constraint. An
+    /// empty list passes nothing (the identity of `Or`). Every constraint is a
+    /// pure `bool` filter, so this is a plain short-circuiting `any`.
+    Or(Vec<JoinConstraint>),
+    /// Conjunction — a tuple passes iff it passes EVERY listed constraint. An
+    /// empty list passes everything (the identity of `And`). The top-level
+    /// `constraints` slice is already an implicit `And`; this one nests inside an
+    /// `Or`, where the flat slice cannot reach.
+    And(Vec<JoinConstraint>),
 }
 
 impl JoinConstraint {
@@ -539,10 +557,14 @@ impl JoinConstraint {
             JoinConstraint::Dominates { a, b } => vec![*a, *b],
             JoinConstraint::DominatedByBranch { branch, node } => vec![*branch, *node],
             JoinConstraint::PhiInputFromEdge { phi, edge, value } => vec![*phi, *edge, *value],
-            // A negation correlates exactly what it negates: contributing these
-            // links the owner patterns AND is what the range-restriction check
-            // in `find_joined_constrained` tests for boundness.
+            // A negation / connective correlates exactly the captures it wraps:
+            // contributing these links the owner patterns AND is what the
+            // range-restriction check in `find_joined_constrained` tests for
+            // declared-ness.
             JoinConstraint::Not(inner) => inner.captures(),
+            JoinConstraint::Or(cs) | JoinConstraint::And(cs) => {
+                cs.iter().flat_map(JoinConstraint::captures).collect()
+            }
         }
     }
 }
@@ -555,6 +577,38 @@ impl JoinConstraint {
 /// `Vec<Match>` is a single row and the list of them is `Vec<JoinedMatch>`.
 /// Same type, opposite meanings; the alias is what tells them apart at a glance.
 pub type JoinedMatch = Vec<Match>;
+
+/// Kleene OR over three-valued verdicts: `Some(true)` if ANY input is
+/// `Some(true)` (truth dominates and short-circuits); else `None` if ANY input
+/// is `None` (unknown poisons a would-be `false`); else `Some(false)`. The
+/// empty iterator yields `Some(false)` — the identity of `Or`.
+fn kleene_or(it: impl Iterator<Item = Option<bool>>) -> Option<bool> {
+    let mut saw_unknown = false;
+    for v in it {
+        match v {
+            Some(true) => return Some(true),
+            None => saw_unknown = true,
+            Some(false) => {}
+        }
+    }
+    (!saw_unknown).then_some(false)
+}
+
+/// Kleene AND over three-valued verdicts: `Some(false)` if ANY input is
+/// `Some(false)` (falsity dominates and short-circuits); else `None` if ANY
+/// input is `None` (unknown poisons a would-be `true`); else `Some(true)`. The
+/// empty iterator yields `Some(true)` — the identity of `And`.
+fn kleene_and(it: impl Iterator<Item = Option<bool>>) -> Option<bool> {
+    let mut saw_unknown = false;
+    for v in it {
+        match v {
+            Some(false) => return Some(false),
+            None => saw_unknown = true,
+            Some(true) => {}
+        }
+    }
+    (!saw_unknown).then_some(true)
+}
 
 /// Evaluates [`JoinConstraint`]s against joined tuples, memoising the two
 /// dominator trees across one `find_joined_constrained` call — each is built at
@@ -626,9 +680,16 @@ impl<'f> ConstraintEval<'f> {
         tuple.iter().find_map(|m| m.value(c))
     }
 
-    /// Whether `tuple` passes `c`. Every constraint is a pure filter, so this
-    /// one `bool` answers for all of them.
-    fn passes(&self, c: &JoinConstraint, tuple: &JoinedMatch) -> bool {
+    /// Three-valued (Kleene) verdict for `tuple` against `c`: `Some(b)` is a
+    /// real verdict, `None` means "a referenced capture was UNBOUND in this row,
+    /// so the relation cannot be answered". The top-level fold keeps a row iff
+    /// every constraint returns `Some(true)` — `None` and `Some(false)` both
+    /// drop it, so an unbound capture never survives.
+    ///
+    /// This is what makes `Not` sound WITHOUT the static range check having to
+    /// carry the whole burden: `Not(None) == None` (drops), never the vacuous
+    /// `true` a two-valued `!false` would produce for an unbound capture.
+    fn passes(&self, c: &JoinConstraint, tuple: &JoinedMatch) -> Option<bool> {
         match *c {
             JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
                 let (Some(phi_v), Some(edge_v), Some(val_v)) = (
@@ -636,25 +697,27 @@ impl<'f> ConstraintEval<'f> {
                     self.value_of(tuple, edge),
                     self.value_of(tuple, value),
                 ) else {
-                    return false;
+                    return None;
                 };
                 // Short-circuits on the first qualifying arm: a pure predicate
                 // never needs to see the rest.
-                self.phi_arms_from_edge(phi_v, edge_v)
-                    .any(|arm| arm == val_v)
+                Some(
+                    self.phi_arms_from_edge(phi_v, edge_v)
+                        .any(|arm| arm == val_v),
+                )
             }
             JoinConstraint::Dominates { a, b } => {
                 let (Some(na), Some(nb)) = (self.node_of(tuple, a), self.node_of(tuple, b)) else {
-                    return false;
+                    return None;
                 };
                 let doms = self.doms.get_or_init(|| control_dominators(self.function));
-                dominates(doms, na, nb)
+                Some(dominates(doms, na, nb))
             }
             JoinConstraint::DominatedByBranch { branch, node } => {
                 let (Some(edge), Some(target)) =
                     (self.value_of(tuple, branch), self.node_of(tuple, node))
                 else {
-                    return false;
+                    return None;
                 };
                 // EDGE dominance — the real relation.  Asking instead whether
                 // the edge's TARGET dominates `target` (as this once did) is a
@@ -663,14 +726,15 @@ impl<'f> ConstraintEval<'f> {
                 // into the join, and the join dominates everything past the
                 // merge — so the proxy silently claimed post-merge nodes were
                 // inside the branch.
-                edge_dominates(self.split_doms(), edge, target)
+                Some(edge_dominates(self.split_doms(), edge, target))
             }
-            // Sound because `find_joined_constrained` has already range-checked
-            // `inner`'s captures against the positive patterns, so a `false`
-            // here means "`inner` is false", never "`inner` could not see its
-            // captures". Reuses the same memoised `doms`, so a negation costs no
-            // extra walk.
-            JoinConstraint::Not(ref inner) => !self.passes(inner, tuple),
+            // `Not(None) == None`: the negation of an unanswerable constraint is
+            // itself unanswerable, so an unbound capture drops the row instead of
+            // vacuously keeping it. Reuses the same memoised `doms`, so a
+            // negation costs no extra walk.
+            JoinConstraint::Not(ref inner) => self.passes(inner, tuple).map(|b| !b),
+            JoinConstraint::Or(ref cs) => kleene_or(cs.iter().map(|c| self.passes(c, tuple))),
+            JoinConstraint::And(ref cs) => kleene_and(cs.iter().map(|c| self.passes(c, tuple))),
         }
     }
 
@@ -826,4 +890,48 @@ fn prefix_agrees(prefix: &[Match], m: &Match, graph: &Graph) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod kleene_tests {
+    use super::{kleene_and, kleene_or};
+
+    // The three-valued truth values, spelled out for the table below.
+    const T: Option<bool> = Some(true);
+    const F: Option<bool> = Some(false);
+    const U: Option<bool> = None;
+
+    #[test]
+    fn not_of_unknown_is_unknown() {
+        // `Not` is `passes(inner).map(|b| !b)`; the load-bearing case is that an
+        // unanswerable `inner` stays unanswerable (drops the row) rather than
+        // flipping to a vacuous `true`.
+        assert_eq!(U.map(|b: bool| !b), U);
+        assert_eq!(T.map(|b| !b), F);
+        assert_eq!(F.map(|b| !b), T);
+    }
+
+    #[test]
+    fn kleene_or_truth_dominates_then_unknown_poisons() {
+        // Any `Some(true)` wins outright, even alongside unknown / false.
+        assert_eq!(kleene_or([U, T, F].into_iter()), T);
+        // No truth, but an unknown present → unknown (a would-be `false`).
+        assert_eq!(kleene_or([F, U, F].into_iter()), U);
+        // All false → false.
+        assert_eq!(kleene_or([F, F].into_iter()), F);
+        // Empty Or is its identity: `Some(false)`.
+        assert_eq!(kleene_or(std::iter::empty()), F);
+    }
+
+    #[test]
+    fn kleene_and_falsity_dominates_then_unknown_poisons() {
+        // Any `Some(false)` wins outright, even alongside unknown / true.
+        assert_eq!(kleene_and([U, F, T].into_iter()), F);
+        // No falsity, but an unknown present → unknown (a would-be `true`).
+        assert_eq!(kleene_and([T, U, T].into_iter()), U);
+        // All true → true.
+        assert_eq!(kleene_and([T, T].into_iter()), T);
+        // Empty And is its identity: `Some(true)`.
+        assert_eq!(kleene_and(std::iter::empty()), T);
+    }
 }

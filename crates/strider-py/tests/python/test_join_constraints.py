@@ -357,3 +357,46 @@ def test_negate_with_an_unbound_capture_does_not_vacuously_match():
 def test_negate_of_phi_input_from_edge_with_a_capture_value_is_allowed():
     ph, e, v = p.Capture(), p.Capture(), p.Capture()
     assert cons.negate(cons.phi_input_from_edge(ph, e, v)) is not None
+
+
+# ── three-valued (Kleene) evaluation / any_of / all_of ───────────────────────
+
+
+def test_negate_over_an_unbound_capture_drops_every_row():
+    """Regression. `ph` is captured only in the phi arm of a `one_of`, so it is
+    absent in the bare-const rows. `dominates(ph, ph)` is always true where `ph`
+    is bound, so `negate(dominates(ph, ph))` is false there; in the ph-absent
+    rows the relation is unanswerable (`None`), and `Not(None) == None`. Under
+    three-valued eval EVERY row therefore drops. The pre-fix two-valued code read
+    the absent capture as false, flipped it to a vacuous true, and kept exactly
+    those rows."""
+    fn = _const_diamond()
+    ph, v = p.Capture(), p.Capture()
+    operand = p.one_of(
+        [p.phi().any_input(p.any_int_const(v)).capture(ph), p.any_int_const(v)]
+    )
+    unconstrained = fn.find_all([operand])
+    assert len(unconstrained) > 0, "some rows exist, including ph-unbound ones"
+
+    negated = fn.find_all([operand], constraints=[cons.negate(cons.dominates(ph, ph))])
+    assert negated == [], (
+        "negate(dominates(ph, ph)) drops the ph-bound rows (false) AND the "
+        "ph-unbound rows (None); the bug kept the latter vacuously"
+    )
+
+
+def test_empty_any_of_passes_nothing_empty_all_of_passes_everything():
+    """The connective identities: `any_of([])` is the never-true (drops every
+    row), `all_of([])` is the always-true (keeps them)."""
+    fn = _const_diamond()
+    t, ph, v = p.Capture(), p.Capture(), p.Capture()
+    guard = p.if_else().capture_true(t)
+    phi = p.phi().any_input(p.any_int_const(v)).capture(ph)
+    # Both patterns are linked by the always-true all_of only if it mentions a
+    # shared capture; a capture-free connective imposes no correlation, so pair
+    # it with a real relation to keep the join connected.
+    linked = cons.phi_input_from_edge(ph, t, v)
+    kept = fn.find_all([guard, phi], constraints=[cons.all_of([]), linked])
+    dropped = fn.find_all([guard, phi], constraints=[cons.any_of([]), linked])
+    assert len(kept) >= 1
+    assert dropped == []
