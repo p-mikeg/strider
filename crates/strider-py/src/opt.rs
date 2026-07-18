@@ -283,16 +283,18 @@ impl PyOptimizerPipeline {
         Ok(())
     }
 
-    /// Number of fixed-point passes currently registered.
-    fn pass_count(&self) -> PyResult<usize> {
+    /// Names of the fixed-point passes currently registered, in order.
+    #[getter]
+    fn passes(&self) -> PyResult<Vec<String>> {
         let state = self.lock_state()?;
-        Ok(state.passes.len())
+        Ok(state.passes.iter().map(|p| p.name().to_string()).collect())
     }
 
-    /// Number of post-passes currently registered.
-    fn post_pass_count(&self) -> PyResult<usize> {
+    /// Names of the post-passes currently registered, in order.
+    #[getter]
+    fn post_passes(&self) -> PyResult<Vec<String>> {
         let state = self.lock_state()?;
-        Ok(state.post_passes.len())
+        Ok(state.post_passes.iter().map(|p| p.name().to_string()).collect())
     }
 }
 

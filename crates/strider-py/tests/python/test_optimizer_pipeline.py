@@ -5,8 +5,17 @@ from .conftest import symbol_addr
 
 def test_empty_pipeline():
     pipe = strider.OptimizerPipeline.empty()
-    assert pipe.pass_count() == 0
-    assert pipe.post_pass_count() == 0
+    assert len(pipe.passes) == 0
+    assert len(pipe.post_passes) == 0
+
+
+def test_default_pipeline_pass_names():
+    p = strider.OptimizerPipeline.default()
+    names = p.passes
+    assert isinstance(names, list) and all(isinstance(n, str) for n in names)
+    assert len(names) == 10
+    assert "ConstantFold" in names
+    assert len(p.post_passes) == 3
 
 
 def test_python_default_pipeline_matches_rust_pinned_count():
@@ -16,13 +25,13 @@ def test_python_default_pipeline_matches_rust_pinned_count():
     crates/strider-py/src/opt.rs would make the Python pipeline a
     behaviourally-different subset of the Rust one — silent drift.
     """
-    assert strider.OptimizerPipeline.default().pass_count() == 10
-    assert strider.OptimizerPipeline.default().post_pass_count() == 3
+    assert len(strider.OptimizerPipeline.default().passes) == 10
+    assert len(strider.OptimizerPipeline.default().post_passes) == 3
 
 
 def test_default_pipeline_nonempty():
     pipe = strider.OptimizerPipeline.default()
-    assert pipe.pass_count() > 0
+    assert len(pipe.passes) > 0
 
 
 def test_add_pure_pass():
@@ -32,7 +41,7 @@ def test_add_pure_pass():
     pipe.add(strider.opt.PhiCollapse())
     pipe.add(strider.opt.RegionCollapse())
     pipe.add(strider.opt.DeadBranchElimination())
-    assert pipe.pass_count() == 5
+    assert len(pipe.passes) == 5
 
 
 def test_flag_cmp_canonicalize_pass_exposed():
@@ -47,7 +56,7 @@ def test_flag_cmp_canonicalize_pass_exposed():
     """
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(strider.opt.FlagCmpCanonicalize())
-    assert pipe.pass_count() == 1
+    assert len(pipe.passes) == 1
 
 
 def test_if_cond_inversion_pass_exposed():
@@ -58,7 +67,7 @@ def test_if_cond_inversion_pass_exposed():
     """
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(strider.opt.IfCondInversion())
-    assert pipe.pass_count() == 1
+    assert len(pipe.passes) == 1
 
 
 def test_default_pipeline_mirrors_rust_default():
@@ -76,8 +85,8 @@ def test_default_pipeline_mirrors_rust_default():
     pattern queries that work under the orchestrator path (which uses the Rust
     default) fail under the custom-pipeline path.
     """
-    assert strider.OptimizerPipeline.default().pass_count() == 10
-    assert strider.OptimizerPipeline.default().post_pass_count() == 3
+    assert len(strider.OptimizerPipeline.default().passes) == 10
+    assert len(strider.OptimizerPipeline.default().post_passes) == 3
 
 
 def test_cc_aware_passes_construct(x86_memory_elf):
@@ -97,8 +106,8 @@ def test_cc_aware_passes_construct(x86_memory_elf):
     pipe.add(e)
     pipe.add_post(c)
     pipe.add_post(d)
-    assert pipe.pass_count() == 2
-    assert pipe.post_pass_count() == 2
+    assert len(pipe.passes) == 2
+    assert len(pipe.post_passes) == 2
 
 
 def test_default_optimizer_pipeline_nonempty_pre_and_post():
@@ -107,8 +116,8 @@ def test_default_optimizer_pipeline_nonempty_pre_and_post():
     # low-level `Lifter.build_optimizer_pipeline()` this test used to
     # exercise was removed by the single-`Lifter` collapse.
     pipe = strider.OptimizerPipeline.default()
-    assert pipe.pass_count() > 0
-    assert pipe.post_pass_count() > 0
+    assert len(pipe.passes) > 0
+    assert len(pipe.post_passes) > 0
 
 
 def test_optimize_on_lifter_mutates(x86_memory_elf):
