@@ -8,7 +8,7 @@ find at least once.
 import strider
 from strider.pattern import Capture, var, add, load, int_const
 
-from .conftest import built_function, built_lifter_and_function
+from .conftest import built_function, built_lifter_and_function, fixture_path
 
 
 def _build_graph(case="memory", symbol="array_sum"):
@@ -128,32 +128,19 @@ def test_partial_and_post_match_getitem_agree_on_bool_type():
     probe bool first.  (`bool` subclasses `int`, so this asserts exact
     `type(...) is bool`, not `isinstance`.)
     """
-    import pytest
-
     from strider.pattern import any_int_const
 
-    # Pre-redesign this used the low-level `Lifter.build_cfg` +
-    # `analyze_cfg` path (no optimizer pass) so `array_sum`'s raw
-    # `Xor(_, 1:i1)` NOT-lowering survived as a literal I1 IntConst.
-    # The single-`Lifter` collapse (Task 2 of the strider-py API
-    # redesign) removed that unoptimized-IR entry point — `analyze`
-    # always drives the canonical default pipeline, whose
-    # `IfCondInversion` pass eliminates that exact shape whenever the
-    # NOT feeds an `If` (its only real-world occurrence), so a fully
-    # optimized fixture may no longer contain a surviving I1 IntConst.
-    # Skip cleanly rather than asserting on IR shape this task's redesign
-    # no longer guarantees; the bool-vs-int type contract this test pins
-    # is still exercised below whenever a fixture does carry one.
-    g = _build_graph()
+    # `aarch64/builtins::expect_branch` carries a surviving I1 `IntConst`
+    # under the default pipeline (verified by a fixture scan), so this
+    # exercises the contract for real instead of skipping — array_sum's
+    # `Xor(_, 1:i1)` NOT-lowering no longer survives `IfCondInversion`.
+    elf = fixture_path("aarch64", "builtins")
+    lift = strider.load_elf(str(elf))
+    _cfg, g, _u = lift.analyze("expect_branch")
     c = Capture()
 
     post = g.find_all(any_int_const(c).bool_valued())
-    if not post:
-        pytest.skip(
-            "no I1 (bool) IntConst survived the default pipeline in this "
-            "fixture — the unoptimized-IR path that used to guarantee one "
-            "was removed by the single-Lifter collapse"
-        )
+    assert post, "expect_branch must carry a surviving I1 IntConst to test"
     for m in post:
         assert type(m[c]) is bool, (
             f"PyMatch m[c] for an I1 const must be bool, got {type(m[c]).__name__}"

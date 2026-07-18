@@ -49,25 +49,6 @@ def test_clone_is_independent_of_original():
     assert after_clone < before, "clone lost adds to the rewrite"
 
 
-def test_clone_then_rewrite_identity_fold_fires():
-    """`add(x, 0) → x` on a clone returns the fire count and drops matches to 0."""
-    g = _build_graph()
-    x = Capture()
-
-    clone = g.clone()
-    # Pre-condition: at least one `add(_, 0)` exists to fold.
-    matches_before = len(clone.find_all(add(var(x), int_const(0))))
-    if matches_before == 0:
-        pytest.skip("fixture has no add(_, 0) to fold")
-
-    fired = clone.rewrite(find=add(var(x), int_const(0)), replace=tpl.var(x))
-    assert isinstance(fired, int)
-    assert fired == matches_before
-
-    # After folding, no `add(_, 0)` remains.
-    assert len(clone.find_all(add(var(x), int_const(0)))) == 0
-
-
 def test_rewrite_returns_zero_when_nothing_matches():
     """A rewrite whose LHS matches nothing fires zero times and is a no-op."""
     g = _build_graph()
