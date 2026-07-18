@@ -184,9 +184,17 @@ class Cfg:
     """Control-flow graph of a single function, produced by
     `Lifter.build_cfg` / returned as element 0 of `Lifter.analyze`."""
 
-    def to_html(self, path: str, style: Optional[str] = ...) -> None: ...
-    def to_dot(self, path: str) -> None: ...
-    def html_str(self, style: Optional[str] = ...) -> str: ...
+    def to_dot(self, path: Optional[str] = ...) -> Optional[str]:
+        """Render the CFG to DOT. Returns the DOT string when `path` is
+        `None`, otherwise writes it to `path` and returns `None`."""
+        ...
+    def to_html(
+        self, path: Optional[str] = ..., style: Optional[str] = ...
+    ) -> Optional[str]:
+        """Render the CFG to a standalone HTML page. Returns the HTML
+        string when `path` is `None`, otherwise writes it and returns
+        `None`. `style` selects the dot theme (default `"dark_cfg"`)."""
+        ...
     def pcode_at(self, addr: int) -> Optional[str]:
         """Look up the lifted p-code for the machine instruction at
         `addr` — an exact LOOKUP against this CFG's own stored decodes
@@ -223,17 +231,11 @@ class Cfg:
         predecessor+successor blocks, capped at `max_nodes`; needs the
         Lifter's Sleigh to resolve register names)."""
         ...
-    def raw_neighborhood_dot(
-        self, center: int, depth: int = ..., max_nodes: int = ...
-    ) -> str:
-        """Structure-faithful neighborhood DOT around region `center`
-        (no Sleigh — one `n<idx>` box per region, edges as stored)."""
-        ...
     def block_at(self, addr: int) -> Optional[int]:
         """The region index whose instruction range contains `addr`,
         else `None`."""
         ...
-    def region_texts(self) -> dict:
+    def _region_texts(self) -> dict:
         """Disassembly text for every region, keyed by region index —
         the text-search corpus for the CFG explorer's search bar."""
         ...

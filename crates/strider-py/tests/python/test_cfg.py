@@ -20,7 +20,7 @@ def test_cfg_to_html_writes_nonempty_file(x86_memory_elf, tmp_path):
     cfg = s.build_cfg(addr, strider.CfgOptions(allow_code_before_start_addr=True))
 
     out_html = tmp_path / "cfg.html"
-    cfg.to_html(str(out_html))
+    assert cfg.to_html(str(out_html)) is None
     assert out_html.exists()
     assert out_html.stat().st_size > 0
 
@@ -33,20 +33,52 @@ def test_cfg_to_dot_writes_nonempty_file(x86_memory_elf, tmp_path):
     cfg = s.build_cfg(addr, strider.CfgOptions(allow_code_before_start_addr=True))
 
     out_dot = tmp_path / "cfg.dot"
-    cfg.to_dot(str(out_dot))
+    assert cfg.to_dot(str(out_dot)) is None
     assert out_dot.exists()
     assert out_dot.stat().st_size > 0
 
 
-def test_cfg_html_str_returns_html(x86_memory_elf):
+def test_cfg_to_html_returns_html_str(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
     mem = strider.load_elf(str(x86_memory_elf)).reader()
     s = strider.lifter(arch, mem)
     cfg = s.build_cfg(addr, strider.CfgOptions(allow_code_before_start_addr=True))
-    html = cfg.html_str()
+    html = cfg.to_html()
     assert isinstance(html, str)
     assert "<html" in html.lower() or "svg" in html.lower()
+
+
+def test_cfg_to_dot_str_and_file(x86_memory_elf, tmp_path):
+    addr = symbol_addr(x86_memory_elf, "array_sum")
+    arch = strider.SleighArch.x86()
+    mem = strider.load_elf(str(x86_memory_elf)).reader()
+    s = strider.lifter(arch, mem)
+    cfg = s.build_cfg(addr, strider.CfgOptions(allow_code_before_start_addr=True))
+
+    dot_str = cfg.to_dot()
+    assert isinstance(dot_str, str) and "digraph" in dot_str.lower()
+
+    out = tmp_path / "c.dot"
+    assert cfg.to_dot(str(out)) is None
+    assert out.read_text()
+
+    assert isinstance(cfg.to_html(), str)
+    assert not hasattr(cfg, "html_str")
+    assert not hasattr(cfg, "raw_neighborhood_dot")
+
+
+def test_cfg_region_texts_renamed_private(x86_memory_elf):
+    """`region_texts` was renamed `_region_texts` (private — internal use
+    by `explore.py`'s search bar, not a stable public API)."""
+    addr = symbol_addr(x86_memory_elf, "array_sum")
+    arch = strider.SleighArch.x86()
+    mem = strider.load_elf(str(x86_memory_elf)).reader()
+    s = strider.lifter(arch, mem)
+    cfg = s.build_cfg(addr, strider.CfgOptions(allow_code_before_start_addr=True))
+    assert not hasattr(cfg, "region_texts")
+    texts = cfg._region_texts()
+    assert isinstance(texts, dict) and len(texts) > 0
 
 
 def test_build_cfg_leaves_lifter_reusable(x86_memory_elf):
@@ -70,6 +102,6 @@ def test_build_cfg_leaves_lifter_reusable(x86_memory_elf):
 
     # The first Cfg must still render even after the Lifter was reused
     # (both Cfgs borrow the same owned Sleigh through the Lifter).
-    html1 = cfg1.html_str()
+    html1 = cfg1.to_html()
     assert isinstance(html1, str)
     assert len(html1) > 0

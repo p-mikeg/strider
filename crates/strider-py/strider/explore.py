@@ -323,14 +323,18 @@ class _CfgVisualizer:
         self._cfg = cfg
         # Disassembly text per region, built once (Sleigh-backed — not
         # cheap per call) and reused for every text search.
-        self._texts = cfg.region_texts()
+        self._texts = cfg._region_texts()
 
     def entry(self):
         return self._cfg.entry()
 
     def dot(self, center, depth, raw):
-        if raw:
-            return self._cfg.raw_neighborhood_dot(center, depth=depth)
+        # Cfg no longer exposes a raw (structure-faithful) neighborhood
+        # view (that lives on Function, over IR node ids — a different
+        # id space than a CFG region index, so it isn't a drop-in
+        # replacement here). Fall back to the pretty render for both
+        # modes; the "raw" toggle is a no-op for a Cfg-backed visualizer.
+        del raw
         return self._cfg.neighborhood_dot(center, depth=depth)
 
     def search(self, query):

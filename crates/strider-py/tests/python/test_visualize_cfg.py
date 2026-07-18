@@ -25,9 +25,15 @@ def test_visualize_cfg_serves_neighborhood_and_search():
     _serve_bg("cfg", 8931)
     entry = int(_get(8931, "/entry"))
     pretty = _get(8931, f"/dot?center={entry}&depth=1&raw=0")
+    # `Cfg` dropped its raw (structure-faithful) neighborhood view as part
+    # of the renderer-method unification (`Cfg.raw_neighborhood_dot` was
+    # removed — the raw view lives on `Function`, over IR node ids, a
+    # different id space than a CFG region index). The explorer's "raw"
+    # toggle is now a no-op for a Cfg-backed visualizer: both modes render
+    # the same pretty neighborhood.
     raw = _get(8931, f"/dot?center={entry}&depth=1&raw=1")
     assert "#ffcc00" in pretty              # center highlighted
-    assert f"n{entry}" in raw               # raw uses region-index ids
+    assert raw == pretty
     # address search centers the containing block
     res = json.loads(_get(8931, "/pattern?q=0x1000"))
     assert res.get("center") is not None or res.get("highlight") is not None

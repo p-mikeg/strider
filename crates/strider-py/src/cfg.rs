@@ -73,9 +73,9 @@ impl PyCfg {
     /// Borrow the parent `Lifter`'s owned `Sleigh`, build a `GraphDot` over
     /// this CFG at `style`, and dispatch to `op`.  Centralises the
     /// `with_sleigh` + `GraphDot::new` + terminal-render skeleton shared by
-    /// `to_html` / `to_dot` / `html_str` (mirrors `PyLifter::dispatch_dot`).
-    /// `style` is already resolved by each caller so their exact per-method
-    /// defaults are preserved.
+    /// `to_html` / `to_dot` (mirrors `PyLifter::dispatch_dot`).  `style` is
+    /// already resolved by each caller so their exact per-method defaults
+    /// are preserved.
     fn dispatch_dot(
         &self,
         py: Python<'_>,
@@ -97,6 +97,7 @@ impl PyCfg {
                     .as_html_from_dot()
                     .map(CfgDotResult::Html)
                     .map_err(into_strider_err),
+                CfgDotOp::DotStr => d.as_dot().map(CfgDotResult::Dot).map_err(into_strider_err),
             }
         })
     }
@@ -136,20 +137,23 @@ impl PyCfg {
 
 /// Discriminator for [`PyCfg::dispatch_dot`], mirroring
 /// [`crate::strider_cls`]'s `DotOp`.  Each variant carries the per-op
-/// arguments the public `to_html` / `to_dot` / `html_str` accessors would
-/// otherwise duplicate the sleigh-borrow / dumper-construction ritual for.
+/// arguments the public `to_html` / `to_dot` accessors would otherwise
+/// duplicate the sleigh-borrow / dumper-construction ritual for.
 enum CfgDotOp<'a> {
     ToHtml(&'a str),
     ToDot(&'a str),
     HtmlStr,
+    DotStr,
 }
 
 /// Return shape of [`PyCfg::dispatch_dot`].  Returning a sum lets a single
 /// helper cover both the unit-returning dump methods and the
-/// string-returning `html_str` without separate variants per dispatch.
+/// string-returning `HtmlStr`/`DotStr` ops without separate variants per
+/// dispatch.
 enum CfgDotResult {
     Unit,
     Html(String),
+    Dot(String),
 }
 
 #[pymethods]
@@ -163,30 +167,40 @@ impl PyCfg {
         visit.call(&self.lifter)
     }
 
-    /// Render the CFG to a standalone HTML file at `path`.  `style`
-    /// selects the dot theme (default `"dark_cfg"`).
-    #[pyo3(signature = (path, style=None))]
-    fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
-        let style = style.unwrap_or("dark_cfg");
-        self.dispatch_dot(py, style, CfgDotOp::ToHtml(path))
-            .map(|_| ())
+    /// Render the CFG to DOT. Returns the DOT string when `path` is
+    /// `None`, otherwise writes it to `path` and returns `None`.
+    #[pyo3(signature = (path=None))]
+    fn to_dot(&self, py: Python<'_>, path: Option<&str>) -> PyResult<Option<String>> {
+        match path {
+            Some(p) => self
+                .dispatch_dot(py, "dark_cfg", CfgDotOp::ToDot(p))
+                .map(|_| None),
+            None => match self.dispatch_dot(py, "dark_cfg", CfgDotOp::DotStr)? {
+                CfgDotResult::Dot(s) => Ok(Some(s)),
+                _ => Ok(None),
+            },
+        }
     }
-    /// Render the CFG to a Graphviz `.dot` file at `path`.
-    #[pyo3(signature = (path,))]
-    fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
-        self.dispatch_dot(py, "dark_cfg", CfgDotOp::ToDot(path))
-            .map(|_| ())
-    }
-    /// Return the CFG rendered as an HTML string (default `"dark_cfg"`
-    /// style) instead of writing it to a file.
-    #[pyo3(signature = (style=None))]
-    fn html_str(&self, py: Python<'_>, style: Option<&str>) -> PyResult<String> {
+
+    /// Render the CFG to a standalone HTML page. Returns the HTML string
+    /// when `path` is `None`, otherwise writes it and returns `None`.
+    /// `style` selects the dot theme (default `"dark_cfg"`).
+    #[pyo3(signature = (path=None, style=None))]
+    fn to_html(
+        &self,
+        py: Python<'_>,
+        path: Option<&str>,
+        style: Option<&str>,
+    ) -> PyResult<Option<String>> {
         let style = style.unwrap_or("dark_cfg");
-        match self.dispatch_dot(py, style, CfgDotOp::HtmlStr)? {
-            CfgDotResult::Html(s) => Ok(s),
-            CfgDotResult::Unit => Err(into_strider_err(anyhow::anyhow!(
-                "internal: CfgDotOp::HtmlStr returned CfgDotResult::Unit"
-            ))),
+        match path {
+            Some(p) => self
+                .dispatch_dot(py, style, CfgDotOp::ToHtml(p))
+                .map(|_| None),
+            None => match self.dispatch_dot(py, style, CfgDotOp::HtmlStr)? {
+                CfgDotResult::Html(s) => Ok(Some(s)),
+                _ => Ok(None),
+            },
         }
     }
 
@@ -270,21 +284,6 @@ impl PyCfg {
         })
     }
 
-    /// Structure-faithful neighborhood DOT around region `center` (no
-    /// Sleigh — one `n<idx>` box per region, edges as stored).
-    #[pyo3(signature = (center, depth=5, max_nodes=60))]
-    fn raw_neighborhood_dot(
-        &self,
-        center: u32,
-        depth: usize,
-        max_nodes: usize,
-    ) -> PyResult<String> {
-        let node = strider_cfg::RegionId::new(center as usize);
-        self.inner
-            .raw_neighborhood_dot(node, depth, max_nodes)
-            .map_err(into_strider_err)
-    }
-
     /// Disassembly text for every region, keyed by region index — the
     /// text-search corpus for the CFG explorer's search bar
     /// (`_CfgVisualizer.search` in `explore.py`). Mirrors the dot
@@ -292,6 +291,7 @@ impl PyCfg {
     /// region, each instruction's `ctx_fmt(sleigh, &regs)`, joined here
     /// with `"\n"` (the dot renderer uses `"\\l"`, a DOT-label
     /// left-justified newline — not meaningful outside a label string).
+    #[pyo3(name = "_region_texts")]
     fn region_texts(&self, py: Python<'_>) -> PyResult<HashMap<u32, String>> {
         self.with_sleigh(py, |sleigh| {
             let regs = sleigh
