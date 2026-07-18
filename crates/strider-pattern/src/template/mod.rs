@@ -65,7 +65,7 @@ pub enum TemplateKind {
     /// Dynamic-kind closure variant. The closure receives a
     /// [`TemplateCtx`] — exposing the captured LHS [`Bindings`], the
     /// matched-root `NodeId` / output type, and a shared
-    /// [`Function`](strider_ir::Function) — and returns the `NodeKind` to materialise. Used
+    /// [`Function`] — and returns the `NodeKind` to materialise. Used
     /// by the `*_const_with` family of builders to emit constants whose
     /// value is computed from captured operand values at rewrite time.
     Fn(TemplateKindFn),
@@ -86,7 +86,7 @@ pub enum TemplateTy {
     InheritRoot,
     /// Inherit the width of a **bound LHS capture**, resolved at
     /// instantiation time from the value the capture matched.  Binding-relative
-    /// (not root-relative like [`InheritRoot`]): use it when a materialised
+    /// (not root-relative like `InheritRoot`): use it when a materialised
     /// interior node's width comes from a captured operand that the rewrite
     /// root's shape does not expose — e.g. the `And(x, mask)` / mask in
     /// `Sless(x<<C, 0) → Xor(Equal(And(x,mask),0),1)`, whose `I1` `Xor` root has

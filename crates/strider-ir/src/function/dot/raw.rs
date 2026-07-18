@@ -221,7 +221,7 @@ impl Function {
     }
 
     /// Raw, structure-faithful render of the depth-`depth` neighborhood around
-    /// `center` (see [`RawFunctionDumper::neighborhood_dot`]). The scale-safe
+    /// `center` (see `RawFunctionDumper::neighborhood_dot`). The scale-safe
     /// debug counterpart to the pretty explorer view — no Sleigh needed.
     ///
     /// # Errors

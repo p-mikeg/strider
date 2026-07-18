@@ -128,7 +128,7 @@ impl<'f> Matcher<'f> {
     /// A root can match in more than one way — most often a commutative node
     /// whose two operands each satisfy a captured sub-pattern. Every DISTINCT
     /// way is yielded, deduplicated by the capture-to-binding map (see
-    /// [`Bindings::binding_signature`]): `add(var(x), var(x))` matched swapped
+    /// `Bindings::binding_signature`): `add(var(x), var(x))` matched swapped
     /// binds `x` identically and is ONE match, while `add(any().capture(k),
     /// any())` binds `k` to each operand in turn and is TWO. A pattern with no
     /// captures on commutative operands therefore never duplicates. Ordering is
@@ -464,7 +464,7 @@ impl<'f> Matcher<'f> {
 /// A CFG relation between captured entities, applied by
 /// [`Matcher::find_joined_constrained`] as a post-correlation filter over
 /// joined tuples. Each captured entity is resolved to a [`CtrlKey`] by WHAT IT
-/// BOUND (see [`ConstraintEval::ctrl_key_of`]): a control-output capture (e.g.
+/// BOUND (see `ConstraintEval::ctrl_key_of`): a control-output capture (e.g.
 /// via [`IfPat::capture_true`](crate::IfPat::capture_true)) resolves to a
 /// `CtrlKey::Edge`, any other capture to a `CtrlKey::Node` (a value's producer).
 /// `PhiInputFromEdge` uses the branch-edge value directly.
@@ -477,7 +477,7 @@ pub enum JoinConstraint {
     /// The entity bound to `dominator` dominates the entity bound to
     /// `dominated` in the control subgraph. Each operand is resolved to a
     /// node-or-edge by WHAT IT CAPTURED (see
-    /// [`ConstraintEval::ctrl_key_of`]): a capture that bound a CONTROL value
+    /// `ConstraintEval::ctrl_key_of`): a capture that bound a CONTROL value
     /// (e.g. via [`IfPat::capture_true`](crate::IfPat::capture_true)) is an
     /// EDGE, any other capture is a NODE (a value's producer). A capture with no
     /// control-flow position fails it.
@@ -513,7 +513,7 @@ pub enum JoinConstraint {
     /// A predecessor qualifies when `edge` dominates its control input as an
     /// EDGE — every path traversing that predecessor first traversed `edge`.
     /// This covers both the direct case (`edge` IS the region's control input;
-    /// see [`ConstraintEval::phi_arms_from_edge`] on why that is a zero-length
+    /// see `ConstraintEval::phi_arms_from_edge` on why that is a zero-length
     /// path rather than a special case) and an arm merged across intervening
     /// control — a `Call`, or a whole guarded loop.
     ///
@@ -536,7 +536,7 @@ pub enum JoinConstraint {
     ///     a constraint mentioning a capture NO pattern binds — that could never
     ///     be satisfied, and under `Not` would match everything.
     ///   * BOUND-ness (per-tuple): evaluation is three-valued (see
-    ///     [`ConstraintEval::passes`]). An unbound capture in THIS row makes
+    ///     `ConstraintEval::passes`). An unbound capture in THIS row makes
     ///     `inner` return `None`, and `Not(None) == None` drops the row — never
     ///     the vacuous `true` a two-valued `!false` would produce.
     Not(Box<JoinConstraint>),

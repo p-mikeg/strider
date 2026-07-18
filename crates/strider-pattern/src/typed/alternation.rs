@@ -36,12 +36,12 @@ use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{MatcherBuilder, PatValueRef};
 
 /// A boxed, type-erased alternative — one entry of a [`OneOf`]. Produced by
-/// [`boxed_alt`]; you normally build these through the [`one_of!`] macro rather
+/// `boxed_alt`; you normally build these through the `one_of!` macro rather
 /// than by hand.
 pub type BoxedAlt = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>;
 
 /// An alternation over several match-side sub-patterns. Build it with the
-/// [`one_of!`] macro (`one_of![a, b, c]`); it lowers to a single alternation
+/// `one_of!` macro (`one_of![a, b, c]`); it lowers to a single alternation
 /// node the matcher tries each alternative against. Match-only — there is no
 /// template counterpart (a rewrite RHS must build one concrete shape, not
 /// choose among several).
@@ -51,7 +51,7 @@ pub struct OneOf {
 
 impl OneOf {
     /// Build an alternation from already-boxed alternatives. Prefer the
-    /// [`one_of!`] macro, which boxes each pattern for you. An empty list
+    /// `one_of!` macro, which boxes each pattern for you. An empty list
     /// matches nothing.
     pub fn new(alts: Vec<BoxedAlt>) -> Self {
         Self { alts }
