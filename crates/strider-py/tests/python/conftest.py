@@ -105,7 +105,7 @@ def built_lifter_and_function(
 def built_function(arch_name: str, case: str, symbol: str, *, optimize: bool = True):
     """Like `built_lifter_and_function`, but returns just the `Function`
     for callers that only need Sleigh-free reads (pattern queries,
-    `node_count`, `raw_dot_str`, ...)."""
+    `node_count`, `to_dot`, ...)."""
     _lift, function = built_lifter_and_function(
         arch_name, case, symbol, optimize=optimize
     )

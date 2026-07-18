@@ -119,7 +119,7 @@ impl PyFunction {
 }
 
 /// Write `contents` to `path`, mapping any I/O error to a `StriderError`.
-/// Shared by the `to_raw_dot` / `to_raw_html` file-dump methods.
+/// Shared by the `to_dot` / `to_html` file-dump paths.
 fn write_to(path: &str, contents: String) -> PyResult<()> {
     std::fs::write(path, contents).map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
 }
@@ -144,35 +144,40 @@ impl PyFunction {
         self.cfg.clone_ref(py)
     }
 
-    /// Render the graph **exactly as stored** to a Graphviz `.dot` string:
-    /// one node per `NodeId` (every arena node, incl. detached ones), one
-    /// edge per input edge, side-tables (stack offset, phi tag, asm
-    /// fingerprints, call-other name, clobber override, arg index) shown
-    /// inline.  No constant inlining, virtual nodes, or commutative
-    /// reordering — a debugging view of the real graph shape, distinct from
-    /// the pretty `to_dot`/`html_str`.
-    fn raw_dot_str(&self) -> PyResult<String> {
-        self.with_read_value(strider_ir::Function::raw_dot)?
-            .map_err(crate::errors::into_strider_err)
+    /// Render the graph **exactly as stored** to DOT: one node per
+    /// `NodeId` (every arena node, incl. detached ones), one edge per
+    /// input edge, side-tables (stack offset, phi tag, asm fingerprints,
+    /// call-other name, clobber override, arg index) shown inline.  No
+    /// constant inlining, virtual nodes, or commutative reordering — a
+    /// debugging view of the real graph shape, distinct from the pretty
+    /// `Lifter.dump_dot`/`html_str`.  Returns the string when `path` is
+    /// `None`, else writes it to `path` and returns `None`.
+    #[pyo3(signature = (path=None))]
+    fn to_dot(&self, path: Option<&str>) -> PyResult<Option<String>> {
+        let s = self.with_read_value(strider_ir::Function::raw_dot)?
+            .map_err(crate::errors::into_strider_err)?;
+        match path {
+            Some(p) => {
+                write_to(p, s)?;
+                Ok(None)
+            }
+            None => Ok(Some(s)),
+        }
     }
 
-    /// Like `raw_dot_str` but wraps the DOT in a self-contained HTML page
+    /// Like `to_dot` but wraps the DOT in a self-contained HTML page
     /// (embedded viz.js; no external `dot` binary needed).
-    fn raw_html_str(&self) -> PyResult<String> {
-        self.with_read_value(strider_ir::Function::raw_html)?
-            .map_err(crate::errors::into_strider_err)
-    }
-
-    /// Write the raw (as-stored) Graphviz `.dot` rendering to `path`.
-    /// See `raw_dot_str` for what "raw" means.
-    fn to_raw_dot(&self, path: &str) -> PyResult<()> {
-        write_to(path, self.raw_dot_str()?)
-    }
-
-    /// Write the raw (as-stored) standalone HTML rendering to `path`.
-    /// See `raw_dot_str` for what "raw" means.
-    fn to_raw_html(&self, path: &str) -> PyResult<()> {
-        write_to(path, self.raw_html_str()?)
+    #[pyo3(signature = (path=None))]
+    fn to_html(&self, path: Option<&str>) -> PyResult<Option<String>> {
+        let s = self.with_read_value(strider_ir::Function::raw_html)?
+            .map_err(crate::errors::into_strider_err)?;
+        match path {
+            Some(p) => {
+                write_to(p, s)?;
+                Ok(None)
+            }
+            None => Ok(Some(s)),
+        }
     }
 
     /// Returns the number of node ids in the IR arena — every allocated
@@ -196,7 +201,7 @@ impl PyFunction {
     /// Needs no Sleigh, so it lives on `Function`; the debug view for when the
     /// pretty output can't be trusted.
     #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60))]
-    fn raw_neighborhood_dot(
+    fn neighborhood_dot(
         &self,
         center: u32,
         depth: usize,

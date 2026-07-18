@@ -304,7 +304,7 @@ class _IrVisualizer:
         if raw:
             # Structure-faithful view for when the pretty output can't be
             # trusted (no Sleigh needed → on the Function).
-            return self._fn.raw_neighborhood_dot(center, depth=depth)
+            return self._fn.neighborhood_dot(center, depth=depth)
         return self._lifter.neighborhood_dot(self._fn, center, depth=depth)
 
     def search(self, query):
