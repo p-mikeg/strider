@@ -171,6 +171,16 @@ pub trait Optimizer: OptimizerClone {
         edit: &mut crate::EditFunction<'_>,
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<OptimizationResult>;
+
+    /// Human-readable pass name — the concrete struct's short name.
+    /// Defaulted via `type_name` so no pass has to implement it; override
+    /// only if a pass wants a name that differs from its struct name.
+    fn name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+            .rsplit("::")
+            .next()
+            .unwrap_or("UnknownPass")
+    }
 }
 
 /// Run a single pass against `function` through a throwaway self-cleaning
@@ -292,6 +302,16 @@ pub trait PostOptimizer: PostOptimizerClone {
     /// Returns the first error encountered by the pass, propagated up through
     /// `anyhow::Error`.
     fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()>;
+
+    /// Human-readable post-pass name — the concrete struct's short name.
+    /// Defaulted via `type_name` so no post-pass has to implement it; override
+    /// only if a post-pass wants a name that differs from its struct name.
+    fn name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+            .rsplit("::")
+            .next()
+            .unwrap_or("UnknownPass")
+    }
 }
 
 clone_box_shim! {
@@ -446,7 +466,7 @@ mod tests {
 
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::OptCtx;
+    use super::{OptCtx, Optimizer};
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
     use strider_ir_test_utils::IrBuilderEx;
@@ -719,5 +739,13 @@ mod tests {
             function.walk().count()
         );
         Ok(())
+    }
+
+    /// ConstantFold implements Optimizer; its default name() returns its
+    /// struct name.
+    #[test]
+    fn optimizer_name_is_the_concrete_struct_name() {
+        let p: Box<dyn Optimizer> = Box::new(crate::opt::constant_fold::ConstantFold::default());
+        assert_eq!(p.name(), "ConstantFold");
     }
 }
