@@ -24,7 +24,7 @@ pub(crate) enum CcImpl {
 /// A calling convention.  Construct via a preset classmethod (e.g.
 /// `CallingConvention.x86_64_systemv()`) or `CallingConvention.custom(...)`
 /// for a binary whose ABI matches no built-in preset.
-#[pyclass(name = "CallingConvention", module = "strider", frozen)]
+#[pyclass(name = "CallingConvention", module = "strider.sleigh", frozen)]
 #[derive(Clone)]
 pub struct PyCallingConvention {
     pub(crate) inner: CcImpl,

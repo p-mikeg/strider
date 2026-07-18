@@ -37,7 +37,7 @@ use crate::function::PyFunction;
 /// subsequent arena-reshuffling op (`Function.compact`, `optimize`, …)
 /// bumps the counter; every accessor then raises a `StriderError` rather
 /// than dereferencing a stale node id.
-#[pyclass(name = "Node", module = "strider", unsendable)]
+#[pyclass(name = "Node", module = "strider.ir", unsendable)]
 pub struct PyNode {
     pub(crate) function: Py<PyFunction>,
     /// Raw arena index of the node this handle points at.

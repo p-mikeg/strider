@@ -9,7 +9,7 @@ use crate::macros::forall_preset;
 /// A target architecture description (Sleigh `.sla` + `.pspec` +
 /// endianness).  Construct via one of the preset classmethods, e.g.
 /// `SleighArch.x86_64()`.
-#[pyclass(name = "SleighArch", module = "strider", frozen)]
+#[pyclass(name = "SleighArch", module = "strider.sleigh", frozen)]
 #[derive(Clone)]
 pub struct PySleighArch {
     pub(crate) inner: strider_target::SleighArch,

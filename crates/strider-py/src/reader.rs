@@ -53,7 +53,7 @@ pub(crate) struct PyBufferReaderInner {
 /// `Send + Sync` reader take a `PyBufferReaderView` snapshot instead
 /// (see `reader_view`), so the surface pyclass doesn't need to be
 /// thread-safe.
-#[pyclass(name = "BufferReader", module = "strider", unsendable)]
+#[pyclass(name = "BufferReader", module = "strider.reader", unsendable)]
 #[derive(Clone)]
 pub struct PyBufferReader {
     /// `Rc` so a `BufferReader` clone shares state with the original —
@@ -257,7 +257,7 @@ fn elf_to_rom_regions(
 /// internal-by-convention: construct it via `strider.load_elf(path,
 /// from_segments=...)` and reach for `ElfLifter` for the user-facing
 /// surface.
-#[pyclass(name = "_LoadedElf", module = "strider", unsendable)]
+#[pyclass(name = "_LoadedElf", module = "strider.reader", unsendable)]
 pub struct PyLoadedElf {
     /// Loaded ELF objects, in `load_elf` / `add_elf` insertion order.
     /// Each [`strider_reader::OwnedElf`] owns its backing bytes and frees
@@ -507,7 +507,7 @@ pub fn load_elf_from_sections(path: &str, apply_relocations: bool) -> PyResult<P
 ///
 /// Performance note: each `read` crosses the Rust↔Python boundary.
 /// Use `BufferReader` for the in-process fast path when you can.
-#[pyclass(name = "MemReader", module = "strider", subclass)]
+#[pyclass(name = "MemReader", module = "strider.reader", subclass)]
 pub struct PyMemReader;
 
 #[pymethods]
@@ -655,7 +655,7 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
 /// override `read(addr, size) -> Optional[bytes]` returning the `size`
 /// RAW bytes at `addr` (NO endianness swap — the optimizer decodes per
 /// the run's arch endianness) or `None` for unmapped.
-#[pyclass(name = "ReadOnlyMemory", module = "strider", subclass)]
+#[pyclass(name = "ReadOnlyMemory", module = "strider.reader", subclass)]
 pub struct PyReadOnlyMemory;
 
 #[pymethods]
@@ -886,7 +886,8 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // that `_api.py` wraps inside an `ElfLifter`.
     m.add_class::<PyMemReader>()?;
     m.add_class::<PyReadOnlyMemory>()?;
-    m.add_function(wrap_pyfunction!(load_elf_from_segments, m)?)?;
-    m.add_function(wrap_pyfunction!(load_elf_from_sections, m)?)?;
+    // The `load_elf_from_segments` / `load_elf_from_sections` seams are
+    // registered on the TOP-LEVEL module (in `lib.rs`), not here, so the
+    // pure-Python facade reaches them via `_ext._load_elf_from_*`.
     Ok(())
 }

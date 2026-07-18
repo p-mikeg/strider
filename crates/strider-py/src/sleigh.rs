@@ -22,7 +22,7 @@ use crate::reader::{AnyMemReader, MemInput};
 /// public `strider.Sleigh` class — a standalone register-table lookup
 /// independent of any `Lifter`, constructed directly via
 /// `strider.Sleigh(arch, mem)`.
-#[pyclass(name = "Sleigh", module = "strider")]
+#[pyclass(name = "Sleigh", module = "strider.sleigh")]
 pub struct PySleigh {
     pub(crate) arch_name: &'static str,
     /// Cached register table, probed once at construction.  Backs
@@ -109,7 +109,7 @@ impl PySleigh {
 // unchanged — the hand-written `pattern.pyi` already documents the
 // surface.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
-#[pyclass(name = "VnSpace", module = "strider", frozen)]
+#[pyclass(name = "VnSpace", module = "strider.sleigh", frozen)]
 #[derive(Clone, Copy)]
 pub struct PyVnSpace {
     pub(crate) inner: rsleigh::VnSpace,
@@ -205,7 +205,7 @@ impl PyVnSpace {
 // method-argument type from a stub-gen-instrumented impl needs the
 // derive even if its surface is hand-written in `pattern.pyi`.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
-#[pyclass(name = "Vn", module = "strider", frozen)]
+#[pyclass(name = "Vn", module = "strider.sleigh", frozen)]
 #[derive(Clone, Copy)]
 pub struct PyVn {
     pub(crate) inner: rsleigh::Vn,

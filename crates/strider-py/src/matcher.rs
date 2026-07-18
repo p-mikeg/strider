@@ -26,7 +26,7 @@ use crate::pattern::{PyCapture, intern_str};
 /// subsequent capture accessor returns a typed `StriderError` rather
 /// than silently dereferencing a stale `ValueId` on the
 /// post-bump arena.
-#[pyclass(name = "Match", module = "strider", unsendable)]
+#[pyclass(name = "Match", module = "strider.pattern", unsendable)]
 pub struct PyMatch {
     /// The per-input-pattern sub-matches (non-empty).  A single-pattern
     /// query yields a one-element vec; a list (join) query yields one entry

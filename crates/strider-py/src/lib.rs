@@ -99,19 +99,53 @@ fn _strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     force_anyhow_backtrace_capture();
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(pyo3::wrap_pyfunction!(viz_standalone_js, m)?)?;
+    // The `_load_elf_*` seams stay on the top-level module so the pure-Python
+    // facade (`_api.py`) reaches them via `_ext._load_elf_from_segments`; they
+    // are underscore/private-intent and never enter `strider.__all__`.
+    m.add_function(pyo3::wrap_pyfunction!(reader::load_elf_from_segments, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(reader::load_elf_from_sections, m)?)?;
+    // StriderError is the one cross-cutting symbol kept at the top level.
     errors::register(py, m)?;
-    arch::register(py, m)?;
-    cc::register(py, m)?;
-    reader::register(py, m)?;
-    sleigh::register(py, m)?;
-    cfg::register(py, m)?;
-    function::register(py, m)?;
-    node::register(py, m)?;
-    strider_cls::register(py, m)?;
-    options::register(py, m)?;
-    opt::register(py, m)?;
-    pattern::register(py, m)?;
-    template::register(py, m)?;
-    matcher::register(py, m)?;
+
+    // Every domain submodule is created here and passed into the per-domain
+    // `register` fns, which only add their classes/functions to the module
+    // they are handed — lib.rs owns the submodule graph.
+    let sleigh = PyModule::new_bound(py, "sleigh")?;
+    sleigh::register(py, &sleigh)?;
+    arch::register(py, &sleigh)?;
+    cc::register(py, &sleigh)?;
+    m.add_submodule(&sleigh)?;
+
+    let reader = PyModule::new_bound(py, "reader")?;
+    reader::register(py, &reader)?;
+    m.add_submodule(&reader)?;
+
+    let cfg = PyModule::new_bound(py, "cfg")?;
+    cfg::register(py, &cfg)?;
+    options::register_cfg(py, &cfg)?;
+    m.add_submodule(&cfg)?;
+
+    let ir = PyModule::new_bound(py, "ir")?;
+    function::register(py, &ir)?;
+    node::register(py, &ir)?;
+    m.add_submodule(&ir)?;
+
+    let lift = PyModule::new_bound(py, "lift")?;
+    strider_cls::register(py, &lift)?;
+    options::register_lift(py, &lift)?;
+    m.add_submodule(&lift)?;
+
+    let opt = PyModule::new_bound(py, "opt")?;
+    opt::register(py, &opt)?;
+    m.add_submodule(&opt)?;
+
+    let pattern = PyModule::new_bound(py, "pattern")?;
+    pattern::register(py, &pattern)?;
+    matcher::register(py, &pattern)?;
+    m.add_submodule(&pattern)?;
+
+    let template = PyModule::new_bound(py, "template")?;
+    template::register(py, &template)?;
+    m.add_submodule(&template)?;
     Ok(())
 }

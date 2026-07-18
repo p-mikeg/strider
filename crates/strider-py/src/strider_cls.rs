@@ -189,7 +189,7 @@ pub(crate) fn prefer_pending_control_flow<T>(result: PyResult<T>) -> PyResult<T>
 /// override entirely in Python, reusing this Rust struct's `#[new]`
 /// constructor via `super().__new__(cls, arch, mem, rom=rom)` (the
 /// standard PyO3 "extra Python state on a Rust base" recipe).
-#[pyclass(name = "Lifter", module = "strider", unsendable, subclass)]
+#[pyclass(name = "Lifter", module = "strider.lift", unsendable, subclass)]
 pub struct PyLifter {
     /// The orchestrator handle: owns the Sleigh, the cached register
     /// table, and the optional rom.  Both `build_cfg` and `analyze` are

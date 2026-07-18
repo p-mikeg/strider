@@ -351,13 +351,14 @@ pub fn extend(op: &str, operand: Py<PyAny>) -> PyResult<PyTemplate> {
 
 // ── Module registration ──────────────────────────────────────────────────
 
-pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new_bound(py, "template")?;
+pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // `m` is the `strider.template` submodule (created + inserted by `lib.rs`):
+    // add the `Template` class and every build free-function directly to it.
     m.add_class::<PyTemplate>()?;
 
     macro_rules! add_fn {
         ($name:ident) => {
-            m.add_function(wrap_pyfunction!($name, &m)?)?;
+            m.add_function(wrap_pyfunction!($name, m)?)?;
         };
     }
     add_fn!(var);
@@ -414,9 +415,5 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(zero_extend);
     add_fn!(sign_extend);
     add_fn!(extend);
-
-    parent.add_submodule(&m)?;
-    let sys = py.import_bound("sys")?;
-    sys.getattr("modules")?.set_item("strider.template", &m)?;
     Ok(())
 }

@@ -166,7 +166,7 @@ impl PipelineState {
 /// thread that created it; revocation on cross-thread access raises
 /// a `RuntimeError` at the Python boundary rather than silently
 /// allowing UB.
-#[pyclass(name = "OptimizerPipeline", module = "strider", unsendable)]
+#[pyclass(name = "OptimizerPipeline", module = "strider.opt", unsendable)]
 pub struct PyOptimizerPipeline {
     state: Mutex<PipelineState>,
 }
@@ -472,9 +472,10 @@ impl PyOptPass {
     }
 }
 
-pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    parent.add_class::<PyOptimizerPipeline>()?;
-    let m = PyModule::new_bound(py, "opt")?;
+pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // `m` is the `strider.opt` submodule (created + inserted by `lib.rs`):
+    // add the pipeline and every pass class directly to it.
+    m.add_class::<PyOptimizerPipeline>()?;
     m.add_class::<PyConstantFold>()?;
     m.add_class::<PyKnownBits>()?;
     m.add_class::<PyPhiCollapse>()?;
@@ -488,8 +489,5 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFunctionArgDetect>()?;
     m.add_class::<PyCallStackArgCollect>()?;
     m.add_class::<PyLoadReadOnly>()?;
-    parent.add_submodule(&m)?;
-    let sys = py.import_bound("sys")?;
-    sys.getattr("modules")?.set_item("strider.opt", &m)?;
     Ok(())
 }

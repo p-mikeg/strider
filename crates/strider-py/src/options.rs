@@ -24,7 +24,7 @@ use crate::strider_cls::{parse_alias_mode, reject_zero_max_size};
 /// Construct with keyword-only arguments; every field defaults to the
 /// Rust struct's own default (`function_max_size=None`,
 /// `allow_code_before_start_addr=False`).
-#[pyclass(name = "CfgOptions", module = "strider")]
+#[pyclass(name = "CfgOptions", module = "strider.cfg")]
 #[derive(Clone, Copy, Default)]
 pub struct PyCfgOptions {
     /// When set, any unconditional branch whose target lies at or past
@@ -70,7 +70,7 @@ impl PyCfgOptions {
 /// Raises `ValueError` for an unrecognised `alias_mode` (see
 /// `strider_cls::parse_alias_mode`) or a nested `function_max_size=0`
 /// (raised by `CfgOptions` itself).
-#[pyclass(name = "LifterOptions", module = "strider")]
+#[pyclass(name = "LifterOptions", module = "strider.lift")]
 pub struct PyLifterOptions {
     /// The nested `CfgOptions` controlling CFG shape (`function_max_size`,
     /// `allow_code_before_start_addr`) — mirrors `strider_lift::LiftOptions.cfg`.
@@ -209,8 +209,14 @@ impl PyLifterOptions {
     }
 }
 
-pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Register `CfgOptions` onto the `strider.cfg` submodule.
+pub fn register_cfg(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCfgOptions>()?;
+    Ok(())
+}
+
+/// Register `LifterOptions` onto the `strider.lift` submodule.
+pub fn register_lift(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLifterOptions>()?;
     Ok(())
 }

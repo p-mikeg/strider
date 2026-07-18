@@ -23,7 +23,7 @@ use crate::cfg::PyCfg;
 /// (not `Arc`) and the `unsendable` pyclass because the workspace is
 /// single-threaded and `Function` is `!Sync` (its SP-decomposition cache is a
 /// `RefCell`); Python access is GIL-serialised regardless.
-#[pyclass(name = "Function", module = "strider", unsendable)]
+#[pyclass(name = "Function", module = "strider.ir", unsendable)]
 pub struct PyFunction {
     pub(crate) inner: Rc<RefCell<strider_ir::Function>>,
     /// Strong reference to the parent Cfg; keeps the Sleigh alive for

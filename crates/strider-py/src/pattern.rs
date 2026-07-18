@@ -3445,8 +3445,10 @@ pub fn float_binary(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<PyFloatBin
 
 // ── Module registration ──────────────────────────────────────────────────
 
-pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new_bound(py, "pattern")?;
+pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // `m` is the `strider.pattern` submodule (created + inserted by `lib.rs`):
+    // add every pattern class/function directly to it, plus the nested
+    // `constraints` sub-submodule.
     m.add_class::<PyCapture>()?;
     m.add_class::<PyPat>()?;
     m.add_class::<PyIntBinaryPat>()?;
@@ -3468,7 +3470,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
 
     macro_rules! add_fn {
         ($name:ident) => {
-            m.add_function(wrap_pyfunction!($name, &m)?)?;
+            m.add_function(wrap_pyfunction!($name, m)?)?;
         };
     }
     add_fn!(any_);
@@ -3571,11 +3573,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(float_un_any);
     add_fn!(float_cmp_any);
 
-    register_constraints(py, &m)?;
-
-    parent.add_submodule(&m)?;
-    let sys = py.import_bound("sys")?;
-    sys.getattr("modules")?.set_item("strider.pattern", &m)?;
+    register_constraints(py, m)?;
     Ok(())
 }
 
@@ -3602,8 +3600,8 @@ fn register_constraints(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResul
     add_fn!(all_of);
 
     parent.add_submodule(&m)?;
-    let sys = py.import_bound("sys")?;
-    sys.getattr("modules")?
-        .set_item("strider.pattern.constraints", &m)?;
+    // The `sys.modules["strider.pattern.constraints"]` entry (needed for
+    // `import strider.pattern.constraints`) is inserted by the package
+    // `__init__.py`, which owns every dotted-path registration.
     Ok(())
 }
