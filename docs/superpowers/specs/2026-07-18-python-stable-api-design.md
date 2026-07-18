@@ -224,6 +224,37 @@ no binder machinery and cannot introduce the filter/binder confusion the
 constraint layer is being kept clear of. Per-match arbitrary logic already
 exists via `.when()`; this fills the *relational* (cross-capture) gap.
 
+## H.1 Vocabulary consistency
+
+Distinct from §C (which unifies redundant *methods*), this fixes public names
+whose *word* contradicts the codebase's canonical vocabulary. The canonical
+terms: the CFG join unit is **Region** (`NodeKind::Region`) — there is no
+"block" type; provenance is **asm fingerprint** (`Function::asm_fingerprint`);
+the analysis address is **entry** (`Entry` node).
+
+**Renames:**
+
+- `Cfg.block_at` → **`Cfg.region_at`**. No "block" type exists; every sibling
+  on `Cfg` already speaks "region". The "block" wording in the
+  `neighborhood_dot` / `region_texts` docstrings and the `explore.py` call
+  site is corrected to "region" in the same change.
+- `Node.fingerprint` → **`Node.asm_fingerprint`**. Aligns with the Rust
+  `Function::asm_fingerprint` and the sibling `Match.asm_fingerprint`, which
+  already uses the full form. (`Cfg.fingerprint_pcode` is untouched — a
+  distinct pcode-mapping verb.)
+
+**Kept deliberately (verified not drift):**
+
+- `ElfLifter.analyze(target)` vs `Lifter.analyze(entry)` — the parameters
+  differ in what they accept (base takes an address; `ElfLifter` also accepts
+  a `str` symbol name, for which `entry` would be wrong). The name split is
+  semantic, not sloppy, so it stays.
+- `addr` vs `SwitchPat.address` — mirrors the Rust `strider-pattern` builders
+  exactly (`memory.rs` = `addr`, `flow.rs` = `address`); unifying Python
+  alone would desync from Rust. Deferred to a Rust-side change, if ever.
+- `RetPat` / `ret` (`Return` is a Rust keyword), `LifterOptions` (named for
+  the `Lifter` it configures), `count_regions` grammar — all justified.
+
 ## I. Runtime-inspection additions (Q4)
 
 - `Node.outputs()` — the missing symmetric counterpart to `Node.inputs()`
@@ -263,7 +294,8 @@ exists via `.when()`; this fills the *relational* (cross-capture) gap.
    churn; do it first so later work lands in final locations).
 3. Q3 cleanups (viz_standalone_js, StriderError, VnSpace constants, load_elf
    collapse, pass enumeration).
-4. Viz/serialization unification (§C) + `Match` alignment (§E).
+4. Viz/serialization unification (§C) + `Match` alignment (§E) + vocabulary
+   renames (§H.1).
 5. Walks (§F) + `Node.outputs()` / ordered iterator (§I).
 6. Pattern DSL completion (§G) + `constraints.user` (§H).
 7. Full gate.
