@@ -48,9 +48,7 @@
 
 mod builder;
 mod control_flow_view;
-pub use control_flow_view::{
-    CtrlKey, control_dominators, control_edge_dominators, dominates, edge_dominates,
-};
+pub use control_flow_view::{CtrlKey, control_dominators, control_edge_dominators, dominates};
 pub mod error;
 mod function;
 #[cfg(any(test, feature = "test-util"))]

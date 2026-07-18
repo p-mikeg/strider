@@ -288,11 +288,8 @@ fn try_match_at(
     // useless for "did this arm match", hence the explicit `reached` flag.
     if nd.alternation {
         let mark = bindings.mark();
-        for &(cap, binding) in cap_bindings.iter().flatten() {
-            if !bindings.bind_capture(cap, binding) {
-                bindings.restore(mark);
-                return false;
-            }
+        if !bind_all_captures(bindings, &cap_bindings) {
+            return false;
         }
         for alt in &inputs {
             let inner = bindings.mark();
@@ -405,11 +402,8 @@ fn try_match_at(
         // this node and everything beneath it.
         let mut finalize = |b: &mut Bindings| -> bool {
             let inner = b.mark();
-            for &(cap, binding) in cap_bindings.iter().flatten() {
-                if !b.bind_capture(cap, binding) {
-                    b.restore(inner);
-                    return false;
-                }
+            if !bind_all_captures(b, &cap_bindings) {
+                return false;
             }
             // Bind captures on this node's SECONDARY (non-anchor) output
             // vertices to the matched IR node's output value at each vertex's
@@ -670,6 +664,24 @@ fn match_assignments(
             false
         }
     }
+}
+
+/// Bind every present capture in `caps` all-or-nothing: on the first rebind
+/// conflict, roll back the captures already bound by THIS call and return
+/// `false`. Allocation-free — it takes its own rollback mark, which (because no
+/// mutation happens between a caller's own mark and this call) restores to the
+/// same point the caller would. The two backtracking sites — the alternation
+/// branch and the `finalize` continuation — bind the same `cap_bindings` pair
+/// this way.
+fn bind_all_captures(b: &mut Bindings, caps: &[Option<(crate::Capture, Binding)>]) -> bool {
+    let mark = b.mark();
+    for &(cap, binding) in caps.iter().flatten() {
+        if !b.bind_capture(cap, binding) {
+            b.restore(mark);
+            return false;
+        }
+    }
+    true
 }
 
 /// The value feeding `ir_node`'s input slot `slot`, or `None` when it has no

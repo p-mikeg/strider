@@ -210,24 +210,6 @@ pub fn control_edge_dominators(
     )
 }
 
-/// Returns `true` if the control edge `edge` dominates `node` — i.e. every path
-/// from the entry to `node` traverses that EDGE.
-///
-/// This is the real relation an edge-operand dominance constraint wants.  It is
-/// strictly stronger than `dominates(consumer(edge), node)`: dominating the edge's
-/// TARGET only implies traversing the edge when the edge is the target's sole
-/// way in.  For `if (c) {} else { X }`, the true edge runs straight into the
-/// join, so the join dominates everything after it while the true edge does not.
-///
-/// `doms` must come from [`control_edge_dominators`].
-pub fn edge_dominates(
-    doms: &petgraph::algo::dominators::Dominators<CtrlKey>,
-    edge: ValueId,
-    node: NodeId,
-) -> bool {
-    dominates(doms, CtrlKey::Edge(edge), CtrlKey::Node(node))
-}
-
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -720,7 +702,7 @@ mod tests {
     /// BOTH arms, so the true edge does NOT dominate it.
     ///
     /// The old node-dominance proxy `dominates(consumer(edge), node)` answers
-    /// TRUE here (a silent false positive); `edge_dominates` answers FALSE.
+    /// TRUE here (a silent false positive); edge-vs-node dominance answers FALSE.
     #[test]
     fn edge_dominates_is_false_past_a_join_with_an_empty_arm() {
         let (f, true_edge, region_j, region_t) = empty_true_arm().expect("empty_true_arm builds");
@@ -747,12 +729,12 @@ mod tests {
 
         // The real relation.
         assert!(
-            !edge_dominates(&split, true_edge, region_t),
+            !dominates(&split, CtrlKey::Edge(true_edge), CtrlKey::Node(region_t)),
             "the tail is past the merge and reachable through BOTH arms, so the \
              true EDGE must not dominate it"
         );
         assert!(
-            !edge_dominates(&split, true_edge, region_j),
+            !dominates(&split, CtrlKey::Edge(true_edge), CtrlKey::Node(region_j)),
             "the join is reachable through the false arm too, so the true edge \
              does not dominate it either"
         );
@@ -776,15 +758,19 @@ mod tests {
         let false_block = f.graph().value_uses(false_edge).next().unwrap().0;
 
         assert!(
-            edge_dominates(&split, true_edge, true_block),
+            dominates(&split, CtrlKey::Edge(true_edge), CtrlKey::Node(true_block)),
             "the true block is in the true block"
         );
         assert!(
-            !edge_dominates(&split, true_edge, false_block),
+            !dominates(&split, CtrlKey::Edge(true_edge), CtrlKey::Node(false_block)),
             "the false block is NOT in the true block"
         );
         assert!(
-            edge_dominates(&split, false_edge, false_block),
+            dominates(
+                &split,
+                CtrlKey::Edge(false_edge),
+                CtrlKey::Node(false_block)
+            ),
             "the false block is in the false block"
         );
 
@@ -803,10 +789,14 @@ mod tests {
             })
             .expect("diamond has a join");
         assert!(
-            !edge_dominates(&split, true_edge, join),
+            !dominates(&split, CtrlKey::Edge(true_edge), CtrlKey::Node(join)),
             "the join is past the merge: no branch edge dominates it"
         );
-        assert!(!edge_dominates(&split, false_edge, join));
+        assert!(!dominates(
+            &split,
+            CtrlKey::Edge(false_edge),
+            CtrlKey::Node(join)
+        ));
     }
 
     /// An edge trivially dominates itself — the zero-length path.  This is what
@@ -831,7 +821,7 @@ mod tests {
         // edge-against-producer(c_i) instead of edge-against-edge would break
         // exactly the direct case.
         assert!(
-            !edge_dominates(&split, true_edge, if_node),
+            !dominates(&split, CtrlKey::Edge(true_edge), CtrlKey::Node(if_node)),
             "an edge cannot dominate its own producer — the If precedes it"
         );
     }
