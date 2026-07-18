@@ -1,6 +1,6 @@
 """strider — Python bindings for the Strider binary analysis pipeline.
 
-The Rust extension is loaded as `strider.strider` (the cdylib) and
+The Rust extension is loaded as `strider._strider` (the cdylib) and
 re-exported into this package's top-level namespace below.
 """
 
@@ -10,9 +10,9 @@ re-exported into this package's top-level namespace below.
 # namespace.
 import importlib as _importlib
 
-_ext = _importlib.import_module("strider.strider")
+_ext = _importlib.import_module("strider._strider")
 
-from .strider import *  # noqa: F401,F403,E402
+from ._strider import *  # noqa: F401,F403,E402
 
 # Hoist the submodules registered by the Rust side into Python so
 # `from strider import opt` works whether the extension was loaded

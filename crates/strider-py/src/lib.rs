@@ -95,7 +95,7 @@ fn viz_standalone_js() -> &'static str {
 }
 
 #[pymodule]
-fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     force_anyhow_backtrace_capture();
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(pyo3::wrap_pyfunction!(viz_standalone_js, m)?)?;

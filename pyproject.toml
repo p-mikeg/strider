@@ -45,7 +45,7 @@ norecursedirs = [".git", ".venv", ".worktrees", "target", "__pycache__"]
 manifest-path = "crates/strider-py/Cargo.toml"
 features = ["pyo3/extension-module"]
 python-source = "crates/strider-py"
-module-name = "strider.strider"
+module-name = "strider._strider"
 include = [
     { path = "crates/strider-py/strider/*.pyi", format = "wheel" },
     # `strider/pattern/` is a stub PACKAGE (`__init__.pyi` + `constraints.pyi`)

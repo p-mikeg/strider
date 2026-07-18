@@ -44,3 +44,13 @@ def test_strider_error_single_home():
         assert False, "strider.errors should not exist"
     except ModuleNotFoundError:
         pass
+
+
+def test_cdylib_is_private():
+    """The native extension is loaded as `strider._strider`, not as a
+    `strider.strider` self-submodule — the self-submodule leak (a module
+    that shadows its own package name) is gone."""
+    import importlib
+
+    importlib.import_module("strider._strider")  # exists
+    assert not hasattr(strider, "strider")  # self-submodule gone

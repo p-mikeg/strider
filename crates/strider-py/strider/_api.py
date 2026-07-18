@@ -55,8 +55,8 @@ from typing import Iterator, Optional, Union
 # wildcard import in `__init__.py` binds into the package namespace.
 import importlib as _importlib
 
-_ext = _importlib.import_module("strider.strider")
-from .strider import (  # noqa: E402
+_ext = _importlib.import_module("strider._strider")
+from ._strider import (  # noqa: E402
     CallingConvention,
     CfgOptions,
     Lifter,
