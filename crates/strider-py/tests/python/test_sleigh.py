@@ -33,12 +33,21 @@ def test_vn_repr_for_register_uses_rsleigh_display():
 
 
 def test_vn_repr_for_const_drops_space_prefix():
-    # CONST-space varnodes (`Vn(VnSpace.const(), off, size)`) are formatted
+    # CONST-space varnodes (`Vn(VnSpace.CONST, off, size)`) are formatted
     # by rsleigh's `Display` as `0x<off>:<size>` — no space prefix and no
     # `[]`, since the offset alone identifies the constant.
-    const_space = strider.VnSpace.const()
+    const_space = strider.VnSpace.CONST
     vn = strider.Vn(const_space, 0x42, 4)
     assert repr(vn) == "0x42:4"
+
+
+def test_vnspace_constants_are_instances_not_callables():
+    from strider import VnSpace  # pre-reorg: `from strider import VnSpace`
+
+    assert isinstance(VnSpace.REGISTER, VnSpace)
+    assert VnSpace.REGISTER == VnSpace.REGISTER
+    assert VnSpace.REGISTER != VnSpace.RAM
+    assert VnSpace.REGISTER.name() == "REGISTER"
 
 
 # ── Hash/eq contract regression tests ─────────────────────────────────────
@@ -47,18 +56,18 @@ def test_vn_repr_for_const_drops_space_prefix():
 def test_vn_space_hash_consistent_with_eq():
     """Regression: PyVnSpace.__hash__ must be a function
     of the inner identity, not the field's stack address.  Two separately
-    constructed VnSpace.ram() objects must hash equally so they work as
+    obtained VnSpace.RAM references must hash equally so they work as
     dict keys / set members.
     """
-    a = strider.VnSpace.ram()
-    b = strider.VnSpace.ram()
-    assert a == b, "two VnSpace.ram() must compare equal"
+    a = strider.VnSpace.RAM
+    b = strider.VnSpace.RAM
+    assert a == b, "two VnSpace.RAM must compare equal"
     assert hash(a) == hash(b), (
         f"equal VnSpaces must hash equally; got hash(a)={hash(a)}, hash(b)={hash(b)}"
     )
     # And they must work as dict / set members.
     d = {a: 1}
-    assert d[b] == 1, "VnSpace.ram() must work as a dict key after fresh construction"
+    assert d[b] == 1, "VnSpace.RAM must work as a dict key after fresh construction"
     s = {a, b}
     assert len(s) == 1, "set of equal VnSpaces must collapse to a single entry"
 
@@ -69,8 +78,8 @@ def test_vn_space_distinct_spaces_compare_unequal():
     byte so RAM and REGISTER end up in different buckets — a quality-of-
     bucketing signal worth pinning.
     """
-    ram = strider.VnSpace.ram()
-    reg = strider.VnSpace.register()
+    ram = strider.VnSpace.RAM
+    reg = strider.VnSpace.REGISTER
     assert ram != reg
     assert hash(ram) != hash(reg)
 
@@ -81,8 +90,8 @@ def test_vn_hash_includes_addr_space():
     bucket.  Without this, `RAM[0x10]:8` and `REGISTER[0x10]:8` would
     collide and hash-table chains would degrade to O(n).
     """
-    ram_vn = strider.Vn(strider.VnSpace.ram(), 0x10, 8)
-    reg_vn = strider.Vn(strider.VnSpace.register(), 0x10, 8)
+    ram_vn = strider.Vn(strider.VnSpace.RAM, 0x10, 8)
+    reg_vn = strider.Vn(strider.VnSpace.REGISTER, 0x10, 8)
     assert ram_vn != reg_vn, "different-space varnodes must compare unequal"
     assert hash(ram_vn) != hash(reg_vn), (
         "Vn.__hash__ must mix in addr_space; otherwise different-space "

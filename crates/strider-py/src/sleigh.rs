@@ -96,12 +96,13 @@ impl PySleigh {
 // ── PyVnSpace + PyVn ────────────────────────────────────────────────
 
 /// One of Sleigh's built-in address spaces.  Frozen pyclass so users
-/// can pass `VnSpace.RAM()` to builder methods that take a space
+/// can pass `VnSpace.RAM` to builder methods that take a space
 /// constraint (`load().space(...)`, `function_arg_stack(...)`, etc.)
 /// without having to thread a `Sleigh` through.
 ///
-/// Strider exposes the four standard Sleigh spaces via the `ram()`,
-/// `register()`, `const()`, and `unique()` classmethods.
+/// Strider exposes the four standard Sleigh spaces as the `RAM`,
+/// `REGISTER`, `CONST`, and `UNIQUE` class constants (`VnSpace`
+/// instances, not callables).
 // `#[gen_stub_pyclass]` derives `PyStubType` for `PyVnSpace` so the
 // macro-emitted `.space(s: PyVnSpace)` signatures compile under
 // `#[gen_stub_pymethods]`.  The existing `#[pymethods]` block below is
@@ -117,30 +118,33 @@ pub struct PyVnSpace {
 #[pymethods]
 impl PyVnSpace {
     /// The RAM (main memory) address space.
-    #[classmethod]
-    fn ram(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn RAM() -> Self {
         Self {
             inner: rsleigh::VnSpace::RAM,
         }
     }
     /// The register address space.
-    #[classmethod]
-    fn register(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn REGISTER() -> Self {
         Self {
             inner: rsleigh::VnSpace::REGISTER,
         }
     }
     /// The constant ("const") address space.
-    #[classmethod]
-    #[pyo3(name = "const")]
-    fn const_(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn CONST() -> Self {
         Self {
             inner: rsleigh::VnSpace::CONST,
         }
     }
     /// The unique (temporary) address space.
-    #[classmethod]
-    fn unique(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn UNIQUE() -> Self {
         Self {
             inner: rsleigh::VnSpace::UNIQUE,
         }

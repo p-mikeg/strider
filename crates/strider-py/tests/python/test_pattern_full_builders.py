@@ -145,12 +145,12 @@ def test_call_other_pat_name_smoke():
 
 
 def test_load_pat_space_constraint_compiles():
-    p = load().space(strider.VnSpace.ram())
+    p = load().space(strider.VnSpace.RAM)
     assert isinstance(p.into_pat(), Pat)
 
 
 def test_store_pat_full_chain():
-    p = store().addr("p").data(int_const(0)).space(strider.VnSpace.ram())
+    p = store().addr("p").data(int_const(0)).space(strider.VnSpace.RAM)
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -223,7 +223,7 @@ def test_function_arg_reg_constructor():
 
 
 def test_function_arg_stack_constructor():
-    p = function_arg_stack(strider.VnSpace.ram(), 16)
+    p = function_arg_stack(strider.VnSpace.RAM, 16)
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -394,18 +394,18 @@ def test_find_all_rejects_both_ignore_casts_options():
 # ── VnSpace + Vn ─────────────────────────────────────────────────────
 
 
-def test_vn_space_classmethods_round_trip():
-    assert strider.VnSpace.ram().name() == "RAM"
-    assert strider.VnSpace.register().name() == "REGISTER"
-    assert strider.VnSpace.const().name() == "CONST"
-    assert strider.VnSpace.unique().name() == "UNIQUE"
+def test_vn_space_constants_round_trip():
+    assert strider.VnSpace.RAM.name() == "RAM"
+    assert strider.VnSpace.REGISTER.name() == "REGISTER"
+    assert strider.VnSpace.CONST.name() == "CONST"
+    assert strider.VnSpace.UNIQUE.name() == "UNIQUE"
     # Equality + hash work.
-    assert strider.VnSpace.ram() == strider.VnSpace.ram()
+    assert strider.VnSpace.RAM == strider.VnSpace.RAM
 
 
 def test_vn_constructor_and_repr():
-    vn = strider.Vn(strider.VnSpace.register(), 0x10, 4)
-    assert vn.space == strider.VnSpace.register()
+    vn = strider.Vn(strider.VnSpace.REGISTER, 0x10, 4)
+    assert vn.space == strider.VnSpace.REGISTER
     assert vn.off == 0x10
     assert vn.size == 4
     # `repr(vn)` delegates to rsleigh's `impl Display for Vn`
