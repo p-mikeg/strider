@@ -1,4 +1,6 @@
-from .conftest import built_function, built_lifter_and_function
+import strider
+
+from .conftest import built_function, built_lifter_and_function, fixture_path
 
 
 def _build_graph():
@@ -9,38 +11,61 @@ def _build_lifter_and_graph():
     return built_lifter_and_function("x86", "memory", "array_sum", optimize=False)
 
 
-def test_pretty_dump_on_lifter():
+def test_pretty_render_on_lifter():
     """Pretty renders need a `Sleigh` (register-name resolution, constant
     inlining, virtual nodes) which only the `Lifter` owns — a bare
-    `Function` has none, so the Sleigh-needing `html_str` accessor stays
-    off it entirely.  `Function.to_dot`/`to_html` DO exist, but they render
-    the raw (as-stored, no-Sleigh) graph — pretty-vs-raw is decided by
-    which object you call, not by the method name."""
+    `Function` has none, so `Lifter.to_html`/`to_dot` are the
+    Sleigh-needing pretty accessors.  `Function.to_dot`/`to_html` DO
+    exist too, but they render the raw (as-stored, no-Sleigh) graph —
+    pretty-vs-raw is decided by which object you call, not by the method
+    name."""
     lift, graph = _build_lifter_and_graph()
-    html = lift.html_str(graph)
+    html = lift.to_html(graph)
     assert isinstance(html, str) and len(html) > 0
-    assert not hasattr(graph, "html_str")
 
 
-def test_lifter_dump_html_writes_file(tmp_path):
+def test_lifter_to_html_writes_file(tmp_path):
     lift, g = _build_lifter_and_graph()
     out = tmp_path / "graph.html"
-    lift.dump_html(g, str(out))
+    assert lift.to_html(g, str(out)) is None
     assert out.exists() and out.stat().st_size > 0
 
 
-def test_lifter_dump_dot_writes_file(tmp_path):
+def test_lifter_to_dot_writes_file(tmp_path):
     lift, g = _build_lifter_and_graph()
     out = tmp_path / "graph.dot"
-    lift.dump_dot(g, str(out))
+    assert lift.to_dot(g, str(out)) is None
     assert out.exists() and out.stat().st_size > 0
 
 
-def test_lifter_html_str_returns_html():
+def test_lifter_to_dot_returns_dot_str():
     lift, g = _build_lifter_and_graph()
-    html = lift.html_str(g)
+    dot = lift.to_dot(g)
+    assert isinstance(dot, str) and "digraph" in dot.lower()
+
+
+def test_lifter_to_html_returns_html_str():
+    lift, g = _build_lifter_and_graph()
+    html = lift.to_html(g)
     assert isinstance(html, str)
     assert "<html" in html.lower() or "svg" in html.lower()
+
+
+def test_lifter_dump_methods_removed():
+    lift, g = _build_lifter_and_graph()
+    del g
+    for gone in ("dump_html", "dump_dot", "html_str"):
+        assert not hasattr(lift, gone)
+
+
+def test_elf_lifter_inherits_to_dot_to_html_not_dump_methods():
+    """`ElfLifter` is a pure-Python `Lifter` subclass, so it inherits
+    `to_dot`/`to_html` from the Rust base and loses `dump_dot`/
+    `dump_html`/`html_str` along with it."""
+    prog = strider.load_elf(str(fixture_path("x86", "memory")))
+    assert hasattr(prog, "to_dot") and hasattr(prog, "to_html")
+    for gone in ("dump_html", "dump_dot", "html_str"):
+        assert not hasattr(prog, gone)
 
 
 def test_graph_node_count_positive():

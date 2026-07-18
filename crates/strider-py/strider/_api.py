@@ -34,8 +34,8 @@ Rust handle) and call its `analyze(addr, cc, ...)`.  Pattern queries
 (`find_all` / `find_unique`) and the addr-only
 `fingerprint`/`asm_fingerprint` live directly on the returned
 `Function`/`Node` (no Sleigh needed); the Sleigh-needing pretty
-renders (`dump_html` / `dump_dot` / `html_str`) live on the `Lifter`
-that produced the function, since it owns the Sleigh.  p-code has two
+renders (`to_dot` / `to_html`) live on the `Lifter` that produced the
+function, since it owns the Sleigh.  p-code has two
 homes: `Cfg.pcode_at` / `Cfg.fingerprint_pcode` (an exact lookup
 against the `Cfg` `analyze` returns — the audit-trail path) and
 `Lifter.pcode_at(entry, addr)` (a linear decode from `entry`, for an

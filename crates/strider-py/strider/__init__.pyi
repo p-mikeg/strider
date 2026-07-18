@@ -317,21 +317,23 @@ class Lifter:
         that pipeline instead, draining it (equivalent to the former
         `Function.optimize(pipeline)`)."""
         ...
-    def dump_html(
-        self, function: Function, path: str, style: Optional[str] = ...
-    ) -> None:
-        """Render `function`'s IR graph to a standalone HTML file at
-        `path`.  Lives on `Lifter` (not `Function`) because the pretty
-        renderer needs the Sleigh the Lifter owns to resolve register
-        names."""
+    def to_dot(self, function: Function, path: Optional[str] = ...) -> Optional[str]:
+        """Render `function`'s IR graph to Graphviz DOT. Returns the DOT
+        string when `path` is `None`, otherwise writes it to `path` and
+        returns `None`.  Lives on `Lifter` (not `Function`) because the
+        pretty renderer needs the Sleigh the Lifter owns to resolve
+        register names."""
         ...
-    def dump_dot(self, function: Function, path: str) -> None:
-        """Render `function`'s IR graph to a Graphviz `.dot` file at
-        `path`."""
-        ...
-    def html_str(self, function: Function, style: Optional[str] = ...) -> str:
-        """Return `function`'s IR graph rendered as an HTML string
-        instead of writing it to a file."""
+    def to_html(
+        self,
+        function: Function,
+        path: Optional[str] = ...,
+        style: Optional[str] = ...,
+    ) -> Optional[str]:
+        """Render `function`'s IR graph to a standalone HTML page.
+        Returns the HTML string when `path` is `None`, otherwise writes
+        it to `path` and returns `None`. `style` selects the dot theme
+        (default `"dark"`)."""
         ...
     def reg(self, name: str) -> Optional[Vn]:
         """Look up a register by Sleigh name; `None` when not a

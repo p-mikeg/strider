@@ -136,7 +136,7 @@ impl PyFunction {
 
     /// The snapshot `Cfg` this function was lifted from — kept alive for
     /// dot rendering (its `Sleigh` resolves register names).  Combine
-    /// with `Lifter.dump_html(function, path)` (or the `Cfg`'s own
+    /// with `Lifter.to_html(function, path)` (or the `Cfg`'s own
     /// `to_html`) for a self-describing render without a separate result
     /// wrapper.
     #[getter(cfg)]
@@ -150,7 +150,7 @@ impl PyFunction {
     /// call-other name, clobber override, arg index) shown inline.  No
     /// constant inlining, virtual nodes, or commutative reordering — a
     /// debugging view of the real graph shape, distinct from the pretty
-    /// `Lifter.dump_dot`/`html_str`.  Returns the string when `path` is
+    /// `Lifter.to_dot`/`to_html`.  Returns the string when `path` is
     /// `None`, else writes it to `path` and returns `None`.
     #[pyo3(signature = (path=None))]
     fn to_dot(&self, path: Option<&str>) -> PyResult<Option<String>> {

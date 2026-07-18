@@ -239,10 +239,9 @@ impl PyLifter {
 
     /// Build a `GraphDot` over `function`'s IR through this Lifter's own
     /// Sleigh and dispatch to `op`.  Centralises the borrow / dumper-
-    /// construction ritual shared by `dump_html` / `dump_dot` /
-    /// `html_str` — the Sleigh-needing pretty renders that moved here
-    /// from `Function` (a bare `Function` has no Sleigh to resolve
-    /// register names with).
+    /// construction ritual shared by `to_html` / `to_dot` — the
+    /// Sleigh-needing pretty renders that moved here from `Function` (a
+    /// bare `Function` has no Sleigh to resolve register names with).
     fn dispatch_dot(
         &self,
         function: &PyFunction,
@@ -266,26 +265,30 @@ impl PyLifter {
                 .as_html_from_dot()
                 .map(DotResult::Html)
                 .map_err(into_strider_err),
+            DotOp::DotStr => d.as_dot().map(DotResult::Dot).map_err(into_strider_err),
         }
     }
 }
 
 /// Discriminator for [`PyLifter::dispatch_dot`].  Each variant carries
-/// the per-op arguments the public accessor `dump_html` / `dump_dot` /
-/// `html_str` would otherwise duplicate the sleigh-borrow / dumper-
-/// construction ritual for.
+/// the per-op arguments the public accessor `to_html` / `to_dot` would
+/// otherwise duplicate the sleigh-borrow / dumper-construction ritual
+/// for.
 enum DotOp<'a> {
     DumpHtml(&'a str),
     DumpDot(&'a str),
     HtmlStr,
+    DotStr,
 }
 
 /// Return shape of [`PyLifter::dispatch_dot`].  Returning a sum lets a
-/// single helper cover both unit-returning dump methods and the
-/// string-returning `html_str` without separate variants per dispatch.
+/// single helper cover both the unit-returning dump ops and the
+/// string-returning `HtmlStr`/`DotStr` ops without separate variants per
+/// dispatch.
 enum DotResult {
     Unit,
     Html(String),
+    Dot(String),
 }
 
 #[pymethods]
@@ -574,35 +577,47 @@ impl PyLifter {
         }
     }
 
-    /// Render `function`'s IR graph to a standalone HTML file at `path`.
-    /// `style` selects the dot theme (default `"dark"`).
+    /// Render `function`'s IR graph to Graphviz DOT. Returns the DOT
+    /// string when `path` is `None`, otherwise writes it to `path` and
+    /// returns `None`.
     ///
     /// Lives on `Lifter` (not `Function`) because the pretty renderer
     /// inlines constants / adds virtual nodes / resolves register names,
     /// all of which need a `Sleigh` — a bare `Function` doesn't carry
-    /// one, but the `Lifter` that produced it does.
-    #[pyo3(signature = (function, path, style=None))]
-    fn dump_html(&self, function: &PyFunction, path: &str, style: Option<&str>) -> PyResult<()> {
-        self.dispatch_dot(function, style, DotOp::DumpHtml(path))
-            .map(|_| ())
+    /// one, but the `Lifter` that produced it does.  (`Function.to_dot`
+    /// renders the graph exactly as stored instead, with no Sleigh.)
+    #[pyo3(signature = (function, path=None))]
+    fn to_dot(&self, function: &PyFunction, path: Option<&str>) -> PyResult<Option<String>> {
+        match path {
+            Some(p) => self
+                .dispatch_dot(function, None, DotOp::DumpDot(p))
+                .map(|_| None),
+            None => match self.dispatch_dot(function, None, DotOp::DotStr)? {
+                DotResult::Dot(s) => Ok(Some(s)),
+                _ => Ok(None),
+            },
+        }
     }
 
-    /// Render `function`'s IR graph to a Graphviz `.dot` file at `path`.
-    #[pyo3(signature = (function, path))]
-    fn dump_dot(&self, function: &PyFunction, path: &str) -> PyResult<()> {
-        self.dispatch_dot(function, None, DotOp::DumpDot(path))
-            .map(|_| ())
-    }
-
-    /// Return `function`'s IR graph rendered as an HTML string (default
-    /// `"dark"` style) instead of writing it to a file.
-    #[pyo3(signature = (function, style=None))]
-    fn html_str(&self, function: &PyFunction, style: Option<&str>) -> PyResult<String> {
-        match self.dispatch_dot(function, style, DotOp::HtmlStr)? {
-            DotResult::Html(s) => Ok(s),
-            DotResult::Unit => Err(into_strider_err(anyhow::anyhow!(
-                "internal: DotOp::HtmlStr returned DotResult::Unit"
-            ))),
+    /// Render `function`'s IR graph to a standalone HTML page. Returns
+    /// the HTML string when `path` is `None`, otherwise writes it to
+    /// `path` and returns `None`. `style` selects the dot theme (default
+    /// `"dark"`).
+    #[pyo3(signature = (function, path=None, style=None))]
+    fn to_html(
+        &self,
+        function: &PyFunction,
+        path: Option<&str>,
+        style: Option<&str>,
+    ) -> PyResult<Option<String>> {
+        match path {
+            Some(p) => self
+                .dispatch_dot(function, style, DotOp::DumpHtml(p))
+                .map(|_| None),
+            None => match self.dispatch_dot(function, style, DotOp::HtmlStr)? {
+                DotResult::Html(s) => Ok(Some(s)),
+                _ => Ok(None),
+            },
         }
     }
 

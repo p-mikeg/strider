@@ -74,5 +74,5 @@ for hit in narrow:
 #    (`prog`, here an `ElfLifter`) owns — that's why it's called on
 #    `prog`, not on `function` directly.
 cfg.to_html("/tmp/quickstart-cfg.html", style="dark_cfg")
-prog.dump_html(function, "/tmp/quickstart-graph.html", style="dark")
+prog.to_html(function, "/tmp/quickstart-graph.html", style="dark")
 print("wrote /tmp/quickstart-cfg.html and /tmp/quickstart-graph.html")
