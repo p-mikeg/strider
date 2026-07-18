@@ -33,3 +33,14 @@ def test_no_import_leaks_at_top_level():
     allowed = {"StriderError", "ir", "lift", "cfg", "sleigh", "reader",
                "opt", "pattern", "template"}
     assert public <= allowed, f"unexpected top-level names: {public - allowed}"
+
+
+def test_viz_standalone_js_is_private():
+    # viz_standalone_js is an internal helper for the explorer's local
+    # server (serves vendored viz.js offline); it must never appear on the
+    # public `strider` surface, and its name on the private `_strider`
+    # cdylib module must be underscore-prefixed too.
+    assert not hasattr(strider, "viz_standalone_js")
+    import strider._strider as _ext
+    assert hasattr(_ext, "_viz_standalone_js")
+    assert not hasattr(_ext, "viz_standalone_js")

@@ -88,8 +88,11 @@ fn force_anyhow_backtrace_capture() {
 pyo3_stub_gen::define_stub_info_gatherer!(stub_info);
 
 /// The vendored viz.js (Graphviz-in-Wasm) source, so the interactive explorer's
-/// local server can serve it and stay fully offline (no CDN).
+/// local server can serve it and stay fully offline (no CDN).  Internal
+/// helper — underscore-prefixed on the Python side so it never leaks onto
+/// the public `strider` surface.
 #[pyfunction]
+#[pyo3(name = "_viz_standalone_js")]
 fn viz_standalone_js() -> &'static str {
     ::dot::viz_standalone_js()
 }
