@@ -504,10 +504,11 @@ impl IfPat {
     /// Bind the If's **true** control-output value (slot 0) to `c`, propagated
     /// into the outer `Match`. Unlike the successor `Region`, this value
     /// survives single-input-region collapse, so it is the stable handle for the
-    /// edge join constraints ([`JoinConstraint::DominatedByBranch`] /
-    /// [`JoinConstraint::PhiInputFromEdge`]) discriminating the true path.
+    /// edge join constraints: a control-output capture resolves to an edge in
+    /// [`JoinConstraint::Dominates`] (giving edge→node and edge→edge dominance)
+    /// and in [`JoinConstraint::PhiInputFromEdge`], discriminating the true path.
     ///
-    /// [`JoinConstraint::DominatedByBranch`]: crate::JoinConstraint::DominatedByBranch
+    /// [`JoinConstraint::Dominates`]: crate::JoinConstraint::Dominates
     /// [`JoinConstraint::PhiInputFromEdge`]: crate::JoinConstraint::PhiInputFromEdge
     pub fn capture_true(mut self, c: Capture) -> Self {
         self.capture_true = Some(c);

@@ -688,8 +688,8 @@ fn negate_over_an_unbound_capture_drops_every_row() {
         .find_joined_constrained(
             &[&operand],
             &[JoinConstraint::Not(Box::new(JoinConstraint::Dominates {
-                a: ph,
-                b: ph,
+                dominator: ph,
+                dominated: ph,
             }))],
         )
         .unwrap()

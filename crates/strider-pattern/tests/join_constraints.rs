@@ -8,7 +8,7 @@
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
-use strider_pattern::{Capture, JoinConstraint, Matcher, call, if_node};
+use strider_pattern::{Capture, JoinConstraint, Matcher, bool_const, call, if_node};
 
 /// Diamond CFG with a `Call` in the true arm (`0xAAAA`), the false arm
 /// (`0xBBBB`), and after the merge (`0xCCCC`). Returns the function + the `If`
@@ -94,7 +94,7 @@ fn empty_true_arm_with_calls() -> strider_ir::Function {
 }
 
 /// THE BUG.  With an empty true arm nothing is in the true block, so
-/// `dominated_by_branch(true_edge, ..)` must select NOTHING.
+/// `dominates(true_edge, ..)` (edge→node) must select NOTHING.
 ///
 /// The old proxy asked "does the edge's TARGET dominate the node?"  Here the
 /// target IS the merge, and the merge dominates the `0xCCCC` call after it — so
@@ -102,7 +102,7 @@ fn empty_true_arm_with_calls() -> strider_ir::Function {
 /// dominance asks the real question ("does every path traverse the EDGE?") and
 /// answers no: `0xCCCC` is reachable through the false arm too.
 #[test]
-fn dominated_by_branch_rejects_calls_past_a_join_with_an_empty_arm() {
+fn dominates_edge_rejects_calls_past_a_join_with_an_empty_arm() {
     let function = empty_true_arm_with_calls();
     let m = Matcher::new(&function);
     let (t, c) = (Capture::new(), Capture::new());
@@ -112,7 +112,10 @@ fn dominated_by_branch_rejects_calls_past_a_join_with_an_empty_arm() {
     let tuples = m
         .find_joined_constrained(
             &[&guard, &callp],
-            &[JoinConstraint::DominatedByBranch { branch: t, node: c }],
+            &[JoinConstraint::Dominates {
+                dominator: t,
+                dominated: c,
+            }],
         )
         .unwrap();
     let addrs: Vec<u64> = tuples
@@ -130,6 +133,131 @@ fn dominated_by_branch_rejects_calls_past_a_join_with_an_empty_arm() {
     );
 }
 
+/// Nested diamond: an OUTER `If(cond=true)` whose true arm holds an INNER
+/// `If(cond=false)`.  The two conditions are distinct constant nodes, so a
+/// `.cond(bool_const(..))`-filtered pattern pins each `If` uniquely.
+///
+/// ```text
+///        outer If(true)
+///        /            \
+///   [true] region_b   [false] region_c
+///     inner If(false)          |
+///      /        \              |
+///  region_d   region_e         |
+///      \        |             /
+///        \      |            /
+///           region_merge (return)
+/// ```
+///
+/// The outer's TRUE edge dominates the inner's true edge (the inner sits
+/// exclusively in the outer's true block); the outer's FALSE edge does not.
+fn nested_diamond() -> strider_ir::Function {
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
+    let region_a = b.create_region_all().unwrap();
+    let region_b = b.create_region_all().unwrap();
+    let region_c = b.create_region_all().unwrap();
+    let region_d = b.create_region_all().unwrap();
+    let region_e = b.create_region_all().unwrap();
+    let region_merge = b.create_region_all().unwrap();
+    b.set_entry_region_all(region_a).unwrap();
+
+    b.set_region(region_a);
+    b.set_lift_addr(Some(0x2000));
+    let outer_cond = b.build_boolean_const(true);
+    b.build_if(outer_cond, region_b, region_c).unwrap();
+    b.set_lift_addr(None);
+
+    b.set_region(region_b); // outer true arm — holds the inner If
+    b.set_lift_addr(Some(0x2010));
+    let inner_cond = b.build_boolean_const(false);
+    b.build_if(inner_cond, region_d, region_e).unwrap();
+    b.set_lift_addr(None);
+
+    for (r, addr) in [
+        (region_d, 0x2020u64),
+        (region_e, 0x2030),
+        (region_c, 0x2040),
+    ] {
+        b.set_region(r);
+        b.set_lift_addr(Some(addr));
+        b.build_branch(region_merge).unwrap();
+        b.set_lift_addr(None);
+    }
+
+    b.set_region(region_merge);
+    b.set_lift_addr(Some(0x2050));
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+
+    b.build().unwrap()
+}
+
+/// EDGE→EDGE dominance, the relation the merged `Dominates` newly exposes to
+/// PUBLIC callers (it was previously trapped inside `phi_input_from_edge`): two
+/// control-output captures resolve to `CtrlKey::Edge`, so `dominates` routes
+/// through the split tree and answers edge-vs-edge.
+#[test]
+fn dominates_edge_over_edge_tracks_nesting() {
+    let function = nested_diamond();
+    let m = Matcher::new(&function);
+    let (t_out, f_out, t_in) = (Capture::new(), Capture::new(), Capture::new());
+    // `.cond(bool_const(..))` pins each If to exactly one node.
+    let outer = if_node()
+        .cond(bool_const(true))
+        .capture_true(t_out)
+        .capture_false(f_out)
+        .build();
+    let inner = if_node().cond(bool_const(false)).capture_true(t_in).build();
+
+    // Outer TRUE edge dominates the inner true edge — inner lives exclusively in
+    // the outer's true block.
+    let dominates_ok = m
+        .find_joined_constrained(
+            &[&outer, &inner],
+            &[JoinConstraint::Dominates {
+                dominator: t_out,
+                dominated: t_in,
+            }],
+        )
+        .unwrap();
+    assert_eq!(
+        dominates_ok.len(),
+        1,
+        "outer true edge dominates the inner true edge"
+    );
+
+    // Outer FALSE edge does NOT dominate the inner true edge (inner is on the
+    // OTHER side of the outer branch).
+    let false_edge = m
+        .find_joined_constrained(
+            &[&outer, &inner],
+            &[JoinConstraint::Dominates {
+                dominator: f_out,
+                dominated: t_in,
+            }],
+        )
+        .unwrap();
+    assert!(
+        false_edge.is_empty(),
+        "outer false edge does not dominate an edge in the true block"
+    );
+
+    // And the inner edge does not dominate the outer edge (the reverse).
+    let reversed = m
+        .find_joined_constrained(
+            &[&outer, &inner],
+            &[JoinConstraint::Dominates {
+                dominator: t_in,
+                dominated: t_out,
+            }],
+        )
+        .unwrap();
+    assert!(
+        reversed.is_empty(),
+        "the inner true edge does not dominate the outer true edge"
+    );
+}
+
 /// The call-target address bound to a joined tuple's `call` match (position 1).
 fn call_addr(tuple: &[strider_pattern::Match], c: Capture, f: &strider_ir::Function) -> u64 {
     let call_node = tuple[1].node(c, f.graph()).expect("call node");
@@ -139,7 +267,7 @@ fn call_addr(tuple: &[strider_pattern::Match], c: Capture, f: &strider_ir::Funct
 }
 
 #[test]
-fn dominated_by_branch_isolates_the_true_arm_in_one_constraint() {
+fn dominates_edge_isolates_the_true_arm_in_one_constraint() {
     let (function, _) = diamond_with_calls();
     let m = Matcher::new(&function);
     let (t, c) = (Capture::new(), Capture::new());
@@ -149,7 +277,10 @@ fn dominated_by_branch_isolates_the_true_arm_in_one_constraint() {
     let tuples = m
         .find_joined_constrained(
             &[&guard, &callp],
-            &[JoinConstraint::DominatedByBranch { branch: t, node: c }],
+            &[JoinConstraint::Dominates {
+                dominator: t,
+                dominated: c,
+            }],
         )
         .unwrap();
     let addrs: Vec<u64> = tuples
@@ -172,7 +303,10 @@ fn dominates_if_selects_all_three_calls() {
     let tuples = m
         .find_joined_constrained(
             &[&guard, &callp],
-            &[JoinConstraint::Dominates { a: g, b: c }],
+            &[JoinConstraint::Dominates {
+                dominator: g,
+                dominated: c,
+            }],
         )
         .unwrap();
     // The If dominates both arms and the merge — every call.
@@ -182,14 +316,17 @@ fn dominates_if_selects_all_three_calls() {
 }
 
 #[test]
-fn negate_inverts_dominated_by_branch() {
+fn negate_inverts_dominates_edge() {
     let (function, _) = diamond_with_calls();
     let m = Matcher::new(&function);
     let (t, c) = (Capture::new(), Capture::new());
     let guard = if_node().capture_true(t).build();
     let callp = call().capture(c).build();
 
-    let inner = JoinConstraint::DominatedByBranch { branch: t, node: c };
+    let inner = JoinConstraint::Dominates {
+        dominator: t,
+        dominated: c,
+    };
     let tuples = m
         .find_joined_constrained(&[&guard, &callp], &[JoinConstraint::Not(Box::new(inner))])
         .unwrap();
@@ -210,7 +347,10 @@ fn double_negation_is_the_identity() {
     let guard = if_node().capture_true(t).build();
     let callp = call().capture(c).build();
 
-    let inner = JoinConstraint::DominatedByBranch { branch: t, node: c };
+    let inner = JoinConstraint::Dominates {
+        dominator: t,
+        dominated: c,
+    };
     let double = JoinConstraint::Not(Box::new(JoinConstraint::Not(Box::new(inner))));
     let tuples = m
         .find_joined_constrained(&[&guard, &callp], &[double])
@@ -237,9 +377,9 @@ fn a_positive_constraint_with_an_unbound_capture_is_rejected_not_silently_empty(
     let err = m
         .find_joined_constrained(
             &[&guard, &callp],
-            &[JoinConstraint::DominatedByBranch {
-                branch: t,
-                node: unbound,
+            &[JoinConstraint::Dominates {
+                dominator: t,
+                dominated: unbound,
             }],
         )
         .err()
@@ -262,9 +402,9 @@ fn negating_an_unbound_capture_is_rejected_not_vacuously_true() {
     // `unbound` is bound by no pattern in the join. A naive negation-as-failure
     // would make this hold VACUOUSLY for every tuple; range restriction must
     // reject it instead.
-    let inner = JoinConstraint::DominatedByBranch {
-        branch: t,
-        node: unbound,
+    let inner = JoinConstraint::Dominates {
+        dominator: t,
+        dominated: unbound,
     };
     let err = m
         .find_joined_constrained(&[&guard, &callp], &[JoinConstraint::Not(Box::new(inner))])

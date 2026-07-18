@@ -13,7 +13,7 @@ import strider.pattern.constraints
 from strider import pattern as p
 from strider.pattern import constraints as cons
 
-_MOVED = ("dominates", "dominated_by_branch", "phi_input_from_edge", "JoinConstraint")
+_MOVED = ("dominates", "phi_input_from_edge", "JoinConstraint")
 
 
 def test_import_strider_pattern_constraints_dotted():

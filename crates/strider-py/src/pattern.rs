@@ -2977,7 +2977,7 @@ impl PyIfPat {
     }
     /// Bind the If's true control-output value to `c` (propagated to the outer
     /// match; stable under region collapse — the handle for the edge join
-    /// constraints, `dominated_by_branch` / `phi_input_from_edge`).
+    /// constraints: an edge operand of `dominates` / `phi_input_from_edge`).
     fn capture_true<'py>(slf: PyRef<'py, Self>, c: PyRef<'py, PyCapture>) -> PyRef<'py, Self> {
         slf.inner.borrow_mut().capture_true = Some(c.inner);
         slf
@@ -3019,8 +3019,7 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
 
 /// A CFG relation between captured entities, passed to
 /// `Function.find_all([...], constraints=[...])` to filter joined tuples.
-/// Construct via `dominates` / `dominated_by_branch` / `phi_input_from_edge`,
-/// and negate with `negate`.
+/// Construct via `dominates` / `phi_input_from_edge`, and negate with `negate`.
 #[gen_stub_pyclass]
 #[pyclass(
     name = "JoinConstraint",
@@ -3032,32 +3031,24 @@ pub struct PyJoinConstraint {
 }
 
 /// `a` dominates `b` in the control subgraph (every path from entry to `b`
-/// passes through `a`). A capture with no control-flow position fails it.
+/// passes through `a`).  Each operand is resolved to a node OR an edge by WHAT
+/// IT CAPTURED: a capture bound to an `If`'s `capture_true`/`capture_false`
+/// value is a control EDGE; any other capture is a NODE.  This ONE relation
+/// covers three shapes:
+///   * node dominates node — plain control dominance;
+///   * edge dominates node — `dominates(true_edge, c)` means "`c` is in the
+///     true block", *exclusively* (the shared post-merge tail is dominated by
+///     the `If` itself, not by either edge, so it is excluded);
+///   * edge dominates edge — `dominates(outer_true, inner_true)` means the
+///     outer branch edge dominates the inner one (nested branches).
+///
+/// A capture with no control-flow position fails it.
 #[pyfunction]
 pub fn dominates(a: PyRef<'_, PyCapture>, b: PyRef<'_, PyCapture>) -> PyJoinConstraint {
     PyJoinConstraint {
         inner: JoinConstraint::Dominates {
-            a: a.inner,
-            b: b.inner,
-        },
-    }
-}
-
-/// `node` sits in the block the branch edge `branch` leads into, *exclusively*
-/// — `node` is dominated by that edge's target, so a single
-/// `dominated_by_branch(true_edge, c)` means "`c` is in the true block" (the
-/// shared post-merge tail is dominated by the `If` itself, not by either edge,
-/// so it is excluded).  `branch` must bind an `If`'s
-/// `capture_true`/`capture_false` value.
-#[pyfunction]
-pub fn dominated_by_branch(
-    branch: PyRef<'_, PyCapture>,
-    node: PyRef<'_, PyCapture>,
-) -> PyJoinConstraint {
-    PyJoinConstraint {
-        inner: JoinConstraint::DominatedByBranch {
-            branch: branch.inner,
-            node: node.inner,
+            dominator: a.inner,
+            dominated: b.inner,
         },
     }
 }
@@ -3605,7 +3596,6 @@ fn register_constraints(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResul
         };
     }
     add_fn!(dominates);
-    add_fn!(dominated_by_branch);
     add_fn!(phi_input_from_edge);
     add_fn!(negate);
     add_fn!(any_of);

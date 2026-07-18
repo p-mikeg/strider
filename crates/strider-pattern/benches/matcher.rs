@@ -89,7 +89,7 @@ fn build_diamond_chain(n: u64) -> strider_ir::Function {
 /// The two join shapes the single-tree change trades between:
 /// - `Dominates`-ONLY: the case that could REGRESS (it now builds the bigger
 ///   V+E tree instead of the V one, and walks ~2x-longer chains);
-/// - MIXED (`Dominates` + `DominatedByBranch`): the case that should IMPROVE
+/// - MIXED (`Dominates` node + edge): the case that should IMPROVE
 ///   (one V+E build instead of two — V, then V+E).
 fn join_constraint_benches(c: &mut Criterion) {
     let function = build_diamond_chain(60);
@@ -100,7 +100,10 @@ fn join_constraint_benches(c: &mut Criterion) {
     {
         let guard = if_node().capture(g).build();
         let callp = call().capture(cap).build();
-        let cons = JoinConstraint::Dominates { a: g, b: cap };
+        let cons = JoinConstraint::Dominates {
+            dominator: g,
+            dominated: cap,
+        };
         let hits = Matcher::new(&function)
             .find_joined_constrained(&[&guard, &callp], std::slice::from_ref(&cons))
             .unwrap();
@@ -122,10 +125,13 @@ fn join_constraint_benches(c: &mut Criterion) {
     {
         let guard = if_node().capture(g).capture_true(t).build();
         let callp = call().capture(cap).build();
-        let dom = JoinConstraint::Dominates { a: g, b: cap };
-        let branch = JoinConstraint::DominatedByBranch {
-            branch: t,
-            node: cap,
+        let dom = JoinConstraint::Dominates {
+            dominator: g,
+            dominated: cap,
+        };
+        let branch = JoinConstraint::Dominates {
+            dominator: t,
+            dominated: cap,
         };
         let hits = Matcher::new(&function)
             .find_joined_constrained(&[&guard, &callp], &[dom.clone(), branch.clone()])

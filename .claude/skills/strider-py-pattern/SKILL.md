@@ -328,19 +328,26 @@ guard = p.if_else(cond=p.int_ne(p.load(p.add(p.var(fop), p.any_int_const())), p.
 call  = p.call().capture(c)
 
 # "call gated on the TRUE branch of the guard, exclusively":
-hits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
+hits = fn.find_all([guard, call], constraints=[cons.dominates(t, c)])
 ```
 
-- `cons.dominates(a, b)` — node `a` dominates node `b` in the control subgraph.
-- `cons.dominated_by_branch(branch, node)` — every path from the function entry to
-  `node` traverses the branch EDGE, i.e. `node` is in that block *exclusively*: the
-  sibling arm AND the post-merge tail are both excluded.
-  One `dominated_by_branch(true_edge, c)` = "`c` is in the true block".
-  `node` must be a CONTROL node (a `call()`, region, return — not a data value):
-  data nodes are absent from the control subgraph and so match nothing.
-  NOTE the polarity is the IR's, not the C source's: `je L` lifts to `CBRANCH L, ZF`,
-  so the `If`'s TRUE edge is the jump-TAKEN edge and the fallthrough is the FALSE
-  edge — the opposite of the source-level `if` body.
+- `cons.dominates(a, b)` — `a` dominates `b` in the control subgraph. ONE general
+  relation: each operand is a NODE or an EDGE chosen by WHAT IT CAPTURED — an
+  `If`'s `capture_true`/`capture_false` value is a control EDGE, any other capture
+  is a NODE. So it covers three shapes:
+  - **node → node**: plain control dominance (`dominates(g, c)` where `g` captured
+    the `If` node and `c` a `call()`).
+  - **edge → node** ("in the true block" idiom): `dominates(true_edge, c)` — every
+    path from the function entry to `c` traverses that branch EDGE, i.e. `c` is in
+    that block *exclusively* (the sibling arm AND the post-merge tail are both
+    excluded). `c` must be a CONTROL node (a `call()`, region, return — not a data
+    value): data nodes are absent from the control subgraph and match nothing.
+    NOTE the polarity is the IR's, not the C source's: `je L` lifts to `CBRANCH L,
+    ZF`, so the `If`'s TRUE edge is the jump-TAKEN edge and the fallthrough is the
+    FALSE edge — the opposite of the source-level `if` body.
+  - **edge → edge**: `dominates(outer_edge, inner_edge)` — the outer branch edge
+    dominates the inner one (nested branches). An edge dominates itself but not its
+    sibling.
 - `cons.phi_input_from_edge(phi, edge, value)` — the `phi` capture's data input on the
   predecessor fed by control `edge` is `value`: "the value merged from THIS
   branch is X". `edge` binds an `If`'s `capture_true`/`capture_false`.
@@ -418,12 +425,12 @@ hits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
 
   ```python
   # Exactly the calls NOT gated on the true edge (false arm + post-merge tail):
-  fn.find_all([guard, call], constraints=[cons.negate(cons.dominated_by_branch(t, c))])
+  fn.find_all([guard, call], constraints=[cons.negate(cons.dominates(t, c))])
 
   # StriderError: `unbound` is bound by no pattern, so this would be vacuously
   # true for every tuple.
   fn.find_all([guard, call],
-              constraints=[cons.negate(cons.dominated_by_branch(t, p.Capture()))])
+              constraints=[cons.negate(cons.dominates(t, p.Capture()))])
   ```
 
   `negate(negate(c))` is the identity. Every constraint is a pure filter, so

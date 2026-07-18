@@ -40,7 +40,7 @@ use strider_graph::NodeId as PatNodeId;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
     CtrlKey, Function, Graph, IRViewer, IRWalker, control_dominators, control_edge_dominators,
-    dominates, edge_dominates,
+    dominates,
 };
 
 use crate::bindings::{Binding, Bindings};
@@ -364,7 +364,7 @@ impl<'f> Matcher<'f> {
         // Constraints correlate patterns too: two patterns linked by a
         // constraint whose captures live one in each are connected even with no
         // shared capture (the common case — `guard` captures `t`, `call`
-        // captures `c`, joined by `dominated_by_branch(t, c)`). Union their
+        // captures `c`, joined by `dominates(t, c)`). Union their
         // owners so the connectivity check accepts a constraint-correlated join.
         for con in constraints {
             // RANGE RESTRICTION. Every capture a constraint mentions must be
@@ -461,44 +461,46 @@ impl<'f> Matcher<'f> {
     }
 }
 
-/// A CFG relation between two captured entities, applied by
+/// A CFG relation between captured entities, applied by
 /// [`Matcher::find_joined_constrained`] as a post-correlation filter over
-/// joined tuples. Captured entities are resolved to control nodes; a value
-/// capture resolves to its producer node (for `Dominates`) or is used directly
-/// as the branch-edge value (for the edge constraints, `DominatedByBranch` and
-/// `PhiInputFromEdge`).
+/// joined tuples. Each captured entity is resolved to a [`CtrlKey`] by WHAT IT
+/// BOUND (see [`ConstraintEval::ctrl_key_of`]): a control-output capture (e.g.
+/// via [`IfPat::capture_true`](crate::IfPat::capture_true)) resolves to a
+/// `CtrlKey::Edge`, any other capture to a `CtrlKey::Node` (a value's producer).
+/// `PhiInputFromEdge` uses the branch-edge value directly.
 ///
 /// Every variant is a pure FILTER over a joined tuple: it decides, it never
 /// binds. All it holds are [`Capture`](crate::Capture)s, so it is a plain
 /// `Clone + Debug` value type.
 #[derive(Debug, Clone)]
 pub enum JoinConstraint {
-    /// The node bound to `a` dominates the node bound to `b` in the control
-    /// subgraph. A capture absent from the control subgraph fails it.
+    /// The entity bound to `dominator` dominates the entity bound to
+    /// `dominated` in the control subgraph. Each operand is resolved to a
+    /// node-or-edge by WHAT IT CAPTURED (see
+    /// [`ConstraintEval::ctrl_key_of`]): a capture that bound a CONTROL value
+    /// (e.g. via [`IfPat::capture_true`](crate::IfPat::capture_true)) is an
+    /// EDGE, any other capture is a NODE (a value's producer). A capture with no
+    /// control-flow position fails it.
+    ///
+    /// This ONE constraint subsumes three relations:
+    ///   * NODE dominates NODE — the plain control-dominance query.
+    ///   * EDGE dominates NODE — "the node sits in the block that edge leads
+    ///     into, *exclusively*". A single `dominates(true_edge, c)` expresses
+    ///     "`c` is in the true block". This is EDGE dominance (evaluated on the
+    ///     edge-split control graph), not dominance by the edge's target: with
+    ///     an empty arm (`if (c) {} else { X }`) the edge runs straight into the
+    ///     join, and the join dominates everything past the merge — so
+    ///     target-dominance would claim post-merge nodes sit inside the branch.
+    ///   * EDGE dominates EDGE — "the outer branch edge dominates the inner
+    ///     one", i.e. every path through the inner edge first traversed the
+    ///     outer.
+    ///
+    /// Dispatch is dominator-first and keeps the fast path: a node→node query
+    /// runs on the plain node dominator tree; any edge operand routes to the
+    /// (subsuming but slower-to-walk) edge-split tree.
     Dominates {
-        a: crate::Capture,
-        b: crate::Capture,
-    },
-    /// `node` is dominated by the branch EDGE `branch` — i.e. every path from
-    /// the entry to `node` traverses that edge, so `node` sits in the block that
-    /// edge leads into, *exclusively*.  A single
-    /// `dominated_by_branch(true_edge, c)` therefore expresses "`c` is in the
-    /// true block".
-    ///
-    /// This is EDGE dominance (evaluated on the edge-split control graph), not
-    /// dominance by the edge's target.  The distinction is not academic: with an
-    /// empty arm (`if (c) {} else { X }`) the edge runs straight into the join,
-    /// and the join dominates everything past the merge — so target-dominance
-    /// would claim post-merge nodes sit inside the branch.
-    ///
-    /// `branch` must bind a control-output value (e.g. via
-    /// [`IfPat::capture_true`](crate::IfPat::capture_true)); an ill-typed
-    /// `branch` or an absent node fails it.  `node` must resolve to a node of
-    /// the CONTROL subgraph (a `Call`, `Region`, `Return`, …): a data node is
-    /// absent from that graph and so is never dominated by anything.
-    DominatedByBranch {
-        branch: crate::Capture,
-        node: crate::Capture,
+        dominator: crate::Capture,
+        dominated: crate::Capture,
     },
     /// The `Phi`/`MemPhi` bound to `phi` merges, on the predecessor whose owning
     /// `Region` control input equals the branch edge `edge`, the value bound to
@@ -554,8 +556,10 @@ impl JoinConstraint {
     /// patterns for the `find_joined` connectivity check).
     fn captures(&self) -> Vec<crate::Capture> {
         match self {
-            JoinConstraint::Dominates { a, b } => vec![*a, *b],
-            JoinConstraint::DominatedByBranch { branch, node } => vec![*branch, *node],
+            JoinConstraint::Dominates {
+                dominator,
+                dominated,
+            } => vec![*dominator, *dominated],
             JoinConstraint::PhiInputFromEdge { phi, edge, value } => vec![*phi, *edge, *value],
             // A negation / connective correlates exactly the captures it wraps:
             // contributing these links the owner patterns AND is what the
@@ -642,10 +646,9 @@ fn kleene_and(it: impl Iterator<Item = Option<bool>>) -> Option<bool> {
 /// one whole build — still WINS at 6 diamonds and LOSES at 60: past a few
 /// hundred tuples the walk dominates the build it saved.
 ///
-/// So: node queries use `doms`; only the edge queries
-/// ([`JoinConstraint::DominatedByBranch`] and [`JoinConstraint::PhiInputFromEdge`])
-/// build and walk `split_doms`.  Both stay lazy, so a join pays for exactly the
-/// relations it asks for.
+/// So: node→node queries use `doms`; an edge operand of [`JoinConstraint::Dominates`]
+/// and [`JoinConstraint::PhiInputFromEdge`] build and walk `split_doms`.  Both
+/// stay lazy, so a join pays for exactly the relations it asks for.
 struct ConstraintEval<'f> {
     function: &'f Function,
     /// Dominators of the plain control subgraph, keyed by `NodeId`.
@@ -664,10 +667,36 @@ impl<'f> ConstraintEval<'f> {
         }
     }
 
+    /// The plain node dominator tree, built on first use. Kept alongside
+    /// [`Self::split_doms`] on MEASURED grounds (see the type doc): node→node
+    /// dominance walks it ~+39% faster than the subsuming split tree.
+    fn doms(&self) -> &petgraph::algo::dominators::Dominators<NodeId> {
+        self.doms.get_or_init(|| control_dominators(self.function))
+    }
+
     /// The edge-split dominator tree, built on first use.
     fn split_doms(&self) -> &petgraph::algo::dominators::Dominators<CtrlKey> {
         self.split_doms
             .get_or_init(|| control_edge_dominators(self.function))
+    }
+
+    /// Resolve a capture to a [`CtrlKey`] across the tuple's matches, keyed on
+    /// WHAT IT BOUND — the node-or-edge choice the general [`JoinConstraint::Dominates`]
+    /// dispatches on:
+    ///   1. a bound VALUE whose kind is `Control` (an `If`'s
+    ///      `capture_true`/`capture_false` edge) → [`CtrlKey::Edge`];
+    ///   2. any other bound value → [`CtrlKey::Node`] of its producer;
+    ///   3. else a bound NODE → [`CtrlKey::Node`];
+    ///   4. else `None` (unbound) — feeds the three-valued [`Self::passes`].
+    fn ctrl_key_of(&self, tuple: &JoinedMatch, c: crate::Capture) -> Option<CtrlKey> {
+        if let Some(v) = self.value_of(tuple, c) {
+            return Some(if self.function.value_kind(v).is_control() {
+                CtrlKey::Edge(v)
+            } else {
+                CtrlKey::Node(self.function.producer(v))
+            });
+        }
+        self.node_of(tuple, c).map(CtrlKey::Node)
     }
 
     /// Resolve a capture to a control node across the tuple's matches.
@@ -706,27 +735,28 @@ impl<'f> ConstraintEval<'f> {
                         .any(|arm| arm == val_v),
                 )
             }
-            JoinConstraint::Dominates { a, b } => {
-                let (Some(na), Some(nb)) = (self.node_of(tuple, a), self.node_of(tuple, b)) else {
+            JoinConstraint::Dominates {
+                dominator,
+                dominated,
+            } => {
+                let (Some(key_a), Some(key_b)) = (
+                    self.ctrl_key_of(tuple, dominator),
+                    self.ctrl_key_of(tuple, dominated),
+                ) else {
                     return None;
                 };
-                let doms = self.doms.get_or_init(|| control_dominators(self.function));
-                Some(dominates(doms, na, nb))
-            }
-            JoinConstraint::DominatedByBranch { branch, node } => {
-                let (Some(edge), Some(target)) =
-                    (self.value_of(tuple, branch), self.node_of(tuple, node))
-                else {
-                    return None;
-                };
-                // EDGE dominance — the real relation.  Asking instead whether
-                // the edge's TARGET dominates `target` (as this once did) is a
-                // strictly weaker proxy: it coincides only when the edge is its
-                // target's sole entry.  With an empty arm the edge runs straight
-                // into the join, and the join dominates everything past the
-                // merge — so the proxy silently claimed post-merge nodes were
-                // inside the branch.
-                Some(edge_dominates(self.split_doms(), edge, target))
+                // Dominator-first dispatch that PRESERVES the node-tree fast
+                // path.  The split tree subsumes the node tree (it answers
+                // node→node identically — `split_dominance_subsumes_node_dominance`
+                // pins this), but its `Edge` vertices interleave, so a node
+                // chain there is ~2x longer and the per-tuple walk is +39%
+                // (`benches/matcher.rs`).  So node→node stays on `doms`; any edge
+                // operand routes to `split_doms`.  Both `dominates` calls
+                // typecheck because it is generic over `Copy + Eq + Hash`.
+                Some(match (key_a, key_b) {
+                    (CtrlKey::Node(na), CtrlKey::Node(nb)) => dominates(self.doms(), na, nb),
+                    (ka, kb) => dominates(self.split_doms(), ka, kb),
+                })
             }
             // `Not(None) == None`: the negation of an unanswerable constraint is
             // itself unanswerable, so an unbound capture drops the row instead of

@@ -15,16 +15,17 @@ from . import Capture
 
 class JoinConstraint:
     """A CFG relation between captured entities. Construct via
-    `dominates` / `dominated_by_branch` / `phi_input_from_edge`, negate with
-    `negate`; pass to `Function.find_all([...], constraints=[...])`."""
+    `dominates` / `phi_input_from_edge`, negate with `negate`; pass to
+    `Function.find_all([...], constraints=[...])`."""
 
 def dominates(a: Capture, b: Capture) -> JoinConstraint:
-    """`a` dominates `b` in the control subgraph. Pass to
+    """`a` dominates `b` in the control subgraph. Each operand is a NODE or an
+    EDGE, chosen by WHAT IT CAPTURED: an `If`'s `capture_true`/`capture_false`
+    value is a control EDGE, any other capture is a NODE. So one relation covers
+    node→node (plain dominance), edge→node (`dominates(true_edge, c)` = "`c` is
+    in the true block", exclusively), and edge→edge (`dominates(outer_edge,
+    inner_edge)` = the outer branch edge dominates the inner one). Pass to
     `Function.find_all([...], constraints=[...])`."""
-def dominated_by_branch(branch: Capture, node: Capture) -> JoinConstraint:
-    """`node` is dominated by the target of branch edge `branch` (an `If`'s
-    `capture_true`/`capture_false` value) — in that block exclusively, so
-    `dominated_by_branch(true_edge, c)` means "`c` is in the true block"."""
 def phi_input_from_edge(
     phi: Capture, edge: Capture, value: Capture
 ) -> JoinConstraint:

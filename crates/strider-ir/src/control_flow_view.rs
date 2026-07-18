@@ -213,8 +213,8 @@ pub fn control_edge_dominators(
 /// Returns `true` if the control edge `edge` dominates `node` — i.e. every path
 /// from the entry to `node` traverses that EDGE.
 ///
-/// This is the real relation `dominated_by_branch` wants.  It is strictly
-/// stronger than `dominates(consumer(edge), node)`: dominating the edge's
+/// This is the real relation an edge-operand dominance constraint wants.  It is
+/// strictly stronger than `dominates(consumer(edge), node)`: dominating the edge's
 /// TARGET only implies traversing the edge when the edge is the target's sole
 /// way in.  For `if (c) {} else { X }`, the true edge runs straight into the
 /// join, so the join dominates everything after it while the true edge does not.
@@ -661,9 +661,9 @@ mod tests {
     /// THE load-bearing property: `Node(n) -> Edge(v) -> Node(c)` in the split
     /// view must compose to EXACTLY `cfg_succs(n)` for every reachable node.
     ///
-    /// If the two views ever disagreed about the CFG, `Dominates` (which reads
-    /// the node tree) and `DominatedByBranch` (which reads the split tree) would
-    /// start answering from different graphs — silently.
+    /// If the two views ever disagreed about the CFG, a node→node dominance
+    /// query (which reads the node tree) and an edge-operand one (which reads the
+    /// split tree) would start answering from different graphs — silently.
     #[test]
     fn split_view_composes_to_cfg_succs() {
         for (name, f) in [

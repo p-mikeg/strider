@@ -2,7 +2,7 @@
 
 The motivating query: a call gated on the TRUE branch of a guard, not the false
 branch and not after the merge — expressed region-independently via the If's
-control-output values plus dominated_by_branch.
+control-output values plus edge-operand dominates.
 """
 
 import pytest
@@ -46,7 +46,7 @@ def _call_count(fn, constraints):
     return len(fn.find_all([guard, call], constraints=constraints(t, f, c, g)))
 
 
-def test_dominated_by_branch_isolates_true_arm_in_one_constraint():
+def test_dominates_edge_isolates_true_arm_in_one_constraint():
     fn = _diamond_with_calls()
     all_calls = len(fn.find_all(p.call()))
     assert all_calls >= 3, f"expected >=3 calls, got {all_calls}"
@@ -62,11 +62,11 @@ def test_dominated_by_branch_isolates_true_arm_in_one_constraint():
     # One constraint = "the call in the block this edge leads into": it excludes
     # the sibling arm AND the merge tail at 0x1010 (the merge is dominated by
     # the If itself, not by either of its edges).
-    hits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
+    hits = fn.find_all([guard, call], constraints=[cons.dominates(t, c)])
     assert len(hits) == 1, "only one call is dominated by the true edge"
     assert 0x100B in hits[0].asm_fingerprint(c), "true edge -> the jump-taken call"
 
-    fhits = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(f, c)])
+    fhits = fn.find_all([guard, call], constraints=[cons.dominates(f, c)])
     assert len(fhits) == 1, "only one call is dominated by the false edge"
     assert 0x1004 in fhits[0].asm_fingerprint(c), "false edge -> the fallthrough call"
 
@@ -76,7 +76,7 @@ def test_find_unique_accepts_constraints():
     g, t, f, c = p.Capture(), p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f).capture(g)
     call = p.call().capture(c)
-    cs = [cons.dominated_by_branch(t, c)]
+    cs = [cons.dominates(t, c)]
     # find_unique agrees the constrained true-arm hit is unique.
     m = fn.find_unique([guard, call], constraints=cs)
     assert m is not None
@@ -90,6 +90,27 @@ def test_dominates_if_selects_every_call():
     dominated = _call_count(fn, lambda t, f, c, g: [cons.dominates(g, c)])
     # The If dominates both arms and the merge — every call is dominated by it.
     assert dominated == all_calls
+
+
+def test_dominates_edge_over_edge_is_exposed():
+    """Both operands of `dominates` are control-output captures, so each
+    resolves to a control EDGE and the relation is answered edge-vs-edge (the
+    capability the merged constraint newly exposes to Python — it used to be
+    reachable only through `phi_input_from_edge`).
+
+    An edge dominates itself (reflexive) but NOT its sibling. This also pins the
+    generalization: the old rule resolved BOTH captures to their producer node
+    (the same `If`), so `dominates(t, f)` was self-domination and wrongly held;
+    edge resolution answers it correctly as False."""
+    fn = _diamond_with_calls()
+    t, f = p.Capture(), p.Capture()
+    guard = p.if_else().capture_true(t).capture_false(f)
+
+    self_dom = fn.find_all([guard], constraints=[cons.dominates(t, t)])
+    assert len(self_dom) == 1, "the true edge dominates itself (edge->edge)"
+
+    sibling = fn.find_all([guard], constraints=[cons.dominates(t, f)])
+    assert len(sibling) == 0, "the true edge does not dominate its false sibling"
 
 
 def test_phi_input_from_edge_ties_value_to_its_branch():
@@ -301,16 +322,16 @@ def test_phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch():
 # ── negate ─────────────────────────────────────────────────────────────────
 
 
-def test_negate_is_the_exact_complement_of_dominated_by_branch():
-    """`negate(dominated_by_branch(t, c))` holds exactly where the positive
-    constraint does not — on a diamond where both cases occur."""
+def test_negate_is_the_exact_complement_of_dominates_edge():
+    """`negate(dominates(t, c))` (edge operand `t`) holds exactly where the
+    positive constraint does not — on a diamond where both cases occur."""
     fn = _diamond_with_calls()
     t, f, c = p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f)
     call = p.call().capture(c)
 
-    pos = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
-    neg = fn.find_all([guard, call], constraints=[cons.negate(cons.dominated_by_branch(t, c))])
+    pos = fn.find_all([guard, call], constraints=[cons.dominates(t, c)])
+    neg = fn.find_all([guard, call], constraints=[cons.negate(cons.dominates(t, c))])
     # One call per region (true arm / false arm / merge); the positive picks
     # exactly the true-arm one, so the negation must pick the other two.
     assert len(pos) == 1
@@ -327,10 +348,10 @@ def test_double_negate_is_the_identity():
     guard = p.if_else().capture_true(t)
     call = p.call().capture(c)
 
-    once = fn.find_all([guard, call], constraints=[cons.dominated_by_branch(t, c)])
+    once = fn.find_all([guard, call], constraints=[cons.dominates(t, c)])
     twice = fn.find_all(
         [guard, call],
-        constraints=[cons.negate(cons.negate(cons.dominated_by_branch(t, c)))],
+        constraints=[cons.negate(cons.negate(cons.dominates(t, c)))],
     )
     assert len(twice) == len(once) == 1
     assert {h.node(c).id for h in twice} == {h.node(c).id for h in once}
@@ -349,7 +370,7 @@ def test_negate_with_an_unbound_capture_does_not_vacuously_match():
     with pytest.raises(strider.errors.StriderError) as ei:
         fn.find_all(
             [guard, call],
-            constraints=[cons.negate(cons.dominated_by_branch(t, unbound))],
+            constraints=[cons.negate(cons.dominates(t, unbound))],
         )
     assert "negate" in str(ei.value)
 
