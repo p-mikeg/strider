@@ -210,7 +210,7 @@ op_forwarders! {
 #[pymethods]
 impl PyMatch {
     /// The root node where the top-level pattern matched, as a `u32`
-    /// node id.  Pair with `Function.node(node_id).fingerprint()` /
+    /// node id.  Pair with `Function.node(node_id).asm_fingerprint()` /
     /// `Cfg.fingerprint_pcode(node)` (both accept this `Match` or its
     /// raw `root` id directly) for proof-of-correctness queries that
     /// don't carry an explicit `Capture` (the root has no user-visible
@@ -320,7 +320,7 @@ impl PyMatch {
     /// empty list when the capture is unbound or when the captured
     /// node is one of the documented exempt kinds (see
     /// `strider_ir::Graph::asm_fingerprint`).  Thin forwarder to
-    /// `Node.fingerprint()`.
+    /// `Node.asm_fingerprint()`.
     ///
     /// The fingerprint is the proof-of-correctness aid: when a pattern
     /// query captures a value node, this list names the machine
@@ -328,7 +328,7 @@ impl PyMatch {
     /// to that node's value.
     fn asm_fingerprint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Vec<u64>> {
         match self.node(py, key)? {
-            Some(node) => node.fingerprint(py),
+            Some(node) => node.asm_fingerprint(py),
             None => Ok(Vec::new()),
         }
     }

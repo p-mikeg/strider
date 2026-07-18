@@ -257,7 +257,7 @@ def test_fingerprint_returns_machine_addresses():
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches, "test fixture has no Add nodes — investigate"
-    fp = function.node(matches[0].root).fingerprint()
+    fp = function.node(matches[0].root).asm_fingerprint()
     assert isinstance(fp, list)
     assert all(isinstance(a, int) for a in fp)
     # An IntBinaryOp("Add") lifted from a real add instruction must
@@ -279,7 +279,7 @@ def test_fingerprint_returns_machine_addresses():
 def test_fingerprint_matches_via_node_and_match_forwarder():
     """`Node` is the single source of truth for the addr-only
     fingerprint; `Match.asm_fingerprint(key)` is a thin forwarder onto
-    `Node.fingerprint()` for a captured node."""
+    `Node.asm_fingerprint()` for a captured node."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load_elf(str(elf))
     _cfg, function, _unresolved = s.analyze("add")
@@ -288,7 +288,7 @@ def test_fingerprint_matches_via_node_and_match_forwarder():
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything()).capture(c)
     )
     assert matches
-    fp_via_node = function.node(matches[0].root).fingerprint()
+    fp_via_node = function.node(matches[0].root).asm_fingerprint()
     fp_via_match = matches[0].asm_fingerprint(c)
     assert fp_via_node == fp_via_match
 

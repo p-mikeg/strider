@@ -217,7 +217,7 @@ impl PyCfg {
 
     /// The asm-fingerprint of `node` as `(addr, text)` p-code pairs,
     /// sorted by address — the CFG-lookup companion to
-    /// `Node.fingerprint()` (addr-only).  Each fingerprint address is
+    /// `Node.asm_fingerprint()` (addr-only).  Each fingerprint address is
     /// resolved via `pcode_at`; an address `pcode_at` returns `None` for
     /// (not present in this CFG — e.g. `node` belongs to a different
     /// `Cfg`/`Function`) is SKIPPED rather than emitting an empty-text
@@ -236,7 +236,7 @@ impl PyCfg {
         py: Python<'_>,
         node: PyRef<'_, PyNode>,
     ) -> PyResult<Vec<(u64, String)>> {
-        let addrs = node.fingerprint(py)?;
+        let addrs = node.asm_fingerprint(py)?;
         let map = self.pcode_map();
         let mut out: Vec<(u64, String)> = addrs
             .into_iter()

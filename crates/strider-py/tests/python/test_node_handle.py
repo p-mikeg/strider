@@ -2,7 +2,7 @@
 
 Covers `Function.node(id)`, `Match.node(capture)`, and the `Node`
 accessors (`id`, `kind()`, `inputs()`, `const_int()`, `const_uint()`,
-`const_bool()`, `fingerprint()`, `__repr__`, `__eq__`/`__hash__`).
+`const_bool()`, `asm_fingerprint()`, `__repr__`, `__eq__`/`__hash__`).
 `Node` is the single source of truth for per-node reads — `Function`
 does not duplicate the id-keyed readers, and `Match`'s value/op readers
 are thin forwarders onto `Match.node(key)`.  Built on the high-level
@@ -128,20 +128,31 @@ def test_node_const_bool_is_none_on_non_bool():
     assert add_node.const_bool() is None
 
 
-def test_node_fingerprint_is_int_list():
-    """`Node.fingerprint()` returns a list of ints, stable across
+def test_node_asm_fingerprint_is_int_list():
+    """`Node.asm_fingerprint()` returns a list of ints, stable across
     separately-constructed `Node` handles for the same id."""
     a = _analyze_add()
     add_hits = a.find_all(add(anything(), anything()))
     assert add_hits
     nid = add_hits[0].root
     n = a.node(nid)
-    fp = n.fingerprint()
+    fp = n.asm_fingerprint()
     assert isinstance(fp, list)
     assert all(isinstance(x, int) for x in fp)
-    assert fp == a.node(nid).fingerprint()
+    assert fp == a.node(nid).asm_fingerprint()
     # An Add lifted from a real add instruction carries >= 1 source addr.
     assert len(fp) >= 1
+
+
+def test_node_asm_fingerprint_name():
+    """`Node.fingerprint` was renamed to `Node.asm_fingerprint` — the
+    old name must no longer be reachable on a real lifted `Node`."""
+    a = _analyze_add()
+    add_hits = a.find_all(add(anything(), anything()))
+    assert add_hits
+    n = a.node(add_hits[0].root)
+    assert isinstance(n.asm_fingerprint(), list)
+    assert not hasattr(n, "fingerprint")
 
 
 def test_node_repr():

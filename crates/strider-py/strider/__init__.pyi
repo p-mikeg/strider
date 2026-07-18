@@ -206,7 +206,7 @@ class Cfg:
     def fingerprint_pcode(self, node: Node) -> List[Tuple[int, str]]:
         """The asm-fingerprint of `node` as `(addr, text)` p-code pairs,
         sorted by address — the CFG-lookup companion to
-        `Node.fingerprint()` (addr-only).  Each fingerprint address is
+        `Node.asm_fingerprint()` (addr-only).  Each fingerprint address is
         resolved via `pcode_at`; an address not present in this CFG is
         SKIPPED (not emitted with empty text).  `[]` for structural
         nodes with no fingerprint (Entry, InitialMemory, InitialVar,
@@ -393,7 +393,7 @@ class Node:
     explore the sea-of-nodes IR beyond pattern matching: walk the
     data/control edges feeding a node (`inputs()`), read its kind
     (`kind()`), pull out constant values, and recover provenance
-    (`fingerprint()`).  Snapshots the function generation at construction
+    (`asm_fingerprint()`).  Snapshots the function generation at construction
     so a stale id (after `compact`/`optimize`) raises rather than
     dereferencing the wrong node."""
 
@@ -430,7 +430,7 @@ class Node:
         """The `Vn` associated with this node (`InitialVar` / `Call` /
         `CallOther` clobber output), else `None`."""
         ...
-    def fingerprint(self) -> List[int]:
+    def asm_fingerprint(self) -> List[int]:
         """Sorted, deduped asm-instruction addresses recorded on this node."""
         ...
     def wide_const_bytes(self) -> Optional[bytes]:
@@ -480,7 +480,7 @@ class Function:
     def node(self, node_id: int) -> Node:
         """A discoverable `Node` handle on the node at `node_id` — the
         single source of truth for per-node reads (`kind()`,
-        `asm_fingerprint()`-equivalent `fingerprint()`, `wide_const_bytes()`,
+        `asm_fingerprint()`, `wide_const_bytes()`,
         `call_other_name()`, …).  Raises `StriderError` for an invalid id."""
         ...
     def compact(self) -> None:
@@ -628,7 +628,7 @@ class Match:
         `Node.vn()`."""
         ...
     def asm_fingerprint(self, key: Any) -> List[int]:
-        """Thin forwarder to `Node.fingerprint()`; `[]` when `key` is unbound."""
+        """Thin forwarder to `Node.asm_fingerprint()`; `[]` when `key` is unbound."""
         ...
     def node(self, key: Any) -> Optional[Node]:
         """A `Node` handle on the node bound to `key` (a `Capture` or

@@ -31,7 +31,7 @@ use crate::function::PyFunction;
 /// explore the sea-of-nodes IR beyond pattern matching: walk the
 /// data/control edges feeding a node (`inputs()`), read its kind
 /// (`kind()`), pull out constant values (`const_int()` / `const_bool()`),
-/// and recover provenance (`fingerprint()`).
+/// and recover provenance (`asm_fingerprint()`).
 ///
 /// Snapshots the function's generation counter at construction.  A
 /// subsequent arena-reshuffling op (`Function.compact`, `optimize`, …)
@@ -301,7 +301,7 @@ impl PyNode {
     /// `pub(crate)` so `PyCfg::fingerprint_pcode` (`cfg.rs`)
     /// can reuse the same addr-only lookup instead of duplicating the
     /// side-table read.
-    pub(crate) fn fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
+    pub(crate) fn asm_fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
         self.with_node(py, |function, nid| {
             // The DAG yields an unordered set; sort here so the Python-facing
             // list stays the documented sorted, deduped order.

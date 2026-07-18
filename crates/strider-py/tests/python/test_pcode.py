@@ -2,7 +2,7 @@
 
 p-code has two homes: `Cfg.pcode_at` / `Cfg.fingerprint_pcode` (an exact
 LOOKUP against an already-built CFG's stored decodes — the audit-trail
-companion to `Node.fingerprint()`, also reachable via
+companion to `Node.asm_fingerprint()`, also reachable via
 `Match.asm_fingerprint(key)`), and `Lifter.pcode_at(entry, addr)` (a
 stand-alone linear sweep from `entry`, replaying context-register state,
 for addresses outside any analysed CFG).
@@ -43,7 +43,7 @@ def test_cfg_pcode_at_matches_decoded_instructions():
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches, "expected at least one Add node in array_sum"
-    addr = sorted(function.node(matches[0].root).fingerprint())[0]
+    addr = sorted(function.node(matches[0].root).asm_fingerprint())[0]
 
     text = cfg.pcode_at(addr)
     assert text is not None
@@ -73,7 +73,7 @@ def test_cfg_pcode_at_returns_none_for_a_zero_pcode_op_instruction():
 def test_fingerprint_pcode_renders_a_matched_node():
     """For a matched value node, `cfg.fingerprint_pcode(node)` returns
     `(addr, text)` pairs whose addresses are drawn from
-    `node.fingerprint()` and whose texts are non-empty, sorted by
+    `node.asm_fingerprint()` and whose texts are non-empty, sorted by
     address."""
     prog = _load_memory()
     cfg, function, _unresolved = prog.analyze("array_sum")
@@ -83,7 +83,7 @@ def test_fingerprint_pcode_renders_a_matched_node():
     assert matches, "expected at least one Add node in array_sum"
     node = function.node(matches[0].root)
 
-    fp = node.fingerprint()
+    fp = node.asm_fingerprint()
     assert fp, "matched Add node must carry a non-empty fingerprint"
 
     fpc = cfg.fingerprint_pcode(node)
@@ -124,7 +124,7 @@ def test_fingerprint_pcode_empty_for_structural_node():
     cfg, function, _unresolved = prog.analyze("array_sum")
     struct_id = None
     for nid in function.node_ids():
-        if not function.node(nid).fingerprint():
+        if not function.node(nid).asm_fingerprint():
             struct_id = nid
             break
     assert struct_id is not None, "expected at least one structural node"
@@ -161,7 +161,7 @@ def test_lifter_pcode_at_matches_cfg_lookup_for_a_real_pcode_address():
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches, "expected at least one Add node in add"
-    addr = sorted(function.node(matches[0].root).fingerprint())[0]
+    addr = sorted(function.node(matches[0].root).asm_fingerprint())[0]
 
     swept = prog.pcode_at(entry, addr)
     looked_up = cfg.pcode_at(addr)
