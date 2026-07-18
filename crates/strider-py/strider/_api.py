@@ -56,13 +56,12 @@ from typing import Iterator, Optional, Union
 import importlib as _importlib
 
 _ext = _importlib.import_module("strider._strider")
-from ._strider import (  # noqa: E402
-    CallingConvention,
-    CfgOptions,
-    Lifter,
-    LifterOptions,
-    SleighArch,
-)
+# These low-level classes now live on the native domain submodules.
+CallingConvention = _ext.sleigh.CallingConvention
+SleighArch = _ext.sleigh.SleighArch
+CfgOptions = _ext.cfg.CfgOptions
+Lifter = _ext.lift.Lifter
+LifterOptions = _ext.lift.LifterOptions
 
 #: What the loaders accept as a filesystem path: a `str`, a `pathlib.Path`,
 #: or any object implementing `__fspath__`.

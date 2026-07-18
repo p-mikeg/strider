@@ -398,9 +398,9 @@ def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
                 if u.path == "/":
                     self._send(_FRONTEND)
                 elif u.path == "/viz.js":
-                    import strider
+                    import strider._strider as _ext
 
-                    self._send(strider.viz_standalone_js(), "application/javascript")
+                    self._send(_ext.viz_standalone_js(), "application/javascript")
                 elif u.path == "/entry":
                     self._send(json.dumps(entry), "application/json")
                 elif u.path == "/patterns":
