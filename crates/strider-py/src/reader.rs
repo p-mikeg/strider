@@ -164,7 +164,7 @@ impl PyBufferReader {
 /// see `strider_reader::elf::elf_get_loadable_regions`'s kind dispatch.
 /// `Sections` FORCES the section-header walk (first-wins VMA dedup)
 /// even for a linked ET_EXEC/ET_DYN binary that does carry PT_LOAD
-/// segments — `strider.load_elf_from_sections`'s strategy.
+/// segments — `strider.load_elf(path, from_segments=False)`'s strategy.
 #[derive(Clone, Copy)]
 pub(crate) enum ElfRegionSource {
     Segments,
@@ -245,8 +245,7 @@ fn elf_to_rom_regions(
 }
 
 /// Parsed ELF binary: the friendly face is the Python `ElfLifter`
-/// returned by `strider.load_elf(...)` / `load_elf_from_segments(...)` /
-/// `load_elf_from_sections(...)`, which wraps one of these.
+/// returned by `strider.load_elf(...)`, which wraps one of these.
 ///
 /// Holds the parsed `object::File`(s) (in load order — the first wins
 /// on symbol-name collisions) plus two internal raw `BufferReader`s
@@ -255,9 +254,9 @@ fn elf_to_rom_regions(
 /// instruction fetch / raw reads (`reader()`), and a runtime-immutable
 /// `rom` reader (code + read-only only) for `LoadReadOnly` constant
 /// folding (`ro_reader()`).  The leading underscore marks it as
-/// internal-by-convention: construct it via `strider.load_elf(path)`
-/// (or the explicit `load_elf_from_segments` / `load_elf_from_sections`)
-/// and reach for `ElfLifter` for the user-facing surface.
+/// internal-by-convention: construct it via `strider.load_elf(path,
+/// from_segments=...)` and reach for `ElfLifter` for the user-facing
+/// surface.
 #[pyclass(name = "_LoadedElf", module = "strider", unsendable)]
 pub struct PyLoadedElf {
     /// Loaded ELF objects, in `load_elf` / `add_elf` insertion order.
