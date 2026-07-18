@@ -326,9 +326,7 @@ impl BuiltCallingConvention {
     /// Takes a [`BuiltCallingConventionParts`] by value so every input is
     /// named at the call site (no positional-argument transposition of the
     /// two same-typed return lists).
-    pub fn try_new(
-        parts: BuiltCallingConventionParts,
-    ) -> std::result::Result<Self, anyhow::Error> {
+    pub fn try_new(parts: BuiltCallingConventionParts) -> std::result::Result<Self, anyhow::Error> {
         let BuiltCallingConventionParts {
             arg_passing_regs,
             callee_saved_regs,
