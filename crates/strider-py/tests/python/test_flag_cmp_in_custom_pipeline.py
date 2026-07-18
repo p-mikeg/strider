@@ -65,7 +65,7 @@ def test_list_empty_pattern_matches_under_custom_pipeline_with_fcc():
         add(function_arg(0), any_int_const(o)),
     )
     hits = list(function.find_all(pat, ignore_casts=True))
-    offsets = sorted({h.uint(o) for h in hits if h.uint(o) is not None})
+    offsets = sorted({h.const_uint(o) for h in hits if h.const_uint(o) is not None})
     # `offsetof(struct task, head)` in the C fixture: int (4) + char[60]
     # (60) = 64.  GCC at -O2 emits exactly `cmp [rdi+0x40], rdi+0x40`.
     assert 64 in offsets, (

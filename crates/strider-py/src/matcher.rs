@@ -251,7 +251,7 @@ impl PyMatch {
     /// The capture's value as an unsigned `int`, or `None` when the
     /// capture isn't bound to an integer-valued node.  Thin forwarder to
     /// `Node.const_uint()`.
-    fn uint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u128>> {
+    fn const_uint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u128>> {
         match self.node(py, key)? {
             Some(node) => node.const_uint(py),
             None => Ok(None),
@@ -261,7 +261,7 @@ impl PyMatch {
     /// The capture's value as a signed `int` (sign-interpreted at the
     /// node's width), or `None` when not bound to an integer node.  Thin
     /// forwarder to `Node.const_int()`.
-    #[pyo3(name = "int")]
+    #[pyo3(name = "const_int")]
     fn int_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<i128>> {
         match self.node(py, key)? {
             Some(node) => node.const_int(py),
@@ -271,7 +271,7 @@ impl PyMatch {
 
     /// The capture's value as a `bool`, or `None` when not bound to a
     /// boolean-valued node.  Thin forwarder to `Node.const_bool()`.
-    #[pyo3(name = "bool")]
+    #[pyo3(name = "const_bool")]
     fn bool_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<bool>> {
         match self.node(py, key)? {
             Some(node) => node.const_bool(py),

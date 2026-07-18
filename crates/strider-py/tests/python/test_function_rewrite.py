@@ -83,7 +83,7 @@ def test_clone_match_staleness_is_independent():
 
     # The clone's pre-rewrite handle is now stale.
     with pytest.raises(strider.errors.StriderError):
-        clone_hits[0].uint(x)
+        clone_hits[0].const_uint(x)
 
     # The original's handle — same generation as before — still reads fine.
     node = orig_hits[0].node(x)

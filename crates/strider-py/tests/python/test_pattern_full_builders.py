@@ -269,7 +269,7 @@ def test_signed_int_const_neg1_matches_at_every_width():
 
 
 def test_signed_int_const_round_trips_via_match_int():
-    # When a match fires, Match.int(c) recovers the SIGNED i128
+    # When a match fires, Match.const_int(c) recovers the SIGNED i128
     # value, so a captured signed_int_const round-trips.
     c = Capture()
     g = _patterns_graph_for("x64")
@@ -283,7 +283,7 @@ def test_signed_int_const_round_trips_via_match_int():
     # +4294967246, not -50.  The pattern's job was to recognise the
     # source-level value; recovering the raw bit pattern is
     # `Match.uint`'s job.
-    val = hits[0].uint(c)
+    val = hits[0].const_uint(c)
     assert val is not None
 
 

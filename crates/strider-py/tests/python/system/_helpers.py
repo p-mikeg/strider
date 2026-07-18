@@ -213,7 +213,7 @@ def count_int_consts(g) -> int:
 def has_constant(g, value: int) -> bool:
     """Returns True iff some `IntConst(value)` node exists.
 
-    Comparison is performed against the typed extractor `match.uint(c)`
+    Comparison is performed against the typed extractor `match.const_uint(c)`
     masked to the constant's output width — matches the Rust
     `has_constant` which compares the stored u128 against `u64::from
     (value)`.
@@ -222,7 +222,7 @@ def has_constant(g, value: int) -> bool:
     hits = g.find_all(pat.any_int_const(c))
     target = value & 0xFFFF_FFFF_FFFF_FFFF
     for m in hits:
-        u = m.uint(c)
+        u = m.const_uint(c)
         if u is None:
             continue
         if u & 0xFFFF_FFFF_FFFF_FFFF == target:

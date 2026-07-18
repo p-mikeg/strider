@@ -42,22 +42,22 @@ def test_wide_const_node_is_minted_by_load_readonly_fold():
 
 
 def test_wide_const_match_uint_returns_full_u128():
-    # Match.uint(c) carries the full 128-bit value into an arbitrary-
+    # Match.const_uint(c) carries the full 128-bit value into an arbitrary-
     # precision Python int — no truncation to 64 bits.
     f = _wide_const_function()
     c = Capture()
     hits = f.find_all(any_int_const(c))
     assert len(hits) == 1
-    assert hits[0].uint(c) == WIDE
+    assert hits[0].const_uint(c) == WIDE
 
 
 def test_wide_const_match_int_is_unsigned_below_bit127():
-    # Match.int(c) interprets the stored u128 as i128.  WIDE's bit 127
+    # Match.const_int(c) interprets the stored u128 as i128.  WIDE's bit 127
     # is clear, so the signed reading equals the unsigned one.
     f = _wide_const_function()
     c = Capture()
     hits = f.find_all(any_int_const(c))
-    assert hits[0].int(c) == WIDE
+    assert hits[0].const_int(c) == WIDE
 
 
 def test_wide_const_int_const_literal_matches():

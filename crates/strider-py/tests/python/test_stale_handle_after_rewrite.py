@@ -34,7 +34,7 @@ def test_match_handle_stale_after_rewrite():
     assert fired > 0, "the rewrite must actually mutate the graph"
 
     with pytest.raises(strider.errors.StriderError):
-        stale_match.uint(x)
+        stale_match.const_uint(x)
     with pytest.raises(strider.errors.StriderError):
         stale_match.node(x)
 

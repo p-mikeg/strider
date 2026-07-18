@@ -55,4 +55,4 @@ def test_any_input_binds_captures_out():
     c = p.Capture()
     hits = fn.find_all(p.phi().any_input(p.any_int_const().capture(c)))
     assert len(hits) >= 1
-    assert hits[0].uint(c) in (1, 2)
+    assert hits[0].const_uint(c) in (1, 2)

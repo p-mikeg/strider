@@ -136,7 +136,7 @@ def test_phi_input_from_edge_ties_value_to_its_branch():
     fh = fn.find_all([guard, phi, val], constraints=[cons.phi_input_from_edge(ph, f, v)])
 
     assert len(th) == 1 and len(fh) == 1
-    true_val, false_val = th[0].uint(v), fh[0].uint(v)
+    true_val, false_val = th[0].const_uint(v), fh[0].const_uint(v)
     # Each edge picks its OWN branch's merged constant, and they differ.
     assert {true_val, false_val} == {1, 2}
     assert true_val != false_val
@@ -185,7 +185,7 @@ def test_any_input_capture_is_readable():
             constraints=[cons.phi_input_from_edge(ph, edge, v)],
         )
         assert len(hits) == 1, f"expected one arm value, got {len(hits)}"
-        return hits[0].uint(v)
+        return hits[0].const_uint(v)
 
     true_val, false_val = read(t), read(f)
     assert {true_val, false_val} == {1, 2}
@@ -218,7 +218,7 @@ def test_any_input_equivalent_to_floating_root_spelling():
             constraints=[cons.phi_input_from_edge(ph, edge, v)],
         )
         assert len(hits) == 1
-        return hits[0].uint(v)
+        return hits[0].const_uint(v)
 
     def via_any_input(pick_true):
         t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
@@ -229,7 +229,7 @@ def test_any_input_equivalent_to_floating_root_spelling():
             constraints=[cons.phi_input_from_edge(ph, edge, v)],
         )
         assert len(hits) == 1
-        return hits[0].uint(v)
+        return hits[0].const_uint(v)
 
     assert via_floating_root(True) == via_any_input(True)
     assert via_floating_root(False) == via_any_input(False)
@@ -293,7 +293,7 @@ def test_phi_input_from_edge_reaches_through_intervening_call():
     fh = fn.find_all([guard, phi, val], constraints=[cons.phi_input_from_edge(ph, f, v)])
 
     assert len(th) == 1 and len(fh) == 1
-    assert {th[0].uint(v), fh[0].uint(v)} == {1, 2}
+    assert {th[0].const_uint(v), fh[0].const_uint(v)} == {1, 2}
 
 
 def test_phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch():

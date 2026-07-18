@@ -68,7 +68,7 @@ def test_one_of_alternative_order_decides_which_arm_binds():
 
     def offsets(pat):
         return sorted(
-            (h.uint(off) if h.has(off) else 0) for h in fn.find_all(p.load(addr=pat))
+            (h.const_uint(off) if h.has(off) else 0) for h in fn.find_all(p.load(addr=pat))
         )
 
     # Specific first: the +8 load binds `off`; the bare load leaves it unbound.
@@ -95,7 +95,7 @@ def test_one_of_leaves_captures_of_the_unfired_arm_unbound():
     for h in fn.find_all(pat):
         # Exactly one arm binds per match — never both, never neither.
         assert h.has(m) != h.has(s)
-        seen.add(h.uint(m) if h.has(m) else ("shl", h.uint(s)))
+        seen.add(h.const_uint(m) if h.has(m) else ("shl", h.const_uint(s)))
     assert seen == {12, ("shl", 3)}
 
 

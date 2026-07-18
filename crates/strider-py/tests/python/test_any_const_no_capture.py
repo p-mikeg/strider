@@ -27,7 +27,7 @@ def test_any_int_const_with_capture_still_binds():
     g = _g()
     c = Capture()
     hits = g.find_all(any_int_const(c))
-    assert any(h.uint(c) is not None for h in hits)
+    assert any(h.const_uint(c) is not None for h in hits)
 
 
 def test_any_bool_and_float_const_without_capture_are_accepted():

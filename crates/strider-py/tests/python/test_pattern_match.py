@@ -81,8 +81,38 @@ def test_match_get_uint_on_const():
     pat = any_int_const(c)
     hits = g.find_all(pat)
     if hits:
-        v = hits[0].uint(c)
+        v = hits[0].const_uint(c)
         assert v is None or isinstance(v, int)
+
+
+def test_match_const_readers_align_with_node():
+    """`Match.const_int` / `Match.const_bool` / `Match.const_uint` are the
+    renamed forms of the old `Match.int` / `Match.bool` / `Match.uint` —
+    aligned with `Node.const_int` / `Node.const_bool` / `Node.const_uint`.
+    The old names must be gone entirely (no builtin-name shadowing).
+    """
+    from strider.pattern import any_int_const
+
+    # Same fixture as the bool-const regression above: `aarch64/builtins::
+    # expect_branch` carries a surviving I1 `IntConst` under the default
+    # pipeline.
+    elf = fixture_path("aarch64", "builtins")
+    lift = strider.load_elf(str(elf))
+    _cfg, g, _u = lift.analyze("expect_branch")
+    c = Capture()
+
+    hits = g.find_all(any_int_const(c).bool_valued())
+    assert hits, "expect_branch must carry a surviving I1 IntConst to test"
+    m = hits[0]
+
+    assert m.const_bool(c) is True or m.const_bool(c) is False
+    assert isinstance(m.const_uint(c), int)
+    assert isinstance(m.const_int(c), int)
+
+    # The old names are gone — no `int`/`bool`/`uint` attributes on Match.
+    assert not hasattr(m, "int")
+    assert not hasattr(m, "bool")
+    assert not hasattr(m, "uint")
 
 
 # ── regression tests ──────────────────────────────────────────────────────
@@ -93,7 +123,7 @@ def test_match_getitem_returns_unsigned_python_int():
     `u128` constants directly without sign-truncation.  Previously a
     `as i128` cast would surface any U128 value with bit 127 set as a
     *negative* Python int (e.g. `u128::MAX` → `-1`).  Confirm both
-    `m["cap"]` and `m.uint("cap")` agree on the unsigned value.
+    `m["cap"]` and `m.const_uint("cap")` agree on the unsigned value.
     """
     from strider.pattern import any_int_const
     g = _build_graph()
@@ -103,9 +133,9 @@ def test_match_getitem_returns_unsigned_python_int():
         return
     for m in hits:
         getitem_val = m[c]
-        uint_val = m.uint(c)
+        uint_val = m.const_uint(c)
         assert getitem_val == uint_val, (
-            f"m[c] vs m.uint(c) disagreement: getitem={getitem_val!r}, uint={uint_val!r}"
+            f"m[c] vs m.const_uint(c) disagreement: getitem={getitem_val!r}, uint={uint_val!r}"
         )
         # IntConsts in real graphs fit in u128 and must be non-negative.
         assert getitem_val >= 0, (

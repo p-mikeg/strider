@@ -106,7 +106,7 @@ def test_predicate_guard_filters_int_const(x86_memory_elf):
     g = _build_graph(x86_memory_elf, "array_sum")
     c = Capture()
     pat_unfiltered = any_int_const(c)
-    pat_filtered = any_int_const(c).when(lambda m: (m.uint(c) or 0) < 0x100)
+    pat_filtered = any_int_const(c).when(lambda m: (m.const_uint(c) or 0) < 0x100)
 
     hits_unfiltered = g.find_all(pat_unfiltered)
     hits_filtered = g.find_all(pat_filtered)
@@ -115,7 +115,7 @@ def test_predicate_guard_filters_int_const(x86_memory_elf):
     assert len(hits_filtered) <= len(hits_unfiltered)
     # Every filtered hit must satisfy the predicate.
     for h in hits_filtered:
-        v = h.uint(c)
+        v = h.const_uint(c)
         assert v is not None
         assert v < 0x100
 
@@ -193,5 +193,5 @@ def test_chained_xor_mask_pattern_finds_xor():
     assert len(hits) >= 1
     # The captured constant must extract as an integer.
     for h in hits:
-        v = h.uint(k)
+        v = h.const_uint(k)
         assert v is not None

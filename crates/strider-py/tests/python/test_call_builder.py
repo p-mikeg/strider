@@ -184,7 +184,7 @@ def test_call_arg0_constraint_filters_out_non_matches():
 
 def test_call_target_capture_round_trips():
     # `.target(var(c))` binds c to the target's IntConst output —
-    # users can then read its value via Match.uint(c).
+    # users can then read its value via Match.const_uint(c).
     g = _switch_graph()
     c = Capture()
     hits = g.find_all(call().target(var(c)))
@@ -196,7 +196,7 @@ def test_call_target_capture_round_trips():
     f_addr = loaded.symbol("f")
     seen_f = False
     for m in hits:
-        u = m.uint(c)
+        u = m.const_uint(c)
         if u is not None and u == f_addr:
             seen_f = True
             break

@@ -96,7 +96,7 @@ def test_find_all_list_merges_shared_capture():
 
     merged = g.find_all([pat_call, pat_const])
     assert len(merged) >= 1
-    assert any(m.uint(target) == f_addr for m in merged)
+    assert any(m.const_uint(target) == f_addr for m in merged)
 
 
 def test_find_all_list_with_unmatchable_pattern_is_empty():

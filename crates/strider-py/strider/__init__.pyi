@@ -578,13 +578,13 @@ class Match:
         """The per-input-pattern root node ids — one entry per pattern passed
         to the query (`[root]` for a single-pattern query)."""
         ...
-    def uint(self, key: Any) -> Optional[int]:
+    def const_uint(self, key: Any) -> Optional[int]:
         """Thin forwarder to `Node.const_uint()`."""
         ...
-    def int(self, key: Any) -> Optional[int]:
+    def const_int(self, key: Any) -> Optional[int]:
         """Thin forwarder to `Node.const_int()`."""
         ...
-    def bool(self, key: Any) -> Optional[bool]:
+    def const_bool(self, key: Any) -> Optional[bool]:
         """Thin forwarder to `Node.const_bool()`."""
         ...
     def float_bits(self, key: Any) -> Optional[int]:
