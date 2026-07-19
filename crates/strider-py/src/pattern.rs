@@ -2575,6 +2575,10 @@ node_builder! {
         { pat addr: addr = "Constrain the load's address operand." },
         { mem mem_in: mem_in
             = "Constrain the load's memory predecessor (a memory-producing sub-pattern)." },
+        { multi_pat any_input: any_input
+            = "Require SOME input of the Load to match `p` (candidates: mem, addr). \
+               A typed sub only binds addr; a kind-unconstrained sub (var/anything) \
+               can also bind the memory edge. Repeatable." },
         { scalar bit_width(u32 => u32): bit_width = "Filter loads by value width in bits." },
         { scalar stack_offset(i128 => i128): stack_offset
             = "Match only loads whose address decomposes to exactly `sp + k`." },
@@ -2610,6 +2614,10 @@ node_builder! {
         { scalar_inner space(crate::sleigh::PyVnSpace => rsleigh::VnSpace): space
             = "Restrict the match to a specific memory space." },
         { mem mem_in: mem_in = "Constrain the store's memory predecessor." },
+        { multi_pat any_input: any_input
+            = "Require SOME input of the Store to match `p` (candidates: mem, addr, \
+               data). A typed sub only binds addr/data; a kind-unconstrained sub \
+               (var/anything) can also bind the memory edge. Repeatable." },
         { scalar bit_width(u32 => u32): bit_width = "Filter stores by data width in bits." },
         { scalar stack_offset(i128 => i128): stack_offset
             = "Match only stores whose address decomposes to exactly `sp + k`." },
@@ -2638,6 +2646,7 @@ struct CallInner {
     target: Option<Py<PyAny>>,
     args: Vec<(usize, Py<PyAny>)>,
     mem: Option<Py<PyAny>>,
+    any_input: Vec<Py<PyAny>>,
     /// `.res()` — pin a nested value operand to the Call's declared result
     /// output (excludes caller-saved clobber outputs).
     res: bool,
@@ -2694,6 +2703,16 @@ impl PyCallPat {
         }
         if let Some(m) = clone_opt(py, &self.inner.borrow().mem) {
             b = b.mem(compile_operand_mem(m.bind(py))?);
+        }
+        let any_inputs: Vec<Py<PyAny>> = self
+            .inner
+            .borrow()
+            .any_input
+            .iter()
+            .map(|p| p.clone_ref(py))
+            .collect();
+        for p in any_inputs {
+            b = b.any_input(compile_operand_match(p.bind(py))?);
         }
         if self.inner.borrow().res {
             b = b.res();
@@ -2754,6 +2773,14 @@ impl PyCallPat {
         slf.inner.borrow_mut().mem = Some(p);
         slf
     }
+    /// Require that SOME input of the Call matches `p` (candidates: ctrl,
+    /// mem, target, sp, each arg). A typed sub only binds a value input
+    /// (e.g. target or an arg); a kind-unconstrained sub (`var`/`anything`)
+    /// can also bind the control or memory edges. Repeatable.
+    fn any_input<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
+        slf.inner.borrow_mut().any_input.push(p);
+        slf
+    }
     /// When nested as a value operand, pin it to the Call's declared result
     /// output (excludes caller-saved clobber outputs).
     fn res(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -2796,6 +2823,9 @@ node_builder! {
                takes a memory producer (store / mem_phi / call / call_other)." },
         { multi_match args(usize): arg
             = "Constrain raw `inputs[idx]` of the matched CallOther." },
+        { multi_pat any_input: any_input
+            = "Require SOME input of the CallOther to match `p`, without pinning \
+               which slot. Repeatable." },
         { flag res: res
             = "When nested as a value operand, pin it to the declared result \
                output (excludes implicit-write clobber outputs)." },
@@ -2822,6 +2852,9 @@ node_builder! {
         { pat preceded_by: preceded_by
             = "Match `p` against the Return's direct ctrl predecessor." },
         { multi_match ret_vals(usize): ret_val = "Constrain return value at position `idx`." },
+        { multi_pat any_input: any_input
+            = "Require SOME input of the Return to match `p`, without pinning \
+               which slot. Repeatable." },
     ],
 }
 
@@ -2848,6 +2881,9 @@ node_builder! {
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
         { mem mem: mem
             = "Constrain the node's memory predecessor (`inputs[1]`)." },
+        { multi_pat any_input: any_input
+            = "Require SOME input of the IndirectBranch to match `p`, without pinning \
+               which slot. Repeatable." },
     ],
 }
 
@@ -2870,6 +2906,9 @@ node_builder! {
     fields: [
         { pat preceded_by: preceded_by
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
+        { multi_pat any_input: any_input
+            = "Require SOME input of the Unreachable to match `p`, without pinning \
+               which slot. Repeatable." },
     ],
 }
 
@@ -2894,6 +2933,9 @@ node_builder! {
             = "Constrain the dispatch address (`inputs[1]`)." },
         { pat preceded_by: preceded_by
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
+        { multi_pat any_input: any_input
+            = "Require SOME input of the Switch to match `p`, without pinning \
+               which slot. Repeatable." },
     ],
 }
 
@@ -3151,6 +3193,13 @@ node_builder! {
                which predecessor slot (a phi's incoming values are usually \
                order-irrelevant). Repeatable: each call adds a constraint bound \
                to a DISTINCT input slot. Captures inside `p` bind out normally." },
+        { pat phi_token: phi_token
+            = "Constrain the phi's ownership edge — the PhiToken input at raw \
+               slot 0 (the owning Region's PhiToken output). Unlike `.input(i, \
+               p)`, which shifts by +1 past this slot, this targets slot 0 \
+               directly. A typed sub can never bind it (PhiToken falls outside \
+               the value domain a typed sub matches); use var()/anything() to \
+               bind the edge." },
     ],
 }
 
@@ -3181,6 +3230,18 @@ node_builder! {
     fields: [
         { multi_mem inputs(usize): input
             = "Constrain the memory token arriving from predecessor slot `idx`." },
+        { multi_pat any_input: any_input
+            = "Require SOME input of the MemPhi to match `p`, without pinning \
+               which slot (candidates: PhiToken at slot 0, each memory \
+               predecessor). A typed value sub can never bind a Memory or \
+               PhiToken edge — only a kind-unconstrained sub (var/anything) \
+               reaches them. Repeatable." },
+        { pat phi_token: phi_token
+            = "Constrain the MemPhi's ownership edge — the PhiToken input at \
+               raw slot 0 (the owning Region's PhiToken output). Unlike \
+               `.input(i, p)`, which shifts by +1 past this slot, this targets \
+               slot 0 directly. See PhiPat.phi_token for the value-phi \
+               analogue." },
     ],
 }
 

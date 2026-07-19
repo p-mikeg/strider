@@ -99,6 +99,16 @@ impl CallPat {
         Self(self.0.input_mem(1, p))
     }
 
+    /// Require that *some* input of the `Call` matches `p`, without pinning
+    /// which slot. Candidate slots are EVERY input (ctrl, mem, target, sp,
+    /// each arg) — the sub-pattern discriminates: a typed value sub only
+    /// binds a value input (e.g. target or an arg), while a kind-unconstrained
+    /// sub (`var`/`anything`) can also bind the control or memory edges.
+    /// Repeatable: each call adds a separate existential constraint.
+    pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_any(p))
+    }
+
     /// When nested as a value operand, pin the operand to the Call's declared
     /// **result** output (raw slot 2) rather than any value output — so a
     /// caller-saved clobber output won't match. No effect when the Call is used
@@ -199,6 +209,14 @@ impl CallOtherPat {
         self
     }
 
+    /// Require that *some* input of the `CallOther` matches `p`, without
+    /// pinning which slot — see [`CallPat::any_input`] for the general model.
+    /// Repeatable: each call adds a separate existential constraint.
+    pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
+        self.inner = self.inner.input_any(p);
+        self
+    }
+
     /// When nested as a value operand, pin the operand to the CallOther's
     /// declared **result** output (raw slot 2) rather than any value output —
     /// so an implicit-write clobber output won't match. No effect when used as
@@ -284,6 +302,13 @@ impl RetPat {
         Self(self.0.input(2 + idx, p))
     }
 
+    /// Require that *some* input of the `Return` matches `p`, without
+    /// pinning which slot — see [`CallPat::any_input`] for the general model.
+    /// Repeatable: each call adds a separate existential constraint.
+    pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_any(p))
+    }
+
     /// Bind the resulting `Return` node to `c`.
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
@@ -325,6 +350,13 @@ impl IndirectBranchPat {
         Self(self.0.input_mem(1, p))
     }
 
+    /// Require that *some* input of the `IndirectBranch` matches `p`, without
+    /// pinning which slot — see [`CallPat::any_input`] for the general model.
+    /// Repeatable: each call adds a separate existential constraint.
+    pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_any(p))
+    }
+
     /// Bind the resulting `IndirectBranch` node to `c`.
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
@@ -353,6 +385,13 @@ impl UnreachablePat {
     /// (`inputs[0]`). The sub-pattern's root produces a control edge.
     pub fn preceded_by<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(0, p))
+    }
+
+    /// Require that *some* input of the `Unreachable` matches `p`, without
+    /// pinning which slot — see [`CallPat::any_input`] for the general model.
+    /// Repeatable: each call adds a separate existential constraint.
+    pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_any(p))
     }
 
     /// Bind the resulting `Unreachable` node to `c`.
@@ -389,6 +428,13 @@ impl SwitchPat {
     /// (`inputs[0]`). The sub-pattern's root produces a control edge.
     pub fn preceded_by<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(0, p))
+    }
+
+    /// Require that *some* input of the `Switch` matches `p`, without
+    /// pinning which slot — see [`CallPat::any_input`] for the general model.
+    /// Repeatable: each call adds a separate existential constraint.
+    pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_any(p))
     }
 
     /// Bind the resulting `Switch` node to `c`.

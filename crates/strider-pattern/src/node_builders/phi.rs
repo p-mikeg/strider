@@ -71,6 +71,17 @@ impl PhiPat {
         self
     }
 
+    /// Constrain the `Phi`'s ownership edge — the `PhiToken` input at raw
+    /// slot 0 (the owning `Region`'s `PhiToken` output). Unlike
+    /// [`input`](Self::input), which shifts by `+1` past this slot, this
+    /// targets slot 0 directly. Typical use: pin which `Region` owns the
+    /// phi, e.g. bind a `var(c)` here and cross-check `c`'s producer
+    /// elsewhere, or attach a node-only guard via `.when()`.
+    pub fn phi_token<P: MatchPat + 'static>(mut self, p: P) -> Self {
+        self.inner = self.inner.input(0, p);
+        self
+    }
+
     /// Restrict the match to lifter-emitted SSA φ nodes whose
     /// `value_vn` entry (via `Function::get_vn_for_value`) is `Some(vn)`.
     pub fn for_vn(mut self, vn: rsleigh::Vn) -> Self {
@@ -138,6 +149,26 @@ impl MemPhiPat {
     /// memory producer.
     pub fn input<M: MemPat + 'static>(self, idx: usize, p: M) -> Self {
         Self(self.0.input_mem(idx + 1, p))
+    }
+
+    /// Require that *some* input of the `MemPhi` matches `p`, without
+    /// pinning which predecessor slot. Candidate slots are EVERY input
+    /// (`PhiToken` at slot 0, each memory predecessor after it) — the
+    /// sub-pattern discriminates: a typed value sub can never bind a
+    /// `Memory` or `PhiToken` edge (both fall outside `MatchPat`'s value
+    /// domain), so only a kind-unconstrained sub (`var`/`anything`) reaches
+    /// them. Repeatable: each call adds a separate existential constraint.
+    pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_any(p))
+    }
+
+    /// Constrain the `MemPhi`'s ownership edge — the `PhiToken` input at raw
+    /// slot 0 (the owning `Region`'s `PhiToken` output). Unlike
+    /// [`input`](Self::input), which shifts by `+1` past this slot, this
+    /// targets slot 0 directly. See [`PhiPat::phi_token`] for the value-phi
+    /// analogue.
+    pub fn phi_token<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input(0, p))
     }
 
     /// Bind the matched `MemPhi`'s memory-token output to `c`.

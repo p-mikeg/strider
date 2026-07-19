@@ -13,7 +13,7 @@ use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     Capture, CaptureExt, CastMask, MatchPat, Matcher, add, any, any_int_const, call, call_other,
-    if_node, indirect_branch, int_const, load, mem_phi, phi, ret, switch, unreachable, var,
+    if_node, indirect_branch, int_const, load, mem_phi, phi, ret, store, switch, unreachable, var,
 };
 
 // ── Call ──────────────────────────────────────────────────────────────────────
@@ -996,6 +996,321 @@ fn phi_for_vn_filters() {
     assert_eq!(
         matcher.find_all(&phi().for_vn(rbx).build()).unwrap().len(),
         0
+    );
+}
+
+// ── phi_token (PhiPat / MemPhiPat) ──────────────────────────────────────────
+
+/// `phi_token` targets raw slot 0 directly (no `+1` shift) — a typed sub can
+/// never bind it (`PhiToken` falls outside `MatchPat`'s value domain, same
+/// rule as `any_input`), so it always matches nothing.
+#[test]
+fn phi_token_typed_sub_never_matches() {
+    let function = phi_over_two_consts();
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&phi().phi_token(int_const(1u128)).build())
+            .unwrap()
+            .len(),
+        0,
+        "a typed value sub can never bind the PhiToken input"
+    );
+}
+
+/// `phi_token` reaches slot 0 (the `PhiToken` edge from the owning `Region`);
+/// a wildcard binds it and the bound value's kind is `PhiToken`. Distinct
+/// from `.input(0, _)`, which (per its `+1` shift) addresses predecessor 0
+/// (a data slot) instead.
+#[test]
+fn phi_token_wildcard_binds_the_phi_token_edge() {
+    let function = phi_over_two_consts();
+    let matcher = Matcher::new(&function);
+    let c = Capture::new();
+    let hits = matcher
+        .find_all(&phi().phi_token(var(c)).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    let bound = hits[0].value(c).unwrap();
+    assert!(
+        matches!(
+            function.value_kind(bound),
+            strider_ir::node::ValueKind::PhiToken
+        ),
+        "phi_token(var(c)) must bind the PhiToken-kind input, got {:?}",
+        function.value_kind(bound)
+    );
+
+    // `.input(0, _)` (the shifted accessor) addresses predecessor 0 instead —
+    // a typed const sub matches it directly, proving the two accessors reach
+    // different slots.
+    assert_eq!(
+        matcher
+            .find_all(&phi().input(0, int_const(1u128)).build())
+            .unwrap()
+            .len(),
+        1,
+        "input(0, _) (shifted) must reach predecessor 0's data value, not the PhiToken"
+    );
+}
+
+/// A join with two real memory predecessors (a store on each branch of an
+/// if/else) plus a load, forcing a genuine `MemPhi` with a non-trivial
+/// `PhiToken` input and two memory predecessors.
+fn mem_phi_with_two_stores() -> strider_ir::Function {
+    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+
+    let entry = b.create_region_all().unwrap();
+    let region_t = b.create_region_all().unwrap();
+    let region_f = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
+
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, region_t, region_f).unwrap();
+
+    for (region, val) in [(region_t, 1u64), (region_f, 2u64)] {
+        b.set_region(region);
+        let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+        let data = b.build_int_const(val, ValueType::I64).unwrap();
+        b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
+        b.build_branch(join).unwrap();
+    }
+
+    b.set_region(join);
+    let addr = b.build_int_const(0x48u64, ValueType::I64).unwrap();
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .unwrap();
+    b.build_return(Some(loaded), &[]).unwrap();
+    b.set_lift_addr(None);
+    b.build().unwrap()
+}
+
+/// `MemPhiPat::any_input` — a wildcard reaches the memory predecessors AND
+/// the `PhiToken` slot; a typed value sub reaches neither.
+#[test]
+fn mem_phi_any_input_general_model() {
+    let function = mem_phi_with_two_stores();
+    let matcher = Matcher::new(&function);
+
+    let c = Capture::new();
+    let hits = matcher
+        .find_all(&mem_phi().any_input(var(c)).build())
+        .unwrap();
+    let kinds: Vec<_> = hits
+        .iter()
+        .map(|h| function.value_kind(h.value(c).unwrap()))
+        .collect();
+    assert!(
+        kinds
+            .iter()
+            .any(|k| matches!(k, strider_ir::node::ValueKind::Memory)),
+        "wildcard any_input must bind a memory predecessor, kinds: {kinds:?}"
+    );
+    assert!(
+        kinds
+            .iter()
+            .any(|k| matches!(k, strider_ir::node::ValueKind::PhiToken)),
+        "wildcard any_input must also reach the PhiToken slot, kinds: {kinds:?}"
+    );
+
+    assert_eq!(
+        matcher
+            .find_all(&mem_phi().any_input(int_const(1u128)).build())
+            .unwrap()
+            .len(),
+        0,
+        "a typed value sub must not bind a Memory or PhiToken predecessor"
+    );
+}
+
+/// `MemPhiPat::phi_token` targets slot 0 directly, distinct from `.input(0,
+/// _)` (which shifts by `+1` to address memory predecessor 0). Every region
+/// (`entry`, `region_t`, `region_f`, `join`) carries its own `MemPhi`, so a
+/// wildcard `phi_token` matches all four — the `.input(0, _)` shifted
+/// accessor is what discriminates the join's genuine store predecessor.
+#[test]
+fn mem_phi_phi_token_targets_slot_zero() {
+    let function = mem_phi_with_two_stores();
+    let matcher = Matcher::new(&function);
+
+    let mem_phi_count = matcher.find_all(&mem_phi().build()).unwrap().len();
+
+    let c = Capture::new();
+    let hits = matcher
+        .find_all(&mem_phi().phi_token(var(c)).build())
+        .unwrap();
+    assert_eq!(
+        hits.len(),
+        mem_phi_count,
+        "a wildcard phi_token must match every MemPhi's slot-0 PhiToken input"
+    );
+    assert!(
+        hits.iter().all(|h| matches!(
+            function.value_kind(h.value(c).unwrap()),
+            strider_ir::node::ValueKind::PhiToken
+        )),
+        "phi_token(var(c)) must bind the PhiToken-kind input on every hit"
+    );
+
+    // A typed sub can never bind the PhiToken slot.
+    assert_eq!(
+        matcher
+            .find_all(&mem_phi().phi_token(int_const(1u128)).build())
+            .unwrap()
+            .len(),
+        0
+    );
+
+    // `.input(0, _)` (shifted) addresses memory predecessor 0 instead — a
+    // memory-producing sub (`store(...)`) matches it directly, and only the
+    // join's MemPhi has a genuine store as its first memory predecessor (the
+    // other three regions' MemPhis chain to another MemPhi, not a store).
+    assert_eq!(
+        matcher
+            .find_all(&mem_phi().input(0, store().data(int_const(1u128))).build())
+            .unwrap()
+            .len(),
+        1,
+        "input(0, _) (shifted) must reach memory predecessor 0, not the PhiToken"
+    );
+}
+
+// ── any_input on the remaining node families ────────────────────────────────
+
+/// `CallPat::any_input` — a typed sub binds the call target; a wildcard also
+/// reaches the control/memory edges (general model, see `node_pat.rs` tests).
+#[test]
+fn call_any_input_binds_target() {
+    let function = call_at(0x1234);
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&call().any_input(int_const(0x1234u128)).build())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// `CallOtherPat::any_input` — a typed sub binds one of the CallOther's args.
+#[test]
+fn call_other_any_input_binds_arg() {
+    let function = call_other_named("f", 5);
+    let matcher = Matcher::new(&function);
+    let hits = matcher
+        .find_all(&call_other().any_input(var(Capture::new())).build())
+        .unwrap();
+    assert!(!hits.is_empty(), "any_input must bind some CallOther input");
+}
+
+/// `RetPat::any_input` — a typed sub binds the return value.
+#[test]
+fn ret_any_input_binds_ret_val() {
+    let function = return_const(7);
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&ret().any_input(int_const(7u128)).build())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// `IndirectBranchPat::any_input` — a typed sub binds the dispatch target.
+#[test]
+fn indirect_branch_any_input_binds_target() {
+    let function = indirect_branch_to(0xBEEF);
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&indirect_branch().any_input(int_const(0xBEEFu128)).build())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// `SwitchPat::any_input` — a typed sub binds the dispatch address.
+#[test]
+fn switch_any_input_binds_address() {
+    let function = switch_fn(0xC0DE);
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&switch().any_input(int_const(0xC0DEu128)).build())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// `UnreachablePat::any_input` — reaches the sole ctrl predecessor via a
+/// wildcard (a typed value sub cannot, since ctrl is not a value edge).
+#[test]
+fn unreachable_any_input_wildcard_reaches_ctrl() {
+    let function = unreachable_fn();
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&unreachable().any_input(var(Capture::new())).build())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// `LoadPat::any_input` — a typed sub binds the load's address operand.
+#[test]
+fn load_any_input_binds_addr() {
+    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+    let entry = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .unwrap();
+    b.build_return(Some(loaded), &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&load().any_input(int_const(0x1000u128)).build())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// `StorePat::any_input` — a typed sub binds the stored data operand.
+#[test]
+fn store_any_input_binds_data() {
+    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+    let entry = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let data = b.build_int_const(99u64, ValueType::I64).unwrap();
+    b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
+    b.build_return(None, &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&store().any_input(int_const(99u128)).build())
+            .unwrap()
+            .len(),
+        1
     );
 }
 

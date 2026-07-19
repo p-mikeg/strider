@@ -91,11 +91,12 @@ fn load_store_kind(exemplar: NodeKind, space: Option<rsleigh::VnSpace>) -> KindS
 
 // ── Shared mem-access accumulator (LoadPat / StorePat common surface) ────────
 //
-// `space` / `mem_in` / `bit_width` / `stack_offset` / `stack_only` /
-// `capture` are byte-for-byte identical on both builders, so they live once
-// here. `addr` (both) and `data` (store-only), plus the anchor choice
-// (value-root at slot 0 vs memory-token root) and where the width pins
-// (output vs input slot 2), diverge and stay on the per-builder structs.
+// `space` / `mem_in` / `any_input` / `bit_width` / `stack_offset` /
+// `stack_only` / `capture` are byte-for-byte identical on both builders, so
+// they live once here. `addr` (both) and `data` (store-only), plus the
+// anchor choice (value-root at slot 0 vs memory-token root) and where the
+// width pins (output vs input slot 2), diverge and stay on the per-builder
+// structs.
 
 /// The fields + methods `LoadPat` and `StorePat` share. Each builder embeds
 /// one (`common`) and forwards its common fluent methods to these fields;
@@ -106,16 +107,24 @@ fn load_store_kind(exemplar: NodeKind, space: Option<rsleigh::VnSpace>) -> KindS
 struct MemAccessSpec {
     space: Option<rsleigh::VnSpace>,
     mem_in: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
+    /// Existential `any_input` constraints, applied in order. Unlike
+    /// `mem_in` (a single fixed slot), each call adds a separate
+    /// constraint — see [`LoadPat::any_input`] / [`StorePat::any_input`].
+    any_input: Vec<Box<dyn FnOnce(NodePat) -> NodePat>>,
     bit_width: Option<u32>,
     stack: StackAccessSpec,
     capture: Option<Capture>,
 }
 
 impl MemAccessSpec {
-    /// Wire the shared `mem_in` predecessor and `capture` onto `n`.
+    /// Wire the shared `mem_in` predecessor, `any_input` constraints, and
+    /// `capture` onto `n`.
     fn wire_mem_and_capture(&mut self, mut n: NodePat) -> NodePat {
         if let Some(m) = self.mem_in.take() {
             n = m(n);
+        }
+        for f in self.any_input.drain(..) {
+            n = f(n);
         }
         if let Some(c) = self.capture {
             n = n.capture(c);
@@ -161,6 +170,18 @@ impl LoadPat {
     /// value chain.
     pub fn mem_in<M: MemPat + 'static>(mut self, p: M) -> Self {
         self.common.mem_in = Some(Box::new(move |n: NodePat| n.input_mem(0, p)));
+        self
+    }
+
+    /// Require that *some* input of the `Load` matches `p`, without pinning
+    /// which slot (candidates: mem, addr). The sub-pattern discriminates — a
+    /// typed value sub only binds the addr input, while a kind-unconstrained
+    /// sub (`var`/`anything`) can also bind the memory edge. Repeatable: each
+    /// call adds a separate existential constraint.
+    pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
+        self.common
+            .any_input
+            .push(Box::new(move |n: NodePat| n.input_any(p)));
         self
     }
 
@@ -261,6 +282,18 @@ impl StorePat {
     /// memory-producing sub-pattern (a `store` / `mem_phi` / `call`).
     pub fn mem_in<M: MemPat + 'static>(mut self, p: M) -> Self {
         self.common.mem_in = Some(Box::new(move |n: NodePat| n.input_mem(0, p)));
+        self
+    }
+
+    /// Require that *some* input of the `Store` matches `p`, without pinning
+    /// which slot (candidates: mem, addr, data). The sub-pattern
+    /// discriminates — a typed value sub only binds addr/data, while a
+    /// kind-unconstrained sub (`var`/`anything`) can also bind the memory
+    /// edge. Repeatable: each call adds a separate existential constraint.
+    pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
+        self.common
+            .any_input
+            .push(Box::new(move |n: NodePat| n.input_any(p)));
         self
     }
 
