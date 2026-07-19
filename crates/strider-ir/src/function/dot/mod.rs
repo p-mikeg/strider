@@ -110,14 +110,10 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
     pub(crate) entry: NodeId,
     pub(crate) function: &'a Function,
     pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
-    /// Reverse of `Function::arg_index_to_values`: carrier node -> arg indices.
-    /// Built once at render time so per-node label lookup is O(1).  Empty until
-    /// `FunctionArgDetect` has run.
+    /// Carrier node -> arg indices.
     pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<u32>>,
-    /// Restrict the render to these nodes; `None` renders everything reachable
-    /// from `entry`.  Edges whose producer falls outside are dropped, so the
-    /// result is the induced subgraph.  Lets the neighbourhood view reuse this
-    /// renderer instead of being a parallel one.
+    /// Restrict the render to the induced subgraph over these nodes; `None`
+    /// renders everything reachable from `entry`.
     pub(crate) nodes: Option<FxHashSet<NodeId>>,
     /// Focus of a neighbourhood render, drawn with a highlight border.
     pub(crate) center: Option<NodeId>,
@@ -143,15 +139,10 @@ pub struct FunctionDotDumperState {
     /// keyed by the `ValueId` they stand for.
     pub(super) virtual_nodes: FxHashMap<ValueId, String>,
     /// Every emitted DOT id that stands for an IR node, mapped back to it.
-    ///
-    /// Many-to-one by design: a constant renders as a fresh box per use, and
-    /// each of those boxes maps to the same `NodeId`.  Total over NodeId-backed
-    /// nodes, since [`get_dot_id`](Self::get_dot_id) is the only minter and the
-    /// only writer.  Virtual nodes are absent (they have no `NodeId`).
+    /// Many-to-one: a per-use constant's boxes all map to the same `NodeId`.
     pub(super) dot_to_node: FxHashMap<String, NodeId>,
     pub(super) next_unique_id: u32,
-    /// Mirrored from [`FunctionDotDumper::center`] so
-    /// [`get_dot_id`](Self::get_dot_id) can keep the centre addressable.
+    /// Focus of a neighbourhood render.
     pub(super) center: Option<NodeId>,
 }
 
@@ -166,8 +157,7 @@ impl FunctionDotDumperState {
         self.dot_to_node.iter().map(|(k, &v)| (k.as_str(), v))
     }
 
-    /// A DOT id backed by no graph `NodeId`, for virtual nodes.  Deliberately
-    /// absent from [`dot_to_node`](Self::dot_to_node).
+    /// A DOT id backed by no graph `NodeId`, for virtual nodes.
     pub(super) fn alloc_virtual_id(&mut self) -> String {
         let id = self.next_unique_id;
         self.next_unique_id += 1;
@@ -175,27 +165,13 @@ impl FunctionDotDumperState {
     }
 
     /// Whether `node` draws a private box beside each consumer instead of one
-    /// shared box.
-    ///
-    /// True for constants: a hot `0` used fifty times would otherwise be a
-    /// fifty-edge hub that drags the layout into a hairball.  The neighbourhood
-    /// centre is exempt; the explorer re-centres and searches on it, so it must
-    /// stay one addressable box even when const.
+    /// shared box.  True for constants, except the neighbourhood centre.
     pub(super) fn renders_per_use(&self, graph: &Graph, node: NodeId) -> bool {
         graph.node_kind(node).is_const() && self.center != Some(node)
     }
 
-    /// A real node's id IS its `NodeId`, which makes it addressable (the
-    /// explorer navigates by it) and self-memoizing: a node reached from several
-    /// edges resolves to the same id, so it renders as one box with no
-    /// bookkeeping.
-    ///
-    /// A [per-use](Self::renders_per_use) constant draws a fresh box at each
-    /// consumer, so its id must be unique per use; those get a `c`-prefixed
-    /// counter.  The `c` / `v` prefixes keep virtual and per-use ids off the
-    /// integer id space.
-    ///
-    /// `graph` is for the node-kind lookup only.
+    /// The DOT id for `node`: its bare `NodeId`, or a fresh `c`-prefixed
+    /// counter for a [per-use](Self::renders_per_use) constant.
     pub(super) fn get_dot_id(&mut self, graph: &Graph, node_id: NodeId) -> String {
         let s = if self.renders_per_use(graph, node_id) {
             let id = self.next_unique_id;

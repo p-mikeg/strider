@@ -11,12 +11,8 @@ use super::require_reg_or_unique;
 
 impl FunctionBuilder {
     /// Outputs are `[Control, Memory]` then one `Typed` slot per output vn,
-    /// each slot's kind derived from the varnode's byte width and tagged with
-    /// that varnode on `value_vn`.
-    ///
-    /// `inputs` must already be fully assembled. Region snapshotting and all
-    /// post-node control/memory advancing or termination stay with the caller,
-    /// since those diverge between `Call` and `CallOther`.
+    /// each tagged with its varnode. `inputs` must already be fully
+    /// assembled; the caller does all control/memory advancing.
     fn emit_call_node(
         &mut self,
         kind: NodeKind,
@@ -32,25 +28,17 @@ impl FunctionBuilder {
         let node = self.create_node(kind, inputs, output_kinds);
         let outputs: Vec<ValueId> = self.function().node_outputs(node).to_vec();
 
-        // Tag each value output so pattern queries can recover its varnode.
-        // An untracked clobber register has no meaningful id, so it is left
-        // untagged rather than stored as a dangling `Vn`.
         for (value, vn) in core::iter::zip(&outputs[2..], output_vns) {
             self.function_mut().set_vn_for_value(*value, *vn);
         }
         Ok((node, outputs))
     }
 
-    /// `output_vns` is ret-vals then clobbers, each getting one output slot
-    /// tagged with its varnode. Returns the output values in that same order so
-    /// the caller can write them back.
+    /// `output_vns` is ret-vals then clobbers; the returned values come back
+    /// in that same order. Writeback is the caller's job.
     ///
-    /// Knows nothing about calling conventions: the lifter derives the vns and
-    /// `ret_stack_pop` from a CC, reads the args, and does the writeback. SP is
-    /// the exception, read here directly, since a `Call` always anchors on it.
-    ///
-    /// Always advances both control and memory, then models the callee's `ret`
-    /// by rebinding SP to `pre_call_SP + ret_stack_pop`.
+    /// Advances both control and memory, then rebinds SP to
+    /// `pre_call_SP + ret_stack_pop`.
     pub fn build_call(
         &mut self,
         call_address: ValueId,
@@ -62,7 +50,6 @@ impl FunctionBuilder {
         self.validate_value_inputs(args)?;
         self.validate_call_output_vns(output_vns)?;
 
-        // Also the base for the post-call adjust below.
         let sp_vn = self.function.stack_vn();
         let sp_value = self.read_variable(&sp_vn)?;
 
@@ -78,9 +65,7 @@ impl FunctionBuilder {
         self.advance_cur_region_ctrl(outputs[0])?;
         self.advance_cur_region_memory(outputs[1])?;
 
-        // A stack-push ISA pops the return-address word here; a link-register
-        // ISA passes 0. SP is guaranteed tracked, since the `read_variable`
-        // above would have errored otherwise.
+        // A link-register ISA passes 0.
         if ret_stack_pop != 0 {
             let sp_ty = sp_vn.int_type()?;
             let const_id = self.build_int_const(ret_stack_pop as u64, sp_ty)?;
@@ -93,11 +78,7 @@ impl FunctionBuilder {
     }
 
     /// Every varnode must be REGISTER / UNIQUE space, and none may appear
-    /// twice.
-    ///
-    /// Deliberately does NOT check that each vn is its own container: callers
-    /// canonicalize sub-register ABI footprints upstream, and the container
-    /// map is machine-register knowledge the target-agnostic IR does not hold.
+    /// twice. Does NOT check that a vn is its own container.
     fn validate_call_output_vns(&self, output_vns: &[rsleigh::Vn]) -> Result<()> {
         for (i, vn) in output_vns.iter().enumerate() {
             require_reg_or_unique(vn)?;
@@ -108,22 +89,13 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// The single IR builder for every IR-emitting `CallOther` form, both the
-    /// `NoReturn` trap class and the modeled `Call(abi)` class. The `NoOp`
-    /// class emits no node at all.
-    ///
     /// Inputs are `[ctrl, mem]` then `args`: an intrinsic has no call target
     /// and no SP anchor. Outputs are `[Control, Memory]`, then the optional
     /// ret-val, then the clobbers, matching `output_vns` order.
     ///
-    /// `terminate` closes the region here, so no separate termination call is
-    /// needed, and requires `advance_memory` false since a trap advances no
-    /// memory. Otherwise control advances and the region stays open.
-    ///
-    /// Name-agnostic: the caller stamps the user-op name onto the returned
-    /// node separately. Writeback of the outputs is the caller's job too, and
-    /// must do clobbers before the result so an aliased clobber cannot
-    /// re-clobber it.
+    /// `terminate` closes the region here and requires `advance_memory`
+    /// false; otherwise control advances and the region stays open. The
+    /// caller stamps the user-op name and writes the outputs back.
     pub fn build_call_other(
         &mut self,
         user_op_id: u64,
@@ -141,8 +113,7 @@ impl FunctionBuilder {
         let (node, outputs) =
             self.emit_call_node(NodeKind::CallOther { user_op_id }, inputs, output_vns)?;
 
-        // The NoReturn class sinks the trap's control edge into `Unreachable`
-        // rather than advancing it, leaving the memory edge dangling.
+        // Sinking control into `Unreachable` leaves the memory edge dangling.
         if terminate {
             self.create_node(NodeKind::Unreachable, [outputs[0]], []);
             self.terminate_cur_region().map(|_| ())?;
@@ -157,7 +128,7 @@ impl FunctionBuilder {
     }
 
     /// Test-only: the CC-aware `Call` construction the lifter performs in
-    /// prod, so test call sites stay off the dumb constructor.
+    /// prod.
     #[allow(clippy::missing_errors_doc)]
     #[cfg(any(test, feature = "test-util"))]
     pub fn build_call_cc(
@@ -173,9 +144,6 @@ impl FunctionBuilder {
         let arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc.arg_passing_regs.iter().copied().collect();
         let mut arg_passing: SmallVec<[ValueId; 4]> = SmallVec::new();
         for vn in &arg_vns {
-            // CC arg regs are tracked full-width containers, so a plain
-            // container-resolved read matches the lifter's aliasing dispatch
-            // with no sub-register slice to insert.
             let c = vn_container::largest_container_in(self.function().all_vns(), vn);
             arg_passing.push(self.read_variable(&c)?);
         }
@@ -190,7 +158,6 @@ impl FunctionBuilder {
             self.write_variable(vn, *new_val)?;
         }
         for (vn, new_val) in core::iter::zip(&ret_val_vars, ret_val_values) {
-            // Already container-resolved, so a direct write is exact.
             self.write_variable(vn, *new_val)?;
         }
 
@@ -203,8 +170,7 @@ impl FunctionBuilder {
     }
 
     /// Test-only: terminates the region with a `Return` reading exactly the
-    /// convention's return-value registers, as the lifter does in prod. Those
-    /// regs arrive container-resolved, so a plain read is exact.
+    /// convention's return-value registers.
     #[cfg(any(test, feature = "test-util"))]
     pub fn build_function_return(&mut self) -> Result<()> {
         let ret_vars: SmallVec<[rsleigh::Vn; 4]> =
@@ -233,8 +199,7 @@ impl FunctionBuilder {
         for vn in &abi.implicit_reads {
             require_reg_or_unique(vn)?;
         }
-        // Implicit-read register values first, then the explicit pcode
-        // operands.
+        // Implicit reads first, then the explicit pcode operands.
         let mut args: SmallVec<[ValueId; 4]> = SmallVec::new();
         for vn in &abi.implicit_reads {
             let c = vn_container::largest_container_in(self.function().all_vns(), vn);
@@ -242,8 +207,8 @@ impl FunctionBuilder {
         }
         args.extend_from_slice(explicit_args);
 
-        // Result then implicit-write clobbers, each canonicalized to its
-        // largest tracked container and deduplicated, result winning ties.
+        // Result then implicit-write clobbers, deduplicated with the result
+        // winning ties.
         let result_vn =
             output.map(|vn| vn_container::largest_container_in(self.function().all_vns(), &vn));
         let mut clobber_vns: SmallVec<[rsleigh::Vn; 4]> = SmallVec::new();
@@ -270,7 +235,7 @@ impl FunctionBuilder {
         let (ret_val_values, clobber_values) = output_values.split_at(result_vn.iter().count());
 
         // Clobbers before the result, so an aliased clobber cannot re-clobber
-        // it. Both are full-container writes.
+        // it.
         for (vn, value) in core::iter::zip(&clobber_vns, clobber_values) {
             self.write_variable(vn, *value)?;
         }

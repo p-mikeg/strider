@@ -27,10 +27,8 @@ impl FunctionBuilder {
         self.write_variable_from_id(var_id, value)
     }
 
-    /// Wires `region_id` as the function entry. Having no predecessors, it
-    /// takes the freshly built `InitialVar`s directly as its current variable
-    /// values, making it the dominator-tree root every other region inherits
-    /// from via [`FunctionBuilder::inherit_variables`].
+    /// Wires `region_id` as the function entry, taking the freshly built
+    /// `InitialVar`s as its current variable values.
     ///
     /// Errors when a tracked variable's byte size has no matching
     /// [`crate::node::ValueType`].
@@ -42,9 +40,8 @@ impl FunctionBuilder {
         self.link_region_variables(region_id, &initial_variables)
     }
 
-    /// Shared by [`Self::set_entry_region`] and [`Self::set_entry_region_all`],
-    /// which differ only in whether the `InitialVar`s become the region's
-    /// current values.
+    /// Links `region_id` to the entry control and memory, then builds one
+    /// `InitialVar` per tracked variable.
     pub(crate) fn wire_entry_and_build_initial_vars(
         &mut self,
         region_id: RegionId,
@@ -55,11 +52,8 @@ impl FunctionBuilder {
         self.link_control_regions(region_id, entry_control)?;
         self.link_memory_regions(region_id, entry_memory)?;
 
-        // Tracked-varnode ids and `InitialVar` payloads share one interner, so
-        // a `vn_id` doubles as SSA-variable key and node payload with no index
-        // translation. Register-passed argument carriers are recorded by the
-        // lifter right after this, since only it owns the `container_of` map
-        // that resolves a narrow ABI alias like `edi` to its container `rdi`.
+        // A `vn_id` doubles as SSA-variable key and `InitialVar` payload, so
+        // no index translation is needed.
         let vn_ids: Vec<_> = self.function().vn_ids().collect();
         let mut initial_variables = SecondaryMap::new();
         for vn_id in vn_ids {
@@ -67,8 +61,6 @@ impl FunctionBuilder {
             let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
             let value = self.build_single_output_pure(NodeKind::InitialVar(vn_id), [], output_type);
             initial_variables[vn_id] = value;
-            // Index it so downstream consumers don't re-scan `preorder()` to
-            // find it.
             let node_id = self.function().producer(value);
             self.function_mut()
                 .side_tables_mut()

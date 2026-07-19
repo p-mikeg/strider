@@ -1,12 +1,5 @@
-//! The shared IR construction vocabulary, gained by every [`IRBuilder`] via
-//! the blanket impl, so lifter, optimizer and plain function build IR alike.
-//!
-//! Everything here is pure: bodies bottom out in `create_node` plus read-only
-//! queries, never touching lift-time scratch such as the active region or the
-//! SSA variable table. Constructors that DO need that scratch (`build_store`
-//! and `build_load` route through the region's memory token; `build_return`,
-//! `build_if`, `build_call` terminate or link regions) stay inherent on
-//! [`crate::FunctionBuilder`].
+//! Everything here is pure: no constructor touches lift-time scratch such as
+//! the active region or the SSA variable table.
 
 use anyhow::anyhow;
 
@@ -18,8 +11,6 @@ use crate::node::{
     ValueId, ValueKind, ValueType,
 };
 
-/// Every method is provided, so implementors get the whole vocabulary free.
-/// The point reads it relies on come from the [`IRViewer`] supertrait.
 pub trait IRBuilderExt: IRBuilder {
     fn build_single_output_pure(
         &mut self,
@@ -46,9 +37,7 @@ pub trait IRBuilderExt: IRBuilder {
     }
 
     /// Only ever widens, or no-ops at equal width. A value wider than
-    /// `output_type` is a caller error: narrow it with
-    /// [`Self::truncate_if_needed`] or [`Self::convert_to_int_if_needed`]
-    /// first.
+    /// `output_type` is a caller error.
     fn extend_if_needed(
         &mut self,
         value_id: ValueId,
@@ -62,8 +51,6 @@ pub trait IRBuilderExt: IRBuilder {
                 "output {value_id:?} target is not an integer value"
             ));
         }
-        // I1 is an integer, so the only non-integer input is a float, which
-        // needs an explicit `FloatBitsToInt` bitcast before any width change.
         if !curr_output_type.is_integer() {
             return Err(anyhow!(
                 "cannot integer-extend non-integer value {value_id:?} \
@@ -81,9 +68,7 @@ pub trait IRBuilderExt: IRBuilder {
             && let Some(signed_val) = self.int_const_i128(value_id)
         {
             // `i128 as u128` reinterprets the sign-extended bits, which
-            // `build_int_const` then masks to width. Reading the full u128 /
-            // i128 rather than a 64-bit projection folds I80 / I128 extends
-            // too. The guard above already rejected narrowing.
+            // `build_int_const` then masks to width.
             return match op {
                 ExtendOp::SignExtend => self.build_int_const(signed_val as u128, output_type),
                 ExtendOp::ZeroExtend => self.build_int_const(unsigned_val, output_type),
@@ -122,8 +107,6 @@ pub trait IRBuilderExt: IRBuilder {
         if in_ty == float_ty {
             return Ok(input);
         }
-        // Register reads are always same-width integers, so the lifter takes
-        // the `IntBitsToFloat` arm.
         if in_ty.is_float() {
             self.build_float_to_float(input, float_ty)
         } else {
@@ -131,15 +114,15 @@ pub trait IRBuilderExt: IRBuilder {
         }
     }
 
-    /// An `IntConst` at `I1`. Logical ops on it are ordinary integer ops.
+    /// An `IntConst` at `I1`.
     fn build_boolean_const(&mut self, val: bool) -> ValueId {
         // I1 is an integer, so the guard inside can never fire.
         self.build_int_const(u128::from(val), ValueType::I1)
             .expect("I1 is always an integer type")
     }
 
-    /// Masks to the type's width and interns, so equal (value, width) pairs
-    /// dedup. Handles any value fitting `u128`, whatever the declared width.
+    /// Masks `val` to the type's width. Handles any value fitting `u128`,
+    /// whatever the declared width.
     fn build_int_const(&mut self, val: impl Into<u128>, output_type: ValueType) -> Result<ValueId> {
         if !output_type.is_integer() {
             return Err(anyhow!(
@@ -152,9 +135,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 
-    /// Little-endian limbs, canonicalised to the inline form when they fit
-    /// `u128`. Requires a wide `output_type`; narrower ones go through
-    /// [`Self::build_int_const`].
+    /// `limbs` is little-endian. Requires a wide `output_type`.
     fn build_int_const_limbs(&mut self, limbs: &[u64], output_type: ValueType) -> Result<ValueId> {
         if !output_type.is_wide_int() {
             return Err(anyhow!(
@@ -168,8 +149,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 
-    /// Strict: both operands must already carry `output_type`. No
-    /// auto-coercion, the caller inserts any truncate or extend.
+    /// Strict: both operands must already carry `output_type`.
     fn build_int_binary_operation(
         &mut self,
         lhs_id: ValueId,
@@ -183,8 +163,7 @@ pub trait IRBuilderExt: IRBuilder {
     }
 
     /// Builds `x <op> IntConst(k):ty`. Note the operand order: the constant
-    /// lands on the right, which is what the non-commutative shift callers
-    /// want.
+    /// lands on the right.
     fn build_const_binop(
         &mut self,
         k: u128,
@@ -252,7 +231,7 @@ pub trait IRBuilderExt: IRBuilder {
     }
 
     /// `bits` is the raw IEEE 754 pattern. `output_type` must be `F32` or
-    /// `F64`; `F80` does not fit the payload.
+    /// `F64`.
     fn build_float_const(&mut self, bits: u64, output_type: ValueType) -> ValueId {
         self.build_single_output_pure(NodeKind::FloatConst(bits), [], output_type)
     }
@@ -325,8 +304,6 @@ pub trait IRBuilderExt: IRBuilder {
     ) -> Result<ValueId> {
         self.require_integer_value(value)?;
         Self::require_float_type(float_type)?;
-        // A reinterpret preserves width by definition, so reject a mismatch
-        // rather than silently truncating or zero-padding.
         let input_ty = self.value_type(value)?;
         if input_ty.byte_size() != float_type.byte_size() {
             return Err(anyhow!(
@@ -337,8 +314,7 @@ pub trait IRBuilderExt: IRBuilder {
             ));
         }
         // F80 skips the fold: `FloatConst`'s u64 payload cannot hold an
-        // 80-bit pattern, so the node stays opaque, which pattern matching
-        // handles fine.
+        // 80-bit pattern.
         if let Some(bits) = self.int_const_u128(value)
             && float_type != ValueType::F80
         {
@@ -355,8 +331,6 @@ pub trait IRBuilderExt: IRBuilder {
         self.require_float_value(value)?;
         Self::require_integer_type(int_type)?;
         let input_ty = self.value_type(value)?;
-        // A reinterpret preserves width by definition, so reject a mismatch
-        // rather than silently truncating or zero-padding.
         if input_ty.byte_size() != int_type.byte_size() {
             return Err(anyhow!(
                 "FloatBitsToInt width mismatch: input {input_ty:?} ({} bytes) \
@@ -365,8 +339,8 @@ pub trait IRBuilderExt: IRBuilder {
                 int_type.byte_size(),
             ));
         }
-        // F80 skips the fold: even were a FloatConst typed F80 to appear, its
-        // u64 payload could not represent the whole 80-bit pattern.
+        // F80 skips the fold: a u64 payload cannot represent the whole 80-bit
+        // pattern.
         if let NodeKind::FloatConst(bits) = *self.function().kind_of_value(value)
             && input_ty != ValueType::F80
         {

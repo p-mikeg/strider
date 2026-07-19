@@ -138,8 +138,6 @@ fn is_const_only_for_constant_kinds() {
 #[test]
 fn non_cacheable_kinds_are_not_cacheable() {
     let space = rsleigh::VnSpace::RAM;
-    // These five take their identity from construction context, unlike the
-    // initial-state kinds whose identity is fully in the NodeKind payload.
     let non_cacheable = [
         NodeKind::Return,
         NodeKind::Region,
@@ -289,9 +287,7 @@ fn int_for_byte_size_to_node_output_type() {
 }
 
 /// Hand-maintained: a new variant must be appended here or the equivalence
-/// tests below silently stop covering it. The exhaustive matches in
-/// `is_cacheable` / `asm_fingerprint_exempt` catch the variant at compile
-/// time, but nothing catches a missing entry in this list.
+/// tests below silently stop covering it.
 fn every_node_kind_smoke() -> Vec<NodeKind> {
     use crate::node::{
         ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -337,8 +333,7 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
     ]
 }
 
-/// Independent restatement of `is_cacheable` as a single negated `matches!`,
-/// pinned so the exhaustive match in the real implementation cannot drift.
+/// Independent restatement of `is_cacheable` as a single negated `matches!`.
 fn legacy_is_cacheable(kind: &NodeKind) -> bool {
     !matches!(
         kind,

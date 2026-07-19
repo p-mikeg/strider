@@ -7,8 +7,6 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
 /// A REGISTER varnode matching a named register renders as that name (`"RAX"`);
 /// anything else as `<space>[0x<off>]:<size>`, or `0x<off>:<size>` for CONST.
-/// Formatting itself is infallible (unknown spaces fall back to the shortcut
-/// char), so the only error is a `sleigh.regs()` failure.
 ///
 /// # Errors
 ///
@@ -77,10 +75,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             .map_or_else(String::new, |t| format!("{sep}{}", t.as_str()))
     }
 
-    /// Appends a `base sp ± K` line to a Store/Load label when the node has a
-    /// `stack_offsets` entry.  Written generically as `base sp` because the
-    /// SP-derived base may be the entry SP or an alignment-masked SP; the
-    /// address-input edge is what resolves it concretely.
+    /// Appends a `base sp +/- K` line to a Store/Load label when the node has a
+    /// `stack_offsets` entry.  The base may be the entry SP or a masked SP.
     fn with_sp_offset(&self, node: NodeId, label: String) -> String {
         match self.function.stack_offset(node) {
             Some((_, k)) if k < 0 => format!("{label}\nbase sp - {}", -k),
@@ -141,9 +137,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     format!("const {v}:f32")
                 }
                 Some(ValueType::F80) => {
-                    // No native Rust f80, so show raw bits.  These nodes
-                    // shouldn't exist (the bit-conversion builders skip the
-                    // immediate-fold for F80), but don't mis-render as f64.
+                    // No native Rust f80, so show raw bits rather than
+                    // mis-rendering as f64.
                     format!("const {bits:#x}:f80")
                 }
                 _ => {
@@ -183,8 +178,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             }
 
             NodeKind::CallOther { user_op_id } => {
-                // Synthetic nodes (tests, third-party builders) bypass the name
-                // side-table, so fall back to the bare id.
                 let name_prefix = self
                     .function
                     .side_tables()
@@ -237,7 +230,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     pub(super) fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut ::dot::DotEmitter) {
         let kind = self.function.node_kind(node);
         let fc = node_fillcolor(kind);
-        // pretty_label, so const boxes carry their type annotation too.
         let label = self
             .pretty_label(node)
             .unwrap_or_else(|_| format!("{kind:?}"));
@@ -245,8 +237,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     }
 
     /// Label for a Call / CallOther output past `[Control, Memory]`, taken from
-    /// the output's `value_vn` tag.  Falls back to `outN` for the two structural
-    /// slots and for untagged outputs (synthetic graphs with no CC metadata).
+    /// the output's `value_vn` tag.  Falls back to `outN` for the two
+    /// structural slots and for untagged outputs.
     pub(super) fn call_clobbered_name(&self, value_id: ValueId) -> io::Result<String> {
         let (_call_id, output_index) = self.function.value_definition(value_id);
         if output_index < 2 {
@@ -260,7 +252,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 
     /// Return inputs are `[ctrl, mem, ret_val_regs[0], ...]`, so slot `i + 2` is
     /// `ret_val_regs[i]`.  `None` when the slot is out of range of the stored
-    /// convention (synthetic graphs carry none).
+    /// convention.
     pub(super) fn return_ret_name(&self, input_slot: usize) -> io::Result<Option<String>> {
         let Some(i) = input_slot.checked_sub(2) else {
             return Ok(None);
@@ -276,8 +268,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    //! Per-VnSpace formatting tests for [`vn_to_display_name`].
-
     use super::vn_to_display_name;
     use rsleigh::{Vn, VnSpace};
 
@@ -332,8 +322,7 @@ mod tests {
     fn register_known_offset_returns_register_name() {
         let sleigh = probe_sleigh();
         let regs = sleigh.regs().expect("regs");
-        // Sleigh's register table varies subtly across .sla versions, so try
-        // several until one resolves.
+        // The register table varies across .sla versions, so try several.
         let candidates = ["RAX", "RDI", "RSI", "EAX", "AX"];
         let (name, vn) = candidates
             .iter()
@@ -359,8 +348,7 @@ mod tests {
     #[test]
     fn unknown_space_byte_falls_back_to_shortcut_char() {
         let sleigh = probe_sleigh();
-        // A shortcut that is none of CONST/REGISTER/RAM/UNIQUE; rsleigh falls
-        // back to rendering the raw char.
+        // A shortcut that is none of CONST/REGISTER/RAM/UNIQUE.
         let exotic = Vn {
             addr_off: 0,
             addr_space: VnSpace::new(b'?'),

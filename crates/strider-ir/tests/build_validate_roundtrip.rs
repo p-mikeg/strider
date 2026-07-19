@@ -53,8 +53,7 @@ fn every_int_unary_op_validates() {
 
 #[test]
 fn bool_ops_validate() {
-    // Booleans are I1 integers, so logical and/or/xor are the bitwise ops
-    // at I1 and logical NOT is `Xor(x, IntConst(1)):I1`.
+    // Booleans are I1 integers, so logical NOT is `Xor(x, IntConst(1)):I1`.
     for op in [IntBinaryOp::And, IntBinaryOp::Or, IntBinaryOp::Xor] {
         make_empty_fn(|fb| {
             let t = fb.build_boolean_const(true);
@@ -146,8 +145,7 @@ fn loads_and_stores_validate() {
 fn region_join_with_phi_validates() {
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
-    // A diamond over a tracked register variable, so create_region mints a
-    // tagged Phi at the join.
+    // A diamond over a tracked register variable, minting a Phi at the join.
     let var_vn = reg_vn(0x10, 8);
     let mut b = RegisterSet::new()
         .tracked(var_vn)
@@ -201,8 +199,7 @@ fn const_then_return_validates() {
 
 #[test]
 fn every_int_cmp_op_validates() {
-    // LessEqual / SlessEqual / NotEqual are absent on purpose: the lifter
-    // lowers them.
+    // LessEqual / SlessEqual / NotEqual are absent: the lifter lowers them.
     for op in [
         IntCmpOp::Equal,
         IntCmpOp::Less,

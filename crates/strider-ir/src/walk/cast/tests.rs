@@ -181,8 +181,7 @@ fn cast_mask_of_returns_empty_for_non_cast_kinds() {
 }
 
 /// Float conversions change the value, unlike bit-level casts, so they stay
-/// out of the walk-through set: a pattern looking for a Mul must not match
-/// through a FloatToInt.
+/// out of the walk-through set.
 #[test]
 fn cast_mask_of_excludes_float_conversions() {
     assert_eq!(cast_mask_of(&NodeKind::FloatToFloat), CastMask::empty());

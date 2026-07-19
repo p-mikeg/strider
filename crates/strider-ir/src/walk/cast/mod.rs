@@ -1,7 +1,3 @@
-//! Which `NodeKind` variants are value-passthrough casts. The structural
-//! classification lives here as the single source of truth; the pattern
-//! semantics (when a consumer walks through one) stay in the matcher.
-
 use bitflags::bitflags;
 
 use crate::ExtendOp;
@@ -20,8 +16,7 @@ bitflags! {
     }
 }
 
-/// Empty for non-cast kinds. The match is exhaustive on purpose: a new
-/// cast-like `NodeKind` fails to compile until someone classifies it.
+/// Empty for non-cast kinds.
 pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
     match kind {
         NodeKind::Extend(ExtendOp::ZeroExtend) => CastMask::ZERO_EXTEND,

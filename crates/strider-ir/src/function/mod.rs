@@ -1,6 +1,3 @@
-//! [`Function`] (graph plus overlay), the self-cleaning [`EditFunction`] and
-//! its [`FunctionState`] bookkeeping, and IR-specific dot rendering.
-
 pub(crate) mod dot;
 mod edit;
 mod func;
@@ -13,8 +10,7 @@ pub use func::Function;
 #[cfg(any(test, feature = "test-util"))]
 pub use func::cc_ret_and_clobber_vns;
 
-/// Trivial-convention [`Function`] with no tracked varnodes, used by the
-/// in-crate tests.
+/// Trivial-convention [`Function`] with no tracked varnodes.
 #[cfg(test)]
 pub(crate) fn test_function() -> Function {
     let mut f = Function::new(
@@ -22,8 +18,7 @@ pub(crate) fn test_function() -> Function {
         strider_target::Endianness::Little,
         Vec::new(),
     );
-    // The builder owns the memory spine; this bypasses it, so mint
-    // `InitialMemory` directly to mirror a built function.
+    // Mint `InitialMemory` directly, mirroring what the builder would do.
     f.graph_mut().create_node(
         crate::node::NodeKind::InitialMemory,
         [],

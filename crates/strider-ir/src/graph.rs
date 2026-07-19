@@ -1,11 +1,3 @@
-//! The IR [`Graph`], a type alias over the generic [`strider_graph::Graph`]
-//! with the IR payloads and dedup policy plugged in. All structural machinery
-//! lives in `strider-graph`; this module is only the strider overlay.
-//!
-//! [`IrCacheable`] is purely mechanical and embeds no domain normalisation.
-//! Integer-constant canonicalisation happens at construction in
-//! `Function::create_node_attributed`, before a node reaches the cache.
-
 use std::hash::{Hash, Hasher};
 
 use rustc_hash::FxHasher;
@@ -13,9 +5,9 @@ use strider_graph::{NodeCacheable, RawStore, ValueId};
 
 use crate::node::{NodeId, NodeKind, ValueKind};
 
-/// A stateless ZST: the generic graph owns the dedup table and per-node
-/// hashes. Cacheable kinds dedup on `(NodeKind, inputs, output_kinds)`;
-/// non-cacheable ones always allocate fresh.
+/// The IR dedup policy: cacheable kinds dedup on
+/// `(NodeKind, inputs, output_kinds)`, non-cacheable ones always allocate
+/// fresh.
 pub struct IrCacheable;
 
 impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
@@ -23,12 +15,6 @@ impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
         kind.is_cacheable()
     }
 
-    /// `[T]: Hash` hashes length then elements, so a borrowed query slice and
-    /// a node's re-read `SmallVec` of the same contents hash alike; that is
-    /// what makes a probe land in the bucket the node was inserted under.
-    ///
-    /// Raw `FxHash` with no sentinel handling: the generic cache remaps the
-    /// lone `u64::MAX` value itself.
     fn hash(kind: &NodeKind, inputs: &[ValueId], outputs: &[ValueKind]) -> u64 {
         let mut h = FxHasher::default();
         kind.hash(&mut h);
@@ -37,8 +23,7 @@ impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
         h.finish()
     }
 
-    /// The equality half of the hash-on-demand probe: no owned key payloads
-    /// are kept, so identity is recomputed from the live store.
+    /// Recomputes `cand`'s identity from the live store.
     fn eq(
         store: &RawStore<NodeKind, ValueKind>,
         cand: NodeId,
@@ -54,9 +39,6 @@ impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
 
 pub use strider_graph::NodeIdRemap;
 
-/// Structural verbs are inherited from the generic graph; the
-/// function-overlay reads and control-aware walks live on [`crate::IRViewer`]
-/// and [`crate::IRWalker`].
 pub type Graph = strider_graph::Graph<NodeKind, ValueKind, IrCacheable>;
 
 pub type Inputs<'a> = strider_graph::Inputs<'a, NodeKind, ValueKind, IrCacheable>;
@@ -65,9 +47,6 @@ pub type InputCursor<'a> = strider_graph::InputCursor<'a, NodeKind, ValueKind, I
 
 #[cfg(test)]
 mod tests {
-    //! White-box tests for the arena, dedup cache, use-list bookkeeping, and
-    //! typed accessors.
-
     use super::*;
     use crate::IRViewer;
     use crate::function::test_function;
@@ -139,8 +118,7 @@ mod tests {
     }
 
     /// `kind_of_value` must agree with the two-step
-    /// `node_kind(producer(out))` lookup it replaces; many call sites assume
-    /// the equivalence.
+    /// `node_kind(producer(out))` lookup.
     #[test]
     fn kind_of_output_matches_two_step_lookup() {
         let mut function = test_function();
@@ -183,9 +161,7 @@ mod tests {
         );
     }
 
-    /// Bulk variant of `cacheable_node_is_deduplicated`, guarding against the
-    /// query hash disagreeing with the per-node cached hash an entry was
-    /// inserted under.
+    /// Bulk variant of `cacheable_node_is_deduplicated`.
     #[test]
     fn cacheable_node_dedup_is_stable_across_many_calls() {
         let mut function = test_function();
@@ -214,9 +190,7 @@ mod tests {
         );
     }
 
-    /// `output_kinds` is part of the dedup key: hashing only `(kind, inputs)`
-    /// would alias values of different widths and hand consumers a
-    /// type-incorrect output.
+    /// `output_kinds` is part of the dedup key.
     #[test]
     fn cacheable_int_const_with_different_type_does_not_dedup() {
         let mut function = test_function();
@@ -237,9 +211,8 @@ mod tests {
         );
     }
 
-    /// Masking happens at the interning choke-point, so a value with bits
-    /// above the declared width and its masked form share one `ConstId` and
-    /// the two `IntConst` nodes dedup.
+    /// A value with bits above the declared width and its masked form must
+    /// dedup to one node.
     #[test]
     fn int_const_payload_is_normalised_to_output_type_width() {
         use crate::{IRBuilderExt, IRViewer};
@@ -377,8 +350,7 @@ mod tests {
         assert_ne!(v1, v3, "InitialVar with a different id must NOT dedupe");
     }
 
-    /// Call is non-cacheable because `CallStackArgCollect` mutates its inputs
-    /// after construction.
+    /// Call is non-cacheable: its inputs are mutated after construction.
     #[test]
     fn adjacent_calls_with_same_args_are_distinct() {
         let mut function = test_function();
@@ -417,8 +389,6 @@ mod tests {
     #[test]
     fn call_other_name_round_trip() {
         let mut function = test_function();
-        // CallOther is non-cacheable, so the two nodes below stay distinct
-        // despite sharing a user_op_id.
         let outs = [ValueKind::Control, ValueKind::Memory];
         let entry = function
             .graph_mut()
@@ -592,8 +562,7 @@ mod tests {
     }
 
     /// Detaching a cacheable node must also evict it from the dedup cache, or
-    /// a later `create_node` with the same key returns the detached zombie
-    /// whose input list is now empty and the next `node_inputs_exact` fails.
+    /// a later `create_node` with the same key returns the detached zombie.
     #[test]
     fn detach_evicts_cacheable_node_from_dedup_cache() {
         use crate::node::IntBinaryOp;
@@ -942,8 +911,7 @@ mod tests {
     }
 
     /// Rewriting an input must evict the stale dedup-cache entry, or a later
-    /// `create_node` with the original key returns the now-modified node and
-    /// the optimizer silently miscompiles through `replace_all_uses`.
+    /// `create_node` with the original key returns the now-modified node.
     #[test]
     fn update_input_on_cacheable_evicts_stale_cache_entry() {
         use crate::node::IntBinaryOp;
@@ -975,13 +943,10 @@ mod tests {
             [ty],
         );
 
-        // Redirect input[0] to c. The node now holds [c, b], while an
-        // unmaintained cache would still map [a, b] to it.
+        // Redirect input[0] to c, leaving the node holding [c, b].
         let in0 = function.graph().node_input_id_at(add_ab, 0).unwrap();
         function.graph_mut().update_input(in0, c_value);
 
-        // Re-creating with the original key must not return add_ab, whose
-        // inputs are now [c, b].
         let fresh = function.graph_mut().create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [a_value, b_value],
@@ -1125,7 +1090,6 @@ mod tests {
         );
         let cval = function.node_outputs(c).iter().copied().next().unwrap();
         // Two consumers of cval, to give the use-list real ordering.
-        // `Truncate` and `Neg` because `Neg` is `IntUnaryOp`'s only variant.
         let _a = function.graph_mut().create_node(
             NodeKind::Truncate,
             [cval],
@@ -1302,8 +1266,6 @@ mod tests {
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
-        // With no recorded descriptor, get_cc falls back to the trivial
-        // default CC, which has no stack args.
         assert_eq!(function.get_cc(nid), function.default_cc());
         assert!(function.get_cc(nid).stack_args.is_none());
     }
@@ -1323,8 +1285,6 @@ mod tests {
             [ValueKind::Control, ValueKind::Memory],
         );
         function.side_tables_mut().set_call_cc(nid, cc.clone());
-        // The override differs from the default, so the stack args derive
-        // from it.
         assert_ne!(function.get_cc(nid), function.default_cc());
         assert_eq!(function.get_cc(nid).stack_args, cc.stack_args,);
     }
@@ -1355,9 +1315,8 @@ mod tests {
 
     #[test]
     fn asm_fingerprint_dedup_cache_hit_unions_via_extend() {
-        // Both IntConst(7) creations hit the dedup cache and land on one
-        // NodeId. Production stamps a fingerprint at every create_node site,
-        // so both contributors union into that single side-table entry.
+        // Both IntConst(7) creations land on one NodeId, so both contributors
+        // union into that single side-table entry.
         let mut function = test_function();
         let a = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),

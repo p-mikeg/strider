@@ -1,17 +1,8 @@
 //! Property-based invariants over value-only DAGs, generated as a sequence of
 //! [`FunctionBuilder`] actions against type-tagged operand buckets.
 //!
-//! Value-only on purpose: random control flow would mean reimplementing most
-//! of `FunctionBuilder`'s region/phi machinery, so control-flow invariants
-//! stay in hand-authored fixtures.
-//!
-//! The strategy stamps a lift address per action, so every emitted node has a
-//! non-empty fingerprint by construction and any validation failure is a real
-//! bug rather than a strategy artifact.
-//!
-//! Optimizer-dependent properties live in
-//! `strider-orchestrator/tests/proptest_optimizer.rs`; `strider-ir` cannot
-//! depend on the analyzer.
+//! Value-only on purpose: control-flow invariants stay in hand-authored
+//! fixtures.
 
 #![allow(
     clippy::unwrap_used,
@@ -28,12 +19,10 @@ use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir::node::ValueType;
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-/// Duplicated from `strider_ir_test_utils::SENTINEL_LIFT_ADDR`; per-step
-/// `lift_off` is added on top.
+/// Base address every step stamps its own `lift_off` on top of.
 const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
-/// I8..I64 only: they fit `u128` inline, so no step crosses the
-/// `ConstValue::Wide` boundary, while still exercising truncate / extend.
+/// I8..I64 only, so no step crosses the wide-constant boundary.
 fn int_ty() -> impl Strategy<Value = ValueType> {
     prop_oneof![
         Just(ValueType::I8),
@@ -74,10 +63,6 @@ fn extend_op() -> impl Strategy<Value = ExtendOp> {
 
 /// Operand indices are taken modulo the bucket size at replay time, so no
 /// step is ever out of bounds; a step needing an empty bucket is a no-op.
-///
-/// `lift_off` is added to the sentinel base at replay time. Per-step
-/// addresses are not required for validity, but they exercise the
-/// side-table-extension path that one fixed address would not.
 #[derive(Debug, Clone)]
 enum Step {
     EmitIntConst {
@@ -200,8 +185,7 @@ impl Pools {
     }
 }
 
-/// `None` when the graph would be empty (nothing to return); proptest retries
-/// those rather than treating them as failures.
+/// `None` when the graph would be empty (nothing to return).
 fn replay(steps: &[Step]) -> Option<strider_ir::Function> {
     let mut b = strider_ir_test_utils::empty_builder().ok()?;
     let region = b.create_region_all().ok()?;
@@ -295,8 +279,6 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
             let Some(src) = pools.pick(*src_width, *src_idx) else {
                 return;
             };
-            // Widening is a no-op returning the input, so the only failure
-            // mode is a non-integer input, which the typed buckets exclude.
             if let Ok(v) = b.truncate_if_needed(src, *dst_width) {
                 pools.bucket_mut(*dst_width).push(v);
             }
@@ -324,8 +306,6 @@ proptest! {
         .. ProptestConfig::default()
     })]
 
-    /// `build()` already validates, so reaching `Some(_)` implies a pass; the
-    /// explicit re-run guards against any post-build mutation added later.
     #[test]
     fn prop_validate_always_passes(steps in step_seq()) {
         let Some(fg) = replay(&steps) else {
@@ -339,8 +319,6 @@ proptest! {
         );
     }
 
-    /// The walk's `DenseEntitySet` visited check must never yield a node
-    /// twice, whatever shape the graph took.
     #[test]
     fn prop_preorder_visits_each_node_at_most_once(steps in step_seq()) {
         let Some(fg) = replay(&steps) else {
@@ -357,16 +335,12 @@ proptest! {
         );
     }
 
-    /// Dedup must be independent of construction history: the same
-    /// `(kind, inputs, output_kinds)` yields the same `NodeId` no matter what
-    /// the graph was built from first.
+    /// Dedup must be independent of construction history.
     #[test]
     fn prop_dedup_determinism(steps in step_seq()) {
         let Some(mut fg) = replay(&steps) else {
             return Ok(());
         };
-        // IntConst is cacheable with no inputs, and equal values share one
-        // interned ConstId, so both creations must land on one node.
         use strider_ir::node::{NodeKind, ValueKind, ValueType};
         let id = fg.intern_int_const(42, ValueType::I32);
         let a = fg.graph_mut().create_node(

@@ -7,18 +7,13 @@ use crate::walk::NodeIdSet;
 use super::ValidationError;
 
 /// At most one live [`NodeKind::Entry`] and one live
-/// [`NodeKind::InitialMemory`].
-///
-/// Neither root is *required*: `InitialMemory` is optional (a function doing
-/// no memory work leaves the eagerly-built one unreachable, culled by
-/// `compact`). Only a duplicate live root is a malformation.
+/// [`NodeKind::InitialMemory`]. Neither is required.
 pub(super) fn check_graph_invariants_uniqueness(
     graph: &Graph,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    // Only the first two of each kind matter, so two Option slots beat two
-    // heap Vecs.
+    // Only the first two of each kind matter.
     let mut entry: (Option<NodeId>, Option<NodeId>) = (None, None);
     let mut initial_memory: (Option<NodeId>, Option<NodeId>) = (None, None);
 
@@ -47,11 +42,6 @@ pub(super) fn check_graph_invariants_uniqueness(
 }
 
 /// Every reachable `Region` needs at least one predecessor.
-///
-/// Local typing cannot express this: the Region signature's variadic CTRL
-/// tail permits zero inputs, so this check is the only thing pinning >= 1.
-/// The per-input "must be Control" rule does come from local typing, reported
-/// there as a `NodeInputKindMismatch`.
 pub(super) fn check_graph_invariants_region(
     graph: &Graph,
     reachable: &NodeIdSet,
@@ -68,12 +58,6 @@ pub(super) fn check_graph_invariants_region(
 }
 
 /// Every reachable node's `Control` output must have exactly one consumer.
-///
-/// Zero consumers is a dangling control path: every control edge must reach a
-/// terminator (`Return` / `IndirectBranch` / `Unreachable`). Two or more is a
-/// malformed fan-out; a real split is an `If`, a real merge a `Region`.
-/// No-return traps still reach a terminator, since the lifter sinks their
-/// control into an `Unreachable`.
 pub(super) fn check_graph_invariants_control_single_use(
     function: &Function,
     reachable: &NodeIdSet,
@@ -99,14 +83,7 @@ pub(super) fn check_graph_invariants_control_single_use(
 }
 
 /// `Extend` must strictly widen its input; `Truncate` must strictly narrow it.
-///
-/// A non-widening `Extend` computes exactly what a `Truncate` does (and vice
-/// versa), so permitting the wrong direction would give one value two legal
-/// node shapes. The builder dispatches on direction and never mints these, so
-/// any that appear come from a malformed surgical edit.
-///
-/// Non-integer input/output is skipped: local typing already reports that
-/// shape error and a width read off a non-`Typed` value is meaningless.
+/// Non-integer input/output is skipped.
 pub(super) fn check_graph_invariants_extend_truncate(
     function: &Function,
     reachable: &NodeIdSet,
@@ -150,9 +127,6 @@ pub(super) fn check_graph_invariants_extend_truncate(
 
 /// Every reachable [`NodeKind::Switch`] needs at least one control output, and
 /// one recorded `switch_targets` case address per control output.
-///
-/// `FunctionBuilder::build_switch` keeps the two in sync; a mismatch means the
-/// side table has drifted from the graph shape.
 pub(super) fn check_graph_invariants_switch(
     function: &Function,
     reachable: &NodeIdSet,
@@ -186,9 +160,6 @@ pub(super) fn check_graph_invariants_phis(
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    // Reachable-scoped: `PhiCollapse` and `DeadBranchElimination` leave
-    // zero-input phi zombies in the arena, which would falsely trip
-    // `PhiTokenNotFromRegion` (input[0] is gone).
     for (node, kind) in function.reachable_kind_iter(reachable) {
         let is_phi = matches!(kind, NodeKind::Phi | NodeKind::MemPhi);
         if !is_phi {
@@ -234,9 +205,7 @@ pub(super) fn check_graph_invariants_phis(
         }
 
         // Every value input must carry the phi's own output type. `MemPhi` is
-        // exempt (Memory tokens have no value type), and a non-value input is
-        // already reported by local typing, so only concrete mismatches land
-        // here.
+        // exempt: Memory tokens have no value type.
         if matches!(kind, NodeKind::Phi) {
             let phi_out_ty = function
                 .first_value_output_of(node)
@@ -260,8 +229,7 @@ pub(super) fn check_graph_invariants_phis(
 }
 
 /// Every reachable, non-exempt node carries at least one asm-fingerprint
-/// contributor. See [`crate::function::Function::asm_fingerprint`] for the
-/// contract and the exempt kinds.
+/// contributor.
 pub(super) fn check_graph_invariants_asm_fingerprints(
     function: &Function,
     reachable: &NodeIdSet,
@@ -277,24 +245,10 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
     }
 }
 
-/// Every reachable `Store` keeps its sole Memory output consumed by a
-/// reachable node, so it stays anchored in the live memory chain back to a
-/// `Return` / `IndirectBranch`.
+/// Every reachable `Store` has its Memory output consumed by a reachable node.
 ///
-/// A `Store` outputs `[MEM]` only, so `retain_reachable` keeps it solely
-/// because the next chain node consumes that output. A memory pass that
-/// repoints the consumer away while leaving the store reachable by another
-/// edge would orphan it from the chain yet still emit it.
-///
-/// Scoped to `Store`, not every Memory producer. A memory-preserving `Call` /
-/// `CallOther` legitimately leaves its Memory output unconsumed (the builder
-/// emits the output unconditionally but threads region memory through it only
-/// when the call clobbers memory), and flagging those would reject the
-/// canonical shape of memory-preserving intrinsics such as MIPS division.
-/// `MemPhi` / `InitialMemory` are vacuous here (reachable already implies
-/// consumed for a single Memory output), and `Load` produces no Memory edge.
-///
-/// A consumer in dead control does not count: it is itself removable.
+/// Scoped to `Store`: a memory-preserving `Call` / `CallOther` legitimately
+/// leaves its Memory output unconsumed.
 pub(super) fn check_graph_invariants_memory_chain(
     function: &Function,
     reachable: &NodeIdSet,
@@ -319,16 +273,13 @@ pub(super) fn check_graph_invariants_memory_chain(
     }
 }
 
-/// The advisory side-indices must not have drifted from the live graph.
+/// The side-indices must not have drifted from the live graph.
 ///
 /// * Every reachable `initial_var_index` entry resolves to an
-///   `InitialVar(vn)` node with the same varnode. An unreachable entry is
-///   tolerated: that is the normal mid-pipeline state, since `initial_sp`
-///   does not filter on liveness. A reachable node whose payload was
-///   rewritten away from `InitialVar(vn)` is a genuine desync, because the
-///   NodeId survived and `compact` will not drop the entry.
+///   `InitialVar(vn)` node with the same varnode. Unreachable entries are
+///   tolerated.
 /// * Every `value_vn` key with a reachable producer is produced by a `Phi` /
-///   `Call` / `CallOther`, the only populations carrying a tag.
+///   `Call` / `CallOther`.
 pub(super) fn check_graph_invariants_side_indices(
     function: &Function,
     reachable: &NodeIdSet,
@@ -371,11 +322,8 @@ pub(super) fn check_graph_invariants_side_indices(
     }
 }
 
-/// Every reachable `IntConst(id)` references a live `Function::const_interner`
-/// entry whose value fits the node's declared output width.
-///
-/// A missing id means the caller bypassed `intern_int_const*`; bits set above
-/// the declared width mean non-canonical masking.
+/// Every reachable `IntConst(id)` references a live const-interner entry whose
+/// value fits the node's declared output width.
 pub(super) fn check_graph_invariants_consts(
     function: &crate::Function,
     reachable: &NodeIdSet,

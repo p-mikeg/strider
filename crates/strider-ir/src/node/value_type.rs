@@ -7,25 +7,18 @@ pub enum ValueType {
     I8,
     I16,
     I32,
-    /// 6-byte varnode, seen on some ARM instructions. Fits `u64`, so it is
-    /// not a wide integer.
+    /// 6-byte varnode, seen on some ARM instructions.
     I48,
     I64,
-    /// The x87 ST0/STn bit-pattern view. Stored in `u128` payloads masked to
-    /// the low 80 bits. No native Rust type fits, so opt rules needing a
-    /// `u64` value get `None` here and skip.
+    /// The x87 ST0/STn bit-pattern view.
     I80,
     I128,
     I256,
-    /// AVX-512 `zmm`. Constants don't fit `u128`, so they intern as
-    /// `ConstValue::Wide`.
+    /// AVX-512 `zmm`.
     I512,
     F32,
     F64,
-    /// x87 extended precision (Intel long double). Rust has no `f80`, so opt
-    /// never constant-folds F80 arithmetic and the nodes just stay in the IR
-    /// for pattern matching. `IntBitsToFloat` / `FloatBitsToInt` skip their
-    /// immediate fold too: `FloatConst`'s u64 payload cannot hold 80 bits.
+    /// x87 extended precision (Intel long double).
     F80,
 }
 
@@ -97,20 +90,15 @@ impl ValueType {
         matches!(self, Self::F32 | Self::F64 | Self::F80)
     }
 
-    /// An integer too wide for `u64`. `F80` shares I80's 10-byte size but is
-    /// excluded, being a float.
+    /// An integer too wide for `u64`; floats are excluded.
     #[inline]
     pub fn is_wide_int(self) -> bool {
         self.is_integer() && self.byte_size() > 8
     }
 
-    /// All-ones mask for this integer type.
-    ///
-    /// `I256` / `I512` also return `u128::MAX`: the carrier cannot represent
-    /// their width, so this is a conservative approximation, not a rejection.
-    /// Masking a genuinely 256-bit value means going through the const
-    /// interner's `ConstValue::Wide` limbs instead. Floats return 0
-    /// defensively; no caller should ask.
+    /// All-ones mask for this integer type. `I256` / `I512` also return
+    /// `u128::MAX`, a conservative approximation rather than a rejection.
+    /// Floats return 0.
     pub fn bit_mask_u128(self) -> u128 {
         let bits = self.bit_width();
         if bits == 0 || !self.is_integer() {
@@ -124,10 +112,6 @@ impl ValueType {
 
     /// Masks `val` to this type's width, or `None` for floats and for widths
     /// past the `u128` carrier.
-    ///
-    /// Rejecting > 128 bits keeps this symmetric with [`Self::get_signed_int`]:
-    /// a query that can only see the low 128 bits must fail loudly rather than
-    /// hand back a silently truncated "success".
     pub fn get_unsigned_int(self, val: u128) -> Option<u128> {
         if !self.is_integer() {
             return None;
@@ -163,8 +147,7 @@ impl ValueType {
 }
 
 impl ValueType {
-    /// Byte size 1 maps to `I8`, never `I1`. Only comparisons and logical ops
-    /// produce `I1`; no varnode width does.
+    /// Byte size 1 maps to `I8`, never `I1`.
     pub fn int_for_byte_size(n: u32) -> crate::error::Result<Self> {
         match n {
             1 => Ok(Self::I8),
@@ -198,9 +181,7 @@ impl std::fmt::Display for ValueType {
     }
 }
 
-/// Spares the value-producing path from threading `vn.size` by hand, and gives
-/// the "unsupported width" diagnostic one home. Re-exported from the crate root
-/// for the lifter.
+/// The [`ValueType`] a varnode's byte size maps to.
 pub trait VnTypeExt {
     fn int_type(&self) -> crate::error::Result<ValueType>;
 
@@ -267,7 +248,6 @@ mod tests {
         assert_eq!(ValueType::I128.get_signed_int(max_pos), Some(i128::MAX));
     }
 
-    /// The x87 ST0 width; the lifter needs it to set up x86 float functions.
     #[test]
     fn u80_f80_widths() {
         assert_eq!(ValueType::I80.byte_size(), 10);
@@ -276,7 +256,6 @@ mod tests {
         assert_eq!(ValueType::F80.bit_width(), 80);
     }
 
-    /// Drives the validator's local-typing check and the lifter's coercions.
     #[test]
     fn u80_is_integer_and_f80_is_float() {
         assert!(ValueType::I80.is_integer());
@@ -285,7 +264,6 @@ mod tests {
         assert!(!ValueType::F80.is_integer());
     }
 
-    /// Opt rules use this mask for rewrites like `x & all_ones` to `x`.
     #[test]
     fn bit_mask_u128_for_u80() {
         let expected: u128 = (1u128 << 80) - 1;
@@ -313,7 +291,6 @@ mod tests {
         assert_eq!(ValueType::I80.get_signed_int(neg50), Some(-50i128));
     }
 
-    /// The lifter's varnode-to-type conversion must handle x87 80-bit regs.
     #[test]
     fn int_for_byte_size_10_is_i80() {
         let ty = ValueType::int_for_byte_size(10).expect("10 must convert to I80");
@@ -329,8 +306,7 @@ mod tests {
         assert_eq!(T::int_for_byte_size(64).unwrap(), T::I512);
         assert!(T::int_for_byte_size(3).is_err());
 
-        // I48 fits u64, so it is not wide, and its mask/sign helpers come off
-        // the generic bit_width path.
+        // I48 fits u64, so it is not wide.
         assert_eq!(T::I48.byte_size(), 6);
         assert_eq!(T::I48.bit_width(), 48);
         assert!(!T::I48.is_wide_int());
@@ -346,7 +322,7 @@ mod tests {
     }
 
     /// A > 128-bit query must fail loudly rather than return the low 128 bits
-    /// as a success, symmetric with `get_signed_int`.
+    /// as a success.
     #[test]
     fn get_unsigned_int_i256_does_not_falsely_succeed() {
         assert_eq!(ValueType::I256.get_unsigned_int(0xDEAD_BEEFu128), None);

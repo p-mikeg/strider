@@ -1,5 +1,5 @@
-//! The semantic-slot accessors on [`IRViewer`] must pick the operand slots the
-//! positional `node_inputs_exact::<N>(n)[k]` idiom used to index by hand.
+//! The semantic-slot accessors on [`IRViewer`] must pick the same operand
+//! slots as positional `node_inputs_exact::<N>(n)[k]` indexing.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 

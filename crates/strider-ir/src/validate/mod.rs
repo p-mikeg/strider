@@ -1,11 +1,5 @@
-//! Whole-graph IR validator, rooted at the function's entry node.
-//!
-//! Two groups of checks: per-node typing against
-//! `node_signature::expected_signature` (`local_typing`), and whole-graph
-//! structural rules (`graph_invariants`).
-//!
-//! Errors are aggregated into a [`ValidationErrors`] bundle rather than
-//! failing fast, so one call reports every problem.
+//! Whole-graph IR validator.  Every check aggregates into a
+//! [`ValidationErrors`] bundle rather than failing fast.
 
 use crate::IRViewer;
 use crate::function::Function;
@@ -27,22 +21,15 @@ use graph_invariants::{
 };
 use local_typing::check_local_typing;
 
-/// Validates `function`, walking from its entry node.
-///
-/// Every check is scoped to the entry-reachable set: detached zombies left
-/// behind by optimization passes (dead-branch residue, collapsed phis) carry
-/// stale shapes and would otherwise produce false positives.
-///
-/// Input/use-list consistency is a structural `strider_graph` invariant held
-/// by construction, so it is not re-checked here.
+/// Validates the entry-reachable part of `function`.
 ///
 /// # Errors
 ///
 /// Returns a [`ValidationErrors`] bundle aggregating every violation found.
 pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     let entry = function.entry();
-    // Reuse the walk's own visited set instead of re-collecting the yielded
-    // NodeIds: saves N inserts and an allocation per call.
+    // Detached zombies (dead-branch residue, collapsed phis) carry stale
+    // shapes, so only the entry-reachable set is checked.
     let mut walk = crate::walk::walk_graph(function.graph(), entry);
     walk.by_ref().for_each(|_| {});
     let reachable: NodeIdSet = walk.into_visited();

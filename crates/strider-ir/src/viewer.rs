@@ -1,17 +1,10 @@
-//! The shared IR read vocabulary: [`IRViewer`] point reads and [`IRWalker`]
-//! control-aware walks, both layered over the single `function()` accessor so
-//! `Function`, the lift builder, and the editing context share one surface.
-//!
-//! [`crate::EditFunction`] shadows the order-producing [`IRWalker`] methods
-//! with inherent versions that reuse its cached live/roots bookkeeping.
-
 use anyhow::anyhow;
 
 use crate::function::Function;
 use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
 /// Each generated method errors unless `value_id`'s kind satisfies the named
-/// predicate. Doc attributes are forwarded per method.
+/// predicate.
 macro_rules! value_kind_requirements {
     ($($(#[$m:meta])* $name:ident => $pred:ident, $noun:literal;)+) => { $(
         $(#[$m])*
@@ -27,7 +20,7 @@ macro_rules! value_kind_requirements {
 }
 
 /// Each generated method reads a fixed input slot, panicking on the arity the
-/// validator already guarantees. Doc attributes are forwarded per method.
+/// validator already guarantees.
 macro_rules! semantic_slot_accessors {
     ($($(#[$m:meta])* $name:ident => $arity:literal [$slot:literal] $msg:literal;)+) => { $(
         $(#[$m])*
@@ -37,8 +30,7 @@ macro_rules! semantic_slot_accessors {
     )+ };
 }
 
-/// Pure point reads only, so anything that can hand out a `&Function` gets
-/// them; node creation lives on [`crate::IRBuilderExt`].
+/// Point reads over a [`Function`].
 pub trait IRViewer {
     fn function(&self) -> &Function;
 
@@ -51,8 +43,7 @@ pub trait IRViewer {
     }
 
     /// Every input of a `Phi` / `MemPhi` except the structural `PhiToken`,
-    /// leaving one data input per predecessor. Filters by kind rather than
-    /// skipping slot 0, so the layout assumption stays explicit.
+    /// leaving one data input per predecessor.
     fn phi_data_inputs(&self, phi: NodeId) -> impl Iterator<Item = ValueId> + '_ {
         let g = self.function().graph();
         g.node_inputs(phi)
@@ -73,8 +64,8 @@ pub trait IRViewer {
         self.node_inputs_exact::<N>(self.producer(value))
     }
 
-    /// Data operands only: the structural `Control` / `Memory` / `PhiToken`
-    /// edges carry no [`ValueType`] and are dropped.
+    /// Data operands only: the `Control` / `Memory` / `PhiToken` edges are
+    /// dropped.
     fn value_inputs(&self, node: NodeId) -> impl Iterator<Item = ValueId> + '_ {
         self.node_inputs(node)
             .into_iter()
@@ -102,20 +93,16 @@ pub trait IRViewer {
         self.function().graph().node_input_id_at(node, idx)
     }
 
-    /// The value on input slot `idx`, where [`Self::node_input_id_at`] returns
-    /// the slot's `UseId`. Use this when a short node is an expected outcome
-    /// rather than a structural violation.
+    /// The value on input slot `idx`, or `None` when the node is shorter.
     fn nth_input(&self, node: NodeId, idx: usize) -> Option<ValueId> {
         self.function().graph().nth_input(node, idx)
     }
 
-    /// The forward use-list, walked in O(uses).
     fn value_uses(&self, value_id: ValueId) -> impl Iterator<Item = (NodeId, u32)> + '_ {
         self.function().graph().value_uses(value_id)
     }
 
-    /// Stops after two steps, so it stays O(1) on a value with a long
-    /// use-list. Prefer it over counting [`Self::value_uses`].
+    /// O(1): stops after two steps rather than counting the whole use-list.
     fn value_has_one_use(&self, value_id: ValueId) -> bool {
         self.function().graph().value_has_one_use(value_id)
     }
@@ -124,8 +111,7 @@ pub trait IRViewer {
         self.function().graph().value_kind(value_id)
     }
 
-    /// `Option`-returning [`Self::value_type`], for when "no type" is an
-    /// expected outcome rather than an error.
+    /// `Option`-returning [`Self::value_type`].
     fn value_type_opt(&self, value_id: ValueId) -> Option<ValueType> {
         self.value_kind(value_id).as_value()
     }
@@ -143,12 +129,8 @@ pub trait IRViewer {
         g.node_kind(g.producer(value_id))
     }
 
-    /// The read SSoT for constant values: every consumer goes through this or
-    /// its signed projection [`Self::int_const_i128`], so the storage
-    /// representation stays encapsulated.
-    ///
-    /// `None` for a non-constant and for `I256`/`I512` values that exceed
-    /// `u128`; otherwise masked to the declared width.
+    /// The constant `value` holds, masked to its declared width. `None` for a
+    /// non-constant, or for an `I256`/`I512` value exceeding `u128`.
     fn int_const_u128(&self, value: ValueId) -> Option<u128> {
         let ty = self.value_kind(value).as_value()?;
         if !ty.is_integer() {
@@ -167,9 +149,8 @@ pub trait IRViewer {
         self.value_kind(value).as_value()?.get_signed_int(v)
     }
 
-    /// Little-endian bytes of an `I80`/`I128`/`I256`/`I512` constant. The
-    /// width comes from the output type, so `IntConst(5):I128` still yields
-    /// 16 bytes. `None` for narrow constants; use [`Self::int_const_u128`].
+    /// Little-endian bytes of an `I80`/`I128`/`I256`/`I512` constant, widened
+    /// to the output type's byte size. `None` for narrow constants.
     fn int_const_wide_le_bytes(&self, node: crate::node::NodeId) -> Option<Vec<u8>> {
         let [out] = self.node_outputs_exact::<1>(node).ok()?;
         let ty = self.value_kind(out).as_value()?;
@@ -182,8 +163,7 @@ pub trait IRViewer {
         Some(self.function().const_value(id).to_le_bytes(ty.byte_size()))
     }
 
-    /// Booleans are 1-bit integers, so this is [`Self::int_const_u128`] under
-    /// an `I1` guard.
+    /// [`Self::int_const_u128`] under an `I1` guard.
     fn bool_const_val(&self, value: ValueId) -> Option<bool> {
         if !self.value_kind(value).is_bool() {
             return None;
@@ -215,9 +195,7 @@ pub trait IRViewer {
     }
 
     /// The incoming memory token of a memory-chain node. `None` elsewhere,
-    /// including `MemPhi` (slot 0 is its phi-token, and its memory
-    /// predecessors are reached separately) and `InitialMemory` (chain root,
-    /// no incoming edge).
+    /// including `MemPhi` and `InitialMemory`.
     fn memory_input_of(&self, node: NodeId) -> Option<ValueId> {
         let inputs = self.node_inputs(node);
         match *self.node_kind(node) {
@@ -227,9 +205,8 @@ pub trait IRViewer {
         }
     }
 
-    // Named operand reads, so consumers never re-encode the positional index
-    // at each call site. Each panics on an arity the validator guarantees for
-    // a well-formed node of that kind.
+    // Each panics on an arity the validator guarantees for a well-formed node
+    // of that kind.
     semantic_slot_accessors! {
         /// `If` input slot 1 of `[control, cond]`.
         if_cond => 2[1] "If node has [control, cond] inputs";
@@ -252,8 +229,6 @@ pub trait IRViewer {
         &'a self,
         reachable: &'a crate::walk::NodeIdSet,
     ) -> impl Iterator<Item = (NodeId, &'a NodeKind)> + 'a {
-        // Iterating the reachable set, not the arena, keeps this sized to the
-        // live graph rather than to accumulated dead nodes.
         let g = self.function().graph();
         reachable.iter().map(move |n| (n, g.node_kind(n)))
     }
@@ -265,9 +240,7 @@ pub trait IRViewer {
             .ok_or_else(|| anyhow!("output {value_id:?} is not a value edge (got {kind:?})"))
     }
 
-    /// The strict counterpart to the coercion helpers: the `build_*`
-    /// constructors call it rather than silently truncating, extending, or
-    /// bit-casting an operand.
+    /// Errors unless `value_id`'s type is exactly `expected`; never coerces.
     fn require_value_type(&self, value_id: ValueId, expected: ValueType) -> crate::Result<ValueId> {
         let actual = self.value_type(value_id)?;
         if actual != expected {
@@ -326,9 +299,8 @@ pub trait IRViewer {
     }
 
     /// Float values keep their type; integers map by byte size, at most 4 to
-    /// F32, 8 to F64, 10 to F80. The 10-byte case is x87 ST0/STn, tracked as
-    /// I80 on the int side, and F80 keeps the bit-reinterpret round trip
-    /// width-preserving. Errors on a byte size with no float counterpart.
+    /// F32, 8 to F64, 10 to F80. Errors on a byte size with no float
+    /// counterpart.
     fn infer_float_type(&self, value: ValueId) -> crate::Result<ValueType> {
         let ty = self.value_type(value)?;
         if ty.is_float() {
@@ -353,7 +325,7 @@ impl IRViewer for Function {
     }
 }
 
-/// Reads the wrapped field directly; `self.function()` would recurse.
+// Reads the field directly; `self.function()` would recurse.
 impl IRViewer for crate::FunctionBuilder {
     #[inline]
     fn function(&self) -> &Function {
@@ -361,7 +333,7 @@ impl IRViewer for crate::FunctionBuilder {
     }
 }
 
-/// Reborrows the wrapped field directly; `self.function()` would recurse.
+// Reborrows the field directly; `self.function()` would recurse.
 impl IRViewer for crate::EditFunction<'_> {
     #[inline]
     fn function(&self) -> &Function {
@@ -369,13 +341,7 @@ impl IRViewer for crate::EditFunction<'_> {
     }
 }
 
-/// The single source of truth for traversing a function's IR graph.
-/// [`crate::EditFunction`] shadows the order-producing methods with inherent
-/// versions that reuse its cached live/roots bookkeeping.
-///
-/// [`Self::reverse_postorder`] takes a [`crate::walk::GraphWalkInfo`]: compute
-/// it once via [`Self::walk_info`] and reuse it across orders instead of
-/// re-walking.
+/// Control-aware traversals of a function's IR graph.
 pub trait IRWalker: IRViewer {
     /// `None` seeds from the function entry. The result carries the reachable
     /// set and input-less roots the post-order family consumes.
@@ -435,10 +401,8 @@ fn ensure_value_type(value_id: ValueId, ok: bool, noun: &str) -> crate::Result<(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    //! Fixtures are built inline rather than via `strider_ir_test_utils`: the
-    //! dev-dep links a separate compilation of strider-ir, so a helper
-    //! returning `strider_ir::Function` would not match this crate's own
-    //! `Function` under `cargo test`.
+    //! Fixtures are built inline: `strider_ir_test_utils` links a separate
+    //! compilation of strider-ir, so its `Function` is a different type here.
 
     use crate::builder::IRBuilderExt;
     use crate::node::ValueType;
@@ -446,8 +410,7 @@ mod tests {
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
     /// `Entry -> Region -> Return(Add(1, 2))`: the Add and its two constants
-    /// form a data cone off the control spine, giving a non-entry seed with a
-    /// known reachable set.
+    /// form a data cone off the control spine.
     #[test]
     fn walk_from_seed_visits_only_the_seed_cone() {
         let cc = strider_target::BuiltCallingConvention::default();
@@ -476,8 +439,7 @@ mod tests {
         assert!(from_mid.is_subset(&all_set));
 
         // Seeding at the Add reaches its data cone and nothing else: not the
-        // Return consumer, not the spine. Proves `walk_from` is really seeded
-        // rather than `walk()` in disguise.
+        // Return consumer, not the spine.
         let from_add: std::collections::HashSet<_> = f.walk_from(add_node).collect();
         assert!(from_add.contains(&add_node));
         assert!(from_add.len() < all_set.len());

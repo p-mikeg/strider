@@ -5,8 +5,7 @@ use crate::node::{NodeKind, ValueKind, ValueType};
 use crate::{IRViewer, IRWalker};
 use ::dot::GraphDotDumper as _;
 
-/// Interns `v` (masked to `ty`) so the renderers' `int_const_u128` /
-/// `const_value` reads resolve, then builds the `IntConst` node.
+/// Interns `v` (masked to `ty`), then builds the `IntConst` node.
 fn int_const_node(f: &mut Function, v: u128, ty: ValueType) -> NodeId {
     let id = f.intern_int_const(v, ty);
     f.graph_mut()
@@ -62,8 +61,7 @@ fn edge_lines(dot: &str) -> Vec<&str> {
     dot.lines().filter(|l| l.contains("->")).collect()
 }
 
-/// A wide `IntConst` must render its value, not the Debug form of the interning
-/// id (`IntConst(ConstId(0))`).
+/// A wide `IntConst` must render its value, not the interning id.
 #[test]
 fn render_int_const_wide_shows_value_not_debug() {
     let mut f = test_function();
@@ -101,8 +99,8 @@ fn render_int_const_wide_shows_value_not_debug() {
     );
 }
 
-/// The raw renderer emits exactly one DOT node per reachable `NodeId` (no
-/// constant inlining, no virtual nodes) and omits detached ones.
+/// The raw renderer emits exactly one DOT node per reachable `NodeId` and
+/// omits detached ones.
 #[test]
 fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
     let mut f = test_function();
@@ -309,9 +307,8 @@ fn if_node_produces_exactly_two_branch_virtual_nodes() {
     );
 }
 
-/// The dot-id map is many-to-one by contract: a real node's id IS its NodeId,
-/// while a const is re-emitted as a fresh `c`-prefixed box per use (so a hot
-/// value never becomes an edge hub) and every box resolves back to it.
+/// The dot-id map is many-to-one: a real node's id IS its NodeId, while a
+/// const gets a fresh `c`-prefixed box per use, each resolving back to it.
 #[test]
 fn dot_id_maps_back_to_its_ir_node_including_duplicated_consts() {
     let mut f = test_function();
@@ -320,8 +317,7 @@ fn dot_id_maps_back_to_its_ir_node_including_duplicated_consts() {
         .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
-    // One const feeding three consumers -> three dot boxes, one NodeId.  The
-    // dumper walks from entry, so the Return has to consume each add.
+    // One const feeding three consumers -> three dot boxes, one NodeId.
     let k = int_const_node(&mut f, 7_u128, ValueType::I64);
     let [kv] = f.node_outputs_exact::<1>(k).unwrap();
     let mut adds = Vec::new();
@@ -417,8 +413,7 @@ fn int_const_label_contains_value_and_type() {
 }
 
 /// The branch virtuals must be wired even when a branch successor renders
-/// *before* the `If` itself; that ordering is what leaves a dangling "if.true"
-/// trapezium plus a spurious direct edge off the `If` diamond.
+/// *before* the `If` itself.
 #[test]
 fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     let mut f = test_function();
@@ -512,7 +507,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
 }
 
 /// A clobbered Call output must render even when the function's
-/// `call_clobbered` list is empty (the default without a calling convention).
+/// `call_clobbered` list is empty.
 #[test]
 fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let mut f = test_function();
@@ -542,8 +537,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     f.graph_mut()
         .create_node(NodeKind::Return, [call_ctrl, call_mem, clob_value], []);
 
-    // The output was made via `graph_mut` without `build_call_kind`, so it
-    // carries no `value_vn` tag and falls back to `out{output_index}`.
+    // The output carries no `value_vn` tag, so it falls back to `outN`.
     let dot = render(&f, entry);
     assert!(
         dot.contains("out2"),
@@ -615,9 +609,8 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     );
 }
 
-/// A `Store` with a `stack_offsets` entry keeps its full address subtree AND
-/// gains a `base sp ± K` line in its label.  The offset line must not replace
-/// the address edge.
+/// A `Store` with a `stack_offsets` entry keeps its address edge AND gains a
+/// `base sp +/- K` line in its label.
 #[test]
 fn store_keeps_addr_edge_and_labels_base_sp_offset() {
     let mut f = test_function();
@@ -639,7 +632,7 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
     );
     let [region_ctrl, _phi_tok] = f.node_outputs_exact::<2>(region).unwrap();
 
-    // addr stands in for SP + 0x10; a raw IntConst is enough here.
+    // addr stands in for SP + 0x10.
     let addr = int_const_node(&mut f, 0x10_u128, ValueType::I64);
     let [addr_value] = f.node_outputs_exact::<1>(addr).unwrap();
 
@@ -664,10 +657,8 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
         "addr const must appear when no stack offset is set:\n{dot_no_offset}",
     );
 
-    // Baseline for the with-offset comparison.
     let edge_count_no_offset = edge_lines(&dot_no_offset).len();
 
-    // With a stack_offset: addr edge kept, label gains the offset line.
     f.side_tables_mut()
         .set_stack_slot(addr_value, addr_value, 0x10_i128);
 
@@ -677,7 +668,6 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
         dot_with_offset.contains("base sp + 16"),
         "Store label must show `base sp + 16` when stack_offset is set:\n{dot_with_offset}",
     );
-    // Generic base form, not an `[sp+K]` substitution.
     assert!(
         !dot_with_offset.contains("[sp+"),
         "must use `base sp + K`, not the old `[sp+K]` form:\n{dot_with_offset}",
@@ -754,7 +744,6 @@ fn function_arg_node_label_includes_arg_index() {
         .create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
-    // InitialVar stands in for a register arg carrier.
     let init_var = f.graph_mut().create_node(
         NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
         [],
@@ -777,11 +766,6 @@ fn function_arg_node_label_includes_arg_index() {
         "arg carrier node must have peripheries attribute (double border):\n{dot}",
     );
 }
-
-// A Region's k-th control input pairs 1:1 with the k-th value input (after the
-// leading phi-token) of every Phi and MemPhi joining there.  The `predN` labels
-// on BOTH ends are what make that correspondence readable without counting edge
-// endpoints by hand.
 
 /// Entry -> If(true){RegionT}{RegionF}, both arms into a 2-predecessor Join with
 /// a tagged Phi and a MemPhi.
@@ -847,7 +831,6 @@ fn render_two_pred_join_with_phi_memphi() -> String {
         },
     );
 
-    // Both arms reuse im_value; only the edge-label structure is pinned here.
     let mem_phi = f.graph_mut().create_node(
         NodeKind::MemPhi,
         [join_phi_token, im_value, im_value],
@@ -878,8 +861,6 @@ fn region_control_inputs_are_labelled_with_pred_index() {
 #[test]
 fn phi_value_inputs_are_labelled_with_matching_pred_index() {
     let dot = render_two_pred_join_with_phi_memphi();
-    // The sibling test pins the Region labels; this one pins that the Phi
-    // shares the scheme, hence >= 2 occurrences each (Region + Phi).
     assert!(
         count_lines(&dot, |l| l.contains("label=pred0")
             || l.contains("label=\"pred0"))
@@ -896,8 +877,6 @@ fn phi_value_inputs_are_labelled_with_matching_pred_index() {
 
 #[test]
 fn mem_phi_value_inputs_are_labelled_with_matching_pred_index() {
-    // This fixture uses unified Memory on both inputs, so the bare `predN`
-    // form is what's asserted.
     let dot = render_two_pred_join_with_phi_memphi();
     let pred0_count = count_lines(&dot, |l| {
         l.contains("label=pred0") || l.contains("label=\"pred0")
@@ -944,8 +923,7 @@ fn neighborhood_bfs_bounds_depth_and_walks_both_directions() {
     assert_eq!(d1.len(), 3);
     // Depth 1 from a const reaches Add via the consumer edge: both directions.
     assert!(neighborhood_nodes(&f, c1, 1, 12, usize::MAX, &consumers).contains(&add));
-    // A non-center hub is included but not expanded through: from c1 with cap 1,
-    // Add (degree 2) is reached but not walked past, so c2 never arrives.
+    // From c1 with cap 1, Add (degree 2) is reached but not walked past.
     let capped = neighborhood_nodes(&f, c1, 3, 1, usize::MAX, &consumers);
     assert!(capped.contains(&c1) && capped.contains(&add) && !capped.contains(&c2));
     assert_eq!(capped.len(), 2);
@@ -957,8 +935,7 @@ fn neighborhood_bfs_bounds_total_node_count() {
     use crate::node::IntBinaryOp;
     use rustc_hash::FxHashMap;
 
-    // Depth 1 from Add reaches all 3 nodes (pinned by the sibling test), so a
-    // budget of 2 must clamp it.
+    // Depth 1 from Add reaches all 3 nodes, so a budget of 2 must clamp it.
     let mut f = test_function();
     let c1 = int_const_node(&mut f, 5, ValueType::I32);
     let c2 = int_const_node(&mut f, 8, ValueType::I32);
@@ -980,9 +957,8 @@ fn neighborhood_bfs_bounds_total_node_count() {
     assert!(budgeted.contains(&add), "center is always kept");
 }
 
-/// The centred node keeps its navigable `NodeId` even when const.  Consts
-/// normally render as a fresh `c*` box per use, but the explorer re-centres and
-/// searches on the centre, so it must stay one addressable shared box.
+/// The centred node keeps its navigable `NodeId` even when const, where a
+/// non-centre const would render as a fresh `c*` box per use.
 #[test]
 fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
     use crate::node::IntBinaryOp;
@@ -1005,7 +981,7 @@ fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
     let a2v = f.node_outputs(add2)[0];
 
     // The consumer index is built by walking from `entry`, so the adds must be
-    // reachable for the const to have any recorded consumer.
+    // reachable.
     let entry = f.entry();
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let mem = crate::function::test_initial_memory(&f);
@@ -1065,8 +1041,7 @@ fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
 fn neighborhood_duplicates_shared_const_per_use() {
     use crate::node::IntBinaryOp;
 
-    // const 7 feeds two Adds, both feeding the centered Add: a hot constant,
-    // which must render one private box per use rather than becoming a hub.
+    // const 7 feeds two Adds, both feeding the centered Add.
     let mut f = test_function();
     let k = int_const_node(&mut f, 7, ValueType::I32);
     let a = int_const_node(&mut f, 1, ValueType::I32);
@@ -1105,8 +1080,7 @@ fn neighborhood_duplicates_shared_const_per_use() {
         .count();
     assert_eq!(sevens, 2, "shared const must be duplicated per use:\n{dot}");
 
-    // The raw neighborhood is structure-faithful: the shared const stays one
-    // box, never duplicated, and the center keeps its 1:1 id.
+    // In the raw neighborhood the shared const stays one box.
     let raw = f.raw_neighborhood_dot(center, 3, 12, 100).unwrap();
     let raw_consts = node_decls(&raw)
         .iter()

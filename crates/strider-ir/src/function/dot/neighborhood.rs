@@ -1,9 +1,5 @@
-//! Neighborhood selection for the interactive explorer.
-//!
-//! Only the node SET is computed here; the render is the ordinary pretty dumper
-//! restricted to it (`FunctionDotDumper.nodes` / `.center`), so styling, labels,
-//! edge roles, const-per-use boxes and the virtuals are shared rather than
-//! reimplemented.
+//! Neighborhood selection for the interactive explorer.  Only the node SET is
+//! computed here; the render is the ordinary pretty dumper restricted to it.
 
 use std::collections::VecDeque;
 use std::io;
@@ -16,8 +12,7 @@ use crate::function::Function;
 use crate::node::NodeId;
 use crate::{IRViewer, IRWalker};
 
-/// Forward edges, which the IR doesn't index directly.  One `O(V+E)` pass over
-/// every reachable node's inputs.
+/// Forward edges, which the IR doesn't index directly.
 pub(super) fn build_consumers(f: &Function) -> FxHashMap<NodeId, Vec<NodeId>> {
     let mut consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
     for node in f.walk() {
@@ -36,15 +31,9 @@ fn producers(f: &Function, node: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
-/// BFS around `center` over **both** input and output edges.  A node whose total
-/// degree exceeds `hub_cap` is included but not expanded *through*; otherwise
-/// the memory token or a hot constant pulls the whole function in at hop 1.
-/// `center` always expands.
-///
-/// Depth alone doesn't bound size (a dense region blows up to hundreds of nodes,
-/// which the browser's synchronous Graphviz layout can't render without
-/// freezing), so `max_nodes` is the real cap.  BFS visits in level order, so the
-/// budget keeps the nearest nodes.
+/// BFS around `center` over **both** input and output edges, capped at
+/// `max_nodes`.  A node whose total degree exceeds `hub_cap` is included but
+/// not expanded *through*; `center` always expands.
 pub(super) fn neighborhood_nodes(
     f: &Function,
     center: NodeId,
@@ -79,12 +68,10 @@ pub(super) fn neighborhood_nodes(
 
 impl<R: MemReader> FunctionDotDumper<'_, R> {
     /// Standalone DOT for the depth-`depth` neighborhood around `center`, with
-    /// `center` highlighted.  Real nodes keep their IR `NodeId` as the DOT id,
-    /// so the explorer can navigate by it.
+    /// `center` highlighted.
     ///
     /// # Errors
-    /// Propagates a `pretty_label` IO error (e.g. a Sleigh register-name
-    /// lookup failure).
+    /// Propagates a `pretty_label` IO error.
     pub fn neighborhood_dot(
         &self,
         center: NodeId,

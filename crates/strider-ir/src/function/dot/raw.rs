@@ -1,10 +1,6 @@
-//! Raw, structure-faithful graph renderer for debugging.
-//!
-//! Unlike the pretty [`super::FunctionDotDumper`], this renders the graph
-//! **exactly as stored**: one DOT node per reachable-from-entry [`NodeId`], one
-//! edge per input edge, no constant inlining, no virtual nodes, no commutative
-//! reordering, no Sleigh register-name translation, and per-node side-table
-//! state shown inline.  For when the pretty output can't be trusted.
+//! Raw graph renderer for debugging: the graph **exactly as stored**, one DOT
+//! node per reachable-from-entry [`NodeId`], one edge per input edge,
+//! side-table state inline, and none of the pretty renderer's transforms.
 
 use ::dot::{DotEmitter, DotStyle, GraphDot, GraphDotDumper};
 use rustc_hash::FxHashMap;
@@ -13,15 +9,14 @@ use crate::function::Function;
 use crate::node::{NodeId, NodeKind};
 use crate::{IRViewer, IRWalker};
 
-/// `{space-shortcut}{offset:#x}:{size}` (e.g. `%0x38:8`), instead of the verbose
-/// derived `Vn { .. }` debug form.
+/// `{space-shortcut}{offset:#x}:{size}`, e.g. `%0x38:8`.
 fn fmt_vn(vn: &rsleigh::Vn) -> String {
     format!("{}{:#x}:{}", vn.addr_space.shortcut(), vn.addr_off, vn.size)
 }
 
 pub(super) struct RawFunctionDumper<'a> {
     function: &'a Function,
-    /// Reverse of `Function::arg_index_to_values`: carrier node -> arg indices.
+    /// Carrier node -> arg indices.
     arg_index: FxHashMap<NodeId, Vec<u32>>,
 }
 
@@ -37,20 +32,18 @@ impl<'a> RawFunctionDumper<'a> {
     fn node_label(&self, node: NodeId) -> String {
         let f = self.function;
         let kind = f.node_kind(node);
-        // `InitialVar` carries an `all_vns` index; resolve it to the varnode.
-        // Every other kind's debug form is already terse.
+        // `InitialVar` carries an index; resolve it to the varnode.
         let kind_str = match kind {
             NodeKind::InitialVar(id) => match f.initial_vn_opt(*id) {
                 Some(vn) => format!("InitialVar(#{} {})", id.index(), fmt_vn(&vn)),
                 None => format!("InitialVar(#{} ?)", id.index()),
             },
-            // Value lives off-side in `const_interner`; it goes on the next line.
+            // The value itself goes on the next line.
             NodeKind::IntConst(id) => format!("IntConst(#{})", id.as_u32()),
             other => format!("{other:?}"),
         };
         let mut s = format!("n{}  {kind_str}", node.as_u32());
 
-        // Raw `ConstValue` debug; a dangling id is labelled, not panicked on.
         if let NodeKind::IntConst(id) = kind {
             let value = match f.const_interner.get(*id) {
                 Some(cv) => format!("{cv:?}"),
@@ -98,7 +91,7 @@ impl<'a> RawFunctionDumper<'a> {
     }
 
     /// Same BFS + `max_nodes` budget as
-    /// [`super::FunctionDotDumper::neighborhood_dot`], rendered structure-faithfully.
+    /// [`super::FunctionDotDumper::neighborhood_dot`], rendered raw.
     fn neighborhood_dot(
         &self,
         center: NodeId,
@@ -149,7 +142,6 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
     fn create_initial_state(&self) -> Self::State {}
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = NodeId> {
-        // Detached / dedup-cache nodes are omitted so the view stays readable.
         // The walk follows backward-data and forward-control edges, so every
         // rendered node's input producers are rendered too: no dangling edges.
         self.function.walk().collect::<Vec<_>>()
@@ -167,7 +159,6 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
         for (in_slot, value) in self.function.node_inputs(node).into_iter().enumerate() {
             let (producer, out_slot) = self.function.value_definition(value);
             let from = format!("n{}", producer.as_u32());
-            // `edge` quotes and escapes `label`, so pass it bare.
             let label = format!("{out_slot}:{in_slot}");
             out.edge(&from, &dot_id, &[("label", &label)]);
         }
@@ -176,9 +167,7 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
 }
 
 impl Function {
-    /// Graphviz DOT of the graph **exactly as stored**: every node reachable
-    /// from entry, every input edge, side-tables inline, none of the pretty
-    /// renderer's cosmetic transforms.
+    /// Graphviz DOT of the graph **exactly as stored**.
     ///
     /// # Errors
     ///
@@ -187,8 +176,7 @@ impl Function {
         GraphDot::new(RawFunctionDumper::new(self), DotStyle::dark()).as_dot()
     }
 
-    /// [`Self::raw_dot`] wrapped in a self-contained HTML page (embedded viz.js,
-    /// so no external `dot` binary is needed).
+    /// [`Self::raw_dot`] wrapped in a self-contained HTML page.
     ///
     /// # Errors
     ///
@@ -197,8 +185,7 @@ impl Function {
         GraphDot::new(RawFunctionDumper::new(self), DotStyle::dark()).as_html_from_dot()
     }
 
-    /// Structure-faithful counterpart to the pretty explorer view; needs no
-    /// Sleigh.
+    /// Raw counterpart to the pretty explorer view; needs no Sleigh.
     ///
     /// # Errors
     ///

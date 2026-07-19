@@ -6,9 +6,7 @@
     clippy::todo
 )]
 
-//! The asm-fingerprint check must fire on a plain `validate()`, otherwise a
-//! pass that forgets `extend_asm_fingerprint_from` silently produces invalid
-//! output.
+//! The asm-fingerprint check must fire on a plain `validate()`.
 
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir::{Function, IRViewer, IntBinaryOp};
@@ -27,8 +25,7 @@ fn default_validate_flags_missing_asm_fingerprint() {
         .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
 
-    // Consts and Add are not fingerprint-exempt kinds, so leaving them
-    // unstamped is what the check should catch.
+    // Consts and Add are not fingerprint-exempt, and are left unstamped.
     let a_id = function.intern_int_const(1, ValueType::I64);
     let a = function.graph_mut().create_node(
         NodeKind::IntConst(a_id),

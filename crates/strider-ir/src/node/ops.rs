@@ -26,7 +26,7 @@ pub enum IntCmpOp {
 }
 
 /// Arithmetic wraps. `Sub` is absent: the lifter lowers `IntSub(a, b)` to
-/// `Add(a, Neg(b))`, so subtraction has one canonical shape.
+/// `Add(a, Neg(b))`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntBinaryOp {
     Add,
@@ -59,8 +59,6 @@ pub enum IntUnaryOp {
 }
 
 /// `Sub` is absent: the lifter lowers `FloatSub(a, b)` to `Add(a, Neg(b))`.
-/// Bit-exact under IEEE 754, since negation only flips the sign bit (NaN and
-/// inf included).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FloatBinaryOp {
     Add,
@@ -86,9 +84,7 @@ pub enum FloatUnaryOp {
 /// lowers them:
 ///
 /// - `FloatNotEqual(a, b)` -> `Xor(FloatEqual(a, b), IntConst(1)):I1`.
-/// - `FloatLessEqual(a, b)` -> `Or(FloatLess(a, b), FloatEqual(a, b))`. The
-///   `Xor(Less(b, a), 1)` form would be wrong: it yields true on NaN, where
-///   IEEE `<=` is false.
+/// - `FloatLessEqual(a, b)` -> `Or(FloatLess(a, b), FloatEqual(a, b))`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FloatCmpOp {
     /// False if either operand is NaN.

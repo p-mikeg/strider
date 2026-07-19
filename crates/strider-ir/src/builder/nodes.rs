@@ -8,10 +8,8 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::RegionId;
 
 impl FunctionBuilder {
-    /// `Function::new` builds only the `Entry` node; the memory spine is the
-    /// builder's job. Mints `InitialMemory` straight on the graph, being a
-    /// fingerprint-exempt initial-state kind, and keeps its `Memory` output as
-    /// `entry_memory` so nothing has to search for it later.
+    /// Mints the `InitialMemory` node and keeps its `Memory` output as
+    /// `entry_memory`.
     pub fn build_entry(&mut self) -> Result<()> {
         let memory_node = self.function_mut().graph_mut().create_node(
             NodeKind::InitialMemory,
@@ -24,13 +22,7 @@ impl FunctionBuilder {
     }
 
     /// Value slots are `value` when present, then `ret_values` in order.
-    ///
-    /// A dumb emitter: the lifter resolves the convention's return registers
-    /// through its own aliasing-aware `read_vn` first, and strider-ir never
-    /// learns which varnodes the values came from.
-    ///
-    /// Terminates the current region unconditionally. Terminating it again is
-    /// a double-termination error.
+    /// Terminates the current region; terminating it again is an error.
     pub fn build_return(&mut self, value: Option<ValueId>, ret_values: &[ValueId]) -> Result<()> {
         let mut ret_inputs: SmallVec<[ValueId; 4]> = SmallVec::new();
         if let Some(v) = value {
@@ -50,13 +42,9 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Control sink for a no-return direct `Call`, whose fall-through lands
-    /// outside the function bound because the callee never returns. The
-    /// direct-call analogue of what [`Self::build_call_other`] emits for the
-    /// NoReturn `CallOther` class. The memory edge is deliberately left
-    /// dangling: `Unreachable` consumes control only.
-    ///
-    /// Terminates the current region unconditionally.
+    /// Control sink for a no-return direct `Call`. The memory edge is left
+    /// dangling: `Unreachable` consumes control only. Terminates the current
+    /// region.
     pub fn build_unreachable(&mut self) -> Result<()> {
         let res = self.terminate_cur_region()?;
         self.require_terminator_kinds(&res)?;
@@ -64,13 +52,8 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Anchors `target_value` on a placeholder so the resolver can later
-    /// inspect its producer and rewrite the node into a `Return` or a
-    /// `Call`+`Return` pair. The returned id lets the lifter correlate the
-    /// placeholder with its pcode address, keying the classification back to
-    /// the dispatch site.
-    ///
-    /// Terminates the current region unconditionally.
+    /// Anchors `target_value` on an `IndirectBranch` placeholder. Terminates
+    /// the current region.
     pub fn build_indirect_branch(&mut self, target_value: ValueId) -> Result<NodeId> {
         let res = self.terminate_cur_region()?;
 
@@ -130,7 +113,6 @@ impl FunctionBuilder {
             [res.control, address],
             std::iter::repeat_n(ValueKind::Control, arms.len()),
         );
-        // Dynamic arity, so snapshot the outputs to end the immutable borrow.
         let out_ctrls: Vec<ValueId> = self.function().node_outputs(sw).to_vec();
         for (&(region, _addr), &ctrl) in arms.iter().zip(&out_ctrls) {
             self.link_region(region, ctrl, res.memory, res.region_id)?;
@@ -192,8 +174,6 @@ impl FunctionBuilder {
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
             output_type,
         );
-        // A phi's source varnode is always tracked, so it always has a VnId.
-        // The untracked case is unreachable and no-ops, as on the Call path.
         self.function_mut().set_vn_for_value(phi_value, var);
         Ok(phi_value)
     }

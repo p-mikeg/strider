@@ -2,8 +2,7 @@
 
 //! Not a unit test in `src/builder/`: `strider_ir_test_utils` is a dev-dep
 //! returning `strider-ir`'s own types, and a unit-test block would see a
-//! second compilation of the crate. Integration tests link the same
-//! `strider-ir` downstream crates do.
+//! second compilation of the crate.
 
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir::{IRBuilder, IRViewer};

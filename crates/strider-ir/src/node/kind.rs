@@ -1,12 +1,9 @@
 use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 
-/// Not a `NodeKind` payload: arg tracking lives in
-/// `Function::arg_index_to_values`. This only exists so pattern builders can
-/// filter matches by ABI source.
+/// Where a function argument is passed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FunctionArgSource {
-    /// Always the full-width container register (`RDI`, never `EDI`), so a
-    /// sub-register read is expressible as `Truncate(InitialVar(rdi))`.
+    /// Always the full-width container register (`RDI`, never `EDI`).
     Register(rsleigh::Vn),
     /// Byte `offset` from the entry-time stack pointer (`InitialVar(sp)`), in
     /// the stack's address `space` (usually RAM).
@@ -16,14 +13,8 @@ pub enum FunctionArgSource {
     },
 }
 
-/// Dense id of a tracked varnode, interned in `Function::vn_interner`. One
-/// identity serves both as the [`NodeKind::InitialVar`] payload and as the
-/// builder's per-region SSA-variable key.
-///
-/// Interned rather than inlining `rsleigh::Vn` so the largest `NodeKind`
-/// payload stays 4 bytes instead of 16. Ids are assigned in `(space, offset,
-/// size)` order, so assignment is deterministic across runs. Resolve via
-/// [`crate::Function::initial_vn`].
+/// Dense id of a tracked varnode, assigned in `(space, offset, size)` order.
+/// Resolve via [`crate::Function::initial_vn`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InitialVnId(u32);
 cranelift_entity::entity_impl!(InitialVnId);
@@ -47,7 +38,7 @@ pub enum NodeKind {
     /// Outputs `[Memory]`.
     InitialMemory,
     /// Entry-time value of the tracked varnode at this id. Outputs one integer
-    /// value. Resolve the varnode via [`crate::Function::initial_vn`].
+    /// value.
     InitialVar(InitialVnId),
 
     /// Inputs: one `Control` per predecessor. Outputs: `[Control, PhiToken]`.
@@ -59,9 +50,7 @@ pub enum NodeKind {
     /// `[value]`.
     ///
     /// A lifter-emitted phi for a register-aliased read carries a source
-    /// varnode tag in the `value_vn` side-table, keyed by the phi's output
-    /// `ValueId` (see [`crate::Function::get_vn_for_value`]); anonymous phis
-    /// have no entry. Non-cacheable: phi identity matters.
+    /// varnode tag in the `value_vn` side-table; anonymous phis have no entry.
     Phi,
 
     /// Inputs: `(control, cond:I1)`. Outputs: `[Control, Control]`, index 0
@@ -78,29 +67,18 @@ pub enum NodeKind {
     /// Consumes the outgoing control edge plus any return values.
     Return,
     /// Placeholder for a branch the CFG could not resolve. Inputs:
-    /// `[control, memory, target_value]`. Outputs: `[]`.
-    ///
-    /// The resolver classifies the producer of `target_value` once the
-    /// optimiser has converged, then rewrites this into a `Return` (link
-    /// register) or a `Call`+`Return` pair (tail call). Surviving the pipeline
-    /// just means classification failed; the IR stays valid.
-    ///
-    /// `memory` is anchored here alongside `control` so the resolver can wire
-    /// the replacement at the same program point without re-walking the CFG
-    /// for the live memory token.
+    /// `[control, memory, target_value]`. Outputs: `[]`. Surviving the
+    /// pipeline just means classification failed; the IR stays valid.
     IndirectBranch,
     /// Control sink for a no-return trap (`ud2`, `int3`, `abort`, `BUG_ON`).
-    /// Inputs: `[control]`. Outputs: `[]`. Consumes the dangling `Control`
-    /// edge a NoReturn `CallOther` leaves behind, so "every control edge
-    /// reaches a terminator" holds and the validator can enforce the
-    /// single-successor control invariant.
+    /// Inputs: `[control]`. Outputs: `[]`.
     Unreachable,
 
     Load(rsleigh::VnSpace),
     Store(rsleigh::VnSpace),
 
-    /// Value is interned in `Function::const_interner`; read it via
-    /// `IRViewer::int_const_u128`, never by matching the payload.
+    /// Read the value via `IRViewer::int_const_u128`, never by matching the
+    /// payload.
     IntConst(crate::node::const_value::ConstId),
     /// Negation only. Bitwise complement is `Xor(x, all_ones)`.
     IntUnaryOp(crate::node::IntUnaryOp),
@@ -139,53 +117,43 @@ pub enum NodeKind {
     ///
     /// Inputs: `[control, memory, arg0, arg1, ...]`. Outputs:
     /// `[Control, Memory]`, plus a `Typed` slot when the instruction has an
-    /// output varnode. Memory is always clobbered, so downstream loads must
-    /// depend on the new token. Non-cacheable.
+    /// output varnode. Memory is always clobbered.
     CallOther {
         user_op_id: u64,
     },
 
     /// Sleigh `SegmentOp`: resolves a (segment, offset) pair to a flat
-    /// pointer. Pure, so cacheable.
+    /// pointer. Pure.
     ///
     /// Inputs: `[segment, offset]`. Outputs: `[Typed]` (pointer-sized).
     SegmentOp {
         op_id: u64,
     },
 
-    /// Sleigh `CPoolRef`: Java constant-pool lookup.
+    /// Sleigh `CPoolRef`: Java constant-pool lookup. Resolution can have
+    /// observable side effects (class loading).
     ///
-    /// Inputs: `[ref0, ref1, ...]`. Outputs: `[Typed]`. Non-cacheable:
-    /// resolution can have observable side effects (class loading).
+    /// Inputs: `[ref0, ref1, ...]`. Outputs: `[Typed]`.
     CPoolRef,
 
-    /// Sleigh `New`: Java object allocation.
+    /// Sleigh `New`: Java object allocation. Each allocation yields a distinct
+    /// object.
     ///
     /// Inputs: `[size, ...]`. Outputs: `[Typed]` (pointer-sized).
-    /// Non-cacheable: each allocation yields a distinct object.
     New,
 }
 
 impl NodeKind {
-    /// Constants only enter the graph via the const interners, so a
-    /// `matches!` is exhaustive in practice and no new variant can become
-    /// const without going through `IntConst` / `FloatConst`.
     #[inline]
     pub fn is_const(self) -> bool {
         matches!(self, Self::IntConst(..) | Self::FloatConst(..))
     }
 
     /// Whether the graph may dedup nodes of this kind.
-    ///
-    /// Not cacheable: kinds whose inputs grow after construction (`Region`,
-    /// `Phi`) and kinds where each occurrence is a distinct event (`Return`,
-    /// `Call`). Matched without a `_` arm so a new variant fails to compile
-    /// until someone decides.
     #[inline]
     pub fn is_cacheable(&self) -> bool {
         match self {
-            // Initial-state singletons: identity is fully determined by the
-            // NodeKind payload, so dedup enforces one-per-function.
+            // Identity is fully determined by the payload plus the inputs.
             Self::Entry
             | Self::InitialMemory
             | Self::InitialVar(..)
@@ -228,12 +196,9 @@ impl NodeKind {
         }
     }
 
-    /// Exempt from the non-empty asm-fingerprint invariant.
-    ///
-    /// Region headers, initial state and phis are synthesised without a
-    /// contributing machine instruction, so an empty fingerprint is legal.
-    /// Everything else must carry at least one entry. No `_` arm, so a new
-    /// variant fails to compile until someone decides.
+    /// Exempt from the non-empty asm-fingerprint invariant: region headers,
+    /// initial state and phis are synthesised without a contributing machine
+    /// instruction.
     #[inline]
     pub fn asm_fingerprint_exempt(&self) -> bool {
         match self {
@@ -276,8 +241,7 @@ impl NodeKind {
         }
     }
 
-    /// Whether the node carries a `Control` input or output. No `_` arm, so a
-    /// new variant fails to compile until someone decides.
+    /// Whether the node carries a `Control` input or output.
     #[inline]
     pub fn has_control_flow(&self) -> bool {
         match self {
@@ -323,10 +287,7 @@ impl NodeKind {
     /// Whether the node must survive even with all outputs unused.
     ///
     /// `Store` counts: removing it is dead-store elimination, which needs
-    /// aliasing reasoning this does not do. `CPoolRef` / `New` count because
-    /// resolution can observe state. `Load` and `MemPhi` do not, and are
-    /// culled when unused. New non-control-flow variants with observable
-    /// effects must be added to the `matches!` below.
+    /// aliasing reasoning this does not do. `Load` and `MemPhi` do not.
     #[inline]
     pub fn has_side_effects(&self) -> bool {
         self.has_control_flow()
@@ -336,13 +297,11 @@ impl NodeKind {
             )
     }
 
-    /// Single source of truth for whether a pattern may try both operand
-    /// orderings at this node.
+    /// Whether a pattern may try both operand orderings at this node.
     ///
     /// `FloatAdd` / `FloatMul` count under the IEEE-754
     /// commutativity-up-to-NaN convention the IR uses throughout. `Carry` and
-    /// `Scarry` ask whether `l + r` overflows, and addition commutes, so they
-    /// do too. `FloatCmpOp::Equal` is symmetric including on NaN.
+    /// `Scarry` ask whether `l + r` overflows, and addition commutes.
     #[inline]
     pub fn is_commutative(&self) -> bool {
         match self {
@@ -364,8 +323,7 @@ impl NodeKind {
     }
 }
 
-// The largest inline payload is a u64 (FloatConst / CallOther / SegmentOp);
-// InitialVar interns its varnode rather than inlining a 16-byte rsleigh::Vn.
+// The largest inline payload is a u64 (FloatConst / CallOther / SegmentOp).
 const _: () = assert!(
     std::mem::size_of::<NodeKind>() <= 16,
     "NodeKind must stay <= 16 bytes (no inline payload may exceed 8 bytes)"
@@ -392,7 +350,6 @@ mod tests {
             assert!(k.has_control_flow(), "{k:?} should be control flow");
             assert!(k.has_side_effects(), "{k:?} should have side effects");
         }
-        // A memory write plus the opaque ops.
         for k in [
             NodeKind::Store(rsleigh::VnSpace::RAM),
             NodeKind::CPoolRef,

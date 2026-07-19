@@ -10,22 +10,7 @@
 
 //! Sea-of-nodes IR: a lifted function as a bipartite graph of
 //! [`node::NodeId`] computations producing typed [`node::ValueId`] outputs.
-//! Structurally equal cacheable nodes with equal inputs are deduplicated
-//! inside [`Graph`].
-//!
-//! [`Graph`] holds structural state only; per-function overlay state (entry,
-//! calling convention, side-tables) lives on [`Function`].
-//!
-//! Access is split across four traits, since a reader cannot tell them apart
-//! from the method names alone:
-//!
-//! - [`IRViewer`]: point reads, one required method (`function()`); everything
-//!   else is a default method.
-//! - [`IRWalker`]: control-aware walks, blanket-impl'd over every `IRViewer`.
-//!   [`EditFunction`] shadows the order-producing methods to reuse its cached
-//!   live/roots bookkeeping instead of re-walking from entry.
-//! - [`IRBuilder`]: the node-creation seam.
-//! - [`IRBuilderExt`]: the blanket `build_*` construction vocabulary.
+//! [`Graph`] holds the structure, [`Function`] the per-function overlay.
 //!
 //! Booleans are the 1-bit integer `I1`; there is no separate bool type or
 //! bool-specific op family.

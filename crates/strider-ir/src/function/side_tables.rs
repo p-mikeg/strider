@@ -1,7 +1,3 @@
-//! Per-function overlay tables keyed by arena ids, grouped so
-//! [`crate::Function::new`] defaults them in one line and
-//! [`crate::Function::compact`] remaps them in one `SideTables::remap` call.
-
 use std::cell::RefCell;
 
 use cranelift_entity::{SecondaryMap, entity_impl};
@@ -12,16 +8,11 @@ use crate::graph::NodeIdRemap;
 use crate::node::{NodeId, ValueId};
 
 /// Interner key for a distinct stack-pointer decomposition `(base, offset)`.
-///
-/// [`SpDecomp`] stores this id rather than the payload inline so the dense
-/// `stack_offsets` map stays narrow (an id + tag).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct StackId(u32);
 entity_impl!(StackId);
 
-/// Cached result of the optimizer's SP decomposition over a value's address
-/// cone.  The third state is what lets the memo cache a NEGATIVE: a non-SP
-/// value is classified once, not re-walked on every query.
+/// Result of the SP decomposition over a value's address cone.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SpDecomp {
     /// Not yet computed (the map default).
@@ -50,102 +41,52 @@ where
 }
 
 /// Per-function data keyed by arena ids (or the CC arg index) that is not part
-/// of the graph's structural identity.  Every entry is remapped, or dropped,
-/// when the arena is compacted.
+/// of the graph's structural identity.
 #[derive(Default, Clone)]
 pub struct SideTables {
-    // Sparse: only CallOther nodes carry a name.
     pub(crate) call_other_names: FxHashMap<NodeId, String>,
     /// Machine-instruction addresses whose lifting or rewrite contributed to
     /// each node's value.
-    // A deferred-union DAG so `extend_asm_fingerprint_from` (the hot path: a
-    // rewrite absorbing its matched interior's proof) is O(1), linking the two
-    // nodes instead of merging address lists.  A node's set is materialised
-    // only on the rare read, by walking its ancestors.  Unions run into the
-    // millions on large functions, so the old sorted-merge storage made each
-    // absorb O(N).
     asm_fingerprints: UnionDag<NodeId, u64>,
-    /// The varnode a value represents.  Two disjoint populations share the map,
-    /// distinguished only by the producer's node kind:
-    ///
-    /// * A lift-time `Phi`'s output: the source-level varnode it tracks.  No
-    ///   entry means an anonymous phi synthesised by an opt pass.
-    /// * A `Call` / `CallOther` clobber output: the clobbered register.  Set
-    ///   for every clobber output at build time, so recovery is one lookup
-    ///   with no slot arithmetic.
-    ///
-    /// Keyed by `ValueId` so it remaps through `compact`'s value translation.
-    /// The payload is an `InitialVnId`, not a raw `Vn`: a source-register tag
-    /// is only meaningful for a TRACKED varnode, so an untracked one (e.g. a
-    /// `CallOther` clobber outside the tracked set) is left untagged.  The id
-    /// is stable across `compact` (the tracked-vn interner never renumbers).
+    /// The tracked varnode a value represents, at most one per value.
     pub(crate) value_vn: FxHashMap<ValueId, crate::node::InitialVnId>,
-    /// Per-`Call` override calling convention.  Sparse: a Call on the
-    /// function-default CC has no entry.  Read through
-    /// [`crate::Function::get_cc`], which falls back to the default.
+    /// Per-`Call` override calling convention.
     pub(crate) call_cc: FxHashMap<NodeId, strider_target::BuiltCallingConvention>,
     /// CC argument index to the carrier nodes' output values (`InitialVar` for
-    /// register args, `Load` for stack args).  Each carrier has a single
-    /// output, so the node is recoverable losslessly via `producer`.
-    ///
-    /// A `Vec` per index because one stack slot may be read by several `Load`s
-    /// at the same `sp+K` with different widths; register args have exactly one.
+    /// register args, `Load` for stack args).
     arg_index_to_values: FxHashMap<u32, Vec<ValueId>>,
     /// SP-decomposition memo keyed by the value whose address cone was
     /// analysed.  A [`SpDecomp::Stack`] resolves through `stack_interner` to
-    /// `(base, offset)`, where `base` is the SP-derived terminal (`InitialVar(sp)`
-    /// or an alignment-masked `sp & -16`).  The offset is meaningful only
-    /// relative to that base: two accesses are the same slot iff they share both.
-    ///
-    /// Volatile during the optimizer's fixed point (cleared on graph mutation
-    /// via [`Self::clear_stack_slots`]) and stably refilled once frozen.
-    ///
-    /// `RefCell` so the read-only decomposer, whose callers hold `&Function`,
-    /// can memoize on a miss.  A pure cache: nothing observable changes but
-    /// query latency, so the IR is not mutable through `&`.
+    /// `(base, offset)`, where `base` is the SP-derived terminal and the offset
+    /// is in bytes relative to it: two accesses are the same slot iff they
+    /// share both.
     stack_offsets: RefCell<SecondaryMap<ValueId, SpDecomp>>,
     stack_interner: RefCell<EntityInterner<StackId, (ValueId, i128)>>,
-    /// Per-output case addresses for a `Switch`: raw target addresses, no arena
-    /// ids.
-    // Sparse: only Switch nodes carry targets.
+    /// Per-output case target addresses for a `Switch`: machine addresses, not
+    /// arena ids.
     switch_targets: FxHashMap<NodeId, Vec<u64>>,
-    /// O(1) `InitialVnId` to `InitialVar(id)` node accelerator for
-    /// indirect-resolve sites and the lifter's lazy `read_or_init_var`
-    /// fallback.  Keys are stable across compaction (culling dead nodes does
-    /// not change the tracked set), so `compact` remaps only the `NodeId`
-    /// payload.
-    ///
-    /// Writers MUST guarantee the inserted node's kind is `InitialVar(id)` for
-    /// the key `id`; the index is advisory and never re-checked.
+    /// `InitialVnId` to `InitialVar(id)` node index.  Advisory: the mapping is
+    /// never re-checked against the node's kind.
     pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
 }
 
 impl SideTables {
-    // Accessors here touch ONE table with no cross-table or interner
-    // resolution.  Ones that also consult the `vn_interner` / `default_cc`
-    // (`get`/`set_vn_for_value`, `get_cc`, `initial_sp`, `initial_var_value`)
-    // stay on `Function`.
-
     #[inline]
     pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
         self.call_other_names.get(&node_id).map(String::as_str)
     }
 
-    /// The `CallOther` emitter is name-agnostic; the caller stamps the name
-    /// here after building the node.
     #[inline]
     pub fn set_call_other_name(&mut self, node_id: NodeId, name: impl Into<String>) {
         self.call_other_names.insert(node_id, name.into());
     }
 
-    /// Replaces any prior override.  Read back via [`crate::Function::get_cc`].
+    /// Replaces any prior override.
     #[inline]
     pub fn set_call_cc(&mut self, node_id: NodeId, cc: strider_target::BuiltCallingConvention) {
         self.call_cc.insert(node_id, cc);
     }
 
-    /// Register args yield a slice of length 1; stack args may have several
-    /// entries (different-width `Load`s at the same `sp+K`).
     #[inline]
     pub fn arg_index_to_values(&self, index: u32) -> &[ValueId] {
         self.arg_index_to_values
@@ -153,7 +94,7 @@ impl SideTables {
             .map_or(&[], Vec::as_slice)
     }
 
-    /// `value` is a carrier node's single output.  Appends to the per-index `Vec`.
+    /// Appends `value` to the carriers recorded for `index`.
     #[inline]
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
         self.arg_index_to_values
@@ -173,8 +114,8 @@ impl SideTables {
         self.stack_offsets.borrow()[value]
     }
 
-    /// `None` when unknown or provably not SP-rooted.  Offsets compare only
-    /// when their bases match.
+    /// `(base, byte offset from base)`.  `None` when unknown or provably not
+    /// SP-rooted.
     #[inline]
     pub fn stack_slot_resolved(&self, value: ValueId) -> Option<(ValueId, i128)> {
         match self.stack_offsets.borrow()[value] {
@@ -183,8 +124,7 @@ impl SideTables {
         }
     }
 
-    /// Takes `&self` (interior mutability) so the read-only decomposer can
-    /// memoize through a shared `&Function`.
+    /// `offset` is in bytes from `base`.
     #[inline]
     pub fn set_stack_slot(&self, value: ValueId, base: ValueId, offset: i128) {
         let id = self.stack_interner.borrow_mut().intern((base, offset));
@@ -197,9 +137,8 @@ impl SideTables {
         self.stack_offsets.borrow_mut()[value] = SpDecomp::NotStack;
     }
 
-    /// The optimizer calls this after a graph mutation so a memoized verdict
-    /// never outlives the graph it was computed against.  The interner resets
-    /// too; its ids are referenced only by the now-cleared slots.
+    /// Drops every memoized decomposition, invalidating all [`StackId`]s.
+    /// Must be called after any graph mutation.
     #[inline]
     pub fn clear_stack_slots(&self) {
         self.stack_offsets.borrow_mut().clear();
@@ -216,8 +155,7 @@ impl SideTables {
         self.switch_targets.insert(id, targets);
     }
 
-    /// Unordered, and materialised on demand by walking the union DAG; callers
-    /// needing a stable order sort the result themselves.
+    /// Unordered.
     pub fn asm_fingerprint(&self, id: NodeId) -> FxHashSet<u64> {
         let mut set = FxHashSet::default();
         self.asm_fingerprints.for_each(id, |addr| {
@@ -226,21 +164,19 @@ impl SideTables {
         set
     }
 
-    /// O(1); no materialisation.
     #[inline]
     pub fn asm_fingerprint_is_empty(&self, id: NodeId) -> bool {
         self.asm_fingerprints.is_empty(id)
     }
 
-    /// Unions `contributors` in.  Existing entries are never removed: the
-    /// fingerprint contract is superset-only.
+    /// Unions `contributors` in.  Existing entries are never removed.
     pub fn extend_asm_fingerprint(&mut self, node_id: NodeId, contributors: &[u64]) {
         for &addr in contributors {
             self.asm_fingerprints.extend(node_id, addr);
         }
     }
 
-    /// O(1): a DAG link, no copy.
+    /// Unions `src`'s fingerprint into `dst`.
     pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
         if dst == src {
             return;
@@ -248,10 +184,9 @@ impl SideTables {
         self.asm_fingerprints.union(dst, src);
     }
 
-    /// Remaps every arena-id key / value after a `retain_reachable`
-    /// compaction; an entry whose node or value did not survive is dropped.
+    /// Remaps every arena-id key / value after a compaction; an entry whose
+    /// node or value did not survive is dropped.
     pub(crate) fn remap(&mut self, remap: &NodeIdRemap) {
-        // NodeId-keyed sparse maps: translate the key, drop pruned nodes.
         self.asm_fingerprints
             .remap(|old| remap.node_old_to_new(old));
         self.call_other_names = remap_hashmap(&mut self.call_other_names, |old, name| {
@@ -263,10 +198,8 @@ impl SideTables {
         self.call_cc = remap_hashmap(&mut self.call_cc, |old, cc| {
             remap.node_old_to_new(old).map(|n| (n, cc))
         });
-        // `stack_offsets` is ValueId-keyed AND each `Stack` slot references an
-        // interned `(base, offset)` whose base is also a ValueId, so both
-        // coordinates need translating.  Rebuild the interner and the dense map
-        // together, dropping a slot whose key or base did not survive.
+        // Both the slot key and its interned base are ValueIds, so the map and
+        // the interner have to be rebuilt together.
         let (new_slots, new_interner) = {
             let old_slots = self.stack_offsets.borrow();
             let old_interner = self.stack_interner.borrow();
@@ -295,20 +228,17 @@ impl SideTables {
         };
         *self.stack_offsets.get_mut() = new_slots;
         *self.stack_interner.get_mut() = new_interner;
-        // `value_vn`: translate keys only; the `InitialVnId` payload is stable
-        // across compaction.
+        // `InitialVnId`s are stable across compaction, so only the arena-id
+        // coordinate of the next two maps needs translating.
         self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn_id| {
             remap
                 .value_old_to_new(old_value)
                 .map(|new_value| (new_value, vn_id))
         });
-        // `initial_var_index`: keys stable (the tracked-vn set is unchanged), so
-        // remap only the NodeId payload; drop keys whose node died.
         self.initial_var_index = remap_hashmap(&mut self.initial_var_index, |vn_id, old_id| {
             remap.node_old_to_new(old_id).map(|new_id| (vn_id, new_id))
         });
-        // `arg_index_to_values`: filter-map the carriers, dropping an index
-        // whose carriers all vanish.
+        // An index whose carriers all vanish is dropped.
         self.arg_index_to_values =
             remap_hashmap(&mut self.arg_index_to_values, |index, old_values| {
                 let mapped: Vec<ValueId> = old_values

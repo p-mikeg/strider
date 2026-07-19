@@ -6,7 +6,7 @@ use crate::IRViewer;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind};
 
-/// A single output with no uses: drawing the node would leave an edgeless island.
+/// Whether `node` has a single output with no uses.
 fn all_uses_go_through_inline(graph: &Graph, node: NodeId) -> bool {
     let outputs = graph.node_outputs(node);
     if outputs.len() != 1 {
@@ -32,10 +32,8 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
         match &self.nodes {
-            // Sorted because the set is unordered and output must be
-            // deterministic.  NOT the walk filtered to the set: a neighbourhood
-            // is BFS'd from its centre and need not be reachable from `entry`,
-            // so filtering the walk would silently drop it.
+            // NOT the walk filtered to the set: a neighbourhood is BFS'd from
+            // its centre and need not be reachable from `entry`.
             Some(set) => {
                 let mut v: Vec<NodeId> = set.iter().copied().collect();
                 v.sort_unstable_by_key(|n| n.as_u32());
@@ -70,8 +68,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
 
 impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// `Ok(None)` when the node draws no shared box of its own (a per-use const,
-    /// or a useless `InitialVar`); callers must skip the virtual-branch and
-    /// edge-draw steps in that case.
+    /// or a useless `InitialVar`).
     fn try_declare_node(
         &self,
         node: NodeId,
@@ -150,9 +147,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         }
     }
 
-    /// Either `emit_if_branch_virtuals` (the If renders first) or
-    /// `emit_input_edge` (a consumer renders first) can materialise the virtual,
-    /// so both go through here to share one entry in `state.virtual_nodes`.
+    /// The `if.true` / `if.false` virtual for `out_id`, created on first call.
     fn get_or_create_if_branch_virtual(
         state: &mut FunctionDotDumperState,
         out_id: crate::node::ValueId,
@@ -171,8 +166,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     }
 
     /// One edge from an input's producer to `node`, materialising whatever
-    /// producer-side helper it needs (post-Call clobber virtual, eager If branch
-    /// virtual, per-use const box).
+    /// producer-side helper it needs.
     #[allow(clippy::too_many_arguments)]
     fn emit_input_edge(
         &self,
@@ -185,8 +179,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         state: &mut FunctionDotDumperState,
     ) -> core::result::Result<(), std::io::Error> {
         let parent_id = self.function.producer(parent_value);
-        // Restricted render: drop edges whose producer is out of view, leaving
-        // the induced subgraph rather than edges off undeclared nodes.
+        // Restricted render: drop edges whose producer is out of view.
         if self
             .nodes
             .as_ref()
@@ -226,9 +219,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     state.get_dot_id(self.function.graph(), parent_id)
                 }
             } else if *self.function.node_kind(parent_id) == NodeKind::If {
-                // The If may not have rendered yet.  Make the branch virtual
-                // eagerly so this edge lands on "if.true"/"if.false" instead of
-                // the If diamond, which would leave the virtual dangling.
+                // The If may not have rendered yet, so make the branch virtual
+                // eagerly rather than landing this edge on the If diamond.
                 let (_, output_index) = self.function.value_definition(parent_value);
                 let blabel = if output_index == 0 {
                     "if.true"
@@ -254,13 +246,9 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         } else if matches!(kind, NodeKind::CPoolRef | NodeKind::New) {
             Some(format!("ref{idx}"))
         } else if matches!(kind, NodeKind::Return) && idx >= 2 {
-            // Slots 2.. are the convention's return registers in ABI order;
-            // fall back to the signature's generic "ret" label if unknown.
+            // Slots 2.. are the convention's return registers in ABI order.
             self.return_ret_name(idx)?
         } else {
-            // Region / Phi / MemPhi per-predecessor inputs pair 1-to-1 at a
-            // common Region.  Numbering both sides `predN` makes the
-            // value-to-predecessor correspondence readable at a glance.
             pred_index(kind, idx).map(|pred| format!("pred{pred}"))
         };
         let label_str: &str = owned_label.as_deref().unwrap_or(label);
@@ -282,12 +270,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 }
 
 /// Predecessor index for an input that pairs across Region / Phi / MemPhi at a
-/// common join.
-///
-/// * `Region`: every input is a per-predecessor control edge, so the index is
-///   the input index.
-/// * `Phi` / `MemPhi`: slot 0 is the phi-token and slots 1.. match the owning
-///   Region's control inputs 1-to-1, so the index is `idx - 1`.
+/// common join.  `None` for any other input.
 fn pred_index(kind: NodeKind, idx: usize) -> Option<usize> {
     match kind {
         NodeKind::Region => Some(idx),

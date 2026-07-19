@@ -1,7 +1,3 @@
-//! A petgraph view over the IR's control subgraph: control nodes joined by
-//! forward control edges only, with no data or Phi back-edges, so
-//! `petgraph::algo::dominators::simple_fast` applies directly.
-
 use petgraph::visit::{GraphBase, IntoNeighbors, Visitable};
 use rustc_hash::FxHashSet;
 
@@ -9,8 +5,7 @@ use crate::function::Function;
 use crate::node::{NodeId, ValueId};
 
 /// Only `Control`-kind edges are visible; data, `PhiToken`, and `Memory` edges
-/// are not. The petgraph visitor traits are implemented on
-/// `&ControlFlowView<'_>`, since petgraph's `GraphRef` wants a `Copy` self.
+/// are not.
 #[derive(Clone, Copy)]
 pub(crate) struct ControlFlowView<'a> {
     function: &'a Function,
@@ -38,8 +33,6 @@ impl<'a> IntoNeighbors for &'a ControlFlowView<'a> {
     }
 }
 
-/// A hash set rather than a dense array: the control subgraph is sparse in
-/// `NodeId` space.
 impl Visitable for ControlFlowView<'_> {
     type Map = FxHashSet<NodeId>;
 
@@ -60,10 +53,6 @@ pub fn control_dominators(function: &Function) -> petgraph::algo::dominators::Do
 
 /// True when every path from `doms`'s entry to `b` passes through `a`; a node
 /// trivially dominates itself.
-///
-/// Generic over the tree's key type so one relation serves both
-/// [`control_dominators`] and [`control_edge_dominators`], where a
-/// [`CtrlKey::Edge`] key expresses edge dominance.
 pub fn dominates<N: Copy + Eq + std::hash::Hash>(
     doms: &petgraph::algo::dominators::Dominators<N>,
     a: N,
@@ -75,12 +64,8 @@ pub fn dominates<N: Copy + Eq + std::hash::Hash>(
     doms.dominators(b).is_some_and(|mut it| it.any(|d| d == a))
 }
 
-/// A vertex of the edge-split control graph.
-///
-/// The classic edge-splitting construction, but with no synthetic vertices:
-/// this IR's control edges are already first-class values with exactly one
-/// consumer each, so dominance over `Edge(v)` is exactly edge dominance over
-/// `v` in the ordinary CFG.
+/// A vertex of the edge-split control graph. Dominance over `Edge(v)` is edge
+/// dominance over `v` in the ordinary CFG.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum CtrlKey {
     Node(NodeId),
@@ -90,8 +75,7 @@ pub enum CtrlKey {
 
 /// [`ControlFlowView`] with [`cfg_succs`](crate::walk::cfg_succs)'s two stages
 /// unfolded: node to its `Control` outputs stops at [`CtrlKey::Edge`], and
-/// output to its consumers resumes from it. Composing the two must reproduce
-/// `cfg_succs` exactly, which `split_view_composes_to_cfg_succs` pins.
+/// output to its consumers resumes from it.
 #[derive(Clone, Copy)]
 pub(crate) struct ControlSplitView<'a> {
     function: &'a Function,
@@ -119,9 +103,7 @@ impl<'a> IntoNeighbors for &'a ControlSplitView<'a> {
                 .map(CtrlKey::Edge)
                 .collect::<Vec<_>>()
                 .into_iter(),
-            // Stage 2, resuming from the output. One consumer per control
-            // edge in well-formed IR is what makes this a true edge split
-            // rather than a hyper-edge.
+            // Stage 2, resuming from the output.
             CtrlKey::Edge(value) => {
                 let succs: Vec<CtrlKey> = graph
                     .value_uses(value)
@@ -158,19 +140,14 @@ impl Visitable for ControlSplitView<'_> {
     }
 }
 
-/// Roughly twice the vertices of [`control_dominators`], hence longer
-/// dominator chains, so callers keep it lazy.
-///
-/// It subsumes [`control_dominators`]: edge-splitting preserves paths 1:1, so
-/// querying with [`CtrlKey::Node`] keys answers node dominance identically
-/// (pinned by `split_dominance_subsumes_node_dominance`). A caller needing
-/// both relations builds only this one.
-///
-/// The entry key must be `CtrlKey::Node(function.entry())`; a mismatch yields
-/// an empty tree and silently answers `false` to every query.
+/// Dominators of the edge-split control graph. Querying with
+/// [`CtrlKey::Node`] keys answers node dominance identically to
+/// [`control_dominators`].
 pub fn control_edge_dominators(
     function: &Function,
 ) -> petgraph::algo::dominators::Dominators<CtrlKey> {
+    // The entry key must be `CtrlKey::Node(function.entry())`; a mismatch
+    // yields an empty tree that silently answers `false` to every query.
     petgraph::algo::dominators::simple_fast(
         &ControlSplitView::new(function),
         CtrlKey::Node(function.entry()),
@@ -501,13 +478,7 @@ mod tests {
     }
 
     /// The subsumption property, over every ordered pair of control-reachable
-    /// nodes. It is what lets the matcher keep one tree instead of two.
-    ///
-    /// Edge-splitting interleaves a vertex on every edge, so paths correspond
-    /// 1:1 and `Node(a)` lies on a split path iff `a` lies on the original.
-    /// Dominance quantifies over all paths, so the two must agree; a
-    /// divergence means the split tree is not a conservative extension and
-    /// everything built on it is suspect.
+    /// nodes.
     #[test]
     fn split_dominance_subsumes_node_dominance() {
         for (name, f) in [
@@ -567,8 +538,6 @@ mod tests {
     }
 
     /// `Node(n) -> Edge(v) -> Node(c)` must compose to exactly `cfg_succs(n)`.
-    /// If the views disagreed about the CFG, node dominance queries and
-    /// edge-operand ones would silently answer from different graphs.
     #[test]
     fn split_view_composes_to_cfg_succs() {
         for (name, f) in [
@@ -622,9 +591,7 @@ mod tests {
 
     /// With an empty true arm the true edge runs straight into the join, so
     /// the join dominates the tail, yet the tail is reachable through both
-    /// arms and the true EDGE does not dominate it. The node-dominance proxy
-    /// `dominates(consumer(edge), node)` answers true here, a silent false
-    /// positive that edge-vs-node dominance avoids.
+    /// arms and the true EDGE does not dominate it.
     #[test]
     fn edge_dominates_is_false_past_a_join_with_an_empty_arm() {
         let (f, true_edge, region_j, region_t) = empty_true_arm().expect("empty_true_arm builds");
@@ -720,9 +687,7 @@ mod tests {
         ));
     }
 
-    /// An edge trivially dominates itself over the zero-length path, which is
-    /// what lets `phi_input_from_edge`'s direct case be plain edge-vs-edge
-    /// dominance with no `==` special case.
+    /// An edge trivially dominates itself over the zero-length path.
     #[test]
     fn edge_dominates_itself_via_zero_length_path() {
         let f = diamond().expect("diamond builds");

@@ -1,19 +1,10 @@
 //! Single source of truth for every node's slot shape: kind (validation),
 //! name (dot labels), and role (dot colors).
-//!
-//! [`ExpectedValueKind`] is coarser than the concrete [`ValueKind`] stored on
-//! real outputs: integer slots accept any width, float slots accept
-//! `F32`/`F64`/`F80`, and the `Bool` selector matches exactly the 1-bit
-//! integer `I1`.
-//!
-//! Variadic arity lives in [`SlotList::tail`]: `None` means fixed arity of
-//! `head.len()`, `Some(tail)` means every index past the head repeats
-//! `tail`.
 
 use crate::node::NodeKind;
 
-/// `pub` only because [`crate::validate::ValidationError`] exposes it; the
-/// rest of this module has no external consumers.
+/// A slot's admissible value kinds, coarser than the concrete [`ValueKind`]
+/// stored on real outputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedValueKind {
     Control,
@@ -78,8 +69,7 @@ impl SlotList {
         self.tail.is_some()
     }
 
-    /// Length of the fixed prefix only. Validating a variadic tail means
-    /// reading past-head indices through [`SlotList::at`].
+    /// Length of the fixed prefix only.
     pub(crate) fn head_len(&self) -> usize {
         self.head.len()
     }
@@ -99,8 +89,6 @@ pub(crate) struct Signature {
 use ExpectedValueKind::*;
 use SlotRole as R;
 
-/// A struct literal here would reflow across five lines per row, turning the
-/// table below into 130 lines. This keeps each row scannable and const.
 const fn slot(kind: ExpectedValueKind, name: &'static str, role: SlotRole) -> Slot {
     Slot { kind, name, role }
 }
@@ -121,16 +109,15 @@ const ADDR: Slot = slot(AnyInt, "addr", R::Addr);
 const DATA: Slot = slot(AnyInt, "data", R::Data);
 const TARGET: Slot = slot(AnyInt, "target", R::Target);
 const SP: Slot = slot(AnyInt, "sp", R::Sp);
-// AnyValue rather than AnyInt: argument and return registers hold floats
-// too, and AnyInt would reject them.
+// AnyValue rather than AnyInt: argument, return, and clobbered registers hold
+// floats too.
 const ARG: Slot = slot(AnyValue, "arg", R::Arg);
 const RET: Slot = slot(AnyValue, "ret", R::Ret);
-/// Clobbered-register outputs, AnyValue for the same reason as `ARG`/`RET`.
 const CALL_OUT: Slot = slot(AnyValue, "val", R::Val);
 const SEG: Slot = slot(AnyInt, "seg", R::Seg);
 const OFF: Slot = slot(AnyInt, "off", R::Off);
 const REF: Slot = slot(AnyInt, "ref", R::Ref);
-// Per-predecessor Phi input; AnyValue for the same reason as ARG / RET.
+// Per-predecessor Phi input.
 const IN_PHI: Slot = slot(AnyValue, "in", R::In);
 
 pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
@@ -169,8 +156,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // One Control input per predecessor.
         NodeKind::Region => sig!(inputs: []; in_tail: CTRL, outputs: [CTRL, PHI]),
         NodeKind::MemPhi => sig!(inputs: [PHI]; in_tail: MEM, outputs: [MEM]),
-        // Tagged and anonymous phis share this shape; the optional varnode
-        // tag lives in the `value_vn` side-table, keyed by the output value.
+        // Tagged and anonymous phis share this shape.
         NodeKind::Phi => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [ANY_VAL]),
 
         NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),
@@ -183,11 +169,8 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
             inputs: [CTRL, MEM, TARGET, SP]; in_tail: ARG,
             outputs: [CTRL, MEM]; out_tail: CALL_OUT,
         ),
-        // The tail is the calling convention's ret_val_regs when lifted;
-        // synthetic builds may pass one explicit value.
         NodeKind::Return => sig!(inputs: [CTRL, MEM]; in_tail: RET, outputs: []),
-        // Placeholder for an unresolved branch. Memory is an input so the
-        // resolver can wire its replacement at the same program point.
+        // Placeholder for an unresolved branch.
         NodeKind::IndirectBranch => sig!(inputs: [CTRL, MEM, TARGET], outputs: []),
         // Control sink for a no-return trap.
         NodeKind::Unreachable => sig!(inputs: [CTRL], outputs: []),
@@ -437,9 +420,8 @@ mod tests {
         assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Rhs);
     }
 
-    /// The kind list is hand-maintained: `expected_signature`'s match is
-    /// exhaustive at compile time, but forgetting to append a new variant
-    /// here silently shrinks coverage instead of failing.
+    /// The kind list is hand-maintained: forgetting to append a new variant
+    /// silently shrinks coverage instead of failing.
     #[test]
     fn expected_signature_covers_every_node_kind() {
         use crate::node::{

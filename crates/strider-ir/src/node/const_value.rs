@@ -1,9 +1,3 @@
-//! Storage dedups by value MAGNITUDE, not width: anything fitting `u128` is
-//! `Bits`, only genuinely wider values become `Wide`. Width lives on the
-//! node's output `ValueKind`, so `IntConst(42):I80` and `IntConst(42):I128`
-//! share a `ConstId` and are told apart only by the node's dedup key.
-//! Read values through the `crate::IRViewer` accessors.
-
 use cranelift_entity::entity_impl;
 
 /// Opaque; resolve via `crate::Function::const_value`.
@@ -14,8 +8,7 @@ entity_impl!(ConstId, "const");
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstValue {
     Bits(u128),
-    /// Little-endian limbs, `limbs[0]` low. Only I256 (4 limbs) and I512
-    /// (8 limbs) values exceeding 128 bits land here.
+    /// Little-endian limbs, `limbs[0]` low.
     Wide(Box<[u64]>),
 }
 

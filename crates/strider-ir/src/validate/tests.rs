@@ -4,16 +4,14 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 /// Distinct from any real machine address.
 const SENTINEL: u64 = 0xDEAD_BEEF_0000_0001;
 
-/// Satisfies the always-on asm-fingerprint check for mock graphs built
-/// straight from `Graph::create_node`. Harmless on exempt kinds.
+/// Satisfies the always-on asm-fingerprint check.
 fn stamp(function: &mut Function, id: NodeId) {
     function
         .side_tables_mut()
         .extend_asm_fingerprint(id, &[SENTINEL]);
 }
 
-/// A fresh [`Function`] with the `Entry` + `InitialMemory` spine every
-/// reachable mock graph starts from, plus the handles tests wire against.
+/// A fresh [`Function`] with an `Entry` + `InitialMemory` spine.
 struct Spine {
     f: Function,
     entry: NodeId,
@@ -90,7 +88,7 @@ fn local_typing_wrong_output_kind() {
         [c_value],
         [ValueKind::Memory],
     );
-    // Onto the reachable spine, since local typing is reachability-scoped.
+    // Onto the reachable spine, since the checks are reachability-scoped.
     let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
     let _ret =
         s.f.graph_mut()
@@ -104,11 +102,8 @@ fn local_typing_wrong_output_kind() {
     });
 }
 
-// Entry and InitialMemory are cacheable, so `create_node` cannot mint a
-// duplicate and the uniqueness errors are unreachable from any legal
-// construction path. The two tests below pin the dedup instead; the validator
-// checks stay as defence-in-depth against a compact() bug resurrecting a
-// stale node.
+// Entry and InitialMemory are cacheable, so no legal construction path can
+// mint a duplicate.  The two tests below pin that dedup instead.
 
 #[test]
 fn graph_invariants_entry_dedupes_on_repeated_create() {
@@ -141,9 +136,7 @@ fn graph_invariants_initial_memory_dedupes_on_repeated_create() {
 #[test]
 fn graph_invariants_region_bad_predecessor() {
     // Region with inputs [entry Control, InitialMemory Memory]: input[1] is
-    // the wrong kind. input[0] and the Return on the Region's Control output
-    // are what keep it in the reachable set, without which the check would
-    // skip it as a zombie.
+    // the wrong kind.  The Return keeps the Region reachable.
     let mut s = spine();
 
     let bad_cs = s.f.graph_mut().create_node(
@@ -156,7 +149,6 @@ fn graph_invariants_region_bad_predecessor() {
         s.f.graph_mut()
             .create_node(NodeKind::Return, [bad_cs_ctrl, s.mem_value], []);
 
-    // Local typing catches it via the Region signature's variadic CTRL tail.
     assert_validation_err(&s.f, |e| {
         matches!(
             e,
@@ -178,8 +170,7 @@ fn test_vn() -> rsleigh::Vn {
 }
 
 /// An `initial_var_index` entry pointing at a reachable node whose payload was
-/// rewritten away from `InitialVar(vn)`: the NodeId survives, so `compact`
-/// keeps the entry, but it no longer describes the live graph.
+/// rewritten away from `InitialVar(vn)`.
 #[test]
 fn validate_flags_stale_initial_var_index_entry() {
     let mut s = spine();
@@ -191,7 +182,6 @@ fn validate_flags_stale_initial_var_index_entry() {
     };
     // Two tracked varnodes so `InitialVnId` 0/1 resolve to vn/other_vn.
     s.f.set_all_vns(vec![vn, other_vn]);
-    // Returning the value output keeps this InitialVar reachable.
     let iv = s.f.graph_mut().create_node(
         NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
         [],
@@ -207,8 +197,7 @@ fn validate_flags_stale_initial_var_index_entry() {
     stamp(&mut s.f, ret);
     validate(&s.f).expect("a well-formed initial_var_index entry validates");
 
-    // Rewrite the payload in place (NodeId survives) to varnode index 1, so
-    // the index entry for `vn` goes stale.
+    // Rewrite the payload in place to varnode index 1, staling the entry.
     *s.f.graph_mut().node_kind_mut(iv) =
         NodeKind::InitialVar(crate::node::InitialVnId::from_index(1));
 
@@ -221,8 +210,7 @@ fn validate_flags_stale_initial_var_index_entry() {
     });
 }
 
-/// A `value_vn` tag whose reachable producer is not a Phi / Call / CallOther,
-/// the only three populations that carry one.
+/// A `value_vn` tag whose reachable producer is not a Phi / Call / CallOther.
 #[test]
 fn validate_flags_stale_value_vn_entry() {
     let mut s = spine();
@@ -288,8 +276,7 @@ fn graph_invariants_phi_value_arity_mismatch() {
     let phi_value = s.f.node_outputs(phi)[0];
     s.f.set_vn_for_value(phi_value, vn);
 
-    // The phi check is reachability-scoped: a Return consuming both the
-    // Region's Control and the phi's value puts it on the reachable spine.
+    // Put the phi on the reachable spine.
     let cs_ctrl_value = s.f.node_outputs(cs).iter().copied().next().unwrap();
     let phi_val_value = s.f.node_outputs(phi).iter().copied().next().unwrap();
     let ret = s.f.graph_mut().create_node(NodeKind::Return, [], []);
@@ -318,7 +305,7 @@ fn graph_invariants_phi_input_type_mismatch() {
     );
     let cs_phi_value = s.f.node_outputs(cs).iter().copied().nth(1).unwrap();
 
-    // Value input typed I8 under an I64 phi output; a phi merges one type.
+    // Value input typed I8 under an I64 phi output.
     let (_c1, c1_value) = int_const(&mut s.f, 1, ValueType::I8);
     let phi = s.f.graph_mut().create_node(
         NodeKind::Phi,
@@ -328,7 +315,7 @@ fn graph_invariants_phi_input_type_mismatch() {
     let phi_value = s.f.node_outputs(phi)[0];
     s.f.set_vn_for_value(phi_value, test_vn());
 
-    // Put the phi on the reachable spine (see the arity test above).
+    // Put the phi on the reachable spine.
     let cs_ctrl_value = s.f.node_outputs(cs).iter().copied().next().unwrap();
     let phi_val_value = s.f.node_outputs(phi).iter().copied().next().unwrap();
     let ret = s.f.graph_mut().create_node(NodeKind::Return, [], []);
@@ -350,9 +337,6 @@ fn graph_invariants_phi_input_type_mismatch() {
 
 #[test]
 fn graph_invariants_phis_skips_unreachable_zombie_phi() {
-    // DeadBranchElimination and CfgDetach detach phi inputs and leave the
-    // zero-input node in the arena; input[0] is gone, so an unscoped check
-    // would fire PhiTokenNotFromRegion on it.
     let mut s = spine();
     let ret =
         s.f.graph_mut()
@@ -384,7 +368,6 @@ fn local_typing_wrong_input_count() {
     );
     let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
 
-    // Smallest reachable shape that gets `bad` inspected.
     let _ret =
         s.f.graph_mut()
             .create_node(NodeKind::Return, [s.entry_ctrl, bad_value], []);
@@ -401,8 +384,7 @@ fn local_typing_wrong_input_count() {
     });
 }
 
-/// Variadic input tails are kind-checked, not just the fixed head prefix: a
-/// `MemPhi` with a Control token in a per-predecessor slot must be rejected.
+/// Variadic input tails are kind-checked, not just the fixed head prefix.
 #[test]
 fn local_typing_mem_phi_variadic_tail_must_be_memory() {
     let mut s = spine();
@@ -442,8 +424,6 @@ fn local_typing_mem_phi_variadic_tail_must_be_memory() {
 
 #[test]
 fn local_typing_accepts_bool_value_phi_inputs() {
-    // The IN_PHI tail must accept I1: real binaries phi-merge x86 flag
-    // registers (CF/ZF/SF).
     let mut s = spine();
 
     let cs = s.f.graph_mut().create_node(
@@ -463,7 +443,6 @@ fn local_typing_accepts_bool_value_phi_inputs() {
     );
     let vp_value = s.f.node_outputs(vp).iter().copied().next().unwrap();
 
-    // Consume the phi'd value so the reachability walk hits it.
     let ret =
         s.f.graph_mut()
             .create_node(NodeKind::Return, [cs_ctrl, s.mem_value, vp_value], []);
@@ -569,12 +548,8 @@ fn local_typing_rejects_wrong_output_count() {
 
 #[test]
 fn graph_invariants_rejects_region_with_zero_predecessors() {
-    // Region's variadic head_len is 0, so local typing accepts zero inputs;
-    // only the explicit graph-invariant catches a reachable zero-pred Region.
-    //
-    // The walk follows forward-control plus backward-data, so the Return
-    // consumes Entry's control (to reach the Return) and the Region's control
-    // (to reach the Region walking back).
+    // The Return consumes Entry's control (so the walk reaches the Return) and
+    // the Region's control (so it reaches the Region walking back).
     let mut s = spine();
     let cs = s.f.graph_mut().create_node(
         NodeKind::Region,
@@ -593,8 +568,6 @@ fn graph_invariants_rejects_region_with_zero_predecessors() {
 
 #[test]
 fn graph_invariants_tolerates_unreachable_zero_predecessor_region() {
-    // RegionCollapse routinely leaves zero-input Region zombies behind after
-    // dead-branch elimination on real binaries.
     let mut s = spine();
     let _zombie_cs = s.f.graph_mut().create_node(
         NodeKind::Region,
@@ -612,8 +585,7 @@ fn graph_invariants_tolerates_unreachable_zero_predecessor_region() {
 #[test]
 fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
     let mut s = spine();
-    // The IntConst never gets a fingerprint, but it is unreachable from
-    // entry, so the check never looks at it.
+    // Unstamped, but unreachable from entry.
     let _const_node = int_const(&mut s.f, 7, ValueType::I64);
     let u =
         s.f.graph_mut()
@@ -679,8 +651,6 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
         s.f.graph_mut()
             .create_node(NodeKind::Return, [cs_ctrl, s.mem_value], []);
     let res = validate(&s.f);
-    // The unstamped Return is reachable and non-exempt, so it is flagged;
-    // Region / Entry / InitialMemory must not be.
     let errs = res.unwrap_err();
     for e in &errs.0 {
         if let ValidationError::MissingAsmFingerprint { kind, .. } = e {
@@ -706,8 +676,7 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
 }
 
 /// An unreachable `Region` zombie carrying stale non-Control inputs must not
-/// be flagged: both the input-kind check and the empty-predecessor check are
-/// reachability-scoped.
+/// be flagged.
 #[test]
 fn unreachable_region_with_non_control_input_does_not_fire() {
     let mut s = spine();
@@ -716,9 +685,7 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
             .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     stamp(&mut s.f, ret);
 
-    // Detached Region fed by an IntConst value output: the shape a surgical
-    // edit leaves behind when it does not scrub inputs. In the arena, but
-    // unreachable from entry.
+    // In the arena, but unreachable from entry.
     let (_int_const, bogus_value) = int_const(&mut s.f, 0x1234, ValueType::I64);
     let _zombie_cs = s.f.graph_mut().create_node(
         NodeKind::Region,
@@ -732,8 +699,6 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
     );
 }
 
-/// A Control output consumed by two nodes is a malformed fan-out; a real
-/// split goes through an `If`, a real merge through a `Region`.
 #[test]
 fn control_output_consumed_twice_is_flagged() {
     let mut s = spine();
@@ -755,8 +720,6 @@ fn control_output_consumed_twice_is_flagged() {
     });
 }
 
-/// Every control edge must reach a terminator, so a reachable node whose
-/// Control output has no consumer is a dangling path.
 #[test]
 fn unused_control_output_is_flagged() {
     let mut s = spine();
@@ -776,8 +739,6 @@ fn unused_control_output_is_flagged() {
     });
 }
 
-/// The minimal terminated graph: `Unreachable` consumes entry's control and
-/// produces none, satisfying the single-successor control invariant.
 #[test]
 fn entry_into_unreachable_validates() {
     let mut s = spine();
@@ -788,8 +749,6 @@ fn entry_into_unreachable_validates() {
     validate(&s.f).expect("Entry -> Unreachable is a valid terminated graph");
 }
 
-/// `IndirectBranch` is the lifter's unresolved-branch placeholder: it consumes
-/// (control, memory, target) and produces no outputs.
 #[test]
 fn indirect_branch_with_control_memory_and_value_validates() {
     let mut s = spine();
@@ -884,8 +843,6 @@ fn store(f: &mut Function, mem_in: ValueId, addr: ValueId, data: ValueId) -> (No
     (n, mem_out)
 }
 
-/// Every reachable memory output (InitialMemory, Store) is consumed by a
-/// reachable node back to the Return terminator.
 #[test]
 fn memory_chain_wired_store_to_return_validates() {
     let mut s = spine();
@@ -902,8 +859,6 @@ fn memory_chain_wired_store_to_return_validates() {
     validate(&s.f).expect("wired Store→Return memory chain must validate");
 }
 
-/// A `Store` in dead control is itself removable, so its unconsumed memory
-/// output is not a broken live chain.
 #[test]
 fn memory_chain_dead_control_store_not_flagged() {
     let mut s = spine();
@@ -924,12 +879,9 @@ fn memory_chain_dead_control_store_not_flagged() {
 
 /// A reachable `Store` whose memory output has no consumer is flagged.
 ///
-/// A `Store` outputs only `[MEM]`, so the walk reaches it solely through a
-/// consumer of that output; a well-formed reachable store is therefore always
-/// anchored and the check can only fire after an edit breaks that. The broken
-/// state has to be built directly: the `Return` keeps its backing input edge
-/// (so the walk still reaches the store) while the store's forward use-list
-/// head is cleared (so the output reports zero uses).
+/// The broken state has to be built directly: the `Return` keeps its backing
+/// input edge (so the walk still reaches the store) while the store's forward
+/// use-list head is cleared (so the output reports zero uses).
 #[test]
 fn memory_chain_orphaned_store_flagged() {
     let mut s = spine();
@@ -957,9 +909,7 @@ fn memory_chain_orphaned_store_flagged() {
 }
 
 /// A memory-preserving `Call` legitimately leaves its Memory output
-/// unconsumed: the builder emits the output unconditionally but threads region
-/// memory through it only when the call clobbers memory. The anchoring check
-/// is `Store`-scoped precisely so this canonical shape is not flagged.
+/// unconsumed.
 #[test]
 fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
     let mut s = spine();
@@ -968,8 +918,7 @@ fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
     let (sp_n, sp) = int_const(&mut s.f, 0x7fff_0000, ValueType::I64);
     stamp(&mut s.f, sp_n);
 
-    // Reachable via its Control output; the Memory output is deliberately
-    // left unconsumed, with memory threaded around it.
+    // The Memory output is deliberately left unconsumed.
     let call = s.f.graph_mut().create_node(
         NodeKind::Call,
         [s.entry_ctrl, s.mem_value, target, sp],
@@ -996,8 +945,7 @@ fn graph_invariants_extend_must_strictly_widen() {
     let (c, c_value) = int_const(&mut s.f, 5, ValueType::I64);
     stamp(&mut s.f, c);
 
-    // I64 down to I32: a non-widening Extend is a redundant spelling of
-    // Truncate.
+    // I64 down to I32.
     let bad = s.f.graph_mut().create_node(
         NodeKind::Extend(ExtendOp::ZeroExtend),
         [c_value],
@@ -1026,8 +974,7 @@ fn graph_invariants_truncate_must_strictly_narrow() {
     let (c, c_value) = int_const(&mut s.f, 5, ValueType::I32);
     stamp(&mut s.f, c);
 
-    // I32 up to I64: a non-narrowing Truncate is a redundant spelling of
-    // Extend.
+    // I32 up to I64.
     let bad = s.f.graph_mut().create_node(
         NodeKind::Truncate,
         [c_value],
@@ -1058,8 +1005,6 @@ fn graph_invariants_equal_width_extend_is_rejected() {
     let (c, c_value) = int_const(&mut s.f, 5, ValueType::I32);
     stamp(&mut s.f, c);
 
-    // The builder emits the value unchanged at equal width rather than an
-    // Extend node, so any same-width Extend is a miswiring.
     let bad = s.f.graph_mut().create_node(
         NodeKind::Extend(ExtendOp::SignExtend),
         [c_value],

@@ -21,14 +21,10 @@ pub(crate) struct Region {
     /// Advances through stores and calls.
     cur_memory: ValueId,
     variables: SecondaryMap<InitialVnId, ValueId>,
-    /// One `Phi` output per `phi_vars` entry, gathering incoming values as
-    /// predecessors are linked. Entries outside `phi_vars` are unset.
+    /// One `Phi` output per `phi_vars` entry. Entries outside `phi_vars` are
+    /// unset.
     initial_variables: SecondaryMap<InitialVnId, ValueId>,
-    /// Variables that actually have a `Phi` here: every tracked variable on
-    /// the eager path, only the IDF-placed ones on the pruned path.
-    /// `link_region_variables` iterates exactly this set, so a non-phi
-    /// variable is never linked; its value arrives by dominator inheritance
-    /// (see [`FunctionBuilder::inherit_variables`]).
+    /// Variables that have a `Phi` here.
     phi_vars: Vec<InitialVnId>,
 }
 
@@ -39,8 +35,8 @@ pub(crate) struct TerminatedRegion {
 }
 
 impl FunctionBuilder {
-    /// One call site for the pair, so a terminator-producing method cannot
-    /// check one edge kind and forget the other.
+    /// Errors unless `res`'s control and memory edges both have their expected
+    /// kind.
     pub(crate) fn require_terminator_kinds(&self, res: &TerminatedRegion) -> Result<()> {
         self.require_control_kind(res.control)?;
         self.require_memory_kind(res.memory)
@@ -73,8 +69,6 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// `pub` rather than `pub(crate)` for the lifter, which advances memory
-    /// after a `build_call_other` whose ABI sets `clobbers_memory`.
     pub fn advance_cur_region_memory(&mut self, memory: ValueId) -> Result<()> {
         self.require_memory_kind(memory)?;
         let region_id = self.require_cur_region()?;
@@ -99,11 +93,10 @@ impl FunctionBuilder {
         self.cur_region = Some(region);
     }
 
-    /// Iterating the TARGET's phi set rather than the source map's keys is
-    /// what makes the pruned path correct: a variable with no phi at `region`
-    /// is skipped, since its value reaches by dominator inheritance instead of
-    /// a phi operand. Operand order follows the caller's per-edge order, so
-    /// `phi.operand[i]` stays paired with `region`'s i-th control predecessor.
+    /// Appends one operand per `region` phi, taken from `variables`. A variable
+    /// with no phi at `region` is skipped. Operand order follows the call
+    /// order, pairing `phi.operand[i]` with `region`'s i-th control
+    /// predecessor.
     pub(crate) fn link_region_variables(
         &mut self,
         region: RegionId,
@@ -123,13 +116,8 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// `phi_vars` is the IDF-placed set on the lift path, or every tracked
-    /// varnode for an ad-hoc build (`create_region_all`).
-    ///
-    /// The fresh phis also seed the region's current-value map. The lift path
-    /// overwrites that map in dominator-tree order via
-    /// [`Self::inherit_variables`], so the seeding matters only to callers
-    /// that build a graph without running the inheritance walk (tests).
+    /// Mints a `Region` / `MemPhi` pair plus one `Phi` per `phi_vars` entry,
+    /// which also seed the region's current-value map.
     pub fn create_region(&mut self, phi_vars: &[InitialVnId]) -> Result<RegionId> {
         let memory_node = self.create_node(NodeKind::MemPhi, [], [ValueKind::Memory]);
         let [memory] = self.function().node_outputs_exact(memory_node)?;
@@ -139,8 +127,7 @@ impl FunctionBuilder {
             [ValueKind::Control, ValueKind::PhiToken],
         );
         let [control, phi_token] = self.function().node_outputs_exact(control_node)?;
-        // PhiToken goes in MemPhi.inputs[0] exactly as it does for a Phi, so
-        // dead-branch and redundant-phi passes can treat the two alike.
+        // PhiToken goes in MemPhi.inputs[0] exactly as it does for a Phi.
         self.function_mut()
             .graph_mut()
             .add_node_input(memory_node, phi_token);
@@ -166,9 +153,9 @@ impl FunctionBuilder {
         }))
     }
 
-    /// Every variable starts at its reaching value from the immediate
-    /// dominator, which dom-tree order guarantees is already complete, then
-    /// `region`'s own placed phis override their variables.
+    /// Seeds `region`'s variables from `idom`'s, then overrides the ones with
+    /// a phi placed at `region`. Requires `idom` to be complete, so call in
+    /// dominator-tree order.
     pub fn inherit_variables(&mut self, region: RegionId, idom: RegionId) {
         let mut variables = self.regions[idom].variables.clone();
         let phi_vars = self.regions[region].phi_vars.clone();
@@ -178,8 +165,7 @@ impl FunctionBuilder {
         self.regions[region].variables = variables;
     }
 
-    /// Entry setup: the entry region has no value phis, so its `InitialVar`
-    /// values are its variable values, the root everything else inherits from.
+    /// Overwrites `region`'s current-value map wholesale.
     pub(crate) fn set_region_variables(
         &mut self,
         region: RegionId,
@@ -230,10 +216,9 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.link_control_regions(region, control)?;
         self.link_memory_regions(region, memory)?;
-        // Take-and-restore instead of cloning, saving an O(num_vars) alloc
-        // per link: `link_region_variables` only adds phi inputs, it never
-        // reads this map. Every call site has `cur_region != region`, so the
-        // temporarily empty slot is never observed.
+        // Take-and-restore instead of cloning. Sound only because every call
+        // site has `cur_region != region`, so the temporarily empty slot is
+        // never observed.
         let source = std::mem::take(&mut self.regions[cur_region].variables);
         let res = self.link_region_variables(region, &source);
         self.regions[cur_region].variables = source;
@@ -250,7 +235,7 @@ impl FunctionBuilder {
         self.link_region(child_region, ctrl, mem, parent_region)
     }
 
-    /// The `Control` value the region's terminator consumes. Tests only.
+    /// The `Control` value the region's terminator consumes.
     #[cfg(any(test, feature = "test-util"))]
     pub fn region_cur_ctrl(&self, region: RegionId) -> ValueId {
         self.regions[region].cur_ctrl

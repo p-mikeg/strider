@@ -1,5 +1,5 @@
 //! The `build_*` vocabulary must behave the same through every [`IRBuilder`]
-//! implementor: the lift builder and the in-place editing context.
+//! implementor.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -7,8 +7,6 @@ use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{EditFunction, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, make_empty_fn};
 
-/// Values are masked to the declared width before construction, so the dedup
-/// cache sees `0x1FF` and `0xFF` at `I8` as one constant.
 #[test]
 fn build_int_const_masks_and_dedups() {
     let mut b = RegisterSet::new().build_fn_single_region().unwrap();
@@ -37,8 +35,6 @@ fn build_binary_op_through_function_builder() {
     ));
 }
 
-/// Building through an `EditFunction` must register the new node in its cached
-/// live set.
 #[test]
 fn build_int_const_through_edit_function_tracks_live() {
     let mut function = make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).unwrap();
@@ -50,7 +46,6 @@ fn build_int_const_through_edit_function_tracks_live() {
     assert!(ctx.is_root(node), "an input-less const is a root");
 }
 
-/// Masking and dedup hold through the editing context too.
 #[test]
 fn build_int_const_masks_and_dedups_through_edit_function() {
     let mut function = make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).unwrap();
