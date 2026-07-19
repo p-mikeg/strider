@@ -200,7 +200,7 @@ impl PyAnalyzeResult {
 }
 
 /// The lift+optimise+resolve handle.  Construct via
-/// `strider.lifter(arch, mem, rom=None)`; call `build_cfg` for a
+/// `strider.lift.lifter(arch, mem, rom=None)`; call `build_cfg` for a
 /// structural-only CFG, or `analyze(entry, cc, ...)` for the full lift.
 #[pyclass(name = "Lifter", module = "strider.lift", unsendable, subclass)]
 pub struct PyLifter {
@@ -315,9 +315,8 @@ impl PyLifter {
     }
 
     /// Build a control-flow graph for the function at `entry`: no lift, no
-    /// optimisation, no indirect-branch resolution.  Every
-    /// `BranchIndirect` is left as an `UnresolvedIndirectBranch`
-    /// terminator, since resolution is `analyze`'s job.
+    /// optimisation, no indirect-branch resolution (indirect branches are
+    /// left unresolved, since resolving them is `analyze`'s job).
     ///
     /// `opts` is a `CfgOptions`, defaulting to all-defaults.  Raises
     /// `StriderError` on a build failure.
@@ -488,8 +487,8 @@ impl PyLifter {
     /// drives internally.  A given `OptimizerPipeline` is DRAINED, so
     /// rebuild it before reusing it.
     ///
-    /// Bumps `function`'s generation, invalidating outstanding
-    /// `Node`/`Match` handles.
+    /// Invalidates any outstanding `Node` / `Match` handles created from
+    /// `function`.
     ///
     /// A custom `pipeline` runs without a rom image, so any `LoadReadOnly`
     /// pass in it short-circuits silently.
@@ -641,10 +640,8 @@ impl PyLifter {
 /// instruction fetch (a `BufferReader` or `MemReader` subclass); `rom`,
 /// if given, is folded by the `LoadReadOnly` pass.
 ///
-/// The calling convention is NOT fixed here: it is a required argument of
-/// every `analyze` call.
-///
-/// For an ELF prefer `strider.load_elf(path)`.
+/// The calling convention is supplied as a required argument of every
+/// `analyze` call, not fixed here.
 ///
 /// Raises `StriderError` on Sleigh-construction failure.
 #[pyfunction]

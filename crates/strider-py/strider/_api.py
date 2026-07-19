@@ -22,9 +22,8 @@ For non-ELF, firmware or custom sources, build a `Lifter` directly with
 `strider.lift.lifter(arch, mem, rom=None)` and call `analyze(addr, cc,
 ...)`.
 
-The architecture is detected from the first 20 bytes of the ELF header
-(magic, EI_CLASS, EI_DATA, e_machine). There is no pyelftools dependency at
-runtime.
+The architecture is detected from the ELF header; there is no pyelftools
+dependency at runtime.
 """
 
 from __future__ import annotations
@@ -243,12 +242,11 @@ class ElfLifter(Lifter):
 
     An `ElfLifter` IS a `Lifter` (`isinstance(lift, strider.lift.Lifter)` is
     true): it carries the same lift, optimise and resolve state as a plain
-    `strider.lift.lifter(...)` handle, wired with the ELF's memory. The
-    writable-inclusive reader serves code fetch; the runtime-immutable
-    reader (code and read-only sections only) serves constant folding. On
-    top of that it adds the symbol table (`symbol`, `symbols`,
-    `symbol_size`, `entry_point`, `functions`) and an `analyze(target)` that
-    accepts a symbol name.
+    `strider.lift.lifter(...)` handle, wired with the ELF's memory as both
+    the code reader and (for its code and read-only sections) the read-only
+    image used for constant folding. On top of that it adds the symbol table
+    (`symbol`, `symbols`, `symbol_size`, `entry_point`, `functions`) and an
+    `analyze(target)` that accepts a symbol name.
 
     Build one with `strider.lift.load_elf(path)`, optionally with
     `from_segments=False` or explicit `arch=` / `cc=` for kernel, syscall or
@@ -353,11 +351,8 @@ class ElfLifter(Lifter):
     def add_elf(self, path: str, *, apply_relocations: bool = False) -> None:
         """Merge another ELF, such as a shared library, into this handle,
         extending both the loaded regions and the symbol set. The
-        earlier-loaded ELF wins on name collisions.
-
-        The decoder was built from a snapshot of the regions, so it is
-        rebuilt here; later `analyze`, `read` and `symbol` calls see the new
-        ELF."""
+        earlier-loaded ELF wins on name collisions. Later `analyze`, `read`
+        and `symbol` calls see the new ELF."""
         self._elf.add_elf(path, apply_relocations)
         self._rebuild(self._arch, self._elf.reader(), rom=self._elf.ro_reader())
 
@@ -379,14 +374,8 @@ class ElfLifter(Lifter):
         to `Lifter.analyze`, including the per-function `opts.pipeline`
         override.
 
-        Constant folding reads the ELF's runtime-immutable regions (code and
-        read-only sections; writable sections excluded), wired in at
-        construction and refreshed by `add_elf`.
-
-        This widens the base signature rather than breaking it: the base
-        declares `entry: int | str` with `cc` optional so that symbol lookup
-        and a default convention are additions. A plain `Lifter` raises for
-        either.
+        Constant folding reads the ELF's code and read-only sections (not its
+        writable data).
 
         Raises `TypeError` when `entry` is neither `str` nor `int`.
         """

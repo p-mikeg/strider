@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any, List
 
 class OptimizerPipeline:
-    """An ordered list of optimizer passes plus post-passes run once after
-    the fixed-point loop converges.
+    """An ordered list of optimizer passes, plus post-passes that run once
+    after the main passes finish.
 
     Pass one to `Lifter.optimize(function, pipeline)`, or to
     `LifterOptions(pipeline=...)` to override the default for a single
@@ -22,17 +22,18 @@ class OptimizerPipeline:
         ...
     @property
     def passes(self) -> List[str]:
-        """The registered fixed-point passes, by name, in order."""
+        """The registered main (repeated) passes, by name, in order."""
         ...
     @property
     def post_passes(self) -> List[str]:
-        """The registered post-passes (run once after convergence), by name."""
+        """The registered post-passes (run once at the end), by name."""
         ...
     def add(self, pass_obj: Any) -> None:
-        """Append a pass to the fixed-point loop."""
+        """Append a pass to the main list, which runs repeatedly until the
+        graph stops changing."""
         ...
     def add_post(self, pass_obj: Any) -> None:
-        """Append a post-pass, run once after the loop converges."""
+        """Append a post-pass, run once after the main passes finish."""
         ...
 
 class ConstantFold:
@@ -43,7 +44,7 @@ class ConstantFold:
         ...
 
 class KnownBits:
-    """Propagates a per-bit known-zero / known-one lattice and simplifies
+    """Tracks which bits are known to be zero or one and simplifies
     operations whose result is fully determined."""
     def __init__(self) -> None:
         """Build the pass."""

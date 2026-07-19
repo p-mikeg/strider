@@ -19,8 +19,8 @@ pub(crate) struct PyBufferReaderInner {
 /// Raw-bytes reader over one or more mapped regions.  Cheap to clone;
 /// clones share state with the original.
 ///
-/// The low-level reader for non-ELF / firmware / custom sources.  For an
-/// ELF prefer `strider.load_elf(path)`.
+/// Low-level reader for firmware / custom sources. Serves both the `mem=`
+/// (instruction fetch) and `rom=` (read-only memory) roles.
 #[pyclass(name = "BufferReader", module = "strider.reader", unsendable)]
 #[derive(Clone)]
 pub struct PyBufferReader {
@@ -170,7 +170,7 @@ fn elf_to_rom_regions(
     }
 }
 
-/// Parsed ELF binary.  Construct via `strider.load_elf(path)`.
+/// Parsed ELF binary.  Construct via `strider.lift.load_elf(path)`.
 #[pyclass(name = "_LoadedElf", module = "strider.reader", unsendable)]
 pub struct PyLoadedElf {
     /// Load order; the first wins on symbol-name collisions.
@@ -358,8 +358,8 @@ pub fn load_elf_from_sections(path: &str, apply_relocations: bool) -> PyResult<P
 }
 
 /// Abstract base; subclasses MUST override
-/// `read(addr, size) -> Optional[bytes]`.  Prefer `BufferReader` when the
-/// data can live in-process.
+/// `read(addr, size) -> Optional[bytes]` to serve instruction bytes from a
+/// custom source.
 #[pyclass(name = "MemReader", module = "strider.reader", subclass)]
 pub struct PyMemReader;
 

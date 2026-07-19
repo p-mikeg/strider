@@ -22,8 +22,8 @@ per_arch_test!(
     "branch_on_const_string",
     string_branch_folds_one_arm
 );
-// runtime_const_idx: the MIPS bounds-check Bool flows into integer ops
-// via CastToInt (extend_if_needed handles Bool input).
+// runtime_const_idx: the MIPS bounds-check I1 flag flows into integer ops
+// via a zero-extend (`extend_if_needed` widens the I1 result).
 per_arch_test!("globals", "runtime_const_idx", runtime_idx_keeps_load);
 
 fn const_byte_folds_to_0x61(function: &strider_ir::Function) {

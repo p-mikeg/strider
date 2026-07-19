@@ -2809,19 +2809,8 @@ pub struct PyJoinConstraint {
     pub(crate) inner: JoinConstraint,
 }
 
-/// `a` dominates `b` in the control subgraph: every path from entry to `b`
-/// passes through `a`. Each operand resolves to a node or an edge by WHAT IT
-/// CAPTURED. A capture bound to an `If`'s `capture_true` / `capture_false`
-/// value is a control EDGE; any other capture is a NODE. One relation, three
-/// shapes:
-///   * node dominates node: plain control dominance.
-///   * edge dominates node: `dominates(true_edge, c)` means `c` is in the true
-///     block, exclusively. The shared post-merge tail is dominated by the `If`
-///     itself rather than by either edge, so it is excluded.
-///   * edge dominates edge: the outer branch edge dominates the inner one,
-///     i.e. nested branches.
-///
-/// A capture with no control-flow position fails it.
+/// `a` dominates `b`: every path from entry to `b` passes through `a`.
+/// Operands are captured nodes (or an `If` branch-edge capture).
 #[pyfunction]
 pub fn dominates(a: PyRef<'_, PyCapture>, b: PyRef<'_, PyCapture>) -> PyJoinConstraint {
     PyJoinConstraint {
@@ -2832,21 +2821,9 @@ pub fn dominates(a: PyRef<'_, PyCapture>, b: PyRef<'_, PyCapture>) -> PyJoinCons
     }
 }
 
-/// The `Phi` bound to `phi` merges `value` on the predecessor whose control
-/// edge is `edge`: "the value merged from THIS branch is X". `edge` must bind
-/// an `If`'s `capture_true` / `capture_false` value, which on converged IR is
-/// the phi region's direct predecessor. Direct-edge only: nested control
-/// between the branch and the merge does not match.
-///
-/// `value` is a `Capture` bound by another pattern in the same `find_all`
-/// list, compared by identity. Bind it on the PHI PATTERN itself via
-/// `.any_input(...)` rather than as an independent root.
-///
-/// ```python
-/// v, ph = Capture(), Capture()
-/// find_all([guard, phi().any_input(int_const(1).capture(v)).capture(ph)],
-///          constraints=[phi_input_from_edge(ph, t, v)])
-/// ```
+/// The value merged into `phi` from the branch `edge` is `value`. `edge` binds
+/// an `If`'s `capture_true` / `capture_false` value, and `value` is bound by
+/// another pattern in the same `find_all` list.
 #[pyfunction]
 pub fn phi_input_from_edge(
     phi: PyRef<'_, PyCapture>,
@@ -2862,15 +2839,7 @@ pub fn phi_input_from_edge(
     }
 }
 
-/// The negation of a join constraint: a tuple survives iff `c` does NOT hold.
-///
-/// **Range restriction.** Negation is only sound when every capture `c`
-/// mentions is bound by a positive pattern in the same `find_all` list. An
-/// unbound capture makes `c` fail for want of a binding, which under negation
-/// flips to a vacuous true and matches everything, so `find_all` raises rather
-/// than match blindly.
-///
-/// Every constraint is negatable. `negate(negate(c))` is the identity.
+/// The negation of `c`: a match survives only if `c` does not hold.
 #[pyfunction]
 pub fn negate(c: PyRef<'_, PyJoinConstraint>) -> PyJoinConstraint {
     PyJoinConstraint {
@@ -2878,13 +2847,11 @@ pub fn negate(c: PyRef<'_, PyJoinConstraint>) -> PyJoinConstraint {
     }
 }
 
-/// Disjunction: a tuple survives iff it passes ANY listed constraint. An empty
-/// list passes nothing.
+/// A constraint that passes when ANY of the listed constraints passes. An
+/// empty list passes nothing.
 ///
-/// The top-level `constraints=[...]` list is an implicit AND, so `any_of` is
-/// the only way to reach a disjunction. Evaluation is three-valued (Kleene):
-/// the disjunction is unknown, dropping the row, when no listed constraint is
-/// true and at least one references a capture unbound in that row.
+/// The top-level `constraints=[...]` list is already an AND, so `any_of` is
+/// how you express OR.
 #[pyfunction]
 pub fn any_of(constraints: Vec<PyRef<'_, PyJoinConstraint>>) -> PyJoinConstraint {
     PyJoinConstraint {
@@ -2892,12 +2859,9 @@ pub fn any_of(constraints: Vec<PyRef<'_, PyJoinConstraint>>) -> PyJoinConstraint
     }
 }
 
-/// Conjunction: a tuple survives iff it passes EVERY listed constraint. An
-/// empty list passes everything. Use it to AND constraints INSIDE an `any_of`,
-/// since the flat top-level list cannot nest. Evaluation is three-valued
-/// (Kleene): the conjunction is unknown, dropping the row, when no listed
-/// constraint is false and at least one references a capture unbound in that
-/// row.
+/// A constraint that passes only when EVERY listed constraint passes. An
+/// empty list passes everything. Use it to AND constraints inside an `any_of`
+/// (the top-level list does not nest).
 #[pyfunction]
 pub fn all_of(constraints: Vec<PyRef<'_, PyJoinConstraint>>) -> PyJoinConstraint {
     PyJoinConstraint {

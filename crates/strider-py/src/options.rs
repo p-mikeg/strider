@@ -53,7 +53,7 @@ pub struct PyLifterOptions {
     /// Nested CFG-shape knobs.
     #[pyo3(get)]
     pub cfg: Py<PyCfgOptions>,
-    /// Compact the IR arena after analysis (default `True`).
+    /// Drop unreachable IR nodes after analysis (default `True`).
     #[pyo3(get)]
     pub compact: bool,
     /// Per-target-address calling-convention overrides (preset or custom

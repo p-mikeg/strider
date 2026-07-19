@@ -13,7 +13,7 @@
 //! IMPORTANT: the target returned is **NOT** the original
 //! `ValueId` recorded at lift time; that id can be invalidated
 //! by `ConstantFold`'s `replace_all_uses` rewires.  Instead, helpers
-//! resolve the placeholder Return's current value-input on the
+//! resolve the placeholder IndirectBranch's current value-input on the
 //! post-optimisation graph and return that.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]

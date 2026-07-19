@@ -529,8 +529,9 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     let arg1 = b.build_int_const(22u64, ValueType::I32)?;
     b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
 
-    // Chain anchor.  rel = 0 is not in the [4, 8] slot table, so the
-    // `is_first_store` exception lets the walk continue.
+    // Chain anchor.  The ret-addr push sits at rel = 0 (from the call-time SP),
+    // below slot 0's probe offset (rel = 4), so it never fills a slot; slot 0
+    // comes up empty and collection stops with nothing collected.
     let sp_minus_4 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
     b.write_variable(&sp, sp_minus_4)?;
     let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;

@@ -30,7 +30,7 @@ pub struct CallingConvention {
     /// In positional order.
     ret_val_regs: &'static [&'static str],
     /// Float return registers (`q0` on aarch64, `XMM0` on x86_64, `d0` on ARM
-    /// AAPCS soft-float, `f0` on MIPS O32).
+    /// AAPCS hard-float (VFP), `f0` on MIPS O32).
     ret_val_regs_float: &'static [&'static str],
     /// `None` when the convention passes no arguments on the stack.
     stack_args: Option<StackArgs>,

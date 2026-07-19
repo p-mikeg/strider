@@ -98,8 +98,8 @@ fn unknown_name_returns_none_on_every_preset() {
 /// The arch-independent `NoOp` rows (Sleigh decoder context:
 /// `setEndianState` / `setISAMode`) and `NoReturn` row (`trap`) resolve
 /// identically under every preset, since no arch-specific row shadows those
-/// names.  The one arch-specific NoReturn is x86's `sysret`, pinned by the
-/// unit tests' `sysret_and_swapgs_are_x86_only`.
+/// names.  The arch-specific NoReturn ops are x86's `sysret` / `sysexit`,
+/// pinned by the unit tests' `sysret_and_swapgs_are_x86_only`.
 #[test]
 fn arch_independent_noop_and_noreturn_resolve_on_every_preset() {
     for preset in all_presets() {

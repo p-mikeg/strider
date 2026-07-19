@@ -1419,10 +1419,11 @@ fn fold_count_op_const_cases() -> Result<()> {
 
 /// Returns a function whose Return value is `kind(wide_const)`.
 ///
-/// The normal builders can't produce this: `build_int_const` rejects I128/I256,
-/// and `build_lzcount`/`build_popcount` would coerce the input down to I64. So
-/// build an I64 skeleton, then graft the wide const and unary node on via the
-/// lower-level `Graph` mutators and rewire the Return.
+/// The normal unary builders can't produce this: `build_lzcount` /
+/// `build_popcount` would coerce the input down to I64, collapsing the wide
+/// const before the node sees it. So build an I64 skeleton, then graft the wide
+/// const and unary node on via the lower-level `Graph` mutators and rewire the
+/// Return.
 fn build_unary_with_wide_const_input(
     kind: NodeKind,
     wide_ty: ValueType,

@@ -46,9 +46,10 @@ pub struct RegionInstruction {
 /// outgoing edge at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegionTerminator {
-    /// Three cases: decoding fell into an already-discovered region, the
-    /// region is the first half of a split, or it closed on an explicit
-    /// `Branch` opcode.
+    /// Four cases: decoding fell into an already-discovered region, the
+    /// region is the first half of a split, it closed on an explicit `Branch`
+    /// opcode, or a `BranchIndirect` was resolved via `known_targets` to a
+    /// single in-range target.
     Unconditional,
     /// Two outgoing edges; the one whose target region CONTAINS
     /// `true_target` is the taken side, the other the fall-through.
@@ -95,8 +96,9 @@ pub enum RegionTerminator {
 }
 
 /// A basic block: maximal straight-line pcode with one entry and at most one
-/// exit.  Ends on a `Branch`, `CondBranch` or `Return` opcode, or when
-/// sequential decoding reaches an already-discovered region's start.
+/// exit.  Ends on a `Branch`, `CondBranch`, `Return`, or `BranchIndirect`
+/// opcode, on a no-return `Call`/`CallOther`, or when sequential decoding
+/// reaches an already-discovered region's start.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Region {
     pub start_addr: PcodeInsnAddr,

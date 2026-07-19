@@ -2,7 +2,7 @@
 //!
 //! Split out from the previous monolithic `indirect_resolve_helpers.rs`.  Every
 //! helper here builds a `Graph` whose unique placeholder
-//! Return's value-input is shaped to exercise one specific classifier arm
+//! IndirectBranch's value-input is shaped to exercise one specific classifier arm
 //! (IntConst, InitialVar(lr), ValuePhi-of-IntConsts, Load jump-table, etc.).
 //!
 //! Subset matrix:
@@ -104,7 +104,7 @@ pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_i
 ///
 /// Steps in the IR: single region; tracked vars `sp`, `lr`; store
 /// `InitialVar(lr)` at `sp - 4` (the "push lr"); load `*(sp - 4)` (the
-/// "pop into pc"); placeholder `Return(loaded)`.
+/// "pop into pc"); placeholder `IndirectBranch(loaded)`.
 ///
 /// `LoadForward` then collapses the load directly to `InitialVar(lr)`
 /// (same offset, no aliasing stores in between); the classifier's
@@ -278,7 +278,7 @@ pub(crate) fn build_push_target_pop_pc_scenario(
     (fg, target, lr)
 }
 
-// Each helper builds a `Graph` whose placeholder Return's value-input is
+// Each helper builds a `Graph` whose placeholder IndirectBranch's value-input is
 // shaped like a jump-table dispatch (`Load(IntAdd(IntConst(base),
 // IntMul(idx, IntConst(stride))))`) and runs the stable optimiser subset
 // so the structure matches what the IR-level resolver's classifier sees
@@ -295,13 +295,13 @@ pub(crate) fn build_push_target_pop_pc_scenario(
 // that lift to a jump-table shape would be fixture overkill, and this
 // builder API is the same code path the cfg builder ultimately uses.
 
-/// Build a placeholder `Return(load)` whose load is jump-table-shaped
+/// Build a placeholder `IndirectBranch(load)` whose load is jump-table-shaped
 /// with `idx & idx_mask` bounding the index.  After the stable
 /// optimiser subset runs, `KnownBits` proves `idx <= idx_mask` and
 /// the classifier's jump-table arm reads `idx_mask + 1` entries
 /// from the caller's rom.
 ///
-/// Returns the graph and the placeholder Return's value-input slot.
+/// Returns the graph and the placeholder IndirectBranch's value-input slot.
 pub(crate) fn build_jump_table_known_bits_scenario(
     base: u64,
     stride: u64,
@@ -360,7 +360,7 @@ pub(crate) fn build_jump_table_known_bits_scenario(
     (fg, target)
 }
 
-/// Build a placeholder `Return(load)` whose load is jump-table-shaped
+/// Build a placeholder `IndirectBranch(load)` whose load is jump-table-shaped
 /// with the index bounded by a *predecessor* `If(idx < bound)`: the
 /// dispatch region is on the true branch.  The stable optimiser
 /// subset is run, but PhiCollapse is OMITTED so the trivial-phi
@@ -370,7 +370,7 @@ pub(crate) fn build_jump_table_known_bits_scenario(
 ///   entry  ──[if idx < bound: true]── dispatch (loads + Returns)
 ///         └──[false]─────────────────── exit (early Return)
 ///
-/// The dispatch's placeholder Return is the target we return.
+/// The dispatch's placeholder IndirectBranch is the target we return.
 pub(crate) fn build_jump_table_predecessor_if_scenario(
     base: u64,
     stride: u64,
@@ -443,7 +443,7 @@ pub(crate) fn build_jump_table_predecessor_if_scenario(
     (fg, target)
 }
 
-/// Build a placeholder `Return(load)` whose load is jump-table-shaped
+/// Build a placeholder `IndirectBranch(load)` whose load is jump-table-shaped
 /// but whose `idx` is NOT bounded by either KnownBits-visible bits
 /// or a predecessor If.  Used to verify the classifier returns None
 /// rather than guessing a bound.
@@ -493,7 +493,7 @@ pub(crate) fn build_jump_table_unbounded_scenario(
     (fg, target)
 }
 
-/// Build a placeholder `Return(load)` whose load is NOT jump-table
+/// Build a placeholder `IndirectBranch(load)` whose load is NOT jump-table
 /// shaped; used to verify the classifier's Load arm falls through
 /// to None on unrelated load shapes (e.g. `Load(IntConst(addr))` for
 /// a simple global read).
@@ -541,7 +541,7 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Val
 /// caller passes to `classify_target`.
 ///
 /// The fixture mirrors the existing `build_two_target_array`
-/// fixture in `crates/opt/src/indirect_branch_resolve/stack_array.rs`,
+/// fixture in `crates/strider-opt/src/post_opt/indirect_branch_resolve/table_tests.rs`,
 /// generalised to N targets.  The stack pointer is a fake 8-byte
 /// register at offset `0x40`; the index argument is a fake 8-byte
 /// register at offset `0x38` (matches sysv argument register
@@ -615,7 +615,7 @@ pub(crate) fn build_stack_array_dispatch_scenario(
     );
     // Direct `graph_mut().create_node` bypasses FunctionBuilder's
     // auto-stamping; manually attribute these nodes to the sentinel
-    // lift address so Layer-C asm-fingerprint validation accepts them.
+    // lift address so the always-on asm-fingerprint validation accepts them.
     b.function_mut()
         .side_tables_mut()
         .extend_asm_fingerprint(arg_u32_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);

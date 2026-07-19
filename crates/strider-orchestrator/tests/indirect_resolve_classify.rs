@@ -56,7 +56,7 @@ fn int_const_to_single() {
     assert_eq!(result, Some(ResolvedTargets::Single(0x0000_0123)));
 }
 
-/// ARM `bx lr` lifts to a placeholder Return whose value-input is
+/// ARM `bx lr` lifts to a placeholder IndirectBranch whose value-input is
 /// `InitialVar(lr_vn)`, the shape the LinkRegister arm matches.
 #[test]
 fn initial_var_lr_to_link_register() {

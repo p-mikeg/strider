@@ -177,8 +177,9 @@ impl PyOptimizerPipeline {
         Self::new_full_default()
     }
 
-    /// Append a fixed-point `strider.opt.*` pass.  A single-shot post-pass is
-    /// rejected here; use `add_post` instead.
+    /// Append a `strider.opt.*` pass to the main list, which runs repeatedly
+    /// until the graph stops changing.  A single-shot post-pass is rejected
+    /// here; use `add_post` instead.
     fn add(&self, pass_obj: PyOptPass) -> PyResult<()> {
         let erased = pass_obj.into_erased()?;
         let mut state = self.lock_state()?;
@@ -186,14 +187,14 @@ impl PyOptimizerPipeline {
         Ok(())
     }
 
-    /// Append a post-pass, run once after the fixed-point loop converges.
+    /// Append a post-pass, run once after the main passes finish.
     fn add_post(&self, pass_obj: PyOptPass) -> PyResult<()> {
         let mut state = self.lock_state()?;
         state.post_passes.push(pass_obj.into_erased_post());
         Ok(())
     }
 
-    /// Names of the fixed-point passes currently registered, in order.
+    /// Names of the main (repeated) passes currently registered, in order.
     #[getter]
     fn passes(&self) -> PyResult<Vec<String>> {
         let state = self.lock_state()?;

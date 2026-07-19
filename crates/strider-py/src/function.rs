@@ -127,7 +127,7 @@ impl PyFunction {
     /// `None`, else writes it to `path` and returns `None`.
     ///
     /// `pretty=False` (the default) renders the graph exactly as stored: one
-    /// node per `NodeId` including detached ones, one edge per input edge,
+    /// node per node id including detached ones, one edge per input edge,
     /// side-tables inline, no constant inlining or virtual nodes.
     ///
     /// `pretty=True` inlines constants, adds virtual nodes and resolves
@@ -184,8 +184,8 @@ impl PyFunction {
         }
     }
 
-    /// Number of node ids in the IR arena: every allocated slot, reachable or
-    /// not.
+    /// Total number of node ids in the graph, whether or not they are
+    /// reachable from entry.
     fn node_count(&self) -> PyResult<usize> {
         self.with_read_value(|function| function.graph().all_node_ids().count())
     }
@@ -224,7 +224,7 @@ impl PyFunction {
         })
     }
 
-    /// All node ids in the IR arena, reachable or not, as raw integers.
+    /// Every node id in the graph, reachable or not, as raw integers.
     fn node_ids(&self) -> PyResult<Vec<u32>> {
         self.with_read_value(|function| {
             function
@@ -275,7 +275,7 @@ impl PyFunction {
     ///
     /// Matcher options:
     /// * `ignore_casts=True`: walk through every value-passthrough cast kind
-    ///   (Extend / Truncate / CastTo* / Bits-cast). Same as
+    ///   (Extend / Truncate / bits-reinterpret). Same as
     ///   `ignore_casts_mask=CastMask.all()`.
     /// * `ignore_casts_mask=mask`: granular per-cast walk-through, composed via
     ///   `CastMask.extend() | CastMask.truncate()`. Passing both is an error.

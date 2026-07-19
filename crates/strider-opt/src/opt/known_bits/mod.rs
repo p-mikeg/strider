@@ -302,8 +302,11 @@ pub(crate) fn node_known_bits(
     Ok(Some((out, kb)))
 }
 
-/// Kinds whose `node_known_bits` arm reads `known[input]`, i.e. the edges along
-/// which known-bits provenance flows.
+/// Kinds whose input edges are followed when building a known-bits fold's
+/// fingerprint cone.  For `IntBinaryOp` / `Truncate` / `Extend` the
+/// `node_known_bits` arm reads `known[input]`, so provenance genuinely flows
+/// along those edges; `Popcount` / `Lzcount` are included conservatively even
+/// though their transfer depends only on the input width, not on `known[input]`.
 fn propagates_known_bits(kind: &NodeKind) -> bool {
     matches!(
         kind,

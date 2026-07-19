@@ -90,8 +90,8 @@ impl PyNode {
         visit.call(&self.function)
     }
 
-    /// Raw arena index. Stable until `compact` / `optimize` reshuffles the
-    /// arena, which invalidates every outstanding id.
+    /// The node's raw integer id in the graph. Stable until `compact` /
+    /// `optimize` invalidates every outstanding id.
     #[getter]
     fn id(&self) -> u32 {
         self.id

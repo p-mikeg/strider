@@ -20,8 +20,8 @@ per_arch_test!("abi", "point_sum", point_sum_has_add);
 per_arch_test!("abi", "make_pair", make_pair_has_return);
 // tail_caller: the orchestrator resolver's `LinkRegister` arm classifies
 // arm's `pop {pc}` (load + bx) once `LoadForward` simplifies the loaded
-// target back to `InitialVar(lr)`, so the placeholder Return resolves to
-// a real Return at the cfg-rebuild step. All arches pass without an ignore.
+// target back to `InitialVar(lr)`, so the placeholder IndirectBranch resolves
+// to a real Return at the cfg-rebuild step. All arches pass without an ignore.
 per_arch_test!("abi", "tail_caller", tail_caller_has_call);
 
 fn eight_args_has_seven_adds(function: &strider_ir::Function) {

@@ -18,7 +18,7 @@ class Node:
     its kind, pull out constant values, and recover which machine
     instructions it came from (`asm_fingerprint()`).
 
-    A handle snapshots the function's generation, so a node id that
+    A handle is tied to the function's current shape, so a node id that
     `compact` or `optimize` has invalidated raises rather than silently
     dereferencing the wrong node.
     """
@@ -160,14 +160,15 @@ class Function:
         `Lifter.neighborhood_dot` is the prettier counterpart."""
         ...
     def node_count(self) -> int:
-        """How many nodes are reachable from entry."""
+        """Total number of node ids in the graph, whether or not they are
+        reachable from entry."""
         ...
     def count_regions(self) -> int:
         """How many control-flow join (`Region`) nodes are reachable from
         entry."""
         ...
     def node_ids(self) -> List[int]:
-        """All reachable node ids."""
+        """Every node id in the graph, reachable or not."""
         ...
     def node(self, node_id: int) -> Node:
         """A `Node` handle on the node at `node_id`. Raises `StriderError`

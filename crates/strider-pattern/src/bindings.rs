@@ -10,8 +10,10 @@ use crate::capture::Capture;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Binding {
-    /// Control-flow or zero-output capture (`Call`, `If`, `Return`,
-    /// `CallOther`): only the owning node is meaningful.
+    /// Value-less-root capture (`If`, `Return`, `IndirectBranch`, `Switch`,
+    /// `Unreachable`): only the owning node is meaningful. `Call` / `CallOther`
+    /// do NOT land here: they anchor on their memory-token output and bind a
+    /// `Value`.
     Node(NodeId),
     /// Value-producing capture (`add`, `int_const`, the `*_any`
     /// constructors). The owning node comes back via

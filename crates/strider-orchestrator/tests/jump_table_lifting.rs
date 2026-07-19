@@ -2,7 +2,7 @@
 //!
 //! Drives the full `build_ir` -> `handle_switch` -> `build_switch` path with
 //! a real x86-64 BranchIndirect resolved to `Multiple([t0, t1, ...])` via
-//! the cfg builder's `LiftOptions::known_targets` feedback path, the same
+//! the cfg builder's `CfgOptions::known_targets` feedback path, the same
 //! path the strider fixed-point orchestrator uses to commit an IR-level
 //! `Multiple` classification across iterations.
 //!

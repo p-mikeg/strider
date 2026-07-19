@@ -335,7 +335,8 @@ enum SpecialTerm {
         target_vn: rsleigh::Vn,
         addr: strider_cfg::PcodeInsnAddr,
     },
-    /// Resolved jump table; lifts to an If-ladder over `targets`.
+    /// Resolved jump table; lifts to a single `Switch` node with one control
+    /// output per target (a single-target table degenerates to a plain branch).
     Switch(rsleigh::Vn, Vec<u64>),
     /// Branch out of the function (`fn_max_size` exceeded, or below
     /// `start_addr` with `allow_code_before_start_addr=false`).  Lifts to

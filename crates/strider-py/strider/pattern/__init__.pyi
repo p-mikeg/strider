@@ -44,9 +44,8 @@ class Match:
     """One result of a query: the nodes a pattern matched and what each
     capture bound to.
 
-    `node(key)` is the single source of truth for per-node reads; every
-    value and op reader below forwards to it, returning `None` when `key` is
-    unbound.
+    The typed readers below (`op`, `value_type`, `const_uint`, `node`, ...)
+    each return `None` when `key` is unbound.
     """
 
     @property
@@ -518,8 +517,8 @@ class PhiPat:
         ...
     def any_input(self, p: PatLike) -> "PhiPat":
         """Match `p` against any one merged value, yielding one match per
-        qualifying arm. Anchored at the phi's own inputs, so it costs one
-        step per arm rather than ranging over the whole function."""
+        qualifying arm. Only the phi's own arms are considered, so this stays
+        cheap even in large functions."""
         ...
     def phi_token(self, p: PatLike) -> "PhiPat":
         """Constrain the region token tying this phi to its merge point."""
@@ -746,8 +745,8 @@ def int_const(value: int) -> Pat:
     """Match an integer constant whose value, masked to its output width,
     equals `value`."""
 def signed_int_const(value: int) -> Pat:
-    """Match an integer constant equal to the signed `value` across both
-    sign- and zero-extended storage forms."""
+    """Match an integer constant equal to the signed number `value`, at any
+    width. More permissive than `int_const`."""
 def int_const_any_of(values: List[int]) -> Pat:
     """Match an integer constant equal to any of `values`, the
     set-membership form of `int_const`."""

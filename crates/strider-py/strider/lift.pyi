@@ -117,12 +117,11 @@ class Lifter:
         `entry`, returning an `AnalyzeResult` (named fields; also unpacks as
         `(cfg, function, unresolved)`).
 
-        `entry` is typed `int | str` and `cc` is optional so that the
-        `ElfLifter` subclass, which resolves a symbol name and derives a
-        default convention from the ELF header, widens this signature rather
-        than breaking it. A plain `Lifter` owns neither a symbol table nor a
-        default convention, so it raises `StriderError` for a `str` entry or
-        a missing `cc`.
+        A plain `Lifter` owns neither a symbol table nor a default
+        convention, so it raises `StriderError` for a `str` entry or a
+        missing `cc`. (`entry` is typed `int | str` with `cc` optional
+        because the `ElfLifter` subclass accepts a symbol name and derives a
+        default convention from the ELF header.)
         """
         ...
     def optimize(
@@ -158,9 +157,8 @@ class Lifter:
         ...
     def reg_name(self, vn: Vn) -> Optional[str]:
         """The register name for `vn`, or `None` when it names no register.
-        Decodes a varnode reached from a function this handle analysed
-        (`function.node(m.root).vn()`) without building a separate
-        `Sleigh`."""
+        Handy for naming a varnode reached from a function this handle
+        analysed, e.g. `function.node(m.root).vn()`."""
         ...
     def pcode_at(self, entry: int, addr: int) -> str:
         """Decode linearly from `entry` one instruction at a time, replaying
@@ -207,8 +205,7 @@ def lifter(
 ) -> Lifter:
     """Build a `Lifter` over a raw code reader (`BufferReader` or
     `MemReader`). `rom` is the optional read-only memory image for constant
-    folding. For an ELF, prefer `strider.lift.load_elf(path)`, which wires
-    `mem` and `rom` from the loaded sections and adds symbol lookups."""
+    folding."""
     ...
 
 class ElfLifter(Lifter):
@@ -286,10 +283,6 @@ class ElfLifter(Lifter):
         """Lift the function at `entry`, a symbol name or an absolute
         address, returning the same `AnalyzeResult` as `Lifter.analyze`. `cc`
         defaults to this handle's convention.
-
-        This widens the base signature rather than breaking it: the base
-        already declares `entry: int | str` with `cc` optional so that symbol
-        lookup and a default convention are additions, not violations.
         """
         ...
     def __repr__(self) -> str: ...

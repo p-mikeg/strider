@@ -58,7 +58,7 @@ pub enum NodeKind {
     If,
     /// Resolved jump table. Inputs: `(control, address)`. Outputs: one
     /// `Control` per target, output `i` taken when `address ==
-    /// switch_targets[i]` (case addresses live in `Function::switch_targets`).
+    /// switch_targets[i]` (case addresses live in the `switch_targets` side-table).
     /// Exhaustive: no default arm.
     Switch,
 

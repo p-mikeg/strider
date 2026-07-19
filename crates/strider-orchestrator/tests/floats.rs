@@ -13,8 +13,8 @@ use strider_ir::{FloatBinaryOp, FloatCmpOp};
 // `arm_be` skips every float test: ARM8_BE Sleigh's VFP register file
 // uses descending offsets and `d0` does not overlap `s0`, so the
 // analyzer's container-register aliasing drops the entire VFP read/write
-// chain. Every VFP-using function reduces to Entry / Return / FunctionArg
-// / InitialVar in the IR, with no Float* nodes.
+// chain. Every VFP-using function reduces to Entry / Return / InitialVar
+// in the IR, with no Float* nodes.
 per_arch_test!("floats", "f32_arith",    has_four_float_binops, ignore = {
     ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — 0 FloatBinaryOps in IR",
 });

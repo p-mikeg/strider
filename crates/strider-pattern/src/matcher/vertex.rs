@@ -57,7 +57,8 @@ pub type PostMatchFn = Box<dyn Fn(&Matcher, NodeId, ValueType, &crate::bindings:
 pub struct PatNode {
     pub kind: KindSpec,
     /// Binds the matched *node* (`Binding::Node`). Only for value-less roots
-    /// (`Return` / `If`) with no output vertex to anchor a value capture on.
+    /// (`Return`, `IndirectBranch`, `Switch`, `Unreachable`, `If`) with no
+    /// value output vertex to anchor a value capture on.
     pub capture: Option<crate::capture::Capture>,
     /// Runs before descending into inputs.
     pub node_predicate: Option<NodePredicate>,
