@@ -296,3 +296,73 @@ pub(crate) fn variant_kind(
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Engine-level `input_any` (`ANY_INPUT_SLOT`) tests on a kind WITH a
+    //! fixed prefix — exercised through the raw [`NodePat::input_any`] path
+    //! because no public wrapper exposes `any_input` on `Call` yet.
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+    use crate::{Matcher, int_const};
+    use strider_ir::IRBuilderExt;
+    use strider_ir::node::ValueType;
+    use strider_ir_test_utils::RegisterSet;
+
+    /// A `Call` whose **target** is `IntConst(0xABCD)` (fixed-prefix slot 2)
+    /// and whose **arg0** is `IntConst(42)` (variadic tail, slot 4).
+    fn call_with_arg() -> strider_ir::Function {
+        let arg = strider_ir_test_utils::reg_vn(0, 8);
+        let mut b = RegisterSet::new()
+            .tracked(arg)
+            .arg(arg)
+            .build_fn_single_region()
+            .unwrap();
+        let c = b.build_int_const(42u64, ValueType::I64).unwrap();
+        b.write_variable(&arg, c).unwrap();
+        let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
+        b.build_call_cc(tgt, None).unwrap();
+        b.build_return(None, &[]).unwrap();
+        b.build().unwrap()
+    }
+
+    /// A node-rooted `Call` pattern with a single existential `any_input(p)`,
+    /// mirroring the raw shape the public `call()` builder lowers to.
+    fn call_any_input<P: MatchPat + 'static>(p: P) -> Pattern {
+        NodePat::node(KindSpec::Exact(NodeKind::Call))
+            .with_mem_value(1)
+            .input_any(p)
+            .build()
+    }
+
+    /// `any_input` on a prefixed kind ranges over the variadic TAIL only:
+    /// it binds an ARG, never the `ctrl`/`mem`/`target`/`sp` prefix slots.
+    #[test]
+    fn call_any_input_binds_arg_not_prefix() {
+        let function = call_with_arg();
+        let matcher = Matcher::new(&function);
+
+        // arg0 = IntConst(42) sits in the variadic tail → matches.
+        assert_eq!(
+            matcher
+                .find_all(&call_any_input(int_const(42u128)))
+                .unwrap()
+                .len(),
+            1,
+            "any_input must bind the variadic ARG",
+        );
+
+        // target = IntConst(0xABCD) is a fixed-prefix slot (slot 2) → must
+        // NOT be offered to `any_input` (the pre-prefix-aware engine would
+        // have matched it here).
+        assert_eq!(
+            matcher
+                .find_all(&call_any_input(int_const(0xABCDu128)))
+                .unwrap()
+                .len(),
+            0,
+            "any_input must NOT bind a fixed-prefix input (the call target)",
+        );
+    }
+}

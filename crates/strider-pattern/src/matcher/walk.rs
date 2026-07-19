@@ -19,7 +19,8 @@
 //! `NodeKind::is_commutative()`, unless it opted out via `force_ordered`) gives
 //! BOTH operands the candidate set `{0, 1}`, so injectivity yields exactly the
 //! natural ordering then the swapped one; an `any_input` existential draws from
-//! every non-`PhiToken` value slot. Backtracking rolls back via
+//! the IR kind's variadic-tail value slots (those past its fixed-arity prefix).
+//! Backtracking rolls back via
 //! [`Bindings::mark`] / [`Bindings::restore`] between attempts.
 //!
 //! The engine is continuation-passing: [`try_match_at`] ENUMERATES a pat
@@ -346,29 +347,32 @@ fn try_match_at(
     // across the whole search, so collect it once here (empty in the common
     // no-`any_input` case) rather than at every recursion level.
     //
-    // A `Phi`/`MemPhi`'s slot-0 `PhiToken` is the owning `Region`'s bookkeeping
-    // edge, not a predecessor: `any_input` ranges over data inputs only. It must
-    // be dropped here rather than left to the sub-pattern's own output-kind
-    // check, because the kind-unconstrained wildcards (`any()` / `var(c)`) carry
-    // `OutputKindSpec::Any` and would bind the token — and being slot 0, it
-    // would shadow every real data input.
+    // `any_input` ranges over the IR kind's variadic TAIL — the value inputs
+    // past its fixed-arity prefix (per `node_signature::expected_signature`).
+    // The prefix carries a kind's bookkeeping / structural operands (a
+    // `Phi`/`MemPhi`'s slot-0 `PhiToken`; a `Call`'s `[ctrl, mem, target, sp]`),
+    // which are NOT existential-input candidates. This must be dropped here
+    // rather than left to the sub-pattern's own output-kind check, because the
+    // kind-unconstrained wildcards (`any()` / `var(c)`) carry
+    // `OutputKindSpec::Any` and would bind a prefix operand — and being at a low
+    // slot, it would shadow the real tail inputs. (The wildcards' `Any` output
+    // kind is deliberate and load-bearing elsewhere — `with_true(any())` matches
+    // a `Region`; a bare `any()` root matches zero-output nodes — so the guard
+    // belongs here, not on them.)
     //
-    // Dropping the phi-token suffices only because `any_input` is exposed on
-    // `PhiPat` alone, whose fixed prefix is exactly `[PhiToken]` (see
-    // `node_signature`). A builder that exposed `any_input` on a kind with
-    // control / memory prefix slots (`Call`'s `[ctrl, mem, target]`, say) would
-    // let a bare `var(c)` bind one of those, so this must then become
-    // prefix-aware — range over the kind's variadic TAIL rather than filter one
-    // kind out. The wildcards' `Any` output kind is deliberate and load-bearing
-    // elsewhere (`with_true(any())` matches a `Region`; a bare `any()` root
-    // matches zero-output nodes), so the guard belongs here, not on them.
+    // For `Phi` the prefix is exactly `[PhiToken]` (length 1), so this reduces
+    // to the historical "skip the slot-0 phi-token" rule. The residual
+    // `PhiToken` filter is redundant once the prefix is excluded (no variadic
+    // tail slot is a phi-token), but kept as a defensive value-kind guard.
     let ext_slots: Vec<usize> = if n_fixed == inputs.len() {
         Vec::new()
     } else {
+        let prefix = strider_ir::fixed_input_prefix_len(ctx.function().node_kind(ir_node));
         ctx.function()
             .node_inputs(ir_node)
             .into_iter()
             .enumerate()
+            .filter(|&(slot, _)| slot >= prefix)
             .filter(|&(_, v)| !matches!(ctx.function().value_kind(v), ValueKind::PhiToken))
             .map(|(slot, _)| slot)
             .collect()
