@@ -402,7 +402,7 @@ def one_of(patterns: List[PatLike]) -> Pat:
 
     Captures under an alternative that did not fire are left UNBOUND (not
     defaulted), so `Match.has(c)` tells you which arm fired and lets you supply
-    your own default: `off = h.uint(o) if h.has(o) else 0`."""
+    your own default: `off = h.const_uint(o) if h.has(o) else 0`."""
 def function_arg(i: int) -> FunctionArgPat:
     """Start a function-argument pattern constrained to argument index `i`."""
 def function_arg_any() -> FunctionArgPat:

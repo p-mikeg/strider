@@ -33,7 +33,7 @@ PYTHONPATH=crates/strider-py python crates/strider-py/examples/python/01_quickst
 
 | # | Script | Demonstrates |
 |---|---|---|
-| 01 | [`01_quickstart.py`](01_quickstart.py) | The five-line "load ELF → lift → query → visualize" flow with `strider.load_elf` + `ElfLifter.analyze`. |
+| 01 | [`01_quickstart.py`](01_quickstart.py) | The five-line "load ELF → lift → query → visualize" flow with `strider.lift.load_elf` + `ElfLifter.analyze`. |
 | 02 | [`02_python_reader.py`](02_python_reader.py) | A custom `MemReader` subclass serving bytes from Python — lift a synthetic instruction stream without touching disk. |
 | 03 | [`03_pattern_rewrite.py`](03_pattern_rewrite.py) | Find a redundant idiom (`x + 0`) and rewrite it to `x`; re-optimize destructively to collapse the dead branch. |
 | 04 | [`04_custom_optimizer.py`](04_custom_optimizer.py) | Build an optimizer pipeline pass-by-pass; compare the lifted graph before and after. |
