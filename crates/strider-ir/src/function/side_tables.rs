@@ -65,8 +65,9 @@ pub struct SideTables {
     /// Per-output case target addresses for a `Switch`: machine addresses, not
     /// arena ids.
     switch_targets: FxHashMap<NodeId, Vec<u64>>,
-    /// `InitialVnId` to `InitialVar(id)` node index.  Advisory: the mapping is
-    /// never re-checked against the node's kind.
+    /// `InitialVnId` to `InitialVar(id)` node index. Accessors trust it; the
+    /// validator re-checks reachable entries against the node's kind
+    /// (`StaleInitialVarIndex`).
     pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
 }
 

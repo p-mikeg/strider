@@ -167,7 +167,6 @@ class Lifter:
     def visualize(
         self,
         target: Union[Function, Cfg],
-        *,
         host: str = ...,
         port: int = ...,
         depth: int = ...,

@@ -101,10 +101,10 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     edit: &mut crate::EditFunction<'_>,
     opt_ctx: &mut crate::pipeline::OptCtx<'_>,
 ) -> Result<OptimizationResult> {
-    // Cached `roots` iterate in ascending NodeId order rather than preorder
-    // discovery order. That is safe because the cached live set stays exactly
-    // the entry-reachable set, and every rule seeded in RPO is confluent
-    // (fires only when it strictly simplifies), so any valid RPO converges.
+    // Seeds iterate in reverse-postorder (or postorder, per `seed_order`), not
+    // discovery/preorder order. Safe because the cached live set stays exactly
+    // the entry-reachable set, and every rule is confluent (fires only when it
+    // strictly simplifies), so any valid order converges.
     let seed: Vec<NodeId> = match pass.seed_order() {
         SeedOrder::ReversePostorder => edit
             .reverse_postorder_filter(|k| pass.matches_kind(k))

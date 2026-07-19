@@ -197,8 +197,8 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
   containing register with shift/mask for sub-register slices. Varnode
   canonicalisation (dedup into largest containers, deterministic sort) is owned
   by `FunctionBuilder::new`.
-- Indirect-branch resolution is a monotone re-lift fixed-point loop in
-  `Strider::analyze`; unresolvable branches are a result
+- Indirect-branch resolution is a re-lift fixed-point loop in `Strider::analyze`
+  that converges on the induced edge set; unresolvable branches are a result
   (`unresolved_indirect_branches`), not an error.
 - SP-alias precision is tuned by `OptOptions` (`alias_mode`, `calls_clobber`,
   `assume_distinct_sp_bases_disjoint`), threaded through `OptCtx` into every

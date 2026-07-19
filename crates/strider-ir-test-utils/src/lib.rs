@@ -273,8 +273,9 @@ where
 }
 
 /// Single-region function with `vn` tracked. The closure receives the
-/// read-back value (a `VarPhi` over `InitialVar(vn)`) and returns the value to
-/// wire into the `Return`; that read-back value comes back to the caller too.
+/// read-back value (the `InitialVar(vn)` value; a single-region function has no
+/// phi at entry) and returns the value to wire into the `Return`; that read-back
+/// value comes back to the caller too.
 ///
 /// # Errors
 ///

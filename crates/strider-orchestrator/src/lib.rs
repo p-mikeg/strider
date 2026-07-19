@@ -82,10 +82,12 @@ where
 
     /// Lift, optimise, and resolve indirect branches at `entry`.
     ///
-    /// The resolution loop is monotone: each iteration classifies indirect
-    /// branches against the optimised IR, folds newly resolved targets into
-    /// `known_targets` (only ever ADDING), and re-lifts, converging once a
-    /// pass adds no new target. `MAX_RESOLUTION_ITERATIONS` is a backstop.
+    /// Resolution is a fixed-point loop: each iteration classifies indirect
+    /// branches against the optimised IR and folds resolved targets into
+    /// `known_targets` (keys are only added, but a re-classified site's target
+    /// set may be overwritten, even narrowed), then re-lifts. It converges when
+    /// the induced edge set stops changing. `MAX_RESOLUTION_ITERATIONS` is a
+    /// backstop.
     ///
     /// Unresolvable branches are a RESULT, not an error: they come back in
     /// [`AnalyzeResult::unresolved_indirect_branches`] with their
