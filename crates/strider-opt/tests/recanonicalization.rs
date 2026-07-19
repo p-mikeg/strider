@@ -1,10 +1,8 @@
-//! Integration tests for incremental re-canonicalization — the behavior that
-//! replaced the deleted `DedupNodes` pass.  A rewrite that rewires a live
-//! node's inputs into a structural twin of an existing node is merged at the
-//! next `EditFunction::clean()` drain; nodes that differ in OUTPUT type are
-//! distinct values and are never merged.  (The end-to-end PhiCollapse → twin →
-//! value_range jump-table scenario is exercised by the orchestrator's
-//! `orchestrator_indirect_branch` suite on real binaries.)
+//! Incremental re-canonicalization: a rewrite that rewires a live node's
+//! inputs into a structural twin of an existing node is merged at the next
+//! `EditFunction::clean()` drain. Nodes differing in OUTPUT type are distinct
+//! values and are never merged. The end-to-end jump-table scenario lives in
+//! the orchestrator's `orchestrator_indirect_branch` suite.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -16,10 +14,9 @@ fn reachable(fg: &strider_ir::Function, node: strider_ir::node::NodeId) -> bool 
     fg.walk().any(|n| n == node)
 }
 
-/// The motivating case (formerly `DedupNodes`' headline test): a rewrite
-/// redirects `add2`'s `c2` operand to `c1` — the way `PhiCollapse` redirects a
-/// trivial phi — so `add2` becomes `Add(a, c1)`, a structural twin of `add1`
-/// the construction cache never re-canonicalised.  `clean()` must merge them.
+/// Redirecting `add2`'s `c2` operand to `c1`, the way `PhiCollapse`
+/// redirects a trivial phi, makes `add2` a structural twin of `add1` that
+/// the construction cache never re-canonicalised. `clean()` must merge them.
 #[test]
 fn clean_merges_structural_twin_left_by_a_rewrite() {
     let a_vn = reg_vn(0x10, 8);
@@ -36,7 +33,7 @@ fn clean_merges_structural_twin_left_by_a_rewrite() {
     let add2 = b
         .build_int_binary_operation(a, c2, IntBinaryOp::Add, ValueType::I64)
         .unwrap();
-    // A downstream consumer keeps BOTH twins reachable from entry.
+    // Keeps BOTH twins reachable from entry.
     let add3 = b
         .build_int_binary_operation(add1, add2, IntBinaryOp::Add, ValueType::I64)
         .unwrap();
@@ -54,9 +51,9 @@ fn clean_merges_structural_twin_left_by_a_rewrite() {
 
     {
         let mut ef = EditFunction::new(&mut fg);
-        // Redirect c2 -> c1: add2 becomes Add(a, c1), a twin of add1.
+        // add2 becomes Add(a, c1), a twin of add1.
         ef.replace_all_uses(c2, c1).unwrap();
-        ef.clean(); // the incremental re-canonicalization merges the twin here
+        ef.clean(); // merges the twin
     }
 
     let survivors = [add1_node, add2_node]
@@ -72,9 +69,9 @@ fn clean_merges_structural_twin_left_by_a_rewrite() {
     );
 }
 
-/// Negative: two `Truncate`s of the same input but to DIFFERENT widths are
-/// different values (the dedup key includes the output kind).  Even after a
-/// rewrite makes their inputs identical, `clean()` must NOT merge them.
+/// Two `Truncate`s to DIFFERENT widths are different values, since the dedup
+/// key includes the output kind. Even once a rewrite makes their inputs
+/// identical, `clean()` must not merge them.
 #[test]
 fn clean_does_not_merge_when_output_type_differs() {
     let a_vn = reg_vn(0x10, 8);
@@ -86,7 +83,7 @@ fn clean_does_not_merge_when_output_type_differs() {
         .unwrap();
     let a = b.read_variable(&a_vn).unwrap();
     let bb = b.read_variable(&b_vn).unwrap();
-    // t32 = Truncate(a):I32 and t16 = Truncate(bb):I16 — distinct inputs today.
+    // Distinct inputs for now: Truncate(a):I32 and Truncate(bb):I16.
     let t32 = b.truncate_if_needed(a, ValueType::I32).unwrap();
     let t16 = b.truncate_if_needed(bb, ValueType::I16).unwrap();
     let w32 = b
@@ -113,8 +110,8 @@ fn clean_does_not_merge_when_output_type_differs() {
 
     {
         let mut ef = EditFunction::new(&mut fg);
-        // Redirect bb -> a: t16 becomes Truncate(a):I16 — same input as t32 but a
-        // DIFFERENT output width, so canonicalization must keep them separate.
+        // t16 becomes Truncate(a):I16: same input as t32 but a different
+        // output width, so canonicalization must keep them separate.
         ef.replace_all_uses(bb, a).unwrap();
         ef.clean();
     }

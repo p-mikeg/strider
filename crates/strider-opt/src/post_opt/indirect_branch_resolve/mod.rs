@@ -1,54 +1,20 @@
-//! IR-level indirect-branch resolver.
+//! Classifies the placeholder targets the lifter inserts at `BranchIndirect`
+//! sites.  The orchestrator drives the outer loop (CFG rebuild, cache
+//! invalidation, iteration cap).
 //!
-//! Classifies placeholder targets that the strider lifter inserts at
-//! `BranchIndirect` sites.  The strider orchestrator drives the outer loop
-//! (CFG rebuild, cache invalidation, iteration cap) and calls into the
-//! classifier functions directly — there is no opt-pipeline pass for
-//! indirect-branch resolution.
+//! [`classify_target`] tries an ordered list of sound recognisers, first match
+//! wins: a literal `IntConst` address, an `InitialVar(lr)` return, then
+//! [`table::classify_table_dispatch`] for rodata jump tables and on-stack label
+//! arrays.  No match leaves the target unresolved, and the orchestrator either
+//! retries or surfaces it at fixed point.
 //!
-//! ## Producer-shape classifier
+//! Each recogniser reads its ABI facts (link-register and stack-pointer
+//! varnodes, endianness) straight off the `Function`, so the only external
+//! inputs are the optional rodata image and the value-range map.
 //!
-//! [`classify_target`] recognises the dispatch value feeding a placeholder
-//! target as one of an ordered list of sound shapes, each a named
-//! recogniser returning `Option<ResolvedTargets>`:
-//!
-//!   * `single_const_target` — the dispatch value is a literal address
-//!     (`IntConst`); the branch goes to exactly one place.
-//!   * `link_register_return` — the dispatch value is the function-entry
-//!     value of the link register (`InitialVar(lr)`); the branch is a
-//!     return.
-//!   * [`table::classify_table_dispatch`] — the dispatch value is an
-//!     indexed table load (rodata jump table or on-stack label array).
-//!
-//! The first recogniser that matches wins; if none does, the target stays
-//! unresolved (the orchestrator retries next iteration or surfaces
-//! `UnresolvedIndirectBranch` at fixed point).
-//!
-//! The ABI facts each recogniser needs — the link-register and
-//! stack-pointer varnodes, the target endianness — are read straight off
-//! the [`strider_ir::Function`] (`default_cc()` / `endianness()`), so the
-//! only external input is the optional [`ReadOnlyMemory`] image (rodata)
-//! and the precomputed value-range map.
-//!
-//! [`IndirectBranchClassify`] is the optimizer post-pass that drives this
-//! classifier: it runs once on the converged graph, walks every live
-//! `IndirectBranch` placeholder, and writes the per-placeholder
-//! classification into [`OptCtx::indirect_resolutions`] for the
-//! orchestrator to drain.
-//!
-//! ## Submodules
-//!
-//! - [`table`] — unified table-dispatch arm covering both the rodata
-//!   jump-table (absolute base) and on-stack label-array (SP-rooted base)
-//!   shapes ([`classify_table_dispatch`]).
-//!
-//! ## Where `ResolvedTargets` lives
-//!
-//! Defined in `strider_cfg::indirect_resolver` (the
-//! lowest layer that needs the enum: the cfg builder consumes it via
-//! `LiftOptions::known_targets` to seat indirect-branch terminators, and
-//! it is the return type of [`classify_target`] itself).  Import it directly
-//! from there.
+//! `ResolvedTargets` lives in `strider_cfg`, the lowest layer that needs it:
+//! the cfg builder consumes it via `LiftOptions::known_targets` to seat
+//! indirect-branch terminators.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -63,41 +29,25 @@ use crate::{EditFunction, ReadOnlyMemory};
 mod eval;
 pub mod table;
 
-/// Per-target enumeration cap for the table-dispatch arm
-/// (`table::classify_table_dispatch`), covering both the rodata jump-table
-/// (absolute base) and on-stack label-array (SP-rooted base) shapes.
-///
-/// `u32::MAX + 1` if a known-bits mask were all-ones, so without this cap
-/// a buggy KnownBits result could force iteration through 4 GiB of slots.
-/// Real jump tables emitted by gcc/clang are bounded by the source-level
-/// `switch` arm count, almost always well under 4096.  Tables larger than
-/// this cap are unusual enough that we prefer `None` (defer to
-/// `UnresolvedIndirectBranch`) over the pathological enumeration cost.
+/// Without a cap, an all-ones KnownBits mask would force iteration through
+/// 4 GiB of slots.  Real gcc/clang jump tables are bounded by the source-level
+/// `switch` arm count and are almost always well under this, so anything
+/// larger is better deferred than enumerated.
 pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 
 pub use table::classify_table_dispatch;
 
-/// Classify a placeholder target's dispatch value into a
-/// [`ResolvedTargets`], or `None` when it matches no known sound shape
-/// (the orchestrator then defers the branch).
-///
-/// `rom` is the binary's read-only image, consulted only by the rodata
-/// jump-table shape (`None` disables it).  `ranges` is the precomputed
-/// dominator-scoped value-range map.  Every other input the recognisers
-/// need (link-register / stack-pointer varnodes, endianness) is read off
-/// `ctx`.
+/// `None` when the dispatch value matches no known sound shape, which defers
+/// the branch.  `rom` is consulted only by the rodata jump-table shape.
 ///
 /// # Soundness
 ///
-/// Every recogniser must identify the branch's runtime target set
-/// **unambiguously** on the optimised IR.  Shapes the prior in-place
-/// heuristic tried (`Load(InitialVar(sp))` for `pop pc`-style returns) are
-/// deliberately excluded: a `push X; pop pc` tail call has the same
-/// Load-shape and would be misclassified as a return.  We rely on
-/// `LoadForward` having simplified a properly-popped return address to
-/// `InitialVar(lr)` directly — the shape `link_register_return` matches.
-/// Every recogniser fails closed (`None`) on any partial proof, never
-/// under-approximating the target set.
+/// Every recogniser must identify the runtime target set UNAMBIGUOUSLY and
+/// fails closed on a partial proof, never under-approximating.  `Load(sp)` for
+/// `pop pc`-style returns is deliberately excluded: a `push X; pop pc` tail
+/// call has the identical shape and would be misclassified as a return.  A
+/// properly-popped return address instead reaches `link_register_return` as
+/// `InitialVar(lr)`, courtesy of `LoadForward`.
 #[must_use]
 pub fn classify_target(
     function: &strider_ir::Function,
@@ -106,25 +56,18 @@ pub fn classify_target(
     ranges: &mut crate::value_range::RangeMap<'_>,
     alias_mode: crate::AliasMode,
 ) -> Option<ResolvedTargets> {
-    // The `IndirectBranch` placeholder's slot-2 input ([control, memory,
-    // target]) is its dispatch value.  Taking the branch NODE (not the bare
-    // value) keeps the table classifier's index-range query scoped to THIS
-    // branch, even when several branches share one dispatch value.
+    // Taking the branch NODE rather than the bare value keeps the table
+    // classifier's index-range query scoped to THIS branch, even when several
+    // branches share one dispatch value.
     let target_value = function.indirect_branch_target(branch);
     single_const_target(function, target_value)
         .or_else(|| link_register_return(function, target_value))
         .or_else(|| table::classify_table_dispatch(function, branch, rom, ranges, alias_mode))
 }
 
-/// Recognise a single constant dispatch target: the target's producer is a
-/// literal `IntConst(k)`, so the branch goes to exactly `k`.
-///
-/// SOUND: a literal constant in the IR comes from a tracked `IntConst`
-/// pcode insn, `ConstantFold`, or a `LoadReadOnly` rodata resolution — all
-/// deterministic functions of the function's pcode, so `k` is the only
-/// possible runtime target.  Wide constants (high 64 bits set) are never
-/// valid targets on a 64-bit ISA — defer rather than truncate to a wrong
-/// address.
+/// Sound because a literal in the IR only comes from a tracked `IntConst`
+/// pcode insn, `ConstantFold`, or a `LoadReadOnly` rodata resolution, all
+/// deterministic functions of the pcode, so `k` is the only possible target.
 fn single_const_target(
     function: &strider_ir::Function,
     target_value: ValueId,
@@ -133,19 +76,14 @@ fn single_const_target(
         return None;
     }
     let k = function.int_const_u128(target_value)?;
-    // A const whose high 64 bits are set is never a valid jump target on a
-    // 64-bit ISA; `try_from` rejects it rather than silently truncating.
+    // A const with its high 64 bits set is never a valid jump target on a
+    // 64-bit ISA, so reject it rather than truncate to a wrong address.
     Some(ResolvedTargets::Single(u64::try_from(k).ok()?))
 }
 
-/// Recognise a return-via-link-register: the target's producer is
-/// `InitialVar(lr)`, the function-entry value of the calling convention's
-/// link register, so the branch dispatches to the caller-provided return
-/// address.
-///
-/// `None` on stack-push ABIs (x86 / x86_64) where `default_cc()` has no
-/// link register — there can be no LR match without one.  This is the
-/// shape `LoadForward` produces for a properly-popped return address.
+/// `None` on stack-push ABIs (x86 / x86_64), which have no link register to
+/// match against.  This is the shape `LoadForward` produces for a
+/// properly-popped return address.
 fn link_register_return(
     function: &strider_ir::Function,
     target_value: ValueId,
@@ -159,32 +97,18 @@ fn link_register_return(
     }
 }
 
-/// The post-optimization analysis pass that drives [`classify_target`]
-/// over every live `IndirectBranch` placeholder.
+/// Analysis-only: never mutates the graph, and writes its output to
+/// [`OptCtx::indirect_resolutions`] for the orchestrator to drain.
 ///
-/// Add it as a **post-pass** (`OptimizerPipeline::add_post_pass`) so it
-/// runs once on the converged graph.  It is **analysis-only** — it never
-/// mutates the graph — and writes its output to
-/// [`OptCtx::indirect_resolutions`] for the orchestrator to drain after
-/// [`crate::OptimizerPipeline::run`] returns.
+/// It must run as a post-pass because a dispatch value is opaque at lift time
+/// and only becomes classifiable once the optimizer has folded it into a
+/// recognizable shape.  The rewrites ARE the resolution mechanism, so the
+/// classifier has to see their output.
 ///
-/// ## Why post-optimization
-///
-/// An `IndirectBranch`'s dispatch value is opaque at lift time (just
-/// "whatever's in the register").  It only becomes classifiable once the
-/// optimizer has folded it into a recognizable shape — a `LoadReadOnly` /
-/// `ConstantFold` jump table, a `LoadForward`-resolved constant, an
-/// `InitialVar(lr)` after `PhiCollapse`.  So the rewrites *are* the
-/// resolution mechanism, and the classifier must run on their output.
-///
-/// ## Why walk live nodes
-///
-/// The pass reads each placeholder's **current** slot-2 input straight
-/// from the live graph, so it never inspects a value the optimizer's
-/// `replace_all_uses` rewired orphaned away.  Walking from the entry also
-/// means a placeholder the node-removing passes proved unreachable simply
-/// isn't visited — a dead indirect branch needs no resolution and is
-/// silently dropped rather than reported unresolved.
+/// Walking live nodes reads each placeholder's CURRENT slot-2 input, so it
+/// never inspects a value `replace_all_uses` orphaned away.  A placeholder the
+/// node-removing passes proved unreachable is simply never visited, so a dead
+/// indirect branch is dropped rather than reported unresolved.
 #[derive(Clone)]
 pub struct IndirectBranchClassify;
 
@@ -192,19 +116,15 @@ impl PostOptimizer for IndirectBranchClassify {
     fn apply(&self, edit: &mut EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()> {
         let function = edit.function();
 
-        // Dominator-scoped value ranges, computed once for every target —
-        // the graph doesn't change during this analysis-only pass.  The
-        // classifier reads every other input (link-register / stack-pointer
-        // varnodes, endianness) off the function itself.
+        // Computed once for every target, since the graph does not change
+        // during this analysis-only pass.
         let known = crate::opt::known_bits::analyze(function)?;
         let doms = strider_ir::control_dominators(function);
         let mut ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
 
         let mut resolutions: rustc_hash::FxHashMap<_, _> = rustc_hash::FxHashMap::default();
         for node in function.walk_kind(|k| matches!(k, NodeKind::IndirectBranch)) {
-            // The classifier reads the placeholder's slot-2 dispatch value off
-            // `node` and scopes its range query to THIS branch.  The walk visits
-            // each node once, so every key is unique.
+            // The walk visits each node once, so every key is unique.
             let resolved =
                 classify_target(function, node, ctx.rom, &mut ranges, ctx.options.alias_mode);
             resolutions.insert(node, resolved);
@@ -217,16 +137,9 @@ impl PostOptimizer for IndirectBranchClassify {
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for [`classify_target`].
-    //!
-    //! Each test constructs a minimal [`strider_ir::Graph`]
-    //! via [`strider_ir::FunctionBuilder::new_raw`], appends nodes
-    //! directly via `graph.create_node` to control the producer shape
-    //! exactly, and then invokes the classifier on the targeted output.
-    //! These tests intentionally bypass the strider IR-lift path so the
-    //! classifier's match arms are exercised in isolation without
-    //! depending on the optimiser pipeline producing the expected
-    //! shape.
+    //! These deliberately bypass the IR-lift path and build nodes directly, so
+    //! the classifier's match arms are exercised in isolation rather than
+    //! depending on the optimiser pipeline to produce the expected shape.
 
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -235,15 +148,9 @@ mod tests {
     use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};
 
-    /// Unit-test convenience: computes the range analysis and
-    /// calls [`classify_target`] with no rom.  The
-    /// integration-style tests in `tests/indirect_resolve_classify.rs`
-    /// drive the rom/SP arms; these unit tests only exercise the
-    /// IntConst / InitialVar / Load-fallthrough arms.
-    /// Tests the two value-based recognisers (`single_const_target` /
-    /// `link_register_return`) on a dispatch value directly.  The table arm —
-    /// the only one that needs a branch node + dominator-scoped ranges — is
-    /// covered in `table_tests` against a real `IndirectBranch`.
+    /// Runs the two value-based recognisers on a dispatch value directly.  The
+    /// table arm is the only one needing a branch node plus dominator-scoped
+    /// ranges, and `table_tests` covers it against a real `IndirectBranch`.
     fn classify_target_bare(
         function: &strider_ir::Function,
         target_value: ValueId,
@@ -252,15 +159,11 @@ mod tests {
             .or_else(|| link_register_return(function, target_value)))
     }
 
-    /// Build a minimal `Graph` with one tracked
-    /// variable and an empty body region terminated by a Return
-    /// whose single value-input is the caller-supplied
-    /// `ValueId`.  Used as a scaffold for the unit tests so
-    /// the classifier sees a real, validation-passing graph.
+    /// An empty region terminated by a Return over the caller-supplied value,
+    /// so the classifier sees a real validation-passing graph.
     fn empty_graph_returning(
         target_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
     ) -> (strider_ir::Function, ValueId) {
-        // No tracked variables, no calling convention plumbing.
         let mut builder = strider_ir_test_utils::empty_builder().expect("FunctionBuilder::new_raw");
         let region = builder.create_region_all().expect("create_region");
         builder
@@ -269,27 +172,23 @@ mod tests {
         builder.set_region(region);
         builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let target = target_inputs(&mut builder);
-        // Re-stamp in case `target_inputs` cleared the lift_addr.
+        // Re-stamp in case the closure cleared the lift_addr.
         builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         builder
             .build_return(Some(target), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
-        // Re-locate the target in the built graph: the build step
-        // is a move, but `ValueId` is a stable cranelift-entity
-        // index so the same id continues to point at the same
-        // output in the resulting graph.
+        // `build` is a move, but `ValueId` is a stable entity index, so the
+        // same id still names the same output afterward.
         (function, target)
     }
 
     #[test]
     fn classify_int_const_returns_single() {
         let (function, target) = empty_graph_returning(|fb| {
-            // Single IntConst node.  Output type is I64 — chosen
-            // because BranchIndirect targets are pointer-sized on
-            // every supported 64-bit arch; smaller widths would
-            // also fold via the `as u64` cast in the classifier.
+            // I64 because BranchIndirect targets are pointer-sized on every
+            // supported 64-bit arch; narrower widths would fold too.
             fb.build_int_const(0x1234u64, ValueType::I64).unwrap()
         });
         let result = classify_target_bare(&function, target).expect("classify");
@@ -298,9 +197,8 @@ mod tests {
 
     #[test]
     fn classify_int_const_when_lr_unset_still_returns_single() {
-        // Pinned: the IntConst arm does not consult
-        // `link_register_vn`.  A None lr (x86 / x86_64) must not
-        // suppress IntConst classification.
+        // The IntConst arm must not consult `link_register_vn`, so a None lr
+        // (x86 / x86_64) cannot suppress its classification.
         let (function, target) = empty_graph_returning(|fb| {
             fb.build_int_const(0xfeed_face_u64, ValueType::I64).unwrap()
         });
@@ -313,16 +211,13 @@ mod tests {
     #[test]
     fn classify_initial_var_with_matching_lr_returns_link_register() {
         let lr_vn = fake_reg_vn(0x4c, 4);
-        // Build a graph where the only tracked variable IS the
-        // link register; reading it produces an `InitialVar(lr)`
-        // output.
+        // The only tracked variable IS the link register, so reading it gives
+        // an `InitialVar(lr)`.
         let mut builder = RegisterSet::new()
             .tracked(lr_vn)
             .link_register(lr_vn)
             .build_fn_single_region()
             .expect("RegisterSet::build_fn_single_region");
-        // `read_variable` in the entry region's only predecessor
-        // (the function entry) returns the InitialVar.
         let target = builder.read_variable(&lr_vn).expect("read_variable(lr)");
         builder
             .build_return(Some(target), &[])
@@ -330,12 +225,8 @@ mod tests {
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
 
-        // PhiCollapse hasn't run, so the producer might be a
-        // VarPhi rather than InitialVar directly.  Inspect.
-        // For the LinkRegister arm to match, the producer must be
-        // `InitialVar(lr_vn)` — we walk past a single-input
-        // VarPhi in the test if we hit one, since
-        // PhiCollapse would have done that in production.
+        // PhiCollapse has not run, so walk past a single-input VarPhi by hand
+        // to reach the `InitialVar(lr_vn)` the LinkRegister arm needs.
         let mut producer_value = target;
         loop {
             let pid = function.producer(producer_value);
@@ -346,8 +237,8 @@ mod tests {
             if !is_var_phi {
                 break;
             }
-            // VarPhi inputs: [phi_token, ...per-pred values].
-            // With one predecessor, slot 1 is the value.
+            // Inputs are [phi_token, ...per-pred values], so a single
+            // predecessor puts the value at slot 1.
             if function.node_inputs(pid).len() != 2 {
                 break;
             }
@@ -365,9 +256,8 @@ mod tests {
     fn classify_initial_var_with_non_matching_vn_returns_none() {
         let lr_vn = fake_reg_vn(0x4c, 4);
         let other_vn = fake_reg_vn(0x10, 4);
-        // Track only `other_vn`; reading it gives `InitialVar(other_vn)`.
-        // Pass `lr_vn` as the link register — they don't match, so
-        // the classifier must return None.
+        // The tracked variable and the declared link register differ, so no
+        // match is possible.
         let mut builder = RegisterSet::new()
             .tracked(other_vn)
             .link_register(lr_vn)
@@ -407,9 +297,7 @@ mod tests {
 
     #[test]
     fn classify_initial_var_with_lr_unset_returns_none() {
-        // InitialVar(lr_vn), but `link_register_vn = None` (the
-        // x86 / x86_64 case).  The `Some(vn) == None` guard fails;
-        // classifier returns None.
+        // InitialVar(lr_vn) with `link_register_vn = None`, the x86 case.
         let lr_vn = fake_reg_vn(0x4c, 4);
         let mut builder = RegisterSet::new()
             .tracked(lr_vn)
@@ -447,18 +335,14 @@ mod tests {
 
     #[test]
     fn classify_unrelated_node_kind_returns_none() {
-        // An IntAdd node — not IntConst, not InitialVar, not
-        // ValuePhi — must classify as None.
         let (function, target) = empty_graph_returning(|fb| {
             let lhs = fb.build_int_const(1u64, ValueType::I64).unwrap();
             let rhs = fb.build_int_const(2u64, ValueType::I64).unwrap();
             fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, ValueType::I64)
                 .expect("build_int_binary_operation")
         });
-        // Note: ConstantFold would turn 1+2 into IntConst(3), but
-        // we don't run the optimiser here — the unit tests use the
-        // raw builder output.  The returned target's producer is
-        // an IntBinaryOp node, which the `_ => None` arm catches.
+        // ConstantFold would turn 1+2 into IntConst(3), but the optimiser does
+        // not run here, so the producer stays an IntBinaryOp.
         let producer_kind = *function.kind_of_value(target);
         assert!(
             matches!(producer_kind, NodeKind::IntBinaryOp(_)),

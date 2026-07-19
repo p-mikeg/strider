@@ -1,26 +1,20 @@
-/// Whether an optimization pass made any change to the IR graph.
-///
-/// Passes return this from `Optimizer::apply`.  The pipeline uses it to
-/// decide whether to run another fixed-point iteration.
+/// Drives the pipeline's decision to run another fixed-point iteration.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptimizationResult {
-    /// The graph was not modified.
     NoChange,
     /// At least one node was changed, added, or removed.
     Changed,
 }
 
 impl OptimizationResult {
-    /// Returns `true` when the result is [`Changed`](OptimizationResult::Changed).
     #[inline]
     #[must_use]
     pub fn changed(self) -> bool {
         matches!(self, OptimizationResult::Changed)
     }
 
-    /// Maps the boolean return of [`strider_ir::Graph::replace_all_uses`] to
-    /// an `OptimizationResult`: `true` → `Changed`, `false` → `NoChange`.
+    /// Maps the boolean return of [`strider_ir::Graph::replace_all_uses`].
     #[must_use]
     pub fn from_changed(changed: bool) -> Self {
         if changed {
@@ -32,59 +26,32 @@ impl OptimizationResult {
 }
 
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
-/// call.  The shared home for configuration and caches that every pass in
-/// one pipeline run agrees on, so individual passes stop carrying their
-/// own copies:
+/// call. Passes that need none of it ignore it (`_ctx: &mut OptCtx<'_>`).
 ///
-/// * `rom` — the optional borrowed read-only memory image consumed by
-///   [`crate::LoadReadOnly`].
-/// * `options` — the [`crate::OptOptions`] struct holding all per-run tuning
-///   knobs (`alias_mode`, `calls_clobber`).  The
-///   SP-aware passes ([`crate::LoadForward`], [`crate::FunctionArgDetect`],
-///   [`crate::CallStackArgCollect`]) read from it; set fields on
-///   `ctx.options` after constructing via [`OptCtx::new`].
+/// SP decompositions are NOT cached here: they live in the function's own
+/// `stack_offsets` side-table, written by `StackOffsetDetect` once the graph
+/// is frozen and recomputed read-only during the fixed point.
 ///
-/// SP decompositions are no longer cached here: they live in the function's
-/// own `stack_offsets` side-table, written by `StackOffsetDetect` once the
-/// graph is frozen and recomputed read-only during the fixed point.
-///
-/// Passes that don't need any of this simply ignore the context
-/// (`_ctx: &mut OptCtx<'_>`).
-///
-/// Borrowed (`&dyn ReadOnlyMemory`), not `Arc`-shared: strider runs
-/// single-threaded and the orchestrator owns the rom for the whole
-/// run, threading it down per pipeline invocation.
-///
-/// The fields are `pub`: this is the shared config bag, and callers
-/// (the orchestrator, tests) set fields on `options` directly after
-/// constructing via [`OptCtx::new`].
+/// The rom is borrowed rather than `Arc`-shared: strider is single-threaded
+/// and the orchestrator owns the rom for the whole run.
 pub struct OptCtx<'mem> {
-    /// Borrowed read-only memory image.  `None` disables every pass
-    /// gated on rom availability ([`crate::LoadReadOnly`]
+    /// `None` disables every rom-gated pass ([`crate::LoadReadOnly`]
     /// short-circuits to `NoChange`).
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
-    /// All per-run tuning knobs in one place.  See [`crate::OptOptions`].
     pub options: crate::OptOptions,
-    /// Output channel for the [`crate::IndirectBranchClassify`] post-pass:
-    /// maps each **live** `IndirectBranch` placeholder the pass visited to
-    /// its classification (`Some` when the dispatch target was recovered,
-    /// `None` when it remains unresolvable this iteration).  Keyed by the
-    /// placeholder's [`strider_ir::node::NodeId`] — the orchestrator joins
-    /// these back to the dispatch pcode address via the correlation it
-    /// recorded at lift time.  Empty until the pass runs; the orchestrator
-    /// drains it after `OptimizerPipeline::run` returns.  Dead placeholders
-    /// (pruned by the node-removing passes) never appear here, so a branch
-    /// optimisation proved unreachable is silently dropped rather than
-    /// reported unresolved.
+    /// Output channel for [`crate::IndirectBranchClassify`]: each LIVE
+    /// `IndirectBranch` placeholder it visited, mapped to `Some` when the
+    /// dispatch target was recovered and `None` when it stays unresolvable
+    /// this iteration. The orchestrator joins the NodeId keys back to
+    /// dispatch pcode addresses via its lift-time correlation, and drains
+    /// this after `OptimizerPipeline::run` returns. Placeholders the
+    /// node-removing passes pruned never appear, so a branch proved
+    /// unreachable is dropped rather than reported unresolved.
     pub indirect_resolutions:
         rustc_hash::FxHashMap<strider_ir::node::NodeId, Option<strider_cfg::ResolvedTargets>>,
 }
 
 impl<'mem> OptCtx<'mem> {
-    /// Construct an optimization context with an optional read-only-memory
-    /// image (the rom the `LoadReadOnly` / indirect-branch passes fold against).
-    /// Callers that already hold an `Option<&dyn ReadOnlyMemory>` pass it straight
-    /// through.
     #[must_use]
     pub fn new(rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>) -> Self {
         Self {
@@ -95,37 +62,18 @@ impl<'mem> OptCtx<'mem> {
     }
 }
 
-/// A single IR optimization pass.
+/// A single IR optimization pass. Returns
+/// [`OptimizationResult::Changed`] when it modified anything, which makes
+/// the pipeline run another iteration.
 ///
-/// Implement this trait to add a new pass.  The pass receives the
-/// `function` (whose entry [`strider_ir::node::NodeId`] is reachable
-/// via `function.entry()`) plus an [`OptCtx`] of per-run state, applies
-/// whatever transformations it can in one sweep, and returns
-/// [`OptimizationResult::Changed`] if anything was modified (causing
-/// the pipeline to run another iteration) or
-/// [`OptimizationResult::NoChange`] if the graph is already in normal
-/// form for this pass.
+/// `apply` is the only entry point: the pipeline builds ONE self-cleaning
+/// `EditFunction` for the whole run rather than reconstructing a wrapper per
+/// pass per iteration. One-off callers holding a `&mut Function` use
+/// `run_one`, which builds a throwaway one.
 ///
-/// # Why `apply(&mut EditFunction)` is the only entry point
-///
-/// The pipeline runs many passes over one function per run.  Each pass
-/// mutates the IR through a [`crate::EditFunction`], so building
-/// a fresh ctx inside every pass would reconstruct the same wrapper
-/// once per pass per fixed-point iteration.  Instead the pipeline builds
-/// **one** self-cleaning `EditFunction` for the whole run and hands it to
-/// every pass via [`Optimizer::apply`] — the single entry point.
-///
-/// One-off callers (tests, benches) that hold a `&mut Function` and want
-/// to run a single pass use the `run_one` helper, which builds a
-/// throwaway [`crate::EditFunction`] (populate → cull → `apply` → drain) for
-/// that function.
-///
-/// `EditFunction<'_>` carries a lifetime parameter, which would prevent it
-/// appearing as the receiver type of a trait object
-/// (`Box<dyn Optimizer>`).  The pipeline stores type-erased passes, so
-/// the trait itself must stay object-safe with no lifetime parameter on
-/// `Self`.  `apply` keeps the trait object-safe by late-binding the ctx
-/// lifetime on the method (`EditFunction<'_>`) rather than on the trait.
+/// The pipeline stores type-erased passes, so the trait must stay
+/// object-safe with no lifetime on `Self`. `apply` achieves that by
+/// late-binding the ctx lifetime on the method (`EditFunction<'_>`).
 ///
 /// ```
 /// # use strider_opt::{OptCtx, OptimizationResult, Optimizer};
@@ -144,37 +92,23 @@ impl<'mem> OptCtx<'mem> {
 /// }
 /// ```
 ///
-/// Passes that need the entry [`strider_ir::node::NodeId`] directly
-/// (for `edit.walk()` or
-/// `strider_ir::walk::cfg_reachable(edit.graph_ref(), edit.entry())`)
-/// derive it via `edit.entry()`, which returns the entry
-/// [`strider_ir::node::NodeId`] directly.
 pub trait Optimizer: OptimizerClone {
-    /// Real entry point: passes mutate the function through the shared
-    /// `EditFunction` the pipeline built once for this run.
-    ///
-    /// `edit` wraps the built function (entry is a valid `NodeId`); passes
-    /// mutate through `edit`'s curated mutation-façade methods
-    /// (`create_node`, `update_input`, `set_stack_slot`, …) and read
-    /// through `edit`'s deref to `Function` / `Graph`.
-    ///
-    /// `ctx` carries per-run state (currently the borrowed rom image);
-    /// passes that don't consume the ctx ignore it (`_ctx: &mut OptCtx<'_>`).
+    /// `edit` wraps the built function, so its entry is a valid `NodeId`.
+    /// Passes mutate through `edit`'s façade methods and read through its
+    /// deref to `Function` / `Graph`.
     ///
     /// # Errors
     ///
-    /// Returns the first error encountered by the pass — typically an IR
-    /// validation failure or a pattern-rewrite error propagated up through
-    /// `anyhow::Error`.
+    /// Returns the first error the pass hits, typically an IR validation
+    /// failure or a pattern-rewrite error.
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<OptimizationResult>;
 
-    /// Human-readable pass name — the concrete struct's short name.
-    /// Defaulted via `type_name` so no pass has to implement it; override
-    /// only if a pass wants a name that differs from its struct name.
+    /// The concrete struct's short name, defaulted via `type_name`.
+    /// Override only for a name differing from the struct name.
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
             .rsplit("::")
@@ -183,28 +117,16 @@ pub trait Optimizer: OptimizerClone {
     }
 }
 
-/// Run a single pass against `function` through a throwaway self-cleaning
-/// [`crate::EditFunction`] — the one-off replacement for the (removed)
-/// `Optimizer::optimize` default.
+/// Runs one pass through a throwaway `EditFunction`, culling dead nodes
+/// before and draining after so the result matches the pipeline's eager
+/// cull. Test-only; the production driver is [`OptimizerPipeline::run`].
 ///
-/// Constructs a [`crate::EditFunction::new`], runs the initial dead-node cull
-/// via [`crate::EditFunction::cull_dead`], calls
-/// [`Optimizer::apply`], then drains the maybe-dead queue
-/// ([`crate::EditFunction::clean`]) so the post-run graph reflects the same
-/// eager cull the pipeline applies.  Direct/one-off callers (tests, benches)
-/// that hold a `&mut Function` use this; the pipeline shares one ctx across
-/// all passes and never calls it.
-///
-/// `function` must be in its built form (`function.entry()` returns a valid `NodeId`).
+/// `function` must be built (`function.entry()` is a valid `NodeId`).
 ///
 /// # Errors
 ///
-/// Returns an error if `function` has not been built (no entry node — the
-/// built invariant `EditFunction::new` enforces), or the first error returned
-/// by [`Optimizer::apply`].
-/// Test-only: the production driver is [`OptimizerPipeline::run`]'s fixed-point
-/// loop; this single-pass runner exists for unit / integration tests only, so
-/// it is gated behind `test` / the `test-util` feature.
+/// Errors if `function` has no entry node, else the first error from
+/// [`Optimizer::apply`].
 #[cfg(any(test, feature = "test-util"))]
 pub fn run_one(
     pass: &dyn Optimizer,
@@ -218,18 +140,12 @@ pub fn run_one(
     Ok(result)
 }
 
-/// Run a single [`PostOptimizer`] against `function` through a throwaway
-/// self-cleaning [`crate::EditFunction`] — the post-pass sibling of
-/// [`run_one`].  Post-passes return no `Change`/`NoChange`, so this yields
-/// `crate::Result<()>`.  Test-only: the production driver is
-/// [`OptimizerPipeline::run`]'s post-pass loop.
-///
-/// `function` must be in its built form (`function.entry()` returns a valid `NodeId`).
+/// Post-pass sibling of [`run_one`], likewise test-only.
 ///
 /// # Errors
 ///
-/// Returns an error if `function` has not been built, or the first error
-/// returned by [`PostOptimizer::apply`].
+/// Errors if `function` has no entry node, else the first error from
+/// [`PostOptimizer::apply`].
 #[cfg(any(test, feature = "test-util"))]
 pub fn run_post(
     pass: &dyn PostOptimizer,
@@ -243,19 +159,12 @@ pub fn run_post(
     Ok(())
 }
 
-/// Defines an object-safe clone shim trait `$shim` for the trait object
-/// `dyn $obj`, plus its blanket impl for every concrete `$obj + Clone +
-/// 'static`.
+/// Defines an object-safe clone shim trait `$shim` for `dyn $obj`, plus its
+/// blanket impl for every `$obj + Clone + 'static`.
 ///
-/// The shim's single method `clone_box(&self) -> Box<dyn $obj>` lets the
-/// pipeline box-clone a type-erased pass.  Enables external iteration over
-/// the canonical default pipelines: downstream crates (e.g. `strider-py`)
-/// snapshot the pass list via [`OptimizerPipeline::passes`] /
-/// [`OptimizerPipeline::post_passes`] and `clone_box` each entry into their
-/// own storage, rather than hand-mirroring the pass list and risking silent
-/// drift.  Pass authors never write `clone_box` by hand — `#[derive(Clone)]`
-/// on the pass type is sufficient (ZST passes get it via
-/// `#[derive(Clone, Copy)]`).
+/// Lets downstream crates snapshot a canonical pipeline by `clone_box`ing
+/// each entry of [`OptimizerPipeline::passes`] instead of hand-mirroring the
+/// pass list and drifting. Pass authors only need `#[derive(Clone)]`.
 macro_rules! clone_box_shim {
     ($(#[$attr:meta])* $shim:ident for dyn $obj:ident) => {
         $(#[$attr])*
@@ -277,35 +186,23 @@ clone_box_shim! {
     OptimizerClone for dyn Optimizer
 }
 
-/// A post-optimization pass that runs **once** after the fixed-point loop
-/// converges (not iterated), so — unlike [`Optimizer`] — it returns no
-/// `Change`/`NoChange`.
+/// A pass that runs ONCE on the converged graph, so unlike [`Optimizer`] it
+/// returns no `Change`/`NoChange`. These are side-table annotation and
+/// wiring passes that never feed back into the loop.
 ///
-/// Post-passes are side-table-annotation / wiring passes
-/// ([`crate::StackOffsetDetect`], [`crate::FunctionArgDetect`],
-/// [`crate::CallStackArgCollect`], [`crate::IndirectBranchClassify`]) that
-/// run on the converged graph and never feed back into the loop.  Splitting
-/// them onto their own trait type-enforces "post-only": a post pass cannot
-/// be registered via [`OptimizerPipeline::add`], and the absence of a
-/// `Change`/`NoChange` return makes the single-shot contract explicit.
-///
-/// Register via [`OptimizerPipeline::add_post_pass`].
+/// The separate trait type-enforces "post-only": such a pass cannot be
+/// registered via [`OptimizerPipeline::add`], only
+/// [`OptimizerPipeline::add_post_pass`].
 pub trait PostOptimizer: PostOptimizerClone {
-    /// Runs ONCE after the fixed-point loop converges (not iterated), so it
-    /// returns no Change/NoChange.
-    ///
     /// `edit` wraps the converged function; `ctx` carries the same per-run
     /// state the fixed-point passes saw.
     ///
     /// # Errors
     ///
-    /// Returns the first error encountered by the pass, propagated up through
-    /// `anyhow::Error`.
+    /// Returns the first error the pass hits.
     fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()>;
 
-    /// Human-readable post-pass name — the concrete struct's short name.
-    /// Defaulted via `type_name` so no post-pass has to implement it; override
-    /// only if a post-pass wants a name that differs from its struct name.
+    /// The concrete struct's short name, defaulted via `type_name`.
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
             .rsplit("::")
@@ -319,16 +216,9 @@ clone_box_shim! {
     PostOptimizerClone for dyn PostOptimizer
 }
 
-/// An ordered list of `Optimizer` passes that are run in a shared fixed-point
-/// loop.
-///
-/// On each iteration every pass is called once in registration order.  The loop
-/// repeats until no pass reports a change.  Use [`OptimizerPipeline::add`] to
-/// register passes and [`OptimizerPipeline::run`] to execute them.
-///
-/// Internally the pipeline stores passes as `Box<dyn Optimizer>` and
-/// dispatches each via `apply(&mut EditFunction, &mut OptCtx)` against the
-/// shared self-cleaning `EditFunction` built once per run.
+/// An ordered pass list run in a shared fixed-point loop: every pass is
+/// called once per iteration in registration order, repeating until no pass
+/// reports a change.
 pub struct OptimizerPipeline {
     passes: Vec<Box<dyn Optimizer>>,
     post_passes: Vec<Box<dyn PostOptimizer>>,
@@ -341,7 +231,6 @@ impl Default for OptimizerPipeline {
 }
 
 impl OptimizerPipeline {
-    /// Creates an empty pipeline with no passes registered.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -350,59 +239,36 @@ impl OptimizerPipeline {
         }
     }
 
-    /// Appends `opt` to the end of the pass list.
     pub fn add<O: Optimizer + 'static>(&mut self, opt: O) {
         self.passes.push(Box::new(opt));
     }
 
-    /// Appends `opt` to the post-pass list.  Post-passes run once, in
-    /// registration order, after the fixed-point loop converges, and return
-    /// no `Change`/`NoChange` (no re-entry into the fixed-point loop).
     pub fn add_post_pass<O: PostOptimizer + 'static>(&mut self, opt: O) {
         self.post_passes.push(Box::new(opt));
     }
 
-    /// Borrow the fixed-point passes as a slice in registration order.
-    ///
-    /// Lets downstream crates snapshot the canonical pipeline without
-    /// hand-mirroring the pass list.  Combine with the
-    /// `OptimizerClone::clone_box` supertrait method to materialise an
-    /// independent copy of each pass.
+    /// The fixed-point passes in registration order. Pair with
+    /// `OptimizerClone::clone_box` to snapshot an independent copy of the
+    /// canonical pipeline instead of hand-mirroring the pass list.
     #[must_use]
     pub fn passes(&self) -> &[Box<dyn Optimizer>] {
         &self.passes
     }
 
-    /// Borrow the post-passes as a slice in registration order.  See
-    /// [`OptimizerPipeline::passes`] for the use-case.
     #[must_use]
     pub fn post_passes(&self) -> &[Box<dyn PostOptimizer>] {
         &self.post_passes
     }
 
-    /// Runs all registered passes in a fixed-point loop until convergence,
-    /// then runs each post-pass exactly once in registration order.
+    /// Runs the passes to convergence, then each post-pass once in
+    /// registration order, then re-validates the graph.
     ///
-    /// `function` must be in its built form (`function.entry()` returns a
-    /// valid `NodeId`); each pass derives the entry
-    /// [`strider_ir::node::NodeId`] internally as needed, and the final
-    /// validation step requires it.
-    /// `ctx` carries per-run pass-agnostic state (currently the borrowed
-    /// rom image); the orchestrator constructs one per pipeline run, ad-hoc
-    /// callers use [`OptCtx::new`].
-    ///
-    /// Returns `Ok(())` when no pass changed the graph in a full iteration
-    /// and all post-passes completed without error.  Propagates the first
-    /// error returned by any pass.
+    /// `function` must be built (`function.entry()` is a valid `NodeId`).
     ///
     /// # Errors
     ///
-    /// Returns an error if the function is not built (`EditFunction::new`
-    /// rejects a function whose `entry()` is `None`).
-    /// Otherwise, returns the first `anyhow::Error` reported by any pass.
-    /// If every pass and post-pass succeeds, the graph is then re-validated
-    /// and any validation error is returned.  When a post-pass returns
-    /// `Err`, the final validation step is skipped — the pass error wins.
+    /// Errors if the function is not built, else the first error from any
+    /// pass. A pass error skips the final validation step and wins.
     pub fn run(
         &self,
         function: &mut strider_ir::Function,
@@ -410,12 +276,10 @@ impl OptimizerPipeline {
     ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
         {
-            // Build ONE self-cleaning EditFunction for the whole run and share
-            // it across every pass, instead of each pass reconstructing one.
-            // `EditFunction::new` seeds the live/roots bookkeeping, and the
-            // explicit `cull_dead()` removes any pre-existing dead nodes.  The
-            // borrow of `function` (via the ctx) is held for the duration of
-            // this scope and released before the final validation step below.
+            // One EditFunction shared by every pass. `new` seeds the
+            // live/roots bookkeeping; `cull_dead` drops pre-existing dead
+            // nodes. Scoped so the borrow of `function` is released before
+            // the validation step below.
             let mut edit = crate::EditFunction::new(function);
             edit.cull_dead();
             let mut iters: u32 = 0;
@@ -424,11 +288,10 @@ impl OptimizerPipeline {
                 for opt in &self.passes {
                     if opt.apply(&mut edit, ctx)?.changed() {
                         changed = true;
-                        // Drain immediately after every pass that changed the
-                        // graph so the NEXT pass in this same iteration sees a
-                        // culled graph — and invalidate the SP-decomposition
-                        // memo, since a rewrite can change (or cull) the value a
-                        // cached verdict was computed for.
+                        // Drain after every changing pass so the next pass in
+                        // this iteration sees a culled graph, and invalidate
+                        // the SP-decomposition memo: a rewrite can change or
+                        // cull the value a cached verdict was computed for.
                         edit.clean();
                         edit.function().side_tables().clear_stack_slots();
                     }
@@ -444,17 +307,15 @@ impl OptimizerPipeline {
                 }
             }
             for opt in &self.post_passes {
-                // Post-passes run exactly once, in order, after convergence and
-                // return no Change/NoChange.  Drain after each so the next sees
-                // a culled graph.  The `stack_offsets` cache that
-                // `StackOffsetDetect` fills is NOT cleared here: later post-pass
-                // mutations (e.g. `CallStackArgCollect` appending Call inputs)
-                // don't change any address value's decomposition, so the filled
-                // slots stay valid and survive as the user-facing per-node SSoT.
+                // `stack_offsets` is deliberately NOT cleared between
+                // post-passes: later mutations (e.g. `CallStackArgCollect`
+                // appending Call inputs) don't change any address value's
+                // decomposition, so the filled slots stay valid and survive
+                // as the user-facing per-node SSoT.
                 opt.apply(&mut edit, ctx)?;
                 edit.clean();
             }
-        } // edit + state dropped here → function borrow released
+        } // dropping edit releases the borrow of `function`
         strider_ir::validate::validate(function)?;
         Ok(())
     }
@@ -462,8 +323,6 @@ impl OptimizerPipeline {
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for [`OptimizerPipeline::run`].
-
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{OptCtx, Optimizer};
@@ -472,7 +331,7 @@ mod tests {
     use strider_ir_test_utils::IrBuilderEx;
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
-    /// Build a tiny single-region function returning `IntConst(K)`.
+    /// Single-region function returning `IntConst(k)`.
     fn one_const_fn(k: u64) -> strider_ir::Function {
         let mut b = strider_ir_test_utils::empty_builder().unwrap();
         let region = b.create_region_all().unwrap();
@@ -485,12 +344,9 @@ mod tests {
         b.build().unwrap()
     }
 
-    /// `run(graph, entry)` validates the final graph — an invalid graph
-    /// in the post-pass output surfaces as a `ValidationErrors`-bearing
-    /// `anyhow::Error` (downcastable) (downcastable via `anyhow::Error::
-    /// downcast_ref::<strider_ir::validate::ValidationErrors>()`).  Smoke test
-    /// using an empty post-pass list and a valid input — run must
-    /// succeed (no validation error) and the graph must be unchanged.
+    /// An invalid final graph surfaces as an `anyhow::Error` carrying
+    /// `strider_ir::validate::ValidationErrors`, reachable via
+    /// `downcast_ref`. Here the input is valid, so run must succeed.
     #[test]
     fn pipeline_run_validates_final_graph_on_clean_input() -> crate::Result<()> {
         let mut function = one_const_fn(3);
@@ -498,10 +354,9 @@ mod tests {
         let before = function.walk().count();
         pipeline.run(&mut function, &mut OptCtx::new(None))?;
         let after = function.walk().count();
-        // The default pipeline on an already-folded constant cannot fold
-        // further; the reachable-count is stable.  This pins that
-        // `run(graph, entry)` doesn't accidentally mutate the graph
-        // beyond what the underlying passes produce.
+        // An already-folded constant cannot fold further, so the reachable
+        // count is stable. Pins that `run` does not mutate the graph beyond
+        // what the passes themselves produce.
         assert!(
             after <= before,
             "default pipeline must not GROW the reachable set"
@@ -509,10 +364,8 @@ mod tests {
         Ok(())
     }
 
-    /// A non-monotone pass that always claims the graph changed must be
-    /// caught by the pipeline's iteration cap rather than spinning
-    /// forever.  Pins the divergence-guard contract on
-    /// `MAX_ITERS = 1024`.
+    /// A non-monotone pass that always claims a change must hit the
+    /// iteration cap instead of spinning forever.
     #[test]
     fn fixed_point_limit_exceeded() {
         use super::{OptimizationResult, Optimizer, OptimizerPipeline};
@@ -540,9 +393,8 @@ mod tests {
         );
     }
 
-    /// `default_pipeline().run` invokes `validate` at the end on a
-    /// trivial valid input — pins that the validate-on-finish step
-    /// is wired and accepts a clean graph (smoke).
+    /// Pins that the validate-on-finish step is wired and accepts a clean
+    /// graph.
     #[test]
     fn run_validates_after_default_pipeline() -> crate::Result<()> {
         let mut function = one_const_fn(0);
@@ -550,14 +402,11 @@ mod tests {
         Ok(())
     }
 
-    /// `run` calls `validate` after every post-pass too — pin that a
-    /// pipeline carrying a post-pass produces a graph that still
-    /// validates.  Uses ConstantFold + CallStackArgCollect (post-pass)
-    /// — the same plumbing the orchestrator relies on.
+    /// A pipeline carrying a post-pass must still produce a graph that
+    /// validates. Uses the same plumbing the orchestrator relies on.
     #[test]
     fn run_with_post_passes_validates() -> crate::Result<()> {
         use crate::{CallStackArgCollect, ConstantFold, OptimizerPipeline};
-        // Use a synthetic SP varnode in REGISTER space.
         let sp = rsleigh::Vn {
             addr_off: 0x20,
             addr_space: rsleigh::VnSpace::REGISTER,
@@ -586,11 +435,8 @@ mod tests {
         Ok(())
     }
 
-    /// `LoadForward` must forward a SP-relative store to the subsequent
-    /// load at the same offset.
-    /// Build `store sp-4 = 0x42; load sp-4` and assert the load is
-    /// forwarded to `IntConst(0x42)`.  Pins the in-pipeline ordering
-    /// the orchestrator depends on.
+    /// `store sp-4 = 0x42; load sp-4` must forward to `IntConst(0x42)`.
+    /// Pins the in-pipeline ordering the orchestrator depends on.
     #[test]
     fn store_then_load_at_same_offset_forwarded() -> crate::Result<()> {
         use crate::{
@@ -647,9 +493,9 @@ mod tests {
         Ok(())
     }
 
-    /// `CallStackArgCollect` post-pass must extend a Call's input list
-    /// with positional stack arg values pushed before it.
-    /// Pins the orchestrator's full SP-aware pipeline.
+    /// `CallStackArgCollect` must extend a Call's inputs with the
+    /// positional stack args pushed before it. Pins the orchestrator's full
+    /// SP-aware pipeline.
     #[test]
     fn full_call_pipeline_collects_args() -> crate::Result<()> {
         use crate::{
@@ -716,9 +562,8 @@ mod tests {
         Ok(())
     }
 
-    /// A 50-deep chain of `Add(_, 1)` ops must reach fixed point via
-    /// the default pipeline — no premature exit, no infinite loop.
-    /// Pins the convergence side of the fixed-point loop.
+    /// A 50-deep `Add(_, 1)` chain must reach fixed point: no premature
+    /// exit, no infinite loop.
     #[test]
     fn long_reassoc_chain_converges() -> crate::Result<()> {
         use strider_ir::IntBinaryOp;
@@ -731,8 +576,7 @@ mod tests {
             Ok(acc)
         })?;
         crate::default_pipeline().run(&mut function, &mut OptCtx::new(None))?;
-        // After fixed point, the 50-deep chain has folded to a single
-        // `IntConst(50)`; the reachable set is small.
+        // The chain folds to a single `IntConst(50)`.
         assert!(
             function.walk().count() < 20,
             "50-deep chain should fold; reachable={}",
@@ -741,8 +585,6 @@ mod tests {
         Ok(())
     }
 
-    /// ConstantFold implements Optimizer; its default name() returns its
-    /// struct name.
     #[test]
     fn optimizer_name_is_the_concrete_struct_name() {
         let p: Box<dyn Optimizer> = Box::new(crate::opt::constant_fold::ConstantFold::default());

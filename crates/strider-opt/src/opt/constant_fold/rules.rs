@@ -10,20 +10,8 @@ use strider_pattern::{
     zero_extend,
 };
 
-/// Every constant-fold rule, in application order, built once and owned by a
-/// [`super::ConstantFold`] instance.
-///
-/// The semantic groups (identity / const-eval / bool-float / reassoc-and-mask
-/// / bitcast-extend) survive as the builders below and the order they are
-/// concatenated in — they were never dispatched on.  The bitcast-extend rules
-/// include the `IntBitsToFloat`/`FloatBitsToInt` round-trip identities, so
-/// int↔float bitcasts are folded inline; there is no separate lowering step.
-///
-/// A [`crate::BoxedRule`] captures patterns whose inner
-/// [`strider_pattern::Pattern`] is `!Send + !Sync` (strider runs
-/// single-threaded), and the boxed rule closures are not `Clone`.  The
-/// owning pass holds this set behind an [`std::rc::Rc`] so the pass stays
-/// cheaply `Clone` while building the rule closures only once.
+/// Every constant-fold rule, in application order. The concatenation order
+/// below is the application order; the group names carry no dispatch.
 pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
     let mut rules = build_identity_rules();
     rules.extend(build_const_eval_rules());
@@ -33,15 +21,11 @@ pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
     rules
 }
 
-// ── per-node folding ──────────────────────────────────────────────────────────
-
 /// Reassociation and mask-merging: constant-folding across nested
 /// `Add`/`Sub`/`And`, mask distribution, and const-on-right canonicalisation.
 fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
-    // Shared captures: every rule here is matched as an independent query (its
-    // own fresh `Bindings`), so reusing one pool carries no cross-rule state.
-    // `x` / `y` are variable operands, `c1` / `c2` / `c3` the constant operands
-    // a given rule binds.
+    // One shared capture pool: each rule matches as an independent query with
+    // fresh `Bindings`, so there is no cross-rule state.
     let (x, y, c1, c2, c3) = (
         Capture::new(),
         Capture::new(),
@@ -50,7 +34,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         Capture::new(),
     );
 
-    // (x + C1) + C2 → x + (C1 + C2)
+    // (x + C1) + C2 -> x + (C1 + C2)
     let rule_add_add = rewrite_rule(
         add(
             add(var(x), any_int_const().capture(c1)),
@@ -62,7 +46,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         ),
     );
 
-    // (x - C1) - C2 → x - (C1 + C2)
+    // (x - C1) - C2 -> x - (C1 + C2)
     let rule_sub_sub = rewrite_rule(
         sub(
             sub(var(x), any_int_const().capture(c1)),
@@ -74,7 +58,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         ),
     );
 
-    // (x + C1) - C2 → x + (C1 - C2)
+    // (x + C1) - C2 -> x + (C1 - C2)
     let rule_add_sub = rewrite_rule(
         sub(
             add(var(x), any_int_const().capture(c1)),
@@ -86,7 +70,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         ),
     );
 
-    // (x - C1) + C2 → x + (C2 - C1)
+    // (x - C1) + C2 -> x + (C2 - C1)
     let rule_sub_add = rewrite_rule(
         add(
             sub(var(x), any_int_const().capture(c1)),
@@ -98,7 +82,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         ),
     );
 
-    // (x & C1) & C2 → x & (C1 & C2)
+    // (x & C1) & C2 -> x & (C1 & C2)
     let rule_and_merge = rewrite_rule(
         and(
             and(var(x), any_int_const().capture(c1)),
@@ -107,16 +91,12 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         template::and(var(x), int_const_with!([c1: uint, c2: uint] => c1 & c2)),
     );
 
-    // ((x & C1) | (y & C2)) & C3 → (x & (C1 & C3)) | (y & (C2 & C3))
+    // ((x & C1) | (y & C2)) & C3 -> (x & (C1 & C3)) | (y & (C2 & C3))
     //
-    // Only fire when the distribution actually simplifies — i.e. at least
-    // one product `Ci & C3` is zero, so that disjunct collapses (via the
-    // `x & 0 → 0` / `x | 0 → x` identities) to leave a single masked term.
-    // When BOTH products are non-zero the distribution is pure churn: it
-    // merely pushes `& C3` inward, and the identities can't shrink either
-    // disjunct, so the factored `And(Or, C3)` shape regenerates and the
-    // rule re-fires forever (non-confluence).  Gating on "a disjunct
-    // collapses" makes the rule strictly progress-reducing.
+    // Gated on at least one product `Ci & C3` being zero, so that disjunct
+    // collapses via `x & 0 -> 0` / `x | 0 -> x`. With both products non-zero the
+    // distribution only pushes `& C3` inward, neither disjunct shrinks, the
+    // factored `And(Or, C3)` shape regenerates, and the rule re-fires forever.
     let rule_and_dist = rewrite_rule(
         and(
             or(
@@ -141,16 +121,12 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         ),
     );
 
-    // (x | A) & B → x & B   when A & B == 0
+    // (x | A) & B -> x & B   when A & B == 0
     //
-    // Alignment idiom: the OR sets bits `A` that the mask `B` then clears
-    // (`A & B == 0`), so the OR is a no-op for the masked value.  ARM/Thumb
-    // dispatch emits `(load | 1) & 0xFFFFFFFE` (set then clear the Thumb bit);
-    // folding it lets the jump-table classifier see a single masked load
-    // instead of hand-stripping the `Or`.  Sound: when `A & B == 0`, every
-    // surviving bit (`B_i = 1`) has `A_i = 0`, so `(x_i | A_i) & B_i =
-    // x_i & B_i`.  Confluent: the RHS is a plain `And`, never the `(_ | _) & _`
-    // LHS shape, so it cannot re-fire (unlike the unguarded full distribution).
+    // Alignment idiom: ARM/Thumb dispatch emits `(load | 1) & 0xFFFFFFFE`, and
+    // folding it lets the jump-table classifier see a single masked load.
+    // Sound because every surviving bit (`B_i = 1`) has `A_i = 0`. Terminates
+    // because the RHS is a plain `And`, never the `(_ | _) & _` LHS shape.
     let rule_align_or_removal = rewrite_rule(
         and(
             or(var(x), any_int_const().capture(c1)),
@@ -168,22 +144,18 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         template::and(var(x), var(c2)),
     );
 
-    // Commutative const-on-right canonicalisation: `op(C, x) → op(x, C)` for
-    // each commutative int op, so a constant operand is always the right one
-    // (a normalisation that lets equal `op(C, x)` / `op(x, C)` dedup to one
-    // node).  `.ordered()` is REQUIRED: it forbids the commutative operand
-    // swap so the LHS matches ONLY the const-on-left shape — without it the
-    // matcher would also match the already-canonical `op(x, C)` and the rule
-    // would re-fire forever (non-termination).  The `x`-not-const guard then
-    // prevents a `(C1, C2)` ping-pong (const-eval folds those instead).
+    // `op(C, x) -> op(x, C)` for each commutative int op, so equal `op(C, x)` /
+    // `op(x, C)` dedup to one node.
     //
-    // `x` / `c1` are reused from the shared pool: each rule is an independent
-    // query.  One rule per op because the template DSL can't rebuild a binary
-    // node from a captured op variant.
-    // One rule per op (the template DSL can't rebuild a binary node from a
-    // captured op variant); the macro removes the five-fold copy.  `$op` names
-    // both the matcher builder (`add`) and its template counterpart
-    // (`template::add`).
+    // `.ordered()` is REQUIRED: it forbids the commutative operand swap so the
+    // LHS matches only the const-on-left shape. Without it the matcher also
+    // matches the already-canonical `op(x, C)` and the rule never terminates.
+    // The `x`-not-const guard then prevents a `(C1, C2)` ping-pong; const-eval
+    // folds those instead.
+    //
+    // One rule per op because the template DSL can't rebuild a binary node from
+    // a captured op variant. `$op` names both the matcher builder and its
+    // `template::` counterpart.
     macro_rules! const_on_right {
         ($op:ident) => {
             rewrite_rule(
@@ -216,11 +188,10 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     ]
 }
 
-/// The low-`W` all-ones mask for a truncate's output width, or `None` when the
-/// width is degenerate (0) or at-or-past 128 bits.  Distinct from
+/// The low-`W` all-ones mask for a truncate's output width, or `None` at a
+/// degenerate (0) or >= 128-bit width. Unlike
 /// [`strider_ir::node::ValueType::bit_mask_u128`], which saturates to
-/// `u128::MAX` at >= 128 bits — the truncate-fold guards bail on those widths
-/// instead.
+/// `u128::MAX`, this bails so the truncate-fold guards skip those widths.
 fn truncate_low_mask(ty: strider_ir::node::ValueType) -> Option<u128> {
     let bits = ty.bit_width();
     if bits == 0 || bits >= 128 {
@@ -229,12 +200,8 @@ fn truncate_low_mask(ty: strider_ir::node::ValueType) -> Option<u128> {
     Some((1u128 << bits) - 1)
 }
 
-/// Builds the bitcast, extend/truncate round-trip, and truncate-folding
-/// rule vec.
+/// Bitcast, extend/truncate round-trip, and truncate-folding rules.
 fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
-    // Shared captures: every rule here is an independent query (fresh
-    // `Bindings`), so one pool serves all rules. Within any single rule the
-    // captures it binds are distinct ids.
     let (x, a, b, c) = (
         Capture::new(),
         Capture::new(),
@@ -242,25 +209,19 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         Capture::new(),
     );
 
-    // IntBitsToFloat(FloatBitsToInt(x)) → x
+    // IntBitsToFloat(FloatBitsToInt(x)) -> x
     let rule_int_float = rewrite_rule(int_bits_to_float(float_bits_to_int(var(x))), var(x));
 
-    // FloatBitsToInt(IntBitsToFloat(x)) → x
+    // FloatBitsToInt(IntBitsToFloat(x)) -> x
     let rule_float_int = rewrite_rule(float_bits_to_int(int_bits_to_float(var(x))), var(x));
 
-    // Truncate(ZeroExtend(x)) → x — when `x`'s type equals the truncate's
-    // output type, the round-trip is identity (the extend added zero bits
-    // that the truncate cuts away).  Without this rule, register-merge
-    // chains in write_reg_vn (which always extend then truncate to land
-    // in container width) leave the round-trip in the IR and the pattern
-    // matcher's data-flow walk can't cross through Extend/Truncate to find
-    // an inner Mul/Add.
+    // Truncate(Extend(x)) -> x, but only when `x`'s type equals the truncate's
+    // output type; otherwise this is a real narrowing, not an identity. The
+    // guard checks exactly that against the rule root's `ty`.
     //
-    // The width-equality check uses `when_match` on the Bindings: the
-    // captured `x`'s output type must equal the rule root's `ty`.
-    // Both extend round-trips share the identical width-equality guard and
-    // identity RHS, differing only in the extend builder; the macro removes
-    // the two-fold copy (mirrors the `const_on_right!` precedent above).
+    // Without this, the extend-then-truncate round-trips write_reg_vn emits to
+    // land in container width stay in the IR, and the matcher's data-flow walk
+    // can't cross them to reach an inner Mul/Add.
     macro_rules! ext_round_trip {
         ($ext:ident) => {{
             let pat = truncate($ext(var(x))).when_match(move |edit, ty, bnd| {
@@ -271,25 +232,17 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         }};
     }
     let zext_round_trip = ext_round_trip!(zero_extend);
-
-    // Truncate(SignExtend(x)) → x — same identity at the bit level when
-    // widths match (sign-extension's added bits are sign replication; the
-    // truncate cuts them off and recovers the original bits).
     let sext_round_trip = ext_round_trip!(sign_extend);
 
-    // Narrowing through binop: `Truncate_<W>(IntBinaryOp(op,
-    // SignExt_<W→W'>(a), SignExt_<W→W'>(b)))` → `IntBinaryOp_<W>(op, a, b)`
-    // for ops where the lower W bits don't depend on the upper bits
-    // (Add/Sub/Mul/And/Or/Xor).  MIPS32 lifts `mul a, b` (32×32→64 IntMul
-    // on a 64-bit unique varnode) followed by a 32-bit Truncate to get
-    // back into integer-register width — without this rule the matcher's
-    // data-flow walk for `add(mul(_,_), _)` cannot cross through the
-    // Truncate to find the inner Mul.
+    // Narrowing through a binop: `Truncate_W(op(SignExt(a), SignExt(b)))` ->
+    // `op_W(a, b)`, valid only for ops whose lower W bits don't depend on the
+    // upper bits (Add/Sub/Mul/And/Or/Xor). MIPS32 lifts `mul a, b` as a 32x32->64
+    // IntMul plus a 32-bit Truncate, which otherwise blocks the matcher's
+    // data-flow walk for `add(mul(_,_), _)`.
     //
-    // We need separate rules for each (lhs_extend_kind, rhs_extend_kind)
-    // permutation because the pattern crate's RHS doesn't currently
-    // support reconstructing a non-const node from a captured op variant.
-    // The (SignExt, SignExt) case for Mul covers the MIPS32 shape above.
+    // Each (lhs_extend_kind, rhs_extend_kind) permutation needs its own rule:
+    // the pattern crate's RHS can't reconstruct a non-const node from a captured
+    // op variant. Only the (SignExt, SignExt) Mul case is needed so far.
     let narrow_mul_through_sext = {
         let pat = truncate(mul(sign_extend(var(a)), sign_extend(var(b)))).when_match(
             move |edit, ty, bnd| {
@@ -303,32 +256,18 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         rewrite_rule(pat, template::mul(var(a), var(b)))
     };
 
-    // Drop the high-bits half of a register-merge Or when truncating to
-    // the low half's width.  x86 / x64's `mov $eax, ...` lifts to a
-    // write_reg_vn merge:
-    //   $rax = ($rax & 0xFFFF_FFFF_0000_0000) | (ZeroExt(low_part) &
-    //                                            0x0000_0000_FFFF_FFFF)
-    // and downstream reads of $eax produce
-    //   Truncate_U32(Or(And(0xFFFF_FFFF_0000_0000, $rax_old),
-    //                   And(0x0000_0000_FFFF_FFFF, ZeroExt(low_part))))
-    // The first And's mask has zero in the low 32 bits, so its
-    // contribution to Truncate_U32(Or(...)) is zero — the truncate
-    // collapses to `Truncate_U32(And(0x0000_0000_FFFF_FFFF, ZeroExt(...)))`,
-    // which the existing `x & all_ones → x` and round-trip rules then
-    // fully simplify.
+    // Drop the high half of an x86 register-merge Or when truncating to the low
+    // half's width: a read of `$eax` after `mov $eax, ...` lifts to
+    // `Truncate_U32(Or(And(high_mask, rax_old), And(low_mask, zext(eax))))`, and
+    // the high mask contributes nothing below bit 32. The guard picks the
+    // high-mask And by requiring its low-`W` bits to be zero.
     //
-    // We pin the high-mask check via `when_match`: the captured constant
-    // `c`'s low-`W` bits must all be zero, where `W` is the truncate's
-    // output bit width.
-    // The real x86-64 register-merge truncate is
-    //   Truncate(Or( And(high_mask, rax_old), And(low_mask, zext(eax)) ))
-    // i.e. BOTH `Or` operands are `And`s, so the `and(...)` subpattern matches
-    // EITHER operand structurally; only the `low-bits-zero` guard picks the
-    // high-mask And. That guard sits on the unary `truncate` root, above the
-    // commutative `Or`. A SINGLE orientation suffices: the matcher is
-    // continuation-passing (matcher/walk.rs), so the guard failure re-drives the
-    // `Or`'s operand order even though the guard is on the truncate ANCESTOR.
-    // Regression-guarded by `test_narrow_widths::x64`.
+    // BOTH `Or` operands are `And`s, so the `and(...)` subpattern matches either
+    // one structurally and only the guard disambiguates. A single orientation
+    // still suffices: the matcher is continuation-passing (matcher/walk.rs), so
+    // a guard failure re-drives the `Or`'s operand order even though the guard
+    // sits on the truncate ancestor. Regression-guarded by
+    // `test_narrow_widths::x64`.
     let mk_drop_high_half = {
         let guard = move |edit: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
@@ -347,12 +286,11 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         )
     };
 
-    // `Truncate_<W>(And(low_W_mask, x)) → Truncate_<W>(x)` — the AND's
-    // effect of zeroing all bits above W is redundant when the truncate
-    // is going to discard those bits anyway. A SINGLE orientation suffices:
-    // the lone non-const operand fails `any_int_const` STRUCTURALLY, so the
-    // `And`'s own commutative retry binds `c` to the const regardless of side
-    // (and a two-const `And` is const-folded before this rule sees it).
+    // `Truncate_W(And(low_W_mask, x)) -> Truncate_W(x)`: the And zeroes bits the
+    // truncate discards anyway. One orientation suffices because the non-const
+    // operand fails `any_int_const` structurally, so the `And`'s commutative
+    // retry binds `c` to the const on either side (a two-const `And` is
+    // const-folded before this rule sees it).
     let mk_drop_low_mask_under_truncate = {
         let guard = move |edit: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
@@ -363,8 +301,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             let Some(low_mask) = truncate_low_mask(ty) else {
                 return false;
             };
-            // The mask must cover at least the low W bits — anything beyond
-            // that is fine since the truncate will drop those bits.
+            // The mask must cover at least the low W bits; anything beyond that
+            // is fine since the truncate drops those bits.
             c_val & low_mask == low_mask
         };
         rewrite_rule(
@@ -373,16 +311,13 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         )
     };
 
-    // Nested SAME-kind extends/truncates collapse to one at the outer width —
-    // each of these casts is transitive, so the intermediate width drops out:
-    //   ZeroExtend(ZeroExtend(x)) → ZeroExtend(x)   (zero-fill is transitive)
-    //   SignExtend(SignExtend(x)) → SignExtend(x)   (sign replication is too)
-    //   Truncate(Truncate(x))     → Truncate(x)     (narrowing twice == once)
-    // The RHS cast inherits the rewrite root's (outer) width.  MIXED-kind nests
-    // (zext∘sext / sext∘zext) are NOT a single cast, so they are left alone.
-    // This lets the doubly-zero-extended compare MIPS emits for `sltu`
-    // (`Equal(ZeroExtend(ZeroExtend(Less:I1)), 0)`) collapse to a single extend,
-    // so FlagCmpCanonicalize's `Equal(ZeroExtend(b:I1), 0) → BitNot(b)` rule fires.
+    // Nested SAME-kind casts are transitive, so the intermediate width drops out
+    // and the RHS inherits the outer width. MIXED-kind nests (zext of sext, and
+    // vice versa) are not a single cast and are left alone.
+    //
+    // This is what lets the doubly-zero-extended compare MIPS emits for `sltu`
+    // collapse to a single extend, so FlagCmpCanonicalize's
+    // `Equal(ZeroExtend(b:I1), 0)` rule can fire.
     let zext_zext = rewrite_rule(
         zero_extend(zero_extend(var(x))),
         template::zero_extend(var(x)),
@@ -407,66 +342,47 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     ]
 }
 
-/// Builds the algebraic-identity rule vec for integer binary operations.
+/// Algebraic identities for integer binary operations.
 fn build_identity_rules() -> Vec<crate::BoxedRule> {
     let (x, c) = (Capture::new(), Capture::new());
-    // Both all-ones rules below share the identical "the captured constant `c`
-    // equals the node's output-width all-ones value" guard; the only difference
-    // is the matched op (`and`/`or`) and the surviving operand (`x`/`c`).  The
-    // guard depends on `c` and the per-match output type, so spell it once and
-    // reuse it (mirrors the `const_on_right!` / `ext_round_trip!` factoring).
+    // All-ones is output-width-dependent, so the guard has to compare `c`
+    // against the per-match output type rather than a fixed constant.
     let is_all_ones = move |edit: &strider_pattern::Matcher,
                             ty: strider_ir::node::ValueType,
                             b: &strider_pattern::Bindings| {
         b.get_uint(c, edit.function()) == ty.get_unsigned_int(u128::MAX)
     };
-    // x & all_ones → x  (commutative). The all-ones mask depends on the
-    // output width, so the shared guard compares the captured constant against
-    // the node's output-type all-ones value.
+    // x & all_ones -> x
     let all_ones_rule = rewrite_rule(
         and(var(x), any_int_const().capture(c)).when_match(is_all_ones),
         var(x),
     );
-    // (No `x ^ all_ones → ~x` rule: `~x` IS `Xor(x, all_ones)` — the
-    // canonical form — since the former BitNot unary-op was removed in favour
-    // of the Xor shape.  Both compiler lowerings (`nor` and `xor a, -1`)
-    // now lift to the same Xor shape directly at lift time.)
-    // x | all_ones → all_ones  (commutative; absorbing element).  Same shared
-    // all-ones guard; rewrite to that same constant.  At `I1` this subsumes the
-    // boolean `x | true → true`.
+    // There is deliberately no `x ^ all_ones -> ~x` rule: `Xor(x, all_ones)` IS
+    // the canonical complement shape, and both compiler lowerings (`nor`,
+    // `xor a, -1`) already lift straight to it.
+
+    // x | all_ones -> all_ones. At I1 this subsumes `x | true -> true`.
     let or_all_ones_rule = rewrite_rule(
         or(var(x), any_int_const().capture(c)).when_match(is_all_ones),
         var(c),
     );
 
+    // The commutative ops below match both operand orders; the shift rules do
+    // not, so only a zero on the right is an identity for them.
     vec![
-        // x + 0 → x  (commutative: also covers 0 + x)
         rewrite_rule(add(var(x), int_const(0u128)), var(x)),
-        // x - 0 → x
         rewrite_rule(sub(var(x), int_const(0u128)), var(x)),
-        // x - x → 0
         rewrite_rule(sub(var(x), var(x)), int_const(0u128)),
-        // x ^ x → 0
         rewrite_rule(xor(var(x), var(x)), int_const(0u128)),
-        // x ^ 0 → x  (commutative)
         rewrite_rule(xor(var(x), int_const(0u128)), var(x)),
-        // x * 0 → 0  (commutative)
         rewrite_rule(mul(var(x), int_const(0u128)), int_const(0u128)),
-        // x * 1 → x  (commutative)
         rewrite_rule(mul(var(x), int_const(1u128)), var(x)),
-        // x & 0 → 0  (commutative)
         rewrite_rule(and(var(x), int_const(0u128)), int_const(0u128)),
-        // x & x → x
         rewrite_rule(and(var(x), var(x)), var(x)),
-        // x | 0 → x  (commutative)
         rewrite_rule(or(var(x), int_const(0u128)), var(x)),
-        // x | x → x
         rewrite_rule(or(var(x), var(x)), var(x)),
-        // x << 0 → x  (non-commutative — only RHS 0 is the identity)
         rewrite_rule(shl(var(x), int_const(0u128)), var(x)),
-        // x >> 0 → x  (logical shift right)
         rewrite_rule(shr(var(x), int_const(0u128)), var(x)),
-        // x >>> 0 → x  (arithmetic / signed shift right)
         rewrite_rule(sshr(var(x), int_const(0u128)), var(x)),
         all_ones_rule,
         or_all_ones_rule,
@@ -475,14 +391,11 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
 
 /// Width-consistency guard for the integer const-eval folds.
 ///
-/// The integer evaluators ([`eval_int_binary`] / [`eval_int_cmp`]) mask
-/// every operand to a single width (the output width, or the LHS width for
-/// comparisons).  That is correct only when every operand already carries
-/// that width — which the lifter guarantees but the validator does not
-/// enforce (`IntBinaryOp` / `IntCmpOp` inputs are typed `AnyInt`).  Returns
-/// a clean rewrite-skip when any captured operand's declared width differs
-/// from `expected`, so a width-mismatched node is left un-folded rather than
-/// folded against a silently re-masked operand value.
+/// [`eval_int_binary`] / [`eval_int_cmp`] mask every operand to a single width
+/// (the output width, or the LHS width for comparisons), which is only correct
+/// when every operand already carries that width. The lifter guarantees that;
+/// the validator does not, since `IntBinaryOp` / `IntCmpOp` inputs are typed
+/// `AnyInt`. Skip rather than fold against a silently re-masked operand.
 fn require_operand_widths(
     edit: &strider_pattern::TemplateCtx<'_>,
     operands: &[Capture],
@@ -501,9 +414,6 @@ fn require_operand_widths(
     Ok(())
 }
 
-/// Builds the full constant-evaluation rule vec for integer binary ops,
-/// integer unary ops, integer comparisons, truncate, extend (zero/sign),
-/// popcount, and lzcount.
 fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
     let (op, l, r, v) = (
         Capture::new(),
@@ -513,19 +423,10 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
     );
 
     vec![
-        // 1. IntBinaryOp(op)(IntConst(l), IntConst(r)) =>
-        //        int_const(eval_int_binary(op, l, r, ty)?, ty)
-        //    `eval_int_binary` returns `None` for div-by-zero / signed
-        //    overflow / I128+ masking failures; the closure opts out of the
-        //    rewrite in that case via `strider_pattern::skip()`.
-        //
-        //    Width-consistency guard: `eval_int_binary` masks both operands
-        //    to the *output* width `ty`.  The lifter keeps int-binary ops
-        //    width-consistent (operand widths == output width), but the
-        //    validator types `IntBinaryOp` inputs only as `AnyInt`.  A
-        //    width-mismatched operand (e.g. a wider shift amount) would have
-        //    its value silently changed by the output-width mask, so skip the
-        //    fold unless both operands carry the output width.
+        // `eval_int_binary` returns `None` for div-by-zero, signed overflow and
+        // I128+ masking failures; the closure turns that into a rewrite skip.
+        // The width guard protects against a wider operand (say a shift amount)
+        // whose value the output-width mask would silently change.
         {
             rewrite_rule(
                 int_binary_any(any_int_const().capture(l), any_int_const().capture(r)).capture(op),
@@ -548,11 +449,8 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 }),
             )
         },
-        // 2. IntUnaryOp(op)(IntConst(v)) => int_const(op(v) masked to ty, ty)
-        //
-        // `IntUnaryOp` now has only the `Neg` variant (bitwise complement is
-        // `Xor(x, all_ones)`, handled by rule 1 above as an int-binary
-        // const-fold), so the closure unconditionally evaluates `wrapping_neg`.
+        // `IntUnaryOp` has only `Neg`; bitwise complement is `Xor(x, all_ones)`
+        // and folds through the int-binary rule above.
         {
             rewrite_rule(
                 int_unary_any(any_int_const().capture(v)).capture(op),
@@ -561,19 +459,10 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 ),
             )
         },
-        // 3. IntCmpOp(op)(IntConst(l), IntConst(r)) =>
-        //        bool_const(eval_int_cmp(op, l, r, in_ty)?)
-        //    `in_ty` = root's first-value-input type, which on an IntCmp is
-        //    the LHS operand type — exactly what `eval_int_cmp` expects.
-        //    `eval_int_cmp` returns `Result<bool, opt::ErrorKind>`; the `?`
-        //    in the closure bridges that failure into a rewrite skip.
-        //
-        //    Width-consistency guard: `eval_int_cmp` masks *both* operands to
-        //    the LHS width.  A wider RHS masked down to the LHS width silently
-        //    changes the compared value and can flip a `Less`/`Sless`/`Carry`
-        //    verdict.  The lifter keeps cmp operands width-consistent, but the
-        //    validator does not enforce it, so skip the fold unless both
-        //    operands carry the LHS width.
+        // The root's first-value-input type is the LHS operand type, which is
+        // what `eval_int_cmp` masks both operands to. A wider RHS masked down
+        // that far can flip a `Less` / `Sless` / `Carry` verdict, hence the
+        // width guard.
         {
             rewrite_rule(
                 int_cmp_any(any_int_const().capture(l), any_int_const().capture(r)).capture(op),
@@ -597,13 +486,9 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 }),
             )
         },
-        // 4. Truncate(IntConst(v)) => int_const(v masked to ty, ty)
-        //    The wider IntConst's raw value is *not* automatically masked
-        //    to the truncate's output width here. Mask explicitly so we
-        //    don't plant an unmasked
-        //    narrow IntConst into the IR. Skip when ty is I128/I256 (the
-        //    truncate output is always narrower than I64 in practice, but
-        //    the skip costs nothing and is consistent with other rules).
+        // The wider IntConst's raw value is not masked to the truncate's output
+        // width for us, so mask explicitly; otherwise a narrow IntConst holding
+        // wide bits lands in the IR.
         {
             rewrite_rule(
                 truncate(any_int_const().capture(v)),
@@ -612,15 +497,10 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 ),
             )
         },
-        // 5. ZeroExtend(IntConst(v)) => int_const(v, ty)
-        //
-        // `v: uint` already masks to the IntConst input's width, and
-        // ZeroExtend's output width is by definition >= the input
-        // width, so `v` is already small enough to fit the output.
-        // Mask defensively against the output type anyway: rule 4
-        // (Truncate) does the same thing and the symmetry keeps the
-        // build path safe under future widenings of `IntConst`'s
-        // u128 storage.
+        // `v: uint` already masks to the input's width and ZeroExtend only
+        // widens, so the mask below is redundant today. Kept for symmetry with
+        // the truncate rule, and to stay safe if `IntConst`'s u128 storage ever
+        // widens.
         {
             rewrite_rule(
                 zero_extend(any_int_const().capture(v)),
@@ -629,11 +509,6 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 ),
             )
         },
-        // 6. SignExtend(IntConst(v)) =>
-        //        int_const(sign_extend(v, in_ty) masked to ty, ty)
-        //    `in_ty` is the narrower input type; `get_signed_int` produces
-        //    the sign-extended i128 value, which `get_unsigned_int` then
-        //    masks to the wider output width.
         {
             rewrite_rule(
                 sign_extend(any_int_const().capture(v)),
@@ -644,8 +519,6 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 }),
             )
         },
-        // 7. Popcount(IntConst(v)) =>
-        //        int_const(masked(v, in_ty).count_ones(), ty)
         {
             rewrite_rule(
                 popcount(any_int_const().capture(v)),
@@ -656,11 +529,6 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 }),
             )
         },
-        // 8. Lzcount(IntConst(v)) =>
-        //        int_const(N if masked == 0 else (masked << (128 - N)).leading_zeros(), ty)
-        //    The `masked == 0` case must return the input type's bit width;
-        //    shifting by (128 - bits) aligns to the u128's MSB so
-        //    `leading_zeros()` gives the correct count within the type's width.
         {
             rewrite_rule(
                 lzcount(any_int_const().capture(v)),
@@ -674,8 +542,8 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
     ]
 }
 
-/// Builds the constant-evaluation and absorbing-element rule vec for the
-/// I1 boolean ops and all float ops.
+/// Const-eval and absorbing-element rules for the I1 boolean ops and all float
+/// ops.
 fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
     let (op, l, r, v, x) = (
         Capture::new(),
@@ -685,30 +553,13 @@ fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
         Capture::new(),
     );
 
-    // Booleans are 1-bit (`I1`) integers in this IR.  Most boolean
-    // const-folds / identities are therefore already covered by the
-    // generic integer rules in `build_const_eval_rules` /
-    // `build_identity_rules`, which fire at any width incl. `I1`:
-    //   - `BAnd/BOr/BXor(IntConst, IntConst)`     → integer rule 1
-    //     (`IntBinaryOp(op)(IntConst, IntConst)`).
-    //   - `BAnd(false, _) → false`                → `x & 0 → 0`.
-    //   - `BitNot(IntConst) → !v` at `I1` (logical not) → integer rule 2
-    //     (`IntUnaryOp(op)(IntConst)`, with `BitNot` masked to `I1`).
-    //   - `x ^ true → !x`                         → `x ^ all_ones → ~x`.
-    // Only the rules with no integer analogue are re-expressed here at
-    // `I1`: `BOr(true, _) → true` (no `x | all_ones → all_ones` integer
-    // rule) and `!!x → x` (no double-`BitNot` integer rule).
+    // Booleans are 1-bit integers here, so the generic integer const-eval and
+    // identity rules already cover almost every boolean fold: they fire at any
+    // width including I1. Only shapes with no integer analogue belong here.
     vec![
-        // (`x | true → true` is handled generically by the integer
-        // `x | all_ones → all_ones` rule — at I1, `true` is the all-ones
-        // value — so no I1-specific Or-absorbing rule is needed here.)
-        // !!x → x  (double-negation elimination — `BitNot(BitNot(x))` at
-        // I1).  Compilers can produce chained NOTs through pcode lifting of
-        // compare-and-invert idioms.  No general double-`BitNot` integer
-        // rule exists, so this is re-expressed via the I1 `bool_not` ctor.
+        // !!x -> x. Nothing collapses a double complement at integer width, and
+        // pcode lifting of compare-and-invert idioms does produce chained NOTs.
         { rewrite_rule(bool_not(bool_not(var(x))), var(x)) },
-        // FloatBinaryOp(op)(FloatConst(l), FloatConst(r)) =>
-        //     float_const(eval_float_binary(op, l, r, ty)?)
         {
             rewrite_rule(
                 float_binary_any(any_float_const().capture(l), any_float_const().capture(r))
@@ -719,7 +570,6 @@ fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
                 ),
             )
         },
-        // FloatUnaryOp(op)(FloatConst(v)) => float_const(eval_float_unary(op, v, ty)?)
         {
             rewrite_rule(
                 float_unary_any(any_float_const().capture(v)).capture(op),
@@ -729,9 +579,8 @@ fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
                 ),
             )
         },
-        // FloatCmpOp(op)(FloatConst(l), FloatConst(r)) =>
-        //     bool_const(eval_float_cmp(op, l, r, in_ty)?)
-        //   `in_ty` = root's first-value-input type (the float operand type).
+        // `in_ty` is the root's first-value-input type, i.e. the float operand
+        // type, not the I1 output.
         {
             rewrite_rule(
                 float_cmp_any(any_float_const().capture(l), any_float_const().capture(r))

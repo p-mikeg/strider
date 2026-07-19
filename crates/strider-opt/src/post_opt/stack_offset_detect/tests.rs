@@ -1,9 +1,5 @@
-//! Tests for [`crate::StackOffsetDetect`].
-//!
-//! Pins: (a) SP-relative stores / loads get a concrete offset stamped
-//! on `Function::stack_offsets`, (b) non-SP-rooted addresses leave the
-//! side-table untouched, (c) re-running the pass on the same function
-//! reports `NoChange`.
+//! Pins that SP-relative accesses get an offset stamped, non-SP-rooted
+//! addresses leave the side-table alone, and a re-run stamps nothing new.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -14,7 +10,6 @@ use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
 use crate::StackOffsetDetect;
 
-/// Count the nodes that currently carry a stamped stack offset.
 fn stamped_count(function: &Function) -> usize {
     function
         .graph()
@@ -23,15 +18,12 @@ fn stamped_count(function: &Function) -> usize {
         .count()
 }
 
-/// Collapse phis (so SP addresses are bare `InitialVar(sp) + k` terminals —
-/// the shape the SP-aware pass sees in production once PhiCollapse has run)
-/// and run the `StackOffsetDetect` post-pass.  The pass reads the stack
-/// pointer from the function's own calling convention and returns no
-/// Change/NoChange — tests assert directly on the `stack_offsets` side-table.
+/// Canonicalize, then run the post-pass.  It returns no Change/NoChange, so
+/// tests assert directly on the `stack_offsets` side-table.
 fn run(function: &mut Function) {
-    // Canonicalize first (ConstantFold folds the lowered `Sub` = `Add(_, Neg(K))`
-    // to `Add(_, IntConst(-K))`, PhiCollapse drops the read_variable(sp) phi),
-    // matching the production shape the post-pass sees.
+    // ConstantFold folds the lowered `Add(_, Neg(K))` to `Add(_, IntConst(-K))`
+    // and PhiCollapse drops the read_variable(sp) phi, giving the production
+    // shape the post-pass sees.
     crate::test_support::cf_rp_pipeline()
         .run(function, &mut crate::OptCtx::new(None))
         .expect("canonicalize must not error");
@@ -39,7 +31,7 @@ fn run(function: &mut Function) {
         .expect("must not error");
 }
 
-/// `store [sp-4] = 0x42; load [sp-4]; return loaded`.
+/// Builds `store [sp-4] = 0x42; load [sp-4]; return loaded`.
 fn stack_store_load_return(sp: rsleigh::Vn) -> Function {
     make_sp_fn(sp, |b, sp_v| {
         let four = b.build_int_const(4u64, ValueType::I32)?;
@@ -96,17 +88,14 @@ fn non_sp_relative_store_leaves_side_table_untouched() {
     assert_eq!(stamped_count(&f), 0);
 }
 
-/// A store whose address is rooted at an *alignment-masked* base
-/// (`And(sp, mask)`, e.g. `and $0xfffffff8, %esp`) IS a stack access — just
-/// in a different coordinate system from entry-SP.  `StackOffsetDetect`
-/// stamps it with that aligned base (offset 0 here, no `Add`), so aligned
-/// frames are covered; the recorded `base` keeps its offset from being
-/// conflated with an entry-SP offset.
+/// An alignment-masked base is still a stack access, just in a different
+/// coordinate system from entry-SP.  Recording that base is what keeps its
+/// offset from being conflated with an entry-SP one.
 #[test]
 fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, sp_v| {
-        // Simulate `and $0xfffffff8, %esp` then a store at that aligned base.
+        // `and $0xfffffff8, %esp`, then a store at that aligned base.
         let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
         let aligned = b.build_int_binary_operation(sp_v, mask, IntBinaryOp::And, ValueType::I32)?;
         let data = b.build_int_const(0x42u64, ValueType::I32)?;
@@ -119,8 +108,7 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     .unwrap();
 
     run(&mut f);
-    // The aligned-base store IS stamped, and its base is the `And` node's
-    // output (NOT the canonical `InitialVar(sp)`).
+    // The base is the `And` output, not the canonical `InitialVar(sp)`.
     let store = f
         .graph()
         .all_node_ids()
@@ -140,9 +128,8 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     );
 }
 
-/// A nested Add chain `((sp + 8) + 16) - 4` must be stamped with the
-/// summed net offset `+20` — the SP decomposition walks the whole chain,
-/// not just the outermost Add.
+/// The decomposition walks the whole chain, not just the outermost Add, so
+/// `((sp + 8) + 16) - 4` stamps the summed `+20`.
 #[test]
 fn nested_add_chain_stamps_summed_offset() {
     let sp = stack_vn_x86();
@@ -172,9 +159,7 @@ fn nested_add_chain_stamps_summed_offset() {
     assert_eq!(offset, 20, "8 + 16 - 4 = 20");
 }
 
-/// A net-NEGATIVE nested chain `(sp + 8) - 12` stamps `-4` — the
-/// summation is signed and the lowered-Sub (`Add(_, Neg(K))`) leg
-/// subtracts.
+/// The summation is signed, so a net-negative chain `(sp + 8) - 12` stamps -4.
 #[test]
 fn nested_chain_with_negative_net_offset_stamps_negative() {
     let sp = stack_vn_x86();
@@ -215,8 +200,7 @@ fn rerun_after_first_pass_is_idempotent() {
         after_first > 0,
         "first run must stamp the SP-relative accesses"
     );
-    // Re-running the post-pass must not stamp anything new (the
-    // already-known offsets are skipped) — the stamped set is stable.
+    // Already-known offsets are skipped, so the stamped set is stable.
     run(&mut f);
     assert_eq!(
         stamped_count(&f),

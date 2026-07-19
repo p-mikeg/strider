@@ -14,9 +14,7 @@ use crate::test_support::{
 };
 use strider_ir_test_utils::{RegisterSet, reg_vn};
 
-// ── constructed-with-data: per-instance rule ownership ────────────────────
-
-/// Builds a fixture that folds `3 + 4 → 7` and returns it.
+/// A fixture that folds `3 + 4` to `7`.
 fn add_consts_fixture() -> Result<strider_ir::Function> {
     make_fn(|b| {
         let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
@@ -25,12 +23,11 @@ fn add_consts_fixture() -> Result<strider_ir::Function> {
     })
 }
 
-/// Proof-completeness: const-eval folds `c3 + c4 → 7`, so the operand
-/// constants are *read* (not reused) and die.  The fresh `IntConst(7)` must
-/// absorb both operands' asm-fingerprints — otherwise the asm that produced
-/// each operand is lost.  The operands carry distinct addresses from the
-/// `Add`, so without the rewrite-engine's interior absorption the result
-/// would carry only the `Add`'s address.
+/// The operand constants are read, not reused, so they die in the fold. The
+/// fresh `IntConst(7)` must absorb their asm-fingerprints or the asm that
+/// produced each operand is lost: they carry addresses distinct from the `Add`,
+/// so without the rewrite engine's interior absorption only the `Add`'s address
+/// would survive.
 #[test]
 fn const_eval_absorbs_operand_fingerprints() -> Result<()> {
     const A: u64 = 0xC0FF_EE01;
@@ -57,8 +54,6 @@ fn const_eval_absorbs_operand_fingerprints() -> Result<()> {
     Ok(())
 }
 
-/// A pass built via [`ConstantFold::new`] owns its rule set and folds the
-/// same representative constant expression the bare-value form did.
 #[test]
 fn new_builds_pass_that_folds() -> Result<()> {
     let mut fg = add_consts_fixture()?;
@@ -70,10 +65,7 @@ fn new_builds_pass_that_folds() -> Result<()> {
     Ok(())
 }
 
-/// Two independently-constructed `ConstantFold` instances each own their
-/// own rule set — proving the data is per-instance, not a shared
-/// thread-local.  Running one then a fresh second on equivalent fixtures
-/// both produce the same fold.
+/// Pins that the rule set is per-instance, not a shared thread-local.
 #[test]
 fn two_independent_instances_each_fold() -> Result<()> {
     let pass_a = ConstantFold::new();
@@ -89,22 +81,19 @@ fn two_independent_instances_each_fold() -> Result<()> {
     Ok(())
 }
 
-/// Width-consistency guard (M4): the int-binary const-eval masks both
-/// operands to the *output* width.  A synthetic node whose operand widths
-/// differ from the output width is not something the lifter emits (it keeps
-/// ops width-consistent), and the validator types `IntBinaryOp` inputs only
-/// as `AnyInt`, so a mismatch would let the eval mask silently change a
-/// value.  The guard must *skip* such a fold rather than emit a possibly
-/// wrong constant.
+/// The int-binary const-eval masks both operands to the output width. The
+/// lifter never emits a width-mismatched node, but the validator types
+/// `IntBinaryOp` inputs only as `AnyInt`, so the fold must skip rather than
+/// evaluate against a silently re-masked value.
 #[test]
 fn int_binary_fold_skips_width_mismatched_operands() -> Result<()> {
     use strider_ir::IRBuilder;
     use strider_ir::node::ValueKind;
-    // ShiftLeft where the shift-amount operand is wider than the output:
-    // masking the amount to the output width changes shift semantics.
+    // A shift amount wider than the output: masking it to the output width
+    // would change the shift's meaning.
     let mut fg = make_fn(|b| {
-        let lhs = b.build_int_const(1u64, ValueType::I32)?; // I32
-        let amt = b.build_int_const(33u64, ValueType::I64)?; // I64 — wider!
+        let lhs = b.build_int_const(1u64, ValueType::I32)?;
+        let amt = b.build_int_const(33u64, ValueType::I64)?;
         let node = b.create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
             [lhs, amt],
@@ -131,18 +120,15 @@ fn int_binary_fold_skips_width_mismatched_operands() -> Result<()> {
     Ok(())
 }
 
-/// Width-consistency guard (M5): `eval_int_cmp` masks both operands to the
-/// *LHS* width.  A `Sless` with a wider RHS would have its RHS masked down,
-/// silently changing the compared value and possibly flipping the verdict.
-/// The guard must skip the fold on a width mismatch.
+/// `eval_int_cmp` masks both operands to the LHS width, so a wider RHS would be
+/// masked down, changing the compared value and possibly flipping the verdict.
 #[test]
 fn int_cmp_fold_skips_width_mismatched_operands() -> Result<()> {
     use strider_ir::IRBuilder;
     use strider_ir::node::ValueKind;
-    // Sless(IntConst:I8(0x80), IntConst:I32(200)) — LHS I8, RHS I32.
     let mut fg = make_fn(|b| {
-        let lhs = b.build_int_const(0x80u64, ValueType::I8)?; // I8
-        let rhs = b.build_int_const(200u64, ValueType::I32)?; // I32 — wider!
+        let lhs = b.build_int_const(0x80u64, ValueType::I8)?;
+        let rhs = b.build_int_const(200u64, ValueType::I32)?;
         let node = b.create_node(
             NodeKind::IntCmpOp(IntCmpOp::Sless),
             [lhs, rhs],
@@ -169,13 +155,6 @@ fn int_cmp_fold_skips_width_mismatched_operands() -> Result<()> {
     Ok(())
 }
 
-// ── integer binary folding ────────────────────────────────────────────────
-
-/// Case table for the run-once two-const integer binary folds.  Each row
-/// names the stand-alone test it absorbed: build
-/// `op(IntConst(lhs), IntConst(rhs))` at `ty`, run `ConstantFold` once,
-/// assert it fired, and assert the function now returns
-/// `IntConst(expected)`.
 #[test]
 fn fold_int_binary_two_consts_cases() -> Result<()> {
     struct Case {
@@ -191,18 +170,14 @@ fn fold_int_binary_two_consts_cases() -> Result<()> {
         Case { case: "fold_int_add_consts", lhs: 3, rhs: 4, op: IntBinaryOp::Add, ty: ValueType::I64, expected: 7 },
         Case { case: "fold_int_and_zero", lhs: 0xFF, rhs: 0, op: IntBinaryOp::And, ty: ValueType::I64, expected: 0 },
         Case { case: "fold_mul_by_one", lhs: 5, rhs: 1, op: IntBinaryOp::Mul, ty: ValueType::I64, expected: 5 },
-        // Shift constant evaluation: `1 << 4` for I32 -> 0x10.
         Case { case: "fold_shl_const_u32", lhs: 1, rhs: 4, op: IntBinaryOp::ShiftLeft, ty: ValueType::I32, expected: 0x10 },
-        // Shift at width boundary: `1 << 31` for I32 -> 0x80000000.
+        // Last in-range shift amount.
         Case { case: "fold_shl_at_width_boundary_u32", lhs: 1, rhs: 31, op: IntBinaryOp::ShiftLeft, ty: ValueType::I32, expected: 0x8000_0000 },
-        // Shift right: `0x80 >> 7` for I8 -> 1.
         Case { case: "fold_shr_const_u8", lhs: 0x80, rhs: 7, op: IntBinaryOp::ShiftRight, ty: ValueType::I8, expected: 1 },
-        // `Xor(49, ~0)` at I32 must fold to bitwise NOT (= ~49 = 0xFFFF_FFCE)
-        // -- NOT two's complement (-49).
+        // The Xor-with-all-ones rows are bitwise NOT, so `~49 = 0xFFFF_FFCE`,
+        // NOT two's complement `-49`.
         Case { case: "fold_int_unary_neg_is_bitwise_not_u32", lhs: 49, rhs: u128::MAX, op: IntBinaryOp::Xor, ty: ValueType::I32, expected: 0xFFFF_FFCE },
-        // At I8: `Xor(0xAA, 0xFF)` must fold to `~0xAA = 0x55` (bitwise NOT).
         Case { case: "fold_int_unary_neg_intermediate_is_bitwise_not_u8", lhs: 0xAA, rhs: u128::MAX, op: IntBinaryOp::Xor, ty: ValueType::I8, expected: 0x55 },
-        // Bitwise NOT of 0 is all-ones at the type width -- `Xor(0, ~0) = ~0`.
         Case { case: "fold_int_unary_neg_zero_is_all_ones_u32", lhs: 0, rhs: u128::MAX, op: IntBinaryOp::Xor, ty: ValueType::I32, expected: 0xFFFF_FFFF },
     ];
     for c in &cases {
@@ -262,7 +237,6 @@ fn fold_int_sub_self() -> Result<()> {
 
 #[test]
 fn fold_add_zero_identity() -> Result<()> {
-    // x + 0 → x  (x is non-const)
     let mut fg = make_fn(|b| {
         let c1 = b.build_int_const(1u64, ValueType::I64).unwrap();
         let c2 = b.build_int_const(2u64, ValueType::I64).unwrap();
@@ -270,14 +244,13 @@ fn fold_add_zero_identity() -> Result<()> {
         let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
         b.build_int_binary_operation(x, zero, IntBinaryOp::Add, ValueType::I64)
     })?;
-    // After at least one fold pass x+0 should collapse to x, then x folds too.
+    // `x + 0` collapses to x first, then x itself folds.
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     assert_returns_const(&fg, 3);
     Ok(())
 }
 
-/// `(x & 4) & 7`  — bit 2 is the only bit reachable by both masks, so the
-/// merged constant is `4 & 7 = 4`.
+/// `(x & 4) & 7`: bit 2 is the only bit reachable by both masks.
 #[test]
 fn fold_and_and_masks() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -287,17 +260,15 @@ fn fold_and_and_masks() -> Result<()> {
         let inner = b.build_int_binary_operation(x, c4, IntBinaryOp::And, ValueType::I64)?;
         b.build_int_binary_operation(inner, c7, IntBinaryOp::And, ValueType::I64)
     })?;
-    // Run to convergence (both-const fold + mask-merge may each fire once).
+    // Both-const fold and mask-merge may each fire once.
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // 0xFF & 4 = 4, 4 & 7 = 4.
     assert_returns_const(&fg, 4);
     Ok(())
 }
 
-// ── add/sub reassociation with constants ──────────────────────────────────
-
-/// Asserts the return-value node is `expected_base + expected_const`
-/// (type-masked; operand order irrelevant).
+/// Asserts the return value is `expected_base + expected_const`, type-masked,
+/// operand order irrelevant.
 fn assert_add_with_const(
     fg: &strider_ir::Function,
     expected_base: strider_ir::Value,
@@ -333,13 +304,12 @@ fn assert_add_with_const(
     Ok(())
 }
 
-/// Asserts the return-value node is `expected_base - expected_const` in the
-/// canonical post-fold lowered shape: `Add(expected_base, IntConst(-K))`,
-/// where `-K` is `wrapping_neg(expected_const)` masked to the type's width.
+/// Asserts the return value is `expected_base - expected_const` in the
+/// canonical post-fold shape `Add(base, IntConst(-K))`.
 ///
-/// `IntBinaryOp::Sub` is not a primitive in this IR — pcode-lift produces
-/// `Add(a, Neg(b))` and `ConstantFold` collapses `Neg(IntConst(K))` to
-/// `IntConst(-K)`, leaving a single `Add` node with a negative-valued constant.
+/// `IntBinaryOp::Sub` is not a primitive: pcode-lift produces `Add(a, Neg(b))`
+/// and `ConstantFold` collapses `Neg(IntConst(K))` to `IntConst(-K)`, leaving
+/// one `Add` with a negative-valued constant.
 fn assert_sub_with_const(
     fg: &strider_ir::Function,
     expected_base: strider_ir::Value,
@@ -355,9 +325,7 @@ fn assert_sub_with_const(
     );
     let inputs = fg.node_inputs(node);
     assert_eq!(inputs.len(), 2);
-    // The lowered `a - K` shape after `ConstantFold` is `Add(a, IntConst(-K))`.
-    // `Add` is commutative, so accept the const on either side; check that
-    // the captured constant equals `wrapping_neg(K)` masked to the type's width.
+    // `Add` is commutative, so accept the const on either side.
     let l = inputs[0];
     let r = inputs[1];
     let neg_masked = ty
@@ -380,27 +348,18 @@ fn assert_sub_with_const(
     Ok(())
 }
 
-/// Commutative const-on-right canonicalisation: `Add(C, x)` with the const on
-/// the *left* is rewritten to `Add(x, C)` so a constant operand is always the
-/// right one.  The variable `x` is a register read (genuinely non-const), so
-/// the canonicalisation fires (and doesn't ping-pong like a `(C1, C2)` pair).
-/// Regression: a count-/unary-fold rule binds `v: uint`
-/// (`int_const_u128` → `get_unsigned_int`). An I256 `Wide` const does not
-/// fit `u128`, so `get_uint` returns `None`. The fold must treat that as a
-/// clean *skip* (rule doesn't fire, IR unchanged) — not a hard
-/// "missing binding for capture of kind uint" error that aborts the pass.
+/// A unary-fold rule binds `v: uint`, and an I256 `Wide` const does not fit
+/// `u128`, so `get_uint` returns `None`. That must be a clean skip, not a hard
+/// "missing binding for capture of kind uint" error aborting the pass.
 #[test]
 fn unary_fold_skips_wide_const_cleanly() -> Result<()> {
-    // Neg(IntConst(I256)) — exercises rule 2 (`v: uint`).
     let mut fg = make_fn(|b| {
-        // A 256-bit value with a non-zero high limb so it cannot fit u128.
+        // Non-zero high limb, so the value cannot fit u128.
         let c = b.build_int_const_limbs(&[1, 2, 3, 4], ValueType::I256)?;
         b.build_int_unary_operation(c, IntUnaryOp::Neg, ValueType::I256)
     })?;
-    // Must not error (the bug surfaced here as `Err(missing binding …)`).
     let outcome =
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
-    // The wide const can't fold, so nothing should change.
     assert!(
         !outcome.changed(),
         "wide-const unary fold must skip, leaving the IR untouched"
@@ -416,12 +375,14 @@ fn unary_fold_skips_wide_const_cleanly() -> Result<()> {
     Ok(())
 }
 
+/// `x` is a register read, so it is genuinely non-const and the rule fires
+/// without the `(C1, C2)` ping-pong the guard exists to prevent.
 #[test]
 fn canonicalize_commutative_const_to_right() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let c = b.build_int_const(5u64, ValueType::I64).unwrap();
-        // const on the LEFT: Add(5, x).
+        // Const on the LEFT.
         b.build_int_binary_operation(c, x, IntBinaryOp::Add, ValueType::I64)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
@@ -446,7 +407,7 @@ fn canonicalize_commutative_const_to_right() -> Result<()> {
 
 #[test]
 fn reassoc_add_add_consts() -> Result<()> {
-    // (x + 3) + 4 → x + 7
+    // (x + 3) + 4 -> x + 7
     let vn = reg_vn(0x1000, 8);
     let (mut fg, x) = make_fn_with_var(vn, |b, x| {
         let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
@@ -461,7 +422,7 @@ fn reassoc_add_add_consts() -> Result<()> {
 
 #[test]
 fn reassoc_add_sub_consts() -> Result<()> {
-    // (x - 3) + 4 → x + 1
+    // (x - 3) + 4 -> x + 1
     let vn = reg_vn(0x1000, 8);
     let (mut fg, x) = make_fn_with_var(vn, |b, x| {
         let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
@@ -476,7 +437,7 @@ fn reassoc_add_sub_consts() -> Result<()> {
 
 #[test]
 fn reassoc_sub_add_consts_wrapping() -> Result<()> {
-    // (x + 3) - 4 → x + (3 - 4)  = x + 0xFFFF_FFFF_FFFF_FFFF
+    // (x + 3) - 4 -> x + (3 - 4)  = x + 0xFFFF_FFFF_FFFF_FFFF
     let vn = reg_vn(0x1000, 8);
     let (mut fg, x) = make_fn_with_var(vn, |b, x| {
         let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
@@ -491,7 +452,7 @@ fn reassoc_sub_add_consts_wrapping() -> Result<()> {
 
 #[test]
 fn reassoc_sub_sub_consts() -> Result<()> {
-    // (x - 3) - 4 → x - 7
+    // (x - 3) - 4 -> x - 7
     let vn = reg_vn(0x1000, 8);
     let (mut fg, x) = make_fn_with_var(vn, |b, x| {
         let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
@@ -506,7 +467,7 @@ fn reassoc_sub_sub_consts() -> Result<()> {
 
 #[test]
 fn reassoc_add_commuted_inner() -> Result<()> {
-    // (3 + x) + 4 → x + 7 (inner Add has const on lhs)
+    // (3 + x) + 4 -> x + 7 (inner Add has const on lhs)
     let vn = reg_vn(0x1000, 8);
     let (mut fg, x) = make_fn_with_var(vn, |b, x| {
         let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
@@ -521,7 +482,7 @@ fn reassoc_add_commuted_inner() -> Result<()> {
 
 #[test]
 fn reassoc_add_commuted_outer() -> Result<()> {
-    // 4 + (x + 3) → x + 7 (outer Add has const on lhs)
+    // 4 + (x + 3) -> x + 7 (outer Add has const on lhs)
     let vn = reg_vn(0x1000, 8);
     let (mut fg, x) = make_fn_with_var(vn, |b, x| {
         let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
@@ -536,8 +497,8 @@ fn reassoc_add_commuted_outer() -> Result<()> {
 
 #[test]
 fn reassoc_chain_three_subs() -> Result<()> {
-    // ((x - 4) - 4) - 4 → x - 12.  Requires the fixed-point loop to
-    // compose multiple reassociation steps.
+    // ((x - 4) - 4) - 4 -> x - 12; needs the fixed-point loop to compose
+    // several reassociation steps.
     let vn = reg_vn(0x1000, 8);
     let (mut fg, x) = make_fn_with_var(vn, |b, x| {
         let c4 = b.build_int_const(4u64, ValueType::I64).unwrap();
@@ -552,7 +513,7 @@ fn reassoc_chain_three_subs() -> Result<()> {
 
 #[test]
 fn reassoc_chain_three_subs_u32() -> Result<()> {
-    // Same chain but at I32: ((x - 4) - 4) - 4 → x - 12.
+    // Same chain but at I32: ((x - 4) - 4) - 4 -> x - 12.
     let vn = reg_vn(0x1000, 4);
     let (mut fg, x) = make_fn_with_var(vn, |b, x| {
         let c4 = b.build_int_const(4u64, ValueType::I32).unwrap();
@@ -567,7 +528,7 @@ fn reassoc_chain_three_subs_u32() -> Result<()> {
 
 #[test]
 fn reassoc_no_fold_without_const() -> Result<()> {
-    // (x + y) + z, no constants → untouched.
+    // (x + y) + z, no constants -> untouched.
     let xv = reg_vn(0x1000, 8);
     let yv = reg_vn(0x1008, 8);
     let zv = reg_vn(0x1010, 8);
@@ -588,7 +549,6 @@ fn reassoc_no_fold_without_const() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
     let before = return_value(fg.graph())?;
-    // Should not change: no constants anywhere.
     let res =
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     assert!(!res.changed(), "no-const chain should not reassociate");
@@ -596,8 +556,7 @@ fn reassoc_no_fold_without_const() -> Result<()> {
     Ok(())
 }
 
-/// Builds `((a & C1) | (b & C2)) & C3` (the AND-distribution LHS) and
-/// returns the built function plus the outer-And's count of `Or` nodes.
+/// Builds the AND-distribution LHS `((a & C1) | (b & C2)) & C3`.
 fn build_and_dist_fn(c1: u64, c2: u64, c3: u64) -> Result<strider_ir::Function> {
     let av = reg_vn(0x1000, 8);
     let bv = reg_vn(0x1008, 8);
@@ -621,17 +580,14 @@ fn build_and_dist_fn(c1: u64, c2: u64, c3: u64) -> Result<strider_ir::Function> 
     b.build()
 }
 
-/// Counts the *reachable* `Or` nodes (walks from entry, ignoring detached
-/// zombies left behind by rewrites).
+/// Walks from entry, so detached zombies left behind by rewrites don't count.
 fn reachable_or_nodes(fg: &strider_ir::Function) -> usize {
     fg.count_kind(|k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Or)))
 }
 
-/// The register-merge-mask case the AND-distribution rule exists for: one
-/// product `Ci & C3` is zero, so a disjunct collapses and the `Or`
-/// disappears.  C1 & C3 = 0xFFFF_0000 & 0x0000_FFFF = 0 → the `(a & C1)`
-/// disjunct folds to `(a & 0) → 0`, and `Or(0, b & C2) → b & C2`, leaving a
-/// single `And` as the returned value.
+/// The register-merge-mask case the AND-distribution rule exists for.
+/// `C1 & C3 == 0`, so `(a & C1)` folds to 0, `Or(0, b & C2)` collapses, and one
+/// `And` is left.
 #[test]
 fn distribution_rewrite_simplifies_when_a_product_is_zero() -> Result<()> {
     let mut fg = build_and_dist_fn(0xFFFF_0000, 0x0000_FFFF, 0x0000_FFFF)?;
@@ -640,9 +596,8 @@ fn distribution_rewrite_simplifies_when_a_product_is_zero() -> Result<()> {
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed();
     assert!(changed, "distribution rule should fire and simplify");
-    // Drive ConstantFold to a true fixed point (each `run_one` only
-    // re-seeds the directly-rewritten node, so the cascade
-    // `(a & 0) → 0` → `Or(0, …) → …` settles over a couple of passes).
+    // Each `run_one` only re-seeds the directly-rewritten node, so the cascade
+    // needs a few passes to settle.
     for _ in 0..8 {
         if !crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
@@ -655,7 +610,6 @@ fn distribution_rewrite_simplifies_when_a_product_is_zero() -> Result<()> {
         0,
         "the disjunct should collapse and the Or disappear",
     );
-    // The surviving return value is a single masking And, not an Or.
     assert!(
         matches!(
             return_kind(fg.graph())?,
@@ -666,12 +620,9 @@ fn distribution_rewrite_simplifies_when_a_product_is_zero() -> Result<()> {
     Ok(())
 }
 
-/// The ARM/Thumb dispatch alignment idiom: `(x | A) & B` where the OR-set
-/// bits `A` are entirely cleared by the mask `B` (`A & B == 0`) is equal to
-/// `x & B` — every surviving bit (`B_i = 1`) has `A_i = 0`, so
-/// `(x_i | A_i) & B_i = x_i & B_i`.  `(x | 1) & 0xFFFF_FFFE` (set then clear
-/// the Thumb bit) must fold to `x & 0xFFFF_FFFE`, dropping the `Or` so the
-/// jump-table classifier sees a single masked load.
+/// The ARM/Thumb dispatch alignment idiom: `(x | 1) & 0xFFFF_FFFE` sets then
+/// clears the Thumb bit, so the `Or` must drop and leave the jump-table
+/// classifier a single masked load.
 #[test]
 fn align_or_removal_drops_or_when_set_bits_are_masked_off() -> Result<()> {
     let xv = reg_vn(0x1000, 8);
@@ -715,32 +666,25 @@ fn align_or_removal_drops_or_when_set_bits_are_masked_off() -> Result<()> {
     Ok(())
 }
 
-/// Confluence regression: when BOTH products `C1 & C3` and `C2 & C3` are
-/// non-zero, the AND-distribution is pure churn (it just pushes `& C3`
-/// inward; neither disjunct can collapse), so the gated rule must NOT
-/// fire.  Before the `when_match` guard this term re-distributed forever,
-/// and the pass only terminated thanks to `compute_full`'s canonical RPO
-/// settling operands first.  The guard makes the rule strictly
-/// progress-reducing, so a second run reports `NoChange` (a stable fixed
-/// point) and the factored `Or` shape is preserved.
+/// With both products `C1 & C3` and `C2 & C3` non-zero the distribution is pure
+/// churn: it pushes `& C3` inward, neither disjunct collapses, and the factored
+/// shape regenerates. Unguarded, this term re-distributed forever. A second run
+/// reporting no change is the fixed-point proof.
 #[test]
 fn distribution_does_not_churn_when_both_products_nonzero() -> Result<()> {
-    // C1 = C2 = C3 = 0xFF → both products = 0xFF (non-zero).
+    // Both products are 0xFF.
     let mut fg = build_and_dist_fn(0xFF, 0xFF, 0xFF)?;
     assert_eq!(reachable_or_nodes(&fg), 1, "test setup expects one Or node");
 
-    // First run reaches the pass's internal fixed point without hanging.
+    // Must reach the pass's internal fixed point without hanging.
     crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
 
-    // The factored shape is preserved — the Or is still there (the rule
-    // did not distribute it away into churn).
     assert_eq!(
         reachable_or_nodes(&fg),
         1,
         "the factored Or shape must be preserved (no churn)",
     );
 
-    // Re-running converges immediately: the result is a stable fixed point.
     let second =
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed();
@@ -751,23 +695,18 @@ fn distribution_does_not_churn_when_both_products_nonzero() -> Result<()> {
     Ok(())
 }
 
-// ── truncate / extend ─────────────────────────────────────────────────────
-
 #[test]
 fn fold_truncate_const() -> Result<()> {
-    // The builder's truncate_if_needed already constant-folds inline, so
-    // by the time the graph is built there is no Truncate node — just an
-    // IntConst with the (possibly unmasked) raw value.
-    // Verify that the return value is semantically 0x00 (0xFF00 & 0xFF).
+    // `truncate_if_needed` folds inline, so the built graph has no Truncate
+    // node at all, only an IntConst carrying the possibly-unmasked raw value.
     let fg = make_fn(|b| {
         let wide = b.build_int_const(0xFF00u64, ValueType::I16).unwrap();
         b.truncate_if_needed(wide, ValueType::I8)
     })?;
     let val = return_value(fg.graph())?;
-    // Use int_const_u128 which masks to the declared type.
+    // `int_const_u128` masks to the declared type.
     let semantic = fg.int_const_u128(val);
     assert_eq!(semantic, Some(0), "0xFF00 truncated to I8 should be 0");
-    // No Truncate nodes should exist.
     assert!(
         !fg.graph()
             .all_node_ids()
@@ -777,28 +716,23 @@ fn fold_truncate_const() -> Result<()> {
     Ok(())
 }
 
-/// Rule 4 (`Truncate(IntConst(v)) => int_const(v, ty)`) must mask the
-/// stored value to the truncate's output width. Otherwise the IR-layer
-/// invariant "an IntConst's stored value fits its declared type" silently
-/// breaks: a `Truncate(IntConst(0xFFFF, I16))` would rewrite to
-/// `IntConst(0xFFFF, I8)` (typed-narrow but value-wide).
+/// The truncate fold must mask the stored value to the output width, or the
+/// IR invariant "an IntConst's stored value fits its declared type" breaks:
+/// `Truncate(IntConst(0xFFFF, I16))` would become a typed-narrow but value-wide
+/// `IntConst(0xFFFF, I8)`.
 ///
-/// We can't directly emit `Truncate(IntConst)` because the builder's
-/// `truncate_if_needed` short-circuits constants. Instead we feed the
-/// truncate from a non-const expression that constant-folds *during* the
-/// optimizer's fixed-point loop: `(0xFFFF | 0xFFFF) → IntConst(0xFFFF)`,
-/// which then arrives at the still-extant Truncate node and triggers
-/// rule 4.
+/// `truncate_if_needed` short-circuits constants, so `Truncate(IntConst)` can't
+/// be emitted directly. Feeding the truncate a non-const Or that folds during
+/// the optimizer loop gets the constant there instead.
 #[test]
 fn truncate_int_const_emits_masked_value() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_int_const(0xFFFFu64, ValueType::I16).unwrap();
         let b_ = b.build_int_const(0xFFFFu64, ValueType::I16).unwrap();
-        // Non-const node so truncate_if_needed emits a real Truncate node.
+        // Non-const, so `truncate_if_needed` emits a real Truncate node.
         let or = b.build_int_binary_operation(a, b_, IntBinaryOp::Or, ValueType::I16)?;
         b.truncate_if_needed(or, ValueType::I8)
     })?;
-    // Sanity: builder did emit a Truncate node.
     assert!(
         fg.graph()
             .all_node_ids()
@@ -811,9 +745,6 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
             .changed()
     );
 
-    // After optimization the Return's value must be an `IntConst(0xFF)`,
-    // i.e. the low byte of 0xFFFF — *masked* to I8. A pre-fix run would
-    // store `0xFFFF` (the wider raw value) here.
     let val = return_value(fg.graph())?;
     let raw = fg.int_const_u128(val).unwrap_or_else(|| {
         panic!(
@@ -830,23 +761,13 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     Ok(())
 }
 
-// ── Truncate(Extend(x)) round-trip ───────────────────────────────────────
-//
-// Register-merge chains in `write_reg_vn` produce
-//   Extend_zext(Truncate(Or(...)))
-// and similar `Truncate(Extend(x))` round-trips when the inner expression's
-// width equals the outer truncate's output width.  The round-trip rules in
-// `apply_bitcast_extend_rules` collapse these to the inner expression.
-// These do NOT cover the opposite direction (Extend/Truncate at the *outer*
-// level, which still defeats the matcher's data-flow walk on x86 IMUL
-// chains), but they ARE valid algebraic identities that simplify the IR
-// generally.
+// The round-trip rules cover `Truncate(Extend(x))`, the shape `write_reg_vn`
+// leaves behind. They do NOT cover the opposite nesting (Extend outside
+// Truncate), which still defeats the matcher's data-flow walk on x86 IMUL
+// chains.
 
 use strider_ir::ExtendOp;
 
-/// `Truncate_<W>(ZeroExtend_<W'>(x_<W>))` where `x` already has type `W`
-/// must collapse to `x` — the extend added zero bits that the truncate
-/// cuts off, so the round-trip is identity.
 #[test]
 fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -858,17 +779,12 @@ fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
         b.truncate_if_needed(widened, ValueType::I32)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    // After optimization the Or's two const inputs fold to IntConst(0xFF),
-    // and the Truncate(Extend(IntConst(0xFF))) collapses to IntConst(0xFF).
-    // Most importantly: no Truncate or Extend node remains in the chain.
     let val = return_value(fg.graph())?;
     assert!(
         matches!(fg.kind_of_value(val), NodeKind::IntConst(_)),
         "round-trip + const-fold must leave an IntConst at the root, got {:?}",
         fg.kind_of_value(val)
     );
-    // Belt-and-suspenders: walk all reachable nodes and verify no
-    // Truncate/Extend survives the chain to the Return.
     for nid in fg.walk() {
         let kind = fg.node_kind(nid);
         assert!(
@@ -879,8 +795,6 @@ fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
     Ok(())
 }
 
-/// `ZeroExtend(ZeroExtend(x)) → ZeroExtend(x)` — nested zero-extends compose
-/// to a single zero-extend at the outer width (value preserved at every step).
 #[test]
 fn fold_nested_zero_extend_collapses() -> Result<()> {
     let xv = reg_vn(0x1000, 1); // I8 register
@@ -906,7 +820,6 @@ fn fold_nested_zero_extend_collapses() -> Result<()> {
     Ok(())
 }
 
-/// `SignExtend(SignExtend(x)) → SignExtend(x)` — sign replication is transitive.
 #[test]
 fn fold_nested_sign_extend_collapses() -> Result<()> {
     let xv = reg_vn(0x1000, 1);
@@ -932,8 +845,6 @@ fn fold_nested_sign_extend_collapses() -> Result<()> {
     Ok(())
 }
 
-/// `Truncate(Truncate(x)) → Truncate(x)` — narrowing twice equals one narrow
-/// to the final width.
 #[test]
 fn fold_nested_truncate_collapses() -> Result<()> {
     let xv = reg_vn(0x1000, 4); // I32 register
@@ -956,13 +867,11 @@ fn fold_nested_truncate_collapses() -> Result<()> {
     Ok(())
 }
 
-/// Same identity holds for `SignExtend`: the sign bits added by the
-/// extend are cut off by the truncate.
 #[test]
 fn fold_truncate_of_sign_extend_round_trip() -> Result<()> {
     let mut fg = make_fn(|b| {
-        // Use a non-const Or so the rule fires through the inner expression
-        // rather than via direct constant folding.
+        // Non-const Or, so the rule fires through the inner expression rather
+        // than via direct constant folding.
         let a = b.build_int_const(0x80u64, ValueType::I32).unwrap();
         let bb = b.build_int_const(0x01u64, ValueType::I32).unwrap();
         let or = b.build_int_binary_operation(a, bb, IntBinaryOp::Or, ValueType::I32)?;
@@ -980,19 +889,16 @@ fn fold_truncate_of_sign_extend_round_trip() -> Result<()> {
     Ok(())
 }
 
-/// `Truncate_<W>(Mul(SignExt_<W→W'>(a_<W>), SignExt_<W→W'>(b_<W>)))`
-/// → `Mul_<W>(a, b)` — narrowing through Mul preserves the lower W bits.
-/// MIPS32 lifts `mul a, b` (32×32→64 IntMul) followed by a 32-bit
-/// Truncate to recover the integer-register width; without this rule
-/// the pattern matcher's data-flow walk for `add(mul(_,_), _)` can't
-/// see the Mul through the surrounding Truncate.
+/// The MIPS32 `mul a, b` shape: a 32x32->64 IntMul plus a 32-bit Truncate to
+/// recover register width, which otherwise hides the Mul from the matcher's
+/// data-flow walk for `add(mul(_,_), _)`.
 #[test]
 fn fold_narrow_mul_through_sign_extend() -> Result<()> {
     let mut fg = make_fn(|b| {
         let lhs = b.build_int_const(3u64, ValueType::I32).unwrap();
         let rhs = b.build_int_const(7u64, ValueType::I32).unwrap();
-        // Use non-const expressions so the constant folder doesn't
-        // collapse before our rule runs.
+        // Non-const, so the constant folder can't collapse this before the
+        // narrowing rule runs.
         let lhs_or = b.build_int_binary_operation(lhs, lhs, IntBinaryOp::Or, ValueType::I32)?;
         let rhs_or = b.build_int_binary_operation(rhs, rhs, IntBinaryOp::Or, ValueType::I32)?;
         let lhs_ext = b.extend_if_needed(lhs_or, ValueType::I64, ExtendOp::SignExtend)?;
@@ -1002,9 +908,7 @@ fn fold_narrow_mul_through_sign_extend() -> Result<()> {
         b.truncate_if_needed(mul, ValueType::I32)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    // After narrowing-through-Mul + constant fold: 3 * 7 = 21 at I32.
     assert_returns_const(&fg, 21);
-    // Nothing wider than I32 should survive (no SignExtend/Mul@I64/Truncate).
     for nid in fg.walk() {
         let kind = fg.node_kind(nid);
         assert!(
@@ -1019,22 +923,19 @@ fn fold_narrow_mul_through_sign_extend() -> Result<()> {
     Ok(())
 }
 
-/// `Truncate_<W>(Or(any, And(high_mask, _)))` → `Truncate_<W>(any)` —
-/// the high-mask half contributes nothing to the lower W bits, so
-/// dropping it doesn't change the truncated value.  This is the x86
-/// `mov $eax, ...` register-merge cleanup.
+/// The x86 `mov $eax, ...` register-merge cleanup: the high-mask half
+/// contributes nothing below bit 32, so the truncate drops it.
 #[test]
 fn fold_drop_high_half_in_or_truncate() -> Result<()> {
     let mut fg = make_fn(|b| {
-        // Build the merge shape: Or(low_part, And(high_mask, junk)).
         let low_part = b.build_int_const(0xAAu64, ValueType::I64).unwrap();
         let junk = b
             .build_int_const(0x12345678_DEADBEEFu64, ValueType::I64)
             .unwrap();
-        // Make low_part non-const via Or so the rule fires through it.
+        // Or-with-self makes low_part non-const so the rule fires through it.
         let low_or =
             b.build_int_binary_operation(low_part, low_part, IntBinaryOp::Or, ValueType::I64)?;
-        // High mask = 0xFFFF_FFFF_0000_0000 (low 32 bits are zero).
+        // Low 32 bits of the mask are zero.
         let high_mask = b
             .build_int_const(0xFFFFFFFF_00000000u64, ValueType::I64)
             .unwrap();
@@ -1045,8 +946,6 @@ fn fold_drop_high_half_in_or_truncate() -> Result<()> {
         b.truncate_if_needed(merged, ValueType::I32)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    // After dropping the high half + folding 0xAA | 0xAA = 0xAA at I32:
-    // the result is IntConst(0xAA).  No Or remains.
     assert_returns_const(&fg, 0xAA);
     for nid in fg.walk() {
         let kind = fg.node_kind(nid);
@@ -1058,9 +957,6 @@ fn fold_drop_high_half_in_or_truncate() -> Result<()> {
     Ok(())
 }
 
-/// `Truncate_<W>(And(low_W_mask, x)) → Truncate_<W>(x)` — the AND's
-/// effect of zeroing all bits above W is redundant when the truncate
-/// is going to discard those bits anyway.
 #[test]
 fn fold_drop_low_mask_under_truncate() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -1074,16 +970,13 @@ fn fold_drop_low_mask_under_truncate() -> Result<()> {
         b.truncate_if_needed(masked, ValueType::I32)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    // After dropping the redundant And + folding the OR-of-itself:
-    // result is IntConst(0xDEADBEEF) at I32.
     assert_returns_const(&fg, 0xDEADBEEF);
     Ok(())
 }
 
-/// Covers the const-on-right And orientation of `drop_low_mask_under_truncate`
-/// (`Truncate(And(x, low_mask))`). A single rule orientation handles it: the
-/// non-const operand `x` fails `any_int_const` structurally, so the `And`'s own
-/// commutative retry binds the const regardless of side.
+/// The const-on-right And orientation. One rule orientation handles it: `x`
+/// fails `any_int_const` structurally, so the `And`'s commutative retry binds
+/// the const on either side.
 #[test]
 fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -1092,7 +985,7 @@ fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
             .unwrap();
         let x = b.build_int_binary_operation(a, a, IntBinaryOp::Or, ValueType::I64)?;
         let low_mask = b.build_int_const(0xFFFFFFFFu64, ValueType::I64).unwrap();
-        // Const on the RIGHT: And(x, low_mask).
+        // Const on the RIGHT.
         let masked = b.build_int_binary_operation(x, low_mask, IntBinaryOp::And, ValueType::I64)?;
         b.truncate_if_needed(masked, ValueType::I32)
     })?;
@@ -1101,13 +994,10 @@ fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
     Ok(())
 }
 
-/// Covers the And-term-on-left Or orientation of `drop_high_half_in_or_truncate`
-/// (`Or(And(high_mask, junk), low_part)`). A single rule orientation handles it:
-/// `low_part` fails the `and(...)` subpattern structurally, so the `Or`'s
-/// commutative retry binds it regardless of side. (The two-`And` form
-/// `Or(And, And)`, disambiguated only by the value guard on the unary truncate
-/// ancestor, is exercised by `test_narrow_widths::x64` and relies on the
-/// matcher's continuation-passing guard re-drive.)
+/// The And-term-on-left Or orientation. `low_part` fails the `and(...)`
+/// subpattern structurally, so the `Or`'s commutative retry binds it on either
+/// side. The harder two-`And` form, disambiguated only by the value guard on
+/// the truncate ancestor, lives in `test_narrow_widths::x64`.
 #[test]
 fn fold_drop_high_half_in_or_truncate_and_term_on_left() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -1122,7 +1012,7 @@ fn fold_drop_high_half_in_or_truncate_and_term_on_left() -> Result<()> {
             .unwrap();
         let high_part =
             b.build_int_binary_operation(high_mask, junk, IntBinaryOp::And, ValueType::I64)?;
-        // And-term on the LEFT of the Or: Or(And(...), low_or).
+        // And-term on the LEFT of the Or.
         let merged =
             b.build_int_binary_operation(high_part, low_or, IntBinaryOp::Or, ValueType::I64)?;
         b.truncate_if_needed(merged, ValueType::I32)
@@ -1138,10 +1028,8 @@ fn fold_drop_high_half_in_or_truncate_and_term_on_left() -> Result<()> {
     Ok(())
 }
 
-/// The round-trip rule must NOT fire when `x`'s type is *narrower* than
-/// the truncate's output type — that's a real width-narrowing operation,
-/// not an identity.  `Truncate_U16(Extend_U64(x_U32))` is still a real
-/// truncation from I32 to I16.
+/// The round-trip rule must not fire when `x` is wider than the truncate's
+/// output: `Truncate_U16(Extend_U64(x_U32))` is a real I32->I16 narrowing.
 #[test]
 fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -1149,14 +1037,11 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
         let bb = b.build_int_const(0x55u64, ValueType::I32).unwrap();
         let or = b.build_int_binary_operation(a, bb, IntBinaryOp::Or, ValueType::I32)?;
         let widened = b.extend_if_needed(or, ValueType::I64, ExtendOp::ZeroExtend)?;
-        // Truncate to I16 — narrower than the inner Or's I32 width, so the
-        // round-trip rule must NOT fire.  Constant-fold can still collapse
-        // the const-Or, but the truncate must remain (or its result must
-        // still semantically be I16).
+        // I16 is narrower than the inner Or's I32, so the round-trip rule must
+        // not fire. Constant-fold may still collapse the const-Or.
         b.truncate_if_needed(widened, ValueType::I16)
     })?;
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    // The result must be I16-typed.
     let val = return_value(fg.graph())?;
     assert_eq!(
         fg.value_kind(val),
@@ -1167,18 +1052,12 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
     Ok(())
 }
 
-// ── boolean folding ───────────────────────────────────────────────────────
-
-// Booleans are 1-bit (`I1`) integers: a boolean NOT is now
-// `Xor(x, IntConst(1)):I1` (since the former BitNot unary-op was removed in
-// favour of `Xor(_, all_ones)`), AND/OR/XOR are `IntBinaryOp` at I1, and a
-// boolean const is an `IntConst(0|1)` typed I1.  These folds now flow
-// through the generic integer const-fold / identity rules at I1.
+// Booleans are 1-bit integers: NOT is `Xor(x, IntConst(1)):I1`, AND/OR/XOR are
+// `IntBinaryOp` at I1, and a bool const is `IntConst(0|1)` typed I1. So these
+// folds all flow through the generic integer rules.
 
 #[test]
 fn fold_bool_neg_const() -> Result<()> {
-    // `!true` = `Xor(IntConst(1):I1, IntConst(1):I1)` folds to
-    // `IntConst(0):I1` via the integer binary const-fold rule.
     let mut fg = make_fn(|b| {
         let t = b.build_boolean_const(true);
         let one = b.build_int_const(u128::MAX, ValueType::I1)?;
@@ -1194,8 +1073,6 @@ fn fold_bool_neg_const() -> Result<()> {
 
 #[test]
 fn fold_bool_and_consts() -> Result<()> {
-    // `true & false` folds to `IntConst(0):I1` via the integer binary
-    // const-fold rule.
     let mut fg = make_fn(|b| {
         let t = b.build_boolean_const(true);
         let f = b.build_boolean_const(false);
@@ -1209,29 +1086,25 @@ fn fold_bool_and_consts() -> Result<()> {
     Ok(())
 }
 
-// `xor b true` is the canonical logical-NOT shape post-the former BitNot unary-op
-// removal — building it directly already yields `~b`, so no rewrite is
-// needed.  Pin that the const-fold pipeline leaves the Xor in place (no
-// `x ^ all_ones → ~x` rewrite anymore — that canonicalisation collapsed
-// into the lift-time shape) when `b` is non-const.
+// `xor b true` is already the canonical logical-NOT shape, so nothing should
+// rewrite it when `b` is non-const.
 #[test]
 fn fold_bool_xor_true_to_not() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let c5 = b.build_int_const(5u64, ValueType::I64).unwrap();
-        // Non-const Bool: `x == 5`.
+        // Non-const bool.
         let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, ValueType::I64)?;
         let t = b.build_boolean_const(true);
         b.build_int_binary_operation(cmp, t, IntBinaryOp::Xor, ValueType::I1)
     })?;
-    // The const-fold pipeline may or may not "change" — the Xor shape
-    // is already canonical for logical-NOT.  Assert the final shape.
+    // The run may or may not report a change; only the final shape matters.
     let _ = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
     assert_return_kind(fg.graph(), NodeKind::IntBinaryOp(IntBinaryOp::Xor));
     Ok(())
 }
 
-// `xor` is commutative, so `true ^ b` must rewrite the same as `b ^ true`.
+// `xor` is commutative, so `true ^ b` must behave as `b ^ true`.
 #[test]
 fn fold_bool_true_xor_x_to_not_commutative() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
@@ -1239,7 +1112,6 @@ fn fold_bool_true_xor_x_to_not_commutative() -> Result<()> {
         let c5 = b.build_int_const(5u64, ValueType::I64).unwrap();
         let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, ValueType::I64)?;
         let t = b.build_boolean_const(true);
-        // Operands flipped relative to the previous test.
         b.build_int_binary_operation(t, cmp, IntBinaryOp::Xor, ValueType::I1)
     })?;
     let _ = crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
@@ -1247,9 +1119,8 @@ fn fold_bool_true_xor_x_to_not_commutative() -> Result<()> {
     Ok(())
 }
 
-// `xor b false` does not match the `x ^ all_ones → ~x` canonicalization
-// (the const is `0`, not all-ones).  Instead the integer identity rule
-// `x ^ 0 → x` fires, collapsing it to the cmp directly.
+// The const is 0, not all-ones, so `x ^ 0 -> x` fires and collapses the Xor to
+// the cmp.
 #[test]
 fn no_fold_bool_xor_false() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
@@ -1263,20 +1134,17 @@ fn no_fold_bool_xor_false() -> Result<()> {
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    // `x ^ 0 → x`: the Xor collapses to the cmp, not to a BitNot.
     assert_return_kind(fg.graph(), NodeKind::IntCmpOp(IntCmpOp::Equal));
     Ok(())
 }
 
-// `x | true → true` for non-const x (Or-absorbing at I1; `true` is the
-// all-ones value).  Pins the re-expressed `BOr(true, _) → true` rule —
-// `Or` is commutative so `true | x` rewrites the same.
+// `x | true -> true` at I1, where `true` is the all-ones value.
 #[test]
 fn fold_bool_or_true_to_true() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let c5 = b.build_int_const(5u64, ValueType::I64).unwrap();
-        // Non-const Bool: `x == 5`.
+        // Non-const bool.
         let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, ValueType::I64)?;
         let t = b.build_boolean_const(true);
         b.build_int_binary_operation(cmp, t, IntBinaryOp::Or, ValueType::I1)
@@ -1285,19 +1153,17 @@ fn fold_bool_or_true_to_true() -> Result<()> {
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    // `x | true → true`: folds to the constant 1 (true at I1), not the cmp.
+    // Folds to 1, not to the cmp.
     assert_returns_const(&fg, 1);
     Ok(())
 }
 
-// `x | all_ones → all_ones` at a wide width (I32): the general integer
-// Or-absorbing rule folds to the all-ones constant (it is NOT limited to
-// the I1 boolean `true`).
+// The Or-absorbing rule is general, not limited to the I1 boolean `true`.
 #[test]
 fn fold_int_or_all_ones_to_all_ones() -> Result<()> {
-    let vn = reg_vn(0x1000, 4); // 4-byte var → I32
+    let vn = reg_vn(0x1000, 4); // 4-byte var -> I32
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
-        // Non-const I32 value via `Neg` (two's-complement negate), then `| 0xFFFF_FFFF`.
+        // `Neg` just makes the value non-const.
         let x32 = b.build_int_unary_operation(x, IntUnaryOp::Neg, ValueType::I32)?;
         let all_ones = b.build_int_const(0xFFFF_FFFFu64, ValueType::I32).unwrap();
         b.build_int_binary_operation(x32, all_ones, IntBinaryOp::Or, ValueType::I32)
@@ -1306,15 +1172,12 @@ fn fold_int_or_all_ones_to_all_ones() -> Result<()> {
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    // Folds to the all-ones constant.
     assert_returns_const(&fg, 0xFFFF_FFFF);
     Ok(())
 }
 
-// `!!x → x` for non-const x — at I1 each logical NOT is
-// `Xor(_, IntConst(1)):I1`, so this builds `Xor(Xor(cmp, 1), 1)` which
-// the `bool_not(bool_not(x)) → x` rule (or the xor reassoc rules)
-// collapses back to the cmp.
+// Each logical NOT at I1 is `Xor(_, IntConst(1))`, so this builds
+// `Xor(Xor(cmp, 1), 1)` for the double-negation rule to collapse.
 #[test]
 fn fold_bool_double_not_to_x() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
@@ -1329,13 +1192,11 @@ fn fold_bool_double_not_to_x() -> Result<()> {
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    // After fold the function returns the cmp directly.
     assert_return_kind(fg.graph(), NodeKind::IntCmpOp(IntCmpOp::Equal));
     Ok(())
 }
 
-// Composes with the xor-true rule via the fixed-point loop:
-// `xor (xor b true) true` → `not (not b)` → `b`.
+// Composes with the xor-true rule via the fixed-point loop.
 #[test]
 fn fold_bool_xor_true_xor_true_collapses_to_x() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
@@ -1352,8 +1213,6 @@ fn fold_bool_xor_true_xor_true_collapses_to_x() -> Result<()> {
     Ok(())
 }
 
-// ── no-fold edge cases ────────────────────────────────────────────────────
-
 #[test]
 fn no_fold_div_by_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -1361,7 +1220,6 @@ fn no_fold_div_by_zero() -> Result<()> {
         let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
         b.build_int_binary_operation(x, zero, IntBinaryOp::Div, ValueType::I64)
     })?;
-    // Should not fold (division by zero is undefined).
     assert!(
         !crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
@@ -1373,10 +1231,8 @@ fn no_fold_div_by_zero() -> Result<()> {
     Ok(())
 }
 
-/// Division / remainder by a constant 0 must skip on every divide-family
-/// op at I32 (Sleigh leaves division-by-zero undefined, mirroring the I64
-/// `no_fold_div_by_zero` pin above): the pass reports no change and the
-/// op node survives as the return-value producer.
+/// Sleigh leaves division by zero undefined, so every divide-family op must
+/// skip rather than fold.
 #[test]
 fn no_fold_divide_family_by_zero_i32_cases() -> Result<()> {
     for op in [
@@ -1408,20 +1264,15 @@ fn no_fold_divide_family_by_zero_i32_cases() -> Result<()> {
     Ok(())
 }
 
-/// Shifts by exactly `bit_width - 1` (the last in-range amount) fold to
-/// the hand-computed value — one row per shift flavour at I32, including
-/// the signed-fill SShiftRight on both a negative and a non-negative lhs.
+/// Shifts by `bit_width - 1`, the last in-range amount, at I32.
 #[test]
 fn fold_shift_by_width_minus_one_cases() -> Result<()> {
     #[rustfmt::skip]
     let cases = [
-        // 1 << 31 = 0x8000_0000 (the existing boundary row, kept for symmetry).
         ("shl_by_31", IntBinaryOp::ShiftLeft, 1u128, 0x8000_0000u128),
-        // 0xFFFF_FFFF >> 31 = 1.
         ("lshr_by_31", IntBinaryOp::ShiftRight, 0xFFFF_FFFF, 1),
-        // 0x8000_0000 >>s 31 = all-ones (sign fill).
+        // Sign fill, not zero fill.
         ("ashr_by_31_negative", IntBinaryOp::SShiftRight, 0x8000_0000, 0xFFFF_FFFF),
-        // 0x7FFF_FFFF >>s 31 = 0 (sign bit clear).
         ("ashr_by_31_positive", IntBinaryOp::SShiftRight, 0x7FFF_FFFF, 0),
     ];
     for (case, op, lhs, expected) in cases {
@@ -1447,9 +1298,8 @@ fn fold_shift_by_width_minus_one_cases() -> Result<()> {
     Ok(())
 }
 
-/// Arithmetic at the 1-bit width: `Add(1, 1):I1` wraps to 0 (the result
-/// is masked to the declared width), `And(1, 1):I1` is 1, and
-/// `Xor(1, 1):I1` is 0.
+/// Arithmetic at the 1-bit width, where `Add(1, 1)` wraps to 0 because the
+/// result is masked to the declared width.
 #[test]
 fn fold_i1_arithmetic_cases() -> Result<()> {
     #[rustfmt::skip]
@@ -1464,9 +1314,8 @@ fn fold_i1_arithmetic_cases() -> Result<()> {
             let b_ = b.build_int_const(1u64, ValueType::I1)?;
             b.build_int_binary_operation(a, b_, op, ValueType::I1)
         })?;
-        // `op(c, c)` identities (`x ^ x → 0`) may fire instead of the
-        // two-const eval; either way the run must report a change and
-        // land on the masked constant.
+        // An `op(c, c)` identity may fire instead of the two-const eval; either
+        // way the result must be the masked constant.
         assert!(
             crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
@@ -1514,10 +1363,6 @@ fn fold_int_cmp_less_consts() -> Result<()> {
     Ok(())
 }
 
-// ── Popcount / Lzcount ────────────────────────────────────────────────────
-
-/// Case table for the run-once `Popcount` / `Lzcount` constant folds.
-/// Each row names the stand-alone test it absorbed.
 #[test]
 fn fold_count_op_const_cases() -> Result<()> {
     #[derive(Clone, Copy)]
@@ -1534,20 +1379,14 @@ fn fold_count_op_const_cases() -> Result<()> {
     }
     #[rustfmt::skip]
     let cases = [
-        // popcount(0b10110101) = 5.
         Case { case: "fold_popcount_const", op: CountOp::Popcount, input: 0b1011_0101, ty: ValueType::I8, expected: 5 },
         Case { case: "fold_popcount_zero", op: CountOp::Popcount, input: 0, ty: ValueType::I64, expected: 0 },
-        // lzcount(0x80u8) = 0 (MSB is set).
         Case { case: "fold_lzcount_msb_set", op: CountOp::Lzcount, input: 0x80, ty: ValueType::I8, expected: 0 },
-        // lzcount(1u8) = 7 (only bit 0 set in an 8-bit value).
         Case { case: "fold_lzcount_one", op: CountOp::Lzcount, input: 1, ty: ValueType::I8, expected: 7 },
-        // lzcount(0_U32) must fold to 32 (the type's bit width). The previous
-        // formula `(masked << (64 - bits)).leading_zeros()` returned 64 when
-        // masked was 0, ignoring the type's narrower width.
+        // A zero input must count the TYPE's bit width, not the host's; the
+        // three rows below pin that at every relevant width.
         Case { case: "fold_lzcount_zero_u32", op: CountOp::Lzcount, input: 0, ty: ValueType::I32, expected: 32 },
         Case { case: "fold_lzcount_zero_u8", op: CountOp::Lzcount, input: 0, ty: ValueType::I8, expected: 8 },
-        // I64 happened to work on the unfixed code (64 - 64 = 0 shift), but
-        // pin it with a regression row so the fix doesn't break it.
         Case { case: "fold_lzcount_zero_u64", op: CountOp::Lzcount, input: 0, ty: ValueType::I64, expected: 64 },
     ];
     for c in &cases {
@@ -1578,16 +1417,12 @@ fn fold_count_op_const_cases() -> Result<()> {
     Ok(())
 }
 
-/// Builds a function whose Return value is `kind(wide_const)`, where the
-/// wide constant has declared type `wide_ty` (I128 or I256) and `kind` is
-/// either `NodeKind::Lzcount` or `NodeKind::Popcount`.
+/// Returns a function whose Return value is `kind(wide_const)`.
 ///
-/// `FunctionBuilder::build_int_const` rejects I128/I256 by design, and
-/// `build_lzcount`/`build_popcount` would coerce through `convert_to_int_if_needed`
-/// (truncating the input to I64). So we build the placeholder skeleton with
-/// a I64 const + return, then graft the wide const + unary node directly via
-/// the lower-level `Graph` mutators (which bypass build_int_const's I256 reject)
-/// and rewire the Return.
+/// The normal builders can't produce this: `build_int_const` rejects I128/I256,
+/// and `build_lzcount`/`build_popcount` would coerce the input down to I64. So
+/// build an I64 skeleton, then graft the wide const and unary node on via the
+/// lower-level `Graph` mutators and rewire the Return.
 fn build_unary_with_wide_const_input(
     kind: NodeKind,
     wide_ty: ValueType,
@@ -1596,15 +1431,13 @@ fn build_unary_with_wide_const_input(
     use strider_ir::node::ValueKind;
     let mut fg = make_fn(|b| Ok(b.build_int_const(0u64, ValueType::I64).unwrap()))?;
     let placeholder = return_value(fg.graph())?;
-    // Intern the constant value (0xFF) at the wide type so we have a valid
-    // ConstId for the new IntConst node.
     let const_id = fg.intern_int_const(0xFF_u128, wide_ty);
     let wide_node = fg.graph_mut().create_node(
         NodeKind::IntConst(const_id),
         [],
         [ValueKind::Typed(wide_ty)],
     );
-    // Stamp the asm fingerprint on the new node (required by the validator).
+    // The validator requires an asm fingerprint on every node.
     fg.side_tables_mut()
         .extend_asm_fingerprint(wide_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let wide_const = fg.node_outputs_exact::<1>(wide_node)?[0];
@@ -1618,11 +1451,8 @@ fn build_unary_with_wide_const_input(
     Ok(fg)
 }
 
-/// `Lzcount` / `Popcount` on an interner-width (I128 / I256) `IntConst`
-/// can't be computed in u64 (`get_unsigned_int(wide, _) == None`), so the
-/// fold rule must silently skip (`Error::skip`) rather than propagate
-/// `ExpectedIntegerType` and crash the whole optimizer pipeline.  Each row
-/// names the stand-alone test it absorbed.
+/// An interner-width `IntConst` can't be counted in u64, so the fold must skip
+/// rather than propagate an error and take down the whole pipeline.
 #[test]
 fn fold_count_op_wide_const_input_skips_cleanly_cases() -> Result<()> {
     #[rustfmt::skip]
@@ -1645,12 +1475,6 @@ fn fold_count_op_wide_const_input_skips_cleanly_cases() -> Result<()> {
     Ok(())
 }
 
-// ── Float constant folding ────────────────────────────────────────────────
-
-/// Case table for the run-once two-const float binary folds.  Each row
-/// names the stand-alone test it absorbed: build
-/// `op(FloatConst(lhs), FloatConst(rhs))` at `ty`, run `ConstantFold`
-/// once, and expect a fold to `FloatConst(expected)`.
 #[test]
 fn fold_float_binary_two_consts_cases() -> Result<()> {
     struct Case {
@@ -1695,8 +1519,7 @@ fn fold_float_binary_two_consts_cases() -> Result<()> {
     Ok(())
 }
 
-/// Case table for the run-once two-const float compare folds (output is
-/// the I1 boolean).  Each row names the stand-alone test it absorbed.
+/// Float compares output the I1 boolean, so the assertions read IntConst.
 #[test]
 fn fold_float_cmp_two_consts_cases() -> Result<()> {
     struct Case {
@@ -1741,8 +1564,6 @@ fn fold_float_cmp_two_consts_cases() -> Result<()> {
     Ok(())
 }
 
-/// Case table for the run-once float unary constant folds.  Each row
-/// names the stand-alone test it absorbed.
 #[test]
 fn fold_float_unary_const_cases() -> Result<()> {
     struct Case {
@@ -1782,10 +1603,9 @@ fn fold_float_unary_const_cases() -> Result<()> {
 
 #[test]
 fn fold_f64_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
-    // FloatUnaryOp::Round is documented (op_kinds.rs) as "Round to nearest
-    // integer (ties to even)" — the IEEE 754 default rounding mode and what
-    // x86/ARM hardware emits. Half-ties must round to the nearest even
-    // integer, NOT away from zero.
+    // `FloatUnaryOp::Round` is ties-to-even: the IEEE 754 default and what
+    // x86/ARM hardware emits. Rust's `f64::round` is ties-away-from-zero and
+    // would fail half of these rows.
     let cases: &[(f64, f64)] = &[
         (0.5, 0.0),
         (1.5, 2.0),
@@ -1844,10 +1664,6 @@ fn fold_f32_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
 
 #[test]
 fn fold_bitcast_identity_int_bits_to_float_of_float_bits_to_int() -> Result<()> {
-    // IntBitsToFloat(FloatBitsToInt(FloatAdd(1.0, 2.0)))
-    // → first, FloatAdd(1.0, 2.0) folds to FloatConst(3.0)
-    // → then,  IntBitsToFloat(FloatBitsToInt(FloatConst(3.0))) simplifies to FloatConst(3.0)
-    //   via the bitcast-identity: replace uses of IntBitsToFloat with FloatBitsToInt's input.
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(1.0f64.to_bits(), ValueType::F64);
         let b2 = b.build_float_const(2.0f64.to_bits(), ValueType::F64);
@@ -1860,22 +1676,12 @@ fn fold_bitcast_identity_int_bits_to_float_of_float_bits_to_int() -> Result<()> 
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    // Float binary fold: sum → FloatConst(3.0).
-    // Bitcast identity fold: IntBitsToFloat(FloatBitsToInt(FloatConst(3.0))) → FloatConst(3.0).
     assert_return_kind(fg.graph(), NodeKind::FloatConst(3.0f64.to_bits()));
     Ok(())
 }
 
-// (CastToFloat lowering tests removed: there is no CastToFloat node — an
-// int→float cast is built directly as IntBitsToFloat / FloatConst, and a
-// float→float cast as FloatToFloat, by `cast_to_float_if_needed` at build
-// time.  That lowering is covered by the strider-ir builder tests.)
-
-// ── Comprehensive tests ──────────────────────────────────────────────────────
-
-/// A NaN-producing float fold is withheld: a NaN's bit pattern is
-/// target-dependent, so `NaN + 1.0` is left as a `FloatAdd` rather than
-/// folded to a host-specific NaN constant.
+/// A NaN's bit pattern is target-dependent, so `NaN + 1.0` stays a `FloatAdd`
+/// rather than folding to a host-specific NaN constant.
 #[test]
 fn fold_f64_nan_plus_one_is_not_folded() -> Result<()> {
     let nan = f64::NAN.to_bits();
@@ -1884,7 +1690,6 @@ fn fold_f64_nan_plus_one_is_not_folded() -> Result<()> {
         let one = b.build_float_const(1.0f64.to_bits(), ValueType::F64);
         b.build_float_binary_op(a, one, FloatBinaryOp::Add, ValueType::F64)
     })?;
-    // Nothing folds: the only op is the NaN-producing Add.
     assert!(
         !crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
@@ -1900,9 +1705,8 @@ fn fold_f64_nan_plus_one_is_not_folded() -> Result<()> {
     Ok(())
 }
 
-/// `inf - inf` is NaN per IEEE 754.  `Neg(inf)` still folds (a sign-bit
-/// flip, `-inf`, not NaN), but the resulting `Add(inf, -inf)` is NaN, whose
-/// bit pattern is target-dependent — so the Add is left unfolded.
+/// The inner `Neg(inf)` still folds (a sign-bit flip, not a NaN), so the pass
+/// reports a change, but the NaN-producing `Add` must survive.
 #[test]
 fn fold_f64_inf_minus_inf_add_is_not_folded() -> Result<()> {
     // `inf - inf` lowered to `Add(inf, Neg(inf))`.
@@ -1913,8 +1717,6 @@ fn fold_f64_inf_minus_inf_add_is_not_folded() -> Result<()> {
         let neg_b = b.build_float_unary_op(bb, FloatUnaryOp::Neg, ValueType::F64)?;
         b.build_float_binary_op(a, neg_b, FloatBinaryOp::Add, ValueType::F64)
     })?;
-    // `Neg(inf)` folds to the `-inf` constant, so the pass reports a change,
-    // but the NaN-producing Add survives as the returned value's producer.
     assert!(
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
@@ -1930,8 +1732,7 @@ fn fold_f64_inf_minus_inf_add_is_not_folded() -> Result<()> {
     Ok(())
 }
 
-/// Bitcast roundtrip on f32 — `IntBitsToFloat(FloatBitsToInt(non-const))` → non-const.
-/// Uses a non-const float (the result of a float Add) so the builder doesn't
+/// Feeds the roundtrip a float Add rather than a constant, so the builder can't
 /// fold the inner cast eagerly.
 #[test]
 fn fold_bitcast_roundtrip_f32() -> Result<()> {
@@ -1946,16 +1747,12 @@ fn fold_bitcast_roundtrip_f32() -> Result<()> {
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    // After folding: float Add → FloatConst(2.5), then bitcast roundtrip
-    // collapses to that constant.
     assert_return_kind(fg.graph(), NodeKind::FloatConst(2.5f32.to_bits() as u64));
     Ok(())
 }
 
-/// Single-pass cascade: `((1 + 2) + 3) + 4` must converge to `IntConst(10)`
-/// in a single `optimize()` call (i.e. without relying on the outer
-/// pipeline fixed-point loop). Verifies that consumers are re-enqueued
-/// into the worklist after a rule rewrites a node.
+/// Converging in ONE pass, without the outer pipeline loop, is what proves
+/// consumers are re-enqueued onto the worklist after a rewrite.
 #[test]
 fn single_pass_propagates_through_chain() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -1968,7 +1765,6 @@ fn single_pass_propagates_through_chain() -> Result<()> {
         b.build_int_binary_operation(c2, four, IntBinaryOp::Add, ValueType::I32)
     })?;
 
-    // Single optimize() call — must converge without the outer pipeline loop.
     crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
 
     {
@@ -1982,8 +1778,8 @@ fn single_pass_propagates_through_chain() -> Result<()> {
     Ok(())
 }
 
-/// 10-deep `((((x - 1) - 1) ...) - 1)` chain — must collapse to `x - 10`
-/// via the worklist re-enqueueing reassociation rules along the way.
+/// A 10-deep sub chain, collapsed by the worklist re-enqueueing reassociation
+/// rules along the way.
 #[test]
 fn fold_chain_of_ten_subs_reassociates() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
@@ -2000,9 +1796,7 @@ fn fold_chain_of_ten_subs_reassociates() -> Result<()> {
     Ok(())
 }
 
-/// Case table for `eval_int_binary`'s input-masking and signed-overflow
-/// guards.  `expected == None` means the fold must skip.  Each row names
-/// the stand-alone test (and arm) it absorbed.
+/// `expected == None` means the fold must skip.
 #[test]
 fn eval_int_binary_masking_and_overflow_cases() {
     use crate::opt::constant_fold::eval_int::eval_int_binary;
@@ -2017,21 +1811,20 @@ fn eval_int_binary_masking_and_overflow_cases() {
     }
     #[rustfmt::skip]
     let cases = [
-        // INT_MIN / -1 signed overflow must skip on every narrow signed
-        // type -- same shape as the u64 case already guarded explicitly.
+        // INT_MIN / -1 overflows at every narrow signed width too, not just u64.
         Case { case: "sdiv_narrow_int_min_neg_one_skips (I32)", op: IntBinaryOp::Sdiv, l: 0x8000_0000, r: 0xFFFF_FFFF, ty: ValueType::I32, expected: None },
         Case { case: "sdiv_narrow_int_min_neg_one_skips (I16)", op: IntBinaryOp::Sdiv, l: 0x8000, r: 0xFFFF, ty: ValueType::I16, expected: None },
         Case { case: "sdiv_narrow_int_min_neg_one_skips (I8)", op: IntBinaryOp::Sdiv, l: 0x80, r: 0xFF, ty: ValueType::I8, expected: None },
         Case { case: "srem_narrow_int_min_neg_one_skips (I32)", op: IntBinaryOp::Srem, l: 0x8000_0000, r: 0xFFFF_FFFF, ty: ValueType::I32, expected: None },
         Case { case: "srem_narrow_int_min_neg_one_skips (I16)", op: IntBinaryOp::Srem, l: 0x8000, r: 0xFFFF, ty: ValueType::I16, expected: None },
         Case { case: "srem_narrow_int_min_neg_one_skips (I8)", op: IntBinaryOp::Srem, l: 0x80, r: 0xFF, ty: ValueType::I8, expected: None },
-        // I8 Div with l carrying high garbage bits beyond I8.
-        // Masked: 0xFF / 2 = 0x7F. Unmasked-eval: 0x1FF / 2 = 0xFF (wrong).
+        // The rows below carry garbage bits above the type width in `l`, so an
+        // unmasked eval gives a different (wrong) answer: 0x1FF / 2 = 0xFF, not
+        // the correct 0xFF / 2 = 0x7F.
         Case { case: "eval_int_binary_unsigned_div_unmasked_u8", op: IntBinaryOp::Div, l: 0x1FF, r: 2, ty: ValueType::I8, expected: Some(0x7F) },
-        // Pick a divisor that distinguishes the masked input from the raw
-        // one: 0xFFFF % 7 = 1, 0x1FFFF % 7 = 5.
+        // 7 is chosen to distinguish masked from raw: 0xFFFF % 7 = 1 but
+        // 0x1FFFF % 7 = 5.
         Case { case: "eval_int_binary_unsigned_rem_unmasked_u16", op: IntBinaryOp::Rem, l: 0x1FFFF, r: 7, ty: ValueType::I16, expected: Some(1) },
-        // Masked: 0xFF >> 1 = 0x7F. Unmasked-eval: 0x1FF >> 1 = 0xFF.
         Case { case: "eval_int_binary_unsigned_shr_unmasked_u8", op: IntBinaryOp::ShiftRight, l: 0x1FF, r: 1, ty: ValueType::I8, expected: Some(0x7F) },
     ];
     for c in &cases {
@@ -2044,8 +1837,7 @@ fn eval_int_binary_masking_and_overflow_cases() {
     }
 }
 
-/// Case table for `eval_int_cmp`'s input-masking guards (all at I8).
-/// Each row names the stand-alone test it absorbed.
+/// Input-masking guards, all at I8.
 #[test]
 fn eval_int_cmp_masking_cases() {
     use crate::opt::constant_fold::eval_int::eval_int_cmp;
@@ -2060,11 +1852,10 @@ fn eval_int_cmp_masking_cases() {
     }
     #[rustfmt::skip]
     let cases = [
-        // Masked: 0xFF == 0xFF -> true. Unmasked-eval: 0x1FF != 0xFF -> false.
+        // Every row's `l` carries bits above I8, so an unmasked eval flips the
+        // expected verdict.
         Case { case: "eval_int_cmp_equal_unmasked_u8", op: IntCmpOp::Equal, l: 0x1FF, r: 0xFF, expected: true, why: "Equal must mask both sides to I8 before comparing" },
-        // Masked: 0x00 < 0x01 -> true. Unmasked-eval: 0x100 < 0x01 -> false.
         Case { case: "eval_int_cmp_less_unmasked_u8", op: IntCmpOp::Less, l: 0x100, r: 0x01, expected: true, why: "Less must mask both sides to I8 before comparing" },
-        // Masked: 0x00 + 0x00 -> no carry. Unmasked-eval: 0x100 + 0 = 0x100 > 0xFF -> false-carry.
         Case { case: "eval_int_cmp_carry_unmasked_u8", op: IntCmpOp::Carry, l: 0x100, r: 0, expected: false, why: "Carry must mask both sides before checking overflow" },
     ];
     for c in &cases {
@@ -2078,10 +1869,8 @@ fn eval_int_cmp_masking_cases() {
     }
 }
 
-/// Case table for `eval_int_cmp`'s `bits >= 128` arms (Scarry / Sborrow /
-/// Carry at I128).  These wide-width branches use wrapping-add/sub +
-/// sign-bit logic instead of the narrow `< min || > max` range check, and
-/// were previously untested.
+/// The `bits >= 128` arms, which use wrapping add/sub plus sign-bit logic
+/// rather than the narrow range check.
 #[test]
 fn eval_int_cmp_i128_overflow_arms_cases() {
     use crate::opt::constant_fold::eval_int::eval_int_cmp;
@@ -2096,16 +1885,10 @@ fn eval_int_cmp_i128_overflow_arms_cases() {
     }
     #[rustfmt::skip]
     let cases = [
-        // i128::MAX + 1 overflows: same-sign (both non-negative) inputs but a
-        // negative wrapped result -> signed carry.
         Case { case: "scarry_i128_max_plus_one", op: IntCmpOp::Scarry, l: i128::MAX as u128, r: 1, expected: true, why: "i128::MAX + 1 signed-overflows" },
-        // i128::MIN - 1 overflows: differing-sign inputs and a result whose
-        // sign differs from the minuend -> signed borrow.
         Case { case: "sborrow_i128_min_minus_one", op: IntCmpOp::Sborrow, l: i128::MIN as u128, r: 1, expected: true, why: "i128::MIN - 1 signed-overflows" },
-        // u128::MAX + 1 wraps to 0; the wrapped sum (0) < l (u128::MAX) is the
-        // i128-width unsigned carry detector.
         Case { case: "carry_u128_max_plus_one", op: IntCmpOp::Carry, l: u128::MAX, r: 1, expected: true, why: "u128::MAX + 1 unsigned-overflows (sum wraps below l)" },
-        // Control: no overflow on the same arms.
+        // Controls: no overflow on the same arms.
         Case { case: "scarry_i128_zero_no_overflow", op: IntCmpOp::Scarry, l: 0, r: 1, expected: false, why: "0 + 1 does not signed-overflow at I128" },
         Case { case: "sborrow_i128_zero_no_overflow", op: IntCmpOp::Sborrow, l: 0, r: 1, expected: false, why: "0 - 1 = -1 does not signed-overflow at I128 (both operands non-negative)" },
         Case { case: "carry_i128_zero_no_overflow", op: IntCmpOp::Carry, l: 0, r: 1, expected: false, why: "0 + 1 does not unsigned-overflow at I128" },
@@ -2121,10 +1904,7 @@ fn eval_int_cmp_i128_overflow_arms_cases() {
     }
 }
 
-/// Case table for `eval_int_binary`'s signed division / remainder positive
-/// folds and the narrow signed-shift fill.  Only the by-zero / INT_MIN÷-1
-/// skips were previously covered, so the value-producing signed arms went
-/// untested.
+/// The value-producing signed arms; the skip cases are covered above.
 #[test]
 fn eval_int_binary_signed_value_folds_cases() {
     use crate::opt::constant_fold::eval_int::eval_int_binary;
@@ -2139,14 +1919,11 @@ fn eval_int_binary_signed_value_folds_cases() {
     }
     #[rustfmt::skip]
     let cases = [
-        // Sdiv(-5, -2) at I8 = 2 (truncated toward zero); both operands
-        // sign-extend before the i128 division.
+        // 2, truncated toward zero.
         Case { case: "sdiv_neg_by_neg_i8", op: IntBinaryOp::Sdiv, l: 0xFB, r: 0xFE, ty: ValueType::I8, expected: Some(2) },
-        // Srem(-7, 2) at I8 = -1 (0xFF); the remainder takes the dividend's
-        // sign, then masks back to I8.
+        // The remainder takes the dividend's sign, then masks back to I8.
         Case { case: "srem_neg_by_pos_i8", op: IntBinaryOp::Srem, l: 0xF9, r: 2, ty: ValueType::I8, expected: Some(0xFF) },
-        // SShiftRight(-128, 1) at I8 = -64 (0xC0); arithmetic shift fills the
-        // vacated sign bit, NOT a logical zero-fill (which would give 0x40).
+        // Sign fill, not the logical zero-fill that would give 0x40.
         Case { case: "sshr_neg_one_i8", op: IntBinaryOp::SShiftRight, l: 0x80, r: 1, ty: ValueType::I8, expected: Some(0xC0) },
     ];
     for c in &cases {
@@ -2159,16 +1936,11 @@ fn eval_int_binary_signed_value_folds_cases() {
     }
 }
 
-// ── Bitwise-complement and two's-complement constant-fold semantics ────
-//
-// Bitwise complement (`~x`) is `Xor(x, all_ones)` — the canonical IR
-// shape since the former BitNot unary-op was removed.  `Neg` is two's-complement
-// negation (`-x`).  The MVN-based ARM `if_returns_const` lowering
-// produces `Xor(IntConst(49), IntConst(all_ones))` which must fold to
-// `~49 = -50`, not to `wrapping_neg(49) = -49`.
+// `Neg` is two's-complement negation; bitwise complement is the separate
+// `Xor(x, all_ones)` shape. The MVN-based ARM lowering emits the Xor form, so
+// conflating the two would fold `~49` to `-49`.
 
-/// `IntUnaryOp::Neg` of `IntConst(50)` at I32 must fold to `-50`
-/// (= 0xFFFF_FFCE = 4_294_967_246) — two's complement, NOT bitwise NOT.
+/// Must fold to two's complement `-50` (0xFFFF_FFCE), not bitwise NOT.
 #[test]
 fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -2191,7 +1963,7 @@ fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
     Ok(())
 }
 
-/// Two's complement of 0 is 0 — sanity check for the I64 path.
+/// Two's complement of 0 is 0.
 #[test]
 fn fold_int_unary_not_zero_is_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -2206,26 +1978,14 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
     Ok(())
 }
 
-// ── Sleigh INT_LEFT/INT_RIGHT/INT_SRIGHT out-of-range shift semantics ──
-//
-// Sleigh's `OpBehaviorIntLeft::evaluateBinary` (sleigh/src/opbehavior.cc:411)
-// returns 0 when the shift amount is >= 8*sizeout — i.e. shifting by
-// the full bit-width or beyond zeroes the value.  `OpBehaviorIntRight`
-// has the same rule, and `OpBehaviorIntSright` returns
-// `signbit ? all_ones : 0` for full-width-or-greater shifts.
-//
-// Pre-fix the constant-fold evaluator computed `shift = (s as u32) % bits`,
-// which gives `1 << (32 % 32) = 1 << 0 = 1` for `IntConst(1, I32) << 32`
-// — diverging from Sleigh by a factor of `2^bits`.  The mismatch
-// surfaces whenever a lifter emits a literal shift at the type's
-// bit-width (e.g. an unrolled bit-clear that masks via `(value & ~(1 <<
-// k))` for k = bit-width as a degenerate "no-op" loop iteration), or
-// whenever `KnownBits` propagates a shift constant that happens to
-// land at-or-past bits.
+// Shifting by the full bit width or beyond zeroes the value in Sleigh
+// (opbehavior.cc:411), and sign-fills for INT_SRIGHT. Reducing the amount
+// modulo the width instead diverges by a factor of 2^bits. A lifter does emit
+// such shifts, e.g. a degenerate unrolled bit-clear iteration, and KnownBits
+// can propagate a shift constant that lands at or past the width.
 
-/// Case table for `eval_int_binary`'s out-of-range (>= bit-width) shift
-/// semantics.  Each row names the stand-alone test it absorbed; the `why`
-/// keeps that test's Sleigh-divergence note.
+/// Out-of-range (>= bit-width) shift semantics; each `why` names the Sleigh
+/// rule the row pins.
 #[test]
 fn eval_int_binary_out_of_range_shift_cases() {
     use crate::opt::constant_fold::eval_int::eval_int_binary;
@@ -2265,11 +2025,8 @@ fn eval_int_binary_out_of_range_shift_cases() {
     }
 }
 
-// ── I128 interner-backed fold round-trip ──────────────────────────────────
-
-/// `build_int_const(v, I128)` routes to the wide interner, and the
-/// constant-fold pass can still fold an `Add` of two I128 constants
-/// through the updated `int_const_u128` funnel.
+/// `build_int_const(v, I128)` routes to the wide interner; the fold still
+/// reaches the value through the `int_const_u128` funnel.
 #[test]
 fn fold_i128_interner_backed_add_round_trip() -> Result<()> {
     // Values wider than u64, to ensure we exercise the interner path.

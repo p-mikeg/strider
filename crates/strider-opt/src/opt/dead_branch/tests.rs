@@ -6,7 +6,6 @@ use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
 use crate::{CfgDetach, ConstantFold, OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse};
 
-// Helper: count Region nodes with N ctrl inputs.
 fn count_regions_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
     fg.all_node_ids()
         .filter(|&node| {
@@ -15,27 +14,23 @@ fn count_regions_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
         .count()
 }
 
-/// Collect every Region reachable from the function entry via the general
-/// graph walk (the same reachability the validator uses).
+/// Uses the same entry-rooted reachability as the validator.
 fn reachable_regions(fg: &strider_ir::Function) -> Vec<NodeId> {
     fg.walk()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .collect()
 }
 
-/// Run the destructive teardown (DBE → CfgDetach) directly, mirroring the
-/// order the destructive pipeline uses.  DBE folds + detaches the constant
-/// If; CfgDetach severs dead `Region`-predecessor slots that stay
-/// data-reachable.  Any node left fully unreachable (e.g. a dead branch
-/// with no downstream join) keeps its inputs but is simply unreachable
-/// from entry — orphans don't affect correctness, so they are not swept.
+/// DBE then CfgDetach, in the order the destructive pipeline uses.  A dead
+/// branch with no downstream join is never visited by CfgDetach and stays in
+/// the arena as an unreachable orphan.
 fn destructive_teardown(fg: &mut strider_ir::Function) -> Result<()> {
     crate::pipeline::run_one(&DeadBranchElimination, fg, &mut OptCtx::new(None))?;
     crate::pipeline::run_one(&CfgDetach, fg, &mut OptCtx::new(None))?;
     Ok(())
 }
 
-/// Build a function with `if(cond)`, two branches each ending in `return`.
+/// `if(cond)` with both branches ending in a `return`.
 fn make_if_fn(cond_val: bool) -> Result<strider_ir::Function> {
     let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region_all()?;
@@ -60,10 +55,8 @@ fn make_if_fn(cond_val: bool) -> Result<strider_ir::Function> {
     b.build()
 }
 
-/// Proof-completeness: the **condition** is part of the proof for killing a
-/// dead branch, so after `DeadBranchElimination` folds `if(const)`, the
-/// surviving control source must carry the condition's asm-fingerprint.
-/// Without the absorb, the condition cone is culled and its asm is lost.
+/// The condition is the proof for taking the arm, so the surviving control
+/// source must carry its asm-fingerprint before the condition cone is culled.
 #[test]
 fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
     const COND_ADDR: u64 = 0xC0DE_0001;
@@ -75,9 +68,8 @@ fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
 
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
-    // The CONDITION carries a distinct address; the `If` + control carry the
-    // sentinel — so an absorbed COND_ADDR on the survivor can only have come
-    // from the condition.
+    // Only the condition carries this address; everything else carries the
+    // sentinel, so an absorbed COND_ADDR can only have come from it.
     b.set_lift_addr(Some(COND_ADDR));
     let cond = b.build_boolean_const(true);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -92,8 +84,7 @@ fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    // The surviving control source is the producer of the If's control input;
-    // capture it before the fold (the If itself is killed by DBE).
+    // Capture the survivor before the fold; DBE kills the If itself.
     let if_node = fg
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
@@ -119,11 +110,8 @@ fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
     Ok(())
 }
 
-// ── End-state tests (DBE + CfgDetach) ──────────────────────────────────────
-
-/// Identify the dead-branch Region before teardown: it is the unique
-/// Region consuming the If's dead control output (index 0 = true output,
-/// index 1 = false output).
+/// The unique Region consuming the If's dead control output.  Output index 0
+/// is the true edge, 1 the false edge.
 fn dead_branch_region(fg: &strider_ir::Function, dead_output_index: usize) -> NodeId {
     let if_node = fg
         .graph()
@@ -142,34 +130,28 @@ fn dead_branch_region(fg: &strider_ir::Function, dead_output_index: usize) -> No
 fn dead_branch_false() -> Result<()> {
     let mut fg = make_if_fn(false)?;
 
-    // Before: three Region nodes with 1 ctrl input each
-    // (entry, true-branch, false-branch).
+    // entry, true-branch, false-branch.
     assert_eq!(count_regions_with_n_inputs(fg.graph(), 1), 3);
 
-    // cond = false → the true branch (If output index 0) is dead.
+    // cond = false, so the true branch (output 0) is dead.
     let dead_region = dead_branch_region(&fg, 0);
 
-    // DBE alone reports Changed (it folds the constant If).
     let result = crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
     assert!(result.changed());
-    // CfgDetach severs the dead predecessor slot of any data-reachable join.
     crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
 
-    // The meaningful outcome: the dead branch Region is no longer reachable
-    // from entry (the live branch was redirected past the folded If).  Its
-    // inputs are NOT swept — orphans don't affect correctness — but it must
-    // not appear in the reachable graph.
+    // Unreachability is the outcome that matters; the dead Region's inputs are
+    // deliberately not swept.
     assert!(
         !reachable_regions(&fg).contains(&dead_region),
         "dead branch Region must be unreachable from entry after teardown"
     );
-    // Entry and the live (false) branch Region remain reachable.
     assert_eq!(
         reachable_regions(&fg).len(),
         2,
         "entry and live branch Region must remain reachable"
     );
-    // The graph still validates (orphans are tolerated).
+    // Orphans are tolerated.
     strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
@@ -181,7 +163,7 @@ fn dead_branch_true() -> Result<()> {
 
     assert_eq!(count_regions_with_n_inputs(fg.graph(), 1), 3);
 
-    // cond = true → the false branch (If output index 1) is dead.
+    // cond = true, so the false branch (output 1) is dead.
     let dead_region = dead_branch_region(&fg, 1);
 
     let result = crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
@@ -204,7 +186,6 @@ fn dead_branch_true() -> Result<()> {
 
 #[test]
 fn dead_branch_non_const_no_change() -> Result<()> {
-    // Build if(x) where x is a non-const boolean.
     let mut fg = {
         let mut b = strider_ir_test_utils::empty_builder()?;
         let entry = b.create_region_all()?;
@@ -213,10 +194,8 @@ fn dead_branch_non_const_no_change() -> Result<()> {
         b.set_entry_region_all(entry)?;
         b.set_region(entry);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        // Non-constant condition: true & false (booleans are 1-bit ints, so
-        // this is `IntBinaryOp::And` at I1 over two I1 IntConsts).  Two nodes
-        // combined so it won't be constant at the If level until ConstantFold
-        // runs — but we don't run ConstantFold here.
+        // `true & false` stays a node, not an IntConst, until ConstantFold
+        // runs, and this test deliberately doesn't run it.
         let t = b.build_boolean_const(true);
         let f = b.build_boolean_const(false);
         let cond = b.build_int_binary_operation(
@@ -234,8 +213,6 @@ fn dead_branch_non_const_no_change() -> Result<()> {
         b.build()?
     };
 
-    // DeadBranchElimination alone should not fire because the condition
-    // is a BoolBinaryOp node, not a BoolConst.
     assert!(
         !crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?
             .changed()
@@ -243,9 +220,8 @@ fn dead_branch_non_const_no_change() -> Result<()> {
     Ok(())
 }
 
-/// `if(true)` nested inside the live branch of an outer `if(true)` — the
-/// destructive pipeline (ConstantFold + DBE + CfgDetach + PhiCollapse +
-/// RegionCollapse) must eliminate both Ifs.
+/// `if(true)` nested in the live branch of an outer `if(true)`: the full
+/// destructive pipeline must eliminate both.
 #[test]
 fn nested_if_true_eliminated() -> Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
@@ -289,24 +265,18 @@ fn nested_if_true_eliminated() -> Result<()> {
     Ok(())
 }
 
-/// Edge case: the dead control output of an `If` is wired into the SAME
-/// `Region` at *multiple* input slots.  After dead-branch elimination the
-/// whole branch is unreachable from entry (it has no downstream join, so
-/// CfgDetach never visits it); the meaningful outcome is that the dead
-/// Region drops out of the reachable graph and the graph still validates —
-/// the orphaned multi-slot Region is harmless residue in the arena.
+/// The dead control output wired into the same `Region` at two slots.  The
+/// branch has no downstream join, so CfgDetach never visits it; the orphaned
+/// multi-slot Region is harmless residue as long as it leaves the reachable
+/// graph and validation still passes.
 ///
-/// (CfgDetach's multi-dead-slot removal on a *reachable* join is pinned
-/// separately by `cfg_detach::tests::cfg_detach_removes_two_dead_predecessors_then_validates`.)
-///
-/// Construction: build the standard `if(true)` skeleton, then wire
-/// `ctrl_false` (the dead output) into the false-branch Region a second
-/// time via `Graph::add_node_input`.  Run DBE + CfgDetach.
+/// Multi-dead-slot removal on a *reachable* join is pinned separately by
+/// `cfg_detach::tests::cfg_detach_removes_two_dead_predecessors_then_validates`.
 #[test]
 fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     let mut fg = make_if_fn(true)?;
 
-    // Find the If node and its ctrl_false output (dead when cond=true).
+    // ctrl_false is the dead output when cond = true.
     let if_node = fg
         .graph()
         .all_node_ids()
@@ -316,7 +286,6 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     assert_eq!(if_outputs.len(), 2, "If must have 2 control outputs");
     let ctrl_false = if_outputs[1];
 
-    // Find the false-branch Region (the unique consumer of ctrl_false).
     let consumers: Vec<_> = fg.graph().value_uses(ctrl_false).collect();
     assert_eq!(
         consumers.len(),
@@ -326,7 +295,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     let false_region = consumers[0].0;
     assert!(matches!(fg.node_kind(false_region), NodeKind::Region));
 
-    // Wire ctrl_false into the same Region a second time, producing the bad shape.
+    // Build the bad shape: the same control value at two slots.
     fg.graph_mut().add_node_input(false_region, ctrl_false);
     let pre_inputs: Vec<_> = fg.node_inputs(false_region).into_iter().collect();
     assert_eq!(pre_inputs.len(), 2);
@@ -339,13 +308,8 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
         "slot 1 must be ctrl_false (added duplicate)"
     );
 
-    // DBE folds + detaches the If (so ctrl_false's producer is now detached
-    // and control-unreachable); CfgDetach runs but only visits reachable
-    // joins.
     destructive_teardown(&mut fg)?;
 
-    // The dead false-branch Region must no longer be reachable from entry,
-    // and the graph (with the orphaned Region still in the arena) validates.
     assert!(
         !reachable_regions(&fg).contains(&false_region),
         "dead false-branch Region must be unreachable from entry after teardown"
@@ -355,15 +319,10 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     Ok(())
 }
 
-/// Escape case: a dead-branch subgraph whose data still feeds a live
-/// `MemPhi`.  The new DBE detaches the folded `If` unconditionally;
-/// `CfgDetach` severs the dead `Region`-predecessor edge, and `PhiCollapse`
-/// collapses the resulting single-pred `MemPhi`.  The end-state graph must
-/// VALIDATE — this is the soundness `CfgDetach`'s
-/// `cfg_detach_collapses_var_and_mem_phi_then_validates` already proved.
-///
-/// Shape: `if(false) { mem++; } else { } join: return`, with the dead
-/// branch's `CallOther` advancing memory into the join's `MemPhi`.
+/// The escape case: `if(false) { mem++; } else { } join: return`, where the
+/// dead branch's `CallOther` advances memory into the join's `MemPhi`.  DBE
+/// detaches unconditionally, so only the CfgDetach + PhiCollapse follow-up
+/// restores a valid graph.
 #[test]
 fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
     let mut fg = {
@@ -380,8 +339,7 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
         b.build_if(cond, true_r, false_r)?;
 
         b.set_region(true_r);
-        // Advance memory through a modeled CallOther so the join's MemPhi
-        // has a non-trivial mem-input from the (dead) true branch.
+        // Gives the join's MemPhi a non-trivial mem-input from the dead branch.
         let (call_node, _) = b.build_call_other_abi(
             0,
             "cpuid",
@@ -407,10 +365,6 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
         b.build()?
     };
 
-    // Run the destructive teardown in the pipeline order and validate.
-    // DBE detaches the folded If; CfgDetach severs the live↔dead edge;
-    // PhiCollapse collapses the now single-pred MemPhi; the final state
-    // must be structurally valid.
     crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
     crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
     crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut OptCtx::new(None))?;
@@ -420,8 +374,7 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
     Ok(())
 }
 
-/// A VarPhi at a 2-input join — when the dead branch is removed (DBE +
-/// CfgDetach), the phi must lose exactly one input slot (the dead position).
+/// A VarPhi at a 2-input join must lose exactly the dead predecessor's slot.
 #[test]
 fn var_phi_loses_dead_slot() -> Result<()> {
     let var = reg_vn(0x1000, 8);
@@ -452,8 +405,8 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     b.set_lift_addr(None);
 
     let mut fg = b.build()?;
-    // The join VarPhi is the one the Return consumes (the builder also
-    // emits per-block single-pred VarPhis; we want the 2-input join phi).
+    // Reached via the Return: the builder also emits per-block single-pred
+    // VarPhis, and this test wants the 2-input join phi.
     let join_phi = fg.producer(
         fg.node_inputs(
             fg.graph()
@@ -474,8 +427,7 @@ fn var_phi_loses_dead_slot() -> Result<()> {
 
     destructive_teardown(&mut fg)?;
 
-    // The join VarPhi should now carry only the live predecessor's value
-    // input (length = 1 token + 1 value = 2).
+    // 1 token + 1 live value.
     let phi_inputs = fg.node_inputs(join_phi);
     assert_eq!(
         phi_inputs.len(),
@@ -510,11 +462,8 @@ fn dead_switch_const_address_keeps_matching_arm() -> Result<()> {
     assert_eq!(n_switch_before, 1);
     let result = crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
     assert!(result.changed(), "const-address switch must fold");
-    // `kill_node` detaches the folded Switch but (like the `If` fold above)
-    // leaves it in the arena untouched — only entry-reachability changes.
-    // Mirror the sibling `If` tests (`dead_branch_false`/`dead_branch_true`)
-    // and assert unreachability via `walk()` rather than an arena-wide
-    // `all_node_ids()` count.
+    // `kill_node` leaves the folded Switch in the arena, so assert
+    // unreachability via `walk()` rather than an arena-wide count.
     let n_switch_after = fg
         .walk()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch))
@@ -523,10 +472,6 @@ fn dead_switch_const_address_keeps_matching_arm() -> Result<()> {
     Ok(())
 }
 
-/// Negative case: a `Switch` whose dispatch address is NOT a compile-time
-/// constant (here, a register read via `InitialVar`) must be left
-/// untouched — `try_rewrite`'s `int_const_u128` lookup fails and returns
-/// `NoChange`.
 #[test]
 fn dead_switch_non_const_address_no_change() -> Result<()> {
     let var = reg_vn(0x1000, 8);

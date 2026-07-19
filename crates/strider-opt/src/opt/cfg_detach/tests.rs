@@ -5,27 +5,15 @@ use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
 use crate::{DeadBranchElimination, OptCtx};
 
-// ── DBE-simulate helper ─────────────────────────────────────────────────────
-//
-// The tests below characterise the REAL post-DBE shape the pass is meant to
-// clean up: DBE redirects the live successor of a constant `If` past the `If`
-// and detaches the folded `If`, WITHOUT stripping the dead Region predecessor.
-// `CfgDetach` is then the sole remover of the now-dead predecessor slot.
-//
-// `simulate_dbe_redirect_without_strip` performs exactly that redirect+detach
-// for an `If(BoolConst(cond))`:
-//   * cond=false → live successor is `ctrl_false` (If output[1]),
-//                  dead   successor is `ctrl_true`  (If output[0]).
-//   * cond=true  → live successor is `ctrl_true`  (If output[0]),
-//                  dead   successor is `ctrl_false` (If output[1]).
-// It returns the dead control output (the slot CfgDetach must remove).
+// Reproduces the post-DBE shape CfgDetach is meant to clean up: redirect the
+// constant `If`'s live successor past it and detach the `If`, leaving the dead
+// Region predecessor in place.
 fn simulate_dbe_redirect_without_strip(
     fg: &mut strider_ir::Function,
     cond: bool,
 ) -> crate::Result<()> {
-    // Target the live If whose constant condition equals `cond`.  This
-    // disambiguates nested Ifs (outer cond=false vs inner cond=true) and skips
-    // any already-detached If (0 inputs) from a prior simulate.
+    // Matching on the condition value disambiguates nested Ifs and skips any
+    // already-detached If from a prior simulate.
     let want_cond_val: u128 = u128::from(cond);
     let if_node = fg
         .graph()
@@ -54,19 +42,18 @@ fn simulate_dbe_redirect_without_strip(
     // If inputs are [ctrl_in, cond]; ctrl_in is the live control to splice in.
     let ctrl_value = fg.node_inputs(if_node)[0];
 
-    // Scope the rewrite ctx so its borrow of `fg` ends here (a bare
-    // `drop` of a non-`Drop` type trips `clippy::drop_non_drop`).
+    // Scoped so the edit ctx's borrow of `fg` ends here (a bare `drop` of a
+    // non-`Drop` type trips `clippy::drop_non_drop`).
     {
         let mut edit = crate::EditFunction::new(fg);
-        edit.replace_value(live_ctrl, ctrl_value)?; // redirect live successor past the If
-        edit.kill_node(if_node); // remove the now-unreachable folded If
+        edit.replace_value(live_ctrl, ctrl_value)?;
+        edit.kill_node(if_node);
     }
     Ok(())
 }
 
-/// The join Region: the Region with the most ctrl inputs (the diamond /
-/// fan-in merge).  Unique in every fixture below (the join fans in strictly
-/// more predecessors than any branch/entry Region).
+/// Relies on every fixture below fanning strictly more predecessors into the
+/// join than into any branch or entry Region.
 fn find_join_region(fg: &strider_ir::Function) -> NodeId {
     fg.graph()
         .all_node_ids()
@@ -75,12 +62,10 @@ fn find_join_region(fg: &strider_ir::Function) -> NodeId {
         .expect("at least one Region")
 }
 
-/// The phi-token output (`outputs[1]`) of a Region.
 fn region_phi_token(fg: &strider_ir::Function, region: NodeId) -> strider_ir::node::ValueId {
     fg.node_outputs(region)[1]
 }
 
-/// True iff `phi`'s token input (`inputs[0]`) is produced by `region`.
 fn phi_belongs_to_region(fg: &strider_ir::Function, phi: NodeId, region: NodeId) -> bool {
     let inputs = fg.node_inputs(phi);
     if inputs.is_empty() {
@@ -89,7 +74,6 @@ fn phi_belongs_to_region(fg: &strider_ir::Function, phi: NodeId, region: NodeId)
     inputs[0] == region_phi_token(fg, region)
 }
 
-/// Find the VarPhi (tagged `var`) whose phi-token belongs to `region`.
 fn find_var_phi_of_region(
     fg: &strider_ir::Function,
     region: NodeId,
@@ -102,16 +86,13 @@ fn find_var_phi_of_region(
     })
 }
 
-/// Find the MemPhi whose phi-token belongs to `region`.
 fn find_mem_phi_of_region(fg: &strider_ir::Function, region: NodeId) -> Option<NodeId> {
     fg.graph().all_node_ids().find(|&n| {
         matches!(fg.node_kind(n), NodeKind::MemPhi) && phi_belongs_to_region(fg, n, region)
     })
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-/// Build `if(cond_val) { return 1; } else { return 2; }`.
+/// `if(cond_val) { return 1; } else { return 2; }`
 fn make_if_fn(cond_val: bool) -> crate::Result<strider_ir::Function> {
     let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region_all()?;
@@ -136,21 +117,16 @@ fn make_if_fn(cond_val: bool) -> crate::Result<strider_ir::Function> {
     b.build()
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────────
-
-/// Combined test: `DeadBranchElimination` folds + detaches the constant
-/// `If`; the dead branch here has no downstream join, so it becomes fully
-/// unreachable from entry.  `CfgDetach` only visits validator-reachable
-/// Regions, so it leaves the orphaned dead Region alone — orphans don't
-/// affect correctness and are not swept.  The meaningful outcome: the dead
-/// Region drops out of the reachable graph (keeping its now-dangling input)
-/// while the live Regions remain, and the graph validates.
+/// The dead branch has no downstream join, so it falls fully out of the
+/// reachable graph. CfgDetach only visits validator-reachable Regions, so it
+/// leaves the orphan alone (keeping its dangling input); orphans are harmless
+/// and never swept.
 #[test]
 fn cfg_detach_removes_dead_region_pred_after_dbe() -> crate::Result<()> {
     let mut fg = make_if_fn(false)?;
 
-    // cond = false → the true branch (If output index 0) is dead.  Capture
-    // the dead Region before teardown.
+    // cond = false, so the true branch (If output 0) is dead. Capture the dead
+    // Region before teardown.
     let if_node = fg
         .graph()
         .all_node_ids()
@@ -185,28 +161,12 @@ fn cfg_detach_removes_dead_region_pred_after_dbe() -> crate::Result<()> {
     Ok(())
 }
 
-/// Focused isolation test: build a graph, then surgically add an extra ctrl
-/// input from a disconnected (unreachable) node to one of the branch Regions.
-/// `CfgDetach` alone must strip the unreachable slot and report `Changed`.
-///
-/// Surgery:
-///   1. Build `make_if_fn(true)` — the false branch is dead but DBE is NOT run.
-///      We leave the graph in its post-build, pre-optimization state.
-///   2. Find the `false_region` (consumer of the If's `ctrl_false` output).
-///   3. Create a detached `Region` node in the graph (it has no inputs, no
-///      outputs that feed into the CFG spine — it is unreachable from entry).
-///   4. Get the detached Region's Control output and `add_node_input` it to
-///      `false_region` at a second slot.
-///   5. Run `CfgDetach`: the detached Region's ctrl output is the producer of
-///      the new slot; since the detached Region is not reachable from entry,
-///      `CfgDetach` removes that slot.
-///   6. Assert `Changed` and `false_region` has 1 ctrl input (the original,
-///      still-reachable If's `ctrl_false`).
+/// Isolates CfgDetach from DBE: graft a ctrl edge from a disconnected node onto
+/// a branch Region and check the pass strips it on its own.
 #[test]
 fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<()> {
     let mut fg = make_if_fn(true)?;
 
-    // Find the false_region (consumer of ctrl_false = If's output[1]).
     let if_node = fg
         .graph()
         .all_node_ids()
@@ -222,11 +182,9 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<(
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .expect("false_region must be a Region consumer of ctrl_false");
 
-    // Confirm false_region starts with 1 ctrl input.
     assert_eq!(fg.node_inputs(false_region).len(), 1);
 
-    // Create a detached Region node (no ctrl input → unreachable from entry).
-    // We give it a Control output we can wire in.
+    // No ctrl input, so the ghost is unreachable from entry.
     let ghost_region = fg.graph_mut().create_node(
         NodeKind::Region,
         [],
@@ -234,7 +192,6 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<(
     );
     let ghost_ctrl_value = fg.node_outputs(ghost_region)[0];
 
-    // Wire the ghost's Control output into false_region as a second pred slot.
     fg.graph_mut()
         .add_node_input(false_region, ghost_ctrl_value);
     assert_eq!(
@@ -243,8 +200,6 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<(
         "false_region should now have 2 ctrl inputs after surgery"
     );
 
-    // Run CfgDetach in isolation: the ghost_region has no ctrl inputs so it is
-    // not reachable from entry.  CfgDetach must remove the ghost slot.
     let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
     assert!(
         result.changed(),
@@ -259,15 +214,8 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<(
     Ok(())
 }
 
-// ── realistic post-DBE characterisation tests ───────────────────────────────
-
-/// Test 1 (load-bearing): a join carrying BOTH a VarPhi and a MemPhi.
-///
-/// Build `if(false) { v=1; mem++; } else { v=2; mem++; } join: read v; return`.
-/// Simulate the future DBE (redirect live ctrl past the If + detach the If,
-/// WITHOUT stripping the dead Region predecessor), then run `CfgDetach` and
-/// assert it removes the dead control slot AND the matching VarPhi/MemPhi value
-/// slots, leaving a structurally valid graph.
+/// A join carrying BOTH a VarPhi and a MemPhi: the dead control slot and both
+/// matching value slots must go, and the result must still validate.
 #[test]
 fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
@@ -282,7 +230,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     let cond = b.build_boolean_const(false);
     b.build_if(cond, true_r, false_r)?;
 
-    // true branch: write var, advance memory via a modeled CallOther.
+    // The CallOther is only there to advance the memory chain.
     b.set_region(true_r);
     let v_t = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_t)?;
@@ -302,7 +250,6 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     b.advance_cur_region_memory(mem_t)?;
     b.build_branch(join)?;
 
-    // false branch: write var differently, advance memory too.
     b.set_region(false_r);
     let v_f = b.build_int_const(2u64, ValueType::I64)?;
     b.write_variable(&var, v_f)?;
@@ -322,7 +269,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     b.advance_cur_region_memory(mem_f)?;
     b.build_branch(join)?;
 
-    // join: read var (forces VarPhi) and return.
+    // The read forces a VarPhi at the join.
     b.set_region(join);
     let merged = b.read_variable(&var)?;
     b.build_return(Some(merged), &[])?;
@@ -330,7 +277,6 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
 
     let mut fg = b.build()?;
 
-    // Pre-conditions: VarPhi + MemPhi with two value inputs each.
     let join_node = find_join_region(&fg);
     let var_phi = find_var_phi_of_region(&fg, join_node, var).expect("VarPhi at join");
     let mem_phi = find_mem_phi_of_region(&fg, join_node).expect("MemPhi at join");
@@ -345,15 +291,12 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
         "MemPhi: token + 2 values before detach"
     );
 
-    // Simulate the future DBE: cond=false → live=false branch, dead=true branch.
+    // cond=false, so the true branch is left reachable only via the detached If.
     simulate_dbe_redirect_without_strip(&mut fg, false)?;
 
-    // The dead branch (true_r) was reached only via the now-detached If, so it
-    // is control-dead.  Run CfgDetach.
     let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
     assert!(result.changed(), "CfgDetach must report Changed");
 
-    // VarPhi and MemPhi each drop to exactly one value input.
     assert_eq!(
         fg.node_inputs(var_phi).len(),
         2,
@@ -365,7 +308,6 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
         "MemPhi: token + 1 value after CfgDetach"
     );
 
-    // The dead-branch Region (true_r as a NodeId) drops to 0 ctrl inputs.
     let true_r_node = fg
         .graph()
         .all_node_ids()
@@ -373,16 +315,12 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
         .expect("dead-branch Region with 0 ctrl inputs");
     assert_eq!(fg.node_inputs(true_r_node).len(), 0);
 
-    // CRITICAL: the post-CfgDetach graph is structurally valid.
     strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-CfgDetach validation failed: {e:?}"))?;
     Ok(())
 }
 
-/// Test 2: a MemPhi-only join (no variable merged).
-///
-/// `if(false) { mem++; } else { mem++; } join: return`.  After the DBE-simulate
-/// + CfgDetach the MemPhi drops to one memory input and the graph validates.
+/// A MemPhi-only join, with no variable merged.
 #[test]
 fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
@@ -461,35 +399,28 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     Ok(())
 }
 
-/// Test 3: TWO dead predecessors on a 3-way join.
-///
-/// Build a nested-if shape that produces a 3-input join with a VarPhi over
-/// three values, then detach TWO of the three branches.  CfgDetach must remove
-/// both dead slots (region 3→1, VarPhi 3→1 values) and the graph validates.
+/// Two dead predecessors on a 3-way join: both slots must go in one run.
 #[test]
 fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
     let entry = b.create_region_all()?;
     let r_a = b.create_region_all()?; // outer-true
-    let mid = b.create_region_all()?; // outer-false → inner if
+    let mid = b.create_region_all()?; // outer-false -> inner if
     let r_b = b.create_region_all()?; // inner-true
     let r_c = b.create_region_all()?; // inner-false
     let join = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
 
-    // Outer if: entry → if(false) { r_a } else { mid }.
     b.set_region(entry);
     let cond_outer = b.build_boolean_const(false);
     b.build_if(cond_outer, r_a, mid)?;
 
-    // r_a: write var, branch to join.
     b.set_region(r_a);
     let v_a = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_a)?;
     b.build_branch(join)?;
 
-    // mid: inner if(true) { r_b } else { r_c }.
     b.set_region(mid);
     let cond_inner = b.build_boolean_const(true);
     b.build_if(cond_inner, r_b, r_c)?;
@@ -511,15 +442,12 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
 
     let mut fg = b.build()?;
 
-    // The join is a 3-way Region with a 3-value VarPhi.
     let join_node = find_join_region(&fg);
     assert_eq!(fg.node_inputs(join_node).len(), 3, "3-way join");
     let var_phi = find_var_phi_of_region(&fg, join_node, var).expect("VarPhi at join");
     assert_eq!(fg.node_inputs(var_phi).len(), 4, "token + 3 values");
 
-    // Simulate DBE on BOTH ifs.  Outer cond=false → live=mid (false branch),
-    // dead=r_a (true branch).  Inner cond=true → live=r_b (true branch),
-    // dead=r_c (false branch).  So r_a and r_c become control-dead.
+    // Outer cond=false kills r_a; inner cond=true kills r_c.
     simulate_dbe_redirect_without_strip(&mut fg, false)?; // outer If
     simulate_dbe_redirect_without_strip(&mut fg, true)?; // inner If
 
@@ -542,15 +470,10 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
     Ok(())
 }
 
-/// Test 4: a Region that is data-reachable but control-dead must still be
-/// visited and cleaned.
-///
-/// After the DBE-simulate, the dead branch's Region is no longer
-/// control-reachable from entry, but it stays reachable through the validator's
-/// general graph walk via backward-data edges (its VarPhi value still feeds the
-/// live join phi until the slot is removed).  CfgDetach iterates `walk()` (not
-/// the control-only set), so it must visit the control-dead Region and remove
-/// its dead predecessor.  This pins the iteration-set behaviour.
+/// Pins the iteration-set choice: a control-dead Region stays reachable through
+/// backward-data edges (its VarPhi still feeds the live join phi until the slot
+/// goes), so iterating `walk()` rather than the control-only set is what lets
+/// the pass reach it at all.
 #[test]
 fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
@@ -584,15 +507,11 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<(
 
     simulate_dbe_redirect_without_strip(&mut fg, false)?;
 
-    // The dead-branch Region (true_r) is NOT control-reachable from entry now,
-    // but it IS visited by the general walk (its VarPhi value still feeds the
-    // join phi).  Confirm the control-only set excludes it but the general walk
-    // includes it — the premise of the iteration-set choice.
     let entry_node = fg.entry();
     let ctrl_reach = strider_ir::walk::cfg_reachable(fg.graph(), entry_node);
     let walk_set: Vec<NodeId> = fg.walk().collect();
-    // Identify true_r: the Region whose sole producer (the If's ctrl_true) is
-    // now detached / unreachable.
+    // true_r is the Region whose sole producer (the If's ctrl_true) is now
+    // detached.
     let dead_region = fg
         .graph()
         .all_node_ids()

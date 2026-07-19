@@ -1,16 +1,10 @@
-//! `CfgDetach` — removes dead control-flow edges into `Region` joins.
+//! Removes dead control-flow edges into `Region` joins, plus the matching
+//! `Phi`/`MemPhi` value slots. The single home for dead-`Region`-predecessor
+//! surgery; `DeadBranchElimination` detaches a folded `If` but never strips the
+//! predecessor slot it orphans.
 //!
-//! After `DeadBranchElimination` redirects a constant `If`'s live branch and
-//! detaches the folded `If`, the dead branch's control producer becomes
-//! unreachable from the entry. This pass visits every `Region` in the general
-//! graph walk (`walk_from` — the validator's reachability notion) and drops each
-//! predecessor slot whose control producer is not control-reachable
-//! (`cfg_reachable`), plus the matching `Phi`/`MemPhi` value slot, via
-//! `EditFunction::remove_region_predecessors`.
-//!
-//! It is the single home for dead-`Region`-predecessor surgery. When a dead
-//! subgraph still escapes to live data (so DBE left the `If` attached), the
-//! dead edge's producer stays reachable and this pass leaves it alone.
+//! A dead subgraph that still escapes to live data keeps its `If` attached, so
+//! its producer stays control-reachable and this pass leaves it alone.
 
 use rustc_hash::FxHashMap;
 use strider_ir::IRViewer;
@@ -23,17 +17,6 @@ use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 #[cfg(test)]
 mod tests;
 
-/// Removes `Region` predecessor slots whose control producer is unreachable
-/// from the function entry via control edges.
-///
-/// Visits every `Region` in the general graph walk (`walk_from`), checks each
-/// predecessor slot's control producer against `cfg_reachable`, and removes
-/// every slot whose producer is absent from that control-reachable set.  The
-/// matching `Phi`/`MemPhi` value slots are removed by
-/// `EditFunction::remove_region_predecessors`.
-///
-/// Multiple dead slots on the same `Region` are removed highest-index-first
-/// so earlier index-stable slots are unaffected by the removals.
 #[derive(Clone, Copy)]
 pub struct CfgDetach;
 
@@ -43,24 +26,17 @@ impl Optimizer for CfgDetach {
         edit: &mut crate::EditFunction<'_>,
         _ctx: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        // A `EditFunction` always wraps a built function, so the entry is
-        // present by construction (`EditFunction::new` invariant).
         let entry = edit.entry();
-        // Control-reachability is the liveness oracle for a predecessor: a
-        // predecessor edge is dead iff its control producer can't be reached
-        // from entry by following control. The *iteration* set, however, is the
-        // general graph walk (the same reachability the validator uses) — a join
-        // that is only data-reachable (e.g. an escaping dead branch whose value
-        // still feeds a live phi) is still validator-visible and may carry a dead
-        // control slot, so we must visit it too.
+        // Two different reachability notions, deliberately. A predecessor edge
+        // is dead iff its control producer is control-unreachable from entry,
+        // but the set we ITERATE is the general graph walk: a join that is only
+        // data-reachable (an escaping dead branch whose value still feeds a live
+        // phi) is still validator-visible and can carry a dead control slot.
         let reachable = cfg_reachable(edit.function().graph(), entry);
 
-        // Group dead predecessor slots by region (ascending `enumerate` order);
-        // the removal runs in a second pass through the rewrite ctx.
         let mut dead: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
-        // Visit every live `Region` in cached reverse-post-order.  The cached
-        // live-set covers the same reachable set as a fresh walk; using the
-        // cached RPO avoids a re-walk of the graph.
+        // The cached live set covers the same nodes as a fresh walk, so reuse
+        // its RPO rather than re-walking.
         let regions: Vec<NodeId> = edit
             .reverse_postorder_filter(|k| matches!(k, NodeKind::Region))
             .collect();
@@ -77,23 +53,17 @@ impl Optimizer for CfgDetach {
             return Ok(OptimizationResult::NoChange);
         }
 
-        // All composite rewrites route through `EditFunction`.  `dead` is fully
-        // owned, so the immutable borrow used to compute it has ended —
-        // perform the slot surgery through the shared `edit`.
-        // Hand each region its full set of dead predecessor indices in one
-        // call — `remove_region_predecessors` removes them highest-first
-        // internally, so there's no per-index loop or ordering concern here.
-        // Severing a Region's LAST predecessor makes that region — and its
-        // whole control-dominated subgraph — unreachable from entry.  The
-        // incremental live-set bookkeeping the curated edit verbs maintain
-        // tracks DATA orphaning only, so a `MemPhi`/value on such a region can
-        // linger in the cached live set (nothing data-orphaned it: its value
-        // still feeds a consumer that is itself control-dead but not yet
-        // recognised as such).  A later pass reading the stale live set — the
-        // memory-SSA walk in particular — then observes a zero-arm `MemPhi` and
-        // trips its "clean chain bottoms out at InitialMemory" invariant.  When
-        // a strip empties a region, resync the cached live set to a fresh
-        // entry walk and cull the detached subgraph so no later pass sees it.
+        // Pass each region all its dead indices at once; the removal orders them
+        // highest-index-first internally so earlier slots stay index-stable.
+        //
+        // Severing a Region's LAST predecessor makes its whole control-dominated
+        // subgraph unreachable, but the incremental live-set bookkeeping tracks
+        // DATA orphaning only, so a `MemPhi` there survives in the cached live
+        // set (its value still feeds a consumer that is itself control-dead but
+        // not yet known to be). The memory-SSA walk would then hit a zero-arm
+        // `MemPhi` and trip its "clean chain bottoms out at InitialMemory"
+        // invariant, so resync from a fresh entry walk whenever a strip empties
+        // a region.
         let mut emptied_a_region = false;
         for (region, idxs) in dead {
             edit.remove_region_predecessors(region, &idxs)?;

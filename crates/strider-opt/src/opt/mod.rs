@@ -1,7 +1,5 @@
-//! The optimization passes — the graph→graph transforms the
-//! [`crate::OptimizerPipeline`] runs in its shared fixed-point loop (as opposed
-//! to the converged-graph analyses in [`crate::post_opt`]).  Each submodule
-//! owns one pass; the pass types are re-exported at the crate root.
+//! Graph transforms run inside the pipeline's fixed-point loop. Analyses that
+//! need a converged graph live in [`crate::post_opt`] instead.
 
 pub(crate) mod cfg_detach;
 pub(crate) mod constant_fold;

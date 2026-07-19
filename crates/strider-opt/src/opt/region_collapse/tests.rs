@@ -5,10 +5,6 @@ use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
 use crate::{OptimizerPipeline, PhiCollapse};
 
-// ── single-input Region collapses ───────────────────────────────────────────
-
-/// A single-input Region's control consumers must be rewired to its lone
-/// control input.
 #[test]
 fn single_input_region_collapses() -> crate::Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
@@ -31,7 +27,6 @@ fn single_input_region_collapses() -> crate::Result<()> {
         .expect("single-input body Region");
     let sole_ctrl_value = fg.node_inputs(body_region)[0];
     let body_ctrl_value = fg.node_outputs(body_region)[0];
-    // The Return consumes the body Region's control output.
     let ctrl_consumer = fg
         .graph()
         .value_uses(body_ctrl_value)
@@ -44,7 +39,6 @@ fn single_input_region_collapses() -> crate::Result<()> {
             .changed();
     assert!(changed, "single-input Region must collapse");
 
-    // The consumer's control input now points at the Region's predecessor.
     let consumer_ctrl_value = fg.node_inputs(ctrl_consumer)[0];
     assert_eq!(
         consumer_ctrl_value, sole_ctrl_value,
@@ -53,9 +47,6 @@ fn single_input_region_collapses() -> crate::Result<()> {
     Ok(())
 }
 
-// ── multi-input Region untouched ────────────────────────────────────────────
-
-/// A multi-predecessor join Region must NOT collapse.
 #[test]
 fn multi_input_region_unchanged() -> crate::Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
@@ -92,9 +83,8 @@ fn multi_input_region_unchanged() -> crate::Result<()> {
         .next()
         .expect("join consumer");
 
-    // The 2-way join doesn't collapse; the entry/branch single-input
-    // Regions DO, so the overall result may be Changed — but the join's
-    // own control output must keep its consumer.
+    // Not asserting on the pass result: the entry/branch single-input Regions
+    // do collapse, so `Changed` is expected regardless of the join.
     crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
 
     let consumer_after = fg
@@ -110,19 +100,14 @@ fn multi_input_region_unchanged() -> crate::Result<()> {
     Ok(())
 }
 
-// ── orphan phi-token consumers don't pin the Region ─────────────────────────
-
-/// A single-pred Region whose control output ends up unused and whose
-/// phi-token is consumed ONLY by an unreachable orphan `Phi` must still be
-/// detached (its input edge cleared): an orphan phi-token consumer is not
-/// reachable from entry, so it must not count as a live use that pins the
-/// Region forever.
+/// An orphan phi-token consumer is unreachable from entry, so it must not count
+/// as a live use; otherwise it pins the Region forever.
 #[test]
 fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
     use strider_ir::node::{ValueKind, ValueType};
 
-    // `fn() { branch body; body: return; }` — `body` is a single-pred
-    // Region whose only control consumer is the Return.
+    // `fn() { branch body; body: return; }`, so `body` is a single-pred Region
+    // whose only control consumer is the Return.
     let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region_all()?;
     let body = b.create_region_all()?;
@@ -142,9 +127,8 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
         .find(|&n| fg.node_inputs(n).len() == 1)
         .expect("single-input body Region");
 
-    // Graft an UNREACHABLE orphan Phi consuming the body Region's phi-token
-    // (a builder-emitted dead VarPhi has exactly this shape).  Its own value
-    // output is never read, so it is unreachable from entry.
+    // A builder-emitted dead VarPhi has exactly this shape: consumes the
+    // phi-token, own output never read, hence unreachable from entry.
     let phi_token = fg.node_outputs(body_region)[1];
     let val = {
         let mut ef = strider_ir::EditFunction::new(&mut fg);
@@ -161,18 +145,14 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
         "fixture must leave the grafted Phi unreachable from entry"
     );
 
-    // `PhiCollapse` collapses + detaches the body Region's reachable
-    // single-pred `MemPhi`, leaving the orphan Phi as the SOLE remaining
-    // phi-token consumer.  `RegionCollapse` then rewires the body Region's
-    // control consumer (Return) to the entry predecessor and must detach the
-    // Region despite that lone unreachable orphan consumer.
+    // PhiCollapse takes out the body Region's reachable single-pred MemPhi,
+    // leaving the orphan Phi as the sole remaining phi-token consumer, which is
+    // the case RegionCollapse must not be blocked by.
     let mut p = OptimizerPipeline::new();
     p.add(PhiCollapse);
     p.add(RegionCollapse);
     p.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    // The orphan Phi is still the lone phi-token consumer, but the Region's
-    // input must have been detached anyway.
     assert!(
         !fg.walk().any(|n| n == orphan_phi),
         "orphan Phi stays unreachable residue in the arena"
@@ -185,10 +165,6 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
     Ok(())
 }
 
-// ── collapse + PhiCollapse over single-pred join validates ──────────────────
-
-/// After RegionCollapse + PhiCollapse over a single-predecessor join, the
-/// graph validates.
 #[test]
 fn collapse_with_phi_collapse_validates() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
@@ -207,7 +183,7 @@ fn collapse_with_phi_collapse_validates() -> crate::Result<()> {
     let mut p = OptimizerPipeline::new();
     p.add(PhiCollapse);
     p.add(RegionCollapse);
+    // `run` validates at the end, so reaching here is the assertion.
     p.run(&mut fg, &mut crate::OptCtx::new(None))?;
-    // pipeline.run validates at the end; reaching here means it's valid.
     Ok(())
 }

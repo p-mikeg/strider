@@ -1,8 +1,7 @@
-//! Shared "what constant does this node produce from constant inputs" SSoT,
-//! used by the jump-table abstract evaluator and by `LoadReadOnly` so the ROM
-//! decode and the per-op fold dispatch live in exactly one place. ConstFold
-//! shares the leaf arithmetic (`eval_int_*`) directly and does not route
-//! through here.
+//! Node-to-constant folding shared by the jump-table abstract evaluator and
+//! `LoadReadOnly`, so the ROM decode and per-op fold dispatch live in one
+//! place. `ConstantFold` shares the leaf arithmetic (`eval_int_*`) directly
+//! and does not route through here.
 
 use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer, ReadOnlyMemory};
@@ -12,9 +11,9 @@ use crate::opt::constant_fold::eval_int::{
     eval_int_binary, eval_int_cmp, eval_int_unary, eval_lzcount, eval_popcount, eval_sign_extend,
 };
 
-/// Decode `ty` bytes at `addr` from a read-only image into an integer masked to
-/// `ty`. The single ROM-decode site. `None` for widths > 16 bytes, an unmapped
-/// read, or a non-integer `ty`.
+/// Decodes `ty` bytes at `addr` into an integer masked to `ty`. The single
+/// ROM-decode site. `None` for widths > 16 bytes, an unmapped read, or a
+/// non-integer `ty`.
 pub(crate) fn read_rom_const(
     rom: &dyn ReadOnlyMemory,
     addr: u64,
@@ -32,11 +31,9 @@ pub(crate) fn read_rom_const(
 }
 
 /// The constant value of `value`, given `resolve` for its inputs' constants.
-/// Covers `IntConst`, integer arithmetic/casts/compares (via the shared
-/// `eval_int_*` helpers), and a constant-address `Load(RAM)` (via
-/// [`read_rom_const`]). `None` for anything not foldable to one integer
-/// constant from `resolve`d inputs. Does NOT handle `Phi` or any
-/// stack-relative address — those stay in the jump-table evaluator.
+/// `None` for anything not foldable to one integer constant. Does NOT handle
+/// `Phi` or any stack-relative address; those stay in the jump-table
+/// evaluator.
 pub(crate) fn eval_node_const(
     function: &Function,
     value: ValueId,
@@ -92,9 +89,6 @@ mod tests {
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IRViewer};
 
-    // Build `Add(IntConst(5), IntConst(100)):I64`; eval_node_const with an
-    // int-const resolver folds it to 105. Copy the builder pattern from
-    // constant_fold/tests.rs.
     #[test]
     fn folds_add_of_two_constants() {
         let (function, sum) = build_add_5_100();

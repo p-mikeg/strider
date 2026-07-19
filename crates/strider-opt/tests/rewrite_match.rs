@@ -1,21 +1,9 @@
-//! Rewrite-rule engine tests: `rewrite_rule`, `apply_rules_count`, and the
-//! error paths surfaced via the public anyhow surface and the rule's
+//! Rewrite-rule engine tests: firing, error paths, and the rule's
 //! `Ok(Option<ValueId>)` contract.
 //!
-//! Relocated from `strider-pattern`'s `pattern_matching` integration
-//! harness when the rewrite machinery moved into `strider-opt`: the
-//! rule constructors (`rewrite_rule`, `rewrite_rule_runtime`) and the
-//! `EditFunction` type now live in `strider_opt`, while the LHS/RHS
-//! pattern builders (`add`, `var`, `int_const`, …) stay in
-//! `strider_pattern`. The minimal `Tb` test-graph builder and the two
-//! assertion helpers this file needs are inlined below so the test is
-//! self-contained.
-//!
-//! A wildcard / predicate / control RHS is a compile-time error
-//! (`rewrite_rule`'s RHS requires `TemplatePat`), so the former runtime
-//! "RHS not buildable" tests are obsolete-by-design and dropped — the
-//! constraint is still enforced, just earlier (see `rewrite_build.rs`'s
-//! compile-fail note).
+//! A wildcard / predicate / control RHS is a compile-time error, since
+//! `rewrite_rule`'s RHS requires `TemplatePat`, so there are no runtime
+//! "RHS not buildable" tests here (see `rewrite_build.rs`).
 
 #![allow(
     clippy::panic,
@@ -37,10 +25,8 @@ use strider_pattern::{
     skip, sub, var,
 };
 
-// ── Minimal test-graph builder ───────────────────────────────────────────────
-
-/// Test graph builder: wraps a `FunctionBuilder` with a single active entry
-/// region pre-created, finalised via `ret_val`.
+/// Wraps a `FunctionBuilder` with a single entry region pre-created,
+/// finalised via `ret_val`.
 struct Tb {
     fb: strider_ir::FunctionBuilder,
 }
@@ -63,8 +49,8 @@ impl Tb {
             .expect("int_binary_operation")
     }
 
-    /// Canonical lowered shape for `l - r`: `Add(l, Neg(r))`.
-    /// `IntBinaryOp::Sub` is not a primitive; pcode-lift produces this shape.
+    /// `IntBinaryOp::Sub` is not a primitive; pcode-lift lowers `l - r` to
+    /// `Add(l, Neg(r))`.
     fn sub(&mut self, l: ValueId, r: ValueId) -> ValueId {
         let neg = self
             .fb
@@ -73,16 +59,12 @@ impl Tb {
         self.add(l, neg)
     }
 
-    /// Emits `Return(v)` in the current region and finalises the graph.
     fn ret_val(mut self, v: ValueId) -> strider_ir::Function {
         self.fb.build_return(Some(v), &[]).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
 }
 
-// ── Assertion helpers ────────────────────────────────────────────────────────
-
-/// Returns the first node whose kind satisfies `pred`, panicking if none.
 #[track_caller]
 fn find_node<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F) -> NodeId {
     function
@@ -91,7 +73,6 @@ fn find_node<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F)
         .expect("expected node kind not found in graph")
 }
 
-/// Asserts `pat` matches exactly `expected` times and returns the hits.
 #[track_caller]
 fn match_count(function: &strider_ir::Function, pat: Pattern, expected: usize) -> Vec<Match> {
     let hits = Matcher::new(function).find_all(&pat).unwrap();
@@ -104,10 +85,8 @@ fn match_count(function: &strider_ir::Function, pat: Pattern, expected: usize) -
     hits
 }
 
-// ── Fixtures: small graphs rewrite tests mutate ──────────────────────────────
-
-/// `return(add(x, 0))` where `x` is `add(7, 1)` so the outer Add has a
-/// non-const LHS — useful for testing `add(var(x), int_const(0))` rewrites.
+/// `return(add(x, 0))` where `x` is `add(7, 1)`, so the outer Add has a
+/// non-const LHS.
 fn graph_add_x_zero() -> strider_ir::Function {
     let mut t = Tb::empty();
     let c7 = t.u64(7);
@@ -118,7 +97,7 @@ fn graph_add_x_zero() -> strider_ir::Function {
     t.ret_val(sum)
 }
 
-/// `return(sub(x, x))` — prime candidate for `sub(var(x), var(x)) → 0`.
+/// `return(sub(x, x))`.
 fn graph_sub_x_x() -> strider_ir::Function {
     let mut t = Tb::empty();
     let c7 = t.u64(7);
@@ -128,8 +107,7 @@ fn graph_sub_x_x() -> strider_ir::Function {
     t.ret_val(diff)
 }
 
-/// `return(add(IntConst(a), IntConst(b)))` — prime candidate for
-/// constant folding.
+/// `return(add(IntConst(a), IntConst(b)))`.
 fn graph_add_const_const(a: u64, b: u64) -> strider_ir::Function {
     let mut t = Tb::empty();
     let ca = t.u64(a);
@@ -138,8 +116,6 @@ fn graph_add_const_const(a: u64, b: u64) -> strider_ir::Function {
     t.ret_val(s)
 }
 
-// ── Assertion helpers local to this module ──────────────────────────────────
-
 #[track_caller]
 fn find_add(function: &strider_ir::Function) -> NodeId {
     find_node(function, |k| {
@@ -147,9 +123,8 @@ fn find_add(function: &strider_ir::Function) -> NodeId {
     })
 }
 
-/// Locate the lowered-`Sub` Add — `Add(_, Neg(_))` — distinguishing it
-/// from any plain `Add(a, b)` in the fixture by its `Neg`-producing
-/// second operand (lift lowers `IntSub(a, b)` to `Add(a, Neg(b))`).
+/// Finds the lowered `Sub`, `Add(_, Neg(_))`, distinguishing it from a plain
+/// `Add(a, b)` by its `Neg`-producing operand.
 #[track_caller]
 fn find_sub(function: &strider_ir::Function) -> NodeId {
     function
@@ -172,16 +147,15 @@ fn find_sub(function: &strider_ir::Function) -> NodeId {
         .expect("fixture must contain a lowered Sub: Add(_, Neg(_))")
 }
 
-/// Returns the `NodeKind` of the node producing the Return's data input.
 fn return_data_input_kind(function: &strider_ir::Function) -> NodeKind {
     let ret = find_node(function, |k| matches!(k, NodeKind::Return));
     let inputs: Vec<ValueId> = function.node_inputs(ret).into_iter().collect();
-    // Return inputs: [ctrl(0), mem(1), retval0(2), ...].
+    // Return inputs: [ctrl, mem, retval0, ...].
     let data_value = inputs[2];
     *function.kind_of_value(data_value)
 }
 
-/// Helper: run rule on every node, reporting whether it fired anywhere.
+/// Runs `rule` on every node, reporting whether it fired anywhere.
 fn fire_anywhere<F>(function: &mut strider_ir::Function, rule: F) -> bool
 where
     F: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> strider_pattern::Result<Option<ValueId>>,
@@ -189,8 +163,6 @@ where
     let mut ctx = EditFunction::new(function);
     apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).expect("apply must not error") > 0
 }
-
-// ── Basic firing ─────────────────────────────────────────────────────────────
 
 #[test]
 fn identity_rule_redirects_consumers_and_returns_true() {
@@ -201,7 +173,7 @@ fn identity_rule_redirects_consumers_and_returns_true() {
     let fired = fire_anywhere(&mut function, rule);
     assert!(fired, "rule should have fired on the outer Add");
 
-    // After the rewrite the Return consumes the inner `add(7, 1)` directly.
+    // The Return now consumes the inner `add(7, 1)` directly.
     let kind = return_data_input_kind(&function);
     assert!(matches!(kind, NodeKind::IntBinaryOp(IntBinaryOp::Add)));
 }
@@ -249,18 +221,15 @@ fn sub_x_x_to_zero_rule() {
     }
 }
 
-// ── Error paths: multi-value-output LHS root ────────────────────────────────
-
-/// Pin the documented `node_outputs_exact::<1>` constraint: rewriting on
-/// a multi-output node (a `Call` whose outputs are
-/// `[Control, Memory, ret-val0...]`) must surface an Err rather than
-/// a silent rewire-of-the-wrong-slot.  Expressed with the runtime rule
-/// variant since `call()` is a control builder, not a `MatchPat` LHS.
+/// Rewriting on a multi-output node (a `Call`, whose outputs are
+/// `[Control, Memory, ret-val0...]`) must error rather than silently
+/// rewire the wrong slot. Uses the runtime rule variant since `call()` is a
+/// control builder, not a `MatchPat` LHS.
 #[test]
 fn rewrite_rule_on_call_root_returns_err() {
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
     // `build_call` reads the stack pointer through the variable table and
-    // errors if it is absent (no SP minting), so track one.
+    // errors if it is absent, so track one.
     let sp = strider_ir_test_utils::reg_vn(0x7000, 8);
     let mut fb = RegisterSet::new()
         .tracked(sp)
@@ -293,10 +262,8 @@ fn rewrite_rule_on_call_root_returns_err() {
     );
 }
 
-// ── heterogeneous rule composition ─────────────────────────────────────────
-
-/// `rewrite_rule` returns a `BoxedRule`, so two rules with structurally
-/// different LHS/RHS shapes collect directly into one `Vec<BoxedRule>`.
+/// `rewrite_rule` returns a `BoxedRule`, so rules with structurally
+/// different shapes collect into one `Vec`.
 #[test]
 fn rewrite_rule_results_collect_into_heterogeneous_vec() {
     let x = Capture::new();
@@ -307,8 +274,6 @@ fn rewrite_rule_results_collect_into_heterogeneous_vec() {
     ];
     assert_eq!(rules.len(), 2);
 }
-
-// ── no matching node anywhere in the reachable graph ──────────────────────
 
 #[test]
 fn rewrite_returns_false_when_no_matching_node() {
@@ -324,8 +289,6 @@ fn rewrite_returns_false_when_no_matching_node() {
     assert!(!fired);
 }
 
-// ── Smoke: run rewrite via Matcher + rule, compare before/after ─────────────
-
 #[test]
 fn pattern_match_before_and_after_rewrite() {
     let mut function = graph_add_x_zero();
@@ -338,8 +301,6 @@ fn pattern_match_before_and_after_rewrite() {
     let ret_kind = return_data_input_kind(&function);
     assert!(matches!(ret_kind, NodeKind::IntBinaryOp(IntBinaryOp::Add)));
 }
-
-// ── GraphRewriter::apply_count / apply_rules_count facade ─────────────────────
 
 /// Counts reachable Add nodes.
 fn count_adds(function: &strider_ir::Function) -> usize {
@@ -354,7 +315,6 @@ fn count_adds(function: &strider_ir::Function) -> usize {
         .count()
 }
 
-/// `apply_count` returns 0 on a graph with no candidate Add node.
 #[test]
 fn apply_count_with_no_match_returns_zero() {
     let mut t = Tb::empty();
@@ -367,8 +327,8 @@ fn apply_count_with_no_match_returns_zero() {
     assert_eq!(n, 0, "rule must not fire on a graph without any Add node");
 }
 
-/// `apply_count` returns exactly one application on `Add(7, 0)`, and the
-/// rewritten Add becomes unreachable afterwards.
+/// One application on `Add(7, 0)`, after which the rewritten Add is
+/// unreachable.
 #[test]
 fn apply_count_with_one_match_returns_one() {
     let mut t = Tb::empty();
@@ -396,9 +356,9 @@ fn apply_count_with_one_match_returns_one() {
     );
 }
 
-/// `apply_rules_count` walks every reachable node once per call; driven
-/// to a fixed point, the two inner identity-Adds collapse while the
-/// outer lowered-Sub Add stays.
+/// `apply_rules_count` walks every reachable node once per call. Driven to a
+/// fixed point, the two inner identity-Adds collapse and the outer
+/// lowered-Sub Add stays.
 #[test]
 fn apply_rules_count_round_robin_reaches_fixed_point() {
     let mut t = Tb::empty();
@@ -407,9 +367,9 @@ fn apply_rules_count_round_robin_reaches_fixed_point() {
     let z = t.u64(0);
     let lhs = t.add(ac, z);
     let rhs = t.add(bc, z);
-    let diff = t.sub(lhs, rhs); // Tb::sub lowers to Add(lhs, Neg(rhs)).
+    let diff = t.sub(lhs, rhs); // lowers to Add(lhs, Neg(rhs))
     let mut function = t.ret_val(diff);
-    // Three Adds: two inner identity-Adds + the outer Sub-lowering Add.
+    // Two inner identity-Adds plus the outer Sub-lowering Add.
     assert_eq!(count_adds(&function), 3);
 
     let y = Capture::new();
@@ -441,8 +401,8 @@ fn apply_rules_count_round_robin_reaches_fixed_point() {
     );
 }
 
-/// After a count-driven rewrite the whole-graph validator still passes —
-/// pins use-list bidirectional integrity through `replace_all_uses`.
+/// The whole-graph validator still passes after a count-driven rewrite,
+/// pinning use-list bidirectional integrity through `replace_all_uses`.
 #[test]
 fn apply_count_preserves_use_list_integrity() {
     let mut t = Tb::empty();
@@ -459,12 +419,9 @@ fn apply_count_preserves_use_list_integrity() {
     strider_ir::validate::validate(&function).expect("validate must pass after rewrite");
 }
 
-// ── RewriteSkip sentinel public contract ─────────────────────────────────────
-
-/// `skip()` produces an error that `is_skip` recognises; an unrelated
-/// error does not.  The `rewrite_rule` interpreter consults `is_skip` on
-/// every `Err` returned during instantiation to convert a deliberate
-/// opt-out into "no change".
+/// The `rewrite_rule` interpreter consults `is_skip` on every `Err` from
+/// instantiation to turn a deliberate opt-out into "no change", so an
+/// unrelated error must not be mistaken for one.
 #[test]
 fn skip_sentinel_round_trips_through_is_skip() {
     let e = skip();
@@ -473,10 +430,7 @@ fn skip_sentinel_round_trips_through_is_skip() {
     assert!(!is_skip(&e_other));
 }
 
-// ── asm-fingerprint absorption into the rewritten root ───────────────────────
-
-/// After a rewrite, the freshly-built producer absorbs the rewritten
-/// root's asm-fingerprint (superset semantics).
+/// The freshly-built producer absorbs the rewritten root's asm-fingerprint.
 #[test]
 fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     let mut function = graph_add_x_zero();
@@ -519,8 +473,6 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     );
 }
 
-// ── apply_rules_in_order composition ─────────────────────────────────────────
-
 /// `apply_rules_in_order` runs each rule in turn at a node, OR-ing the
 /// results: only the second rule fires on the fixture, yet the composed
 /// result is `true`.
@@ -538,7 +490,7 @@ fn apply_rules_in_order_or_composes_results() {
         hits[0].root()
     };
     let rules: Vec<BoxedRule> = vec![
-        // First rule looks for Add(_, IntConst(7)) — no match.
+        // Looks for Add(_, IntConst(7)), which is absent.
         rewrite_rule(add(var(x), int_const(7u128)), var(x)),
         // Second rule matches the actual fixture (Add(_, 0)).
         rewrite_rule(add(var(y), int_const(0u128)), var(y)),

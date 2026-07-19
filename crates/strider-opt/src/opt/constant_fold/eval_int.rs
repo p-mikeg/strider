@@ -5,10 +5,8 @@ use anyhow::anyhow;
 
 use crate::error::Result;
 
-/// The signed minimum representable in `ty`'s bit width (`-2^(bits-1)`, or
-/// `i128::MIN` at ≥128 bits).  The signed-overflow guards in `Sdiv` / `Srem`
-/// read only the minimum (the `INT_MIN / -1` undefined case), so the maximum
-/// is not derived.
+/// The signed minimum representable in `ty`'s bit width, or `i128::MIN` at
+/// >= 128 bits.
 fn signed_min(ty: ValueType) -> i128 {
     let bits = ty.bit_width() as u32;
     if bits >= 128 {
@@ -18,39 +16,29 @@ fn signed_min(ty: ValueType) -> i128 {
     }
 }
 
-/// Sign-extends `v` to `i128` per `ty`'s bit width, erroring if `ty` is not an
-/// integer (the shared "expected integer type" message both the comparison
-/// evaluator and the `SignExtend` const-fold rule emit).
 pub(crate) fn require_signed(ty: ValueType, v: u128) -> Result<i128> {
     ty.get_signed_int(v)
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))
 }
 
-// ── integer constant evaluation ───────────────────────────────────────────────
-
-/// Evaluates `op(l, r)` as an integer arithmetic operation, returning the
-/// result masked to `ty`, or `None` if the operation is undefined (e.g.
-/// division by zero).
+/// Result masked to `ty`, or `None` when the operation is undefined (division
+/// by zero, `INT_MIN / -1`).
 ///
-/// Both `l` and `r` are masked to `ty.bit_mask_u128()` at entry.
-/// IntConst values are normally already masked by `build_int_const`, but
-/// re-masking is cheap insurance against any caller passing raw bits.
-/// Operations that aren't safe under masking-commutativity (Div, Rem,
-/// ShiftRight, signed cmps) need this mask to give correct results.
+/// Both operands are masked to `ty` at entry. Div, Rem and ShiftRight are not
+/// safe under masking-commutativity, so they need the inputs already narrowed
+/// to give the right answer on a caller that passed raw bits.
 pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) -> Option<u128> {
     let mask = ty.bit_mask_u128();
     let l = l & mask;
     let r = r & mask;
     let bits = ty.bit_width() as u32;
-    // Sleigh's `OpBehaviorIntLeft::evaluateBinary` (sleigh/src/opbehavior.cc:411)
-    // returns 0 when the shift amount is `>= 8 * sizeout`.  `IntRight` matches.
-    // `IntSright` returns `signbit ? calc_mask : 0`.  Mirroring this here keeps
-    // the constant-fold's evaluation consistent with Sleigh's runtime semantics
-    // — pre-fix the evaluator computed `r % bits` and diverged from Sleigh
-    // by the full shift output for any literal `r >= bits`.
+    // Sleigh (opbehavior.cc:411) returns 0 when the shift amount is
+    // `>= 8 * sizeout` for IntLeft/IntRight, and `signbit ? calc_mask : 0` for
+    // IntSright. Do NOT reduce the amount modulo `bits`: that diverges from
+    // Sleigh by the full shift output for any literal `r >= bits`.
     let r_ge_bits = r >= u128::from(bits);
-    // Shift arms below only call `shift` inside the `!r_ge_bits` branch,
-    // so `s < bits <= u128::from(u32::MAX)` and the truncation is lossless.
+    // `shift` is only reached inside the `!r_ge_bits` branch, so `s < bits` and
+    // the truncation is lossless.
     #[allow(clippy::cast_possible_truncation)]
     let shift = |s: u128| -> u32 { s as u32 };
     let raw: u128 = match op {
@@ -76,7 +64,6 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
         IntBinaryOp::SShiftRight => {
             let sl = ty.get_signed_int(l)?;
             if r_ge_bits {
-                // Sign-bit-set → fill with all-ones; sign-bit-clear → zero.
                 if sl < 0 { mask } else { 0 }
             } else {
                 sl.wrapping_shr(shift(r)) as u128 & mask
@@ -94,11 +81,9 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
             if sr == 0 {
                 return None;
             }
-            // Signed overflow: INT_MIN / -1 is undefined for every signed
-            // integer width.  At narrow widths the i128 division "looks
-            // well-defined" (e.g. -i32::MIN as i128 = 2^31 fits), but the
-            // mask-back to ty would silently wrap to INT_MIN — not the
-            // mathematical result.  Skip rather than emit a wraparound.
+            // INT_MIN / -1 is undefined at every signed width. At narrow widths
+            // the i128 division looks well-defined (2^31 fits), but masking back
+            // to `ty` wraps it to INT_MIN, not the mathematical result.
             let int_min = signed_min(ty);
             if sl == int_min && sr == -1 {
                 return None;
@@ -117,9 +102,8 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
             if sr == 0 {
                 return None;
             }
-            // Signed-overflow guard: INT_MIN % -1 is mathematically 0 but
-            // hardware idiv raises #DE; treat it as undefined and skip,
-            // matching the Sdiv case.
+            // INT_MIN % -1 is mathematically 0, but hardware idiv raises #DE.
+            // Treat it as undefined, matching the Sdiv arm.
             let int_min = signed_min(ty);
             if sl == int_min && sr == -1 {
                 return None;
@@ -130,41 +114,32 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
     Some(raw & mask)
 }
 
-/// Evaluates a comparison on two constant integer values.
 pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Result<bool> {
-    // Mask both inputs to ty at entry.  Unsigned comparisons (Equal, Less,
-    // LessEqual, Carry) operate on raw u128s and would otherwise return
-    // wrong answers for narrow IntConsts that carry high bits beyond the
-    // type width.  The signed arms re-mask via get_signed_int so the
-    // double-mask is idempotent for them.
+    // Unsigned arms compare raw u128s, so a narrow IntConst carrying high bits
+    // beyond the type width would compare wrong without this mask. The signed
+    // arms re-mask via get_signed_int, so the double-mask is idempotent there.
     let mask = ty.bit_mask_u128();
     let l = l & mask;
     let r = r & mask;
 
     let signed = |v: u128| -> Result<i128> { require_signed(ty, v) };
     let bits = ty.bit_width() as u32;
-    // Carry / signed-overflow comparisons: shifting both operands to the TOP of
-    // the host width turns the type's width-`bits` overflow into host-width
-    // overflow, so stdlib's overflow flag is one SSoT across every width.
-    // `top == 0` at bits >= 128 reduces to a plain i128/u128 overflowing op
-    // (wider-than-128 types fold at 128 bits, like the rest of this module's
-    // u128-domain evaluation).
+    // Shifting both operands to the top of the host width turns width-`bits`
+    // overflow into host-width overflow, so stdlib's overflow flag works at
+    // every width. `top == 0` at bits >= 128 degrades to a plain i128/u128
+    // overflowing op (wider types fold at 128 bits here).
     let top = 128u32.saturating_sub(bits);
 
     Ok(match op {
         IntCmpOp::Equal => l == r,
         IntCmpOp::Less => l < r,
         IntCmpOp::Sless => signed(l)? < signed(r)?,
-        // Unsigned add overflow at the type width.
         IntCmpOp::Carry => (l << top).overflowing_add(r << top).1,
-        // Signed add overflow at the type width.
         IntCmpOp::Scarry => (signed(l)? << top).overflowing_add(signed(r)? << top).1,
-        // Signed sub overflow at the type width.
         IntCmpOp::Sborrow => (signed(l)? << top).overflowing_sub(signed(r)? << top).1,
     })
 }
 
-/// Evaluates a unary integer op on a constant, masked to `ty`.
 pub(crate) fn eval_int_unary(op: IntUnaryOp, v: u128, ty: ValueType) -> Option<u128> {
     let raw = match op {
         IntUnaryOp::Neg => v.wrapping_neg(),
@@ -172,19 +147,18 @@ pub(crate) fn eval_int_unary(op: IntUnaryOp, v: u128, ty: ValueType) -> Option<u
     ty.get_unsigned_int(raw)
 }
 
-/// Sign-extends `v` from `in_ty`, masked to `out_ty`.
 pub(crate) fn eval_sign_extend(v: u128, in_ty: ValueType, out_ty: ValueType) -> Option<u128> {
     let signed = require_signed(in_ty, v).ok()? as u128;
     out_ty.get_unsigned_int(signed)
 }
 
-/// Population count of `v` masked to `in_ty`.
 pub(crate) fn eval_popcount(v: u128, in_ty: ValueType) -> Option<u128> {
     let masked = in_ty.get_unsigned_int(v)?;
     Some(u128::from(masked.count_ones()))
 }
 
-/// Leading-zero count of `v` within `in_ty`'s width; `None` for widths > 128.
+/// Leading-zero count within `in_ty`'s width, not the host's; `None` past 128
+/// bits.
 pub(crate) fn eval_lzcount(v: u128, in_ty: ValueType) -> Option<u128> {
     let masked = in_ty.get_unsigned_int(v)?;
     let bits = in_ty.bit_width() as u32;

@@ -1,45 +1,18 @@
-//! Detects stack-passed function arguments and records them in the
-//! `strider_ir::Function::arg_index_to_values` side-table.
+//! Detects stack-passed function arguments and records them in
+//! `Function::arg_index_to_values`.  Register-passed carriers are recorded at
+//! builder entry instead; only the stack portion needs the optimized memory
+//! graph, which is why this runs as a post-pass.
 //!
-//! Runs as a post-pass after the main fixed-point loop converges.  Register-
-//! passed arg carriers are recorded unconditionally at builder entry (by
-//! `FunctionBuilder::set_entry_region`); this pass handles only the stack-arg
-//! portion, which genuinely requires the optimized memory graph.
+//! A candidate is a `Load[InitialVar(sp) + K]` with `K` in a stack slot and no
+//! shadowing def on its memory chain.  The original `Load` nodes survive as the
+//! registered carriers: no rewiring, no new nodes.  The shadow check's walk may
+//! narrow a candidate's own memory edge, which never changes which args are
+//! detected.
 //!
-//! Stack-passed arg `Load` nodes (`Load[InitialVar(sp) + K]` unshadowed by
-//! any prior store) are detected and recorded in the side-table.  The
-//! original `Load` nodes survive as the registered carriers — no consumer
-//! rewiring, no new nodes.  (The shared memory-SSA walk used for the
-//! stack-arg shadow check may narrow a stack-arg `Load`'s own memory input
-//! onto its nearest clobber; this never changes which args are detected.)
-//!
-//! # Detection rules
-//!
-//! * **Stack args** (strict contiguity + no-shadow).  Collect all `Load`
-//!   nodes whose address decomposes (via [`sp_analysis::decompose_sp`]) to
-//!   `InitialVar(sp) + K` where `K` falls in a stack slot under the
-//!   convention's [`strider_target::StackArgs`] formula (`StackArgs::slot_of`
-//!   floors the load's first byte onto its containing slot — a wider-than-slot
-//!   argument such as a 32-bit-ABI `double` is anchored at the slot its first
-//!   byte occupies).  Reject any
-//!   whose memory input is reachable backward from a shadowing store — the
-//!   walk is a DFS through memory predecessors that treats `MemPhi` as a
-//!   fork where every predecessor must be non-disqualifying.  Disqualifying
-//!   nodes: a stack-tagged `Store { offset: K }`, a `MemPhi` whose
-//!   per-predecessor offsets contain `K`, and un-decomposed `Store` (may alias —
-//!   conservative).  Non-disqualifying: `InitialMemory`, `Call`,
-//!   `CallOther`, and stores at other offsets.  After
-//!   filtering, a width-aware cursor walks the surviving byte-position slots
-//!   from 0, assigning one *argument ordinal* per anchored argument: a
-//!   wider-than-slot argument consumes every slot it spans (so its footprint
-//!   is not mistaken for a gap) yet advances the ordinal by exactly one.
-//!   Ordinals start at `first_stack_arg = arg_passing_regs.len()`; the first
-//!   slot with no anchored load ends the gap-free prefix.
-//!
-//! For the stack-arg multi-`Load` case, every `Load` touching one argument's
-//! slot span (potentially at different widths / sub-field offsets) is
-//! registered into the side-table for that argument ordinal — the
-//! `Vec<ValueId>` per entry accommodates this.
+//! Ordinals start at `first_stack_arg = arg_passing_regs.len()`, and the first
+//! slot with no anchored load ends the gap-free prefix.  Every `Load` touching
+//! one argument's slot span, possibly at different widths or sub-field offsets,
+//! is registered under that one ordinal.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
@@ -49,22 +22,12 @@ use crate::mem_ssa::narrow_load_to;
 use crate::pipeline::PostOptimizer;
 use crate::sp_analysis::{SpAnalyzer, SpExpr, SpOptions};
 
-/// Detects stack-passed argument `Load` nodes and records their
-/// carrier nodes in
-/// `strider_ir::Function::arg_index_to_values` via
-/// `strider_ir::Function::register_arg_value`.  Intended to run once, as an
-/// [`OptimizerPipeline::add_post_pass`][crate::OptimizerPipeline::add_post_pass]
-/// after the fixed-point loop has converged.
+/// Runs ONCE after the fixed-point loop converges.  Owns only the indices
+/// `>= first_stack_arg`.
 ///
-/// Register-arg carriers are recorded at builder entry
-/// (`FunctionBuilder::set_entry_region`); this pass handles only the
-/// stack-arg portion (indices `>= first_stack_arg`), which genuinely
-/// requires the optimized memory graph.  The arg layout (stack-arg offsets
-/// and the register-vs-stack boundary) is derived on-demand from the
-/// function's own calling convention (`Function::default_cc`), the
-/// stack-pointer varnode likewise, and the alias precision / call-clobber
-/// behaviour from [`crate::OptCtx`] — the pass carries no configuration
-/// of its own.
+/// The arg layout, the stack-pointer varnode, and the alias precision all come
+/// from the function and the per-run options, so the pass carries no
+/// configuration.
 #[derive(Clone)]
 pub struct FunctionArgDetect;
 
@@ -74,10 +37,7 @@ impl PostOptimizer for FunctionArgDetect {
         edit: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
-        // SSoT: derive the positional-arg layout on-demand from the function's
-        // own CC.  `first_stack_arg` is the register-vs-stack boundary; the
-        // ranged clear below preserves the register-arg carriers recorded at
-        // builder entry.
+        // `first_stack_arg` is the register-vs-stack boundary.
         let cc = edit.function().default_cc();
         let first_stack_arg = cc.arg_passing_regs.len();
         let maybe_stack_args = cc.stack_args;
@@ -85,87 +45,53 @@ impl PostOptimizer for FunctionArgDetect {
             // This convention passes no arguments on the stack.
             return Ok(());
         };
-        // Register args are recorded at builder entry; this pass owns only the
-        // stack-arg indices (>= first_stack_arg).  Each analyze iteration lifts a
-        // fresh function, so the stack-arg carriers start empty; a re-run on the
-        // same function would at worst append a carrier `ValueId` a second time,
-        // which every consumer tolerates (they take `.first()` or test
-        // membership), so no clear is needed.
-        //
-        // Build the SP-alias context once for the whole pass: it owns the shared
-        // decompose memo + the alias knobs (read from `OptOptions` here, not
-        // threaded down).
+        // No clear needed: each analyze iteration lifts a fresh function, so the
+        // stack-arg carriers start empty, and a re-run would at worst append a
+        // carrier twice, which every consumer tolerates.
         let alias_mode = opt_ctx.options.alias_mode;
         let arg_alias = opt_ctx.options.arg_alias;
         let alias_cfg = SpAnalyzer::new(SpOptions::new(alias_mode, arg_alias));
         detect_stack_args(edit, &alias_cfg, stack_args, first_stack_arg)?;
-        // Arg detection only populates the arg_index_to_values side-table,
-        // and the memory-SSA walk's narrowing only shortens stack-arg loads'
-        // memory edges (idempotent, never changes which args are detected).
         Ok(())
     }
 }
 
-/// Rule (stack args): collect every `Load` node whose address decomposes to
-/// `InitialVar(sp) + K` where `K` lands in a stack slot.  Group by the
-/// byte-position slot the load's first byte occupies (`StackArgs::slot_of`,
-/// a plain floor), tracking how far each anchored load reaches.  A width-aware
-/// cursor then walks slots from 0, mapping each anchored argument to one
-/// *ordinal*: a wider-than-slot argument (e.g. a 32-bit-ABI `double` spanning
-/// two slots) advances the cursor across all its slots but the ordinal by one,
-/// so the following narrower argument is not lost to the slots the wide one
-/// covered.  The first slot with no anchored load ends the gap-free prefix.
-/// For each argument, every qualifying `Load` touching its slot span is
-/// registered into `function.arg_index_to_values` for that ordinal.
-///
-/// The original `Load` nodes survive unchanged — no consumer rewiring.
-/// Multiple `Load`s touching one argument (e.g. different widths or sub-field
-/// offsets) are all registered into the side-table for that ordinal.
+/// Groups qualifying loads by the byte-position slot their first byte occupies,
+/// tracking how far each reaches, then walks slots from 0 assigning one ordinal
+/// per anchored argument.  A wider-than-slot argument (a 32-bit-ABI `double`)
+/// advances the cursor across every slot it spans but the ordinal by one, so
+/// the next narrower argument is not lost to the slots the wide one covered.
 fn detect_stack_args(
     edit: &mut crate::EditFunction<'_>,
     alias_cfg: &SpAnalyzer,
     stack_args: strider_target::StackArgs,
     first_stack_arg: usize,
 ) -> Result<()> {
-    // Incoming stack args live at fixed offsets from the *entry* stack
-    // pointer.  Pin `InitialVar(sp)` up front: a candidate load's terminal
-    // base must equal it, so a load rooted at a *different* SP terminal —
-    // e.g. an alignment-masked `sp & mask`, which addresses a frame local —
-    // is rejected even when its offset coincides with a convention slot.
-    // With no entry-SP read there can be no stack args.
+    // Incoming stack args sit at fixed offsets from the ENTRY stack pointer, so
+    // pinning `InitialVar(sp)` up front rejects a load rooted at a different SP
+    // terminal (an alignment-masked `sp & mask` addressing a frame local) even
+    // when its offset happens to coincide with a convention slot.
     let Some(sp_node) = edit.function().initial_sp() else {
         return Ok(());
     };
-    // `initial_sp` is a raw O(1) lookup that does not filter liveness, so skip a
-    // culled-but-not-compacted `InitialVar(sp)` (the function never reads SP) via
-    // the optimization's live-set — no live load is rooted at a dead SP, so there
-    // can be no stack args.
+    // `initial_sp` does not filter liveness, so skip a culled-but-not-compacted
+    // `InitialVar(sp)`: no live load is rooted at a dead SP.
     if !edit.is_live(sp_node) {
         return Ok(());
     }
     let [initial_sp] = edit
         .node_outputs_exact::<1>(sp_node)
         .expect("InitialVar has 1 output per node signature");
-    // Group qualifying loads by the *byte-position* slot their first byte
-    // lands in (`StackArgs::slot_of` — a plain floor, no upper size bound).  A
-    // load qualifies when:
-    //   (a) its address decomposes to `initial_sp + K`,
-    //   (b) `K` is at or above the first stack slot (StackArgs::slot_of), and
-    //   (c) nothing on its memory chain clobbers the slot (mem_chain_is_dirty
-    //       resolves the nearest clobber via the SpOptions + the knobs;
-    //       not-dirty == the nearest clobber is InitialMemory).
-    // `slot_of` floors a wider-than-slot argument (a 32-bit-ABI `double`, an
-    // x86-64 `long double`) onto the slot its first byte occupies; the cursor
-    // below turns these byte-position slots into argument ordinals.  `span` is
-    // the largest slot any load anchored at a start slot reaches, so a wide
-    // argument's two-slot footprint advances the cursor by two while its
-    // ordinal advances by one.
+    // A load qualifies when (a) its address decomposes to `initial_sp + K`,
+    // (b) `K` lands in a stack slot, and (c) nothing on its memory chain
+    // clobbers that slot.  `span` records the furthest slot any load anchored
+    // at a start slot reaches, which is what lets a wide argument advance the
+    // cursor by two slots while its ordinal advances by one.
     let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> = rustc_hash::FxHashMap::default();
     let mut span: rustc_hash::FxHashMap<usize, usize> = rustc_hash::FxHashMap::default();
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
-    // One-shot scan: detection order doesn't matter (loads are grouped by
-    // slot, then a cursor assigns ordinals), and the pass never re-enqueues,
-    // so iterate the cached live Load set directly — no worklist, no RPO walk.
+    // Detection order does not matter and the pass never re-enqueues, so the
+    // cached live set is enough: no worklist, no RPO walk.
     let loads: Vec<NodeId> = edit
         .live_of_kind(|k| matches!(k, NodeKind::Load(_)))
         .collect();
@@ -178,23 +104,17 @@ fn detect_stack_args(
             continue;
         };
         let load_size = load_ty.byte_size() as i128;
-        // (a) decompose to initial_sp + K.
         let Some(SpExpr { base, offset }) = alias_cfg.decompose(edit.function(), addr) else {
             continue;
         };
         if base != initial_sp {
             continue;
         }
-        // (b) the load's first byte falls in a stack slot.  Its last byte
-        // (`offset + load_size - 1`) is at or above its first, so `slot_of`
-        // is `Some`; `end_slot` is how far a wider-than-slot load reaches.
         let Some(start_slot) = stack_args.slot_of(offset) else {
             continue;
         };
-        // The load's last byte is `offset + load_size - 1`.  A pathological
-        // offset/size (from arbitrary lifted arithmetic) could overflow i64
-        // here; treat an overflow as "not a stack arg" and skip rather than
-        // panicking.
+        // A pathological offset/size out of arbitrary lifted arithmetic can
+        // overflow here; treat that as "not a stack arg" rather than panicking.
         let Some(last_byte) = offset.checked_add(load_size).and_then(|e| e.checked_sub(1)) else {
             continue;
         };
@@ -204,9 +124,6 @@ fn detect_stack_args(
         if disqualified.contains(&start_slot) {
             continue;
         }
-        // (c) memory chain clean.  `mem_chain_is_dirty` walks the load's own
-        // memory chain via the shared `alias_cfg`; not-dirty == the nearest
-        // clobber is `InitialMemory`.
         let dirty = mem_chain_is_dirty(edit, alias_cfg, node_id);
         if dirty {
             disqualified.insert(start_slot);
@@ -219,29 +136,22 @@ fn detect_stack_args(
         *reach = (*reach).max(end_slot);
     }
 
-    // Width-aware cursor: walk byte-position slots from 0, assigning one
-    // argument ordinal per anchored argument.  A wide argument consumes every
-    // slot it spans (so the slots it covers are not mistaken for a gap), but
-    // advances the ordinal by exactly one.  The first slot with no anchored
-    // load (or a disqualified slot — those are absent from `groups`) ends the
-    // contiguous prefix.
+    // A disqualified slot is absent from `groups`, so it ends the prefix the
+    // same way a genuine gap does.
     let mut cursor = 0usize;
     let mut ordinal = first_stack_arg;
     while groups.contains_key(&cursor) {
         let arg_span = span[&cursor] - cursor + 1;
         let index = ordinal as u32;
-        // Gather every qualifying load whose start slot falls inside this
-        // argument's span: the anchor read plus any sub-field reads of the
-        // same (possibly wider-than-one-slot) argument.
+        // The anchor read plus any sub-field reads of the same argument.
         let mut arg_loads: Vec<NodeId> = Vec::new();
         for s in cursor..cursor + arg_span {
             if let Some(loads) = groups.get(&s) {
                 arg_loads.extend_from_slice(loads);
             }
         }
-        // Same-space guard: one argument's carriers must share a single Load
-        // space; a mismatch skips registration for this ordinal (the ordinal
-        // is still consumed, mirroring the previous per-slot behaviour).
+        // One argument's carriers must share a Load space.  A mismatch skips
+        // registration but still consumes the ordinal.
         let first_load = *arg_loads
             .first()
             .expect("a present span entry always has ≥1 anchored load");
@@ -265,15 +175,8 @@ fn detect_stack_args(
     Ok(())
 }
 
-/// Walks the load's memory chain backward (via the shared `alias_cfg`) looking
-/// for any def that may shadow its SP slot.  Returns `true` if any path may
-/// overwrite bytes in the load's range — i.e. the nearest clobber is anything
-/// but the clean `InitialMemory` root.
-///
-/// The load's address class / byte size are re-derived from the node inside
-/// [`SpAnalyzer::nearest_clobber`] (the SP decompose is a memo hit — the caller
-/// already decomposed the same address to qualify the load).  The traversal is
-/// cycle-guarded, `MemPhi`-forking, and stack-safe at any chain depth.
+/// `true` when any path may overwrite bytes in the load's range, i.e. the
+/// nearest clobber is anything but the clean `InitialMemory` root.
 fn mem_chain_is_dirty(
     edit: &mut crate::EditFunction<'_>,
     alias_cfg: &SpAnalyzer,
@@ -283,8 +186,7 @@ fn mem_chain_is_dirty(
         .memory_input_of(load)
         .expect("a Load has a memory input (slot 0)");
     let clobber = alias_cfg.nearest_clobber(edit.function(), load, mem_token);
-    // Caller-side narrowing: shorten this candidate load's memory edge onto its
-    // nearest clobber (perf only — never changes which args are detected).
+    // Perf only; narrowing never changes which args are detected.
     narrow_load_to(edit, load, clobber);
     !matches!(edit.node_kind(clobber), NodeKind::InitialMemory)
 }

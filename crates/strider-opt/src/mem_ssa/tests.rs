@@ -1,10 +1,5 @@
-//! White-box tests for the read-only memory-SSA walk
-//! ([`MemorySSAWalker::find_nearest_clobber`]) and its caller-side
-//! [`narrow_load_to`] step.
-//!
-//! Construct synthetic memory chains (`InitialMemory`, `Store`,
-//! `MemPhi`) and drive the walk with stub [`MemorySSAWalker`] walkers
-//! whose alias verdict each test pins.
+//! Synthetic memory chains driven by stub walkers whose alias verdict each
+//! test pins.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -13,8 +8,7 @@ use strider_ir::node::{NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir_test_utils::make_empty_fn;
 
-/// Walker that classifies a specific set of store memory outputs as
-/// aliasing; every other def is non-aliasing.
+/// Aliases exactly the listed memory outputs; every other def is disjoint.
 struct AliasSet {
     aliasing: Vec<ValueId>,
 }
@@ -27,8 +21,7 @@ impl MemorySSAWalker for AliasSet {
     }
 }
 
-/// Walker that never aliases — drives the "reaches InitialMemory clean"
-/// path.
+/// Drives the "chain reaches InitialMemory clean" path.
 struct NeverAlias;
 impl MemorySSAWalker for NeverAlias {
     fn def_clobbers(&mut self, _function: &Function, _def: NodeId) -> bool {
@@ -36,16 +29,12 @@ impl MemorySSAWalker for NeverAlias {
     }
 }
 
-/// Runs the read-only walk from the def that produced `start_mem`.  No
-/// narrowing — the read-only walk never mutates — so only the returned clobber
-/// node is exercised.  Returns the clobber node, or the `InitialMemory` root
-/// for a clean chain.
+/// Walk from the def that produced `start_mem`, no narrowing.
 fn run<W: MemorySSAWalker>(fg: &mut Function, walker: &mut W, start_mem: ValueId) -> NodeId {
     let start = fg.producer(start_mem);
     walker.find_nearest_clobber(fg, start)
 }
 
-/// Asserts the walk bottomed out cleanly at the `InitialMemory` root.
 fn assert_clean(fg: &Function, r: NodeId) {
     assert!(
         matches!(*fg.node_kind(r), NodeKind::InitialMemory),
@@ -54,8 +43,6 @@ fn assert_clean(fg: &Function, r: NodeId) {
     );
 }
 
-/// Builds `fn() -> u64 { return 7; }` and returns
-/// `(function, initial_memory_output)`.
 fn empty_chain() -> (Function, ValueId) {
     let fg = make_empty_fn(|b| b.build_int_const(7u64, ValueType::I64)).unwrap();
     let im = fg
@@ -66,8 +53,7 @@ fn empty_chain() -> (Function, ValueId) {
     (fg, im_value)
 }
 
-/// Builds a linear chain of `depth` `Store`s and returns
-/// `(function, head_memory_output, store_mem_outputs_head_to_tail)`.
+/// Returns `(function, head_memory_output, store_mems_head_to_tail)`.
 fn linear_store_chain(depth: usize) -> (Function, ValueId, Vec<ValueId>) {
     let fg = make_empty_fn(|b| {
         for i in 0..depth {
@@ -85,8 +71,7 @@ fn linear_store_chain(depth: usize) -> (Function, ValueId, Vec<ValueId>) {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return must exist");
     let head = fg.node_inputs(ret)[1];
-    // Collect every Store's memory output, in chain order head→tail
-    // (most-recent first), by walking slot-0 from the head.
+    // Head to tail, i.e. most recent store first.
     let mut store_mems = Vec::new();
     let mut cur = head;
     loop {
@@ -102,10 +87,9 @@ fn linear_store_chain(depth: usize) -> (Function, ValueId, Vec<ValueId>) {
     (fg, head, store_mems)
 }
 
-/// Builds a linear chain of `depth` `Store`s followed by a `Load` that
-/// reads the head of the chain, and returns `(function, load_node,
-/// load_memory_input, store_mem_outputs_head_to_tail)`.  The loaded value is
-/// the function's return value, so the `Load` is reachable.
+/// Returns `(function, load_node, load_memory_input,
+/// store_mems_head_to_tail)`.  The loaded value is returned by the function,
+/// so the `Load` stays reachable.
 fn linear_chain_with_load(depth: usize) -> (Function, NodeId, ValueId, Vec<ValueId>) {
     let fg = make_empty_fn(|b| {
         for i in 0..depth {
@@ -137,9 +121,7 @@ fn linear_chain_with_load(depth: usize) -> (Function, NodeId, ValueId, Vec<Value
     (fg, load, head, store_mems)
 }
 
-/// Runs the read-only walk + the caller-side narrowing step with a real
-/// `Load` node so the narrowing rewrite is exercised: `mem` is the load's own
-/// memory input.  Returns the clobber.
+/// Walk plus the caller-side narrowing step, so the rewrite is exercised.
 fn run_load<W: MemorySSAWalker>(fg: &mut Function, walker: &mut W, load: NodeId) -> NodeId {
     let mem = fg.node_inputs(load)[0];
     let mem_node = fg.producer(mem);
@@ -151,8 +133,8 @@ fn run_load<W: MemorySSAWalker>(fg: &mut Function, walker: &mut W, load: NodeId)
 
 #[test]
 fn narrows_load_past_disjoint_prefix() {
-    // load → store0(head) → store1 → store2 → InitialMemory.  Only the
-    // furthest store (store2, nearest InitialMemory) aliases the load.
+    // load -> store0(head) -> store1 -> store2 -> InitialMemory, with only
+    // store2 (nearest InitialMemory) aliasing.
     let (mut fg, load, head, store_mems) = linear_chain_with_load(3);
     assert_eq!(store_mems.len(), 3, "three stores in the chain");
     assert_eq!(
@@ -172,8 +154,7 @@ fn narrows_load_past_disjoint_prefix() {
         "nearest clobber is the furthest store"
     );
 
-    // Narrowing: the load's memory input is repointed directly at that
-    // store, skipping the two disjoint stores in between.
+    // The load's memory input is repointed past the two disjoint stores.
     assert_eq!(
         fg.node_inputs(load)[0],
         furthest,
@@ -183,8 +164,7 @@ fn narrows_load_past_disjoint_prefix() {
 
 #[test]
 fn narrowing_is_idempotent() {
-    // After the first narrowing the load points at its nearest clobber, so a
-    // second walk returns the same clobber and moves nothing.
+    // Once narrowed, a second walk finds the same clobber and moves nothing.
     let (mut fg, load, _head, store_mems) = linear_chain_with_load(3);
     let furthest = *store_mems.last().unwrap();
     let mut walker = AliasSet {
@@ -198,9 +178,8 @@ fn narrowing_is_idempotent() {
     assert_eq!(fg.node_inputs(load)[0], furthest, "no further movement");
 }
 
-/// Builds `fn { *0x10 = 0x42; return 7; }` and returns
-/// `(function, initial_memory_output, store_memory_output, region_phi_token)`
-/// — the scaffold every grafted-phi test grows a `MemPhi` and load onto.
+/// Scaffold the grafted-phi tests grow a `MemPhi` and a load onto.  Returns
+/// `(function, initial_memory_output, store_memory_output, region_phi_token)`.
 fn base_with_store() -> (Function, ValueId, ValueId, ValueId) {
     let fg = make_empty_fn(|b| {
         let addr = b.build_int_const(0x10u64, ValueType::I64)?;
@@ -227,7 +206,6 @@ fn base_with_store() -> (Function, ValueId, ValueId, ValueId) {
     (fg, im, store_mem, phi_token)
 }
 
-/// Grafts an `IntConst` and returns its value output.
 fn mk_const(fg: &mut Function, v: u64) -> ValueId {
     let const_id = fg.intern_int_const(u128::from(v), ValueType::I64);
     let n = strider_ir_test_utils::sentinel_node(
@@ -239,7 +217,6 @@ fn mk_const(fg: &mut Function, v: u64) -> ValueId {
     fg.node_outputs_exact::<1>(n).unwrap()[0]
 }
 
-/// Grafts a `Store(mem, addr, data)` and returns its memory output.
 fn mk_store(fg: &mut Function, mem: ValueId, addr: ValueId, data: ValueId) -> ValueId {
     let n = strider_ir_test_utils::sentinel_node(
         fg,
@@ -250,7 +227,7 @@ fn mk_store(fg: &mut Function, mem: ValueId, addr: ValueId, data: ValueId) -> Va
     fg.node_outputs_exact::<1>(n).unwrap()[0]
 }
 
-/// Grafts a `Load(mem, addr)` and returns the load NODE.
+/// Returns the load NODE, not its value output.
 fn mk_load(fg: &mut Function, mem: ValueId, addr: ValueId) -> NodeId {
     strider_ir_test_utils::sentinel_node(
         fg,
@@ -260,10 +237,8 @@ fn mk_load(fg: &mut Function, mem: ValueId, addr: ValueId) -> NodeId {
     )
 }
 
-/// Grafts a `CallOther(control, mem)` and returns its memory output (the
-/// node's slot-1 output).  Models a memory-clobbering call sitting on the
-/// chain — the walk reaches it via `memory_input_of` (slot 1) and the walker
-/// classifies it by its memory output, exactly like a `Store`.
+/// Returns the CallOther's memory output (slot 1), which is how the walker
+/// classifies it, same as a `Store`.
 fn mk_call_other(fg: &mut Function, control: ValueId, mem: ValueId) -> ValueId {
     let n = strider_ir_test_utils::sentinel_node(
         fg,
@@ -275,8 +250,6 @@ fn mk_call_other(fg: &mut Function, control: ValueId, mem: ValueId) -> ValueId {
         .expect("CallOther has a memory output")
 }
 
-/// Grafts a `MemPhi` over `arms` (with `phi_token`) and returns its memory
-/// output.
 fn mk_mem_phi(fg: &mut Function, phi_token: ValueId, arms: &[ValueId]) -> ValueId {
     let inputs: Vec<ValueId> = core::iter::once(phi_token)
         .chain(arms.iter().copied())
@@ -292,10 +265,9 @@ fn mk_mem_phi(fg: &mut Function, phi_token: ValueId, arms: &[ValueId]) -> ValueI
 
 #[test]
 fn narrowing_jumps_past_transparent_phi_with_disjoint_prefix() {
-    // load → store_outer(disjoint) → MemPhi[store_dom, store_dom] → store_dom.
-    // Both phi arms agree on the dominating store, so the walk passes through
-    // the phi to it; the load is repointed straight onto store_dom, jumping
-    // both the disjoint outer store AND the transparent phi.
+    // load -> store_outer(disjoint) -> MemPhi[store_dom, store_dom].  Agreeing
+    // arms make the phi transparent, so the load jumps past both it and the
+    // disjoint outer store onto store_dom.
     let (mut fg, _im, store_dom_mem, phi_token) = base_with_store();
     let phi_mem = mk_mem_phi(&mut fg, phi_token, &[store_dom_mem, store_dom_mem]);
     let a2 = mk_const(&mut fg, 0x20);
@@ -304,7 +276,7 @@ fn narrowing_jumps_past_transparent_phi_with_disjoint_prefix() {
     let a3 = mk_const(&mut fg, 0x30);
     let load = mk_load(&mut fg, store_outer_mem, a3);
 
-    // store_dom aliases; store_outer is disjoint.
+    // store_dom aliases, store_outer is disjoint.
     let mut walker = AliasSet {
         aliasing: vec![store_dom_mem],
     };
@@ -323,10 +295,9 @@ fn narrowing_jumps_past_transparent_phi_with_disjoint_prefix() {
 
 #[test]
 fn narrowing_stops_at_disagreeing_phi_skipping_disjoint_prefix() {
-    // load → store_outer(disjoint) → MemPhi[store_inner(aliasing), InitialMemory].
-    // The arms disagree (one clobbers, one clean), so the phi is the boundary:
-    // the load is repointed onto the phi, skipping the disjoint outer store
-    // but NEVER past the merge.
+    // load -> store_outer(disjoint) -> MemPhi[store_inner(aliasing), im].
+    // One arm clobbers and one is clean, so the phi is the boundary: the load
+    // skips the disjoint outer store but never crosses the merge.
     let (mut fg, im, store_inner_mem, phi_token) = base_with_store();
     let phi_mem = mk_mem_phi(&mut fg, phi_token, &[store_inner_mem, im]);
     let a2 = mk_const(&mut fg, 0x20);
@@ -335,7 +306,7 @@ fn narrowing_stops_at_disagreeing_phi_skipping_disjoint_prefix() {
     let a3 = mk_const(&mut fg, 0x30);
     let load = mk_load(&mut fg, store_outer_mem, a3);
 
-    // Only the inner (phi-arm) store aliases; the outer store is disjoint.
+    // Only the inner (phi-arm) store aliases.
     let mut walker = AliasSet {
         aliasing: vec![store_inner_mem],
     };
@@ -363,8 +334,7 @@ fn initial_memory_with_no_alias_returns_none() {
 fn linear_chain_finds_nearest_aliasing_store() {
     let (mut fg, head, store_mems) = linear_store_chain(4);
     assert_eq!(store_mems.len(), 4, "four stores in the chain");
-    // Mark the SECOND-from-head store as aliasing; the walk must return
-    // it (the nearest clobber), skipping the first non-aliasing store.
+    // Second-from-head aliases, so the walk must skip the first store.
     let nearest = store_mems[1];
     let mut walker = AliasSet {
         aliasing: vec![nearest],
@@ -380,9 +350,7 @@ fn linear_chain_finds_nearest_aliasing_store() {
 #[test]
 fn non_aliasing_store_is_skipped() {
     let (mut fg, head, store_mems) = linear_store_chain(3);
-    // Mark only the FURTHEST store (closest to InitialMemory) as
-    // aliasing; the walk must skip the two nearer non-aliasing stores
-    // and still find it.
+    // Only the furthest store aliases, so two nearer stores get skipped.
     let furthest = *store_mems.last().unwrap();
     let mut walker = AliasSet {
         aliasing: vec![furthest],
@@ -398,9 +366,8 @@ fn linear_chain_all_clean_returns_none() {
     assert_clean(&fg, r);
 }
 
-/// Builds a function with one Store so a Region exists, then grafts a
-/// `MemPhi` whose `n_arms` predecessors all route to `InitialMemory`.
-/// Returns `(function, mem_phi_value)`.
+/// One Store, so a Region exists to hang a `MemPhi` on; the phi's `n_arms`
+/// predecessors all route straight to `InitialMemory`.
 fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
     let mut fg = make_empty_fn(|b| {
         let addr = b.build_int_const(0x100u64, ValueType::I64)?;
@@ -435,8 +402,6 @@ fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
 
 #[test]
 fn mem_phi_all_arms_clean_returns_none() {
-    // Every predecessor routes to InitialMemory with no alias → the phi
-    // is clean → None.
     let (mut fg, phi_value) = mem_phi_all_initial(3);
     let r = run(&mut fg, &mut NeverAlias, phi_value);
     assert_clean(&fg, r);
@@ -444,9 +409,7 @@ fn mem_phi_all_arms_clean_returns_none() {
 
 #[test]
 fn mem_phi_disagreeing_arms_returns_phi_boundary() {
-    // Build a MemPhi with two arms: one through a Store (which the
-    // walker marks aliasing), one through InitialMemory.  Because one
-    // predecessor reaches a clobber, the phi is a clobber boundary.
+    // Two arms: one through an aliasing Store, one through InitialMemory.
     let mut fg = make_empty_fn(|b| {
         let addr = b.build_int_const(0x200u64, ValueType::I64)?;
         let v = b.build_int_const(0x99u64, ValueType::I64)?;
@@ -477,10 +440,8 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     );
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
-    // Walker marks the store-arm's store as aliasing.  One arm clobbers
-    // (the store) and the other is clean (InitialMemory) → the arms
-    // DISAGREE, so the MemPhi itself is the boundary clobber: the walk
-    // returns the phi's own output, NOT the inner store.
+    // The arms disagree, so the walk returns the phi's own output rather
+    // than the inner store.
     let mut walker = AliasSet {
         aliasing: vec![store_mem],
     };
@@ -492,16 +453,12 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     );
 }
 
-/// Both arms of a `MemPhi` route to the SAME aliasing store (the store
-/// dominates the merge, reached identically through every arm).  The
-/// arms AGREE, so the walk passes the phi through transparently and
-/// returns that single dominating store — NOT the phi.  This is the
-/// dominator case the store-to-load forwarder forwards across.
+/// Both arms route to the same aliasing store, so the phi is transparent and
+/// the walk returns that store, not the phi.  This is the dominator case the
+/// store-to-load forwarder forwards across.
 #[test]
 fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
-    // Build a chain: InitialMemory ← Store(dominating) ← MemPhi[both arms
-    // = dominating store's mem].  The phi's two value inputs are the same
-    // ValueId, so every arm resolves to the same store.
+    // Both phi arms are the same ValueId, so they resolve to the same store.
     let mut fg = make_empty_fn(|b| {
         let addr = b.build_int_const(0x300u64, ValueType::I64)?;
         let v = b.build_int_const(0x77u64, ValueType::I64)?;
@@ -519,7 +476,6 @@ fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
         .unwrap();
     let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
     let phi_token = fg.node_outputs(region_node)[1];
-    // Both arms carry the same (dominating) store memory token.
     let phi = strider_ir_test_utils::sentinel_node(
         &mut fg,
         NodeKind::MemPhi,
@@ -539,15 +495,12 @@ fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     );
 }
 
-/// A `MemPhi` whose arms reach DIFFERENT aliasing stores (per-branch
-/// stores) disagrees → the phi is the boundary, NOT either inner store.
+/// Arms reaching different aliasing stores disagree, so the phi is the
+/// boundary rather than either inner store.
 #[test]
 fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
-    // Two stores, both marked aliasing; build a MemPhi whose two arms
-    // each route to a DIFFERENT one.
+    // Wire a MemPhi directly to each store's memory output, one per arm.
     let (fg, _head, store_mems) = linear_store_chain(2);
-    // store_mems are head→tail; both are reachable via the chain, but for
-    // this test we wire a MemPhi directly to each store's mem output.
     let mut fg = fg;
     let region_node = fg
         .walk()
@@ -564,8 +517,7 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
     );
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
-    // Mark BOTH stores aliasing: each arm resolves to its own (different)
-    // store → the arms disagree → boundary.
+    // Both stores alias, so each arm resolves to a different one.
     let mut walker = AliasSet {
         aliasing: vec![arm_a, arm_b],
     };
@@ -577,27 +529,22 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
     );
 }
 
-/// A memory-clobbering `CallOther` sits on the chain between the load's
-/// memory input and `InitialMemory`; the walker classifies the call as
-/// clobbering.  The walk must return the Call node (the nearest clobber),
-/// proving the engine reaches a Call's memory output via `memory_input_of`
+/// Proves the engine reaches a Call's memory output via `memory_input_of`
 /// (slot 1) and short-circuits on it exactly as it does a `Store`.
 #[test]
 fn call_on_chain_is_the_nearest_clobber() {
-    // InitialMemory ← Store(disjoint) ← CallOther(clobbering) ← load.
+    // InitialMemory <- Store(disjoint) <- CallOther(clobbering) <- load.
     let (mut fg, _im, store_mem, _phi_token) = base_with_store();
     let region_node = fg
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .expect("Region must exist");
     let control = fg.node_outputs(region_node)[0];
-    // Graft the CallOther onto the store's memory output, then a load past it.
     let call_mem = mk_call_other(&mut fg, control, store_mem);
     let a = mk_const(&mut fg, 0x40);
     let load = mk_load(&mut fg, call_mem, a);
 
-    // The walker marks ONLY the CallOther's memory output as clobbering; the
-    // disjoint store underneath is clean.
+    // Only the CallOther clobbers; the store underneath is disjoint.
     let mut walker = AliasSet {
         aliasing: vec![call_mem],
     };
@@ -614,9 +561,7 @@ fn call_on_chain_is_the_nearest_clobber() {
     );
 }
 
-/// A `MemPhi` whose arms disagree because of a clobbering `CallOther` on one
-/// arm (the other arm reaching `InitialMemory` cleanly) makes the phi itself
-/// the boundary — the Call-on-an-arm case of the disagree rule.
+/// The Call-on-an-arm case of the disagree rule.
 #[test]
 fn mem_phi_call_arm_disagrees_returns_phi_boundary() {
     let (mut fg, im, _store_mem, phi_token) = base_with_store();
@@ -625,7 +570,7 @@ fn mem_phi_call_arm_disagrees_returns_phi_boundary() {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .expect("Region must exist");
     let control = fg.node_outputs(region_node)[0];
-    // arm 0: a clobbering CallOther rooted at InitialMemory; arm 1: clean.
+    // arm 0: a clobbering CallOther rooted at InitialMemory.  arm 1: clean.
     let call_mem = mk_call_other(&mut fg, control, im);
     let phi_mem = mk_mem_phi(&mut fg, phi_token, &[call_mem, im]);
 
@@ -640,63 +585,50 @@ fn mem_phi_call_arm_disagrees_returns_phi_boundary() {
     );
 }
 
-/// Builds a loop-carried (cyclic) memory chain and returns
+/// Loop-carried memory chain; returns
 /// `(function, entry_store_mem, load_node, phi_value)`.
 ///
-/// Shape:
 /// ```text
 ///   InitialMemory ← MemPhi[ im, back_store ]      (loop-header phi)
 ///                        ↑              │
 ///                   entry_store ←───────┘ (back_store consumes the phi output)
-///   load → entry_store → MemPhi → … (entry_store's mem input is the phi)
+///   load -> entry_store -> MemPhi -> ... (entry_store's mem input is the phi)
 /// ```
-/// The `MemPhi`'s second arm is a `Store` that consumes the phi's OWN memory
-/// output — a genuine back-edge.  Walking the chain therefore re-encounters
-/// the phi while resolving it (the loop-header case the `Resolve::InProgress`
-/// cycle-cut exists for).
+/// The phi's second arm is a `Store` consuming the phi's own memory output, a
+/// genuine back-edge, so resolving the phi re-encounters it.  This is the case
+/// the `Resolve::InProgress` cycle-cut exists for.
 fn cyclic_loop_chain() -> (Function, ValueId, NodeId, ValueId) {
     use strider_ir::IRViewer;
     let (mut fg, im, _store_mem, phi_token) = base_with_store();
-    // Loop-header phi: arm0 = im (entry edge), arm1 = placeholder (rewired below).
+    // arm0 = im (entry edge), arm1 = placeholder, rewired below.
     let phi_mem = mk_mem_phi(&mut fg, phi_token, &[im, im]);
     let phi_node = fg.producer(phi_mem);
-    // entry_store sits on the entry arm's live path, reading the phi output.
+    // Sits on the entry arm's live path, reading the phi output.
     let ea = mk_const(&mut fg, 0x10);
     let ed = mk_const(&mut fg, 0x42);
     let entry_store_mem = mk_store(&mut fg, phi_mem, ea, ed);
-    // back_store closes the loop: it consumes the phi's own output and feeds
-    // back into the phi's second arm.
+    // Closes the loop: consumes the phi's output, feeds its second arm.
     let ba = mk_const(&mut fg, 0x77);
     let bd = mk_const(&mut fg, 0x88);
     let back_store_mem = mk_store(&mut fg, phi_mem, ba, bd);
-    // Rewrite arm1 (input slot 2: [phi_token, arm0, arm1]) onto the back store,
-    // closing the cycle phi → back_store → phi.
+    // arm1 is input slot 2: [phi_token, arm0, arm1].
     let use_id = fg.node_input_id_at(phi_node, 2).unwrap();
     fg.graph_mut().update_input(use_id, back_store_mem);
-    // A load reading entry_store's memory output — the walk start for the
-    // store-is-returned case.
     let la = mk_const(&mut fg, 0x20);
     let load = mk_load(&mut fg, entry_store_mem, la);
     (fg, entry_store_mem, load, phi_mem)
 }
 
-/// The cycle-cut: a loop-header `MemPhi` whose second arm feeds back through a
-/// `Store` to its own output must NOT make the walk diverge.  An all-clean
-/// cycle terminates and bottoms out at the `InitialMemory` root (the back-edge
-/// re-encounter resolves to `None` via the `Resolve::InProgress` marker), and
-/// a single aliasing store on the non-back (entry) arm is returned as the
-/// nearest clobber — the walk terminates in both cases.
+/// A loop-header `MemPhi` feeding back to its own output must not diverge the
+/// walk, with or without a real clobber present.
 #[test]
 fn cyclic_loop_header_phi_terminates() {
-    // All-clean: the walk traverses the loop-header phi and the back-edge,
-    // cuts the cycle, and reaches InitialMemory.
+    // All-clean: cut the cycle and reach InitialMemory.
     let (mut fg, _entry_store_mem, _load, phi_value) = cyclic_loop_chain();
     let r_clean = run(&mut fg, &mut NeverAlias, phi_value);
     assert_clean(&fg, r_clean);
 
-    // A single aliasing store on the non-back (entry) arm is returned as the
-    // nearest clobber — proving termination with a real clobber present, not
-    // just on the clean path.
+    // One aliasing store on the entry arm: terminates with a clobber too.
     let (mut fg, entry_store_mem, load, _phi_value) = cyclic_loop_chain();
     let mut walker = AliasSet {
         aliasing: vec![entry_store_mem],

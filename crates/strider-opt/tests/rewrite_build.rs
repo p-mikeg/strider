@@ -1,11 +1,7 @@
 //! Integration coverage for the typed `rewrite_rule` path.
 //!
-//! A wildcard RHS is a **compile error**, not a runtime check:
-//! `rewrite_rule(add(var(x), int_const(0)), any())` would fail to
-//! compile because `Any` does not implement `TemplatePat`. The throwaway
-//! `rustc` spike behind this design confirmed both halves (buildable-RHS
-//! compiles, wildcard-RHS errors with `Any: TemplatePat is not
-//! satisfied`); the buildable-RHS rules below exercise the firing path.
+//! A wildcard RHS is a COMPILE error, not a runtime check: `Any` does not
+//! implement `TemplatePat`. The rules below exercise the firing path.
 
 #![allow(
     clippy::panic,
@@ -24,13 +20,10 @@ use strider_pattern::{
     int_const_with, template, var,
 };
 
-// compile-fail: a wildcard RHS does not implement `TemplatePat`, so the
-// following does NOT compile (verified with a throwaway scratch build —
-// `error[E0277]: the trait bound `Any: TemplatePat` is not satisfied`):
+// compile-fail, uncomment to re-confirm the wildcard-RHS rejection:
 //
 //     let rule = rewrite_rule(add(var(x), int_const(0u128)), any());
-//
-// Uncomment to re-confirm the compile-time wildcard-RHS rejection.
+//     // error[E0277]: the trait bound `Any: TemplatePat` is not satisfied
 
 /// `add(var(x), int_const(0)) -> var(x)` fires and redirects uses.
 #[test]
@@ -47,7 +40,6 @@ fn add_zero_identity_fires_and_redirects() {
 
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
 
-    // Find the Add root.
     let add_root = {
         let m = Matcher::new(&fx);
         let pat = add(var(x), int_const(0u128)).into_pattern();
@@ -60,8 +52,8 @@ fn add_zero_identity_fires_and_redirects() {
     let fired = rule(&mut ctx, add_root).unwrap().is_some();
     assert!(fired, "add-zero identity should fire");
 
-    // The Or consumer now reads `a` (an IntConst(7)) twice — no Add(_, 0)
-    // remains reachable from any live consumer's first operand.
+    // The Or consumer now reads the IntConst(7) twice; no Add(_, 0) is
+    // reachable from any live consumer's first operand.
     let or_reads_const = ctx
         .function()
         .node_inputs(or_node(ctx.function()))
@@ -75,7 +67,6 @@ fn add_zero_identity_fires_and_redirects() {
     assert!(or_reads_const, "Or should now read the redirected constant");
 }
 
-/// Locate the lone `Or` node in the fixture.
 fn or_node(f: &strider_ir::Function) -> strider_ir::node::NodeId {
     f.walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Or)))
@@ -112,7 +103,6 @@ fn const_fold_rule_via_macro() {
     let fired = rule(&mut ctx, add_root).unwrap().is_some();
     assert!(fired);
 
-    // A fresh IntConst(7) now exists.
     let has_seven = ctx.function().walk().any(|n| {
         let f = ctx.function();
         matches!(f.node_kind(n), NodeKind::IntConst(_))
@@ -121,17 +111,15 @@ fn const_fold_rule_via_macro() {
     assert!(has_seven, "3 + 4 should fold to IntConst(7)");
 }
 
-/// A reassociation rule whose RHS nests a computed `int_const_with!` const
-/// inside an `add` proves a binary op nesting a `ConstWith` is a valid,
-/// working template RHS (the relaxed value-op factory bounds restore this).
-/// `(x + 1) + 2` folds to `x + 3`.
+/// A binary op nesting a computed `int_const_with!` const is a valid
+/// template RHS: `(x + 1) + 2` folds to `x + 3`.
 #[test]
 fn reassoc_rule_nests_computed_const_in_add() {
     let x = Capture::new();
     let c1 = Capture::new();
     let c2 = Capture::new();
 
-    // Fixture: `(x + 1) + 2` over a tracked register var `x`.
+    // `(x + 1) + 2` over a tracked register var.
     let (mut fx, _xval) = make_fn_with_var(reg_vn(0, 8), |b, xv| {
         let one = b.build_int_const(1u64, T::I64)?;
         let inner = b.build_int_binary_operation(xv, one, IntBinaryOp::Add, T::I64)?;
@@ -167,7 +155,6 @@ fn reassoc_rule_nests_computed_const_in_add() {
     let fired = rule(&mut ctx, outer_root).unwrap().is_some();
     assert!(fired, "reassoc rule should fire on (x + 1) + 2");
 
-    // The folded constant 1 + 2 == 3 now exists in the graph.
     let has_three = ctx.function().walk().any(|n| {
         let f = ctx.function();
         matches!(f.node_kind(n), NodeKind::IntConst(_))
@@ -176,18 +163,13 @@ fn reassoc_rule_nests_computed_const_in_add() {
     assert!(has_three, "(x + 1) + 2 should reassociate to x + 3");
 }
 
-/// The runtime (FFI) rule path rejects an RHS that references a capture
-/// the LHS does not bind. The compile-time `rewrite_rule` path enforces
-/// this via a `.expect`, but `rewrite_rule_runtime` (the dynamically
-/// constructed FFI counterpart) must surface it as an `Err`.
-///
-/// Restores the dropped `rewrite_new_rejects_unbound_capture_in_rhs`
-/// coverage for `check_capture_coverage`'s rejection arm.
+/// `rewrite_rule` panics on an RHS capture the LHS does not bind;
+/// `rewrite_rule_runtime` must surface the same rejection as an `Err`.
 #[test]
 fn rewrite_rule_runtime_rejects_unbound_capture_in_rhs() {
     let a = Capture::new();
     let b = Capture::new();
-    // A fresh capture the LHS never binds.
+    // Never bound by the LHS.
     let c = Capture::new();
 
     let lhs = add(var(a), var(b)).into_pattern();
@@ -204,14 +186,11 @@ fn rewrite_rule_runtime_rejects_unbound_capture_in_rhs() {
     );
 }
 
-// A match-only wildcard can no longer reach `rewrite_rule_runtime` at
-// all: its RHS is a `Template`, and there is no way to seal a wildcard
-// into a `Template` (`Any: TemplatePat` is not implemented, so
-// `any().into_template()` does not type-check; and a `Pattern` is not a
-// `Template`). The old runtime non-buildable-RHS rejection test is
-// therefore obsolete — type-honesty makes the bad state unrepresentable.
+// A wildcard cannot reach `rewrite_rule_runtime` at all: its RHS is a
+// `Template`, and there is no way to seal a wildcard into one. Hence no
+// runtime non-buildable-RHS rejection test.
 //
-// compile-fail (confirmed with a throwaway scratch build):
+// compile-fail:
 //
 //     let rhs: strider_pattern::Template = any().into_template();
 //     // error[E0277]: the trait bound `Any: TemplatePat` is not satisfied

@@ -11,25 +11,16 @@ mod tests;
 
 use std::rc::Rc;
 
-// ── Public optimizer ──────────────────────────────────────────────────────────
-
 /// Folds constant expressions and applies algebraic identities.
 ///
-/// Handles full constant evaluation for all arithmetic, comparison, boolean,
-/// truncation, and extension operations.  Also applies identities such as
-/// `x + 0 → x`, `x ^ x → 0`, and nested AND-mask merging `(a & C1) & C2 →
-/// a & (C1 & C2)`.
-///
-/// The rule set is built once by [`ConstantFold::new`] and held behind an
-/// [`Rc`] so the pass stays cheaply `Clone` (the boxed rule closures are
-/// not `Clone`); cloning the pass shares the same rule set.
+/// The rule set is built once and held behind an [`Rc`] so the pass stays
+/// cheaply `Clone`; the boxed rule closures themselves are not `Clone`.
 #[derive(Clone)]
 pub struct ConstantFold {
     rules: Rc<Vec<crate::BoxedRule>>,
 }
 
 impl ConstantFold {
-    /// Builds the constant-fold rule set once and returns a pass that owns it.
     pub fn new() -> Self {
         Self {
             rules: Rc::new(rules::build_rules()),
@@ -44,14 +35,10 @@ impl Default for ConstantFold {
 }
 
 impl PeepholePass for ConstantFold {
-    /// Every constant-fold rule roots at an int/float **operation** — the
-    /// arithmetic, comparison, cast, truncate/extend, and conversion kinds
-    /// below.  A rule can never fire on a `Region` / `Phi` / `Call` / `Load` /
-    /// constant / control node, so seeding those (the former `true`) just paid
-    /// ~46 failing rule attempts per node.  `run_peephole` honours `matches_kind`
-    /// for both the seed walk AND the re-enqueue of a rewrite's consumers/new
-    /// node, so narrowing to the foldable kinds cannot drop a fold — it only
-    /// stops probing nodes that never fold.
+    /// Every rule roots at an int/float operation, so nothing else is worth
+    /// seeding. Narrowing here cannot drop a fold: `run_peephole` honours
+    /// `matches_kind` for both the seed walk and the re-enqueue of a rewrite's
+    /// consumers.
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(
             kind,

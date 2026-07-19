@@ -10,21 +10,13 @@ use crate::pipeline::{OptimizationResult, Optimizer};
 #[cfg(test)]
 mod tests;
 
-/// Per-output known-bits side-table.  Defaults to `KnownBitsFacts::default()`
-/// (`{ones: 0, zeros: 0}` = "no info") for unrecorded outputs, which is
-/// equivalent to "absent" in the previous `FxHashMap`-based form.
-/// Migrated from `FxHashMap<ValueId, KnownBitsFacts>` to `SecondaryMap` to
-/// avoid hashing in the inner loop — at 10k+ nodes this is the
-/// hottest probe in the entire `KnownBits` pass.
+/// Unrecorded outputs read back as `KnownBitsFacts::default()` (`{0, 0}` =
+/// "no info").  A `SecondaryMap` rather than a hash map: this is the hottest
+/// probe in the pass.
 pub(crate) type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
 
-// ── Known-bits representation ─────────────────────────────────────────────────
-
-/// Returns the all-ones bit mask for `ty` as a `u128`, or `None` if `ty` is not
-/// an integer type or its width exceeds 128 bits.  Used by [`KnownBits`] to gate
-/// out the floats and the only integers that don't fit the `u128` lattice —
-/// `I256` / `I512`; every integer up to `I128` (including the 1-bit `I1` and the
-/// 80-bit `I80`) is tracked.
+/// `None` for floats and for the integers too wide for the `u128` lattice
+/// (`I256` / `I512`).  Everything up to `I128` is tracked, including `I1`.
 pub(crate) fn type_mask_u128(ty: ValueType) -> Option<u128> {
     if !ty.is_integer() || ty.bit_width() > 128 {
         return None;
@@ -32,37 +24,22 @@ pub(crate) fn type_mask_u128(ty: ValueType) -> Option<u128> {
     Some(ty.bit_mask_u128())
 }
 
-/// Known-bit information for a single output.
+/// Known-bit lattice for one output.  `ones` and `zeros` are masked to the
+/// output type's width and must never overlap: `ones & zeros == 0`, and a bit
+/// in neither set is unknown.
 ///
-/// Both `ones` and `zeros` are masked to the output type's width and must
-/// never overlap (`ones & zeros == 0`).
-///
-/// Construct via [`KnownBitsFacts::from_const`] / [`KnownBitsFacts::default`],
-/// which preserve the invariant by construction; struct-literal
-/// construction is `pub(crate)` and only used inside the analysis
-/// where the masks are derived from already-validated `KnownBitsFacts` values.
+/// The fields are `pub(crate)` because nothing enforces disjointness on a
+/// struct literal; only `from_const`, `default`, and the transfer function
+/// preserve it.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct KnownBitsFacts {
-    /// Bits that are definitely 1.
-    ///
-    /// `pub(crate)` because the `ones & zeros == 0` invariant is
-    /// enforced only by [`KnownBitsFacts::from_const`] and the transfer
-    /// function — external struct-literal construction
-    /// (`KnownBitsFacts { ones: 0xFF, zeros: 0xFF }`) would silently
-    /// violate it.
     pub(crate) ones: u128,
-    /// Bits that are definitely 0.  Same caveat as [`Self::ones`].
     pub(crate) zeros: u128,
 }
 
 impl KnownBitsFacts {
-    /// Build the `KnownBitsFacts` for an integer constant.  Returns `None` for
-    /// types this analysis doesn't track (`Bool`, floats, I128, I256):
-    /// the caller treats `None` as "fully unknown" and skips
-    /// propagation, which is the correct sound behaviour for a
-    /// 64-bit-bound bit-tracker.  Previously this collapsed to
-    /// all-ones-zeros (i.e. `ones=0, zeros=0`) silently — same effect
-    /// as "unknown" but indistinguishable from a deliberate zero.
+    /// `None` for untracked types; the caller must treat that as fully
+    /// unknown, not as a deliberate zero.
     fn from_const(val: u128, ty: ValueType) -> Option<Self> {
         let type_mask = type_mask_u128(ty)?;
         let masked = ty.get_unsigned_int(val)?;
@@ -72,38 +49,28 @@ impl KnownBitsFacts {
         })
     }
 
-    /// Returns `true` if all bits of `type_mask` are determined.
     fn all_known(self, type_mask: u128) -> bool {
         (self.ones | self.zeros) & type_mask == type_mask
     }
 
-    /// Upper bound on the runtime value of an output with these known bits.
-    ///
-    /// `(!zeros) & type_mask` is the OR of every bit position that *could*
-    /// be 1, so the runtime value is `<=` this number.  Used by analyses
-    /// that need a single-number bound rather than separate ones/zeros
-    /// (e.g. the jump-table classifier's index-bound check).
+    /// Upper bound on the runtime value: every bit that could be 1, set.
     pub fn max_value(self, type_mask: u128) -> u128 {
         (!self.zeros) & type_mask
     }
 }
 
-/// Outcome of resolving a shift's RHS against the output width, shared by the
-/// `ShiftLeft` / `ShiftRight` arms.
 enum ConstShift {
-    /// The shift amount is fully known and strictly below the output width.
     InRange(u32),
-    /// The shift amount is fully known but at-or-past the output width;
-    /// Sleigh returns 0, so every output bit is known zero.
+    /// Shift amount known but at-or-past the output width; Sleigh returns 0,
+    /// so every output bit is known zero.
     OverWidth,
-    /// The shift amount is not fully known — no information.
     Unknown,
 }
 
-/// Classify a shift's RHS known bits against the output type width.
-///
 /// Mirrors Sleigh's `OpBehaviorInt{Left,Right}::evaluateBinary`, which return 0
-/// for any shift amount `>= bit_width`.
+/// for any shift amount `>= bit_width`.  Masking the amount to
+/// `bit_width - 1` instead would wrap large literal shifts back into range and
+/// produce wrong known bits.
 fn classify_const_shift(rhs_kb: KnownBitsFacts, rhs_mask: u128, bit_width: u64) -> ConstShift {
     if !rhs_kb.all_known(rhs_mask) {
         return ConstShift::Unknown;
@@ -114,23 +81,15 @@ fn classify_const_shift(rhs_kb: KnownBitsFacts, rhs_mask: u128, bit_width: u64) 
     ConstShift::InRange(rhs_kb.ones as u32)
 }
 
-/// Direction of a logical shift, selecting the per-direction `InRange` bit-math
-/// in [`shift_known_bits`].
 #[derive(Clone, Copy)]
 enum ShiftDir {
     Left,
     Right,
 }
 
-/// Known-bits transfer for the `ShiftLeft` / `ShiftRight` arms.
-///
-/// Reads the RHS mask, classifies the (constant) shift against the output
-/// width, and — for an in-range shift — applies the direction-specific
-/// bit-math (left: low bits become known-zero, surviving bits move up; right:
-/// upper bits become known-zero, surviving bits move down).  Returns `None`
-/// for an unknown shift amount (caller defers to "fully unknown"); an
-/// over-width shift yields all-zeros.  Shared scaffolding for both arms — only
-/// the per-direction math differs.
+/// Transfer for both shift arms.  Vacated bits become known-zero; surviving
+/// lhs bits carry their ones/zeros along.  `None` means the shift amount is
+/// unknown, so the caller must fall back to fully unknown.
 fn shift_known_bits(
     function: &strider_ir::Function,
     l: KnownBitsFacts,
@@ -139,9 +98,8 @@ fn shift_known_bits(
     ty: ValueType,
     dir: ShiftDir,
 ) -> Option<KnownBitsFacts> {
-    // `ty` is always a tracked integer here (callers gate on
-    // `type_mask_u128(ty)` before reaching the shift arms), so this is a
-    // pure O(1) re-derivation of a value the caller already proved present.
+    // Callers already gated on `type_mask_u128(ty)`; this re-derivation never
+    // fails.
     let type_mask = type_mask_u128(ty)?;
     let rhs_mask = function
         .value_type_opt(rhs)
@@ -178,11 +136,8 @@ fn shift_known_bits(
     }
 }
 
-// ── Per-node known-bits computation ───────────────────────────────────────────
-
-/// Computes the known bits contributed by `node_id` toward its single integer
-/// value output.  Returns `(output_id, KnownBitsFacts)` or `None` if the node has no
-/// integer value output or no useful information can be extracted.
+/// Known bits of `node_id`'s first integer value output.  `None` if it has no
+/// such output, or nothing can be proven about it.
 pub(crate) fn node_known_bits(
     function: &strider_ir::Function,
     node_id: NodeId,
@@ -190,7 +145,6 @@ pub(crate) fn node_known_bits(
 ) -> Result<Option<(ValueId, KnownBitsFacts)>> {
     let kind = *function.node_kind(node_id);
 
-    // Find the first integer value output.
     let Some(&out) = function
         .node_outputs(node_id)
         .iter()
@@ -200,8 +154,6 @@ pub(crate) fn node_known_bits(
     };
     let out_kind = function.value_kind(out);
     let ty = out_kind.as_value_or_err()?;
-    // KnownBits tracks 64-bit masks only; types wider than I64 (I128/I256,
-    // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
     let Some(type_mask) = type_mask_u128(ty) else {
         return Ok(None);
     };
@@ -212,13 +164,10 @@ pub(crate) fn node_known_bits(
             .and_then(|v| KnownBitsFacts::from_const(v, ty))
         {
             Some(kb) => kb,
-            // Untracked type (Bool, float, I128, I256) — defer to default
-            // "fully unknown" via the worklist's missing-entry path.
             None => return Ok(None),
         },
 
         NodeKind::IntBinaryOp(op) => {
-            // IntBinaryOp has exactly 2 inputs (validated structural invariant).
             let [lhs, rhs] = function
                 .graph()
                 .node_inputs_exact::<2>(node_id)
@@ -226,10 +175,9 @@ pub(crate) fn node_known_bits(
             let l = known[lhs];
             let r = known[rhs];
             match op {
-                // All four lattice fields are masked to `type_mask`: operands
-                // may legally be wider than this node's output (the validator
-                // does not pin operand width == output width), so an operand's
-                // above-width known bit must not survive into this node's facts.
+                // Every arm masks to `type_mask`: an operand may legally be
+                // wider than this node's output, and its above-width known bits
+                // must not leak into these facts.
                 IntBinaryOp::And => KnownBitsFacts {
                     ones: l.ones & r.ones & type_mask,
                     zeros: (l.zeros | r.zeros) & type_mask,
@@ -239,35 +187,16 @@ pub(crate) fn node_known_bits(
                     zeros: l.zeros & r.zeros & type_mask,
                 },
                 IntBinaryOp::Xor => KnownBitsFacts {
-                    // bit is known 1 if exactly one input is known 1.
+                    // Known 1 iff exactly one input is known 1; known 0 iff
+                    // both inputs are known and agree.
                     ones: ((l.ones & r.zeros) | (l.zeros & r.ones)) & type_mask,
-                    // bit is known 0 if both inputs agree (both 0 or both 1).
                     zeros: ((l.ones & r.ones) | (l.zeros & r.zeros)) & type_mask,
                 },
                 IntBinaryOp::ShiftLeft => {
-                    // Lower bits of a left-shifted value are known zero;
-                    // surviving lhs bits move up by `shift` positions and
-                    // carry their `ones`/`zeros` with them.
-                    //
-                    // Sleigh's `OpBehaviorIntLeft::evaluateBinary` returns 0
-                    // when the shift amount is `>= bit_width` (sleigh/src/
-                    // opbehavior.cc:411).  Mirror that here — pre-fix the
-                    // arm masked the shift with `(bit_width - 1)` and
-                    // wrapped large literal shifts back into range,
-                    // producing the wrong known-bits result for any
-                    // literal shift at-or-past the type width.
                     return Ok(shift_known_bits(function, l, rhs, r, ty, ShiftDir::Left)
                         .map(|facts| (out, facts)));
                 }
                 IntBinaryOp::ShiftRight => {
-                    // Logical right-shift: upper bits become 0; lhs bits
-                    // shift down by `shift` positions and bring their
-                    // known-bit information with them.
-                    //
-                    // Sleigh `OpBehaviorIntRight::evaluateBinary`: shift
-                    // `>= bit_width` returns 0 (sleigh/src/opbehavior.cc:432).
-                    // Mirror that here — see the ShiftLeft arm for the
-                    // pre-fix bug rationale.
                     return Ok(shift_known_bits(function, l, rhs, r, ty, ShiftDir::Right)
                         .map(|facts| (out, facts)));
                 }
@@ -275,20 +204,11 @@ pub(crate) fn node_known_bits(
             }
         }
 
-        // Note: bitwise complement (`~x`) is `Xor(x, all_ones)` since
-        // the former BitNot unary-op was removed in favour of the Xor shape.
-        // The `IntBinaryOp::Xor` arm above already swaps known ones/zeros
-        // correctly when one operand is a fully-known all-ones constant
-        // (every bit position has `r.ones = type_mask`, `r.zeros = 0`,
-        // making the result's `ones = l.zeros & type_mask` and
-        // `zeros = l.ones & type_mask` — identical to the old BitNot
-        // arm).  Two's-complement negate — `IntUnaryOp::Neg` — has no
-        // closed-form known-bits propagation: it depends on the borrow
-        // chain across the input's bits, so it falls through to the
-        // unknown case.
+        // There is no unary-complement arm: `~x` is `Xor(x, all_ones)`, and the
+        // Xor arm swaps ones/zeros correctly against a fully-known all-ones
+        // operand.  `IntUnaryOp::Neg` has no closed-form transfer (it depends on
+        // the borrow chain), so it falls through to unknown.
         NodeKind::Truncate => {
-            // Upper bits of the source are discarded; lower bits are preserved.
-            // Truncate has exactly 1 input (validated structural invariant).
             let [value] = function
                 .graph()
                 .node_inputs_exact::<1>(node_id)
@@ -301,20 +221,14 @@ pub(crate) fn node_known_bits(
         }
 
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
-            // Upper bits are explicitly zeroed by the extension.
-            // Extend has exactly 1 input (validated structural invariant).
             let [value] = function
                 .graph()
                 .node_inputs_exact::<1>(node_id)
                 .expect("Extend has 1 input per node signature");
             let input_kind = function.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
-            // Bail when the input width is unsupported (I80/I128/I256) —
-            // mirrors the SignExtend arm below.  Returning `Ok(None)`
-            // leaves the output's KB at "fully unknown"; the previous
-            // `unwrap_or(0)` here would have set `input_mask = 0` and
-            // marked every bit as known-zero, silently corrupting
-            // analysis on wide-to-wider ZeroExtends.
+            // An untracked input width must bail, not default `input_mask` to
+            // 0: that would mark every bit known-zero.
             let Some(input_mask) = type_mask_u128(input_ty) else {
                 return Ok(None);
             };
@@ -326,10 +240,8 @@ pub(crate) fn node_known_bits(
         }
 
         NodeKind::Extend(ExtendOp::SignExtend) => {
-            // Upper bits replicate the input's sign bit.  When the sign bit
-            // is statically known, the entire upper region is determined;
-            // otherwise we still pass the lower bits through.
-            // Extend has exactly 1 input (validated structural invariant).
+            // Upper bits replicate the sign bit, so they are determined only
+            // when the sign bit is; the lower bits pass through either way.
             let [value] = function
                 .graph()
                 .node_inputs_exact::<1>(node_id)
@@ -340,23 +252,20 @@ pub(crate) fn node_known_bits(
                 return Ok(None);
             };
             let kb = known[value];
-            // Sign bit = highest bit of the input width.
+            // Highest bit of the input width.
             let sign_bit = (input_mask >> 1) + 1;
             let upper_mask = type_mask & !input_mask;
             if kb.ones & sign_bit != 0 {
-                // Sign bit known 1 → upper bits all known 1.
                 KnownBitsFacts {
                     ones: (kb.ones & input_mask) | upper_mask,
                     zeros: kb.zeros & input_mask,
                 }
             } else if kb.zeros & sign_bit != 0 {
-                // Sign bit known 0 → upper bits all known 0.
                 KnownBitsFacts {
                     ones: kb.ones & input_mask,
                     zeros: (kb.zeros & input_mask) | upper_mask,
                 }
             } else {
-                // Sign bit unknown → keep only the lower bits' knowledge.
                 KnownBitsFacts {
                     ones: kb.ones & input_mask,
                     zeros: kb.zeros & input_mask,
@@ -365,8 +274,8 @@ pub(crate) fn node_known_bits(
         }
 
         NodeKind::Popcount | NodeKind::Lzcount => {
-            // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
-            // Popcount / Lzcount have exactly 1 input (validated structural invariant).
+            // Result is in [0, bit_width(input)], so every bit above
+            // ceil_log2(bit_width + 1) is known zero.
             let [value] = function
                 .graph()
                 .node_inputs_exact::<1>(node_id)
@@ -374,8 +283,8 @@ pub(crate) fn node_known_bits(
             let input_kind = function.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
             let max_val = input_ty.bit_width() as u64;
-            // `max_val == 0` ⇒ leading_zeros() == 64 ⇒ the subtraction is 0, so
-            // `.max(1)` yields 1; otherwise it is a no-op.
+            // `.max(1)` only matters for `max_val == 0`, where the subtraction
+            // yields 0.
             let bits_needed = u64::from((u64::BITS - max_val.leading_zeros()).max(1));
             let result_mask = if bits_needed >= 128 {
                 u128::MAX
@@ -392,13 +301,8 @@ pub(crate) fn node_known_bits(
         _ => return Ok(None),
     };
 
-    // The transfer function must never produce a bit that is provably both
-    // 1 and 0.  A contradiction here would mean the lattice/transfer logic
-    // itself is inconsistent — surface it in debug builds at the point of
-    // origin rather than letting it silently propagate.  (This replaces the
-    // old `KnownBitsFacts::merge` contradiction check, which could only ever
-    // have fired on a transfer-function bug since each output's facts are
-    // recomputed from scratch and overwritten — never unioned.)
+    // Overlapping ones/zeros can only mean a transfer-function bug; catch it at
+    // the point of origin instead of letting it propagate.
     debug_assert_eq!(
         kb.ones & kb.zeros,
         0,
@@ -408,13 +312,10 @@ pub(crate) fn node_known_bits(
     Ok(Some((out, kb)))
 }
 
-/// Whether [`node_known_bits`] derives this kind's known bits **from its
-/// inputs** — i.e. the kinds whose match arms read `known[input]`.  These are
-/// the node kinds along which known-bits *provenance* flows: the fold-time
-/// fingerprint walk recurses through them and stops at every other kind, so a
-/// `Load` / `Phi` / `Call` (which `node_known_bits` treats as opaque, reading
-/// none of their inputs) is a leaf — its memory / address / control cone
-/// never contributed a bit and so is never tainted.
+/// Kinds whose `node_known_bits` arm reads `known[input]`, i.e. the edges along
+/// which known-bits provenance flows.  The fold-time fingerprint walk recurses
+/// through these and stops everywhere else, so an opaque kind (`Load` / `Phi` /
+/// `Call`) is a leaf and its address / memory / control cone is never tainted.
 fn propagates_known_bits(kind: &NodeKind) -> bool {
     matches!(
         kind,
@@ -426,60 +327,33 @@ fn propagates_known_bits(kind: &NodeKind) -> bool {
     )
 }
 
-// ── Read-only analyzer ────────────────────────────────────────────────────────
-
-/// Runs the known-bits worklist analysis to fixed point and returns the
-/// resulting `KnownBitsFacts` map keyed by [`ValueId`].  Pure — does not mutate
-/// the graph; the [`KnownBits`] optimizer pass is layered on top of this
-/// to perform constant-replacement rewrites.
+/// Known-bits worklist analysis to fixed point.  Non-mutating, so other passes
+/// (e.g. the jump-table classifier) can call it for a bit-knowledge query
+/// without running the rewriting [`KnownBits`] pass.
 ///
-/// Other passes (e.g. the indirect-branch jump-table classifier) call this
-/// directly when they need a non-mutating bit-knowledge query rather than
-/// a graph-rewriting optimizer pass.  The fixed-point analysis is at least
-/// as tight as any single-pass local recurrence: it propagates across more
-/// node kinds and follows data-dependency chains farther.
-///
-/// Outputs absent from the returned map have no statically-proven bit
-/// information; treat them as the all-unknown default `KnownBitsFacts { ones: 0,
-/// zeros: 0 }`.
+/// Outputs absent from the map have no proven bits; treat them as the
+/// all-unknown default.
 ///
 /// # Errors
 ///
-/// Returns an `Err` if a per-node KnownBitsFacts derivation fails — e.g. an
-/// arithmetic op whose recorded output type is wider than 64 bits.  Wrong
-/// input *arity* is **not** surfaced as `Err`: the `node_inputs_exact`
-/// accessors `.expect(...)` (panic) on a malformed reachable node, per the
-/// panic-on-validator-invariant policy — the validator runs before KnownBits,
-/// so a reachable node always has its signature arity.  Well-formed graphs
-/// always converge.
+/// Only a malformed per-node derivation errors.  Wrong input arity panics
+/// instead (validated invariant); well-formed graphs always converge.
 pub fn analyze(function: &strider_ir::Function) -> Result<KnownBitsMap> {
-    // Seed with every reachable node; consumers re-enqueue on input
-    // change via `value_uses`.  `Worklist` is the shared dedup-FIFO
-    // worklist used by ConstantFold and DeadBranchElimination — no
-    // local re-implementation.
+    // Seeded from reachable nodes only: detached zombies (left by PhiCollapse,
+    // DeadBranchElimination, ...) can have zero inputs, which would trip
+    // `node_inputs_exact` inside `node_known_bits`.  Reachability is also the
+    // validator's scope, so the two agree.
     //
-    // Detached "zombie" nodes (left behind by PhiCollapse,
-    // DeadBranchElimination, etc.) are deliberately excluded:
-    // `node_known_bits` calls `node_inputs_exact::<N>` which would
-    // surface a hard error on a zero-input zombie.  Reachability is
-    // the validator's existing scope-of-correctness boundary
-    // (the local-typing check in `strider_ir::validate`), so it's the right scope here too.
+    // RPO seed order (operands before consumers) is just churn reduction; the
+    // monotone fixpoint converges to the same map from any order.
     let mut known: KnownBitsMap = SecondaryMap::new();
-    // Seed in reverse-post-order (operands before consumers) so the first
-    // visit of each node already sees its inputs' facts — the monotone
-    // worklist fixpoint converges to the same result from any seed order, but
-    // RPO minimises the re-enqueue churn.
     let mut work: Worklist<NodeId> = function.reverse_postorder_filter(|_| true).collect();
     while let Some(node_id) = work.dequeue() {
         let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
             continue;
         };
-        // The transfer function recomputes `kb` from scratch from the
-        // inputs' *current* facts every visit, and the recompute is
-        // monotonically more precise than the stored value (which starts at
-        // the all-unknown default).  So we overwrite directly — there is no
-        // union-with-previous to perform.  Re-enqueue consumers only when
-        // the freshly computed facts differ from what was already stored.
+        // `kb` is recomputed from scratch each visit and is monotonically more
+        // precise than what is stored, so overwrite rather than union.
         if known[out] == kb {
             continue;
         }
@@ -491,16 +365,8 @@ pub fn analyze(function: &strider_ir::Function) -> Result<KnownBitsMap> {
     Ok(known)
 }
 
-// ── Public optimizer ──────────────────────────────────────────────────────────
-
 /// Propagates known-bit information and replaces outputs whose every bit is
 /// determined with an equivalent integer constant.
-///
-/// Handles `IntConst`, `And`, `Or`, `Xor`, `Truncate`, `ZeroExtend`,
-/// and constant-shift nodes.  (Bitwise complement is `Xor(x, all_ones)`,
-/// already covered by the Xor arm.)  Runs a fixed-point inner loop to
-/// propagate information along data-dependency chains before deciding
-/// replacements.
 #[derive(Clone)]
 pub struct KnownBits;
 
@@ -510,44 +376,26 @@ impl Optimizer for KnownBits {
         edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &mut crate::OptCtx<'_>,
     ) -> crate::Result<OptimizationResult> {
-        // Analyze pass — propagate known bits to fixed point.  Read-only;
-        // shared with the jump-table classifier (and any other caller
-        // that needs bit-knowledge without graph rewrites).
         let known = analyze(edit.function())?;
 
-        // Rewrite pass — a flat iteration over the finished fixed-point map.
-        // The fixpoint already happened in `analyze`, so a fully-determined
-        // output is a pure per-output decision: replace it with the
-        // equivalent constant.  No second worklist and no consumer
-        // re-enqueue are needed — order is irrelevant, and each output is
-        // visited exactly once (the map holds one entry per output the
-        // analysis populated, so detached/zombie outputs never appear).
+        // The fixpoint is already done, so folding is a flat per-output
+        // decision: no second worklist, no consumer re-enqueue, order
+        // irrelevant.  `SecondaryMap::iter` covers defaulted entries too, but
+        // `all_known` rejects `{0, 0}` against any non-zero mask.
         //
-        // `SecondaryMap::iter` densely covers every `ValueId` up to the
-        // high-water mark the analysis touched; the per-entry guards below
-        // skip the default ("fully unknown") entries naturally, since
-        // `all_known` is false for `ones == 0 && zeros == 0` against any
-        // non-zero `type_mask`.
-        //
-        // Collect the targets first (releasing the read borrow on `known` /
-        // `edit`) before mutating, so the rewrite loop owns `&mut edit`.
+        // Collect first so the mutating loop below can take `&mut edit`.
         let to_fold: Vec<(ValueId, ValueType, u128)> = known
             .iter()
             .filter_map(|(value, &kb)| {
-                // Skip outputs whose kind is not an integer value
-                // (control / memory / phi-token).
                 let ty = edit.value_type_opt(value)?;
                 if !ty.is_integer() {
                     return None;
                 }
-                // Skip types KnownBits doesn't track (I80/I128/I256/…).
                 let type_mask = type_mask_u128(ty)?;
-                // Skip outputs that are not fully determined.
                 if !kb.all_known(type_mask) {
                     return None;
                 }
-                // Skip outputs whose producer is already an `IntConst`
-                // (folding it would be a no-op).
+                // Folding an existing IntConst would be a no-op.
                 let producer = edit.producer(value);
                 if matches!(*edit.node_kind(producer), NodeKind::IntConst(_)) {
                     return None;
@@ -556,30 +404,16 @@ impl Optimizer for KnownBits {
             })
             .collect();
 
-        // Each fold is justified by the KNOWN BITS feeding `value`'s producer
-        // — the contributor cone is about to be cascade-culled, so its
-        // asm-fingerprints (the proof of WHY the result is this constant)
-        // would be lost.  A one-hop absorb of the direct inputs is NOT enough:
-        // a contributor that establishes known bits but is itself not fully
-        // known (e.g. the `x & 1` in `((x & 1) | 2) & 0`) never folds, so the
-        // fixpoint can never carry its fingerprint up.  Each fold must absorb
-        // the union of its producer's CONTRIBUTOR cone — recursing only
-        // through kinds whose known bits `node_known_bits` derives from their
-        // inputs (`propagates_known_bits`), stopping at opaque kinds (`Load` /
-        // `Phi` / `Call` / …) whose memory / address / control cones never
-        // contributed a bit and must not be tainted.
+        // A fold's contributor cone is about to be cascade-culled, taking its
+        // asm-fingerprints (the proof of why the result is constant) with it.
+        // A one-hop absorb of the direct inputs is not enough: a contributor
+        // that establishes bits without being fully known itself (the `x & 1`
+        // in `((x & 1) | 2) & 0`) never folds, so the fixpoint can never carry
+        // its fingerprint upward.  Absorb the whole cone instead, recursing
+        // only through `propagates_known_bits` kinds.
         //
-        // Many folds share a large upstream cone, so per-fold walking is
-        // O(folds·cone).  Instead, precompute ONCE — over the pre-fold graph,
-        // before the mutating `replace_value` cascade culls contributors — a
-        // memo of each cone node's contributor NODE set (pure graph structure —
-        // node ids + kinds, never a fingerprint read).  Each fold then absorbs
-        // its inputs' memoized cone nodes via O(1) `extend_asm_fingerprint_from`
-        // links.  The cone is acyclic (the propagates kinds are IntBinaryOp /
-        // Truncate / Extend / Popcount / Lzcount — never Phi / Region, the only
-        // sources of data cycles), so a memoized DFS needs no cycle handling.
-        // Over-tainting WITHIN a contributor cone (e.g. both operands of `& 0`)
-        // is intentional — the fingerprint is a generous superset proof aid.
+        // Folds share cones, so per-fold walking would be O(folds*cone); memoize
+        // once over the pre-fold graph, before `replace_value` starts culling.
         let cone_nodes = build_cone_node_memo(edit, &to_fold);
 
         let mut result = OptimizationResult::NoChange;
@@ -587,9 +421,8 @@ impl Optimizer for KnownBits {
             let new_value = edit.build_int_const(ones, ty)?;
             let folded_producer = edit.producer(value);
             let new_producer = edit.producer(new_value);
-            // Seed from the producer's INPUT cones (the producer itself is
-            // absorbed by `replace_value` below).  Mirrors the previous walk's
-            // seeding exactly, so the resulting fingerprint set is identical.
+            // Seed from the producer's input cones; the producer itself is
+            // absorbed by `replace_value` below.
             for p in crate::peephole::input_producers(edit, folded_producer) {
                 if let Some(cone) = cone_nodes.get(&p) {
                     for &q in cone {
@@ -599,8 +432,6 @@ impl Optimizer for KnownBits {
                     }
                 }
             }
-            // `replace_value` absorbs the rewritten node's fingerprint into
-            // the new const (superset-only union) and redirects every use.
             if edit.replace_value(value, new_value)? {
                 result = OptimizationResult::Changed;
             }
@@ -609,35 +440,24 @@ impl Optimizer for KnownBits {
     }
 }
 
-/// The per-node set of contributor NODE ids in a node's known-bits cone
-/// (deduplicated).
+/// Deduplicated contributor node ids in one node's known-bits cone.
 type ConeNodes = smallvec::SmallVec<[NodeId; 8]>;
 
-/// Precomputes, for every node in the known-bits contributor cone reachable
-/// from the `to_fold` producers' inputs, the set of contributor node ids in
-/// that node's cone:
+/// Memoizes `cone(n) = {n} ∪ (propagates(n) ? ⋃ₚ cone(p) : ∅)` over `p` in
+/// `n`'s input producers, for the cones reachable from the `to_fold`
+/// producers' inputs.
 ///
-/// `cone(n) = {n} ∪ (propagates(n) ? ⋃ₚ cone(p) : ∅)`
-///
-/// where `p` ranges over `n`'s input producers.  This reads only graph
-/// structure (node ids + kinds) — never a fingerprint — so nothing is
-/// materialised here; the caller turns each cone node into an O(1)
-/// `extend_asm_fingerprint_from` link.  Every visited node contributes itself
-/// and recursion continues only through `propagates_known_bits` kinds; each
-/// node's set is computed once, so F folds sharing a cone of size C cost O(C)
-/// rather than O(F·C).
-///
-/// Computed over the pre-fold graph before any `replace_value` runs, so the
-/// cone membership is a correct snapshot.  The cone is acyclic, so the
-/// iterative postorder needs no cycle handling.
+/// Reads only node ids and kinds, never a fingerprint, so the caller can turn
+/// each cone node into an O(1) `extend_asm_fingerprint_from` link.  The cone is
+/// acyclic (the propagating kinds exclude Phi and Region, the only sources of
+/// data cycles), so the iterative postorder needs no cycle handling.
 fn build_cone_node_memo(
     edit: &crate::EditFunction<'_>,
     to_fold: &[(ValueId, ValueType, u128)],
 ) -> rustc_hash::FxHashMap<NodeId, ConeNodes> {
     let mut memo: rustc_hash::FxHashMap<NodeId, ConeNodes> = rustc_hash::FxHashMap::default();
-    // Iterative postorder: push (node, children_emitted). On first pop, push
-    // the node back as `true` and push its propagates-children; on the second
-    // pop, every child's set is in `memo`, so fold them in.
+    // Iterative postorder: the bool is "children already pushed".  On the
+    // second pop every child's set is in `memo`.
     let mut stack: Vec<(NodeId, bool)> = Vec::new();
     let seed_inputs = to_fold.iter().flat_map(|&(value, _, _)| {
         crate::peephole::input_producers_iter(edit, edit.producer(value))
@@ -647,7 +467,6 @@ fn build_cone_node_memo(
     }
     while let Some((n, expanded)) = stack.pop() {
         if expanded {
-            // Children resolved — assemble this node's cone (itself + children).
             let mut nodes: ConeNodes = smallvec::smallvec![n];
             if propagates_known_bits(edit.node_kind(n)) {
                 for p in crate::peephole::input_producers_iter(edit, n) {

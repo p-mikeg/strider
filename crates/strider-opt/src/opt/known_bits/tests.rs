@@ -4,10 +4,8 @@ use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::RegisterSet;
 
-// ── Original tests ────────────────────────────────────────────────────────────
-
-/// `(x | 7) & 4` — bits 0-2 of `Or` are known 1; after And with 4 every
-/// bit is determined → should fold to `IntConst(4)`.
+/// `(x | 7) & 4`: bits 0-2 of the Or are known 1, so the And is fully
+/// determined.
 #[test]
 fn known_bits_or_then_and() -> Result<()> {
     let mut fg2 = make_fn(|b| {
@@ -22,7 +20,7 @@ fn known_bits_or_then_and() -> Result<()> {
     Ok(())
 }
 
-/// `(x & 0xF0) & 0x0F` — the two masks have no overlap, so the result is 0.
+/// `(x & 0xF0) & 0x0F`: the masks are disjoint, so the result is 0.
 #[test]
 fn known_bits_and_mask_then_and() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -37,8 +35,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
     Ok(())
 }
 
-/// A plain `IntConst` already has all bits known — the optimizer must not
-/// loop or report spurious changes.
+/// An `IntConst` is already fully known; the pass must not report a change.
 #[test]
 fn known_bits_const_no_change() -> Result<()> {
     let mut fg = make_fn(|b| Ok(b.build_int_const(42u64, ValueType::I64).unwrap()))?;
@@ -48,8 +45,7 @@ fn known_bits_const_no_change() -> Result<()> {
     Ok(())
 }
 
-/// `popcount(I8)` fits in 4 bits (max = 8), so bits 4..7 are known zero.
-/// `and(popcount(x), 0xF0)` should fold to 0.
+/// `popcount(I8)` maxes at 8, so bits 4..7 are known zero and `& 0xF0` is 0.
 #[test]
 fn known_bits_popcount_range() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -63,12 +59,9 @@ fn known_bits_popcount_range() -> Result<()> {
     Ok(())
 }
 
-/// Popcount range at the I64 width edge: the popcount of an OPAQUE
-/// (unknown-bits) 64-bit value is at most 64 (7 bits), so bits 7..63 are
-/// known zero.  ANDing with a mask over those bits folds to 0.  Unlike the
-/// I8 case above — whose const input can't distinguish exact-vs-range and
-/// never touches the 7-bit boundary — this pins the `[0, bit_width]` range
-/// derivation at I64 with a genuinely-unknown input.
+/// Popcount range at the I64 edge with a genuinely opaque input: the I8 case
+/// above has a constant input, so it can't distinguish exact-value from range
+/// and never reaches the 7-bit boundary.
 #[test]
 fn known_bits_popcount_range_i64_opaque() -> Result<()> {
     let v = rsleigh::Vn {
@@ -77,9 +70,9 @@ fn known_bits_popcount_range_i64_opaque() -> Result<()> {
         size: 8,
     };
     let mut b = RegisterSet::new().tracked(v).build_fn_single_region()?;
-    let x = b.read_variable(&v)?; // opaque I64 (InitialVar) — bits unknown
+    let x = b.read_variable(&v)?;
     let pc = b.build_popcount(x, ValueType::I64)?;
-    // Mask covering bits 7..63 — everything above the 7 bits that hold 0..=64.
+    // Bits 7..63: everything above the 7 bits that can hold 0..=64.
     let mask = b
         .build_int_const(0xFFFF_FFFF_FFFF_FF80u64, ValueType::I64)
         .unwrap();
@@ -92,15 +85,11 @@ fn known_bits_popcount_range_i64_opaque() -> Result<()> {
     Ok(())
 }
 
-// ── Comprehensive tests ───────────────────────────────────────────────────────
-
-/// After `x >> 4` for I8, the upper 4 bits are statically zero. ANDing
-/// with `0xF0` (which targets only the upper bits) must fold to 0 — KnownBits
-/// proves the result has no set bits.
+/// `x >> 4` at I8 leaves the upper 4 bits zero, so `& 0xF0` is 0.
 #[test]
 fn known_bits_shift_right_upper_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let x = b.build_int_const(0x55u64, ValueType::I8).unwrap(); // any value
+        let x = b.build_int_const(0x55u64, ValueType::I8).unwrap();
         let four = b.build_int_const(4u64, ValueType::I8).unwrap();
         let shr = b.build_int_binary_operation(x, four, IntBinaryOp::ShiftRight, ValueType::I8)?;
         let mask_high = b.build_int_const(0xF0u64, ValueType::I8).unwrap();
@@ -111,8 +100,7 @@ fn known_bits_shift_right_upper_zero() -> Result<()> {
     Ok(())
 }
 
-/// After `x << 5` for I8, the lower 5 bits are statically zero. ANDing with
-/// `0x1F` (lower 5 bits) must fold to 0.
+/// `x << 5` at I8 leaves the lower 5 bits zero, so `& 0x1F` is 0.
 #[test]
 fn known_bits_shift_left_lower_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -127,8 +115,7 @@ fn known_bits_shift_left_lower_zero() -> Result<()> {
     Ok(())
 }
 
-/// A long OR chain of single-bit constants then ANDed with 0xFF — the worklist
-/// must propagate the OR's known-1 bits through the chain.
+/// The worklist must carry known-1 bits through a long Or chain.
 #[test]
 fn known_bits_long_or_and_chain() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -145,9 +132,7 @@ fn known_bits_long_or_and_chain() -> Result<()> {
     Ok(())
 }
 
-/// `lzcount(I8)` fits in 4 bits (max value 8). `and(lzcount(x), 0xF0)` must
-/// fold to 0 — the upper 4 bits of an lzcount(I8) result are statically known
-/// to be zero.
+/// `lzcount(I8)` maxes at 8, so bits 4..7 are known zero and `& 0xF0` is 0.
 #[test]
 fn known_bits_lzcount_range() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -161,17 +146,14 @@ fn known_bits_lzcount_range() -> Result<()> {
     Ok(())
 }
 
-/// XOR of identical-bits inputs: bit known if both agree → must be known 0.
-/// `(x | 0xFF) ^ (x | 0xFF)` for I8 — KnownBits should prove this is 0.
+/// Xor of two operands with identical known bits: every bit agrees, so every
+/// bit is known 0.
 #[test]
 fn known_bits_xor_identical_or_known_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(0x55u64, ValueType::I8).unwrap();
         let ff = b.build_int_const(0xFFu64, ValueType::I8).unwrap();
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, ValueType::I8)?;
-        // (x|0xFF) is statically all-ones; xoring with itself folds to 0.
-        // (Note: this also exercises ConstantFold's `x ^ x → 0` identity, but
-        // KnownBits-only would prove the result by the both-known-1 case.)
         b.build_int_binary_operation(or_, or_, IntBinaryOp::Xor, ValueType::I8)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
@@ -179,19 +161,14 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
     Ok(())
 }
 
-/// Bitwise NOT swaps known-ones and known-zeros.  `(x | 0xFF) NOT NOT`
-/// for I8 returns 0xFF — testing that bitwise-NOT propagation is correct
-/// round-trip.  Bitwise complement is `Xor(x, IntConst(all_ones))` since
-/// the former BitNot unary-op was removed; KnownBits' Xor arm handles the
-/// known-bits flip when one operand is a fully-known all-ones constant.
+/// Complement round-trip: `~~x == x`.  Complement is `Xor(x, all_ones)`, so
+/// this exercises the Xor arm's ones/zeros swap twice.
 #[test]
 fn known_bits_neg_round_trip() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(0xAAu64, ValueType::I8).unwrap();
         let ff = b.build_int_const(0xFFu64, ValueType::I8).unwrap();
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, ValueType::I8)?;
-        // ~~(x|0xFF) — bitwise-NOT round-trip = identity, encoded as two
-        // chained `Xor(_, 0xFF)` at I8.
         let all_ones = b.build_int_const(u128::MAX, ValueType::I8)?;
         let n1 = b.build_int_binary_operation(or_, all_ones, IntBinaryOp::Xor, ValueType::I8)?;
         b.build_int_binary_operation(n1, all_ones, IntBinaryOp::Xor, ValueType::I8)
@@ -201,17 +178,14 @@ fn known_bits_neg_round_trip() -> Result<()> {
     Ok(())
 }
 
-/// `truncate(0xABCD I16) → I8` — the truncate preserves lower bits, so the
-/// result has all bits known to 0xCD. KnownBits must propagate through
-/// Truncate.
 #[test]
 fn known_bits_truncate_preserves_low_bits() -> Result<()> {
     let mut fg = make_fn(|b| {
         let v = b.build_int_const(0xABCDu64, ValueType::I16).unwrap();
         b.truncate_if_needed(v, ValueType::I8)
     })?;
-    // The builder likely already folded this at construction; just verify
-    // the final state matches.
+    // The builder may already have folded this at construction; either way the
+    // end state must match.
     run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     let semantic = fg.int_const_u128(val);
@@ -221,19 +195,9 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
 
 use crate::test_support::return_value;
 
-// ── analyze is infallible-by-shape: no merge / contradiction path ────────────
-//
-// `KnownBitsFacts::merge` (and its `Result`/contradiction check) was removed:
-// each output's facts are recomputed from scratch and overwritten every visit,
-// so there is no union-with-previous that could contradict.  These tests pin
-// that the analysis no longer surfaces a merge error — they are structural
-// (the `analyze` signature still returns `Result<KnownBitsMap>` only for the
-// malformed-IR arm of `node_known_bits`, never for a merge), so they simply
-// compile + run to a populated map and confirm the expected folds happen.
-
-/// `analyze()` over a well-formed graph returns `Ok` and populates the map
-/// for a fully-known output.  Pins that the analysis loop no longer has a
-/// merge/contradiction error path.
+/// `analyze` has no contradiction error path: facts are recomputed and
+/// overwritten each visit, never unioned, so the only fallible arm is
+/// malformed IR.
 #[test]
 fn analyze_returns_populated_map_no_merge_error() -> Result<()> {
     let fg = make_fn(|b| {
@@ -242,14 +206,8 @@ fn analyze_returns_populated_map_no_merge_error() -> Result<()> {
         b.build_int_binary_operation(c, mask, IntBinaryOp::And, ValueType::I64)
     })?;
     let ctx = &fg;
-    // No `?`-on-merge here: the only fallible arm is malformed IR, which a
-    // well-formed graph never hits.  The call compiling + returning Ok is the
-    // structural confirmation that the merge/Result was dropped.
     let known = super::analyze(ctx)?;
-    // The `And(7, 4)` output must be recorded as fully known = 4.
     let return_val = return_value(fg.graph())?;
-    // Walk to the And node's output via the returned map: at least one output
-    // must be fully known to 4.
     let any_known_four = known.iter().any(|(out, &kb)| {
         let Some(ty) = fg.value_type_opt(out) else {
             return false;
@@ -263,14 +221,11 @@ fn analyze_returns_populated_map_no_merge_error() -> Result<()> {
         any_known_four,
         "analyze must record the And(7,4) output as known = 4"
     );
-    // Sanity: the function still has a return value (we didn't break the graph).
     let _ = return_val;
     Ok(())
 }
 
-/// `And(x, 0)` is known-zero regardless of `x` — the map-iteration rewrite
-/// must fold the And output to `IntConst(0)`.  Exercises the new flat
-/// "iterate the finished map" rewrite path on a non-constant operand.
+/// Folding driven by known bits alone, on a non-constant operand.
 #[test]
 fn known_bits_and_with_zero_folds_via_map() -> Result<()> {
     let mut fg = make_fn_with_var(|b, var| {
@@ -288,14 +243,10 @@ fn known_bits_and_with_zero_folds_via_map() -> Result<()> {
     Ok(())
 }
 
-/// A fully-known I1 (boolean) output must fold uniformly with wider ints:
-/// `Xor(c, c)` for two equal I1 constants is known-0, and the map-iteration
-/// rewrite must emit `IntConst(0):I1`.  Pins that the `ty`/mask handling
-/// covers `bit_width(I1) == 1`.
+/// Booleans are `I1`, so the mask handling must cover `bit_width(I1) == 1`.
 #[test]
 fn known_bits_i1_folds_via_map() -> Result<()> {
     let mut fg = make_fn(|b| {
-        // `Or(0, 1) : I1` is fully known to 1; the rewrite must fold it.
         let zero = b.build_int_const(0u64, ValueType::I1).unwrap();
         let one = b.build_int_const(1u64, ValueType::I1).unwrap();
         b.build_int_binary_operation(zero, one, IntBinaryOp::Or, ValueType::I1)
@@ -305,10 +256,7 @@ fn known_bits_i1_folds_via_map() -> Result<()> {
     Ok(())
 }
 
-/// KnownBits tracks the full 128-bit lattice (previously gated out at the u64
-/// ceiling): `Or(1<<100, 0):I128` is fully known and must fold to
-/// `IntConst(1<<100):I128`.  Exercises a bit ABOVE the old u64 range — the old
-/// `u64`-masked lattice could not represent bit 100 and bailed on I128 entirely.
+/// The lattice is 128-bit wide: bit 100 must survive an I128 fold.
 #[test]
 fn known_bits_i128_high_bit_or_folds() -> Result<()> {
     let hi: u128 = 1u128 << 100;
@@ -327,25 +275,20 @@ fn known_bits_i128_high_bit_or_folds() -> Result<()> {
     Ok(())
 }
 
-/// A fully-known output reachable via two consumers must fold exactly once.
-/// The old rewrite walked the graph and re-derived facts per node, which
-/// could revisit a shared output; the map holds one entry per output, so the
-/// flat map-iteration rewrite visits each output once regardless of how many
-/// consumers reach it.  `(c | 8)` is fed to two separate ANDs; the shared
-/// `Or` output folds, and so do both ANDs, with no double-processing.
+/// A fully-known output reachable via two consumers must fold exactly once:
+/// the map holds one entry per output regardless of consumer count.
 #[test]
 fn known_bits_shared_output_folds_once() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(0u64, ValueType::I8).unwrap();
         let eight = b.build_int_const(8u64, ValueType::I8).unwrap();
-        // `Or(0, 8)` is fully known = 8; it is a non-IntConst node whose
-        // output is consumed twice below.
+        // Fully known = 8, but not an IntConst node, and consumed twice below.
         let shared = b.build_int_binary_operation(c, eight, IntBinaryOp::Or, ValueType::I8)?;
         let m8 = b.build_int_const(8u64, ValueType::I8).unwrap();
         let m4 = b.build_int_const(4u64, ValueType::I8).unwrap();
         let a = b.build_int_binary_operation(shared, m8, IntBinaryOp::And, ValueType::I8)?;
         let d = b.build_int_binary_operation(shared, m4, IntBinaryOp::And, ValueType::I8)?;
-        // `(shared & 8)` = 8, `(shared & 4)` = 0 → XOR = 8.
+        // 8 ^ 0 = 8.
         b.build_int_binary_operation(a, d, IntBinaryOp::Xor, ValueType::I8)
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
@@ -358,12 +301,8 @@ fn known_bits_shared_output_folds_once() -> Result<()> {
     Ok(())
 }
 
-// ── shifts must propagate the lhs's known bits ───────────────────────────────
-
-/// Variant of `make_fn` that tracks a single 1-byte variable so the closure
-/// can read it via `read_variable` to obtain a non-constant `InitialVar`
-/// output — used by tests that want to model an unknown source value (such
-/// as a freshly-entered architectural register).
+/// `make_fn` plus one tracked 1-byte variable, so a test can `read_variable`
+/// for a genuinely unknown value.
 fn make_fn_with_var<F>(f: F) -> Result<strider_ir::Function>
 where
     F: FnOnce(&mut FunctionBuilder, rsleigh::Vn) -> Result<strider_ir::Value>,
@@ -380,11 +319,9 @@ where
     b.build()
 }
 
-/// `ShiftRight(x | 2, 1) & 1` for I8 must fold to `IntConst(1)`: the literal
-/// `2` has bit 1 known-1, OR with anything keeps bit 1 set, the shift moves
-/// it to bit 0, and the final mask keeps only bit 0 — so the answer is `1`
-/// regardless of `x`.  The previous KnownBits implementation cleared the
-/// lhs bits entirely on shift, losing the propagated known-1.
+/// `ShiftRight(x | 2, 1) & 1` is 1 for every `x`: the literal `2` pins bit 1
+/// known-1, the shift moves it to bit 0, the mask keeps only bit 0.  A shift
+/// arm that cleared the lhs bits would lose the propagated known-1.
 #[test]
 fn known_bits_shift_right_propagates_lhs_ones() -> Result<()> {
     let mut fg = make_fn_with_var(|b, var| {
@@ -402,10 +339,8 @@ fn known_bits_shift_right_propagates_lhs_ones() -> Result<()> {
     Ok(())
 }
 
-/// `ShiftLeft(x | 1, 7) & 0x80` for I8 must fold to `IntConst(0x80)`: bit 0
-/// of `x|1` is known 1; shifting by 7 moves it to bit 7 (known 1) while bits
-/// 0-6 become known 0.  ANDing with `0x80` keeps only bit 7 — so the result
-/// is `0x80` regardless of `x`.
+/// Mirror of the ShiftRight case: `ShiftLeft(x | 1, 7) & 0x80` is 0x80 for
+/// every `x`.
 #[test]
 fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
     let mut fg = make_fn_with_var(|b, var| {
@@ -424,17 +359,12 @@ fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
     Ok(())
 }
 
-/// A shift by a NON-constant amount (`classify_const_shift` → `Unknown`)
-/// must NOT fold the shift output to a constant: with the shift amount
-/// statically unknown, the `IntBinaryOp::ShiftLeft` arm returns `Ok(None)`
-/// (no known bits), so the result stays a real `ShiftLeft` node even though
-/// the LHS is a fully-known constant.  Without that arm, a wrong known-bits
-/// result could let ConstantFold collapse the shift to a bogus constant.
+/// A fully-known LHS is not enough: an unknown shift amount must yield no
+/// known bits, or ConstantFold could later collapse the shift to a bogus
+/// constant.
 #[test]
 fn known_bits_shift_by_unknown_amount_does_not_fold() -> Result<()> {
     let mut fg = make_fn_with_var(|b, var| {
-        // LHS: a fully-known constant.  RHS: a register read — statically
-        // unknown shift amount.
         let known_lhs = b.build_int_const(0xFFu64, ValueType::I8).unwrap();
         let var_shift = b.read_variable(&var)?;
         b.build_int_binary_operation(known_lhs, var_shift, IntBinaryOp::ShiftLeft, ValueType::I8)
@@ -449,23 +379,11 @@ fn known_bits_shift_by_unknown_amount_does_not_fold() -> Result<()> {
     Ok(())
 }
 
-// ── Sleigh INT_LEFT/INT_RIGHT out-of-range shift semantics in KnownBits ──
-//
-// KnownBits's `IntBinaryOp::ShiftLeft` / `ShiftRight` arms compute a
-// shift via `rhs_kb.ones & (ty.bit_width() - 1)` — i.e. mask the shift
-// amount to the low log2(bit_width) bits.  Sleigh's
-// `OpBehaviorIntLeft::evaluateBinary` (sleigh/src/opbehavior.cc:411)
-// returns 0 when the shift is `>= bit_width`; the masked-shift form
-// instead loops back to the low bits and produces a wrong known-bits
-// result.  E.g. `IntConst(0xFF, I8) << 8` should be 0 (Sleigh) but
-// the pre-fix arm computed `0xFF << (8 & 7) = 0xFF << 0 = 0xFF`.
-//
-// The visible bug: `(value << bit_width) & 1` should fold to 0 (because
-// any value shifted by bit_width is 0), but the masked-shift form
-// folds it as `(value << 0) & 1` and leaves it unresolved.
+// Sleigh returns 0 for any shift amount >= bit_width.  Masking the amount to
+// the low log2(bit_width) bits instead would wrap it back into range and give
+// wrong known bits, e.g. `0xFFu8 << 8` computed as `0xFF << 0`.
 
-/// `IntConst(1, I8) << IntConst(8, I8)` is 0 per Sleigh — KnownBits
-/// must fold the chain to a constant 0, not 1.
+/// Per Sleigh, `1u8 << 8` is 0, not 1.
 #[test]
 fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -485,8 +403,7 @@ fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
     Ok(())
 }
 
-/// `IntConst(0xFF, I32) >> IntConst(32, I32)` is 0 per Sleigh — KnownBits
-/// must report all bits known zero.
+/// Right-shift counterpart: per Sleigh, `0xFFu32 >> 32` is 0.
 #[test]
 fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -505,13 +422,9 @@ fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
     Ok(())
 }
 
-/// PPC CR0-byte extraction chain: an unknown one-byte source value
-/// (the cr0 register) is masked, ORed with a literal that pre-sets the EQ
-/// bit, right-shifted to position the EQ bit at bit 0, and finally ANDed
-/// with 1.  Mathematically, `((cr0 & 1) | 2) >> 1) & 1 == 1` for every
-/// value of `cr0` because bit 1 of the OR is unconditionally set by the
-/// literal `2`.  KnownBits must propagate the literal's known-1 bit through
-/// `Or`, then `ShiftRight`, then `And`.
+/// PPC CR0-byte extraction chain: `((cr0 & 1) | 2) >> 1) & 1` is 1 for every
+/// `cr0`, since the literal `2` unconditionally sets bit 1 of the Or.  Pins
+/// propagation across Or, ShiftRight, and And in sequence.
 #[test]
 fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
     let mut fg = make_fn_with_var(|b, cr0_var| {
@@ -536,19 +449,12 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
     Ok(())
 }
 
-// ── SignExtend propagation ────────────────────────────────────────────────────
-//
-// `extend_if_needed` folds an `IntConst` input at builder level (IRBuilderExt::extend_if_needed),
-// so to exercise the KnownBits SignExtend path we feed it a non-IntConst Or-of-
-// constants whose result is fully known but whose node kind isn't IntConst.
-// KnownBits's rewrite pass first folds the Or to IntConst; the surrounding
-// `while changed` loop then re-runs `analyze`, and only then does the
-// SignExtend node's arm fire (or fail to fire, before the fix).
+// `extend_if_needed` folds an `IntConst` input at builder level, so the
+// SignExtend tests below feed it an Or-of-constants instead: fully known, but
+// not an `IntConst` node.  The fixed-point loop folds the Or first, then the
+// SignExtend arm fires on the re-run.
 
-/// `SignExtend((0u8 | 0x7Fu8) : I8 → I64)` — MSB of the inner Or is known 0,
-/// so the upper 56 bits of the SignExtend result must be zero.  Without the
-/// SignExtend arm in `node_known_bits`, the SignExtend stays as a node;
-/// with it, the entire chain folds to `IntConst(0x7F)`.
+/// Sign bit known 0: the upper 56 bits of the extension are zero.
 #[test]
 fn known_bits_sign_extend_msb_zero_folds_to_const() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -562,9 +468,7 @@ fn known_bits_sign_extend_msb_zero_folds_to_const() -> Result<()> {
     Ok(())
 }
 
-/// `SignExtend((0u8 | 0x80u8) : I8 → I64)` — MSB of the inner Or is known 1,
-/// so the upper 56 bits of the SignExtend result must be one.  Result must
-/// fold to `IntConst(0xFFFF_FFFF_FFFF_FF80)`.
+/// Sign bit known 1: the upper 56 bits of the extension are one.
 #[test]
 fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -578,9 +482,8 @@ fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
     Ok(())
 }
 
-/// `ZeroExtend(x : I8 → I64)` has its upper 56 bits known zero regardless
-/// of `x`, so `And(zext(x), high_mask)` (a mask touching only bits ≥ 8)
-/// folds to `IntConst(0)`.
+/// A ZeroExtend's upper bits are known zero regardless of the input, so a mask
+/// touching only those bits folds to 0.
 #[test]
 fn known_bits_zero_extend_upper_known_zero_enables_mask_drop() -> Result<()> {
     let mut fg = make_fn_with_var(|b, var| {
@@ -601,9 +504,8 @@ fn known_bits_zero_extend_upper_known_zero_enables_mask_drop() -> Result<()> {
     Ok(())
 }
 
-/// `SignExtend(x : I8 → I64)` of a value whose sign bit is UNKNOWN gives
-/// no knowledge of the upper bits, so `And(sext(x), high_mask)` must NOT
-/// fold — the And survives as the return-value producer.
+/// The SignExtend counterpart of the ZeroExtend case: an unknown sign bit
+/// gives no upper-bit facts, so nothing folds.
 #[test]
 fn known_bits_sign_extend_unknown_msb_does_not_fold() -> Result<()> {
     let mut fg = make_fn_with_var(|b, var| {
@@ -623,12 +525,9 @@ fn known_bits_sign_extend_unknown_msb_does_not_fold() -> Result<()> {
     Ok(())
 }
 
-/// NOTE: pins current behavior — `node_known_bits` has NO `SShiftRight`
-/// arm (only `ShiftLeft` / `ShiftRight`), so an arithmetic shift of a
-/// value whose sign bit is provably zero is still fully opaque to the
-/// lattice: `And((x & 0x7F) >>s 4, 0xF8)` does NOT fold even though every
-/// result bit ≥ 3 is mathematically zero.  If an `SShiftRight` arm is ever
-/// added, this test should flip to assert the fold to `IntConst(0)`.
+/// There is no `SShiftRight` arm, so an arithmetic shift stays opaque even
+/// when the sign bit is provably zero and the result is mathematically 0.
+/// Flip this to assert the fold if such an arm is ever added.
 #[test]
 fn known_bits_sshift_right_of_known_sign_zero_is_opaque() -> Result<()> {
     let mut fg = make_fn_with_var(|b, var| {
@@ -650,20 +549,13 @@ fn known_bits_sshift_right_of_known_sign_zero_is_opaque() -> Result<()> {
     Ok(())
 }
 
-// ── proof-completeness: contributing operand fingerprints ───────────────────────
-//
-// When KnownBits folds a node to a constant, the operand cones whose known
-// bits *justified* the fold are cascade-culled.  Their asm-fingerprints (the
-// proof of WHY the result is that constant) must be absorbed into the new
-// constant.  Over-tainting is intentional and fine — the contract is
-// superset-only.
+// A fold cascade-culls the operand cones that justified it, so their
+// asm-fingerprints must be absorbed into the new constant first.
+// Over-tainting is fine; the contract is superset-only.
 
-/// `(0 | 7) & 4` folds to `IntConst(4)` via known bits.  The contributing
-/// operand `7` (an input of the inner `Or`, transitively feeding the folded
-/// `And`) carries a DISTINCT addr.  Its value (7) differs from the folded
-/// result (4), so the new constant is NOT the dedup-shared `7` node — the only
-/// way the result can carry the `7`-operand's addr is the operand-fingerprint
-/// absorb.  Without the fix, the culled `7` cone's addr is lost.
+/// The operand `7` carries a distinct addr and differs in value from the
+/// folded result `4`, so the new constant cannot be a dedup hit on the `7`
+/// node: an absorbed OPERAND_ADDR can only have come from the cone walk.
 #[test]
 fn known_bits_fold_absorbs_contributing_operand_fingerprint() -> Result<()> {
     use strider_ir::IRViewer;
@@ -671,10 +563,7 @@ fn known_bits_fold_absorbs_contributing_operand_fingerprint() -> Result<()> {
 
     let mut fg = make_fn(|b| {
         let x_seed = b.build_int_const(0u64, ValueType::I64).unwrap();
-        // The contributing operand `7` carries a distinct addr; every other
-        // node carries the sentinel — and 7 != 4 (the folded result), so an
-        // absorbed OPERAND_ADDR on the folded `4` constant can only have come
-        // from this operand cone (not dedup with a same-valued node).
+        // Every other node carries the sentinel.
         b.set_lift_addr(Some(OPERAND_ADDR));
         let c7 = b.build_int_const(7u64, ValueType::I64).unwrap();
         b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
@@ -698,15 +587,10 @@ fn known_bits_fold_absorbs_contributing_operand_fingerprint() -> Result<()> {
     Ok(())
 }
 
-/// The fixpoint-propagation hole: a contributor that establishes known bits
-/// but is itself NOT fully known never folds, so its fingerprint can never
-/// ride a later fold up the chain.  `((x & 1) | 2) & 0` folds to
-/// `IntConst(0)` (AND with 0 ⇒ every bit known-zero), but the inner
-/// `x & 1` and `(x & 1) | 2` depend on the variable `x`, so they stay live
-/// and unfolded.  The inner `x & 1` (carrying a distinct addr) sits two
-/// levels below the folded `& 0`, so a one-hop input absorb loses it — the
-/// `x & 1` cone is culled with its asm history.  The fold must absorb the
-/// FULL backward cone of the folded value, not just its direct inputs.
+/// The fixpoint-propagation hole: `((x & 1) | 2) & 0` folds to 0, but the
+/// inner `x & 1` never folds (it depends on `x`), so its fingerprint can never
+/// ride a later fold upward.  It sits two levels down, so a one-hop input
+/// absorb would lose it when the cone is culled.
 #[test]
 fn known_bits_fold_absorbs_cone_through_nonfolding_intermediate() -> Result<()> {
     use strider_ir::IRViewer;
@@ -714,8 +598,6 @@ fn known_bits_fold_absorbs_cone_through_nonfolding_intermediate() -> Result<()> 
 
     let mut fg = make_fn_with_var(|b, var| {
         let x = b.read_variable(&var)?;
-        // The inner AND carries a distinct addr and never folds (depends on
-        // x), so the fixpoint cannot propagate its fingerprint upward.
         b.set_lift_addr(Some(INNER_ADDR));
         let one = b.build_int_const(1u64, ValueType::I8).unwrap();
         let x_and_1 = b.build_int_binary_operation(x, one, IntBinaryOp::And, ValueType::I8)?;
@@ -742,21 +624,17 @@ fn known_bits_fold_absorbs_cone_through_nonfolding_intermediate() -> Result<()> 
     Ok(())
 }
 
-/// Precision: the fold's proof must NOT bleed through opaque nodes that
-/// KnownBits doesn't derive bits from. `Load[addr] & 0` folds to
-/// `IntConst(0)` — the `& 0` forces it, the `Load`'s bits are irrelevant.
-/// The contributor walk must absorb the operands it consulted but STOP at the
-/// `Load` (a non-propagating kind), never descending into the Load's
-/// address / memory cone. So the address node's distinct fingerprint must
-/// NOT land on the folded constant.
+/// The other direction: `Load[addr] & 0` folds because of the `& 0`, so the
+/// Load's address cone contributed nothing and the walk must stop at the Load
+/// rather than tainting it.
 #[test]
 fn known_bits_fold_does_not_taint_opaque_load_address_cone() -> Result<()> {
     use strider_ir::IRViewer;
     const ADDR_ADDR: u64 = 0xC0DE_0099;
 
     let mut fg = make_fn_with_var(|b, _var| {
-        // The load address carries a DISTINCT addr; a full-cone walk would
-        // descend Load → address and wrongly absorb it.
+        // An unrestricted cone walk would descend Load -> address and absorb
+        // this.
         b.set_lift_addr(Some(ADDR_ADDR));
         let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
         b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
@@ -780,19 +658,13 @@ fn known_bits_fold_does_not_taint_opaque_load_address_cone() -> Result<()> {
     Ok(())
 }
 
-/// Two fully-determined outputs that SHARE an upstream propagates-cone must
-/// EACH absorb the shared cone's fingerprints — the second fold may not lose
-/// them.  This is the regression guard for the O(folds·cone) → O(n) rewrite:
-/// the memoized cone-fingerprint map returns the full address set on every
-/// revisit, whereas a naive shared `seen`-set across folds would skip cone
-/// nodes already visited by the first fold and under-attribute the second.
+/// Two folds sharing an upstream cone must EACH absorb it.  A `seen` set
+/// shared across folds would skip nodes the first fold already visited and
+/// under-attribute the second; the memo returns the full set every time.
 ///
-/// Shape: a shared `(0 | 7)` Or carrying a DISTINCT addr feeds two distinct
-/// folds — `(0 | 7) & 4` → `4` and `(0 | 7) & 1` → `1`.  Both fold via known
-/// bits (the shared `7` operand makes bits 0-2 known-one).  The two results
-/// (4 and 1) differ from each other and from 7, so neither folded constant
-/// dedups with the shared node — the only way either can carry the shared
-/// addr is the cone-fingerprint absorb.  Both MUST carry it.
+/// A shared `(0 | 7)` with a distinct addr feeds `& 4` and `& 1`.  Both
+/// results differ from each other and from 7, so neither folded constant can
+/// pick up the addr by deduping with the shared node.
 #[test]
 fn known_bits_shared_cone_both_folds_absorb_fingerprint() -> Result<()> {
     use strider_ir::IRViewer;
@@ -801,10 +673,6 @@ fn known_bits_shared_cone_both_folds_absorb_fingerprint() -> Result<()> {
     let mut fg = make_fn_with_var(|b, var| {
         let x = b.read_variable(&var)?;
         let x_seed = b.build_int_const(0u64, ValueType::I8).unwrap();
-        // The shared Or (and its `7` operand) carries a distinct addr; it is
-        // the common upstream cone of both folds below.  7 differs from both
-        // folded results (4, 1), so an absorbed SHARED_ADDR can only have come
-        // from this shared cone, not from dedup with a same-valued node.
         b.set_lift_addr(Some(SHARED_ADDR));
         let c7 = b.build_int_const(7u64, ValueType::I8).unwrap();
         let shared = b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, ValueType::I8)?;
@@ -813,9 +681,8 @@ fn known_bits_shared_cone_both_folds_absorb_fingerprint() -> Result<()> {
         let fold_a = b.build_int_binary_operation(shared, c4, IntBinaryOp::And, ValueType::I8)?;
         let c1 = b.build_int_const(1u64, ValueType::I8).unwrap();
         let fold_b = b.build_int_binary_operation(shared, c1, IntBinaryOp::And, ValueType::I8)?;
-        // OR each fold with the variable `x` (not statically known) so each
-        // folded constant stays live and unfolded as an input — then combine.
-        // This keeps both `4` and `1` constants present after the pass.
+        // Or each fold with the unknown `x` so both the `4` and the `1`
+        // constants stay live after the pass.
         let live_a = b.build_int_binary_operation(fold_a, x, IntBinaryOp::Or, ValueType::I8)?;
         let live_b = b.build_int_binary_operation(fold_b, x, IntBinaryOp::Or, ValueType::I8)?;
         b.build_int_binary_operation(live_a, live_b, IntBinaryOp::Or, ValueType::I8)
@@ -823,13 +690,9 @@ fn known_bits_shared_cone_both_folds_absorb_fingerprint() -> Result<()> {
 
     run_to_fixed_point(&KnownBits, &mut fg)?;
 
-    // Both `(0|7)&4` and `(0|7)&1` fold; the top Or of two constants (4|1=5)
-    // folds too.  Find the two folded-to-constant producers feeding the top.
     let top = fg.producer(return_value(fg.graph())?);
-    // The top is itself foldable (4 | 1 = 5).  Walk to find the two And-fold
-    // constants by their values among all IntConsts that carry the shared addr.
-    // Simpler: collect every IntConst node and check the two whose values are
-    // 4 and 1 both carry SHARED_ADDR.
+    // The top Or folds too, so locate the two fold results by value among all
+    // surviving IntConst nodes.
     let mut found_4 = false;
     let mut found_1 = false;
     let int_consts: Vec<NodeId> = fg
@@ -868,8 +731,6 @@ fn known_bits_shared_cone_both_folds_absorb_fingerprint() -> Result<()> {
     Ok(())
 }
 
-// ── KnownBitsFacts constructor invariant ────────────────────────────────────────────────
-
 #[test]
 fn kb_default_is_all_unknown() {
     let kb = super::KnownBitsFacts::default();
@@ -887,14 +748,9 @@ fn kb_struct_literal_disjoint_ones_zeros() {
     assert_eq!(kb.zeros, 0b10);
 }
 
-/// Pin the invariant that `KnownBitsMap` returns `KnownBitsFacts::default()` =
-/// "fully unknown" (both `ones` and `zeros` zero) for an untracked
-/// `ValueId`.  The `Truncate` arm of `node_known_bits` reads
-/// `known[input]` directly and propagates the result through
-/// `& type_mask`; if `KnownBitsFacts::default()` ever drifted to "all ones" or
-/// "all zeros" the Truncate would synthesise spurious known bits on
-/// any input whose KB analysis returned `None` (e.g. I80 / I128 /
-/// I256 chains where `type_mask_u128` gates out).
+/// The default must stay fully unknown, not all-zeros or all-ones: the
+/// `Truncate` arm reads `known[input]` directly, so a drifted default would
+/// synthesise spurious known bits for any input the analysis gated out.
 #[test]
 fn kb_default_is_fully_unknown_not_all_zero_or_all_one() {
     let kb = super::KnownBitsFacts::default();
