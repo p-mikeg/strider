@@ -157,20 +157,20 @@ per-pattern tuple), so every capture from every pattern in the list is
 readable straight off it:
 
 ```python
-from strider.pattern import (
-    Capture, add, any_int_const, call, load, initial_var_for, int_const,
-)
+from strider.pattern import Capture, add, any_int_const, load, var
 
-# Field-offset recovery: vn_open(&nd, ...); script_vp = nd.ni_vp;
-rbp = prog.reg("RBP")   # `Lifter.reg` looks up a register by Sleigh name
-k_call, k_load = Capture(), Capture()
-for m in g.find_all([
-    call().target(int_const(VN_OPEN))
-        .arg(0, add(initial_var_for(rbp), any_int_const(k_call))),
-    load().addr(add(initial_var_for(rbp), any_int_const(k_load))),
-]):
-    field_offset = (m.const_uint(k_load) - m.const_uint(k_call)) & 0xFFFFFFFFFFFFFFFF
-    print(f"field offset = {field_offset:#x}")
+# Field-offset recovery: `p->x + p->y` lifts to two loads off the SAME
+# base pointer — one bare (`p->x`, offset 0) and one at `p + off` (`p->y`).
+# The shared Capture `base` is what joins the two patterns: only a
+# pointer that feeds BOTH loads is reported, and `off` reads back the
+# second field's byte offset.
+_, g, _ = prog.analyze("struct_field_load")
+base, off = Capture(), Capture()
+for m in g.find_all(
+    [load(addr=var(base)), load(addr=add(var(base), any_int_const(off)))],
+    ignore_casts=True,
+):
+    print(f"struct field at offset {m.const_uint(off):#x}")
 ```
 
 ### Stack-only filter

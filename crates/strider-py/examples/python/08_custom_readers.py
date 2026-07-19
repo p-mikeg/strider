@@ -19,7 +19,7 @@ runs the full default optimizer pipeline. `LoadReadOnly` folds the load
 into `IntConst(42)`, leaving `Add(arg0, 42)` in the graph. We then:
 
   1. Query it with a capturing pattern and read the captured constant
-     back as a Python int (`Match.uint`).
+     back as a Python int (`Match.const_uint`).
   2. Template-rewrite `arg0 + 42 → arg0 + 0` and re-optimize via
      `Lifter.optimize`, so ConstantFold collapses the add away entirely.
 
@@ -101,7 +101,7 @@ assert len(fn.find_all(load())) == 0, "load should have folded away"
 
 # --- 1. Query a capture and read the matched value back ------------------
 # A bare `Capture` in the operand slot binds whatever value sits there;
-# `Match.uint` reads it back as a Python int (None if it's not a constant).
+# `Match.const_uint` reads it back as a Python int (None if it's not a constant).
 # `ignore_casts=True` sees through the register-width truncate/extend nodes
 # the lifter inserts around rdi.
 print("\n=== capture the folded constant ===")
