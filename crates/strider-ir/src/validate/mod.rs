@@ -13,11 +13,11 @@ mod local_typing;
 mod tests;
 
 use graph_invariants::{
-    check_graph_invariants_asm_fingerprints, check_graph_invariants_consts,
-    check_graph_invariants_control_single_use, check_graph_invariants_extend_truncate,
-    check_graph_invariants_memory_chain, check_graph_invariants_phis,
-    check_graph_invariants_region, check_graph_invariants_side_indices,
-    check_graph_invariants_switch, check_graph_invariants_uniqueness,
+    check_function_invariants_asm_fingerprints, check_function_invariants_consts,
+    check_function_invariants_control_single_use, check_function_invariants_extend_truncate,
+    check_function_invariants_memory_chain, check_function_invariants_phis,
+    check_function_invariants_region, check_function_invariants_side_indices,
+    check_function_invariants_switch, check_function_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 
@@ -39,16 +39,16 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
         check_local_typing(function.graph(), node, &mut errs);
     }
 
-    check_graph_invariants_uniqueness(function.graph(), &reachable, &mut errs);
-    check_graph_invariants_region(function.graph(), &reachable, &mut errs);
-    check_graph_invariants_control_single_use(function, &reachable, &mut errs);
-    check_graph_invariants_phis(function, &reachable, &mut errs);
-    check_graph_invariants_consts(function, &reachable, &mut errs);
-    check_graph_invariants_extend_truncate(function, &reachable, &mut errs);
-    check_graph_invariants_switch(function, &reachable, &mut errs);
-    check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
-    check_graph_invariants_memory_chain(function, &reachable, &mut errs);
-    check_graph_invariants_side_indices(function, &reachable, &mut errs);
+    check_function_invariants_uniqueness(function, &reachable, &mut errs);
+    check_function_invariants_region(function, &reachable, &mut errs);
+    check_function_invariants_control_single_use(function, &reachable, &mut errs);
+    check_function_invariants_phis(function, &reachable, &mut errs);
+    check_function_invariants_consts(function, &reachable, &mut errs);
+    check_function_invariants_extend_truncate(function, &reachable, &mut errs);
+    check_function_invariants_switch(function, &reachable, &mut errs);
+    check_function_invariants_asm_fingerprints(function, &reachable, &mut errs);
+    check_function_invariants_memory_chain(function, &reachable, &mut errs);
+    check_function_invariants_side_indices(function, &reachable, &mut errs);
 
     if errs.is_empty() {
         Ok(())

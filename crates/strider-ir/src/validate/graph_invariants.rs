@@ -1,6 +1,5 @@
 use crate::IRViewer;
 use crate::function::Function;
-use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, ValueKind};
 use crate::walk::NodeIdSet;
 
@@ -8,11 +7,12 @@ use super::ValidationError;
 
 /// At most one live [`NodeKind::Entry`] and one live
 /// [`NodeKind::InitialMemory`]. Neither is required.
-pub(super) fn check_graph_invariants_uniqueness(
-    graph: &Graph,
+pub(super) fn check_function_invariants_uniqueness(
+    function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
+    let graph = function.graph();
     // Only the first two of each kind matter.
     let mut entry: (Option<NodeId>, Option<NodeId>) = (None, None);
     let mut initial_memory: (Option<NodeId>, Option<NodeId>) = (None, None);
@@ -42,11 +42,12 @@ pub(super) fn check_graph_invariants_uniqueness(
 }
 
 /// Every reachable `Region` needs at least one predecessor.
-pub(super) fn check_graph_invariants_region(
-    graph: &Graph,
+pub(super) fn check_function_invariants_region(
+    function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
+    let graph = function.graph();
     for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
         if !matches!(kind, NodeKind::Region) {
             continue;
@@ -58,7 +59,7 @@ pub(super) fn check_graph_invariants_region(
 }
 
 /// Every reachable node's `Control` output must have exactly one consumer.
-pub(super) fn check_graph_invariants_control_single_use(
+pub(super) fn check_function_invariants_control_single_use(
     function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -84,7 +85,7 @@ pub(super) fn check_graph_invariants_control_single_use(
 
 /// `Extend` must strictly widen its input; `Truncate` must strictly narrow it.
 /// Non-integer input/output is skipped.
-pub(super) fn check_graph_invariants_extend_truncate(
+pub(super) fn check_function_invariants_extend_truncate(
     function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -127,7 +128,7 @@ pub(super) fn check_graph_invariants_extend_truncate(
 
 /// Every reachable [`NodeKind::Switch`] needs at least one control output, and
 /// one recorded `switch_targets` case address per control output.
-pub(super) fn check_graph_invariants_switch(
+pub(super) fn check_function_invariants_switch(
     function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -154,7 +155,7 @@ pub(super) fn check_graph_invariants_switch(
 /// Every `Phi` / `MemPhi` takes its dispatch token (input[0]) from a
 /// `Region`'s `PhiToken` output, and has one value input per predecessor of
 /// that owning `Region`.
-pub(super) fn check_graph_invariants_phis(
+pub(super) fn check_function_invariants_phis(
     function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -230,7 +231,7 @@ pub(super) fn check_graph_invariants_phis(
 
 /// Every reachable, non-exempt node carries at least one asm-fingerprint
 /// contributor.
-pub(super) fn check_graph_invariants_asm_fingerprints(
+pub(super) fn check_function_invariants_asm_fingerprints(
     function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -249,7 +250,7 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
 ///
 /// Scoped to `Store`: a memory-preserving `Call` / `CallOther` legitimately
 /// leaves its Memory output unconsumed.
-pub(super) fn check_graph_invariants_memory_chain(
+pub(super) fn check_function_invariants_memory_chain(
     function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -280,7 +281,7 @@ pub(super) fn check_graph_invariants_memory_chain(
 ///   tolerated.
 /// * Every `value_vn` key with a reachable producer is produced by a `Phi` /
 ///   `Call` / `CallOther`.
-pub(super) fn check_graph_invariants_side_indices(
+pub(super) fn check_function_invariants_side_indices(
     function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -324,8 +325,8 @@ pub(super) fn check_graph_invariants_side_indices(
 
 /// Every reachable `IntConst(id)` references a live const-interner entry whose
 /// value fits the node's declared output width.
-pub(super) fn check_graph_invariants_consts(
-    function: &crate::Function,
+pub(super) fn check_function_invariants_consts(
+    function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
