@@ -303,7 +303,8 @@ mod tests {
     //! control/memory inputs (`Call`, `MemPhi`) — exercised through the raw
     //! [`NodePat::input_any`] path because no public wrapper exposes `any_input`
     //! on them yet. They pin the general `any_input` model: candidate slots are
-    //! every input except the `PhiToken`, and the sub-pattern discriminates.
+    //! EVERY input slot (no value-kind filter), and the sub-pattern
+    //! discriminates.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
@@ -338,10 +339,10 @@ mod tests {
             .build()
     }
 
-    /// `any_input` under the GENERAL model: the candidate slots are every input
-    /// EXCEPT the `PhiToken` plumbing slot (a `Call` has none). A typed value
-    /// sub matches whichever VALUE input carries that value; a wildcard reaches
-    /// ANY input, including the control/memory ones a typed sub can never bind.
+    /// `any_input` under the GENERAL model: the candidate slots are EVERY input
+    /// (a `Call` has no `PhiToken` anyway). A typed value sub matches whichever
+    /// VALUE input carries that value; a wildcard reaches ANY input, including
+    /// the control/memory ones a typed sub can never bind.
     #[test]
     fn call_any_input_general_model() {
         let function = call_with_arg();
@@ -461,42 +462,47 @@ mod tests {
     }
 
     /// Under the GENERAL model a `MemPhi`'s memory predecessors ARE offered to
-    /// `any_input` — they are inputs, not the `PhiToken`. A wildcard binds them
-    /// (one per memory predecessor), while a typed value sub binds none of them
-    /// (sub-pattern discrimination: a typed sub can never bind a `Memory` edge).
+    /// `any_input` — they are inputs, like any other. A wildcard binds every
+    /// input it can reach (the two memory predecessors AND, with no `PhiToken`
+    /// filter, the slot-0 `PhiToken` too), while a typed value sub binds none of
+    /// them (sub-pattern discrimination: a typed sub can never bind a `Memory`
+    /// or `PhiToken` edge).
     #[test]
     fn mem_phi_any_input_binds_a_memory_predecessor() {
         let function = mem_phi_with_two_stores();
         let matcher = Matcher::new(&function);
 
-        // A wildcard reaches the memory predecessors (the if/else stores'
-        // memory outputs) — under the general model they ARE offered. Every
-        // binding is a Memory value (never the excluded slot-0 `PhiToken`).
+        // A wildcard reaches every input — the if/else stores' memory outputs
+        // AND the `PhiToken` plumbing slot (no value-kind filter narrows the
+        // candidate set anymore).
         let c = crate::Capture::new();
         let hits = matcher.find_all(&mem_phi_any_input(crate::var(c))).unwrap();
+        let kinds: Vec<_> = hits
+            .iter()
+            .map(|hit| function.value_kind(hit.value(c).unwrap()))
+            .collect();
         assert!(
-            !hits.is_empty(),
-            "wildcard any_input must bind a MemPhi memory predecessor",
+            kinds
+                .iter()
+                .any(|k| matches!(k, strider_ir::node::ValueKind::Memory)),
+            "wildcard any_input must bind a MemPhi memory predecessor, kinds: {kinds:?}",
         );
-        for hit in &hits {
-            assert!(
-                matches!(
-                    function.value_kind(hit.value(c).unwrap()),
-                    strider_ir::node::ValueKind::Memory
-                ),
-                "each wildcard binding is a Memory predecessor, never the PhiToken",
-            );
-        }
+        assert!(
+            kinds
+                .iter()
+                .any(|k| matches!(k, strider_ir::node::ValueKind::PhiToken)),
+            "wildcard any_input can now also reach the PhiToken slot, kinds: {kinds:?}",
+        );
 
         // Sub-pattern discrimination: a typed VALUE sub can never bind a Memory
-        // edge, so it matches nothing.
+        // or PhiToken edge, so it matches nothing.
         assert_eq!(
             matcher
                 .find_all(&mem_phi_any_input(int_const(1u128)))
                 .unwrap()
                 .len(),
             0,
-            "a typed value sub must not bind a Memory predecessor",
+            "a typed value sub must not bind a Memory or PhiToken predecessor",
         );
     }
 }

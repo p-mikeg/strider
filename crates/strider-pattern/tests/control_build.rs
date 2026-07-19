@@ -857,52 +857,63 @@ fn phi_any_input_matches_a_data_input_regardless_of_slot() {
     );
 }
 
-/// A kind-unconstrained `any_input` sub-pattern (`var` / `any`) must bind one
-/// of the phi's DATA inputs, never its slot-0 `PhiToken` — the token is the
-/// owning `Region`'s bookkeeping edge, not a predecessor value.
+/// `any_input`'s candidate slots are now EVERY input slot (no `PhiToken`
+/// filter) — the sub-pattern is what discriminates. A VALUE-typed sub
+/// (e.g. `int_const`) can never match the `PhiToken` producer (a `Region`
+/// node, not an `IntConst`), so it still binds only a DATA input. A bare
+/// kind-unconstrained wildcard (`var` / `any`), which accepts any producer
+/// regardless of what it outputs, now CAN reach the slot-0 `PhiToken` too.
 #[test]
-fn phi_any_input_binds_a_data_input_not_the_phi_token() {
+fn phi_any_input_value_sub_binds_a_data_input_not_the_phi_token() {
     let function = phi_over_two_consts();
     let m = Matcher::new(&function);
 
     // `any_input` is existential: `x` can bind EITHER data input, and both are
-    // genuinely distinct bindings, so both are reported (one per data slot —
-    // never three, which would mean the phi-token leaked in as a third).
+    // genuinely distinct bindings, so both are reported — a value-typed sub
+    // still can't match the phi-token producer, so there are exactly two.
     let x = Capture::new();
-    let hits = m.find_all(&phi().any_input(var(x)).build()).unwrap();
+    let hits = m
+        .find_all(&phi().any_input(any_int_const().capture(x)).build())
+        .unwrap();
     assert_eq!(hits.len(), 2, "one match per bindable DATA input");
     for hit in &hits {
         let bound = hit.node(x, function.graph()).unwrap();
         assert!(
             matches!(function.node_kind(bound), NodeKind::IntConst(_)),
-            "any_input(var) must bind a data input (IntConst), got {:?}",
+            "any_input(value sub) must bind a data input (IntConst), got {:?}",
             function.node_kind(bound)
         );
     }
+}
 
-    // Two kind-unconstrained existentials must claim the two DATA slots, so
-    // both bind constants rather than one silently taking the phi-token.
-    // Distinctness is by slot, so the two assignments (a←1,c←2 and a←2,c←1)
-    // are both reported.
-    let (a, c) = (Capture::new(), Capture::new());
-    let hits = m
-        .find_all(&phi().any_input(var(a)).any_input(var(c)).build())
-        .unwrap();
+/// A bare kind-unconstrained `any_input(var(..))` has no sub-pattern
+/// discrimination at all, so — with no `PhiToken` filter in the candidate
+/// set — it now also matches the phi's slot-0 `PhiToken` plumbing edge,
+/// alongside its two data inputs.
+#[test]
+fn phi_any_input_wildcard_can_reach_the_phi_token() {
+    let function = phi_over_two_consts();
+    let m = Matcher::new(&function);
+
+    let x = Capture::new();
+    let hits = m.find_all(&phi().any_input(var(x)).build()).unwrap();
     assert_eq!(
         hits.len(),
-        2,
-        "both slot assignments of the two data inputs"
+        3,
+        "a bare wildcard any_input reaches all 3 input slots (2 data + 1 phi-token)"
     );
-    for hit in &hits {
-        for cap in [a, c] {
-            let n = hit.node(cap, function.graph()).unwrap();
-            assert!(
-                matches!(function.node_kind(n), NodeKind::IntConst(_)),
-                "each any_input(var) binds a data input, got {:?}",
-                function.node_kind(n)
-            );
-        }
-    }
+    let kinds: Vec<NodeKind> = hits
+        .iter()
+        .map(|hit| *function.node_kind(hit.node(x, function.graph()).unwrap()))
+        .collect();
+    assert!(
+        kinds.iter().any(|k| matches!(k, NodeKind::IntConst(_))),
+        "still reaches the data inputs, kinds: {kinds:?}"
+    );
+    assert!(
+        kinds.iter().any(|k| matches!(k, NodeKind::Region)),
+        "now also reaches the phi-token producer (the owning Region), kinds: {kinds:?}"
+    );
 }
 
 #[test]

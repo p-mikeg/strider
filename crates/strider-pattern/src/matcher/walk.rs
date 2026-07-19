@@ -19,7 +19,8 @@
 //! `NodeKind::is_commutative()`, unless it opted out via `force_ordered`) gives
 //! BOTH operands the candidate set `{0, 1}`, so injectivity yields exactly the
 //! natural ordering then the swapped one; an `any_input` existential draws from
-//! every input slot except the `PhiToken` plumbing slot.
+//! every input slot — the sub-pattern discriminates which ones can actually
+//! match (a value sub can't match a `PhiToken`/control/memory slot).
 //! Backtracking rolls back via
 //! [`Bindings::mark`] / [`Bindings::restore`] between attempts.
 //!
@@ -343,34 +344,22 @@ fn try_match_at(
             .all(|e| e.consumer_slot < COMM_ORDER.len())
         && ctx.function().node_kind(ir_node).is_commutative();
 
-    // The existential candidate set: every input slot of `ir_node` EXCEPT the
-    // `PhiToken` plumbing slot. Invariant across the whole search, so collect it
-    // once here (empty in the common no-`any_input` case) rather than at every
-    // recursion level.
+    // The existential candidate set: EVERY input slot of `ir_node`. Invariant
+    // across the whole search, so collect it once here (empty in the common
+    // no-`any_input` case) rather than at every recursion level.
     //
-    // `any_input(sub)` = "some input edge of this node matches `sub`". The
-    // candidate slots are every input EXCEPT a `PhiToken` (a `Phi`/`MemPhi`'s
-    // slot-0 bookkeeping edge from its owning `Region`, which is never a
-    // predecessor value). The sub-pattern discriminates: a typed sub
-    // (`int_const`, `add`, …) carries a value output-kind, so it only matches a
-    // value edge and naturally skips control/memory inputs; a bare wildcard
-    // (`var(c)` / `any()`, carrying `OutputKindSpec::Any`) binds ANY of these
-    // inputs. This one mechanism covers a phi's value predecessors, a region's
-    // control predecessors, a mem_phi's memory predecessors, and a call's args.
-    //
-    // For `Phi` the only non-value input is the slot-0 `PhiToken`, so excluding
-    // it yields exactly the value predecessors — identical to the historical
-    // "skip the phi-token" behavior (the invariance the phi tests pin).
+    // `any_input(sub)` = "some input edge of this node matches `sub`". No
+    // value-kind filter is applied here — the sub-pattern discriminates: a
+    // typed sub (`int_const`, `add`, …) carries a value output-kind, so it
+    // only matches a value edge and naturally skips control/memory/PhiToken
+    // inputs; a bare wildcard (`var(c)` / `any()`, carrying
+    // `OutputKindSpec::Any`) binds ANY input, including a `PhiToken`. This one
+    // mechanism covers a phi's value predecessors, a region's control
+    // predecessors, a mem_phi's memory predecessors, and a call's args.
     let ext_slots: Vec<usize> = if n_fixed == inputs.len() {
         Vec::new()
     } else {
-        ctx.function()
-            .node_inputs(ir_node)
-            .into_iter()
-            .enumerate()
-            .filter(|&(_, v)| !matches!(ctx.function().value_kind(v), ValueKind::PhiToken))
-            .map(|(slot, _)| slot)
-            .collect()
+        (0..ctx.function().node_inputs(ir_node).len()).collect()
     };
 
     // The one enumeration problem: assign each pattern input an IR input slot
@@ -552,7 +541,7 @@ struct InputEdge {
 /// |---|---|
 /// | fixed, non-commutative | `Only(its own consumer slot)` |
 /// | fixed, commutative pair | `OneOf([own slot, the other])` — injectivity yields exactly the 2 orderings |
-/// | existential (`any_input`) | `OneOf(every input slot except `PhiToken`)` |
+/// | existential (`any_input`) | `OneOf(every input slot)` |
 #[derive(Clone, Copy)]
 enum Candidates<'a> {
     /// Exactly one slot. This is the COMMON case (most patterns are all
