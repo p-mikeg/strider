@@ -36,8 +36,8 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::Truncate, [value_id], output_type))
     }
 
-    /// Only ever widens, or no-ops at equal width. A value wider than
-    /// `output_type` is a caller error.
+    /// Widens a narrower value; no-ops at equal-or-wider width. Symmetric with
+    /// `truncate_if_needed`, which passes a narrower value through unchanged.
     fn extend_if_needed(
         &mut self,
         value_id: ValueId,
@@ -57,11 +57,9 @@ pub trait IRBuilderExt: IRBuilder {
                  ({curr_output_type}); a bitcast is required first"
             ));
         }
+        // Already wide enough: extension is not needed, so no-op.
         if curr_output_type.bit_width() > output_type.bit_width() {
-            return Err(anyhow!(
-                "extend_if_needed: value {value_id:?} ({curr_output_type}) is wider than \
-                 target {output_type}; extend cannot narrow — truncate first"
-            ));
+            return Ok(value_id);
         }
 
         if let Some(unsigned_val) = self.int_const_u128(value_id)

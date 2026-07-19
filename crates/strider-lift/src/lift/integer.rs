@@ -10,8 +10,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.write_vn(out_vn, value)
     }
 
-    /// Sleigh contracts `output.size >= input.size`.  `extend_if_needed` would
-    /// also reject an inverted pair, but checking here names the `.sla` bug.
+    /// Sleigh contracts `output.size >= input.size`; this check names the
+    /// `.sla` bug when that is violated.
     pub(super) fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) -> Result<()> {
         let out_vn = require_output_vn(insn)?;
         let in0_size = nth_input_or_err(insn, 0)?.size;

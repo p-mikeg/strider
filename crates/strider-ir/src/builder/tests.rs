@@ -225,19 +225,19 @@ fn extend_noop_when_already_wide_enough() -> Result<()> {
 }
 
 #[test]
-fn extend_rejects_value_wider_than_target() -> Result<()> {
+fn extend_noop_when_wider_than_target() -> Result<()> {
     let mut b = empty_builder()?;
     let wide_add = non_const_add(&mut b, ValueType::I64)?;
-    assert!(
-        b.extend_if_needed(wide_add, ValueType::I32, ExtendOp::ZeroExtend)
-            .is_err(),
-        "extend must reject a non-const value wider than the target"
+    assert_eq!(
+        b.extend_if_needed(wide_add, ValueType::I32, ExtendOp::ZeroExtend)?,
+        wide_add,
+        "extend on a value wider than the target is a no-op"
     );
     let wide_const = b.build_int_const(0xDEAD_BEEFu64, ValueType::I64)?;
-    assert!(
-        b.extend_if_needed(wide_const, ValueType::I32, ExtendOp::SignExtend)
-            .is_err(),
-        "extend must reject a constant wider than the target"
+    assert_eq!(
+        b.extend_if_needed(wide_const, ValueType::I32, ExtendOp::SignExtend)?,
+        wide_const,
+        "extend on a constant wider than the target is a no-op"
     );
     Ok(())
 }
