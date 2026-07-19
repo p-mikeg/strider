@@ -1,10 +1,7 @@
-//! Integration tests for `strider_reader::elf::apply_elf_relocations`.
-//!
-//! Uses the `fixtures/out/<arch>/elf_relocs.elf` shared-library
-//! fixture (built by `fixtures/Makefile` with `-shared -fPIC`).  The
-//! fixture's `dispatch_table` array has one relocation per slot
-//! pointing at one of `helper_a..helper_d`; without the applier the
-//! slots read zero, with the applier they read the helper addresses.
+//! `apply_elf_relocations` against `fixtures/out/<arch>/elf_relocs.elf`, a
+//! `-shared -fPIC` fixture whose `dispatch_table` has one relocation per slot
+//! pointing at `helper_a..helper_d`. Unapplied the slots read zero; applied
+//! they read the helper addresses.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
@@ -14,7 +11,6 @@ use std::path::PathBuf;
 #[path = "common/mod.rs"]
 mod common;
 
-/// Read 4 bytes (big-endian) from `regions` at virtual address `addr`.
 fn read_u32_be(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u32> {
     for r in regions {
         if r.contains(addr) && addr + 4 <= r.end_addr() {
@@ -28,18 +24,14 @@ fn read_u32_be(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u32> 
 
 #[test]
 fn apply_elf_relocations_defined_mips_rel32_writes_symbol_value() {
-    // A defined-symbol `R_MIPS_REL32` has `S + A` semantics (symbol
-    // value plus addend), not addend-only — the addend-only reduction
-    // is correct *only* for the undefined / index-0 (STN_UNDEF) case.
-    // The `.data.rel.ro` slot here points at the defined `func` symbol
-    // (st_value = sym_addr); after relocation the slot must read
-    // `sym_addr`, not 0.  The fixture is a `REL` (implicit-addend)
-    // section so A = 0, isolating the symbol-value contribution.
+    // A defined-symbol REL32 is `S + A`, not addend-only; the addend-only
+    // reduction holds only for the undefined / index-0 (STN_UNDEF) case. The
+    // fixture uses a `REL` (implicit-addend) section so A = 0, isolating the
+    // symbol-value contribution.
     let fx = common::elf_fixture::build_mips32be_rel32_elf();
     let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    // Load every allocatable file-backed section so `.data.rel.ro`
-    // (the relocation site) has a region to patch.
+    // Include writable sections so `.data.rel.ro` has a region to patch.
     let mut regions =
         strider_reader::elf::elf_get_loadable_regions_including_writable(&obj).expect("regions");
     strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
@@ -53,12 +45,9 @@ fn apply_elf_relocations_defined_mips_rel32_writes_symbol_value() {
 
 #[test]
 fn apply_elf_relocations_undefined_mips_rel32_stays_addend_only() {
-    // The undefined / index-0 (STN_UNDEF) REL32 case must remain
-    // addend-only: `S = 0`, the `REL` section's addend is 0, so the
-    // slot reads 0 after relocation.  `object` reports the index-0
-    // reloc as `RelocationTarget::Absolute`, which routes through
-    // `image_relative_reloc` (addend-only) — this pins that the
-    // defined-symbol fix did not perturb the undefined path.
+    // The STN_UNDEF case stays addend-only: `S = 0` and the `REL` addend is 0,
+    // so the slot reads 0. `object` reports it as `RelocationTarget::Absolute`,
+    // routing through `image_relative_reloc`.
     let fx = common::elf_fixture::build_mips32be_rel32_elf_with(false);
     let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
@@ -75,12 +64,10 @@ fn apply_elf_relocations_undefined_mips_rel32_stays_addend_only() {
 
 #[test]
 fn apply_elf_relocations_patches_slot_at_very_end_of_region() {
-    // The synthetic MIPS fixture's slot segment is exactly the 4-byte
-    // relocation site, so the patch's last byte IS the region's last
-    // byte — the boundary case where an off-by-one in the applier's
-    // range check would reject or overrun.  Assert the geometry first
-    // so a future fixture reshuffle that pads the segment doesn't
-    // silently demote this test to an interior-patch case.
+    // The slot segment is exactly the 4-byte site, so the patch's last byte is
+    // the region's last byte, where an off-by-one would reject or overrun. The
+    // geometry is asserted first so a future fixture reshuffle that pads the
+    // segment cannot silently demote this to an interior patch.
     let fx = common::elf_fixture::build_mips32be_rel32_elf();
     let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
@@ -108,26 +95,19 @@ fn apply_elf_relocations_patches_slot_at_very_end_of_region() {
 
 #[test]
 fn apply_elf_relocations_autoload_field_straddling_section_end_is_not_patched() {
-    // Synthesised ELF: the `.data.rel.ro` section is 6 bytes, but the
-    // 4-byte `R_X86_64_PC32` relocation site sits at offset 4 — so the
-    // field `[off 4, off 8)` runs past the section's 6 file-backed bytes.
-    //
-    // Load code-only so autoload must stage `.data.rel.ro`.  The site's
-    // FIRST byte is covered by the staged region, but the full field
-    // straddles the region's end, so the patch can't land — the slot must
-    // remain at its zeroed initial value.
+    // `.data.rel.ro` is 6 bytes with the 4-byte PC32 site at offset 4, so the
+    // field `[4, 8)` runs past its file-backed bytes. Loading code-only forces
+    // autoload to stage the section; the site's first byte lands inside the
+    // staged region but the full field straddles its end, so the patch cannot
+    // land and the slot stays zeroed.
     let fx =
         common::elf_fixture::build_x86_64_pc32_rela_elf(/* slot_len */ 6, /* off */ 4, 0);
     let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    // Code-and-readonly only: excludes the writable `.data.rel.ro`.
     let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
 
     strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).expect("autoload");
 
-    // The staged region covers the site's first byte but not the full
-    // 4-byte field, so the relocation is dropped: the slot's first byte
-    // stays zeroed.
     let staged = regions
         .iter()
         .find(|r| r.contains(fx.site_addr))
@@ -142,12 +122,10 @@ fn apply_elf_relocations_autoload_field_straddling_section_end_is_not_patched() 
 
 #[test]
 fn apply_elf_relocations_negative_addend_pc_relative() {
-    // A PC-relative `R_X86_64_PC32` (object's `RelocationKind::Relative`,
-    // `S + A - P`) with a *negative* addend.  The applier casts the i64
-    // addend to u64 (2's-complement bit pattern) and `wrapping_add`s it,
-    // then truncates to the 4-byte field — the correct modular result.
-    // This guards against a future "fix" to a checked/saturating add that
-    // would silently break negative-addend relocations.
+    // A PC32 (`S + A - P`) with a negative addend. The applier bitcasts the
+    // i64 to u64, wrapping-adds, and truncates to the 4-byte field, giving the
+    // correct modular result. Guards against a future "fix" to a checked or
+    // saturating add.
     let addend: i64 = -0x40;
     let fx = common::elf_fixture::build_x86_64_pc32_rela_elf(
         /* slot_len */ 4, /* off */ 0, addend,
@@ -158,7 +136,6 @@ fn apply_elf_relocations_negative_addend_pc_relative() {
         strider_reader::elf::elf_get_loadable_regions_including_writable(&obj).expect("regions");
     strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
 
-    // Expected: (S + A - P) truncated to 32 bits, written little-endian.
     let expected = fx
         .sym_addr
         .wrapping_add(addend as u64)
@@ -170,7 +147,6 @@ fn apply_elf_relocations_negative_addend_pc_relative() {
     );
 }
 
-/// Read 4 bytes (LE) from `regions` at virtual address `addr`.
 fn read_u32_le_at(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u32> {
     for r in regions {
         if r.contains(addr) && addr + 4 <= r.end_addr() {
@@ -189,8 +165,6 @@ fn fixture_path(arch: &str, case: &str) -> PathBuf {
         .join(format!("{case}.elf"))
 }
 
-/// Read 8 bytes (LE) from `regions` at virtual address `addr`.
-/// Returns `None` if no region covers the range.
 fn read_u64_le(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u64> {
     for r in regions {
         if r.contains(addr) && addr + 8 <= r.end_addr() {
@@ -202,7 +176,6 @@ fn read_u64_le(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u64> 
     None
 }
 
-/// Find the symbol's address; panic with a clear message when missing.
 fn sym_addr(obj: &object::File<'_>, name: &str) -> u64 {
     obj.symbol_by_name(name)
         .unwrap_or_else(|| panic!("symbol {name:?} not found"))
@@ -217,10 +190,9 @@ fn apply_elf_relocations_patches_dispatch_table_x86_64() {
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
     let obj = obj.file();
-    // dispatch_table lives in `.data.rel.ro` (writable section that
-    // gets relro-protected at runtime).  The default
-    // code-and-readonly loader skips it; the wider loader picks it
-    // up so the applier has somewhere to patch.
+    // `dispatch_table` lives in `.data.rel.ro`, which the default
+    // code-and-readonly loader skips as writable; the wider loader picks it up
+    // so the applier has somewhere to patch.
     let regions = strider_reader::elf::elf_load_with_relocations(&obj).expect("load+apply");
 
     let table_addr = sym_addr(&obj, "dispatch_table");
@@ -229,9 +201,7 @@ fn apply_elf_relocations_patches_dispatch_table_x86_64() {
     let helper_c = sym_addr(&obj, "helper_c");
     let helper_d = sym_addr(&obj, "helper_d");
 
-    // Post-condition: every dispatch_table slot now reads its helper.
-    // A well-formed ELF resolves cleanly (no malformed / unresolved
-    // targets), so all four slots are patched.
+    // A well-formed ELF resolves cleanly, so all four slots are patched.
     assert_eq!(read_u64_le(&regions, table_addr), Some(helper_a));
     assert_eq!(read_u64_le(&regions, table_addr + 8), Some(helper_b));
     assert_eq!(read_u64_le(&regions, table_addr + 16), Some(helper_c));
@@ -240,11 +210,8 @@ fn apply_elf_relocations_patches_dispatch_table_x86_64() {
 
 #[test]
 fn default_loader_omits_data_rel_ro() {
-    // Sanity: without `apply_relocations`, the
-    // `elf_get_loadable_regions` filter still excludes
-    // `.data.rel.ro` (it's writable).  This is the
-    // existing back-compat behaviour the Python `MemoryMap`
-    // default mirrors.
+    // The default filter excludes `.data.rel.ro` as writable, so the table is
+    // unmapped without an explicit relocation pass.
     let path = fixture_path("x64", "elf_relocs");
     if !path.exists() {
         return;
@@ -261,11 +228,9 @@ fn default_loader_omits_data_rel_ro() {
 
 #[test]
 fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
-    // Strider's existing fixtures (e.g. control.elf) are statically
-    // linked executables (ET_EXEC) — `dynamic_relocations()` returns
-    // an empty iterator and the applier is a no-op.  This guards
-    // the "false default" of the strider-py opt-in flag: a normal
-    // userland binary doesn't need relocation processing.
+    // `control.elf` is ET_EXEC, so `dynamic_relocations()` is empty and the
+    // applier no-ops. Justifies relocation processing being opt-in: a normal
+    // userland binary does not need it.
     let path = fixture_path("x86", "control");
     if !path.exists() {
         return; // skip if fixture not built
@@ -273,9 +238,8 @@ fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
     let obj = strider_reader::load_elf(&path).expect("load_elf");
     let obj = obj.file();
     let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
-    // ET_EXEC with no dynamic relocations: the applier is a no-op (any
-    // GLOB_DAT / JUMP_SLOT entries target undefined externs and are
-    // deliberately skipped), so the regions are byte-for-byte unchanged.
+    // Any GLOB_DAT / JUMP_SLOT entries target undefined externs and are
+    // deliberately skipped, so the regions stay byte-for-byte identical.
     let before: Vec<Vec<u8>> = regions.iter().map(|r| r.data().to_vec()).collect();
     strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
     let after: Vec<Vec<u8>> = regions.iter().map(|r| r.data().to_vec()).collect();
@@ -287,10 +251,9 @@ fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
 
 #[test]
 fn apply_elf_relocations_autoload_pulls_in_missing_site_sections() {
-    // Reproduces the i386 kernel scenario at the Rust level: load only
-    // code-and-readonly (so `.data.rel.ro` is excluded), then call the
-    // autoload variant.  It must lazily pull the missing section so
-    // every relocation lands (verified below by the patched table slot).
+    // The i386 kernel scenario: load code-and-readonly only, excluding
+    // `.data.rel.ro`, and autoload must pull the missing section in so every
+    // relocation still lands.
     let path = fixture_path("x64", "elf_relocs");
     if !path.exists() {
         return;
@@ -308,8 +271,6 @@ fn apply_elf_relocations_autoload_pulls_in_missing_site_sections() {
         "autoload must have added at least one region"
     );
 
-    // The autoload staged the `.data.rel.ro` section, so the dispatch
-    // table slot is now covered and patched to its helper's address.
     let table_addr = sym_addr(&obj, "dispatch_table");
     let helper_a = sym_addr(&obj, "helper_a");
     assert_eq!(read_u64_le(&regions, table_addr), Some(helper_a));
@@ -317,9 +278,8 @@ fn apply_elf_relocations_autoload_pulls_in_missing_site_sections() {
 
 #[test]
 fn apply_elf_relocations_idempotent() {
-    // Running the applier twice produces the same regions as running
-    // it once.  Each relocation is a deterministic write; re-applying
-    // overwrites with the same value.
+    // Each relocation is a deterministic write, so re-applying overwrites with
+    // the same value.
     let path = fixture_path("x64", "elf_relocs");
     if !path.exists() {
         return;
@@ -337,9 +297,7 @@ fn apply_elf_relocations_idempotent() {
 
 #[test]
 fn apply_elf_relocations_autoload_is_idempotent() {
-    // Running autoload twice must produce the same regions as
-    // running it once: the second call sees the previously-staged
-    // sections in `regions` and skips re-staging.
+    // The second call sees the previously-staged sections and skips re-staging.
     let path = fixture_path("x64", "elf_relocs");
     if !path.exists() {
         return;
@@ -365,15 +323,10 @@ fn apply_elf_relocations_autoload_is_idempotent() {
 
 #[test]
 fn apply_elf_relocations_autoload_does_not_fabricate_values_for_undefined_externs() {
-    // ET_EXEC userland fixture (`control`) has GLOB_DAT / JMP_SLOT
-    // entries that target undefined externs (libc).  Autoload happily
-    // pulls the .got / .got.plt sections in, but the inner applier still
-    // refuses to write a value because the symbol is undefined.
-    //
-    // Pins the property that autoload doesn't tempt the applier into
-    // making up values for undefined externs: every staged region's
-    // bytes must equal the ELF section's file-initial bytes (no patch
-    // landed).
+    // `control`'s GLOB_DAT / JMP_SLOT entries target undefined libc externs.
+    // Autoload pulls the .got / .got.plt sections in regardless, but the
+    // applier must still refuse to write: every staged region keeps the
+    // section's file-initial bytes.
     use object::ObjectSection as _;
 
     let path = fixture_path("x86", "control");
@@ -387,9 +340,6 @@ fn apply_elf_relocations_autoload_does_not_fabricate_values_for_undefined_extern
 
     strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
 
-    // Anything autoload staged beyond the original code+rodata set is a
-    // GOT/GOT.PLT section pulled in to back an undefined-extern reloc; its
-    // bytes must be byte-for-byte the file-initial section data.
     for r in &regions[regions_before..] {
         let sec = obj
             .sections()
@@ -407,13 +357,9 @@ fn apply_elf_relocations_autoload_does_not_fabricate_values_for_undefined_extern
 #[test]
 fn apply_elf_relocations_autoload_preserves_preloaded_bytes_on_pre_resolved_binary() {
     // `arithmetic` is a dynamically-linked ET_EXEC whose only dynamic relocs
-    // (R_386_GLOB_DAT / R_386_JUMP_SLOT) target undefined externs and are
-    // deliberately skipped.  The autoload variant may still STAGE an uncovered
-    // GOT section (so the region set can grow), but with nothing resolved to
-    // apply it must never patch the originally-loaded bytes.  This pins that
-    // autoload is byte-preserving on the pre-existing regions of a pre-resolved
-    // binary — the sibling `apply_elf_relocations` no-op test covers the pure
-    // variant, and `..._pulls_in_missing_site_sections` covers active patching.
+    // target undefined externs and are skipped. Autoload may still stage an
+    // uncovered GOT section, so the region set can grow, but with nothing to
+    // apply it must not touch the originally-loaded bytes.
     let path = fixture_path("x86", "arithmetic");
     if !path.exists() {
         return;
@@ -428,8 +374,7 @@ fn apply_elf_relocations_autoload_preserves_preloaded_bytes_on_pre_resolved_bina
 
     strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
 
-    // Every originally-loaded region survives byte-for-byte: autoload only
-    // APPENDS staged sections, and a pre-resolved binary has no patch to apply.
+    // Autoload only appends, so every originally-loaded region survives.
     for (start, bytes) in &before {
         let after = regions
             .iter()

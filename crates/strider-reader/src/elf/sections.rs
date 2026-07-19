@@ -1,40 +1,18 @@
-//! ELF → [`MemRegion`] loaders.
-//!
-//! Two public entry points, both *kind-dispatched* on `obj.kind()`:
-//!
-//! - [`elf_get_loadable_regions`] — the code+read-only filter used by
-//!   [`super::reader::ElfFileMemReader`].  An executable instruction or a
-//!   compile-time-constant load may legitimately reference anything in
-//!   this set (`.text`, `.rodata`, `.plt`, `.eh_frame`).
-//! - [`elf_get_loadable_regions_including_writable`] — the broader
-//!   include-writable filter used by
-//!   [`super::relocations::apply_elf_relocations_autoload`].  Strictly a
-//!   superset of [`elf_get_loadable_regions`]; also picks up
-//!   `.data.rel.ro` / `.got.plt` / `.data` so relocations targeting
-//!   writable runtime data have something to patch.
+//! ELF to [`MemRegion`] loaders.
 //!
 //! # Dispatch
 //!
-//! For `ObjectKind::Executable` (ET_EXEC) and `ObjectKind::Dynamic`
-//! (ET_DYN) the loader walks **program headers** (`obj.segments()` —
-//! PT_LOAD entries).  Program headers are the canonical runtime memory
-//! layout: a linked executable is described to the OS loader by its
-//! program headers, not its section headers.  Section headers can be
-//! stripped from a linked binary entirely and the OS will still load it
-//! correctly; the section view is for debuggers / analysers.
+//! ET_EXEC / ET_DYN walk **program headers** (PT_LOAD). Those are the canonical
+//! runtime layout: the OS loads a linked binary from its program headers, and
+//! section headers can be stripped entirely without affecting that. The section
+//! view exists for debuggers and analysers.
 //!
-//! For `ObjectKind::Relocatable` (ET_REL — an `.o` object file) and any
-//! other kind, the loader falls back to walking **sections** because
-//! relocatable objects have *no* program headers at all (PT_LOAD only
-//! appears post-link).  A relocatable section's `sh_addr` is typically 0
-//! pre-link, so several sections (`.text`, `.text.startup`,
-//! `.text.foo`, …) commonly share VMA 0.  To avoid the later section
-//! silently shadowing the earlier one's bytes, ET_REL section
-//! collection uses **first-wins** VMA dedup: the first section reaching
-//! a given VMA keeps the slot; subsequent sections at the same VMA are
-//! dropped.  For ET_REL `MemRegionsLookupTable`'s own
-//! last-insert-wins rule would otherwise replace the earlier section's
-//! bytes with whatever section happened to come later in iteration
+//! ET_REL and every other kind fall back to walking **sections**, since a
+//! relocatable object has no program headers at all (PT_LOAD only appears
+//! post-link). Pre-link `sh_addr` is typically 0, so `.text`, `.text.startup`,
+//! `.text.foo` commonly share VMA 0. Section collection therefore uses
+//! **first-wins** VMA dedup: without it, `MemRegionsLookupTable`'s
+//! last-insert-wins rule would pick whichever section came later in iteration
 //! order, which is non-deterministic from the user's perspective.
 
 use std::collections::BTreeMap;
@@ -44,29 +22,19 @@ use object::{Object, ObjectKind, ObjectSection, ObjectSegment};
 
 use crate::{MemRegion, Result};
 
-/// What runtime-relevant bytes the loader should accept.
 #[derive(Clone, Copy)]
 enum LoadFilter {
-    /// Executable + non-writable allocatable bytes only (`.text`,
-    /// `.rodata`, `.plt`, `.eh_frame`).  Used by
-    /// [`super::reader::ElfFileMemReader`] for instruction fetch and
-    /// compile-time-constant loads.
+    /// `.text`, `.rodata`, `.plt`, `.eh_frame`: what an instruction fetch or a
+    /// constant-address load may legitimately reference.
     CodeAndReadOnly,
-    /// Every allocatable file-backed mapping, including writable
-    /// (`.data`, `.got`, `.data.rel.ro`).  Used by
-    /// [`super::relocations::apply_elf_relocations_autoload`] so
-    /// relocations targeting writable runtime data have something to
-    /// patch.
+    /// Also `.data`, `.got`, `.data.rel.ro`, so relocations targeting writable
+    /// runtime data have something to patch.
     AllAllocatable,
 }
 
 impl LoadFilter {
-    /// Does this filter accept a PT_LOAD segment with the given
-    /// `p_flags`?  PT_LOAD is the only segment type the loader maps; the
-    /// caller has already restricted iteration to PT_LOAD.
-    ///
-    /// `PF_W` indicates a writable mapping.  `CodeAndReadOnly` rejects
-    /// writable mappings; `AllAllocatable` accepts every PT_LOAD.
+    /// Callers have already restricted iteration to PT_LOAD, so only the `PF_W`
+    /// axis matters here.
     fn segment_accepts(self, p_flags: u32) -> bool {
         let is_writable = p_flags & object::elf::PF_W != 0;
         match self {
@@ -75,9 +43,8 @@ impl LoadFilter {
         }
     }
 
-    /// Does this filter accept a section with the given `sh_flags`?
-    /// Sections always require `SHF_ALLOC`; the `SHF_WRITE` /
-    /// `SHF_EXECINSTR` axes pick exec-or-rodata vs include-writable.
+    /// Sections always require `SHF_ALLOC`; `SHF_WRITE` / `SHF_EXECINSTR` then
+    /// pick exec-or-rodata vs include-writable.
     fn section_accepts(self, sh_flags: u64) -> bool {
         let is_alloc = sh_flags & u64::from(object::elf::SHF_ALLOC) != 0;
         if !is_alloc {
@@ -92,37 +59,21 @@ impl LoadFilter {
     }
 }
 
-/// Returns every code + read-only mapping the loader knows how to
-/// surface for `obj`.
-///
-/// Dispatches on `obj.kind()`:
-///
-/// - **`Executable` / `Dynamic`** (ET_EXEC / ET_DYN): walks PT_LOAD
-///   program headers (the runtime memory layout).  Writable segments
-///   are excluded.
-/// - **`Relocatable`** (ET_REL — `.o` object files), and any other
-///   kind: walks sections, picking executable or non-writable
-///   `SHF_ALLOC` sections.  First-wins VMA dedup applies — see the
-///   module-level docs.
+/// Every code + read-only mapping, kind-dispatched per the module docs:
+/// PT_LOAD program headers for ET_EXEC / ET_DYN (writable segments excluded),
+/// sections with first-wins VMA dedup otherwise.
 ///
 /// # Errors
 ///
-/// Returns an `object::Error` if an accepted segment / section's
-/// `data()` can't be read, or a `RegionOverflow` if any accepted
-/// mapping's `address + length` would exceed `u64::MAX`.
+/// When an accepted segment or section's `data()` can't be read, or its
+/// `address + length` would exceed `u64::MAX`.
 pub fn elf_get_loadable_regions(obj: &object::File<'_>) -> Result<Vec<MemRegion>> {
     collect_loadable_regions(obj, LoadFilter::CodeAndReadOnly)
 }
 
-/// Like [`elf_get_loadable_regions`] but additionally includes
-/// writable mappings (`.data.rel.ro`, `.got.plt`, `.data`).  Strictly
-/// a superset.
-///
-/// Used by [`super::relocations::apply_elf_relocations_autoload`] so
-/// dynamic relocations targeting writable runtime data have somewhere
-/// to patch.  Same dispatch as [`elf_get_loadable_regions`] —
-/// program-headers for ET_EXEC / ET_DYN, sections (with first-wins
-/// VMA dedup) for ET_REL.
+/// A strict superset of [`elf_get_loadable_regions`], adding writable mappings
+/// (`.data.rel.ro`, `.got.plt`, `.data`) so dynamic relocations targeting
+/// writable runtime data have somewhere to patch. Same dispatch.
 ///
 /// # Errors
 ///
@@ -133,14 +84,10 @@ pub fn elf_get_loadable_regions_including_writable(
     collect_loadable_regions(obj, LoadFilter::AllAllocatable)
 }
 
-/// Force the **section-header-walk** strategy (first-wins VMA dedup)
-/// regardless of `obj.kind()` — bypassing [`elf_get_loadable_regions`]'s
-/// kind dispatch even for an ET_EXEC / ET_DYN binary that DOES carry
-/// PT_LOAD segments.  Used by `strider.lift.load_elf(path,
-/// from_segments=False)` (the Python high-level facade) when the caller
-/// explicitly wants section-granular regions (e.g. `.text` / `.rodata`
-/// / `.plt` as separate mappings) instead of the segment loader's
-/// coalesced PT_LOAD ranges.
+/// Forces the section walk (with first-wins VMA dedup) regardless of
+/// `obj.kind()`, even for an ET_EXEC / ET_DYN binary that does carry PT_LOAD
+/// segments. For callers wanting section-granular regions (`.text` / `.rodata`
+/// / `.plt` as separate mappings) instead of coalesced PT_LOAD ranges.
 ///
 /// # Errors
 ///
@@ -149,9 +96,7 @@ pub fn elf_get_loadable_regions_sections_only(obj: &object::File<'_>) -> Result<
     collect_loadable_sections_dedup(obj, LoadFilter::CodeAndReadOnly)
 }
 
-/// Like [`elf_get_loadable_regions_sections_only`] but additionally
-/// includes writable mappings, mirroring
-/// [`elf_get_loadable_regions_including_writable`]'s writable axis.
+/// [`elf_get_loadable_regions_sections_only`] plus the writable mappings.
 ///
 /// # Errors
 ///
@@ -162,36 +107,26 @@ pub fn elf_get_loadable_regions_sections_only_including_writable(
     collect_loadable_sections_dedup(obj, LoadFilter::AllAllocatable)
 }
 
-/// Kind-dispatch: program-headers path for ET_EXEC / ET_DYN, sections
-/// path (with first-wins VMA dedup) for ET_REL and everything else.
 fn collect_loadable_regions(obj: &object::File<'_>, filter: LoadFilter) -> Result<Vec<MemRegion>> {
     match obj.kind() {
         ObjectKind::Executable | ObjectKind::Dynamic => collect_loadable_segments(obj, filter),
-        // ET_REL (Relocatable) plus any unknown/core kind: the safest
-        // fallback is the section-walker — an `.o` has no program
-        // headers, and core dumps' segment layout isn't what the
-        // analyser wants either.  Section-walker collects allocatable
-        // sections under first-wins VMA dedup.
+        // ET_REL plus any unknown / core kind. An `.o` has no program headers,
+        // and a core dump's segment layout isn't what the analyser wants
+        // either, so the section walk is the safer fallback for both.
         _ => collect_loadable_sections_dedup(obj, filter),
     }
 }
 
-/// Walks `obj.segments()`, keeping every PT_LOAD entry whose `p_flags`
-/// passes `filter`, and returns one [`MemRegion`] per accepted segment
-/// (using the file-backed bytes — `segment.data()`).
-///
-/// Empty `data()` (a BSS-only segment with `p_filesz == 0`) is silently
-/// skipped — there's nothing to load.
+/// One [`MemRegion`] per accepted PT_LOAD segment, from its file-backed bytes.
+/// Empty `data()` (a BSS-only segment, `p_filesz == 0`) has nothing to load and
+/// is skipped.
 fn collect_loadable_segments(obj: &object::File<'_>, filter: LoadFilter) -> Result<Vec<MemRegion>> {
     let mut out = Vec::new();
     for seg in obj.segments() {
-        // `obj.segments()` only yields PT_LOAD entries: the `object`
-        // crate's ELF segment iterator filters on `p_type == PT_LOAD`
-        // internally, and the generic `Segment` trait exposes no
-        // `p_type` to re-assert here.  We read `p_flags` only to apply
-        // the writable / executable `LoadFilter` axis below — NOT to
-        // re-check the segment type (which is already guaranteed
-        // PT_LOAD-only by the iterator).
+        // `obj.segments()` already yields PT_LOAD only (the `object` crate
+        // filters on `p_type` internally, and the generic `Segment` trait
+        // exposes no `p_type` to re-assert). `p_flags` is read purely for the
+        // writable / executable filter axis, not to re-check segment type.
         let object::SegmentFlags::Elf { p_flags } = seg.flags() else {
             continue;
         };
@@ -207,16 +142,9 @@ fn collect_loadable_segments(obj: &object::File<'_>, filter: LoadFilter) -> Resu
     Ok(out)
 }
 
-/// Walks `obj.sections()`, keeping every section whose `sh_flags`
-/// passes `filter` and has file-backed bytes, and returns one
-/// [`MemRegion`] per accepted section.
-///
-/// Uses **first-wins VMA dedup**: when two sections share the same
-/// `sh_addr`, the first one encountered in iteration order keeps the
-/// slot.  `.o` (ET_REL) files commonly have several sections at
-/// VMA 0 pre-link (`.text`, `.text.startup`, …); without this dedup
-/// `MemRegionsLookupTable`'s own last-insert-wins rule would
-/// non-deterministically swap one section's bytes for another's.
+/// One [`MemRegion`] per accepted file-backed section, under **first-wins VMA
+/// dedup**: when two sections share an `sh_addr`, the first encountered keeps
+/// the slot. See the module docs for why last-wins is not acceptable here.
 fn collect_loadable_sections_dedup(
     obj: &object::File<'_>,
     filter: LoadFilter,
@@ -233,10 +161,8 @@ fn collect_loadable_sections_dedup(
         if data.is_empty() {
             continue;
         }
-        // First-wins: only build a `MemRegion` (which copies `data`) when
-        // no region already occupies this start address.  Avoids the
-        // copy on the loser of a VMA collision (`.text` vs `.text.foo`
-        // in an ET_REL `.o` before linking).
+        // Build the `MemRegion` (which copies `data`) only on a vacant entry,
+        // so the loser of a VMA collision costs no copy.
         if let std::collections::btree_map::Entry::Vacant(e) = by_addr.entry(sec.address()) {
             let region = MemRegion::new(sec.address(), data.to_vec())?;
             e.insert(region);

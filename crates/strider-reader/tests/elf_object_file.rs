@@ -1,14 +1,11 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! Loader tests against an ET_REL object file produced by the
-//! toolchain — `fixtures/out/<arch>/tzcount.o`.
+//! The loader against a real ET_REL object, `fixtures/out/<arch>/tzcount.o`.
 //!
-//! ET_REL files have no PT_LOAD program headers, so the loader must
-//! dispatch to the section-walker.  Several sections commonly share
-//! VMA 0 pre-link (`.text` carrying `tzcount`, `.text.startup`
-//! carrying `main`); first-wins VMA dedup is what makes a `tzcount`
-//! lookup land on the intended `.text` bytes instead of being
-//! silently swapped by a later iteration-order shadow.
+//! ET_REL has no PT_LOAD program headers, so the loader must dispatch to the
+//! section walker. Sections commonly share VMA 0 pre-link (`.text` carrying
+//! `tzcount`, `.text.startup` carrying `main`), and first-wins VMA dedup is
+//! what keeps a `tzcount` lookup on the intended `.text` bytes.
 
 use object::{Object, ObjectSymbol};
 use std::path::PathBuf;
@@ -22,21 +19,15 @@ fn object_path(arch: &str, case: &str) -> PathBuf {
         .join(format!("{case}.o"))
 }
 
-/// `strider.load`'s loader path: parse the `.o`, build an
-/// `ElfFileMemReader`, then verify a function symbol from the `.o`
-/// (`tzcount`) resolves to bytes that can be read back at its
-/// symbol address.  Pre-fix, this loader produced an empty memory
-/// map for `.o` files because it walked PT_LOAD program headers
-/// (which an `.o` doesn't have); the read at the symbol address
-/// returned `None` and any analysis built on top was a no-op.
+/// Regression: the loader used to walk PT_LOAD program headers unconditionally,
+/// so `.o` files produced an empty memory map, reads at symbol addresses
+/// returned `None`, and any analysis on top silently no-opped.
 #[test]
 fn et_rel_object_file_loads_text_at_tzcount_symbol_address() {
     let path = object_path("x64", "tzcount");
     if !path.exists() {
-        // `make -C fixtures ARCH=x64 CASE=tzcount` builds this.
-        // Tests skip cleanly when fixtures aren't built — matches the
-        // existing `apply_elf_relocations_patches_dispatch_table_x86_64`
-        // skip convention.
+        // `make -C fixtures ARCH=x64 CASE=tzcount` builds this; skip cleanly
+        // when fixtures aren't built.
         return;
     }
 
@@ -50,22 +41,16 @@ fn et_rel_object_file_loads_text_at_tzcount_symbol_address() {
 
     let reader = ElfFileMemReader::from_object(&obj).expect("ElfFileMemReader::from_object");
 
-    // `tzcount`'s symbol resolves to an absolute address in the loaded
-    // image (for an ET_REL with `sh_addr == 0`, that's just the
-    // section-relative offset, which is 0 because `.text` starts at
-    // VMA 0 and `tzcount` is the first function).  The point of the
-    // test isn't the specific number, just that *some* readable byte
+    // For an ET_REL with `sh_addr == 0` this is just the section-relative
+    // offset. The specific number doesn't matter, only that a readable byte
     // sits where the symbol says it does.
     let tz = obj
         .symbol_by_name("tzcount")
         .expect("tzcount symbol present");
     let addr = tz.address();
 
-    // Reading a single byte at the symbol address must succeed.  This
-    // is the minimum contract Strider needs to even start lifting:
-    // Sleigh's `lift_one(addr)` will call `MemReader::read(addr, _)`
-    // for instruction fetch, and a failed read here means "I couldn't
-    // load this function from the binary at all".
+    // The minimum contract for lifting to start at all: Sleigh's
+    // `lift_one(addr)` fetches instructions through `MemReader::read`.
     assert!(
         ReadOnlyMemory::read(&reader, addr, &mut [0u8; 1]).is_ok(),
         "loader must surface .text bytes for the tzcount symbol at {addr:#x}; \

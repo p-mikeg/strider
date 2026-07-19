@@ -1,43 +1,20 @@
-//! Memory readers for the Strider binary analysis framework.
-//!
-//! The crate provides:
-//!   * Generic region-based memory storage ([`MemRegion`],
-//!     [`MemRegionsLookupTable`]) that any reader backend can compose.
-//!   * A re-export of the [`ReadOnlyMemory`] trait (defined in
-//!     `strider-ir`) used by the optimizer's `LoadReadOnly` pass to resolve
-//!     compile-time-constant loads.
-//!   * An ELF backend in the [`elf`] module that implements both
-//!     [`rsleigh::MemReader`] (for Sleigh instruction fetch) and
-//!     [`ReadOnlyMemory`] from the same underlying regions.
-//!
-//! New reader backends (raw blobs, PE, Mach-O, …) can live alongside `elf`
-//! and implement the same traits so they plug interchangeably into the
-//! pipeline.
+//! Memory readers: generic region storage ([`MemRegion`],
+//! [`MemRegionsLookupTable`]) plus an [`elf`] backend that serves both
+//! [`rsleigh::MemReader`] (instruction fetch) and [`ReadOnlyMemory`]
+//! (constant-load folding) from the same regions.
 
 use std::collections::BTreeMap;
 
-/// Crate-level `Result` alias.  Every fallible function in `strider-reader`
-/// returns this type.
 pub type Result<T> = anyhow::Result<T>;
 
 pub mod elf;
 pub use elf::{ElfFileMemReader, OwnedElf, load_elf};
 
-// ── MemReadError ─────────────────────────────────────────────────────────────
-//
-// rsleigh 4.0.0's [`rsleigh::MemReader`] requires `type Err: std::error::Error
-// + 'static`.  Strider's readers want to keep using the ergonomic
-// [`anyhow::Error`] for everything else, but `anyhow::Error` itself does *not*
-// implement [`std::error::Error`] (precisely so it can hold any error
-// transparently).  This thin wrapper bridges the gap: it owns an
-// `anyhow::Error`, implements [`std::error::Error`] by delegating
-// `Display` / `Debug` / `source` to the wrapped value, and offers `From`
-// conversions so call sites can use `?` and `anyhow!`/`bail!` as before.
-
-/// Error type returned by every [`rsleigh::MemReader`] impl in the strider
-/// crates.  Wraps an [`anyhow::Error`] so the trait's `std::error::Error`
-/// bound (introduced in rsleigh 4.0.0) is satisfied while preserving the
-/// `anyhow!` / `?` ergonomics callers already rely on.
+/// Error type for every [`rsleigh::MemReader`] impl in the strider crates.
+///
+/// `rsleigh::MemReader` requires `Err: std::error::Error + 'static`, which
+/// `anyhow::Error` deliberately does not implement. This wrapper satisfies the
+/// bound while keeping `anyhow!` / `?` usable at call sites.
 #[derive(Debug)]
 pub struct MemReadError(pub(crate) anyhow::Error);
 
@@ -49,9 +26,8 @@ impl std::fmt::Display for MemReadError {
 
 impl std::error::Error for MemReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        // `anyhow::Error` does not implement `std::error::Error`, but its
-        // inner cause does.  Walk one level down so consumers that
-        // chase `source()` see the real underlying error.
+        // `anyhow::Error` isn't a `std::error::Error`, but its inner cause is.
+        // Walk one level down so `source()` chasers see the real error.
         self.0.source()
     }
 }
@@ -62,31 +38,19 @@ impl From<anyhow::Error> for MemReadError {
     }
 }
 
-// `From<MemReadError> for anyhow::Error` is provided automatically by
-// anyhow's blanket `impl<E: std::error::Error + Send + Sync + 'static>
-// From<E> for anyhow::Error`, since `MemReadError: std::error::Error +
-// Send + Sync + 'static`.
+// `From<MemReadError> for anyhow::Error` comes free from anyhow's blanket impl
+// over `std::error::Error + Send + Sync + 'static`.
 
-// ── ReadOnlyMemory trait ──────────────────────────────────────────────────────
-//
-// The trait itself lives in the generic `read-only-memory` crate so the
-// optimizer crates can depend on it without back-edging through
-// `strider-reader`.  Re-exported here for backwards compatibility; the
-// concrete `ElfFileMemReader` impl in `elf.rs` continues to implement
-// `read_only_memory::ReadOnlyMemory` under the alias `crate::ReadOnlyMemory`.
+// The trait lives in the generic `read-only-memory` crate so the optimizer
+// crates can depend on it without back-edging through `strider-reader`.
 pub use read_only_memory::ReadOnlyMemory;
 
-// ── MemRegion ─────────────────────────────────────────────────────────────────
-
-/// A contiguous range of bytes loaded at a fixed virtual address.
+/// A contiguous range of bytes loaded at a fixed virtual address: one
+/// backend-specific mapping (ELF section, blob manifest entry, ...) into the
+/// target's address space.
 ///
-/// Corresponds to one backend-specific mapping (e.g. an ELF section or an
-/// entry from a raw blob manifest) into the virtual address space of the
-/// target binary.
-///
-/// Fields are private so the "no overflow" invariant established by
-/// [`new`](Self::new) cannot be bypassed after construction. Read access
-/// is via [`start_addr`](Self::start_addr) and [`data`](Self::data).
+/// Fields are private so the no-overflow invariant [`new`](Self::new)
+/// establishes cannot be bypassed after construction.
 #[derive(Clone, Debug)]
 pub struct MemRegion {
     start_addr: u64,
@@ -94,14 +58,11 @@ pub struct MemRegion {
 }
 
 impl MemRegion {
-    /// Creates a new `MemRegion` loaded at `start_addr`.
-    ///
     /// # Errors
     ///
-    /// Returns an error when `start_addr + data.len()` would exceed
-    /// `u64::MAX`. This guarantees that downstream methods
-    /// ([`end_addr`](Self::end_addr), [`contains`](Self::contains),
-    /// [`read`](Self::read)) can treat the region's end as a plain `u64`.
+    /// Errors when `start_addr + data.len()` would exceed `u64::MAX`. This is
+    /// what lets [`end_addr`](Self::end_addr), [`contains`](Self::contains) and
+    /// [`read`](Self::read) treat the region's end as a plain `u64`.
     pub fn new(start_addr: u64, data: Vec<u8>) -> Result<Self> {
         let len = data.len() as u64;
         start_addr.checked_add(len).ok_or_else(|| {
@@ -110,53 +71,38 @@ impl MemRegion {
         Ok(Self { start_addr, data })
     }
 
-    /// First virtual address covered by this region.
     pub fn start_addr(&self) -> u64 {
         self.start_addr
     }
 
-    /// Raw bytes of the region, starting at [`start_addr`](Self::start_addr).
     pub fn data(&self) -> &[u8] {
         &self.data
     }
 
-    /// Mutable view of the region's bytes.  The Vec's length is not
-    /// resizable through this view (the slice doesn't expose
-    /// truncate/extend), so the constructor's "no overflow" invariant
-    /// on `start_addr + data.len()` survives.  Used by relocation
-    /// appliers to patch in-place without rebuilding the region.
+    /// A slice, so length can't change through it and the constructor's
+    /// no-overflow invariant survives. Relocation appliers patch through this.
     pub fn data_mut(&mut self) -> &mut [u8] {
         &mut self.data
     }
 
-    /// One past the last virtual address covered by this region.
-    ///
-    /// `end_addr == start_addr + data.len()`. Cannot overflow: the
-    /// constructor [`new`](Self::new) rejects any `(start_addr, data)` pair
-    /// that would.
+    /// One past the last address covered. Cannot overflow: [`new`](Self::new)
+    /// rejects any pair that would.
     pub fn end_addr(&self) -> u64 {
         self.start_addr + self.data.len() as u64
     }
 
-    /// Returns `true` when `addr` falls within `[start_addr, end_addr)`.
+    /// `addr` falls within `[start_addr, end_addr)`.
     pub fn contains(&self, addr: u64) -> bool {
         addr >= self.start_addr && addr < self.end_addr()
     }
 
-    /// Reads bytes starting at `addr` into `out`.
+    /// Reads bytes at `addr` into `out`, possibly partially.
     ///
-    /// Returns:
-    /// - `Some(n)` when [`contains(addr)`](Self::contains) — `n` is the number
-    ///   of bytes copied, with `n <= out.len()`. `n` is less than `out.len()`
-    ///   when `addr + out.len()` extends past the end of this region; in
-    ///   particular, `n == 0` when `out` is empty (the address is mapped but
-    ///   the caller asked for zero bytes).
-    /// - `None` when `!contains(addr)` — that is, `addr < start_addr` or
-    ///   `addr >= end_addr`. A zero-byte read at exactly `end_addr` returns
-    ///   `None` rather than `Some(0)`, mirroring the rule that `end_addr`
-    ///   itself is not part of the region. Note that for an empty region
-    ///   (`data.len() == 0`), `start_addr == end_addr`, so every address
-    ///   satisfies `addr >= end_addr` and reads always return `None`.
+    /// `Some(n)` when [`contains(addr)`](Self::contains); `n < out.len()` when
+    /// the request runs past the region's end. `None` otherwise, including a
+    /// zero-length read at exactly `end_addr` (the end is exclusive even for a
+    /// zero-byte request). An empty region has `start_addr == end_addr`, so it
+    /// contains nothing and always returns `None`.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let (offset, available) = self.available_at(addr)?;
         let to_copy = available.min(out.len());
@@ -164,27 +110,20 @@ impl MemRegion {
         Some(to_copy)
     }
 
-    /// Returns `(offset, available)` for `addr` within this region, where
-    /// `offset` is the byte index into [`data`](Self::data) and `available`
-    /// is the (non-zero) number of bytes from `addr` to the region's end.
-    ///
-    /// Returns `None` when `!contains(addr)`.  Lets a caller decide which of
-    /// several overlapping regions best satisfies a request before writing.
+    /// `(index into data, non-zero bytes remaining)`, or `None` when `addr` is
+    /// outside. Lets a caller pick among overlapping regions before writing.
     fn available_at(&self, addr: u64) -> Option<(usize, usize)> {
         let offset = usize::try_from(addr.checked_sub(self.start_addr)?).ok()?;
         let available = self.data.len().checked_sub(offset)?;
         (available != 0).then_some((offset, available))
     }
 
-    /// Returns `true` when this region fully covers the request
-    /// `[addr, addr + len)` — `addr` is mapped and the request doesn't
-    /// straddle past [`end_addr`](Self::end_addr).  An `addr + len` that
-    /// would overflow `u64` is treated as not covered.
+    /// This region covers all of `[addr, addr + len)`. An `addr + len` that
+    /// overflows `u64` counts as not covered.
     ///
-    /// This is the single source of truth for the "highest-start-down,
-    /// must-fully-cover" coverage rule shared by
-    /// [`MemRegionsLookupTable::read`]'s full-coverage fast path and the
-    /// relocation patcher's covering-region lookup.
+    /// Single source of truth for the must-fully-cover rule shared by
+    /// [`MemRegionsLookupTable::read`]'s fast path and the relocation patcher's
+    /// covering-region lookup.
     pub fn fully_covers(&self, addr: u64, len: usize) -> bool {
         match addr.checked_add(len as u64) {
             Some(end) => self.contains(addr) && end <= self.end_addr(),
@@ -193,75 +132,45 @@ impl MemRegion {
     }
 }
 
-// ── MemRegionsLookupTable ─────────────────────────────────────────────────────
-
-/// A fast lookup table over a collection of [`MemRegion`]s, possibly overlapping.
+/// Lookup table over a set of possibly-overlapping [`MemRegion`]s.
 ///
-/// Regions are indexed by start address in a `BTreeMap`, giving O(log n)
-/// candidate lookup via a range query. Two regions sharing the same start
-/// address collapse: the last-inserted one wins. When regions overlap at
-/// different start addresses, reads resolve by walking candidates from the
-/// highest `start_addr <= addr` downward and returning the first region that
-/// contains `addr`; this is O(log n) in the usual non-overlapping case and
-/// O(n) in the worst case where every earlier region must be consulted.
+/// Keyed by start address, so candidate lookup is an O(log n) range query.
+/// Regions sharing a start address collapse, last-inserted wins. Overlapping
+/// regions at distinct starts resolve by walking candidates from the highest
+/// `start_addr <= addr` downward: O(log n) on the usual disjoint set, O(n)
+/// worst case.
 #[derive(Debug)]
 pub struct MemRegionsLookupTable {
-    /// Sorted map from region start address to the region itself.
     regions: BTreeMap<u64, MemRegion>,
 }
 
 impl MemRegionsLookupTable {
-    /// Builds a lookup table from `regions`.
-    ///
-    /// If two regions share the same start address, the later one in iteration
-    /// order overwrites the earlier one.
+    /// Two regions sharing a start address collapse to the later one.
     pub fn new<I: IntoIterator<Item = MemRegion>>(regions: I) -> Self {
         Self {
             regions: regions.into_iter().map(|r| (r.start_addr(), r)).collect(),
         }
     }
 
-    /// Reads bytes starting at `addr` from whichever region contains it.
+    /// Reads bytes at `addr` from whichever region wins; `None` when none
+    /// contains `addr`. Partial reads are possible, see [`MemRegion::read`].
     ///
-    /// Returns `None` when no region contains `addr`.
-    /// Partial reads are possible — see [`MemRegion::read`].
+    /// Resolution is **all-or-most**, never a per-byte merge: `out` is filled
+    /// from exactly one region, so it is never a cross-region byte mix.
+    /// Candidates are walked from the highest `start_addr <= addr` downward.
+    /// A region fully covering the request wins outright (highest start among
+    /// those); otherwise the region covering the most of it wins, ties going to
+    /// the highest start.
     ///
-    /// Candidates are walked from highest `start_addr <= addr` downward.  A
-    /// region that fully satisfies the request (highest such start address
-    /// wins) is used immediately; otherwise the region covering the most of
-    /// the request is chosen.  This means a shorter region sitting inside a
-    /// larger one shadows the larger one only for the bytes it actually
-    /// covers — a read straddling the inner region's end falls through to the
-    /// fully-covering outer region rather than returning a short partial read.
-    ///
-    /// # Overlapping regions with differing bytes
-    ///
-    /// When two regions overlap at *distinct* start addresses and disagree
-    /// on the bytes in the overlap (a malformed / synthesised region set —
-    /// well-formed ELF loadable ranges are disjoint), the resolution is
-    /// fully specified by the two rules above and is intentionally
-    /// **all-or-most**, not a per-byte merge:
-    ///
-    /// - If exactly one candidate region *fully covers* the request, that
-    ///   region's bytes win (the highest-start such region if several do).
-    /// - Otherwise the region that covers the **most** of the request wins
-    ///   outright, and `out` is filled entirely from that one region.  When
-    ///   two candidates tie on coverage length, the highest-start one wins
-    ///   (it is encountered first and `best` updates only on strictly
-    ///   greater coverage).
-    ///
-    /// In particular a partial read that *straddles* a shorter higher-start
-    /// region's end resolves to the lower-start region that reaches further,
-    /// not to the higher-start region's truncated prefix — `out` is never a
-    /// cross-region byte mix.
-    ///
-    /// Availability is computed without writing so `out` is filled exactly
-    /// once from the winning region (no cross-region byte mixing).
+    /// Consequence worth knowing: a read straddling a shorter inner region's
+    /// end falls through to the fully-covering outer region rather than
+    /// returning the inner region's truncated prefix. Overlapping regions that
+    /// disagree on bytes only arise from a malformed or synthesised region set
+    /// (well-formed ELF loadable ranges are disjoint), but the rule above
+    /// specifies that case rather than leaving it to iteration order.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let mut best: Option<(&MemRegion, usize)> = None;
         for (_, region) in self.regions.range(..=addr).rev() {
-            // A region that covers the whole request wins outright; iterating
-            // highest-start-first means the latest-starting such region wins.
             if region.fully_covers(addr, out.len()) {
                 return region.read(addr, out);
             }
@@ -276,18 +185,18 @@ impl MemRegionsLookupTable {
         best.and_then(|(region, _)| region.read(addr, out))
     }
 
-    /// Fill-all-or-error read: copies the exact mapped bytes into `buf` (no
-    /// endianness swap), erroring if `addr` is unmapped or the request straddles
-    /// the end of a region (a short fill).  This is the single source of truth
-    /// for the `ReadOnlyMemory::read` contract that every region-backed reader
-    /// (ELF, Python buffer) needs — `LoadReadOnly` must never fold a constant
-    /// from partial bytes.
+    /// Fill-all-or-error read: copies the mapped bytes into `buf` **raw**, with
+    /// no endianness swap. Callers wanting an integer decode them themselves.
+    ///
+    /// Single source of truth for the `ReadOnlyMemory::read` contract every
+    /// region-backed reader (ELF, Python buffer) implements. Short fills must
+    /// error, not truncate, so `LoadReadOnly` can never fold a constant out of
+    /// partial bytes.
     ///
     /// # Errors
     ///
-    /// Returns an error if `addr` is not mapped by any region, or if the
-    /// request straddles the end of a region so fewer than `buf.len()` bytes
-    /// are available (a short fill).
+    /// When `addr` is unmapped, or the request straddles a region's end so
+    /// fewer than `buf.len()` bytes are available.
     pub fn read_exact(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let want = buf.len();
         let got = self

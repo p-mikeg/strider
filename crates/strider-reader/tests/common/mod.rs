@@ -1,11 +1,6 @@
-// Shared helpers for the strider-reader crate's integration tests.
-//
-// Included by each test file via:
-//     #[path = "common/mod.rs"]
-//     mod common;
-//
-// Items use `#[allow(dead_code)]` because any given test crate only
-// exercises a subset — unused items would otherwise warn.
+// Included per test file via `#[path = "common/mod.rs"] mod common;`, so each
+// test crate compiles its own copy and exercises only a subset. Hence the
+// blanket `dead_code` allow.
 
 #![allow(dead_code)]
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]

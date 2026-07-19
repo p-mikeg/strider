@@ -1,19 +1,12 @@
-//! Backend-agnostic assertions over the `rsleigh::MemReader` and
-//! `strider_reader::ReadOnlyMemory` traits.
-//!
-//! When a new backend (PE, Mach-O, raw blob, …) lands, its test file
-//! builds the reader and calls these helpers in addition to its own
-//! backend-specific assertions.
+//! Backend-agnostic assertions over `rsleigh::MemReader` and
+//! `strider_reader::ReadOnlyMemory`. A new backend (PE, Mach-O, raw blob, ...)
+//! calls these alongside its own backend-specific assertions.
 
 #![allow(dead_code)]
 
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::ReadOnlyMemory;
 
-// ── MemReader ────────────────────────────────────────────────────────────
-
-/// Asserts that a full `buf.len()` read at `addr` succeeds and the
-/// resulting bytes equal `expected`.
 pub(crate) fn assert_mem_reader_reads<R>(r: &R, addr: u64, expected: &[u8])
 where
     R: MemReader,
@@ -42,9 +35,8 @@ where
     );
 }
 
-/// Asserts that a read at an unmapped address fails with an error whose
-/// message identifies it as a "not mapped" failure carrying the
-/// requested address in hex.
+/// The error message must name the failure and carry the requested address in
+/// hex.
 pub(crate) fn assert_mem_reader_unmapped_is_not_mapped_error<R>(r: &R, addr: u64)
 where
     R: MemReader,
@@ -68,8 +60,8 @@ where
     );
 }
 
-/// Asserts that a partial read (buf larger than region suffix) returns
-/// `Ok(expected_n)`, documenting MemReader's permissive partial-read contract.
+/// A buffer larger than the region suffix returns `Ok(expected_n)`: MemReader
+/// permits partial reads.
 pub(crate) fn assert_mem_reader_partial_read_ok<R>(
     r: &R,
     addr: u64,
@@ -93,19 +85,15 @@ pub(crate) fn assert_mem_reader_partial_read_ok<R>(
     assert_eq!(n, expected_n, "partial read length");
 }
 
-// ── ReadOnlyMemory ───────────────────────────────────────────────────────
-
-/// Asserts that filling a `expected.len()`-byte buffer at `addr` succeeds
-/// and yields exactly the RAW mapped bytes (no endianness swap — the
-/// reader copies bytes verbatim; decode is the optimizer's job).
+/// The bytes must arrive raw, with no endianness swap: the reader copies
+/// verbatim and decoding is the optimizer's job.
 pub(crate) fn assert_readonly_reads(r: &impl ReadOnlyMemory, addr: u64, expected: &[u8]) {
     let mut buf = vec![0u8; expected.len()];
     r.read(addr, &mut buf).expect("ReadOnlyMemory::read");
     assert_eq!(&buf[..], expected, "ReadOnlyMemory raw bytes");
 }
 
-/// Asserts that filling a `len`-byte buffer at `addr` errors (any byte in
-/// the range is unmapped — the all-or-nothing contract).
+/// All-or-nothing: any unmapped byte in the range must error.
 pub(crate) fn assert_readonly_errors(r: &impl ReadOnlyMemory, addr: u64, len: usize) {
     let mut buf = vec![0u8; len];
     assert!(

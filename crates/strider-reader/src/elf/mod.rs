@@ -1,38 +1,11 @@
-//! ELF-backed implementation of [`crate::MemRegion`]s and the
-//! [`rsleigh::MemReader`] trait.
+//! The ELF backend: [`crate::MemRegion`] sets built from an [`object::File`],
+//! plus the reader that serves them.
 //!
-//! This module is the ELF-specific half of the `strider-reader` crate. The generic
-//! region-lookup machinery (`MemRegion`, `MemRegionsLookupTable`) lives in
-//! [`crate`] so other backends (raw blobs, PE, Mach-O, …) can reuse it.
-//!
-//! # Submodules
-//!
-//! - [`sections`] — ELF segment / section loaders that produce
-//!   [`MemRegion`](crate::MemRegion) sets from an [`object::File`].
-//!   The auto-dispatching entry points are kind-dispatched on
-//!   `obj.kind()`: ET_EXEC / ET_DYN walk PT_LOAD segments (program
-//!   headers), ET_REL walks sections with first-wins VMA dedup.  The
-//!   narrower preset [`elf_get_loadable_regions`] is used by
-//!   [`ElfFileMemReader`]; the broader
-//!   [`elf_get_loadable_regions_including_writable`] is used by
-//!   [`apply_elf_relocations_autoload`] so dynamic relocs targeting
-//!   writable runtime data (`.got.plt` / `.data.rel.ro`) have
-//!   something to patch.  [`elf_get_loadable_regions_sections_only`]
-//!   (+ its `_including_writable` sibling) force the section-walk
-//!   strategy even for a linked ET_EXEC/ET_DYN binary — used by
-//!   `strider.lift.load_elf(path, from_segments=False)`.
-//! - [`reader`] — [`ElfFileMemReader`], the
-//!   [`rsleigh::MemReader`] + [`crate::ReadOnlyMemory`] impl that owns
-//!   its regions.
-//! - [`relocations`] — the relocation applier family
-//!   ([`apply_elf_relocations`], [`apply_elf_relocations_autoload`],
-//!   and the per-arch `R_*_RELATIVE` / `R_*_GLOB_DAT` /
-//!   `R_*_JUMP_SLOT` tables).  ET_DYN uses the dynamic-relocations
-//!   table; ET_REL uses per-section relocations.
-//! - [`load`] — the top-level convenience entries
-//!   ([`load_elf`] for `'static`-lifetime ELF parsing,
-//!   [`elf_load_with_relocations`] for an all-in-one regions + relocs
-//!   load).
+//! [`sections`] loaders are kind-dispatched on `obj.kind()`: ET_EXEC / ET_DYN
+//! walk PT_LOAD segments, ET_REL walks sections with first-wins VMA dedup. The
+//! `_sections_only` presets force the section walk regardless of kind.
+//! [`relocations`] patches sites in place: ET_DYN via the dynamic-relocations
+//! table, ET_REL via per-section tables.
 
 pub mod load;
 pub mod reader;

@@ -1,35 +1,24 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! End-to-end smoke tests against real toolchain-produced ELFs.
+//! End-to-end against real toolchain-produced ELFs, one test per architecture.
 //!
-//! One test per supported architecture. Each asserts that `load_elf`
-//! parses the binary, `ElfFileMemReader::from_path` accepts it, and both
-//! trait impls can read one byte at the ELF entry point.
-//!
-//! Build prerequisites first:
-//!
-//!     make -C fixtures
-//!
-//! Tests panic with a clear message if the binary is absent — matching
-//! the convention used by `strider_cfg::cfg_integration` and `strider::run`.
+//! Requires `make -C fixtures`. Unlike most fixture-backed tests here, these
+//! panic rather than skip when the binary is absent.
 
 use object::Object;
 use strider_reader::{ElfFileMemReader, ReadOnlyMemory};
 
 fn binary_path(arch: &str) -> std::path::PathBuf {
-    // The legacy single-fixture `test.elf` was split into per-category
-    // fixtures by the strider-crate review.  `arithmetic.elf` stands in
-    // for the smoke check — every supported arch builds it cleanly.
+    // `arithmetic.elf` stands in for the smoke check: every supported arch
+    // builds it cleanly.
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/out")
         .join(arch)
         .join("arithmetic.elf")
 }
 
-/// Loads `fixtures/out/<arch>/test.elf` and asserts the reader
-/// impls all round-trip on it. Every supported arch in this workspace
-/// is little-endian (x86, x64, arm/EABI5, aarch64), so that's asserted
-/// uniformly here.
+/// Every arch in this workspace is little-endian (x86, x64, arm/EABI5,
+/// aarch64), so endianness is asserted uniformly.
 fn assert_smoke(arch: &str) {
     let path = binary_path(arch);
     assert!(
@@ -38,7 +27,6 @@ fn assert_smoke(arch: &str) {
         path.display(),
     );
 
-    // load_elf round-trip
     let obj = strider_reader::load_elf(&path).unwrap();
     let obj = obj.file();
     assert_eq!(
@@ -47,15 +35,11 @@ fn assert_smoke(arch: &str) {
         "{arch}: expected little-endian binary",
     );
 
-    // ElfFileMemReader round-trip
     let r = ElfFileMemReader::from_path(&path).unwrap();
 
-    // Read 1 byte from a known-executable address.  We prefer `obj.entry()`
-    // when it's non-zero; some toolchains (x86 in this fixture set) emit
-    // ELFs with `e_entry == 0` because no entry symbol was passed to the
-    // linker.  Fall back to the first executable code section's address —
-    // ElfFileMemReader maps code + readonly-data sections, so picking a
-    // section ensures the address is in the reader's region table.
+    // Some toolchains (x86 in this fixture set) emit `e_entry == 0` when no
+    // entry symbol reached the linker. Fall back to the first executable
+    // section, which is guaranteed to be in the reader's region table.
     use object::{ObjectSection, SectionKind};
     let exec_addr = if obj.entry() != 0 {
         obj.entry()
@@ -79,13 +63,11 @@ fn assert_smoke(arch: &str) {
     .unwrap();
     assert_eq!(n, 1, "{arch}: could not read 1 byte at {exec_addr:#x}");
 
-    // ReadOnlyMemory read at the same address returns *some* u8 value.
     assert!(
         ReadOnlyMemory::read(&r, exec_addr, &mut [0u8; 1]).is_ok(),
         "{arch}: ReadOnlyMemory failed at {exec_addr:#x}",
     );
 
-    // At least one section exists.
     assert!(
         obj.sections().next().is_some(),
         "{arch}: real ELF has no sections?",
