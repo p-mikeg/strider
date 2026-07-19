@@ -170,9 +170,8 @@ fn self_loop_emits_pre_and_post_once() {
 
 #[test]
 fn multi_root_preserves_root_order_in_rpo() {
-    // Doc-comment in PostOrderContext::reset promises: if `u` precedes `v` in
-    // `roots` and there's no path from v to u, then `u` precedes `v` in any RPO.
-    // Build two disjoint chains (a -> b, x -> y) and pass roots in [a, x] order.
+    // Pins the RPO root order PostOrderContext::reset documents: roots [a, x]
+    // over disjoint chains must keep a before x in the reversed post-order.
     let g = common::graph(
         "a -> b
          x -> y",
@@ -192,9 +191,8 @@ fn multi_root_preserves_root_order_in_rpo() {
 
 #[test]
 fn duplicate_root_visited_once() {
-    // PostOrderContext::next_event drops a second Pre for an already-visited
-    // node.  Passing the same root twice must yield exactly one (Pre, Post)
-    // pair, not two — this is what makes idempotent root lists safe.
+    // next_event drops the second Pre for an already-visited node, which is
+    // what makes duplicate-tolerant root lists safe to pass.
     let g = common::graph("a -> b");
     let a = g.node("a");
     let mut po = entity_postorder(&g, [a, a]);

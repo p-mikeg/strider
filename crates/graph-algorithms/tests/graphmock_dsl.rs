@@ -1,5 +1,4 @@
-//! Tests for the `common::graph` DSL — moved inline from the
-//! standalone `graphmock` crate.
+//! Tests for the `common::graph` DSL itself.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 

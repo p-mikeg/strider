@@ -1,7 +1,5 @@
-//! Test-only graph DSL — moved inline from the standalone `graphmock`
-//! crate (which had no production consumers beyond these tests).
-//!
-//! `&Graph` implements [`graph_algorithms::walk::GraphRef`], so it plugs straight into
+//! Test-only graph DSL.  `&Graph` implements
+//! [`graph_algorithms::walk::GraphRef`], so it plugs straight into
 //! [`graph_algorithms::walk::PreOrder`] / [`graph_algorithms::walk::PostOrder`].
 
 #![allow(
@@ -26,25 +24,21 @@ struct Node {
     succs: Vec<NodeId>,
 }
 
-/// A small directed graph built from the [`graph`] DSL, used as a fixture
-/// for `graph-algorithms` traversal tests.
 pub struct Graph {
     nodes: PrimaryMap<NodeId, Node>,
     nodes_by_name: std::collections::HashMap<String, NodeId>,
 }
 
 impl Graph {
-    /// Returns the conventional entry node id (`NodeId(0)`).
+    /// The first node named in the DSL input, by construction.
     pub const fn entry(&self) -> NodeId {
         NodeId(0)
     }
 
-    /// Looks up a node by the name it was given in the DSL.
     pub fn node(&self, name: &str) -> NodeId {
         self.nodes_by_name[name]
     }
 
-    /// Returns the DSL name of `node`.
     pub fn name(&self, node: NodeId) -> &str {
         &self.nodes[node].name
     }
@@ -69,14 +63,12 @@ impl Graph {
     }
 }
 
-/// Build a [`Graph`] from a tiny edge-list DSL.
+/// Each non-blank line is `pred[, pred...] -> succ[, succ...]`, whitespace
+/// trimmed.  Names are interned: first appearance creates the node, later
+/// ones reuse its id.
 ///
-/// Each non-blank line has the form `pred[, pred…] -> succ[, succ…]`.
-/// Whitespace around names is trimmed.  Names are interned: a name's
-/// first appearance creates a node, later appearances reuse the same id.
-///
-/// Test-only helper — input is a hard-coded literal in callers, so a
-/// malformed line panics rather than returning an error.
+/// Input is a literal at every call site, so a malformed line panics rather
+/// than returning an error.
 pub(crate) fn graph(input: &str) -> Graph {
     let mut graph = Graph {
         nodes: PrimaryMap::new(),

@@ -85,7 +85,6 @@ fn self_loop_visits_node_once() {
 
 #[test]
 fn multi_root_disjoint_subgraphs_visits_both() {
-    // Two disjoint chains: a -> b and x -> y. We pass both roots in.
     let g = common::graph(
         "a -> b
          x -> y",
@@ -96,8 +95,7 @@ fn multi_root_disjoint_subgraphs_visits_both() {
         .map(|n| g.name(n).to_owned())
         .collect::<Vec<_>>();
     assert_eq!(order.len(), 4);
-    // Either {a, b} appears before {x, y} or vice versa, but each chain is
-    // contiguous in pre-order. We assert both nodes from each chain appear.
+    // Chain order is asserted separately; here only reachability matters.
     for name in ["a", "b", "x", "y"] {
         assert!(
             order.iter().any(|s| s == name),
@@ -108,9 +106,8 @@ fn multi_root_disjoint_subgraphs_visits_both() {
 
 #[test]
 fn repeated_successor_is_visited_once() {
-    // a -> b appears twice as a successor of a (because we say so).  The pre-order
-    // walk must still visit b exactly once.  This exercises the "skip if already
-    // visited" loop in PreOrderContext::next.
+    // `b` is listed twice as a successor of `a`, so it reaches the stack twice.
+    // Exercises the skip-if-visited loop in PreOrderContext::next.
     let g = common::graph(
         "a -> b, b
          b -> c",
@@ -125,10 +122,8 @@ fn repeated_successor_is_visited_once() {
 
 #[test]
 fn multi_root_visited_in_reverse_iteration_order() {
-    // Doc-comment in PreOrderContext::reset promises: if `u` precedes `v` in
-    // `roots` and there's no path from v to u, then `v` is visited before `u`
-    // in pre-order (LIFO stack semantics — the OPPOSITE of post-order).
-    // Build two disjoint chains (a -> b, x -> y) and pass roots in [a, x] order.
+    // Pins the LIFO root order PreOrderContext::reset documents: roots [a, x]
+    // over disjoint chains must visit x's chain first (opposite of post-order).
     let g = common::graph(
         "a -> b
          x -> y",
