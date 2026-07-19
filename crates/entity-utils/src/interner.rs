@@ -1,41 +1,30 @@
-//! A bidirectional interning map over a `cranelift-entity` key.
-
 use core::hash::Hash;
 use core::ops::Index;
 
 use cranelift_entity::{EntityRef, PrimaryMap};
 use rustc_hash::FxHashMap;
 
-/// A bidirectional interning table: a forward `PrimaryMap<K, V>` (dense key
-/// → value) paired with a reverse `V → K` index, kept consistent because the
-/// only mutator is [`EntityInterner::intern`].
+/// Dedup by value, dense id by allocation.
 ///
-/// Interning a value returns its existing key when the value is already
-/// present, otherwise it allocates the next dense key and records *both*
-/// directions in lockstep — so the forward and reverse halves can never
-/// drift. This is the recurring "dedup by value, dense id by allocation"
-/// pattern: SSA variable tables, integer-constant interning
-/// (`ConstValue → ConstId`), and similar.
+/// The forward `PrimaryMap` and the reverse index can never drift: [`intern`]
+/// is the only mutator and writes both halves in lockstep.
 ///
-/// `V` must be `Clone` (one clone per genuinely-new value, to record both
-/// directions) plus `Eq + Hash` (it keys the reverse map). For `Copy`
-/// values the clone is free.
+/// `V: Clone` costs one clone per genuinely-new value (free when `Copy`);
+/// `Eq + Hash` keys the reverse map.
+///
+/// [`intern`]: EntityInterner::intern
 #[derive(Clone, Debug)]
 pub struct EntityInterner<K: EntityRef, V: Clone + Eq + Hash> {
-    /// Dense `K → V`, in allocation order.
     forward: PrimaryMap<K, V>,
-    /// Reverse `V → K` index; an exact inverse of `forward`.
     reverse: FxHashMap<V, K>,
 }
 
 impl<K: EntityRef, V: Clone + Eq + Hash> EntityInterner<K, V> {
-    /// Creates an empty interner.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Interns `value`, returning its key. Idempotent: a value already
-    /// present returns its existing key without allocating a new one.
+    /// Idempotent: an already-present value returns its existing key.
     pub fn intern(&mut self, value: V) -> K {
         if let Some(&key) = self.reverse.get(&value) {
             return key;
@@ -45,36 +34,29 @@ impl<K: EntityRef, V: Clone + Eq + Hash> EntityInterner<K, V> {
         key
     }
 
-    /// Returns the value for `key`, or `None` when `key` is out of range.
     pub fn get(&self, key: K) -> Option<&V> {
         self.forward.get(key)
     }
 
-    /// Returns the key for `value`, or `None` when it has not been interned.
     pub fn key_of(&self, value: &V) -> Option<K> {
         self.reverse.get(value).copied()
     }
 
-    /// Returns the number of interned values.
     pub fn len(&self) -> usize {
         self.forward.len()
     }
 
-    /// Returns whether nothing has been interned yet.
     pub fn is_empty(&self) -> bool {
         self.forward.is_empty()
     }
 
-    /// Iterates the keys in allocation order.
+    /// Allocation order.
     pub fn keys(&self) -> impl Iterator<Item = K> + '_ {
         self.forward.keys()
     }
 
-    /// The interned values as a contiguous slice in allocation (key) order.
-    ///
-    /// The `i`-th element is the value for the key at index `i`, so a caller
-    /// can index it directly by a key's `.index()`.  Backed by the forward
-    /// [`PrimaryMap`]'s element vec, so it is O(1) and allocation-free.
+    /// Allocation order, so a caller can index it by a key's `.index()`.
+    /// Borrows the forward map's element vec: O(1), no allocation.
     pub fn values_as_slice(&self) -> &[V] {
         self.forward.values().as_slice()
     }
@@ -92,11 +74,8 @@ impl<K: EntityRef, V: Clone + Eq + Hash> Default for EntityInterner<K, V> {
 impl<K: EntityRef, V: Clone + Eq + Hash> Index<K> for EntityInterner<K, V> {
     type Output = V;
 
-    /// # Panics
-    ///
-    /// Panics if `key` was not produced by this interner (i.e. it is out of
-    /// range for the forward map). Prefer the non-panicking
-    /// [`EntityInterner::get`] when the key's provenance is uncertain.
+    /// Panics on a key this interner did not produce; use
+    /// [`get`](EntityInterner::get) when provenance is uncertain.
     #[track_caller]
     fn index(&self, key: K) -> &V {
         &self.forward[key]
@@ -136,12 +115,9 @@ mod tests {
     fn forward_and_reverse_agree() {
         let mut interner: EntityInterner<TestId, u64> = EntityInterner::new();
         let k = interner.intern(42);
-        // forward
         assert_eq!(interner.get(k), Some(&42));
         assert_eq!(interner[k], 42);
-        // reverse
         assert_eq!(interner.key_of(&42), Some(k));
-        // absent
         assert_eq!(interner.key_of(&99), None);
         assert_eq!(interner.get(TestId(7)), None);
     }
@@ -160,10 +136,8 @@ mod tests {
 
     #[test]
     fn intern_reverse_collision_distinct_keys() {
-        // A wrapper whose `Hash` is degenerate (always hashes to 0) forces
-        // every value into the same reverse-map bucket. `Eq` still
-        // discriminates, so two distinct values must get two distinct keys
-        // and both must resolve forward and backward.
+        // Degenerate `Hash` forces every value into one reverse-map bucket;
+        // `Eq` must still keep distinct values on distinct keys.
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         struct Collide(u32);
         impl core::hash::Hash for Collide {
@@ -177,13 +151,10 @@ mod tests {
         let b = interner.intern(Collide(2));
         assert_ne!(a, b, "colliding-hash but distinct values get distinct keys");
         assert_eq!(interner.len(), 2);
-        // Forward both ways.
         assert_eq!(interner.get(a), Some(&Collide(1)));
         assert_eq!(interner.get(b), Some(&Collide(2)));
-        // Reverse both ways despite the bucket collision.
         assert_eq!(interner.key_of(&Collide(1)), Some(a));
         assert_eq!(interner.key_of(&Collide(2)), Some(b));
-        // Re-interning either is still idempotent.
         assert_eq!(interner.intern(Collide(1)), a);
         assert_eq!(interner.intern(Collide(2)), b);
     }

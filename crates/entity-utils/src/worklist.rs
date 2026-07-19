@@ -3,12 +3,9 @@ use cranelift_entity::EntityRef;
 
 use super::set::DenseEntitySet;
 
-/// A queue of unique [`EntityRef`] values for fixed-point iteration.
-///
-/// Each entity may be enqueued at most once at a time: if `entity` is already
-/// in the queue, a second `enqueue` call is a no-op.  This prevents redundant
-/// re-processing while still allowing an entity to be re-enqueued after it has
-/// been dequeued.
+/// FIFO queue for fixed-point iteration, holding each entity at most once:
+/// enqueueing one already queued is a no-op, but an entity may be re-enqueued
+/// once dequeued.
 #[derive(Clone, Debug)]
 pub struct Worklist<E> {
     worklist: VecDeque<E>,
@@ -16,7 +13,6 @@ pub struct Worklist<E> {
 }
 
 impl<E: EntityRef> Worklist<E> {
-    /// Creates an empty worklist.
     pub fn new() -> Self {
         Self {
             worklist: VecDeque::new(),
@@ -24,17 +20,12 @@ impl<E: EntityRef> Worklist<E> {
         }
     }
 
-    /// Adds `entity` to the back of the queue.
-    ///
-    /// Has no effect if `entity` is already queued.
     pub fn enqueue(&mut self, entity: E) {
         if self.workset.insert(entity) {
             self.worklist.push_back(entity);
         }
     }
 
-    /// Removes and returns the next entity from the front of the queue, or
-    /// `None` if the queue is empty.
     pub fn dequeue(&mut self) -> Option<E> {
         let entity = self.worklist.pop_front()?;
         self.workset.remove(entity);
@@ -78,9 +69,6 @@ mod tests {
         let mut wl: Worklist<Id> = Worklist::new();
         wl.enqueue(Id(7));
         wl.enqueue(Id(7));
-        // Before the fix this would fail: enqueue never inserts into the
-        // workset, so both pushes land in the deque and the second dequeue
-        // returns Some instead of None.
         assert_eq!(wl.dequeue(), Some(Id(7)));
         assert_eq!(wl.dequeue(), None);
     }
@@ -92,7 +80,7 @@ mod tests {
         while let Some(e) = wl.dequeue() {
             got.push(e);
         }
-        // Order of first occurrence preserved; duplicates dropped.
+        // First-occurrence order preserved.
         assert_eq!(got, vec![Id(1), Id(2), Id(3)]);
     }
 
@@ -160,16 +148,14 @@ mod tests {
 
     #[test]
     fn debug_format_pins_derive() {
-        // `Worklist` derives Debug; this is a regression pin so the derive
-        // can't be silently removed.  We don't assert a specific format string.
+        // Pins the `Debug` derive against silent removal; the format string
+        // itself is deliberately not asserted.
         let mut wl: Worklist<Id> = Worklist::new();
         wl.enqueue(Id(1));
         let _ = format!("{wl:?}");
     }
 
-    /// `enqueue` deduplicates at 10k-item scale.  Pins the
-    /// single-pass `if workset.insert(e) { push }` shape —
-    /// re-enqueueing the same id never duplicates the queue.
+    /// Pins the single-pass `if workset.insert(e) { push }` shape at scale.
     #[test]
     fn enqueue_dedup_at_ten_thousand_scale() {
         let n: u32 = 10_000;
@@ -180,7 +166,6 @@ mod tests {
         for i in 0..n {
             wl.enqueue(Id(i));
         }
-        // Draining yields exactly `n`, not `2n` — the re-enqueue deduped.
         let mut count = 0usize;
         while wl.dequeue().is_some() {
             count += 1;

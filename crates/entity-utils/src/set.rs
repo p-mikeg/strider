@@ -3,11 +3,8 @@ use core::marker::PhantomData;
 use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::EntityRef;
 
-/// A dense bit-set of [`cranelift_entity::EntityRef`] values.
-///
-/// Backed by a [`cranelift_bitset::CompoundBitSet`], this provides O(1)
-/// membership tests and updates using the entity's integer index.  Suitable
-/// as a visited-set in graph traversals over dense id spaces.
+/// O(1) membership and update, keyed on the entity's integer index. The
+/// visited-set of choice for graph traversal over a dense id space.
 #[derive(Clone, Debug)]
 pub struct DenseEntitySet<E> {
     bitset: CompoundBitSet,
@@ -15,12 +12,10 @@ pub struct DenseEntitySet<E> {
 }
 
 impl<E: EntityRef> DenseEntitySet<E> {
-    /// Creates an empty set.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Creates an empty set pre-allocated for at least `capacity` entities.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             bitset: CompoundBitSet::with_capacity(capacity),
@@ -28,56 +23,37 @@ impl<E: EntityRef> DenseEntitySet<E> {
         }
     }
 
-    /// Clears all entries from the set.
     pub fn clear(&mut self) {
         self.bitset.clear();
     }
 
-    /// Returns the number of entities currently in the set.
-    ///
-    /// Runs in O(max_index / 64) — it sums the population counts of the
-    /// backing words rather than reading a cached length, so this is not
-    /// O(1).
+    /// NOT O(1): popcounts the backing words rather than reading a cached
+    /// length, so O(max_index / 64).
     pub fn len(&self) -> usize {
         self.bitset.len()
     }
 
-    /// Returns `true` if the set contains no entities.
-    ///
-    /// Runs in O(max_index / 64) for the same reason as
-    /// [`DenseEntitySet::len`].
+    /// O(max_index / 64), same as [`len`](DenseEntitySet::len).
     pub fn is_empty(&self) -> bool {
         self.bitset.is_empty()
     }
 
-    /// Returns `true` if `entity` is a member of the set.
     pub fn contains(&self, entity: E) -> bool {
         self.bitset.contains(entity.index())
     }
 
-    /// Inserts `entity` into the set.  Returns `true` if `entity` was
-    /// newly inserted, `false` if it was already present — matching
-    /// `std::collections::HashSet::insert`'s contract so callers can
-    /// switch implementations without changing the call shape.
-    ///
-    /// Single-pass: delegates directly to
-    /// `cranelift_bitset::CompoundBitSet::insert`, which itself
-    /// returns `bool` with the same "was newly inserted" semantics.
-    /// Hot graph-traversal paths get one bitset access per insert.
+    /// `true` when newly inserted, matching `HashSet::insert` so callers can
+    /// swap implementations. One bitset access, for hot traversal paths.
     pub fn insert(&mut self, entity: E) -> bool {
         self.bitset.insert(entity.index())
     }
 
-    /// Removes `entity` from the set.
     pub fn remove(&mut self, entity: E) {
         self.bitset.remove(entity.index());
     }
 
-    /// Returns an iterator over all entities currently in the set, in
-    /// ascending entity-index order.
-    ///
-    /// Iterating fully runs in O(max_index / 64 + len): it scans the backing
-    /// words (skipping empty ones) and yields one entity per set bit.
+    /// Ascending entity-index order. A full pass scans the backing words,
+    /// skipping empty ones, so it is O(max_index / 64 + len).
     pub fn iter(&self) -> Iter<'_, E> {
         Iter::<E> {
             inner: self.bitset.iter(),
@@ -86,9 +62,6 @@ impl<E: EntityRef> DenseEntitySet<E> {
     }
 }
 
-/// Iterator over a [`DenseEntitySet`] in ascending entity-index order.
-///
-/// Returned by [`DenseEntitySet::iter`] and `<&DenseEntitySet>::into_iter`.
 pub struct Iter<'a, E> {
     inner: cranelift_bitset::compound::Iter<'a>,
     _marker: PhantomData<E>,
@@ -102,8 +75,8 @@ impl<E: EntityRef> Iterator for Iter<'_, E> {
     }
 }
 
-// `cranelift_bitset::compound::Iter` keeps yielding `None` once exhausted,
-// so the wrapper is naturally fused.
+// The inner cranelift iterator keeps yielding `None` once exhausted, so the
+// wrapper is fused for free.
 impl<E: EntityRef> core::iter::FusedIterator for Iter<'_, E> {}
 
 impl<'a, E: EntityRef> IntoIterator for &'a DenseEntitySet<E> {
@@ -201,7 +174,6 @@ mod tests {
         assert!(!s.contains(Id(0)));
         assert!(!s.contains(Id(100)));
         assert!(s.iter().next().is_none());
-        // Verify re-insert after clear works (bitset is fully reset).
         s.insert(Id(0));
         assert!(s.contains(Id(0)));
     }
@@ -237,7 +209,7 @@ mod tests {
         s.insert(Id(2));
         assert_eq!(s.len(), 2);
         assert!(!s.is_empty());
-        s.insert(Id(1)); // idempotent
+        s.insert(Id(1));
         assert_eq!(s.len(), 2);
         s.remove(Id(1));
         assert_eq!(s.len(), 1);

@@ -1,7 +1,4 @@
-//! Dense entity-set + worklist + interner data structures.
-//!
-//! Generic helpers over `cranelift-entity::EntityRef` and
-//! `cranelift-bitset::CompoundBitSet`.
+//! Generic collections keyed by a `cranelift-entity::EntityRef`.
 
 extern crate alloc;
 

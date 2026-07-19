@@ -1,40 +1,31 @@
-//! A DAG of deferred unions over per-node values, keyed by an external
-//! [`EntityRef`].
+//! Deferred unions over per-key value sets: absorb is on the hot path,
+//! materialise is off it.
 //!
-//! Each external key `N` maps to at most one DAG node holding an optional
-//! value `V`; a node absorbs others by linking (not copying), so
-//! [`union`](UnionDag::union) is O(1) — a single [`EntityList`] push. A key's
-//! full value set is materialised only on demand by walking its ancestors
-//! ([`for_each`](UnionDag::for_each)), deduplicating shared sub-DAGs.
-//!
-//! This is the "cheaply accumulate overlapping sets, read them rarely"
-//! pattern: absorb is on the hot path, materialise is off it.
+//! A node absorbs another by linking rather than copying, so
+//! [`union`](UnionDag::union) is one [`EntityList`] push. A key's full set is
+//! walked out on demand by [`for_each`](UnionDag::for_each).
 
 use cranelift_entity::packed_option::PackedOption;
 use cranelift_entity::{EntityList, EntityRef, ListPool, PrimaryMap, SecondaryMap, entity_impl};
 
 use crate::DenseEntitySet;
 
-/// Internal DAG-node id. Never exposed: callers address the DAG by their own
-/// external key `N`.
+/// Never exposed; callers address the DAG by their own external key `N`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct UnionId(u32);
 entity_impl!(UnionId);
 
 #[derive(Clone, Debug)]
 struct Node<V> {
-    /// The value this node contributes to its set, if any. A pure join node
-    /// (created by [`UnionDag::union`] on a key that had no value yet) carries
-    /// `None`.
+    /// `None` for a pure join node, one [`UnionDag::union`] made for a key
+    /// that had no value of its own yet.
     own: Option<V>,
-    /// Absorbed nodes whose sets are unioned into this one.
     parents: EntityList<UnionId>,
 }
 
-/// A DAG of deferred unions over values `V`, addressed by external key `N`.
 #[derive(Clone, Debug)]
 pub struct UnionDag<N: EntityRef, V: Copy> {
-    /// External key → its DAG root. `NONE` means the key has no set yet.
+    /// `NONE` means the key has no set yet.
     roots: SecondaryMap<N, PackedOption<UnionId>>,
     nodes: PrimaryMap<UnionId, Node<V>>,
     links: ListPool<UnionId>,
@@ -51,13 +42,12 @@ impl<N: EntityRef, V: Copy> Default for UnionDag<N, V> {
 }
 
 impl<N: EntityRef, V: Copy> UnionDag<N, V> {
-    /// Creates an empty DAG.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Adds one value to `n`'s set. The first value fills `n`'s node; later
-    /// values become absorbed leaf nodes. O(1) amortised.
+    /// O(1) amortised: the first value fills `n`'s own node, later ones become
+    /// absorbed leaves.
     pub fn extend(&mut self, n: N, v: V) {
         match self.roots[n].expand() {
             None => {
@@ -72,7 +62,7 @@ impl<N: EntityRef, V: Copy> UnionDag<N, V> {
         }
     }
 
-    /// Makes `dst`'s set absorb `src`'s — O(1). A no-op when `src` is empty.
+    /// O(1), and a no-op when `src` is empty.
     pub fn union(&mut self, dst: N, src: N) {
         let Some(src_root) = self.roots[src].expand() else {
             return;
@@ -81,16 +71,14 @@ impl<N: EntityRef, V: Copy> UnionDag<N, V> {
         self.nodes[dst_root].parents.push(src_root, &mut self.links);
     }
 
-    /// Whether `n` has no set at all. O(1).
     pub fn is_empty(&self, n: N) -> bool {
         self.roots[n].is_none()
     }
 
-    /// Calls `f` with every value reachable from `n`'s set, each contributing
-    /// DAG node visited exactly once (shared sub-DAGs are not re-walked; a
-    /// value held by two distinct nodes is still yielded twice — the caller's
-    /// collection deduplicates values).  Cycle-safe: absorbing in both
-    /// directions is permitted and still terminates.
+    /// Visits every value reachable from `n`'s set. Dedup is per NODE, not per
+    /// value: a shared sub-DAG is walked once, but the same value held by two
+    /// nodes is yielded twice and the caller must collect it. Cycle-safe:
+    /// mutual absorption still terminates.
     pub fn for_each(&self, n: N, mut f: impl FnMut(V)) {
         let Some(root) = self.roots[n].expand() else {
             return;
@@ -111,9 +99,9 @@ impl<N: EntityRef, V: Copy> UnionDag<N, V> {
         }
     }
 
-    /// Remaps external keys after a compaction of the `N` space. `f` returns
-    /// the key's new id, or `None` if it was culled (its set is dropped). The
-    /// DAG arena is untouched — only the key→root map is rebuilt.
+    /// Relabels keys after the `N` space is compacted; `f` returning `None`
+    /// culls a key and drops its set. Only the key->root map is rebuilt; the
+    /// DAG arena is untouched.
     pub fn remap(&mut self, f: impl Fn(N) -> Option<N>) {
         let mut roots: SecondaryMap<N, PackedOption<UnionId>> = SecondaryMap::new();
         for (key, root) in self.roots.iter() {
@@ -126,7 +114,7 @@ impl<N: EntityRef, V: Copy> UnionDag<N, V> {
         self.roots = roots;
     }
 
-    /// Returns `n`'s root, creating a fresh valueless join node if it has none.
+    /// Creates a valueless join node when `n` has no root yet.
     fn ensure(&mut self, n: N) -> UnionId {
         match self.roots[n].expand() {
             Some(root) => root,
@@ -138,7 +126,6 @@ impl<N: EntityRef, V: Copy> UnionDag<N, V> {
         }
     }
 
-    /// Allocates a fresh DAG node carrying `own` and no parents.
     fn alloc(&mut self, own: Option<V>) -> UnionId {
         self.nodes.push(Node {
             own,
@@ -176,7 +163,7 @@ mod tests {
         let mut dag: UnionDag<Key, u64> = UnionDag::new();
         dag.extend(Key(0), 1);
         dag.extend(Key(0), 2);
-        dag.extend(Key(0), 1); // dup value, same key
+        dag.extend(Key(0), 1);
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2]));
     }
 
@@ -203,7 +190,7 @@ mod tests {
         dag.extend(Key(0), 1);
         dag.extend(Key(1), 2);
         dag.union(Key(0), Key(1));
-        // Mutating dst after the union must not leak back into src.
+        // Mutating dst must not leak back into src.
         dag.extend(Key(0), 3);
         assert_eq!(set_of(&dag, Key(1)), FxHashSet::from_iter([2]));
     }
@@ -226,8 +213,8 @@ mod tests {
 
     #[test]
     fn shared_subdag_is_collected_once_across_a_diamond() {
-        // c holds {5}; a and b both absorb c; d absorbs a and b. d's set is
-        // {5} — c reached along two paths, its value yielded once (node-dedup).
+        // a and b both absorb c; d absorbs a and b. c is reached along two
+        // paths but yields its value once.
         let mut dag: UnionDag<Key, u64> = UnionDag::new();
         dag.extend(Key(2), 5); // c = Key(2)
         dag.extend(Key(0), 1); // a
@@ -267,7 +254,6 @@ mod tests {
         let mut dag: UnionDag<Key, u64> = UnionDag::new();
         dag.extend(Key(0), 1);
         dag.extend(Key(2), 3);
-        // Key(0) -> Key(5); Key(2) culled.
         dag.remap(|k| {
             if k == Key(2) {
                 None
