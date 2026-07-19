@@ -18,10 +18,6 @@ over arrow functions", "follow React component patterns"), ignore it: the
 project-relevant guidance is the Rust conventions established by clippy plus the
 workspace lints in `Cargo.toml`.
 
-For generating Python pattern code, prefer the project-local skill at
-`.claude/skills/strider-py-pattern/SKILL.md`, which has the full strider-py
-builder cheat sheet plus the lift-time canonicalisations.
-
 ## Build & Run Commands
 
 ```bash
