@@ -284,6 +284,7 @@ wrap.addEventListener("wheel",e=>{ if(!e.ctrlKey)return; e.preventDefault();
 Viz.instance().then(async v=>{
   viz=v; names=await (await fetch("/patterns")).json();
   center=String(await (await fetch("/entry")).json());
+  if(!(await (await fetch("/caps")).json()).raw){ $("raw").style.display="none"; }
   await render(); centerNode(center,false); pushHist();
 });
 </script></body></html>"""
@@ -293,6 +294,8 @@ class _IrVisualizer:
     """Adapts a `(lifter, function)` pair to the `_Visualizer` protocol
     `_serve` expects: `entry()`, `dot(center, depth, raw)`, `search(query)`,
     `completions()`."""
+
+    supports_raw = True  # Function.neighborhood_dot gives a no-Sleigh raw view
 
     def __init__(self, lifter, function):
         self._lifter, self._fn = lifter, function
@@ -319,6 +322,8 @@ class _CfgVisualizer:
     `entry()`, `dot(center, depth, raw)`, `search(query)`,
     `completions()`."""
 
+    supports_raw = False  # Cfg has no raw view; the frontend hides the toggle
+
     def __init__(self, cfg):
         self._cfg = cfg
         # Disassembly text per region, built once (Sleigh-backed — not
@@ -329,11 +334,10 @@ class _CfgVisualizer:
         return self._cfg.entry()
 
     def dot(self, center, depth, raw):
-        # Cfg no longer exposes a raw (structure-faithful) neighborhood
-        # view (that lives on Function, over IR node ids — a different
-        # id space than a CFG region index, so it isn't a drop-in
-        # replacement here). Fall back to the pretty render for both
-        # modes; the "raw" toggle is a no-op for a Cfg-backed visualizer.
+        # Cfg has no raw (structure-faithful) neighborhood view — that lives
+        # on Function over IR node ids, a different id space than a CFG region
+        # index. `supports_raw = False` hides the toggle, so `raw` is never
+        # set here; ignore it defensively.
         del raw
         return self._cfg.neighborhood_dot(center, depth=depth)
 
@@ -403,6 +407,11 @@ def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
                     self._send(_ext._viz_standalone_js(), "application/javascript")
                 elif u.path == "/entry":
                     self._send(json.dumps(entry), "application/json")
+                elif u.path == "/caps":
+                    self._send(
+                        json.dumps({"raw": getattr(visualizer, "supports_raw", False)}),
+                        "application/json",
+                    )
                 elif u.path == "/patterns":
                     self._send(json.dumps(visualizer.completions()), "application/json")
                 elif u.path == "/dot":
