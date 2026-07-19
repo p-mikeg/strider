@@ -1,6 +1,3 @@
-//! Checked varnode / insn accessors and the LOAD/STORE space decoder, shared
-//! by the opcode handlers on `FunctionLifter`.
-
 pub(crate) type Result<T> = anyhow::Result<T>;
 
 pub(crate) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {

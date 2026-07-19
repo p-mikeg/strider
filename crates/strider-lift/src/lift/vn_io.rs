@@ -1,10 +1,7 @@
-//! Varnode read/write dispatch, and the sole owner of register aliasing.
-//!
-//! Overlapping sub-registers (x86-64 `al`/`ah`/`ax`/`eax`/`rax`, x87 ST
-//! slices, aarch64 s/d/q SIMD views) are always read and written through the
-//! largest containing tracked register, with shift/mask operations inserted
-//! for the slice.  strider-ir treats varnodes as an opaque universe and does
-//! no slicing of its own.
+//! The sole owner of register aliasing: overlapping sub-registers (x86-64
+//! `al`/`ah`/`ax`/`eax`/`rax`, x87 ST slices, aarch64 s/d/q SIMD views) are
+//! always read and written through the largest containing tracked register,
+//! with shift/mask operations inserted for the slice.
 
 use anyhow::{anyhow, bail};
 use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, Value, ValueType, VnTypeExt};

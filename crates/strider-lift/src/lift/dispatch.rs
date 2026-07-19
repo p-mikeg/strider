@@ -1,6 +1,4 @@
-//! The single opcode-keyed match routing every p-code instruction to a
-//! per-family handler in the sibling modules.  Every opcode hits exactly one
-//! arm; the trivial families forward to a `process_*_op` builder call.
+//! Every p-code opcode hits exactly one arm of this match.
 
 use anyhow::{Result, bail};
 use rsleigh::Opcode;

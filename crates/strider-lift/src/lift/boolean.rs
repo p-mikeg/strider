@@ -1,7 +1,7 @@
-//! Boolean opcodes.  Booleans are the 1-bit integer `I1`, so these lower to
-//! ordinary integer ops: and/or/xor at `I1`, and `BoolNeg` to
-//! `Xor(x, IntConst(1)):I1`.  Sleigh always supplies already-`I1` operands
-//! (comparison and flag results), so no int-to-bool conversion is needed.
+//! Booleans are the 1-bit integer `I1`, so these lower to ordinary integer
+//! ops: and/or/xor at `I1`, and `BoolNeg` to `Xor(x, IntConst(1)):I1`.  Sleigh
+//! always supplies already-`I1` operands, so no int-to-bool conversion is
+//! needed.
 
 use strider_ir::{IRBuilderExt, IntBinaryOp, ValueType};
 

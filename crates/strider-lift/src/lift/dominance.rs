@@ -1,9 +1,3 @@
-//! Wiring only, no graph theory: petgraph's `simple_fast` computes immediate
-//! dominators over the CFG's region graph, and a thin [`DomTree`] adapter hands
-//! the idom relation to the generic routines in
-//! [`graph_algorithms::dominance`].  The CFG itself knows nothing about
-//! dominance; it exposes only its region graph.
-
 use graph_algorithms::dominance::{DefSites, DomTree, Frontiers};
 use petgraph::Direction::Incoming;
 use petgraph::algo::dominators::{Dominators, simple_fast};

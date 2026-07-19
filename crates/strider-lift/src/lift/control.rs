@@ -71,9 +71,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         Ok(())
     }
 
-    /// Also serves the link-register return (ARM `bx lr`): the dispatcher
-    /// routes `BranchIndirect` here too, since both emit a CC `Return`.  Tail
-    /// calls and jump tables are split off earlier into dedicated terminators.
+    /// Also serves the link-register return (ARM `bx lr`), which emits a CC
+    /// `Return` too.
     ///
     /// The p-code `Return` carries a fabricated input, typically the popped
     /// return address on stack-push ISAs.  That is not an ABI return slot, so
@@ -83,16 +82,14 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     /// Reads each CC return register through the aliasing-aware `read_vn`, so a
-    /// sub-register ret reg is sliced out of its container.  Terminates the
-    /// current region.
+    /// sub-register ret reg is sliced out of its container.
     fn build_cc_return(&mut self) -> Result<()> {
         let ret_vns = self.builder.function().ret_val_regs();
         let ret_values = self.read_vns(&ret_vns)?;
         self.builder.build_return(None, &ret_values)
     }
 
-    /// Owns all calling-convention knowledge for a call: strider-ir's
-    /// `build_call` takes resolved Vn lists and knows nothing about CCs.
+    /// Resolves the call's CC register lists and emits the `Call` node.
     fn build_cc_call(
         &mut self,
         call_address: strider_ir::Value,
@@ -177,13 +174,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         Ok(())
     }
 
-    /// Emits an `IndirectBranch` placeholder anchoring `target_vn`'s lifted
-    /// value, inspected by the resolver after the optimiser runs.
-    ///
-    /// `IndirectBranch [ctrl, mem, target]` carries the same control and memory
-    /// snapshot a real `Return` would, so the resolver can rewrite it in place
-    /// (LinkRegister) or splice in a `Call+Return` (Single tail call) without
-    /// re-walking the CFG.
+    /// Emits an `IndirectBranch [ctrl, mem, target]` placeholder anchoring
+    /// `target_vn`'s lifted value, carrying the same control and memory
+    /// snapshot a real `Return` would.
     ///
     /// The NODE id, not the lifted value, is recorded against `addr`: the
     /// optimizer may `replace_all_uses` the value away, and the resolver needs
@@ -204,10 +197,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 
 #[cfg(test)]
 mod tests {
-    //! Pins the `Switch`-node shape in isolation via `build_switch`, no Cfg
-    //! needed.  The full `handle_switch` path is covered by
-    //! `crates/strider-orchestrator/tests/jump_table_lifting.rs`.
-
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use strider_ir::node::NodeKind;

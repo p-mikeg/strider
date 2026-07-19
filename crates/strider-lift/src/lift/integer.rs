@@ -1,6 +1,3 @@
-//! Non-arithmetic integer opcodes: `Copy`, `IntZext`, `IntSext`.  Arithmetic
-//! is in [`super::arithmetic`], bit-positioning in [`super::cast`].
-
 use strider_ir::{ExtendOp, IRBuilderExt, VnTypeExt};
 
 use crate::lift::FunctionLifter;

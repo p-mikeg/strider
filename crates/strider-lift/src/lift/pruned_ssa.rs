@@ -1,13 +1,9 @@
 //! Cytron pruned-SSA value-phi placement: per region, the iterated dominance
-//! frontier of each variable's definition sites.  Placing a phi for every
-//! tracked varnode at every region instead is `O(regions * varnodes)`, which
-//! reached 4M nodes on a 32 KB kernel function, nearly all dead.
+//! frontier of each variable's definition sites.
 //!
 //! Def-sites are collected here in the lifter, not in a generic pass, so they
-//! reuse the EXACT write-set logic the lift emits (`container_of` for outputs,
-//! the CC ret/clobber projection for calls, the CallOther ABI's implicit
-//! writes).  Otherwise "where a phi is placed" could diverge from "what
-//! actually gets written".
+//! reuse the EXACT write-set logic the lift emits.  Otherwise "where a phi is
+//! placed" could diverge from "what actually gets written".
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::RegionId;

@@ -1,8 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! `LiftOptions`: an embedded [`strider_cfg::CfgOptions`] plus the IR-lift
-//! knobs.
-
 use strider_lift::LiftOptions;
 
 #[test]

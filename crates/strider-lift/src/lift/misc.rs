@@ -1,6 +1,3 @@
-//! Opaque value-producing opcodes: `SegmentOp` (segmented-address lookup),
-//! `CPoolRef` (JVM constant-pool lookup), `New` (JVM object allocation).
-
 use strider_ir::{IRBuilderExt, VnTypeExt};
 
 use crate::lift::FunctionLifter;

@@ -1,6 +1,3 @@
-//! The `CallOther` CPU-intrinsic family.  Direct and indirect calls live in
-//! the sibling `control` module with the other terminator handlers.
-
 use anyhow::{Result, anyhow};
 
 use super::FunctionLifter;
@@ -53,9 +50,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         Ok(())
     }
 
-    /// Owns the ABI-footprint orchestration; strider-ir's `build_call_other` is
-    /// a dumb node emitter.  Implicit-read registers come FIRST in the arg
-    /// list, before the explicit pcode operands.
+    /// Implicit-read registers come FIRST in the arg list, before the explicit
+    /// pcode operands.
     fn build_abi_call_other(
         &mut self,
         user_op_id: u64,
@@ -152,7 +148,7 @@ mod tests {
     }
 
     /// Confirms `CallOtherAbi::build` resolves against the lifter's own
-    /// sleigh_regs.  The build-level tests live in strider-target.
+    /// sleigh_regs.
     #[test]
     fn call_other_abi_build_syscall_x86_64() {
         let regs = x86_64_sleigh_regs();

@@ -1,10 +1,5 @@
-//! Integer arithmetic and comparison opcodes.  Bit-position manipulation
-//! (cast / slice / extract / popcount / piece / insert / ptr_*) is in
-//! [`super::cast`].
-//!
 //! Three comparisons are lowered at lift time so `IntCmpOp` holds only
-//! primitive predicates, and patterns see one canonical shape per predicate
-//! instead of operand-swap-inverse pairs:
+//! primitive predicates:
 //!
 //! - `IntNotEqual(a, b)` -> `Xor(IntEqual(a, b), IntConst(1)):I1`
 //! - `IntLessEqual(a, b)` -> `Xor(IntLess(b, a), IntConst(1)):I1`
@@ -237,10 +232,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Lowers `IntSub(a, b)` to `Add(a, Neg(b))`.  Exact: `a - b` equals
     /// `a + (-b)` mod 2^W, and `Add` wraps identically.  There is no
     /// `IntBinaryOp::Sub`, so patterns see one canonical shape.
-    ///
-    /// Constant-RHS gives `Add(a, Neg(IntConst(K)))`, which `ConstantFold`
-    /// immediately collapses to `Add(a, IntConst(-K))`.  Only a variable RHS
-    /// costs a persisted `Neg` node.
     pub(super) fn handle_int_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // Sleigh requires all three widths to agree here, unlike the
         // comparison lowerings, whose I1 output makes only the input check

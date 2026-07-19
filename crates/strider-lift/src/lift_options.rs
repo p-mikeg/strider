@@ -1,5 +1,5 @@
-//! Options for the whole binary-to-IR lift.  The tracked varnode set is always
-//! scanned fresh from the CFG at lift time, so it is deliberately not a knob.
+//! The tracked varnode set is always scanned fresh from the CFG at lift time,
+//! so it is deliberately not a knob here.
 
 use rustc_hash::FxHashMap;
 

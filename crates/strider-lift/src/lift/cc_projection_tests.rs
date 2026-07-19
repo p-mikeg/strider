@@ -1,7 +1,3 @@
-//! CC-projection tests.  Each projection resolves every CC register to its
-//! largest tracked container and excludes callee-saved registers plus the CC
-//! `stack_vn`.
-//!
 //! These use [`with_test_lifter_cc`] rather than the default harness, whose
 //! injected `empty_cc` stack_vn would pollute the clobber lists.
 

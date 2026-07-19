@@ -1,6 +1,3 @@
-//! Memory opcodes.  `Load` produces a value; `Store` advances the unified
-//! memory chain.
-
 use strider_ir::VnTypeExt;
 
 use crate::lift::FunctionLifter;

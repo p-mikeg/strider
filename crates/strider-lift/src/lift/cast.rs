@@ -1,6 +1,3 @@
-//! Bit-positioning and slicing opcodes: `Subpiece`, `Popcount`, `Lzcount`,
-//! `Piece`, `Extract`, `Insert`.
-
 use strider_ir::node::ValueType;
 use strider_ir::{IRBuilderExt, IntBinaryOp, VnTypeExt};
 

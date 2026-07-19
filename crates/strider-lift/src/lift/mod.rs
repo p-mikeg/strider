@@ -1,7 +1,3 @@
-//! Region-by-region translation of a `strider_cfg::Cfg` into a
-//! `strider_ir::Function`, given a resolved set of indirect-branch targets.
-//! No optimization; that is the orchestrator's concern.
-
 use anyhow::{Result, anyhow};
 
 mod arithmetic;
@@ -36,32 +32,25 @@ pub struct LiftOutcome {
     pub function: strider_ir::Function,
     /// One entry per region that terminated in an unresolved indirect branch,
     /// mapping the `BranchIndirect`'s pcode address to the `IndirectBranch`
-    /// placeholder anchoring its dispatch varnode.  The orchestrator needs
-    /// this to key the classifier's node-keyed results back to an address.
+    /// placeholder anchoring its dispatch varnode.
     pub unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
 }
 
 pub use crate::lift_options::LiftOptions;
 
 /// The CFG-to-IR lift engine, built once and reused across every function and
-/// rebuild iteration.  The owned `Sleigh`'s `lift_one` context state *is* the
-/// engine's state.
+/// rebuild iteration.
 ///
 /// The calling convention is deliberately not stored: it is per-function, so
 /// it is a per-call argument.
 ///
-/// Not `Clone`, since the owned `Sleigh` is not cheaply cloneable.  Callers
-/// needing a detached engine (the strider-py GIL-release path) rebuild from a
-/// cloneable memory snapshot.
+/// Not `Clone`, since the owned `Sleigh` is not cheaply cloneable.
 pub struct Lifter<R: rsleigh::MemReader> {
     arch: strider_target::SleighArch,
     /// Borrowed `&mut` to build the CFG, then `&` to lift it.
     sleigh: rsleigh::Sleigh<R>,
-    /// Cached at construction: `Sleigh::regs()` is expensive, and the
-    /// CallOther per-op-ABI dispatch resolves register names per call.
+    /// Cached at construction: `Sleigh::regs()` is expensive.
     sleigh_regs: rsleigh::SleighRegs,
-    /// Snapshotted at construction; the table is fixed, so no need to
-    /// re-snapshot per instruction.
     user_op_names: Vec<String>,
 }
 
@@ -83,10 +72,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         &self.user_op_names
     }
 
-    /// Used for dot rendering, and to clone a throwaway Sleigh for the
-    /// fingerprint-to-pcode audit trail (strider-py's
-    /// `PyLifter::fingerprint_pcode`), which needs one with no inherited
-    /// context-register state and whose mutations never reach this instance.
     #[must_use]
     pub fn sleigh(&self) -> &rsleigh::Sleigh<R> {
         &self.sleigh
@@ -97,9 +82,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         &self.sleigh_regs
     }
 
-    /// `per_address_ccs` supplies CC overrides for call TARGETS; the builder
-    /// reads their `no_return` flag to terminate a region at a no-return call.
-    /// Pass an empty map for no overrides.
+    /// `per_address_ccs` supplies CC overrides for call TARGETS.  Pass an
+    /// empty map for no overrides.
     pub fn build_cfg(
         &mut self,
         entry: strider_cfg::MachineInsnAddr,
@@ -118,9 +102,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             .build()
     }
 
-    /// Returns the unique set only.  Ordering belongs to
-    /// `FunctionBuilder::new`, which sorts by `(space, offset, size)` to keep
-    /// `InitialVnId` numbering stable across runs.
+    /// Returns the unique set only; ordering is applied by
+    /// `FunctionBuilder::new`.
     pub(crate) fn find_all_unique_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
         cfg.regions()
             .flat_map(|region| region.insns.iter())
@@ -190,9 +173,8 @@ pub(crate) fn ir_region_of(
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// Allocates one IR region per CFG region.  Keyed by CFG `RegionId` so the
-    /// per-instruction loop resolves a successor in O(1) without re-traversing
-    /// the petgraph; every CFG region is present, hence no `Option` value.
+    /// Allocates one IR region per CFG region, keyed by CFG `RegionId`; every
+    /// CFG region is present, hence no `Option` value.
     fn build_region_map(&mut self, placement: &pruned_ssa::PhiPlacement) -> Result<RegionMap> {
         self.builder.build_entry()?;
         let cfg = self.cfg;
@@ -213,13 +195,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     /// Each arg-passing register's largest-container `InitialVar` output is the
-    /// carrier for its positional index.  Lives here rather than in
-    /// `set_entry_region` because container resolution is lifter-owned machine
-    /// knowledge: a narrow ABI alias (`edi`) routes through its tracked
-    /// container (`rdi`), as the CC ret-val / clobber projections do.
-    ///
-    /// No filtering on use: an argument the function never reads is culled by
-    /// DCE and dropped from the arg table by `Function::compact`.
+    /// carrier for its positional index: a narrow ABI alias (`edi`) routes
+    /// through its tracked container (`rdi`).
     fn record_register_arg_carriers(&mut self) {
         let arg_regs = self
             .builder
@@ -325,12 +302,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         Ok(())
     }
 
-    /// Wires the region successors no terminator handler wired.  CFG edges are
-    /// unweighted, so the gate is the SOURCE region's terminator: only
-    /// `Unconditional` regions are wired here, since `handle_branch` is a
-    /// no-op.  `CondBranch` is wired by `handle_cond_branch` and `Switch` by
-    /// `handle_switch`'s If-ladder; re-linking either would double-add a
-    /// predecessor.
+    /// Wires the region successors no terminator handler wired: only
+    /// `Unconditional` regions, whose `handle_branch` is a no-op.  `CondBranch`
+    /// and `Switch` are already wired by their handlers.
     fn link_region_edges(&mut self, region_map: &RegionMap) -> Result<()> {
         let cfg = self.cfg;
         for edge_idx in cfg.region_graph().edge_indices() {
@@ -357,9 +331,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 /// skip, so the post-loop dispatch can lift it via a dedicated handler.
 enum SpecialTerm {
     /// Emits an `IndirectBranch` placeholder anchoring the dispatch varnode.
-    /// The orchestrator's classifier later rewrites it in place to
-    /// `Call`/`Return` (link-register / tail-call) or replaces the region
-    /// terminator on CFG rebuild (jump table).
     UnresolvedIndirect {
         target_vn: rsleigh::Vn,
         addr: strider_cfg::PcodeInsnAddr,

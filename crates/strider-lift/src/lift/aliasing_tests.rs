@@ -1,7 +1,5 @@
-//! Register-aliasing tests against the production `read_reg_vn` /
-//! `write_reg_vn` and the shift/mask machinery in [`crate::lift::vn_io`].
-//!
-//! Little-endian tests use the x86 harness, big-endian ones `ppc32be`.
+//! Little-endian aliasing tests use the x86 harness, big-endian ones
+//! `ppc32be`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

@@ -1,7 +1,6 @@
-//! Calling-convention register-list projections.  Machine-ABI knowledge, so it
-//! lives with the lifter, not the target-agnostic IR.  Every CC register is
-//! resolved to its largest tracked container before membership or exclusion, so
-//! a narrower ABI register (`eax`) matches the tracked container (`rax`).
+//! Every CC register is resolved to its largest tracked container before
+//! membership or exclusion, so a narrower ABI register (`eax`) matches the
+//! tracked container (`rax`).
 
 use super::FunctionLifter;
 

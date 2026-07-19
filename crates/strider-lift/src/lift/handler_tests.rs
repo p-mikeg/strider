@@ -1,7 +1,6 @@
-//! Value-opcode lifting tests over hand-built `rsleigh::Insn` structs, not
-//! bytes decoded from a binary.  The CFG and calling convention are throwaway
-//! scaffolding: value lifting touches only the IR builder and Sleigh context,
-//! and never consults the region id or the region map.
+//! Value-opcode lifting tests over hand-built `rsleigh::Insn` structs.  The
+//! CFG and calling convention are throwaway scaffolding: value lifting touches
+//! only the IR builder and Sleigh context, never the region id or region map.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

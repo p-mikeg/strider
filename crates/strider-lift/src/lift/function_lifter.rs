@@ -9,25 +9,19 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     pub(crate) builder: strider_ir::FunctionBuilder,
     pub(crate) cfg: &'a strider_cfg::Cfg,
     /// Maps each `BranchIndirect`'s pcode address to its `IndirectBranch`
-    /// placeholder node, drained by `build_ir` into the [`super::LiftOutcome`].
-    /// The resolver reads the placeholder's live dispatch input off the node,
-    /// so the correlation never goes stale under optimizer rewrites.
+    /// placeholder node.
     pub(crate) unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
-    /// Empty by default, so lookups are a plain `.get`.
     pub(crate) per_address_ccs:
         &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    /// Machine-register container knowledge, which lives with the lifter rather
-    /// than the target-agnostic IR.  Built once over the raw varnode set plus
-    /// every CC register; it is the O(1) fast path the register-aliasing
-    /// read/write and the CC / CallOther projections hit on every access.
-    /// Varnodes absent from it fall through to the scan in `container_of`.
+    /// O(1) varnode-to-largest-container map, built over the raw varnode set
+    /// plus every CC register.  Varnodes absent from it fall through to the
+    /// scan in `container_of`.
     pub(crate) container_map: vn_container::ContainerMap,
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// `all_vns` is every varnode any instruction in `cfg` references; ordering
-    /// is applied by `FunctionBuilder::new`.  Pass an empty `per_address_ccs`
-    /// for no CC overrides.
+    /// `all_vns` is every varnode any instruction in `cfg` references.  Pass
+    /// an empty `per_address_ccs` for no CC overrides.
     pub(crate) fn new(
         lifter: &'a Lifter<R>,
         cc: strider_target::BuiltCallingConvention,
@@ -89,8 +83,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     /// Every IR node born inside `f` picks up `addr` in its fingerprint
-    /// side-table.  The address is cleared even on the error path, so a later
-    /// node is never mis-attributed.
+    /// side-table.  The address is cleared even on the error path.
     pub(crate) fn with_lift_addr<T>(
         &mut self,
         addr: Option<u64>,

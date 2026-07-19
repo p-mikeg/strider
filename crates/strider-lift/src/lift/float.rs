@@ -1,6 +1,3 @@
-//! Floating-point opcodes: arithmetic, unary, comparison, and the float /
-//! integer conversions.
-
 use strider_ir::node::ValueType;
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IntBinaryOp, VnTypeExt,
