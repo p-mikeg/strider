@@ -27,10 +27,6 @@
 //! When a gap closes, the ignore can be lifted and the assertion
 //! ("no `UnresolvedIndirectBranch` terminator survives") will start
 //! holding without any test rewrite.
-//!
-//! See:
-//!   - docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md
-//!     (§"Future work" / cross-region stack analysis).
 
 #![allow(
     clippy::panic,

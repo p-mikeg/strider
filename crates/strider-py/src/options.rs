@@ -1,8 +1,7 @@
 //! `CfgOptions` / `LifterOptions` — Python opts structs that mirror the
 //! Rust `strider_cfg::CfgOptions` / `strider_lift::LiftOptions` (nested
 //! `cfg`), replacing the kwargs pile that used to sit directly on
-//! `Lifter.build_cfg` / `Lifter.analyze`.  See
-//! `docs/superpowers/specs/2026-07-03-py-opts-pipelines-design.md`.
+//! `Lifter.build_cfg` / `Lifter.analyze`.
 //!
 //! `LifterOptions.pipeline`, when set, overrides the optimizer pipeline
 //! `Lifter.analyze` runs for THAT call only (never on `strider.lifter(...)`

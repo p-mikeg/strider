@@ -627,9 +627,8 @@ pub(crate) fn find_unique_if(function: &strider_ir::Function) -> strider_ir::nod
 ///       Mips32be: "BUG-N: <one-line reason>",
 ///   });
 ///
-/// Ignore reasons should reference an entry in
-/// docs/superpowers/plans/2026-04-25-analyzer-known-issues.md so a future
-/// reader can find the diagnosis and the fix path.
+/// Ignore reasons should be a one-line diagnosis, not just a symptom, so
+/// a future reader can find the fix path from the reason alone.
 ///
 /// Implementation note: because Rust `macro_rules!` does not support ident
 /// equality matching, the ignore block is parsed with individual per-arch

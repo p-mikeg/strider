@@ -101,8 +101,7 @@ pub enum RegionTerminator {
     /// `cfg::region_builder::process_new_insn` when a CallOther's
     /// `strider_target::call_other_abi::classify` result is `NoReturn` (Linux
     /// `BUG()` / `BUG_ON()`-class traps: x86 `ud2`, aarch64
-    /// `brk #imm`).  See
-    /// `docs/superpowers/specs/2026-05-05-callother-classification-design.md`.
+    /// `brk #imm`).
     NoReturn,
     /// Branch whose target lies outside the function range.  The IR
     /// layer is expected to lower this as

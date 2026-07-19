@@ -127,9 +127,11 @@ impl Match {
     /// This is the proof-of-correctness aid: when a pattern query
     /// captures a value node, this set lists the machine
     /// instructions whose lifting (or subsequent rewrite) contributed
-    /// to that node's value.  See
-    /// `docs/superpowers/specs/2026-05-03-asm-fingerprints-design.md`
-    /// for the full contract.
+    /// to that node's value.
+    ///
+    /// The contract is superset-only: passes may GROW a fingerprint but
+    /// must never shrink it, so a captured node's addresses always cover
+    /// every instruction that contributed to it.
     pub fn asm_fingerprint(&self, c: Capture, graph: &strider_ir::Function) -> FxHashSet<u64> {
         match self.bindings.get_node(c, graph.graph()) {
             Some(node) => graph.side_tables().asm_fingerprint(node),

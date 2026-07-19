@@ -1,7 +1,6 @@
 """Regression tests for the 2026-06-14 deep-audit binding fixes.
 
-Each test pins one numbered finding from
-`docs/superpowers/reviews/2026-06-14/strider-py.md`:
+Each test pins one numbered finding from that audit:
 
   * PY-2  — `CallOtherPat.ctrl()` / `.mem()` route to the correct
             control / memory input slot and actually match.

@@ -211,7 +211,7 @@ Tasks:
 4. Write a top "Executive Summary": counts by dimension+severity, the 5-10 highest-priority items overall (soundness first), and the recommended fix ordering.
 5. For the filesplit dimension, render the proposed target module tree explicitly.
 
-Write the full report as markdown to ${ROOT}/docs/superpowers/reviews/2026-06-11-deep-review.md (create the directory if needed via the Bash tool: mkdir -p). Use clear headed sections per dimension and a stable-id table.
+Write the full report as markdown to ${ROOT}/.reviews/deep-review.md (create the directory if needed via the Bash tool: mkdir -p). Use clear headed sections per dimension and a stable-id table.
 
 Then RETURN (as your final text) a concise plain-text executive summary: the counts, and the ranked list of high+medium soundness items (id, file:lines, one-line problem) plus the top simplify/runtime/filesplit recommendations. Keep it under ~400 lines.
 

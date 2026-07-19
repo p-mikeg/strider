@@ -1,6 +1,5 @@
 //! Complex pattern queries — struct-field offsets, bit-test branches, calls
-//! under control-flow, and a scale smoke test.  See
-//! `docs/superpowers/specs/2026-04-27-complex-pattern-tests-design.md`.
+//! under control-flow, and a scale smoke test.
 //!
 //! Conventions:
 //!   * Every `Matcher` instance opts into `ignore_casts_mask(EXTEND |

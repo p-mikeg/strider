@@ -1,6 +1,4 @@
 //! Python bindings for the Strider binary analysis pipeline.
-//!
-//! See `docs/superpowers/specs/2026-05-01-strider-py-design.md`.
 
 // PyO3 0.22's attribute macros (`#[pymethods]`, `#[pyfunction]`,
 // `#[pymodule]`, `create_exception!`) emit calls to `unsafe fn`s

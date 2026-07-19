@@ -2,8 +2,7 @@
 
 Each captured node carries a sorted-deduplicated list of asm-instruction
 addresses identifying the parent machine instructions whose lifting
-contributed to that node's value.  See
-``docs/superpowers/specs/2026-05-03-asm-fingerprints-design.md``.
+contributed to that node's value.
 """
 
 from __future__ import annotations

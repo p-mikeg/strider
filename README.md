@@ -371,4 +371,4 @@ uv run pytest
 
 ## Project status
 
-The 11-crate workspace is internally consistent; `cargo test --workspace` and `cargo clippy --workspace -- -D warnings` are part of CI.  Per-crate READMEs in each `crates/<name>/README.md` document the per-crate surface; the design specs that drove major refactors live under `docs/superpowers/specs/` and `docs/superpowers/plans/`.
+The 11-crate workspace is internally consistent; `cargo test --workspace` and `cargo clippy --workspace -- -D warnings` are part of CI.  Per-crate READMEs in each `crates/<name>/README.md` document the per-crate surface.

@@ -1,7 +1,8 @@
-//! Sleigh user-op (CallOther) classification table.  See
-//! `docs/superpowers/specs/2026-05-06-callother-precise-abi-design.md`
-//! (and the predecessor spec `2026-05-05-callother-classification-design.md`
-//! for the original cfg/ir consumer split).
+//! Sleigh user-op (CallOther) classification table.
+//!
+//! Two consumers share it: `strider_cfg::region_builder` (which terminates
+//! a region at a `NoReturn` trap) and `strider_lift`'s
+//! `FunctionLifter::handle_call_other`.
 
 use crate::calling_convention::regs_to_vns;
 use CallOtherClass::NoOp;

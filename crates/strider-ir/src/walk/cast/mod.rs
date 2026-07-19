@@ -6,8 +6,6 @@
 //! `NodeKind` variants are value-passthrough casts — has a single source of
 //! truth alongside the other structural traversal primitives.  Pattern
 //! semantics (when to walk through them) stays in the analyzer.
-//!
-//! See `docs/superpowers/specs/2026-04-27-cast-mask-design.md`.
 
 use bitflags::bitflags;
 

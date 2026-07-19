@@ -24,4 +24,7 @@ __pycache__/
 # strider-py --example stub_gen`.  Dev tool only; the wheel ships
 # the hand-written `crates/strider-py/strider/pattern.pyi` instead.
 /crates/strider-py/strider/_generated/
+# Deep-review workflow report output (.claude/workflows/deep-review.mjs).
+/.reviews/
+
 /uv.lock

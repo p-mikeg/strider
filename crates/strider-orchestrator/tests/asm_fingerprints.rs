@@ -4,9 +4,6 @@
 //! pipeline and asserts that every reachable node whose kind is *not* in
 //! the documented exempt set carries at least one machine-instruction
 //! address in its fingerprint.
-//!
-//! See `docs/superpowers/specs/2026-05-03-asm-fingerprints-design.md` for
-//! the full contract.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 

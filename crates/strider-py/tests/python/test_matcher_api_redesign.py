@@ -7,7 +7,8 @@
 - `find_unique(pat, ...)` returns the single binding, erroring on 0 and >1.
 
 Dedup is controlled by `ignore_root`: default keys on captures+root(s);
-`ignore_root=True` keys on captures only.  See `docs/python-matcher-api.md`.
+`ignore_root=True` keys on captures only, collapsing one binding reached
+from several roots.
 """
 
 from __future__ import annotations

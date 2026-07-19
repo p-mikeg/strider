@@ -422,5 +422,7 @@ hierarchy is intentionally flat (no typed subclasses).
 
 ## Design
 
-See `docs/superpowers/specs/2026-05-01-strider-py-design.md` for the
-full design.
+The public surface is domain-namespaced submodules — `strider.ir`,
+`strider.lift`, `strider.cfg`, `strider.sleigh`, `strider.reader`,
+`strider.opt`, `strider.pattern`, `strider.template` — plus the single
+cross-cutting top-level symbol `strider.StriderError`.

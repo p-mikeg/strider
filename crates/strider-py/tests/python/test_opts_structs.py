@@ -3,8 +3,7 @@ per-function `LifterOptions.pipeline` override.
 
 `Lifter.build_cfg` / `Lifter.analyze` (and `ElfLifter.analyze`) take a
 single opts struct — `CfgOptions` / `LifterOptions` — instead of the old
-kwargs pile.  See
-`docs/superpowers/specs/2026-07-03-py-opts-pipelines-design.md`.
+kwargs pile.
 """
 
 from __future__ import annotations

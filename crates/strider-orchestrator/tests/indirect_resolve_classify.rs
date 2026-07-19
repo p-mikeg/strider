@@ -112,9 +112,9 @@ fn initial_var_non_lr_returns_none() {
 /// LinkRegister arm matches because the producer truly IS an
 /// InitialVar(lr).
 ///
-/// See `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`
-/// "Why this is sound across iterations" + "the IR-level orchestrator resolver — post-IR resolver"
-/// for the full argument.
+/// Soundness across iterations rests on the classifier only ever ADDING
+/// known targets: a later iteration cannot retract an edge an earlier one
+/// seated, so the fixed point is monotone.
 #[test]
 fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
     let (function, _target, _lr_vn) = build_pop_pc_via_stack_load_forward_scenario();
@@ -142,8 +142,9 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 /// motivates routing through `LoadForward` instead of
 /// pattern-matching on the load shape.
 ///
-/// See `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`
-/// "the IR-level orchestrator resolver — post-IR resolver" for the soundness rules.
+/// The post-IR resolver classifies against the OPTIMISED graph, which is
+/// why the load must already have been forwarded rather than matched on
+/// its pre-optimisation shape.
 #[test]
 fn push_target_pop_pc_does_not_resolve_to_link_register() {
     let target = 0x1000u64;
