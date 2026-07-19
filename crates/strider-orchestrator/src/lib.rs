@@ -80,8 +80,12 @@ where
         )
     }
 
-    /// Lift, optimise, and resolve indirect branches at `entry` (see the
-    /// module doc for the loop).
+    /// Lift, optimise, and resolve indirect branches at `entry`.
+    ///
+    /// The resolution loop is monotone: each iteration classifies indirect
+    /// branches against the optimised IR, folds newly resolved targets into
+    /// `known_targets` (only ever ADDING), and re-lifts, converging once a
+    /// pass adds no new target. `MAX_RESOLUTION_ITERATIONS` is a backstop.
     ///
     /// Unresolvable branches are a RESULT, not an error: they come back in
     /// [`AnalyzeResult::unresolved_indirect_branches`] with their

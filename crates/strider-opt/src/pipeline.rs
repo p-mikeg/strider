@@ -157,6 +157,10 @@ clone_box_shim! {
 
 /// A pass that runs ONCE on the converged graph, so unlike [`Optimizer`] it
 /// returns no `Change`/`NoChange`.
+///
+/// Assumes the optimizer has converged: may rely on any canonical shape the
+/// in-loop passes settle on (e.g. `Add(_, Neg(_))` for subtraction) rather
+/// than re-normalising.
 pub trait PostOptimizer: PostOptimizerClone {
     /// `edit` wraps the converged function.
     ///
