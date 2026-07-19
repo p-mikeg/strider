@@ -1,7 +1,3 @@
-//! `BuiltCallingConvention::try_new` enforces its documented cross-list
-//! disjointness invariants: listing the SP varnode in `arg_passing_regs` must
-//! give a clear `Err` rather than a downstream miscompile.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rsleigh::{Vn, VnSpace};

@@ -9,8 +9,7 @@ pub enum Endianness {
 
 impl Endianness {
     /// Decodes an N-byte word into a `u128`: `[0x01,0x02,0x03,0x04]` gives
-    /// `0x0403_0201` little-endian, `0x0102_0304` big-endian.  This is the
-    /// optimizer-side decode of the raw bytes `ReadOnlyMemory::read` fills.
+    /// `0x0403_0201` little-endian, `0x0102_0304` big-endian.
     ///
     /// # Panics
     ///
@@ -92,11 +91,7 @@ mod endianness_tests {
     }
 }
 
-/// Dispatch key for [`crate::call_other_abi::classify`].  One variant per
-/// [`SleighArch`] preset, deliberately finer-grained than the SLA spec: the
-/// three 32-bit ARM variants share `ARM8` but could diverge on CallOther
-/// semantics.  Presets that agree today share a match arm via `|`
-/// alternation in `classify_arch_specific`; a divergence splits the arm.
+/// One variant per [`SleighArch`] preset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArchPreset {
     X86,
@@ -104,8 +99,7 @@ pub enum ArchPreset {
     Arm,
     ArmBe,
     /// BE8 ARM (little-endian instructions, big-endian data), i.e. modern
-    /// ARMv6+ big-endian.  Same instruction set and CallOther ABI as
-    /// [`ArchPreset::Arm`]; only the Sleigh spec and data endianness differ.
+    /// ARMv6+ big-endian.
     ArmBeKernel,
     ArmThumb,
     Aarch64,
@@ -121,10 +115,6 @@ pub enum ArchPreset {
 }
 
 /// The Sleigh configuration describing one target architecture.
-///
-/// The stack-pointer register name lives on the calling convention, not
-/// here, so `CallingConvention::build` is self-contained and two ABIs on
-/// one arch can in principle declare different SP registers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SleighArch {
     sla_spec: rsleigh::sla_spec::SlaSpec,
@@ -133,8 +123,7 @@ pub struct SleighArch {
     pub(crate) preset: ArchPreset,
 }
 
-/// Emits a `pub fn $name() -> SleighArch` preset constructor, threading the
-/// caller's rustdoc through as `$(#[$doc])*`.
+/// Emits a `pub fn $name() -> SleighArch` preset constructor.
 macro_rules! arch_ctor {
     ($(#[$doc:meta])* $name:ident => $sla:ident, $pspec:ident, $endian:ident, $preset:ident) => {
         $(#[$doc])*
@@ -160,7 +149,6 @@ impl SleighArch {
         self.endianness
     }
 
-    /// Set by each preset constructor; not user-overridable.
     pub fn preset(&self) -> ArchPreset {
         self.preset
     }
@@ -182,8 +170,7 @@ impl SleighArch {
     }
 
     arch_ctor! {
-        /// ARM 32-bit little-endian, non-Thumb.  `ARM8_le` + `ARM_v45` matches
-        /// the `-marm` target in `fixtures/arch/arm.mk`.
+        /// ARM 32-bit little-endian, non-Thumb.
         arm => SLA_SPEC_ARM8_LE, PSPEC_ARM_V45, Little, Arm
     }
 
@@ -211,8 +198,7 @@ impl SleighArch {
     }
 
     arch_ctor! {
-        /// `powerpc-linux-gnu-gcc -mlittle-endian`.  Uncommon as a Linux
-        /// target, but the Sleigh spec exists and mirrors `ppc32be`.
+        /// `powerpc-linux-gnu-gcc -mlittle-endian`.
         ppc32le => SLA_SPEC_PPC_32_LE, PSPEC_PPC_32, Little, Ppc32Le
     }
 
@@ -233,25 +219,17 @@ impl SleighArch {
 
     arch_ctor! {
         /// ARM Cortex-M, Thumb-2 only (`arm-linux-gnueabihf-gcc -mthumb`).
-        /// `ARM8_le` decodes both ARM and Thumb; the `ARMCORTEX` pspec is
-        /// what selects Thumb-only Cortex-M decoding.
         arm_thumb => SLA_SPEC_ARM8_LE, PSPEC_ARMCORTEX, Little, ArmThumb
     }
 
     arch_ctor! {
         /// Legacy **BE32** ARM 32-bit: big-endian instructions AND data,
-        /// pre-ARMv6.  ARM AAPCS is byte-order independent, so `arm_aapcs`
-        /// pairs with both this and [`SleighArch::arm`].
+        /// pre-ARMv6.
         ///
         /// Modern ARMv6+ big-endian Linux is **BE8** (little-endian
         /// instructions, big-endian data, flagged `EF_ARM_BE8`), not BE32.
         /// This spec byte-reverses every instruction word and fails almost
         /// every decode on such a binary; use [`SleighArch::arm_be_kernel`].
-        ///
-        /// Built with `clang --target=armeb-linux-gnueabi` linked by the
-        /// `arm-linux-gnueabihf` GNU `ld`: lld 14 has no
-        /// `armelfb_linux_eabi` emulation, GNU `ld` handles `-EB` via the BE
-        /// BFD target.
         arm_be => SLA_SPEC_ARM8_BE, PSPEC_ARM_V45, Big, ArmBe
     }
 
@@ -259,18 +237,11 @@ impl SleighArch {
         /// **BE8** ARM 32-bit (GHIDRA's `ARM:LEBE:32`): little-endian
         /// instructions, big-endian data.  Every ARMv6+ big-endian Linux
         /// target, kernel and userland, is this.
-        ///
-        /// The LE `ARM8_le` spec decodes the instruction words; the paired
-        /// `Endianness::Big` drives strider's own data decoding
-        /// (`LoadReadOnly` ROM reads, jump-table entries).  Pairs with the
-        /// byte-order-independent `arm_aapcs` CC.  Pass explicitly:
-        /// `load_elf(vmlinux, arch=SleighArch.arm_be_kernel())`.
         arm_be_kernel => SLA_SPEC_ARM8_LE, PSPEC_ARM_V45, Big, ArmBeKernel
     }
 
     /// Extracts this arch's register table by probing Sleigh against an
-    /// empty memory reader, for callers that need a `SleighRegs` without
-    /// decoding any code.
+    /// empty memory reader.
     ///
     /// # Errors
     ///

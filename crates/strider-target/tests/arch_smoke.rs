@@ -11,10 +11,6 @@
 //! `rsleigh::Sleigh::new` and yield a usable register table.  Without this,
 //! presets nothing else exercises (`mipsbe32`, `mipsle32`, `aarch64be`) would
 //! silently rot when an upstream constant is renamed.
-//!
-//! Stack-pointer resolution is deliberately not asserted here: the SP name
-//! lives on `CallingConvention`, so the `calling_convention` unit tests cover
-//! it.
 
 use strider_target::SleighArch;
 

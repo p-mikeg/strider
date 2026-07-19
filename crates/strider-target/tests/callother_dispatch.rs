@@ -1,12 +1,3 @@
-//! `call_other_abi::classify` returns the documented per-arch ABIs and falls
-//! through to the arch-independent table for shared opcodes (`mfence`,
-//! `cpuid`).  Pins that:
-//!
-//! - ARM `swi` reads `r7`/`r0..r6` and writes `r0` (Linux SVC).
-//! - x86_64 `swi` does NOT share that shape.  It is a different ISA's software
-//!   interrupt, modelled as a stub by the arch-specific arm.
-//! - `mfence` resolves identically under any preset.
-
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_target::ArchPreset;

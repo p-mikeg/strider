@@ -1,13 +1,5 @@
 //! `x86_linux_kernel` (`-mregparm=3`) is the one Linux calling convention
-//! that diverges from a userland ABI.  Every other arch's kernel-internal CC
-//! is byte-identical to its userland preset, so callers use that directly and
-//! there is no kernel alias to test.  Syscall ABIs are not calling conventions
-//! either: the `syscall` / `int 0x80` / `svc` traps lift to `CallOther`,
-//! classified through `call_other_abi`.
-//!
-//! `calling_convention/tests.rs` already pins the register counts; this pins
-//! the distinctive part, the exact `EAX, EDX, ECX` arg registers that separate
-//! regparm-3 from stack-only `x86_cdecl`.
+//! that diverges from a userland ABI.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 

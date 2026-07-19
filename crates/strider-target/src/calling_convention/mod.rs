@@ -2,7 +2,6 @@ use anyhow::anyhow;
 
 use crate::Result;
 
-/// Single source of truth for the name-to-varnode error path.
 pub(crate) fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh::Vn> {
     sleigh_regs
         .name_to_vn(name)
@@ -21,24 +20,17 @@ pub(crate) fn regs_to_vns(
 }
 
 /// A calling convention as static register-name slices.
-/// [`CallingConvention::build`] resolves the names against a Sleigh register
-/// table to produce a [`BuiltCallingConvention`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CallingConvention {
-    /// Lives on the convention, not the arch: every built convention needs
-    /// the SP's `Vn` resolved, which keeps `build` self-contained.
     stack_ptr_reg_name: &'static str,
     /// In positional order.
     arg_passing_regs: &'static [&'static str],
-    /// Excludes the stack pointer; SP's cross-call behaviour is
-    /// [`Self::ret_stack_pop`].
+    /// Excludes the stack pointer.
     callee_saved_regs: &'static [&'static str],
     /// In positional order.
     ret_val_regs: &'static [&'static str],
     /// Float return registers (`q0` on aarch64, `XMM0` on x86_64, `d0` on ARM
-    /// AAPCS soft-float, `f0` on MIPS O32).  Kept apart from
-    /// [`Self::ret_val_regs`] because their widths differ from the integer
-    /// return regs.
+    /// AAPCS soft-float, `f0` on MIPS O32).
     ret_val_regs_float: &'static [&'static str],
     /// `None` when the convention passes no arguments on the stack.
     stack_args: Option<StackArgs>,
@@ -47,14 +39,10 @@ pub struct CallingConvention {
     /// address, 0 on link-register ISAs where the call never touches SP.
     ret_stack_pop: i64,
     /// Register holding the return address across a call; `None` on
-    /// stack-push ISAs (x86, x86_64), where it lives on the stack.  The
-    /// indirect-branch resolver uses it to recognise `bx lr` / `pop {pc}` /
-    /// `jr ra` as returns.
+    /// stack-push ISAs (x86, x86_64), where it lives on the stack.
     link_register_reg_name: Option<&'static str>,
     /// `true` if calls under this convention preserve **all** observable
-    /// state, memory included.  `strider_ir::FunctionBuilder::build_call`
-    /// then omits the Call's Memory output and leaves the region's memory
-    /// chain alone, so `LoadReadOnly` / `LoadForward` forward across it.
+    /// state, memory included.
     ///
     /// `false` for every standard ABI; `true` only for transparent-hook
     /// presets like [`Self::x86_64_all_preserving`] (Linux-kernel
@@ -63,59 +51,35 @@ pub struct CallingConvention {
 }
 
 /// A [`CallingConvention`] with its register names resolved to varnodes.
-///
-/// Fields are `pub` because the type is immutable post-construction: both
-/// construction paths ([`CallingConvention::build`] and [`Self::try_new`])
-/// check every ABI invariant, and there is no mutating API.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BuiltCallingConvention {
     /// In positional order.
     pub arg_passing_regs: Vec<rsleigh::Vn>,
-    /// Excludes the stack pointer; SP's callee-side preservation is
-    /// [`Self::ret_stack_pop`].
+    /// Excludes the stack pointer.
     pub callee_saved_regs: Vec<rsleigh::Vn>,
     /// In positional order.
     pub ret_val_regs: Vec<rsleigh::Vn>,
-    /// Kept apart from [`Self::ret_val_regs`] because their widths differ.
+    /// In positional order.
     pub ret_val_regs_float: Vec<rsleigh::Vn>,
-    /// Deliberately absent from the four register lists above; SP's
-    /// cross-call behaviour is [`Self::ret_stack_pop`] instead.
+    /// Never present in the four register lists above.
     pub stack_vn: rsleigh::Vn,
     /// `None` when the convention passes no arguments on the stack.
     pub stack_args: Option<StackArgs>,
     /// Net byte change the callee's `ret` inflicts on the caller's SP: `8` on
     /// x86_64 (pops the return address), `0` on link-register ISAs.
     pub ret_stack_pop: i64,
-    /// `None` on stack-push ISAs (x86, x86_64).  The indirect-branch resolver
-    /// uses it to classify return-shaped indirect branches.
+    /// `None` on stack-push ISAs (x86, x86_64).
     pub link_register_vn: Option<rsleigh::Vn>,
     /// `true` for zero-side-effect hooks like `__fentry__` / `mcount`.
-    /// `build_call` then suppresses the Call's Memory output so
-    /// `LoadReadOnly` / `LoadForward` can forward across the call.
     pub preserves_memory: bool,
     /// `true` for a `noreturn` callee (`exit`, `abort`, `panic`,
     /// `__stack_chk_fail`), attached to a call TARGET via a per-address CC
-    /// override.  The CFG builder then terminates the calling region
-    /// `NoReturn` (lowered to `Call + Unreachable`) wherever the return
-    /// address lands, so even a *mid-function* fall-through is never lifted
-    /// as a live successor.
-    ///
-    /// The default `false` leaves the CFG builder's structural fallback in
-    /// charge: a call whose return address leaves the function bound is
-    /// unreachable-after even for an unmarked callee.
+    /// override.
     pub no_return: bool,
 }
 
 /// The trivial convention for synthetic / mock graphs that have no real
 /// target ABI: everything empty, plus a synthetic `stack_vn`.
-///
-/// The synthetic SP is a real, 8-byte REGISTER-space varnode (not a
-/// zero-sized sentinel) so a `Call` built under this CC can mint a
-/// well-typed `InitialVar(stack_vn)` anchor, which a `Call` always needs.
-/// Its offset sits far outside any architecture's register file, so stack
-/// analyses (`StackOffsetDetect`, `LoadForward`) correctly find nothing on
-/// a trivial-CC function, and the SP-exclusion-from-clobbers filter
-/// (`*v != stack_vn`) never drops a real tracked register.
 impl Default for BuiltCallingConvention {
     fn default() -> Self {
         Self {
@@ -137,18 +101,15 @@ impl Default for BuiltCallingConvention {
     }
 }
 
-/// Far outside any real architecture's register file, so the synthetic SP
-/// never aliases a tracked register.
+/// Far outside any real architecture's register file.
 pub(crate) const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
 
-/// First offender for [`BuiltCallingConvention::try_new`]'s disjointness
-/// checks.  O(|a|*|b|) over the <=31-element ABI register lists.
+/// First varnode of `a` that is also in `b`.
 fn first_in_both<'a>(a: &'a [rsleigh::Vn], b: &[rsleigh::Vn]) -> Option<&'a rsleigh::Vn> {
     a.iter().find(|vn| b.contains(vn))
 }
 
-/// First duplicate, for [`BuiltCallingConvention::try_new`]'s uniqueness
-/// checks.  O(n^2) over the <=31-element ABI register lists.
+/// First varnode appearing twice in `list`.
 fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
     list.iter()
         .enumerate()
@@ -158,10 +119,6 @@ fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
 
 /// Named-field inputs to [`BuiltCallingConvention::try_new`], one per
 /// identically named [`BuiltCallingConvention`] field.
-///
-/// A struct rather than positional arguments so the two same-typed return
-/// lists (`ret_val_regs` / `ret_val_regs_float`) cannot be transposed by a
-/// caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltCallingConventionParts {
     pub arg_passing_regs: Vec<rsleigh::Vn>,
@@ -185,13 +142,6 @@ impl BuiltCallingConvention {
     /// pointer.  `ret_vals` holds the tracked clobbered containers of
     /// `ret_val_regs` then `ret_val_regs_float` in ABI order; `clobbers` holds
     /// every other clobbered REGISTER/UNIQUE entry in `tracked_vns` order.
-    ///
-    /// Single source of truth for CC register-list projection: the production
-    /// lifter and the strider-ir test fixture `build_call_cc` both call it, so
-    /// their `Call` output shapes agree.  All machine-register knowledge stays
-    /// with the caller via the injected `container_of` (the lifter passes its
-    /// O(1) vn-to-container map; IR-side callers pass a `largest_container_in`
-    /// scan).
     pub fn ret_and_clobber_vns(
         &self,
         tracked_vns: &[rsleigh::Vn],
@@ -243,9 +193,7 @@ impl BuiltCallingConvention {
     ///
     /// # Errors
     ///
-    /// Returns the first violation found, naming the offending varnodes so a
-    /// CC author debugging a typo sees them rather than a downstream
-    /// miscompile.
+    /// Returns the first violation found, naming the offending varnodes.
     pub fn try_new(parts: BuiltCallingConventionParts) -> std::result::Result<Self, anyhow::Error> {
         let BuiltCallingConventionParts {
             arg_passing_regs,
@@ -361,9 +309,7 @@ impl BuiltCallingConvention {
 }
 
 /// Stack-arg layout: an unbounded series where the N-th stack argument sits
-/// at `base_offset + N * increment` bytes from the call-time SP.  Every
-/// supported ABI's stack-arg series is a uniform stride equal to its word
-/// size, so this is exact for all of them.
+/// at `base_offset + N * increment` bytes from the call-time SP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StackArgs {
     /// Byte offset from call-time SP of the first stack-passed argument.
@@ -375,9 +321,7 @@ pub struct StackArgs {
 impl StackArgs {
     /// Byte offset from call-time SP of the `n`-th stack argument.
     ///
-    /// Saturates rather than overflowing on a runaway index: a saturated
-    /// offset matches no real stack store, so the over-collecting
-    /// `call_stack_args` cursor walk terminates cleanly.
+    /// Saturates rather than overflowing on a runaway index.
     #[must_use]
     pub fn offset_of(&self, n: usize) -> i128 {
         self.base_offset
@@ -391,9 +335,6 @@ impl StackArgs {
     /// Offsets come from binary content, so `offset + size` is a checked add:
     /// a garbage offset degrades to `None` instead of panicking in debug and
     /// wrapping in release.
-    ///
-    /// Superseded in prod by [`Self::slot_of`] + `slots_spanned`; kept only
-    /// for the strict within-one-slot tests.
     #[cfg(test)]
     #[must_use]
     pub fn index_of(&self, offset: i128, size: i128) -> Option<usize> {
@@ -420,15 +361,13 @@ impl StackArgs {
     /// `floor((offset - base_offset) / increment)`, or `None` below
     /// `base_offset`.
     ///
-    /// Unlike the test-only `index_of` this bounds the access size not at
-    /// all: an argument wider than a slot (a 32-bit-ABI `double`, an x86-64
-    /// `long double`) is attributed to the slot its first byte lands in, as
-    /// is a sub-field read landing mid-slot.
+    /// The access size is not bounded at all: an argument wider than a slot
+    /// (a 32-bit-ABI `double`, an x86-64 `long double`) is attributed to the
+    /// slot its first byte lands in, as is a sub-field read landing mid-slot.
     ///
     /// The result is a byte-position slot index, NOT an argument ordinal: a
     /// wider-than-slot argument spans several slots but advances the ordinal
-    /// by one, so a caller wanting ordinals walks these indices with a
-    /// width-aware cursor.
+    /// by one.
     #[must_use]
     pub fn slot_of(&self, offset: i128) -> Option<usize> {
         debug_assert!(
@@ -443,10 +382,6 @@ impl StackArgs {
 
     /// Consecutive slots a `size`-byte argument occupies:
     /// `ceil(max(size, 1) / increment)`, always `>= 1`.
-    ///
-    /// The cursor-advance companion to [`Self::slot_of`]: `slot_of` anchors a
-    /// wide argument at the slot of its first byte, `slots_spanned` says how
-    /// many slots to step past it.
     ///
     /// Saturating, so a garbage decoded `size` from arbitrary lifted
     /// arithmetic degrades to a large-but-finite span instead of wrapping.
@@ -464,9 +399,7 @@ impl StackArgs {
     }
 }
 
-/// One row of `CC_PRESETS`.  All preset data lives in that table; the named
-/// factory functions (`x86_64_systemv`, `x86_cdecl`, ...) are thin name
-/// lookups over it.
+/// One row of `CC_PRESETS`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CcPresetRow {
     /// The Rust factory name, also the Python classmethod name.
@@ -548,8 +481,7 @@ const MIPS_O32_BASE: CallingConvention = CallingConvention {
     preserves_memory: false,
 };
 
-/// Every supported calling-convention preset.  Adding one means appending a
-/// [`CcPresetRow`]; the factory wrappers and `lookup_preset` need no change.
+/// Every supported calling-convention preset.
 pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     // x86-64 System V.  RSP is not listed callee-saved: `ret` pops the return
     // address, so the caller observes SP shifted by `ret_stack_pop`.
@@ -575,9 +507,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     },
     // "All-preserving" x86_64: every userland caller-clobbered register listed
     // callee-saved, for sites like Linux-kernel `__fentry__` / `mcount`
-    // callbacks that preserve all caller state.  Apply it through the
-    // per-address override map so it hits only those Call sites; the
-    // function-default CC stays SystemV.
+    // callbacks that preserve all caller state.
     CcPresetRow {
         name: "x86_64_all_preserving",
         cc: CallingConvention {
@@ -613,8 +543,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ],
             ret_val_regs: &["x0", "x1"],
             // The ABI-correct 16-byte SIMD regs, containing the s0/d0/q0
-            // sub-registers.  d0/d1 was an earlier workaround for the IR
-            // lacking I128 support.
+            // sub-registers.
             ret_val_regs_float: &["q0", "q1"],
             stack_args: Some(StackArgs {
                 base_offset: 0,
@@ -711,9 +640,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     //
     // ELFv1 has function descriptors: an external function symbol resolves to
     // a 3-pointer descriptor (entry, TOC, env), not the entry itself.  Only
-    // the register-level ABI is modelled here, so an indirect call in an ELFv1
-    // binary is a pointer-to-descriptor and a pattern query needing the entry
-    // address must follow the descriptor itself.
+    // the register-level ABI is modelled here.
     CcPresetRow {
         name: "powerpc64_elf_v1",
         cc: POWERPC64_ELF_BASE,
@@ -755,15 +682,11 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     },
 ];
 
-/// Linear scan: ~22 rows, and each name comparison short-circuits on length,
-/// so a hash map would not pay for itself.
 pub(crate) fn lookup_preset(name: &str) -> Option<&'static CcPresetRow> {
     CC_PRESETS.iter().find(|row| row.name == name)
 }
 
-/// Panics if no row matches `name`.  Every named factory passes its own
-/// `stringify!`'d name, so a miss is an internal inconsistency in this file,
-/// not a caller error.
+/// Panics if no row matches `name`.
 fn cc_from_table(name: &'static str) -> CallingConvention {
     lookup_preset(name)
         .unwrap_or_else(|| panic!("calling-convention preset not registered: {name}"))
@@ -771,8 +694,7 @@ fn cc_from_table(name: &'static str) -> CallingConvention {
 }
 
 /// Emits a named factory wrapper around [`cc_from_table`], with `$desc` as
-/// the first rustdoc paragraph.  Uses `#[doc = concat!(...)]` because the
-/// `///` form does not accept macro variables.
+/// the first rustdoc paragraph.
 macro_rules! cc_factory {
     ($name:ident, $desc:expr) => {
         #[doc = concat!($desc, "  See `CC_PRESETS` for the full field table.")]
@@ -833,16 +755,10 @@ impl CallingConvention {
         let ret_val_regs = regs_to_vns(sleigh_regs, self.ret_val_regs)?;
         let ret_val_regs_float = regs_to_vns(sleigh_regs, self.ret_val_regs_float)?;
         let stack_vn = vn_for_name(sleigh_regs, self.stack_ptr_reg_name)?;
-        // Propagating the resolution error means a typo in a preset's
-        // link-register name surfaces here rather than later in the
-        // indirect-branch resolver.
         let link_register_vn = self
             .link_register_reg_name
             .map(|name| vn_for_name(sleigh_regs, name))
             .transpose()?;
-        // Routed through `try_new` so a future preset with a typo (SP in
-        // arg_passing_regs, a link register missing from callee-saved) fails
-        // at construction instead of miscompiling downstream.
         BuiltCallingConvention::try_new(BuiltCallingConventionParts {
             arg_passing_regs,
             callee_saved_regs,
@@ -857,11 +773,6 @@ impl CallingConvention {
     }
 }
 
-// x86 32-bit is the only arch whose kernel-internal CC (`-mregparm=3`)
-// diverges from its userland preset, so it is the sole kernel wrapper.  Every
-// other arch's kernel CC equals its userland preset, used directly.  Syscall
-// ABIs are not calling conventions: the `syscall` / `int 0x80` / `svc` traps
-// lift to `CallOther`, classified through `call_other_abi`.
 impl CallingConvention {
     cc_factory!(
         x86_linux_kernel,

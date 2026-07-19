@@ -1,14 +1,7 @@
-//! Sleigh user-op (CallOther) classification table, shared by
-//! `strider_cfg::region_builder` (which terminates a region at a `NoReturn`
-//! trap) and `strider_lift`'s `FunctionLifter::handle_call_other`.
-
 use crate::calling_convention::regs_to_vns;
 use CallOtherClass::NoOp;
 
-/// Vn-resolved [`CallOtherAbi`], as [`crate::BuiltCallingConvention`] is to
-/// [`crate::CallingConvention`].  Built by the lifter once it has a Sleigh
-/// register table, and recorded in `strider_ir::Function`'s `call_descriptor`
-/// side-table as the `CallOther` lifting.
+/// Vn-resolved [`CallOtherAbi`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BuiltCallOtherAbi {
     pub implicit_reads: Vec<rsleigh::Vn>,
@@ -21,36 +14,27 @@ pub struct BuiltCallOtherAbi {
 /// `output`; this fills in the implicit channel around it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallOtherAbi {
-    /// Read beyond Sleigh's pcode-explicit `inputs[1..]`, appended to the
-    /// CallOther's value inputs at lift time.  Exact Sleigh register names,
-    /// case-sensitive.
+    /// Read beyond Sleigh's pcode-explicit `inputs[1..]`.  Exact Sleigh
+    /// register names, case-sensitive.
     pub implicit_reads: &'static [&'static str],
 
     /// Written or scratch-clobbered beyond Sleigh's pcode-explicit `output`.
-    /// Each becomes one extra clobber output slot on the CallOther node, and
-    /// the strider layer rebinds the matching tracked variable to it.
     pub implicit_writes: &'static [&'static str],
 
     /// Whether the op advances the IR's memory edge: `false` for pure compute
     /// (rdtsc, NEON/SVE), `true` for anything touching memory (atomics,
     /// barriers, port I/O, syscalls, kernel entries).
-    ///
-    /// Deliberately one flag with no stack / heap / unknown partition.  Like
-    /// mainstream compilers, per-query precision is recovered by
-    /// address-range and memory-dependence analysis in the optimiser instead.
     pub clobbers_memory: bool,
 
     /// `true` when control does not pass this op: a `BUG_ON`-class trap,
-    /// `sysret`, or a modeled call known never to return.  The op still emits
-    /// its full register / memory footprint, since a no-return op can have
-    /// effects, and the lifter then terminates the region `NoReturn`.  A bare
-    /// trap is the empty-footprint case.
+    /// `sysret`, or a modeled call known never to return.  A no-return op
+    /// still carries its full register / memory footprint; a bare trap is the
+    /// empty-footprint case.
     pub no_return: bool,
 }
 
 impl CallOtherAbi {
-    /// Resolves the name-based footprint against `sleigh_regs`, mirroring
-    /// [`crate::CallingConvention::build`].
+    /// Resolves the name-based footprint against `sleigh_regs`.
     ///
     /// # Errors
     ///
@@ -65,8 +49,7 @@ impl CallOtherAbi {
     }
 }
 
-/// Single source of truth for what `handle_call_other` does with a given
-/// user-op name.
+/// How a user-op name is lifted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallOtherClass {
     /// No IR node emitted, control and memory unchanged, and any
@@ -74,16 +57,13 @@ pub enum CallOtherClass {
     NoOp,
 
     /// Register footprint, memory effect, and whether control returns, beyond
-    /// what Sleigh's pcode encodes.  A trap ([`CallOtherClass::NO_RETURN`]) is
-    /// just the empty-footprint `no_return: true` case, so one modeled path
-    /// covers both an ordinary side-effecting user-op and a terminating one.
+    /// what Sleigh's pcode encodes.
     Call(CallOtherAbi),
 }
 
 impl CallOtherClass {
     /// Bare trap: an empty-footprint, non-returning `Call` (`BUG_ON`,
-    /// `sysret`, `UndefinedInstruction`).  The cfg terminates the region
-    /// `NoReturn`; the lifter terminates after emitting the empty node.
+    /// `sysret`, `UndefinedInstruction`).
     pub const NO_RETURN: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
         implicit_reads: &[],
         implicit_writes: &[],
@@ -101,10 +81,8 @@ impl CallOtherClass {
 /// first, then the arch-independent one, then the prefix families and the PPC
 /// table.
 ///
-/// The IR layer is the single strict gate on a `None`: the lifter turns it
-/// into `UnknownCallOtherError`, while the cfg builder just leaves the insn in
-/// the region.  A missing entry is intentional, since entries are added on
-/// demand as real binaries surface them.
+/// A missing entry is intentional: entries are added on demand as real
+/// binaries surface them.
 pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     classify_arch_specific(preset, name)
         .or_else(|| classify_arch_independent(name))
@@ -116,7 +94,6 @@ pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
 /// management, Altivec/VSX vector ops, traps, and system-register moves to
 /// named `pcodeop` CallOthers.  Scoped to the four PPC presets so the generic
 /// names among them (`random`, `message`) cannot match on another arch.
-/// Grouped by classification and ASCII-sorted within each group.
 fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     use crate::ArchPreset::{Ppc32Be, Ppc32Le, Ppc64Be, Ppc64Le};
     if !matches!(preset, Ppc32Be | Ppc32Le | Ppc64Be | Ppc64Le) {
@@ -204,9 +181,7 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
 
 /// Names whose ABI depends on the emitting arch: `swi` (which collides
 /// between ARM's Linux SVC/SWI and x86's INT), Linux syscall ABIs, SMCCC, and
-/// the x86 MSR / MONITOR-MWAIT / SWAPGS family.  OS-specific syscall
-/// distinctions (Linux vs FreeBSD x86_64 register usage) would slot in here
-/// too.
+/// the x86 MSR / MONITOR-MWAIT / SWAPGS family.
 fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     ARCH_SPECIFIC_TABLE.iter().find_map(|row| {
         (row.preset_arches.contains(&preset) && row.op_names.contains(&name)).then_some(row.class)
@@ -223,8 +198,6 @@ struct CallOtherRow {
     class: CallOtherClass,
 }
 
-/// Linear scan returning the first hit.  Adding an entry is one diffable row;
-/// the dispatch loop and the arch-independent fallback do not change.
 static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // ARM Linux SVC / SWI: r7 = syscall number, r0..r6 = args, r0 = return.
     // See `arch/arm/kernel/entry-common.S` and the EABI variant in
@@ -250,12 +223,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // Hence the empty register ABI: INT 0x80 really does read
     // EAX/EBX/ECX/EDX/ESI/EDI/EBP and write EAX, but modelling that here
     // would be wrong for INT3 padding and the other vectors, which touch none
-    // of those registers at the user-visible level.  Precise INT-0x80
-    // patterns need a per-immediate-operand dispatch that does not exist yet;
-    // 64-bit coverage comes from x86_64's separate `syscall` opcode below.
-    //
-    // Without this row, any x86 lift containing an INT errors with
-    // UnknownCallOtherError.
+    // of those registers at the user-visible level.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["swi"],
@@ -438,9 +406,8 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // SYSRET (0F 07) is a fast return from SYSCALL into ring 3.  Kept
     // arch-specific so a non-x86 spec that coincidentally names a user-op
     // `sysret` cannot inherit NoReturn.  For kernel-internal analysis it
-    // terminates the function, since kernel-context control does not return to
-    // its kernel-context caller; a future `ReturnToUserMode` class could
-    // distinguish user-mode trampolines.
+    // terminates the function: kernel-context control does not return to its
+    // kernel-context caller.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["sysret", "sysexit"],
@@ -474,25 +441,13 @@ const ARM32_ALL: &[crate::ArchPreset] = &[
 const AARCH64_BOTH: &[crate::ArchPreset] =
     &[crate::ArchPreset::Aarch64, crate::ArchPreset::Aarch64Be];
 
-/// Names meaning the same on every arch that emits them.  The bulk of the
-/// table.
+/// Names meaning the same on every arch that emits them.
 ///
 /// **Invariant: `Call` entries here MUST have empty `implicit_reads` and
 /// `implicit_writes`.**  A named register (RAX, x0, r7) only resolves on one
 /// arch's Sleigh register table, which makes the entry arch-specific by
-/// definition, so it belongs in `classify_arch_specific`.  The memory edge
-/// alone is fine here, being a pure IR concept.  Using only the shared `PURE`
-/// / `MEM_CLOBBER` consts makes the invariant syntactically true; the
-/// `arch_independent_call_entries_have_empty_register_channels` test enforces
-/// it.
-///
-/// Grouped by classification and ASCII-sorted within each group.  Lookup is a
-/// linear scan: the table is small and classification fires once per
-/// CallOther at lift time, so a hash map's setup cost is not justified.
+/// definition.
 fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
-    // Hardcoding empty register channels here keeps the no-named-registers
-    // invariant syntactically true, leaving the memory edge as the only
-    // per-entry choice.
     const PURE: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
         implicit_reads: &[],
         implicit_writes: &[],
@@ -767,10 +722,10 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
 }
 
 /// Arch-scoped prefix families, each covering dozens of GHIDRA user-ops (one
-/// per named system register, cache-maintenance target, or SIMD op) that would
-/// otherwise need a row each.  Scoped to the arches that define the family so
-/// a same-named user-op elsewhere cannot inherit the classification; anything
-/// outside a known family returns `None`.
+/// per named system register, cache-maintenance target, or SIMD op).  Scoped
+/// to the arches that define the family so a same-named user-op elsewhere
+/// cannot inherit the classification; anything outside a known family returns
+/// `None`.
 ///
 /// **Homogeneity was verified against the GHIDRA `.sinc` `define pcodeop`
 /// lists**, since a substring rule is only sound if EVERY member shares the
