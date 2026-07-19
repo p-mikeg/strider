@@ -2,6 +2,7 @@
 name = "vn-container"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 rsleigh.workspace = true

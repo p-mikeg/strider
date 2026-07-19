@@ -2,6 +2,7 @@
 name = "strider-py"
 version.workspace = true
 edition = { workspace = true }
+license.workspace = true
 
 [lib]
 # The rlib is named `strider_py` (Rust-side identifier) so the compiled

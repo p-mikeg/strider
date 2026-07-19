@@ -110,3 +110,7 @@ cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).

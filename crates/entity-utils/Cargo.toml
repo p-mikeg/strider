@@ -2,6 +2,7 @@
 name = "entity-utils"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 cranelift-bitset.workspace = true

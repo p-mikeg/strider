@@ -2,6 +2,7 @@
 name = "strider-orchestrator"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 strider-opt = { workspace = true }

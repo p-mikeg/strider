@@ -2,6 +2,7 @@
 name = "strider-opt"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [features]
 # Exposes the single-pass test runners (`run_one` / `run_post`) to downstream
