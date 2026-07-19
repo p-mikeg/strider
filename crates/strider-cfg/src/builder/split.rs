@@ -12,11 +12,8 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
     /// fresh [`NodeIndex`]) and a second half (from `addr` on, RETAINING
     /// `region_id`).
     ///
-    /// The second half keeps the id so outgoing edges and any work-queue
-    /// entries naming `region_id` as a parent need no fixup, including the
-    /// popped item that triggered this split.  Incoming edges, the
-    /// first-to-second fall-through edge, and both `start_addr_to_region_id`
-    /// entries are fixed up by hand below.
+    /// The second half keeps the id so outgoing edges and work-queue entries
+    /// naming `region_id` need no fixup.
     ///
     /// A no-op split returns `region_id` unchanged.
     pub(super) fn split_region(

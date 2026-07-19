@@ -1,9 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Smoke tests for the CFG-level DOT renderer behind the orchestrator's
-//! `cfg.html` debug output.  Synthetic x86_64 byte sequences, so there is no
-//! ELF fixture-build dependency.
-
 use dot::{DotStyle, GraphDot};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;

@@ -40,40 +40,26 @@ use crate::Result;
 /// // `sleigh` is still owned + usable here (the builder only borrowed it).
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-///
-/// See `crates/strider-lift/tests/cfg_build_end_to_end.rs` for runnable
-/// end-to-end examples.
 pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) sleigh: &'a mut rsleigh::Sleigh<R>,
     pub(super) start_addr: MachineInsnAddr,
     pub(super) options: CfgOptions,
-    /// The whole arch, not a split endianness/preset pair: carrying both
-    /// together is what stops a big-endian binary being decoded as LE, or
-    /// AArch64 `brk` being classified as the x86 stub.  `SleighArch` is
-    /// `Copy + Eq`, so this costs nothing.
     pub(super) arch: strider_target::SleighArch,
     pub(super) region_graph: RegionGraph,
     pub(super) start_addr_to_region_id: BTreeMap<PcodeInsnAddr, NodeIndex>,
     /// LIFO, so exploration is depth-first.
     pub(super) work_queue: Vec<(Option<NodeIndex>, PcodeInsnAddr)>,
     /// CC overrides for CALL TARGETS, keyed by target machine address.  Only
-    /// `no_return` is read here: a direct call to such a target terminates the
-    /// calling region `NoReturn` wherever the return address lands, so a
-    /// mid-function no-return call kills its fall-through.  Empty by default,
-    /// leaving the function-end structural fallback to do the work.
+    /// `no_return` is read here.
     pub(super) per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    /// Snapshotted once at construction and indexed by `user_op_id`; the table
-    /// is fixed for the Sleigh's lifetime.  Empty when the Sleigh reports no
-    /// user ops or the snapshot fails, which leaves a CallOther unclassified
-    /// exactly like an out-of-range id.
+    /// Snapshotted once at construction and indexed by `user_op_id`.  Empty
+    /// when the Sleigh reports no user ops or the snapshot fails.
     pub(super) user_op_names: Vec<String>,
 }
 
 impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// The canonical constructor: endianness and `ArchPreset` are derived
-    /// atomically from `arch`.  The Sleigh is borrowed mutably rather than
-    /// owned, since `lift_one(&mut self)` is stateful and the caller reuses
-    /// it after `build()` returns.
+    /// atomically from `arch`.
     pub fn for_arch(
         arch: &strider_target::SleighArch,
         sleigh: &'a mut rsleigh::Sleigh<R>,
@@ -104,8 +90,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
     }
 
-    /// The orchestrator passes the same map it hands the lifter, so a
-    /// `no_return` target terminates its calling region during CFG build.
     #[must_use]
     pub fn with_per_address_ccs(
         mut self,
@@ -119,8 +103,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// or `TailCall`.  Those two empty shapes are deliberate:
     ///
     /// - `Unconditional`: a single-instruction `jmp <in-range>` whose trailing
-    ///   branch opcode `finish_branch_or_tail_call` popped.  No body remains,
-    ///   but the successor edge must survive.
+    ///   branch opcode was popped.
     /// - `TailCall`: the stub [`Self::tail_call_stub`] builds for a CondBranch
     ///   arm leaving the function bound.  Nothing outside the bound is ever
     ///   decoded, so the stub has no body by construction.
@@ -148,12 +131,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Lowers the out-of-function arm of a conditional branch, creating the
     /// stub on first use.  It is wired as a regular CondBranch successor but
     /// never enqueued, so no byte outside `[start, start + fn_max_size)` is
-    /// decoded.  The IR layer lifts it as `Call(IntConst(target)) + Return`,
-    /// keeping the conditional alive with its leaving arm as a tail call.
+    /// decoded.
     ///
     /// Keyed through `start_addr_to_region_id` like any region, so two
-    /// branches to the same OOB address share one stub rather than colliding
-    /// on the one-region-per-start-address invariant.
+    /// branches to the same OOB address share one stub.
     pub(super) fn tail_call_stub(&mut self, addr: PcodeInsnAddr) -> Result<NodeIndex> {
         if let Some(&existing) = self.start_addr_to_region_id.get(&addr) {
             return Ok(existing);
@@ -207,9 +188,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         Ok(())
     }
 
-    /// The returned `Cfg` is pure data and does not own the Sleigh, so the
-    /// caller's Sleigh is immediately reusable for the IR lift, the dot
-    /// renderer, or the next CFG rebuild.
+    /// The returned `Cfg` is pure data and does not own the Sleigh.
     pub fn build(mut self) -> Result<Cfg> {
         self.work_queue.push((None, self.start_pcode_addr()));
         while let Some((parent_region, address)) = self.work_queue.pop() {
@@ -235,9 +214,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
 
 #[cfg(test)]
 mod tests {
-    //! Inline so the `pub(super)` helpers are reachable without a re-exported
-    //! test API.
-
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use petgraph::visit::{EdgeRef, IntoEdgeReferences};

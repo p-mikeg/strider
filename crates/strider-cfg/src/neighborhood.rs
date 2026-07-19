@@ -1,5 +1,3 @@
-//! Neighborhood BFS over the CFG region graph, for the interactive explorer.
-
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use rustc_hash::FxHashSet;
@@ -39,13 +37,8 @@ pub(crate) fn neighborhood_regions(
 }
 
 impl Cfg {
-    /// Pretty render around `center`, mirroring the per-block label logic of
-    /// `CfgDotDumper::dump_as_dot`.  Node ids are region indices; `center`
+    /// Pretty render around `center`.  Node ids are region indices; `center`
     /// gets a gold border.
-    ///
-    /// The leading `::` on `::dot` is required: this crate has a private
-    /// sibling module named `dot`, so a bare `dot::` path is ambiguous
-    /// between it and the external crate.
     pub fn neighborhood_dot<R: rsleigh::MemReader>(
         &self,
         sleigh: &rsleigh::Sleigh<R>,

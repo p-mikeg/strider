@@ -11,15 +11,12 @@ use crate::Result;
 /// `[start_addr, start_addr + fn_max_size)`.
 ///
 /// `allow_code_before_start_addr` relaxes the lower bound ONLY while
-/// `fn_max_size` is `None`, for binaries whose bodies legitimately reach back
-/// into the prelude or unwind area.  With a size set the extent is known
-/// exactly, so any `target < start_addr` is in a different function and is a
-/// tail call whatever the flag says.
+/// `fn_max_size` is `None`.  With a size set the extent is known exactly, so
+/// any `target < start_addr` is a tail call whatever the flag says.
 ///
 /// The window is non-wrapping.  When `start_addr + fn_max_size` overflows it
-/// clamps to `[start_addr, u64::MAX]` and the upper bound is dropped entirely,
-/// which is exact rather than approximate: there is no address above the
-/// window left to misclassify.
+/// clamps to `[start_addr, u64::MAX]` and the upper bound is dropped
+/// entirely.
 pub(crate) fn is_addr_tail_call(
     target: u64,
     start_addr: u64,
@@ -109,10 +106,6 @@ impl Cfg {
 
     /// Unordered; a predecessor with parallel edges is yielded once per edge,
     /// and dangling sources are skipped.
-    ///
-    /// The IR lifter uses this to attribute a tail-call stub's terminator
-    /// nodes to the conditional branch proving them: the stub is empty, so the
-    /// proving insn sits at the tail of its predecessors.
     pub fn region_predecessors(&self, region_id: RegionId) -> impl Iterator<Item = &Region> {
         self.region_graph
             .edges_directed(region_id, petgraph::Incoming)
@@ -132,8 +125,7 @@ impl Cfg {
     /// machine insn lifts to zero pcode ops (alignment `nop` / `pause` /
     /// `endbr64` / `paciasp`): the builder keys the region at the zero-op
     /// address, but a branch or switch TARGET lands on the first real
-    /// instruction, which is equally a valid entry.  Same containment
-    /// reasoning as [`Self::region_if`].
+    /// instruction, which is equally a valid entry.
     ///
     /// Genuine interior addresses still return `None`; they signal a missing
     /// `split_region`.
@@ -158,9 +150,6 @@ impl Cfg {
 
 #[cfg(test)]
 mod tests {
-    //! Inline so the malformed-CFG cases can populate the `pub(crate)`
-    //! `start_addr_to_region_id` field directly.
-
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use std::collections::BTreeMap;

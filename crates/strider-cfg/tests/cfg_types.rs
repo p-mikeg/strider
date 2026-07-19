@@ -1,8 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Pure data-type behaviour: ordering, conversions, containment, variant
-//! distinctness.  No internal CFG state needed.
-
 use strider_cfg::{
     CfgOptions, MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
 };

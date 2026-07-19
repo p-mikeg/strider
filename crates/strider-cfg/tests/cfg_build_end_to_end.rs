@@ -1,10 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! `Builder::build` driven by hand-crafted x86-64 byte sequences, covering
-//! what real binaries do not exercise cleanly: back-jump region splits,
-//! `fn_max_size` tail-call classification, `allow_code_before_start_addr`,
-//! `CondBranch` with an out-of-bound successor, a multi-pcode insn past
-//! `fn_max_size`, and Sleigh handle re-use across builds.
+//! what real binaries do not exercise cleanly.
 
 use rustc_hash::FxHashMap;
 

@@ -1,7 +1,3 @@
-//! Shared fixtures for the crate's inline test modules, so the synthetic
-//! `PcodeInsnAddr` / `Insn` / `Region` / `Sleigh` / `Builder` builders have
-//! one home instead of a copy per `mod tests`.
-
 use rsleigh::mem_readers::BufMemReader;
 use strider_target::SleighArch;
 

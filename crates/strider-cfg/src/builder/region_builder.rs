@@ -74,7 +74,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// GHIDRA's C++ `DisassemblyCache` (`sleigh.hh:107-120`) already memoises
-    /// recently-parsed instructions inside the `Sleigh`, so no outer cache.
+    /// recently-parsed instructions inside the `Sleigh`.
     fn lift_one(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
         self.builder
             .sleigh
@@ -156,9 +156,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
-    /// Address-bounds reasoning only.  Callers needing the well-formedness
-    /// rule "a tail call may only target `insn_index == 0`" must enforce it
-    /// themselves; [`Self::classify_branch_target`] is the variant that does.
+    /// Address-bounds reasoning only: does NOT check that the target lands on
+    /// a machine-instruction boundary.
     pub(super) fn is_branch_tail_call_nocheck(&self, branch_target_addr: PcodeInsnAddr) -> bool {
         crate::is_addr_tail_call(
             branch_target_addr.machine_addr.addr,
@@ -169,8 +168,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Tail-call vs intra-function, bailing when an out-of-bounds target does
-    /// not land on a machine-instruction boundary.  Shared by the `Branch`
-    /// and `CondBranch` arms, which apply the identical guard.
+    /// not land on a machine-instruction boundary.
     fn classify_branch_target(&self, branch_target_addr: PcodeInsnAddr) -> Result<bool> {
         let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
         if is_tail_call && branch_target_addr.insn_index != 0 {
@@ -210,15 +208,11 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// terminator.  Two cases end the region as `NoReturn`, which the IR
     /// lifter lowers to `Call + Unreachable`:
     ///
-    /// 1. The target's per-address CC is flagged `no_return` (`exit`/`abort`).
-    ///    This ends the region wherever the return address lands, killing a
-    ///    *mid-function* no-return call's dead fall-through that case 2 cannot
-    ///    see.
+    /// 1. The target's per-address CC is flagged `no_return` (`exit`/`abort`),
+    ///    which ends the region wherever the return address lands.
     /// 2. The return address is outside `[start, start + fn_max_size)`, so no
     ///    in-function code follows: an unmarked no-return callee (FreeBSD
-    ///    `exit1`), or the function simply ends at the call.  Stopping here
-    ///    avoids falling into padding and tripping
-    ///    `detect_fallthrough_oob_tail_call`.
+    ///    `exit1`), or the function simply ends at the call.
     fn process_call(
         &mut self,
         insn: &rsleigh::Insn,
@@ -268,8 +262,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// The conditional ALWAYS survives.  An out-of-bounds successor is wired
-    /// to a synthetic empty stub (`Builder::tail_call_stub`) so the leaving
-    /// arm lifts as a conditional tail call instead of being deleted.
+    /// to a synthetic empty stub (`Builder::tail_call_stub`) rather than
+    /// deleted.
     fn process_cond_branch(
         &mut self,
         insn: &rsleigh::Insn,
@@ -314,8 +308,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Resolves the user-op id from the CONST input at position 0 and
     /// terminates the region when the target ABI table classifies it
     /// noreturn.  An unexpected input shape falls through to `Continue`
-    /// rather than erroring: the IR layer's strict-on-emission check will
-    /// surface a real problem with far more context than is available here.
+    /// rather than erroring.
     fn process_call_other(&mut self, insn: &rsleigh::Insn) -> Result<InsnOutcome> {
         let Some(id_vn) = insn.inputs.first() else {
             return Ok(InsnOutcome::Continue);
@@ -343,8 +336,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(InsnOutcome::Continue)
     }
 
-    /// Seats a terminator from the `known_targets` entry the orchestrator
-    /// seeded from the IR-level resolver:
+    /// Seats a terminator from this site's `known_targets` entry:
     ///
     /// - `Single(K)` in range: `Unconditional` to K, successor enqueued.
     /// - `Single(K)` out of range: `TailCall`, no successor edge.
@@ -353,10 +345,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ///   whole site defers instead, because `Switch` has no per-target
     ///   tail-call escape and mixing in-range with tail-call targets in one
     ///   `Switch` would misroute the OOB cases.
-    /// - no entry: defer via `UnresolvedIndirectBranch` for the outer loop.
+    /// - no entry: defer via `UnresolvedIndirectBranch`.
     ///
     /// `CallIndirect` is deliberately not routed here; it stays a
-    /// non-terminator handled by the IR layer.
+    /// non-terminator.
     fn process_branch_indirect(
         &mut self,
         insn: &rsleigh::Insn,
@@ -461,15 +453,11 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// The empty-region case is load-bearing.  A stretch of machine
     /// instructions lifting to zero pcode ops (AArch64 `nop` / `paciasp`,
     /// ARM `bti`, x86 `nop` / `pause`, alignment padding) leaves `self.insns`
-    /// empty when the fall-through fires, yet we still materialise an empty
-    /// region owning `self.start_addr` instead of hot-wiring the parent edge
-    /// into the existing region.  That address can be a branch or switch
-    /// TARGET (a backward `je` onto a `pause` loop header, a jump-table case
-    /// label after an alignment `nop`), and `region_if` / `region_id_at_start`
-    /// resolve targets to the region that *owns* the address.  Hot-wiring
-    /// leaves it owned by nobody and the IR lifter cannot recover the
-    /// successor.  The empty region is a pass-through the IR driver iterates
-    /// as a no-op.
+    /// empty when the fall-through fires, yet an empty region owning
+    /// `self.start_addr` is still materialised rather than hot-wiring the
+    /// parent edge into the existing region.  That address can itself be a
+    /// branch or switch TARGET, and a target resolves to the region that
+    /// *owns* the address; hot-wiring would leave it owned by nobody.
     fn process_insn(
         &mut self,
         insn: &rsleigh::Insn,
@@ -520,20 +508,16 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Sequential decoding running off the recorded function extent is a
-    /// function-boundary error, NOT a tail call.  A real tail call has an
-    /// explicit `jmp`/`je` opcode and gets classified through
-    /// [`Self::process_branch`] / [`Self::process_cond_branch`]; reaching the
-    /// bound by falling through instead means `fn_max_size` is too small or
-    /// the function is unterminated, and calling that a tail call hides it.
+    /// function-boundary error, NOT a tail call: a real tail call has an
+    /// explicit `jmp`/`je` opcode, so reaching the bound by falling through
+    /// means `fn_max_size` is too small or the function is unterminated.
     ///
     /// Gating on `insns.is_empty()` would NOT be sufficient: a run of
     /// zero-pcode-op instructions (x86 `nop`, AArch64 `paciasp` / `autiasp`,
     /// ARM `bti`) never appends to `self.insns` yet still advances `cur_addr`,
     /// so such a prefix could walk past the bound and absorb the next
     /// function's first real instruction.  Gate on `cur_addr` having advanced
-    /// past the region start instead: the first iteration cannot have
-    /// overflowed anything, and every later one applies the bound regardless
-    /// of pcode-op count.
+    /// past the region start instead.
     fn detect_fallthrough_oob_tail_call(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
         let advanced_past_start = cur_addr.machine_addr.addr != self.start_addr.machine_addr.addr;
         if !advanced_past_start || !self.is_branch_tail_call_nocheck(cur_addr) {
@@ -552,9 +536,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
 
 #[cfg(test)]
 mod tests {
-    //! Inline rather than under `tests/` so the private helpers are reachable
-    //! without a re-exported test API.
-
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::cast_sign_loss)]
 
     use rsleigh::mem_readers::BufMemReader;

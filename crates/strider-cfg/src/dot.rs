@@ -11,8 +11,8 @@ use anyhow::anyhow;
 use crate::Result;
 
 impl Cfg {
-    /// The CFG owns no Sleigh handle, so the caller threads back the one that
-    /// built it for register-name resolution.
+    /// The `Sleigh` that built the CFG, borrowed for register-name
+    /// resolution.
     pub fn dot_dumper<'a, R: rsleigh::MemReader>(
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,
@@ -124,8 +124,7 @@ mod tests {
 
     use crate::{Builder, CfgOptions};
 
-    /// Keeps the `Sleigh` alive across the render; the dumper borrows it for
-    /// register-name resolution.
+    /// Keeps the `Sleigh` alive across the render.
     fn dot_string(bytes: Vec<u8>, start: u64) -> String {
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(bytes, start);

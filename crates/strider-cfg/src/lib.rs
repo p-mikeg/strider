@@ -10,13 +10,6 @@
 
 //! Binary function to a [`Cfg`] of basic blocks, via GHIDRA's Sleigh p-code
 //! lifter ([`rsleigh`]).  Each region holds a sequence of [`rsleigh::Insn`].
-//!
-//! IR-free by design: `strider-lift` lifts a finished [`Cfg`] into the
-//! `strider_ir` sea-of-nodes, so this crate stays a leaf with no analysis
-//! dependency.
-//!
-//! [`RegionTerminator`] is the single source of truth for how a region
-//! transfers control; CFG edges carry no weight.
 
 mod builder;
 mod dot;
@@ -45,9 +38,7 @@ use petgraph::graph::NodeIndex;
 /// A completed CFG for a single function, produced by [`Builder::build`].
 #[derive(Debug)]
 pub struct Cfg {
-    /// Read-only by convention: mutating this directly desyncs
-    /// `start_addr_to_region_id` and silently corrupts later
-    /// `region_id_at_start` lookups.  A past bug did exactly that.
+    /// Must not be mutated directly: `start_addr_to_region_id` would desync.
     pub(crate) region_graph: RegionGraph,
     pub(crate) entry: NodeIndex,
     /// O(log R) start-address index, kept in sync with `region_graph`.
