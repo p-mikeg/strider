@@ -92,8 +92,7 @@ A Rust workspace of sixteen crates. The ones you meet first:
 
 The rest are `strider-target` (arch and ABI descriptions) and five generic
 utility crates (`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory`,
-`vn-container`). Each crate has its own `README.md`, and
-[`CLAUDE.md`](CLAUDE.md) has the full dependency map and invariants.
+`vn-container`).
 
 ## Rust API
 
