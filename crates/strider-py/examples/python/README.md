@@ -41,6 +41,7 @@ PYTHONPATH=crates/strider-py python crates/strider-py/examples/python/01_quickst
 | 06 | [`06_complex_patterns.py`](06_complex_patterns.py) | Multi-level captures, back-references, `.when` predicate guards, commutative matching, the `_any` variant-agnostic constructors. |
 | 07 | [`07_callback_rom.py`](07_callback_rom.py) | A `ReadOnlyMemory` subclass that serves `.rodata` from Python; folds compile-time-constant loads into constants via `LoadReadOnly`. |
 | 08 | [`08_custom_readers.py`](08_custom_readers.py) | Combine a custom `MemReader` and `ReadOnlyMemory` in one lift; capture a folded constant and template-rewrite it on a clone. |
+| 09 | [`09_neighborhood.py`](09_neighborhood.py) | Render the CFG and IR neighborhood around a center node with `neighborhood_dot`; launch the interactive `visualize` explorer with `--serve`. |
 
 ## What each example doesn't show
 
