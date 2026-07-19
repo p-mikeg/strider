@@ -1,10 +1,13 @@
 use core::iter;
 use core::ops::ControlFlow;
+use std::collections::VecDeque;
 
 pub use entity_utils::set::DenseEntitySet;
 
+use crate::IRViewer;
+use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{NodeId, ValueId};
+use crate::node::{NodeId, NodeKind, ValueId};
 
 mod cast;
 pub use cast::{CastMask, cast_mask_of};
@@ -273,6 +276,79 @@ impl GraphWalkInfo {
         rpo.reverse();
         rpo
     }
+}
+
+/// Whether `kind` is one of the memory-chain node kinds `memory_reachable`
+/// walks and reports: the `InitialMemory` root plus every node that both
+/// consumes and re-produces a `Memory` token (`Load` is the one exception —
+/// it consumes but produces none, so it is always a leaf of the walk).
+fn is_memory_chain_kind(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::InitialMemory
+            | NodeKind::Store(_)
+            | NodeKind::Load(_)
+            | NodeKind::Call
+            | NodeKind::CallOther { .. }
+            | NodeKind::MemPhi
+    )
+}
+
+/// The memory-touching nodes reachable by following memory-token edges
+/// forward from `function`'s `InitialMemory` root, in BFS order.
+///
+/// The memory chain is rooted at the unique `InitialMemory` node; its
+/// `Memory` output feeds the next memory op (`Load` / `Store` / `Call` /
+/// `CallOther` / `MemPhi`), and each producer's own `Memory` output
+/// continues the chain. `Load` is a leaf — it consumes a memory token but
+/// produces none. The `InitialMemory` root is included.
+///
+/// A `Memory`-typed value's use-list can include a non-chain consumer that
+/// merely reads the final token without itself touching memory (a `Return`'s
+/// or `Unreachable`'s memory input, an `IndirectBranch`'s memory slot, …);
+/// [`is_memory_chain_kind`] excludes those from both the output and any
+/// further traversal (they produce no `Memory` output of their own, so
+/// excluding them from the walk changes nothing structurally — only the
+/// reported node set).
+///
+/// `InitialMemory` is a data root with no control edges of its own, so it is
+/// located via the same mixed backward-data + forward-control reachable set
+/// [`crate::validate::validate`] uses ([`GraphWalkInfo::compute_full`]), not
+/// the control-only [`cfg_reachable`] skeleton (which would never see it).
+///
+/// Returns an empty `Vec` when `entry`'s function performs no memory
+/// operations at all — i.e. has no reachable `InitialMemory` (a validated
+/// function that touches memory always has exactly one reachable
+/// `InitialMemory` node).
+pub fn memory_reachable(function: &Function, entry: NodeId) -> Vec<NodeId> {
+    let graph = function.graph();
+    let live = GraphWalkInfo::compute_full(graph, entry).live_nodes;
+    let Some(root) = function
+        .reachable_kind_iter(&live)
+        .find(|(_, k)| matches!(k, NodeKind::InitialMemory))
+        .map(|(n, _)| n)
+    else {
+        return Vec::new();
+    };
+
+    let mut seen = DenseEntitySet::<NodeId>::new();
+    let mut order = Vec::new();
+    let mut work = VecDeque::from([root]);
+    seen.insert(root);
+    while let Some(node) = work.pop_front() {
+        order.push(node);
+        // Follow this node's Memory output (if any) to its consumers,
+        // continuing the walk only through other memory-chain nodes.
+        if let Ok(mem_out) = function.memory_output_of(node) {
+            for (consumer, _slot) in function.value_uses(mem_out) {
+                if !seen.contains(consumer) && is_memory_chain_kind(function.node_kind(consumer)) {
+                    seen.insert(consumer);
+                    work.push_back(consumer);
+                }
+            }
+        }
+    }
+    order
 }
 
 #[cfg(test)]
@@ -1021,5 +1097,128 @@ mod tests {
              Return consumer nor the entry spine"
         );
         assert!(!cone.contains(&ret) && !cone.contains(&entry));
+    }
+
+    // ── memory_reachable ──────────────────────────────────────────────────────
+
+    /// Constructs a minimal `FunctionBuilder` with no tracked variables and one
+    /// active entry region. Mirrors the local `empty_builder` /
+    /// `builder_with_region` helpers duplicated per test module in this crate
+    /// (`builder/tests.rs`, `builder/build_trait.rs`) — a dev-dep on
+    /// `strider-ir-test-utils` would double-compile a DIFFERENT
+    /// `FunctionBuilder` under `cargo test`, so each in-crate test module
+    /// grows its own tiny copy instead.
+    fn builder_with_region() -> crate::Result<crate::FunctionBuilder> {
+        let mut b = crate::FunctionBuilder::new(
+            vec![],
+            strider_target::BuiltCallingConvention::default(),
+            strider_target::Endianness::Little,
+        )?;
+        let r = b.create_region_all()?;
+        b.set_entry_region_all(r)?;
+        b.set_region(r);
+        Ok(b)
+    }
+
+    /// `memory_reachable` must walk the InitialMemory -> Store -> Load chain:
+    /// every returned node touches memory, InitialMemory is the (included)
+    /// root, and the Store is found. A pure-arithmetic node with no memory
+    /// edge must not appear.
+    #[test]
+    fn memory_reachable_covers_the_store_load_chain() {
+        use crate::IRBuilderExt;
+
+        let mut b = builder_with_region().unwrap();
+
+        let space = rsleigh::VnSpace::RAM;
+        let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+        let data = b.build_int_const(7u64, ValueType::I32).unwrap();
+        b.build_store(addr, data, space).unwrap();
+        b.build_load(addr, space, ValueType::I32).unwrap();
+
+        // Pure-arithmetic node with no memory edge — must NOT appear.
+        let (arith, _) = int_bin(
+            b.function_mut().graph_mut(),
+            crate::IntBinaryOp::Add,
+            addr,
+            data,
+        );
+
+        // Terminate: without a terminator consuming the region's final
+        // memory token, nothing forward-control-reachable ever backward-data
+        // -walks into the Store/MemPhi/InitialMemory chain, so
+        // `GraphWalkInfo::compute_full` (which `memory_reachable` uses to
+        // locate the root) would never find `InitialMemory` at all.
+        b.build_return(None, &[]).unwrap();
+
+        let entry = b.entry();
+        let f = b.function();
+        let mem = memory_reachable(f, entry);
+
+        for &n in &mem {
+            let k = f.node_kind(n);
+            assert!(
+                matches!(
+                    k,
+                    NodeKind::InitialMemory
+                        | NodeKind::Store(_)
+                        | NodeKind::Load(_)
+                        | NodeKind::Call
+                        | NodeKind::CallOther { .. }
+                        | NodeKind::MemPhi
+                ),
+                "non-memory-touching node {n:?} ({k:?}) must not appear in memory_reachable"
+            );
+        }
+        assert!(
+            mem.iter()
+                .any(|&n| matches!(f.node_kind(n), NodeKind::InitialMemory)),
+            "InitialMemory root must be included: {mem:?}"
+        );
+        assert!(
+            mem.iter()
+                .any(|&n| matches!(f.node_kind(n), NodeKind::Store(_))),
+            "the Store must be reachable: {mem:?}"
+        );
+        assert!(
+            mem.iter()
+                .any(|&n| matches!(f.node_kind(n), NodeKind::Load(_))),
+            "the Load must be reachable: {mem:?}"
+        );
+        assert!(
+            !mem.contains(&arith),
+            "a pure-arithmetic node with no memory edge must not appear: {mem:?}"
+        );
+    }
+
+    /// Even with zero `Store`/`Load`/`Call` in the function body,
+    /// `set_entry_region_all` wires the entry region's `MemPhi` to
+    /// `InitialMemory` (`link_memory_regions`), so `InitialMemory` is always
+    /// reachable and `memory_reachable` returns exactly the two-node
+    /// `[InitialMemory, MemPhi]` chain rather than an empty `Vec`.
+    #[test]
+    fn memory_reachable_finds_the_entry_mem_phi_with_no_memory_ops() {
+        let mut b = builder_with_region().unwrap();
+        b.build_return(None, &[]).unwrap();
+        let entry = b.entry();
+        let f = b.function();
+        let mem = memory_reachable(f, entry);
+
+        assert!(
+            mem.iter()
+                .any(|&n| matches!(f.node_kind(n), NodeKind::InitialMemory)),
+            "InitialMemory root must be included: {mem:?}"
+        );
+        assert!(
+            mem.iter()
+                .any(|&n| matches!(f.node_kind(n), NodeKind::MemPhi)),
+            "the entry region's MemPhi must be reachable: {mem:?}"
+        );
+        for &n in &mem {
+            assert!(
+                matches!(f.node_kind(n), NodeKind::InitialMemory | NodeKind::MemPhi),
+                "no Store/Load/Call exists yet non-memory node {n:?} appeared: {mem:?}"
+            );
+        }
     }
 }
