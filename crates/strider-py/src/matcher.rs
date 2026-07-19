@@ -149,62 +149,31 @@ impl PyMatch {
     }
 }
 
-/// Emits an op-variant forwarder as its own `#[pymethods] impl PyMatch`
-/// block (one fn per name).  Each resolves `key` to a `Node` (via
-/// `Self::node`) and forwards to the identically-named `Node` reader,
-/// or returns `None` when the capture is unbound.  (pyo3 forbids a bare
-/// `macro_rules!` invocation *inside* a `#[pymethods]` block, so the macro
-/// emits the whole block instead; pyo3 permits multiple such blocks.)
-macro_rules! op_forwarders {
-    ($($name:ident, $doc:literal;)+) => {
-        #[pymethods]
-        impl PyMatch {
-            $(
-                #[doc = $doc]
-                fn $name(
-                    &self,
-                    py: Python<'_>,
-                    key: CaptureKey<'_>,
-                ) -> PyResult<Option<String>> {
-                    match self.node(py, key)? {
-                        Some(node) => node.$name(py),
-                        None => Ok(None),
-                    }
-                }
-            )+
+#[pymethods]
+impl PyMatch {
+    /// The operation variant of the node bound to `key` — `"Add"`,
+    /// `"Less"`, `"Neg"` — or `None` when `key` is unbound or names a
+    /// node that carries no operation.  Thin forwarder to `Node.op()`.
+    ///
+    /// One accessor covers every op family (integer / float, binary /
+    /// unary / compare); pair it with [`PyMatch::value_type`] to tell a
+    /// boolean op (`Xor` at `I1`) from a wide bitwise one.
+    fn op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
+        match self.node(py, key)? {
+            Some(node) => node.op(py),
+            None => Ok(None),
         }
-    };
-}
+    }
 
-op_forwarders! {
-    int_binary_op,
-        "Recover the matched `IntBinaryOp` variant name from `key`, \
-         e.g. `\"Add\"`, `\"Sub\"`, `\"And\"`.  Thin forwarder to \
-         `Node.int_binary_op()`.";
-    int_unary_op,
-        "Recover the matched `IntUnaryOp` variant name from `key`. \
-         Thin forwarder to `Node.int_unary_op()`.";
-    int_cmp_op,
-        "Recover the matched `IntCmpOp` variant name from `key`, \
-         e.g. `\"Less\"`, `\"Equal\"`, `\"Sless\"`.  Thin forwarder to \
-         `Node.int_cmp_op()`.";
-    bool_binary_op,
-        "Recover the matched boolean binary op's variant name (an \
-         `IntBinaryOp` — `And` / `Or` / `Xor` — at `I1`) from `key`. \
-         Thin forwarder to `Node.bool_binary_op()`.";
-    // Note: there is no `bool_unary_op` accessor.  A boolean logical NOT
-    // is `Xor(x, IntConst(1)):I1` since the former BitNot unary-op was
-    // removed in favour of `Xor(_, all_ones)`, so the matching op variant
-    // is recovered via `bool_binary_op` (which returns `"Xor"`).
-    float_binary_op,
-        "Recover the matched `FloatBinaryOp` variant name from `key`. \
-         Thin forwarder to `Node.float_binary_op()`.";
-    float_unary_op,
-        "Recover the matched `FloatUnaryOp` variant name from `key`. \
-         Thin forwarder to `Node.float_unary_op()`.";
-    float_cmp_op,
-        "Recover the matched `FloatCmpOp` variant name from `key`. \
-         Thin forwarder to `Node.float_cmp_op()`.";
+    /// The value-output type of the node bound to `key` — `"I1"`,
+    /// `"I64"`, `"F64"` — or `None` when `key` is unbound or names a node
+    /// with no value output.  Thin forwarder to `Node.value_type()`.
+    fn value_type(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
+        match self.node(py, key)? {
+            Some(node) => node.value_type(py),
+            None => Ok(None),
+        }
+    }
 }
 
 #[pymethods]

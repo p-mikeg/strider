@@ -111,51 +111,6 @@ impl PyNode {
     }
 }
 
-/// Emits the op-name accessors that are byte-identical except the
-/// `NodeKind` variant they match.  Each becomes a method on `PyNode`
-/// that returns the matched op's `Debug` name (e.g. `"Add"`) or `None`.
-/// pyo3 forbids a bare `macro_rules!` invocation *inside* a
-/// `#[pymethods]` block, so the macro emits its own such block; pyo3
-/// permits multiple (see `matcher.rs`'s `op_forwarders!`).
-macro_rules! op_name_accessors {
-    ($( $(#[doc = $doc:literal])+ $name:ident => $variant:ident; )+) => {
-        #[pymethods]
-        impl PyNode {
-            $(
-                $(#[doc = $doc])+
-                pub(crate) fn $name(&self, py: Python<'_>) -> PyResult<Option<String>> {
-                    self.with_node(py, |function, nid| match function.node_kind(nid) {
-                        NodeKind::$variant(op) => Some(format!("{op:?}")),
-                        _ => None,
-                    })
-                }
-            )+
-        }
-    };
-}
-
-op_name_accessors! {
-    /// If this node is an `IntBinaryOp`, its variant name (e.g. `"Add"`),
-    /// else `None`.
-    int_binary_op => IntBinaryOp;
-
-    /// If this node is an `IntUnaryOp`, its variant name, else `None`.
-    int_unary_op => IntUnaryOp;
-
-    /// If this node is an `IntCmpOp`, its variant name (e.g. `"Less"`,
-    /// `"Equal"`), else `None`.
-    int_cmp_op => IntCmpOp;
-
-    /// If this node is a `FloatBinaryOp`, its variant name, else `None`.
-    float_binary_op => FloatBinaryOp;
-
-    /// If this node is a `FloatUnaryOp`, its variant name, else `None`.
-    float_unary_op => FloatUnaryOp;
-
-    /// If this node is a `FloatCmpOp`, its variant name, else `None`.
-    float_cmp_op => FloatCmpOp;
-}
-
 #[pymethods]
 impl PyNode {
     /// Expose the strong `Py<PyFunction>` back-reference to Python's cyclic
@@ -174,11 +129,50 @@ impl PyNode {
         self.id
     }
 
-    /// The node's `NodeKind` formatted as a string (e.g. `"IntConst"`,
-    /// `"Call"`, `"Phi"`, `"Add"`).  The node's `NodeKind` formatted as a
-    /// string.
+    /// The node's `NodeKind` as a string.  Payload-carrying kinds render
+    /// with their payload, so this already names the op variant:
+    /// `"IntBinaryOp(Add)"`, `"IntCmpOp(Less)"`, `"Load(Ram)"`.  Kinds
+    /// with no payload render bare: `"Region"`, `"Phi"`, `"Entry"`.  See
+    /// [`PyNode::op`] for just the op variant.
     fn kind(&self, py: Python<'_>) -> PyResult<String> {
         self.with_node(py, |function, nid| format!("{:?}", function.node_kind(nid)))
+    }
+
+    /// The operation variant of an op-carrying node — `"Add"`, `"Less"`,
+    /// `"Neg"`, `"Sqrt"` — or `None` for a node that carries no operation
+    /// (`Region`, `Load`, `IntConst`, `Call`, …).
+    ///
+    /// One accessor covers every op family; the family itself is already
+    /// in [`PyNode::kind`], so `kind() == "IntBinaryOp(Xor)"` and
+    /// `op() == "Xor"` name the same node from two directions.  A boolean
+    /// op is an `IntBinaryOp` whose output is `I1`, so pair this with
+    /// [`PyNode::value_type`] to tell `Xor:I1` (a logical NOT) from a
+    /// wide bitwise `Xor`.
+    pub(crate) fn op(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.with_node(py, |function, nid| match function.node_kind(nid) {
+            NodeKind::IntBinaryOp(op) => Some(format!("{op:?}")),
+            NodeKind::IntUnaryOp(op) => Some(format!("{op:?}")),
+            NodeKind::IntCmpOp(op) => Some(format!("{op:?}")),
+            NodeKind::FloatBinaryOp(op) => Some(format!("{op:?}")),
+            NodeKind::FloatUnaryOp(op) => Some(format!("{op:?}")),
+            NodeKind::FloatCmpOp(op) => Some(format!("{op:?}")),
+            _ => None,
+        })
+    }
+
+    /// The node's value-output type as a string — `"I1"`, `"I32"`,
+    /// `"I64"`, `"F64"`, … — or `None` for a node with no value output
+    /// (`Region`, `Store`, `Return`, …).
+    ///
+    /// Booleans are the 1-bit integer `I1`, so `value_type() == "I1"` is
+    /// the "this produces a boolean" test.  The returned name is accepted
+    /// verbatim by the pattern-side `value_ty(...)` filter.
+    pub(crate) fn value_type(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.with_node(py, |function, nid| {
+            let value = Self::value_output(function, nid)?;
+            let ty = function.value_kind(value).as_value()?;
+            Some(format!("{ty:?}"))
+        })
     }
 
     /// The data / control nodes feeding this one, as a list of `Node`s.
@@ -296,25 +290,6 @@ impl PyNode {
             }
         })?;
         Ok(vn.map(crate::sleigh::PyVn::from_inner))
-    }
-
-    /// If this node is a boolean binary op (an `IntBinaryOp` whose output
-    /// is `I1`), its variant name, else `None`.
-    ///
-    /// Note: there is no `bool_unary_op`.  A boolean logical NOT is
-    /// `Xor(x, IntConst(1)):I1`, so it is recovered here (returning
-    /// `"Xor"`).
-    pub(crate) fn bool_binary_op(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        self.with_node(py, |function, nid| {
-            let NodeKind::IntBinaryOp(op) = function.node_kind(nid) else {
-                return None;
-            };
-            let value = Self::value_output(function, nid)?;
-            if !function.value_kind(value).as_value()?.is_bool() {
-                return None;
-            }
-            Some(format!("{op:?}"))
-        })
     }
 
     /// The asm-fingerprint addresses recorded on this node — a sorted,

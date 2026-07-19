@@ -69,10 +69,10 @@ for hit in narrow:
 # 4. Visualize. Open the HTMLs in any browser to see the rendered
 #    graphviz output. `dark` and `dark_cfg` are the built-in styles.
 #    `cfg` (from step 2's `analyze` call) already IS the final CFG —
-#    render it directly, no `build_cfg` rebuild needed.  The pretty IR
-#    render needs a Sleigh (for register names), which only the `Lifter`
-#    (`prog`, here an `ElfLifter`) owns — that's why it's called on
-#    `prog`, not on `function` directly.
+#    render it directly, no `build_cfg` rebuild needed.  `pretty=True`
+#    resolves register names, inlines constants and adds virtual nodes;
+#    it needs a Sleigh, which the function reaches through its parent
+#    Cfg's Lifter.  Omit it for the raw as-stored graph.
 cfg.to_html("/tmp/quickstart-cfg.html", style="dark_cfg")
-prog.to_html(function, "/tmp/quickstart-graph.html", style="dark")
+function.to_html("/tmp/quickstart-graph.html", pretty=True, style="dark")
 print("wrote /tmp/quickstart-cfg.html and /tmp/quickstart-graph.html")

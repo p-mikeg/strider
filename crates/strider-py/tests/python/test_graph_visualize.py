@@ -11,60 +11,72 @@ def _build_lifter_and_graph():
     return built_lifter_and_function("x86", "memory", "array_sum", optimize=False)
 
 
-def test_pretty_render_on_lifter():
+def test_pretty_render_is_a_flag_not_a_receiver():
     """Pretty renders need a `Sleigh` (register-name resolution, constant
-    inlining, virtual nodes) which only the `Lifter` owns — a bare
-    `Function` has none, so `Lifter.to_html`/`to_dot` are the
-    Sleigh-needing pretty accessors.  `Function.to_dot`/`to_html` DO
-    exist too, but they render the raw (as-stored, no-Sleigh) graph —
-    pretty-vs-raw is decided by which object you call, not by the method
-    name."""
-    lift, graph = _build_lifter_and_graph()
-    html = lift.to_html(graph)
+    inlining, virtual nodes), which a `Function` reaches through its
+    parent `Cfg`'s `Lifter`.  So pretty-vs-raw is chosen by the `pretty`
+    FLAG on one method, not by which object you happen to call — the two
+    renders no longer hide behind the same verb on different receivers."""
+    graph = _build_graph()
+    html = graph.to_html(pretty=True)
     assert isinstance(html, str) and len(html) > 0
+    assert graph.to_html() != html, "pretty and raw must differ"
 
 
-def test_lifter_to_html_writes_file(tmp_path):
-    lift, g = _build_lifter_and_graph()
+def test_pretty_to_html_writes_file(tmp_path):
+    g = _build_graph()
     out = tmp_path / "graph.html"
-    assert lift.to_html(g, str(out)) is None
+    assert g.to_html(str(out), pretty=True) is None
     assert out.exists() and out.stat().st_size > 0
 
 
-def test_lifter_to_dot_writes_file(tmp_path):
-    lift, g = _build_lifter_and_graph()
+def test_pretty_to_dot_writes_file(tmp_path):
+    g = _build_graph()
     out = tmp_path / "graph.dot"
-    assert lift.to_dot(g, str(out)) is None
+    assert g.to_dot(str(out), pretty=True) is None
     assert out.exists() and out.stat().st_size > 0
 
 
-def test_lifter_to_dot_returns_dot_str():
-    lift, g = _build_lifter_and_graph()
-    dot = lift.to_dot(g)
+def test_pretty_to_dot_returns_dot_str():
+    g = _build_graph()
+    dot = g.to_dot(pretty=True)
     assert isinstance(dot, str) and "digraph" in dot.lower()
 
 
-def test_lifter_to_html_returns_html_str():
-    lift, g = _build_lifter_and_graph()
-    html = lift.to_html(g)
+def test_pretty_to_html_returns_html_str():
+    g = _build_graph()
+    html = g.to_html(pretty=True)
     assert isinstance(html, str)
     assert "<html" in html.lower() or "svg" in html.lower()
 
 
-def test_lifter_dump_methods_removed():
+def test_style_requires_pretty():
+    """`style` themes the pretty render only.  Accepting-and-ignoring it
+    on the raw path would be the same silent-success defect as the old
+    unknown-style fallback."""
+    import pytest
+
+    g = _build_graph()
+    with pytest.raises(strider.StriderError, match="pretty"):
+        g.to_html(style="dark")
+    with pytest.raises(strider.StriderError, match="unknown dot style"):
+        g.to_html(pretty=True, style="not_a_theme")
+
+
+def test_lifter_render_methods_removed():
+    """The pretty renders moved onto `Function` behind `pretty=True`;
+    the `Lifter`-side duplicates are gone, so one verb has one home."""
     lift, g = _build_lifter_and_graph()
     del g
-    for gone in ("dump_html", "dump_dot", "html_str"):
+    for gone in ("to_dot", "to_html", "dump_html", "dump_dot", "html_str"):
         assert not hasattr(lift, gone)
 
 
-def test_elf_lifter_inherits_to_dot_to_html_not_dump_methods():
-    """`ElfLifter` is a pure-Python `Lifter` subclass, so it inherits
-    `to_dot`/`to_html` from the Rust base and loses `dump_dot`/
-    `dump_html`/`html_str` along with it."""
+def test_elf_lifter_has_no_render_methods_either():
+    """`ElfLifter` is a pure-Python `Lifter` subclass, so it inherits the
+    removal too — rendering lives on the `Function` it returns."""
     prog = strider.lift.load_elf(str(fixture_path("x86", "memory")))
-    assert hasattr(prog, "to_dot") and hasattr(prog, "to_html")
-    for gone in ("dump_html", "dump_dot", "html_str"):
+    for gone in ("to_dot", "to_html", "dump_html", "dump_dot", "html_str"):
         assert not hasattr(prog, gone)
 
 

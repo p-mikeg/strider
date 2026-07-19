@@ -22,6 +22,7 @@ from strider.pattern import (
     phi_for, initial_var, initial_var_for, function_arg,
     function_arg_any, function_arg_reg, function_arg_stack,
     int_const, signed_int_const, int_cmp, int_bin_any, int_cmp_any,
+    any_int_const,
 )
 
 from .conftest import built_function, fixture_path
@@ -308,7 +309,7 @@ def test_int_cmp_no_not_equal_op():
         int_cmp("NotEqual", "x", "y")
 
 
-# ── Match accessors: int_cmp_op + int_binary_op + vn ─────────────────
+# ── Match accessors: op + value_type + vn ────────────────────────────
 
 
 def test_int_binary_op_recovery():
@@ -318,11 +319,48 @@ def test_int_binary_op_recovery():
     hits = g.find_all(p)
     assert len(hits) >= 1
     # Recover a real op variant from the first match.
-    op_name = hits[0].int_binary_op(c)
+    op_name = hits[0].op(c)
     assert op_name in {
         "Add", "Sub", "Mul", "Div", "Sdiv", "Rem", "Srem",
         "And", "Or", "Xor", "ShiftLeft", "ShiftRight", "SShiftRight",
     }
+
+
+def test_op_and_value_type_replace_the_seven_family_accessors():
+    """One `op()` covers every op family, and `value_type()` carries the
+    signal the old `bool_binary_op` encoded — a boolean op is an
+    `IntBinaryOp` at `I1`, so the pair distinguishes it from a wide
+    bitwise op of the same shape.  `kind()` already names the family, so
+    the seven per-family accessors were pure duplication."""
+    g = _patterns_graph()
+    c = Capture()
+    hits = g.find_all(int_bin_any(c, anything(), anything()))
+    assert len(hits) >= 1
+    node = hits[0].node(c)
+
+    # kind() names the family AND the variant; op() is just the variant.
+    assert node.kind() == f"IntBinaryOp({node.op()})"
+    assert hits[0].op(c) == node.op()
+    assert hits[0].value_type(c) == node.value_type()
+    assert node.value_type().startswith(("I", "F"))
+
+    for gone in (
+        "int_binary_op", "int_unary_op", "int_cmp_op", "bool_binary_op",
+        "float_binary_op", "float_unary_op", "float_cmp_op",
+    ):
+        assert not hasattr(node, gone), f"Node.{gone} should be gone"
+        assert not hasattr(hits[0], gone), f"Match.{gone} should be gone"
+
+
+def test_op_is_none_for_a_node_carrying_no_operation():
+    """`op()` answers "which operation", so a node that is not an
+    operation answers `None` rather than raising."""
+    g = _patterns_graph()
+    c = Capture()
+    hits = g.find_all(any_int_const(c))
+    assert len(hits) >= 1
+    assert hits[0].node(c).op() is None
+    assert hits[0].op(c) is None
 
 
 def test_int_cmp_op_recovery():
@@ -331,7 +369,7 @@ def test_int_cmp_op_recovery():
     p = int_cmp_any(c, anything(), anything())
     hits = g.find_all(p)
     assert len(hits) >= 1
-    op_name = hits[0].int_cmp_op(c)
+    op_name = hits[0].op(c)
     # Regression: the previous allowed set included
     # `LessEqual`, `SlessEqual`, `Borrow` — none of these exist in
     # `ir::IntCmpOp`; they are lift-time-lowered shapes, never emitted

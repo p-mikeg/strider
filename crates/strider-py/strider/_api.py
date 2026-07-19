@@ -31,9 +31,10 @@ directly with `strider.lift.lifter(arch, mem, rom=None)` (the native
 Rust handle) and call its `analyze(addr, cc, ...)`.  Pattern queries
 (`find_all` / `find_unique`) and the addr-only
 `fingerprint`/`asm_fingerprint` live directly on the returned
-`Function`/`Node` (no Sleigh needed); the Sleigh-needing pretty
-renders (`to_dot` / `to_html`) live on the `Lifter` that produced the
-function, since it owns the Sleigh.  p-code has two
+`Function`/`Node` (no Sleigh needed); rendering is `Function.to_dot` /
+`to_html`, where `pretty=True` selects the Sleigh-backed render (the
+function reaches the Sleigh back through its parent `Cfg`'s `Lifter`)
+and the default renders the graph as stored.  p-code has two
 homes: `Cfg.pcode_at` / `Cfg.fingerprint_pcode` (an exact lookup
 against the `Cfg` `analyze` returns — the audit-trail path) and
 `Lifter.pcode_at(entry, addr)` (a linear decode from `entry`, for an
@@ -430,19 +431,24 @@ class ElfLifter(Lifter):
 
     def analyze(
         self,
-        target: Union[str, int],
+        entry: Union[str, int],
         cc: Optional[CallingConvention] = None,
         opts: Optional[LifterOptions] = None,
     ):
-        """Lift the function at `target` (symbol name or absolute
-        address), returning the same `(Cfg, Function, unresolved_addrs)`
-        tuple as the base `Lifter.analyze`.
+        """Lift the function at `entry` (symbol name or absolute address),
+        returning the same `AnalyzeResult` as the base `Lifter.analyze`.
 
-        A `str` target is resolved to an address via the ELF symbol
+        A `str` entry is resolved to an address via the ELF symbol
         table; when the symbol's recorded size is non-zero and the
         caller didn't pass an explicit `opts.cfg.function_max_size`, the
         ELF's `st_size` is used as the bound automatically.  An `int`
-        target is used verbatim.
+        entry is used verbatim.
+
+        This is a signature-compatible override: the base declares
+        `entry: int | str` and `cc` optional precisely so that the two
+        affordances this class adds — symbol-name lookup and an
+        ELF-derived default CC — are widenings rather than a Liskov
+        violation.  A plain `Lifter` raises for either.
 
         `cc` defaults to the ELF-derived (or explicitly-passed at
         construction) calling convention when omitted.  `opts` (a
@@ -455,8 +461,9 @@ class ElfLifter(Lifter):
         writable sections excluded), wired into the base `Lifter` at
         construction (and rebuilt by `add_elf`).
 
-        Raises `TypeError` when `target` is neither `str` nor `int`.
+        Raises `TypeError` when `entry` is neither `str` nor `int`.
         """
+        target = entry
         if opts is None:
             opts = LifterOptions()
 
@@ -476,7 +483,7 @@ class ElfLifter(Lifter):
             addr = target
         else:
             raise TypeError(
-                f"`target` must be a symbol name (str) or address (int), "
+                f"`entry` must be a symbol name (str) or address (int), "
                 f"got {type(target).__name__}"
             )
 

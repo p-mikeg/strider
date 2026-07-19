@@ -192,18 +192,34 @@ def test_analyze_returns_cfg_first():
     assert function.node_count() > 0 and isinstance(unresolved, list)
 
 
-def test_analyze_by_name_returns_tuple():
-    """`ElfLifter.analyze(symbol_name)` returns the same
-    `(Cfg, Function, unresolved)` tuple as the base `Lifter.analyze`, with
-    a non-empty IR graph."""
+def test_analyze_by_name_returns_named_result():
+    """`ElfLifter.analyze(symbol_name)` returns the same `AnalyzeResult`
+    as the base `Lifter.analyze`, with a non-empty IR graph."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     result = s.analyze("add")
-    assert isinstance(result, tuple) and len(result) == 3
+    assert isinstance(result, strider.lift.AnalyzeResult)
+    assert isinstance(result.cfg, strider.cfg.Cfg)
+    assert result.function.node_count() > 0
+    assert isinstance(result.unresolved, list)
+
+
+def test_analyze_result_unpacks_as_a_triple():
+    """`AnalyzeResult` keeps the legacy destructuring shape: it is a
+    3-sequence yielding `(cfg, function, unresolved)` in that order, so
+    `cfg, fn, unresolved = lifter.analyze(...)` still works."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.lift.load_elf(str(elf))
+    result = s.analyze("add")
+    assert len(result) == 3
     cfg, function, unresolved = result
-    assert isinstance(cfg, strider.cfg.Cfg)
-    assert function.node_count() > 0
-    assert isinstance(unresolved, list)
+    assert cfg is result.cfg
+    assert function is result.function
+    assert unresolved == result.unresolved
+    # Positional indexing agrees with the named fields, negative included.
+    assert result[0] is result.cfg and result[-1] == result.unresolved
+    with pytest.raises(IndexError):
+        result[3]
 
 
 def test_analyze_by_address_returns_tuple():
@@ -432,8 +448,20 @@ def test_standalone_strider_rejects_name_targets():
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded._elf.reader()
     s = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises(strider.StriderError, match="ElfLifter"):
         s.analyze("add", strider.sleigh.CallingConvention.x86_64_systemv())
+
+
+def test_standalone_strider_requires_an_explicit_cc():
+    """`cc` is optional in the base signature only so `ElfLifter` (which
+    derives one from the ELF header) is a compatible override — a plain
+    `Lifter` stores no default and says so rather than guessing."""
+    elf = fixture_path("x64", "arithmetic")
+    loaded = strider.lift.load_elf(str(elf))
+    mem = loaded._elf.reader()
+    s = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    with pytest.raises(strider.StriderError, match="cc"):
+        s.analyze(loaded.symbol("add"))
 
 
 # The custom-pipeline path used to live on `strider.run(..., pipeline=)`:

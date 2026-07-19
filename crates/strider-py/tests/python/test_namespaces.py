@@ -2,7 +2,7 @@ import strider
 
 EXPECTED = {
     "ir": ["Function", "Node"],
-    "lift": ["Lifter", "ElfLifter", "LifterOptions", "load_elf"],
+    "lift": ["Lifter", "ElfLifter", "LifterOptions", "AnalyzeResult", "load_elf"],
     "cfg": ["Cfg", "CfgOptions"],
     "sleigh": ["SleighArch", "CallingConvention", "Sleigh", "Vn", "VnSpace"],
     "reader": ["BufferReader", "MemReader", "ReadOnlyMemory"],

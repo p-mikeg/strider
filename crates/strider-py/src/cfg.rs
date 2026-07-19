@@ -83,7 +83,7 @@ impl PyCfg {
         op: CfgDotOp<'_>,
     ) -> PyResult<CfgDotResult> {
         self.with_sleigh(py, |sleigh| {
-            let d = dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some(style)));
+            let d = dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some(style))?);
             match op {
                 CfgDotOp::ToHtml(p) => d
                     .dump_as_html(Path::new(p))

@@ -189,6 +189,82 @@ pub(crate) fn prefer_pending_control_flow<T>(result: PyResult<T>) -> PyResult<T>
 /// override entirely in Python, reusing this Rust struct's `#[new]`
 /// constructor via `super().__new__(cls, arch, mem, rom=rom)` (the
 /// standard PyO3 "extra Python state on a Rust base" recipe).
+/// What [`PyLifter::analyze`] returns: the CFG, the lifted+optimised IR,
+/// and the addresses of any indirect branch that stayed unresolved.
+///
+/// Named fields are the point — `analyze(...).function` reads better than
+/// indexing, and an unresolved branch is no longer something a caller
+/// discards by binding a third tuple slot to `_`.  Legacy destructuring
+/// (`cfg, function, unresolved = lifter.analyze(...)`) keeps working: the
+/// sequence protocol below yields the three fields in that order.
+///
+/// `unsendable`: holds `Py<PyCfg>` / `Py<PyFunction>`, both GIL-bound.
+#[pyclass(name = "AnalyzeResult", module = "strider.lift", unsendable)]
+pub struct PyAnalyzeResult {
+    /// The FINAL resolve/re-lift iteration's CFG — the one `function` was
+    /// actually lifted from.
+    #[pyo3(get)]
+    cfg: Py<PyCfg>,
+    /// The lifted, optimised, indirect-branch-resolved IR.
+    #[pyo3(get)]
+    function: Py<PyFunction>,
+    /// Machine addresses of indirect branches that could not be resolved.
+    /// Empty when the function resolved fully; a non-empty list is NOT an
+    /// error, it is the honest report that some edges are unknown.
+    #[pyo3(get)]
+    unresolved: Vec<u64>,
+}
+
+#[pymethods]
+impl PyAnalyzeResult {
+    /// Expose the strong `Py<>` handles to Python's cyclic GC so a cycle
+    /// routed through a result object stays collectable.
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        visit.call(&self.cfg)?;
+        visit.call(&self.function)
+    }
+
+    /// Three fields, so `cfg, function, unresolved = result` unpacks.
+    fn __len__(&self) -> usize {
+        3
+    }
+
+    /// Positional access in field order, so legacy tuple indexing and
+    /// destructuring both keep working.  Accepts negative indices.
+    fn __getitem__(&self, py: Python<'_>, idx: isize) -> PyResult<PyObject> {
+        let idx = if idx < 0 { idx + 3 } else { idx };
+        match idx {
+            0 => Ok(self.cfg.to_object(py)),
+            1 => Ok(self.function.to_object(py)),
+            2 => Ok(self.unresolved.to_object(py)),
+            _ => Err(pyo3::exceptions::PyIndexError::new_err(
+                "AnalyzeResult index out of range (expected 0..3)",
+            )),
+        }
+    }
+
+    /// Iterate the three fields in order — this is what makes tuple
+    /// destructuring work.
+    fn __iter__(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let items = pyo3::types::PyTuple::new_bound(
+            py,
+            [
+                self.cfg.to_object(py),
+                self.function.to_object(py),
+                self.unresolved.to_object(py),
+            ],
+        );
+        Ok(items.as_any().iter()?.unbind().into())
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "AnalyzeResult(cfg=..., function=..., unresolved={} addr(s))",
+            self.unresolved.len()
+        )
+    }
+}
+
 #[pyclass(name = "Lifter", module = "strider.lift", unsendable, subclass)]
 pub struct PyLifter {
     /// The orchestrator handle: owns the Sleigh, the cached register
@@ -239,10 +315,12 @@ impl PyLifter {
 
     /// Build a `GraphDot` over `function`'s IR through this Lifter's own
     /// Sleigh and dispatch to `op`.  Centralises the borrow / dumper-
-    /// construction ritual shared by `to_html` / `to_dot` — the
-    /// Sleigh-needing pretty renders that moved here from `Function` (a
-    /// bare `Function` has no Sleigh to resolve register names with).
-    fn dispatch_dot(
+    /// construction ritual behind `Function.to_dot(pretty=True)` /
+    /// `to_html(pretty=True)`, which reach this handle back through
+    /// `PyFunction.cfg -> PyCfg.lifter` (a bare `Function` owns no Sleigh
+    /// to resolve register names with, but the Lifter that produced it
+    /// does).
+    pub(crate) fn dispatch_dot(
         &self,
         function: &PyFunction,
         style: Option<&str>,
@@ -251,7 +329,7 @@ impl PyLifter {
         let sleigh = self.sleigh();
         let guard = function.read_inner().map_err(into_strider_err)?;
         let dumper = guard.dot_dumper(sleigh).map_err(into_strider_err)?;
-        let d = dot::GraphDot::new(dumper, dot_style_for(style));
+        let d = dot::GraphDot::new(dumper, dot_style_for(style)?);
         match op {
             DotOp::DumpHtml(p) => d
                 .dump_as_html(Path::new(p))
@@ -274,7 +352,7 @@ impl PyLifter {
 /// the per-op arguments the public accessor `to_html` / `to_dot` would
 /// otherwise duplicate the sleigh-borrow / dumper-construction ritual
 /// for.
-enum DotOp<'a> {
+pub(crate) enum DotOp<'a> {
     DumpHtml(&'a str),
     DumpDot(&'a str),
     HtmlStr,
@@ -285,7 +363,7 @@ enum DotOp<'a> {
 /// single helper cover both the unit-returning dump ops and the
 /// string-returning `HtmlStr`/`DotStr` ops without separate variants per
 /// dispatch.
-enum DotResult {
+pub(crate) enum DotResult {
     Unit,
     Html(String),
     Dot(String),
@@ -405,19 +483,28 @@ impl PyLifter {
     }
 
     /// Lift the function at `entry`, optimise it to a fixed point,
-    /// resolve its indirect branches, and return `(cfg, function,
-    /// unresolved_addrs)`.  `cfg` is the FINAL resolve/re-lift iteration's
-    /// CFG — the one `function` was actually lifted from (resolved
-    /// indirect branches are seated as real terminators, so it matches
-    /// the returned IR exactly; no separate rebuild is done).
+    /// resolve its indirect branches, and return an [`PyAnalyzeResult`]
+    /// carrying `.cfg`, `.function` and `.unresolved` (it also unpacks as
+    /// a 3-tuple in that order).  `cfg` is the FINAL resolve/re-lift
+    /// iteration's CFG — the one `function` was actually lifted from
+    /// (resolved indirect branches are seated as real terminators, so it
+    /// matches the returned IR exactly; no separate rebuild is done).
     ///
     /// `cc` is the function-default calling convention for THIS call
-    /// (the handle stores no default); per-target-address overrides are
-    /// supplied via `opts.per_address_ccs` (preset or custom CCs accepted).
+    /// (the base handle stores no default); per-target-address overrides
+    /// are supplied via `opts.per_address_ccs` (preset or custom CCs
+    /// accepted).
     ///
     /// Args:
-    ///     entry: Address of the function to analyse.
-    ///     cc: Calling convention for this analysis.
+    ///     entry: Address of the function to analyse.  Typed `int | str`
+    ///         so the `ElfLifter` subclass — which resolves a `str` symbol
+    ///         name against the ELF symbol table — is a signature-compatible
+    ///         override.  A plain `Lifter` has no symbol table, so a `str`
+    ///         here raises `StriderError`.
+    ///     cc: Calling convention for this analysis.  Optional for the
+    ///         same reason: `ElfLifter` defaults it to the ELF-derived CC.
+    ///         A plain `Lifter` has no default, so `None` raises
+    ///         `StriderError`.
     ///     opts: A `LifterOptions` (default all-defaults) mirroring
     ///         `strider_lift::LiftOptions` plus the optimize-side knobs and
     ///         the per-function `pipeline` override.  When `opts.pipeline`
@@ -428,14 +515,30 @@ impl PyLifter {
     /// unrecognised `alias_mode` (both raised eagerly by the `CfgOptions`/
     /// `LifterOptions` constructors), and `StriderError` on lift/analysis
     /// failure.
-    #[pyo3(signature = (entry, cc, opts=None))]
+    #[pyo3(signature = (entry, cc=None, opts=None))]
     fn analyze(
         slf: Py<Self>,
         py: Python<'_>,
-        entry: u64,
-        cc: PyCallingConvention,
+        entry: &Bound<'_, PyAny>,
+        cc: Option<PyCallingConvention>,
         opts: Option<Py<PyLifterOptions>>,
-    ) -> PyResult<(Py<PyCfg>, Py<PyFunction>, Vec<u64>)> {
+    ) -> PyResult<PyAnalyzeResult> {
+        // The base handle owns no symbol table and no default CC — both
+        // are `ElfLifter` affordances.  Widening the signature is what
+        // makes that override Liskov-clean; these two guards are what keep
+        // the widened parameters honest on a plain `Lifter`.
+        let entry: u64 = entry.extract().map_err(|_| {
+            into_strider_err(anyhow::anyhow!(
+                "`entry` must be an address (int); a symbol name (str) needs \
+                 an ElfLifter — build one with strider.lift.load_elf(path)"
+            ))
+        })?;
+        let cc = cc.ok_or_else(|| {
+            into_strider_err(anyhow::anyhow!(
+                "`cc` is required on a plain Lifter (the handle stores no \
+                 default); only ElfLifter derives one from the ELF header"
+            ))
+        })?;
         let opts = match opts {
             Some(o) => o,
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
@@ -535,7 +638,11 @@ impl PyLifter {
         let cfg_obj = Py::new(py, PyCfg::new(cfg, slf.clone_ref(py)))?;
 
         let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
-        Ok((cfg_obj, py_function, unresolved))
+        Ok(PyAnalyzeResult {
+            cfg: cfg_obj,
+            function: py_function,
+            unresolved,
+        })
     }
 
     /// Run an optimizer pipeline over `function`'s IR in place.
@@ -574,50 +681,6 @@ impl PyLifter {
                 let pipe = strider_orchestrator::opt::default_pipeline();
                 function.run_pipeline_in_place(pipe, "optimize")
             }
-        }
-    }
-
-    /// Render `function`'s IR graph to Graphviz DOT. Returns the DOT
-    /// string when `path` is `None`, otherwise writes it to `path` and
-    /// returns `None`.
-    ///
-    /// Lives on `Lifter` (not `Function`) because the pretty renderer
-    /// inlines constants / adds virtual nodes / resolves register names,
-    /// all of which need a `Sleigh` — a bare `Function` doesn't carry
-    /// one, but the `Lifter` that produced it does.  (`Function.to_dot`
-    /// renders the graph exactly as stored instead, with no Sleigh.)
-    #[pyo3(signature = (function, path=None))]
-    fn to_dot(&self, function: &PyFunction, path: Option<&str>) -> PyResult<Option<String>> {
-        match path {
-            Some(p) => self
-                .dispatch_dot(function, None, DotOp::DumpDot(p))
-                .map(|_| None),
-            None => match self.dispatch_dot(function, None, DotOp::DotStr)? {
-                DotResult::Dot(s) => Ok(Some(s)),
-                _ => Ok(None),
-            },
-        }
-    }
-
-    /// Render `function`'s IR graph to a standalone HTML page. Returns
-    /// the HTML string when `path` is `None`, otherwise writes it to
-    /// `path` and returns `None`. `style` selects the dot theme (default
-    /// `"dark"`).
-    #[pyo3(signature = (function, path=None, style=None))]
-    fn to_html(
-        &self,
-        function: &PyFunction,
-        path: Option<&str>,
-        style: Option<&str>,
-    ) -> PyResult<Option<String>> {
-        match path {
-            Some(p) => self
-                .dispatch_dot(function, style, DotOp::DumpHtml(p))
-                .map(|_| None),
-            None => match self.dispatch_dot(function, style, DotOp::HtmlStr)? {
-                DotResult::Html(s) => Ok(Some(s)),
-                _ => Ok(None),
-            },
         }
     }
 
@@ -799,6 +862,7 @@ pub fn lifter(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyRes
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLifter>()?;
+    m.add_class::<PyAnalyzeResult>()?;
     m.add_function(wrap_pyfunction!(lifter, m)?)?;
     Ok(())
 }

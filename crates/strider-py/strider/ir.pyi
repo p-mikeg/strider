@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional, Tuple
 
+from .cfg import DotStyle
 from .pattern import Match, PatLike as _PatLike
 from .sleigh import Vn
 from .template import Template as _Template
@@ -25,7 +26,11 @@ class Node:
         """The raw `u32` arena index of this node."""
         ...
     def kind(self) -> str:
-        """The node's `NodeKind` formatted as a string."""
+        """The node's `NodeKind` as a string. Payload-carrying kinds render
+        WITH their payload, so this already names the op variant:
+        `"IntBinaryOp(Add)"`, `"IntCmpOp(Less)"`, `"Load(Ram)"`. Kinds with
+        no payload render bare: `"Region"`, `"Phi"`, `"Entry"`. See `op()`
+        for just the operation variant."""
         ...
     def inputs(self) -> List[Node]:
         """The data/control nodes feeding this one, as a list of `Node`s."""
@@ -66,40 +71,63 @@ class Node:
     def call_other_name(self) -> Optional[str]:
         """Sleigh user-op name attached to a `CallOther` node, else `None`."""
         ...
-    def int_binary_op(self) -> Optional[str]:
-        """If this node is an `IntBinaryOp`, its variant name, else `None`."""
+    def op(self) -> Optional[str]:
+        """The operation variant of an op-carrying node — `"Add"`,
+        `"Less"`, `"Neg"`, `"Sqrt"` — or `None` for a node that carries no
+        operation (`Region`, `Load`, `IntConst`, `Call`, ...).
+
+        One accessor covers every op family; the family itself is already
+        in `kind()`, so `kind() == "IntBinaryOp(Xor)"` and `op() == "Xor"`
+        name the same node from two directions. A boolean op is an
+        `IntBinaryOp` whose output is `I1`, so pair this with
+        `value_type()` to tell `Xor:I1` (a logical NOT) from a wide
+        bitwise `Xor`."""
         ...
-    def int_unary_op(self) -> Optional[str]:
-        """If this node is an `IntUnaryOp`, its variant name, else `None`."""
-        ...
-    def int_cmp_op(self) -> Optional[str]:
-        """If this node is an `IntCmpOp`, its variant name, else `None`."""
-        ...
-    def bool_binary_op(self) -> Optional[str]:
-        """If this node is a boolean binary op (`IntBinaryOp` at `I1`),
-        its variant name, else `None`."""
-        ...
-    def float_binary_op(self) -> Optional[str]:
-        """If this node is a `FloatBinaryOp`, its variant name, else `None`."""
-        ...
-    def float_unary_op(self) -> Optional[str]:
-        """If this node is a `FloatUnaryOp`, its variant name, else `None`."""
-        ...
-    def float_cmp_op(self) -> Optional[str]:
-        """If this node is a `FloatCmpOp`, its variant name, else `None`."""
+    def value_type(self) -> Optional[str]:
+        """The node's value-output type — `"I1"`, `"I32"`, `"I64"`,
+        `"F64"`, ... — or `None` for a node with no value output
+        (`Region`, `Store`, `Return`, ...).
+
+        Booleans are the 1-bit integer `I1`, so `value_type() == "I1"` is
+        the "this produces a boolean" test. The name is accepted verbatim
+        by the pattern-side `Pat.value_ty(...)` filter."""
         ...
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
 
 class Function:
-    def to_dot(self, path: Optional[str] = ...) -> Optional[str]:
-        """Render the graph exactly as stored to a Graphviz `.dot` string.
-        Returns the string when `path` is `None`, else writes it to `path`
-        and returns `None`."""
+    def to_dot(
+        self,
+        path: Optional[str] = ...,
+        *,
+        pretty: bool = ...,
+        style: Optional[DotStyle] = ...,
+    ) -> Optional[str]:
+        """Render the IR graph to Graphviz DOT. Returns the string when
+        `path` is `None`, else writes it to `path` and returns `None`.
+
+        `pretty=False` (the default) renders the graph EXACTLY AS STORED:
+        one node per `NodeId`, one edge per input edge, side-tables inline,
+        no constant inlining or virtual nodes. It is the debugging view of
+        the real graph shape, and it cannot fail.
+
+        `pretty=True` inlines constants, adds virtual nodes and resolves
+        register names. That needs a `Sleigh`, which this function reaches
+        back through its parent `Cfg`'s `Lifter` — so it is available only
+        for a function obtained from `analyze`, and raises `StriderError`
+        if the graph has no entry. `style` themes the pretty render and is
+        rejected without `pretty=True`."""
         ...
-    def to_html(self, path: Optional[str] = ...) -> Optional[str]:
-        """Like `to_dot` but wraps the DOT in a self-contained HTML page."""
+    def to_html(
+        self,
+        path: Optional[str] = ...,
+        *,
+        pretty: bool = ...,
+        style: Optional[DotStyle] = ...,
+    ) -> Optional[str]:
+        """Like `to_dot` but wraps the DOT in a self-contained HTML page.
+        Same `pretty` / `style` arguments and the same caveats."""
         ...
     def neighborhood_dot(
         self,

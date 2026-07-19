@@ -12,10 +12,30 @@ path.
 
 from __future__ import annotations
 
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, List, Literal, Optional, Union
 
 from ..ir import Node
 from ..sleigh import Vn
+
+#: Value-type names accepted by `Pat.value_ty` and returned by
+#: `Node.value_type` / `Match.value_type`. Matched case-insensitively at
+#: runtime; these are the canonical spellings.
+ValueTy = Literal[
+    "i1", "i8", "i16", "i32", "i48", "i64", "i80", "i128", "i256", "i512",
+    "f32", "f64", "f80",
+]
+
+#: `IntCmpOp` variant names accepted by `int_cmp`. The short aliases
+#: `"eq"` / `"lt"` / `"slt"` are equivalent to `"Equal"` / `"Less"` /
+#: `"Sless"`. Matched case-insensitively at runtime.
+IntCmpOpName = Literal[
+    "Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow", "eq", "lt", "slt",
+]
+
+#: Extend-op names accepted by `extend`.
+ExtendOpName = Literal[
+    "zero", "zero_extend", "ZeroExtend", "sign", "sign_extend", "SignExtend",
+]
 
 class Match:
     """`Node` is the single source of truth for per-node reads; every
@@ -46,36 +66,19 @@ class Match:
         """Thin forwarder to `Node.float_bits()`."""
         ...
     def has(self, key: Any) -> bool: ...
-    def int_binary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `IntBinaryOp` variant name from `key`.
-        Thin forwarder to `Node.int_binary_op()`."""
+    def op(self, key: Any) -> Optional[str]:
+        """The operation variant of the node bound to `key` — `"Add"`,
+        `"Less"`, `"Neg"` — or `None` when `key` is unbound or names a node
+        that carries no operation. Thin forwarder to `Node.op()`.
+
+        One accessor covers every op family (integer / float, binary /
+        unary / compare); pair it with `value_type` to tell a boolean op
+        (`Xor` at `I1`) from a wide bitwise one."""
         ...
-    def int_unary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `IntUnaryOp` variant name from `key`.
-        Thin forwarder to `Node.int_unary_op()`."""
-        ...
-    def int_cmp_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `IntCmpOp` variant name from `key`.
-        Thin forwarder to `Node.int_cmp_op()`."""
-        ...
-    def bool_binary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched boolean binary op (`IntBinaryOp` at `I1`) name.
-        Thin forwarder to `Node.bool_binary_op()`."""
-        ...
-    # `bool_unary_op` was removed alongside `IntUnaryOp::BitNot`: a 1-bit
-    # logical NOT is `Xor(_, IntConst(1)):I1`, so the op variant is
-    # recovered via `bool_binary_op` (returns "Xor").
-    def float_binary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `FloatBinaryOp` variant name from `key`.
-        Thin forwarder to `Node.float_binary_op()`."""
-        ...
-    def float_unary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `FloatUnaryOp` variant name from `key`.
-        Thin forwarder to `Node.float_unary_op()`."""
-        ...
-    def float_cmp_op(self, key: Any) -> Optional[str]:
-        """Recover the matched `FloatCmpOp` variant name from `key`.
-        Thin forwarder to `Node.float_cmp_op()`."""
+    def value_type(self, key: Any) -> Optional[str]:
+        """The value-output type of the node bound to `key` — `"I1"`,
+        `"I64"`, `"F64"` — or `None` when `key` is unbound or names a node
+        with no value output. Thin forwarder to `Node.value_type()`."""
         ...
     def vn(self, key: Any) -> Optional[Vn]:
         """Recover the varnode bound by `key` (InitialVar / `Call` /
@@ -134,9 +137,19 @@ class Pat:
     def cap(self, name: str) -> Pat: ...
     def when(self, f: Callable[[Match], bool]) -> Pat: ...
     def ordered(self) -> Pat: ...
-    def of_width(self, n: int) -> Pat: ...
-    def value_ty(self, ty: str) -> Pat: ...
-    def bool_valued(self) -> Pat: ...
+    def of_width(self, n: int) -> Pat:
+        """OUTPUT-side: constrain this value's own output to `n` bits. The
+        free-function form is `value_of_width(n)`. For the INPUT side, see
+        `inputs_of_width(n, inner)`."""
+        ...
+    def value_ty(self, ty: ValueTy) -> Pat:
+        """OUTPUT-side: constrain this value's own output type by name."""
+        ...
+    def bool_valued(self) -> Pat:
+        """OUTPUT-side: constrain this value's output to a boolean (1-bit
+        `I1`). Exactly `of_width(1)`, named for intent. INCLUDES
+        comparisons; for "operates on bools", see `bool_inputs(inner)`."""
+        ...
 
 # All builders accept str | Capture | Pat (or one of the typed builders
 # below) for sub-patterns.  The typed-builder variants are auto-finalised
@@ -422,14 +435,23 @@ def predicate(f: Callable[[Match], bool]) -> Pat:
     """Match any node subject to a Python predicate; shorthand for
     `anything().when(f)`."""
 def value_of_width(n: int) -> Pat:
-    """Match any value output exactly `n` bits wide (output-width filter)."""
+    """OUTPUT-side: match any value whose own output is exactly `n` bits
+    wide. Width 1 means "produces a bool" — which INCLUDES comparisons,
+    since a comparison's output is `I1` however wide its operands are.
+    The chained form is `Pat.of_width(n)`."""
 def bool_value() -> Pat:
-    """Match any boolean value (any 1-bit `I1` value output)."""
+    """OUTPUT-side: match any value producing a boolean (1-bit `I1`).
+    Exactly `value_of_width(1)`, named for intent. INCLUDES comparisons.
+    The chained form is `Pat.bool_valued()`."""
 def inputs_of_width(n: int, inner: PatLike) -> Pat:
-    """Match `inner` and require all of its value inputs to be `n` bits
-    wide (input-width filter)."""
+    """INPUT-side: match `inner` and require all of ITS VALUE INPUTS to be
+    `n` bits wide. Width 1 means "operates on bools" — which EXCLUDES
+    comparisons, whose operands are typically wider than their `I1`
+    result. This is the input-side counterpart of `value_of_width`."""
 def bool_inputs(inner: PatLike) -> Pat:
-    """Match `inner` whose value inputs are all booleans (1-bit `I1`)."""
+    """INPUT-side: match `inner` whose value inputs are all booleans
+    (1-bit `I1`). Exactly `inputs_of_width(1, inner)`, named for intent.
+    EXCLUDES comparisons — see `inputs_of_width`."""
 def int_const(value: int) -> Pat:
     """Match an `IntConst` whose value (masked to its output width)
     equals `value`."""
@@ -521,7 +543,7 @@ def sshr(l: PatLike, r: PatLike) -> Pat: ...
 def int_and(l: PatLike, r: PatLike) -> Pat: ...
 def int_or(l: PatLike, r: PatLike) -> Pat: ...
 def int_xor(l: PatLike, r: PatLike) -> Pat: ...
-def int_cmp(op: str, l: PatLike, r: PatLike) -> Pat:
+def int_cmp(op: IntCmpOpName, l: PatLike, r: PatLike) -> Pat:
     """Match a specific `IntCmpOp` variant (e.g. `"Equal"`, `"Less"`,
     `"Sless"`, `"Carry"`)."""
 def int_eq(l: PatLike, r: PatLike) -> Pat: ...
@@ -580,7 +602,7 @@ def popcount(operand: PatLike) -> Pat: ...
 def lzcount(operand: PatLike) -> Pat: ...
 def zero_extend(operand: PatLike) -> Pat: ...
 def sign_extend(operand: PatLike) -> Pat: ...
-def extend(op: str, operand: PatLike) -> Pat: ...
+def extend(op: ExtendOpName, operand: PatLike) -> Pat: ...
 
 # ── Memory & control flow ────────────────────────────────────────────
 

@@ -14,6 +14,7 @@ use strider_ir::IRWalker;
 use strider_ir::node::NodeKind;
 
 use crate::cfg::PyCfg;
+use crate::dot::reject_style_without_pretty;
 
 /// Opaque wrapper over `strider_ir::Function`.
 ///
@@ -36,6 +37,36 @@ impl PyFunction {
         Self {
             inner: Rc::new(RefCell::new(function)),
             cfg,
+        }
+    }
+
+    /// The Sleigh-backed pretty render, shared by `to_dot(pretty=True)`
+    /// and `to_html(pretty=True)`.
+    ///
+    /// A `Function` owns no `Sleigh`, but it holds a strong handle on the
+    /// `Cfg` it was lifted from, which holds one on the `Lifter` that owns
+    /// the Sleigh — so the pretty renderer is reachable by borrowing back
+    /// down that chain, with no extra field and no `Rc`/`Arc` sharing of
+    /// the Sleigh itself (the borrow never outlives the `PyRef` guard).
+    fn pretty_dot(
+        &self,
+        py: Python<'_>,
+        style: Option<&str>,
+        path: Option<&str>,
+        html: bool,
+    ) -> PyResult<Option<String>> {
+        use crate::strider_cls::{DotOp, DotResult};
+        let cfg = self.cfg.borrow(py);
+        let lifter = cfg.lifter.borrow(py);
+        let op = match (html, path) {
+            (true, Some(p)) => DotOp::DumpHtml(p),
+            (false, Some(p)) => DotOp::DumpDot(p),
+            (true, None) => DotOp::HtmlStr,
+            (false, None) => DotOp::DotStr,
+        };
+        match lifter.dispatch_dot(self, style, op)? {
+            DotResult::Html(s) | DotResult::Dot(s) => Ok(Some(s)),
+            DotResult::Unit => Ok(None),
         }
     }
 
@@ -144,16 +175,34 @@ impl PyFunction {
         self.cfg.clone_ref(py)
     }
 
-    /// Render the graph **exactly as stored** to DOT: one node per
-    /// `NodeId` (every arena node, incl. detached ones), one edge per
-    /// input edge, side-tables (stack offset, phi tag, asm fingerprints,
-    /// call-other name, clobber override, arg index) shown inline.  No
-    /// constant inlining, virtual nodes, or commutative reordering — a
-    /// debugging view of the real graph shape, distinct from the pretty
-    /// `Lifter.to_dot`/`to_html`.  Returns the string when `path` is
-    /// `None`, else writes it to `path` and returns `None`.
-    #[pyo3(signature = (path=None))]
-    fn to_dot(&self, path: Option<&str>) -> PyResult<Option<String>> {
+    /// Render the IR graph to Graphviz DOT.  Returns the string when
+    /// `path` is `None`, else writes it to `path` and returns `None`.
+    ///
+    /// `pretty=False` (the default) renders the graph **exactly as
+    /// stored**: one node per `NodeId` (every arena node, incl. detached
+    /// ones), one edge per input edge, side-tables (stack offset, phi tag,
+    /// asm fingerprints, call-other name, clobber override, arg index)
+    /// shown inline, no constant inlining or virtual nodes.  It is the
+    /// debugging view of the real graph shape, and it cannot fail.
+    ///
+    /// `pretty=True` inlines constants, adds virtual nodes and resolves
+    /// register names.  That needs a `Sleigh`, which this function reaches
+    /// back through its parent `Cfg`'s `Lifter` — so it is only available
+    /// for a function obtained from `analyze` (and raises `StriderError`
+    /// if the graph has no entry).  `style` selects the dot theme and
+    /// applies to the pretty render only.
+    #[pyo3(signature = (path=None, *, pretty=false, style=None))]
+    fn to_dot(
+        &self,
+        py: Python<'_>,
+        path: Option<&str>,
+        pretty: bool,
+        style: Option<&str>,
+    ) -> PyResult<Option<String>> {
+        if pretty {
+            return self.pretty_dot(py, style, path, /* html */ false);
+        }
+        reject_style_without_pretty(style)?;
         let s = self
             .with_read_value(strider_ir::Function::raw_dot)?
             .map_err(crate::errors::into_strider_err)?;
@@ -167,9 +216,20 @@ impl PyFunction {
     }
 
     /// Like `to_dot` but wraps the DOT in a self-contained HTML page
-    /// (embedded viz.js; no external `dot` binary needed).
-    #[pyo3(signature = (path=None))]
-    fn to_html(&self, path: Option<&str>) -> PyResult<Option<String>> {
+    /// (embedded viz.js; no external `dot` binary needed).  Takes the same
+    /// `pretty` / `style` arguments and the same caveats.
+    #[pyo3(signature = (path=None, *, pretty=false, style=None))]
+    fn to_html(
+        &self,
+        py: Python<'_>,
+        path: Option<&str>,
+        pretty: bool,
+        style: Option<&str>,
+    ) -> PyResult<Option<String>> {
+        if pretty {
+            return self.pretty_dot(py, style, path, /* html */ true);
+        }
+        reject_style_without_pretty(style)?;
         let s = self
             .with_read_value(strider_ir::Function::raw_html)?
             .map_err(crate::errors::into_strider_err)?;

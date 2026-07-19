@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, List, Optional, Tuple, Union
+from typing import Any, Iterable, List, Literal, Optional, Tuple, Union
 
 import os
 
-from .cfg import Cfg, CfgOptions
+from .cfg import Cfg, CfgOptions, DotStyle
 from .ir import Function, Node
 from .opt import OptimizerPipeline
 from .reader import BufferReader
@@ -16,6 +16,41 @@ from .sleigh import CallingConvention, SleighArch, Vn
 #: What the loaders accept as a filesystem path: a `str`, a `pathlib.Path`,
 #: or any object implementing `__fspath__`.
 StrPath = Union[str, "os.PathLike[str]"]
+
+#: Memory-aliasing model for the optimizer. Validated eagerly by the
+#: `LifterOptions` constructor, which raises `ValueError` for anything else.
+AliasMode = Literal["stack_global_disjoint", "strict"]
+
+class AnalyzeResult:
+    """What `Lifter.analyze` returns: named fields, and still unpackable.
+
+    `result.function` beats `result[1]`, and an unresolved indirect branch
+    is no longer something you discard by binding a third tuple slot to
+    `_`.  The legacy shape keeps working — `AnalyzeResult` is a
+    3-sequence yielding `(cfg, function, unresolved)` in that order, so
+    `cfg, fn, unresolved = lifter.analyze(...)` is unchanged.
+    """
+
+    @property
+    def cfg(self) -> Cfg:
+        """The FINAL resolve/re-lift iteration's CFG — the one `function`
+        was actually lifted from."""
+        ...
+    @property
+    def function(self) -> Function:
+        """The lifted, optimised, indirect-branch-resolved IR."""
+        ...
+    @property
+    def unresolved(self) -> List[int]:
+        """Machine addresses of indirect branches that could not be
+        resolved. Empty when the function resolved fully; a non-empty list
+        is NOT an error, it is the honest report that some edges are
+        unknown."""
+        ...
+    def __len__(self) -> int: ...
+    def __getitem__(self, idx: int) -> Any: ...
+    def __iter__(self) -> Any: ...
+    def __repr__(self) -> str: ...
 
 class LifterOptions:
     """Mirrors `strider_lift::LiftOptions` (nested `cfg`, exactly like
@@ -30,7 +65,7 @@ class LifterOptions:
     per_address_ccs: Optional[dict]
     calls_clobber: bool
     assume_distinct_sp_bases_disjoint: bool
-    alias_mode: str
+    alias_mode: AliasMode
     pipeline: Optional[OptimizerPipeline]
     def __init__(
         self,
@@ -40,7 +75,7 @@ class LifterOptions:
         per_address_ccs: Optional[dict] = ...,
         calls_clobber: bool = ...,
         assume_distinct_sp_bases_disjoint: bool = ...,
-        alias_mode: str = ...,
+        alias_mode: AliasMode = ...,
         pipeline: Optional[OptimizerPipeline] = ...,
     ) -> None: ...
     def with_cfg(self, cfg: CfgOptions) -> LifterOptions: ...
@@ -63,10 +98,21 @@ class Lifter:
     ) -> Cfg: ...
     def analyze(
         self,
-        entry: int,
-        cc: CallingConvention,
+        entry: Union[int, str],
+        cc: Optional[CallingConvention] = ...,
         opts: Optional[LifterOptions] = ...,
-    ) -> Tuple[Cfg, Function, List[int]]: ...
+    ) -> AnalyzeResult:
+        """Lift, optimise and indirect-branch-resolve the function at
+        `entry`, returning an `AnalyzeResult` (named fields; also unpacks
+        as `(cfg, function, unresolved)`).
+
+        `entry` is typed `int | str` and `cc` is optional so that the
+        `ElfLifter` subclass — which resolves a `str` symbol name and
+        derives a default `cc` from the ELF header — is a
+        signature-compatible override rather than a Liskov violation.
+        A plain `Lifter` owns neither a symbol table nor a default CC, so
+        it raises `StriderError` for a `str` entry or a missing `cc`."""
+        ...
     def optimize(
         self,
         function: Function,
@@ -78,24 +124,6 @@ class Lifter:
         `Function.reoptimize()`); passing an `OptimizerPipeline` runs
         that pipeline instead, draining it (equivalent to the former
         `Function.optimize(pipeline)`)."""
-        ...
-    def to_dot(self, function: Function, path: Optional[str] = ...) -> Optional[str]:
-        """Render `function`'s IR graph to Graphviz DOT. Returns the DOT
-        string when `path` is `None`, otherwise writes it to `path` and
-        returns `None`.  Lives on `Lifter` (not `Function`) because the
-        pretty renderer needs the Sleigh the Lifter owns to resolve
-        register names."""
-        ...
-    def to_html(
-        self,
-        function: Function,
-        path: Optional[str] = ...,
-        style: Optional[str] = ...,
-    ) -> Optional[str]:
-        """Render `function`'s IR graph to a standalone HTML page.
-        Returns the HTML string when `path` is `None`, otherwise writes
-        it to `path` and returns `None`. `style` selects the dot theme
-        (default `"dark"`)."""
         ...
     def reg(self, name: str) -> Optional[Vn]:
         """Look up a register by Sleigh name; `None` when not a
@@ -193,17 +221,21 @@ class ElfLifter(Lifter):
         `strider.lift.lifter` / `strider.sleigh.Sleigh`."""
         ...
     def add_elf(self, path: str, *, apply_relocations: bool = ...) -> None: ...
-    def analyze(  # type: ignore[override]
+    def analyze(
         self,
-        target: Any,  # str | int
+        entry: Union[int, str],
         cc: Optional[CallingConvention] = ...,
         opts: Optional[LifterOptions] = ...,
-    ) -> Tuple[Cfg, Function, List[int]]:
-        """Lift the function at `target` (symbol name or absolute
+    ) -> AnalyzeResult:
+        """Lift the function at `entry` (symbol name or absolute
         address), driving the full lift+optimise+resolve pipeline and
-        returning the same `(Cfg, Function, unresolved_addrs)` tuple as
-        the base `Lifter.analyze`.  `cc` defaults to the ELF-derived (or
-        explicitly-passed at construction) calling convention."""
+        returning the same `AnalyzeResult` as the base `Lifter.analyze`.
+        `cc` defaults to the ELF-derived (or explicitly-passed at
+        construction) calling convention.
+
+        A signature-compatible override: the base already declares
+        `entry: int | str` and `cc` optional precisely so the two
+        affordances this class adds are widenings, not violations."""
         ...
     def __repr__(self) -> str: ...
 

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 from .ir import Node
+
+#: Dot colour themes accepted by every `to_html` / `to_dot` renderer.
+DotStyle = Literal["dark", "dark_cfg", "empty"]
 
 class Cfg:
     """Control-flow graph of a single function, produced by
@@ -15,7 +18,7 @@ class Cfg:
         `None`, otherwise writes it to `path` and returns `None`."""
         ...
     def to_html(
-        self, path: Optional[str] = ..., style: Optional[str] = ...
+        self, path: Optional[str] = ..., style: Optional[DotStyle] = ...
     ) -> Optional[str]:
         """Render the CFG to a standalone HTML page. Returns the HTML
         string when `path` is `None`, otherwise writes it and returns
