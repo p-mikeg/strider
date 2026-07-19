@@ -205,6 +205,33 @@ impl PyNode {
         Ok(out)
     }
 
+    /// The nodes that consume this node's outputs, as a list of `Node`s —
+    /// the forward counterpart to `inputs()`.
+    ///
+    /// Each of this node's output `ValueId`s may feed zero or more
+    /// consumer nodes; every consumer is returned (a consumer appears once
+    /// per edge it draws from this node). Order follows output-slot then
+    /// use order.
+    fn outputs(&self, py: Python<'_>) -> PyResult<Vec<PyNode>> {
+        // Collect the consumer ids under the read borrow, then build the
+        // child `PyNode`s after dropping the guard (each `PyNode::new`
+        // re-borrows the function).
+        let consumer_ids: Vec<u32> = self.with_node(py, |function, nid| {
+            let mut ids = Vec::new();
+            for &out in function.node_outputs(nid) {
+                for (consumer, _slot) in function.value_uses(out) {
+                    ids.push(consumer.as_u32());
+                }
+            }
+            ids
+        })?;
+        let mut out = Vec::with_capacity(consumer_ids.len());
+        for cid in consumer_ids {
+            out.push(PyNode::new(py, self.function.clone_ref(py), cid)?);
+        }
+        Ok(out)
+    }
+
     /// The node's integer constant value as a signed `int` (sign-extended
     /// at the value's declared width), or `None` when its value output
     /// isn't an integer `IntConst` or the stored magnitude exceeds 128

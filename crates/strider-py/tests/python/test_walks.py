@@ -40,3 +40,22 @@ def test_mem_walk_returns_memory_touching_nodes():
     assert any(k.startswith(("Load", "Store")) for k in kinds)
     # every returned node is memory-touching (no bare arithmetic kind)
     assert not any(k.startswith(("IntBinaryOp", "IntConst")) for k in kinds)
+
+
+def test_node_outputs_are_the_consumers():
+    fn = _fn()
+    # entry's outputs feed the first control/region nodes
+    entry = fn.node(fn.entry_node())
+    outs = entry.outputs()
+    assert all(isinstance(n, strider.ir.Node) for n in outs)
+    # round-trip: some output's consumer lists entry among ITS inputs
+    # (pick any node that has inputs and verify inputs/outputs are inverse on one edge)
+    data = fn.data_walk()
+    for n in data:
+        for i in n.inputs():
+            assert n.id in {c.id for c in i.outputs()}, "outputs must invert inputs"
+            break
+        else:
+            continue
+        break
+    assert not hasattr(entry, "input")  # sanity: only inputs/outputs exist
