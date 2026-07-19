@@ -817,6 +817,17 @@ impl PyLifter {
     /// `strider.serve(lifter, function)`, generalised to also accept a
     /// `Cfg`. `host`/`port`/`depth` mirror `explore.visualize`'s kwargs
     /// (`port=0` picks an ephemeral port).
+    ///
+    /// **Calling this off the main thread requires `explore.shutdown`.**
+    /// Because it blocks inside this Rust frame, a thread still parked here
+    /// when the interpreter finalizes is killed by CPython with
+    /// `pthread_exit`; the resulting forced unwind cannot pass back through
+    /// PyO3's `catch_unwind`, and glibc aborts the process. Stop the server
+    /// with `strider.explore.shutdown(port)` and join the thread before
+    /// exiting. Note also that a `Function`/`Cfg` created INSIDE such a
+    /// thread is `unsendable`, so if it outlives the thread PyO3 refuses to
+    /// drop it from another thread and leaks it with an unraisable warning
+    /// rather than freeing it.
     #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=5))]
     fn visualize(
         slf: Py<Self>,

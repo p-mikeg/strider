@@ -389,7 +389,15 @@ def visualize(lifter, target, *, host="127.0.0.1", port=0, depth=5):
     """Start the explorer for `target` — a `Function` (from `analyze`) or a
     `Cfg` (from `build_cfg`/`analyze`), dispatching on `type(target).__name__`
     to avoid importing the pyclass types here. Blocks serving requests until
-    interrupted."""
+    interrupted.
+
+    Off the main thread, pair this with `shutdown(port)` and join the
+    thread before the interpreter exits — a thread left parked in here is
+    killed with `pthread_exit` at finalization, and that forced unwind
+    aborts the process on its way back out through PyO3. A `Function` /
+    `Cfg` created inside such a thread is also `unsendable`: if it
+    outlives the thread, PyO3 leaks it (with an unraisable warning)
+    instead of dropping it from a foreign thread."""
     tn = type(target).__name__
     if tn == "Function":
         vis = _IrVisualizer(lifter, target)

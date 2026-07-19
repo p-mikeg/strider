@@ -181,7 +181,15 @@ class Lifter:
         """Start the interactive explorer for `target` — a `Function`
         (from `analyze`) or a `Cfg` (from `build_cfg`/`analyze`).
         Prints the local URL to stdout and BLOCKS serving requests on
-        this thread until interrupted (Ctrl-C)."""
+        this thread until interrupted (Ctrl-C).
+
+        Off the main thread this MUST be paired with
+        `strider.explore.shutdown(port)` plus a thread join: a thread left
+        parked in here when the interpreter finalizes is killed with
+        `pthread_exit`, and the forced unwind aborts the process on its
+        way out through PyO3. Objects created inside such a thread are
+        `unsendable` and are leaked rather than dropped if they outlive
+        it."""
         ...
 
 def lifter(
