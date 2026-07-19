@@ -381,16 +381,16 @@ mod tests {
             "typed any_input matching no value input binds nothing",
         );
 
-        // A WILDCARD reaches every non-`PhiToken` input — the control and memory
-        // edges included, which is the general model's defining behavior. The
-        // exact count is pinned to lock the candidate set (ctrl, mem, target,
-        // sp, arg0).
+        // A WILDCARD reaches every input — the control and memory edges included,
+        // which is the general model's defining behavior. This kind has no PhiToken
+        // slot. The exact count is pinned to lock the candidate set (ctrl, mem,
+        // target, sp, arg0).
         let c = crate::Capture::new();
         let hits = matcher.find_all(&call_any_input(crate::var(c))).unwrap();
         assert_eq!(
             hits.len(),
             5,
-            "wildcard any_input reaches every non-PhiToken input (ctrl, mem, target, sp, arg0)",
+            "wildcard any_input reaches every input (ctrl, mem, target, sp, arg0)",
         );
         // Among the wildcard's bindings, a control and a memory input DO appear
         // — proving those slots are reachable only by a wildcard, not the typed

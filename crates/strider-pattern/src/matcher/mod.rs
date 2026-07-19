@@ -25,10 +25,12 @@ pub use vertex::{KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, Pos
 
 /// Sentinel consumer slot marking an **existential** (`any_input`) input edge:
 /// its sub-pattern is not wired to a fixed IR input slot but matched against
-/// *some* value input of the consumer node (e.g. `phi().any_input(p)` matches
-/// a `Phi` one of whose data inputs matches `p`, without knowing which
-/// predecessor). Recognised by [`walk::try_match_at`], which routes these edges
-/// through the existential search instead of the fixed-slot `match_inputs`.
+/// some input slot of the consumer node (ANY input — the sub-pattern discriminates;
+/// e.g. `phi().any_input(p)` matches a `Phi` one of whose inputs matches `p`,
+/// without knowing which predecessor). A typed sub only matches value edges;
+/// a wildcard can reach control/memory/`PhiToken` slots. Recognised by
+/// [`walk::try_match_at`], which routes these edges through the existential
+/// search instead of the fixed-slot `match_inputs`.
 pub(crate) const ANY_INPUT_SLOT: usize = usize::MAX;
 
 use std::cell::OnceCell;

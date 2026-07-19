@@ -59,10 +59,13 @@ impl PhiPat {
         self
     }
 
-    /// Require that *some* data input of the `Phi` matches `p`, without
+    /// Require that *some* input of the `Phi` matches `p`, without
     /// pinning which predecessor slot. A `Phi`'s incoming values are one per
     /// predecessor and usually order-irrelevant, so this is the common way to
     /// constrain a phi operand. Captures inside `p` bind out normally.
+    /// A *typed* sub-pattern only matches data (value) predecessors, but a
+    /// kind-unconstrained sub (`var`/`anything`) can also bind the `PhiToken`
+    /// ownership edge — use `phi_token()` to match it explicitly.
     pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.inner = self.inner.input_any(p);
         self
