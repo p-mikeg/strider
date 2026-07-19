@@ -26,24 +26,14 @@
 //! `known_targets`), so the orchestrator never edits IR in place and there
 //! is no per-iteration index to protect from node-removing passes.
 //!
-//! Unresolvable branches are a RESULT, not an error: they land in
-//! [`AnalyzeResult::unresolved_indirect_branches`]. A site is dropped from
-//! that report if the optimizer proved its placeholder dead, or if the loop
-//! already folded a classification for it (even one the cfg layer could not
-//! seat, e.g. an out-of-range `Multiple` table).
-//!
 //! Termination is step 3's "nothing new resolved" check, NOT monotone
 //! growth: `apply_resolutions` overwrites entries. What bounds the loop is
 //! that an unchanged cone re-derives an equal classification, which the
-//! edge-set diff sees as no growth. `MAX_RESOLUTION_ITERATIONS` is a
-//! backstop only; falling through it is a non-convergence bug and trips a
-//! `debug_assert!` rather than returning a stale result silently.
+//! edge-set diff sees as no growth.
 
 pub use strider_opt as opt;
 
 pub use strider_lift::LiftOptions;
-/// Re-exported so downstream consumers (the Python bindings, tests) need no
-/// direct `strider-lift` dependency.
 pub use strider_lift::lift::{LiftOutcome, Lifter};
 
 use std::collections::BTreeSet;
@@ -55,17 +45,13 @@ use anyhow::{Result, anyhow};
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
 
-/// Per-binary analysis handle. Everything per-function (entry, calling
-/// convention, options) is passed per [`Strider::analyze`] call, so one
-/// handle serves a whole binary.
+/// Per-binary analysis handle.
 pub struct Strider<R>
 where
     R: rsleigh::MemReader,
 {
     lifter: Lifter<R>,
-    /// `LoadReadOnly`'s memory image; `None` disables the pass. Threaded by
-    /// `&dyn` into each pipeline run rather than shared by `Arc`: strider is
-    /// single-threaded.
+    /// `LoadReadOnly`'s memory image; `None` disables the pass.
     rom: Option<Box<dyn ReadOnlyMemory>>,
 }
 
@@ -91,16 +77,14 @@ where
         self.lifter.sleigh_regs()
     }
 
-    /// The same `Sleigh` instance `analyze` / `build_cfg` drive, for callers
-    /// that must resolve register names against identical context state.
+    /// The same `Sleigh` instance `analyze` / `build_cfg` drive.
     #[must_use]
     pub fn sleigh(&self) -> &rsleigh::Sleigh<R> {
         self.lifter.sleigh()
     }
 
     /// Structural CFG build only: no lift, no optimisation, no
-    /// indirect-branch resolution. Shares [`Strider::analyze`]'s `Lifter`
-    /// so a preview or dot snapshot needs no second handle.
+    /// indirect-branch resolution.
     ///
     /// # Errors
     ///
@@ -124,15 +108,14 @@ where
     ///
     /// Unresolvable branches are a RESULT, not an error: they come back in
     /// [`AnalyzeResult::unresolved_indirect_branches`] with their
-    /// placeholder nodes still in the function, so a caller wanting full
-    /// resolution asserts that list is empty.
+    /// placeholder nodes still in the function.
     ///
     /// `lift_opts.cfg.known_targets` is IGNORED: the loop grows its own
     /// map. `lift_opts.compact` applies once at finalize, after the loop.
     ///
     /// `pipeline` picks the optimisations ([`strider_opt::default_pipeline`]
-    /// when `None`), but the [`strider_opt::IndirectBranchClassify`]
-    /// post-pass is always appended: resolution is not user-tunable.
+    /// when `None`); the [`strider_opt::IndirectBranchClassify`] post-pass is
+    /// always appended.
     ///
     /// # Errors
     ///
@@ -268,8 +251,6 @@ where
 
 pub struct AnalyzeResult {
     /// The FINAL iteration's CFG, i.e. the one `function` was lifted from.
-    /// Resolved indirect branches are seated as real terminators here, so
-    /// it matches the returned IR.
     pub cfg: strider_cfg::Cfg,
     /// May still contain `IndirectBranch` placeholders for any site in
     /// `unresolved_indirect_branches`.
@@ -278,19 +259,16 @@ pub struct AnalyzeResult {
     pub unresolved_indirect_branches: Vec<PcodeInsnAddr>,
 }
 
-/// Backstop only. [`apply_resolutions`]'s "nothing new resolved" signal is
-/// the real terminator; this cap just bounds a pathological classifier that
-/// keeps reporting growth without converging.
+/// Backstop only; [`apply_resolutions`] reporting no growth is the real
+/// terminator.
 const MAX_RESOLUTION_ITERATIONS: usize = 256;
 
 /// Fold `resolutions` into `known_targets`, keyed back to pcode addresses
 /// via `unresolved`. Returns whether the induced edge set grew: the loop's
 /// progress signal.
 ///
-/// Two distinct placeholders can share one `PcodeInsnAddr` (overlapping or
-/// duplicated code terminating two regions at the same machine address).
-/// Their target sets are UNIONED rather than letting the last write win, so
-/// the seated terminator covers every classified successor.
+/// Two distinct placeholders can share one `PcodeInsnAddr`; their target
+/// sets are UNIONED, not last-write-wins.
 ///
 /// # Errors
 ///
@@ -330,8 +308,7 @@ fn apply_resolutions(
 }
 
 /// Successor set of a `ResolvedTargets`, where `None` means "no concrete
-/// address" (`LinkRegister`). SSoT for the three-arm match [`merge_resolved`]
-/// and [`edge_set_of`] both need.
+/// address" (`LinkRegister`).
 fn targets_of(r: &ResolvedTargets) -> impl Iterator<Item = Option<u64>> + '_ {
     // Chaining a 0-or-1 `head` with a slice `tail` unifies the three arms
     // into one return type without allocating.
@@ -361,13 +338,9 @@ fn merge_resolved(a: &ResolvedTargets, b: &ResolvedTargets) -> ResolvedTargets {
 }
 
 /// Lift-time deferred sites narrowed to the genuinely live-and-unclassified
-/// ones (sorted, deduplicated). A site is excluded when either:
-///   * its placeholder is no longer live, i.e. the node-removing passes
-///     proved it unreachable and it needs no resolution; or
-///   * its address is already in `known_targets`. It WAS classified even if
-///     the cfg layer could not seat the terminator (an out-of-range
-///     `Multiple` table gets re-emitted as an unresolved placeholder), and
-///     reporting it would contradict that.
+/// ones (sorted, deduplicated). A site is excluded when its placeholder is no
+/// longer live, or when its address is already in `known_targets` (classified,
+/// even if the cfg layer could not seat the terminator).
 fn live_unresolved_branches(
     live_indirect: &rustc_hash::FxHashSet<strider_ir::node::NodeId>,
     unresolved: &UnresolvedAnchors,
@@ -393,10 +366,8 @@ type UnresolvedAnchors = Vec<(PcodeInsnAddr, strider_ir::node::NodeId)>;
 /// `None` = unresolvable this iteration.
 type IndirectResolutions = FxHashMap<strider_ir::node::NodeId, Option<ResolvedTargets>>;
 
-/// Induced edge set of `known_targets`, the convergence test between
-/// iterations. `target = None` is a `LinkRegister` resolution: two such
-/// anchors at one address are equivalent whatever their payload. `BTreeSet`
-/// for deterministic sort and dedup in one type.
+/// Induced edge set of `known_targets`. `target = None` is a `LinkRegister`
+/// resolution.
 fn edge_set_of(
     map: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
 ) -> BTreeSet<(PcodeInsnAddr, Option<u64>)> {
@@ -501,9 +472,8 @@ mod tests {
         (function, placeholder)
     }
 
-    /// Production snapshots this from `resolutions.keys()`; recomputed here
-    /// via the walk that snapshot replaces, so the filtering behaviour under
-    /// test is the same.
+    /// The reachable `IndirectBranch` set; production snapshots the
+    /// equivalent from `resolutions.keys()`.
     fn live_indirect_set(function: &strider_ir::Function) -> rustc_hash::FxHashSet<NodeId> {
         use strider_ir::node::NodeKind;
         use strider_ir::{IRViewer, IRWalker};
