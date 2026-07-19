@@ -393,26 +393,43 @@ fn try_match_at(
             if !bind_all_captures(b, &cap_bindings) {
                 return false;
             }
-            // Bind captures on this node's SECONDARY (non-anchor) output
-            // vertices to the matched IR node's output value at each vertex's
-            // slot — how `If::capture_true` / `capture_false` bind their
-            // control-output values (the matcher never descends into a node's
-            // outputs otherwise). The anchor output's capture (and the node
-            // capture) are handled by the `cap_bindings` loop above.
+            // Enforce and bind this node's SECONDARY (non-anchor) output
+            // vertices against the matched IR node's output value at each
+            // vertex's slot — how `If::capture_true` / `capture_false` and the
+            // generic `output(j)` builder reach a sibling output (the matcher
+            // never descends into a node's outputs otherwise). The anchor
+            // output's constraint + capture (and the node capture) are handled
+            // above / by the `cap_bindings` loop.
             for &ov_idx in ctx.pat.graph.produced_outputs(pat_node).iter() {
                 if Some(ov_idx) == out_vertex {
                     continue;
                 }
                 let ov = ctx.pat.graph.output_weight(ov_idx);
-                if let Some(cap) = ov.capture {
-                    let Some(&val) = ctx.function().node_outputs(ir_node).get(ov.slot) else {
-                        b.restore(inner);
-                        return false;
-                    };
-                    if !b.bind_capture(cap, Binding::Value(val)) {
+                let Some(&val) = ctx.function().node_outputs(ir_node).get(ov.slot) else {
+                    // No IR output at this vertex's slot. A vertex that imposes
+                    // NOTHING (a bare node-rooted `any()` wildcard) is vacuously
+                    // satisfied — this is what lets `any()` match a value-less
+                    // `Return`. A vertex that carries a capture or any
+                    // kind / width / slot constraint (e.g. `output(j)`) cannot
+                    // be satisfied against a missing slot, so it fails.
+                    if vertex_imposes_requirement(ov) {
                         b.restore(inner);
                         return false;
                     }
+                    continue;
+                };
+                // The secondary vertex's declarative kind / width / slot
+                // constraint (e.g. `output(j).of_width(w)`) is genuinely
+                // checked here, not just its capture.
+                if !output_ok(ov, ctx.function(), val) {
+                    b.restore(inner);
+                    return false;
+                }
+                if let Some(cap) = ov.capture
+                    && !b.bind_capture(cap, Binding::Value(val))
+                {
+                    b.restore(inner);
+                    return false;
                 }
             }
             if let Some(pm) = &nd.post_match {
@@ -677,6 +694,17 @@ fn bind_all_captures(b: &mut Bindings, caps: &[Option<(crate::Capture, Binding)>
 fn input_at(ctx: &Ctx, ir_node: NodeId, slot: usize) -> Option<ValueId> {
     let use_id = ctx.function().node_input_id_at(ir_node, slot).ok()?;
     Some(ctx.function().graph().value_of_use(use_id))
+}
+
+/// Whether a secondary output vertex constrains ANYTHING — a capture to bind,
+/// or a kind / width / slot filter to satisfy. A vertex that imposes nothing is
+/// the bare wildcard (`any()`): matched node-rooted against a value-less node it
+/// is vacuously satisfied, which is what lets `any()` match a `Return`.
+fn vertex_imposes_requirement(o: &PatValue) -> bool {
+    o.capture.is_some()
+        || o.width.is_some()
+        || o.match_slot.is_some()
+        || !matches!(o.kind, OutputKindSpec::Any)
 }
 
 /// Whether the IR output `value` satisfies the pat output's declarative

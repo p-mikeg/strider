@@ -35,7 +35,7 @@
 
 use itertools::Itertools;
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
@@ -117,6 +117,16 @@ impl CallPat {
         Self(self.0.pin_anchor_slot())
     }
 
+    /// Bind / constrain a **sibling output** of the Call — the value it
+    /// produces at raw output `slot` (`[Control(0), Memory(1), result(2),
+    /// …clobbers]`, so `output(2)` is the first return value). Returns a small
+    /// terminal builder: `.capture(c)` binds that output's value, `.of_width(w)`
+    /// / `.of_type(t)` constrain it. This is a **leaf** — it names the output
+    /// value itself, it does not recurse into what the output feeds.
+    pub fn output(self, slot: usize) -> OutputPat<Self> {
+        OutputPat { parent: self, slot }
+    }
+
     /// Bind the resulting `Call` node to `c`.
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
@@ -126,6 +136,59 @@ impl CallPat {
     /// node.
     pub fn build(self) -> Pattern {
         self.0.build()
+    }
+}
+
+/// The seam a family builder exposes so [`OutputPat`] can commit a
+/// sibling-output constraint back onto it. Implemented by the multi-output
+/// node families ([`CallPat`], [`CallOtherPat`]).
+pub trait WithOutput {
+    /// Bind the value at output `slot` to `c`.
+    fn capture_output(self, slot: usize, c: Capture) -> Self;
+    /// Constrain the output at `slot` to bit width `bits`.
+    fn output_width(self, slot: usize, bits: u32) -> Self;
+    /// Constrain the output at `slot` to exact value type `ty`.
+    fn output_ty(self, slot: usize, ty: ValueType) -> Self;
+}
+
+/// Terminal sub-builder returned by `.output(slot)` on a multi-output family
+/// builder. Each terminal commits one sibling-output constraint and returns
+/// the family builder so the chain continues (`.build()`, further verbs, …).
+///
+/// A single `.output(slot)` call carries ONE aspect (capture, width, or type);
+/// call `.output(slot)` again for another vertex on the same slot if you need
+/// more than one.
+pub struct OutputPat<B: WithOutput> {
+    parent: B,
+    slot: usize,
+}
+
+impl<B: WithOutput> OutputPat<B> {
+    /// Bind the sibling output's value to `c`.
+    pub fn capture(self, c: Capture) -> B {
+        self.parent.capture_output(self.slot, c)
+    }
+
+    /// Constrain the sibling output to bit width `bits`.
+    pub fn of_width(self, bits: u32) -> B {
+        self.parent.output_width(self.slot, bits)
+    }
+
+    /// Constrain the sibling output to exact value type `ty`.
+    pub fn of_type(self, ty: ValueType) -> B {
+        self.parent.output_ty(self.slot, ty)
+    }
+}
+
+impl WithOutput for CallPat {
+    fn capture_output(self, slot: usize, c: Capture) -> Self {
+        Self(self.0.capture_output(slot, c))
+    }
+    fn output_width(self, slot: usize, bits: u32) -> Self {
+        Self(self.0.output_width(slot, bits))
+    }
+    fn output_ty(self, slot: usize, ty: ValueType) -> Self {
+        Self(self.0.output_ty(slot, ty))
     }
 }
 
@@ -226,6 +289,13 @@ impl CallOtherPat {
         self
     }
 
+    /// Bind / constrain a **sibling output** of the CallOther — the value it
+    /// produces at raw output `slot` (`[Control(0), Memory(1), result(2), …]`).
+    /// See [`CallPat::output`] for the terminal builder and leaf semantics.
+    pub fn output(self, slot: usize) -> OutputPat<Self> {
+        OutputPat { parent: self, slot }
+    }
+
     /// Bind the resulting `CallOther` node to `c`.
     pub fn capture(mut self, c: Capture) -> Self {
         self.inner = self.inner.capture(c);
@@ -252,6 +322,21 @@ impl CallOtherPat {
     /// `CallOther` node.
     pub fn build(self) -> Pattern {
         self.configured().build()
+    }
+}
+
+impl WithOutput for CallOtherPat {
+    fn capture_output(mut self, slot: usize, c: Capture) -> Self {
+        self.inner = self.inner.capture_output(slot, c);
+        self
+    }
+    fn output_width(mut self, slot: usize, bits: u32) -> Self {
+        self.inner = self.inner.output_width(slot, bits);
+        self
+    }
+    fn output_ty(mut self, slot: usize, ty: ValueType) -> Self {
+        self.inner = self.inner.output_ty(slot, ty);
+        self
     }
 }
 

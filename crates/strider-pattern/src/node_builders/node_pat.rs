@@ -18,7 +18,7 @@
 
 use std::mem::Discriminant;
 
-use strider_ir::node::NodeKind;
+use strider_ir::node::{NodeKind, ValueType};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
@@ -46,6 +46,35 @@ pub(crate) enum AnchorKind {
 /// can close over filter state captured at builder-construction time.
 type NodePredicateFactory = Box<dyn FnOnce() -> NodePredicate>;
 
+/// One declared **sibling-output** constraint: bind and/or kind-constrain
+/// the value the matched node produces at output `slot`, independent of the
+/// anchor. Lowered to a secondary output vertex (see [`NodePat::lower`]) that
+/// the matcher's `finalize` loop reads at `slot` — a leaf constraint, never a
+/// sub-pattern (a node's output has no operands of its own to recurse into).
+///
+/// The vertex defaults to the unconstrained wildcard kind
+/// ([`OutputKindSpec::Any`](crate::matcher::OutputKindSpec::Any)) so it binds
+/// whatever the node produces at `slot` — value, control, memory, or phi-token;
+/// `ty` narrows it to an exact value type and `width` to a bit width.
+#[derive(Clone, Copy)]
+pub(crate) struct OutputSpec {
+    slot: usize,
+    capture: Option<Capture>,
+    ty: Option<ValueType>,
+    width: Option<u32>,
+}
+
+impl OutputSpec {
+    fn at(slot: usize) -> Self {
+        Self {
+            slot,
+            capture: None,
+            ty: None,
+            width: None,
+        }
+    }
+}
+
 /// Shared lowering core for the slot-convention node-family builders.
 pub(crate) struct NodePat {
     kind: KindSpec,
@@ -66,6 +95,10 @@ pub(crate) struct NodePat {
     /// [`PatValue::match_slot`]). Set by `.res()` on Call/CallOther to pin the
     /// declared result output and exclude clobbers.
     pin_anchor_slot: bool,
+    /// Declared sibling-output constraints (`output(j)`): each lowers to a
+    /// secondary output vertex the matcher binds / kind-checks at its slot,
+    /// independent of the anchor.
+    outputs: Vec<OutputSpec>,
 }
 
 impl NodePat {
@@ -80,6 +113,7 @@ impl NodePat {
             output_width: None,
             input_widths: Vec::new(),
             pin_anchor_slot: false,
+            outputs: Vec::new(),
         }
     }
 
@@ -189,6 +223,36 @@ impl NodePat {
         self
     }
 
+    /// Bind the value the matched node produces at **output slot** `slot`
+    /// (a *sibling* output of the anchor) to `c`. Leaf: it captures the
+    /// output value itself, it does not recurse into what the output feeds.
+    pub(crate) fn capture_output(mut self, slot: usize, c: Capture) -> Self {
+        self.outputs.push(OutputSpec {
+            capture: Some(c),
+            ..OutputSpec::at(slot)
+        });
+        self
+    }
+
+    /// Constrain the sibling output at `slot` to bit width `bits` (implies a
+    /// value output of that width).
+    pub(crate) fn output_width(mut self, slot: usize, bits: u32) -> Self {
+        self.outputs.push(OutputSpec {
+            width: Some(bits),
+            ..OutputSpec::at(slot)
+        });
+        self
+    }
+
+    /// Constrain the sibling output at `slot` to the exact value type `ty`.
+    pub(crate) fn output_ty(mut self, slot: usize, ty: ValueType) -> Self {
+        self.outputs.push(OutputSpec {
+            ty: Some(ty),
+            ..OutputSpec::at(slot)
+        });
+        self
+    }
+
     /// Lower the node onto `b`: create the node, declare its anchor
     /// output, wire every indexed input, then apply the node-limit and
     /// capture. Shared by [`build`](Self::build) and the wrappers'
@@ -203,6 +267,7 @@ impl NodePat {
             output_width,
             input_widths,
             pin_anchor_slot,
+            outputs,
         } = self;
         let node = b.node(kind);
         let anchor_out = match anchor {
@@ -227,6 +292,26 @@ impl NodePat {
                 b.set_value_width(o, *bits);
             }
             b.input(node, slot, o);
+        }
+        // Declared sibling-output vertices (`output(j)`): each is a secondary
+        // (non-anchor) output vertex the matcher reads at its slot during
+        // `finalize`. Default kind is the unconstrained wildcard so it binds
+        // whatever the node produces at that slot; `ty` / `width` narrow it.
+        for spec in outputs {
+            let out = b.value_output(node, spec.slot);
+            match (spec.ty, spec.width) {
+                (Some(ty), _) => b.set_value_ty(out, ty),
+                // No type pin: relax to the wildcard kind so a non-value
+                // (control / memory) sibling output can still be bound. A
+                // width pin below still narrows it to a value of that width.
+                (None, _) => b.set_output_any(out),
+            }
+            if let Some(bits) = spec.width {
+                b.set_value_width(out, bits);
+            }
+            if let Some(c) = spec.capture {
+                b.capture_output(out, c);
+            }
         }
         if let Some(factory) = node_predicate
             && let Some(out) = anchor_out

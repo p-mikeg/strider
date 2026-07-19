@@ -209,3 +209,38 @@ def test_mem_phi_phi_token_differs_from_shifted_input():
     via_input = fn.find_all(mem_phi().input(0, store().data(int_const(1))))
     assert len(via_input) >= 1
     assert fn.find_all(mem_phi().phi_token(int_const(1))) == []
+
+
+# ── call().output(j): sibling-output binding ─────────────────────────────
+
+
+def test_call_output_slot_binds_sibling_value():
+    """`call().output(2).capture(c)` binds the value the Call produces at
+    raw output slot 2 (its first caller-saved clobber / return value) — a
+    leaf sibling-output binding, no recursion into what the output feeds."""
+    fn = _direct_call_and_ret(0x2000)
+    c = Capture()
+    hits = fn.find_all(call().output(2).capture(c))
+    assert len(hits) == 1
+    assert hits[0].has(c)
+    # The bound value's producer is the Call node itself (a sibling output).
+    assert hits[0].node(c) is not None
+
+
+def test_call_output_missing_slot_never_matches():
+    """A slot the Call does not produce fails the whole match — the
+    sibling-output constraint is genuinely checked, not silently skipped."""
+    fn = _direct_call_and_ret(0x2000)
+    c = Capture()
+    assert fn.find_all(call().output(500).capture(c)) == []
+
+
+def test_call_output_slot_type_and_width_constraints():
+    """`.of_type` / `.of_width` constrain the sibling output; the wrong
+    type/width rejects the match. On x86-64 every caller-saved clobber
+    output is a 64-bit register value."""
+    fn = _direct_call_and_ret(0x2000)
+    assert len(fn.find_all(call().output(2).of_type("i64"))) == 1
+    assert fn.find_all(call().output(2).of_type("i32")) == []
+    assert len(fn.find_all(call().output(2).of_width(64))) == 1
+    assert fn.find_all(call().output(2).of_width(32)) == []

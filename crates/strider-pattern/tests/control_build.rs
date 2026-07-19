@@ -1569,3 +1569,84 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
         "no I1 value output: bool_value() must not match a value-less or wide node",
     );
 }
+
+// ── sibling-output binding: output(j).capture / .of_width / .of_type ──────────
+
+/// The Call node and its slot-2 (clobber / result) I64 value output.
+fn call_and_clobber(function: &strider_ir::Function) -> (NodeKind, strider_ir::node::ValueId) {
+    let call = function
+        .graph()
+        .all_node_ids()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::Call))
+        .expect("call node");
+    let clobber = *function
+        .node_outputs(call)
+        .iter()
+        .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::I64))
+        .expect("64-bit clobber value output at slot 2");
+    (function.node_kind(call).clone(), clobber)
+}
+
+/// `call().output(2).capture(c)` binds the Call's sibling output at slot 2
+/// (its clobber / result value) — the generic leaf sibling-output binding.
+#[test]
+fn call_output_slot_binds_sibling_value() {
+    let function = call_with_clobber_retval();
+    let m = Matcher::new(&function);
+    let (_k, clobber) = call_and_clobber(&function);
+
+    let c = Capture::new();
+    let hits = m.find_all(&call().output(2).capture(c).build()).unwrap();
+    assert_eq!(hits.len(), 1, "one Call, one binding");
+    assert_eq!(
+        hits[0].value(c),
+        Some(clobber),
+        "output(2) binds the slot-2 sibling output value",
+    );
+}
+
+/// `output(j).of_width(w)` constrains the sibling output's width; the
+/// wrong width fails the whole match (the constraint is genuinely checked
+/// on the secondary output vertex, not silently dropped).
+#[test]
+fn call_output_slot_width_constraint() {
+    let function = call_with_clobber_retval();
+    let m = Matcher::new(&function);
+
+    assert_eq!(
+        m.find_all(&call().output(2).of_width(64).build())
+            .unwrap()
+            .len(),
+        1,
+        "slot-2 output is 64 bits wide",
+    );
+    assert_eq!(
+        m.find_all(&call().output(2).of_width(32).build())
+            .unwrap()
+            .len(),
+        0,
+        "slot-2 output is not 32 bits: the width constraint rejects the match",
+    );
+}
+
+/// `output(j).of_type(t)` pins the sibling output's exact value type.
+#[test]
+fn call_output_slot_type_constraint() {
+    let function = call_with_clobber_retval();
+    let m = Matcher::new(&function);
+
+    assert_eq!(
+        m.find_all(&call().output(2).of_type(ValueType::I64).build())
+            .unwrap()
+            .len(),
+        1,
+        "slot-2 output is I64",
+    );
+    assert_eq!(
+        m.find_all(&call().output(2).of_type(ValueType::I32).build())
+            .unwrap()
+            .len(),
+        0,
+        "slot-2 output is not I32",
+    );
+}

@@ -43,8 +43,8 @@ pub(crate) mod node_pat;
 pub mod phi;
 
 pub use flow::{
-    CallOtherPat, CallPat, IfPat, IndirectBranchPat, RetPat, SwitchPat, UnreachablePat, call,
-    call_other, if_node, indirect_branch, ret, switch, unreachable,
+    CallOtherPat, CallPat, IfPat, IndirectBranchPat, OutputPat, RetPat, SwitchPat, UnreachablePat,
+    WithOutput, call, call_other, if_node, indirect_branch, ret, switch, unreachable,
 };
 pub use function_arg::{
     FunctionArgPat, function_arg, function_arg_any, function_arg_reg, function_arg_stack,

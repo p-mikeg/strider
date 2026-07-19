@@ -47,9 +47,9 @@ pub use matcher::match_pat::{
 pub use matcher::{CastMask, JoinConstraint, Matcher, Pattern, PostMatchFn};
 pub use node_builders::{
     CallOtherPat, CallPat, FunctionArgPat, IfPat, IndirectBranchPat, LoadPat, MemPat, MemPhiPat,
-    PhiPat, RetPat, StorePat, SwitchPat, UnreachablePat, call, call_other, function_arg,
-    function_arg_any, function_arg_reg, function_arg_stack, if_node, indirect_branch, load,
-    mem_phi, phi, phi_for, ret, store, switch, unreachable,
+    OutputPat, PhiPat, RetPat, StorePat, SwitchPat, UnreachablePat, WithOutput, call, call_other,
+    function_arg, function_arg_any, function_arg_reg, function_arg_stack, if_node, indirect_branch,
+    load, mem_phi, phi, phi_for, ret, store, switch, unreachable,
 };
 pub use template::template_pat::TemplatePat;
 pub use template::{Template, TemplateCtx, instantiate};

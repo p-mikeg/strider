@@ -2650,6 +2650,20 @@ struct CallInner {
     /// `.res()` — pin a nested value operand to the Call's declared result
     /// output (excludes caller-saved clobber outputs).
     res: bool,
+    /// `.output(j)....` — sibling-output constraints; each spec carries exactly
+    /// one aspect (capture / width / type).
+    outputs: Vec<OutputSpecPy>,
+}
+
+/// One `.output(j)` sibling-output constraint, mirroring the Rust
+/// `output(j).capture(c)` / `.of_width(w)` / `.of_type(t)` terminals. Exactly
+/// one of `capture` / `width` / `ty` is set (each terminal commits one aspect).
+#[derive(Clone, Copy)]
+struct OutputSpecPy {
+    slot: usize,
+    capture: Option<Capture>,
+    width: Option<u32>,
+    ty: Option<T>,
 }
 
 /// Typed builder for `Call` node patterns. Chain `.at(addr)`,
@@ -2716,6 +2730,16 @@ impl PyCallPat {
         }
         if self.inner.borrow().res {
             b = b.res();
+        }
+        let outputs: Vec<OutputSpecPy> = self.inner.borrow().outputs.clone();
+        for spec in outputs {
+            if let Some(c) = spec.capture {
+                b = b.output(spec.slot).capture(c);
+            } else if let Some(w) = spec.width {
+                b = b.output(spec.slot).of_width(w);
+            } else if let Some(t) = spec.ty {
+                b = b.output(spec.slot).of_type(t);
+            }
         }
         if let Some(c) = self.common.borrow().capture {
             b = b.capture(c);
@@ -2787,8 +2811,70 @@ impl PyCallPat {
         slf.inner.borrow_mut().res = true;
         slf
     }
+
+    /// Bind / constrain a **sibling output** of the Call — the value it
+    /// produces at raw output `slot` (`[Control(0), Memory(1), result(2),
+    /// ...clobbers]`, so `output(2)` is the first return value). Returns a small
+    /// terminal builder: `.capture(c)` binds that output's value, `.of_width(w)`
+    /// / `.of_type("i64")` constrain it. Leaf: it names the output value itself,
+    /// it does not recurse into what the output feeds.
+    fn output(slf: Bound<'_, Self>, slot: usize) -> PyCallOutput {
+        PyCallOutput {
+            parent: slf.unbind(),
+            slot,
+        }
+    }
 }
 builder_common_methods!(PyCallPat);
+
+/// Terminal sub-builder returned by `CallPat.output(slot)`. Each terminal
+/// commits one sibling-output constraint onto the parent `CallPat` and returns
+/// it so the chain continues (`.build()`, further verbs, ...).
+#[gen_stub_pyclass]
+#[pyclass(name = "CallOutputPat", module = "strider.pattern", unsendable)]
+pub struct PyCallOutput {
+    parent: Py<PyCallPat>,
+    slot: usize,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyCallOutput {
+    /// Bind the sibling output's value to `c`.
+    fn capture(&self, py: Python<'_>, c: PyRef<'_, PyCapture>) -> Py<PyCallPat> {
+        self.parent.borrow(py).inner.borrow_mut().outputs.push(OutputSpecPy {
+            slot: self.slot,
+            capture: Some(c.inner),
+            width: None,
+            ty: None,
+        });
+        self.parent.clone_ref(py)
+    }
+
+    /// Constrain the sibling output to bit width `bits`.
+    fn of_width(&self, py: Python<'_>, bits: u32) -> Py<PyCallPat> {
+        self.parent.borrow(py).inner.borrow_mut().outputs.push(OutputSpecPy {
+            slot: self.slot,
+            capture: None,
+            width: Some(bits),
+            ty: None,
+        });
+        self.parent.clone_ref(py)
+    }
+
+    /// Constrain the sibling output to the exact value type named by `ty`
+    /// (e.g. `"i64"`, `"f32"`).
+    fn of_type(&self, py: Python<'_>, ty: &str) -> PyResult<Py<PyCallPat>> {
+        let t = parse_value_ty(ty)?;
+        self.parent.borrow(py).inner.borrow_mut().outputs.push(OutputSpecPy {
+            slot: self.slot,
+            capture: None,
+            width: None,
+            ty: Some(t),
+        });
+        Ok(self.parent.clone_ref(py))
+    }
+}
 
 /// Start a `Call` pattern builder, optionally pinning the target to `at`.
 #[pyfunction]
@@ -3517,6 +3603,7 @@ pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFloatBinaryPat>()?;
     m.add_class::<PyBoolBinaryPat>()?;
     m.add_class::<PyCallPat>()?;
+    m.add_class::<PyCallOutput>()?;
     m.add_class::<PyCallOtherPat>()?;
     m.add_class::<PyRetPat>()?;
     m.add_class::<PyIndirectBranchPat>()?;
