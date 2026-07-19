@@ -1,6 +1,5 @@
 use core::iter;
 use core::ops::ControlFlow;
-use std::collections::VecDeque;
 
 pub use entity_utils::set::DenseEntitySet;
 
@@ -294,8 +293,42 @@ fn is_memory_chain_kind(kind: &NodeKind) -> bool {
     )
 }
 
+/// Returns `node`'s memory-chain successors: the consumers of its `Memory`
+/// output (if it has one) that are themselves memory-chain kinds
+/// (`is_memory_chain_kind`). `Load` has no `Memory` output, so it is
+/// naturally a leaf. Non-chain consumers of a `Memory` value (e.g. a
+/// `Return`'s memory input) are filtered out here, at the successor
+/// relation, rather than by the caller.
+fn mem_succs(function: &Function, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    function
+        .memory_output_of(node)
+        .ok()
+        .into_iter()
+        .flat_map(move |mem_value| function.value_uses(mem_value))
+        .map(|(consumer, _slot)| consumer)
+        .filter(|&consumer| is_memory_chain_kind(function.node_kind(consumer)))
+}
+
+/// A [`graph_algorithms::walk::GraphRef`] over the forward memory-token chain
+/// ([`mem_succs`]) — the successor relation [`memory_reachable`] walks from
+/// the function's `InitialMemory` root.
+#[derive(Clone, Copy)]
+struct MemorySuccs<'a>(&'a Function);
+
+impl graph_algorithms::walk::GraphRef for MemorySuccs<'_> {
+    type NodeId = NodeId;
+
+    fn try_successors(
+        &self,
+        node: NodeId,
+        f: impl FnMut(NodeId) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        mem_succs(self.0, node).try_for_each(f)
+    }
+}
+
 /// The memory-touching nodes reachable by following memory-token edges
-/// forward from `function`'s `InitialMemory` root, in BFS order.
+/// forward from `function`'s `InitialMemory` root, in pre-order.
 ///
 /// The memory chain is rooted at the unique `InitialMemory` node; its
 /// `Memory` output feeds the next memory op (`Load` / `Store` / `Call` /
@@ -319,8 +352,8 @@ fn is_memory_chain_kind(kind: &NodeKind) -> bool {
 /// **Complexity: O(V+E) over the whole function, not O(memory nodes +
 /// edges).** Locating the root requires a full data-inclusive reachability
 /// pass — `InitialMemory` is a data root, not control-reachable, so the
-/// cheap `cfg_reachable` walk can't find it — before the memory-chain BFS
-/// even starts. That BFS itself is only O(memory nodes + edges), but it's
+/// cheap `cfg_reachable` walk can't find it — before the memory-chain walk
+/// even starts. That walk itself is only O(memory nodes + edges), but it's
 /// dominated by the O(V+E) `compute_full` prefix. This runs once per call,
 /// which is acceptable for a user-facing query — [`crate::validate::validate`]
 /// and `data_walk` pay the identical O(V+E) cost. A future O(memory-chain)
@@ -343,24 +376,12 @@ pub fn memory_reachable(function: &Function, entry: NodeId) -> Vec<NodeId> {
         return Vec::new();
     };
 
-    let mut seen = DenseEntitySet::<NodeId>::new();
-    let mut order = Vec::new();
-    let mut work = VecDeque::from([root]);
-    seen.insert(root);
-    while let Some(node) = work.pop_front() {
-        order.push(node);
-        // Follow this node's Memory output (if any) to its consumers,
-        // continuing the walk only through other memory-chain nodes.
-        if let Ok(mem_out) = function.memory_output_of(node) {
-            for (consumer, _slot) in function.value_uses(mem_out) {
-                if !seen.contains(consumer) && is_memory_chain_kind(function.node_kind(consumer)) {
-                    seen.insert(consumer);
-                    work.push_back(consumer);
-                }
-            }
-        }
-    }
-    order
+    // A pre-order walk over the memory-chain successor relation
+    // ([`MemorySuccs`]) visits exactly the memory-chain-reachable nodes; the
+    // generic `PreOrder`'s `DenseEntitySet` tracker dedups and breaks cycles
+    // (e.g. a loop-header `MemPhi` back-edge) the same way the old
+    // hand-rolled worklist's `seen` set did.
+    PreOrder::new(MemorySuccs(function), iter::once(root)).collect()
 }
 
 #[cfg(test)]
@@ -1234,7 +1255,7 @@ mod tests {
         }
     }
 
-    /// `memory_reachable`'s BFS must terminate — and dedup correctly — on a
+    /// `memory_reachable`'s walk must terminate — and dedup correctly — on a
     /// genuinely cyclic memory chain: a loop-header `MemPhi` (`r1`) with a
     /// memory predecessor (`r2`'s `MemPhi`) that is itself reachable
     /// FORWARD from `r1`'s own `MemPhi` output (the loop-continue arm `r1 ->
