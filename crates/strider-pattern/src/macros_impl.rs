@@ -1,38 +1,32 @@
-//! Crate-public `macro_rules!` helpers for collapsing rewrite-RHS
-//! constant-from-bindings boilerplate.
+//! Collapses rewrite-RHS constant-from-bindings boilerplate.
 //!
-//! Ported from `strider-orchestrator::pattern::macros` so consumers can
-//! depend on a single source of truth.  Three public macros —
-//! [`int_const_with!`], [`bool_const_with!`], [`float_const_with!`] —
-//! expand to a call to the matching `*_const_with_fn` builder with a
-//! closure that resolves each named LHS capture against
-//! [`Bindings`](crate::Bindings) and evaluates the body.
+//! [`int_const_with!`], [`bool_const_with!`] and [`float_const_with!`] expand
+//! to the matching `*_const_with_fn` builder with a closure that resolves each
+//! named LHS capture against [`Bindings`](crate::Bindings), then evaluates the
+//! body.
 //!
-//! Each entry inside the macro's bracket list is `name: kind`, where
-//! `kind` selects which extractor to call:
+//! Bracket-list grammar. Each entry is `name: kind`, where `kind` picks the
+//! extractor:
 //!
-//!   * `uint`            — `Bindings::get_uint(c, &function)`  (`u128`)
-//!   * `int`             — `Bindings::get_int(c, &function)`   (`i128`)
-//!   * `bool`            — `Bindings::get_bool(c, &function)`  (`bool`)
-//!   * `float_bits`      — `Bindings::get_float_bits(c, &graph)` (`u64`)
+//!   * `uint`, `int`, `bool`: `Bindings::get_uint` / `get_int` / `get_bool`,
+//!     yielding `u128` / `i128` / `bool`.
+//!   * `float_bits`: `Bindings::get_float_bits`, yielding `u64`.
 //!   * `int_binary_op` / `int_unary_op` / `int_cmp_op`
 //!   * `bool_binary_op`
 //!   * `float_binary_op` / `float_unary_op` / `float_cmp_op`
 //!
-//! Two reserved bare identifiers, if present in the bracket list,
-//! bind graph-derived values rather than capture lookups:
+//! Two reserved bare identifiers bind graph-derived values instead of capture
+//! lookups:
 //!
-//!   * `ty`    — the rewrite root's output type
+//!   * `ty`: the rewrite root's output type
 //!     ([`crate::TemplateCtx::root_ty`]).
-//!   * `in_ty` — `Option<ValueType>`: the type of the rewrite
-//!     root's first value input.  Use
-//!     `in_ty.ok_or_else(strider_pattern::skip)?` if required.
+//!   * `in_ty`: `Option<ValueType>`, the type of the root's first value input.
+//!     Use `in_ty.ok_or_else(strider_pattern::skip)?` where it is required.
 //!
-//! Missing bindings raise a [`MissingBinding`](crate::MissingBinding)
-//! error tagged with the macro entry's `kind` token.
+//! A missing binding raises [`MissingBinding`](crate::MissingBinding) tagged
+//! with the entry's `kind` token.
 
-/// Builds an `IntConst` node whose value is computed from LHS
-/// captures.  See module docs for the bracket-list grammar.
+/// Bracket-list grammar is in the module docs.
 #[macro_export]
 macro_rules! int_const_with {
     ([$($caps:tt)*] => $body:expr) => {
@@ -43,8 +37,7 @@ macro_rules! int_const_with {
     };
 }
 
-/// Builds an `I1` boolean constant (an `IntConst` typed `I1`) whose
-/// value is computed from LHS captures.
+/// Builds an `IntConst` typed `I1`.
 #[macro_export]
 macro_rules! bool_const_with {
     ([$($caps:tt)*] => $body:expr) => {
@@ -55,8 +48,7 @@ macro_rules! bool_const_with {
     };
 }
 
-/// Builds a `FloatConst` node whose IEEE 754 bit pattern is computed
-/// from LHS captures.  The body must evaluate to `u64`.
+/// The body must evaluate to a `u64` IEEE 754 bit pattern.
 #[macro_export]
 macro_rules! float_const_with {
     ([$($caps:tt)*] => $body:expr) => {
@@ -67,42 +59,31 @@ macro_rules! float_const_with {
     };
 }
 
-/// Internal helper: tt-muncher that expands a capture list into
-/// `let` bindings inside the `*_const_with!` closure body.
+/// tt-muncher expanding a capture list into `let` bindings inside the
+/// `*_const_with!` closure body.
 ///
-/// Accepts entries of the form:
-///   * `ty`              — bare ident, graph-derived (matched by
-///                          spelling via the inner
-///                          [`__const_with_bind_one`])
-///   * `in_ty`           — bare ident, graph-derived (same)
-///   * `name: kind`      — typed capture extraction
-///
-/// Hygiene: each emitted `let` is built by `__const_with_bind_one`
-/// from a `$hy:ident` that was bound from the caller's token, so the
-/// surrounding closure body sees the caller's identifier directly.
+/// Hygiene: each emitted `let` is built by `__const_with_bind_one` from a
+/// `$hy:ident` bound from the caller's own token, so the closure body sees the
+/// caller's identifier.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __const_with_bindings {
     ($ctx:ident;) => {};
-    // Typed capture: `name: kind`.
     ($ctx:ident; $name:ident : $kind:ident $(, $($rest:tt)*)?) => {
         let $name = $crate::__const_with_extract!($ctx, $name, $kind)?;
         $( $crate::__const_with_bindings!($ctx; $($rest)*); )?
     };
-    // Bare ident — `ty` / `in_ty` (dispatched by spelling inside
-    // `__const_with_bind_one`).
+    // Bare `ty` / `in_ty`, dispatched by spelling in `__const_with_bind_one`.
     ($ctx:ident; $cap:ident $(, $($rest:tt)*)?) => {
         $crate::__const_with_bind_one!($ctx, $cap, $cap);
         $( $crate::__const_with_bindings!($ctx; $($rest)*); )?
     };
 }
 
-/// Internal helper: emits a single `let`-binding for the bare-ident
-/// form (`ty` / `in_ty`) of the `*_const_with!` capture list,
-/// dispatching by ident *spelling*.  The third argument is the
-/// caller's literal identifier (passed twice from
-/// `__const_with_bindings`) so the emitted `let` lives in the
-/// caller's hygiene context.
+/// Emits the `let` for a bare-ident capture entry, dispatching on ident
+/// *spelling*. The third argument is the caller's literal identifier, passed
+/// twice from `__const_with_bindings`, so the `let` lands in the caller's
+/// hygiene context.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __const_with_bind_one {
@@ -116,9 +97,8 @@ macro_rules! __const_with_bind_one {
     };
 }
 
-/// Internal helper: maps a `kind` token to the right `Bindings`
-/// extractor call.  Each arm returns an `anyhow::Result<T>` so the
-/// surrounding closure body can use the `?` operator uniformly.
+/// Maps a `kind` token to its `Bindings` extractor. Every arm yields
+/// `anyhow::Result<T>` so the closure body can `?` uniformly.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __const_with_extract {

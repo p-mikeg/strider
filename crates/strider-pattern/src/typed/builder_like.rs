@@ -1,23 +1,11 @@
-//! The shared verb surface between the match- and build-side builders.
+//! The construction verbs shared by [`MatcherBuilder`] and [`TemplateBuilder`],
+//! so a fixed-op typed struct declares its node shape once instead of in twin
+//! `MatchPat` / `TemplatePat` bodies.
 //!
-//! [`MatcherBuilder`] and
-//! [`TemplateBuilder`] expose an
-//! identical subset of construction verbs for value ops (`leaf` / `unary`
-//! / `binary` / `node` / `input` / `value_output` / `set_value_ty`),
-//! differing only in their output/node handle types. [`BuilderLike`]
-//! abstracts that subset so a fixed-op typed struct can declare its node
-//! shape exactly once, in a single [`CompileInto::compile_into`] body
-//! generic over the builder, instead of byte-for-byte duplicated
-//! `MatchPat` / `TemplatePat` impls.
-//!
-//! The match/template split (and with it the compile-time
-//! wildcard-in-RHS guard) is preserved entirely: [`CompileInto`] is
-//! blanket-implemented for `MatchPat` over the match builder and for
-//! `TemplatePat` over the template builder, and the operand bounds of
-//! each fixed-op `compile_into` are stated against [`CompileInto`], so an
-//! operand only lowers into a builder its own side admits. The split
-//! factory free functions (`add` bounded `MatchPat`, `template::add`
-//! bounded `TemplatePat`) are untouched.
+//! The match/template split still holds: [`CompileInto`] is blanket-implemented
+//! for `MatchPat` over the match builder and `TemplatePat` over the template
+//! builder, so an operand only lowers into a builder its own side admits. That
+//! is what keeps the compile-time wildcard-in-RHS guard.
 
 use strider_ir::IntBinaryOp;
 use strider_ir::node::ValueType;
@@ -27,31 +15,19 @@ use crate::matcher::{KindSpec, MatcherBuilder, PatNodeRef, PatValueRef};
 use crate::template::template_pat::TemplatePat;
 use crate::template::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 
-/// The value-op construction verbs shared by both imperative builders.
-///
-/// Implemented for [`MatcherBuilder`] (match side) and
-/// [`TemplateBuilder`] (build side). A [`CompileInto`] body wires its
-/// node shape through these verbs and so lowers correctly into either.
 pub trait BuilderLike {
-    /// Handle to an output vertex this builder produced.
     type OutRef: Copy;
-    /// Handle to a bare node vertex this builder produced.
     type NodeRef: Copy;
 
-    /// A unary node of `kind` consuming `inner`, with one value output.
+    /// One value input, one value output.
     fn unary(&mut self, kind: KindSpec, inner: Self::OutRef) -> Self::OutRef;
-    /// A binary [`IntBinaryOp`] node consuming `l` / `r`, with one value
-    /// output.
     fn binary(&mut self, op: IntBinaryOp, l: Self::OutRef, r: Self::OutRef) -> Self::OutRef;
-    /// A bare node of `kind` with no inputs/outputs yet.
+    /// A bare node with no inputs/outputs yet.
     fn node(&mut self, kind: KindSpec) -> Self::NodeRef;
-    /// Wire `prod` into `node`'s input `slot`.
     fn input(&mut self, node: Self::NodeRef, slot: usize, prod: Self::OutRef);
-    /// Add a value output at `slot` to `node`.
     fn value_output(&mut self, node: Self::NodeRef, slot: usize) -> Self::OutRef;
-    /// Pin `out`'s value output to an exact type.
     fn set_value_ty(&mut self, out: Self::OutRef, ty: ValueType);
-    /// A leaf node of `kind` (no inputs) with a single value output.
+    /// No inputs, one value output.
     fn leaf(&mut self, kind: KindSpec) -> Self::OutRef;
 }
 
@@ -109,16 +85,10 @@ impl BuilderLike for TemplateBuilder {
     }
 }
 
-/// Lower a typed operand into a builder `B`, returning its value-output
-/// handle.
-///
-/// Blanket-implemented for every [`MatchPat`] over [`MatcherBuilder`] and
-/// every [`TemplatePat`] over [`TemplateBuilder`], so the two sides'
-/// operand admissibility (and the wildcard-in-RHS compile guard) carry
-/// straight through to the generic `compile_into` bodies.
+/// Blanket-implemented for every [`MatchPat`] over [`MatcherBuilder`] and every
+/// [`TemplatePat`] over [`TemplateBuilder`], so each side's operand
+/// admissibility carries through to the generic `compile_into` bodies.
 pub trait CompileInto<B: BuilderLike> {
-    /// Lower `self` into `b`, returning the value-output handle of its
-    /// root node.
     fn compile_into(self, b: &mut B) -> B::OutRef;
 }
 
@@ -134,20 +104,10 @@ impl<P: TemplatePat> CompileInto<TemplateBuilder> for P {
     }
 }
 
-// ── Shared fixed-op lowerings ─────────────────────────────────────────
-//
-// One generic body per fixed-op node shape, wired through the
-// [`BuilderLike`] verbs and operands bounded by [`CompileInto<B>`]. The
-// `MatchPat` / `TemplatePat` impls of each fixed-op struct are thin
-// forwarders to these (the operand bound `L: MatchPat` supplies `L:
-// CompileInto<MatcherBuilder>` via the blanket impls above, and likewise
-// for the template side), so each node shape is declared exactly once.
-// These are kept as free functions rather than a single generic
-// `CompileInto` impl per struct because the structs already carry direct
-// `MatchPat` / `TemplatePat` impls, and a blanket `CompileInto` over
-// those traits would collide with such per-struct impls.
+// Free functions rather than a generic `CompileInto` impl per struct: the
+// structs already carry direct `MatchPat` / `TemplatePat` impls, and a blanket
+// `CompileInto` over those traits would collide with them.
 
-/// `unary(kind, inner)` — the cast / fixed-kind-unary shape.
 pub(crate) fn compile_unary_kind<B, I>(b: &mut B, kind: KindSpec, inner: I) -> B::OutRef
 where
     B: BuilderLike,
@@ -157,7 +117,6 @@ where
     b.unary(kind, i)
 }
 
-/// `binary(op, l, r)` — the plain integer-binary shape.
 pub(crate) fn compile_int_binary<B, L, R>(b: &mut B, op: IntBinaryOp, l: L, r: R) -> B::OutRef
 where
     B: BuilderLike,
@@ -169,9 +128,8 @@ where
     b.binary(op, l, r)
 }
 
-/// A two-input node of `kind` with one value output, optionally pinned to
-/// `out_ty`. Covers the int/float comparison (`I1`-pinned) and float-
-/// binary (un-pinned) shapes.
+/// Two-input, one value output, optionally pinned to `out_ty`. Covers the
+/// int/float comparisons (`I1`-pinned) and float-binary (un-pinned).
 pub(crate) fn compile_two_input<B, L, R>(
     b: &mut B,
     kind: KindSpec,
@@ -196,7 +154,7 @@ where
     out
 }
 
-/// `binary(op, l, r)` pinned to `I1` — the boolean-binary shape.
+/// `binary` pinned to `I1`: the boolean-binary shape.
 pub(crate) fn compile_bool_binary<B, L, R>(b: &mut B, op: IntBinaryOp, l: L, r: R) -> B::OutRef
 where
     B: BuilderLike,

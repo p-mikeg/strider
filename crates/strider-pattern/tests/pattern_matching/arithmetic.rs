@@ -1,15 +1,11 @@
-//! Integer binary / unary / comparison pattern matching.
-//!
-//! Covers every int op family constructor (`add`, `sub`, …, `neg`, `not`, …,
-//! `int_eq`, `int_lt`, …) including deep nesting and wrong-op / wrong-operand
-//! rejections.  Commutative-vs-ordered semantics live in `commutativity.rs`.
+//! Integer binary / unary / comparison pattern matching: every int op family
+//! constructor, deep nesting, wrong-op and wrong-operand rejection.
+//! Commutative-vs-ordered semantics live in `commutativity.rs`.
 
 use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
-
-// ── Integer binary ops ────────────────────────────────────────────────────────
 
 #[test]
 fn add_matches() {
@@ -32,7 +28,6 @@ fn add_wrong_operand_rejects() {
 
 #[test]
 fn every_int_binary_op_has_a_working_ctor() {
-    // Each ctor builds `OP(IntConst(5), IntConst(3))` finalised to a `Pattern`.
     type Ctor = fn() -> strider_pattern::matcher::Pattern;
     let ctor_add: Ctor = || add(int_const(5u128), int_const(3u128)).into_pattern();
     let ctor_mul: Ctor = || mul(int_const(5u128), int_const(3u128)).into_pattern();
@@ -70,8 +65,7 @@ fn every_int_binary_op_has_a_working_ctor() {
 
 #[test]
 fn wrong_op_rejects() {
-    // Use Mul as the "different op" graph (Sub no longer exists; the
-    // pattern's wrong-op-rejection check is op-agnostic).
+    // Mul is just a stand-in wrong op; the rejection check is op-agnostic.
     let function = shapes::int_bin_5_3(IntBinaryOp::Mul);
     a::none(
         &function,
@@ -79,15 +73,13 @@ fn wrong_op_rejects() {
     );
 }
 
-/// `pattern::sub(a, b)` is an ergonomic alias that constructs the lowered
-/// shape `Add(a, Neg(b))`.  Build the lowered shape directly and verify
-/// the alias matches it.
+/// `sub(a, b)` is an alias for the lowered `Add(a, Neg(b))` shape.
 #[test]
 fn sub_matches_lowered_shape() {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
-    let lowered = t.sub(l, r); // Tb::sub builds Add(l, Neg(r)) directly.
+    let lowered = t.sub(l, r); // builds Add(l, Neg(r)) directly
     let function = t.ret_val(lowered);
     a::matches(
         &function,
@@ -96,10 +88,8 @@ fn sub_matches_lowered_shape() {
     );
 }
 
-// ── Integer unary ops ─────────────────────────────────────────────────────────
-
-/// Helper: build `return(bit_not(IntConst(v))):I64` where bitwise complement
-/// is the canonical `Xor(IntConst(v), IntConst(all_ones))` shape.
+/// `return(~5):I64`, where complement is the canonical
+/// `Xor(IntConst(5), IntConst(all_ones))`.
 fn int_bit_not_5() -> strider_ir::Function {
     let mut t = Tb::empty();
     let v = t.u64(5);
@@ -145,14 +135,11 @@ fn bit_not_wrong_operand_rejects() {
 
 #[test]
 fn unary_wrong_op_rejects() {
-    // `neg(int_const(5))` matches `IntUnaryOp::Neg(IntConst(5))`; the
-    // canonical bit-not shape `Xor(5, all_ones)` is a binary op, so the
-    // `neg` pattern must reject it.
+    // The canonical bit-not shape is a binary Xor, so a unary neg pattern
+    // must reject it.
     let function = int_bit_not_5();
     a::none(&function, neg(int_const(5u128)).into_pattern());
 }
-
-// ── Integer comparisons ───────────────────────────────────────────────────────
 
 #[test]
 fn every_int_cmp_op_has_a_working_ctor() {
@@ -183,10 +170,8 @@ fn every_int_cmp_op_has_a_working_ctor() {
     }
 }
 
-/// `int_le(a, b)` is an ergonomic alias for the lowered shape
-/// `BoolNeg(IntLess(b, a))` — `IntCmpOp::LessEqual` is not a primitive
-/// in the IR.  Build the lowered shape directly and verify the ctor
-/// matches it.
+/// `IntCmpOp::LessEqual` is not an IR primitive, so `int_le(a, b)` is an alias
+/// for the lowered `not(Less(b, a))` shape.
 #[test]
 fn int_le_matches_lowered_shape() {
     let function = shapes::int_le_lowered_5_3();
@@ -217,12 +202,9 @@ fn cmp_wrong_op_rejects() {
     );
 }
 
-// ── Nested / deep patterns ────────────────────────────────────────────────────
-
 #[test]
 fn nested_add_three_levels_matches() {
     let function = shapes::add_nested_3(1, 2, 3);
-    // Pattern: add(add(1, 2), 3) — matches the outer Add whose lhs is inner.
     a::matches(
         &function,
         add(add(int_const(1u128), int_const(2u128)), int_const(3u128)).into_pattern(),
@@ -232,7 +214,7 @@ fn nested_add_three_levels_matches() {
 
 #[test]
 fn nested_pattern_depth_five() {
-    // Graph: (((((1+2)+3)+4)+5)+6)
+    // (((((1+2)+3)+4)+5)+6)
     let mut t = Tb::empty();
     let a1 = t.u64(1);
     let a2 = t.u64(2);
@@ -247,7 +229,6 @@ fn nested_pattern_depth_five() {
     let s = t.add(s, a6);
     let function = t.ret_val(s);
 
-    // Exact shape.
     a::matches(
         &function,
         add(
@@ -264,7 +245,7 @@ fn nested_pattern_depth_five() {
         1,
     );
 
-    // Wrong const buried deep → reject.
+    // A wrong const buried five levels deep must still reject.
     a::none(
         &function,
         add(
@@ -283,13 +264,11 @@ fn nested_pattern_depth_five() {
 
 #[test]
 fn nested_any_partial_matches() {
-    // (inner + 3) with any() captures — inner add can be any shape.
     let function = shapes::add_nested_3(1, 2, 3);
     let inner = Capture::new();
     let m = a::unique(
         &function,
         add(any().capture(inner), int_const(3u128)).into_pattern(),
     );
-    // `inner` should point to the inner Add's value output.
     assert!(m.value(inner).is_some());
 }

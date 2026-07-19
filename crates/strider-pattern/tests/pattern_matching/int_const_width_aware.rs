@@ -1,5 +1,5 @@
-//! Width-aware `int_const` matching: `signed_int_const(-50)` matches an
-//! `IntConst` at any declared width without explicit per-arch pinning.
+//! `signed_int_const(-50)` matches an `IntConst` at any declared width, with
+//! no per-arch pinning.
 
 use strider_ir::IRBuilderExt;
 use strider_ir::node::ValueType;
@@ -7,8 +7,7 @@ use strider_pattern::{MatchPat, Matcher, int_const, signed_int_const};
 
 use super::support::Tb;
 
-/// A I32 node holding the bit pattern `0xffff_ffce` (= -50 mod 2^32).
-/// The pattern `signed_int_const(-50)` must match it.
+/// I32 holding `0xffff_ffce`, i.e. -50 mod 2^32.
 #[test]
 fn negative_int_const_matches_at_u32_width() {
     let mut t = Tb::empty();
@@ -23,8 +22,7 @@ fn negative_int_const_matches_at_u32_width() {
     );
 }
 
-/// A I64 node holding the bit pattern `0xffff_ffff_ffff_ffce` (= -50 mod 2^64).
-/// The pattern `signed_int_const(-50)` must match it.
+/// I64 holding `0xffff_ffff_ffff_ffce`, i.e. -50 mod 2^64.
 #[test]
 fn negative_int_const_matches_at_u64_width() {
     let mut t = Tb::empty();
@@ -39,8 +37,7 @@ fn negative_int_const_matches_at_u64_width() {
     );
 }
 
-/// A I128 node holding -50 as a full 128-bit two's-complement value.
-/// The pattern `signed_int_const(-50)` must match it.
+/// I128 holding -50 as a full 128-bit two's complement value.
 #[test]
 fn negative_int_const_matches_at_u128_width() {
     let mut t = Tb::empty();

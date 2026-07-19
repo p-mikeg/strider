@@ -1,20 +1,16 @@
-//! [`NodePat`] — the shared lowering core behind the slot-convention
-//! control / memory / phi builders.
+//! The shared lowering core behind the slot-convention control / memory /
+//! phi builders.
 //!
-//! Every variadic node-family builder (`Call` / `CallOther` / `Return` /
-//! `Load` / `Store` / `Phi` / `MemPhi`) lowers to the same
-//! shape: pick a kind, declare an anchor output (a value output, a
-//! memory-token output, or none), wire sparse positional sub-patterns
-//! into input slots, optionally pin a node predicate + capture, then
-//! seal the built graph (`finish`).
-//! [`NodePat`] holds that machinery once; the public
-//! builders are thin slot-convention wrappers that translate caller
-//! verbs into [`NodePat::input`] / [`NodePat::input_control`] /
-//! [`NodePat::input_mem`] calls at the right raw slot.
+//! Every variadic node-family builder (`Call`, `CallOther`, `Return`, `Load`,
+//! `Store`, `Phi`, `MemPhi`) lowers the same way: pick a kind, declare an
+//! anchor output, wire sparse positional sub-patterns into input slots,
+//! optionally pin a node predicate and capture, then seal. [`NodePat`] holds
+//! that machinery once and the public builders are thin wrappers translating
+//! caller verbs into [`NodePat::input`] / [`NodePat::input_control`] /
+//! [`NodePat::input_mem`] at the right raw slot.
 //!
-//! The lone genuine per-builder difference is the slot convention (which
-//! raw input slot each verb addresses) and the anchor/root choice, both
-//! expressed declaratively here via [`AnchorKind`].
+//! The only genuine per-builder differences are the slot convention and the
+//! anchor choice, both declared here via [`AnchorKind`].
 
 use std::mem::Discriminant;
 
@@ -26,38 +22,34 @@ use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Patte
 
 use super::{MemPat, SubCompiler};
 
-/// How the lowered node's anchor output is modelled. The anchor is the
-/// output a node-limit and capture attach to; it also doubles as the
-/// chaining handle for memory roots and the seal handle for value roots.
+/// The anchor is the output a node predicate and capture attach to; it also
+/// doubles as the chaining handle for memory roots and the seal handle for
+/// value roots.
 #[derive(Clone, Copy)]
 pub(crate) enum AnchorKind {
-    /// A value output at the given slot (`Load` / `Phi`).
+    /// `Load`, `Phi`.
     Value(usize),
-    /// A memory-token output at the given slot (`Call` / `CallOther` /
-    /// `Store` / `MemPhi`).
+    /// `Call`, `CallOther`, `Store`, `MemPhi`.
     Memory(usize),
-    /// A control output at the given slot (`Entry` / `Region`).
+    /// `Entry`, `Region`.
     Control(usize),
     /// No output vertex at all (`Return`): captures attach to the node
-    /// directly and no node-limit can be anchored.
+    /// directly and no node predicate can be anchored.
     None,
 }
 
-/// A node-predicate factory: given the matched node's anchor, install a
-/// predicate. Boxed once and run inside [`NodePat::lower`] so the predicate
-/// can close over filter state captured at builder-construction time.
+/// Boxed and run inside [`NodePat::lower`], so the predicate can close over
+/// filter state captured at builder-construction time.
 type NodePredicateFactory = Box<dyn FnOnce() -> NodePredicate>;
 
-/// One declared **sibling-output** constraint: bind and/or kind-constrain
-/// the value the matched node produces at output `slot`, independent of the
-/// anchor. Lowered to a secondary output vertex (see [`NodePat::lower`]) that
-/// the matcher's `finalize` loop reads at `slot` — a leaf constraint, never a
-/// sub-pattern (a node's output has no operands of its own to recurse into).
+/// Binds and/or kind-constrains the value produced at output `slot`,
+/// independent of the anchor. Always a leaf, never a sub-pattern: an output
+/// has no operands of its own to recurse into.
 ///
-/// The vertex defaults to the unconstrained wildcard kind
-/// ([`OutputKindSpec::Any`](crate::matcher::OutputKindSpec::Any)) so it binds
-/// whatever the node produces at `slot` — value, control, memory, or phi-token;
-/// `ty` narrows it to an exact value type and `width` to a bit width.
+/// Defaults to the wildcard kind
+/// ([`OutputKindSpec::Any`](crate::matcher::OutputKindSpec::Any)), binding
+/// whatever the node produces at `slot`, be it value, control, memory or
+/// phi-token. `ty` narrows to an exact value type, `width` to a bit width.
 #[derive(Clone, Copy)]
 pub(crate) struct OutputSpec {
     slot: usize,
@@ -77,34 +69,26 @@ impl OutputSpec {
     }
 }
 
-/// Shared lowering core for the slot-convention node-family builders.
 pub(crate) struct NodePat {
     kind: KindSpec,
-    /// Sparse indexed sub-pattern constraints (raw input slot → compiler).
+    /// Sparse: raw input slot to compiler.
     inputs: Vec<(usize, SubCompiler)>,
     node_predicate: Option<NodePredicateFactory>,
     capture: Option<Capture>,
     anchor: AnchorKind,
-    /// Width to pin on the anchor value output (declarative; checked by
-    /// the matcher's `output_ok`). `None` leaves the width unconstrained.
+    /// Checked by the matcher's `output_ok`.
     output_width: Option<u32>,
-    /// Declarative width constraints on the producer output of specific
-    /// input slots (`(slot, bits)`); applied during `lower` to the
-    /// compiled sub-pattern's output before it is wired into the slot.
+    /// `(slot, bits)`, applied during `lower` to each compiled sub-pattern's
+    /// output before it is wired into the slot.
     input_widths: Vec<(usize, u32)>,
-    /// When `true` and the anchor is a value output, enforce that the matched
-    /// value is produced at exactly the anchor slot (see
-    /// [`PatValue::match_slot`]). Set by `.res()` on Call/CallOther to pin the
-    /// declared result output and exclude clobbers.
+    /// Requires the matched value to be produced at exactly the anchor slot
+    /// (see [`PatValue::match_slot`]). Set by `.res()` on Call / CallOther to
+    /// pin the declared result output and exclude clobbers.
     pin_anchor_slot: bool,
-    /// Declared sibling-output constraints (`output(j)`): each lowers to a
-    /// secondary output vertex the matcher binds / kind-checks at its slot,
-    /// independent of the anchor.
     outputs: Vec<OutputSpec>,
 }
 
 impl NodePat {
-    /// A node-rooted builder over `kind` with no anchor output.
     pub(crate) fn node(kind: KindSpec) -> Self {
         Self {
             kind,
@@ -119,66 +103,58 @@ impl NodePat {
         }
     }
 
-    /// A value-rooted builder over `kind` whose value output lives at
-    /// `slot` (sealed via `finish`; nests as a value operand).
+    /// Nests as a value operand.
     pub(crate) fn value(kind: KindSpec, slot: usize) -> Self {
         let mut s = Self::node(kind);
         s.anchor = AnchorKind::Value(slot);
         s
     }
 
-    /// Replace the node's kind spec (e.g. once `CallOther::user_op_id`
-    /// narrows the variant to a `VariantWith` payload check).
+    /// For when a verb narrows the variant to a `VariantWith` payload check,
+    /// as `CallOther::user_op_id` does.
     pub(crate) fn with_kind(mut self, kind: KindSpec) -> Self {
         self.kind = kind;
         self
     }
 
-    /// Declare a memory-token anchor output at `slot` (the chaining
-    /// handle exposed by the memory-rooted wrappers via [`MemPat`]).
+    /// The chaining handle the memory-rooted wrappers expose via [`MemPat`].
     pub(crate) fn with_mem_value(mut self, slot: usize) -> Self {
         self.anchor = AnchorKind::Memory(slot);
         self
     }
 
-    /// Declare a control anchor output at `slot` (`Entry` / `Region`).
-    /// Lets the wrapper implement [`MatchPat`] via
-    /// [`compile_anchored`](Self::compile_anchored) so it nests as a
-    /// control operand (a `Region` predecessor, `.ctrl()` /
-    /// `preceded_by()`).
+    /// Lets the wrapper nest as a control operand (a `Region` predecessor,
+    /// `.ctrl()`, `preceded_by()`) by implementing [`MatchPat`] through
+    /// [`compile_anchored`](Self::compile_anchored).
     pub(crate) fn with_control_value(mut self, slot: usize) -> Self {
         self.anchor = AnchorKind::Control(slot);
         self
     }
 
-    /// Re-anchor onto a value output at `slot`. Used to nest a normally
-    /// memory-rooted node (`Call` / `CallOther`, whose value outputs start at
-    /// slot 2 after ctrl/mem) as a **value** operand of another node, e.g.
-    /// `add(x, call_other().name("f"))`.
+    /// Nests a normally memory-rooted node as a value operand, as in
+    /// `add(x, call_other().name("f"))`. `Call` / `CallOther` value outputs
+    /// start at slot 2, after ctrl and mem.
     pub(crate) fn with_value_anchor(mut self, slot: usize) -> Self {
         self.anchor = AnchorKind::Value(slot);
         self
     }
 
-    /// Enforce the anchor value output's slot at match time (see
-    /// [`crate::matcher::PatValue::match_slot`]). Only takes effect when the
-    /// anchor is [`AnchorKind::Value`]. Set by `.res()` on Call/CallOther.
+    /// No-op unless the anchor is [`AnchorKind::Value`]. See
+    /// [`crate::matcher::PatValue::match_slot`].
     pub(crate) fn pin_anchor_slot(mut self) -> Self {
         self.pin_anchor_slot = true;
         self
     }
 
-    /// Wire a value sub-pattern into raw input `slot`. The one boxing
-    /// site for value operands.
+    /// The one boxing site for value operands.
     pub(crate) fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
         self.inputs.push((slot, Box::new(move |b| p.compile(b))));
         self
     }
 
-    /// Wire an **existential** value sub-pattern: it matches *some* value
-    /// input of the node rather than a fixed slot (the `any_input` verb).
-    /// Recorded at the [`ANY_INPUT_SLOT`] sentinel slot; the matcher routes
-    /// it through its existential search.
+    /// Existential: matches *some* input of the node rather than a fixed
+    /// slot. Recorded at the `ANY_INPUT_SLOT` sentinel, which routes it
+    /// through the matcher's existential search.
     pub(crate) fn input_any<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.inputs.push((
             crate::matcher::ANY_INPUT_SLOT,
@@ -187,23 +163,21 @@ impl NodePat {
         self
     }
 
-    /// Wire a control-predecessor sub-pattern into raw input `slot`
-    /// (relaxing its root output to a control edge).
+    /// Relaxes the sub-pattern's root output to a control edge.
     pub(crate) fn input_control<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
         self.inputs.push((slot, control_compiler(p)));
         self
     }
 
-    /// Wire a memory-producing sub-pattern into raw input `slot` (its
-    /// memory-token output feeds the slot).
+    /// The sub-pattern's memory-token output feeds the slot.
     pub(crate) fn input_mem<M: MemPat + 'static>(mut self, slot: usize, p: M) -> Self {
         self.inputs
             .push((slot, Box::new(move |b| p.compile_mem(b))));
         self
     }
 
-    /// Install a node predicate on the anchor (short-circuits before
-    /// child recursion). The factory is invoked once during `lower`.
+    /// The predicate short-circuits before child recursion. The factory runs
+    /// once, during `lower`.
     pub(crate) fn with_node_predicate<F>(mut self, f: F) -> Self
     where
         F: FnOnce() -> NodePredicate + 'static,
@@ -212,32 +186,27 @@ impl NodePat {
         self
     }
 
-    /// Pin the anchor value output's width to `bits` (declarative;
-    /// reuses the matcher's output-vertex width check). The anchor must
-    /// be a value output ([`AnchorKind::Value`]) for this to take effect.
+    /// No-op unless the anchor is [`AnchorKind::Value`].
     pub(crate) fn with_output_width(mut self, bits: u32) -> Self {
         self.output_width = Some(bits);
         self
     }
 
-    /// Pin the width of the producer output wired into raw input `slot`
-    /// to `bits` (declarative). Applied during `lower` to the compiled
-    /// sub-pattern's output, so the matcher's `output_ok` checks it when
-    /// the input is consumed.
+    /// Applied during `lower` to the compiled sub-pattern's output, so the
+    /// matcher's `output_ok` checks it when the input is consumed.
     pub(crate) fn with_input_width(mut self, slot: usize, bits: u32) -> Self {
         self.input_widths.push((slot, bits));
         self
     }
 
-    /// Bind the matched node (or its anchor output) to `c`.
+    /// Binds the anchor output where there is one, otherwise the node.
     pub(crate) fn capture(mut self, c: Capture) -> Self {
         self.capture = Some(c);
         self
     }
 
-    /// Bind the value the matched node produces at **output slot** `slot`
-    /// (a *sibling* output of the anchor) to `c`. Leaf: it captures the
-    /// output value itself, it does not recurse into what the output feeds.
+    /// Binds a *sibling* output of the anchor. A leaf: it captures the output
+    /// value itself and does not recurse into what that output feeds.
     pub(crate) fn capture_output(mut self, slot: usize, c: Capture) -> Self {
         self.outputs.push(OutputSpec {
             capture: Some(c),
@@ -246,8 +215,7 @@ impl NodePat {
         self
     }
 
-    /// Constrain the sibling output at `slot` to bit width `bits` (implies a
-    /// value output of that width).
+    /// Implies a value output of that width.
     pub(crate) fn output_width(mut self, slot: usize, bits: u32) -> Self {
         self.outputs.push(OutputSpec {
             width: Some(bits),
@@ -256,7 +224,6 @@ impl NodePat {
         self
     }
 
-    /// Constrain the sibling output at `slot` to the exact value type `ty`.
     pub(crate) fn output_ty(mut self, slot: usize, ty: ValueType) -> Self {
         self.outputs.push(OutputSpec {
             ty: Some(ty),
@@ -265,10 +232,8 @@ impl NodePat {
         self
     }
 
-    /// Lower the node onto `b`: create the node, declare its anchor
-    /// output, wire every indexed input, then apply the node-limit and
-    /// capture. Shared by [`build`](Self::build) and the wrappers'
-    /// [`MemPat`] / [`MatchPat`] impls.
+    /// Shared by [`build`](Self::build) and the wrappers' [`MemPat`] /
+    /// [`MatchPat`] impls.
     pub(crate) fn lower(self, b: &mut MatcherBuilder) -> Option<PatValueRef> {
         let NodePat {
             kind,
@@ -306,17 +271,15 @@ impl NodePat {
             }
             b.input(node, slot, o);
         }
-        // Declared sibling-output vertices (`output(j)`): each is a secondary
-        // (non-anchor) output vertex the matcher reads at its slot during
-        // `finalize`. Default kind is the unconstrained wildcard so it binds
-        // whatever the node produces at that slot; `ty` / `width` narrow it.
+        // Sibling-output vertices, read by the matcher at their slot during
+        // `finalize`.
         for spec in outputs {
             let out = b.value_output(node, spec.slot);
             match (spec.ty, spec.width) {
                 (Some(ty), _) => b.set_value_ty(out, ty),
-                // No type pin: relax to the wildcard kind so a non-value
-                // (control / memory) sibling output can still be bound. A
-                // width pin below still narrows it to a value of that width.
+                // Without a type pin, relax to the wildcard so a control or
+                // memory sibling output can still bind. A width pin below
+                // still narrows it to a value of that width.
                 (None, _) => b.set_output_any(out),
             }
             if let Some(bits) = spec.width {
@@ -340,20 +303,16 @@ impl NodePat {
         anchor_out
     }
 
-    /// Seal the builder into a finished [`Pattern`]: on the value output
-    /// for value roots, on the node vertex for node roots.
     pub(crate) fn build(self) -> Pattern {
         let mut b = MatcherBuilder::new();
         let _ = self.lower(&mut b);
         b.finish()
     }
 
-    /// Lower and return the anchor output (for the [`MatchPat`] /
-    /// [`MemPat`] impls of anchored wrappers that nest as a value or
-    /// memory operand). The anchor is `Some(_)` by construction for these
-    /// wrappers ([`AnchorKind::Value`] / [`AnchorKind::Memory`]); only a
-    /// node-rooted ([`AnchorKind::None`]) builder, which never nests,
-    /// would yield `None`.
+    /// For the [`MatchPat`] / [`MemPat`] impls of anchored wrappers nesting as
+    /// a value or memory operand. Those always carry an anchor by
+    /// construction; only a node-rooted builder, which never nests, could
+    /// yield `None`.
     #[allow(clippy::expect_used)]
     pub(crate) fn compile_anchored(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.lower(b)
@@ -361,10 +320,8 @@ impl NodePat {
     }
 }
 
-/// A [`SubCompiler`] that compiles a value-pattern then relaxes its root
-/// output to match a control edge. Used for control-predecessor slots
-/// (`ctrl` / `preceded_by`) where the producer's output is `Control`,
-/// not a value.
+/// For control-predecessor slots (`ctrl`, `preceded_by`), where the producer
+/// output is `Control` rather than a value.
 fn control_compiler<P: MatchPat + 'static>(p: P) -> SubCompiler {
     Box::new(move |b| {
         let o = p.compile(b);
@@ -373,15 +330,11 @@ fn control_compiler<P: MatchPat + 'static>(p: P) -> SubCompiler {
     })
 }
 
-/// An exact-payload predicate narrowing a [`KindSpec::VariantWith`]
-/// beyond its discriminant (e.g. `CallOther` `user_op_id`, `Load` /
-/// `Store` `space`).
+/// Narrows a [`KindSpec::VariantWith`] beyond its discriminant: `CallOther`
+/// `user_op_id`, `Load` / `Store` `space`.
 pub(crate) type KindCheck = Box<dyn Fn(&NodeKind) -> bool>;
 
-/// Build a `KindSpec` that pins a node kind's discriminant and, when
-/// `check` is `Some`, additionally narrows the exact payload via
-/// [`KindSpec::VariantWith`]. Shared by `CallOther` (`user_op_id`) and
-/// `Load` / `Store` (`space`).
+/// Pins a discriminant, plus the exact payload when `check` is `Some`.
 pub(crate) fn variant_kind(
     discriminant: Discriminant<NodeKind>,
     check: Option<KindCheck>,
@@ -397,12 +350,11 @@ pub(crate) fn variant_kind(
 
 #[cfg(test)]
 mod tests {
-    //! Engine-level `input_any` (`ANY_INPUT_SLOT`) tests on kinds with
-    //! control/memory inputs (`Call`, `MemPhi`) — exercised through the raw
-    //! [`NodePat::input_any`] path because no public wrapper exposes `any_input`
-    //! on them yet. They pin the general `any_input` model: candidate slots are
-    //! EVERY input slot (no value-kind filter), and the sub-pattern
-    //! discriminates.
+    //! `input_any` on kinds with control/memory inputs (`Call`, `MemPhi`),
+    //! driven through the raw [`NodePat::input_any`] path since no public
+    //! wrapper exposes `any_input` on them. They pin the general model:
+    //! candidate slots are EVERY input slot, with no value-kind filter, and
+    //! the sub-pattern does the discriminating.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
@@ -411,8 +363,8 @@ mod tests {
     use strider_ir::{IRBuilderExt, IRViewer};
     use strider_ir_test_utils::RegisterSet;
 
-    /// A `Call` whose **target** is `IntConst(0xABCD)` (fixed-prefix slot 2)
-    /// and whose **arg0** is `IntConst(42)` (variadic tail, slot 4).
+    /// Target `IntConst(0xABCD)` at fixed-prefix slot 2, arg0 `IntConst(42)`
+    /// in the variadic tail at slot 4.
     fn call_with_arg() -> strider_ir::Function {
         let arg = strider_ir_test_utils::reg_vn(0, 8);
         let mut b = RegisterSet::new()
@@ -428,8 +380,7 @@ mod tests {
         b.build().unwrap()
     }
 
-    /// A node-rooted `Call` pattern with a single existential `any_input(p)`,
-    /// mirroring the raw shape the public `call()` builder lowers to.
+    /// Mirrors the raw shape the public `call()` builder lowers to.
     fn call_any_input<P: MatchPat + 'static>(p: P) -> Pattern {
         NodePat::node(KindSpec::Exact(NodeKind::Call))
             .with_mem_value(1)
@@ -437,16 +388,15 @@ mod tests {
             .build()
     }
 
-    /// `any_input` under the GENERAL model: the candidate slots are EVERY input
-    /// (a `Call` has no `PhiToken` anyway). A typed value sub matches whichever
-    /// VALUE input carries that value; a wildcard reaches ANY input, including
-    /// the control/memory ones a typed sub can never bind.
+    /// A typed value sub matches whichever VALUE input carries that value; a
+    /// wildcard reaches any input, including the control and memory ones a
+    /// typed sub can never bind.
     #[test]
     fn call_any_input_general_model() {
         let function = call_with_arg();
         let matcher = Matcher::new(&function);
 
-        // A typed sub binds the arg carrying its value (arg0 = IntConst(42)).
+        // arg0 is IntConst(42).
         assert_eq!(
             matcher
                 .find_all(&call_any_input(int_const(42u128)))
@@ -456,9 +406,7 @@ mod tests {
             "typed any_input binds the matching arg",
         );
 
-        // The call TARGET is an ordinary value input; under the general model it
-        // is offered (the tail-only engine hid it), so a typed sub of the
-        // target's value now binds it.
+        // The call target is an ordinary value input, so it is offered too.
         assert_eq!(
             matcher
                 .find_all(&call_any_input(int_const(0xABCDu128)))
@@ -468,8 +416,7 @@ mod tests {
             "typed any_input reaches the call target under the general model",
         );
 
-        // Sub-pattern discrimination: a typed VALUE sub matching no value input
-        // binds nothing — control/memory are never reachable by a typed sub.
+        // A typed sub can never reach control or memory.
         assert_eq!(
             matcher
                 .find_all(&call_any_input(int_const(0x9999u128)))
@@ -479,10 +426,8 @@ mod tests {
             "typed any_input matching no value input binds nothing",
         );
 
-        // A WILDCARD reaches every input — the control and memory edges included,
-        // which is the general model's defining behavior. This kind has no PhiToken
-        // slot. The exact count is pinned to lock the candidate set (ctrl, mem,
-        // target, sp, arg0).
+        // The count is pinned to lock the candidate set. `Call` has no
+        // PhiToken slot.
         let c = crate::Capture::new();
         let hits = matcher.find_all(&call_any_input(crate::var(c))).unwrap();
         assert_eq!(
@@ -490,9 +435,7 @@ mod tests {
             5,
             "wildcard any_input reaches every input (ctrl, mem, target, sp, arg0)",
         );
-        // Among the wildcard's bindings, a control and a memory input DO appear
-        // — proving those slots are reachable only by a wildcard, not the typed
-        // subs above.
+        // Control and memory appear, reachable only by a wildcard.
         let bound_kinds: Vec<_> = hits
             .iter()
             .map(|h| function.value_kind(h.value(c).unwrap()))
@@ -511,12 +454,9 @@ mod tests {
         );
     }
 
-    /// A `MemPhi` with two REAL memory predecessors (a store on each side of
-    /// an if/else, joined) — its variadic tail (past the fixed `[PhiToken]`
-    /// prefix, len 1) is `Memory`, not `PhiToken`. Exercised through the raw
-    /// [`NodePat::input_any`] path because the public `mem_phi()` builder
-    /// doesn't expose `any_input` (there is no value sub-pattern a `Memory`
-    /// tail slot could ever legitimately bind).
+    /// Two real memory predecessors, a store on each side of a joined
+    /// if/else, so the variadic tail past the one-slot `[PhiToken]` prefix is
+    /// `Memory`.
     fn mem_phi_with_two_stores() -> strider_ir::Function {
         let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
         let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
@@ -550,8 +490,6 @@ mod tests {
         b.build().unwrap()
     }
 
-    /// A node-rooted `MemPhi` pattern with a single existential
-    /// `any_input(p)`, mirroring the raw shape `call_any_input` uses above.
     fn mem_phi_any_input<P: MatchPat + 'static>(p: P) -> Pattern {
         NodePat::node(KindSpec::variant_of(&NodeKind::MemPhi))
             .with_mem_value(0)
@@ -559,20 +497,16 @@ mod tests {
             .build()
     }
 
-    /// Under the GENERAL model a `MemPhi`'s memory predecessors ARE offered to
-    /// `any_input` — they are inputs, like any other. A wildcard binds every
-    /// input it can reach (the two memory predecessors AND, with no `PhiToken`
-    /// filter, the slot-0 `PhiToken` too), while a typed value sub binds none of
-    /// them (sub-pattern discrimination: a typed sub can never bind a `Memory`
-    /// or `PhiToken` edge).
+    /// A `MemPhi`'s memory predecessors are inputs like any other, so a
+    /// wildcard reaches both of them and the slot-0 `PhiToken`. A typed value
+    /// sub binds none of them: it can never bind a `Memory` or `PhiToken`
+    /// edge.
     #[test]
     fn mem_phi_any_input_binds_a_memory_predecessor() {
         let function = mem_phi_with_two_stores();
         let matcher = Matcher::new(&function);
 
-        // A wildcard reaches every input — the if/else stores' memory outputs
-        // AND the `PhiToken` plumbing slot (no value-kind filter narrows the
-        // candidate set anymore).
+        // Both stores' memory outputs and the `PhiToken` plumbing slot.
         let c = crate::Capture::new();
         let hits = matcher.find_all(&mem_phi_any_input(crate::var(c))).unwrap();
         let kinds: Vec<_> = hits
@@ -592,8 +526,7 @@ mod tests {
             "wildcard any_input can now also reach the PhiToken slot, kinds: {kinds:?}",
         );
 
-        // Sub-pattern discrimination: a typed VALUE sub can never bind a Memory
-        // or PhiToken edge, so it matches nothing.
+        // A typed value sub can bind neither, so it matches nothing.
         assert_eq!(
             matcher
                 .find_all(&mem_phi_any_input(int_const(1u128)))
@@ -604,9 +537,7 @@ mod tests {
         );
     }
 
-    /// A node-rooted pattern anchored on a control output (`AnchorKind::Control`,
-    /// the shape `entry()` / `region()` lower to) seals into a single-rooted
-    /// `Pattern` whose root resolves without error.
+    /// `AnchorKind::Control` is the shape `entry()` and `region()` lower to.
     #[test]
     fn control_anchored_node_pat_seals_and_roots() {
         let pat = NodePat::node(KindSpec::Exact(NodeKind::Entry))

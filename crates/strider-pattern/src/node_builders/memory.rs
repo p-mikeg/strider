@@ -1,23 +1,21 @@
-//! `Load` / `Store` builders with first-class memory-token vertices.
+//! `Load` / `Store` builders with first-class memory-token vertices. Both are
+//! thin slot-convention wrappers over the shared `NodePat` core.
 //!
-//! Both are thin slot-convention wrappers over the shared `NodePat`
-//! core. Slot conventions (matching the IR `expected_signature`):
+//! Slot conventions, per the IR `expected_signature`:
 //!
-//! * `Load`  inputs `[mem(0), addr(1)]`; output: the loaded value (slot 0).
-//! * `Store` inputs `[mem(0), addr(1), data(2)]`; output: the new memory
-//!   token (slot 0).
+//! * `Load` inputs `[mem(0), addr(1)]`, output the loaded value at slot 0.
+//! * `Store` inputs `[mem(0), addr(1), data(2)]`, output the new memory token
+//!   at slot 0.
 //!
-//! `Load` is value-producing (a value root that nests as a value
-//! operand); `Store` is a memory-token root (exposes its produced memory
-//! token via [`MemPat`]). Both model their memory predecessor (wired via
-//! `mem_in`).
+//! `Load` is value-producing and nests as a value operand; `Store` is a
+//! memory-token root exposing its token via [`MemPat`]. Both model their
+//! memory predecessor, wired through `mem_in`.
 //!
-//! `space` is enforced at kind-match time via [`KindSpec::VariantWith`];
-//! `bit_width` is a declarative output-vertex width constraint (on the
-//! `Load`'s value output / the `Store`'s data-input producer output,
-//! checked by the matcher's `output_ok`); `stack_only` / `stack_offset`
-//! are genuine `Function::stack_offset` side-table lookups routed through
-//! a `NodePat` node-limit.
+//! Where each filter lands: `space` fires at kind-match time via
+//! [`KindSpec::VariantWith`]; `bit_width` is a declarative output-vertex width
+//! the matcher's `output_ok` checks; `stack_only` and `stack_offset` are
+//! `Function::stack_offset` side-table lookups, so they lower to a node
+//! predicate.
 
 use strider_ir::node::{NodeId, NodeKind};
 
@@ -27,8 +25,6 @@ use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 
 use super::MemPat;
 use super::node_pat::{KindCheck, NodePat, variant_kind};
-
-// ── Stack-access filter (shared by LoadPat / StorePat) ───────────────────────
 
 /// SP-relative match state shared by `LoadPat` and `StorePat`.
 #[derive(Default)]
@@ -58,9 +54,9 @@ impl StackAccessSpec {
         true
     }
 
-    /// Wire the SP-relative filter onto `n` when active, else return it
-    /// unchanged. The filter is an irreducible `Function::stack_offset`
-    /// side-table lookup, so it lowers to a node predicate.
+    /// A no-op when inactive. The filter is an irreducible
+    /// `Function::stack_offset` side-table lookup, so it lowers to a node
+    /// predicate.
     fn apply(self, n: NodePat) -> NodePat {
         if !self.active() {
             return n;
@@ -71,10 +67,8 @@ impl StackAccessSpec {
     }
 }
 
-/// Build the `space`-aware kind spec for a `Load` / `Store`. Without a
-/// space constraint the spec is variant-agnostic; with one it pins the
-/// exact `VnSpace` via a `VariantWith` predicate so the check fires at
-/// kind-match time.
+/// Variant-agnostic without a space constraint; with one, pins the exact
+/// `VnSpace` through `VariantWith` so the check fires at kind-match time.
 fn load_store_kind(exemplar: NodeKind, space: Option<rsleigh::VnSpace>) -> KindSpec {
     let discriminant = std::mem::discriminant(&exemplar);
     let is_load = matches!(exemplar, NodeKind::Load(_));
@@ -89,27 +83,21 @@ fn load_store_kind(exemplar: NodeKind, space: Option<rsleigh::VnSpace>) -> KindS
     variant_kind(discriminant, check)
 }
 
-// ── Shared mem-access accumulator (LoadPat / StorePat common surface) ────────
-//
-// `space` / `mem_in` / `any_input` / `bit_width` / `stack_offset` /
-// `stack_only` / `capture` are byte-for-byte identical on both builders, so
-// they live once here. `addr` (both) and `data` (store-only), plus the
-// anchor choice (value-root at slot 0 vs memory-token root) and where the
-// width pins (output vs input slot 2), diverge and stay on the per-builder
-// structs.
-
-/// The fields + methods `LoadPat` and `StorePat` share. Each builder embeds
-/// one (`common`) and forwards its common fluent methods to these fields;
-/// the per-builder `configured()` reads `space` for the kind spec, then
-/// wires the rest via [`wire_mem_and_capture`](Self::wire_mem_and_capture)
-/// and [`apply_stack`](Self::apply_stack).
+/// What `LoadPat` and `StorePat` share verbatim. Each embeds one as `common`
+/// and forwards its fluent methods here; the per-builder `configured()` reads
+/// `space` for the kind spec, then wires the rest through
+/// [`wire_mem_and_capture`](Self::wire_mem_and_capture) and
+/// [`apply_stack`](Self::apply_stack).
+///
+/// `addr`, `data`, the anchor choice (value root versus memory-token root)
+/// and where the width pins (output versus input slot 2) all diverge, so they
+/// stay on the per-builder structs.
 #[derive(Default)]
 struct MemAccessSpec {
     space: Option<rsleigh::VnSpace>,
     mem_in: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
-    /// Existential `any_input` constraints, applied in order. Unlike
-    /// `mem_in` (a single fixed slot), each call adds a separate
-    /// constraint — see [`LoadPat::any_input`] / [`StorePat::any_input`].
+    /// Applied in order. Unlike `mem_in`, which is one fixed slot, each call
+    /// adds a separate constraint.
     any_input: Vec<Box<dyn FnOnce(NodePat) -> NodePat>>,
     bit_width: Option<u32>,
     stack: StackAccessSpec,
@@ -117,8 +105,6 @@ struct MemAccessSpec {
 }
 
 impl MemAccessSpec {
-    /// Wire the shared `mem_in` predecessor, `any_input` constraints, and
-    /// `capture` onto `n`.
     fn wire_mem_and_capture(&mut self, mut n: NodePat) -> NodePat {
         if let Some(m) = self.mem_in.take() {
             n = m(n);
@@ -132,18 +118,12 @@ impl MemAccessSpec {
         n
     }
 
-    /// Apply the shared SP-relative stack filter onto `n`.
     fn apply_stack(self, n: NodePat) -> NodePat {
         self.stack.apply(n)
     }
 }
 
-// ── LoadPat ───────────────────────────────────────────────────────────────────
-
-/// Builder for `Load` node patterns. Created by [`load`].
-///
-/// `Load` inputs are `[mem(0), addr(1)]`; its single output is the
-/// loaded value.
+/// Inputs `[mem(0), addr(1)]`, single output the loaded value.
 #[derive(Default)]
 pub struct LoadPat {
     common: MemAccessSpec,
@@ -151,33 +131,27 @@ pub struct LoadPat {
 }
 
 impl LoadPat {
-    /// Restrict the match to loads in address space `s`.
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
         self.common.space = Some(s);
         self
     }
 
-    /// Constrain the load's address operand (`inputs[1]`).
+    /// `inputs[1]`.
     pub fn addr<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.addr = Some(Box::new(move |n: NodePat| n.input(1, p)));
         self
     }
 
-    /// Constrain the load's memory predecessor (`inputs[0]`) to a
-    /// memory-producing sub-pattern (a `store` / `mem_phi` / `call`).
-    /// Wires the producer's memory-token output into the load's memory
-    /// input slot, so the IR memory chain is walked the same way as the
-    /// value chain.
+    /// `inputs[0]`, taking a `store` / `mem_phi` / `call`. Wires that
+    /// producer's memory token into the load's memory input, so the IR memory
+    /// chain is walked like the value chain.
     pub fn mem_in<M: MemPat + 'static>(mut self, p: M) -> Self {
         self.common.mem_in = Some(Box::new(move |n: NodePat| n.input_mem(0, p)));
         self
     }
 
-    /// Require that *some* input of the `Load` matches `p`, without pinning
-    /// which slot (candidates: mem, addr). The sub-pattern discriminates — a
-    /// typed value sub only binds the addr input, while a kind-unconstrained
-    /// sub (`var`/`anything`) can also bind the memory edge. Repeatable: each
-    /// call adds a separate existential constraint.
+    /// Candidates are mem and addr. A typed value sub binds only addr;
+    /// `var` / `anything` also reaches the memory edge. Repeatable.
     pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.common
             .any_input
@@ -185,33 +159,31 @@ impl LoadPat {
         self
     }
 
-    /// Restrict the match to loads whose value output is `n` bits wide.
+    /// Pins the value output's width.
     pub fn bit_width(mut self, n: u32) -> Self {
         self.common.bit_width = Some(n);
         self
     }
 
-    /// Restrict the match to loads whose address decomposes to exactly
-    /// `sp + k` (reads `Function::stack_offset` in O(1)).
+    /// Requires the address to decompose to exactly `sp + k`, an O(1)
+    /// `Function::stack_offset` read.
     pub fn stack_offset(mut self, k: i128) -> Self {
         self.common.stack.stack_offset_filter = Some(k);
         self
     }
 
-    /// Reject matches where `Function::stack_offset(node)` is `None`.
+    /// Rejects matches where `Function::stack_offset(node)` is `None`.
     pub fn stack_only(mut self) -> Self {
         self.common.stack.stack_only = true;
         self
     }
 
-    /// Bind the resulting `Load`'s value output to `c`.
+    /// Binds the value output.
     pub fn capture(mut self, c: Capture) -> Self {
         self.common.capture = Some(c);
         self
     }
 
-    /// Translate the accumulated filters into a configured [`NodePat`]
-    /// (a `Load`-kind value root at slot 0).
     fn configured(self) -> NodePat {
         let LoadPat { mut common, addr } = self;
         let exemplar = NodeKind::Load(rsleigh::VnSpace::RAM);
@@ -222,14 +194,12 @@ impl LoadPat {
             n = a(n);
         }
         if let Some(w) = common.bit_width {
-            // The loaded value is the Load's value output, so pin the
-            // anchor output vertex's width declaratively.
+            // The loaded value IS the anchor output, so pin it there.
             n = n.with_output_width(w);
         }
         common.apply_stack(n)
     }
 
-    /// Seal the builder into a finished [`Pattern`].
     pub fn build(self) -> Pattern {
         self.configured().build()
     }
@@ -241,17 +211,11 @@ impl MatchPat for LoadPat {
     }
 }
 
-/// Construct a fresh [`LoadPat`].
 pub fn load() -> LoadPat {
     LoadPat::default()
 }
 
-// ── StorePat ──────────────────────────────────────────────────────────────────
-
-/// Builder for `Store` node patterns. Created by [`store`].
-///
-/// `Store` inputs are `[mem(0), addr(1), data(2)]`; its single output is
-/// the new memory token (slot 0).
+/// Inputs `[mem(0), addr(1), data(2)]`, single output the new memory token.
 #[derive(Default)]
 pub struct StorePat {
     common: MemAccessSpec,
@@ -260,36 +224,31 @@ pub struct StorePat {
 }
 
 impl StorePat {
-    /// Restrict the match to stores in address space `s`.
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
         self.common.space = Some(s);
         self
     }
 
-    /// Constrain the store's address operand (`inputs[1]`).
+    /// `inputs[1]`.
     pub fn addr<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.addr = Some(Box::new(move |n: NodePat| n.input(1, p)));
         self
     }
 
-    /// Constrain the value being stored (`inputs[2]`).
+    /// The stored value, `inputs[2]`.
     pub fn data<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.data = Some(Box::new(move |n: NodePat| n.input(2, p)));
         self
     }
 
-    /// Constrain the store's memory predecessor (`inputs[0]`) to a
-    /// memory-producing sub-pattern (a `store` / `mem_phi` / `call`).
+    /// `inputs[0]`, taking a `store` / `mem_phi` / `call`.
     pub fn mem_in<M: MemPat + 'static>(mut self, p: M) -> Self {
         self.common.mem_in = Some(Box::new(move |n: NodePat| n.input_mem(0, p)));
         self
     }
 
-    /// Require that *some* input of the `Store` matches `p`, without pinning
-    /// which slot (candidates: mem, addr, data). The sub-pattern
-    /// discriminates — a typed value sub only binds addr/data, while a
-    /// kind-unconstrained sub (`var`/`anything`) can also bind the memory
-    /// edge. Repeatable: each call adds a separate existential constraint.
+    /// Candidates are mem, addr and data. A typed value sub binds only addr
+    /// or data; `var` / `anything` also reaches the memory edge. Repeatable.
     pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.common
             .any_input
@@ -297,34 +256,29 @@ impl StorePat {
         self
     }
 
-    /// Restrict the match to stores whose data input (`inputs[2]`) is
-    /// `n` bits wide.
+    /// Pins the width of the data input, `inputs[2]`.
     pub fn bit_width(mut self, n: u32) -> Self {
         self.common.bit_width = Some(n);
         self
     }
 
-    /// Restrict the match to stores whose address decomposes to exactly
-    /// `sp + k`.
+    /// Requires the address to decompose to exactly `sp + k`.
     pub fn stack_offset(mut self, k: i128) -> Self {
         self.common.stack.stack_offset_filter = Some(k);
         self
     }
 
-    /// Reject matches where `Function::stack_offset(node)` is `None`.
+    /// Rejects matches where `Function::stack_offset(node)` is `None`.
     pub fn stack_only(mut self) -> Self {
         self.common.stack.stack_only = true;
         self
     }
 
-    /// Bind the resulting `Store` node to `c`.
     pub fn capture(mut self, c: Capture) -> Self {
         self.common.capture = Some(c);
         self
     }
 
-    /// Translate the accumulated filters into a configured [`NodePat`]
-    /// (a `Store`-kind node root with a memory token at output slot 0).
     fn configured(self) -> NodePat {
         let StorePat {
             mut common,
@@ -341,20 +295,18 @@ impl StorePat {
         if let Some(d) = data {
             n = d(n);
         } else if common.bit_width.is_some() {
-            // No explicit data sub-pattern, but a width constraint needs a
-            // wired producer output at the data slot to pin the width on.
+            // A width constraint needs SOME wired producer output at the data
+            // slot to pin itself on.
             n = n.input(2, crate::typed::wildcards::any());
         }
         if let Some(w) = common.bit_width {
-            // The stored value is the Store's data input (`inputs[2]`), so
-            // pin that input's producer-output width declaratively.
+            // The stored value is an input, not an output, so the width pins
+            // on that input's producer output.
             n = n.with_input_width(2, w);
         }
         common.apply_stack(n)
     }
 
-    /// Seal the builder into a finished [`Pattern`] rooted on the
-    /// `Store` node (a memory-token root, no value output).
     pub fn build(self) -> Pattern {
         self.configured().build()
     }
@@ -366,7 +318,6 @@ impl MemPat for StorePat {
     }
 }
 
-/// Construct a fresh [`StorePat`].
 pub fn store() -> StorePat {
     StorePat::default()
 }

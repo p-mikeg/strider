@@ -1,16 +1,12 @@
-//! Reusable pre-built graph fixtures.  A shape lives here iff at least two
-//! test modules need it; single-use shapes stay inline in the test for
-//! readability.
+//! Reusable graph fixtures. A shape lives here iff two or more test modules
+//! need it; single-use shapes stay inline in the test.
 
 use strider_ir::node::ValueType;
 use strider_ir::{FloatBinaryOp, Function, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use strider_ir_test_utils::{Tb, reg_vn, stack_vn_x86_64 as stack_vn};
 
-// ── Minimal op-rooted graphs ─────────────────────────────────────────────────
-// Each builds `return(op(5, 3))` (or similar) at I64 width.  Parameterising
-// the op lets every test module drive the full op enum without open-coding
-// the boilerplate.
+// Op-rooted graphs, parameterised so a test can drive the whole op enum.
 
 pub(crate) fn int_bin_5_3(op: IntBinaryOp) -> Function {
     let mut t = Tb::empty();
@@ -44,20 +40,19 @@ pub(crate) fn int_cmp_5_3(op: IntCmpOp) -> Function {
     t.ret_val(cast)
 }
 
-/// `return(5 <= 3)` built as the lowered shape `BoolNeg(IntLess(3, 5))`,
-/// matching the canonical form pcode-lift produces for `IntLessEqual`.
+/// `return(5 <= 3)` in the lowered `not(Less(3, 5))` form the pcode lift
+/// produces for `IntLessEqual`. Args swapped, result negated.
 pub(crate) fn int_le_lowered_5_3() -> Function {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
-    // `5 <= 3`  →  `!(3 < 5)`  →  Less(rhs=3, lhs=5).
     let lt = t.int_cmp(r, l, IntCmpOp::Less);
     let neg = t.bool_not(lt);
     let cast = t.as_int(neg, ValueType::I64);
     t.ret_val(cast)
 }
 
-/// Signed analogue of [`int_le_lowered_5_3`]: `BoolNeg(IntSless(3, 5))`.
+/// Signed analogue of [`int_le_lowered_5_3`], over `Sless`.
 pub(crate) fn int_sle_lowered_5_3() -> Function {
     let mut t = Tb::empty();
     let l = t.u64(5);
@@ -86,7 +81,7 @@ pub(crate) fn float_bin(l: f64, r: f64, op: FloatBinaryOp) -> Function {
     t.ret_val(as_int)
 }
 
-/// `return(a + b)` — both operands are `IntConst` of type `I64`.
+/// `return(a + b)`, both operands `IntConst` at `I64`.
 pub(crate) fn add_consts(a: u64, b: u64) -> Function {
     let mut t = Tb::empty();
     let la = t.u64(a);
@@ -95,7 +90,7 @@ pub(crate) fn add_consts(a: u64, b: u64) -> Function {
     t.ret_val(s)
 }
 
-/// `return(((a + b) + c))` — three-deep nested add.
+/// `return((a + b) + c)`.
 pub(crate) fn add_nested_3(a: u64, b: u64, c: u64) -> Function {
     let mut t = Tb::empty();
     let la = t.u64(a);
@@ -106,7 +101,7 @@ pub(crate) fn add_nested_3(a: u64, b: u64, c: u64) -> Function {
     t.ret_val(s)
 }
 
-/// `call(addr)` then `return` — no args, no return value.
+/// `call(addr)` then `return`; no args, no return value.
 pub(crate) fn call_at(addr: u64) -> Function {
     let mut t = Tb::empty();
     t.call_at(addr);
@@ -123,8 +118,7 @@ pub(crate) fn store_then_load_ram(addr: u64, data: u64) -> Function {
     t.ret_val(v)
 }
 
-/// `if c == 1 { return 10 } else { return 20 }` where `c` is a u64 const
-/// supplied by the caller.  Useful for If-pattern and dead-branch tests.
+/// `if c == 1 { return 10 } else { return 20 }`, `c` a caller-supplied const.
 pub(crate) fn if_cmp_then_return(c: u64) -> Function {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let entry = t.region();
@@ -152,10 +146,9 @@ pub(crate) fn if_cmp_then_return(c: u64) -> Function {
     t.finish()
 }
 
-/// Compiler-inverted equivalent of [`if_cmp_then_return`].  Same source-level
-/// program — `if (c == 1) { return 10 } else { return 20 }` — but the IR has
-/// the cond wrapped in `Not(...)` and the branches swapped, so the literal
-/// IR shape is `if (!(c == 1)) { return 20 } else { return 10 }`.
+/// Compiler-inverted [`if_cmp_then_return`]: same source program, but the IR
+/// wraps the cond in `Not(..)` and swaps the branches, giving the literal
+/// shape `if !(c == 1) { return 20 } else { return 10 }`.
 pub(crate) fn if_cmp_then_return_inverted(c: u64) -> Function {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let entry = t.region();
@@ -184,9 +177,9 @@ pub(crate) fn if_cmp_then_return_inverted(c: u64) -> Function {
     t.finish()
 }
 
-/// Graph with a single tracked register and `return(reg)` — yields one
-/// `InitialVar(reg)` node.  Returns the register so tests can construct
-/// `phi_for` / `initial_var_for` patterns against it.
+/// `return(reg)` over one tracked register, yielding a single
+/// `InitialVar(reg)`. Returns the register so tests can build `phi_for` /
+/// `initial_var_for` patterns against it.
 pub(crate) fn single_initial_var() -> (Function, rsleigh::Vn) {
     let reg = reg_vn(0x00, 8);
     let mut t = Tb::with_vars(&[reg]);
@@ -194,10 +187,8 @@ pub(crate) fn single_initial_var() -> (Function, rsleigh::Vn) {
     (t.ret_val(v), reg)
 }
 
-// NOTE: `function_arg_reg` lives in the strider-orchestrator copy of this
-// file because it invokes `strider_opt::FunctionArgDetect` to
-// populate the `Function::arg_index_to_values` side-table.  The
-// strider-pattern crate doesn't depend on strider-orchestrator (and can't,
-// without inverting the crate graph), so the helper would be unbuildable
-// here.  The single test consumer (`pattern_matching/ssa.rs`) lives in
-// the strider-orchestrator tests crate alongside its required optimiser pass.
+// `function_arg_reg` lives in the strider-orchestrator copy of this file: it
+// needs `strider_opt::FunctionArgDetect` to populate `arg_index_to_values`,
+// and strider-pattern can't depend on strider-orchestrator without inverting
+// the crate graph. Its one consumer (`pattern_matching/ssa.rs`) is over there
+// too.

@@ -1,8 +1,6 @@
-//! `Match::asm_fingerprint` tests.
-//!
-//! Builds tiny mock graphs with explicit asm-addresses set on the
-//! `FunctionBuilder`, then matches a pattern with a capture and
-//! verifies the captured node's fingerprint is what we set.
+//! `Match::asm_fingerprint`: mock graphs with explicit asm addresses set on
+//! the builder, matched with a capture, checking the captured node's
+//! fingerprint is what was set.
 
 use rustc_hash::FxHashSet;
 use strider_pattern::*;
@@ -14,9 +12,8 @@ fn asm_fingerprint_returns_attributed_address() {
     let mut t = Tb::empty();
     t.fb_mut().set_lift_addr(Some(0x100));
     let c = t.u64(42);
-    // Keep a non-None lift_addr active so the trailing Return node
-    // (emitted by ret_val) carries a fingerprint and satisfies the
-    // post-rewrite always-on asm-fingerprint check.
+    // lift_addr stays set so ret_val's Return also carries a fingerprint and
+    // passes the always-on fingerprint check.
     let function = t.ret_val(c);
 
     let v = Capture::new();
@@ -36,15 +33,14 @@ fn asm_fingerprint_unbound_capture_is_empty() {
     let bound = Capture::new();
     let unbound = Capture::new();
     let m = a::first(&function, int_const(7u128).capture(bound).into_pattern());
-    // The match was for `int_const(7).capture(bound)`; `unbound` was
-    // never declared in the pattern so the matcher has no binding for it.
+    // `unbound` was never declared in the pattern, so there is no binding.
     assert!(m.asm_fingerprint(unbound, &function).is_empty());
 }
 
 #[test]
 fn asm_fingerprint_captures_dedup_unioned_addresses() {
-    // Two adds of (1, 2) at different addresses dedup to a single Add
-    // node in the graph; its fingerprint contains both addresses.
+    // Two adds of (1, 2) at different addresses dedup to one node, whose
+    // fingerprint is the union of both addresses.
     let mut t = Tb::empty();
     t.fb_mut().set_lift_addr(Some(0x100));
     let l1 = t.u64(1);

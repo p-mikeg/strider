@@ -1,27 +1,22 @@
-//! `CallOtherPat` input-slot patterns: the `ctrl` / `mem` aliases bind
-//! the control / memory predecessors, and `arg(idx, value_pat)`
-//! constrains a pcode-explicit value argument.
+//! `CallOtherPat` input-slot patterns.
 //!
-//! Under the bipartite model the control and memory predecessors are
-//! NOT value edges, so they are addressed through the typed `ctrl` /
-//! `mem` aliases (which relax the sub-pattern's root to a control /
-//! memory edge); `arg(idx, …)` stays value-typed for the pcode-explicit
-//! argument slots.
+//! Control and memory predecessors are not value edges under the bipartite
+//! model, so they need the typed `ctrl` / `mem` aliases, which relax the
+//! sub-pattern's root to a control / memory edge. `arg(idx, ..)` stays
+//! value-typed for the pcode-explicit argument slots.
 
 use strider_ir::node::ValueType;
 use strider_ir::{Function, FunctionBuilder, IRBuilderExt};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{Capture, CaptureExt, Matcher, any, call_other, int_const, mem_phi};
 
-/// Build a graph with a single `cpuid` CallOther whose pcode-explicit
-/// inputs/outputs are bound through real Vns so we can pattern-match
-/// each slot.
+/// One `cpuid` CallOther with its pcode-explicit inputs/outputs bound through
+/// real Vns, so every slot is pattern-matchable.
 fn build_cpuid_graph() -> Function {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    // CPUID per the ABI table is empty-channel + memory_edge=true.
-    // Pass no pcode-explicit args, no implicit reads, no implicit writes.
+    // CPUID is empty-channel with memory_edge=true per the ABI table.
     let _ = b
         .build_call_other_abi(
             7,
@@ -43,9 +38,8 @@ fn build_cpuid_graph() -> Function {
 #[test]
 fn ctrl_alias_binds_control_predecessor() {
     let function = build_cpuid_graph();
-    // The control predecessor (inputs[0]) is the region's control
-    // output; `ctrl(any())` relaxes the sub-pattern's root to a control
-    // edge so the wildcard binds it.
+    // inputs[0] is the region's control output; ctrl() relaxes the wildcard's
+    // root to a control edge so it can bind there.
     let c = Capture::new();
     let pat = call_other().name("cpuid").ctrl(any().capture(c)).build();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
@@ -59,7 +53,7 @@ fn ctrl_alias_binds_control_predecessor() {
 #[test]
 fn mem_alias_binds_memory_predecessor() {
     let function = build_cpuid_graph();
-    // The memory predecessor (inputs[1]) is the region's MemPhi token.
+    // inputs[1] is the region's MemPhi token.
     let c = Capture::new();
     let pat = call_other().name("cpuid").mem(mem_phi().capture(c)).build();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
@@ -70,15 +64,13 @@ fn mem_alias_binds_memory_predecessor() {
     );
 }
 
-/// `arg(idx, value_pat)` constrains a pcode-explicit value argument.
 #[test]
 fn arg_constrains_pcode_explicit_value_argument() {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let a0 = b.build_int_const(0x11u64, ValueType::I64).expect("a0");
-    // A modeled CallOther with one pcode-explicit value arg.  Its inputs
-    // are `[ctrl(0), mem(1), arg0(2)]`.
+    // Inputs are [ctrl(0), mem(1), arg0(2)].
     let _ = b
         .build_call_other_abi(
             9,
@@ -97,7 +89,6 @@ fn arg_constrains_pcode_explicit_value_argument() {
     let function = b.build().expect("build");
     let matcher = Matcher::new(&function);
 
-    // arg slot 2 holds the value argument IntConst(0x11).
     assert_eq!(
         matcher
             .find_all(
@@ -110,7 +101,6 @@ fn arg_constrains_pcode_explicit_value_argument() {
             .len(),
         1
     );
-    // Wrong value at the same slot → reject.
     assert_eq!(
         matcher
             .find_all(

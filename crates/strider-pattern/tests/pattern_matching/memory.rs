@@ -1,8 +1,4 @@
 //! `Load` / `Store` pattern matching.
-//!
-//! Covers: `load()` with no constraints, `.space()`, `.addr()`, `.capture()`
-//! on the value slot; `store()` with `.space/.addr/.data`; store-then-load
-//! aliasing; wrong-space and addr-mismatch rejection.
 
 use strider_ir::IRViewer;
 use strider_ir::node::ValueType;
@@ -10,13 +6,10 @@ use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};
 
-// ── Load ──────────────────────────────────────────────────────────────────────
-
 #[test]
 fn load_unconstrained_matches() {
     let function = shapes::store_then_load_ram(0x100, 42);
-    // The load is the value-producing node; store is also present but
-    // `load()` is kind-filtered to `Load`.
+    // Graph also holds a Store; load() must not pick it up.
     a::matches(&function, load().build(), 1);
 }
 
@@ -29,7 +22,6 @@ fn load_space_matches_ram() {
 #[test]
 fn load_wrong_space_rejects() {
     let function = shapes::store_then_load_ram(0x100, 42);
-    // UNIQUE space has no loads — must reject.
     a::none(&function, load().space(rsleigh::VnSpace::UNIQUE).build());
 }
 
@@ -48,8 +40,6 @@ fn load_captures_value_slot() {
         &function,
         load().addr(int_const(0x100u128)).capture(v).build(),
     );
-    // The captured output is the Load's value slot; reading it back
-    // points at the Load node.
     let value = m.value(v).expect("value slot capture");
     assert!(matches!(
         function.kind_of_value(value),
@@ -59,7 +49,7 @@ fn load_captures_value_slot() {
 
 #[test]
 fn load_with_patterned_addr() {
-    // Load from `base + 8`: addr is itself a pattern.
+    // addr is itself a pattern: base + 8.
     let mut t = Tb::empty();
     let base = t.u64(0x100);
     let off = t.u64(8);
@@ -74,7 +64,6 @@ fn load_with_patterned_addr() {
             .build(),
         1,
     );
-    // Wrong sub-pattern → reject.
     a::none(
         &function,
         load()
@@ -82,8 +71,6 @@ fn load_with_patterned_addr() {
             .build(),
     );
 }
-
-// ── Store ─────────────────────────────────────────────────────────────────────
 
 #[test]
 fn store_unconstrained_matches() {
@@ -116,7 +103,6 @@ fn store_addr_and_data_together() {
             .build(),
         1,
     );
-    // Right addr, wrong data → reject.
     a::none(
         &function,
         store()
@@ -133,13 +119,9 @@ fn store_space_matches() {
     a::none(&function, store().space(rsleigh::VnSpace::UNIQUE).build());
 }
 
-// ── Store-then-load aliasing pattern ──────────────────────────────────────────
-
 #[test]
 fn store_then_load_same_addr_match() {
     let function = shapes::store_then_load_ram(0x200, 77);
-    // Must simultaneously find a store with data=77 and a load at the same
-    // address.
     a::matches(
         &function,
         store()
@@ -151,8 +133,6 @@ fn store_then_load_same_addr_match() {
     a::matches(&function, load().addr(int_const(0x200u128)).build(), 1);
 }
 
-// ── Load without a preceding store ───────────────────────────────────────────
-
 #[test]
 fn load_only_graph_matches() {
     let mut t = Tb::empty();
@@ -161,15 +141,11 @@ fn load_only_graph_matches() {
     let function = t.ret_val(v);
 
     a::matches(&function, load().build(), 1);
-    // There is no store in this graph.
     a::none(&function, store().build());
 }
 
-// ── load().bit_width() discriminates among multiple loads ─────────────────────
-
-/// Two loads of different widths (I32 + I64) off the same tracked base:
-/// `bit_width(n)` must select exactly the load whose value output is `n`
-/// bits, leaving the other unmatched.
+/// bit_width(n) must select the load whose value output is n bits and leave
+/// the other unmatched, on two same-base loads of different widths.
 #[test]
 fn load_bit_width_filters_among_multiple_loads() {
     let base = reg_vn(0x40, 8);
@@ -177,7 +153,7 @@ fn load_bit_width_filters_among_multiple_loads() {
     let base_v = t.read_var(&base);
     let l32 = t.load_ram(base_v, ValueType::I32);
     let l64 = t.load_ram(base_v, ValueType::I64);
-    // Combine both loads so each appears in the Return's reachable set.
+    // Combined so both loads are in the Return's reachable set.
     let l32_64 = t.zext_to(l32, ValueType::I64);
     let combined = t.add(l32_64, l64);
     let function = t.ret_val(combined);

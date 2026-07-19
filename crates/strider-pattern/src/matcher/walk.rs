@@ -1,46 +1,34 @@
-//! Recursive bipartite match engine with commutative-operand retry and
-//! cast walk-through.
+//! Recursive bipartite match engine with commutative-operand retry and cast
+//! walk-through.
 //!
-//! The matcher visits the pattern graph in pull order rooted at
-//! [`Pattern::root`](crate::matcher::Pattern): for each pat node it
-//! kind-checks the corresponding IR node, runs the node's predicate,
-//! then walks each input. An input is a `Consumes{slot}` edge whose
-//! source is a [`PatValue`] vertex; that output vertex's incoming
-//! `Produces` edge source is the producer [`PatNode`]. Matching one
-//! input therefore checks the producer's IR output against the
-//! [`PatValue`]'s declarative constraints (kind + width +
-//! `value_predicate`) and recurses into the producer pat node.
+//! The matcher visits the pattern graph in pull order from
+//! [`Pattern::root`](crate::matcher::Pattern), kind-checking each pat node
+//! against its IR node, running the node predicate, then walking inputs. An
+//! input is a `Consumes{slot}` edge from a [`PatValue`] vertex, whose incoming
+//! `Produces` edge names the producer [`PatNode`].
 //!
-//! Matching a node's inputs is ONE problem — an injective assignment of the pat
-//! node's inputs to the IR node's input slots, each input drawing from its own
-//! [`Candidates`] set — solved by the single enumerator [`match_assignments`].
-//! A fixed operand's candidate set is the singleton `{its own slot}` (a direct
-//! index); an arity-2 pat node whose IR kind is commutative (per
-//! `NodeKind::is_commutative()`, unless it opted out via `force_ordered`) gives
-//! BOTH operands the candidate set `{0, 1}`, so injectivity yields exactly the
-//! natural ordering then the swapped one; an `any_input` existential draws from
-//! every input slot — the sub-pattern discriminates which ones can actually
-//! match (a value sub can't match a `PhiToken`/control/memory slot).
-//! Backtracking rolls back via
-//! [`Bindings::mark`] / [`Bindings::restore`] between attempts.
+//! Matching a node's inputs is one problem: an injective assignment of pattern
+//! inputs to IR input slots, each input drawing from its own [`Candidates`]
+//! set, solved by [`match_assignments`]. A fixed operand's set is a singleton;
+//! a commutative arity-2 node gives both operands `{0, 1}`, so injectivity
+//! yields exactly the natural then the swapped ordering; an `any_input`
+//! existential draws from every slot and lets the sub-pattern discriminate (a
+//! value sub cannot match a `PhiToken`/control/memory slot). Backtracking rolls
+//! back via [`Bindings::mark`] / [`Bindings::restore`].
 //!
-//! The engine is continuation-passing: [`try_match_at`] ENUMERATES a pat
-//! node's matches (each operand ordering × every descendant configuration)
-//! and calls a continuation `k` per configuration instead of returning the
-//! first hit. So when a guard ANYWHERE above rejects a configuration (its
-//! `k` returns `false`), a commutative node BELOW it re-drives its operand
-//! order to find one the ancestor accepts — e.g. a `when_match` guard on a
-//! unary parent picks which operand of a commutative child binds. The root
-//! continuation is supplied by the caller ([`Matcher`]): a first-hit collector
-//! returns `true` and stops at the first fully guard-satisfying configuration
-//! in DFS order, while `find_all`'s collector records each and returns `false`
-//! to enumerate the rest — so several distinct bindings per root are reported
-//! instead of silently dropping all but the first.
+//! The engine is continuation-passing: [`try_match_at`] enumerates a pat node's
+//! matches (each operand ordering by each descendant configuration) and calls
+//! `k` per configuration rather than returning the first hit. A guard anywhere
+//! above that rejects a configuration therefore re-drives a commutative node
+//! below it, so e.g. a `when_match` on a unary parent picks which operand of a
+//! commutative child binds. The caller supplies the root continuation: a
+//! first-hit collector returns `true` to stop at the first guard-satisfying
+//! configuration in DFS order, while `find_all`'s returns `false` to enumerate
+//! the rest, reporting several distinct bindings per root.
 //!
-//! On a sub-pattern mismatch at a producer output, if the pattern's
-//! [`CastMask`](crate::matcher::CastMask) is non-empty the matcher
-//! transparently unwraps any cast in the mask and re-attempts the
-//! sub-pattern against the cast's value input.
+//! On a sub-pattern mismatch at a producer output, a non-empty
+//! [`CastMask`](crate::matcher::CastMask) makes the matcher unwrap a masked
+//! cast and retry against the cast's value input.
 //!
 //! [`PatValue`]: crate::matcher::PatValue
 //! [`PatNode`]: crate::matcher::PatNode
@@ -53,36 +41,26 @@ use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
 use crate::matcher::{Matcher, OutputKindSpec, PatValue, Pattern, skip_casts};
 
-/// Invariant context threaded by `&` through the entire recursive match.
-///
-/// `matcher` (IR access + the match-time predicate closures) and `pat` (the
-/// pattern graph and its `cast_mask`) are FIXED for a whole `try_match*` call —
-/// every recursive call and every continuation sees the same two. Bundling them
-/// into one borrowed `Ctx` lets the recursion carry a single pointer instead of
-/// re-threading the pair at every frame (no allocation, no boxing, no added dyn
-/// dispatch beyond the one shared reference).
+/// Both fields are fixed for a whole `try_match*` call, so bundling them lets
+/// the recursion carry one pointer instead of re-threading a pair per frame.
 struct Ctx<'a> {
     matcher: &'a Matcher<'a>,
     pat: &'a Pattern,
 }
 
 impl Ctx<'_> {
-    /// The IR function under match (shorthand for `self.matcher.function()`).
     #[inline]
     fn function(&self) -> &strider_ir::Function {
         self.matcher.function()
     }
 }
 
-/// Entry point for a value-rooted attempt: try `pat`'s root pat node
-/// against the IR node producing `root_value`, with `root_value` available
-/// for the root output's declarative constraints and the root capture.
+/// Value-rooted attempt: `pat`'s root against the IR node producing
+/// `root_value`, which supplies the root output's constraints and capture.
 ///
-/// `k` is the root continuation, invoked once per fully guard-satisfying
-/// configuration (each operand ordering × every descendant configuration).
-/// Returning `true` accepts that configuration and stops the search (the
-/// first-hit collector); returning `false` drives the next one, which is how a
-/// caller ENUMERATES every distinct binding rather than only the first.
+/// `k` runs once per fully guard-satisfying configuration. `true` accepts and
+/// stops the search; `false` drives the next one, which is how a caller
+/// enumerates every distinct binding rather than only the first.
 pub(crate) fn try_match(
     matcher: &Matcher,
     pat: &Pattern,
@@ -91,16 +69,9 @@ pub(crate) fn try_match(
     bindings: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
-    // The root output vertex (if the root pat node declares one) carries
-    // the root-level output constraints. For a value root — exactly one
-    // value output vertex — that vertex's constraint applies to whichever
-    // output is currently being matched (`root_value`), regardless of slot.
     let root_out_vertex = root_output_vertex_for(pat, root, matcher, root_value);
     let root_node = matcher.function().producer(root_value);
     let ctx = Ctx { matcher, pat };
-    // `try_match_at` enumerates every configuration whose every guard (root +
-    // descendants) passed and hands each to `k`, which decides whether to
-    // accept-and-stop or record-and-continue.
     try_match_at(
         &ctx,
         root,
@@ -112,15 +83,13 @@ pub(crate) fn try_match(
     )
 }
 
-/// Entry point for a zero-value-output attempt (e.g. `Return`): try
-/// `pat`'s root pat node against `node` with no associated output.
+/// Zero-value-output attempt (`Return` and friends): `pat`'s root against
+/// `node`, with no associated output.
 ///
-/// A zero-output IR node produces no value, so it can only satisfy a root
-/// whose output vertex imposes no value requirement (a bare `any()` /
-/// `var()` wildcard, or a control/zero-output control builder). A root
-/// that requires a value output — a pinned `Value` kind or any `width` —
-/// is rejected here rather than silently skipping the constraint (which
-/// is how `bool_value()` used to wrongly match `Return`).
+/// Such a node can only satisfy a root whose output vertex imposes no value
+/// requirement (a bare `any()` / `var()`, or a control builder). A root
+/// demanding a value output is rejected here rather than having its constraint
+/// silently skipped, which would let `bool_value()` match a `Return`.
 ///
 /// `k` is the root continuation; see [`try_match`].
 pub(crate) fn try_match_node(
@@ -138,9 +107,7 @@ pub(crate) fn try_match_node(
     try_match_at(&ctx, root, node, None, None, bindings, k)
 }
 
-/// Whether the root pat node declares an output vertex that demands a
-/// value output (a `Value` / `AnyValue` kind, or any `width` constraint).
-/// Such a root cannot match a zero-output IR node.
+/// A root demanding a value output cannot match a zero-output IR node.
 fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
     pat.graph.produced_outputs(root).iter().any(|&ov| {
         let o = pat.graph.output_weight(ov);
@@ -148,22 +115,17 @@ fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
     })
 }
 
-/// Resolve the root pat node's output vertex carrying the root-level
-/// output constraints to check against the IR `root_value`.
+/// The root pat node's output vertex carrying the root-level constraints to
+/// check against `root_value`; `None` if it declares no output vertex.
 ///
-/// A value root declares exactly one output vertex (the value / memory /
-/// wildcard it produces). Its `kind` / `width` constraint applies to
-/// *whichever* output is being matched — [`Matcher::matches`] iterates
-/// every IR output of a node and roots an attempt at each — so it is
-/// checked against `root_value` directly, with no slot matching. (Matching
-/// by slot would silently skip the constraint whenever a multi-output
-/// node such as `Region` / `Call` is rooted at a non-slot-0 output: that
-/// is the bug this resolves.)
+/// A value root declares exactly one output vertex, and its constraint applies
+/// to whichever output is being matched: [`Matcher::matches`] roots an attempt
+/// at every IR output of a node, so matching by slot instead would silently
+/// skip the constraint whenever a multi-output `Region` / `Call` is rooted at a
+/// non-slot-0 output.
 ///
-/// The only multi-output-vertex root is the `If` control builder (two
-/// `Control` vertices); for it the per-slot lookup is kept, anchoring the
-/// branch node-limit on the slot-0 control output. Returns `None` when
-/// the root pat node declares no output vertex (no constraint).
+/// The one multi-output-vertex root is the `If` control builder (two `Control`
+/// vertices), which keeps the per-slot lookup.
 ///
 /// [`Matcher::matches`]: crate::Matcher::matches
 fn root_output_vertex_for(
@@ -172,8 +134,7 @@ fn root_output_vertex_for(
     matcher: &Matcher,
     root_value: ValueId,
 ) -> Option<PatValueId> {
-    // Single output vertex: its constraint applies to the matched output
-    // regardless of slot.
+    // Single output vertex: applies regardless of slot.
     let outs = pat.graph.produced_outputs(root);
     let mut iter = outs.iter().copied();
     let first = iter.next()?;
@@ -181,30 +142,24 @@ fn root_output_vertex_for(
         return Some(first);
     }
 
-    // Multiple output vertices (the `If` control root): keep the per-slot
-    // lookup so each control output's constraints land on the right slot.
+    // The `If` control root: per-slot lookup, so each control output's
+    // constraints land on the right slot.
     let (_node, ir_slot) = matcher.function().value_definition(root_value);
     outs.iter()
         .copied()
         .find(|&out_vertex| pat.graph.output_weight(out_vertex).slot as u32 == ir_slot)
 }
 
-/// Recursive worker. `pat_node` is the current pattern node index;
-/// `ir_node` is the IR node being matched; `root_value` / `out_vertex` are
-/// the IR output and its pat-output vertex when this pat node sits at a
-/// value-producing position (used for the output constraints + capture).
-/// Recursive worker, continuation-passing so a guard failure ANYWHERE above can
-/// re-drive a commutative operand order BELOW it.
+/// Recursive worker, continuation-passing so a guard failure anywhere above can
+/// re-drive a commutative operand order below it. `root_value` / `out_vertex`
+/// are the IR output and its pat-output vertex when this pat node sits at a
+/// value-producing position.
 ///
-/// Rather than return the first sub-match, `try_match_at` ENUMERATES every way
-/// `pat_node` matches `ir_node` (each operand ordering × every descendant
-/// configuration); for each it extends `bindings` with that configuration's
-/// captures + footprint and calls `k`. When `k` returns `true` the whole match
-/// is accepted and `bindings` keeps the accepted state; when `k` returns
-/// `false` (an ancestor guard rejected this configuration) the next one is
-/// tried. With no configuration accepted, `bindings` is restored to entry and
-/// `false` is returned. The root passes `k = |_| true`, so the FIRST fully
-/// guard-satisfying configuration in DFS order wins.
+/// Enumerates every way `pat_node` matches `ir_node`; for each it extends
+/// `bindings` with that configuration's captures and footprint and calls `k`.
+/// `k` returning `true` accepts and leaves `bindings` in the accepted state;
+/// `false` tries the next configuration. If none is accepted, `bindings` is
+/// restored to entry.
 fn try_match_at(
     ctx: &Ctx,
     pat_node: PatNodeId,
@@ -219,8 +174,7 @@ fn try_match_at(
         return false;
     }
 
-    // Root-output constraints (kind / width). The output vertex carries the
-    // declarative shape constraints (e.g. `bool_*` builders pin `Value(I1)`;
+    // Root-output kind / width constraints (`bool_*` pins `Value(I1)`,
     // `value_of_width` pins width).
     if let Some(ov_idx) = out_vertex
         && let Some(value) = root_value
@@ -231,17 +185,14 @@ fn try_match_at(
         }
     }
 
-    // Node predicate. Fires after kind + output constraints and BEFORE
-    // descending into inputs — node-only predicates short-circuit here.
+    // Fires after kind + output constraints and before descending into inputs,
+    // so node-only predicates short-circuit here.
     if let Some(predicate) = &nd.node_predicate
         && !predicate(ctx.matcher, ir_node)
     {
         return false;
     }
 
-    // Collect this pat node's inputs: each incoming `Consumes{slot}` edge
-    // source is a PatValue vertex; that vertex's incoming `Produces`
-    // edge source is the producer pat node.
     let mut inputs: Vec<InputEdge> = ctx
         .pat
         .graph
@@ -257,15 +208,11 @@ fn try_match_at(
         })
         .collect();
 
-    // Capture to bind for THIS node, independent of operand ordering: an
-    // output-vertex capture (value positions) binds the matched VALUE; a
-    // node-declared capture (control nodes like `If`) binds the matched NODE.
-    // Picking the kind from `root_value` alone used to mis-bind a node capture
-    // on `If` as `Binding::Value`.
-    // Both may be present and are independent captures: e.g. an `If` with
-    // `capture_true(t)` (an output-vertex value capture) AND `capture(g)` (the
-    // node capture). Binding only one — the old either/or — silently dropped the
-    // other. `[anchor_output_value_capture, node_capture]`.
+    // Captures for THIS node, independent of operand ordering. An
+    // output-vertex capture binds the matched VALUE; a node-declared capture
+    // (control nodes like `If`) binds the matched NODE. Both can be present and
+    // are independent: an `If` may carry `capture_true(t)` and `capture(g)`, so
+    // binding only one would silently drop the other.
     let cap_bindings = [
         out_vertex
             .and_then(|ov| ctx.pat.graph.output_weight(ov).capture)
@@ -273,21 +220,16 @@ fn try_match_at(
         nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
     ];
 
-    // Alternation (`one_of`): `inputs` are independent alternative sub-patterns,
-    // not operands. Bind this node's own capture (the matched value) once, then
-    // try each alternative against the SAME `ir_node`, accepting the first whose
-    // whole configuration (its own guards + the ancestor continuation `k`)
-    // succeeds. Each alternative's `try_match_at` handles its captures / guard /
-    // footprint, so the alternation node records nothing itself.
+    // Alternation (`one_of`): `inputs` are independent alternative
+    // sub-patterns, not operands, all tried against the SAME `ir_node`. Each
+    // alternative's own `try_match_at` handles its captures / guard / footprint,
+    // so the alternation node records nothing itself.
     //
-    // `one_of` is an ORDERED CHOICE (first-match-wins), not a union: once an arm
-    // matches, the later arms are shadowed by design — a permissive leading arm
-    // deliberately swallows what a narrower later arm would have caught. So the
-    // enumeration runs WITHIN the winning arm (every operand ordering it
-    // admits), never ACROSS arms; otherwise a trailing wildcard arm would add a
-    // spurious second binding to every hit of a specific earlier arm. As in
-    // `try_operand`, an enumerating `k` makes `try_match_at`'s return value
-    // useless for "did this arm match", hence the explicit `reached` flag.
+    // This is an ordered choice, not a union: once an arm matches, later arms
+    // are shadowed by design. So enumeration runs WITHIN the winning arm, never
+    // across arms; otherwise a trailing wildcard arm would add a spurious
+    // second binding to every hit of a specific earlier arm. An enumerating `k`
+    // makes the return value useless for "did this arm match", hence `reached`.
     if nd.alternation {
         let mark = bindings.mark();
         if !bind_all_captures(bindings, &cap_bindings) {
@@ -315,8 +257,8 @@ fn try_match_at(
             }
             bindings.restore(inner);
             if reached {
-                // This arm matched and every configuration of it went through
-                // `k`; first-match-wins means the remaining arms are shadowed.
+                // This arm matched and was fully enumerated; the rest are
+                // shadowed.
                 break;
             }
         }
@@ -324,19 +266,18 @@ fn try_match_at(
         return false;
     }
 
-    // Order the fixed-slot operands ahead of the existential (`any_input`) ones
-    // — a stable sort, so each group keeps its relative order — and count them:
-    // the fixed operands are assigned their slots first, as before.
+    // Fixed-slot operands are assigned before the existential (`any_input`)
+    // ones. Stable, so each group keeps its relative order.
     inputs.sort_by_key(|e| e.consumer_slot == crate::matcher::ANY_INPUT_SLOT);
     let n_fixed = inputs
         .iter()
         .filter(|e| e.consumer_slot != crate::matcher::ANY_INPUT_SLOT)
         .count();
 
-    // Commutativity: exactly two fixed operands, at slots {0,1} (the shape of
-    // every commutative IR kind's signature), IR kind commutative, not
-    // force_ordered. `.ordered()` sets `force_ordered`, which leaves both
-    // operands on `Candidates::Only` — one ordering, exactly as before.
+    // Commutativity needs exactly two fixed operands at slots {0,1} (the shape
+    // of every commutative IR kind's signature), a commutative IR kind, and no
+    // `.ordered()`. Otherwise both operands stay on `Candidates::Only`, i.e.
+    // one ordering.
     let commutative = !nd.force_ordered
         && n_fixed == 2
         && inputs[..2]
@@ -344,26 +285,22 @@ fn try_match_at(
             .all(|e| e.consumer_slot < COMM_ORDER.len())
         && ctx.function().node_kind(ir_node).is_commutative();
 
-    // The existential candidate set: EVERY input slot of `ir_node`. Invariant
-    // across the whole search, so collect it once here (empty in the common
-    // no-`any_input` case) rather than at every recursion level.
+    // The existential candidate set: every input slot of `ir_node`. Invariant
+    // across the search, so collected once here rather than per recursion level
+    // (and empty in the common no-`any_input` case).
     //
-    // `any_input(sub)` = "some input edge of this node matches `sub`". No
-    // value-kind filter is applied here — the sub-pattern discriminates: a
-    // typed sub (`int_const`, `add`, …) carries a value output-kind, so it
-    // only matches a value edge and naturally skips control/memory/PhiToken
-    // inputs; a bare wildcard (`var(c)` / `any()`, carrying
-    // `OutputKindSpec::Any`) binds ANY input, including a `PhiToken`. This one
-    // mechanism covers a phi's value predecessors, a region's control
-    // predecessors, a mem_phi's memory predecessors, and a call's args.
+    // No value-kind filter: the sub-pattern discriminates. A typed sub carries
+    // a value output-kind and so skips control/memory/PhiToken inputs, while a
+    // bare wildcard (`OutputKindSpec::Any`) binds any input including a
+    // `PhiToken`. That one mechanism covers a phi's value predecessors, a
+    // region's control predecessors, a mem_phi's memory predecessors, and a
+    // call's args.
     let ext_slots: Vec<usize> = if n_fixed == inputs.len() {
         Vec::new()
     } else {
         (0..ctx.function().node_inputs(ir_node).len()).collect()
     };
 
-    // The one enumeration problem: assign each pattern input an IR input slot
-    // drawn from its own candidate set, injectively.
     let assigns: Vec<Assign> = inputs
         .into_iter()
         .map(|edge| {
@@ -380,47 +317,38 @@ fn try_match_at(
 
     let mark = bindings.mark();
     {
-        // `finalize` finishes THIS node once every input has been assigned a
-        // slot and matched there: bind the node's capture (capture-equality is
-        // enforced here against deeper bindings), run its guard, record it into
-        // the footprint, then hand off to the parent continuation `k`. Returning
-        // `false` makes the assignment enumeration try its next configuration (a
-        // deeper commutative swap, this node's swap, or an existential's next
-        // slot) — so an ANCESTOR guard failure surfaced through `k` re-drives
-        // this node and everything beneath it.
+        // Finishes THIS node once every input is assigned and matched: bind
+        // its capture (capture-equality is enforced here against deeper
+        // bindings), run its guard, record it into the footprint, hand off to
+        // `k`. Returning `false` makes the enumeration try its next
+        // configuration, so an ancestor guard failure surfaced through `k`
+        // re-drives this node and everything beneath it.
         let mut finalize = |b: &mut Bindings| -> bool {
             let inner = b.mark();
             if !bind_all_captures(b, &cap_bindings) {
                 return false;
             }
-            // Enforce and bind this node's SECONDARY (non-anchor) output
-            // vertices against the matched IR node's output value at each
-            // vertex's slot — how `If::capture_true` / `capture_false` and the
-            // generic `output(j)` builder reach a sibling output (the matcher
-            // never descends into a node's outputs otherwise). The anchor
-            // output's constraint + capture (and the node capture) are handled
-            // above / by the `cap_bindings` loop.
+            // Secondary (non-anchor) output vertices, checked and bound at
+            // each vertex's slot. This is how `If::capture_true` /
+            // `capture_false` and the generic `output(j)` builder reach a
+            // sibling output; the matcher never descends into a node's outputs
+            // otherwise. The anchor output and node captures are handled above.
             for &ov_idx in ctx.pat.graph.produced_outputs(pat_node).iter() {
                 if Some(ov_idx) == out_vertex {
                     continue;
                 }
                 let ov = ctx.pat.graph.output_weight(ov_idx);
                 let Some(&val) = ctx.function().node_outputs(ir_node).get(ov.slot) else {
-                    // No IR output at this vertex's slot. A vertex that imposes
-                    // NOTHING (a bare node-rooted `any()` wildcard) is vacuously
-                    // satisfied — this is what lets `any()` match a value-less
-                    // `Return`. A vertex that carries a capture or any
-                    // kind / width / slot constraint (e.g. `output(j)`) cannot
-                    // be satisfied against a missing slot, so it fails.
+                    // No IR output at this slot. A vertex imposing nothing (a
+                    // bare node-rooted `any()`) is vacuously satisfied, which
+                    // is what lets `any()` match a value-less `Return`. One
+                    // carrying a capture or any constraint cannot be.
                     if vertex_imposes_requirement(ov) {
                         b.restore(inner);
                         return false;
                     }
                     continue;
                 };
-                // The secondary vertex's declarative kind / width / slot
-                // constraint (e.g. `output(j).of_width(w)`) is genuinely
-                // checked here, not just its capture.
                 if !output_ok(ov, ctx.function(), val) {
                     b.restore(inner);
                     return false;
@@ -456,27 +384,23 @@ fn try_match_at(
     false
 }
 
-/// Try `edge`'s sub-pattern against the operand `value`, then — if the pattern's
-/// cast mask permits and `value` is a registered cast — against the unwrapped
-/// value. `k` continues the enclosing match (the remaining input
-/// assignments). Shared by both [`Candidates`] arms, which differ only
-/// in what they do when this returns `false`: a singleton fails its pinned slot,
-/// a multi-candidate set tries its next slot.
+/// Try `edge`'s sub-pattern against the operand `value`, then, if the cast mask
+/// permits and `value` is a registered cast, against the unwrapped value. `k`
+/// continues the enclosing match. Both [`Candidates`] arms share this and
+/// differ only in their reaction to `false`: a singleton fails its pinned slot,
+/// a multi-candidate set tries the next.
 ///
-/// On every failure path `bindings` is restored to its state at entry, so a
-/// caller may retry without cleaning up. The skipped casts are journaled BEFORE
-/// the retry, so a failure rolls them back while a success keeps them — which is
-/// what holds the asm-fingerprint superset contract.
+/// Every failure path restores `bindings` to entry, so a caller may retry
+/// without cleanup. Skipped casts are journaled BEFORE the retry, so a failure
+/// rolls them back and a success keeps them, which is what holds the
+/// asm-fingerprint superset contract.
 ///
-/// The cast walk-through is a **fallback**, not an alternative: it engages only
-/// when the direct sub-pattern yields NO configuration at all, never to offer a
-/// second binding alongside a direct one that already matched. `try_match_at`'s
-/// return value can't decide that under an enumerating `k` (which returns
-/// `false` for every configuration, so the call always reports `false`), hence
-/// the explicit `reached` flag — "did any configuration reach the
-/// continuation", which is what "mismatch" has always meant here. Keeping this a
-/// fallback also keeps enumeration bounded by the PATTERN's commutative nodes:
-/// offering the cast-peeled value as an extra binding would instead multiply
+/// The cast walk-through is a fallback, not an alternative: it engages only
+/// when the direct sub-pattern yields no configuration at all, never to offer a
+/// second binding beside a direct one. Under an enumerating `k` the return
+/// value can't tell those apart (it is always `false`), hence the `reached`
+/// flag. Fallback-only also bounds enumeration by the PATTERN's commutative
+/// nodes; offering the cast-peeled value as an extra binding would multiply
 /// matches by the GRAPH's cast-chain depth.
 fn try_operand(
     ctx: &Ctx,
@@ -507,8 +431,8 @@ fn try_operand(
     }
     bindings.restore(mark);
     if reached {
-        // The direct producer matched (and every configuration was enumerated
-        // through `k`); the fallback exists for a mismatch, so stop here.
+        // Direct producer matched and was fully enumerated; the fallback is
+        // only for a mismatch.
         return false;
     }
 
@@ -519,7 +443,6 @@ fn try_operand(
     let mut skipped = Vec::new();
     let unwrapped = skip_casts(ctx.matcher, value, ctx.pat.cast_mask, &mut skipped);
     if unwrapped == value {
-        // Not a registered cast — no further fallback.
         return false;
     }
     for &cast in &skipped {
@@ -541,58 +464,51 @@ fn try_operand(
     false
 }
 
-/// One incoming input of a consumer pat node.
 struct InputEdge {
     consumer_slot: usize,
     out_vertex: PatValueId,
     producer: PatNodeId,
 }
 
-/// The IR input slots ONE pattern input is allowed to occupy.
-///
-/// This is the whole abstraction: matching a consumer's inputs is an injective
-/// assignment of its pattern inputs to `ir_node`'s input slots, and the three
-/// disciplines the matcher needs differ only in this candidate set —
+/// The IR input slots one pattern input may occupy. The matcher's three
+/// disciplines differ only in this set:
 ///
 /// | pattern input | candidate set |
 /// |---|---|
 /// | fixed, non-commutative | `Only(its own consumer slot)` |
-/// | fixed, commutative pair | `OneOf([own slot, the other])` — injectivity yields exactly the 2 orderings |
+/// | fixed, commutative pair | `OneOf([own slot, the other])`, injectivity yielding exactly the 2 orderings |
 /// | existential (`any_input`) | `OneOf(every input slot)` |
 #[derive(Clone, Copy)]
 enum Candidates<'a> {
-    /// Exactly one slot. This is the COMMON case (most patterns are all
-    /// fixed-slot), and it is why this is an enum rather than a uniform slice:
-    /// [`match_assignments`] serves it with a single direct `node_input_id_at`
-    /// index — no candidate loop, no injectivity check, no allocation. Modelling
-    /// it as a one-element `OneOf` would be correct but would trade an indexed
-    /// lookup for a scan, so a singleton MUST stay its own arm.
+    /// The common case, and why this is an enum rather than a uniform slice:
+    /// [`match_assignments`] serves it with one direct `node_input_id_at`
+    /// index, no candidate loop, no injectivity check, no allocation. A
+    /// one-element `OneOf` would be correct but trades an indexed lookup for a
+    /// scan, so keep the singleton arm.
     Only(usize),
-    /// An ordered candidate list; the input takes the first slot that is both
-    /// unclaimed by an enclosing assignment and matches the sub-pattern.
+    /// Ordered; the input takes the first slot both unclaimed by an enclosing
+    /// assignment and matching the sub-pattern.
     OneOf(&'a [usize]),
 }
 
 /// Candidate slots for a commutative operand pair, indexed by the pattern
-/// input's OWN consumer slot: each operand tries its own slot first, so
-/// injectivity enumerates the natural ordering before the swapped one no matter
-/// which of the two operands the assignment visits first.
+/// input's own consumer slot. Each operand tries its own slot first, so
+/// injectivity enumerates the natural ordering before the swapped one whichever
+/// operand the assignment visits first.
 const COMM_ORDER: [[usize; 2]; 2] = [[0, 1], [1, 0]];
 
-/// One pattern input plus the slots it may be assigned to.
 struct Assign<'a> {
     edge: InputEdge,
     cands: Candidates<'a>,
 }
 
-/// The slots already claimed by the enclosing [`Candidates::OneOf`]
-/// assignments, as a borrowed cons list rooted in the recursion's own stack
-/// frames: the chain is bounded by the input count and each link lives in the
-/// frame that claimed it, so injectivity costs no allocation and nothing has to
-/// be threaded back out through the continuation closures.
+/// Slots already claimed by enclosing [`Candidates::OneOf`] assignments, as a
+/// borrowed cons list living in the recursion's own stack frames: the chain is
+/// bounded by the input count, so injectivity costs no allocation and nothing
+/// needs threading back out through the continuation closures.
 ///
-/// Distinctness is a property of the ASSIGNMENT — by slot index, never by value
-/// — so `any_input(1).any_input(1)` still matches a phi with two separate `1`
+/// Distinctness is by slot index, never by value, so
+/// `any_input(1).any_input(1)` still matches a phi with two separate `1`
 /// predecessors.
 struct Claimed<'a> {
     slot: usize,
@@ -612,17 +528,14 @@ impl Claimed<'_> {
     }
 }
 
-/// The one enumerator: continuation-passing injective assignment of
-/// `assigns[i..]` to `ir_node`'s input slots, invoking `done` once every input
-/// is placed and matched.
+/// Continuation-passing injective assignment of `assigns[i..]` to `ir_node`'s
+/// input slots, invoking `done` once every input is placed and matched.
 ///
-/// Each input's sub-match recurses with a continuation that assigns the
-/// REMAINING inputs, so when a later stage rejects (`done`, or a deeper
-/// continuation, returns `false`) an earlier input is asked for its next
-/// candidate before this call fails — the backtracking that lets a parent guard
-/// re-drive a child's commutative ordering. Every candidate goes through the
-/// shared [`try_operand`], so an existential honours `ignore_casts` exactly like
-/// a fixed slot.
+/// Each input's sub-match recurses with a continuation assigning the remaining
+/// inputs, so a later rejection asks an earlier input for its next candidate
+/// before this call fails. That is the backtracking that lets a parent guard
+/// re-drive a child's commutative ordering. Every candidate goes through
+/// [`try_operand`], so an existential honours `ignore_casts` like a fixed slot.
 fn match_assignments(
     ctx: &Ctx,
     assigns: &[Assign],
@@ -636,8 +549,8 @@ fn match_assignments(
         return done(bindings);
     };
     match a.cands {
-        // Singleton: a direct index, no search and no injectivity bookkeeping.
-        // The slot is pinned, so a failed operand fails the whole slot.
+        // Direct index, no search and no injectivity bookkeeping. The slot is
+        // pinned, so a failed operand fails it outright.
         Candidates::Only(slot) => {
             let Some(value) = input_at(ctx, ir_node, slot) else {
                 return false;
@@ -663,21 +576,17 @@ fn match_assignments(
                 }) {
                     return true;
                 }
-                // This candidate didn't work out (bindings already restored) —
-                // try the next slot.
+                // Bindings already restored; try the next slot.
             }
             false
         }
     }
 }
 
-/// Bind every present capture in `caps` all-or-nothing: on the first rebind
-/// conflict, roll back the captures already bound by THIS call and return
-/// `false`. Allocation-free — it takes its own rollback mark, which (because no
-/// mutation happens between a caller's own mark and this call) restores to the
-/// same point the caller would. The two backtracking sites — the alternation
-/// branch and the `finalize` continuation — bind the same `cap_bindings` pair
-/// this way.
+/// Bind every present capture all-or-nothing: on the first rebind conflict,
+/// roll back what THIS call bound and return `false`. It takes its own rollback
+/// mark, which restores to the same point a caller's would, since no mutation
+/// happens between the caller's mark and this call.
 fn bind_all_captures(b: &mut Bindings, caps: &[Option<(crate::Capture, Binding)>]) -> bool {
     let mark = b.mark();
     for &(cap, binding) in caps.iter().flatten() {
@@ -689,17 +598,15 @@ fn bind_all_captures(b: &mut Bindings, caps: &[Option<(crate::Capture, Binding)>
     true
 }
 
-/// The value feeding `ir_node`'s input slot `slot`, or `None` when it has no
-/// such slot.
 fn input_at(ctx: &Ctx, ir_node: NodeId, slot: usize) -> Option<ValueId> {
     let use_id = ctx.function().node_input_id_at(ir_node, slot).ok()?;
     Some(ctx.function().graph().value_of_use(use_id))
 }
 
-/// Whether a secondary output vertex constrains ANYTHING — a capture to bind,
-/// or a kind / width / slot filter to satisfy. A vertex that imposes nothing is
-/// the bare wildcard (`any()`): matched node-rooted against a value-less node it
-/// is vacuously satisfied, which is what lets `any()` match a `Return`.
+/// Whether the vertex constrains anything at all: a capture to bind, or a kind
+/// / width / slot filter. A vertex imposing nothing is the bare `any()`
+/// wildcard, vacuously satisfied node-rooted against a value-less node, which
+/// is what lets `any()` match a `Return`.
 fn vertex_imposes_requirement(o: &PatValue) -> bool {
     o.capture.is_some()
         || o.width.is_some()
@@ -707,13 +614,10 @@ fn vertex_imposes_requirement(o: &PatValue) -> bool {
         || !matches!(o.kind, OutputKindSpec::Any)
 }
 
-/// Whether the IR output `value` satisfies the pat output's declarative
-/// kind + width constraints.
 fn output_ok(o: &PatValue, f: &strider_ir::Function, value: ValueId) -> bool {
     let val = f.value_kind(value).as_value();
     let kind_ok = match &o.kind {
-        // Unconstrained wildcard: any output kind matches. A `width`
-        // constraint (checked below) can still narrow it to a value.
+        // A `width` constraint below can still narrow this to a value.
         OutputKindSpec::Any => true,
         OutputKindSpec::Value(ty) => val == Some(*ty),
         OutputKindSpec::AnyValue => val.is_some(),

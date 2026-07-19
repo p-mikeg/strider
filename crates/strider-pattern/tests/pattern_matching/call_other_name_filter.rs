@@ -1,6 +1,5 @@
-//! `CallOtherPat::name(s)` matches by user-op name (from the
-//! [`strider_ir::Graph::call_other_name`] side-table), independent of
-//! the `user_op_id` payload.  Combinable with `user_op_id` / `arg`.
+//! `CallOtherPat::name(s)` matches on the `call_other_name` side-table, not
+//! the `user_op_id` payload. Combinable with `user_op_id` / `arg`.
 
 use strider_ir::FunctionBuilder;
 use strider_ir_test_utils::RegisterSet;
@@ -8,8 +7,6 @@ use strider_pattern::{Matcher, call_other};
 
 #[test]
 fn name_matches_only_target() {
-    // Two CallOthers with different user-op ids AND different names.
-    // `call_other().name("cpuid")` should match the cpuid one only.
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");

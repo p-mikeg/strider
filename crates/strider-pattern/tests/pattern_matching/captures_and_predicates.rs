@@ -1,21 +1,15 @@
-//! Capture variables (`Capture`, typed op-vars) and `.when` /
-//! `predicate(f)` guards.
-//!
-//! Covers: identity enforcement across multiple occurrences, node-id capture,
-//! root-level and sub-pattern predicates, composition of `.capture().when()`,
-//! and graph-lookup helpers (`get_uint`, `get_bool`, `get_float_bits`) —
-//! including the "unbound var returns None" contract.
+//! Capture variables (`Capture`, typed op-vars) and `.when` / `predicate(f)`
+//! guards, plus the graph-lookup helpers (`get_uint`, `get_bool`,
+//! `get_float_bits`) including their "unbound var returns None" contract.
 
 use strider_ir::IRViewer;
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
 
-// ── Capture equality enforcement ─────────────────────────────────────────────────
-
 #[test]
 fn same_var_twice_matches_identical_output() {
-    // add(5, 5): both operands dedup to the same `ValueId`.
+    // Both operands of add(5, 5) dedup to the same `ValueId`.
     let function = shapes::add_consts(5, 5);
     let x = Capture::new();
     a::matches(&function, add(var(x), var(x)).into_pattern(), 1);
@@ -23,7 +17,6 @@ fn same_var_twice_matches_identical_output() {
 
 #[test]
 fn same_var_twice_rejects_distinct_outputs() {
-    // add(5, 3): operands are distinct.
     let function = shapes::add_consts(5, 3);
     let x = Capture::new();
     a::none(&function, add(var(x), var(x)).into_pattern());
@@ -31,7 +24,6 @@ fn same_var_twice_rejects_distinct_outputs() {
 
 #[test]
 fn var_used_three_times_enforces_all() {
-    // add(add(7, 7), 7) — three uses of the same constant.
     let mut t = Tb::empty();
     let c = t.u64(7);
     let s = t.add(c, c);
@@ -49,8 +41,6 @@ fn var_used_three_times_enforces_all() {
     );
 }
 
-// ── Capture binding for node-only patterns ───────────────────────────────────
-
 #[test]
 fn node_var_captures_node_id() {
     let function = shapes::call_at(0xABCD);
@@ -62,8 +52,6 @@ fn node_var_captures_node_id() {
         strider_ir::node::NodeKind::Call
     ));
 }
-
-// ── Predicates: `.when` on root pattern ──────────────────────────────────────
 
 #[test]
 fn when_true_passes_match_through() {
@@ -88,12 +76,9 @@ fn when_false_rejects_match() {
     );
 }
 
-// ── `.when` on sub-pattern ───────────────────────────────────────────────────
-
 #[test]
 fn when_on_subpattern_filters() {
     let function = shapes::add_consts(5, 3);
-    // Inner pattern requires the int_const(5) but rejects via when.
     a::none(
         &function,
         add(
@@ -102,7 +87,6 @@ fn when_on_subpattern_filters() {
         )
         .into_pattern(),
     );
-    // Same pattern with a pass-through when succeeds.
     a::matches(
         &function,
         add(
@@ -113,8 +97,6 @@ fn when_on_subpattern_filters() {
         1,
     );
 }
-
-// ── `predicate(f)` standalone ────────────────────────────────────────────────
 
 #[test]
 fn predicate_true_matches_all_outputs() {
@@ -131,19 +113,16 @@ fn predicate_false_matches_nothing() {
     a::matches(&function, predicate(|_m, _ty| false).into_pattern(), 0);
 }
 
-// ── Predicate reads the captured value ───────────────────────────────────────
-
 #[test]
 fn predicate_inspects_node_kind() {
-    // Find any IntConst output with value == 7.
     let mut t = Tb::empty();
     let a_ = t.u64(7);
     let b_ = t.u64(3);
     let s = t.add(a_, b_);
     let function = t.ret_val(s);
 
-    // The new predicate signature only sees `(matcher, ty)` — to filter on the
-    // matched node's output id we capture it and check via the bindings in
+    // The predicate signature only sees `(matcher, ty)`, so filtering on the
+    // matched output means capturing it and reading the bindings in
     // `when_match`.
     let c = Capture::new();
     let hits = Matcher::new(&function)
@@ -162,13 +141,10 @@ fn predicate_inspects_node_kind() {
     assert_eq!(hits.len(), 1);
 }
 
-// ── `.capture(v).when(f)` composition ────────────────────────────────────────
-
 #[test]
 fn capture_then_when_composes() {
     let function = shapes::add_consts(5, 3);
     let x = Capture::new();
-    // Root matches; the predicate later inspects the capture and filters.
     let hits = Matcher::new(&function)
         .find_all(
             &add(int_const(5u128), int_const(3u128))
@@ -180,8 +156,6 @@ fn capture_then_when_composes() {
     assert_eq!(hits.len(), 1);
     assert!(hits[0].value(x).is_some());
 }
-
-// ── Match helper coverage ────────────────────────────────────────────────────
 
 #[test]
 fn get_int_const_returns_value() {
@@ -195,7 +169,7 @@ fn get_int_const_returns_value() {
 
 #[test]
 fn get_int_const_on_non_const_returns_none() {
-    // Capture the `Add` itself (not a constant), then ask get_uint.
+    // `x` binds the `Add`, not a constant.
     let function = shapes::add_consts(5, 3);
     let x = Capture::new();
     assert_eq!(
@@ -221,9 +195,8 @@ fn get_int_const_on_unbound_var_returns_none() {
 
 #[test]
 fn get_bool_const_and_float_bits_helpers() {
-    // Return the I1 boolean const directly.  Widening it to a wider integer
-    // would const-fold it into a wider `IntConst`, and `get_bool` only reads
-    // back an `IntConst` typed `I1`.
+    // Return the I1 const directly: widening it would const-fold into a wider
+    // `IntConst`, and `get_bool` only reads back an `IntConst` typed `I1`.
     let mut t = Tb::empty();
     let bc = t.boolean(true);
     let function = t.ret_val(bc);
@@ -231,7 +204,6 @@ fn get_bool_const_and_float_bits_helpers() {
     let v = Capture::new();
     let m = a::unique(&function, bool_const(true).capture(v).into_pattern());
     assert_eq!(m.bindings().get_bool(v, &function), Some(true));
-    // Not a float.
     assert_eq!(m.bindings().get_float_bits(v, function.graph()), None);
 }
 
@@ -250,18 +222,15 @@ fn match_root_is_the_matched_node() {
         &function,
         add(int_const(5u128), int_const(3u128)).into_pattern(),
     );
-    // The matched root should be an Add.
     assert!(matches!(
         function.node_kind(m.root()),
         strider_ir::node::NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add)
     ));
 }
 
-// ── filter() short-circuits before child recursion ───────────────────────────
-
-/// A parent's `filter` runs after the kind / output-type check and BEFORE
-/// the matcher recurses into the child sub-patterns: when the root filter
-/// rejects, the child's own filter must NOT fire even once.
+/// A parent's `filter` runs after the kind / output-type check but before the
+/// matcher recurses into child sub-patterns, so a rejecting root filter must
+/// leave the child's filter unfired.
 #[test]
 fn filter_short_circuits_before_child_recursion() {
     use std::cell::Cell;
@@ -275,7 +244,7 @@ fn filter_short_circuits_before_child_recursion() {
         counter.set(counter.get() + 1);
         true
     });
-    // Root's filter always fails, BEFORE walking the child.
+    // Root filter always fails, before the child is walked.
     let root = add(int_const(99u128), child).filter(|_m, _n| false);
 
     a::none(&function, root.into_pattern());
@@ -286,8 +255,7 @@ fn filter_short_circuits_before_child_recursion() {
     );
 }
 
-/// Companion: when the root filter accepts, the match proceeds and the
-/// child filter is visited.
+/// Converse: an accepting root filter lets recursion reach the child filter.
 #[test]
 fn filter_accepts_match_and_visits_child() {
     use std::cell::Cell;

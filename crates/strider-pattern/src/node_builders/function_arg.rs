@@ -1,23 +1,13 @@
-//! Function-argument-carrier builder: [`FunctionArgPat`].
+//! Matches the function-argument *carrier* node the `FunctionArgDetect`
+//! post-pass records in `Function::arg_index_to_values`: an `InitialVar(vn)`
+//! for a register-passed arg, a `Load` for a stack-passed one.
 //!
-//! After the `FunctionArgDetect` post-pass, function arguments are
-//! represented by a *carrier* node recorded in the
-//! `Function::arg_index_to_values` side-table: an `InitialVar(vn)` node
-//! for a register-passed arg, or a `Load` node for a stack-passed arg.
-//! [`FunctionArgPat`] matches that carrier.
-//!
-//! The carrier produces a value output, so the pattern is value-rooted
-//! (sealed via [`finish`](crate::matcher::MatcherBuilder::finish)). The
-//! kind spec is [`KindSpec::Any`] — register carriers are `InitialVar`
-//! and stack carriers are `Load`, so the discriminant alone can't
-//! distinguish a carrier from a non-carrier. The index / source
-//! constraints are a single node-only predicate (a
-//! [`NodePredicate`](crate::matcher::NodePredicate)) that consults
-//! `Function::arg_index_to_values` at match time, short-circuiting before
-//! the matcher walks into any child inputs.
-//!
-//! Enum-dispatch source distinction (register vs stack) is preserved via
-//! [`FunctionArgSource`].
+//! The carrier produces a value output, so the pattern is value-rooted. Its
+//! kind spec has to be [`KindSpec::Any`]: carriers are `InitialVar` or `Load`
+//! depending on the ABI, so no discriminant separates a carrier from a
+//! non-carrier. The index and source constraints instead ride one node-only
+//! predicate that consults the side-table at match time, short-circuiting
+//! before the matcher walks any child inputs.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{FunctionArgSource, NodeKind};
@@ -26,13 +16,6 @@ use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 
-/// Builder for a function-argument-carrier pattern. Created by
-/// [`function_arg`] / [`function_arg_any`] / [`function_arg_reg`] /
-/// [`function_arg_stack`].
-///
-/// Matches the carrier node registered in
-/// `Function::arg_index_to_values`. All constraints (index + source) ride
-/// a single node-only predicate; the kind spec is [`KindSpec::Any`].
 #[derive(Default)]
 pub struct FunctionArgPat {
     source: Option<FunctionArgSource>,
@@ -41,29 +24,26 @@ pub struct FunctionArgPat {
 }
 
 impl FunctionArgPat {
-    /// Restrict the match to a specific ABI source (register- vs
-    /// stack-passed).
+    /// Register- versus stack-passed.
     pub fn source(mut self, s: FunctionArgSource) -> Self {
         self.source = Some(s);
         self
     }
 
-    /// Restrict the match to a specific argument index.
     pub fn index(mut self, i: u32) -> Self {
         self.index = Some(i);
         self
     }
 
-    /// Bind the matched carrier's value output to `c`.
+    /// Binds the carrier's value output.
     pub fn capture(mut self, c: Capture) -> Self {
         self.capture = Some(c);
         self
     }
 
-    /// Lower the carrier pattern onto `b`, returning its value output
-    /// (slot 0). Shared by [`build`](Self::build) (which seals on the
-    /// value output) and [`MatchPat::compile`] (which nests the carrier
-    /// as a value operand of another builder).
+    /// Returns the value output at slot 0. Shared by
+    /// [`build`](Self::build), which seals on it, and [`MatchPat::compile`],
+    /// which nests the carrier as a value operand.
     fn lower(self, b: &mut MatcherBuilder) -> PatValueRef {
         let FunctionArgPat {
             source,
@@ -71,17 +51,14 @@ impl FunctionArgPat {
             capture,
         } = self;
         let node = b.node(KindSpec::Any);
-        // The carrier (`InitialVar` / `Load`) produces a value at slot 0.
         let value_out = b.value_output(node, 0);
 
-        // Index + source predicates are node-only — no cross-binding
-        // state — so they live on the node limit and short-circuit before
-        // child recursion.
+        // Index and source carry no cross-binding state, so one node
+        // predicate covers both and short-circuits before child recursion.
         b.set_node_predicate(
             value_out,
             Box::new(move |matcher, node| {
                 let f = matcher.function();
-                // Index constraint.
                 match index {
                     Some(idx) => {
                         if !f
@@ -105,7 +82,6 @@ impl FunctionArgPat {
                         }
                     }
                 }
-                // Source constraint.
                 let Some(expected) = source else {
                     return true;
                 };
@@ -120,12 +96,11 @@ impl FunctionArgPat {
                         },
                         NodeKind::Load(actual_space),
                     ) => {
-                        // Enforce the carrier's address space (the `Load`
-                        // payload) and its SP-relative offset (the
-                        // `StackOffsetDetect`-populated `stack_offset`
-                        // side-table). A carrier with no recorded stack
-                        // offset, or one at a different (space, offset),
-                        // is rejected.
+                        // Both the address space, from the `Load` payload,
+                        // and the SP-relative offset, from the
+                        // `StackOffsetDetect`-populated side-table, must
+                        // agree. A carrier with no recorded offset is
+                        // rejected.
                         if want_space != *actual_space {
                             return false;
                         }
@@ -141,8 +116,6 @@ impl FunctionArgPat {
         value_out
     }
 
-    /// Seal the builder into a finished [`Pattern`] rooted on the carrier
-    /// node's value output.
     pub fn build(self) -> Pattern {
         let mut b = MatcherBuilder::new();
         self.lower(&mut b);
@@ -156,30 +129,26 @@ impl MatchPat for FunctionArgPat {
     }
 }
 
-/// Match the carrier registered at side-table index `idx`. No source
-/// filter — accepts both register-passed (`InitialVar`) and stack-passed
-/// (`Load`) carriers.
+/// Unfiltered by source, so both register (`InitialVar`) and stack (`Load`)
+/// carriers match.
 pub fn function_arg(idx: u32) -> FunctionArgPat {
     FunctionArgPat::default().index(idx)
 }
 
-/// Match any carrier registered in the side-table, regardless of index or
-/// source. Used by passes that want to enumerate every function-arg
-/// carrier in a function.
+/// Any carrier, whatever its index or source: for passes enumerating every
+/// function-arg carrier.
 pub fn function_arg_any() -> FunctionArgPat {
     FunctionArgPat::default()
 }
 
-/// Match the carrier at side-table index `idx`, restricted to a
-/// register-passed `InitialVar(vn)`.
+/// Restricted to a register-passed `InitialVar(vn)`.
 pub fn function_arg_reg(vn: rsleigh::Vn, idx: u32) -> FunctionArgPat {
     FunctionArgPat::default()
         .index(idx)
         .source(FunctionArgSource::Register(vn))
 }
 
-/// Match the carrier at side-table index `idx`, restricted to a
-/// stack-passed `Load` at `(space, offset)`.
+/// Restricted to a stack-passed `Load` at `(space, offset)`.
 pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i128, idx: u32) -> FunctionArgPat {
     FunctionArgPat::default()
         .index(idx)

@@ -1,8 +1,6 @@
 //! Shared test helpers: graph construction, pre-built shapes, assertion DSL.
-//!
-//! Every test file should `use super::support::{graph, shapes, assertions};`
-//! (or bring specific names into scope) rather than reaching into `strider_ir`
-//! or `strider_pattern` internals directly.
+//! Test files go through these rather than reaching into `strider_ir` /
+//! `strider_pattern` internals directly.
 
 #![allow(dead_code, unused_imports)]
 

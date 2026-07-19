@@ -1,6 +1,6 @@
-//! `one_of` alternation: a pattern position that matches whichever of several
-//! shapes the value has — the "optional wrapper" case, e.g. an address that may
-//! or may not be masked (`add(base, off)` vs `and(add(base, off), mask)`).
+//! `one_of` alternation: one pattern position matching whichever of several
+//! shapes the value has. The motivating case is an optional wrapper, e.g. an
+//! address that may or may not be masked.
 
 use strider_ir::{IntBinaryOp, IntUnaryOp};
 use strider_ir_test_utils::Tb;
@@ -8,10 +8,8 @@ use strider_pattern::{
     Capture, MatchPat, Matcher, add, and, any_int_const, int_const, mul, neg, one_of, var, xor,
 };
 
-/// At the root, `one_of` matches every node matching any alternative.
 #[test]
 fn one_of_matches_any_alternative_at_root() {
-    // A graph containing both an `add(5, 3)` and a `mul(5, 3)`.
     let mut t = Tb::empty();
     let a = t.u64(5);
     let b = t.u64(3);
@@ -27,17 +25,17 @@ fn one_of_matches_any_alternative_at_root() {
     ]
     .into_pattern();
 
-    // matches the add(5,3) and the mul(5,3) — the outer add(sum,prod) matches
-    // neither alternative (its operands are not the two constants).
+    // The outer add(sum, prod) matches neither alternative: its operands are
+    // not the two constants.
     assert_eq!(m.find_all(&pat).unwrap().len(), 2);
 }
 
-/// Nested `one_of` matches an optionally-wrapped inner shape, binding a shared
-/// capture in whichever branch fires — the motivating "maybe-masked address".
+/// A shared capture must bind in whichever alternative fires, so a nested
+/// `one_of` can match an optionally-wrapped inner shape.
 #[test]
 fn one_of_matches_optionally_masked_inner_with_shared_capture() {
-    // neg(add(11, 7))                 -> the unmasked branch
-    // neg(and(add(22, 7), 0xff))      -> the masked branch
+    // neg(add(11, 7))            unmasked branch
+    // neg(and(add(22, 7), 0xff)) masked branch
     let mut t = Tb::empty();
     let add1 = {
         let c = t.u64(11);
@@ -60,7 +58,6 @@ fn one_of_matches_optionally_masked_inner_with_shared_capture() {
     let m = Matcher::new(&f);
 
     let base = Capture::new();
-    // neg( one_of( add(base, 7) , and(add(base, 7), any_const) ) )
     let pat = neg(one_of![
         add(var(base), int_const(7u128)),
         and(add(var(base), int_const(7u128)), any_int_const()),
@@ -73,16 +70,14 @@ fn one_of_matches_optionally_masked_inner_with_shared_capture() {
         2,
         "both the masked and unmasked negs should match"
     );
-    // the shared capture is bound in whichever branch fired (both matches).
     let bound = hits.iter().filter(|h| h.value(base).is_some()).count();
     assert_eq!(bound, 2, "base captured in each match");
 }
 
-/// `one_of` nests: an alternative may itself be a `one_of`, and the whole thing
-/// matches the flattened union of the leaf alternatives.
+/// An alternative may itself be a `one_of`; the whole matches the flattened
+/// union of the leaves.
 #[test]
 fn one_of_nests_recursively() {
-    // A graph with add(5,3), mul(5,3), and xor(5,3).
     let mut t = Tb::empty();
     let a = t.u64(5);
     let b = t.u64(3);
@@ -94,7 +89,6 @@ fn one_of_nests_recursively() {
     let f = t.ret_val(root);
     let m = Matcher::new(&f);
 
-    // one_of[ add , one_of[ mul , xor ] ] — matches all three leaf ops.
     let pat = one_of![
         add(int_const(5u128), int_const(3u128)),
         one_of![

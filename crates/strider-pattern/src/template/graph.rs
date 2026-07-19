@@ -1,18 +1,16 @@
-//! The bipartite build-side graph: [`Template`].
+//! The bipartite build-side graph, counterpart to
+//! [`Pattern`](crate::matcher::Pattern): the generic
+//! [`strider_graph::Graph`] under
+//! [`NeverCacheable`](strider_graph::NeverCacheable), over the payloads
+//! [`TmplNode`] and [`TmplValue`].
 //!
-//! [`Template`] is the build-side counterpart of
-//! [`Pattern`](crate::matcher::Pattern), instantiating the generic
-//! [`strider_graph::Graph`] (with the always-allocate
-//! [`NeverCacheable`](strider_graph::NeverCacheable) policy) over the build
-//! payloads [`TmplNode`] (the node vertex) and [`TmplValue`] (the output
-//! vertex). Unlike the match side, a template carries no kindspecs /
-//! limits / predicates: a node is either a [`Build`](TmplNodeKind::Build)
-//! (declaring a [`TemplateKind`] — a concrete `NodeKind` or a dynamic
-//! `Fn`) or a [`Capture`](TmplNodeKind::Capture) leaf marker whose
-//! [`ValueCapture`](TmplValue::ValueCapture) output resolves through the
-//! LHS [`Bindings`](crate::Bindings) at instantiation. A `Template` is
-//! therefore **buildable by construction** — there is no match-only shape
-//! it can represent.
+//! Unlike the match side, a template carries no kindspecs or predicates. A
+//! node is either a [`Build`](TmplNodeKind::Build) declaring a
+//! [`TemplateKind`], or a [`Capture`](TmplNodeKind::Capture) leaf marker
+//! whose [`ValueCapture`](TmplValue::ValueCapture) output resolves through
+//! the LHS [`Bindings`](crate::Bindings) at instantiation. A `Template` is
+//! therefore buildable by construction: it can represent no match-only
+//! shape.
 
 use strider_graph::{Graph, NeverCacheable, NodeId};
 
@@ -21,23 +19,14 @@ use crate::graph_ext::{HasInputSlots, PatGraphRead};
 use crate::matcher::OutputKindSpec;
 use crate::template::{TemplateKind, TemplateTy};
 
-/// A template **node** vertex.
-///
-/// Carries the build [`kind`](Self::kind) plus the consumer input slot of
-/// each input (parallel to the generic graph's input order; see
-/// `graph_ext` for why the slot lives on the node payload).
-///
-/// A capture is split across both vertex enums: the node side is a
-/// payload-less [`Capture`](TmplNodeKind::Capture) **marker** that only says
-/// "this leaf is a capture, don't synthesise it"; the capture id and its
-/// value resolution live on the produced [`TmplValue::ValueCapture`]. The
-/// node side is deliberately opaque — for now the value side carries
-/// everything.
+/// A capture is split across both vertex enums. The node side is a
+/// payload-less marker saying only "this leaf is a capture, do not synthesise
+/// it"; the capture id and its value resolution live on the produced
+/// [`TmplValue::ValueCapture`].
 pub struct TmplNode {
-    /// The build kind (synthesise vs. capture-leaf marker).
     pub kind: TmplNodeKind,
-    /// The consumer input slot of each input, parallel to the generic
-    /// graph's input order.
+    /// Parallel to the generic graph's input order; see `graph_ext` for why
+    /// the slot rides on the node payload.
     pub input_slots: Vec<usize>,
 }
 
@@ -47,59 +36,37 @@ impl HasInputSlots for TmplNode {
     }
 }
 
-/// How a template node materialises.
-///
-/// * [`Build`](Self::Build) — a node to synthesise as fresh IR from its
-///   [`TemplateKind`] (a concrete `NodeKind` or a dynamic `Fn`).
-/// * [`Capture`](Self::Capture) — a **leaf** marker; resolves through its
-///   [`ValueCapture`](TmplValue::ValueCapture) output to the LHS-bound
-///   value (the `add(x, 0) → x` shape). Never synthesised, never has
-///   inputs.
 pub enum TmplNodeKind {
-    /// A node to synthesise as fresh IR.
+    /// Synthesised as fresh IR from a concrete `NodeKind` or a dynamic `Fn`.
     Build(TemplateKind),
-    /// A capture leaf marker; the capture id lives on its `ValueCapture`
-    /// output.
+    /// A leaf resolving through its
+    /// [`ValueCapture`](TmplValue::ValueCapture) output to the LHS-bound
+    /// value, as in `add(x, 0) -> x`. Never synthesised, never has inputs.
     Capture,
 }
 
-/// A template **output** vertex — either a built output's signature or a
-/// value capture.
-///
-/// This is the value side of the build graph. A built node produces
-/// [`TmplOutput`](Self::TmplOutput) value/memory/control outputs; a
-/// capture leaf produces a [`ValueCapture`](Self::ValueCapture) that
-/// carries the capture id and resolves to the LHS-bound value at
-/// instantiation.
+/// The value side of the build graph.
 pub enum TmplValue {
-    /// A built output's signature (slot + kind + type).
+    /// A built node's output: slot, kind and type.
     TmplOutput(TmplOutput),
-    /// A value capture: resolves to `bindings.get_value(c)`.
+    /// Resolves to `bindings.get_value(c)` at instantiation.
     ValueCapture(Capture),
 }
 
-/// A built output's signature — one slot of a built node's output
-/// signature.
-///
-/// On the build side these declare the materialised node's output
-/// signature (value / memory / control / phi-token), so a multi-output
-/// interior node (a `Store` / `Call` producing a memory token a later node
-/// consumes) wires the right slot. Value outputs also carry the build
-/// [`TemplateTy`] (inherit-root or fixed) resolved at instantiation;
-/// memory / control / phi-token outputs ignore it.
+/// One slot of a materialised node's output signature. Declaring the kind
+/// (value / memory / control / phi-token) is what lets a multi-output interior
+/// node, such as a `Store` or `Call` whose memory token a later node consumes,
+/// wire the right slot.
 pub struct TmplOutput {
-    /// The output slot index on the producing node.
     pub slot: usize,
-    /// The kind of output this slot declares.
     pub kind: OutputKindSpec,
-    /// The value output type this slot declares
-    /// ([`TemplateTy::InheritRoot`] by default). Meaningful only for
-    /// value outputs.
+    /// Resolved at instantiation, and meaningful only for value outputs;
+    /// memory / control / phi-token slots ignore it.
     pub ty: TemplateTy,
 }
 
 impl TmplOutput {
-    /// A value output at `slot`, inheriting the rewrite root's type.
+    /// Inherits the rewrite root's type.
     pub fn value(slot: usize) -> Self {
         Self {
             slot,
@@ -108,7 +75,6 @@ impl TmplOutput {
         }
     }
 
-    /// A memory-token output at `slot`.
     pub fn memory(slot: usize) -> Self {
         Self {
             slot,
@@ -118,36 +84,29 @@ impl TmplOutput {
     }
 }
 
-/// A build-side template over the IR: a generic bipartite
-/// [`strider_graph::Graph`] of [`TmplNode`] / [`TmplValue`] vertices,
-/// materialised by [`instantiate`](crate::template::instantiate).
+/// Materialised by [`instantiate`](crate::template::instantiate).
 pub struct Template {
     pub(crate) graph: Graph<TmplNode, TmplValue, NeverCacheable>,
 }
 
 impl Template {
-    /// Wraps an already-materialised bipartite graph as a [`Template`].
-    /// Used by `TemplateBuilder::finish` after the staging core seals the
+    /// For `TemplateBuilder::finish`, once the staging core has sealed the
     /// staged DAG.
     pub(crate) fn from_graph(graph: Graph<TmplNode, TmplValue, NeverCacheable>) -> Self {
         Self { graph }
     }
 
-    /// The template's build root — the unique graph sink, recovered
-    /// structurally.
+    /// The build root is the unique sink, recovered structurally.
     ///
     /// # Errors
-    /// Errors if the template is not a single-rooted graph: zero sinks
-    /// (rootless / cyclic) or more than one (multi-rooted).
+    /// Unless there is exactly one sink: zero means rootless or cyclic, more
+    /// than one means multi-rooted.
     pub fn root(&self) -> anyhow::Result<NodeId> {
         self.graph.derive_root()
     }
 
-    /// Every [`Capture`] this template references via a
-    /// [`ValueCapture`](TmplValue::ValueCapture) output vertex.
-    ///
-    /// Used by the rewrite engine's construction-time capture-coverage
-    /// check to confirm every referenced capture is bound by the LHS.
+    /// Drives the rewrite engine's construction-time coverage check, which
+    /// confirms the LHS binds every capture the RHS references.
     pub fn referenced_captures(&self) -> impl Iterator<Item = Capture> + '_ {
         self.graph
             .all_value_ids()
@@ -164,16 +123,14 @@ mod tests {
 
     #[test]
     fn output_vertex_carries_build_type_not_node() {
-        // The value-output *type* is data about the value, so it lives on
-        // the output vertex, mirroring the match side where `PatValue`
-        // carries width/type and `PatNode` carries none.
+        // The type is data about the value, so it rides the output vertex,
+        // mirroring `PatValue` on the match side.
         let o = TmplOutput::value(0);
         assert!(matches!(o.ty, TemplateTy::InheritRoot));
     }
 
-    /// `bool_not(var(c))` seals into `xor(var(c), IntConst(1)):I1` — the
-    /// xor, its const operand, and the captured var node: three node
-    /// vertices.
+    /// `bool_not(var(c))` seals into `xor(var(c), IntConst(1)):I1`: the xor,
+    /// its const operand and the captured var, so three node vertices.
     #[test]
     fn bool_not_template_builds_three_node_graph() {
         use crate::{Capture, TemplatePat, var};

@@ -8,18 +8,13 @@
     )
 )]
 
-//! Sea-of-nodes pattern + template crate.
+//! Sea-of-nodes pattern (match side) + template (build side).
 //!
-//! Internal representation: [`matcher::Pattern`] and
-//! [`template::Template`] are backed by the generic
-//! [`strider_graph::Graph<N, V, NeverCacheable>`](strider_graph::Graph),
-//! which mirrors the IR's `Node → ValueData → Node` bipartite structure.
-//! `Pattern` instantiates it as `Graph<PatNode, PatValue, NeverCacheable>`
-//! (no dedup — every pattern node is distinct); `Template` as
-//! `Graph<TmplNode, TmplValue, NeverCacheable>`. The generic-graph read
-//! vocabulary the matcher / instantiation walk use is restored on top of
-//! the generic graph by `graph_ext`; the sparse per-input consumer slot
-//! rides on the node payload there.
+//! Both [`matcher::Pattern`] and [`template::Template`] are the generic
+//! [`strider_graph::Graph`] under `NeverCacheable`: pattern nodes are never
+//! deduplicated, since two structurally identical positions in a pattern are
+//! distinct match sites. `graph_ext` restores the read vocabulary the matcher
+//! and the instantiation walk need on top of the generic graph.
 
 pub mod bindings;
 pub mod capture;
@@ -55,14 +50,9 @@ pub use node_builders::{
 pub use template::template_pat::TemplatePat;
 pub use template::{Template, TemplateCtx, instantiate};
 
-/// Returns the [`ValueType`](strider_ir::node::ValueType) of
-/// the matched root's first value input, or `None` if the root has no
-/// inputs or its first input isn't a value edge.
-///
-/// Exposed for the `*_const_with!` macros via the magic `in_ty`
-/// identifier — for `IntCmp(lhs, rhs)` rules where the comparison's
-/// input type (needed for signed / carry handling) differs from the
-/// root's output type (always `I1`).
+/// Reached from the `*_const_with!` macros via the magic `in_ty` identifier.
+/// An `IntCmp` root's output type is always `I1`, so signed / carry handling
+/// has to read the operand type instead.
 pub fn first_value_input_type(ctx: &TemplateCtx<'_>) -> Option<strider_ir::node::ValueType> {
     let inputs = ctx.function.node_inputs(ctx.root);
     let inp = inputs.into_iter().next()?;

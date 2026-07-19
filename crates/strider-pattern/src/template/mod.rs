@@ -1,18 +1,11 @@
-//! Template instantiation: materialising a [`Template`] as fresh IR.
+//! Materialising a [`Template`] as fresh IR.
 //!
-//! A [`Template`] is the build-side counterpart of
-//! [`Pattern`](crate::matcher::Pattern): a node is either a
-//! [`Build`](TmplNodeKind::Build) (declaring a [`TemplateKind`] — an exact
-//! `NodeKind` or a dynamic `Fn`) or a [`Capture`](TmplNodeKind::Capture) leaf
-//! marker. The value side lives on the [`TmplValue`]: a built node's
-//! [`TmplOutput`] carries the output [`TemplateTy`], and a capture leaf's
-//! [`ValueCapture`](TmplValue::ValueCapture) carries the capture id.
-//! [`instantiate`] walks the bipartite store in topological order,
-//! resolves each capture leaf's `ValueCapture` through the LHS
-//! [`Bindings`] (the captured value re-used verbatim), synthesises every
-//! `Build` node via the generic [`strider_ir::IRBuilder::create_node_attributed`] seam
-//! (so each implementor applies its own attribution / liveness policy),
-//! and returns the root's materialised value output.
+//! [`instantiate`] walks the bipartite store in topological order, resolves
+//! each capture leaf's `ValueCapture` through the LHS [`Bindings`], reusing
+//! the captured value verbatim, synthesises every `Build` node through the
+//! [`strider_ir::IRBuilder::create_node_attributed`] seam so each implementor
+//! keeps its own attribution and liveness policy, and returns the root's
+//! materialised value output.
 
 mod builder;
 mod ctx;
@@ -23,11 +16,10 @@ pub use builder::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 pub use ctx::TemplateCtx;
 pub use graph::{Template, TmplNode, TmplNodeKind, TmplOutput, TmplValue};
 
-// Build-side twin value-op factories (`template::add`, `template::sub`,
-// …). These share the typed structs of the bare match-side factories but
-// carry `TemplatePat` constructor bounds, so the match/template boundary
-// is enforced at the construction call site. Re-exported here so callers
-// write `strider_pattern::template::add(...)` on a rewrite RHS.
+// Build-side twins of the match-side value-op factories. They share the same
+// typed structs but carry `TemplatePat` constructor bounds, so the
+// match/template boundary is enforced at the construction call site.
+// Re-exported so a rewrite RHS reads `strider_pattern::template::add(...)`.
 pub use crate::typed::value_ops::template::*;
 
 use std::collections::BTreeMap;
@@ -42,101 +34,81 @@ use crate::bindings::Bindings;
 use crate::graph_ext::{PatGraphRead, reachable_topo};
 use crate::matcher::OutputKindSpec;
 
-/// Type alias for the [`TemplateKind::Fn`] closure shape. Factored out
-/// to keep [`TemplateKind`] legible under clippy's `type_complexity`
-/// lint. `Box` (single-threaded; no `Arc` / `Rc` / `Send` / `Sync` in
-/// the core).
+/// Named to keep [`TemplateKind`] under clippy's `type_complexity` lint.
+/// `Box`, not `Arc` / `Rc`: the core is single-threaded.
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
 
-/// Type alias for the [`TemplateKind::FnIntConst`] closure shape.
-/// Returns a `u128` value; the instantiator interns it as a `ConstId` via
-/// `intern_int_const` (≤I128) or `intern_int_const_limbs` (I256/I512).
-///
-/// The `u128` return caps the expressible range: for an I256/I512 output
-/// type only the low 128 bits are materialised (the high limbs are zero).
-/// That suffices for every current rewrite (folds operate at ≤128 bits);
-/// a full-range I256/I512 rewrite constant would need a wider closure.
+/// The `u128` return caps the expressible range: an I256/I512 output
+/// materialises only the low 128 bits, leaving the high limbs zero. Every
+/// current rewrite folds at 128 bits or below; a full-range I256/I512
+/// constant would need a wider closure.
 pub type TemplateKindFnIntConst = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<u128>>;
 
-/// How a template node materialises into fresh IR during instantiation.
+/// How a template node materialises into fresh IR.
 pub enum TemplateKind {
-    /// Emit a node with the given exact [`NodeKind`].
     Exact(NodeKind),
-    /// Dynamic-kind closure variant. The closure receives a
-    /// [`TemplateCtx`] — exposing the captured LHS [`Bindings`], the
-    /// matched-root `NodeId` / output type, and a shared
-    /// [`Function`] — and returns the `NodeKind` to materialise. Used
-    /// by the `*_const_with` family of builders to emit constants whose
-    /// value is computed from captured operand values at rewrite time.
+    /// The closure returns the `NodeKind` to materialise, given a
+    /// [`TemplateCtx`]. Drives the `*_const_with` builders, whose constants
+    /// are computed from captured operand values at rewrite time.
     Fn(TemplateKindFn),
-    /// Dynamic `IntConst` variant: the closure computes a `u128` value
-    /// at rewrite time, and the instantiator interns it via the unified
-    /// `ConstId` interner — `intern_int_const` for ≤128-bit types,
-    /// `intern_int_const_limbs` for I256/I512 — without ever truncating
-    /// to `u64` prematurely.  Used by [`int_const_with_fn`](crate::int_const_with_fn)
-    /// so that I128 rewrites preserve values wider than 64 bits.
+    /// The closure computes a `u128` at rewrite time and the instantiator
+    /// interns it through the unified `ConstId` interner, never truncating to
+    /// `u64` first, so an I128 rewrite preserves values wider than 64 bits.
     FnIntConst(TemplateKindFnIntConst),
 }
 
-/// The output type a template node declares for its value output.
+/// The output type a template node declares for its value output. All three
+/// resolve at instantiation time.
 #[derive(Clone, Copy)]
 pub enum TemplateTy {
-    /// Inherit the rewrite root's output type (resolved at
-    /// instantiation time).
+    /// The rewrite root's output type.
     InheritRoot,
-    /// Inherit the width of a **bound LHS capture**, resolved at
-    /// instantiation time from the value the capture matched.  Binding-relative
-    /// (not root-relative like `InheritRoot`): use it when a materialised
-    /// interior node's width comes from a captured operand that the rewrite
-    /// root's shape does not expose — e.g. the `And(x, mask)` / mask in
-    /// `Sless(x<<C, 0) → Xor(Equal(And(x,mask),0),1)`, whose `I1` `Xor` root has
-    /// no `x`-wide input.
+    /// The width of the value a bound LHS capture matched. For a materialised
+    /// interior node whose width comes from a captured operand the root's
+    /// shape does not expose: in
+    /// `Sless(x<<C, 0) -> Xor(Equal(And(x,mask),0),1)` the `I1` `Xor` root has
+    /// no `x`-wide input, so `And` and its mask cannot inherit from it.
     InheritBinding(crate::Capture),
-    /// A fixed output type, independent of the root.
+    /// Independent of the root.
     Fixed(ValueType),
 }
 
-/// Materialise `template` as an IR sub-graph rooted at the returned
-/// output.
+/// Materialises `template` as an IR sub-graph rooted at the returned output.
 ///
-/// Captures are resolved from `bindings`; `root_ty` is the output type
-/// used for any node whose [`TemplateTy`] is [`TemplateTy::InheritRoot`].
-/// `lhs_root` is the matched LHS root `NodeId` exposed to
-/// [`TemplateKind::Fn`] closures via [`TemplateCtx::root`] — pure-`Exact`
-/// templates ignore it, so standalone callers may pass any valid
-/// `NodeId` from `function`.
+/// `root_ty` types any node whose [`TemplateTy`] is
+/// [`TemplateTy::InheritRoot`]. `lhs_root` reaches [`TemplateKind::Fn`]
+/// closures as [`TemplateCtx::root`]; a pure-`Exact` template ignores it, so
+/// a standalone caller may pass any valid `NodeId` from `function`.
 ///
-/// Interior nodes may be multi-output (a built `Store` / `Call`
-/// producing a memory token a later node consumes); the **root** yields a
-/// single value output — the contract the single-value rewrite rule
+/// `proof_nodes` is unioned into the asm-fingerprint of every node created
+/// here. Callers pass the matched LHS footprint so each fresh RHS node, root
+/// and interior alike, carries the whole rewrite's proof rather than just the
+/// matched root. `lhs_root` stays separate because the dynamic-`Fn` closures
+/// need the single matched-root node for `InheritRoot` typing.
+///
+/// Interior nodes may be multi-output, such as a built `Store` or `Call`
+/// producing a memory token a later node consumes. The root always yields a
+/// single value output, which is the contract the single-value rewrite rule
 /// relies on.
 ///
 /// # Author-owned output-signature validity
 ///
-/// `create_node_attributed` is called with each template node's **declared** output
-/// signature; this function does **not** run [`strider_ir::validate`] on
-/// the materialised sub-graph, and the rewrite path never validates
-/// afterward either. It is the [`Template`] author's responsibility that
-/// every node's declared output signature matches its `NodeKind`'s
-/// `expected_signature`. Input-slot wiring **is** checked here: a gap in a
-/// node's input slots (non-contiguous `0..n`) or a duplicate slot is
-/// rejected with an error rather than being silently closed / overwritten.
-/// The typed `template::` builders wire contiguous single-occupancy slots
-/// by construction; a [`Template`] hand-built via the raw
-/// [`TemplateBuilder`] node / output verbs is validated against this here.
+/// Nodes are created with their **declared** output signature, and neither
+/// this function nor the rewrite path afterwards runs
+/// [`strider_ir::validate`]. Matching each declared signature to its
+/// `NodeKind`'s `expected_signature` is the [`Template`] author's
+/// responsibility.
+///
+/// Input-slot wiring IS checked here: a gap or a duplicate errors out rather
+/// than being silently closed or overwritten. The typed `template::` builders
+/// wire contiguous single-occupancy slots by construction, so only a
+/// hand-built [`Template`] can trip this.
 ///
 /// # Errors
 ///
-/// Returns an error if the template is rootless, references an unbound
-/// capture, has a [`TemplateKind::Fn`] closure that itself errors, has a
-/// node with gapped / duplicate input slots, or if the underlying
-/// `create_node_attributed` call fails to produce a value output.
-/// `proof_nodes` is the attribution set unioned into the asm-fingerprint of
-/// **every** node this function creates (via `create_node_attributed`): the
-/// caller passes the matched LHS footprint so each fresh RHS node — root and
-/// interior alike — carries the whole rewrite's proof, not just the matched
-/// root. `lhs_root` is kept separately because the dynamic-`Fn` template
-/// closures need the single matched-root node for `InheritRoot` typing.
+/// If the template is rootless, references an unbound capture, has a
+/// [`TemplateKind::Fn`] closure that itself errors, has gapped or duplicate
+/// input slots, or if node creation yields no value output.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
@@ -148,30 +120,24 @@ pub fn instantiate<B: IRBuilder>(
     let root = template.root()?;
     let order = reachable_topo(&template.graph, root)?;
 
-    // Widths for `TemplateTy::InheritBinding(cap)` nodes: resolved once from the
-    // value each referenced capture matched.  Scanned before the mutating build
-    // loop (needs an immutable `function` borrow).  A capture bound to a
-    // non-typed value simply doesn't enter the map and falls back to `root_ty`.
+    // Scanned before the mutating build loop, which is what the immutable
+    // `function` borrow requires.
     let binding_tys = resolve_binding_tys(template, bindings, builder.function());
 
-    // Map from a template *output vertex* (a generic-graph ValueId) → its
-    // materialised IR ValueId. Keying on the output vertex (not the producer
-    // node) lets a multi-output interior node feed the right slot to each
-    // consumer: a `Store`'s memory output and a sibling value output
-    // resolve to distinct IR outputs.
+    // Keyed on the output VERTEX rather than the producer node, so a
+    // multi-output interior node feeds the right slot to each consumer: a
+    // `Store`'s memory output and a sibling value output must resolve to
+    // distinct IR outputs.
     let mut materialised: FxHashMap<TmplValueId, ValueId> = FxHashMap::default();
-    // The root node's value output, captured as the root materialises.
     let mut root_value: Option<ValueId> = None;
 
     for vtx in order {
         let nd = template.graph.node_weight(vtx);
 
-        // Resolve this node's build kind. A `Capture` leaf is a marker with
-        // no build kind: it *is* the materialisation — its `ValueCapture`
-        // output resolves to the LHS binding (the captured value re-used
-        // verbatim in the RHS, e.g. `add(x, 0) → x`) and is never
-        // synthesised. The capture id lives on the value (output), not the
-        // marker node.
+        // A `Capture` leaf has no build kind: it IS the materialisation. Its
+        // `ValueCapture` output resolves to the LHS binding, reusing that
+        // value verbatim as in `add(x, 0) -> x`, and is never synthesised.
+        // The capture id lives on the output, not the marker node.
         let kind = match &nd.kind {
             TmplNodeKind::Capture => {
                 let outs = template.graph.produced_outputs(vtx);
@@ -192,10 +158,8 @@ pub fn instantiate<B: IRBuilder>(
             }
             TmplNodeKind::Build(TemplateKind::Exact(k)) => *k,
             TmplNodeKind::Build(TemplateKind::Fn(f)) => {
-                // The node's declared value-output type (resolved against
-                // the rewrite root for `InheritRoot`), read from the node's
-                // value output vertex. Exposed to the dynamic closure as
-                // the `root_ty` it computes its constant against.
+                // The closure computes its constant against this node's own
+                // declared output type, not the rewrite root's.
                 let value_ty = node_value_ty(template, vtx, root_ty, &binding_tys);
                 let ctx = TemplateCtx {
                     function: builder.function(),
@@ -206,8 +170,6 @@ pub fn instantiate<B: IRBuilder>(
                 f(&ctx)?
             }
             TmplNodeKind::Build(TemplateKind::FnIntConst(f)) => {
-                // Compute the u128 value via the closure, then intern it
-                // (see `intern_fn_int_const` for the per-width interning).
                 let value_ty = node_value_ty(template, vtx, root_ty, &binding_tys);
                 let ctx = TemplateCtx {
                     function: builder.function(),
@@ -222,21 +184,17 @@ pub fn instantiate<B: IRBuilder>(
 
         let inputs = collect_inputs(template, vtx, &materialised)?;
 
-        // Declare the node's output signature from its template output
-        // vertices. The common path is a single value output; a
-        // multi-output node (e.g. a `Store` declaring a memory output a
-        // later node consumes) declares that signature instead. Each value
-        // output resolves its own [`TemplateTy`] against the rewrite root.
+        // Usually a single value output; a multi-output node such as a
+        // `Store` declares its memory output here too.
         let outputs = output_kinds_for(template, vtx, root_ty, &binding_tys);
 
         let node = builder.create_node_attributed(kind, inputs, outputs, proof_nodes);
 
-        // Map each template output vertex to the IR output at the
-        // matching slot, so multi-output consumers wire the right edge.
+        // Map each template output vertex onto the IR output at the same
+        // slot, so multi-output consumers wire the right edge.
         let ir_outputs = builder.function().node_outputs(node);
         for out_vtx in template.graph.produced_outputs(vtx).iter().copied() {
-            // A built node's outputs are all `TmplOutput`; a `ValueCapture`
-            // never hangs off a `Build` node.
+            // A `ValueCapture` never hangs off a `Build` node.
             let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
                 continue;
             };
@@ -262,10 +220,8 @@ pub fn instantiate<B: IRBuilder>(
     root_value.ok_or_else(|| anyhow!("root template node never materialised"))
 }
 
-/// Resolve a build [`TemplateTy`] against the rewrite root's output type
-/// (`root_ty`) and the per-capture width map (`binding_tys`).  An
-/// `InheritBinding` whose capture didn't resolve to a typed value falls back
-/// to `root_ty`.
+/// An `InheritBinding` whose capture never resolved to a typed value falls
+/// back to `root_ty`.
 fn resolve_ty(
     ty: TemplateTy,
     root_ty: ValueType,
@@ -278,10 +234,9 @@ fn resolve_ty(
     }
 }
 
-/// Resolve the width of every `InheritBinding(cap)` referenced anywhere in
-/// `template`, once, from the value each capture matched in `bindings`.  A
-/// capture bound to a non-typed value (or unbound) is simply omitted — the
-/// consumer falls back to the root type.
+/// Resolves every `InheritBinding(cap)` width once, from the value each
+/// capture matched. A capture that is unbound or bound to a non-typed value is
+/// omitted, leaving the consumer to fall back to the root type.
 fn resolve_binding_tys(
     template: &Template,
     bindings: &Bindings,
@@ -307,27 +262,22 @@ fn resolve_binding_tys(
     out
 }
 
-/// Intern a dynamic-`FnIntConst` value `v` as an `IntConst` of `value_ty`.
-///
-/// The closure value is a `u128`, so it always fits within 128 bits — even for
-/// I256/I512 the high limbs are zero, so the limb path would canonicalise back
-/// through `intern_int_const` anyway. `intern_int_const` masks `v` to
-/// `value_ty`'s width and stores it as `Bits`.
+/// `v` is a `u128`, so even an I256/I512 output has zero high limbs and the
+/// limb path would canonicalise back through `intern_int_const` regardless.
+/// That masks `v` to `value_ty`'s width and stores it as `Bits`.
 fn intern_fn_int_const<B: IRBuilder>(builder: &mut B, value_ty: ValueType, v: u128) -> NodeKind {
     NodeKind::IntConst(builder.function_mut().intern_int_const(v, value_ty))
 }
 
-/// Collect a template node's inputs in slot order: each `Consumes` edge names
-/// the producer output vertex feeding this node's slot; its already-materialised
-/// IR output is read from `materialised`.
+/// In slot order, reading each producer's already-materialised IR output from
+/// `materialised`.
 ///
-/// The raw `TemplateBuilder` verbs do not enforce contiguous,
-/// single-occupancy slots; a gap (slots 0 and 2 but not 1) would be
-/// silently CLOSED by `into_values()` and a duplicate slot would
-/// silently overwrite the earlier edge — both producing wrong IR with
-/// no diagnostic on the validate-skipping rewrite path. Reject both
-/// here (the typed builders always wire `0..n` once, so they never
-/// trip this).
+/// The raw `TemplateBuilder` verbs enforce neither contiguous nor
+/// single-occupancy slots. A gap (slots 0 and 2 but not 1) would be silently
+/// CLOSED by `into_values()`, and a duplicate slot would silently overwrite
+/// the earlier edge; both yield wrong IR with no diagnostic, since the
+/// rewrite path skips validation. Hence both are rejected here. The typed
+/// builders always wire `0..n` exactly once and never trip it.
 fn collect_inputs(
     template: &Template,
     node_vtx: NodeId,
@@ -345,9 +295,8 @@ fn collect_inputs(
             ));
         }
     }
-    // Reject a gap: the keys must be exactly the contiguous range
-    // `0..len`, else the dense `into_values()` would shift later slots
-    // down onto the wrong IR input index.
+    // The keys must be exactly `0..len`, or the dense `into_values()` shifts
+    // later slots down onto the wrong IR input index.
     if inputs_by_slot
         .keys()
         .enumerate()
@@ -363,10 +312,8 @@ fn collect_inputs(
     Ok(inputs_by_slot.into_values().collect())
 }
 
-/// Resolve one template output vertex's [`OutputKindSpec`] (+ its
-/// [`TemplateTy`]) into the concrete IR [`ValueKind`], against `root_ty`.
-/// Single source of truth for the `OutputKindSpec → ValueKind` mapping
-/// shared by [`node_value_ty`] and [`output_kinds_for`].
+/// The single source of truth for the `OutputKindSpec` to [`ValueKind`]
+/// mapping, shared by [`node_value_ty`] and [`output_kinds_for`].
 fn resolved_output_kind(
     o: &TmplOutput,
     root_ty: ValueType,
@@ -376,19 +323,17 @@ fn resolved_output_kind(
         OutputKindSpec::Memory => ValueKind::Memory,
         OutputKindSpec::Control => ValueKind::Control,
         OutputKindSpec::PhiToken => ValueKind::PhiToken,
-        // Value (typed or not) — use this output's own resolved type. The
-        // unconstrained `Any` wildcard is a match-only kind (no template
-        // builder emits it); resolve it defensively.
+        // Every value shape uses this output's own resolved type. `Any` is
+        // match-only and no template builder emits it; resolved defensively.
         OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
             ValueKind::Typed(resolve_ty(o.ty, root_ty, binding_tys))
         }
     }
 }
 
-/// The resolved value-output type a template node declares: the
-/// [`TemplateTy`] of its first value output vertex, resolved against
-/// `root_ty`. Falls back to `root_ty` when the node has no value output
-/// vertex (the dynamic-`Fn` `root_ty` for such a node is then the root's).
+/// The [`TemplateTy`] of the node's first value output vertex, resolved
+/// against `root_ty`. A node with no value output vertex falls back to
+/// `root_ty` itself.
 fn node_value_ty(
     template: &Template,
     node_vtx: NodeId,
@@ -412,11 +357,9 @@ fn node_value_ty(
         .unwrap_or(root_ty)
 }
 
-/// The full output-kind signature a template node declares, derived from
-/// its template output vertices; each value output resolves its own
-/// [`TemplateTy`] against `root_ty`. Falls back to a single value output
-/// of the root's type when the node has no explicit output vertex (the
-/// common value-expression case).
+/// Each value output resolves its own [`TemplateTy`] against `root_ty`. A
+/// node with no explicit output vertex, the common value-expression case,
+/// falls back to a single value output of the root's type.
 fn output_kinds_for(
     template: &Template,
     node_vtx: NodeId,

@@ -1,29 +1,22 @@
-//! Wildcards, constant constructors, constant-value capture.
-//!
-//! Covers: `any()`, `var(v)`, `int_const(n)`, `bool_const(b)`,
-//! `float_const(bits)`, `any_int_const/any_bool_const/any_float_const`,
-//! boundary values, and IR-level constant deduplication.
+//! Wildcards, constant constructors, constant-value capture, boundary values,
+//! and IR-level constant deduplication.
 
 use strider_ir::node::ValueType;
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a};
 
-// ── `any()` and `var(v)` ─────────────────────────────────────────────────────
-
 /// `any()` matches every reachable value output in the graph.
 #[test]
 fn any_matches_every_output() {
-    // Graph: return(add(5, 3)) — 3 value outputs: two IntConsts and one Add.
     let mut t = Tb::empty();
     let a = t.u64(5);
     let b = t.u64(3);
     let s = t.add(a, b);
     let function = t.ret_val(s);
 
-    // `any()` has no kind filter so it returns a match per reachable output.
-    // The exact count depends on graph internals (Entry/Return produce control
-    // edges, not value outputs) so we only require >= 3.
+    // No kind filter, so one match per reachable value output. The exact count
+    // depends on graph internals, hence the loose bound.
     let hits = Matcher::new(&function)
         .find_all(&any().into_pattern())
         .unwrap();
@@ -45,8 +38,6 @@ fn var_binds_to_matched_output() {
     let m = a::first(&function, int_const(42u128).capture(v).into_pattern());
     assert_eq!(m.bindings().get_uint(v, &function), Some(42));
 }
-
-// ── Integer constants ─────────────────────────────────────────────────────────
 
 #[test]
 fn int_const_exact_matches() {
@@ -82,8 +73,7 @@ fn any_int_const_captures_value() {
 
 #[test]
 fn any_int_const_rejects_non_const() {
-    // add(5, 3) has an Add root; any_int_const should only match the
-    // IntConst leaves — two matches total.
+    // Only the two IntConst leaves should match, not the Add root.
     let mut t = Tb::empty();
     let a1 = t.u64(5);
     let a2 = t.u64(3);
@@ -94,13 +84,10 @@ fn any_int_const_rejects_non_const() {
     a::matches(&function, any_int_const().capture(iv).into_pattern(), 2);
 }
 
-// ── Boolean constants ─────────────────────────────────────────────────────────
-
 #[test]
 fn bool_const_true_matches() {
-    // Return the I1 boolean const directly.  Widening it (via `as_int`) would
-    // const-fold it into a wider `IntConst`, which `bool_const` (an I1-typed
-    // matcher) must NOT match.
+    // Returned at I1 on purpose: widening via as_int would const-fold to a
+    // wider IntConst, which the I1-typed bool_const must not match.
     let mut t = Tb::empty();
     let b = t.boolean(true);
     let function = t.ret_val(b);
@@ -111,9 +98,7 @@ fn bool_const_true_matches() {
 
 #[test]
 fn any_bool_const_captures_value() {
-    // Return the I1 boolean const directly: widening it to a wider integer
-    // (via `as_int`) would const-fold it into a wider `IntConst`, leaving no
-    // reachable I1 boolean const for `any_bool_const` to match.
+    // Kept at I1: widening would const-fold away the boolean const entirely.
     let mut t = Tb::empty();
     let b = t.boolean(true);
     let function = t.ret_val(b);
@@ -122,8 +107,6 @@ fn any_bool_const_captures_value() {
     let m = a::unique(&function, any_bool_const().capture(bv).into_pattern());
     assert_eq!(m.bindings().get_bool(bv, &function), Some(true));
 }
-
-// ── Float constants ───────────────────────────────────────────────────────────
 
 #[test]
 fn float_const_exact_bits_matches() {
@@ -171,16 +154,13 @@ fn any_float_const_captures_bits() {
     );
 }
 
-// ── Constant deduplication ────────────────────────────────────────────────────
-
-/// The IR graph deduplicates constants: two `IntConst(5)` requests produce
-/// the same `NodeId`.  `find_all(int_const(5))` must therefore return exactly
-/// one match even when the value is used twice.
+/// The graph dedups constants, so two `IntConst(5)` requests are one `NodeId`
+/// and `find_all` sees a single match despite two uses.
 #[test]
 fn duplicate_int_const_is_single_node() {
     let mut t = Tb::empty();
     let c1 = t.u64(5);
-    let c2 = t.u64(5); // same value — deduplicated
+    let c2 = t.u64(5); // same value, deduplicated
     let s = t.add(c1, c2);
     let function = t.ret_val(s);
 

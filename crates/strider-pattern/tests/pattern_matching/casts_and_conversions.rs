@@ -1,12 +1,8 @@
 //! Width-changing and type-converting cast patterns.
 //!
-//! Covers: `zero_extend`, `sign_extend`, `extend(ExtendOp::…)`, `truncate`,
-//! `cast_to_float`, `int_to_float`, `float_to_int`, `float_to_float`,
-//! `int_bits_to_float`, `float_bits_to_int`.
-//!
-//! Because most cast producers are introduced implicitly by coercion helpers
-//! on `FunctionBuilder`, tests use those helpers to create the target nodes
-//! and then match against them with the corresponding pattern constructor.
+//! Most cast producers are introduced implicitly by coercion helpers on
+//! `FunctionBuilder`, so tests build nodes through those helpers and match
+//! them with the corresponding pattern constructor.
 
 use strider_ir::node::ValueType;
 use strider_ir::{ExtendOp, IRViewer};
@@ -15,11 +11,9 @@ use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn};
 
-// Note on constant folding: `extend_if_needed`, `truncate_if_needed`, and
-// `convert_to_*` on `IntConst` / `BoolConst` inputs immediately fold to a
-// new const rather than emitting an Extend / Truncate / CastTo* node.  To
-// exercise the cast nodes themselves each helper below threads the value
-// through an `Add` of two constants so the operand is non-const.
+// `extend_if_needed` / `truncate_if_needed` / `convert_to_*` fold on const
+// inputs instead of emitting a cast node, so the helpers below thread their
+// value through an `Add` to keep the operand non-const.
 
 fn non_const_u32(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::ValueId {
     let a_ = t.u32(a_v);
@@ -32,8 +26,6 @@ fn non_const_u64(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::ValueId {
     let b_ = t.u64(b_v);
     t.add(a_, b_)
 }
-
-// ── Zero / sign extend, truncate ─────────────────────────────────────────────
 
 #[test]
 fn zero_extend_matches() {
@@ -55,7 +47,6 @@ fn sign_extend_matches() {
 
 #[test]
 fn extend_op_variant_matches_zero_and_sign() {
-    // Zero-extend graph.
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
     let x = t.zext_to(s, ValueType::I64);
@@ -70,7 +61,6 @@ fn extend_op_variant_matches_zero_and_sign() {
         extend(ExtendOp::SignExtend, any()).into_pattern(),
     );
 
-    // Sign-extend graph.
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
     let x = t.sext_to(s, ValueType::I64);
@@ -97,7 +87,6 @@ fn truncate_matches() {
 
 #[test]
 fn extend_then_truncate_chain_matches() {
-    // Non-const I32 → I64 (zero-extend) → I8 (truncate).
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
     let ext = t.zext_to(s, ValueType::I64);
@@ -107,12 +96,6 @@ fn extend_then_truncate_chain_matches() {
     a::matches(&function, truncate(any()).into_pattern(), 1);
     a::matches(&function, truncate(zero_extend(any())).into_pattern(), 1);
 }
-
-// (The `CastToFloat` matching test was removed with the node kind: an
-// int→float cast is now `IntBitsToFloat`, covered by
-// `int_bits_to_float_matches` below.)
-
-// ── Int ↔ Float conversions ──────────────────────────────────────────────────
 
 #[test]
 fn int_to_float_matches() {
@@ -141,15 +124,14 @@ fn float_to_float_matches() {
     let ff = t.float_to_float(f, ValueType::F64);
     let as_int = t.float_to_int(ff, ValueType::I64);
     let function = t.ret_val(as_int);
-    // There are two FloatToFloat nodes.
+    // Two FloatToFloat nodes in the graph.
     a::matches(&function, float_to_float(any()).into_pattern(), 2);
 }
 
 #[test]
 fn int_bits_to_float_matches() {
     let mut t = Tb::empty();
-    // `build_int_bits_to_float` on a const folds immediately; use a
-    // non-const input (an Add) so a real IntBitsToFloat node is emitted.
+    // A const input folds, so feed an Add to emit a real IntBitsToFloat.
     let a_ = t.u64(1);
     let b_ = t.u64(2);
     let s = t.add(a_, b_);
@@ -170,11 +152,8 @@ fn float_bits_to_int_matches() {
     a::matches(&function, float_bits_to_int(any()).into_pattern(), 1);
 }
 
-// ── Cross-kind rejection ─────────────────────────────────────────────────────
-
 #[test]
 fn cast_patterns_are_kind_sensitive() {
-    // Graph has a ZeroExtend; patterns for unrelated casts must not match.
     let mut t = Tb::empty();
     let v = t.u32(1);
     let x = t.zext_to(v, ValueType::I64);
@@ -185,12 +164,10 @@ fn cast_patterns_are_kind_sensitive() {
     a::none(&function, int_bits_to_float(any()).into_pattern());
 }
 
-// ── ignore_casts_mask walk-through (mask lives on the Pattern) ─────────────────
-
 /// `Add(IntConst(5), ZeroExtend(reg))` at I64 where the extend's input is a
 /// 4-byte tracked register read (so the IR builder does not fold the cast).
 fn add_with_zext_reg_operand() -> strider_ir::Function {
-    let vn = reg_vn(0x40, 4); // 4-byte register varnode → I32
+    let vn = reg_vn(0x40, 4); // 4-byte register varnode, so I32
     let mut t = Tb::with_vars(&[vn]);
     let x32 = t.read_var(&vn);
     let zx = t.zext_to(x32, ValueType::I64);
@@ -200,8 +177,8 @@ fn add_with_zext_reg_operand() -> strider_ir::Function {
 }
 
 /// A strict `int_const` sub-pattern does NOT walk through a ZeroExtend: the
-/// walk-through fallback only engages on a *kind-mismatch* against the
-/// cast's *input*, and that input is a register read (not an IntConst).
+/// walk-through fallback engages only on a kind-mismatch against the cast's
+/// input, and that input is a register read.
 #[test]
 fn ignore_casts_mask_does_not_spuriously_match_strict_const() {
     let function = add_with_zext_reg_operand();
@@ -210,16 +187,15 @@ fn ignore_casts_mask_does_not_spuriously_match_strict_const() {
     a::none(&function, pat_strict);
 
     // With ZERO_EXTEND the matcher unwraps the cast and retries against the
-    // register read — still not an IntConst, so the strict pattern fails.
+    // register read, still not an IntConst.
     let pat_walk = add(int_const(5u128), any_int_const())
         .into_pattern()
         .ignore_casts_mask(CastMask::ZERO_EXTEND);
     a::none(&function, pat_walk);
 }
 
-/// With `CastMask::ZERO_EXTEND` set on the Pattern, `add(int_const(5),
-/// var(c))` still matches once (the direct producer `var(c)` accepts the
-/// ZeroExtend output before the walk-through fallback engages).
+/// `var(c)` accepts the ZeroExtend output as a direct producer, so the match
+/// lands before the walk-through fallback ever engages.
 #[test]
 fn ignore_casts_mask_zero_extend_matches_var_capture() {
     let function = add_with_zext_reg_operand();
@@ -240,13 +216,10 @@ fn ignore_casts_mask_zero_extend_matches_var_capture() {
     );
 }
 
-// ── Deep cast-chain walk-through ─────────────────────────────────────────────
-
-/// The cast walk-through is an unbounded tail-loop: a chain of 32
-/// alternating Truncate / ZeroExtend casts between the `Add` and the
-/// `Mul` is still skipped in one fallback step.  The `int_const` operand
-/// (a 0-input producer) is matched directly — the active cast mask never
-/// perturbs a leaf that already matches.
+/// The cast walk-through is an unbounded tail-loop: 32 alternating Truncate /
+/// ZeroExtend casts between the `Add` and the `Mul` are skipped in one fallback
+/// step. The `int_const` operand matches directly, since an active cast mask
+/// never perturbs a leaf that already matches.
 #[test]
 fn deep_alternating_cast_chain_walked_through() {
     let function = {
@@ -254,7 +227,7 @@ fn deep_alternating_cast_chain_walked_through() {
         let two = t.u64(2);
         let three = t.u64(3);
         let mut v = t.mul(two, three);
-        // 16 × (Truncate I64→I32, ZeroExtend I32→I64) = 32 cast nodes.
+        // 16 x (Truncate I64 to I32, ZeroExtend back) = 32 cast nodes.
         for _ in 0..16 {
             v = t.trunc_to(v, ValueType::I32);
             v = t.zext_to(v, ValueType::I64);
@@ -270,8 +243,7 @@ fn deep_alternating_cast_chain_walked_through() {
         add(mul(any(), any()), int_const(4u128)).into_pattern(),
     );
 
-    // With ignore_casts the matcher reaches the Mul through all 32 casts,
-    // and the const-4 leaf still matches as-is.
+    // With ignore_casts the matcher reaches the Mul through all 32 casts.
     a::matches(
         &function,
         add(mul(int_const(2u128), int_const(3u128)), int_const(4u128))

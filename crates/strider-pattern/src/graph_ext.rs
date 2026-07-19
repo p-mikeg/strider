@@ -1,59 +1,42 @@
-//! Read helpers over the generic
-//! [`strider_graph::Graph`].
-//!
-//! The match side ([`Pattern`](crate::matcher::Pattern)) and the build side
-//! ([`Template`](crate::template::Template)) both store their bipartite
-//! pattern graph as a `strider_graph::Graph<N, V, NeverCacheable>`. The
-//! generic graph exposes structural verbs (`node_inputs`, `node_outputs`,
-//! `producer`, `value_kind_ref`, …) but not the read vocabulary the
-//! matcher / instantiation walk were written against (`consumed_inputs`
-//! with per-edge slots, `produced_outputs`, `derive_root`,
-//! `reachable_topo`). This extension trait restores that vocabulary on top
-//! of the generic graph so the two consumers read it the same way they read
-//! the generic `strider_graph::Graph`.
+//! Read vocabulary the matcher and the instantiation walk need on top of the
+//! generic [`strider_graph::Graph`], shared by the match side
+//! ([`Pattern`](crate::matcher::Pattern)) and the build side
+//! ([`Template`](crate::template::Template)).
 //!
 //! ## The sparse-slot bridge
 //!
-//! A pattern's inputs are **sparse** (`call().arg(0, …)` wires only raw
-//! input slot 4), whereas the generic graph stores inputs densely. The
-//! original consumer slot of each input therefore rides on the node payload
-//! ([`HasInputSlots::input_slots`]) — parallel to the generic graph's input
-//! order — and [`consumed_inputs`](PatGraphRead::consumed_inputs) zips the
-//! two back together to reproduce the `Consumes { slot }` edge.
+//! Pattern inputs are **sparse**: `call().arg(0, ...)` wires only raw input
+//! slot 4. The generic graph stores inputs densely, so each input's original
+//! consumer slot rides on the node payload ([`HasInputSlots::input_slots`]),
+//! parallel to the generic graph's input order.
+//! [`consumed_inputs`](PatGraphRead::consumed_inputs) zips the two back
+//! together.
 
 use anyhow::anyhow;
 use petgraph::visit::{DfsPostOrder, Reversed, Walker};
 use rustc_hash::FxHashSet;
 use strider_graph::{Graph, NeverCacheable, NodeId, ValueId, Vertex};
 
-/// A node payload that records the consumer input slot of each of its
-/// inputs, parallel to the generic graph's input order.
 pub(crate) trait HasInputSlots {
-    /// The consumer slots, one per input, in input order.
+    /// Consumer slots, one per input, parallel to the generic graph's input
+    /// order.
     fn input_slots(&self) -> &[usize];
 }
 
-/// Read verbs over a generic pattern / template graph.
 pub(crate) trait PatGraphRead<N: HasInputSlots, V> {
-    /// The node payload at `node`.
     fn node_weight(&self, node: NodeId) -> &N;
-    /// The output (value) payload at `value`.
     fn output_weight(&self, value: ValueId) -> &V;
-    /// The producer node of `value`.
     fn producer_of(&self, value: ValueId) -> NodeId;
-    /// Every `(consumer_slot, producer_value)` input of `node`, recovering
-    /// the sparse consumer slot from the node payload.
+    /// Recovers each input's sparse consumer slot from the node payload.
     fn consumed_inputs(&self, node: NodeId) -> Vec<(usize, ValueId)>;
-    /// The value (output) vertices `node` produces. Borrows the generic
-    /// graph's contiguously-stored output slice directly (no per-node
-    /// allocation on the matcher / instantiate hot paths).
+    /// Borrows the generic graph's contiguous output slice, so the matcher
+    /// and instantiate hot paths allocate nothing per node.
     fn produced_outputs(&self, node: NodeId) -> &[ValueId];
-    /// The unique **sink** node — a node none of whose produced outputs are
-    /// consumed — recovered structurally rather than stored.
+    /// The root is the unique sink, derived structurally rather than stored.
     ///
     /// # Errors
-    /// Errors unless there is exactly one sink: zero (rootless / cyclic) or
-    /// more than one (multi-rooted).
+    /// Unless there is exactly one sink: zero means rootless or cyclic, more
+    /// than one means multi-rooted.
     fn derive_root(&self) -> anyhow::Result<NodeId>;
 }
 
@@ -105,15 +88,11 @@ impl<N: HasInputSlots, V> PatGraphRead<N, V> for Graph<N, V, NeverCacheable> {
     }
 }
 
-/// Returns every node vertex reachable backwards from `root` (i.e. `root`
-/// and its transitive input cone) in producer-before-consumer topological
-/// order.
+/// `root` plus its transitive input cone, in producer-before-consumer order.
 ///
-/// The generic graph's bipartite petgraph view drives the traversal: a
-/// `Node → Value → Node` relation means a producer node always precedes its
-/// consumer nodes in a `toposort`. Reachability follows reversed edges from
-/// the `root` node vertex; the global toposort is filtered to the reachable
-/// set, then projected back to node vertices. Errors on a cycle.
+/// Reachability walks reversed edges from `root`; the global toposort is then
+/// filtered to that set and projected back to node vertices. Errors on a
+/// cycle.
 pub(crate) fn reachable_topo<N, V>(
     graph: &Graph<N, V, NeverCacheable>,
     root: NodeId,

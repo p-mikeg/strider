@@ -1,8 +1,5 @@
-//! Integration tests for `strider_pattern`.
-//!
-//! Files are organised by semantic concern (what the user can do) rather
-//! than by IR node kind.  Each module has a short header describing its
-//! scope; every positive test has a matching negative test nearby.
+//! Integration tests for `strider_pattern`, organised by semantic concern
+//! rather than by IR node kind.
 
 #![allow(
     clippy::panic,

@@ -1,7 +1,6 @@
-//! Public [`Match`] result type returned by every successful pattern
-//! match.  Wraps a root [`NodeId`] and the accumulated
-//! [`Bindings`] journal; per-capture value reads go through
-//! [`Match::bindings`] (the typed accessors live on [`Bindings`]).
+//! The [`Match`] returned by every successful pattern match: a root
+//! [`NodeId`] plus the accumulated [`Bindings`] journal. Typed per-capture
+//! reads live on [`Bindings`], reached via [`Match::bindings`].
 
 use rustc_hash::FxHashSet;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -10,13 +9,6 @@ use strider_ir::{Graph, IRViewer};
 use crate::bindings::{Binding, Bindings};
 use crate::capture::Capture;
 
-/// The result of a successful pattern match against a single root node.
-///
-/// Exposes the matched root, the captured bindings (via
-/// [`bindings`](Self::bindings) for the typed value/op accessors on
-/// [`Bindings`]), and two match-level helpers that need the owning
-/// [`strider_ir::Function`]: [`get_vn`](Self::get_vn) and
-/// [`asm_fingerprint`](Self::asm_fingerprint).
 #[derive(Clone)]
 pub struct Match {
     pub(crate) root: NodeId,
@@ -24,93 +16,68 @@ pub struct Match {
 }
 
 impl Match {
-    /// Construct a [`Match`] from a root [`NodeId`] and the
-    /// accumulated bindings.  `pub` (not `pub(crate)`) so a language
-    /// binding (e.g. `strider-py`) can materialise a `Match` view over
-    /// an in-progress [`Bindings`] journal — this is how a `.when()`
-    /// predicate receives a real `Match` for the match attempt still in
-    /// flight, with `root` set to the node the guarded sub-pattern
-    /// matched at.  [`Bindings`] itself is still only ever produced by
-    /// the matcher (its mutation API stays `pub(crate)`), so this
-    /// doesn't open up bindings construction — only re-packaging an
-    /// already-produced one.
+    /// `pub` so a language binding such as `strider-py` can view an
+    /// in-progress [`Bindings`] journal: this is how a `.when()` predicate
+    /// receives a real `Match` for the attempt still in flight, `root` set to
+    /// the node the guarded sub-pattern matched at. Only the matcher can
+    /// produce [`Bindings`] (its mutation API stays `pub(crate)`), so this
+    /// re-packages rather than opening up construction.
     pub fn from_root(root: NodeId, bindings: Bindings) -> Self {
         Self { root, bindings }
     }
 
-    /// The root node where the top-level pattern matched.
+    /// Where the top-level pattern matched.
     pub fn root(&self) -> NodeId {
         self.root
     }
 
-    /// The captured [`Bindings`].  All typed value / op accessors
-    /// (`get_uint` / `get_int` / `get_bool` / `get_float_bits` /
-    /// `get_*_op`, …) live on [`Bindings`]; read them as
-    /// `m.bindings().get_uint(c, function)`.
+    /// Typed value / op accessors (`get_uint`, `get_float_bits`, `get_*_op`,
+    /// ...) all live on [`Bindings`]: `m.bindings().get_uint(c, function)`.
     pub fn bindings(&self) -> &Bindings {
         &self.bindings
     }
 
-    /// Returns the `NodeId` bound to `c`, or `None` if `c` was not
-    /// captured in this match.  Every successful capture binds at
-    /// least the matched node id; for value-producing captures the
-    /// owning node is recovered from the bound `ValueId` via
-    /// [`strider_ir::Graph::producer`], hence the `&Graph` arg.
+    /// Value-producing captures store only a `ValueId`, so the owning node is
+    /// recovered via [`strider_ir::Graph::producer`]. Hence the `&Graph`.
     pub fn node(&self, c: Capture, graph: &Graph) -> Option<NodeId> {
         self.bindings.get_node(c, graph)
     }
 
-    /// Returns the value `ValueId` bound to `c`, or `None` if
-    /// `c` was not captured or the binding was control-flow.
-    /// Multi-output nodes (e.g. `Load = [Memory, Value]`) bind the
-    /// value slot.
+    /// `None` for an unbound or control-flow capture. A multi-output node
+    /// such as `Load = [Memory, Value]` binds the value slot.
     pub fn value(&self, c: Capture) -> Option<ValueId> {
         self.bindings.get_value(c)
     }
 
-    /// Whether `c` is bound in this match (either variant of the
-    /// internal `Binding` — value or node-only).  Graph-free — useful
-    /// for `c in m` containment checks where the only question is
-    /// "did this capture fire?".
+    /// Graph-free, unlike [`node`](Self::node): answers only "did this
+    /// capture fire?".
     pub fn is_bound(&self, c: Capture) -> bool {
         self.bindings.is_bound(c)
     }
 
-    /// Returns the [`rsleigh::Vn`] associated with the binding, if one
-    /// can be determined.  The output-to-varnode mapping is well-defined
-    /// only for a handful of producer kinds:
+    /// The output-to-varnode mapping is well-defined for only two producer
+    /// kinds, and `None` for everything else:
     ///
-    /// * `InitialVar(vn)` — the varnode whose function-entry value is
-    ///   read.
-    /// * `Call` / `CallOther` clobber output values — the register the
-    ///   call clobbers, recovered with a single
+    /// * `InitialVar(vn)`: the varnode read at function entry.
+    /// * `Call` / `CallOther` clobber outputs: the clobbered register. Every
+    ///   clobber output is tagged at build time, on both the function-default
+    ///   and the override / implicit-write paths, so one
     ///   [`strider_ir::Function::get_vn_for_value`] lookup keyed by the bound
-    ///   value.  Every clobber output is tagged at build time (both the
-    ///   function-default and the override / implicit-write paths), so the
-    ///   lookup needs no slot arithmetic and works uniformly for Call and
-    ///   CallOther.
-    ///
-    /// Returns `None` for unbound captures or producers without a
-    /// well-defined varnode mapping.
+    ///   value suffices, with no slot arithmetic.
     pub fn get_vn(&self, c: Capture, function: &strider_ir::Function) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
         if let Binding::Value(value) = binding {
             let (node, _slot) = function.value_definition(value);
             let kind = function.node_kind(node);
-            // Call / CallOther clobber outputs carry their clobbered
-            // varnode directly on the value via `value_vn`.  Control /
-            // Memory / value outputs are absent from `value_vn`, so a
-            // missing entry correctly falls through to `None`.
+            // Control / Memory / value outputs are absent from `value_vn`,
+            // so a missing entry correctly falls through.
             if matches!(kind, NodeKind::Call | NodeKind::CallOther { .. })
                 && let Some(vn) = function.get_vn_for_value(value)
             {
                 return Some(vn);
             }
         }
-        // Fallback: an `InitialVar` carries its varnode tag on the
-        // owning node — recover the node id (directly for a
-        // [`Binding::Node`], via `producer` for a
-        // [`Binding::Value`]) and inspect the kind.
+        // An `InitialVar` tags the owning node, not the value.
         let node = self.bindings.get_node(c, function.graph())?;
         match function.node_kind(node) {
             NodeKind::InitialVar(id) => Some(function.initial_vn(*id)),
@@ -118,20 +85,13 @@ impl Match {
         }
     }
 
-    /// Returns the asm-instruction-address fingerprint of the node bound
-    /// to `c`, as an unordered set.  Returns an empty set when the capture
-    /// is unbound or when the bound node has no recorded contributors
-    /// (legitimately empty for region / phi / initial-state kinds — see
-    /// `strider_ir::Function::asm_fingerprint` for the documented exempt set).
+    /// The machine instructions whose lifting or subsequent rewrite fed the
+    /// bound node's value: the proof-of-correctness aid for a query.
     ///
-    /// This is the proof-of-correctness aid: when a pattern query
-    /// captures a value node, this set lists the machine
-    /// instructions whose lifting (or subsequent rewrite) contributed
-    /// to that node's value.
-    ///
-    /// The contract is superset-only: passes may GROW a fingerprint but
-    /// must never shrink it, so a captured node's addresses always cover
-    /// every instruction that contributed to it.
+    /// Empty when the capture is unbound, and legitimately empty for the
+    /// region / phi / initial-state kinds `strider_ir::Function::asm_fingerprint`
+    /// exempts. The contract is superset-only: passes may grow a fingerprint
+    /// but never shrink it, so these addresses always cover every contributor.
     pub fn asm_fingerprint(&self, c: Capture, graph: &strider_ir::Function) -> FxHashSet<u64> {
         match self.bindings.get_node(c, graph.graph()) {
             Some(node) => graph.side_tables().asm_fingerprint(node),
@@ -139,34 +99,28 @@ impl Match {
         }
     }
 
-    /// Returns an owned copy of the full [`Bindings`] captured by this match.
-    /// Used by the rewrite-rule interpreter (drops the `Matcher` borrow
-    /// before mutating the graph) and by tests.
+    /// Lets the rewrite-rule interpreter drop the `Matcher` borrow before
+    /// mutating the graph.
     pub fn bindings_clone(&self) -> Bindings {
         self.bindings.clone()
     }
 
-    /// The match's structural footprint: every IR node that matched a pat
-    /// node — the root, the interior, and the captured leaves — as recorded
-    /// by the matcher (ground truth, not a reconstruction).  May contain
-    /// duplicates when a DAG sub-pattern matched along two paths; consumers
-    /// that union over the slice (e.g. asm-fingerprint absorption in the
-    /// rewrite engine) are duplicate-insensitive.
+    /// Every IR node that matched a pat node: root, interior and captured
+    /// leaves, as recorded by the matcher rather than reconstructed. May hold
+    /// duplicates when a DAG sub-pattern matched along two paths, which
+    /// consumers that union over the slice do not care about.
     ///
-    /// This is the primitive the rewrite-rule engine uses to absorb the
-    /// asm-fingerprints of the matched interior (the rewrite's proof) before
-    /// those nodes are culled — superseding a fragile backward-BFS that
-    /// could miss matched nodes not reachable as a single backward cone from
-    /// the root.
+    /// The rewrite engine absorbs the matched interior's asm-fingerprints
+    /// through this before culling those nodes. A backward BFS from the root
+    /// would miss matched nodes outside a single backward cone.
     pub fn matched_nodes(&self) -> &[NodeId] {
         self.bindings.matched_nodes()
     }
 
-    /// Sorted, deduplicated `(capture-id, bound-node-id)` pairs — a stable
-    /// structural signature over this match's captured bindings.  Language
-    /// bindings use it to deduplicate matches by *what they bind* rather than
-    /// by root identity (the sea-of-nodes shape can reach one binding from
-    /// several roots).
+    /// Sorted, deduplicated `(capture-id, bound-node-id)` pairs. Language
+    /// bindings deduplicate matches by *what they bind* rather than by root
+    /// identity, since one binding is reachable from several roots in a
+    /// sea-of-nodes graph.
     pub fn capture_signature(&self, graph: &Graph) -> Vec<(u32, u32)> {
         let mut sig: Vec<(u32, u32)> = self
             .bindings

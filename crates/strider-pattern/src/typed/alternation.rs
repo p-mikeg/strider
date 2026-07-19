@@ -1,23 +1,12 @@
-//! `one_of` — alternation over match-side sub-patterns.
-//!
-//! `one_of![a, b]` (Rust) / `one_of([a, b])` (Python) matches a value if *any*
-//! alternative matches it (first-match wins, with the matcher's usual
-//! backtracking). Nest it anywhere a value operand is accepted, so a single
-//! pattern covers a value that may or may not be wrapped:
-//!
-//! ```ignore
-//! // load whose address is `add(base, off)`, optionally masked by `and(_, k)`
-//! let inner = || add(var(base), var(off));
-//! load().addr(one_of![inner(), int_and(inner(), any_int_const(k))])
-//! ```
+//! Alternation over match-side sub-patterns: `one_of![a, b]` matches a value if
+//! any alternative does. Nests anywhere a value operand is accepted.
 //!
 //! # Order the alternatives most-specific first
 //!
-//! First-match wins, so a **permissive** alternative placed before a narrower
-//! one shadows it: the narrower arm is never tried, and — because the shadowing
-//! arm still *matches* — the query silently returns the wrong binding rather
-//! than failing. The wildcards (`any()` / `var(c)`) match ANY node, including
-//! the very operator a later arm was meant to recognise:
+//! First-match wins, so a permissive alternative shadows a narrower one placed
+//! after it. The shadowing arm still *matches*, so the query silently returns
+//! the wrong binding rather than failing. Wildcards (`any()` / `var(c)`) match
+//! any node, including the operator a later arm was meant to recognise:
 //!
 //! ```ignore
 //! // WRONG: `var(base)` also matches the `Add`, so `off` never binds and
@@ -28,38 +17,28 @@
 //! load().addr(one_of![add(var(base), any_int_const(off)), var(base)])
 //! ```
 //!
-//! An alternative that does not bind is left unbound rather than defaulted, so
-//! `Match::value`/`node` returns `None` for its captures — that is how a caller
-//! tells which arm fired (and supplies its own default for the absent one).
+//! Captures under an arm that did not fire stay unbound (not defaulted), so
+//! `Match::value`/`node` returning `None` is how a caller tells which arm won.
 
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{MatcherBuilder, PatValueRef};
 
-/// A boxed, type-erased alternative — one entry of a [`OneOf`]. Produced by
-/// `boxed_alt`; you normally build these through the `one_of!` macro rather
-/// than by hand.
+/// One type-erased entry of a [`OneOf`], normally built by the `one_of!` macro.
 pub type BoxedAlt = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>;
 
-/// An alternation over several match-side sub-patterns. Build it with the
-/// `one_of!` macro (`one_of![a, b, c]`); it lowers to a single alternation
-/// node the matcher tries each alternative against. Match-only — there is no
-/// template counterpart (a rewrite RHS must build one concrete shape, not
-/// choose among several).
+/// Match-only: a rewrite RHS must build one concrete shape, so there is no
+/// template counterpart.
 pub struct OneOf {
     alts: Vec<BoxedAlt>,
 }
 
 impl OneOf {
-    /// Build an alternation from already-boxed alternatives. Prefer the
-    /// `one_of!` macro, which boxes each pattern for you. An empty list
-    /// matches nothing.
+    /// An empty list matches nothing.
     pub fn new(alts: Vec<BoxedAlt>) -> Self {
         Self { alts }
     }
 }
 
-/// Type-erase one match-side pattern into a [`BoxedAlt`]. A [`one_of!`] macro
-/// helper; not usually called directly.
 #[doc(hidden)]
 pub fn boxed_alt<P: MatchPat + 'static>(p: P) -> BoxedAlt {
     Box::new(move |b| p.compile(b))
@@ -72,8 +51,7 @@ impl MatchPat for OneOf {
     }
 }
 
-/// `one_of![a, b, c]` — match a value if any of the listed sub-patterns matches
-/// it. Sugar for [`OneOf::new`] that boxes each alternative.
+/// `one_of![a, b, c]`: match a value if any listed sub-pattern matches it.
 #[macro_export]
 macro_rules! one_of {
     ($($alt:expr),+ $(,)?) => {

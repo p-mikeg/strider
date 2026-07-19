@@ -1,18 +1,15 @@
-//! Memory-chain matchers — `LoadPat::mem_in`, `StorePat::mem_in` — exercise
-//! the backward walk along the per-region memory chain.
+//! `LoadPat::mem_in` / `StorePat::mem_in`: the backward walk along the
+//! per-region memory chain.
 
 use strider_ir::node::ValueType;
 use strider_ir::{FunctionBuilder, IRBuilderExt};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{Matcher, int_const, load, store};
 
-// ── LoadPat::mem_in ──────────────────────────────────────────────────────────
-
 #[test]
 fn load_mem_in_matches_preceding_store() {
-    // Build: Store(addr=0x100, data=42) ; v = Load(addr=0x200) ; ret v
-    // The Load's value is consumed by Return so the Load is reachable;
-    // its inputs[0] (memory) is the Store's mem_value.
+    // The Load's value goes to Return (reachability) and its inputs[0] is the
+    // Store's memory output.
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");

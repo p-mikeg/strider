@@ -1,6 +1,4 @@
-//! Control / variadic builder matching: `call` / `call_other` / `ret`
-//! / `if_node` / `phi` / `mem_phi` / `value_phi` / `function_arg` / `entry`
-//! / `region`.
+//! Control / variadic builder matching.
 
 #![allow(
     clippy::panic,
@@ -18,15 +16,12 @@ use strider_pattern::{
     unreachable, var,
 };
 
-// ── Call ──────────────────────────────────────────────────────────────────────
-
-/// `call(addr)` then `return` in a fresh post-call region.
+/// `call(addr)` followed by a `Return`.
 fn call_at(addr: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let tgt = b.build_int_const(addr, ValueType::I64).unwrap();
     b.build_call_cc(tgt, None).unwrap();
-    // `build_call` advances the current region's control to the call's
-    // output, leaving the same region active — return in place.
+    // build_call leaves the same region active, so return in place.
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()
 }
@@ -141,7 +136,6 @@ fn call_arg_by_index() {
             .len(),
         0
     );
-    // Out-of-range arg index → reject.
     assert_eq!(
         matcher
             .find_all(&call().arg(99, any()).build())
@@ -153,9 +147,7 @@ fn call_arg_by_index() {
 
 #[test]
 fn call_arg_nests_value_builder_load() {
-    // A `Call` whose arg0 is the value loaded from a constant address.
-    // The value-producing `load()` builder nests directly as a `Call`
-    // arg operand because it implements `MatchPat`.
+    // `load()` nests directly as a `Call` arg operand because it is a `MatchPat`.
     let arg = strider_ir_test_utils::reg_vn(0, 8);
     let mut b: FunctionBuilder = RegisterSet::new()
         .tracked(arg)
@@ -173,7 +165,6 @@ fn call_arg_nests_value_builder_load() {
     let function = b.build().unwrap();
     let matcher = Matcher::new(&function);
 
-    // load() nested in arg(0) matches; a mismatched address load rejects.
     assert_eq!(
         matcher
             .find_all(&call().arg(0, load().addr(int_const(0x40u128))).build())
@@ -189,8 +180,6 @@ fn call_arg_nests_value_builder_load() {
         0
     );
 }
-
-// ── CallOther ─────────────────────────────────────────────────────────────────
 
 /// A `CallOther` named `name` with op id `op`, then return.
 fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
@@ -265,8 +254,6 @@ fn call_other_user_op_id_filter() {
     );
 }
 
-// ── Return ────────────────────────────────────────────────────────────────────
-
 fn return_const(v: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let val = b.build_int_const(v, ValueType::I64).unwrap();
@@ -328,7 +315,7 @@ fn ret_without_value_rejects_ret_val() {
 #[test]
 fn ret_preceded_by_smoke() {
     let function = return_const(7);
-    // The Return's ctrl predecessor is a Region; `any()` matches it.
+    // The Return's ctrl predecessor is a Region, which `any()` matches.
     assert_eq!(
         Matcher::new(&function)
             .find_all(&ret().preceded_by(any()).build())
@@ -353,8 +340,6 @@ fn ret_captures_node() {
     ));
 }
 
-// ── IndirectBranch ───────────────────────────────────────────────────────────
-
 fn indirect_branch_to(target_addr: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let tgt = b.build_int_const(target_addr, ValueType::I64).unwrap();
@@ -364,7 +349,6 @@ fn indirect_branch_to(target_addr: u64) -> strider_ir::Function {
 
 #[test]
 fn indirect_branch_captures_node() {
-    // Build a function whose region ends in an IndirectBranch placeholder.
     let function = indirect_branch_to(0x4000);
     let n = Capture::new();
     let hits = Matcher::new(&function)
@@ -407,8 +391,6 @@ fn indirect_branch_target_matches_and_captures() {
     assert!(hits[0].value(c).is_some());
 }
 
-// ── Unreachable ──────────────────────────────────────────────────────────────
-
 fn unreachable_fn() -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     b.build_unreachable().unwrap();
@@ -440,8 +422,6 @@ fn unreachable_captures_node() {
         strider_ir::node::NodeKind::Unreachable
     ));
 }
-
-// ── Switch ───────────────────────────────────────────────────────────────────
 
 fn switch_fn(addr: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
@@ -499,8 +479,6 @@ fn switch_address_matches_and_captures() {
     assert!(hits[0].value(c).is_some());
 }
 
-// ── If ────────────────────────────────────────────────────────────────────────
-
 fn if_then_else() -> (strider_ir::Function, strider_ir::node::NodeId) {
     let (function, if_node, ()) = RegisterSet::new()
         .build_if_then_else_returns(|b| {
@@ -537,8 +515,7 @@ fn if_cond_captures() {
 #[test]
 fn if_with_true_and_false_branches() {
     let (function, _) = if_then_else();
-    // The single consumer of each control output is the branch Region;
-    // `any()` matches a real node.
+    // Each control output's single consumer is the branch Region.
     assert_eq!(
         Matcher::new(&function)
             .find_all(
@@ -579,16 +556,15 @@ fn if_capture_true_false_bind_distinct_control_outputs() {
     let tv = hits[0].value(t).expect("true control output bound");
     let fv = hits[0].value(f).expect("false control output bound");
     assert_ne!(tv, fv, "true and false outputs are distinct values");
-    // Both control outputs belong to the same If node.
     assert_eq!(function.graph().producer(tv), if_id);
     assert_eq!(function.graph().producer(fv), if_id);
 }
 
 #[test]
 fn if_node_capture_and_control_output_captures_coexist() {
-    // A node capture (`capture`) and output-vertex captures (`capture_true` /
-    // `capture_false`) on the same If must ALL bind — the anchor-vs-node capture
-    // used to be either/or, silently dropping the node capture.
+    // A node capture and the output-vertex captures on the same If must ALL
+    // bind. The anchor-vs-node capture used to be either/or, silently dropping
+    // the node capture.
     let (function, if_id) = if_then_else();
     let (g, t, f) = (Capture::new(), Capture::new(), Capture::new());
     let hits = Matcher::new(&function)
@@ -605,8 +581,6 @@ fn if_node_capture_and_control_output_captures_coexist() {
     assert!(hits[0].value(t).is_some(), "true output still binds");
     assert!(hits[0].value(f).is_some(), "false output still binds");
 }
-
-// ── Phi / MemPhi / ValuePhi ───────────────────────────────────────────────────
 
 #[test]
 fn mem_phi_matches_region_head() {
@@ -660,9 +634,8 @@ fn phi_capture_binds_value_output() {
     );
 }
 
-/// Diamond join: `if(true){ var=1 } else { var=2 }` then read `var` — the join
-/// carries a `Phi` whose data inputs are `IntConst(1)` (slot 1) and
-/// `IntConst(2)` (slot 2). Returns the function.
+/// Diamond join `if(true){ var=1 } else { var=2 }` then read `var`. The join's
+/// `Phi` has `IntConst(1)` at data slot 1 and `IntConst(2)` at slot 2.
 fn phi_over_two_consts() -> strider_ir::Function {
     let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
     let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
@@ -695,8 +668,8 @@ fn phi_over_two_consts() -> strider_ir::Function {
     b.build().unwrap()
 }
 
-/// Diamond join whose `Phi` value feeds `Add(phi, 10)` (then returned), so the
-/// phi appears as a **value operand** — the shape `phi()` must nest into.
+/// Diamond join whose `Phi` feeds `Add(phi, 10)`, putting the phi in a value
+/// operand position: the shape `phi()` must nest into.
 fn phi_feeding_add() -> strider_ir::Function {
     let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
     let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
@@ -728,14 +701,13 @@ fn phi_feeding_add() -> strider_ir::Function {
     b.build().unwrap()
 }
 
-/// A `Phi` produces a value output, so `phi()` must nest as a value operand
-/// (regression: it used to be node-rooted only — `add(x, phi())` / a Python
-/// `store(data=phi())` errored "cannot be nested as a value operand").
+/// A `Phi` produces a value output, so `phi()` must nest as a value operand.
+/// It used to be node-rooted only, so `add(x, phi())` (and the Python
+/// `store(data=phi())`) errored "cannot be nested as a value operand".
 #[test]
 fn phi_nests_as_a_value_operand() {
     let function = phi_feeding_add();
     let m = Matcher::new(&function);
-    // `Add(phi, 10)` — phi nested as the add's operand.
     assert_eq!(
         m.find_all(&add(phi(), int_const(10u128)).into_pattern())
             .unwrap()
@@ -743,7 +715,6 @@ fn phi_nests_as_a_value_operand() {
         1,
         "phi must match nested as a value operand of Add"
     );
-    // Capture through the nesting binds the phi node out.
     let c = Capture::new();
     let hits = m
         .find_all(&add(phi().capture(c), any()).into_pattern())
@@ -755,11 +726,10 @@ fn phi_nests_as_a_value_operand() {
     );
 }
 
-/// A two-input phi whose every data input is a `ZeroExtend` of an I32 `Load`
-/// from a constant address.  The `Load` is a real interior node carried by no
-/// per-region trivial phi, so `any_input(load())` is a clean cast-walk-through
-/// discriminator (a bare `InitialVar` would be shadowed by the trivial
-/// single-predecessor phis the builder emits for each tracked-var read).
+/// Two-input phi, every data input a `ZeroExtend` of an I32 `Load`. The `Load`
+/// is a real interior node carried by no per-region trivial phi, making it a
+/// clean cast-walk-through discriminator; a bare `InitialVar` would be shadowed
+/// by the trivial single-predecessor phis the builder emits per tracked-var read.
 fn phi_over_casts_of_load() -> strider_ir::Function {
     let phi_reg = strider_ir_test_utils::reg_vn(0x10, 8); // I64 phi'd var
     let mut b = RegisterSet::new().tracked(phi_reg).build_fn().unwrap();
@@ -799,8 +769,7 @@ fn phi_over_casts_of_load() -> strider_ir::Function {
 fn phi_any_input_honours_ignore_casts() {
     let function = phi_over_casts_of_load();
     let matcher = Matcher::new(&function);
-    // Every phi data input is an I64 `ZeroExtend`; the `Load` sits one cast
-    // down.  Without walk-through, `any_input(load())` finds nothing.
+    // Every phi data input is an I64 `ZeroExtend` with the `Load` one cast down.
     assert_eq!(
         matcher
             .find_all(&phi().any_input(load()).build())
@@ -809,8 +778,6 @@ fn phi_any_input_honours_ignore_casts() {
         0,
         "any_input must not reach through a cast by default",
     );
-    // With `ignore_casts`, the extend is skipped and the `Load` matches — the
-    // same walk-through the fixed-slot inputs already honour.
     assert_eq!(
         matcher
             .find_all(
@@ -830,8 +797,6 @@ fn phi_any_input_honours_ignore_casts() {
 fn phi_any_input_matches_a_data_input_regardless_of_slot() {
     let function = phi_over_two_consts();
     let matcher = Matcher::new(&function);
-    // `IntConst(2)` sits at the second data slot, so a slot-agnostic
-    // `any_input` must still find it.
     assert_eq!(
         matcher
             .find_all(&phi().any_input(int_const(2u128)).build())
@@ -848,7 +813,6 @@ fn phi_any_input_matches_a_data_input_regardless_of_slot() {
             .len(),
         1,
     );
-    // A value present on no input matches nothing.
     assert_eq!(
         matcher
             .find_all(&phi().any_input(int_const(99u128)).build())
@@ -859,20 +823,16 @@ fn phi_any_input_matches_a_data_input_regardless_of_slot() {
     );
 }
 
-/// `any_input`'s candidate slots are now EVERY input slot (no `PhiToken`
-/// filter) — the sub-pattern is what discriminates. A VALUE-typed sub
-/// (e.g. `int_const`) can never match the `PhiToken` producer (a `Region`
-/// node, not an `IntConst`), so it still binds only a DATA input. A bare
-/// kind-unconstrained wildcard (`var` / `any`), which accepts any producer
-/// regardless of what it outputs, now CAN reach the slot-0 `PhiToken` too.
+/// `any_input`'s candidate slots are EVERY input slot (no `PhiToken` filter);
+/// the sub-pattern is what discriminates. A value-typed sub such as
+/// `int_const` can never match the `PhiToken` producer (a `Region`), so it
+/// still binds only a data input.
 #[test]
 fn phi_any_input_value_sub_binds_a_data_input_not_the_phi_token() {
     let function = phi_over_two_consts();
     let m = Matcher::new(&function);
 
-    // `any_input` is existential: `x` can bind EITHER data input, and both are
-    // genuinely distinct bindings, so both are reported — a value-typed sub
-    // still can't match the phi-token producer, so there are exactly two.
+    // Existential: `x` binds either data input, and both are distinct bindings.
     let x = Capture::new();
     let hits = m
         .find_all(&phi().any_input(any_int_const().capture(x)).build())
@@ -888,10 +848,8 @@ fn phi_any_input_value_sub_binds_a_data_input_not_the_phi_token() {
     }
 }
 
-/// A bare kind-unconstrained `any_input(var(..))` has no sub-pattern
-/// discrimination at all, so — with no `PhiToken` filter in the candidate
-/// set — it now also matches the phi's slot-0 `PhiToken` plumbing edge,
-/// alongside its two data inputs.
+/// A bare `any_input(var(..))` discriminates nothing, so with no `PhiToken`
+/// filter it also matches the phi's slot-0 `PhiToken` plumbing edge.
 #[test]
 fn phi_any_input_wildcard_can_reach_the_phi_token() {
     let function = phi_over_two_consts();
@@ -920,10 +878,9 @@ fn phi_any_input_wildcard_can_reach_the_phi_token() {
 
 #[test]
 fn phi_multiple_any_input_bind_distinct_slots() {
-    // Phi inputs are the constants 1 and 2 (one slot each).
+    // Phi data inputs are the constants 1 and 2, one slot each.
     let function = phi_over_two_consts();
     let m = Matcher::new(&function);
-    // 1 and 2 live on different slots -> distinct match.
     assert_eq!(
         m.find_all(
             &phi()
@@ -935,8 +892,6 @@ fn phi_multiple_any_input_bind_distinct_slots() {
         .len(),
         1,
     );
-    // Two `any_input(1)` need TWO distinct inputs equal to 1, but only one
-    // exists — distinct semantics reject the same-slot reuse.
     assert_eq!(
         m.find_all(
             &phi()
@@ -949,7 +904,6 @@ fn phi_multiple_any_input_bind_distinct_slots() {
         0,
         "two any_input must bind two DIFFERENT slots",
     );
-    // 1 on one slot, any-const on the OTHER (the 2) -> distinct match.
     assert_eq!(
         m.find_all(
             &phi()
@@ -968,7 +922,6 @@ fn phi_any_input_binds_captures_out() {
     let function = phi_over_two_consts();
     let matcher = Matcher::new(&function);
     let c = Capture::new();
-    // Capture whichever data input is the const 2 — the capture must flow out.
     let hits = matcher
         .find_all(&phi().any_input(int_const(2u128).capture(c)).build())
         .unwrap();
@@ -1001,11 +954,8 @@ fn phi_for_vn_filters() {
     );
 }
 
-// ── phi_token (PhiPat / MemPhiPat) ──────────────────────────────────────────
-
-/// `phi_token` targets raw slot 0 directly (no `+1` shift) — a typed sub can
-/// never bind it (`PhiToken` falls outside `MatchPat`'s value domain, same
-/// rule as `any_input`), so it always matches nothing.
+/// `phi_token` targets raw slot 0 directly, no `+1` shift. `PhiToken` falls
+/// outside `MatchPat`'s value domain, so a typed sub can never bind it.
 #[test]
 fn phi_token_typed_sub_never_matches() {
     let function = phi_over_two_consts();
@@ -1020,10 +970,8 @@ fn phi_token_typed_sub_never_matches() {
     );
 }
 
-/// `phi_token` reaches slot 0 (the `PhiToken` edge from the owning `Region`);
-/// a wildcard binds it and the bound value's kind is `PhiToken`. Distinct
-/// from `.input(0, _)`, which (per its `+1` shift) addresses predecessor 0
-/// (a data slot) instead.
+/// `phi_token` reaches slot 0, the `PhiToken` edge from the owning `Region`.
+/// Distinct from `.input(0, _)`, whose `+1` shift addresses predecessor 0.
 #[test]
 fn phi_token_wildcard_binds_the_phi_token_edge() {
     let function = phi_over_two_consts();
@@ -1041,9 +989,7 @@ fn phi_token_wildcard_binds_the_phi_token_edge() {
         function.value_kind(bound)
     );
 
-    // `.input(0, _)` (the shifted accessor) addresses predecessor 0 instead —
-    // a typed const sub matches it directly, proving the two accessors reach
-    // different slots.
+    // The shifted accessor reaches a different slot: a typed const sub matches.
     assert_eq!(
         matcher
             .find_all(&phi().input(0, int_const(1u128)).build())
@@ -1054,9 +1000,8 @@ fn phi_token_wildcard_binds_the_phi_token_edge() {
     );
 }
 
-/// A join with two real memory predecessors (a store on each branch of an
-/// if/else) plus a load, forcing a genuine `MemPhi` with a non-trivial
-/// `PhiToken` input and two memory predecessors.
+/// A store on each branch of an if/else plus a load at the join, forcing a
+/// genuine `MemPhi` with two memory predecessors.
 fn mem_phi_with_two_stores() -> strider_ir::Function {
     let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
     let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
@@ -1090,8 +1035,8 @@ fn mem_phi_with_two_stores() -> strider_ir::Function {
     b.build().unwrap()
 }
 
-/// `MemPhiPat::any_input` — a wildcard reaches the memory predecessors AND
-/// the `PhiToken` slot; a typed value sub reaches neither.
+/// A wildcard reaches the memory predecessors AND the `PhiToken` slot; a typed
+/// value sub reaches neither.
 #[test]
 fn mem_phi_any_input_general_model() {
     let function = mem_phi_with_two_stores();
@@ -1128,11 +1073,9 @@ fn mem_phi_any_input_general_model() {
     );
 }
 
-/// `MemPhiPat::phi_token` targets slot 0 directly, distinct from `.input(0,
-/// _)` (which shifts by `+1` to address memory predecessor 0). Every region
-/// (`entry`, `region_t`, `region_f`, `join`) carries its own `MemPhi`, so a
-/// wildcard `phi_token` matches all four — the `.input(0, _)` shifted
-/// accessor is what discriminates the join's genuine store predecessor.
+/// `phi_token` targets slot 0 directly; `.input(0, _)` shifts by `+1` to
+/// address memory predecessor 0. Every region here carries its own `MemPhi`,
+/// so a wildcard `phi_token` matches all four.
 #[test]
 fn mem_phi_phi_token_targets_slot_zero() {
     let function = mem_phi_with_two_stores();
@@ -1166,10 +1109,8 @@ fn mem_phi_phi_token_targets_slot_zero() {
         0
     );
 
-    // `.input(0, _)` (shifted) addresses memory predecessor 0 instead — a
-    // memory-producing sub (`store(...)`) matches it directly, and only the
-    // join's MemPhi has a genuine store as its first memory predecessor (the
-    // other three regions' MemPhis chain to another MemPhi, not a store).
+    // Only the join's MemPhi has a genuine store as memory predecessor 0; the
+    // other three chain to another MemPhi.
     assert_eq!(
         matcher
             .find_all(&mem_phi().input(0, store().data(int_const(1u128))).build())
@@ -1180,10 +1121,6 @@ fn mem_phi_phi_token_targets_slot_zero() {
     );
 }
 
-// ── any_input on the remaining node families ────────────────────────────────
-
-/// `CallPat::any_input` — a typed sub binds the call target; a wildcard also
-/// reaches the control/memory edges (general model, see `node_pat.rs` tests).
 #[test]
 fn call_any_input_binds_target() {
     let function = call_at(0x1234);
@@ -1197,7 +1134,6 @@ fn call_any_input_binds_target() {
     );
 }
 
-/// `CallOtherPat::any_input` — a typed sub binds one of the CallOther's args.
 #[test]
 fn call_other_any_input_binds_arg() {
     let function = call_other_named("f", 5);
@@ -1208,7 +1144,6 @@ fn call_other_any_input_binds_arg() {
     assert!(!hits.is_empty(), "any_input must bind some CallOther input");
 }
 
-/// `RetPat::any_input` — a typed sub binds the return value.
 #[test]
 fn ret_any_input_binds_ret_val() {
     let function = return_const(7);
@@ -1222,7 +1157,6 @@ fn ret_any_input_binds_ret_val() {
     );
 }
 
-/// `IndirectBranchPat::any_input` — a typed sub binds the dispatch target.
 #[test]
 fn indirect_branch_any_input_binds_target() {
     let function = indirect_branch_to(0xBEEF);
@@ -1236,7 +1170,6 @@ fn indirect_branch_any_input_binds_target() {
     );
 }
 
-/// `SwitchPat::any_input` — a typed sub binds the dispatch address.
 #[test]
 fn switch_any_input_binds_address() {
     let function = switch_fn(0xC0DE);
@@ -1250,8 +1183,7 @@ fn switch_any_input_binds_address() {
     );
 }
 
-/// `UnreachablePat::any_input` — reaches the sole ctrl predecessor via a
-/// wildcard (a typed value sub cannot, since ctrl is not a value edge).
+/// Only a wildcard reaches the sole ctrl predecessor: ctrl is not a value edge.
 #[test]
 fn unreachable_any_input_wildcard_reaches_ctrl() {
     let function = unreachable_fn();
@@ -1265,7 +1197,6 @@ fn unreachable_any_input_wildcard_reaches_ctrl() {
     );
 }
 
-/// `LoadPat::any_input` — a typed sub binds the load's address operand.
 #[test]
 fn load_any_input_binds_addr() {
     let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
@@ -1290,7 +1221,6 @@ fn load_any_input_binds_addr() {
     );
 }
 
-/// `StorePat::any_input` — a typed sub binds the stored data operand.
 #[test]
 fn store_any_input_binds_data() {
     let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
@@ -1314,10 +1244,9 @@ fn store_any_input_binds_data() {
     );
 }
 
-/// Build a function with a register-passed arg carrier (`InitialVar(rax)`
-/// at index 0) and a stack-passed arg carrier (a `Load` at index 1), with
-/// the carriers registered directly in `arg_index_to_values` (as the
-/// `FunctionArgDetect` post-pass would). Returns `(function, rax)`.
+/// Register-passed carrier (`InitialVar(rax)`) at index 0 and stack-passed
+/// carrier (a `Load`) at index 1, registered directly in `arg_index_to_values`
+/// the way the `FunctionArgDetect` post-pass would.
 fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     use strider_ir::node::NodeKind;
     let rax = strider_ir_test_utils::reg_vn(0, 8);
@@ -1326,9 +1255,9 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
         .arg(rax)
         .build_fn_single_region()
         .unwrap();
-    // Register-arg carrier: read the tracked register → InitialVar(rax).
+    // Register-arg carrier: InitialVar(rax).
     let v = b.read_variable(&rax).unwrap();
-    // Stack-arg carrier: a Load off a constant address.
+    // Stack-arg carrier.
     let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
     let loaded = b
         .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
@@ -1350,13 +1279,12 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
         .all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Load(_)))
         .expect("Load carrier");
-    // Stamp the stack-arg offset that `StackOffsetDetect` would record so
-    // `function_arg_stack`'s offset enforcement has something to check
-    // against. `function_arg_stack` only reads the offset, so any valid
-    // base output handle suffices here.
+    // Stamp the offset `StackOffsetDetect` would record, so
+    // `function_arg_stack`'s offset check has something to read. Only the
+    // offset is read, so any valid base output handle works.
     let base = function.node_outputs(stack_carrier)[0];
-    // Value-keyed: the derived `stack_offset(node)` looks up the node's address
-    // value, so stamp the slot on that address (slot 1 of the Load).
+    // `stack_offset(node)` resolves via the node's address value, so stamp the
+    // slot on the Load's address input.
     let carrier_addr = function.node_inputs(stack_carrier)[1];
     function
         .side_tables_mut()
@@ -1375,10 +1303,8 @@ fn function_arg_index_matches_carrier() {
     use strider_pattern::function_arg;
     let (function, _rax) = two_arg_carriers();
     let matcher = Matcher::new(&function);
-    // Each index matches exactly its one registered carrier.
     assert_eq!(matcher.find_all(&function_arg(0).build()).unwrap().len(), 1);
     assert_eq!(matcher.find_all(&function_arg(1).build()).unwrap().len(), 1);
-    // No carrier registered at index 2.
     assert_eq!(matcher.find_all(&function_arg(2).build()).unwrap().len(), 0);
 }
 
@@ -1387,7 +1313,6 @@ fn function_arg_any_matches_every_carrier() {
     use strider_pattern::function_arg_any;
     let (function, _rax) = two_arg_carriers();
     let matcher = Matcher::new(&function);
-    // Both the register and stack carriers are matched.
     assert_eq!(
         matcher.find_all(&function_arg_any().build()).unwrap().len(),
         2
@@ -1399,7 +1324,6 @@ fn function_arg_reg_matches_only_register_carrier() {
     use strider_pattern::{function_arg, function_arg_reg};
     let (function, rax) = two_arg_carriers();
     let matcher = Matcher::new(&function);
-    // Register source at index 0 matches the InitialVar(rax) carrier.
     assert_eq!(
         matcher
             .find_all(&function_arg_reg(rax, 0).build())
@@ -1407,7 +1331,6 @@ fn function_arg_reg_matches_only_register_carrier() {
             .len(),
         1
     );
-    // The stack carrier (index 1) is a Load, not a register source.
     assert_eq!(
         matcher
             .find_all(&function_arg_reg(rax, 1).build())
@@ -1415,7 +1338,6 @@ fn function_arg_reg_matches_only_register_carrier() {
             .len(),
         0
     );
-    // Wrong varnode at index 0 doesn't match.
     let rbx = strider_ir_test_utils::reg_vn(8, 8);
     assert_eq!(
         matcher
@@ -1424,7 +1346,7 @@ fn function_arg_reg_matches_only_register_carrier() {
             .len(),
         0
     );
-    // Sanity: index 0 with no source filter still matches.
+    // Sanity: index 0 without a source filter still matches.
     assert_eq!(matcher.find_all(&function_arg(0).build()).unwrap().len(), 1);
 }
 
@@ -1433,7 +1355,6 @@ fn function_arg_stack_matches_only_stack_carrier() {
     use strider_pattern::function_arg_stack;
     let (function, _rax) = two_arg_carriers();
     let matcher = Matcher::new(&function);
-    // Stack source at index 1 matches the Load carrier.
     assert_eq!(
         matcher
             .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 1).build())
@@ -1441,7 +1362,6 @@ fn function_arg_stack_matches_only_stack_carrier() {
             .len(),
         1
     );
-    // The register carrier (index 0) is an InitialVar, not a stack source.
     assert_eq!(
         matcher
             .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 0).build())
@@ -1456,9 +1376,8 @@ fn function_arg_stack_rejects_wrong_offset() {
     use strider_pattern::function_arg_stack;
     let (function, _rax) = two_arg_carriers();
     let matcher = Matcher::new(&function);
-    // The stack carrier at index 1 has recorded offset 0x40. A pattern
-    // with the correct space + index but a DIFFERENT offset must not
-    // match — the offset is enforced against `Function::stack_offset`.
+    // The carrier at index 1 records offset 0x40, enforced against
+    // `Function::stack_offset`.
     assert_eq!(
         matcher
             .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x48, 1).build())
@@ -1480,9 +1399,8 @@ fn function_arg_stack_rejects_wrong_offset() {
 #[test]
 fn function_arg_does_not_match_non_carrier() {
     use strider_pattern::function_arg;
-    // A function whose InitialVar is NOT registered as an arg carrier: `rax`
-    // is tracked but is not an arg-passing register, so the builder records no
-    // carrier for it at entry.
+    // `rax` is tracked but is not an arg-passing register, so the builder
+    // records no carrier at entry despite the InitialVar existing.
     let rax = strider_ir_test_utils::reg_vn(0, 8);
     let mut b: FunctionBuilder = RegisterSet::new()
         .tracked(rax)
@@ -1492,18 +1410,13 @@ fn function_arg_does_not_match_non_carrier() {
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
     let matcher = Matcher::new(&function);
-    // No carrier registered → no match, even though an InitialVar exists.
     assert_eq!(matcher.find_all(&function_arg(0).build()).unwrap().len(), 0);
 }
 
-// ── non-slot-0 value output: width constraint applies to the matched output ──
-
-/// A `Call` that clobbers a tracked 64-bit register produces a *value*
-/// output at a non-zero output slot (`Control@0`, `Memory@1`, clobber
-/// value@2). This is the regression scaffold for the slot-coupling bug:
-/// a root output-vertex width/type constraint must apply to whichever
-/// output is being matched, not to slot 0 — so a value constraint on the
-/// non-slot-0 clobber output is genuinely checked.
+/// A `Call` clobbering a tracked 64-bit register puts a value output at a
+/// non-zero slot (`Control@0`, `Memory@1`, clobber value@2). Scaffold for the
+/// slot-coupling regression: a root output-vertex width/type constraint must
+/// apply to whichever output is matched, not always to slot 0.
 fn call_with_clobber_retval() -> strider_ir::Function {
     let rax = strider_ir_test_utils::reg_vn(0, 8);
     let mut b: FunctionBuilder = RegisterSet::new()
@@ -1524,7 +1437,6 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
     let function = call_with_clobber_retval();
     let m = Matcher::new(&function);
 
-    // The `Call` node and its non-slot-0 (clobber) value output.
     let call = function
         .graph()
         .all_node_ids()
@@ -1536,10 +1448,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
         .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::I64))
         .expect("64-bit clobber value output");
 
-    // `var(c).of_width(64)` matches the clobber output — the constraint is
-    // checked against the matched (non-slot-0) output, not skipped. (The
-    // I64 call-target const is the other 64-bit value, hence two matches;
-    // the clobber output is among the bound captures.)
+    // The I64 call-target const is the other 64-bit value, hence two matches.
     let c = Capture::new();
     let right = m.find_all(&var(c).of_width(64).into_pattern()).unwrap();
     assert!(
@@ -1547,9 +1456,8 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
         "the non-slot-0 64-bit clobber output is matched + bound by of_width(64)",
     );
 
-    // The clobber output must NOT match the wrong width — the bug would
-    // have let it through (constraint silently skipped at the non-slot-0
-    // output). The Call node has no 32-bit value output at all.
+    // The bug let this through by skipping the constraint at a non-slot-0
+    // output.
     let c2 = Capture::new();
     assert_eq!(
         m.find_all(&var(c2).of_width(32).into_pattern())
@@ -1559,18 +1467,13 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
         "no 32-bit value output exists, so of_width(32) does not match",
     );
 
-    // No genuine 1-bit value output exists (only Control / Memory / I64),
-    // so `bool_value()` matches nothing — in particular it does not match
-    // the `Call` (non-slot-0 value), `Region`, or `Return` via a skipped
-    // constraint.
+    // Only Control / Memory / I64 outputs exist here.
     assert_eq!(
         m.find_all(&bool_value().into_pattern()).unwrap().len(),
         0,
         "no I1 value output: bool_value() must not match a value-less or wide node",
     );
 }
-
-// ── sibling-output binding: output(j).capture / .of_width / .of_type ──────────
 
 /// The Call node and its slot-2 (clobber / result) I64 value output.
 fn call_and_clobber(function: &strider_ir::Function) -> (NodeKind, strider_ir::node::ValueId) {
@@ -1587,8 +1490,7 @@ fn call_and_clobber(function: &strider_ir::Function) -> (NodeKind, strider_ir::n
     (*function.node_kind(call), clobber)
 }
 
-/// `call().output(2).capture(c)` binds the Call's sibling output at slot 2
-/// (its clobber / result value) — the generic leaf sibling-output binding.
+/// The generic leaf sibling-output binding: slot 2 is the clobber / result.
 #[test]
 fn call_output_slot_binds_sibling_value() {
     let function = call_with_clobber_retval();
@@ -1605,9 +1507,8 @@ fn call_output_slot_binds_sibling_value() {
     );
 }
 
-/// `output(j).of_width(w)` constrains the sibling output's width; the
-/// wrong width fails the whole match (the constraint is genuinely checked
-/// on the secondary output vertex, not silently dropped).
+/// A wrong width must fail the whole match, proving the constraint is checked
+/// on the secondary output vertex rather than dropped.
 #[test]
 fn call_output_slot_width_constraint() {
     let function = call_with_clobber_retval();
@@ -1651,10 +1552,7 @@ fn call_output_slot_type_constraint() {
     );
 }
 
-// ── entry / region ──────────────────────────────────────────────────────────
-
-/// Entry → if/else → join. Four `Region` nodes total (the entry region, the
-/// true/false branch regions, and the join region) plus one `Entry` node.
+/// Entry, if/else, join: four `Region` nodes plus one `Entry`.
 fn branching_fn() -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
 
@@ -1680,7 +1578,6 @@ fn branching_fn() -> strider_ir::Function {
     b.build().unwrap()
 }
 
-/// `entry()` matches exactly the function's unique `Entry` node.
 #[test]
 fn entry_matches_exactly_one() {
     let function = branching_fn();
@@ -1693,8 +1590,8 @@ fn entry_matches_exactly_one() {
     );
 }
 
-/// `region()` matches every `Region` node — cross-checked against the same
-/// `walk_kind` sweep the Python-facing `count_regions` uses.
+/// Cross-checked against the same `walk_kind` sweep the Python-facing
+/// `count_regions` uses.
 #[test]
 fn region_matches_every_region_node() {
     let function = branching_fn();
@@ -1711,8 +1608,6 @@ fn region_matches_every_region_node() {
     );
 }
 
-/// `region().any_input(entry())` reaches a control predecessor: only the
-/// entry region is directly preceded by `Entry`.
 #[test]
 fn region_any_input_reaches_entry_predecessor() {
     let function = branching_fn();
@@ -1726,9 +1621,8 @@ fn region_any_input_reaches_entry_predecessor() {
     );
 }
 
-/// `region().input(0, entry())` pins the same control predecessor to the
-/// fixed raw slot 0 (Region has no fixed prefix ahead of its variadic tail,
-/// so slot 0 IS predecessor 0).
+/// Region has no fixed prefix ahead of its variadic tail, so raw slot 0 is
+/// predecessor 0.
 #[test]
 fn region_input_slot_zero_reaches_entry_predecessor() {
     let function = branching_fn();
@@ -1741,9 +1635,8 @@ fn region_input_slot_zero_reaches_entry_predecessor() {
     );
 }
 
-/// A typed value sub can never bind a `Region`'s Control predecessor edge —
-/// `any_input` on a control-only node family must discriminate the same way
-/// `mem_phi_any_input_binds_a_memory_predecessor` proved for `MemPhi`.
+/// A typed value sub can never bind a `Region`'s Control predecessor edge:
+/// `any_input` on a control-only family discriminates like it does on `MemPhi`.
 #[test]
 fn region_any_input_typed_value_sub_matches_nothing() {
     let function = branching_fn();

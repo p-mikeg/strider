@@ -7,11 +7,8 @@ use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
 
-// ── Matcher::new / empty graphs ─────────────────────────────────────────
-
 #[test]
 fn new_on_empty_graph_does_not_panic() {
-    // Empty function: just entry → return-nothing.
     let function = Tb::empty().ret_nothing();
     let _ = Matcher::new(&function);
 }
@@ -24,13 +21,10 @@ fn find_all_on_empty_graph_returns_empty_for_specific_kind() {
     a::none(&function, add(any(), any()).into_pattern());
 }
 
-// ── Kind-prefilter correctness ───────────────────────────────────────────────
-
+/// The fixture holds only IntConst / IntBinaryOp / Return / Entry, so each
+/// kind-filtered pattern must bail before any structural work.
 #[test]
 fn kind_prefilter_skips_incompatible_nodes() {
-    // add(5, 3) has only IntConst + IntBinaryOp + Return + Entry.  load()
-    // pattern is kind-filtered to Load, so it must return 0 matches without
-    // attempting any structural work.
     let function = shapes::add_consts(5, 3);
     a::none(&function, load().build());
     a::none(&function, store().build());
@@ -38,8 +32,6 @@ fn kind_prefilter_skips_incompatible_nodes() {
     a::none(&function, if_node().build());
     a::none(&function, phi().build());
 }
-
-// ── match_at ─────────────────────────────────────────────────────────────────
 
 #[test]
 fn match_at_hits_correct_node() {
@@ -62,13 +54,11 @@ fn match_at_hits_correct_node() {
     assert_eq!(m.root(), add_node);
 }
 
+/// The footprint is root + interior + captured leaves, not just the captures.
+/// The rewrite engine absorbs fingerprints from it, and a backward-BFS
+/// reconstruction would miss multi-sink / non-cone matched nodes.
 #[test]
 fn matched_nodes_includes_root_and_all_structural_operands() {
-    // The matched-node footprint must be the GROUND TRUTH set of every IR
-    // node the pattern matched — root + interior + captured leaves — not just
-    // the captures.  This is the primitive the rewrite engine absorbs
-    // fingerprints from (a backward-BFS reconstruction misses multi-sink /
-    // non-cone matched nodes).
     let function = shapes::add_consts(5, 3);
     let add_node = function
         .walk()
@@ -138,8 +128,6 @@ fn match_at_is_scoped_to_that_node_only() {
     assert!(result.is_none());
 }
 
-// ── find_all deterministic ordering ──────────────────────────────────────────
-
 #[test]
 fn find_all_is_deterministic() {
     let function = shapes::add_nested_3(1, 2, 3);
@@ -162,18 +150,13 @@ fn find_all_is_deterministic() {
     assert_eq!(a1, a2);
 }
 
-// ── Lazy kind-index cache reuse across queries ───────────────────────────────
-
-/// Run `find_all` with patterns at different discriminants against the
-/// same matcher.  The lazy kind index is built on the first query and
-/// reused on later ones; every query must still return its correct hit
-/// count (regression check for the cached path).
+/// The lazy kind index is built on the first query and reused after; each
+/// query at a different discriminant must still return its own hit count.
 #[test]
 fn kind_index_reused_across_queries() {
     let function = shapes::add_consts(5, 7);
     let matcher = Matcher::new(&function);
 
-    // Query 1: any IntConst — two hits (5 and 7).
     let pat_const = any_int_const().into_pattern();
     assert_eq!(
         matcher.find_all(&pat_const).unwrap().len(),
@@ -181,11 +164,11 @@ fn kind_index_reused_across_queries() {
         "two IntConsts"
     );
 
-    // Query 2: Add(_, _) — one hit, served after the index is built.
+    // Served after the index is built.
     let pat_add = add(any(), any()).into_pattern();
     assert_eq!(matcher.find_all(&pat_add).unwrap().len(), 1, "one Add");
 
-    // Query 3: re-run the IntConst query — still two hits via the cache.
+    // Re-run the first query, now via the cache.
     assert_eq!(
         matcher.find_all(&pat_const).unwrap().len(),
         2,
@@ -193,9 +176,7 @@ fn kind_index_reused_across_queries() {
     );
 }
 
-// ── Multi-match iteration & distinct bindings ────────────────────────────────
-
-/// Graph with three distinct Add nodes at different operand values.
+/// Three leaf `Add`s at distinct operand values, summed by two more `Add`s.
 fn graph_three_adds() -> strider_ir::Function {
     let mut t = Tb::empty();
     let a = t.u64(1);
@@ -219,9 +200,8 @@ fn find_all_returns_distinct_matches_with_distinct_roots() {
     let rhs = Capture::new();
     let pat = add(any_int_const().capture(lhs), any_int_const().capture(rhs)).into_pattern();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    // Three `add` roots, each with two DISTINCT bindings — `add` is
-    // commutative and both captures sit on operands, so each root matches
-    // once as (lhs←a, rhs←b) and once as (lhs←b, rhs←a).
+    // Three roots x two orderings: `add` is commutative and both captures sit
+    // on operands, so each root matches as (lhs,rhs) and as (rhs,lhs).
     assert_eq!(hits.len(), 6);
 
     let roots: std::collections::HashSet<NodeId> = hits.iter().map(|m| m.root()).collect();
@@ -239,8 +219,8 @@ fn each_match_has_its_own_bindings() {
     let rhs = Capture::new();
     let pat = add(any_int_const().capture(lhs), any_int_const().capture(rhs)).into_pattern();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    // Two operand orderings per root (see
-    // `find_all_returns_distinct_matches_with_distinct_roots`).
+    // Two operand orderings per root; see
+    // `find_all_returns_distinct_matches_with_distinct_roots`.
     assert_eq!(hits.len(), 6);
 
     let raw: Vec<(u128, u128)> = hits
@@ -252,7 +232,6 @@ fn each_match_has_its_own_bindings() {
             )
         })
         .collect();
-    // Every match carries its OWN bindings: no two hits agree on both captures.
     let distinct: std::collections::HashSet<(u128, u128)> = raw.iter().copied().collect();
     assert_eq!(
         distinct.len(),
@@ -260,7 +239,7 @@ fn each_match_has_its_own_bindings() {
         "each match has its own bindings: {raw:?}"
     );
 
-    // Normalised by operand order, the three source `add`s come back — each
+    // Normalised by operand order, the three source `add`s come back, each
     // contributing its pair twice, once per ordering.
     let mut got: Vec<(u128, u128)> = raw
         .into_iter()
@@ -269,8 +248,6 @@ fn each_match_has_its_own_bindings() {
     got.sort();
     assert_eq!(got, vec![(1, 2), (1, 2), (3, 4), (3, 4), (5, 6), (5, 6)]);
 }
-
-// ── Match::bindings_clone ────────────────────────────────────────────────────
 
 #[test]
 fn bindings_clone_outlives_match() {
@@ -296,8 +273,6 @@ fn bindings_clone_outlives_match() {
 
     assert_eq!(bindings.get_uint(v, &function), Some(5));
 }
-
-// ── Match::get_vn ────────────────────────────────────────────────────────────
 
 #[test]
 fn get_vn_on_initial_var_returns_varnode() {
@@ -328,10 +303,7 @@ fn get_vn_on_unbound_var_returns_none() {
     assert_eq!(m.get_vn(never_bound, &function), None);
 }
 
-// ── Default behaviour ───────────────────────────────────────────────────────
-
-/// Regression: with both flags off, existing pattern queries return the
-/// same matches as before.
+/// With both walk-through flags off, an ordinary query is unaffected.
 #[test]
 fn existing_pattern_unchanged_with_default_options() {
     let function = shapes::add_consts(5, 3);
@@ -340,10 +312,7 @@ fn existing_pattern_unchanged_with_default_options() {
     assert_eq!(hits.len(), 1);
 }
 
-// ── ignore_casts walk-through ────────────────────────────────────────────────
-
-/// Returns a graph whose return value is `Add(ZeroExt(Mul(2,3)), 4)` at I64,
-/// where the Mul is at I32.
+/// Returns `Add(ZeroExt(Mul(2,3)), 4)` at I64, with the Mul at I32.
 fn graph_add_zext_mul() -> strider_ir::Function {
     let mut t = Tb::empty();
     let two = t.u32(2);
@@ -366,16 +335,15 @@ fn add_mul_pattern_does_not_match_through_extend_by_default() {
 #[test]
 fn add_mul_pattern_matches_through_extend_with_ignore_casts() {
     let function = graph_add_zext_mul();
-    // The cast mask now lives on the pattern, not the matcher.
+    // The cast mask lives on the pattern, not the matcher.
     let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }
 
-/// LOW-1: a cast walked through via `ignore_casts` is part of the IR the
-/// match relied on, so it MUST appear in `matched_nodes()` (the
-/// asm-fingerprint footprint). Otherwise a rewrite that culls the dead
-/// cast would lose its address — a superset-only violation.
+/// A cast walked through via `ignore_casts` is IR the match relied on, so it
+/// must appear in `matched_nodes()`. Otherwise a rewrite culling the dead cast
+/// loses its address, violating the superset-only fingerprint contract.
 #[test]
 fn cast_walk_through_records_skipped_cast_in_footprint() {
     let function = graph_add_zext_mul();
@@ -449,9 +417,7 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
     assert_eq!(hits.len(), 1);
 }
 
-// ── Region boundaries are explicit ───────────────────────────────────
-
-/// Two-region graph: entry region runs `Call`; tail region runs `Return`.
+/// Entry region runs `Call`, tail region runs `Return`.
 fn graph_ret_via_region_after_call() -> strider_ir::Function {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let head = t.fb_mut().create_region_all().expect("head");
@@ -476,11 +442,9 @@ fn graph_ret_via_region_after_call() -> strider_ir::Function {
 #[test]
 fn ret_call_does_not_match_through_region_by_default() {
     let function = graph_ret_via_region_after_call();
-    // "Return preceded by a Call node": express the Call-kind predecessor
-    // via a node-level filter (the new API has no Call-kind value wildcard,
-    // and `preceded_by` only inspects the direct ctrl predecessor).  The
-    // Return's ctrl predecessor is the tail Region, not the Call, so this
-    // must NOT match — the region boundary is explicit.
+    // "Return preceded by a Call" goes through a node-level filter: there is no
+    // Call-kind value wildcard, and `preceded_by` inspects only the direct ctrl
+    // predecessor, which here is the tail Region rather than the Call.
     let pat = ret()
         .preceded_by(any().filter(|m, node| {
             matches!(
@@ -492,8 +456,6 @@ fn ret_call_does_not_match_through_region_by_default() {
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert!(hits.is_empty());
 }
-
-// ── matches().next(): short-circuiting single-match query ───────────────────
 
 #[test]
 fn matches_next_concrete_kind_equals_find_all_first() {
@@ -529,12 +491,9 @@ fn matches_next_wildcard_equals_find_all_first() {
 fn matches_next_no_match_returns_none() {
     let function = shapes::add_consts(5, 3);
     let m = Matcher::new(&function);
-    // No Load node in an arithmetic-only graph.
     assert!(m.matches(&load().build()).unwrap().next().is_none());
     assert!(m.matches(&call().build()).unwrap().next().is_none());
 }
-
-// ── find_joined: shared-capture cross-pattern intersection ──────────
 
 #[test]
 fn find_joined_empty_input() {
@@ -615,8 +574,8 @@ fn find_joined_intersects_on_shared_capture_node_id() {
     assert_eq!(k_val, 8);
 }
 
-/// Three patterns sharing one capture: a joined tuple exists only when
-/// ALL THREE bind the shared capture to the same node.
+/// A joined tuple exists only when all three patterns bind the shared capture
+/// to the same node.
 #[test]
 fn find_joined_three_patterns_all_agree_on_shared_capture() {
     let mut t = Tb::empty();
@@ -658,8 +617,8 @@ fn find_joined_three_patterns_all_agree_on_shared_capture() {
     assert_eq!(s1, s2);
 }
 
-/// Same three-pattern join, but the third store hangs off a DIFFERENT
-/// base — its `shared` binding disagrees, so no triple survives.
+/// Same three-pattern join, but the third store hangs off a different base, so
+/// its `shared` binding disagrees and no triple survives.
 #[test]
 fn find_joined_three_patterns_one_disagrees_yields_empty() {
     let mut t = Tb::empty();
@@ -695,11 +654,10 @@ fn find_joined_three_patterns_one_disagrees_yields_empty() {
     assert!(req.is_empty(), "third pattern's shared binding disagrees");
 }
 
-/// find_joined connectivity is ORDER-INDEPENDENT: a pattern that bridges to the
-/// rest only through a pattern listed *after* it must not be spuriously
-/// rejected. Regression for the old prefix-only check, which rejected e.g. the
-/// kernel `guard(var(fop))` + `call(var(fv))` + `load(...).capture(fop, fv)`
-/// join whenever the bridging capturing pattern wasn't listed first.
+/// Connectivity is ORDER-INDEPENDENT: a pattern bridging to the rest only via a
+/// pattern listed *after* it must not be rejected. The old prefix-only check
+/// rejected e.g. `guard(var(fop))` + `call(var(fv))` +
+/// `load(...).capture(fop, fv)` whenever the bridge wasn't listed first.
 #[test]
 fn find_joined_connectivity_is_order_independent() {
     let mut t = Tb::empty();
@@ -716,9 +674,8 @@ fn find_joined_connectivity_is_order_independent() {
 
     let x = Capture::new(); // shared base
     let d = Capture::new(); // shared data
-    // `bridge` binds both x and d; `by_base` binds only x; `by_data` binds only
-    // d — so `by_base` and `by_data` share nothing directly and connect ONLY
-    // through `bridge`.
+    // `bridge` binds both x and d; `by_base` binds only x, `by_data` only d, so
+    // those two share nothing directly and connect ONLY through `bridge`.
     let bridge = store()
         .addr(add(var(x), int_const(8u128)).ordered())
         .data(var(d))
@@ -728,7 +685,6 @@ fn find_joined_connectivity_is_order_independent() {
         .build();
     let by_data = store().data(var(d)).build();
 
-    // Every order is accepted, including the ones where the bridge is last.
     for order in [
         [&by_base, &by_data, &bridge],
         [&by_data, &by_base, &bridge],
@@ -740,7 +696,7 @@ fn find_joined_connectivity_is_order_independent() {
         );
     }
 
-    // A genuinely disconnected capture group still errors (unchanged).
+    // A genuinely disconnected capture group still errors.
     let z = Capture::new();
     let disjoint = store().data(var(z)).build();
     assert!(
@@ -750,8 +706,8 @@ fn find_joined_connectivity_is_order_independent() {
     );
 }
 
-/// A pattern that does NOT mention the shared capture imposes no
-/// constraint: the join degrades to a cross product against its matches.
+/// A pattern that does NOT mention the shared capture imposes no constraint:
+/// the join degrades to a cross product against its matches.
 #[test]
 fn find_joined_pattern_without_shared_capture_cross_products() {
     let mut t = Tb::empty();
@@ -769,8 +725,8 @@ fn find_joined_pattern_without_shared_capture_cross_products() {
 
     let mr = Matcher::new(&function);
     let shared = Capture::new();
-    // Pattern A binds `shared` (two matches, different bases); pattern B
-    // (the Call) never mentions it.
+    // The store binds `shared` twice over different bases; the Call never
+    // mentions it.
     let p_store = store()
         .addr(add(var(shared), any_int_const().capture(Capture::new())).ordered())
         .data(int_const(0u128))
@@ -784,18 +740,15 @@ fn find_joined_pattern_without_shared_capture_cross_products() {
     for tuple in &req {
         assert_eq!(tuple.len(), 2);
         assert!(tuple[0].node(shared, function.graph()).is_some());
-        // The call match carries no `shared` binding at all.
         assert!(tuple[1].node(shared, function.graph()).is_none());
     }
-    // The two tuples bind `shared` to the two distinct bases.
     let s0 = req[0][0].node(shared, function.graph()).unwrap();
     let s1 = req[1][0].node(shared, function.graph()).unwrap();
     assert_ne!(s0, s1);
 }
 
-/// A zero-match pattern in FIRST position also collapses the whole join
-/// to an empty top-level Vec (no per-slot empties) — symmetric with the
-/// existing second-position case.
+/// A zero-match pattern in FIRST position collapses the whole join to an empty
+/// top-level Vec (no per-slot empties), like the second-position case.
 #[test]
 fn find_joined_zero_match_first_pattern_yields_empty() {
     let function = shapes::add_consts(2, 3);
@@ -834,18 +787,15 @@ fn find_joined_disagreement_on_shared_capture_yields_empty() {
     assert!(req.is_empty());
 }
 
-/// MED-1: two patterns that EACH declare captures but share NONE of them
-/// is a caller bug (a mis-wired correlation), not a request for a
-/// cartesian product. `find_joined` must reject it loudly instead of
-/// returning |adds|² meaningless tuples. A capture-FREE pattern (pure
-/// filter) stays exempt — that case is the documented cross-product
-/// (see `find_joined_pattern_without_shared_capture_cross_products`).
+/// Two patterns that EACH declare captures but share NONE of them is a caller
+/// bug (a mis-wired correlation), not a request for a cartesian product, so it
+/// must error rather than return |adds|^2 meaningless tuples. A capture-FREE
+/// pattern stays exempt; see
+/// `find_joined_pattern_without_shared_capture_cross_products`.
 #[test]
 fn find_joined_disjoint_captures_is_rejected() {
     let function = shapes::add_nested_3(1, 2, 3);
     let mr = Matcher::new(&function);
-    // Two add patterns, each capturing its own operands — but the two
-    // patterns share no capture between them.
     let a0 = Capture::new();
     let a1 = Capture::new();
     let b0 = Capture::new();
@@ -862,17 +812,12 @@ fn find_joined_disjoint_captures_is_rejected() {
     );
 }
 
-/// MED-3: when several joined tuples are equivalent on every shared
-/// capture (here the shared `base`) but differ only in WHICH correlated
-/// site they pair, the consumer that acts per shared binding would
-/// double-act. `find_joined` must deduplicate tuples by their
-/// shared-capture binding signature so a correlated site appears once.
+/// Tuples that agree on every shared capture but differ only in WHICH
+/// correlated site they pair must dedup, or a consumer acting per shared
+/// binding double-acts. Here two stores share a base, so the raw cross-product
+/// is 2*2 = 4 tuples that must collapse to one.
 #[test]
 fn find_joined_dedups_tuples_equivalent_on_shared_captures() {
-    // Two stores hanging off the SAME base at different offsets. Both
-    // patterns match both stores and bind the shared `base` identically.
-    // The raw cross-product is 2×2 = 4 tuples, all agreeing on `base`;
-    // dedup-on-shared-capture must collapse them to one.
     let mut t = Tb::empty();
     let base = t.u64(0xAAAA);
     let off8 = t.u64(8);
@@ -886,8 +831,8 @@ fn find_joined_dedups_tuples_equivalent_on_shared_captures() {
 
     let mr = Matcher::new(&function);
     let shared = Capture::new();
-    // Both patterns capture only the shared base; the offset operand is
-    // an uncaptured wildcard, so the two stores bind identical shared sets.
+    // The offset operand is an uncaptured wildcard, so both stores bind
+    // identical shared sets.
     let p0 = store()
         .addr(add(var(shared), any()).ordered())
         .data(int_const(0u128))
@@ -905,18 +850,13 @@ fn find_joined_dedups_tuples_equivalent_on_shared_captures() {
     );
 }
 
-// ── Minimal entry+return function ────────────────────────────────────────────
-
-/// Pins the wildcard footprint of a minimal function (entry region +
-/// `Return` only): `any()` matches every reachable node — Entry, the
-/// entry Region, its MemPhi, InitialMemory, and the Return — value-less
-/// kinds included.
+/// `any()` matches every reachable node of a minimal function, value-less
+/// kinds (Entry, Region, MemPhi, InitialMemory) included.
 #[test]
 fn find_all_any_on_minimal_function_pins_node_count() {
     let function = Tb::empty().ret_nothing();
     let m = Matcher::new(&function);
     let hits = m.find_all(&any().into_pattern()).unwrap();
-    // Ground truth: the wildcard count equals the reachable-walk count.
     let walked = function.walk().count();
     assert_eq!(hits.len(), walked, "any() matches every reachable node");
     assert_eq!(
@@ -926,8 +866,8 @@ fn find_all_any_on_minimal_function_pins_node_count() {
     );
 }
 
-/// `match_at` on the `Return` node itself: the value-less control root
-/// matches `ret()` (root == the Return) and also the bare wildcard.
+/// The value-less control root matches `ret()` and the bare wildcard, but not
+/// a value-typed pattern.
 #[test]
 fn match_at_on_return_node_of_minimal_function() {
     let function = Tb::empty().ret_nothing();
@@ -946,7 +886,6 @@ fn match_at_on_return_node_of_minimal_function() {
         "any() matches the value-less Return at match_at"
     );
 
-    // A value-typed pattern must NOT match the value-less Return.
     assert!(
         m.match_at(ret_node, &any_int_const().into_pattern())
             .unwrap()

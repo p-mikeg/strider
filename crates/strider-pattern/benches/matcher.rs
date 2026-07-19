@@ -1,10 +1,6 @@
-//! Micro-benchmarks for `strider_pattern::Matcher` over a large synthetic
-//! function (~2000 value nodes).
-//!
-//! Two paths are measured:
-//! - `find_all` of a small pattern with many hits (the real matching path);
-//! - `find_all` of a pattern whose root kind never occurs in the graph
-//!   (the prefilter fast-reject path).
+//! `strider_pattern::Matcher` micro-benchmarks over large synthetic
+//! functions: plain `find_all` (many hits, and a root kind that never
+//! occurs so only the prefilter runs), plus the join-constraint paths.
 
 use std::hint::black_box;
 
@@ -17,10 +13,9 @@ use strider_pattern::{
     int_const, phi, shl,
 };
 
-/// Builds one long value chain: starting from a constant, 1000 iterations
-/// alternating Add / Mul / Xor with a fresh constant each iteration.  The
-/// constants vary by loop index so the dedup cache never collapses the
-/// chain — the result is ~2000 distinct value nodes ending in a `Return`.
+/// 1000 iterations alternating Add / Mul / Xor from a constant seed. The
+/// constants vary by loop index so the dedup cache can't collapse the chain:
+/// ~2000 distinct value nodes ending in a `Return`.
 fn build_chain() -> strider_ir::Function {
     let mut t = Tb::empty();
     let mut acc = t.u64(1);
@@ -35,14 +30,13 @@ fn build_chain() -> strider_ir::Function {
     t.ret_val(acc)
 }
 
-/// Builds a CHAIN OF DIAMONDS: `N` guards in sequence, each with a `Call` in
-/// its true arm, its false arm, and its merge region.  Nothing is optimised
-/// away — the matcher runs on the raw built function, so no DCE eats the
-/// filler and every call is a real hit.
+/// `n` diamonds in sequence, each with a `Call` in its true arm, false arm
+/// and merge region. The matcher runs on the raw built function, so no DCE
+/// eats the filler and every call is a real hit.
 ///
-/// The result is a deep dominator chain (the merge of diamond `i` dominates
-/// every node of diamond `i+1`), which is what makes the node-vs-split tree
-/// depth difference visible at all.
+/// The merge of diamond `i` dominates every node of diamond `i+1`, giving a
+/// deep dominator chain; without that depth the node-vs-split tree depth
+/// difference isn't visible at all.
 fn build_diamond_chain(n: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
 
@@ -87,16 +81,16 @@ fn build_diamond_chain(n: u64) -> strider_ir::Function {
 }
 
 /// The two join shapes the single-tree change trades between:
-/// - `Dominates`-ONLY: the case that could REGRESS (it now builds the bigger
-///   V+E tree instead of the V one, and walks ~2x-longer chains);
-/// - MIXED (`Dominates` node + edge): the case that should IMPROVE
-///   (one V+E build instead of two — V, then V+E).
+/// - `Dominates`-only: can regress (builds the bigger V+E tree instead of the
+///   V one, and walks ~2x longer chains).
+/// - Mixed (`Dominates` node + edge): should improve (one V+E build instead
+///   of two, V then V+E).
 fn join_constraint_benches(c: &mut Criterion) {
     let function = build_diamond_chain(60);
 
     let (g, t, cap) = (Capture::new(), Capture::new(), Capture::new());
 
-    // Dominates-only: the If dominates every call at or after it.
+    // The If dominates every call at or after it.
     {
         let guard = if_node().capture(g).build();
         let callp = call().capture(cap).build();
@@ -121,7 +115,7 @@ fn join_constraint_benches(c: &mut Criterion) {
         });
     }
 
-    // Mixed: a node-dominance query AND an edge-dominance query in one join.
+    // A node-dominance query and an edge-dominance query in one join.
     {
         let guard = if_node().capture(g).capture_true(t).build();
         let callp = call().capture(cap).build();
@@ -167,8 +161,7 @@ fn matcher_benches(c: &mut Criterion) {
         });
     });
 
-    // No ShiftLeft node exists in the chain, so this exercises the
-    // never-matching prefilter path.
+    // No ShiftLeft node exists in the chain, so only the prefilter runs.
     let no_match_pat = shl(int_const(0xDEAD_BEEFu128), int_const(7u128)).into_pattern();
     let hits = Matcher::new(&function).find_all(&no_match_pat).unwrap();
     assert!(hits.is_empty(), "shl pattern must never match");
@@ -182,10 +175,10 @@ fn matcher_benches(c: &mut Criterion) {
     });
 }
 
-/// A chain of `n` diamonds, each arm writing a distinct constant to `reg`, so
-/// every merge region carries a value `Phi` — the shape
-/// `JoinConstraint::PhiInputFromEdge` is about.  The bare `build_diamond_chain`
-/// writes no vars and so has no phis at all.
+/// `n` diamonds whose arms each write a distinct constant to `reg`, so every
+/// merge region carries a value `Phi` (the shape
+/// `JoinConstraint::PhiInputFromEdge` is about). `build_diamond_chain` writes
+/// no vars and so has no phis at all.
 fn build_phi_diamond_chain(n: u64) -> strider_ir::Function {
     let reg = strider_ir_test_utils::reg_vn(0, 8);
     let mut b: FunctionBuilder = RegisterSet::new()
@@ -266,10 +259,10 @@ fn phi_input_from_edge_benches(c: &mut Criterion) {
             });
         });
 
-        // The BASELINE the inline form was originally measured against: the arm
-        // value as its own free-floating root, searched over the whole graph and
-        // joined as a cross-product against the phi.  `any_input` must stay in
-        // the same class as (or beat) this, exactly as the inline form did.
+        // Baseline the inline form was measured against: the arm value as its
+        // own free-floating root, searched over the whole graph and joined as
+        // a cross-product against the phi. `any_input` must stay in the same
+        // class as this, or beat it.
         let bare_phi = phi().capture(ph).build();
         let val_root = any_int_const().capture(v).into_pattern();
         c.bench_function(&format!("phi_input_from_edge_floating_root/{n}"), |b| {

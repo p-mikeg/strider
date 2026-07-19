@@ -1,28 +1,21 @@
-//! Commutative matching: `add`, `mul`, `and`, `or`, `xor`,
-//! `bool_and/or/xor`, `float_add`, `float_mul`.
+//! Commutative matching: swapped operands match, `.ordered()` rejects them,
+//! and the swap retry neither over-counts nor leaks bindings.
 //!
-//! For each commutative ctor:
-//!   * match succeeds on both canonical and swapped operand orders;
-//!   * `.ordered()` forces the match to fail on swapped order;
-//!   * duplicate matches for the same root are not emitted.
-//!
-//! Non-commutative ctors (`sub`, `div`, `shl`, …) — already tested positive
-//! cases in `arithmetic.rs` — are rechecked here with swapped operands to
-//! confirm they do NOT match.
+//! Non-commutative ctors (`sub`, `div`, `shl`, ...) are rechecked here with
+//! swapped operands to confirm they do NOT match; their positive cases live in
+//! `arithmetic.rs`.
 
 use strider_ir::{FloatBinaryOp, FloatCmpOp, IRBuilderExt, IntBinaryOp, IntCmpOp};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
 
-// ── Commutative int ops match swapped operands ───────────────────────────────
-
 #[test]
 fn add_commutes() {
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
     a::matches_both_orders(
         &function,
-        add(int_const(5u128), int_const(3u128)).into_pattern(), // canonical
+        add(int_const(5u128), int_const(3u128)).into_pattern(), // as built
         add(int_const(3u128), int_const(5u128)).into_pattern(), // swapped
     );
 }
@@ -59,19 +52,15 @@ fn and_or_xor_commute() {
     );
 }
 
-// ── `.ordered()` disables commutative retry ──────────────────────────────────
-
 #[test]
 fn ordered_rejects_swap() {
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
-    // Swapped order with `.ordered()` must fail.
     a::none(
         &function,
         add(int_const(3u128), int_const(5u128))
             .ordered()
             .into_pattern(),
     );
-    // But canonical order still matches.
     a::matches(
         &function,
         add(int_const(5u128), int_const(3u128))
@@ -92,20 +81,19 @@ fn ordered_mul_rejects_swap() {
     );
 }
 
-// ── No duplicate match from the swap retry ───────────────────────────────────
-
+/// `add(any(), any())` on `add(5, 3)`: no captures, so both orderings produce
+/// the same binding map and collapse to one hit. Over-counting here means the
+/// swap retry is emitting duplicates.
 #[test]
 fn commutative_match_emits_single_match_per_root() {
-    // add(5, 3): pattern add(any(), any()) would in principle match twice if
-    // the swap retry over-counted.  Exactly one match per root.
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
     a::matches(&function, add(any(), any()).into_pattern(), 1);
 }
 
+/// Constant dedup makes both operands of `add(5, 5)` one `ValueId`, so the
+/// swap retry must still yield a single hit.
 #[test]
 fn commutative_match_with_identical_operands_emits_one() {
-    // add(5, 5) — constant dedup means both operands share a ValueId.
-    // add(int_const(5), int_const(5)) must match exactly once.
     let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
     a::matches(
         &function,
@@ -113,18 +101,9 @@ fn commutative_match_with_identical_operands_emits_one() {
         1,
     );
 }
-
-// ── Every DISTINCT binding is reported, not just the first ───────────────────
-//
-// `find_all` enumerates every operand ordering that matches, deduplicated by
-// the resulting capture->binding MAP.  So a capture on one operand of a
-// commutative node yields one match PER operand it can bind (the orderings
-// produce different maps), while a capture-free or identically-bound pattern
-// still yields exactly one (the orderings produce the SAME map).
-
-/// A capture on one operand of a commutative node binds to EACH operand in
-/// turn — both bindings are valid and both must be reported.  Reporting only
-/// the first is what made "one hit ⇒ unambiguous" a lie.
+/// `find_all` dedups by the capture->binding MAP, not by root, so a capture on
+/// one operand of a commutative node yields one hit per operand it can bind.
+/// Reporting only the first made "one hit means unambiguous" a lie.
 #[test]
 fn commutative_capture_reports_both_operand_bindings() {
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
@@ -134,33 +113,27 @@ fn commutative_capture_reports_both_operand_bindings() {
         .iter()
         .map(|m| m.bindings().get_uint(k, &function))
         .collect();
-    // Natural ordering first, then swapped — the enumeration order is pinned.
+    // Enumeration order is pinned: natural ordering first, then swapped.
     assert_eq!(bound, vec![Some(5), Some(3)], "both operands must bind");
     bound.sort_unstable();
     bound.dedup();
     assert_eq!(bound.len(), 2, "the two bindings must be DISTINCT");
 }
 
-/// Dedup is by the capture->binding MAP, not by root: when both operands are
-/// the SAME value the two orderings produce an IDENTICAL map, so it is ONE
-/// match, not two.
+/// Both operands the same value (constant dedup) means the two orderings
+/// produce an identical binding map, hence one match, not two.
 #[test]
 fn commutative_capture_identical_operands_dedups_to_one() {
-    // add(5, 5) — constant dedup makes both operands share one ValueId.
     let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
     let k = Capture::new();
     let hits = a::matches(&function, add(any().capture(k), any()).into_pattern(), 1);
     assert_eq!(hits[0].bindings().get_uint(k, &function), Some(5));
 }
 
-/// Arrangements MULTIPLY across nested commutative nodes.
-///
-/// `add(add(5,3), add(7,9))` matched by `add(add(w,x), add(y,z))` has three
-/// independent commutative choices — the outer node and each inner node — so
-/// the enumeration must report 2*2*2 = 8 distinct binding maps rather than
-/// collapsing to one node's worth. This is what "find_all reports every
-/// arrangement" means once a pattern is deeper than a single node, which the
-/// tests above cannot observe.
+/// Arrangements MULTIPLY across nested commutative nodes: `add(add(w,x),
+/// add(y,z))` over `add(add(5,3), add(7,9))` has three independent swap
+/// choices, so 2*2*2 = 8 distinct binding maps, not one node's worth. The
+/// single-node tests above cannot observe this.
 #[test]
 fn nested_commutative_arrangements_multiply() {
     let mut t = Tb::empty();
@@ -184,8 +157,7 @@ fn nested_commutative_arrangements_multiply() {
     .into_pattern();
     let hits = a::matches(&function, pat, 8);
 
-    // Every hit is a DISTINCT (w,x,y,z) tuple — the dedup key is the binding
-    // map, so 8 hits must mean 8 different maps, not one map reported 8 times.
+    // 8 hits must mean 8 different binding maps, not one map reported 8 times.
     let mut seen: Vec<(u128, u128, u128, u128)> = hits
         .iter()
         .map(|m| {
@@ -201,8 +173,8 @@ fn nested_commutative_arrangements_multiply() {
         "all 8 arrangements must be distinct: {seen:?}"
     );
 
-    // Each inner pair stays together: {w,x} is always {5,3} and {y,z} always
-    // {7,9}, or the outer swap carries both — never a cross-node mix.
+    // Each inner pair stays together (the outer swap carries both), never a
+    // cross-node mix.
     for (wv, xv, yv, zv) in &seen {
         let mut left = [*wv, *xv];
         let mut right = [*yv, *zv];
@@ -233,8 +205,8 @@ fn ordered_capture_reports_only_the_pinned_ordering() {
     );
 }
 
-/// A capture on a NON-commutative node has only one ordering, so it stays at
-/// one hit — the enumeration must not manufacture duplicates.
+/// A capture on a NON-commutative node has one ordering, so the enumeration
+/// must not manufacture duplicates.
 #[test]
 fn non_commutative_capture_stays_single() {
     let function = shapes::int_bin(20, 4, IntBinaryOp::Div);
@@ -244,8 +216,8 @@ fn non_commutative_capture_stays_single() {
 }
 
 /// `matches()` is lazy: `.next()` yields the natural ordering without
-/// enumerating the swapped one.  `find_all` collects this iterator, so this
-/// is what pins `find_all(..)[0]` to the natural ordering.
+/// enumerating the swapped one. `find_all` collects this iterator, so this is
+/// what pins `find_all(..)[0]` to the natural ordering.
 #[test]
 fn matches_iterator_yields_natural_ordering_first() {
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
@@ -263,13 +235,10 @@ fn matches_iterator_yields_natural_ordering_first() {
     );
 }
 
-// ── Non-commutative ops REJECT swap ──────────────────────────────────────────
-
+/// `pattern::sub(a, b)` is an alias for the lowered `Add(a, Neg(b))`, so the
+/// fixture builds that shape directly.
 #[test]
 fn sub_does_not_commute() {
-    // `pattern::sub(a, b)` is an ergonomic alias for `Add(a, Neg(b))`.
-    // Build the lowered `5 - 3` shape directly via the test helper and
-    // verify operand order is preserved (i.e. swapping captures fails).
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -306,8 +275,6 @@ fn div_shl_shr_do_not_commute() {
     );
 }
 
-// ── Boolean commutativity ────────────────────────────────────────────────────
-
 #[test]
 fn bool_and_or_xor_commute() {
     let g_and = shapes::bool_bin(true, false, IntBinaryOp::And);
@@ -330,34 +297,27 @@ fn bool_and_or_xor_commute() {
     );
 }
 
-// ── `bool_binary` / `bool_and` are chainable (`.ordered()` pins operand slots) ─
-
+/// `bool_binary` is chainable: bare it matches commutatively, `.ordered()`
+/// pins the operand slots.
 #[test]
 fn bool_binary_ordered_rejects_swap() {
-    // Build `and(true, false)` at I1.  Default `bool_binary` matches
-    // commutatively; `.ordered()` pins the operand slots so the swapped
-    // operand order must fail while the canonical order still matches.
     let function = shapes::bool_bin(true, false, IntBinaryOp::And);
-    // Canonical (operand 0 = true, operand 1 = false) matches either way.
     a::matches(
         &function,
         bool_binary(IntBinaryOp::And, bool_const(true), bool_const(false)).into_pattern(),
         1,
     );
-    // Without `.ordered()`, the swapped order still matches (commutative).
     a::matches(
         &function,
         bool_binary(IntBinaryOp::And, bool_const(false), bool_const(true)).into_pattern(),
         1,
     );
-    // With `.ordered()`, the swapped order must NOT match…
     a::none(
         &function,
         bool_binary(IntBinaryOp::And, bool_const(false), bool_const(true))
             .ordered()
             .into_pattern(),
     );
-    // …but the canonical order still does.
     a::matches(
         &function,
         bool_binary(IntBinaryOp::And, bool_const(true), bool_const(false))
@@ -385,9 +345,8 @@ fn bool_and_ordered_rejects_swap() {
     );
 }
 
-/// The chainable `bool_binary` builder must keep the `I1` output guard:
-/// `.ordered()` (or the bare builder) must NOT match a same-shaped wide
-/// `And` even when the operand order lines up.
+/// The `I1` output guard survives `.ordered()`: neither form may match a
+/// same-shaped wide `And`, even with the operand order lined up.
 #[test]
 fn bool_binary_ordered_requires_i1_output() {
     use strider_ir::node::ValueType;
@@ -416,19 +375,15 @@ fn bool_binary_ordered_requires_i1_output() {
     );
 }
 
-// ── int_cmp Carry / Scarry commutativity ─────────────────────────────────────
-//
-// `NodeKind::is_commutative` includes `IntCmpOp::Carry` and `IntCmpOp::Scarry`
-// (an addition carry/overflow commutes because addition does), so `int_carry`
-// / `int_scarry` must match swapped operands, and `.ordered()` must reject the
-// swap.
+// `IntCmpOp::Carry` / `Scarry` are commutative in `NodeKind::is_commutative`:
+// an addition carry/overflow commutes because addition does.
 
 #[test]
 fn int_carry_commutes() {
     let function = shapes::int_cmp_5_3(IntCmpOp::Carry);
     a::matches_both_orders(
         &function,
-        int_carry(int_const(5u128), int_const(3u128)).into_pattern(), // canonical
+        int_carry(int_const(5u128), int_const(3u128)).into_pattern(), // as built
         int_carry(int_const(3u128), int_const(5u128)).into_pattern(), // swapped
     );
 }
@@ -436,14 +391,12 @@ fn int_carry_commutes() {
 #[test]
 fn ordered_int_carry_rejects_swap() {
     let function = shapes::int_cmp_5_3(IntCmpOp::Carry);
-    // Swapped order with `.ordered()` must fail…
     a::none(
         &function,
         int_carry(int_const(3u128), int_const(5u128))
             .ordered()
             .into_pattern(),
     );
-    // …but canonical order still matches.
     a::matches(
         &function,
         int_carry(int_const(5u128), int_const(3u128))
@@ -458,7 +411,7 @@ fn int_scarry_commutes() {
     let function = shapes::int_cmp_5_3(IntCmpOp::Scarry);
     a::matches_both_orders(
         &function,
-        int_scarry(int_const(5u128), int_const(3u128)).into_pattern(), // canonical
+        int_scarry(int_const(5u128), int_const(3u128)).into_pattern(), // as built
         int_scarry(int_const(3u128), int_const(5u128)).into_pattern(), // swapped
     );
 }
@@ -481,8 +434,6 @@ fn ordered_int_scarry_rejects_swap() {
     );
 }
 
-// ── Float commutativity ──────────────────────────────────────────────────────
-
 #[test]
 fn float_add_and_mul_commute() {
     let g_add = shapes::float_bin(2.0, 5.0, FloatBinaryOp::Add);
@@ -499,11 +450,10 @@ fn float_add_and_mul_commute() {
     );
 }
 
+/// `FloatBinaryOp::Sub` is not a primitive: `pattern::float_sub` is an alias
+/// for the lowered `FloatAdd(a, Neg(b))`, which the fixture builds by hand.
 #[test]
 fn float_sub_and_div_do_not_commute() {
-    // `FloatBinaryOp::Sub` is no longer a primitive — `pattern::float_sub`
-    // is an ergonomic alias that constructs the lowered shape
-    // `FloatAdd(a, FloatUnaryOp::Neg(b))`.
     let g_sub = {
         let mut t = Tb::empty();
         let a = t.f64(5.0);
@@ -538,10 +488,8 @@ fn float_sub_and_div_do_not_commute() {
     );
 }
 
-// ── Mixed commutative + non-commutative nesting ──────────────────────────────
-
-/// Graph: `add(sub(a, b), c)`.  Commutative outer `add` can rearrange
-/// `(sub-result, c)`, but non-commutative inner `sub` cannot.
+/// `add(sub(a, b), c)`: the outer `add` can rearrange `(sub-result, c)`, the
+/// inner `sub` cannot.
 #[test]
 fn commutative_outer_non_commutative_inner() {
     let mut t = Tb::empty();
@@ -552,50 +500,43 @@ fn commutative_outer_non_commutative_inner() {
     let s = t.add(d, c);
     let function = t.ret_val(s);
 
-    // Canonical shape.
     a::matches(
         &function,
         add(sub(int_const(10u128), int_const(3u128)), int_const(5u128)).into_pattern(),
         1,
     );
-    // Outer-add swapped: still matches (commutative).
+    // Outer-add swapped: still matches.
     a::matches(
         &function,
         add(int_const(5u128), sub(int_const(10u128), int_const(3u128))).into_pattern(),
         1,
     );
-    // Inner-sub swapped: must NOT match.
+    // Inner-sub swapped: no match.
     a::none(
         &function,
         add(sub(int_const(3u128), int_const(10u128)), int_const(5u128)).into_pattern(),
     );
-    // Inner swap combined with outer swap: still must NOT match.
+    // Inner swap plus outer swap: still no match.
     a::none(
         &function,
         add(int_const(5u128), sub(int_const(3u128), int_const(10u128))).into_pattern(),
     );
 }
 
-// ── Capture consistency across commutative swap ──────────────────────────────
-
-/// If a commutative pattern partially binds variables on its first operand
-/// order and fails on the other, the swap retry must start with clean
-/// bindings — otherwise `var(x)` used twice could spuriously match when the
-/// operands are distinct.
+/// The swap retry must start from clean bindings after a partial bind on the
+/// first ordering. Otherwise `var(x)` used twice spuriously matches distinct
+/// operands.
 #[test]
 fn commutative_swap_does_not_leak_bindings() {
-    // add(5, 3): operands are distinct.  Pattern `add(var(x), var(x))` should
-    // NOT match (the two operands are different `ValueId`s and `x`
-    // enforces identity).
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
     let x = Capture::new();
     a::none(&function, add(var(x), var(x)).into_pattern());
 }
 
+/// Constant dedup makes both operands of `add(5, 5)` the same output, so the
+/// identity capture `add(var(x), var(x))` does match here.
 #[test]
 fn commutative_swap_matches_identical_operand_with_identity_capture() {
-    // add(5, 5): constant dedup makes both operands the same output.  Now
-    // `add(var(x), var(x))` MUST match.
     let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
     let x = Capture::new();
     assert_eq!(
@@ -604,19 +545,15 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
     );
 }
 
-// ── when_match × commutative swap retry ──────────────────────────────────────
-
-/// A `when_match` guard on a CHILD operand that rejects the natural
-/// operand order does not kill the match: the commutative swap retry
-/// re-drives the child against the other operand, where the guard
-/// passes.
+/// A `when_match` guard on a CHILD operand that rejects the natural ordering
+/// does not kill the match: the swap retry re-drives the child against the
+/// other operand, where the guard passes.
 #[test]
 fn child_when_match_rejection_still_tries_swapped_order() {
     use strider_ir::IRViewer;
 
-    // add(2, 3): the guarded child sits on pattern slot 0, which the
-    // natural order maps to operand 2 (guard fails) and the swap retry
-    // maps to operand 3 (guard passes).
+    // The guarded child sits on pattern slot 0: natural order maps it to the
+    // 2-operand (guard fails), the swap retry to the 3-operand (guard passes).
     let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
     let c = Capture::new();
     let guarded = any().capture(c).when_match(move |m, _ty, b| {
@@ -633,20 +570,17 @@ fn child_when_match_rejection_still_tries_swapped_order() {
     );
 }
 
-/// A `when_match` guard on the ROOT runs after the inputs resolved in
-/// SOME order; if it rejects on a commutative node, the matcher re-drives
-/// the SWAPPED operand order before giving up — so an operand-order-
-/// sensitive root guard still finds a valid ordering (e.g. `const(a) +
-/// const(b)` with a guard pinning the narrow operand).
+/// A ROOT `when_match` guard runs after the inputs resolved in SOME order; a
+/// rejection on a commutative node re-drives the swapped order before giving
+/// up, so an order-sensitive root guard still finds a valid ordering.
 #[test]
 fn root_when_match_rejection_redrives_swap() {
     use strider_ir::IRViewer;
 
     let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
     let l = Capture::new();
-    // Inputs match in the natural order (l ← 2); the root guard demands
-    // l == 3, which only the swapped order satisfies — the commutative
-    // swap retry re-drives the inputs so l ← 3 and the guard passes.
+    // Inputs match naturally with l bound to 2; the guard demands 3, which
+    // only the swapped order satisfies.
     let pat = add(any().capture(l), any())
         .when_match(move |m, _ty, b| {
             let Some(v) = b.get_value(l) else {
@@ -663,8 +597,8 @@ fn root_when_match_rejection_redrives_swap() {
     );
 }
 
-/// `.ordered()` still disables the swap re-drive even when a root guard
-/// rejects: a non-commutative (forced-ordered) node fails outright.
+/// `.ordered()` disables the swap re-drive even when a root guard rejects:
+/// the forced-ordered node fails outright.
 #[test]
 fn ordered_root_when_match_rejection_does_not_redrive_swap() {
     use strider_ir::IRViewer;
@@ -683,18 +617,16 @@ fn ordered_root_when_match_rejection_does_not_redrive_swap() {
     a::none(&function, pat);
 }
 
-/// A guard on a UNARY parent (which has no operands of its own to swap) must
-/// still re-drive a COMMUTATIVE child's operand order: the backtracking
-/// propagates DOWN past the unary node. This is the `const(a) + const(b)` under
-/// a width-narrowing/extending parent case — the guard picks the operand, and
-/// the matcher must try the child's other ordering to satisfy it.
+/// A guard on a UNARY parent (nothing of its own to swap) must still re-drive
+/// a commutative child's operand order: backtracking propagates DOWN past the
+/// unary node.
 #[test]
 fn unary_parent_guard_redrives_commutative_child() {
     use strider_ir::IRViewer;
     use strider_ir::node::ValueType;
 
-    // zext(add(2, 3)): the natural order binds x←2 (guard wants 3); the re-drive
-    // must reach down through the unary zext to swap the add so x←3.
+    // zext(add(2, 3)): natural order binds x to 2, but the guard wants 3, so
+    // the re-drive must reach down through the zext to swap the add.
     let function = {
         let mut t = Tb::empty();
         let two = t.u64(2);
@@ -717,10 +649,7 @@ fn unary_parent_guard_redrives_commutative_child() {
     );
 }
 
-// ── float_cmp commutativity ──────────────────────────────────────────────────
-
-/// Builds a graph that asserts a float comparison `a OP b` and returns
-/// the boolean result (cast to u64 for typability).
+/// `a OP b` returned as the boolean result, cast to u64 for typability.
 fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> strider_ir::Function {
     let mut t = Tb::empty();
     let a = t.f64(l);
@@ -750,10 +679,10 @@ fn float_eq_commutes() {
     );
 }
 
+/// `FloatCmpOp::NotEqual` is not a primitive: `pattern::float_ne` is an alias
+/// for `Xor(FloatEqual(_, _), 1):I1`, which the fixture builds by hand.
 #[test]
 fn float_ne_commutes() {
-    // `FloatCmpOp::NotEqual` is no longer a primitive — `pattern::float_ne`
-    // is an ergonomic alias that constructs `Xor(FloatEqual(_, _), 1):I1`.
     let function = {
         let mut t = Tb::empty();
         let a = t.f64(1.0);
@@ -781,7 +710,6 @@ fn float_ne_commutes() {
 #[test]
 fn float_lt_does_not_commute() {
     let function = graph_float_cmp(1.0, 2.0, FloatCmpOp::Less);
-    // Canonical order matches.
     a::matches(
         &function,
         float_cmp(
@@ -792,7 +720,7 @@ fn float_lt_does_not_commute() {
         .into_pattern(),
         1,
     );
-    // Swapped order must NOT match — Less is directional.
+    // Less is directional.
     a::none(
         &function,
         float_cmp(

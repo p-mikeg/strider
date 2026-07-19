@@ -1,5 +1,5 @@
-//! Integration coverage for the typed template side: a `TemplatePat`
-//! RHS instantiated as fresh IR against a matched LHS.
+//! The typed template side: a `TemplatePat` RHS instantiated as fresh IR
+//! against a matched LHS.
 
 #![allow(
     clippy::panic,
@@ -20,10 +20,8 @@ use strider_pattern::{
     Bindings, Capture, MatchPat, Matcher, TemplatePat, add, int_const, signed_int_const, var,
 };
 
-// ── Shared match-then-instantiate scaffold ───────────────────────────────────
-
-/// Matches `lhs` exactly once against `fx` and returns the matched root
-/// node, the captured bindings, and the root's single value-output type.
+/// Matches `lhs` exactly once and returns the root node, its bindings, and the
+/// root's single value-output type.
 #[track_caller]
 fn match_lhs_once(fx: &Function, lhs: &Pattern) -> (NodeId, Bindings, ValueType) {
     let m = Matcher::new(fx);
@@ -36,8 +34,8 @@ fn match_lhs_once(fx: &Function, lhs: &Pattern) -> (NodeId, Bindings, ValueType)
     (root_node, bindings, root_ty)
 }
 
-/// Instantiates `rhs` as fresh IR against the matched `root`, with the
-/// proof-node set defaulted to `[root]`, returning the new root value.
+/// Instantiates `rhs` against the matched `root`, defaulting the proof-node set
+/// to `[root]`.
 #[track_caller]
 fn instantiate_at_root(
     fx: &mut Function,
@@ -50,8 +48,8 @@ fn instantiate_at_root(
     instantiate(rhs, &mut ef, bindings, root, &[root], root_ty).unwrap()
 }
 
-/// Match `add(var(x), int_const(1))`, then instantiate
-/// `add(var(x), int_const(2))` as fresh IR re-using the captured `x`.
+/// Instantiating `add(var(x), int_const(2))` after matching
+/// `add(var(x), int_const(1))` re-uses the captured `x` and mints a fresh const.
 #[test]
 fn instantiate_add_const_builds_fresh_node() {
     let x = Capture::new();
@@ -63,22 +61,18 @@ fn instantiate_add_const_builds_fresh_node() {
     })
     .unwrap();
 
-    // Match the LHS.
     let lhs = add(var(x), int_const(1u128)).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
 
-    // Build the RHS as fresh IR.
     let rhs = template::add(var(x), int_const(2u128)).into_template();
     let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
 
-    // The new output is an Add node.
     let new_node = fx.producer(new_value);
     assert!(matches!(
         fx.node_kind(new_node),
         NodeKind::IntBinaryOp(IntBinaryOp::Add)
     ));
 
-    // Its constant operand is the freshly built `IntConst(2)`.
     let has_two = fx
         .node_inputs(new_node)
         .into_iter()
@@ -93,11 +87,10 @@ fn instantiate_add_const_builds_fresh_node() {
     assert!(has_two, "RHS should materialise IntConst(2)");
 }
 
-/// `instantiate` must attribute the FULL proof-node set to EVERY node it
-/// creates — not just the root output. A multi-node RHS (`add(var(x),
-/// int_const(2))` → Add root + intermediate IntConst) is built with a
-/// two-node proof set carrying distinct addrs; the intermediate IntConst
-/// must carry BOTH proof addrs, proving the proof lands on non-root nodes.
+/// `instantiate` must attribute the full proof-node set to every node it
+/// creates, not just the root output. The multi-node RHS is built with a
+/// two-node proof set carrying distinct addrs; the intermediate IntConst must
+/// carry both, proving attribution reaches non-root nodes.
 #[test]
 fn instantiate_attributes_full_proof_set_to_every_new_node() {
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
@@ -115,7 +108,7 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
     })
     .unwrap();
 
-    // Match `add(var(x), int_const(1))`; collect the two proof nodes.
+    // Collect the two proof nodes.
     let lhs = add(var(x), int_const(1u128)).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     let proof_a = fx
@@ -141,7 +134,7 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
     assert!(fx.side_tables().asm_fingerprint(proof_a).contains(&PROOF_A));
     assert!(fx.side_tables().asm_fingerprint(proof_b).contains(&PROOF_B));
 
-    // Build the RHS with BOTH proof nodes as the attribution set.
+    // Both proof nodes form the attribution set.
     let rhs = template::add(var(x), int_const(2u128)).into_template();
     let proof_nodes = [proof_a, proof_b];
     let new_value = {
@@ -149,10 +142,9 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
         instantiate(&rhs, &mut ef, &bindings, root_node, &proof_nodes, root_ty).unwrap()
     };
 
-    // The INTERMEDIATE freshly-built IntConst(2) — not the root Add — must
-    // carry BOTH proof fingerprints. The new nodes aren't wired into the
-    // reachable graph yet (that's `replace_value`'s job), so reach the
-    // intermediate via the new root Add's inputs rather than a graph walk.
+    // The new nodes aren't wired into the reachable graph yet (that's
+    // `replace_value`'s job), so reach the intermediate IntConst via the new
+    // root's inputs rather than a graph walk.
     let new_root = fx.producer(new_value);
     let new_const2 = fx
         .node_inputs(new_root)
@@ -174,7 +166,7 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
 }
 
 /// A bare `var(c)` template resolves to its bound output through the
-/// `Bindings` — no fresh node is created.
+/// `Bindings`; no fresh node is created.
 #[test]
 fn instantiate_bare_var_resolves_to_bound_output() {
     let c = Capture::new();
@@ -186,12 +178,11 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     })
     .unwrap();
 
-    // Match `add(int_const(5), var(c))` — `c` binds to the 7-operand.
+    // `c` binds to the 7-operand.
     let lhs = add(int_const(5u128), var(c)).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     let bound = bindings.get_value(c).unwrap();
 
-    // Instantiating a bare `var(c)` returns the bound output unchanged.
     let pre_count = fx.walk().count();
     let rhs = var(c).into_template();
     let resolved = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
@@ -199,29 +190,24 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     assert_eq!(fx.walk().count(), pre_count, "no fresh node created");
 }
 
-/// A `Template` may declare a multi-output interior node and wire its
-/// non-value output into a later consumer. Build
-/// `Load(Store(InitialMemory, addr, data).mem, addr)` directly on the
-/// `TemplateBuilder`: the `Store` is a multi-output interior node whose
-/// **memory** output feeds the `Load`'s memory input slot, while the
-/// `Load` (the root) yields the single value. This exercises
+/// A `Template` may wire a multi-output interior node's non-value output into a
+/// later consumer. Here the `Store`'s memory output feeds the `Load`'s memory
+/// input slot while the `Load` root yields the value, exercising
 /// `instantiate`'s per-output-vertex slot wiring.
 #[test]
 fn template_wires_multi_output_interior_memory_node() {
     let space = rsleigh::VnSpace::RAM;
 
-    // Build the template imperatively (the typed value-op builders only
-    // expose value expressions; memory wiring needs the raw builder).
+    // The typed value-op builders only expose value expressions; memory wiring
+    // needs the raw builder.
     let mut b = TemplateBuilder::new();
 
-    // mem0 = InitialMemory (one memory output).
     let mem0_node = b.node(KindSpec::Exact(NodeKind::InitialMemory));
     let mem0 = b.memory_output(mem0_node, 0);
 
-    // addr / data leaves (value). Built via FnIntConst so they intern real
-    // values into the target function at instantiation — a raw
-    // `Exact(IntConst(ConstId::from_u32(..)))` leaf would stamp a dangling
-    // ConstId into the fixture (passing only because this test never validates).
+    // FnIntConst interns real values into the target function at instantiation.
+    // A raw `Exact(IntConst(ConstId::from_u32(..)))` leaf would stamp a dangling
+    // ConstId into the fixture, passing only because this test never validates.
     let addr = b.leaf(KindSpec::Any);
     b.set_template_kind(
         addr,
@@ -235,16 +221,15 @@ fn template_wires_multi_output_interior_memory_node() {
     );
     b.set_value_ty(data, T::I64);
 
-    // store = Store(mem0, addr, data) — inputs [MEM, ADDR, DATA],
-    // output [MEM]. The memory output is the multi-output interior edge.
+    // Store inputs are [mem, addr, data]; its lone output is the memory token.
     let store = b.node(KindSpec::Exact(NodeKind::Store(space)));
     b.input(store, 0, mem0);
     b.input(store, 1, addr);
     b.input(store, 2, data);
     let store_mem = b.memory_output(store, 0);
 
-    // load = Load(store_mem, addr) — inputs [MEM, ADDR], output [INT_VAL].
-    // It consumes the *Store's* memory output, proving the slot wiring.
+    // Load inputs are [mem, addr]. It consumes the Store's memory output, which
+    // is what proves the slot wiring.
     let load = b.node(KindSpec::Exact(NodeKind::Load(space)));
     b.input(load, 0, store_mem);
     b.input(load, 1, addr);
@@ -252,8 +237,7 @@ fn template_wires_multi_output_interior_memory_node() {
 
     let tpl = b.finish();
 
-    // Instantiate against a throwaway fixture; the template is
-    // pure-`Exact`, so bindings / lhs_root are unused.
+    // The template is pure-`Exact`, so bindings / lhs_root are unused.
     let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::I64)).unwrap();
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
@@ -263,7 +247,6 @@ fn template_wires_multi_output_interior_memory_node() {
         instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64).unwrap()
     };
 
-    // The root materialised as a Load yielding a value output.
     let load_node = fx.producer(root_value);
     assert!(
         matches!(fx.node_kind(load_node), NodeKind::Load(_)),
@@ -274,7 +257,6 @@ fn template_wires_multi_output_interior_memory_node() {
         "root output must be a value"
     );
 
-    // The Load's memory input (slot 0) is the Store's memory output.
     let load_inputs = fx.node_inputs(load_node);
     let mem_value = load_inputs[0];
     let store_node = fx.producer(mem_value);
@@ -288,7 +270,6 @@ fn template_wires_multi_output_interior_memory_node() {
         "the wired Store output must be the memory token"
     );
 
-    // The Store's own memory input traces back to the InitialMemory node.
     let store_inputs = fx.node_inputs(store_node);
     let store_mem_value = store_inputs[0];
     assert!(
@@ -300,29 +281,23 @@ fn template_wires_multi_output_interior_memory_node() {
     );
 }
 
-/// `int_const(V)` as a template RHS for V > u64::MAX must produce the FULL
-/// value when the root is I128 — not a u64-truncated one.
-///
-/// Before the `ConstId` unification, the old narrow-cast path truncated the high
-/// bits before the interner could preserve them.
+/// `int_const(V)` as a template RHS for V > u64::MAX must produce the full value
+/// on an I128 root. Before the `ConstId` unification the narrow-cast path
+/// truncated the high bits before the interner could preserve them.
 #[test]
 fn int_const_wide_template_rhs_preserves_full_value() {
-    // A value whose high 64 bits are non-zero — the truncation bug drops them.
+    // High 64 bits are non-zero, which is what the truncation bug dropped.
     let wide_val: u128 = 1u128 << 100;
 
-    // Build a fixture with an I128 constant so we have something to match on.
     let mut fx = make_empty_fn(|b| b.build_int_const(wide_val, T::I128)).unwrap();
 
-    // Find the I128 constant node.
     let lhs = int_const(wide_val).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     assert_eq!(root_ty, T::I128);
 
-    // Instantiate `int_const(wide_val)` as an I128 RHS.
     let rhs = int_const(wide_val).into_template();
     let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
 
-    // The produced constant must read back as the full wide_val, not truncated.
     let stored = fx
         .int_const_u128(new_value)
         .expect("new value must be an integer constant readable via int_const_u128");
@@ -333,9 +308,8 @@ fn int_const_wide_template_rhs_preserves_full_value() {
     );
 }
 
-/// `int_const(u128::MAX)` as a template RHS on an I128 root must produce
-/// the full 128-bit all-ones pattern (I128 all-ones = u128::MAX), not a
-/// u64-truncated value.
+/// `int_const(u128::MAX)` on an I128 root must give the full 128-bit all-ones
+/// pattern, not a u64-truncated value.
 #[test]
 fn int_const_all_ones_i128_template_rhs() {
     let all_ones = u128::MAX;
@@ -357,23 +331,19 @@ fn int_const_all_ones_i128_template_rhs() {
     );
 }
 
-/// `signed_int_const(-50)` as a template RHS on an I128 root must produce
-/// the full 128-bit two's-complement pattern for -50, not a zero-extended
-/// low-64 value.
+/// `signed_int_const(-50)` on an I128 root must give the full 128-bit
+/// two's-complement pattern, not a zero-extended low-64 value.
 #[test]
 fn signed_int_const_negative_i128_template_rhs() {
     let v: i64 = -50;
-    // Expected: full I128 two's-complement representation of -50.
     let expected: u128 = i128::from(v) as u128;
 
-    // Build a fixture with the I128 two's-complement constant so we can match it.
     let mut fx = make_empty_fn(|b| b.build_int_const(expected, T::I128)).unwrap();
 
     let lhs = int_const(expected).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     assert_eq!(root_ty, T::I128);
 
-    // Instantiate `signed_int_const(-50)` as an I128 RHS.
     let rhs = signed_int_const(v).into_template();
     let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
 
@@ -387,13 +357,11 @@ fn signed_int_const_negative_i128_template_rhs() {
     );
 }
 
-/// LOW-2: a raw-built template whose node wires NON-CONTIGUOUS input
-/// slots (here slots 0 and 2, with a gap at 1) must fail `instantiate`
-/// with a typed error rather than silently closing the gap (which would
-/// land slot 2's producer at IR input index 1 — wrong IR, no diagnostic).
+/// A raw-built template with non-contiguous input slots must fail `instantiate`
+/// with a typed error rather than silently closing the gap, which would land
+/// slot 2's producer at IR input index 1: wrong IR, no diagnostic.
 #[test]
 fn instantiate_noncontiguous_raw_template_slots_errors() {
-    // Build an `Add` node wired at slots 0 and 2 — slot 1 is left empty.
     let mut b = TemplateBuilder::new();
     let l = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(5))));
     let r = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(7))));
@@ -417,8 +385,8 @@ fn instantiate_noncontiguous_raw_template_slots_errors() {
     );
 }
 
-/// LOW-2: a raw-built template wiring TWO producers into the SAME input
-/// slot silently dropped the earlier edge; `instantiate` must reject it.
+/// Wiring two producers into the same input slot silently dropped the earlier
+/// edge; `instantiate` must reject it.
 #[test]
 fn instantiate_duplicate_raw_template_slot_errors() {
     let mut b = TemplateBuilder::new();
@@ -455,7 +423,6 @@ fn instantiate_with_unbound_template_capture_errors() {
     let lhs = int_const(5u128).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
 
-    // RHS references a capture no pattern ever bound.
     let unbound = Capture::new();
     let rhs = template::add(var(unbound), int_const(1u128)).into_template();
 

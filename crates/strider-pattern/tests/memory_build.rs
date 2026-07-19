@@ -1,6 +1,5 @@
-//! `load` / `store` builder matching, including memory-token chaining
-//! (a `load` consuming the memory token produced by a prior `store` /
-//! `mem_phi`).
+//! `load` / `store` builder matching, including memory-token chaining: a
+//! `load` consuming the token a prior `store` / `mem_phi` produced.
 
 #![allow(
     clippy::panic,
@@ -13,8 +12,6 @@ use strider_ir::node::ValueType;
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{Capture, Matcher, add, int_const, load, mem_phi, store};
-
-// ── Load ──────────────────────────────────────────────────────────────────────
 
 #[test]
 fn load_unconstrained_matches() {
@@ -76,7 +73,7 @@ fn load_addr_matches_literal() {
 
 #[test]
 fn load_with_patterned_addr() {
-    // Load from `base + 8`: addr is itself a pattern.
+    // addr is itself a pattern: base + 8.
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let base = b.build_int_const(0x100u64, ValueType::I64).unwrap();
     let off = b.build_int_const(8u64, ValueType::I64).unwrap();
@@ -165,8 +162,6 @@ fn load_captures_value_slot() {
     ));
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
-
 #[test]
 fn store_unconstrained_matches() {
     let function = store_then_load(0x100, 42);
@@ -195,7 +190,6 @@ fn store_addr_and_data() {
             .len(),
         1
     );
-    // Right addr, wrong data → reject.
     assert_eq!(
         matcher
             .find_all(
@@ -247,10 +241,8 @@ fn store_captures_node() {
     ));
 }
 
-// ── Memory-chain (headline) ───────────────────────────────────────────────────
-
-/// `store(addr1, data) ; v = load(addr2) ; return v`.  The load's
-/// memory input (slot 0) is wired to the store's memory token.
+/// `store(addr1, data); v = load(addr2); return v`. The load's memory input
+/// (slot 0) is wired to the store's memory token.
 fn store_then_load(store_addr: u64, data: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let a1 = b.build_int_const(store_addr, ValueType::I64).unwrap();
@@ -267,8 +259,6 @@ fn store_then_load(store_addr: u64, data: u64) -> strider_ir::Function {
 #[test]
 fn load_mem_in_matches_preceding_store() {
     let function = store_then_load(0x100, 42);
-    // The load chains off the store's memory token: wire the store
-    // pattern (its memory output) into the load's memory input slot.
     let pat = load()
         .addr(int_const(0x999u128))
         .mem_in(store().addr(int_const(0x100u128)))
@@ -284,8 +274,8 @@ fn load_mem_in_matches_preceding_store() {
 #[test]
 fn load_mem_in_rejects_wrong_store() {
     let function = store_then_load(0x100, 42);
-    // The store is at 0x100; constrain the mem_in store to a different
-    // address — the chain must not match.
+    // Store is at 0x100, so a mem_in constrained to another address must
+    // break the chain.
     let pat = load()
         .addr(int_const(0x999u128))
         .mem_in(store().addr(int_const(0xBEEFu128)))
@@ -295,9 +285,8 @@ fn load_mem_in_rejects_wrong_store() {
 
 #[test]
 fn load_mem_in_matches_region_mem_phi() {
-    // A freshly created region head carries a MemPhi as the region's
-    // initial memory token; the first store/load in the region chains
-    // off it.  Build: v = load(addr) directly off the region MemPhi.
+    // A fresh region head carries a MemPhi as its initial memory token, so
+    // the region's first load chains straight off it.
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let addr = b.build_int_const(0x10u64, ValueType::I64).unwrap();
     let v = b
@@ -318,7 +307,6 @@ fn load_mem_in_matches_region_mem_phi() {
 #[test]
 fn store_mem_in_chains_off_region_mem_phi() {
     let function = store_then_load(0x100, 42);
-    // The store's memory predecessor is the region's MemPhi.
     let pat = store().mem_in(mem_phi()).build();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);

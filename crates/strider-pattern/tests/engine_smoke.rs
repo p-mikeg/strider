@@ -1,6 +1,5 @@
-//! Integration smoke tests for the bipartite match engine, driven
-//! directly through [`MatcherBuilder`] (no typed structs / templates —
-//! those land in later changes).
+//! Integration smoke tests for the bipartite match engine, driven directly
+//! through [`MatcherBuilder`] rather than the typed builders.
 
 #![allow(
     clippy::panic,
@@ -31,17 +30,13 @@ fn matches_add_const_via_builder() {
     let pat = mb.finish();
 
     let m = Matcher::new(&f);
-    // A single-rooted pattern resolves a unique root and matches: the
-    // match entry is fallible (returns Result) even on the happy path.
     assert_eq!(m.find_all(&pat).unwrap().len(), 1);
 }
 
 #[test]
 fn multi_sink_pattern_is_buildable_but_match_returns_err() {
-    // A user can construct a pattern that is not single-rooted (e.g. two
-    // independent sinks sharing a captured value). The seal does NOT
-    // reject it — it is a valid graph — but the current matcher cannot
-    // match a multi-sink pattern, so it returns an Err rather than
+    // A multi-sink pattern is a valid graph, so the seal accepts it. The
+    // matcher cannot match one, and must say so with an Err rather than
     // panicking or silently matching nothing.
     let f = make_empty_fn(|b| {
         let x = b.build_int_const(5u64, ValueType::I64)?;
@@ -51,10 +46,10 @@ fn multi_sink_pattern_is_buildable_but_match_returns_err() {
     .unwrap();
 
     let mut mb = MatcherBuilder::new();
-    // Two leaf nodes, each with an unconsumed value output → two sinks.
+    // Two leaves with unconsumed value outputs, so two sinks.
     let _a = mb.leaf(KindSpec::Any);
     let _b = mb.leaf(KindSpec::Any);
-    let pat = mb.finish(); // seals the (valid) graph; root derived at match time
+    let pat = mb.finish();
 
     let m = Matcher::new(&f);
     assert!(m.find_all(&pat).is_err());
@@ -62,12 +57,12 @@ fn multi_sink_pattern_is_buildable_but_match_returns_err() {
 
 #[test]
 fn commutative_swap_matches_add_const_other_order() {
-    // IR is `Add(const, var)` — pattern is `add(any, const)`.  Must
-    // match via commutative operand swap.
+    // IR is `Add(const, var)` and the pattern is `add(any, const)`, so it can
+    // only match via a commutative operand swap.
     let f = make_empty_fn(|b| {
         let k = b.build_int_const(1u64, ValueType::I64)?;
         let x = b.build_int_const(5u64, ValueType::I64)?;
-        // const is slot 0, var is slot 1
+        // const in slot 0, var in slot 1
         b.build_int_binary_operation(k, x, IntBinaryOp::Add, ValueType::I64)
     })
     .unwrap();
@@ -84,9 +79,8 @@ fn commutative_swap_matches_add_const_other_order() {
 
 #[test]
 fn force_ordered_disables_commutative_swap() {
-    // IR is `Add(const(1), const(5))`.  Ordered pattern `add(const(5),
-    // const(1))` must NOT match (it would only match via a swap, which
-    // force_ordered disables).
+    // `add(const(5), const(1))` against IR `Add(const(1), const(5))` would only
+    // match via a swap, which force_ordered disables.
     let f = make_empty_fn(|b| {
         let a = b.build_int_const(1u64, ValueType::I64)?;
         let c = b.build_int_const(5u64, ValueType::I64)?;
@@ -107,19 +101,15 @@ fn force_ordered_disables_commutative_swap() {
 
 #[test]
 fn cast_walk_through_matches_under_extend() {
-    // IR: `Add(ZeroExtend(var:I32):I64, const:I64)`.  The left operand
-    // is a non-const var read wrapped in a ZeroExtend cast (a const
-    // would fold instead of producing an `Extend` node).  Pattern wants
-    // `add(any:I32-via-cast, const)` — modelled as `add(any, const)`
-    // where the `any` leaf must reach the var *through* the cast.  To
-    // make the cast load-bearing, the `any` leaf is pinned to the
-    // varnode read's I32 width: without walk-through the matcher sees
-    // the I64 ZeroExtend output (mismatch), with EXTEND walk-through it
-    // unwraps to the I32 inner value.
+    // IR is `Add(ZeroExtend(var:I32):I64, const:I64)`; the operand is a var read
+    // rather than a const because a const would fold instead of producing an
+    // `Extend`. Pinning the `any` leaf to the var's I32 width makes the cast
+    // load-bearing: without walk-through the matcher sees the I64 ZeroExtend
+    // output, with EXTEND walk-through it unwraps to the I32 inner value.
     use strider_ir::ExtendOp;
     use strider_ir_test_utils::reg_vn;
 
-    let var = reg_vn(0x10, 4); // I32-sized register var
+    let var = reg_vn(0x10, 4);
     let (f, _x) = strider_ir_test_utils::make_fn_with_var(var, |b, x| {
         let widened = b.extend_if_needed(x, ValueType::I64, ExtendOp::ZeroExtend)?;
         let k = b.build_int_const(1u64, ValueType::I64)?;
@@ -127,7 +117,6 @@ fn cast_walk_through_matches_under_extend() {
     })
     .unwrap();
 
-    // Left leaf pinned to I32 width; right leaf is the I64 const.
     let build_pat = |mask: bool| {
         let mut mb = MatcherBuilder::new();
         let l = mb.leaf(KindSpec::Any);
@@ -149,9 +138,7 @@ fn cast_walk_through_matches_under_extend() {
 
 #[test]
 fn multi_sink_pattern_root_errors_with_sink_count() {
-    // Disconnected two-component pattern (two independent leaves): the
-    // seal accepts it, but `Pattern::root()` itself reports the
-    // multi-sink shape as an error naming the sink count.
+    // The seal accepts a disconnected pattern; `root()` is where it is caught.
     let mut mb = MatcherBuilder::new();
     let _a = mb.leaf(KindSpec::Any);
     let _b = mb.leaf(KindSpec::Any);
@@ -168,12 +155,10 @@ fn multi_sink_pattern_root_errors_with_sink_count() {
 #[test]
 #[should_panic(expected = "cyclic staged pattern graph")]
 fn cyclic_pattern_graph_panics_at_finish() {
-    // A cycle IS expressible through the raw MatcherBuilder (wire a
-    // node's own output back into its input), but it never reaches
-    // `Pattern::root()`: the staged-graph seal panics at `finish()`.
-    // The typed `MatchPat` builders cannot express a cycle at all
-    // (operands are consumed by value), so this is builder-bug
-    // territory, pinned as a panic rather than an Err.
+    // A cycle is expressible through the raw MatcherBuilder but never reaches
+    // `Pattern::root()`: the staged-graph seal panics at `finish()`. The typed
+    // `MatchPat` builders cannot express a cycle at all (operands are consumed
+    // by value), so this is builder-bug territory, pinned as a panic not an Err.
     let mut mb = MatcherBuilder::new();
     let n = mb.node(KindSpec::Any);
     let out = mb.value_output(n, 0);
@@ -183,8 +168,7 @@ fn cyclic_pattern_graph_panics_at_finish() {
 
 #[test]
 fn multi_output_root_node_still_resolves_root() {
-    // A pattern whose single root node declares TWO outputs (both
-    // unconsumed) is still single-SINK: `root()` resolves it fine.
+    // One root node with two unconsumed outputs is still single-SINK.
     let mut mb = MatcherBuilder::new();
     let n = mb.node(KindSpec::Any);
     let _o0 = mb.value_output(n, 0);

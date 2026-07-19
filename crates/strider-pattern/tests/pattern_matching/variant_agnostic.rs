@@ -1,8 +1,6 @@
-//! Variant-agnostic `*_any` constructors.
-//!
-//! Each `*_any` constructor matches any variant in its op family and binds
-//! the matched node to a [`Capture`].  The op variant is recovered after
-//! the match via the matching `Match::get_*_op(c, &graph)` helper.
+//! Variant-agnostic `*_any` constructors: match any variant in an op family,
+//! bind the node to a [`Capture`], then recover the variant afterwards via
+//! `Match::get_*_op(c, &graph)`.
 
 use strider_ir::node::ValueType;
 use strider_ir::{
@@ -11,8 +9,6 @@ use strider_ir::{
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a};
-
-// ── Int binary ────────────────────────────────────────────────────────────────
 
 #[test]
 fn int_binary_any_captures_each_variant() {
@@ -44,7 +40,7 @@ fn int_binary_any_captures_each_variant() {
 
 #[test]
 fn int_binary_any_retries_swap_only_for_commutative() {
-    // Commutative: swap should match.
+    // Add is commutative, so the swapped pattern still matches.
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -59,7 +55,7 @@ fn int_binary_any_retries_swap_only_for_commutative() {
         1,
     );
 
-    // Non-commutative: swap must NOT match.
+    // Sub is not, so it must not.
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -74,12 +70,9 @@ fn int_binary_any_retries_swap_only_for_commutative() {
     );
 }
 
-// ── Int unary ────────────────────────────────────────────────────────────────
-
 #[test]
 fn int_unary_any_captures_variant() {
-    // `IntUnaryOp` has only `Neg` since `BitNot` was removed (bitwise
-    // complement is `Xor(x, all_ones)`).
+    // Neg is the only IntUnaryOp; complement is Xor(x, all_ones).
     let op = IntUnaryOp::Neg;
     let mut t = Tb::empty();
     let v = t.u64(42);
@@ -96,8 +89,6 @@ fn int_unary_any_captures_variant() {
         Some(op)
     );
 }
-
-// ── Int comparison ───────────────────────────────────────────────────────────
 
 #[test]
 fn int_cmp_any_captures_variant() {
@@ -127,7 +118,7 @@ fn int_cmp_any_captures_variant() {
 
 #[test]
 fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
-    // Equal commutative → swap matches.
+    // Equal is symmetric.
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -143,7 +134,7 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
         1,
     );
 
-    // Less NOT commutative → swap rejects.
+    // Less is directional.
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -194,11 +185,9 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
     );
 }
 
-// ── Bool binary / unary ──────────────────────────────────────────────────────
-
 #[test]
 fn bool_bin_any_captures_variant() {
-    // Booleans are 1-bit ints: a boolean binary op is an `IntBinaryOp` at I1.
+    // Booleans are 1-bit ints, so a boolean binary op is an IntBinaryOp at I1.
     for op in [IntBinaryOp::And, IntBinaryOp::Or, IntBinaryOp::Xor] {
         let mut t = Tb::empty();
         let a_ = t.boolean(true);
@@ -221,32 +210,26 @@ fn bool_bin_any_captures_variant() {
     }
 }
 
-// Note: `bool_unary_any_captures_variant` / `bool_unary_any_rejects_wide_int_op`
-// removed.  the former BitNot unary-op was deleted in favour of `Xor(_, all_ones)`,
-// so a "bool unary op" is `IntBinaryOp::Xor(_, IntConst(1)):I1` — covered by
-// `bool_bin_any` with an all-ones `int_const(u128::MAX)` operand.
+// There are no bool-unary tests: with BitNot gone, a "bool unary op" is
+// Xor(_, IntConst(1)):I1, covered by bool_bin_any with an all-ones operand.
 
-/// `bool_bin_any` must match **only** the `I1`-output op (its doc says "an
-/// `IntBinaryOp` at `I1`"); a structurally identical wide (64-bit) `And` shares
-/// the same `NodeKind` after the bool→I1 collapse but is NOT a boolean op and
-/// must be rejected.  Every `bool_bin_any` match must produce an `I1` value.
+/// After the bool-to-I1 collapse a wide 64-bit `And` shares its `NodeKind`
+/// with a boolean one, so `bool_bin_any` must gate on the `I1` output and
+/// reject the wide op.
 #[test]
 fn bool_bin_any_rejects_wide_int_op() {
     let mut t = Tb::empty();
-    // I1 `And` (boolean).
     let bt = t.boolean(true);
     let bf = t.boolean(false);
     let bool_and = t.bool_bin(bt, bf, IntBinaryOp::And);
     let bool_as_int = t.as_int(bool_and, ValueType::I64);
-    // 64-bit `And` (wide integer) — same NodeKind discriminant + payload.
+    // Same NodeKind discriminant and payload, but 64-bit.
     let w0 = t.u64(0xF0);
     let w1 = t.u64(0x0F);
     let wide_and = t.int_bin(w0, w1, IntBinaryOp::And);
     let sum = t.add(bool_as_int, wide_and);
     let function = t.ret_val(sum);
 
-    // `bool_bin_any` must match exactly one node — the I1 `And` — and that
-    // node's output must be the 1-bit boolean, never the 64-bit `And`.
     let ob = Capture::new();
     let hits = a::matches(
         &function,
@@ -263,8 +246,6 @@ fn bool_bin_any_rejects_wide_int_op() {
         "bool_bin_any must match only the I1-output op, not a wide one",
     );
 }
-
-// ── Float binary / unary / cmp ───────────────────────────────────────────────
 
 #[test]
 fn float_binary_any_captures_variant() {
@@ -342,8 +323,6 @@ fn float_cmp_any_captures_variant() {
     }
 }
 
-// ── Op-variant capture combined with value capture ───────────────────────────
-
 #[test]
 fn variant_any_composes_with_value_capture() {
     let mut t = Tb::empty();
@@ -355,8 +334,8 @@ fn variant_any_composes_with_value_capture() {
     let ov = Capture::new();
     let lv = Capture::new();
     let rv = Capture::new();
-    // `Mul` is commutative and both value captures sit on operands, so the two
-    // operand orderings are two DISTINCT bindings — natural order first.
+    // Mul is commutative and both captures sit on operands, so the two operand
+    // orderings are two distinct bindings, natural order first.
     let hits = a::matches(
         &function,
         int_binary_any(any_int_const().capture(lv), any_int_const().capture(rv))
