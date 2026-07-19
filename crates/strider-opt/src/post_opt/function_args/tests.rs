@@ -148,8 +148,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
 }
 
 /// A `Load` rooted at an alignment-masked SP addresses a frame local, not an
-/// incoming arg, so only an `InitialVar(sp)` base qualifies.  Without the base
-/// check the offset-only match registered it wrongly.
+/// incoming arg, so only an `InitialVar(sp)` base qualifies.
 #[test]
 fn aligned_sp_load_is_not_a_stack_arg() -> Result<()> {
     let sp = sp32_vn();
@@ -196,8 +195,7 @@ fn build_sp_load(
     Ok(loaded)
 }
 
-/// Ten incoming stack args, more than any old fixed offset-list length,
-/// proving the `StackArgs` formula has no upper bound.
+/// Ten incoming stack args, proving the `StackArgs` formula has no upper bound.
 #[test]
 fn detects_ten_contiguous_stack_args() -> Result<()> {
     const N: usize = 10;
@@ -488,9 +486,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
 }
 
 /// 32-bit cdecl `f(double a, int b)`: `a` spans two slots at `sp+4`, `b` sits
-/// at `sp+12`, and they must come out as ordinals 0 and 1.  A naive
-/// slot-equals-ordinal mapping puts `b` at slot 2, leaves slot 1 a gap, and
-/// truncates, losing `b` entirely.
+/// at `sp+12`, and they must come out as ordinals 0 and 1.
 #[test]
 fn wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
     let sp = sp32_vn();
@@ -610,8 +606,7 @@ fn span_four_wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
 }
 
 /// An unused arg register is registered at builder entry regardless, then
-/// dropped by `compact` once DCE makes its InitialVar unreachable, so patterns
-/// can no longer find it.
+/// dropped by `compact` once DCE makes its InitialVar unreachable.
 #[test]
 fn unused_register_arg_dropped_by_compact() -> Result<()> {
     let rdi = rdi_like_vn();
@@ -753,8 +748,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
 }
 
 /// A store at a DIFFERENT offset whose byte range still overlaps the load's
-/// must shadow it; exact-offset comparison misses this.  Here the store covers
-/// [0,8) and the load [4,12), so the old `k == offset` check registered it.
+/// must shadow it.  Here the store covers [0,8) and the load [4,12).
 #[test]
 fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     let sp = stack_vn_aarch64();
@@ -979,9 +973,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
 
 // The `Store(_)` arm of `mem_chain_is_dirty`, in four cases: SP-rooted
 // overlapping (dirty), non-SP (pass-through), SP-rooted disjoint
-// (pass-through), and SP-rooted phi (conservatively dirty).  An earlier
-// catch-all `_ => true` marked EVERY plain `Store` a shadow, so a stack-arg
-// load whose chain merely crossed an unrelated global store was rejected.
+// (pass-through), and SP-rooted phi (conservatively dirty).
 
 /// An SP-rooted store whose range matches the load's must mark the chain dirty.
 #[test]
@@ -1176,8 +1168,6 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
 
 #[test]
 fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
-    // The prior recursive form stack-overflowed on the default 8 MB Rust stack
-    // at this depth.
     const CHAIN_LEN: usize = 10_000;
 
     let sp = sp32_vn();
@@ -1219,8 +1209,7 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
 }
 
 /// A `CallOther` on the chain is gated purely by `calls_clobber`: the callee is
-/// opaque, so nothing can be inferred from its arguments and the former
-/// SP-pointer escape analysis was removed deliberately.
+/// opaque, so nothing can be inferred from its arguments.
 #[test]
 fn callother_on_chain_gated_only_by_calls_clobber() -> Result<()> {
     let sp = sp32_vn();

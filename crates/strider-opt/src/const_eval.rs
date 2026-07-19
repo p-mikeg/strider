@@ -1,8 +1,3 @@
-//! Node-to-constant folding shared by the jump-table abstract evaluator and
-//! `LoadReadOnly`, so the ROM decode and per-op fold dispatch live in one
-//! place. `ConstantFold` shares the leaf arithmetic (`eval_int_*`) directly
-//! and does not route through here.
-
 use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
@@ -11,9 +6,8 @@ use crate::opt::constant_fold::eval_int::{
     eval_int_binary, eval_int_cmp, eval_int_unary, eval_lzcount, eval_popcount, eval_sign_extend,
 };
 
-/// Decodes `ty` bytes at `addr` into an integer masked to `ty`. The single
-/// ROM-decode site. `None` for widths > 16 bytes, an unmapped read, or a
-/// non-integer `ty`.
+/// Decodes `ty` bytes at `addr` into an integer masked to `ty`. `None` for
+/// widths > 16 bytes, an unmapped read, or a non-integer `ty`.
 pub(crate) fn read_rom_const(
     rom: &dyn ReadOnlyMemory,
     addr: u64,
@@ -32,8 +26,7 @@ pub(crate) fn read_rom_const(
 
 /// The constant value of `value`, given `resolve` for its inputs' constants.
 /// `None` for anything not foldable to one integer constant. Does NOT handle
-/// `Phi` or any stack-relative address; those stay in the jump-table
-/// evaluator.
+/// `Phi` or any stack-relative address.
 pub(crate) fn eval_node_const(
     function: &Function,
     value: ValueId,

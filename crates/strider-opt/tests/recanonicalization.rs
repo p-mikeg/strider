@@ -1,8 +1,7 @@
 //! Incremental re-canonicalization: a rewrite that rewires a live node's
 //! inputs into a structural twin of an existing node is merged at the next
 //! `EditFunction::clean()` drain. Nodes differing in OUTPUT type are distinct
-//! values and are never merged. The end-to-end jump-table scenario lives in
-//! the orchestrator's `orchestrator_indirect_branch` suite.
+//! values and are never merged.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -14,9 +13,9 @@ fn reachable(fg: &strider_ir::Function, node: strider_ir::node::NodeId) -> bool 
     fg.walk().any(|n| n == node)
 }
 
-/// Redirecting `add2`'s `c2` operand to `c1`, the way `PhiCollapse`
-/// redirects a trivial phi, makes `add2` a structural twin of `add1` that
-/// the construction cache never re-canonicalised. `clean()` must merge them.
+/// Redirecting `add2`'s `c2` operand to `c1` makes it a structural twin of
+/// `add1` that the construction cache never re-canonicalised. `clean()`
+/// must merge them.
 #[test]
 fn clean_merges_structural_twin_left_by_a_rewrite() {
     let a_vn = reg_vn(0x10, 8);

@@ -1,7 +1,3 @@
-//! Fixtures here mimic the flag-tree an arch's `cmp a, b; b.<cond>` lift leaves
-//! on an `If` cond; each test asserts the pass collapses it to one `IntCmpOp`
-//! over the original `(a, b)`.
-
 use super::FlagCmpCanonicalize;
 use crate::error::Result;
 use strider_ir::{IRBuilderExt, IRViewer};

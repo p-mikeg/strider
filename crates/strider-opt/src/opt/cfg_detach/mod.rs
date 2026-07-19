@@ -1,7 +1,5 @@
 //! Removes dead control-flow edges into `Region` joins, plus the matching
-//! `Phi`/`MemPhi` value slots. The single home for dead-`Region`-predecessor
-//! surgery; `DeadBranchElimination` detaches a folded `If` but never strips the
-//! predecessor slot it orphans.
+//! `Phi`/`MemPhi` value slots.
 //!
 //! A dead subgraph that still escapes to live data keeps its `If` attached, so
 //! its producer stays control-reachable and this pass leaves it alone.

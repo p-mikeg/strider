@@ -1,5 +1,4 @@
 /// Drives the pipeline's decision to run another fixed-point iteration.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptimizationResult {
     NoChange,
@@ -26,27 +25,14 @@ impl OptimizationResult {
 }
 
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
-/// call. Passes that need none of it ignore it (`_ctx: &mut OptCtx<'_>`).
-///
-/// SP decompositions are NOT cached here: they live in the function's own
-/// `stack_offsets` side-table, written by `StackOffsetDetect` once the graph
-/// is frozen and recomputed read-only during the fixed point.
-///
-/// The rom is borrowed rather than `Arc`-shared: strider is single-threaded
-/// and the orchestrator owns the rom for the whole run.
+/// call.
 pub struct OptCtx<'mem> {
-    /// `None` disables every rom-gated pass ([`crate::LoadReadOnly`]
-    /// short-circuits to `NoChange`).
+    /// `None` disables every rom-gated pass.
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
     pub options: crate::OptOptions,
-    /// Output channel for [`crate::IndirectBranchClassify`]: each LIVE
-    /// `IndirectBranch` placeholder it visited, mapped to `Some` when the
-    /// dispatch target was recovered and `None` when it stays unresolvable
-    /// this iteration. The orchestrator joins the NodeId keys back to
-    /// dispatch pcode addresses via its lift-time correlation, and drains
-    /// this after `OptimizerPipeline::run` returns. Placeholders the
-    /// node-removing passes pruned never appear, so a branch proved
-    /// unreachable is dropped rather than reported unresolved.
+    /// Each LIVE `IndirectBranch` placeholder visited this run, mapped to
+    /// `Some` when the dispatch target was recovered and `None` when it
+    /// stays unresolvable.
     pub indirect_resolutions:
         rustc_hash::FxHashMap<strider_ir::node::NodeId, Option<strider_cfg::ResolvedTargets>>,
 }
@@ -66,15 +52,6 @@ impl<'mem> OptCtx<'mem> {
 /// [`OptimizationResult::Changed`] when it modified anything, which makes
 /// the pipeline run another iteration.
 ///
-/// `apply` is the only entry point: the pipeline builds ONE self-cleaning
-/// `EditFunction` for the whole run rather than reconstructing a wrapper per
-/// pass per iteration. One-off callers holding a `&mut Function` use
-/// `run_one`, which builds a throwaway one.
-///
-/// The pipeline stores type-erased passes, so the trait must stay
-/// object-safe with no lifetime on `Self`. `apply` achieves that by
-/// late-binding the ctx lifetime on the method (`EditFunction<'_>`).
-///
 /// ```
 /// # use strider_opt::{OptCtx, OptimizationResult, Optimizer};
 /// # use strider_opt::EditFunction;
@@ -93,9 +70,7 @@ impl<'mem> OptCtx<'mem> {
 /// ```
 ///
 pub trait Optimizer: OptimizerClone {
-    /// `edit` wraps the built function, so its entry is a valid `NodeId`.
-    /// Passes mutate through `edit`'s façade methods and read through its
-    /// deref to `Function` / `Graph`.
+    /// `edit` wraps a built function, so its entry is a valid `NodeId`.
     ///
     /// # Errors
     ///
@@ -107,8 +82,7 @@ pub trait Optimizer: OptimizerClone {
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<OptimizationResult>;
 
-    /// The concrete struct's short name, defaulted via `type_name`.
-    /// Override only for a name differing from the struct name.
+    /// The concrete struct's short name.
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
             .rsplit("::")
@@ -118,8 +92,7 @@ pub trait Optimizer: OptimizerClone {
 }
 
 /// Runs one pass through a throwaway `EditFunction`, culling dead nodes
-/// before and draining after so the result matches the pipeline's eager
-/// cull. Test-only; the production driver is [`OptimizerPipeline::run`].
+/// before and draining after.
 ///
 /// `function` must be built (`function.entry()` is a valid `NodeId`).
 ///
@@ -140,7 +113,7 @@ pub fn run_one(
     Ok(result)
 }
 
-/// Post-pass sibling of [`run_one`], likewise test-only.
+/// Post-pass sibling of [`run_one`].
 ///
 /// # Errors
 ///
@@ -161,10 +134,6 @@ pub fn run_post(
 
 /// Defines an object-safe clone shim trait `$shim` for `dyn $obj`, plus its
 /// blanket impl for every `$obj + Clone + 'static`.
-///
-/// Lets downstream crates snapshot a canonical pipeline by `clone_box`ing
-/// each entry of [`OptimizerPipeline::passes`] instead of hand-mirroring the
-/// pass list and drifting. Pass authors only need `#[derive(Clone)]`.
 macro_rules! clone_box_shim {
     ($(#[$attr:meta])* $shim:ident for dyn $obj:ident) => {
         $(#[$attr])*
@@ -187,22 +156,16 @@ clone_box_shim! {
 }
 
 /// A pass that runs ONCE on the converged graph, so unlike [`Optimizer`] it
-/// returns no `Change`/`NoChange`. These are side-table annotation and
-/// wiring passes that never feed back into the loop.
-///
-/// The separate trait type-enforces "post-only": such a pass cannot be
-/// registered via [`OptimizerPipeline::add`], only
-/// [`OptimizerPipeline::add_post_pass`].
+/// returns no `Change`/`NoChange`.
 pub trait PostOptimizer: PostOptimizerClone {
-    /// `edit` wraps the converged function; `ctx` carries the same per-run
-    /// state the fixed-point passes saw.
+    /// `edit` wraps the converged function.
     ///
     /// # Errors
     ///
     /// Returns the first error the pass hits.
     fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()>;
 
-    /// The concrete struct's short name, defaulted via `type_name`.
+    /// The concrete struct's short name.
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
             .rsplit("::")
@@ -212,7 +175,7 @@ pub trait PostOptimizer: PostOptimizerClone {
 }
 
 clone_box_shim! {
-    /// Object-safe clone shim for [`PostOptimizer`], mirroring [`OptimizerClone`].
+    /// Object-safe clone shim for [`PostOptimizer`].
     PostOptimizerClone for dyn PostOptimizer
 }
 
@@ -247,9 +210,7 @@ impl OptimizerPipeline {
         self.post_passes.push(Box::new(opt));
     }
 
-    /// The fixed-point passes in registration order. Pair with
-    /// `OptimizerClone::clone_box` to snapshot an independent copy of the
-    /// canonical pipeline instead of hand-mirroring the pass list.
+    /// The fixed-point passes in registration order.
     #[must_use]
     pub fn passes(&self) -> &[Box<dyn Optimizer>] {
         &self.passes
@@ -276,10 +237,8 @@ impl OptimizerPipeline {
     ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
         {
-            // One EditFunction shared by every pass. `new` seeds the
-            // live/roots bookkeeping; `cull_dead` drops pre-existing dead
-            // nodes. Scoped so the borrow of `function` is released before
-            // the validation step below.
+            // Scoped so the borrow of `function` is released before the
+            // validation step below.
             let mut edit = crate::EditFunction::new(function);
             edit.cull_dead();
             let mut iters: u32 = 0;
@@ -344,9 +303,7 @@ mod tests {
         b.build().unwrap()
     }
 
-    /// An invalid final graph surfaces as an `anyhow::Error` carrying
-    /// `strider_ir::validate::ValidationErrors`, reachable via
-    /// `downcast_ref`. Here the input is valid, so run must succeed.
+    /// A valid input graph must survive `run`'s final validation.
     #[test]
     fn pipeline_run_validates_final_graph_on_clean_input() -> crate::Result<()> {
         let mut function = one_const_fn(3);
@@ -403,7 +360,7 @@ mod tests {
     }
 
     /// A pipeline carrying a post-pass must still produce a graph that
-    /// validates. Uses the same plumbing the orchestrator relies on.
+    /// validates.
     #[test]
     fn run_with_post_passes_validates() -> crate::Result<()> {
         use crate::{CallStackArgCollect, ConstantFold, OptimizerPipeline};
@@ -436,7 +393,6 @@ mod tests {
     }
 
     /// `store sp-4 = 0x42; load sp-4` must forward to `IntConst(0x42)`.
-    /// Pins the in-pipeline ordering the orchestrator depends on.
     #[test]
     fn store_then_load_at_same_offset_forwarded() -> crate::Result<()> {
         use crate::{
@@ -494,8 +450,7 @@ mod tests {
     }
 
     /// `CallStackArgCollect` must extend a Call's inputs with the
-    /// positional stack args pushed before it. Pins the orchestrator's full
-    /// SP-aware pipeline.
+    /// positional stack args pushed before it.
     #[test]
     fn full_call_pipeline_collects_args() -> crate::Result<()> {
         use crate::{

@@ -1,6 +1,5 @@
 //! Stamps `Function::stack_offsets` with the slot `(base, K)` for every Store
 //! / Load whose address decomposes to a single SP-derived `base + K` terminal.
-//! Everything else (Phi-of-offsets, non-SP-rooted addresses) records nothing.
 //!
 //! `K` is only comparable against another access sharing the same `base`.
 
@@ -11,8 +10,7 @@ use crate::error::Result;
 use crate::pipeline::PostOptimizer;
 use crate::sp_analysis::decompose;
 
-/// The stack-pointer varnode is read from the function's own calling
-/// convention at apply time, so the pass carries no convention state.
+/// Annotates SP-relative `Store` / `Load` offsets in `Function::stack_offsets`.
 #[derive(Clone)]
 pub struct StackOffsetDetect;
 
@@ -22,9 +20,8 @@ impl PostOptimizer for StackOffsetDetect {
         edit: &mut crate::EditFunction<'_>,
         _ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
-        // `decompose` memoizes its own verdict, so triggering it on each
-        // address is enough: both positive and negative results land in the
-        // cache as a side effect.
+        // `decompose` memoizes its own verdict, so triggering it on each address
+        // is enough; the stamping is a side effect.
         let candidates: Vec<NodeId> = edit
             .live_of_kind(|k| matches!(k, NodeKind::Store(_) | NodeKind::Load(_)))
             .collect();

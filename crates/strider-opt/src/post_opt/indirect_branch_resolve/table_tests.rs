@@ -1,7 +1,3 @@
-//! Covers both the rodata jump table (absolute base, needs a rom) and the
-//! on-stack label array (SP-rooted base), since one entry point classifies
-//! both.  Each test builds a minimal graph and calls the classifier directly.
-
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
 use super::*;
@@ -33,8 +29,7 @@ fn make_known_and_doms(
 }
 
 /// Records every `(addr, size)` read, so a test can assert the absolute-base
-/// path issues exactly `count` reads in index order.  Kept separate from the
-/// shared [`MockRom`] because only this file needs the log.
+/// path issues exactly `count` reads in index order.
 pub(super) struct RecordingRom {
     inner: MockRom,
     log: Mutex<Vec<(u64, usize)>>,
@@ -390,9 +385,7 @@ fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
 fn classify_table_dispatch_resolves_shift_narrowed_loaded_index() {
     // x86 instruction-decoder shape: `loaded_byte >> 5`, the top 3 bits.  It is
     // load-derived, but the shift narrows it strictly BELOW the byte width, so
-    // it is a real index.  The former "load-derived and not AND-masked" gate
-    // rejected it, since a shift is not a mask, leaving ~70% of x86emu's tables
-    // unresolved.
+    // it is a real index.
     let (g, _target) = build_with_target(|fb| {
         let byte_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
         let byte = fb
@@ -443,8 +436,7 @@ fn classify_table_dispatch_resolves_shift_narrowed_loaded_index() {
 fn classify_table_dispatch_masked_full_byte_i32_resolves() {
     // Adversarial pair to the width-only exclusion: this ALSO spans [0,255],
     // but it is `reg & 0xFF` typed I32 with no byte-typed producer to strip to,
-    // so the range does not fill its type width.  A genuine 256-entry index,
-    // proving the test keys on the extend-stripped type rather than the range.
+    // so the range does not fill its type width.  A genuine 256-entry index.
     let (g, _target) = build_with_target(|fb| {
         let raw = build_non_const_idx(fb); // Load:I32, unbounded
         let mask = fb.build_int_const(0xFFu64, ValueType::I32).unwrap();
@@ -482,9 +474,8 @@ fn classify_table_dispatch_masked_full_byte_i32_resolves() {
 #[test]
 fn decompose_index_picks_shallowest_narrowed_index() {
     // Two bounded dominators of one dispatch: a deep `reg & 0x3F` and the
-    // shallow `(reg & 0x3F) & 0x7` the address actually scales.  Picking the
-    // deeper, looser ancestor made guard-tightened dispatches over-enumerate
-    // and defer, so the shallow one must win.
+    // shallow `(reg & 0x3F) & 0x7` the address actually scales.  The shallow one
+    // must win, or a guard-tightened dispatch over-enumerates and defers.
     let (g, _target) = build_with_target(|fb| {
         let raw = build_non_const_idx(fb);
         let m63 = fb.build_int_const(0x3Fu64, ValueType::I32).unwrap();
@@ -653,11 +644,6 @@ fn classify_table_dispatch_diamond_both_paths_guarded_defers() {
     // merge, and the soundness gate skips a guard whose consumer is a merge
     // (one edge does not dominate it; other predecessors bypass).  So the
     // dispatch defers even though both paths happen to agree.
-    //
-    // Sound, but stricter than the old region-keyed model, which exploited
-    // reflexive dominance at the merge to resolve such diamonds.
-    // Single-predecessor guarded dispatches, the common compiler shape, are
-    // unaffected: their consumer is the placeholder or a single-pred Region.
     //
     //   entry  -> if (dummy)   -> path_a, path_b
     //   path_a -> if (idx < 4) -> dispatch, exit_a
@@ -1295,8 +1281,7 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
 
 /// A `Call` between the prologue stores and the dispatch load is a clobber
 /// boundary: the slots are no longer provably the stored constants, so the
-/// classifier must defer.  The old bespoke backward scan walked past `Call`
-/// nodes as if they were non-aliasing stores.
+/// classifier must defer.
 #[test]
 fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_load() {
     // Store targets into stack slots, then Call, then the dispatch load.

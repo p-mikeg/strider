@@ -12,9 +12,6 @@ mod tests;
 use std::rc::Rc;
 
 /// Folds constant expressions and applies algebraic identities.
-///
-/// The rule set is built once and held behind an [`Rc`] so the pass stays
-/// cheaply `Clone`; the boxed rule closures themselves are not `Clone`.
 #[derive(Clone)]
 pub struct ConstantFold {
     rules: Rc<Vec<crate::BoxedRule>>,
@@ -35,10 +32,6 @@ impl Default for ConstantFold {
 }
 
 impl PeepholePass for ConstantFold {
-    /// Every rule roots at an int/float operation, so nothing else is worth
-    /// seeding. Narrowing here cannot drop a fold: `run_peephole` honours
-    /// `matches_kind` for both the seed walk and the re-enqueue of a rewrite's
-    /// consumers.
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(
             kind,

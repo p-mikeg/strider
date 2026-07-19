@@ -1,9 +1,5 @@
-//! Rewrite-rule engine tests: firing, error paths, and the rule's
-//! `Ok(Option<ValueId>)` contract.
-//!
 //! A wildcard / predicate / control RHS is a compile-time error, since
-//! `rewrite_rule`'s RHS requires `TemplatePat`, so there are no runtime
-//! "RHS not buildable" tests here (see `rewrite_build.rs`).
+//! `rewrite_rule`'s RHS requires `TemplatePat`.
 
 #![allow(
     clippy::panic,
@@ -223,8 +219,7 @@ fn sub_x_x_to_zero_rule() {
 
 /// Rewriting on a multi-output node (a `Call`, whose outputs are
 /// `[Control, Memory, ret-val0...]`) must error rather than silently
-/// rewire the wrong slot. Uses the runtime rule variant since `call()` is a
-/// control builder, not a `MatchPat` LHS.
+/// rewire the wrong slot.
 #[test]
 fn rewrite_rule_on_call_root_returns_err() {
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
@@ -262,8 +257,7 @@ fn rewrite_rule_on_call_root_returns_err() {
     );
 }
 
-/// `rewrite_rule` returns a `BoxedRule`, so rules with structurally
-/// different shapes collect into one `Vec`.
+/// Rules with structurally different shapes collect into one `Vec`.
 #[test]
 fn rewrite_rule_results_collect_into_heterogeneous_vec() {
     let x = Capture::new();
@@ -401,8 +395,7 @@ fn apply_rules_count_round_robin_reaches_fixed_point() {
     );
 }
 
-/// The whole-graph validator still passes after a count-driven rewrite,
-/// pinning use-list bidirectional integrity through `replace_all_uses`.
+/// The whole-graph validator still passes after a count-driven rewrite.
 #[test]
 fn apply_count_preserves_use_list_integrity() {
     let mut t = Tb::empty();
@@ -419,9 +412,8 @@ fn apply_count_preserves_use_list_integrity() {
     strider_ir::validate::validate(&function).expect("validate must pass after rewrite");
 }
 
-/// The `rewrite_rule` interpreter consults `is_skip` on every `Err` from
-/// instantiation to turn a deliberate opt-out into "no change", so an
-/// unrelated error must not be mistaken for one.
+/// An unrelated instantiation error must not be mistaken for a deliberate
+/// `skip()` opt-out.
 #[test]
 fn skip_sentinel_round_trips_through_is_skip() {
     let e = skip();
@@ -473,9 +465,8 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     );
 }
 
-/// `apply_rules_in_order` runs each rule in turn at a node, OR-ing the
-/// results: only the second rule fires on the fixture, yet the composed
-/// result is `true`.
+/// `apply_rules_in_order` OR-s the per-rule results: only the second rule
+/// fires on the fixture, yet the composed result is `true`.
 #[test]
 fn apply_rules_in_order_or_composes_results() {
     let mut function = graph_add_x_zero();

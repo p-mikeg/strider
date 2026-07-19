@@ -6,11 +6,7 @@
 //! full type range (top).
 //!
 //! SOUNDNESS INVARIANT: `range_of` may widen toward top but must NEVER return
-//! an interval tighter than the real runtime value set.  The jump-table
-//! classifier enumerates `lo..=hi` as the COMPLETE target set, so a too-tight
-//! bound silently drops real branch targets.  Any future refinement that
-//! intersects a non-dominating fact, or otherwise tightens an interval, has to
-//! re-justify this.
+//! an interval tighter than the real runtime value set.
 
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
@@ -29,10 +25,8 @@ mod tests;
 /// `lo`/`hi` are unsigned regardless of signedness: guard extraction gates
 /// `Sless` on KnownBits sign-bit = 0, so the interval is non-negative.
 ///
-/// `stride` is a must-congruence from KnownBits (low `k` bits known-zero means
-/// a multiple of `2^k`).  It is always a sound divisor of the real spacing, so
-/// [`Self::count`] never under-counts.  That lets a scaled index
-/// `idx*8 = [0, 4800, stride 8]` read as 601 entries, not a 4800-wide span.
+/// `stride` is a must-congruence from KnownBits, always a sound divisor of the
+/// real spacing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Interval {
     pub lo: u128,
@@ -57,7 +51,7 @@ impl Interval {
         self.lo == 0 && self.hi >= width_mask
     }
 
-    /// What the table-dispatch classifier enumerates and caps.  `0` if `hi < lo`.
+    /// Number of values in the set.  `0` if `hi < lo`.
     pub fn count(&self) -> u128 {
         if self.hi < self.lo {
             0
@@ -66,7 +60,7 @@ impl Interval {
         }
     }
 
-    /// `None` when top.  Production reads `hi`/`lo` directly.
+    /// `None` when top.
     #[cfg(test)]
     pub fn upper_exclusive(&self, width_mask: u128) -> Option<u64> {
         if self.hi >= width_mask {
@@ -77,10 +71,8 @@ impl Interval {
     }
 
     fn intersect(self, other: Self) -> Self {
-        // Keep a stride only when one side is dense, which covers the common
-        // guard-meets-KnownBits case (a guard is stride 1, so the KnownBits
-        // stride survives).  A genuine two-stride meet would need alignment
-        // reasoning, so fall back to 1 and enumerate everything.
+        // A genuine two-stride meet would need alignment reasoning, so keep a
+        // stride only when one side is dense and otherwise fall back to 1.
         let stride = if self.stride == 1 {
             other.stride
         } else if other.stride == 1 {
@@ -108,29 +100,21 @@ impl Interval {
 /// `InProgress` grey, `Done` black.
 #[derive(Clone, Copy)]
 enum MemoSlot {
-    /// Re-entry means a dependency cycle (a loop-carried phi-of-phi).  The
-    /// back-edge resolves to top, matching what any fixpoint's first iteration
-    /// would give, without recursing forever.
+    /// Re-entry means a dependency cycle; the back-edge resolves to top.
     InProgress,
     Done(Interval),
 }
 
-/// Result of `compute_value_ranges`; query via `range_of(value, region)`.
+/// Per-`(value, region)` integer ranges.
 pub struct RangeMap<'f> {
     function: &'f strider_ir::Function,
     doms: &'f Dominators<NodeId>,
-    /// Per guarded value, the `(guard_node, interval)` pairs from `If` guards.
-    /// `guard_node` is the unique control consumer of the guarded edge: a
-    /// `Region` before `RegionCollapse`, any other control node after it
-    /// deletes the dispatch Region.  Dominance is checked lazily at query
-    /// time, so only guards dominating the query node apply.
+    /// Per guarded value, the `(guard_node, interval)` pairs from `If` guards,
+    /// where `guard_node` is the unique control consumer of the guarded edge.
     guards: FxHashMap<ValueId, Vec<(NodeId, Interval)>>,
     /// Flow-insensitive `[0, max_value]` bounds from KnownBits.
     kb_bounds: SecondaryMap<ValueId, Option<Interval>>,
-    /// Caches resolved intervals so a value shared across phi arms resolves
-    /// once, and cuts resolution cycles via `InProgress` instead of an
-    /// arbitrary recursion-depth cap.  Persists across queries, so successive
-    /// anchor/candidate lookups share resolved arms.
+    /// Resolved intervals, with `InProgress` cutting resolution cycles.
     memo: FxHashMap<(ValueId, NodeId), MemoSlot>,
 }
 
@@ -140,17 +124,12 @@ impl<'f> RangeMap<'f> {
     /// A multi-input phi unions each arm's range in that arm's predecessor
     /// region, falling back to a guard on the phi's own output if any arm is
     /// top.  Any other value intersects its dominating guards with the
-    /// KnownBits base.  Either way, unconstrained means top.
-    ///
-    /// A single-input phi cannot occur in the converged IR this runs on
-    /// (`PhiCollapse` removed it), so a degenerate phi resolves to top.
+    /// KnownBits base.  Unconstrained means top.
     pub fn range_of(&mut self, value: ValueId, region: NodeId) -> Interval {
         let key = (value, region);
 
-        // A grey hit is a resolution cycle (a loop-carried phi-of-phi), cut by
-        // returning top for the back-edge.  The frame that opened the cycle
-        // still applies any dominating guard on its way out, so a bounded loop
-        // index keeps its bound and an unbounded one stays top.
+        // A grey hit is a resolution cycle, cut by returning top for the
+        // back-edge; the frame that opened it still applies dominating guards.
         match self.memo.get(&key) {
             Some(MemoSlot::Done(iv)) => return *iv,
             Some(MemoSlot::InProgress) => {
@@ -164,9 +143,7 @@ impl<'f> RangeMap<'f> {
         let producer = self.function.producer(value);
 
         // Bounds are deliberately not propagated UP a `ZeroExtend`/`Truncate`
-        // chain such as `ZeroExtend(Truncate(rdi))` guarded on the inner
-        // truncate.  The only consumer, the jump-table classifier's
-        // `candidate_range` scan, already reaches the inner guarded node.
+        // chain; the inner guarded node has to be queried directly.
         let result = if matches!(self.function.node_kind(producer), NodeKind::Phi) {
             self.resolve_phi(producer, region)
         } else {
@@ -177,9 +154,8 @@ impl<'f> RangeMap<'f> {
         result
     }
 
-    /// `region` is consulted only for a guard recorded against the phi's own
-    /// output; the per-arm ranges use the effective regions derived from the
-    /// joining region.
+    /// `region` applies only to a guard on the phi's own output; each arm is
+    /// queried in its own effective region.
     fn resolve_phi(&mut self, phi_node: NodeId, region: NodeId) -> Interval {
         let data_inputs: Vec<ValueId> = self.function.phi_data_inputs(phi_node).collect();
 
@@ -196,16 +172,13 @@ impl<'f> RangeMap<'f> {
         let ty = self.function.value_type_opt(phi_value);
         let type_mask = type_mask_or_top(ty);
 
-        // Single-input phis cannot reach here: `PhiCollapse` eliminated them in
-        // the converged IR this runs on.
         if data_inputs.len() < 2 {
             return Interval::top(type_mask);
         }
 
         // The Region's control inputs line up 1-to-1 with the phi's data
-        // inputs, so each arm is queried in its own effective region (see
-        // `arm_query_regions`).  That is what keeps a guard holding on only one
-        // incoming path from being applied to an arm that bypasses it.
+        // inputs, so each arm is queried in its own effective region: a guard
+        // holding on one incoming path must never apply to an arm bypassing it.
         let Some(joining_region) = self.find_joining_region(phi_node) else {
             return Interval::top(type_mask);
         };
@@ -220,9 +193,7 @@ impl<'f> RangeMap<'f> {
             let arm_range = self.range_of(arm_val, *arm_region);
             if arm_range.is_top(type_mask) {
                 // The union is top, but a guard on the phi's own output still
-                // bounds it at the query point whichever arm the value came
-                // from.  Guards key on the phi directly, since a multi-input
-                // phi is never chased through.
+                // bounds it at the query point whichever arm the value took.
                 return self
                     .dominating_guard(phi_value, region)
                     .unwrap_or(arm_range);
@@ -231,8 +202,7 @@ impl<'f> RangeMap<'f> {
         }
 
         let union = result.expect("union has >= 1 arm by the guards above");
-        // A guard holding at the query point is valid for every arm, so it
-        // refines the union and recovers a bound the union alone loses.
+        // A guard holding at the query point is valid for every arm.
         match self.dominating_guard(phi_value, region) {
             Some(guard) => union.intersect(guard),
             None => union,
@@ -267,26 +237,18 @@ impl<'f> RangeMap<'f> {
     }
 
     /// Per control input of `joining_region`, the effective query region for
-    /// that arm.
-    ///
-    /// An arm arriving on an If's TRUE edge has the joining region as its own
-    /// true-successor, and guards are stored as `(true_succ_region, iv)`, so
-    /// querying in `joining_region` finds the guard by reflexive dominance.
-    /// Every other arm (unconditional branch, false edge, other producer)
-    /// traces back to its source Region, where only a guard dominating that
-    /// predecessor applies.
+    /// that arm: the joining region itself for an arm arriving on an If's TRUE
+    /// edge, else the arm's own source Region.
     fn arm_query_regions(&self, joining_region: NodeId) -> Vec<NodeId> {
         let g = self.function.graph();
         // Every `Region` input is a Control edge per the node signature; the
-        // filter just keeps arm positions aligned with the phi's value inputs
-        // should that ever change.
+        // filter keeps arm positions aligned should that ever change.
         g.node_inputs(joining_region)
             .iter()
             .filter(|&v| g.value_kind(v).is_control())
             .map(|ctrl_val| {
                 let producer = g.producer(ctrl_val);
-                // An If's outputs are [true_ctrl, false_ctrl], so being the
-                // first output identifies the true edge.
+                // An If's outputs are [true_ctrl, false_ctrl].
                 if matches!(g.node_kind(producer), NodeKind::If) {
                     let if_outputs = g.node_outputs(producer);
                     if !if_outputs.is_empty() && if_outputs[0] == ctrl_val {
@@ -318,9 +280,7 @@ impl<'f> RangeMap<'f> {
         }
     }
 
-    /// Guards are stored per-value, not per-(value, region), so a query costs
-    /// O(guards_on_v * domtree-depth) instead of eagerly enumerating every
-    /// dominated region at build time.
+    /// Intersects `value`'s dominating guards with its KnownBits base.
     fn resolve_leaf(&self, value: ValueId, region: NodeId) -> Interval {
         let ty = self.function.value_type_opt(value);
         let type_mask = type_mask_or_top(ty);
@@ -328,7 +288,6 @@ impl<'f> RangeMap<'f> {
         let guard = self.dominating_guard(value, region);
         let kb = self.kb_bounds[value];
 
-        // `intersect` is commutative, so the order here does not matter.
         guard
             .into_iter()
             .chain(kb)
@@ -358,7 +317,6 @@ fn add_operand_shifted_interval(
         return None;
     }
     let [a, b] = function.producer_inputs_exact::<2>(value).ok()?;
-    // Exactly one operand must be the constant addend.
     let (operand, c) = match (function.int_const_u128(a), function.int_const_u128(b)) {
         (None, Some(c)) => (a, c),
         (Some(c), None) => (b, c),
@@ -387,16 +345,13 @@ fn is_sign_bit_known_zero(
 }
 
 /// Builds the flow-insensitive KnownBits bases, then scans every `If` to
-/// extract guard facts keyed per value.  Dominance is resolved at query time
-/// in [`RangeMap::range_of`], not enumerated here.
+/// extract guard facts keyed per value.
 pub fn compute_value_ranges<'f>(
     function: &'f strider_ir::Function,
     doms: &'f Dominators<NodeId>,
     known: &KnownBitsMap,
 ) -> RangeMap<'f> {
     let mut kb_bounds: SecondaryMap<ValueId, Option<Interval>> = SecondaryMap::new();
-    // Walk the live graph rather than the raw arena: a culled-but-not-compacted
-    // value carries no useful KnownBits anyway, and O(reachable) <= O(arena).
     for node in function.walk() {
         for &value_id in function.node_outputs(node) {
             let kb: KnownBitsFacts = known[value_id];
@@ -411,8 +366,8 @@ pub fn compute_value_ranges<'f>(
                 continue;
             };
             let max_val = kb.max_value(type_mask);
-            // `k` trailing known-zero bits means a multiple of `2^k`, i.e. the
-            // interval stride.  Capped to the range so it stays a valid divisor.
+            // `k` trailing known-zero bits means a multiple of `2^k`, capped to
+            // the range so the stride stays a valid divisor.
             let tz = kb.zeros.trailing_ones().min(127);
             let stride = (1u128 << tz).min(max_val.max(1));
             // Record only when strictly tighter than the full range.
@@ -440,9 +395,6 @@ pub fn compute_value_ranges<'f>(
 
         let cond_value = function.if_cond(if_node);
 
-        // Keying the guard by the edge's unique control CONSUMER (not by a
-        // Region) survives `RegionCollapse` deleting the dispatch Region: the
-        // guard then keys on whatever control node consumes the edge.
         for (edge_ctrl, edge_taken) in [(true_ctrl, true), (false_ctrl, false)] {
             let Some((guarded_value, guard_interval)) =
                 guard_from_compare(function, cond_value, edge_taken, known)
@@ -451,11 +403,9 @@ pub fn compute_value_ranges<'f>(
             };
 
             // Soundness gate: attach the guard only where the consumer is
-            // reached EXCLUSIVELY via this edge.  `RegionCollapse` has already
-            // dissolved every single-predecessor `Region`, so a `Region` still
-            // consuming an edge is a genuine merge and the guard does not hold
-            // for its other predecessors.  Every other control consumer has
-            // exactly one control input by signature.
+            // reached EXCLUSIVELY via this edge.  A `Region` still consuming an
+            // edge is a genuine merge, so the guard does not hold for its other
+            // predecessors.
             let Some(consumer) = single_control_consumer(function, edge_ctrl) else {
                 continue;
             };
@@ -463,16 +413,13 @@ pub fn compute_value_ranges<'f>(
                 continue;
             }
 
-            // No trivial-phi chase needed: `PhiCollapse` already eliminated
-            // single-input phis, so the guarded value is its own base.
             guards
                 .entry(guarded_value)
                 .or_default()
                 .push((consumer, guard_interval));
 
-            // Back-propagate through `Add(X, const)`: this is the offset-switch
-            // shape, where the guard sits on `idx - K` while the dispatch
-            // indexes `idx`, so `idx` inherits the shifted bound.
+            // Back-propagate through `Add(X, const)`: a guard on `idx - K`
+            // gives `idx` the shifted bound.
             let mut cur = guarded_value;
             let mut iv = guard_interval;
             while let Some((operand, shifted)) = add_operand_shifted_interval(function, cur, iv) {
@@ -497,12 +444,7 @@ pub fn compute_value_ranges<'f>(
 /// or false (its negation).  `Sless` is gated on KnownBits sign-bit = 0.
 ///
 /// Only upper-bounded intervals matter for table sizing, so a purely
-/// lower-bounded constraint like `v >= N` returns `None` rather than being
-/// recorded.
-///
-/// The lowered `<=` shape `Xor(Less(N, v), 1):I1` needs no handling: by the
-/// time this runs, `IfCondInversion` has rewritten `If(Xor(C,1))` to `If(C)`
-/// with swapped branches, so the condition is already a bare compare.
+/// lower-bounded constraint like `v >= N` returns `None`.
 fn guard_from_compare(
     function: &strider_ir::Function,
     cmp_value: ValueId,
@@ -519,13 +461,12 @@ fn guard_from_compare(
     // Const on RHS means `v < N`; const on LHS means `N < v`.
     let (guarded, n, const_on_rhs) =
         match (function.int_const_u128(lhs), function.int_const_u128(rhs)) {
-            // Nothing to bound; const-fold owns the both-const case.
+            // Nothing to bound.
             (Some(_), Some(_)) | (None, None) => return None,
             (None, Some(n)) => (lhs, n, true),
             (Some(n), None) => (rhs, n, false),
         };
 
-    // The guarded operand must be an integer wider than a bool.
     let ty = function.value_type_opt(guarded)?;
     if !ty.is_integer() || ty == ValueType::I1 {
         return None;
@@ -557,8 +498,7 @@ fn guard_from_compare(
     }
 }
 
-/// Each control edge has a single sink, so the first consumer is the only one.
-/// `None` for a dead edge.
+/// Each control edge has a single sink.  `None` for a dead edge.
 fn single_control_consumer(function: &strider_ir::Function, ctrl_val: ValueId) -> Option<NodeId> {
     function
         .graph()

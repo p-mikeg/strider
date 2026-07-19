@@ -13,19 +13,15 @@ use crate::pipeline::OptCtx;
 /// rom MUST map only runtime-immutable memory (code, `.rodata`; never
 /// `.data` / `.got` / `.data.rel.ro` / stack).  A writable global that is
 /// stored then reloaded would otherwise fold to its stale file-initial
-/// value, discarding the store.
-///
-/// Only RAM is modelled; the pass gates on `Load(VnSpace::RAM)` and never
-/// asks the rom about other spaces.
+/// value, discarding the store.  Only `Load(VnSpace::RAM)` is folded.
 ///
 /// # Endianness
 ///
 /// [`ReadOnlyMemory::read`][strider_ir::ReadOnlyMemory::read] fills the
 /// buffer with RAW bytes and does not decode.  This pass decodes them per
-/// `Function::endianness` (the SSoT), then masks to the load's output type.
+/// `Function::endianness`, then masks to the load's output type.
 ///
-/// The rom flows through the per-run [`OptCtx`]; `None` is the canonical
-/// "no rom configured" path and folds nothing.
+/// A `None` rom on the [`OptCtx`] folds nothing.
 ///
 /// ```rust
 /// use strider_opt::{LoadReadOnly, OptCtx, OptimizerPipeline};
@@ -74,15 +70,12 @@ impl crate::peephole::PeepholePass for LoadReadOnly {
     }
 }
 
-/// `node_id` MUST be a `Load(VnSpace::RAM)`; the caller filters on that, and
-/// the address read below relies on the `Load` two-input arity invariant.
+/// `node_id` MUST be a `Load(VnSpace::RAM)`.
 fn try_fold_const_load_at(
     edit: &mut crate::EditFunction<'_>,
     node_id: NodeId,
     rom: &dyn ReadOnlyMemory,
 ) -> Result<bool> {
-    // Shared const-eval utility, so the ROM decode is not duplicated in the
-    // jump-table evaluator.
     let (data_value, ty) = edit.single_value_output(node_id)?;
     let resolve = |v| edit.function().int_const_u128(v);
     let Some(masked) =
@@ -91,9 +84,8 @@ fn try_fold_const_load_at(
         return Ok(false);
     };
     let new_value = edit.build_int_const(masked, ty)?;
-    // Which byte run got read is justified by the address cone, and that cone
-    // is cascade-culled once the Load is replaced.  Absorb its fingerprint
-    // first.  Over-tainting is fine; fingerprints are a superset proof aid.
+    // The address cone justifies which byte run was read and is cascade-culled
+    // once the Load is replaced, so absorb its fingerprint first.
     let addr_value = edit.load_addr(node_id);
     edit.absorb_fingerprint(new_value, addr_value);
     edit.replace_value(data_value, new_value)

@@ -1,7 +1,3 @@
-//! Shared helpers for white-box tests inside this crate. The mock-IR builders
-//! themselves live in `strider-ir-test-utils` so every consumer shares one
-//! implementation.
-
 #![allow(dead_code)] // Not every caller uses every helper.
 
 use anyhow::anyhow;
@@ -44,8 +40,7 @@ pub(crate) fn assert_returns_const(f: &strider_ir::Function, expected: u64) {
     );
 }
 
-/// `ConstantFold` + `PhiCollapse` + `RegionCollapse`, the common
-/// phi-collapsing trio. Chain extra passes onto the returned pipeline.
+/// `ConstantFold` + `PhiCollapse` + `RegionCollapse`.
 pub(crate) fn cf_rp_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold::new());
@@ -54,8 +49,7 @@ pub(crate) fn cf_rp_pipeline() -> OptimizerPipeline {
     p
 }
 
-/// `cf_rp_pipeline` plus `LoadForward`, which reads the stack pointer and
-/// endianness off the function, so fixtures must bake those in.
+/// `cf_rp_pipeline` plus `LoadForward`.
 pub(crate) fn standard_test() -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
@@ -65,16 +59,14 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
     pipeline
 }
 
-/// Alias precision lives on the ctx, not the pass, so a strict-mode test
-/// runs [`standard_test`] with this instead of a strict-pass variant.
+/// An [`crate::OptCtx`] in [`crate::AliasMode::Strict`].
 pub(crate) fn octx_strict() -> crate::OptCtx<'static> {
     let mut ctx = crate::OptCtx::new(None);
     ctx.options.alias_mode = crate::AliasMode::Strict;
     ctx
 }
 
-/// The default mode, spelled out for tests asserting the cross-class
-/// step-through behaviour.
+/// An [`crate::OptCtx`] in [`crate::AliasMode::StackGlobalDisjoint`].
 pub(crate) fn octx_permissive() -> crate::OptCtx<'static> {
     let mut ctx = crate::OptCtx::new(None);
     ctx.options.alias_mode = crate::AliasMode::StackGlobalDisjoint;
@@ -96,7 +88,7 @@ pub(crate) fn return_kind(graph: &Graph) -> crate::Result<NodeKind> {
 }
 
 /// Counts nodes matching `pred` over the full arena, detached zombies
-/// included. For a reachable-only count use [`Graph::count_kind`].
+/// included.
 pub(crate) fn count<F: Fn(&NodeKind) -> bool>(graph: &Graph, pred: F) -> usize {
     graph
         .all_node_ids()

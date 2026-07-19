@@ -9,8 +9,7 @@
 //! `InitialMemory`.
 //!
 //! The pass never synthesizes a value-`Phi`; a control merge is opaque.
-//! `PhiCollapse` runs first, so a trivial `MemPhi` is already gone and a
-//! store dominating the merge is still reachable.
+//! Requires `PhiCollapse` to have run, so a trivial `MemPhi` is already gone.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 use strider_ir::{IRBuilderExt, IRViewer};
@@ -20,9 +19,6 @@ use crate::error::Result;
 use crate::pipeline::OptimizationResult;
 use crate::sp_analysis::{AliasVerdict, SpAnalyzer, SpOptions};
 
-/// Runs inside the main fixed-point loop: stack stores classified by
-/// `StackOffsetDetect` only become visible to the walker on a later
-/// iteration, and forwarded constants feed `ConstantFold` / `KnownBits`.
 #[derive(Clone)]
 pub struct LoadForward;
 
@@ -103,9 +99,7 @@ fn try_forward_load(
     };
 
     // Redirecting the sole output leaves the Load dead; the automatic cull
-    // removes it and its address cone.  No manual detach needed, since the
-    // memory chain holds only Store / MemPhi / Call, so a still-attached
-    // forwarded Load cannot pollute the memory-SSA walk mid-sweep.
+    // removes it and its address cone.
     let changed = edit.replace_value(load_value, forwarded)?;
     Ok(OptimizationResult::from_changed(changed))
 }
@@ -115,9 +109,6 @@ fn try_forward_load(
 /// LE: the load's bytes are the low ones, so a plain `Truncate`.
 /// BE: they are the high ones, so shift right by
 /// `(store_size - load_size) * 8` first.
-///
-/// Every synthesised node is attributed to `load`; the asm-fingerprint
-/// contract applies to intermediates too, not just the outermost node.
 fn narrow(
     edit: &mut crate::EditFunction<'_>,
     store_data: ValueId,
@@ -129,11 +120,8 @@ fn narrow(
     let shifted = match endianness {
         Endianness::Little => store_data,
         Endianness::Big => {
-            // Shared with the jump-table evaluator's symbolic reshape.
             let shift_bits =
                 crate::sp_analysis::high_low_shift_bits(store_data_ty, load_ty, endianness);
-            // Via `build_int_const` so a wide store type mints the interned
-            // const and dedups against equal-valued nodes.
             let shift_const = edit.build_int_const(u128::from(shift_bits), store_data_ty)?;
             // `build_int_const` carries no contributor stamp, so attribute the
             // const by hand; every reachable node needs a fingerprint.

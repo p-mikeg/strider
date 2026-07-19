@@ -13,11 +13,10 @@ mod decompose_tests {
         }
     }
 
-    /// Reproduces what production hands `decompose`: a bare
-    /// `InitialVar(sp) + k` terminal, since it does not look through phis.
-    /// ConstantFold deliberately does not run: [`sub_off`] already builds the
-    /// canonical shape, and the deep-chain / memo tests need the structure
-    /// left un-collapsed.
+    /// Collapses phis down to a bare `InitialVar(sp) + k` terminal, which
+    /// is the only shape `decompose` recognises.  ConstantFold deliberately
+    /// does not run: the deep-chain / memo tests need the structure left
+    /// un-collapsed.
     fn collapse_phis(fg: &mut strider_ir::Function) {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
@@ -26,9 +25,8 @@ mod decompose_tests {
             .expect("phi collapse");
     }
 
-    /// The post-`ConstantFold` shape of `x - k`.  The lifter emits
-    /// `Add(x, Neg(IntConst(k)))`, but ConstantFold folds the `Neg` away before
-    /// any SP-aware pass runs, and the decomposer does not peel `Neg` itself.
+    /// The post-`ConstantFold` shape of `x - k`, i.e. `Add(x, IntConst(-k))`.
+    /// The decomposer does not peel a `Neg` itself.
     fn sub_off(
         b: &mut strider_ir::FunctionBuilder,
         x: ValueId,
@@ -180,10 +178,9 @@ mod decompose_tests {
         Ok(())
     }
 
-    /// A loop-carried `Phi(InitialVar(sp), Add(phi, -K))` puts a data cycle in
-    /// the cone.  Every node in it must classify the same whatever the query
-    /// order or memo sharing.  That path-independence is what makes caching a
-    /// `None` verdict sound.
+    /// A loop-carried `Phi(InitialVar(sp), Add(phi, -K))` puts a data cycle
+    /// in the cone.  Every node in it must classify the same whatever the
+    /// query order or memo sharing.
     #[test]
     fn decompose_sp_cycle_classifies_identically_regardless_of_query_order() -> crate::Result<()> {
         let sp = sp();
@@ -309,10 +306,8 @@ mod decompose_tests {
     }
 
     /// FreeBSD i386 10.0 prologue: `and $0xfffffff8, %esp` aligns the stack
-    /// after the saved-register pushes, so all later stack arithmetic anchors
-    /// at the And's output rather than `InitialVar(sp)`.  Without recognising
-    /// the And, every post-alignment store is non-decomposable and
-    /// `CallStackArgCollect` walks past the call's args as "non-aliasing".
+    /// after the saved-register pushes, so all later stack arithmetic must
+    /// anchor at the And's output rather than `InitialVar(sp)`.
     #[test]
     fn decompose_sp_and_with_alignment_mask_yields_opaque_base() -> crate::Result<()> {
         let sp = sp();
@@ -351,10 +346,8 @@ mod decompose_tests {
         Ok(())
     }
 
-    /// The local-frame reservation `sub $0x1d0, %esp` after the alignment must
-    /// decompose to the same opaque base with a non-zero offset.  Otherwise a
-    /// post-alignment cdecl call site has args at addresses `decompose` cannot
-    /// relate, breaking `CallStackArgCollect`.
+    /// The local-frame reservation `sub $0x1d0, %esp` after the alignment
+    /// must decompose to the same opaque base with a non-zero offset.
     #[test]
     fn decompose_sp_sub_after_and_chains_offset_through_opaque_base() -> crate::Result<()> {
         let sp = sp();
@@ -417,9 +410,8 @@ mod decompose_tests {
         Ok(())
     }
 
-    /// The recursive form overflowed the thread stack at ~4-8k nodes on a deep
-    /// `sp + K1 + ... + KN` chain.  5000 nodes must walk without panic and
-    /// still give the right cumulative offset.
+    /// A 5000-node `sp + K1 + ... + KN` chain must walk without overflowing
+    /// the thread stack and still give the right cumulative offset.
     #[test]
     fn decompose_sp_does_not_stack_overflow_on_deep_chain() -> crate::Result<()> {
         let sp = sp();
@@ -477,8 +469,8 @@ mod alias_tests {
             .expect("one store")
     }
 
-    /// Mirrors what the production `SpMemWalker` Store arm does: classify the
-    /// store address, derive its size, then run [`alias_verdict`].
+    /// Classifies the store address, derives its size, then runs
+    /// [`alias_verdict`].
     fn store_alias_verdict(
         f: &Function,
         store: NodeId,
@@ -509,9 +501,8 @@ mod alias_tests {
         )
     }
 
-    /// Leaves SP addresses as the bare `InitialVar(sp) + k` terminals these
-    /// alias helpers see in production, since the decomposer does not look
-    /// through phis.
+    /// Leaves SP addresses as the bare `InitialVar(sp) + k` terminals the
+    /// decomposer recognises.
     fn collapse(f: &mut Function) {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
@@ -566,9 +557,9 @@ mod alias_tests {
         );
     }
 
-    /// Under `distinct_sp_bases_disjoint` (what stack-arg detection uses) the
-    /// same store is `Disjoint`: incoming-arg slots above the entry SP are
-    /// assumed not to overlap frame locals at an alignment-masked SP.
+    /// Under `distinct_sp_bases_disjoint` the same store is `Disjoint`:
+    /// incoming-arg slots above the entry SP are assumed not to overlap frame
+    /// locals at an alignment-masked SP.
     #[test]
     fn different_base_terminal_store_disjoint_when_opted_in() {
         let sp = stack_vn_x86();
@@ -722,10 +713,8 @@ mod cfg_tests {
     use strider_ir_test_utils::{make_sp_fn, stack_vn_x86};
 
     /// After a rewrite leaves a store's raw address non-decomposable,
-    /// `stack_offsets` still records it as `[sp+K]`.  The walk stops at that
-    /// store via `classify_store_addr`, so `verdict` must classify it the same
-    /// way; falling back to `Anchor` reports `MayAlias` and `LoadForward`
-    /// silently misses a legal forward.
+    /// `stack_offsets` still records it as `[sp+K]`, and `verdict` must
+    /// classify it from that rather than falling back to `Anchor`.
     #[test]
     fn verdict_uses_stack_offset_ssot_for_nondecomposable_store() {
         let sp = stack_vn_x86();

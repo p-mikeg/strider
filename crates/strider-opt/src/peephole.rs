@@ -1,13 +1,6 @@
-//! `PeepholePass` trait + driver for the kind-filtered, per-node rewrite
-//! shape most passes in this crate take.
-//!
 //! An impl declares which `NodeKind`s it cares about and how to attempt one
 //! rewrite at a root; [`run_peephole`] owns the worklist, kind-filtered
 //! seeding, and consumer re-enqueue.
-//!
-//! `PeepholePass` sits below [`crate::pipeline::Optimizer`] and gets a
-//! blanket `Optimizer` impl. Passes that don't fit the shape (analytic or
-//! multi-stage ones with a per-pass memo) hand-write `Optimizer` instead.
 
 use entity_utils::Worklist;
 use strider_ir::IRViewer;
@@ -16,17 +9,14 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 use crate::error::Result;
 use crate::pipeline::OptimizationResult;
 
-/// The producer node of each value input of `node`, in input-slot order.
-///
-/// Owned `Vec` so callers may mutate `edit` while iterating (e.g. extending
-/// a fingerprint per producer). Iterate-only callers want the
-/// allocation-free [`input_producers_iter`].
+/// The producer node of each value input of `node`, in input-slot order,
+/// owned so `edit` stays free to mutate.
 pub(crate) fn input_producers<V: IRViewer>(edit: &V, node: NodeId) -> Vec<NodeId> {
     input_producers_iter(edit, node).collect()
 }
 
-/// Borrowing counterpart of [`input_producers`]. Holds `edit` borrowed for
-/// the iterator's lifetime, so the loop body must not borrow it mutably.
+/// Borrowing counterpart of [`input_producers`]: `edit` stays borrowed for
+/// the iterator's lifetime.
 pub(crate) fn input_producers_iter<V: IRViewer>(
     edit: &V,
     node: NodeId,
@@ -35,9 +25,6 @@ pub(crate) fn input_producers_iter<V: IRViewer>(
 }
 
 /// Outcome of one [`PeepholePass::try_rewrite`] attempt.
-///
-/// Reporting the freshly created node lets the driver re-examine it without
-/// scanning the new-NodeId range.
 pub(crate) enum PeepholeRewrite {
     NoChange,
     /// `new_node` is `Some(n)` when the rewrite built a FRESH node worth
@@ -57,7 +44,7 @@ impl PeepholeRewrite {
         })
     }
 
-    /// For passes that rewire to an existing value, creating no fresh node.
+    /// For a rewire to an existing value, creating no fresh node.
     pub(crate) fn from_changed(changed: bool) -> Self {
         if changed {
             PeepholeRewrite::Changed { new_node: None }
@@ -67,14 +54,13 @@ impl PeepholeRewrite {
     }
 }
 
-/// Worklist seed order. Value-propagation passes (constant folding,
-/// known-bits) want operands settled before their consumers; canonicalization
-/// passes that collapse a tree to one node must match the OUTERMOST shape
-/// before a sub-rewrite destroys it.
+/// Worklist seed order.
 pub(crate) enum SeedOrder {
-    /// Operands before consumers. The default.
+    /// Operands before consumers. The default; what a value-propagation
+    /// pass wants.
     ReversePostorder,
-    /// Consumers before operands, so outer shapes match first.
+    /// Consumers before operands, so a tree-collapsing canonicalization
+    /// matches the OUTERMOST shape before a sub-rewrite destroys it.
     Postorder,
 }
 
@@ -108,11 +94,6 @@ pub(crate) trait PeepholePass {
 /// Drives a [`PeepholePass`] over the reachable graph to a local fixpoint,
 /// off what each rewrite reports rather than by scanning new NodeIds.
 ///
-/// Consumers are snapshotted BEFORE `try_rewrite` runs: a rewrite rewires
-/// uses to its replacement, leaving `value_uses(old_out)` empty afterwards.
-/// The `SmallVec<[NodeId; 8]>` inlines the common fan-out to keep the hot
-/// worklist path allocation-free.
-///
 /// # Errors
 /// Propagates the first error from `try_rewrite`.
 pub(crate) fn run_peephole<P: PeepholePass>(
@@ -120,16 +101,10 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     edit: &mut crate::EditFunction<'_>,
     opt_ctx: &mut crate::pipeline::OptCtx<'_>,
 ) -> Result<OptimizationResult> {
-    // Each order is computed directly, never by reversing the other: the
-    // postorder comes straight from the forward def-use walk.
-    //
-    // Both filters seed from the edit's cached walk (the O(1)-maintained
-    // `roots` + `live_nodes`), avoiding a per-seed `compute_full`. Cached
-    // `roots` iterate in ascending NodeId order rather than preorder
-    // discovery order; that is safe because the cached live set stays exactly
-    // the entry-reachable set, and `ConstantFold`'s AND-distribution rule is
-    // confluent (fires only when it strictly simplifies), so any valid RPO
-    // converges.
+    // Cached `roots` iterate in ascending NodeId order rather than preorder
+    // discovery order. That is safe because the cached live set stays exactly
+    // the entry-reachable set, and every rule seeded in RPO is confluent
+    // (fires only when it strictly simplifies), so any valid RPO converges.
     let seed: Vec<NodeId> = match pass.seed_order() {
         SeedOrder::ReversePostorder => edit
             .reverse_postorder_filter(|k| pass.matches_kind(k))
@@ -139,9 +114,10 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     let mut work: Worklist<NodeId> = seed.into_iter().collect();
     let mut overall = OptimizationResult::NoChange;
     let propagate = pass.propagate_to_consumers();
-    // Snapshotted per iteration before the pass body runs. Kind-filtered
-    // here, so `try_rewrite` only ever sees a node matching `matches_kind`,
-    // the same contract the seed walk gives.
+    // Snapshotted before `try_rewrite` runs: a rewrite rewires uses to its
+    // replacement, leaving `value_uses(old_out)` empty afterwards.
+    // Kind-filtered here, so `try_rewrite` only ever sees a node matching
+    // `matches_kind`.
     let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
     while let Some(root) = work.dequeue() {
         if propagate {
@@ -176,8 +152,6 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     Ok(overall)
 }
 
-/// `Clone + 'static` satisfies the `OptimizerClone` super-trait so the
-/// pipeline can box-clone the pass.
 impl<P: PeepholePass + Clone + 'static> crate::pipeline::Optimizer for P {
     fn apply(
         &self,
@@ -202,8 +176,7 @@ mod tests {
     use crate::pipeline::OptimizationResult;
 
     /// Records every `try_rewrite` invocation and on match rewires the
-    /// root's single value output to a fresh `IntConst(REPLACEMENT_K)`, so
-    /// the tests can assert ordering and propagation without a real pass.
+    /// root's single value output to a fresh `IntConst(REPLACEMENT_K)`.
     struct ScriptedPass {
         match_kind: fn(&NodeKind) -> bool,
         do_rewrite: bool,
@@ -211,9 +184,8 @@ mod tests {
         return_error: bool,
         visit_log: RefCell<Vec<u32>>,
         /// The first successful rewrite builds a fresh kind-matching node
-        /// instead of folding to an `IntConst`, proving `run_peephole`
-        /// re-enqueues those. Consumed on first use so it cannot cascade
-        /// forever.
+        /// instead of folding to an `IntConst`. Consumed on first use so it
+        /// cannot cascade forever.
         create_matching_once: RefCell<bool>,
     }
 

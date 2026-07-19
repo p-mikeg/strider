@@ -7,13 +7,8 @@
 //! the canned pass list.
 //!
 //! No pass takes construction arguments: SP-aware passes read the calling
-//! convention from the function's own `default_cc` and alias precision from
-//! the per-run [`OptCtx`], and `LoadReadOnly` reads its ROM from that ctx.
-//! Each no-ops when its input is absent, so one `default_pipeline()` covers
-//! every run.
-//!
-//! Indirect-branch resolution is driven by the orchestrator (see
-//! `indirect_branch_resolve`); it is not a pipeline pass.
+//! convention from the function's own `default_cc`, and alias precision plus
+//! the `LoadReadOnly` ROM from the per-run [`OptCtx`].
 
 pub mod error;
 pub(crate) mod mem_ssa;
@@ -38,8 +33,6 @@ mod post_opt;
 mod test_support;
 pub mod value_range;
 
-// Public module path: downstream reaches the classifiers directly, not just
-// the pass type.
 pub use post_opt::indirect_branch_resolve;
 
 pub use opt::cfg_detach::CfgDetach;
@@ -63,23 +56,7 @@ pub use post_opt::indirect_branch_resolve::{IndirectBranchClassify, classify_tar
 pub use post_opt::stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;
 
-/// Every pass runs once per fixed-point iteration, so one pass's
-/// simplification is visible to the rest within the same iteration.
-///
-/// Order constraints:
-/// - `FlagCmpCanonicalize` after `ConstantFold`, so a doubled
-///   `Xor(Xor(_,1),1)` at `I1` has already collapsed.
-/// - `IfCondInversion` after both, so the cond it sees is at most one
-///   `Xor(_,1)` deep and a constant-cond `If` is already simplified.
-///   Swapping branches under a constant cond would make
-///   `DeadBranchElimination` strip the wrong arm.
-///
-/// `LoadReadOnly` reads its ROM from the per-run [`OptCtx`]; with `rom =
-/// None` it short-circuits to a no-op. The PyO3 wrapper auto-prepends it to
-/// any custom pipeline that omitted it.
-///
-/// Nodes the node-removing passes strand are left in the arena: the validator
-/// and pattern queries only walk from entry.
+/// The canned pass list.
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold::new());
@@ -87,7 +64,12 @@ pub fn default_pipeline() -> OptimizerPipeline {
     // inside the loop so the value it materialises feeds the next iteration.
     p.add(LoadReadOnly);
     p.add(KnownBits);
+    // After ConstantFold, so a doubled `Xor(Xor(_,1),1)` at `I1` has already
+    // collapsed.
     p.add(FlagCmpCanonicalize::new());
+    // After both, so the cond is at most one `Xor(_,1)` deep and a
+    // constant-cond `If` is already simplified. Swapping branches under a
+    // constant cond would make `DeadBranchElimination` strip the wrong arm.
     p.add(IfCondInversion::new());
     p.add(PhiCollapse);
     p.add(RegionCollapse);

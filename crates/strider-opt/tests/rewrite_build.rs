@@ -1,7 +1,5 @@
-//! Integration coverage for the typed `rewrite_rule` path.
-//!
 //! A wildcard RHS is a COMPILE error, not a runtime check: `Any` does not
-//! implement `TemplatePat`. The rules below exercise the firing path.
+//! implement `TemplatePat`.
 
 #![allow(
     clippy::panic,

@@ -1,7 +1,6 @@
 //! For each `Call`, walks the memory-SSA chain to find the `Store` supplying
 //! each positional stack-arg slot and appends the stored data as extra Call
-//! inputs.  The SP-decomposition and walk machinery lives in
-//! [`crate::sp_analysis`].
+//! inputs.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -13,26 +12,21 @@ use crate::sp_analysis::{SpAnalyzer, SpExpr, SpOptions};
 #[cfg(test)]
 mod tests;
 
-/// Stack-arg offsets are relative to the CALL-TIME SP, so the origin is the
-/// `Call`'s own SP input decomposed to an entry-SP-relative `{ base, offset }`.
-/// A store wider than one slot is ONE argument spanning several slots.  The
-/// result is the contiguous prefix `0..k`, stopping at the first slot with no
-/// anchored store.
+/// The contiguous prefix of stack-arg slots `0..k`, stopping at the first slot
+/// with no anchored store.  Offsets are relative to the CALL-TIME SP, and a
+/// store wider than one slot is ONE argument spanning several slots.
 ///
 /// Over-collection is intentional: once lowered to memory, argument pushes are
-/// indistinguishable from incidental in-window stack writes (a prologue
-/// zero-init, a `push ebx` save), so every plausible store is collected and the
-/// caller disambiguates.  Alias precision still decides which intervening
-/// stores are steppable, and a `Call` on the chain still ends collection since
-/// the callee may overwrite the frame.
+/// indistinguishable from incidental in-window stack writes, so every plausible
+/// store is collected.  A `Call` on the chain ends collection, since the callee
+/// may overwrite the frame.
 fn collect_stack_args(
     function: &strider_ir::Function,
     call_id: NodeId,
     stack_args: strider_target::StackArgs,
     alias_cfg: &SpAnalyzer,
 ) -> Vec<ValueId> {
-    // Call inputs are [control, memory, target, sp, ...args]; slots 1 and 3
-    // are guaranteed by the validated Call structural invariant.
+    // Call inputs are [control, memory, target, sp, ...args].
     let inputs = function.node_inputs(call_id);
     let mem_value = function
         .memory_input_of(call_id)
@@ -40,7 +34,7 @@ fn collect_stack_args(
     let sp_value = inputs[3];
 
     // A slot's entry-relative probe offset is `call_sp_off + offset_of(slot)`.
-    // A non-decomposable SP input, say a phi-SP, yields no args.
+    // A non-decomposable SP input yields no args.
     let Some(SpExpr {
         base,
         offset: call_sp_off,
@@ -54,14 +48,12 @@ fn collect_stack_args(
     loop {
         let slot_off = call_sp_off + stack_args.offset_of(cursor);
         // Probing a single byte lets the store report its own width back, so a
-        // wider-than-slot argument is discovered rather than forced into a
-        // fixed range.
+        // wider-than-slot argument is discovered rather than forced into a range.
         let Some(store) = alias_cfg.reaching_store(function, mem_value, base, slot_off, 1) else {
             break;
         };
-        // A covering store anchored EARLIER is a wider preceding argument the
-        // cursor should already have passed, meaning this slot was never
-        // written itself, so the prefix ends here.
+        // A covering store anchored EARLIER means this slot was never written
+        // itself, so the prefix ends here.
         if store.store_offset != slot_off {
             break;
         }
@@ -71,12 +63,8 @@ fn collect_stack_args(
     args
 }
 
-/// Runs ONCE after the fixed-point loop converges.
-///
-/// The stack-arg formula, the stack-pointer varnode, and the alias precision
-/// are all derived on demand from the function and the per-run options, so the
-/// pass carries no configuration.  A per-`Call` CC override, e.g. a varargs
-/// site, wins over the convention default.
+/// Wires positional stack args into each `Call`.  A per-`Call` CC override
+/// wins over the convention default.
 #[derive(Clone)]
 pub struct CallStackArgCollect;
 
@@ -87,9 +75,8 @@ impl PostOptimizer for CallStackArgCollect {
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
         let alias_mode = opt_ctx.options.alias_mode;
-        // Calls are independent of each other, so the cached live set is enough
-        // and no graph walk is needed.  The owned `Vec` lets the immutable
-        // borrow end before the mutation loop takes `edit` mutably.
+        // The owned `Vec` lets the immutable borrow end before the mutation loop
+        // takes `edit` mutably.
         let calls: Vec<NodeId> = edit.live_of_kind(|k| matches!(k, NodeKind::Call)).collect();
         let alias_cfg = SpAnalyzer::new(SpOptions::call_blocking(alias_mode));
         for call_id in calls {
@@ -97,7 +84,6 @@ impl PostOptimizer for CallStackArgCollect {
             let Some(stack_args) = edit.function().get_cc(call_id).stack_args else {
                 continue;
             };
-            // Single-shot post-pass, so no changed/unchanged result to track.
             let args = collect_stack_args(edit.function(), call_id, stack_args, &alias_cfg);
             for arg_value in &args {
                 edit.add_node_input(call_id, *arg_value)?;

@@ -1,17 +1,7 @@
-//! Rewrites `If(Xor(C, IntConst(1))) {A} {B}` into `If(C) {B} {A}`, so pattern
-//! matchers only ever see a non-inverted `If` condition.  Lifters emit either
-//! sense depending on the arch's flag-test instruction; this collapses both to
-//! one shape.
+//! Rewrites `If(Xor(C, IntConst(1))) {A} {B}` into `If(C) {B} {A}`.
 //!
 //! Convergence: each application removes one `Xor`-with-1 from the cond, and a
 //! doubly-inverted cond collapses first via `ConstantFold`'s xor-reassoc.
-//!
-//! Run after `ConstantFold` so chained `Xor(_, 1)` has already simplified;
-//! without that ordering a double inversion just takes two iterations.
-//!
-//! Hand-written rather than a `crate::rewrite_rule`: the rewrite engine
-//! replaces one output's consumers with a fresh node, but this needs input
-//! redirection plus a bidirectional consumer swap across two `Control` outputs.
 
 use std::rc::Rc;
 
@@ -22,8 +12,6 @@ use crate::error::Result;
 use crate::peephole::PeepholeRewrite;
 use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 
-/// A built [`Pattern`] is not `Clone`, so it is held behind an [`Rc`] to keep
-/// the pass cheaply `Clone`; clones share the same pattern.
 #[derive(Clone)]
 pub struct IfCondInversion {
     inner_pat: Rc<Pattern>,
@@ -67,8 +55,6 @@ impl crate::peephole::PeepholePass for IfCondInversion {
         Ok(PeepholeRewrite::Changed { new_node: None })
     }
 
-    /// Inversion swaps control consumers without folding to a constant, so
-    /// re-enqueueing consumers would only re-walk unchanged joins.
     fn propagate_to_consumers(&self) -> bool {
         false
     }
@@ -76,10 +62,6 @@ impl crate::peephole::PeepholePass for IfCondInversion {
 
 /// Returns the `Xor`'s non-constant operand when the `If` cond is the canonical
 /// 1-bit logical NOT `Xor(x, IntConst(1)):I1`.
-///
-/// Goes through the matcher rather than a hand-rolled check so the LHS shape
-/// (commutative Xor with the I1 all-ones constant, plus the I1-output guard)
-/// stays owned by the `bool_not` builder.
 fn is_inverted_cond_match(
     function: &strider_ir::Function,
     if_node: NodeId,

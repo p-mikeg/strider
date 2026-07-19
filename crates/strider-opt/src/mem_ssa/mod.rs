@@ -1,7 +1,3 @@
-//! Backward memory-SSA walk: from a memory cursor, find the nearest
-//! definition that may alias the analysed location.  The alias predicate is
-//! supplied by the caller's [`MemorySSAWalker`].
-//!
 //! MemPhi join rule: resolve each predecessor independently.  If all arms
 //! agree (all clean, or all naming the same definition) the merge is
 //! transparent and the shared result passes through.  If they disagree there
@@ -14,9 +10,6 @@
 //! false disagreement.  A node still on the resolution path is marked
 //! `InProgress`, which breaks loop-header cycles by contributing `None` for
 //! that edge.
-//!
-//! The traversal is an iterative enter/exit DFS, so chain depth and phi
-//! fan-out cost heap, not host stack.
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -24,22 +17,17 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
 pub(crate) trait MemorySSAWalker {
-    /// Does `def` overlap the location being analysed?  The walker holds
-    /// that location itself, so the walk does not pass it in.
+    /// Does `def` overlap the location being analysed?
     ///
-    /// `def` is never a `MemPhi` or `InitialMemory` (the walk handles those
-    /// structurally), so this classifies `Store` / `Call` / `CallOther` and
-    /// any opaque memory producer.  Return `true` for producers you cannot
-    /// reason about.
+    /// `def` is never a `MemPhi` or `InitialMemory`; the walk handles those
+    /// structurally.  Return `true` for producers you cannot reason about.
     ///
     /// `true` terminates the branch with `def` as the nearest clobber;
     /// `false` advances past `def` to its own memory input.
     fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool;
 
     /// Nearest clobbering definition backward from `mem`'s memory output, or
-    /// the `InitialMemory` node when every path is clean (callers
-    /// distinguish by node kind).  Read-only: narrowing is the separate
-    /// [`narrow_load_to`] step.
+    /// the `InitialMemory` node when every path is clean.  Read-only.
     fn find_nearest_clobber(&mut self, function: &Function, mem: NodeId) -> NodeId
     where
         Self: Sized,
@@ -49,12 +37,12 @@ pub(crate) trait MemorySSAWalker {
 }
 
 /// Repoints a `Load`'s memory input onto `clobber`'s memory output, skipping
-/// the proven-disjoint defs in between so later walks are shorter.
+/// the proven-disjoint defs in between.  A non-`Load` handle is left alone.
 ///
-/// Only a `Load` is rewired: it is a pure consumer with no memory output, so
+/// Sound only for a `Load`: it is a pure consumer with no memory output, so
 /// moving its single incoming memory edge is invisible to every other node.
 /// Idempotent, and monotone across fixed-point iterations (verdicts only ever
-/// move MayAlias to Disjoint).  A non-`Load` handle is left alone.
+/// move MayAlias to Disjoint).
 pub(crate) fn narrow_load_to(edit: &mut crate::EditFunction<'_>, load: NodeId, clobber: NodeId) {
     let rewire = {
         let function = edit.function();
@@ -90,8 +78,7 @@ fn join_phi_results(phi_value: ValueId, preds: &[Option<ValueId>]) -> Option<Val
     }
 }
 
-/// An absent memo key means "not yet entered on this walk"; only `InProgress`
-/// and `Done` are ever stored.
+/// An absent key means "not yet entered on this walk".
 #[derive(Clone, Copy)]
 enum Resolve {
     /// On the current resolution path; re-encountering it is a cycle.
@@ -128,20 +115,15 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
         }
     }
 
-    /// The memo is per-call, so each caller (one per `Load` in `LoadForward`,
-    /// one per stack slot in `CallStackArgCollect`) re-walks from its own
-    /// cursor: O(loads x chain) per fixed-point iteration.  Bounded in
-    /// practice because `narrow_load_to` collapses proven-disjoint runs, so
-    /// later iterations are short.  Add a cross-load cache keyed by
-    /// `mem_value` only if a profile on a real binary shows this dominating.
+    /// The memo is per-call, so every query re-walks from its own cursor.
     fn walk_from(
         &mut self,
         start_mem: ValueId,
         initial_memory: &mut Option<NodeId>,
     ) -> Option<ValueId> {
-        // A hash map, not a dense entity-keyed `SecondaryMap`: one walk touches
-        // only O(chain) of the function's ValueIds and callers run it once per
-        // stack slot, so per-walk O(function) init would dominate.
+        // A hash map, not a dense entity-keyed `SecondaryMap`: one walk
+        // touches only O(chain) of the function's ValueIds, so a per-walk
+        // O(function) init would dominate.
         let mut memo: FxHashMap<ValueId, Resolve> = FxHashMap::default();
         let mut work: Vec<Frame> = vec![Frame::Enter(start_mem)];
 
@@ -204,8 +186,8 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
         }
     }
 
-    /// The walker's alias verdict is applied at enter-time and short-circuits
-    /// before this runs, so a non-phi node only forwards.
+    /// The alias verdict short-circuits at enter-time, so a non-phi node
+    /// only forwards.
     fn combine(&self, cur: ValueId, succ_results: &[Option<ValueId>]) -> Option<ValueId> {
         let node = self.function.producer(cur);
         match *self.function.node_kind(node) {

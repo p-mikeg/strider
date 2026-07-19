@@ -1,6 +1,3 @@
-//! Pins that SP-relative accesses get an offset stamped, non-SP-rooted
-//! addresses leave the side-table alone, and a re-run stamps nothing new.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use strider_ir::node::{NodeKind, ValueType};
@@ -18,8 +15,7 @@ fn stamped_count(function: &Function) -> usize {
         .count()
 }
 
-/// Canonicalize, then run the post-pass.  It returns no Change/NoChange, so
-/// tests assert directly on the `stack_offsets` side-table.
+/// Canonicalize, then run the post-pass.
 fn run(function: &mut Function) {
     // ConstantFold folds the lowered `Add(_, Neg(K))` to `Add(_, IntConst(-K))`
     // and PhiCollapse drops the read_variable(sp) phi, giving the production
@@ -88,9 +84,8 @@ fn non_sp_relative_store_leaves_side_table_untouched() {
     assert_eq!(stamped_count(&f), 0);
 }
 
-/// An alignment-masked base is still a stack access, just in a different
-/// coordinate system from entry-SP.  Recording that base is what keeps its
-/// offset from being conflated with an entry-SP one.
+/// An alignment-masked base is a stack access in a different coordinate system
+/// from entry-SP, so its offset must not be conflated with an entry-SP one.
 #[test]
 fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     let sp = stack_vn_x86();

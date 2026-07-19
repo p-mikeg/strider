@@ -1,16 +1,8 @@
-//! SP decomposition, address classification, and the alias verdict table,
-//! shared by every SP-aware pass.  Drives the payload-agnostic walk in
-//! [`crate::mem_ssa`].
-//!
 //! `decompose` reduces `InitialVar(sp)` plus `Add`-of-constant steps (or an
-//! alignment-masked `sp & mask` anchor) to one `SpExpr { base, offset }`,
-//! memoized into the function's `stack_offsets` side-table.
+//! alignment-masked `sp & mask` anchor) to one `SpExpr { base, offset }`.
 //!
 //! It does NOT look through `Phi`: a stack-tagged `Phi(sp)` decomposes to
-//! `None`.  That is safe because `PhiCollapse` / `RedundantPhis` run first and
-//! collapse the single-predecessor phis the lifter wraps around
-//! `read_variable(sp)`, and every caller reads `None` conservatively as "not a
-//! provable SP terminal".
+//! `None`, which reads conservatively as "not a provable SP terminal".
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer, IntBinaryOp, SpDecomp};
@@ -47,21 +39,17 @@ pub(crate) enum AddrClass {
 /// Implements the table described in the [`AliasMode`] docs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AliasVerdict {
-    /// Same byte range, so `load_forward` can use this Store as its source.
+    /// Same byte range.
     Match,
-    /// Provably non-overlapping; the caller steps through.
+    /// Provably non-overlapping.
     Disjoint,
-    /// Neither provable; the caller bails.
+    /// Neither provable.
     MayAlias,
 }
 
-/// Memoized: a hit is O(1), a miss walks the SP spine and caches the verdict
-/// (positive or `NotStack`).
-///
-/// The cache sits behind a `RefCell` so it fills through a shared `&Function`;
-/// the memory-SSA and range-scoped callers cannot hand over `&mut`.  Sound
-/// during the fixed point because the optimizer clears the cache on every
-/// graph mutation, so no memoized verdict outlives its graph.
+/// Memoized: a hit is O(1), a miss walks the SP spine and caches the verdict.
+/// Sound only because the pipeline clears the memo on every graph mutation,
+/// so no memoized verdict outlives its graph.
 pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<SpExpr> {
     match function.side_tables().stack_slot(value) {
         SpDecomp::Stack(_) => return resolve_slot(function, value),
@@ -179,8 +167,7 @@ fn classify_addr(function: &Function, addr: ValueId) -> AddrClass {
     }
 }
 
-/// Named separately so `def_clobbers` and the exact re-check in
-/// [`SpAnalyzer::verdict`] classify a store identically.
+/// The one classification of a `Store`'s address, so every consumer agrees.
 fn classify_store_addr(function: &Function, store_node: NodeId) -> AddrClass {
     classify_addr(function, function.store_addr(store_node))
 }
@@ -287,15 +274,11 @@ pub(crate) fn alias_verdict(load: SizedAddr, store: SizedAddr, options: SpOption
     }
 }
 
-/// The SP-aware [`MemorySSAWalker`], shared by `load_forward` and
-/// `function_args`.  `MemPhi` is handled structurally by the walk, so
-/// `def_clobbers` never sees one.
+/// The SP-aware [`MemorySSAWalker`].
 struct SpMemWalker<'a> {
     analyzer: &'a SpAnalyzer,
-    /// A precomputed [`SizedAddr`] rather than a `Load` `NodeId` because
-    /// `reaching_store` probes a synthetic SP-rooted location with no backing
-    /// `Load` node.  The class is the one representation a real load and that
-    /// probe share.
+    /// The probed location.  Precomputed rather than a `Load` `NodeId`, since
+    /// a probe need not have a backing `Load` node.
     load: SizedAddr,
     /// Distinct spaces never alias, even at the same numeric address.
     load_space: rsleigh::VnSpace,
@@ -338,8 +321,7 @@ impl SpOptions {
         Self { alias_mode, mem }
     }
 
-    /// For load-forward, call-stack-arg collection, and stack-array jump
-    /// tables: a `Call` on the memory chain clobbers the probed location, and
+    /// A `Call` on the memory chain clobbers the probed location, and
     /// distinct SP bases stay conservatively non-disjoint.
     pub(crate) fn call_blocking(alias_mode: AliasMode) -> Self {
         Self::new(
@@ -352,9 +334,8 @@ impl SpOptions {
     }
 }
 
-/// Built once per pass.  Takes the `&Function` per call rather than binding
-/// it: consumers interleave these read queries with `&mut EditFunction`
-/// mutations, so a captured shared borrow would collide with the edits.
+/// The SP-aware query surface.  Takes the `&Function` per call rather than
+/// binding it, so a query may be interleaved with `&mut` edits.
 pub(crate) struct SpAnalyzer {
     options: SpOptions,
 }
@@ -372,8 +353,7 @@ impl SpAnalyzer {
         }
     }
 
-    /// The one place the knobs meet [`alias_verdict`], so `verdict` and
-    /// `def_clobbers` cannot drift apart.
+    /// The one place the knobs meet [`alias_verdict`].
     fn alias(&self, load: SizedAddr, store: SizedAddr) -> AliasVerdict {
         alias_verdict(load, store, self.options)
     }
@@ -389,9 +369,7 @@ impl SpAnalyzer {
         }
     }
 
-    /// Goes through [`classify_store_addr`] so [`Self::verdict`] classifies a
-    /// store the same way [`SpMemWalker::def_clobbers`] does, even after a
-    /// rewrite leaves the store's raw address non-decomposable.
+    /// The store's address class paired with its stored width.
     fn store_sized(&self, function: &Function, store: NodeId) -> SizedAddr {
         SizedAddr {
             class: classify_store_addr(function, store),
@@ -399,7 +377,7 @@ impl SpAnalyzer {
         }
     }
 
-    /// The single decompose entry for consumers outside this module.
+    /// See the free [`decompose`].
     pub(crate) fn decompose(&self, function: &Function, value: ValueId) -> Option<SpExpr> {
         decompose(function, value)
     }
@@ -484,9 +462,8 @@ impl SpAnalyzer {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReachingSpStore {
     node: NodeId,
-    /// Byte offset from `base`.  Equals the probed `offset` only when the store
-    /// is anchored at the probed location; callers needing anchoring compare
-    /// the two themselves.
+    /// Byte offset from `base`.  Equals the probed `offset` only when the
+    /// store is anchored at the probed location.
     pub store_offset: i128,
 }
 
@@ -495,19 +472,17 @@ impl ReachingSpStore {
         function.store_data(self.node)
     }
 
-    /// Callers derive an argument's slot span from this: `ceil(size / increment)`.
+    /// Byte width of the stored value.
     pub(crate) fn size(&self, function: &Function) -> i128 {
         store_value_byte_size(function, self.data(function))
     }
 }
 
 /// Right-shift in bits that brings the `load_ty`-width slice of a wider
-/// `store_ty` integer into the low end.  Shared by `LoadForward`'s node-building
-/// narrowing and the jump-table evaluator's symbolic `reshape`.
+/// `store_ty` integer into the low end.  Little-endian keeps the load bytes
+/// low already, so the shift is 0.
 ///
-/// Little-endian keeps the load bytes low already, so the shift is 0.  Callers
-/// only invoke this when the load is narrower, so the subtraction cannot
-/// underflow.
+/// `load_ty` must be no wider than `store_ty`, else the subtraction underflows.
 #[inline]
 pub(crate) fn high_low_shift_bits(
     store_ty: ValueType,
@@ -520,9 +495,8 @@ pub(crate) fn high_low_shift_bits(
     }
 }
 
-/// The IR signature guarantees a valid `Store`'s DATA slot is value-typed, so
-/// a non-value here means malformed IR and panics rather than silently
-/// degrading the alias verdict.
+/// Byte width of a `Store`'s DATA operand.  Panics on a non-value operand,
+/// which the IR signature already rules out.
 #[inline]
 pub(crate) fn store_value_byte_size(function: &Function, store_data: ValueId) -> i128 {
     function

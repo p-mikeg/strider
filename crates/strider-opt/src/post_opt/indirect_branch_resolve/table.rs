@@ -7,9 +7,8 @@
 //! its proven strided range and folding the dispatch cone for each value.
 //!
 //! The evaluator covers only ConstFold arithmetic, `LoadReadOnly` ROM reads,
-//! and `LoadForward` via `reaching_store`.  A cone needing anything else (a
-//! `KnownBits` narrowing, say) resolves to `None` and the branch defers: sound,
-//! just less eager.
+//! and `LoadForward` via `reaching_store`.  A cone needing anything else
+//! resolves to `None` and the branch defers: sound, just less eager.
 //!
 //! # Soundness
 //!
@@ -23,13 +22,10 @@
 //!
 //! A COMPLETE FOLD: every value in the range must fold to a constant target.
 //! Any failure returns `None`, because a `Multiple` omitting a real runtime
-//! target would wire a CFG with missing edges.  The evaluator is read-only, and
-//! the caller's [`AliasMode`] is threaded in so a global-clobbered on-stack
-//! table defers under `Strict` exactly as it would in the orchestrator's run.
+//! target would wire a CFG with missing edges.
 //!
 //! Over-approximating the bound is sound, since surplus targets become dead CFG
-//! edges.  Under-approximating is not.  Failing either gate defers the branch:
-//! no panic, no partial commitment.
+//! edges.  Under-approximating is not.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -56,20 +52,14 @@ pub fn classify_table_dispatch(
     // `IndirectBranch` that happens to share the dispatch value.
     let target_value = function.indirect_branch_target(branch);
 
-    // A `Load[reg]` function pointer has no bounded dominator, so it defers
-    // here with no fold attempted.
+    // A `Load[reg]` function pointer has no bounded dominator and defers here.
     let (idx_value, range) = decompose_index(function, ranges, target_value, branch)?;
 
-    // No size guard on the cone is needed: the evaluator identifies the SP spine
-    // structurally rather than walking per-node, so even a false-positive
-    // candidate with a large decode cone folds cheaply and bails on its first
-    // non-folding value.
     let mut ev = super::eval::Evaluator::new(function, rom, alias_mode);
     let pruned = super::eval::cone_order_pruned(function, target_value, idx_value);
     // `stride` is a KnownBits MUST-divisor of the value spacing, so stepping by
-    // it visits exactly the reachable indices: a scaled `idx*8` hits 8, 16, ...
-    // and not the 7 misaligned values between.  `collect::<Option<_>>` bails
-    // the moment a value fails to fold, which fails closed.
+    // it visits exactly the reachable indices.  `collect::<Option<_>>` bails the
+    // moment a value fails to fold, which fails closed.
     let step = usize::try_from(range.stride).unwrap_or(1).max(1);
     let mut targets: Vec<u64> = (range.lo..=range.hi)
         .step_by(step)
@@ -83,24 +73,17 @@ pub fn classify_table_dispatch(
 /// The shallowest genuinely-bounded, non-width-only, non-constant value that
 /// DOMINATES the target in its variability cone.
 ///
-/// A jump table is `f(index)` for one controlling variable, so the index is a
-/// value-dominator of the target.  Requiring dominance excludes a bypassed
-/// sub-branch: in a rotate `(x<<2) | (x>>30)`, `x>>30` has the tightest
-/// interval but does not dominate, since the `x<<2` arm bypasses it.
+/// Requiring dominance excludes a bypassed sub-branch: in a rotate
+/// `(x<<2) | (x>>30)`, `x>>30` has the tightest interval but does not dominate.
 ///
-/// SHALLOWEST, not deepest, is load-bearing.  The shallowest bounded dominator
-/// sits just below the address arithmetic and has every guard/mask/shift
-/// applied, so enumerating it visits exactly the reachable slots.  A deeper
-/// bounded node is an earlier stage whose bound can be looser: a pre-guard
-/// `b>>5` spans [0,7] while the guarded value indexing the table is [0,5], and
-/// enumerating [0,7] reads two out-of-bounds slots, fails the fold, and defers
-/// a branch that should have resolved.
+/// SHALLOWEST, not deepest, is load-bearing: it sits just below the address
+/// arithmetic with every guard/mask/shift applied, so enumerating it visits
+/// exactly the reachable slots.  A deeper node's bound can be looser, and
+/// enumerating out-of-bounds slots defers a branch that should have resolved.
 ///
 /// The cone traverses THROUGH a load the evaluator can fold (const-base rodata,
 /// SP-rooted stack) into its address, and stops at reg/GOT-based loads (vtable,
-/// funcptr, PIC) and opaque sources.  A virtual ENTRY feeds every root so
-/// `simple_fast` yields the short convergence-to-target spine rather than the
-/// whole cone.  The caller's fold still confirms the pin.
+/// funcptr, PIC) and opaque sources.  A virtual ENTRY feeds every root.
 fn decompose_index(
     function: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
@@ -139,12 +122,10 @@ fn decompose_index(
         let mut has_var_input = false;
         for p in inputs {
             // An SP-decomposable base is a symbolic BASE, not a variable, so it
-            // is skipped like a const.  Otherwise `sp` becomes a second root,
-            // the real index stops dominating the target (the SP path bypasses
-            // it), and every stack table defers.  `decompose` is what draws the
-            // line: it accepts `sp + const` and alignment-masked shapes but
-            // rejects a bit-extraction `sp & 0xF`, which is a bounded VALUE and
-            // must stay a candidate index.
+            // is skipped like a const; otherwise `sp` becomes a second root and
+            // the real index stops dominating the target.  `decompose` accepts
+            // `sp + const` and alignment masks but rejects `sp & 0xF`, which is
+            // a bounded VALUE and must stay a candidate index.
             if function.int_const_u128(p).is_some()
                 || crate::sp_analysis::decompose(function, p).is_some()
             {
@@ -164,8 +145,7 @@ fn decompose_index(
     let doms = petgraph::algo::dominators::simple_fast(&g, entry);
 
     // `dominators` yields the chain shallow to deep, so the first bounded hit
-    // IS the shallowest.  `find_map` early-exits, keeping the heavy range query
-    // off as many nodes as possible.
+    // IS the shallowest.
     doms.dominators(target_idx)?
         .filter_map(|di| *g.node_weight(di).expect("dominator is a graph node"))
         .filter(|&v| v != target)
@@ -173,9 +153,7 @@ fn decompose_index(
 }
 
 /// The address of a load the evaluator can fold, or `None` for a reg/GOT-based
-/// one (vtable, funcptr, PIC) it cannot.  Traversing into a foldable address
-/// continues the index search past a table's entry load; stopping at an
-/// unfoldable one defers without chasing a non-existent index.
+/// one (vtable, funcptr, PIC) it cannot.
 ///
 /// The check is operand-level because a stack table load
 /// `Load[(sp+base) + idx*stride]` has an INDEX-DEPENDENT address that never
@@ -215,19 +193,13 @@ fn bounded_index(
 
 /// Is `v`'s range merely its type width rather than a real narrowing?  A raw
 /// byte load fills its cell width exactly, making it table DATA, not an index.
-/// A value narrowed by a shift, mask, or guard has a range strictly inside its
-/// integer type.
 ///
 /// Keying on the RANGE rather than on "is it load-derived" is load-bearing: a
-/// guarded raw load, `if (Load < N) switch(Load)`, is a genuine index whose
-/// bound comes from the guard even though it strips to a `Load`.  A blanket
-/// skip-all-loads rule cannot tell it from a raw [0,255] entry; the width
-/// comparison can.
+/// guarded raw load, `if (Load < N) switch(Load)`, is a genuine index even
+/// though it strips to a `Load`.
 ///
 /// Zero-extends are stripped first because they preserve the integer value
-/// while widening the type: a byte's [0,255] reads as full-width against i8 but
-/// narrow against i32.  `bounded` already caps the count, so in practice only a
-/// full byte reaches the test, and `w < 128` keeps the shift well-defined.
+/// while widening the type.  `w < 128` keeps the shift well-defined.
 fn is_width_only(function: &strider_ir::Function, v: ValueId, iv: Interval) -> bool {
     let mut base = v;
     while matches!(

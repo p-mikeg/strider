@@ -11,12 +11,11 @@ use crate::pipeline::{OptimizationResult, Optimizer};
 mod tests;
 
 /// Unrecorded outputs read back as `KnownBitsFacts::default()` (`{0, 0}` =
-/// "no info").  A `SecondaryMap` rather than a hash map: this is the hottest
-/// probe in the pass.
+/// "no info").
 pub(crate) type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
 
-/// `None` for floats and for the integers too wide for the `u128` lattice
-/// (`I256` / `I512`).  Everything up to `I128` is tracked, including `I1`.
+/// The all-ones mask for `ty`, or `None` for floats and for integers wider
+/// than the `u128` lattice (`I256` / `I512`).
 pub(crate) fn type_mask_u128(ty: ValueType) -> Option<u128> {
     if !ty.is_integer() || ty.bit_width() > 128 {
         return None;
@@ -27,10 +26,6 @@ pub(crate) fn type_mask_u128(ty: ValueType) -> Option<u128> {
 /// Known-bit lattice for one output.  `ones` and `zeros` are masked to the
 /// output type's width and must never overlap: `ones & zeros == 0`, and a bit
 /// in neither set is unknown.
-///
-/// The fields are `pub(crate)` because nothing enforces disjointness on a
-/// struct literal; only `from_const`, `default`, and the transfer function
-/// preserve it.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct KnownBitsFacts {
     pub(crate) ones: u128,
@@ -38,8 +33,7 @@ pub struct KnownBitsFacts {
 }
 
 impl KnownBitsFacts {
-    /// `None` for untracked types; the caller must treat that as fully
-    /// unknown, not as a deliberate zero.
+    /// `None` for untracked types, meaning fully unknown, not a known zero.
     fn from_const(val: u128, ty: ValueType) -> Option<Self> {
         let type_mask = type_mask_u128(ty)?;
         let masked = ty.get_unsigned_int(val)?;
@@ -68,9 +62,8 @@ enum ConstShift {
 }
 
 /// Mirrors Sleigh's `OpBehaviorInt{Left,Right}::evaluateBinary`, which return 0
-/// for any shift amount `>= bit_width`.  Masking the amount to
-/// `bit_width - 1` instead would wrap large literal shifts back into range and
-/// produce wrong known bits.
+/// for any shift amount `>= bit_width`.  Masking the amount to `bit_width - 1`
+/// instead would wrap large literal shifts back into range.
 fn classify_const_shift(rhs_kb: KnownBitsFacts, rhs_mask: u128, bit_width: u64) -> ConstShift {
     if !rhs_kb.all_known(rhs_mask) {
         return ConstShift::Unknown;
@@ -88,8 +81,8 @@ enum ShiftDir {
 }
 
 /// Transfer for both shift arms.  Vacated bits become known-zero; surviving
-/// lhs bits carry their ones/zeros along.  `None` means the shift amount is
-/// unknown, so the caller must fall back to fully unknown.
+/// lhs bits carry their ones/zeros along.  `None` when the shift amount is
+/// unknown, meaning fully unknown.
 fn shift_known_bits(
     function: &strider_ir::Function,
     l: KnownBitsFacts,
@@ -204,10 +197,8 @@ pub(crate) fn node_known_bits(
             }
         }
 
-        // There is no unary-complement arm: `~x` is `Xor(x, all_ones)`, and the
-        // Xor arm swaps ones/zeros correctly against a fully-known all-ones
-        // operand.  `IntUnaryOp::Neg` has no closed-form transfer (it depends on
-        // the borrow chain), so it falls through to unknown.
+        // No unary arm: `~x` is `Xor(x, all_ones)` and folds through the Xor
+        // arm, while `Neg` has no closed-form transfer.
         NodeKind::Truncate => {
             let [value] = function
                 .graph()
@@ -301,8 +292,7 @@ pub(crate) fn node_known_bits(
         _ => return Ok(None),
     };
 
-    // Overlapping ones/zeros can only mean a transfer-function bug; catch it at
-    // the point of origin instead of letting it propagate.
+    // Overlapping ones/zeros can only mean a transfer-function bug.
     debug_assert_eq!(
         kb.ones & kb.zeros,
         0,
@@ -313,9 +303,7 @@ pub(crate) fn node_known_bits(
 }
 
 /// Kinds whose `node_known_bits` arm reads `known[input]`, i.e. the edges along
-/// which known-bits provenance flows.  The fold-time fingerprint walk recurses
-/// through these and stops everywhere else, so an opaque kind (`Load` / `Phi` /
-/// `Call`) is a leaf and its address / memory / control cone is never tainted.
+/// which known-bits provenance flows.
 fn propagates_known_bits(kind: &NodeKind) -> bool {
     matches!(
         kind,
@@ -327,25 +315,17 @@ fn propagates_known_bits(kind: &NodeKind) -> bool {
     )
 }
 
-/// Known-bits worklist analysis to fixed point.  Non-mutating, so other passes
-/// (e.g. the jump-table classifier) can call it for a bit-knowledge query
-/// without running the rewriting [`KnownBits`] pass.
-///
-/// Outputs absent from the map have no proven bits; treat them as the
-/// all-unknown default.
+/// Known-bits worklist analysis to fixed point.  Non-mutating.  Outputs absent
+/// from the map have no proven bits.
 ///
 /// # Errors
 ///
 /// Only a malformed per-node derivation errors.  Wrong input arity panics
 /// instead (validated invariant); well-formed graphs always converge.
 pub fn analyze(function: &strider_ir::Function) -> Result<KnownBitsMap> {
-    // Seeded from reachable nodes only: detached zombies (left by PhiCollapse,
-    // DeadBranchElimination, ...) can have zero inputs, which would trip
-    // `node_inputs_exact` inside `node_known_bits`.  Reachability is also the
-    // validator's scope, so the two agree.
-    //
-    // RPO seed order (operands before consumers) is just churn reduction; the
-    // monotone fixpoint converges to the same map from any order.
+    // Reachable nodes only: a detached zombie can have zero inputs, which would
+    // trip `node_inputs_exact` inside `node_known_bits`.  RPO seed order is just
+    // churn reduction; the monotone fixpoint converges from any order.
     let mut known: KnownBitsMap = SecondaryMap::new();
     let mut work: Worklist<NodeId> = function.reverse_postorder_filter(|_| true).collect();
     while let Some(node_id) = work.dequeue() {
@@ -378,11 +358,6 @@ impl Optimizer for KnownBits {
     ) -> crate::Result<OptimizationResult> {
         let known = analyze(edit.function())?;
 
-        // The fixpoint is already done, so folding is a flat per-output
-        // decision: no second worklist, no consumer re-enqueue, order
-        // irrelevant.  `SecondaryMap::iter` covers defaulted entries too, but
-        // `all_known` rejects `{0, 0}` against any non-zero mask.
-        //
         // Collect first so the mutating loop below can take `&mut edit`.
         let to_fold: Vec<(ValueId, ValueType, u128)> = known
             .iter()
@@ -405,15 +380,11 @@ impl Optimizer for KnownBits {
             .collect();
 
         // A fold's contributor cone is about to be cascade-culled, taking its
-        // asm-fingerprints (the proof of why the result is constant) with it.
-        // A one-hop absorb of the direct inputs is not enough: a contributor
-        // that establishes bits without being fully known itself (the `x & 1`
-        // in `((x & 1) | 2) & 0`) never folds, so the fixpoint can never carry
-        // its fingerprint upward.  Absorb the whole cone instead, recursing
-        // only through `propagates_known_bits` kinds.
-        //
-        // Folds share cones, so per-fold walking would be O(folds*cone); memoize
-        // once over the pre-fold graph, before `replace_value` starts culling.
+        // asm-fingerprints with it.  A one-hop absorb of the direct inputs is
+        // not enough: a contributor that establishes bits without being fully
+        // known itself (the `x & 1` in `((x & 1) | 2) & 0`) never folds, so the
+        // fixpoint can never carry its fingerprint upward.  Absorb the whole
+        // cone, memoized once over the pre-fold graph since folds share cones.
         let cone_nodes = build_cone_node_memo(edit, &to_fold);
 
         let mut result = OptimizationResult::NoChange;
@@ -443,14 +414,12 @@ impl Optimizer for KnownBits {
 /// Deduplicated contributor node ids in one node's known-bits cone.
 type ConeNodes = smallvec::SmallVec<[NodeId; 8]>;
 
-/// Memoizes `cone(n) = {n} ∪ (propagates(n) ? ⋃ₚ cone(p) : ∅)` over `p` in
-/// `n`'s input producers, for the cones reachable from the `to_fold`
+/// Memoizes `cone(n) = {n} + (propagates(n) ? union of cone(p) : {})` over `p`
+/// in `n`'s input producers, for the cones reachable from the `to_fold`
 /// producers' inputs.
 ///
-/// Reads only node ids and kinds, never a fingerprint, so the caller can turn
-/// each cone node into an O(1) `extend_asm_fingerprint_from` link.  The cone is
-/// acyclic (the propagating kinds exclude Phi and Region, the only sources of
-/// data cycles), so the iterative postorder needs no cycle handling.
+/// The cone is acyclic (the propagating kinds exclude Phi and Region, the only
+/// sources of data cycles), so the postorder needs no cycle handling.
 fn build_cone_node_memo(
     edit: &crate::EditFunction<'_>,
     to_fold: &[(ValueId, ValueType, u128)],

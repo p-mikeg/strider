@@ -1,7 +1,6 @@
 //! Collapses the multi-node "flag-tree" conditions that flag-register
 //! architectures emit for `cmp`-then-branch into a single
-//! [`strider_ir::IntCmpOp`] on the original `(a, b)` pair, which is the form
-//! the jump-table bound walker in [`crate::indirect_branch_resolve`] expects.
+//! [`strider_ir::IntCmpOp`] on the original `(a, b)` pair.
 //!
 //! AArch64 `cmp a, b` lifts (post `IntSub` / `IntLessEqual` canonicalisation)
 //! to four flags, and each cond code reads a fixed boolean tree of them:
@@ -24,10 +23,6 @@
 //!
 //! Run after `ConstantFold` (so `BitNot(BitNot(x)) -> x` at `I1` has collapsed)
 //! and before `IfCondInversion` (so the cond carries at most one BitNot layer).
-//!
-//! Rules go through [`crate::rewrite_rule`], which absorbs the matched root's
-//! asm-fingerprint into every fresh interior node of the RHS, so the
-//! superset-only contract holds without per-rule bookkeeping.
 
 use std::rc::Rc;
 
@@ -43,8 +38,6 @@ use strider_pattern::{
 use crate::error::Result;
 use crate::peephole::{PeepholePass, PeepholeRewrite, SeedOrder};
 
-/// The boxed rule closures are not `Clone`, so the table sits behind an [`Rc`]
-/// to keep the pass cheaply `Clone`; clones share one table.
 #[derive(Clone)]
 pub struct FlagCmpCanonicalize {
     rules: Rc<Vec<BoxedRule>>,
@@ -65,14 +58,12 @@ impl Default for FlagCmpCanonicalize {
 }
 
 impl PeepholePass for FlagCmpCanonicalize {
-    /// Rules walk arbitrary boolean / arith subtrees, so no root kind filter
-    /// helps; defer to the per-rule matcher.
     fn matches_kind(&self, _kind: &NodeKind) -> bool {
         true
     }
 
-    /// Outermost-first is load-bearing: a bottom-up seed would rewrite an inner
-    /// sub-pattern and destroy the enclosing flag-tree match.
+    /// Outermost-first: a bottom-up seed would rewrite an inner sub-pattern and
+    /// destroy the enclosing flag-tree match.
     fn seed_order(&self) -> SeedOrder {
         SeedOrder::Postorder
     }
@@ -93,17 +84,14 @@ impl PeepholePass for FlagCmpCanonicalize {
         Ok(PeepholeRewrite::from_new_value(edit, opt))
     }
 
-    /// Once a tree collapses to a single `IntCmpOp` its consumers cannot match
-    /// a fresh flag-tree shape, so skip the re-enqueue; `ConstantFold` and
-    /// `IfCondInversion` pick up any follow-on in the same fixed-point loop.
+    /// A collapsed `IntCmpOp` cannot expose a fresh flag-tree shape to its
+    /// consumers, so skip the re-enqueue.
     fn propagate_to_consumers(&self) -> bool {
         false
     }
 }
 
-/// Guard for the constant-folded-ZF rules: the Equal offset must be the
-/// two's-complement negation of the compare constant (`M ≡ -N`) at
-/// `width_src`'s width.  `false` unless all three bindings resolve.
+/// `M == -N` at `width_src`'s width.  `false` unless all bindings resolve.
 fn neg_relation(
     binds: &Bindings,
     func: &strider_ir::Function,
@@ -121,9 +109,7 @@ fn neg_relation(
     (m_val & width) == (n_val.wrapping_neg() & width)
 }
 
-/// Guard for the offset-base variants: the Equal offset must be the
-/// compare-base offset minus the compare constant (`C2 ≡ C1 - N`) at
-/// `width_src`'s width.  `false` unless all four bindings resolve.
+/// `M == C1 - N` at `width_src`'s width.  `false` unless all bindings resolve.
 fn sub_relation(
     binds: &Bindings,
     func: &strider_ir::Function,
@@ -144,23 +130,20 @@ fn sub_relation(
 }
 
 fn build_rules() -> Vec<BoxedRule> {
-    // Captures are reused across rules safely: each rule matches as its own
-    // query with fresh `Bindings`, so "same node everywhere" is intra-rule only.
+    // Captures may be shared across rules: each rule matches with fresh
+    // `Bindings`, so "same node everywhere" binds intra-rule only.
     let a = Capture::new();
     let b = Capture::new();
-    // Constant-folded LS/HI: the `Less` constant `N` and the `Add` constant `M`.
+    // The `Less` constant `N` and the `Add` constant `M`.
     let n = Capture::new();
     let m = Capture::new();
-    // Offset-base variants: the compared value's own offset `C1` (compared
-    // value is `Add(b, C1)`) and that whole value `X`, reused on the RHS.
+    // The compare-base offset `C1` and the whole offset value `X = Add(b, C1)`.
     let c1 = Capture::new();
     let x = Capture::new();
 
     // Emits an LS rule and its De-Morgan HI dual:
     //   LS:  Or(less, eq)                          -> BitNot(cmp)
     //   HI:  And(BitNot(less), BitNot(eq))         -> cmp
-    // The fragments are re-evaluated per arm since pattern builders are not
-    // `Clone`, so both arms bind identical captures under an identical guard.
     macro_rules! ls_hi_pair {
         ($less:expr, $eq:expr, $guard:expr, $cmp:expr $(,)?) => {
             [
@@ -185,8 +168,6 @@ fn build_rules() -> Vec<BoxedRule> {
         // HI -> IntLess(b, a), in either arch shape:
         //    raw NZCV:    BoolAnd(BitNot(IntLess(a, b)), BitNot(Equal(diff, 0)))
         //    decomposed:  BoolAnd(BitNot(Equal(a, b)), BitNot(IntLess(a, b)))
-        // ARM/Thumb and post-ConstantFold trees leave the decomposed form.  The
-        // two shapes are structurally disjoint, so one `one_of` LHS is enough.
         rewrite_rule(
             one_of![
                 bool_and(
@@ -203,7 +184,7 @@ fn build_rules() -> Vec<BoxedRule> {
         // LS -> BitNot(IntLess(b, a)), in either arch shape:
         //    raw NZCV:    BoolOr(IntLess(a, b), Equal(diff, 0))
         //    decomposed:  BoolOr(Equal(a, b), IntLess(a, b))
-        // The raw form assumes ConstantFold already cancelled the
+        // The raw form requires ConstantFold to have already cancelled the
         // `BitNot(BitNot(IntLess))` chain that `BitNot(CY)` produces.
         rewrite_rule(
             one_of![
@@ -235,7 +216,6 @@ fn build_rules() -> Vec<BoxedRule> {
         //    raw NZCV:    BoolAnd(BitNot(Equal(diff, 0)),
         //                    Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))))
         //    decomposed:  BoolAnd(BitNot(Equal(a, b)), BitNot(IntSless(a, b)))
-        //                    ≡ (a!=b) ∧ ¬(a<b) ≡ a>b ≡ b<a
         rewrite_rule(
             one_of![
                 bool_and(
@@ -255,7 +235,7 @@ fn build_rules() -> Vec<BoxedRule> {
         // LE -> BitNot(IntSless(b, a)), in either arch shape:
         //    raw NZCV:    BoolOr(Equal(diff, 0),
         //                    BitNot(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))))
-        //    decomposed:  BoolOr(Equal(a, b), IntSless(a, b))  ≡ (a=b) ∨ (a<b) ≡ a<=b ≡ ¬(b<a)
+        //    decomposed:  BoolOr(Equal(a, b), IntSless(a, b))
         rewrite_rule(
             one_of![
                 bool_or(
@@ -271,17 +251,16 @@ fn build_rules() -> Vec<BoxedRule> {
         ),
         // Thumb "false" flag test (BNE / BCC / BPL / BVC):
         //    IntEqual(ZeroExtend(b), 0) -> BitNot(b)
-        // The `of_width(1)` guard is load-bearing: `zext(b) == 0` equals `!b`
-        // only for an `I1` `b`.  Unguarded, a chained zero-extend (I1->I8->I32)
-        // binds `b` to the wider intermediate and yields a malformed BitNot.
+        // `of_width(1)` is load-bearing: `zext(b) == 0` equals `!b` only for an
+        // `I1` `b`.  Unguarded, a chained zero-extend (I1->I8->I32) binds `b` to
+        // the wider intermediate and yields a malformed BitNot.
         rewrite_rule(
             int_eq(zero_extend(var(b).of_width(1)), int_const(0u128)),
             template::bool_not(var(b)),
         ),
         // Thumb "true" flag test (BEQ / BCS / BMI / BVS):
         //    BitNot(IntEqual(ZeroExtend(b), 0)) -> b
-        // Same `I1` guard as above; replacing the test with `b` preserves
-        // booleanness only when `b` is the 1-bit flag.
+        // Same `I1` guard as above.
         rewrite_rule(
             bool_not(int_eq(zero_extend(var(b).of_width(1)), int_const(0u128))),
             var(b),
@@ -289,30 +268,22 @@ fn build_rules() -> Vec<BoxedRule> {
     ];
 
     // Constant compare operand (`cmp a, N; ja`/`jbe`), after ConstantFold
-    // collapsed the lifted `Equal(Add(a, Neg(N)), 0)` to `Equal(Add(a, M), 0)`
-    // with `M = -N`:
+    // collapsed `Equal(Add(a, Neg(N)), 0)` to `Equal(Add(a, M), 0)`, `M = -N`:
     //   LS:  Or(Less(a, N), Equal(Add(a, M), 0))                  -> BitNot(Less(N, a))
     //   HI:  And(BitNot(Less(a, N)), BitNot(Equal(Add(a, M), 0)))  -> Less(N, a)
-    // The guard pins `M ≡ -N` mod width.  The captured `IntConst(N)` is reused
-    // on the RHS, so no constant is synthesised and the width is right by
-    // construction.  Rule order is immaterial: the `Or`- and `And`-rooted
-    // shapes are structurally disjoint.
+    // The guard pins `M == -N` mod width.
     rules.extend(ls_hi_pair!(
         int_lt(var(a), any_int_const().capture(n)),
         int_eq(add(var(a), any_int_const().capture(m)), int_const(0u128)),
         move |edit, _ty, binds| neg_relation(binds, edit.function(), m, n, a),
         template::int_lt(var(n), var(a)),
     ));
-    // Offset-base siblings, for a switch whose cases start at a nonzero base:
-    // gcc emits `sub b, K; cmp (b-K), N; ja`, so the compared value is the
-    // offset index `X = Add(b, C1)`, while the ZF term folds to
-    // `Equal(Add(b, C2), 0)` with `C2 = C1 - N`.  The Less operand and the
-    // Equal base are therefore DISTINCT nodes, which is why these rules key on
-    // the shared base `b` and reuse the captured `X` on the RHS.
+    // Offset-base siblings, for a switch whose cases start at a nonzero base.
+    // The Less operand `X = Add(b, C1)` and the Equal base `Add(b, C2)` are
+    // DISTINCT nodes, so these key on the shared base `b`:
     //   LS:  Or(Less(X, N), Equal(Add(b, C2), 0))                  -> BitNot(Less(N, X))
     //   HI:  And(BitNot(Less(X, N)), BitNot(Equal(Add(b, C2), 0)))  -> Less(N, X)
-    // The HI form also covers a masked switch (Thumb `and r0,#7; subs r0,#1;
-    // cmp r0,#N-1; bhi`).  Guard pins `C2 ≡ C1 - N`.
+    // The guard pins `C2 == C1 - N`.
     rules.extend(ls_hi_pair!(
         int_lt(
             add(var(b), any_int_const().capture(c1)).capture(x),
@@ -325,13 +296,11 @@ fn build_rules() -> Vec<BoxedRule> {
 
     // Solve for x: `Equal(Add(x, C1), C2) -> Equal(x, C2 - C1)`.  Sound at any
     // width/signedness, since fixed-width add wraps mod 2^W and `Equal` tests
-    // that residue.  Commutativity of `Equal`/`Add` covers the other orderings.
+    // that residue.
     //
-    // This lives here rather than in ConstantFold: run that early, it consumes
-    // the `Equal(diff, 0)` term the offset-base flag idioms above need.  Here
-    // it is safe because seeding is outermost-first, so the `Or` root folds
-    // before this rule can reach the inner `Equal`.  A standalone
-    // `Equal(Add(x, C1), C2)` still folds as intended.
+    // Must NOT run before the offset-base rules above, whose `Equal(diff, 0)`
+    // term it would consume.  Outermost-first seeding gives that: the `Or` root
+    // folds before this rule can reach the inner `Equal`.
     rules.push(rewrite_rule(
         int_eq(
             add(var(a), any_int_const().capture(n)),
@@ -339,15 +308,13 @@ fn build_rules() -> Vec<BoxedRule> {
         ),
         template::int_eq(
             var(a),
-            // `capture_typed` gives the fresh const operand `a`'s width, not the
-            // `Equal` root's `I1` output width.
+            // The fresh const takes `a`'s width, not the `Equal` root's `I1`.
             capture_typed(a, int_const_with!([n: uint, m: uint] => m.wrapping_sub(n))),
         ),
     ));
 
     // `Equal(Xor(x, C1), C2) -> Equal(x, C1 ^ C2)`: xor-with-C1 is a bijection,
-    // so applying it to both sides is value-preserving.  Same seed-order safety
-    // and `capture_typed` width handling as the `Add` rule above.
+    // so applying it to both sides is value-preserving.
     rules.push(rewrite_rule(
         int_eq(
             xor(var(a), any_int_const().capture(n)),
@@ -370,13 +337,10 @@ fn build_rules() -> Vec<BoxedRule> {
     ));
 
     // `Sless(ShiftLeft(x, C), 0):I1 -> Xor(Equal(And(x, mask), 0), 1):I1`,
-    // mask = 1 << (W-1-C).  A signed `< 0` on a left-shifted value tests bit
-    // (W-1-C) of `x`, so spelling it as an explicit single-bit mask test makes
-    // it match what a plain `if (x & mask)` lifts to.  The `And`/mask/`0` are
-    // width `W` via `capture_typed(x, ..)` (the `Xor` root is `I1` and exposes
-    // no `x`-wide input); the `Xor`/`1` are `I1`.  Guarded to `C < W`: at or
-    // above the width `x << C` is 0 and the test is const-false, a different
-    // rewrite.
+    // mask = 1 << (W-1-C): a signed `< 0` on a left-shifted value tests bit
+    // (W-1-C) of `x`.  The `And`/mask/`0` are width `W` via `capture_typed(x,
+    // ..)`; the `Xor`/`1` are `I1`.  Guarded to `C < W`: at or above the width
+    // `x << C` is 0 and the test is const-false, a different rewrite.
     rules.push(rewrite_rule(
         int_slt(shl(var(x), any_int_const().capture(n)), int_const(0u128)).when_match(
             move |edit, _ty, b| {
@@ -410,12 +374,10 @@ fn build_rules() -> Vec<BoxedRule> {
     rules
 }
 
-/// Rewrites a PowerPC CR-bit test to the comparison sitting at the tested bit.
-/// `None` on any shape it cannot prove a true identity for.
-///
-/// `cmpwi a, N` writes a 4-bit CR field (LT/GT/EQ/SO) that the lifter models as
-/// a packed word `Or(ShiftLeft(ZeroExtend(cmp_i:I1), pos_i) ...)`; a conditional
-/// branch reads one bit as `Truncate(ShiftRight(pack, k)):I1`.
+/// Rewrites a PowerPC CR-bit test to the comparison sitting at the tested bit:
+/// `Truncate(ShiftRight(Or(ShiftLeft(ZeroExtend(cmp_i:I1), pos_i) ...), k)):I1`
+/// -> `cmp_i` where `pos_i == k`.  `None` on any shape it cannot prove a true
+/// identity for.
 fn canonicalize_cr_bit_test(
     edit: &mut crate::EditFunction<'_>,
     root: NodeId,
@@ -426,16 +388,15 @@ fn canonicalize_cr_bit_test(
     // `replace_value` absorbs only the immediate `Truncate`'s fingerprint, so
     // fold the rest of the pack in first; otherwise the `crset`/`cror`/`cmpwi`
     // addresses vanish when the pack is culled, breaking the superset-only
-    // contract.  The declarative rules get this from the rewrite engine.
+    // contract.
     absorb_cr_pack_fingerprints(edit, cond_out, cmp);
     edit.replace_value(cond_out, cmp)?;
     Ok(Some(cmp))
 }
 
 /// Folds every CR-pack interior node's asm-fingerprint into the surviving
-/// comparison.  The descent stops at each `IntCmpOp`: a comparison carries its
-/// own instruction address, and below it are the compared values themselves
-/// (often live elsewhere), not pack-building instructions.
+/// comparison.  The descent stops at each `IntCmpOp`; below one are the compared
+/// values themselves, not pack-building instructions.
 fn absorb_cr_pack_fingerprints(
     edit: &mut crate::EditFunction<'_>,
     cond_out: ValueId,
@@ -464,12 +425,10 @@ fn absorb_cr_pack_fingerprints(
     }
 }
 
-/// Reads the `(condition-output, comparison)` pair for a CR-bit test without
-/// mutating.  `Some` only when every OR term is a provable single-bit value at
-/// a DISTINCT position and the one at the tested bit carries a comparison; then
-/// that bit equals the comparison for all inputs, making the replacement a true
-/// identity.  No KnownBits needed: a `ZeroExtend` of an `I1` is in {0,1}, so
-/// `ShiftLeft(zext(I1), pos)` provably sets only bit `pos`.
+/// The `(condition-output, comparison)` pair for a CR-bit test.  `Some` only
+/// when every OR term is a provable single-bit value at a DISTINCT position and
+/// the one at the tested bit carries a comparison; only then does that bit equal
+/// the comparison for all inputs.
 fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueId)> {
     if !matches!(f.node_kind(root), NodeKind::Truncate) {
         return None;
@@ -512,10 +471,8 @@ fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueI
     found.map(|cmp| (cond_out, cmp))
 }
 
-/// A CR field is 4 bits, so a well-formed pack is at most 3 binary `Or` nodes
-/// deep; the cap allows one level of slack.  Anything deeper is pushed as an
-/// opaque leaf that `single_bit_term` rejects, so an over-wide pack (e.g. a
-/// misrouted full-CR `mfcr`) simply does not fold.
+/// Flattens an `Or` tree into its terms.  A well-formed 4-bit CR pack is at
+/// most 3 `Or` nodes deep; anything past the cap is pushed as an opaque leaf.
 fn flatten_or(f: &impl IRViewer, value: ValueId, out: &mut Vec<ValueId>, depth: u32) {
     const MAX_OR_DEPTH: u32 = 4;
     if depth <= MAX_OR_DEPTH
@@ -532,8 +489,7 @@ fn flatten_or(f: &impl IRViewer, value: ValueId, out: &mut Vec<ValueId>, depth: 
 /// Classifies a CR-pack term as `(bit position, comparison at that bit)`,
 /// proving structurally that it sets ONLY that bit; `None` for anything not
 /// provably single-bit.  The comparison is `Some` only for a
-/// `ZeroExtend(IntCmpOp)` leaf; an opaque masked bit (the SO flag) gives
-/// `Some((pos, None))`: a known bit, but no comparison behind it.
+/// `ZeroExtend(IntCmpOp)` leaf.
 fn single_bit_term(
     f: &impl IRViewer,
     value: ValueId,

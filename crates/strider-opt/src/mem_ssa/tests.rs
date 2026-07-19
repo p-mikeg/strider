@@ -1,6 +1,3 @@
-//! Synthetic memory chains driven by stub walkers whose alias verdict each
-//! test pins.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
@@ -237,8 +234,7 @@ fn mk_load(fg: &mut Function, mem: ValueId, addr: ValueId) -> NodeId {
     )
 }
 
-/// Returns the CallOther's memory output (slot 1), which is how the walker
-/// classifies it, same as a `Store`.
+/// Returns the CallOther's memory output (slot 1).
 fn mk_call_other(fg: &mut Function, control: ValueId, mem: ValueId) -> ValueId {
     let n = strider_ir_test_utils::sentinel_node(
         fg,
@@ -454,8 +450,7 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
 }
 
 /// Both arms route to the same aliasing store, so the phi is transparent and
-/// the walk returns that store, not the phi.  This is the dominator case the
-/// store-to-load forwarder forwards across.
+/// the walk returns that store, not the phi.
 #[test]
 fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     // Both phi arms are the same ValueId, so they resolve to the same store.
@@ -529,8 +524,7 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
     );
 }
 
-/// Proves the engine reaches a Call's memory output via `memory_input_of`
-/// (slot 1) and short-circuits on it exactly as it does a `Store`.
+/// A clobbering `CallOther` terminates the walk exactly as a `Store` does.
 #[test]
 fn call_on_chain_is_the_nearest_clobber() {
     // InitialMemory <- Store(disjoint) <- CallOther(clobbering) <- load.
@@ -595,8 +589,7 @@ fn mem_phi_call_arm_disagrees_returns_phi_boundary() {
 ///   load -> entry_store -> MemPhi -> ... (entry_store's mem input is the phi)
 /// ```
 /// The phi's second arm is a `Store` consuming the phi's own memory output, a
-/// genuine back-edge, so resolving the phi re-encounters it.  This is the case
-/// the `Resolve::InProgress` cycle-cut exists for.
+/// genuine back-edge, so resolving the phi re-encounters it.
 fn cyclic_loop_chain() -> (Function, ValueId, NodeId, ValueId) {
     use strider_ir::IRViewer;
     let (mut fg, im, _store_mem, phi_token) = base_with_store();

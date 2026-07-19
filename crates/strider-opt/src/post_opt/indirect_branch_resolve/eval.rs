@@ -1,13 +1,12 @@
 //! Read-only abstract evaluation of a jump-table dispatch cone: the concrete
-//! branch target for a concrete index, computed by evaluating the cone in
-//! producers-before-consumers order.
+//! branch target for a concrete index, computed in producers-before-consumers
+//! order.
 //!
 //! An abstract value is either a concrete number or SP-relative, because the SP
 //! is symbolic and a stack address cannot be a pure number.  Three foldings do
 //! the work: ConstFold arithmetic, a constant-address ROM read, and an
-//! SP-relative load resolved via `reaching_store`.  No graph mutation, no
-//! clone, no pipeline.  Any unresolved value, a non-const dispatch result, or a
-//! cycle yields `None` and the caller rejects the candidate.
+//! SP-relative load resolved via `reaching_store`.  Any unresolved value, a
+//! non-const dispatch result, or a cycle yields `None`.
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -56,9 +55,7 @@ impl<'a> Evaluator<'a> {
     ///
     /// Bailing on the first non-folding node is exact, not just an
     /// optimization: every node in `order` is a value-ancestor of `dispatch`,
-    /// so one that fails to fold means `dispatch` cannot be constant either.  A
-    /// candidate that does resolve never hits such a node, while a large
-    /// not-a-table cone usually fails at its leaves.
+    /// so one that fails to fold means `dispatch` cannot be constant either.
     pub(crate) fn eval_target(
         &mut self,
         order: &[ValueId],
@@ -86,11 +83,10 @@ impl<'a> Evaluator<'a> {
         let f = self.function;
         let node = f.producer(value);
         let kind = *f.node_kind(node);
-        // The SP spine is identified STRUCTURALLY from already-evaluated
-        // inputs, not by re-running `decompose` (a full cone walk) per node per
-        // fold.  On the converged graph the only SP shapes are the terminal
-        // `InitialVar(sp)`, `Add(sp-rooted, const)`, and the alignment base
-        // `And(sp-rooted, alignmask)`.
+        // The SP spine is identified STRUCTURALLY from already-evaluated inputs,
+        // not by re-running `decompose` per node per fold.  On the converged
+        // graph the only SP shapes are the terminal `InitialVar(sp)`,
+        // `Add(sp-rooted, const)`, and the alignment base `And(sp-rooted, mask)`.
         if matches!(kind, NodeKind::InitialVar(id) if f.initial_vn(id) == f.default_cc().stack_vn) {
             return Some(Abs::SpRel {
                 base: value,
@@ -136,9 +132,7 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// The single const-domain fold, used for every kind this evaluator does
-    /// not layer the `SpRel` domain over, plus the `Const` arms of `eval_add`
-    /// and `eval_load`.
+    /// The const-domain fold, for every kind with no `SpRel` layering.
     fn eval_const_node(&self, value: ValueId) -> Option<Abs> {
         let resolve = |v| self.get(v).and_then(Abs::as_const);
         crate::const_eval::eval_node_const(self.function, value, &resolve, self.rom).map(Abs::Const)
@@ -149,8 +143,7 @@ impl<'a> Evaluator<'a> {
             (Abs::Const(_), Abs::Const(_)) => self.eval_const_node(value),
             (Abs::SpRel { base, offset }, Abs::Const(c))
             | (Abs::Const(c), Abs::SpRel { base, offset }) => {
-                // Signed, so a negative frame offset stored as 0xFFFF..
-                // subtracts correctly.
+                // Signed, so a negative frame offset subtracts correctly.
                 let delta = ty.get_signed_int(c)?;
                 Some(Abs::SpRel {
                     base,
@@ -186,8 +179,7 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// Mirrors `LoadForward::narrow`.  Equal widths pass through; a load wider
-    /// than the store gives `None`.
+    /// Equal widths pass through; a load wider than the store gives `None`.
     fn reshape(&self, v: u128, data_ty: ValueType, load_ty: ValueType) -> Option<u128> {
         if data_ty == load_ty {
             return Some(v);
@@ -217,12 +209,10 @@ impl<'a> Evaluator<'a> {
                 Some(_) => return None,
             }
         }
-        // A zero-arm phi violates a validator invariant, so fail closed.
         agreed
     }
 }
 
-/// Test-only: the classifier only ever folds over the index-pruned cone.
 /// Feeding this backward relation to a post-order walk yields producers before
 /// consumers.
 #[cfg(test)]
@@ -264,7 +254,6 @@ impl graph_algorithms::walk::GraphRef for ValueInputSuccsPruned<'_> {
         value: ValueId,
         f: impl FnMut(ValueId) -> std::ops::ControlFlow<()>,
     ) -> std::ops::ControlFlow<()> {
-        // The pinned index is a leaf, so its producer cone is never visited.
         if value == self.stop {
             return std::ops::ControlFlow::Continue(());
         }
@@ -275,11 +264,9 @@ impl graph_algorithms::walk::GraphRef for ValueInputSuccsPruned<'_> {
 }
 
 /// Backward reachability from `root` over value edges, never descending through
-/// `stop`'s own inputs.  `stop` is pinned to a constant at eval time, so its
-/// upstream computation, on a real dispatch the index's whole instruction-decode
-/// chain and often thousands of nodes, is dead weight that must not be re-walked
-/// per fold.  This makes evaluation O(index-to-dispatch path) instead of
-/// O(backward slice from `root`).
+/// `stop`'s own inputs (it is pinned to a constant at eval time).  Makes
+/// evaluation O(index-to-dispatch path) instead of O(backward slice from
+/// `root`).
 pub(crate) fn cone_order_pruned(
     function: &strider_ir::Function,
     root: ValueId,
@@ -298,8 +285,7 @@ mod tests {
 
     // Pinning the INNER `idx = idx_raw + 5` of `dispatch = (idx_raw + 5) + 100`
     // makes its ancestor `idx_raw` irrelevant, so the pruned cone must stop at
-    // `idx` yet still evaluate correctly.  This is the shape that made a real
-    // cone 7,101 nodes: the index's whole upstream decode chain hanging off it.
+    // `idx` yet still evaluate correctly.
     #[test]
     fn pruned_cone_stops_at_index_and_evaluates_correctly() {
         let vn = reg_vn(0x1000, 8);
@@ -370,7 +356,7 @@ mod tests {
     fn evaluates_add_under_seed() {
         let (function, idx, sum) = build_add_idx_100();
         // The bail-on-first-failure contract requires `order` to be the cone
-        // pruned at the index, which is what the classifier passes.
+        // pruned at the index.
         let order = cone_order_pruned(&function, sum, idx);
         let mut ev = Evaluator::new(&function, None, crate::AliasMode::default());
         assert_eq!(ev.eval_target(&order, sum, idx, 5), Some(105));
@@ -384,8 +370,7 @@ mod tests {
         // Pruning at `sum` itself leaves a cone of just `[sum]`.
         let order_sum = cone_order_pruned(&function, sum, sum);
         assert_eq!(ev.eval_target(&order_sum, sum, sum, 5), Some(5));
-        // Seeding an unrelated leaf leaves the real index unresolved, so the
-        // register read fails to fold and the branch reports `None`.
+        // Seeding an unrelated leaf leaves the real index unresolved.
         let const_100 = sum_unrelated_leaf(&function, sum);
         let order = cone_order_pruned(&function, sum, const_100);
         assert_eq!(ev.eval_target(&order, sum, const_100, 5), None);
@@ -400,8 +385,6 @@ mod tests {
         use strider_ir::IRViewer;
         let add_node = f.producer(sum);
         let inputs = f.node_inputs(add_node);
-        // `int_const_u128` is Some only for IntConst, so this picks the
-        // constant operand rather than the register read.
         for input in inputs {
             if f.int_const_u128(input) == Some(100) {
                 return input;

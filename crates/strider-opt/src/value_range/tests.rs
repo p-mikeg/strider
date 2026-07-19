@@ -1221,8 +1221,6 @@ fn two_sibling_guard_regions_give_independent_bounds() {
 
 // Two arms with distinct finite KnownBits bounds, `& 7` and `& 15`, must
 // UNION to the wider [0,15], not intersect to [0,7] and not fall back to top.
-// Every other phi test here covers a top arm or a guard on the phi output,
-// never two distinct finite arms.
 #[test]
 fn multi_input_phi_unions_two_distinct_finite_arms() {
     use rsleigh::VnSpace;

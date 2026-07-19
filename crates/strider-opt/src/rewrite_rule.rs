@@ -1,21 +1,10 @@
-//! Rewriter infrastructure. The in-place editing context it builds on
-//! ([`EditFunction`] and its [`FunctionState`](strider_ir::FunctionState)
-//! bookkeeping) lives in `strider-ir`.
-//!
 //! RHS buildability is a COMPILE-TIME property: [`rewrite_rule`] bounds its
 //! RHS on [`TemplatePat`], implemented only by buildable typed structs, so a
-//! wildcard RHS fails to compile. [`rewrite_rule_runtime`] is the dynamic
-//! (FFI) counterpart taking an already-built [`Pattern`] and [`Template`];
-//! a [`Template`] is buildable by construction, so its only construction
-//! check is that the RHS's captures are LHS-bound.
+//! wildcard RHS fails to compile.  [`rewrite_rule_runtime`] is the dynamic
+//! (FFI) counterpart taking an already-built [`Pattern`] and [`Template`].
 //!
-//! Asm-fingerprint absorption holds by construction: the RHS is materialised
-//! through the editing context with the matched rewrite root threaded as
-//! contributor, so every fresh interior node absorbs that fingerprint
-//! (superset-only) and enters the cached live/roots state AT CREATION, with
-//! no retroactive reconciliation walk. A closure inside the RHS may bail via
-//! `Err(strider_pattern::skip())`, which the interpreter turns into "no
-//! change".
+//! Asm-fingerprint absorption holds by construction: every fresh RHS node
+//! absorbs the matched footprint's fingerprints at creation (superset-only).
 
 use strider_ir::node::{NodeId, ValueId};
 use strider_ir::{EditFunction, IRViewer, IRWalker};
@@ -30,10 +19,8 @@ use strider_pattern::{
 ///
 /// The returned closure attempts the match at a candidate root and on
 /// success materialises the RHS and redirects the root's value output to
-/// it. Returns `Ok(Some(new_out))` when at least one use was redirected;
-/// `new_out` is what the peephole driver re-examines for cascading folds.
-/// `Ok(None)` covers a failed match, a skipped RHS, and nothing to
-/// redirect.
+/// it. Returns `Ok(Some(new_out))` when at least one use was redirected,
+/// `Ok(None)` for a failed match, a skipped RHS, or nothing to redirect.
 ///
 /// # Single-value-output constraint
 ///
@@ -42,8 +29,7 @@ use strider_pattern::{
 ///
 /// # Panics
 ///
-/// Panics if the RHS references a [`Capture`] the LHS does not bind, an
-/// authoring error surfaced eagerly at construction.
+/// Panics if the RHS references a [`Capture`] the LHS does not bind.
 #[allow(clippy::expect_used)]
 pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs: T) -> BoxedRule {
     let lhs_pat = lhs.into_pattern();
@@ -63,14 +49,11 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs
 ///
 /// * Each template node's declared output signature must match its
 ///   `NodeKind`'s real `expected_signature` (kind, slot count, types).
-/// * No two producers may be wired into the same input slot; `instantiate`
-///   keys inputs by slot in a `BTreeMap`, so a duplicate silently drops the
-///   earlier edge.
+/// * No two producers may be wired into the same input slot; a duplicate
+///   silently drops the earlier edge.
 ///
-/// The typed `template::` builders guarantee both. A [`Template`] hand-built
-/// via the raw [`TemplateBuilder`](strider_pattern::template::TemplateBuilder)
-/// verbs does not, and can declare a structurally-invalid IR node that
-/// nothing catches.
+/// The typed `template::` builders guarantee both; the raw
+/// [`TemplateBuilder`](strider_pattern::template::TemplateBuilder) does not.
 ///
 /// # Errors
 ///
@@ -87,10 +70,9 @@ fn rewrite_rule_impl(
 ) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
     move |edit: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
         // Keep the matcher borrow tight so the function can be mutated
-        // afterwards. While the match is live, snapshot its structural
-        // footprint (root, interior, captured leaves). That footprint is the
-        // rewrite's proof; the interior nodes get culled, so their
-        // asm-fingerprints must be carried onto the RHS.
+        // afterwards. The snapshotted footprint (root, interior, captured
+        // leaves) is the rewrite's proof: the interior nodes get culled, so
+        // their asm-fingerprints must be carried onto the RHS.
         let (bindings, matched_nodes) = {
             let matcher = Matcher::new(edit.function());
             match matcher.match_at(node, &lhs)? {
@@ -101,25 +83,20 @@ fn rewrite_rule_impl(
 
         let (root_value, root_ty) = edit.function().single_value_output(node)?;
 
-        // Materialise the RHS through the editing context, threading the
-        // matched footprint as the proof-node set so EVERY fresh node, not
-        // just the root output, absorbs the whole matched subgraph's
-        // fingerprints at creation: the flag tree behind a folded compare,
-        // the operand constants of a const-eval. A closure in the tree may
-        // opt out via `skip()`, which becomes "no change" here.
+        // Threading the matched footprint as the proof-node set makes EVERY
+        // fresh node, not just the root output, absorb the matched subgraph's
+        // fingerprints at creation. A closure in the tree may opt out via
+        // `skip()`, which becomes "no change" here.
         let new_value = match instantiate(&rhs, edit, &bindings, node, &matched_nodes, root_ty) {
             Ok(value) => value,
             Err(e) if is_skip(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
 
-        // Redundant for a fresh-node RHS (`instantiate` already absorbed
-        // `matched_nodes`), but load-bearing for a BARE-CAPTURE RHS such as
-        // `add(x, 0) -> x`: that returns the LHS-bound value verbatim with no
-        // fresh node, so `instantiate` never touches it and `replace_value`
-        // below carries only the ROOT. Without this the culled interior
-        // nodes' addresses would be lost, shrinking the survivor's fingerprint
-        // below its true ancestor set.
+        // Redundant for a fresh-node RHS, but load-bearing for a
+        // BARE-CAPTURE RHS such as `add(x, 0) -> x`: that returns the
+        // LHS-bound value verbatim, so nothing else carries the culled
+        // interior nodes' addresses onto the survivor.
         let new_producer = edit.producer(new_value);
         for &matched in &matched_nodes {
             edit.function_mut()
@@ -128,24 +105,14 @@ fn rewrite_rule_impl(
         }
 
         // `replace_value` absorbs the old root's fingerprint, redirects every
-        // use, and enqueues the orphaned old root for the cull. The
-        // subsequent `clean()` cascades its dead operand cone; without that
-        // the rewritten-away cone would linger in `live_nodes` until
-        // `compact`.
+        // use, and enqueues the orphaned old root for the cull.
         let changed = edit.replace_value(root_value, new_value)?;
         Ok(changed.then_some(new_value))
     }
 }
 
-/// Asserts every capture the RHS references also appears in the LHS. An
-/// unbound capture would otherwise surface as a missing binding at apply
-/// time, far from the rule's authoring site.
-///
-/// This is the ONLY RHS construction check: a [`Template`] is structurally
-/// buildable by construction.
+/// Asserts every capture the RHS references also appears in the LHS.
 fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
-    // LHS captures live on the producing output vertex for value captures
-    // and on the node for value-less roots; `bound_captures` covers both.
     let lhs_caps: rustc_hash::FxHashSet<Capture> = lhs.bound_captures().collect();
     for cap in rhs.referenced_captures() {
         if !lhs_caps.contains(&cap) {
@@ -163,8 +130,7 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
 ///
 /// Rules are tried in order at each node, and a firing rule redirects the
 /// matched root's uses, so a later rule at that node sees the rewritten
-/// graph. The caller owns edit construction and any pre-pass
-/// [`EditFunction::cull_dead`]; this driver only walks and applies.
+/// graph.
 ///
 /// # Errors
 ///
@@ -190,11 +156,7 @@ where
 /// rules see the new graph state and may no longer apply.
 ///
 /// `Ok(Some(new_out))` names the output of the LAST rule to fire, whose
-/// redirect won, so it is the surviving node for the peephole driver to
-/// re-examine.
-///
-/// Returns a closure bound to the `rules` borrow, so callers can hoist the
-/// rule vec into long-lived storage and compose per call cheaply.
+/// redirect won.
 pub fn apply_rules_in_order<R>(
     rules: &[R],
 ) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + '_
@@ -212,8 +174,7 @@ where
     }
 }
 
-/// The common trait-object type both rule constructors box into, so a
-/// heterogeneous rule list collects directly into a `Vec<BoxedRule>`.
+/// The common trait-object type both rule constructors box into.
 pub type BoxedRule = Box<dyn for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>>;
 
 #[cfg(test)]
@@ -224,8 +185,7 @@ pub type BoxedRule = Box<dyn for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result
     clippy::unreachable
 )]
 mod tests {
-    //! Every fixture builds a BUILT `Function` (entry set) so
-    //! `EditFunction::new` succeeds.
+    //! Every fixture builds a BUILT `Function` (entry set).
 
     use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{EditFunction, FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
@@ -433,10 +393,8 @@ mod tests {
         assert!(!edit.is_live(k2_node), "k2 orphaned → culled");
     }
 
-    /// Killing `add(k, k)` must leave `k` with zero uses and get it culled.
-    /// Each per-edge last-use check still sees two uses before the detach,
-    /// so the deadness check must run AFTER the detach, once every edge is
-    /// gone, for the repeated operand to be enqueued.
+    /// Killing `add(k, k)` must leave `k` with zero uses and get it culled,
+    /// even though the operand is repeated across both input edges.
     #[test]
     fn kill_node_culls_repeated_operand() {
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
@@ -645,9 +603,8 @@ mod tests {
         Capture, CaptureExt, MatchPat, Matcher, add, any_int_const, int_const_with,
     };
 
-    /// An RHS node built directly on the graph by `instantiate`, bypassing
-    /// `EditFunction::create_node`, must still land in the cached live set;
-    /// otherwise `live_of_kind` / `postorder` would never see it.
+    /// An RHS node built directly on the graph by `instantiate` must still
+    /// land in the cached live set.
     #[test]
     fn rewrite_rule_registers_fresh_node_in_live_set() {
         let c1 = Capture::new();
@@ -710,13 +667,9 @@ mod tests {
     use std::collections::BTreeSet;
     use strider_pattern::{template, var};
 
-    /// The self-cleaning `EditFunction`'s core soundness contract: after any
-    /// edits plus `clean()`, the cached live/roots state must equal a fresh
-    /// `GraphWalkInfo::compute_full(entry)` AS SETS. Root ORDER differs
-    /// (cached iterates ascending NodeId, `compute_full` records
-    /// preorder-discovery order), hence set comparison.
-    ///
-    /// `NodeId` is not `Ord`, so the sets key on `.index()`.
+    /// After any edits plus `clean()`, the cached live/roots state must
+    /// equal a fresh `GraphWalkInfo::compute_full(entry)` AS SETS: root
+    /// ORDER legitimately differs.
     fn assert_live_matches_reachable(edit: &EditFunction) {
         use cranelift_entity::EntityRef;
         let entry = edit.entry();
@@ -747,9 +700,7 @@ mod tests {
     }
 
     /// Folding `(var + 1) + 2` to `var + 3` rewrites away the inner Add and
-    /// its `IntConst(1)`. Raw `replace_all_uses` never enqueues the old
-    /// outer-Add root, leaving that dead cone in `live_nodes` until
-    /// `compact`.
+    /// its `IntConst(1)`; neither may linger in `live_nodes`.
     #[test]
     fn track_chain_fold_culls_dead_intermediate() {
         let vn = reg_vn(0x1000, 8);
@@ -812,9 +763,8 @@ mod tests {
     }
 
     /// AND-distribution, `((a & C1) | (b & C2)) & C3` to
-    /// `(a & (C1&C3)) | (b & (C2&C3))`, builds a fresh `Or`, two `And`s and
-    /// two folded consts. Every fresh node must be tracked and the old
-    /// factored subtree culled.
+    /// `(a & (C1&C3)) | (b & (C2&C3))`: every fresh node must be tracked and
+    /// the old factored subtree culled.
     #[test]
     fn track_fresh_multi_node_subtree() {
         let a = reg_vn(0x1000, 8);
@@ -953,9 +903,7 @@ mod tests {
 
     /// A bare-capture identity fold must carry the culled INTERIOR matched
     /// nodes' asm-fingerprints onto the survivor, per the superset-only
-    /// proof contract. `instantiate`'s bare-capture branch returns the
-    /// LHS-bound value verbatim and `replace_value` absorbs only the ROOT,
-    /// so nothing else covers the interior nodes.
+    /// proof contract.
     #[test]
     fn identity_fold_carries_interior_fingerprint_onto_survivor() {
         let vn = reg_vn(0x1000, 8);
@@ -1145,9 +1093,7 @@ mod tests {
     }
 
     /// A multi-output template: the RHS root `Load` consumes a fresh
-    /// `Store`'s memory output, so the Store is a non-root interior node
-    /// reachable only upward through that memory input. Both fresh interior
-    /// nodes must be tracked.
+    /// `Store`'s memory output. Both fresh interior nodes must be tracked.
     #[test]
     fn track_multi_output_template_interior() {
         use super::rewrite_rule_runtime;
@@ -1263,8 +1209,8 @@ mod tests {
         }
     }
 
-    /// The non-template path: a direct `replace_value` plus `clean()` must
-    /// also leave the cached state equal to the entry-reachable walk.
+    /// A direct `replace_value` plus `clean()` must also leave the cached
+    /// state equal to the entry-reachable walk.
     #[test]
     fn track_direct_replace_value() {
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
@@ -1297,11 +1243,7 @@ mod tests {
     }
 
     /// The RHS const dedup-REVIVES a node built earlier but culled as
-    /// unreachable: the dedup cache hands back the pre-existing
-    /// `IntConst(3)`. Every node `create_node` returns, fresh or a
-    /// dedup-cache hit on a culled one, goes through `track_created` in the
-    /// shared `create_node_attributed` choke-point, which re-inserts it into
-    /// `live_nodes`/`roots` and is idempotent on already-live nodes.
+    /// unreachable: the dedup-cache hit must re-enter `live_nodes`/`roots`.
     #[test]
     fn track_rhs_dedup_revives_culled_const() {
         let vn = reg_vn(0x1000, 8);

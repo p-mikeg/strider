@@ -24,8 +24,7 @@ fn const_val(fg: &strider_ir::Function, v: ValueId, ctx: &str) -> u128 {
 /// Prologue zero-init writes and a `push ebx` save land in a later call's
 /// arg-slot window, and once lowered to memory they are indistinguishable from
 /// argument pushes.  So all 7 are collected here and disambiguation is left to
-/// the caller.  The old chain-order heuristic that stopped after arg 1 was
-/// dropped because it could equally drop real args.
+/// the caller.
 #[test]
 fn local_inits_in_arg_window_are_collected_too() -> Result<()> {
     let sp = stack_vn();
@@ -107,8 +106,7 @@ fn local_inits_in_arg_window_are_collected_too() -> Result<()> {
 
 /// 32-bit cdecl `f(double a, int b)`: the 8-byte store at `sp+0` spans two
 /// 4-byte slots and must be ONE argument, with the cursor advancing past both
-/// so `b` lands next.  The old within-slot `index_of` rejected the wide store
-/// entirely and dropped both args.
+/// so `b` lands next.
 #[test]
 fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
     let sp = stack_vn();
@@ -364,8 +362,8 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     Ok(())
 }
 
-/// Ten push-style stack args, more than any old fixed offset-list length,
-/// proving `StackArgs` has no upper bound on collection.
+/// Ten push-style stack args, proving `StackArgs` has no upper bound on
+/// collection.
 #[test]
 fn collects_ten_stack_args() -> Result<()> {
     const N: usize = 10;
@@ -643,7 +641,6 @@ fn disjoint_in_window_store_is_collected_not_a_terminator() -> Result<()> {
         .iter()
         .map(|&v| const_val(&fg, v, "trash_in_arg_window"))
         .collect();
-    // The in-window "trash" at slot 2 is indistinguishable from a real arg.
     assert_eq!(
         collected,
         vec![11, 22, 0xAAAA],
@@ -654,8 +651,7 @@ fn disjoint_in_window_store_is_collected_not_a_terminator() -> Result<()> {
 
 /// Soundness floor under `Strict`: a non-SP-rooted Store between the pushes
 /// and the Call terminates the walk, so only the push closest to the Call is
-/// collected.  Models the `volatile int g = ...;` barrier `gcc -O2` interleaves
-/// with stack-arg pushes.  `StackGlobalDisjoint` recovers the upstream args.
+/// collected.  `StackGlobalDisjoint` recovers the upstream args.
 #[test]
 fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     let sp = stack_vn();
@@ -714,8 +710,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     Ok(())
 }
 
-/// Multi-store stress on the same floor: the first non-SP store terminates the
-/// walk, so no stack args reach the Call at all.
+/// The first non-SP store terminates the walk, so no stack args reach the Call.
 #[test]
 fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Result<()> {
     let sp = stack_vn();
@@ -774,16 +769,11 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
     Ok(())
 }
 
-// Chain order is not slot order: on i386 cdecl, gcc/clang -O2 routinely emits
-// pushes in source order while the memory chain reflects program order, so the
-// LAST arg stored is the most recent on the chain.  The original walker
-// required successive stores at `anchor + stack_arg_offsets[args.len()]`, which
-// only matches when the compiler happens to push in slot-descending order.
-// Collection must succeed for any chain order, as long as every store's offset
-// belongs to the convention's stack-arg-offset set.
+// Chain order is not slot order: collection must succeed for any chain order,
+// as long as every store's offset belongs to the convention's stack-arg-offset
+// set.
 
-/// i386 `free(arg0, arg1)`, the original repro from `exec_free_args` in the
-/// FreeBSD i386 10.0 kernel.  Args go to `(%esp)` and `0x4(%esp)` in program
+/// i386 `free(arg0, arg1)`.  Args go to `(%esp)` and `0x4(%esp)` in program
 /// order, then `call` pushes the return address at sp-4, so the chain backward
 /// is ret-addr, arg1, arg0.  Both args must be collected even though arg1 is
 /// the most-recent stack store.
@@ -846,10 +836,9 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     Ok(())
 }
 
-/// i386 `kmap_free_wakeup(arg0, arg1, arg2)`, the second repro from the same
-/// function.  The compiler stores arg1, arg0, arg2 in that order, so no two
-/// successive chain stores are at adjacent slots and the original in-order
-/// walker bailed with `args = []`.  All three must land in the right slots.
+/// i386 `kmap_free_wakeup(arg0, arg1, arg2)`.  The compiler stores arg1, arg0,
+/// arg2 in that order, so no two successive chain stores are at adjacent slots.
+/// All three must land in the right slots.
 #[test]
 fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     let sp = stack_vn();
@@ -969,14 +958,11 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     Ok(())
 }
 
-/// A store outside the convention's stack-arg window must terminate the walk,
-/// which is the safety property the original in-order rule provided, now
-/// expressed as set membership.
+/// A store outside the convention's stack-arg window must terminate the walk.
 ///
 /// Chain order, latest first: `ret-addr@-12, arg0@-8, arg1@-4, local@-16`.
 /// The local at -16 is at relative offset -4 from the anchor and not in the
-/// slot table, so aborting there keeps its value from leaking into an arg slot
-/// should the convention table ever grow.
+/// slot table, so aborting there keeps its value from leaking into an arg slot.
 #[test]
 fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     let sp = stack_vn();
@@ -1187,10 +1173,10 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
 }
 
 /// The store's offset must come from `Function::stack_offsets` when an entry
-/// exists, not from re-deriving it.  Here the arg0 store's address is replaced
-/// with an opaque constant so decomposition returns `None`, and the side-table
-/// is populated by hand as `StackOffsetDetect` would have.  Reading the
-/// side-table collects the arg; re-deriving passes through and collects none.
+/// exists, not from re-deriving it.  The arg0 store's address is replaced with
+/// an opaque constant so decomposition returns `None`, and the side-table is
+/// populated by hand.  Reading the side-table collects the arg; re-deriving
+/// collects none.
 #[test]
 fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result<()> {
     #![allow(clippy::unwrap_used)]
@@ -1240,8 +1226,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         })
         .expect("arg0 Store(IntConst(77)) must exist");
 
-    // Slot 1 is the address.  Making it opaque means a walker without the
-    // side-table would pass through this store and miss arg0.
+    // Slot 1 is the address, made opaque so decomposition returns None.
     let opaque_addr = {
         let mut ef = strider_ir::EditFunction::new(&mut fg);
         ef.build_int_const(0xDEAD_BEEFu64, ValueType::I32).unwrap()
@@ -1249,8 +1234,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     let addr_input_id = fg.node_input_id_at(arg0_store, 1).unwrap();
     fg.graph_mut().update_input(addr_input_id, opaque_addr);
 
-    // The sentinel fingerprint keeps IR validation from rejecting the
-    // manually-wired graph.
+    // The sentinel fingerprint keeps IR validation from rejecting the graph.
     let opaque_producer = fg.producer(opaque_addr);
     fg.side_tables_mut().extend_asm_fingerprint(
         opaque_producer,
@@ -1258,7 +1242,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     );
 
     // The base must equal what the anchor store at sp+0 resolves to, so both
-    // stores agree on one SP root and pass the base-consistency check.
+    // stores agree on one SP root.
     let sp_base = fg
         .walk_kind(|k| matches!(*k, NodeKind::InitialVar(id) if fg.initial_vn(id) == sp))
         .next()

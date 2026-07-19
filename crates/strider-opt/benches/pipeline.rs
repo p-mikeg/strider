@@ -1,8 +1,5 @@
-//! Micro-benchmark for the default optimizer pipeline over a large,
-//! const-foldable synthetic chain (~2000 value nodes).
-//!
-//! `strider_ir::Function` is not `Clone`, so each iteration rebuilds the
-//! input in the `iter_batched` setup closure; only `pipeline.run` is timed.
+//! Each iteration rebuilds the input in the `iter_batched` setup closure;
+//! only `pipeline.run` is timed.
 
 use std::hint::black_box;
 
