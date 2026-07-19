@@ -2,6 +2,26 @@
 
 from __future__ import annotations
 
+from typing import Any, List
+
+class OptimizerPipeline:
+    """An ordered list of optimizer passes plus a set of post-passes run
+    once after the fixed-point loop converges."""
+    @classmethod
+    def empty(cls) -> OptimizerPipeline: ...
+    @classmethod
+    def default(cls) -> OptimizerPipeline: ...
+    @property
+    def passes(self) -> List[str]:
+        """The registered fixed-point passes, by name, in order."""
+        ...
+    @property
+    def post_passes(self) -> List[str]:
+        """The registered post-passes (run once after convergence), by name."""
+        ...
+    def add(self, pass_obj: Any) -> None: ...
+    def add_post(self, pass_obj: Any) -> None: ...
+
 # Pure no-arg passes.
 class ConstantFold:
     def __init__(self) -> None: ...

@@ -14,7 +14,84 @@ from __future__ import annotations
 
 from typing import Any, Callable, List, Optional, Union
 
-from .. import Match
+from ..ir import Node
+from ..sleigh import Vn
+
+class Match:
+    """`Node` is the single source of truth for per-node reads; every
+    value/op reader below is a thin forwarder to `self.node(key).<reader>()`
+    (returning `None` when `key` is unbound)."""
+
+    @property
+    def root(self) -> int:
+        """The root node where the top-level pattern matched, as a `u32`
+        node id.  Convenience for the single-pattern case — see `roots` for a
+        joined (list) query."""
+        ...
+    @property
+    def roots(self) -> List[int]:
+        """The per-input-pattern root node ids — one entry per pattern passed
+        to the query (`[root]` for a single-pattern query)."""
+        ...
+    def const_uint(self, key: Any) -> Optional[int]:
+        """Thin forwarder to `Node.const_uint()`."""
+        ...
+    def const_int(self, key: Any) -> Optional[int]:
+        """Thin forwarder to `Node.const_int()`."""
+        ...
+    def const_bool(self, key: Any) -> Optional[bool]:
+        """Thin forwarder to `Node.const_bool()`."""
+        ...
+    def float_bits(self, key: Any) -> Optional[int]:
+        """Thin forwarder to `Node.float_bits()`."""
+        ...
+    def has(self, key: Any) -> bool: ...
+    def int_binary_op(self, key: Any) -> Optional[str]:
+        """Recover the matched `IntBinaryOp` variant name from `key`.
+        Thin forwarder to `Node.int_binary_op()`."""
+        ...
+    def int_unary_op(self, key: Any) -> Optional[str]:
+        """Recover the matched `IntUnaryOp` variant name from `key`.
+        Thin forwarder to `Node.int_unary_op()`."""
+        ...
+    def int_cmp_op(self, key: Any) -> Optional[str]:
+        """Recover the matched `IntCmpOp` variant name from `key`.
+        Thin forwarder to `Node.int_cmp_op()`."""
+        ...
+    def bool_binary_op(self, key: Any) -> Optional[str]:
+        """Recover the matched boolean binary op (`IntBinaryOp` at `I1`) name.
+        Thin forwarder to `Node.bool_binary_op()`."""
+        ...
+    # `bool_unary_op` was removed alongside `IntUnaryOp::BitNot`: a 1-bit
+    # logical NOT is `Xor(_, IntConst(1)):I1`, so the op variant is
+    # recovered via `bool_binary_op` (returns "Xor").
+    def float_binary_op(self, key: Any) -> Optional[str]:
+        """Recover the matched `FloatBinaryOp` variant name from `key`.
+        Thin forwarder to `Node.float_binary_op()`."""
+        ...
+    def float_unary_op(self, key: Any) -> Optional[str]:
+        """Recover the matched `FloatUnaryOp` variant name from `key`.
+        Thin forwarder to `Node.float_unary_op()`."""
+        ...
+    def float_cmp_op(self, key: Any) -> Optional[str]:
+        """Recover the matched `FloatCmpOp` variant name from `key`.
+        Thin forwarder to `Node.float_cmp_op()`."""
+        ...
+    def vn(self, key: Any) -> Optional[Vn]:
+        """Recover the varnode bound by `key` (InitialVar / `Call` /
+        `CallOther` clobber output), else `None`.  Thin forwarder to
+        `Node.vn()`."""
+        ...
+    def asm_fingerprint(self, key: Any) -> List[int]:
+        """Thin forwarder to `Node.asm_fingerprint()`; `[]` when `key` is unbound."""
+        ...
+    def node(self, key: Any) -> Optional[Node]:
+        """A `Node` handle on the node bound to `key` (a `Capture` or
+        string capture-name), or `None` when `key` is unbound.  Every
+        other reader on `Match` is built on top of this resolution."""
+        ...
+    def __getitem__(self, key: Any) -> Any: ...
+    def __contains__(self, key: Any) -> bool: ...
 
 class Capture:
     """Opaque capture variable; bind a matched node and read it back
