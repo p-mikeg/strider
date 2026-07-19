@@ -43,16 +43,15 @@ pub(crate) fn target_value_input(function: &Function) -> Option<strider_ir::Valu
     found
 }
 
-/// Run `Lifter::build_ir` on a hand-assembled byte
-/// sequence + the standard SystemV-x86_64 calling convention, then run
-/// the full optimiser pipeline.  Returns the resulting graph plus the
+/// Lift a hand-assembled byte sequence under SystemV-x86_64 and run the
+/// full optimiser pipeline.  Returns the resulting graph plus the
 /// (single) IR-level placeholder target's `ValueId` and the
-/// convention's link-register VN (always `None` on x86_64 — that arch
-/// pushes return addresses on the stack).
+/// convention's link-register VN (always `None` on x86_64, which
+/// pushes return addresses on the stack instead).
 ///
 /// Panics if the synthetic CFG produces zero or multiple
-/// `UnresolvedIndirectBranch` placeholders — every fixture in this
-/// module is supposed to have exactly one indirect branch.
+/// `UnresolvedIndirectBranch` placeholders; every fixture in this
+/// module has exactly one indirect branch.
 pub(crate) fn run_pipeline_x86_64(
     bytes: Vec<u8>,
 ) -> (Function, strider_ir::Value, Option<rsleigh::Vn>) {
@@ -62,7 +61,6 @@ pub(crate) fn run_pipeline_x86_64(
     let sleigh =
         rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
 
-    // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
     let cc = CallingConvention::x86_64_systemv()
         .build(strider.sleigh_regs())
@@ -78,11 +76,9 @@ pub(crate) fn run_pipeline_x86_64(
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     let mut function = outcome.function;
 
-    // Run the full optimiser pipeline so the placeholder's target
-    // value reaches the producer-shape the classifier looks at.
     // ConstantFold collapses `mov rax, K; jmp *rax` to IntConst(K);
-    // PhiCollapse simplifies the trivial Return shape we don't
-    // need to walk past.
+    // PhiCollapse simplifies the trivial Return shape so the classifier
+    // sees the producer-shape it expects.
     let p = strider_orchestrator::opt::default_pipeline();
     p.run(
         &mut function,
@@ -95,11 +91,11 @@ pub(crate) fn run_pipeline_x86_64(
         1,
         "fixture must have exactly one IR-level placeholder",
     );
-    // Resolve the *current* target after the optimiser ran — the
-    // original recorded ValueId may be orphaned if any pass
-    // `replace_all_uses`-rewrote the placeholder's input slot
-    // (e.g. ConstantFold rewriting a folded IntBinaryOp into an
-    // IntConst).  See module-level docs for the full contract.
+    // Resolve the *current* target after the optimiser ran: the original
+    // recorded ValueId may be orphaned if any pass `replace_all_uses`-rewrote
+    // the placeholder's input slot (e.g. ConstantFold folding an
+    // IntBinaryOp into an IntConst).  See module-level docs for the
+    // full contract.
     let target = target_value_input(&function)
         .expect("fixture must have one IndirectBranch placeholder after optimisation");
     (function, target, lr_vn)

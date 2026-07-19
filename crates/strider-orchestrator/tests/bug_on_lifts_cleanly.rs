@@ -1,11 +1,10 @@
-//! Integration tests: trap-instruction (BUG_ON-class) regions lift
-//! cleanly without UnresolvedIndirectBranch errors.
+//! Trap-instruction (BUG_ON-class) regions must lift without
+//! UnresolvedIndirectBranch errors.
 //!
-//! Verifies the end-to-end fix for commit_creds, do_exit,
-//! do_task_dead, __schedule, etc. on real Linux kernels.  Both arches:
-//! a single trap insn lifts to a region whose terminator is
-//! [`strider_cfg::RegionTerminator::NoReturn`]; no unresolved indirect
-//! branches surface.
+//! Regression: commit_creds, do_exit, do_task_dead, __schedule and friends
+//! on real Linux kernels used to surface unresolved indirect branches here.
+//! A lone trap insn must terminate its region as
+//! [`strider_cfg::RegionTerminator::NoReturn`].
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

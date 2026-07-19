@@ -15,7 +15,6 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider_h = strider_orchestrator::Lifter::new(arch, sleigh).expect("strider");
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .build(strider_h.sleigh_regs())
@@ -29,10 +28,9 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
         .expect("cfg");
     let outcome = strider_h.build_ir(&cfg, cc).expect("build_ir");
 
-    // Find a cpuid* CallOther.  Sleigh's lift selects one of
-    // cpuid / cpuid_<leaf>_info based on EAX; with no EAX setup it
-    // falls through to cpuid_brand_part3_info.  Any cpuid* user-op
-    // is acceptable here - we're testing the precise-ABI shape.
+    // Sleigh's lift selects one of cpuid / cpuid_<leaf>_info based on EAX;
+    // with no EAX setup it falls through to cpuid_brand_part3_info. Any
+    // cpuid* user-op is acceptable, since we're testing the precise-ABI shape.
     let cpuid_names = [
         "cpuid",
         "cpuid_basic_info",
@@ -66,9 +64,9 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let node = found_node.expect("a cpuid* CallOther exists in this fixture");
     let name = found_name.expect("name");
 
-    // Outputs: [ctrl, mem, value(tmpptr)].  Empty implicit_writes
-    // (Sleigh handles register writes via subsequent Loads from the
-    // returned tmpptr).  3 outputs total.
+    // Outputs: [ctrl, mem, value(tmpptr)]. Empty implicit_writes, since
+    // Sleigh handles register writes via subsequent Loads from the
+    // returned tmpptr.
     let n_outs = outcome.function.node_outputs(node).len();
     assert_eq!(
         n_outs, 3,
@@ -86,7 +84,6 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider_h = strider_orchestrator::Lifter::new(arch, sleigh).expect("strider");
     let cc = strider_target::CallingConvention::aarch64_aapcs64()
         .build(strider_h.sleigh_regs())
@@ -109,8 +106,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     );
     let node = matches[0].root();
 
-    // Outputs: [ctrl, mem, value(x0)].  No implicit clobbers.
-    // 3 outputs total.
+    // Outputs: [ctrl, mem, value(x0)]. No implicit clobbers.
     let n_outs = outcome.function.node_outputs(node).len();
     assert_eq!(
         n_outs, 3,

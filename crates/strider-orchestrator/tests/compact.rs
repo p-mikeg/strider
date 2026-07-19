@@ -1,9 +1,9 @@
 //! End-to-end test for `Config::compact`.
 //!
-//! Drives `strider_orchestrator::Strider::analyze` on a small inline-byte function under both
-//! compact=true and compact=false; asserts the compact graph has no
-//! more node ids than the non-compact graph AND identical
-//! pattern-match counts on a representative query.
+//! Drives `strider_orchestrator::Strider::analyze` under both compact=true
+//! and compact=false; asserts the compact graph has no more node ids than
+//! the non-compact graph and identical pattern-match counts on a
+//! representative query.
 
 #![allow(clippy::unwrap_used)]
 
@@ -16,8 +16,8 @@ mod common;
 
 /// Minimal x86_64 function: `mov rax, 42; ret`.
 fn x86_64_call_then_ret_bytes() -> (Vec<u8>, u64) {
-    // 48 c7 c0 2a 00 00 00     mov rax, 42
-    // c3                        ret
+    // 48 c7 c0 2a 00 00 00   mov rax, 42
+    // c3                     ret
     let bytes = vec![0x48, 0xc7, 0xc0, 0x2a, 0x00, 0x00, 0x00, 0xc3];
     let entry = 0x1000;
     (bytes, entry)

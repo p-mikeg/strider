@@ -2,26 +2,19 @@
 //!
 //! When `fn_max_size` is set, the cfg builder classifies any direct `jmp`
 //! whose target lies outside `[start, start+fn_max_size)` as
-//! `RegionTerminator::TailCall { target }` (no successor edge).  The
-//! terminator's doc-comment promises the IR layer lowers it as
-//! `Call(IntConst(target)) + Return`, but historically nothing did:
-//! the per-insn loop processed the trailing `Opcode::Branch` through
-//! the generic `handle_branch` path, which errors with
-//! "invalid region index N" because a TailCall region has no
-//! Unconditional edge.
+//! `RegionTerminator::TailCall { target }` (no successor edge). The
+//! terminator's doc comment promises the IR layer lowers it as
+//! `Call(IntConst(target)) + Return`, but historically nothing did: the
+//! per-insn loop processed the trailing `Opcode::Branch` through the
+//! generic `handle_branch` path, which errors with "invalid region index
+//! N" because a TailCall region has no Unconditional edge.
 //!
-//! This test pins the fix.  Synthetic x86_64 function:
+//! Synthetic x86_64 function:
 //!
 //! ```text
 //! 0x1000:  B8 05 00 00 00     mov eax, 5
-//! 0x1005:  E9 F6 7F 00 00     jmp 0x9000        ← out-of-fn tail call
+//! 0x1005:  E9 F6 7F 00 00     jmp 0x9000        ; out-of-fn tail call
 //! ```
-//!
-//! With `fn_max_size = 10` and `allow_code_before_start_addr = false`,
-//! the cfg builder emits `RegionTerminator::TailCall { target: 0x9000 }`.
-//! The IR must lift it as `Call(IntConst(0x9000)) + Return` — i.e. the
-//! lifted graph must contain at least one `Call` node whose target is
-//! `IntConst(0x9000)` AND a `Return` node downstream of it.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
@@ -82,8 +75,6 @@ fn bounded_lift_handles_tail_call_terminator() {
     let function = run_at(make_sleigh(), BASE, &lift_opts)
         .expect("orchestrator must lift TailCall as Call+Return");
 
-    // Post-condition: the graph contains a `Call` whose target operand
-    // is an `IntConst(0x9000)`, and a `Return` node downstream.
     let mut had_call_with_target = false;
     let mut had_return = false;
     for nid in function.walk() {
@@ -112,10 +103,8 @@ fn bounded_lift_handles_tail_call_terminator() {
     );
 }
 
-/// Helper: walks the lifted graph and returns whether it contains a
-/// `Call(IntConst(target)) + Return` pair.  Mirrors the verifier in
-/// `bounded_lift_handles_tail_call_terminator` so the new tests can
-/// share the same shape assertion.
+/// Mirrors the verifier in `bounded_lift_handles_tail_call_terminator` so
+/// later tests share the same shape assertion.
 fn graph_has_tail_call_to(function: &strider_ir::Function, target: u64) -> bool {
     let mut had_call = false;
     let mut had_return = false;
@@ -136,21 +125,19 @@ fn graph_has_tail_call_to(function: &strider_ir::Function, target: u64) -> bool 
     had_call && had_return
 }
 
-/// Synthetic vmspace_exitfree-shape: a small function ending with a
+/// Synthetic vmspace_exitfree shape: a small function ending with a
 /// backward `jmp` whose target is a *different* function (below
-/// `start_addr`).  Pre-fix, with `allow_code_before_start_addr=true`
-/// AND `fn_max_size` set, the cfg builder followed the backward jmp
-/// into adjacent bytes — ballooning the lifted graph to tens of
-/// thousands of nodes.  Post-fix the backward target is classified as
-/// a tail call regardless of the reach-back flag (since `fn_max_size`
-/// defines the function's exact extent), and the IR carries
+/// `start_addr`). Pre-fix, with `allow_code_before_start_addr=true` AND
+/// `fn_max_size` set, the cfg builder followed the backward jmp into
+/// adjacent bytes, ballooning the lifted graph to tens of thousands of
+/// nodes. Post-fix the backward target is classified as a tail call
+/// regardless of the reach-back flag (`fn_max_size` defines the
+/// function's exact extent), and the IR carries
 /// `Call(IntConst(<backward_target>)) + Return`.
 #[test]
 fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
-    // Layout:
-    //   0x1000..0x1080: NOP padding (the "previous function").
-    //   0x1080..0x108A: our function — `mov eax, 5; jmp 0x1000`.
-    //
+    // 0x1000..0x1080: NOP padding (the "previous function").
+    // 0x1080..0x108A: our function: `mov eax, 5; jmp 0x1000`.
     // jmp 0x1000 from 0x1080+5 (insn after `mov`) = rel32 of
     //   0x1000 - (0x1085 + 5) = 0x1000 - 0x108A = -0x8A = 0xFFFFFF76 LE.
     const BASE: u64 = 0x1000;
@@ -158,7 +145,7 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     const TAIL_TARGET: u64 = 0x1000;
     let mut bs = vec![0x90u8; 0x80]; // 0x1000..0x1080: padding
     bs.extend_from_slice(&[0xB8, 0x05, 0x00, 0x00, 0x00]); // mov eax, 5
-    bs.extend_from_slice(&[0xE9, 0x76, 0xFF, 0xFF, 0xFF]); // jmp -0x8A → 0x1000
+    bs.extend_from_slice(&[0xE9, 0x76, 0xFF, 0xFF, 0xFF]); // jmp -0x8A to 0x1000
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bs, BASE);
@@ -181,8 +168,8 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
         "expected Call(IntConst({:#x})) + Return from the backward-jmp tail call",
         TAIL_TARGET
     );
-    // Sanity: a 10-byte function tail-calling out should produce a
-    // small graph — not the tens-of-thousands-of-nodes pre-fix shape.
+    // A 10-byte function tail-calling out should stay tight, not balloon
+    // to the tens-of-thousands-of-nodes pre-fix shape.
     let node_count = function.walk().count();
     assert!(
         node_count < 200,
@@ -190,25 +177,21 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     );
 }
 
-/// A function whose body has no explicit terminator inside the bound
-/// and whose fall-through crosses `start + fn_max_size` is a
+/// A function whose body has no explicit terminator inside the bound and
+/// whose fall-through crosses `start + fn_max_size` is a
 /// **function-boundary error**, not a tail call: a legitimate tail call
-/// has an explicit `jmp <oob>` / `je <oob>` opcode, which reaches
+/// has an explicit `jmp <oob>` / `je <oob>` opcode, reaching
 /// `is_branch_tail_call_nocheck` via `process_branch` /
-/// `process_cond_branch` and classifies correctly.  Sequential
-/// fall-through past the bound means the user's `fn_max_size` is too
-/// small or the function is unterminated — silently classifying it as
-/// a tail call hides the bug (the user-reported `tzcount.o` reproducer
-/// surfaces here).  The cfg builder must surface an error with a clear
-/// "function-boundary error" / "sequential decoding overflowed"
-/// message instead.
+/// `process_cond_branch`. Sequential fall-through past the bound means
+/// `fn_max_size` is too small or the function is unterminated; silently
+/// treating that as a tail call hides the bug (the user-reported
+/// `tzcount.o` reproducer). The cfg builder must instead surface a clear
+/// "function-boundary error" / "sequential decoding overflowed" message.
 #[test]
 fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
-    // Layout:
-    //   0x1000..0x1002: `xor eax, eax`              (2 bytes, ≥1 pcode op).
-    //   0x1002..0x1008: `lock cmpxchg %r14, 0x58(%rbx)` (multi-pcode-op,
-    //                                                  intra-insn CONST
-    //                                                  branches).
+    // 0x1000..0x1002: `xor eax, eax` (2 bytes, >=1 pcode op).
+    // 0x1002..0x1008: `lock cmpxchg %r14, 0x58(%rbx)` (multi-pcode-op,
+    //   intra-insn CONST branches).
     const BASE: u64 = 0x1000;
     let mut bs = vec![0x31u8, 0xc0];
     bs.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
@@ -241,8 +224,7 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
     );
 }
 
-/// Finds a `Call` node whose target operand is an `IntConst(target)`.
-/// Call input slots per `node_signature`: [control, memory, target, args…];
+/// Call input slots per `node_signature`: [control, memory, target, args...];
 /// the target sits at slot 2.
 fn find_call_to(function: &strider_ir::Function, target: u64) -> Option<strider_ir::node::NodeId> {
     function.walk().find(|&nid| {
@@ -257,13 +239,12 @@ fn find_call_to(function: &strider_ir::Function, target: u64) -> Option<strider_
     })
 }
 
-/// Conditional branch whose taken AND fall-through targets both lie
-/// past `start + fn_max_size`.  The conditional must SURVIVE: the cfg
-/// builder lowers each OOB arm as a synthetic tail-call stub, so the
-/// IR carries an `If` dispatching between two
-/// `Call(IntConst(target)) + Return` arms with distinct targets.
-/// Each Call's asm fingerprint names the conditional-branch
-/// instruction — the insn that proves the call happens.
+/// Conditional branch whose taken AND fall-through targets both lie past
+/// `start + fn_max_size`. The conditional must SURVIVE: the cfg builder
+/// lowers each OOB arm as a synthetic tail-call stub, so the IR carries
+/// an `If` dispatching between two `Call(IntConst(target)) + Return` arms
+/// with distinct targets. Each Call's asm fingerprint names the
+/// conditional-branch instruction that proves the call happens.
 #[test]
 fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() {
     // 0x1000: `je 0x1080` (rel8 = +0x7E, both targets OOB at fn_max_size=2).
@@ -316,13 +297,12 @@ fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() 
 /// Conditional branch with ONLY the taken target out-of-bounds: the
 /// conditional must survive as an `If` whose taken arm is a synthetic
 /// tail call (`Call(IntConst(<oob>)) + Return`) and whose fall-through
-/// arm is the function's normal in-range `ret`.  Pre-fix the cfg
-/// builder silently deleted the conditional, folding the region onto
-/// the in-range arm — analysis then believed the branch was never
-/// taken.
+/// arm is the function's normal in-range `ret`. Pre-fix the cfg builder
+/// silently deleted the conditional, folding the region onto the
+/// in-range arm, so analysis believed the branch was never taken.
 #[test]
 fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
-    // 0x1000: 85 FF   test edi, edi   (condition depends on the arg reg —
+    // 0x1000: 85 FF   test edi, edi   (condition depends on the arg reg,
     //                                  no pass can constant-fold the If)
     // 0x1002: 74 7C   je 0x1080       (taken 0x1004+0x7C=0x1080, OOB at
     //                                  fn_max_size=0x10)

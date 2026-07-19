@@ -1,18 +1,15 @@
 //! Property-based invariants for the optimizer.
 //!
-//! Companion to `strider-ir/tests/proptest_invariants.rs`.  That file
-//! verifies `validate()` over strategy-generated graphs; this file verifies
-//! the optimizer side:
+//! Companion to `strider-ir/tests/proptest_invariants.rs`, which verifies
+//! `validate()` over strategy-generated graphs; this file verifies asm-
+//! fingerprint monotonicity under the default pipeline: every node's
+//! fingerprint after `opt::default_pipeline().run()` is a superset of its
+//! pre-pipeline value (the contract is superset-only, passes may grow
+//! fingerprints but never shrink them).
 //!
-//! 1. **Asm-fingerprint monotonicity under the default pipeline.**
-//!    Every node's asm-fingerprint after `opt::default_pipeline().run()`
-//!    is a superset of its pre-pipeline value.  The asm-fingerprint
-//!    contract is *superset-only* — passes may grow fingerprints (and
-//!    must, when they rewrite-merge two nodes), but never shrink them.
-//!
-//! **Scope.**  Value-only DAGs via a sequence of
-//! [`FunctionBuilder`] actions, mirroring `cranelift-fuzzgen`.  Control-flow
-//! properties stay in hand-authored fixtures.
+//! Scope: value-only DAGs via a sequence of [`FunctionBuilder`] actions,
+//! mirroring `cranelift-fuzzgen`. Control-flow properties stay in
+//! hand-authored fixtures.
 
 #![allow(
     clippy::unwrap_used,
@@ -37,8 +34,6 @@ use strider_orchestrator::opt::{OptimizerPipeline, default_pipeline};
 /// Mirrors `strider_ir_test_utils::SENTINEL_LIFT_ADDR`.
 const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
-// ── Strategy (mirrors strider-ir/tests/proptest_invariants.rs) ────────────
-
 fn int_ty() -> impl Strategy<Value = ValueType> {
     prop_oneof![
         Just(ValueType::I8),
@@ -61,8 +56,7 @@ fn binary_op() -> impl Strategy<Value = IntBinaryOp> {
 }
 
 fn unary_op() -> impl Strategy<Value = IntUnaryOp> {
-    // `IntUnaryOp` has only `Neg` since `BitNot` was removed (bitwise
-    // complement is `Xor(x, all_ones)`).
+    // Only `Neg`: bitwise complement is `Xor(x, all_ones)`, not a IntUnaryOp.
     Just(IntUnaryOp::Neg)
 }
 
@@ -311,9 +305,6 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
     }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
-
-/// Collects every node-id → asm-fingerprint mapping, indexed by `NodeId`.
 fn collect_fingerprints(function: &strider_ir::Function) -> HashMap<NodeId, Vec<u64>> {
     function
         .graph()
@@ -331,8 +322,6 @@ fn collect_fingerprints(function: &strider_ir::Function) -> HashMap<NodeId, Vec<
         .collect()
 }
 
-// ── Properties ────────────────────────────────────────────────────────────
-
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 1000,
@@ -340,14 +329,13 @@ proptest! {
     })]
 
     /// Every node's asm-fingerprint after the default optimizer pipeline
-    /// is a superset of its pre-pipeline fingerprint.  The contract is
-    /// *superset-only* — passes may grow fingerprints, but must never
-    /// shrink them.
+    /// is a superset of its pre-pipeline fingerprint (passes may grow
+    /// fingerprints, never shrink them).
     ///
-    /// A node that is detached / unreachable after the pipeline is exempt
-    /// (some passes leave zombie nodes in the arena with their inputs
-    /// detached; we only inspect nodes that survive `all_node_ids()` and
-    /// whose pre-fingerprint was non-empty).
+    /// A node detached / unreachable after the pipeline is exempt: some
+    /// passes leave zombie nodes in the arena with their inputs detached,
+    /// so only nodes that survive `all_node_ids()` with a non-empty
+    /// pre-fingerprint are checked.
     #[test]
     fn prop_fingerprint_monotonic_under_default_pipeline(steps in step_seq()) {
         let Some(mut fg) = replay(&steps) else {
@@ -372,9 +360,8 @@ proptest! {
                 continue;
             }
             let Some(post_fp) = post.get(id) else {
-                // Node was removed entirely (e.g. PhiCollapse); not a
-                // monotonicity violation — the fingerprint contract only
-                // applies to *surviving* nodes.
+                // Node removed entirely (e.g. PhiCollapse); the fingerprint
+                // contract only applies to surviving nodes.
                 continue;
             };
             let pre_set: BTreeSet<u64> = pre_fp.iter().copied().collect();

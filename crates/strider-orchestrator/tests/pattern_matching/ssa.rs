@@ -11,8 +11,6 @@ use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes, stack_vn};
 
-// ── InitialVar ───────────────────────────────────────────────────────────────
-
 #[test]
 fn initial_var_matches_any() {
     let (g, _reg) = shapes::single_initial_var();
@@ -28,14 +26,14 @@ fn initial_var_for_exact_vn_matches() {
 #[test]
 fn initial_var_for_wrong_vn_rejects() {
     let (g, _reg) = shapes::single_initial_var();
-    let other = reg_vn(0x40, 8); // Different varnode.
+    let other = reg_vn(0x40, 8);
     a::none(&g, initial_var_for(other).into_pattern());
 }
 
 /// `InitialVar` carries a per-function `all_vns` index, not the varnode.
 /// With two tracked regs, `hi` sorts to `all_vns[1]` (not `[0]`), so a
 /// correct `initial_var_for` must resolve each candidate node's index back
-/// to its varnode and match by identity — never positionally.
+/// to its varnode and match by identity, never positionally.
 #[test]
 fn initial_var_for_resolves_nonzero_index() {
     let lo = reg_vn(0x00, 8);
@@ -57,9 +55,7 @@ fn initial_var_capture_binds_value() {
     assert!(m.value(v).is_some());
 }
 
-// ── Phi (formerly VarPhi) ────────────────────────────────────────────────────
-
-/// `if (reg == 0) { reg = 1 } else { reg = 2 }` — after merge, a phi
+/// `if (reg == 0) { reg = 1 } else { reg = 2 }`: after merge, a phi
 /// materialises the new value of `reg`.
 fn graph_phi_for_reg() -> (strider_ir::Function, rsleigh::Vn) {
     let reg = reg_vn(0, 8);
@@ -94,7 +90,6 @@ fn graph_phi_for_reg() -> (strider_ir::Function, rsleigh::Vn) {
 #[test]
 fn phi_matches_any() {
     let (g, _reg) = graph_phi_for_reg();
-    // At least one phi exists at the merge region.
     let hits = Matcher::new(&g).find_all(&phi().build()).unwrap();
     assert!(!hits.is_empty(), "expected at least one phi");
 }
@@ -113,12 +108,9 @@ fn phi_for_wrong_vn_rejects() {
     a::none(&g, phi_for(other).build());
 }
 
-// ── FunctionArg side-table ───────────────────────────────────────────────────
-//
 // After `FunctionArgDetect`, the underlying `InitialVar` / `Load` nodes
 // survive unchanged and are recorded in `Function::arg_index_to_values`.
-// Tests below verify the side-table contents and that the carrier nodes
-// are the expected kinds.
+// The tests below check the side-table contents and carrier node kinds.
 
 /// A graph with one stack-arg at sp-relative offset `4`, index `0`.
 fn graph_fn_arg_stack() -> strider_ir::Function {
@@ -137,7 +129,7 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
             })),
     );
 
-    // `read *(sp + 4)` — the first stack arg in cdecl-style.
+    // `read *(sp + 4)`: the first stack arg in cdecl-style.
     let sp_v = t.read_var(&sp);
     let four = t.u64(4);
     let addr = t.add(sp_v, four);
@@ -145,8 +137,8 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let mut function = t.ret_val(v);
 
     // Collapse the single-predecessor `read_var(sp)` phi so the stack-arg
-    // load is a bare `InitialVar(sp) + 4` terminal (production shape after
-    // PhiCollapse) before the SP-aware post-pass.
+    // load is a bare `InitialVar(sp) + 4` terminal (the production shape
+    // after PhiCollapse) before the SP-aware post-pass runs.
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
     pre.add(strider_orchestrator::opt::PhiCollapse);
     pre.add(strider_orchestrator::opt::RegionCollapse);
@@ -185,7 +177,6 @@ fn function_arg_reg_registered_in_side_table() {
 #[test]
 fn function_arg_reg_carrier_matches_initial_var_for() {
     let (g, reg) = shapes::function_arg_reg();
-    // The carrier is an InitialVar; it must be findable by the pattern matcher.
     a::matches(&g, initial_var_for(reg).into_pattern(), 1);
 }
 
@@ -193,7 +184,7 @@ fn function_arg_reg_carrier_matches_initial_var_for() {
 #[test]
 fn function_arg_reg_wrong_vn_rejects() {
     let (g, _reg) = shapes::function_arg_reg();
-    let other = reg_vn(0x40, 8); // Different varnode.
+    let other = reg_vn(0x40, 8);
     a::none(&g, initial_var_for(other).into_pattern());
 }
 
@@ -218,7 +209,7 @@ fn function_arg_stack_registered_in_side_table() {
 #[test]
 fn function_arg_stack_wrong_offset_absent() {
     let function = graph_fn_arg_stack();
-    // Index 1 corresponds to offset 8 in the convention — not present.
+    // Index 1 corresponds to offset 8 in the convention, not present here.
     let carriers_1 = function.side_tables().arg_index_to_values(1);
     assert!(
         carriers_1.is_empty(),
@@ -232,7 +223,6 @@ fn function_arg_reg_and_stack_carry_different_kinds() {
     let (g_reg, _reg) = shapes::function_arg_reg();
     let g_stack = graph_fn_arg_stack();
 
-    // Register graph: carrier is InitialVar.
     let reg_carriers = g_reg.side_tables().arg_index_to_values(0);
     assert!(!reg_carriers.is_empty());
     assert!(matches!(
@@ -240,7 +230,6 @@ fn function_arg_reg_and_stack_carry_different_kinds() {
         NodeKind::InitialVar(_)
     ));
 
-    // Stack graph: carrier is Load.
     let stack_carriers = g_stack.side_tables().arg_index_to_values(0);
     assert!(!stack_carriers.is_empty());
     assert!(matches!(
@@ -248,8 +237,6 @@ fn function_arg_reg_and_stack_carry_different_kinds() {
         NodeKind::Load(_)
     ));
 }
-
-// ── iter_arg_indices / arg_index_to_values API ─────────────────────────────────────
 
 /// `arg_index_to_values(i)` for a registered index returns a non-empty slice.
 #[test]
@@ -283,16 +270,16 @@ fn arg_indices_iterator_sorted() {
     assert_eq!(indices, vec![0], "only arg 0 should be registered");
 }
 
-/// `JoinConstraint::PhiInputFromEdge` ties a phi's per-branch data input to the
-/// control edge that leads into that predecessor.  On the collapsed diamond
+/// `JoinConstraint::PhiInputFromEdge` ties a phi's per-branch data input to
+/// the control edge leading into that predecessor. On the collapsed diamond
 /// `if (reg==0){reg=1}else{reg=2}`, the true edge selects one merged constant
 /// and the false edge the other.
 #[test]
 fn phi_input_from_edge_ties_value_to_its_branch() {
     let (mut function, _reg) = graph_phi_for_reg();
     // Collapse the single-predecessor arms so the If's true/false outputs
-    // become the merge region's DIRECT predecessors (the converged shape the
-    // direct-edge constraint keys on).
+    // become the merge region's direct predecessors, the shape the
+    // direct-edge constraint keys on.
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
     pre.add(strider_orchestrator::opt::PhiCollapse);
     pre.add(strider_orchestrator::opt::RegionCollapse);
@@ -342,20 +329,18 @@ fn phi_input_from_edge_ties_value_to_its_branch() {
     );
 }
 
-// ── Guarded loop: the sole-entry gate's false negative ───────────────────────
-
-/// `if (reg == 0) { do { reg = reg + 1 } while (reg != 0) }` — a GUARDED LOOP.
+/// `if (reg == 0) { do { reg = reg + 1 } while (reg != 0) }`: a guarded loop.
 ///
-/// The guarded block's header has TWO control predecessors: the guard's true
-/// edge AND the loop's own back-edge (the latch).  At the exit, a phi merges the
-/// untouched `reg` (arriving on the guard's FALSE edge) with the loop's
+/// The guarded block's header has two control predecessors: the guard's true
+/// edge and the loop's own back-edge (the latch). At the exit, a phi merges
+/// the untouched `reg` (arriving on the guard's false edge) with the loop's
 /// `reg + 1` (arriving on the loop-exit edge).
 ///
 /// Every path that reaches the loop-exit edge went through the guard's true
-/// edge — so the guard's true edge DOES dominate that arm.  The old sole-entry
-/// gate could not see this: it anchored dominance at the edge's consumer (the
-/// loop header) and disabled the clause entirely because that header has two
-/// predecessors, leaving only the direct `==` test, which fails.
+/// edge, so the guard's true edge DOES dominate that arm. The old sole-entry
+/// dominance gate could not see this: it anchored dominance at the edge's
+/// consumer (the loop header) and disabled the clause because that header
+/// has two predecessors, leaving only the direct `==` test, which fails.
 fn graph_guarded_loop() -> (strider_ir::Function, rsleigh::Vn) {
     let reg = reg_vn(0, 8);
     let mut t = Tb::bare(vec![reg], &[], &[reg], &[], None, 0);
@@ -366,15 +351,14 @@ fn graph_guarded_loop() -> (strider_ir::Function, rsleigh::Vn) {
 
     t.enter(entry);
     let reg_v = t.read_var(&reg);
-    // The guard compares against 7; the latch against 0.  The two constants
-    // make the two `If`s tellable apart by `cond`, so the test can pin the
-    // OUTER guard rather than accidentally matching the latch.
+    // The guard compares against 7, the latch against 0, so the two `If`s
+    // are tellable apart by `cond` and a pattern can pin the OUTER guard
+    // rather than accidentally matching the latch.
     let seven = t.u64(7);
     let cmp = t.int_cmp(reg_v, seven, IntCmpOp::Equal);
-    // TRUE enters the guarded loop; FALSE skips it.
     t.build_if(cmp, head, exit);
 
-    // The loop header: predecessors are the guard's true edge AND its own latch.
+    // The loop header's predecessors are the guard's true edge and its own latch.
     t.enter(head);
     let cur = t.read_var(&reg);
     let one = t.u64(1);
@@ -389,13 +373,13 @@ fn graph_guarded_loop() -> (strider_ir::Function, rsleigh::Vn) {
     (t.ret_val(out), reg)
 }
 
-/// The guarded-loop FALSE NEGATIVE.  The exit phi's loop-side arm is reached
+/// The guarded-loop false negative. The exit phi's loop-side arm is reached
 /// only through the guard's true edge, so `phi_input_from_edge` must find it.
 ///
-/// Under the old `dom_anchor` sole-entry gate this returned nothing: the loop
+/// Under the old sole-entry dominance gate this returned nothing: the loop
 /// header's second predecessor (its own latch) disabled the dominance clause,
-/// and the direct `==` clause cannot see an arm merged across the loop body.
-/// Edge dominance has no such gate — a latch does not make the guard optional.
+/// and the direct `==` clause can't see an arm merged across the loop body.
+/// Edge dominance has no such gate: a latch does not make the guard optional.
 #[test]
 fn phi_input_from_edge_reaches_into_a_guarded_loop() {
     let (function, _reg) = graph_guarded_loop();
@@ -418,8 +402,8 @@ fn phi_input_from_edge_reaches_into_a_guarded_loop() {
         .capture(ph)
         .build();
 
-    // The loop-carried value `reg + 1` arrives at the exit phi from inside the
-    // guarded loop — i.e. via the guard's TRUE edge.
+    // The loop-carried value `reg + 1` arrives at the exit phi from inside
+    // the guarded loop, i.e. via the guard's TRUE edge.
     let hits = |edge: Capture| -> usize {
         m.find_joined_constrained(
             &[&guard, &phi_p],
@@ -448,7 +432,7 @@ fn phi_input_from_edge_reaches_into_a_guarded_loop() {
     );
 }
 
-/// `if (reg == 0) { *p = 1 } else { *p = 2 }` — after merge a `MemPhi` merges
+/// `if (reg == 0) { *p = 1 } else { *p = 2 }`: after merge a `MemPhi` merges
 /// the two branch stores' memory tokens.
 fn graph_memphi_diamond() -> strider_ir::Function {
     let reg = reg_vn(0, 8);
@@ -483,9 +467,9 @@ fn graph_memphi_diamond() -> strider_ir::Function {
 }
 
 /// The `MemPhi` sibling of the value-phi test: `PhiInputFromEdge` ties a
-/// `MemPhi`'s per-branch MEMORY input to the control edge.  Here `value` binds
+/// `MemPhi`'s per-branch memory input to the control edge. Here `value` binds
 /// a memory token (the branch's `Store` output), proving the constraint works
-/// for the memory phi with a memory-typed value, not just value phis.
+/// for a memory-typed value, not just value phis.
 #[test]
 fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
     let mut function = graph_memphi_diamond();
@@ -508,8 +492,8 @@ fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
     );
     let guard = if_node().capture_true(t).capture_false(f).build();
     // `mem_phi().capture(mp)` binds `mp` to the MemPhi's memory output; the
-    // store's `capture(sv)` binds `sv` to its memory output — the very token
-    // the MemPhi merges on that predecessor.  `dv` reads back which branch.
+    // store's `capture(sv)` binds `sv` to its memory output, the token the
+    // MemPhi merges on that predecessor. `dv` reads back which branch.
     let mphi = mem_phi().capture(mp).build();
     let st = store()
         .data(any_int_const().capture(dv))
@@ -545,8 +529,6 @@ fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
     );
 }
 
-// ── PhiInputFromEdge: the arm value bound by `any_input` ─────────────────────
-
 /// The collapsed `if (reg==0){reg=1}else{reg=2}` diamond, shared by the
 /// `any_input` tests below.
 fn collapsed_phi_diamond() -> strider_ir::Function {
@@ -562,7 +544,7 @@ fn collapsed_phi_diamond() -> strider_ir::Function {
     function
 }
 
-/// An `any_input`-bound arm value selects the SAME arm the free-floating
+/// An `any_input`-bound arm value selects the same arm the free-floating
 /// two-root capture spelling does, without the value ranging over the function.
 #[test]
 fn phi_input_from_edge_any_input_matches_same_arm() {
@@ -656,13 +638,13 @@ fn phi_input_from_edge_any_input_capture_is_readable() {
 }
 
 /// Regression: three-valued (Kleene) evaluation. A `Not` over a constraint
-/// whose capture is UNBOUND in a row must DROP that row, not vacuously keep it.
+/// whose capture is unbound in a row must drop that row, not vacuously keep it.
 ///
-/// `ph` is captured only in the phi arm of a `one_of`, so it is absent in the
+/// `ph` is captured only in the phi arm of a `one_of`, so it's absent in the
 /// bare-const rows. `dominates(ph, ph)` is always true where `ph` is bound, so
 /// `negate(dominates(ph, ph))` is `Some(false)` there. In the `ph`-absent rows
-/// the relation is UNANSWERABLE (`None`), and `Not(None) == None` — so under
-/// Kleene EVERY row drops. The pre-fix two-valued code read the absent capture
+/// the relation is unanswerable (`None`), and `Not(None) == None`, so under
+/// Kleene every row drops. The pre-fix two-valued code read the absent capture
 /// as `false`, flipped it to a vacuous `true`, and kept exactly those rows.
 #[test]
 fn negate_over_an_unbound_capture_drops_every_row() {
@@ -683,7 +665,7 @@ fn negate_over_an_unbound_capture_drops_every_row() {
         "some rows exist, including bare-const rows where `ph` is unbound"
     );
 
-    // `dominates(ph, ph)` is self-domination — always true where `ph` is bound.
+    // `dominates(ph, ph)` is self-domination: always true where `ph` is bound.
     let negated = m
         .find_joined_constrained(
             &[&operand],
@@ -728,7 +710,7 @@ fn phi_input_from_edge_any_input_negative() {
 }
 
 /// A capture bound BOTH by a free-floating root and by `any_input` on the phi
-/// must AGREE — the join unifies the two bindings, it never overwrites.
+/// must agree: the join unifies the two bindings, it never overwrites.
 #[test]
 fn phi_input_from_edge_any_input_capture_unifies_with_tuple() {
     let function = collapsed_phi_diamond();
@@ -744,7 +726,7 @@ fn phi_input_from_edge_any_input_capture_unifies_with_tuple() {
         .any_input(any_int_const().capture(v))
         .capture(ph)
         .build();
-    // `v` is bound by a free-floating root too — the classic two-root spelling.
+    // `v` is bound by a free-floating root too: the classic two-root spelling.
     let val_root = any_int_const().capture(v).into_pattern();
 
     let count = |edge: Capture| -> usize {
@@ -761,20 +743,17 @@ fn phi_input_from_edge_any_input_capture_unifies_with_tuple() {
     };
 
     // The `val_root` root ranges over every int const; the phi's `any_input`
-    // also binds `v`. Unification must collapse this to the ONE arm value per
-    // edge — if either binding overwrote the other, every const would survive.
+    // also binds `v`. Unification must collapse this to the one arm value per
+    // edge; if either binding overwrote the other, every const would survive.
     assert_eq!(count(t), 1, "unification pins `v` to the true arm's value");
     assert_eq!(count(f), 1, "unification pins `v` to the false arm's value");
 }
 
-// ── PhiInputFromEdge: control-flow reach (not just the direct edge) ───────────
-
-/// `if (reg == 0) { f(); reg = 1 } else { f(); reg = 2 }` — the motivating
-/// shape.  A `Call` terminates its basic block, so each branch's edge leads
+/// `if (reg == 0) { f(); reg = 1 } else { f(); reg = 2 }`: the motivating
+/// shape. A `Call` terminates its basic block, so each branch's edge leads
 /// into a region that is NOT the merge region's predecessor: an intervening
-/// region sits between the `If`'s true/false output and the join.  This is the
-/// shape behind every `__netdev_update_features` / `inet_sock_destruct` /
-/// `__d_alloc` fixture, where a direct-edge-only constraint sees nothing.
+/// region sits between the `If`'s true/false output and the join. This is
+/// the shape behind fixtures where a direct-edge-only constraint sees nothing.
 fn graph_phi_across_call() -> (strider_ir::Function, rsleigh::Vn) {
     let reg = reg_vn(0, 8);
     let mut t = Tb::bare(vec![reg], &[], &[reg], &[], None, 0);
@@ -790,7 +769,7 @@ fn graph_phi_across_call() -> (strider_ir::Function, rsleigh::Vn) {
     let cond = t.int_cmp(reg_v, zero, IntCmpOp::Equal);
     t.build_if(cond, a_r, b_r);
 
-    // True side: the call splits the block, so `a_tail` — not `a_r` — is the
+    // True side: the call splits the block, so `a_tail`, not `a_r`, is the
     // merge's predecessor, and the If's true edge feeds `a_r`.
     t.enter(a_r);
     t.call_at(0x1000);
@@ -813,10 +792,10 @@ fn graph_phi_across_call() -> (strider_ir::Function, rsleigh::Vn) {
     (t.ret_val(merged), reg)
 }
 
-/// THE motivating test: the phi's arms merge ACROSS A CALL, so neither branch
-/// edge is a literal control input of the join region.  Direct-edge-only
-/// matching returns nothing here; reaching through the intervening control must
-/// still pin each arm to its branch.
+/// The motivating test: the phi's arms merge across a call, so neither branch
+/// edge is a literal control input of the join region. Direct-edge-only
+/// matching returns nothing here; reaching through the intervening control
+/// must still pin each arm to its branch.
 #[test]
 fn phi_input_from_edge_reaches_through_intervening_call() {
     let (function, _reg) = graph_phi_across_call();
@@ -828,9 +807,10 @@ fn phi_input_from_edge_reaches_through_intervening_call() {
         Capture::new(),
     );
     let guard = if_node().capture_true(t).capture_false(f).build();
-    // Pin the MERGE phi (the one the Return consumes): the builder mints a phi
-    // per region, and `phi()` alone would also match the branch regions' own
-    // single-predecessor phis — whose direct predecessor IS the branch edge.
+    // Pin the MERGE phi (the one the Return consumes): the builder mints a
+    // phi per region, and `phi()` alone would also match the branch
+    // regions' own single-predecessor phis, whose direct predecessor IS
+    // the branch edge.
     let phi_p = ret().ret_val(0, phi().capture(ph)).build();
     let val = any_int_const().capture(v).into_pattern();
 
@@ -880,9 +860,7 @@ fn phi_input_from_edge_any_input_reaches_through_call() {
         Capture::new(),
     );
     let guard = if_node().capture_true(t).capture_false(f).build();
-    // Pin the MERGE phi (the one the Return consumes): the builder mints a phi
-    // per region, and `phi()` alone would also match the branch regions' own
-    // single-predecessor phis — whose direct predecessor IS the branch edge.
+    // Pin the MERGE phi (see phi_input_from_edge_reaches_through_intervening_call).
     let phi_p = ret()
         .ret_val(0, phi().any_input(any_int_const().capture(v)).capture(ph))
         .build();
@@ -917,9 +895,9 @@ fn phi_input_from_edge_any_input_reaches_through_call() {
 }
 
 /// Two stacked diamonds: `if (c0) {..} else {..}` merges at `m1`, then
-/// `if (c1) {reg=1} else {reg=2}` merges at `m2`.  The phi at `m2` has arms
-/// whose predecessors are reachable from BOTH of the OUTER if's edges, so
-/// neither outer edge dominates them.  Reach is exclusive: neither outer edge
+/// `if (c1) {reg=1} else {reg=2}` merges at `m2`. The phi at `m2` has arms
+/// whose predecessors are reachable from BOTH of the outer if's edges, so
+/// neither outer edge dominates them. Reach is exclusive: neither outer edge
 /// may pin an arm of the `m2` phi.
 fn graph_stacked_diamonds() -> (strider_ir::Function, rsleigh::Vn) {
     let reg = reg_vn(0, 8);
@@ -945,7 +923,7 @@ fn graph_stacked_diamonds() -> (strider_ir::Function, rsleigh::Vn) {
     t.write_var(&flag, twenty);
     t.branch(m1);
 
-    // Inner diamond — reachable from both outer branches.
+    // Inner diamond, reachable from both outer branches.
     t.enter(m1);
     let flag_v = t.read_var(&flag);
     let fifteen = t.u64(15);
@@ -967,9 +945,9 @@ fn graph_stacked_diamonds() -> (strider_ir::Function, rsleigh::Vn) {
     (t.ret_val(merged), reg)
 }
 
-/// The exclusivity negative: an arm reachable from BOTH branch edges is pinned
-/// to NEITHER.  Dominance means "every path goes through it" — a merged arm has
-/// paths through both edges, so it belongs to neither.
+/// The exclusivity negative: an arm reachable from BOTH branch edges is
+/// pinned to neither. Dominance means "every path goes through it"; a merged
+/// arm has paths through both edges, so it belongs to neither.
 #[test]
 fn phi_input_from_edge_rejects_arm_reachable_from_both_branches() {
     let (function, reg) = graph_stacked_diamonds();
@@ -986,12 +964,12 @@ fn phi_input_from_edge_rejects_arm_reachable_from_both_branches() {
         .capture_true(c0_t)
         .capture_false(c0_f)
         .build();
-    // The phi of `reg` at m2 — the one merging 1 and 2.
+    // The phi of `reg` at m2, the one merging 1 and 2.
     let phi_p = ret().ret_val(0, phi_for(reg).capture(ph)).build();
     let val = any_int_const().capture(v).into_pattern();
 
-    // Guard against a VACUOUS pass: an unmatched probe would also give ∅.  The
-    // outer `If` and the merge phi must both really be there.
+    // Guard against a vacuous pass: an unmatched probe would also give ∅.
+    // The outer `If` and the merge phi must both really be there.
     assert_eq!(m.find_all(&outer).unwrap().len(), 1, "outer if must match");
     assert_eq!(m.find_all(&phi_p).unwrap().len(), 1, "merge phi must match");
 
@@ -1013,14 +991,14 @@ fn phi_input_from_edge_rejects_arm_reachable_from_both_branches() {
     }
 }
 
-/// The WILDCARD PROBE, which is how you tell the two ∅s apart.  A `∅` from
-/// `PhiInputFromEdge` is ambiguous: EITHER the edge reaches no arm of this phi,
-/// OR it does and the arm merges a different value.  A wildcard `value` cannot
-/// fail on value grounds, so an empty result from it proves the edge is not
-/// visible — the discriminator, spelled `anything()` rather than named.
+/// The wildcard probe, which is how you tell the two ∅s apart. A `∅` from
+/// `PhiInputFromEdge` is ambiguous: either the edge reaches no arm of this
+/// phi, or it does and the arm merges a different value. A wildcard `value`
+/// cannot fail on value grounds, so an empty result from it proves the edge
+/// is not visible.
 #[test]
 fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
-    // Visible: the across-a-call diamond — a wildcard hits on both edges.
+    // Visible: the across-a-call diamond, a wildcard hits on both edges.
     let (function, _reg) = graph_phi_across_call();
     let m = Matcher::new(&function);
     let (t, f, ph, v) = (
@@ -1050,8 +1028,8 @@ fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
         );
     }
 
-    // ...yet a value that is on no arm still gives ∅ — a real mismatch, which
-    // the wildcard probe above distinguishes from blindness.
+    // ...yet a value on no arm still gives ∅, a real mismatch, which the
+    // wildcard probe above distinguishes from blindness.
     let dead = ret()
         .ret_val(
             0,
@@ -1070,8 +1048,8 @@ fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
         .unwrap();
     assert!(mismatch.is_empty(), "no arm merges 0xDEAD");
 
-    // Invisible: the OUTER if's edges reach no arm of the inner phi, so even a
-    // wildcard is empty — that is what blindness looks like.
+    // Invisible: the OUTER if's edges reach no arm of the inner phi, so
+    // even a wildcard is empty, which is what blindness looks like.
     let (function2, reg2) = graph_stacked_diamonds();
     let m2 = Matcher::new(&function2);
     let (ot, of, ph2, v2) = (
@@ -1088,11 +1066,10 @@ fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
     let phi2 = ret()
         .ret_val(0, phi_for(reg2).any_input(any().capture(v2)).capture(ph2))
         .build();
-    // The probe itself must match — otherwise ∅ would be vacuous, which is
-    // precisely the confusion the wildcard probe exists to resolve.  The phi
-    // probe matches once per ARM (its `any_input` binds `v2` to each in turn,
-    // the `find_all` enumeration contract), so assert non-vacuity rather than
-    // an arity-coupled count.
+    // The probe itself must match, otherwise ∅ would be vacuous. The phi
+    // probe matches once per arm (its `any_input` binds `v2` to each in
+    // turn, the `find_all` enumeration contract), so assert non-vacuity
+    // rather than an arity-coupled count.
     assert_eq!(m2.find_all(&outer).unwrap().len(), 1, "outer if must match");
     assert!(
         !m2.find_all(&phi2).unwrap().is_empty(),
@@ -1116,9 +1093,10 @@ fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
     }
 }
 
-/// `if (c0) { if (c1) {reg=1} else {reg=2} } else { reg=3 }` — the true branch's
-/// block SPLITS and reaches the merge TWICE, so two arms qualify for the true
-/// edge.  Enumerate one binding per qualifying arm; never silently pick one.
+/// `if (c0) { if (c1) {reg=1} else {reg=2} } else { reg=3 }`: the true
+/// branch's block splits and reaches the merge twice, so two arms qualify
+/// for the true edge. Enumerate one binding per qualifying arm; never
+/// silently pick one.
 fn graph_split_branch() -> (strider_ir::Function, rsleigh::Vn) {
     let reg = reg_vn(0, 8);
     let flag = reg_vn(0x40, 8);
@@ -1159,8 +1137,8 @@ fn graph_split_branch() -> (strider_ir::Function, rsleigh::Vn) {
     (t.ret_val(merged), reg)
 }
 
-/// A split branch reaching the merge twice yields ONE BINDING PER QUALIFYING
-/// ARM — the `find_all` enumeration contract, not an arbitrary pick.
+/// A split branch reaching the merge twice yields one binding per qualifying
+/// arm, the `find_all` enumeration contract, not an arbitrary pick.
 #[test]
 fn phi_input_from_edge_enumerates_every_qualifying_arm() {
     let (function, reg) = graph_split_branch();
@@ -1198,7 +1176,7 @@ fn phi_input_from_edge_enumerates_every_qualifying_arm() {
     };
 
     // The true edge's block splits: BOTH 1 and 2 are exclusively reached
-    // through it, so both bind — one tuple each.
+    // through it, so both bind, one tuple each.
     assert_eq!(
         vals(t),
         [1u128, 2].into_iter().collect(),
@@ -1208,11 +1186,11 @@ fn phi_input_from_edge_enumerates_every_qualifying_arm() {
     assert_eq!(vals(f), [3u128].into_iter().collect());
 }
 
-/// `if (c0) {} else { flag = 20 }` — the EMPTY-ARM shape.  The true edge's
-/// consumer IS the join `m1`, so a later phi's arms are dominated by `m1` while
-/// `m1` is reachable from BOTH edges.  Attributing those arms to the true edge
-/// would be a false positive: reach must stay exclusive, so the dominance
-/// clause only applies where the edge is its target's SOLE entry.
+/// `if (c0) {} else { flag = 20 }`: the empty-arm shape. The true edge's
+/// consumer IS the join `m1`, so a later phi's arms are dominated by `m1`
+/// while `m1` is reachable from both edges. Attributing those arms to the
+/// true edge would be a false positive: reach must stay exclusive, so the
+/// dominance clause only applies where the edge is its target's sole entry.
 #[test]
 fn phi_input_from_edge_rejects_empty_branch_criss_cross() {
     let reg = reg_vn(0, 8);

@@ -56,8 +56,8 @@ fn has_add(function: &strider_ir::Function) {
     );
 }
 // `IntBinaryOp::Sub` is no longer a primitive: pcode-lift lowers `IntSub`
-// to `Add(_, Neg(_))` at lift time.  An honest "has subtraction" check
-// looks for the `IntUnaryOp::Neg` produced by the lowering — every real
+// to `Add(_, Neg(_))` at lift time. An honest "has subtraction" check
+// looks for the `IntUnaryOp::Neg` produced by the lowering; every real
 // subtraction in the binary contributes at least one Neg.
 fn has_sub(function: &strider_ir::Function) {
     assert!(
@@ -165,7 +165,7 @@ fn has_ashr(function: &strider_ir::Function) {
 
 // Arithmetic negation (-a).  Sleigh's `Int2Comp` opcode lifts to `IntUnaryOp::Neg`.
 // ARM and MIPS synthesise it as `0 - a`, which lifts via the new lowering
-// to `Add(0, Neg(a))` and collapses to `Neg(a)` via the `x + 0 → x` identity
+// to `Add(0, Neg(a))` and collapses to `Neg(a)` via the `x + 0 -> x` identity
 // rule.  Either path produces an `IntUnaryOp::Neg`, so a single check
 // covers both arches.
 fn has_neg(function: &strider_ir::Function) {

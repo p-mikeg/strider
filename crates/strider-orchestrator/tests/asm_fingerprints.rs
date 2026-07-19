@@ -14,15 +14,14 @@ use strider_ir::{IRViewer, IRWalker};
 
 #[test]
 fn arithmetic_x86_add_validate_with_asm_fingerprint_check() {
-    // Same invariant as above, but driven through the IR validator's opt-in
-    // hook so we exercise the public surface end-to-end.
+    // Drives the check through validate()'s opt-in hook rather than the
+    // side-table directly, to exercise the public surface.
     let function = analyze(Arch::X86, "arithmetic", "add");
     validate(&function).expect("every reachable non-exempt node must have a fingerprint");
 }
 
 #[test]
 fn arithmetic_x86_default_validate_remains_unchanged() {
-    // Sanity: the default `validate` call still works post-pipeline.
     let function = analyze(Arch::X86, "arithmetic", "add");
     validate(&function).expect("default validate still passes");
 }
@@ -37,7 +36,7 @@ fn control_x86_clamp_validate_with_asm_fingerprint_check() {
 
 #[test]
 fn control_x86_count_bits_validate_with_asm_fingerprint_check() {
-    // Loop body — exercises mem-phi / var-phi at the join points.
+    // Loop body: exercises mem-phi / var-phi at the join points.
     let function = analyze(Arch::X86, "control", "count_bits");
     validate(&function).expect("count_bits pipeline preserves the fingerprint invariant");
 }
@@ -54,18 +53,16 @@ fn arithmetic_x86_complex_validate_with_asm_fingerprint_check() {
 
 #[test]
 fn arithmetic_x86_add_node_fingerprint_is_inside_function_extent() {
-    // Every fingerprint address for a reachable value node must be a
-    // plausible machine address (non-zero, fits the function's region).
-    // This is a loose smoke check: it confirms we did NOT accidentally
-    // record pcode-insn-index values or other garbage.
+    // Loose smoke check: confirms fingerprints hold plausible machine
+    // addresses, not pcode-insn-index values or other garbage.
     let function = analyze(Arch::X86, "arithmetic", "add");
     let mut saw_any = false;
     for node in function.walk() {
         let fp = function.side_tables().asm_fingerprint(node);
         for addr in fp {
             assert_ne!(addr, 0, "asm-fingerprint addr 0 is suspicious");
-            // x86 fixtures are linked at the default location; everything
-            // we lift sits well above 64KiB.
+            // x86 fixtures link at the default location; everything lifted
+            // sits well above 64KiB.
             assert!(
                 addr > 0x1000,
                 "asm-fingerprint addr {addr:#x} is suspiciously low"
@@ -78,20 +75,10 @@ fn arithmetic_x86_add_node_fingerprint_is_inside_function_extent() {
 
 #[test]
 fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
-    // Tight-bound complement to the loose extent check above: drive a
-    // hand-assembled snippet through the full orchestrator so the exact
-    // machine-address range is known by construction, then assert every
-    // reachable non-exempt node carries a non-empty fingerprint whose
-    // addresses ALL fall inside the snippet:
-    //
-    //   1000:  48 01 c0   add rax, rax
-    //   1003:  48 01 c0   add rax, rax
-    //   1006:  48 01 c0   add rax, rax
-    //   1009:  48 01 c0   add rax, rax
-    //   100c:  c3         ret
-    //
-    // Valid contributor addresses are therefore exactly
-    // {0x1000, 0x1003, 0x1006, 0x1009, 0x100c}.
+    // Tight-bound complement to the loose extent check above: a hand-assembled
+    // snippet makes the valid address set known by construction
+    // ({0x1000, 0x1003, 0x1006, 0x1009, 0x100c}), so every reachable
+    // non-exempt node's fingerprint must fall entirely inside it.
     use rsleigh::mem_readers::BufMemReader;
     use strider_orchestrator::opt::OptOptions;
     use strider_orchestrator::{LiftOptions, Strider};

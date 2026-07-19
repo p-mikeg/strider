@@ -1,9 +1,8 @@
 //! Sub-register aliasing end-to-end: a snippet that writes a wide
-//! register (`rax`) and then reads/writes a narrow alias (`al`) must
-//! lift through the container-register dispatch (`read_reg_vn` /
-//! `write_reg_vn`) — the raw IR carries the truncate/mask shape — and
-//! the optimiser must fold the whole chain to the right constant in
-//! the ret-val register.
+//! register (`rax`) and then reads/writes a narrow alias (`al`) must lift
+//! through the container-register dispatch (`read_reg_vn` / `write_reg_vn`),
+//! so the raw IR carries the truncate/mask shape, and the optimiser must
+//! fold the whole chain to the right constant in the ret-val register.
 //!
 //! Snippet (x86_64):
 //!
@@ -15,7 +14,7 @@
 //!
 //! Hand-computed result: `rax = 0xff`, then `al = (0xff + 1) & 0xff =
 //! 0x00` written back into bits 0-7 of the container while bits 8-63
-//! (all zero) are preserved → `rax == 0` at `ret`.
+//! (all zero) are preserved -> `rax == 0` at `ret`.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
@@ -41,7 +40,7 @@ fn snippet_bytes() -> Vec<u8> {
 #[test]
 fn narrow_alias_read_lifts_with_truncate_or_mask_shape() {
     // Lift WITHOUT the optimiser: the `al` read of the tracked `rax`
-    // container must insert a Truncate (or an And mask) — that shape is
+    // container must insert a Truncate (or an And mask); that shape is
     // the register-aliasing dispatch's signature.
     let reader = BufMemReader::new(snippet_bytes(), BASE);
     let (mut driver, cc) = common::strider_x86_64(reader);
@@ -67,7 +66,7 @@ fn narrow_alias_read_lifts_with_truncate_or_mask_shape() {
 fn narrow_alias_write_folds_to_zero_in_ret_val_register() {
     // Full orchestrator run: the optimiser folds the container
     // read-modify-write chain; the Return's rax slot must be
-    // IntConst(0) (al wrapped 0xff+1 → 0x00, upper bits already zero).
+    // IntConst(0) (al wrapped 0xff+1 -> 0x00, upper bits already zero).
     let arch = strider_target::SleighArch::x86_64();
     let reader = BufMemReader::new(snippet_bytes(), BASE);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
@@ -88,8 +87,7 @@ fn narrow_alias_write_folds_to_zero_in_ret_val_register() {
     assert!(result.unresolved_indirect_branches.is_empty());
     let function = result.function;
 
-    // Locate the unique Return and inspect its ret-val inputs
-    // (slots 2.. after [control, memory]).
+    // ret-val inputs start at slot 2, after [control, memory].
     let ret = function
         .walk()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
@@ -104,10 +102,10 @@ fn narrow_alias_write_folds_to_zero_in_ret_val_register() {
         .iter()
         .map(|&v| function.int_const_u128(v))
         .collect();
-    // Pinned: the optimiser fully folds the chain — the first ret-val
-    // slot (rax in the SystemV ret-val order) is IntConst(0); the
-    // remaining ret-val slots (rdx / float regs) stay non-constant
-    // function-entry values.
+    // Pinned: the optimiser fully folds the chain, so the first ret-val
+    // slot (rax in SystemV ret-val order) is IntConst(0); the remaining
+    // ret-val slots (rdx / float regs) stay non-constant function-entry
+    // values.
     assert_eq!(
         ret_vals.first().copied().flatten(),
         Some(0),

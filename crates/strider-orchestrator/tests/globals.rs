@@ -42,7 +42,7 @@ fn const_int_folds_to_value(function: &strider_ir::Function) {
 fn string_branch_folds_one_arm(function: &strider_ir::Function) {
     // The byte 'y' = 0x79 read from k_str[0] folds; combined with
     // DeadBranchElimination this often eliminates one arm of the If.
-    // We pin only the constant — the arm-elimination is opt's responsibility.
+    // We pin only the constant; arm-elimination is opt's responsibility.
     assert!(
         has_constant(function, 0x79) || count_ifs(function) == 0,
         "expected either IntConst(0x79) or eliminated If; neither found"

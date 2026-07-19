@@ -15,8 +15,8 @@ use strider_ir::{FloatBinaryOp, FloatCmpOp};
 // `arm_be` skips every float test: ARM8_BE Sleigh's VFP register file
 // uses descending offsets and `d0` does not overlap `s0`, so the
 // analyzer's container-register aliasing drops the entire VFP read/write
-// chain.  The body of every VFP-using function reduces to Entry / Return
-// / FunctionArg / InitialVar in the IR, with no Float* nodes.
+// chain. Every VFP-using function reduces to Entry / Return / FunctionArg
+// / InitialVar in the IR, with no Float* nodes.
 per_arch_test!("floats", "f32_arith",    has_four_float_binops, ignore = {
     ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — 0 FloatBinaryOps in IR",
 });
@@ -48,11 +48,9 @@ per_arch_test!("floats", "f32_neg_abs",  has_float_neg, ignore = {
 });
 
 fn has_four_float_binops(function: &strider_ir::Function) {
-    // `FloatBinaryOp::Sub` is no longer a primitive — `FloatSub` lifts to
-    // `FloatAdd(_, FloatUnaryOp::Neg(_))`.  A real subtraction in the
-    // source contributes one `FloatAdd` AND one `FloatUnaryOp::Neg`, so
-    // counting Adds alone double-counts subtractions; instead we count
-    // each binop kind plus the lowered-Sub `Neg` markers.
+    // `FloatSub` lifts to `FloatAdd(_, FloatUnaryOp::Neg(_))`, so a real
+    // subtraction contributes one Add and one Neg; counting Adds alone
+    // would double-count subtractions against the source's binop count.
     let total = count_float_binop(function, FloatBinaryOp::Add)
         + count_float_binop(function, FloatBinaryOp::Mul)
         + count_float_binop(function, FloatBinaryOp::Div);
@@ -80,30 +78,23 @@ fn has_float_to_int(function: &strider_ir::Function) {
     );
 }
 fn has_two_float_cmps(function: &strider_ir::Function) {
-    // The C source has two `if (a OP b) ...` branches.  x64 / aarch64 may
-    // lower one or both via cmov / csel (conditional-move) instead of a
-    // real branch — those don't appear as `If` nodes in the IR.  The
-    // assertion that survives all archs: at least 2 FloatCmpOp nodes
-    // (one per `OP` in the source, regardless of whether the surrounding
-    // construct lowers as If or cmov).
-    // `LessEqual` and `NotEqual` are no longer primitives — they lower to
-    // compositions of `Equal` and `Less` (see `strider_lift::lift` (value::float)).
-    // Either source-level `<=` becomes one `Equal` + one `Less` here.
+    // The source has two `if (a OP b)` branches, but x64 / aarch64 may
+    // lower one or both via cmov / csel instead of a real branch, so
+    // counting `If` nodes is unreliable; count FloatCmpOp instead
+    // (>= 2, one per source `OP`, regardless of If-vs-cmov lowering).
+    // `LessEqual` and `NotEqual` aren't primitives: they lower to
+    // Equal/Less compositions, so a source-level `<=` becomes one Equal
+    // + one Less here.
     let total =
         count_float_cmp(function, FloatCmpOp::Less) + count_float_cmp(function, FloatCmpOp::Equal);
     assert!(total >= 2, "expected ≥2 FloatCmpOp, got {total}");
 }
 fn has_float_neg(function: &strider_ir::Function) {
-    // Float negation `-f` has two equally-valid lowerings, with several
-    // arch-specific variants:
-    //   1. FloatUnaryOp::Neg (semantic; some lifters emit this directly).
-    //   2. Xor with the sign bit — 0x80000000 (F32) or 0x80000000_00000000
-    //      (F64).  The sign mask may be a direct IntConst, OR a vector-load
-    //      from .rodata (x86_64 SSE typically uses xorps with [.LC]).  When
-    //      it's a Load, the bit pattern doesn't appear as a foldable IntConst.
-    //
-    // Accept any of: Neg node OR any Xor (the lowering of float-neg always
-    // involves at least one Xor on archs without a dedicated FloatNeg).
+    // Float negation `-f` lowers either to FloatUnaryOp::Neg directly, or
+    // to a Xor against the sign bit (0x80000000 / 0x80000000_00000000).
+    // The sign mask may be a direct IntConst or a vector-load from .rodata
+    // (x86_64 SSE's xorps against [.LC]), in which case the bit pattern
+    // isn't a foldable IntConst, so we accept either a Neg node or any Xor.
     use strider_ir::FloatUnaryOp;
     let has_neg = count_float_unop(function, FloatUnaryOp::Neg) >= 1;
     let has_xor = count_int_binop(function, strider_ir::IntBinaryOp::Xor) >= 1;

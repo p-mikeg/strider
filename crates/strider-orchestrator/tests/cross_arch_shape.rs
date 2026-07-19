@@ -1,26 +1,17 @@
 //! Cross-architecture IR structural-shape baseline.
 //!
-//! Lifts a single representative function from `fixtures/cases/control.c`
-//! for every supported architecture, distils each post-optimization IR
-//! graph into a **structural fingerprint** (register-name-/ID-/address-
-//! independent), and snapshots the per-arch fingerprint map.
+//! Lifts `sum_to_n` from `fixtures/cases/control.c` for every supported
+//! architecture, distils each post-optimization graph into a structural
+//! fingerprint (register-name-/ID-/address-independent: node-kind
+//! histogram + edge-kind totals + reachable node count + region count +
+//! per-phi-kind counts), and snapshots the per-arch map. This lets x86 and
+//! arm64 IR for the same source collapse to a comparable fingerprint;
+//! drift in that "same source -> structurally equivalent IR" invariant
+//! moves at least one arch's bucket.
 //!
-//! The structural fingerprint is invariant to register names, specific
-//! `IntConst` values, asm-fingerprint addresses, and node IDs — only the
-//! *shape* of the graph (node-kind histogram + edge-kind totals + reachable
-//! node count + region count + per-phi-kind counts) is captured.  This lets
-//! the same source on x86 and arm64 collapse to a comparable fingerprint
-//! whose drift between arches is itself information worth pinning: any
-//! later work that breaks the "same source ↦ structurally equivalent IR
-//! across arches" invariant will move at least one arch's bucket.
-//!
-//! Function selected: `sum_to_n` — exercises a loop + arithmetic + return
-//! path, while being simple enough to compare cleanly across arches.
-//!
-//! Lift failures (panics from `common::analyze`) are captured as a sentinel
-//! `LIFT_FAILED` fingerprint rather than silently dropped — drift in the
-//! failure set is itself part of the contract.
-//!
+//! Lift failures (panics from `common::analyze`) are captured as a
+//! sentinel `LIFT_FAILED` fingerprint rather than silently dropped: drift
+//! in the failure set is itself part of the contract.
 
 #![allow(
     clippy::panic,
@@ -36,17 +27,13 @@ use std::collections::BTreeMap;
 use strider_ir::node::{NodeKind, ValueKind};
 use strider_ir::{IRViewer, IRWalker};
 
-/// Function selected for the cross-arch comparison.  See module doc.
 const FN_NAME: &str = "sum_to_n";
 const CASE: &str = "control";
 
-/// Returns a stable, human-readable name for a node kind variant.
-///
-/// The name elides scalar payload that's irrelevant to structural
-/// shape (e.g. the numeric value of an [`NodeKind::IntConst`], or the
-/// varnode of an [`NodeKind::InitialVar`]) but keeps inner operator
-/// payload that *is* a structural property of the source program
-/// (e.g. `IntBinaryOp(Add)` → `"IntBinaryOp(Add)"`).
+/// Payload-elided name for a `NodeKind` variant: scalar payload irrelevant
+/// to structural shape (an `IntConst`'s value, an `InitialVar`'s varnode)
+/// is dropped, but operator payload that reflects the source program
+/// (`IntBinaryOp(Add)`) is kept.
 fn node_kind_name(k: &NodeKind) -> &'static str {
     use strider_ir::{
         ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -130,7 +117,7 @@ fn node_kind_name(k: &NodeKind) -> &'static str {
 }
 
 /// Structural shape of one lifted IR graph, register-/address-/value-
-/// agnostic.  See module doc for what is and isn't captured.
+/// agnostic. See module doc for what is and isn't captured.
 #[derive(Debug, serde::Serialize)]
 struct Fingerprint {
     /// `LIFT_FAILED:<msg>` on lift panic, else `OK`.
@@ -140,14 +127,11 @@ struct Fingerprint {
     edges_control: usize,
     edges_memory: usize,
     edges_value: usize,
-    /// Phi counts broken out by kind so register-renaming inside `VarPhi(Vn)`
-    /// or `Phi` doesn't blur the histogram.
+    /// Broken out per phi kind so register-renaming inside `VarPhi(Vn)` /
+    /// `Phi` doesn't blur the histogram.
     var_phis: usize,
     mem_phis: usize,
     value_phis: usize,
-    /// `NodeKind` variant name → count.  Variant payload is elided (no
-    /// register names, no constants, no user-op ids) so the bucket is
-    /// arch-independent.
     kind_histogram: BTreeMap<String, usize>,
 }
 
@@ -168,18 +152,10 @@ impl Fingerprint {
     }
 }
 
-/// Canonical (payload-elided) name for a `NodeKind` variant.  Two nodes
-/// with the same variant but different payload (e.g. `IntConst(0)` vs
-/// `IntConst(42)`, or `InitialVar(rax)` vs `InitialVar(x0)`) collapse to
-/// the same bucket.  Operator-bearing variants keep the operator name
-/// (e.g. `IntBinaryOp(Add)`) since that's a *structural* property of the
-/// source program, not a register-renaming artefact.
-///
-/// Uses [`node_kind_name`] for the common case;
-/// overrides only for `Phi`, which splits into `VarPhi` / `ValuePhi`
-/// based on the per-value side-table `value_vn` (queried via
-/// `Function::get_vn_for_value` on the Phi's output, which
-/// `node_kind_name` cannot access without graph context).
+/// `Phi` splits into `VarPhi` / `ValuePhi` via the per-value side-table
+/// `value_vn` (`Function::get_vn_for_value` on the Phi's output), which
+/// [`node_kind_name`] can't see without graph context; every other kind
+/// delegates to it.
 fn kind_bucket(function: &strider_ir::Function, nid: strider_ir::node::NodeId) -> String {
     let k = function.node_kind(nid);
     match k {
@@ -195,17 +171,10 @@ fn kind_bucket(function: &strider_ir::Function, nid: strider_ir::node::NodeId) -
     }
 }
 
-/// Compute the structural fingerprint of `g`.
-///
-/// Walks every reachable node via `Graph::preorder` (same
-/// reachability scope used by the validator's local-typing check), accumulating:
-///   * histogram of payload-elided `NodeKind` buckets,
-///   * total edge counts by kind (Control / Memory / Value), where an
-///     "edge" is one input slot — counted by the kind of that input's
-///     producer-output,
-///   * region count (one per `Region` reachable node — matches
-///     how `strider_cfg::Cfg` regions are projected into the IR),
-///   * per-kind phi counts (broken out for sensitivity to kind drift).
+/// Walks every reachable node (same reachability scope as the validator's
+/// local-typing check) accumulating the histogram, edge-kind totals
+/// (counted by the kind of each input's producer-output), region count,
+/// and per-kind phi counts.
 fn structural_fingerprint(function: &strider_ir::Function) -> Fingerprint {
     let mut kind_histogram: BTreeMap<String, usize> = BTreeMap::new();
     let mut reachable_nodes = 0usize;
@@ -236,15 +205,13 @@ fn structural_fingerprint(function: &strider_ir::Function) -> Fingerprint {
             NodeKind::MemPhi => mem_phis += 1,
             _ => {}
         }
-        // Count incoming edges by producer-output kind.
         for input in function.node_inputs(nid) {
             match function.value_kind(input) {
                 ValueKind::Control => edges_control += 1,
                 ValueKind::Memory => edges_memory += 1,
                 ValueKind::Typed(_) => edges_value += 1,
-                // PhiToken edges are an internal phi-bookkeeping detail and
-                // not part of the user-visible data/control shape; we omit
-                // them.
+                // PhiToken edges are internal phi bookkeeping, not part of
+                // the user-visible data/control shape.
                 ValueKind::PhiToken => {}
             }
         }
@@ -276,8 +243,8 @@ fn control_c_sum_to_n_cross_arch_shape() {
     for &arch in ALL_ARCHES {
         let path = common::binary_path(arch, CASE);
         if !path.exists() {
-            // Missing binary — fixture not built for this arch.  Distinct
-            // from a lift failure; record sentinel so a future build of
+            // Missing binary (fixture not built for this arch) is distinct
+            // from a lift failure; record a sentinel so a future build of
             // the missing arch shows up as drift.
             map.insert(arch.name(), Fingerprint::lift_failed("MISSING_BINARY"));
             continue;

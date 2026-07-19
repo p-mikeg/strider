@@ -1,6 +1,4 @@
 //! Load / Store at the default code space and on the stack.
-//!
-//! 7 functions × 6 archs = 42 tests.
 
 #![allow(
     clippy::panic,

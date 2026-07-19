@@ -1,24 +1,18 @@
-//! Complex pattern queries — struct-field offsets, bit-test branches, calls
+//! Complex pattern queries: struct-field offsets, bit-test branches, calls
 //! under control-flow, and a scale smoke test.
 //!
 //! Conventions:
-//!   * Every `Matcher` instance opts into `ignore_casts_mask(EXTEND |
-//!     TRUNCATE)` so tests don't break on arch-specific width-cast noise.
+//!   * Every `Matcher` opts into `ignore_casts_mask(EXTEND | TRUNCATE)` so
+//!     tests don't break on arch-specific width-cast noise.
 //!   * Bit-mask values are captured (never hardcoded) via a `Capture` and
-//!     a `.when_match()` predicate that checks `count_ones() == 1`.
-//!   * On arm_thumb gcc emits a `setISAMode` user-op as a `CallOther`
-//!     between the If and the following Call to set up the ISA-mode
-//!     context bit.  `IfPat`'s branch walk does not pass through a
-//!     CallOther, but `strider_target::call_other_abi::classify("setISAMode")`
-//!     returns `NoOp` so the IR builder skips emitting the CallOther
-//!     entirely, and structural compositions like
-//!     `if_node().true_branch(call().arg(0, function_arg(1)))` match
-//!     on Thumb just like every other arch.
+//!     a `.when_match()` predicate checking `count_ones() == 1`.
+//!   * On arm_thumb, gcc emits a `setISAMode` CallOther between the If and
+//!     the following Call. `call_other_abi::classify("setISAMode")` reports
+//!     it as `NoOp`, so the IR builder never emits the node and If->Call
+//!     compositions match on Thumb just like every other arch.
 //!
-//! The `per_arch_test!` macro generates one module per fixture-function
-//! name, so each fixture function gets exactly one named test (which may
-//! make multiple assertions internally).  This keeps the test count to
-//! one per (fixture × arch) — 9 fixtures × 14 arches = 126 invocations.
+//! `per_arch_test!` generates one test per fixture function per arch
+//! (9 fixtures × 14 arches = 126 invocations).
 
 #![allow(
     clippy::panic,
@@ -40,34 +34,26 @@ use strider_pattern::{
 use strider_ir::IntCmpOp;
 use strider_ir::node::{NodeId, NodeKind};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Local helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// The standard cast mask used by every pattern in this module: walk
-/// through width casts (Extend / Truncate) inserted by some lifters
-/// between integer-width-mismatched operations.
+/// Cast mask shared by every pattern in this module: skips Extend/Truncate
+/// width casts some lifters insert between mismatched-width operations.
 fn cast_mask() -> CastMask {
     CastMask::EXTEND | CastMask::TRUNCATE
 }
 
-/// Seal `p` into a [`Pattern`] with the standard cast mask applied.
 fn finish<P: MatchPat>(p: P) -> Pattern {
     p.into_pattern().ignore_casts_mask(cast_mask())
 }
 
-/// Apply the standard cast mask to an already-built control [`Pattern`].
 fn masked(p: Pattern) -> Pattern {
     p.ignore_casts_mask(cast_mask())
 }
 
-/// Plain matcher; cast-mask handling now lives on the pattern.
 fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
     Matcher::new(function)
 }
 
-/// Pattern that matches `IntConst` whose value is a single-bit mask
-/// (`n != 0 && n.count_ones() == 1`); the captured value lands in `iv`.
+/// Matches an `IntConst` single-bit mask (nonzero, popcount 1); captures
+/// the value into `iv`.
 fn single_bit_int_const(iv: Capture) -> impl MatchPat {
     any_int_const().capture(iv).when_match(move |ctx, _ty, b| {
         let Some(n) = b.get_uint(iv, ctx.function()) else {
@@ -77,13 +63,12 @@ fn single_bit_int_const(iv: Capture) -> impl MatchPat {
     })
 }
 
-/// Pattern that matches a "bit-test against zero" — `IntCmp(Equal, And(_,
-/// single-bit-const), 0)`.  The mask value is captured into `mask_var`.
+/// "Bit-test against zero": `IntCmp(Equal, And(_, single-bit-const), 0)`.
+/// The mask value is captured into `mask_var`.
 ///
-/// Note: `IntNotEqual` does not exist as a separate `IntCmpOp` variant —
-/// the analyzer lowers p-code `INT_NOTEQUAL` to `BoolNeg(IntEqual)`, so
-/// every "(x & K) == 0" or "(x & K) != 0" both still produce an
-/// `IntCmpOp::Equal` in IR (potentially wrapped in a `BoolUnaryOp::Neg`).
+/// `IntNotEqual` isn't a separate `IntCmpOp` variant: `INT_NOTEQUAL` lowers
+/// to a negated `IntEqual`, so both `(x & K) == 0` and `(x & K) != 0` reach
+/// IR as `IntCmpOp::Equal`, the latter wrapped in a boolean negation.
 fn bit_test_against_zero(value: Capture, mask_var: Capture) -> impl MatchPat {
     int_cmp(
         IntCmpOp::Equal,
@@ -102,14 +87,12 @@ fn field_load_at_offset(base: Capture, offset: Capture) -> impl MatchPat {
     load().addr(add(var(base), any_int_const().capture(offset)))
 }
 
-/// Builds a `Pat` that matches any carrier node registered for function arg
-/// `arg_index` in the `Function::arg_index_to_values` side-table.  The pattern
-/// checks that the matched node's primary output is one of the carriers'
-/// outputs, making it usable as a drop-in for the old `function_arg(N)`
-/// pattern in expressions like `call().arg(i, arg_carrier_pat(g, N))`.
+/// Matches any carrier node registered for function arg `arg_index` in the
+/// `Function::arg_index_to_values` side-table, by checking the matched node's
+/// primary output against the carriers' outputs. Drop-in for expressions
+/// like `call().arg(i, arg_carrier_pat(g, N))`.
 fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> impl MatchPat + 'static {
     use strider_ir::node::ValueId;
-    // The side-table already stores each carrier's primary output value.
     let carrier_outputs: Vec<ValueId> = function
         .side_tables()
         .arg_index_to_values(arg_index)
@@ -121,10 +104,6 @@ fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> impl Matc
     })
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. read_struct_fields — three field loads, captured offsets {0, 4, 8}
-// ─────────────────────────────────────────────────────────────────────────────
-
 per_arch_test!(
     "complex",
     "read_struct_fields",
@@ -132,15 +111,14 @@ per_arch_test!(
 );
 
 fn read_struct_fields_assertions(function: &strider_ir::Function) {
-    // (a) The graph must contain ≥3 Loads (s->a, s->b, s->c).
     assert!(
         count_loads(function) >= 3,
         "read_struct_fields must have ≥3 Loads; got {}",
         count_loads(function)
     );
 
-    // (b) Some compilers emit `load(base)` for offset 0; others emit
-    // `load(base + 0)`.  Either way ≥1 Load is required.
+    // Some compilers fold offset 0 to bare `load(base)`; others emit
+    // `load(base + 0)`. Either way >=1 Load is required.
     let m = matcher(function);
     let pat = masked(load().build());
     assert!(
@@ -148,8 +126,6 @@ fn read_struct_fields_assertions(function: &strider_ir::Function) {
         "expected ≥1 Load match in read_struct_fields"
     );
 
-    // (c) At least one of {4, 8} must appear as a constant offset on the
-    // load address — capture the offset via a Capture and assert.
     let base = Capture::new();
     let off = Capture::new();
     let off_pat = finish(field_load_at_offset(base, off));
@@ -163,10 +139,6 @@ fn read_struct_fields_assertions(function: &strider_ir::Function) {
         "expected at least one Load(base + {{4,8}}); got offsets {offsets:?}"
     );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 2. write_struct_fields — three stores at offsets {0, 4, 8} of the same value
-// ─────────────────────────────────────────────────────────────────────────────
 
 per_arch_test!(
     "complex",
@@ -200,7 +172,7 @@ fn write_struct_fields_assertions(function: &strider_ir::Function) {
         "expected ≥1 Store(base + {{4,8}}); got offsets {offsets:?}"
     );
 
-    // Distinct offsets: at least 2 different K values among the stores.
+    // At least 2 distinct offsets among the stores.
     let mut distinct = offsets.clone();
     distinct.sort();
     distinct.dedup();
@@ -209,10 +181,6 @@ fn write_struct_fields_assertions(function: &strider_ir::Function) {
         "expected ≥2 distinct Store offsets; got {distinct:?}"
     );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. nested_struct_field — single Load whose address has a constant offset
-// ─────────────────────────────────────────────────────────────────────────────
 
 per_arch_test!(
     "complex",
@@ -233,11 +201,9 @@ fn nested_struct_field_assertions(function: &strider_ir::Function) {
     let off = Capture::new();
     let pat = finish(field_load_at_offset(base, off));
     let hits = m.find_all(&pat).unwrap();
-    // Either we found a `Load(base + IntConst)` (offset captured), or the
-    // compiler emitted bare `Load(base)` for a folded zero — either is ok
-    // for this fixture.  But if any `add(_, IntConst)` form matched, at
-    // least one offset must be non-zero (the inner.x position is at
-    // `padding + offsetof(Inner, x)` ≥ 4).
+    // Either the offset got captured, or the compiler folded a zero offset
+    // to bare `Load(base)`; both are fine. But when captured, it must be
+    // nonzero (inner.x sits at padding + offsetof(Inner, x) >= 4).
     let offsets: Vec<u128> = hits
         .iter()
         .filter_map(|h| h.bindings().get_uint(off, function))
@@ -250,17 +216,13 @@ fn nested_struct_field_assertions(function: &strider_ir::Function) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 4. bit_test_zero — IntCmp(Equal, And(_, single-bit-const), 0)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // arm `pop {pc}` resolves via the indirect-branch resolver's
 // `LinkRegister` arm once `LoadForward` simplifies the loaded
 // target back to `InitialVar(lr)`.
 per_arch_test!("complex", "bit_test_zero", bit_test_zero_assertions);
 
 fn bit_test_zero_assertions(function: &strider_ir::Function) {
-    // (mask & 0x4) == 0 → graph contains both `And` and `Equal`.
+    // (mask & 0x4) == 0 -> graph contains both `And` and `Equal`.
     assert!(
         count_int_binop(function, strider_ir::IntBinaryOp::And) >= 1,
         "bit_test_zero must contain ≥1 IntBinaryOp::And; got {}",
@@ -272,9 +234,8 @@ fn bit_test_zero_assertions(function: &strider_ir::Function) {
         count_int_cmp(function, strider_ir::IntCmpOp::Equal)
     );
 
-    // Match `IntCmp(Equal, And(_, single-bit-IntConst), 0)` and assert
-    // the captured mask is a single-bit value (the pattern enforces the
-    // predicate; we additionally verify the captures).
+    // The pattern already enforces the single-bit predicate; double-check
+    // the captures below.
     let m = matcher(function);
     let mask = Capture::new();
     let value = Capture::new();
@@ -294,10 +255,6 @@ fn bit_test_zero_assertions(function: &strider_ir::Function) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 5. if_bit_clear_call — If exists; ≥1 Call exists
-// ─────────────────────────────────────────────────────────────────────────────
-
 per_arch_test!("complex", "if_bit_clear_call", if_bit_clear_call_assertions);
 
 fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
@@ -312,20 +269,10 @@ fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
         count_calls(function)
     );
 
-    // Decoupled background fact: some Call has arg(0) = function_arg(1)
-    // — the `p` parameter (`mask` is arg 0).  Cross-arch, this exercises
-    // the optimizer's LoadForward pass: at -O0, `p` is spilled to
-    // stack at function entry and reloaded before the call, so for the
-    // pattern to match the spill round-trip MUST collapse so
-    // Call.arg(0) ↔ FunctionArg(1).
-    //
-    // On Thumb-2, gcc emits a `setISAMode` user-op as a `CallOther`
-    // between the If and the Call to set up the ISA-mode context.
-    // `IfPat`'s branch walk doesn't pass through a CallOther, but
-    // `strider_target::call_other_abi::classify("setISAMode")` returns `NoOp` so the
-    // IR builder skips the node entirely, and the strict composition
-    // `If(true_branch=Call(...))` matches on Thumb just like every
-    // other arch.
+    // Call.arg(0) is `p` (mask is arg 0). At -O0 `p` is spilled to the
+    // stack and reloaded before the call, so this also exercises LoadForward
+    // collapsing the spill round-trip back to the carrier. (Thumb's
+    // setISAMode CallOther: see the module doc.)
     let m = matcher(function);
     assert!(
         !m.find_all(&masked(if_node().build())).unwrap().is_empty(),
@@ -345,15 +292,9 @@ fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
              through to the call site)"
     );
 
-    // STRICT composition: "If whose true branch is a Call(arg(0) =
-    // carrier(arg 1))".  The compiler may emit either
-    //   bne skip; call          (call on False side)
-    // or
-    //   je do_call; call        (call on True side)
-    // so we accept *either* branch shape — but the composition itself
-    // (If immediately consuming a Call with that arg) must succeed on
-    // every arch, including arm_thumb (proves the construction-time
-    // NoOp classification of setISAMode keeps the walk unblocked).
+    // The compiler may put the call on either branch (`bne skip; call` vs
+    // `je do_call; call`), so accept either. What must hold on every arch,
+    // including Thumb, is that the If directly consumes the Call.
     let true_pat = masked(
         if_node()
             .with_true(masked(call().arg(0, arg_carrier_pat(function, 1)).build()))
@@ -374,10 +315,6 @@ fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 6. call_with_field_arg — Call.arg(0) is a Load
-// ─────────────────────────────────────────────────────────────────────────────
-
 per_arch_test!(
     "complex",
     "call_with_field_arg",
@@ -394,10 +331,8 @@ fn call_with_field_arg_assertions(function: &strider_ir::Function) {
         "call_with_field_arg must Call invoke()"
     );
 
-    // Tight match: Call whose arg(0) is `Load(base + offset)` where
-    // offset is captured (and asserted to be in a sane range).  This is
-    // the canonical "find a call's arg that's a struct field load"
-    // pattern — the value of `offset` is captured rather than hardcoded.
+    // Call whose arg(0) is Load(base + offset); offset is captured, not
+    // hardcoded, so the assertion below doesn't pin an ABI-specific value.
     let m = matcher(function);
     let base = Capture::new();
     let off = Capture::new();
@@ -408,10 +343,9 @@ fn call_with_field_arg_assertions(function: &strider_ir::Function) {
         "expected ≥1 Call(arg(0) = Load(base + IntConst))"
     );
 
-    // Sanity-bound the offset.  `s->handler` lives at offset 16 in
-    // `struct S { int a, b, c, flags; int *handler; }` (16 on 32-bit
-    // pointer arches) or 32 (on 64-bit pointer arches with extra
-    // padding) — both well under 256.
+    // `s->handler` lives at offset 16 in `struct S { int a, b, c, flags;
+    // int *handler; }` on 32-bit pointer arches, or 32 with the extra
+    // padding on 64-bit ones; both comfortably under 256.
     let offsets: Vec<u128> = hits
         .iter()
         .filter_map(|h| h.bindings().get_uint(off, function))
@@ -421,10 +355,6 @@ fn call_with_field_arg_assertions(function: &strider_ir::Function) {
         "no captured field-load offset is in 0..256; got {offsets:?}"
     );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 7. dispatch_on_flag — bit-test → if → call → field-load (composition)
-// ─────────────────────────────────────────────────────────────────────────────
 
 per_arch_test!("complex", "dispatch_on_flag", dispatch_on_flag_assertions);
 
@@ -442,28 +372,20 @@ fn dispatch_on_flag_assertions(function: &strider_ir::Function) {
         "dispatch_on_flag must contain ≥1 Load"
     );
 
-    // Three strict facts, decoupled (so single-branch / IT-block /
-    // CallOther / BoolUnaryOp normalisation noise on specific arches
-    // doesn't collapse the test):
-    //   (a) An If exists.
-    //   (b) The bit-test pattern `IntCmp(Equal, And(Load, single-bit
-    //       const), 0)` matches *somewhere* in the graph — proves a
-    //       struct-field bit-test was performed (without requiring it
-    //       to be the If's direct cond, since aarch64 / aarch64be
-    //       lift `bne` as `BoolUnaryOp::Neg(IntCmp(Equal, ..., 0))`
-    //       which inserts a Neg between the IntCmp and the If).
-    //   (c) A Call exists whose arg(0) is a struct-field Load (any
-    //       offset captured into `off`).
+    // Three facts checked independently, not as one composed pattern, so
+    // arch-specific IT-block / CallOther / bool-negation noise around any
+    // one of them can't sink the whole test: an If exists; the bit-test
+    // shape matches somewhere (not necessarily as the If's direct cond,
+    // since aarch64/aarch64be wrap `bne` in a negation of the IntCmp); and
+    // a Call exists with a struct-field-load arg.
     let m = matcher(function);
     let mask = Capture::new();
 
-    // Bit-test pattern: assert `IntCmp(Equal, And(_, single-bit-const), 0)`
-    // somewhere in the graph.  The masked value's source is not pinned
-    // to `load()` because PPC GPR reads at -O0 surface as
-    // `Or(Load, ShiftRight(Load, 32))` (Sleigh's modelling of 32-bit
-    // register reads in 64-bit-capable contexts), and KnownBits doesn't
-    // currently fold that idiom away.  The bit-test discriminating
-    // power — "a bit-test against a single-bit constant" — survives.
+    // The masked value's source isn't pinned to `load()`: PPC GPR reads at
+    // -O0 surface as `Or(Load, ShiftRight(Load, 32))` (Sleigh's modelling of
+    // 32-bit register reads in a 64-bit-capable context), which KnownBits
+    // doesn't currently fold away. The bit-test's discriminating power
+    // (a single-bit-const mask) still holds regardless.
     let bit_test = finish(int_cmp(
         IntCmpOp::Equal,
         and(any(), single_bit_int_const(mask)),
@@ -486,13 +408,8 @@ fn dispatch_on_flag_assertions(function: &strider_ir::Function) {
         "expected Call(arg(0) = Load(base + IntConst)) in dispatch_on_flag"
     );
 
-    // STRICT composition: an If whose true *or* false branch is the
-    // Call(arg(0) = field-load) site.  As with `if_bit_clear_call`,
-    // the compiler chooses either polarity freely so we accept either
-    // branch — but the composition itself (If immediately consuming
-    // Call, no opaque CallOther in the way) must succeed on every
-    // arch including arm_thumb — proven by the construction-time NoOp
-    // classification of setISAMode in strider_target::call_other_abi.
+    // As in if_bit_clear_call, accept either branch polarity; what must
+    // hold everywhere, including Thumb, is that If directly consumes Call.
     let off2 = Capture::new();
     let base2 = Capture::new();
     let off3 = Capture::new();
@@ -519,10 +436,6 @@ fn dispatch_on_flag_assertions(function: &strider_ir::Function) {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 8. multi_arg_call_in_branch — two Calls each with three args
-// ─────────────────────────────────────────────────────────────────────────────
-
 per_arch_test!(
     "complex",
     "multi_arg_call_in_branch",
@@ -536,12 +449,11 @@ fn multi_arg_call_in_branch_assertions(function: &strider_ir::Function) {
         count_calls(function)
     );
 
-    // The C source has TWO ext_three call sites with distinct arg
-    // orderings: `ext_three(a, b, c)` on the True branch and
-    // `ext_three(c, b, a)` on the False.  Function param indices are
-    // cond=0, a=1, b=2, c=3.  We match each ordering independently
-    // via strict carrier-pat on every positional arg — a buggy
-    // optimizer that fails to connect Call.arg(N) back to the carrier(N)
+    // The C source has two ext_three call sites with distinct arg orderings:
+    // `ext_three(a, b, c)` on the True branch, `ext_three(c, b, a)` on the
+    // False (param indices are cond=0, a=1, b=2, c=3). Each ordering is
+    // matched independently via strict carrier-pat on every positional arg,
+    // so an optimizer that fails to connect Call.arg(N) to carrier(N)
     // through the spill round-trip would lose one of the two matches.
     let m = matcher(function);
     let nv_abc = Capture::new();
@@ -574,8 +486,8 @@ fn multi_arg_call_in_branch_assertions(function: &strider_ir::Function) {
         "expected a Call with args (carrier(3), carrier(2), carrier(1)) \
              — the False-branch ext_three(c,b,a)"
     );
-    // Distinct call sites — captured NodeIds must differ across the
-    // two patterns (otherwise we matched the same call twice).
+    // Captured NodeIds must differ across the two patterns, otherwise the
+    // same call matched both orderings.
     let abc_ids: std::collections::HashSet<_> = hits_abc
         .iter()
         .filter_map(|h| h.node(nv_abc, function.graph()))
@@ -591,49 +503,41 @@ fn multi_arg_call_in_branch_assertions(function: &strider_ir::Function) {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 9. complex_dispatch — scale smoke test
-// ─────────────────────────────────────────────────────────────────────────────
-
 per_arch_test!("complex", "complex_dispatch", complex_dispatch_assertions);
 
 fn complex_dispatch_assertions(function: &strider_ir::Function) {
     let n = function.walk().count();
-    // Larger function (many locals, several stack-allocated structs,
-    // 3 loops, ≥10 branches, mixed-width compute) → expect a much
-    // larger IR than the original 30-node smoke.  100 is comfortably
-    // below what every arch produces while still catching a hard
-    // regression (e.g. an opt pass that drops half the function).
+    // Many locals, several stack-allocated structs, 3 loops, >=10 branches,
+    // mixed-width compute: 100 is comfortably below what every arch produces
+    // while still catching a regression that drops half the function.
     assert!(
         n >= 100,
         "expected ≥100 reachable IR nodes in complex_dispatch; got {n}"
     );
 
-    // C source has 11 source-level `if` statements (the dispatch flag
-    // ladders + the inner loop branch + the acc<0 / acc>100 / padding
-    // checks).  IR may merge or fold a few — assert ≥6 to stay above
-    // the noise floor on optimising arches.
+    // 11 source-level `if` statements (dispatch flag ladders, inner loop
+    // branch, acc<0 / acc>100 / padding checks); IR may fold a few, so >=6
+    // stays above the noise floor on optimising arches.
     assert!(
         count_ifs(function) >= 6,
         "complex_dispatch must have ≥6 Ifs; got {}",
         count_ifs(function)
     );
-    // 7 source-level call sites: cb_zero (×2), cb_set (×2), invoke
-    // (×3), ext_three (×2).  Cross-arch ≥4 is the conservative floor.
+    // 7 source-level call sites: cb_zero ×2, cb_set ×2, invoke ×3,
+    // ext_three ×2. >=4 is the conservative cross-arch floor.
     assert!(
         count_calls(function) >= 4,
         "complex_dispatch must have ≥4 Calls; got {}",
         count_calls(function)
     );
-    // Stack-allocated `big`, `local_outer`, `locals[8]` produce many
-    // stores at distinct stack offsets.
+    // `big`, `local_outer`, `locals[8]` are stack-allocated, so they
+    // produce many stores at distinct stack offsets.
     assert!(
         count_stores(function) >= 5,
         "complex_dispatch must have ≥5 stores; got {}",
         count_stores(function)
     );
 
-    // Multiple struct field accesses => at least one Load at base+const.
     let m = matcher(function);
     let base = Capture::new();
     let off = Capture::new();
@@ -643,8 +547,8 @@ fn complex_dispatch_assertions(function: &strider_ir::Function) {
         "expected ≥1 Load(base + IntConst) in complex_dispatch"
     );
 
-    // Distinct field offsets — proves multiple fields are accessed,
-    // not the same one repeatedly.
+    // Distinct offsets prove multiple fields are accessed, not the same
+    // one repeatedly.
     let offsets: std::collections::HashSet<u128> = m
         .find_all(&pat)
         .unwrap()
@@ -657,10 +561,6 @@ fn complex_dispatch_assertions(function: &strider_ir::Function) {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 10. call_uses_call_return — pattern across a Call→Call dataflow
-// ─────────────────────────────────────────────────────────────────────────────
-
 per_arch_test!(
     "complex",
     "call_uses_call_return",
@@ -668,19 +568,15 @@ per_arch_test!(
 );
 
 fn call_uses_call_return_assertions(function: &strider_ir::Function) {
-    // Source: `consume(produce(x))` — outer Call's arg(0) is the
-    // return value of the inner Call.  IR shape (-O0):
+    // Source: `consume(produce(x))`, so the outer Call's arg(0) is the
+    // inner Call's return value. At -O0 that's typically:
     //   call_inner = Call(produce, x)
-    //   ret = Call_inner output (possibly via spill round-trip)
-    //   spill chain = Store → Load (optional, collapsed by LoadForward)
-    //   call_outer = Call(consume, …chain to ret…)
-    //
-    // Whether the spill round-trip is collapsed by LoadForward,
-    // and whether the result is even loaded back via the
-    // calling-convention return register — all vary per arch.  What's
-    // universal: at least one outer Call's input chain MUST trace back
-    // to another Call.  We walk the IR by hand from each Call's inputs
-    // through whatever intermediate plumbing the optimizer left in place.
+    //   spill chain = Store -> Load (optional, collapsed by LoadForward)
+    //   call_outer = Call(consume, ...chain to call_inner's output...)
+    // Whether the spill collapses, and whether the result is loaded back
+    // via the CC return register, both vary per arch. What's universal is
+    // that some outer Call's input chain traces back to another Call, so
+    // we walk the IR by hand rather than pattern-match one fixed shape.
 
     assert!(
         count_calls(function) >= 2,
@@ -689,9 +585,8 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
     );
 
     // For each Call, walk every input slot back through any chain of
-    // {Store, Load, Region, ValuePhi}.
-    // If we hit another Call, the test passes — that's proof of
-    // Call→Call dataflow.
+    // {Store, Load, Region, ValuePhi}. Hitting another Call is proof of
+    // Call->Call dataflow.
     let calls: Vec<NodeId> = function
         .walk()
         .filter(|&n| matches!(function.node_kind(n), NodeKind::Call))
@@ -705,14 +600,12 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
             for _ in 0..16 {
                 match function.node_kind(producer) {
                     NodeKind::Call if producer != outer => return true,
-                    // Walk through plumbing that doesn't change the
-                    // value identity.  For each kind, follow the
-                    // node's first input — every kind here produces
-                    // its data from the most-likely value input slot.
+                    // Walk through plumbing that doesn't change the value
+                    // identity, following the node's first (most-likely
+                    // value-producing) input slot.
                     NodeKind::Load(_) => {
-                        // Load inputs: [memory, addr]; following the
-                        // memory edge surfaces the producing store /
-                        // call.
+                        // Load inputs: [memory, addr]; the memory edge
+                        // surfaces the producing store / call.
                         let inps: Vec<_> = function.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else {
                             break;
@@ -720,8 +613,8 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
                         producer = function.producer(first);
                     }
                     NodeKind::Store(_) => {
-                        // Store inputs: [mem, addr, data] — `data` is
-                        // the value being persisted.
+                        // Store inputs: [mem, addr, data]; `data` is the
+                        // value being persisted.
                         let inps: Vec<_> = function.node_inputs(producer).into_iter().collect();
                         let Some(&data) = inps.get(2) else {
                             break;
@@ -740,8 +633,8 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
                             .get_vn_for_value(function.node_outputs(producer)[0])
                             .is_none() =>
                     {
-                        // Anonymous phi (ValuePhi).  Take the first input;
-                        // if it doesn't lead back to a Call we'll bail at
+                        // Anonymous phi (ValuePhi): take the first input;
+                        // if it doesn't lead back to a Call this bails at
                         // the next step anyway.
                         let inps: Vec<_> = function.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else {

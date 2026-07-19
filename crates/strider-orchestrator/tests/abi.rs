@@ -18,13 +18,10 @@ per_arch_test!("abi", "eight_int_args", eight_args_has_seven_adds);
 per_arch_test!("abi", "mixed_args", mixed_has_loads_and_adds);
 per_arch_test!("abi", "point_sum", point_sum_has_add);
 per_arch_test!("abi", "make_pair", make_pair_has_return);
-// tail_caller: closed under the indirect-branch fixed-point
-// design (per `2026-04-27-indirect-branch-fixedpoint.md`).
-// the IR-level orchestrator resolver's `LinkRegister` arm classifies arm `pop {pc}` (load + bx)
-// once `LoadForward` simplifies the loaded target back to
-// `InitialVar(lr)`, so the placeholder Return resolves to a real
-// Return at the cfg-rebuild step.  All arches, including arm, now
-// pass without an ignore.
+// tail_caller: the orchestrator resolver's `LinkRegister` arm classifies
+// arm's `pop {pc}` (load + bx) once `LoadForward` simplifies the loaded
+// target back to `InitialVar(lr)`, so the placeholder Return resolves to
+// a real Return at the cfg-rebuild step. All arches pass without an ignore.
 per_arch_test!("abi", "tail_caller", tail_caller_has_call);
 
 fn eight_args_has_seven_adds(function: &strider_ir::Function) {
@@ -36,7 +33,7 @@ fn eight_args_has_seven_adds(function: &strider_ir::Function) {
     );
 }
 fn mixed_has_loads_and_adds(function: &strider_ir::Function) {
-    // Two pointer args dereferenced once each — ≥2 Loads.
+    // Two pointer args dereferenced once each: >=2 Loads.
     assert!(
         count_loads(function) >= 2,
         "mixed_args dereferences 2 pointers; got {}",
@@ -58,8 +55,8 @@ fn make_pair_has_return(function: &strider_ir::Function) {
     assert!(count_returns(function) >= 1, "make_pair returns a pair");
 }
 fn tail_caller_has_call(function: &strider_ir::Function) {
-    // Note: compilers may tail-call-optimize this; if so the Call disappears.
-    // Test guards against complete IR breakage but not against tail-call elision.
+    // Compilers may tail-call-optimize this away, so this only guards
+    // against complete IR breakage, not tail-call elision.
     assert!(
         count_calls(function) >= 1 || count_returns(function) >= 1,
         "tail_caller must have a Call or Return; got {} call, {} ret",

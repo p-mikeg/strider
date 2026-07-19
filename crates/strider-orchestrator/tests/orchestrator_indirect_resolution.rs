@@ -1,11 +1,4 @@
-//! Integration tests for the strider top-level orchestrator
-//! (`strider_orchestrator::Strider::analyze`).
-//!
-//! Each test:
-//!   1. Constructs a `Config` against a synthetic byte sequence +
-//!      the standard SystemV-x86_64 calling convention,
-//!   2. Calls `strider_orchestrator::Strider::analyze`,
-//!   3. Asserts the result matches the spec's per-scenario contract.
+//! Integration tests for `strider_orchestrator::Strider::analyze`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -46,9 +39,8 @@ fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_orchestrator::Ana
 
 #[test]
 fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
-    // A function with no BranchIndirect: just `ret`.  The fast path
-    // skips the loop entirely; the result is the optimised IR.
-
+    // No BranchIndirect (just `ret`): the fast path skips the loop
+    // entirely and returns the optimised IR.
     let bytes = vec![0xc3u8]; // ret
     let function = run_at(bytes, 0x1000).expect("orchestrator").function;
     let mut had_return = false;
@@ -62,20 +54,15 @@ fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
 
 #[test]
 fn outer_loop_unresolved_branch_is_reported_not_errored() {
-    // `jmp rax` on x86_64: rax is a function-entry value (no constant
-    // write), and x86_64 has no link register, so the IR-level
-    // indirect-branch resolver cannot classify it.  The orchestrator must
-    // reach a fixed point and RETURN the result with the branch listed in
-    // `unresolved_indirect_branches` (never panic, never loop forever,
-    // never error).
-
-    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax — sole machine insn at 0x1000
+    // `jmp rax`: rax is a function-entry value (no constant write), and
+    // x86_64 has no link register, so the resolver can't classify it. The
+    // orchestrator must reach a fixed point and return the branch listed in
+    // `unresolved_indirect_branches` (never panic, loop forever, or error).
+    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax, sole machine insn at 0x1000
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let result =
         run_at(bytes, 0x1000).expect("analyze must return Ok even when a branch is unresolvable");
-    // EXACTLY the one branch site, at the snippet's only machine
-    // instruction (0x1000); `jmp rax` lifts to a single BRANCHIND pcode
-    // op, so the pcode insn index is 0.
+    // `jmp rax` lifts to a single BRANCHIND pcode op, hence insn_index 0.
     assert_eq!(
         result.unresolved_indirect_branches,
         vec![strider_cfg::PcodeInsnAddr {
@@ -84,7 +71,6 @@ fn outer_loop_unresolved_branch_is_reported_not_errored() {
         }],
         "unresolved list must contain exactly the jmp-rax site"
     );
-    // The placeholder must still be present in the returned function.
     let placeholder_count = result
         .function
         .walk()
@@ -104,12 +90,10 @@ fn outer_loop_unresolved_branch_is_reported_not_errored() {
 #[test]
 fn analyze_ignores_pre_seeded_known_targets_in_lift_options() {
     // `Strider::analyze`'s documented contract: the caller's
-    // `cfg.known_targets` seed is IGNORED — the resolution loop grows its
-    // own map from classifier results only.  Pin that: pre-seeding the
-    // unresolvable `jmp rax` site with a valid Single target does NOT
-    // short-circuit resolution; the branch is still reported unresolved
-    // and the placeholder survives (identical outcome to the unseeded
-    // run above).
+    // `cfg.known_targets` seed is ignored, the resolution loop grows its
+    // own map from classifier results only. Pre-seeding the unresolvable
+    // `jmp rax` site with a valid Single target must not short-circuit
+    // resolution.
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax at 0x1000
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
 
@@ -118,7 +102,7 @@ fn analyze_ignores_pre_seeded_known_targets_in_lift_options() {
         insn_index: 0,
     };
     let mut known = rustc_hash::FxHashMap::default();
-    // 0x1004 is in-range padding — a valid (decodable) seed target.
+    // 0x1004 is in-range padding: a valid (decodable) seed target.
     known.insert(site, strider_cfg::ResolvedTargets::Single(0x1004));
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
@@ -157,23 +141,20 @@ fn analyze_ignores_pre_seeded_known_targets_in_lift_options() {
 
 #[test]
 fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
-    // `push imm32; pop rax; jmp rax` — structurally a tail call.
-    // After StackOffsetDetect + LoadForward the placeholder's dispatch
-    // input folds to IntConst(K); the `IndirectBranchClassify` post-pass
-    // reads that live input and classifies `Single(K)`.  K lies OUTSIDE
-    // the function range (below `start_addr`), so the orchestrator seats
-    // it as a tail call and the rebuild lowers it to `Call(K) + Return`.
+    // `push imm32; pop rax; jmp rax` is structurally a tail call. After
+    // StackOffsetDetect + LoadForward the placeholder's dispatch input
+    // folds to IntConst(K); IndirectBranchClassify reads that live input
+    // and classifies Single(K). K lies outside the function range (below
+    // start_addr), so the orchestrator seats it as a tail call and the
+    // rebuild lowers it to `Call(K) + Return`.
     let k = 0x500u64;
     let k_le = (k as u32).to_le_bytes();
     let mut bytes: Vec<u8> = vec![0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0];
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
 
-    // Must actually resolve — not fall back to the unresolved error.
     let function = run_at(bytes, 0x1000)
         .expect("push/pop/jmp of a constant must resolve to a tail call")
         .function;
-    // The placeholder must have been resolved away: no `IndirectBranch`
-    // node survives in the final graph.
     let placeholder_survives = function.walk().any(|n| {
         matches!(
             function.node_kind(n),
@@ -219,10 +200,8 @@ fn orchestrator_owned_sleigh_reports_unresolved_branch() {
 
 #[test]
 fn orchestrator_correctness_unchanged_after_sleigh_persistence() {
-    // CORRECTNESS: the resulting graph for a function that does NOT
-    // need indirect resolution is identical regardless of how many
-    // times Sleigh is reused across runs.
-
+    // The graph for a function that needs no indirect resolution must be
+    // identical regardless of how many times Sleigh is reused across runs.
     let make_run = || {
         let bytes = vec![0xc3u8]; // ret
         run_at(bytes, 0x1000).expect("orchestrator").function
@@ -239,18 +218,17 @@ fn orchestrator_correctness_unchanged_after_sleigh_persistence() {
 
 #[test]
 fn analyze_branch_behind_constant_false_guard_reports_clean() {
-    // OR-1 smoke test: a `jmp rax` reachable only through a constant-false
-    // flag (`xor eax,eax; test eax,eax; jne <indirect>`).  The CFG/optimizer
-    // pipeline never leaves a live, unclassified `IndirectBranch` for this
-    // shape, so `analyze` must report an empty unresolved list (no spurious
-    // dead-branch report).  The OR-1 liveness/known-targets filter itself is
-    // exercised deterministically by the `live_unresolved_*` unit tests in
-    // `lib.rs`; this is the end-to-end contract check that no spurious
-    // "unresolved" leaks out of the orchestrator for a guarded indirect jump.
+    // A `jmp rax` reachable only through a constant-false flag
+    // (`xor eax,eax; test eax,eax; jne <indirect>`). The pipeline must
+    // never leave a live, unclassified IndirectBranch for this shape, so
+    // `analyze` reports an empty unresolved list (no spurious dead-branch
+    // report). The underlying liveness/known-targets filter is exercised
+    // directly by the `live_unresolved_*` unit tests in `lib.rs`; this is
+    // the end-to-end check.
     //
     // 0x1000: 31 c0       xor eax,eax     (eax=0, ZF=1)
     // 0x1002: 85 c0       test eax,eax    (ZF stays 1)
-    // 0x1004: 75 02       jne 0x1008      (taken iff ZF==0 — never)
+    // 0x1004: 75 02       jne 0x1008      (taken iff ZF==0, never)
     // 0x1006: c3          ret             (live fallthrough)
     // 0x1008: ff e0       jmp rax         (guarded arm)
     let mut bytes: Vec<u8> = vec![0x31, 0xc0, 0x85, 0xc0, 0x75, 0x02, 0xc3, 0xff, 0xe0];
@@ -265,22 +243,18 @@ fn analyze_branch_behind_constant_false_guard_reports_clean() {
 
 #[test]
 fn analyze_resolution_loop_beats_single_pass_manual_lift() {
-    // OR-5 (EC-5): demonstrate the orchestrator's headline behaviour that
-    // the flagship example (which drives `Lifter` directly for a single
-    // pass) never exercises — the resolve/re-lift loop.
-    //
-    // `push K; pop rax; jmp rax` resolves to a tail call only AFTER the
-    // classifier folds `Single(K)` into `known_targets` and the CFG is
-    // rebuilt.  A single manual `build_cfg + build_ir + pipeline.run`
-    // (exactly what `orchestrator_demo` does) leaves the `IndirectBranch`
-    // placeholder in the graph; `Strider::analyze`'s loop removes it.
+    // `push K; pop rax; jmp rax` resolves to a tail call only after the
+    // classifier folds Single(K) into known_targets and the CFG is
+    // rebuilt. A single manual `build_cfg + build_ir + pipeline.run` (what
+    // `orchestrator_demo` does) leaves the IndirectBranch placeholder in
+    // the graph; `Strider::analyze`'s resolve/re-lift loop removes it.
     use strider_orchestrator::Lifter;
     let k = 0x500u64;
     let k_le = (k as u32).to_le_bytes();
     let mut bytes: Vec<u8> = vec![0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0];
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
 
-    // --- single manual pass (the example's path) ---
+    // Single manual pass (the example's path).
     let arch = SleighArch::x86_64();
     let sleigh = make_sleigh_value(bytes.clone(), 0x1000);
     let regs = sleigh.regs().expect("regs");
@@ -314,7 +288,7 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
          (the example's path does not resolve it)"
     );
 
-    // --- the orchestrator's resolution loop ---
+    // The orchestrator's resolution loop.
     let resolved = run_at(bytes, 0x1000)
         .expect("analyze must resolve the indirect tail call")
         .function;
@@ -328,7 +302,6 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
         !loop_has_indirect,
         "Strider::analyze's resolution loop must resolve the placeholder away"
     );
-    // And the loop reports no unresolved branches for this case.
     let result_unresolved = {
         let arch = SleighArch::x86_64();
         let mut b2: Vec<u8> = vec![0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0];
@@ -356,8 +329,6 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
     );
 }
 
-// Constructs a placeholder Sleigh for the unused-import shim.  Keeping
-// the import surface stable means no `make_sleigh_value` warning.
 #[allow(dead_code)]
 fn _ensure_make_sleigh_used() {
     let _ = make_sleigh_value(vec![0xc3], 0);

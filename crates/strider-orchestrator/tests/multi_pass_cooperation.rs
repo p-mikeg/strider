@@ -23,9 +23,6 @@ use strider_orchestrator::opt::{
 
 type Result<T> = strider_orchestrator::opt::Result<T>;
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-/// Count reachable nodes matching `pred`.
 fn count_reachable<F>(function: &strider_ir::Function, pred: F) -> usize
 where
     F: Fn(&NodeKind) -> bool,
@@ -36,11 +33,9 @@ where
         .count()
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-/// Two nested `if(const)` branches — both constants evaluable at construction
-/// time.  Running `ConstantFold + DeadBranchElimination + PhiCollapse + CfgDetach` must
-/// eliminate all `If` nodes from the reachable graph.
+/// Two nested `if(const)` branches, both constants evaluable at
+/// construction time. `ConstantFold + DeadBranchElimination + PhiCollapse
+/// + CfgDetach` must eliminate all `If` nodes from the reachable graph.
 #[test]
 fn nested_const_branches_fully_eliminated() -> Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
@@ -83,7 +78,6 @@ fn nested_const_branches_fully_eliminated() -> Result<()> {
     pipeline.add(CfgDetach);
     pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
-    // All If nodes must have been eliminated from the reachable graph.
     let remaining_ifs = count_reachable(&fg, |k| matches!(k, NodeKind::If));
     assert_eq!(
         remaining_ifs, 0,
@@ -118,7 +112,6 @@ fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
     pipeline.add(CfgDetach);
     pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
-    // The return value must now source from IntConst(3).
     let ret = fg
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
@@ -151,17 +144,15 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    // Unconditional branch to live (single predecessor → region is degenerate).
+    // Unconditional branch to live (single predecessor -> region is degenerate).
     b.build_branch(live)?;
 
     b.set_region(live);
     let sp_val = b.read_variable(&sp)?;
-    // Store 0x42 at sp+0.
     let sp_off = b.build_int_const(0u64, ValueType::I64)?;
     let addr = b.build_int_binary_operation(sp_val, sp_off, IntBinaryOp::Add, ValueType::I64)?;
     let stored_val = b.build_int_const(0x42u64, ValueType::I64)?;
     b.build_store(addr, stored_val, rsleigh::VnSpace::RAM)?;
-    // Reload from sp+0.
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
@@ -175,7 +166,6 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     pipeline.add(LoadForward);
     pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
-    // The return value should have been forwarded to the stored constant.
     let ret = fg
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
@@ -221,11 +211,9 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
     pipeline.add(DeadBranchElimination);
     pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
-    // No If nodes must remain in the reachable graph.
     let ifs = count_reachable(&fg, |k| matches!(k, NodeKind::If));
     assert_eq!(ifs, 0, "If(true) must be eliminated by CF+DBE");
 
-    // The reachable Return must return IntConst(1) — the true branch.
     let ret = fg
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
@@ -260,7 +248,6 @@ fn region_with_one_predecessor_collapses() -> Result<()> {
 
     let mut fg = b.build()?;
 
-    // Before: 2 reachable Regions (entry + body).
     let regions_before = count_reachable(&fg, |k| matches!(k, NodeKind::Region));
     assert_eq!(regions_before, 2, "fixture must start with 2 regions");
 
@@ -269,7 +256,6 @@ fn region_with_one_predecessor_collapses() -> Result<()> {
     pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
-    // After: the degenerate body Region must be gone (1 or 0 Regions survive).
     let regions_after = count_reachable(&fg, |k| matches!(k, NodeKind::Region));
     assert!(
         regions_after < regions_before,
@@ -291,9 +277,8 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    // Build: Store(addr1, val) → Load(addr2) where addr1 ≠ addr2 —
-    // the load depends on the Store's memory output but does NOT
-    // alias it.
+    // Store(addr1, val) -> Load(addr2), addr1 != addr2: the load depends
+    // on the Store's memory output but does not alias it.
     let addr1 = b.build_int_const(0x1000u64, ValueType::I64)?;
     let addr2 = b.build_int_const(0x2000u64, ValueType::I64)?;
     let val = b.build_int_const(0xABu64, ValueType::I64)?;
@@ -328,8 +313,8 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
 }
 
 /// Running the full `ConstantFold + DBE + PhiCollapse` pipeline twice on
-/// the same graph must produce the same graph shape (idempotency guard).
-/// The second run must report `NoChange`.
+/// the same graph must produce the same graph shape (idempotency guard):
+/// node count after the second run must equal the first.
 #[test]
 fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
     // Build a slightly non-trivial fixture: if(true) { return 1+2 } else { return 3 }
@@ -364,13 +349,12 @@ fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
     pipeline.add(DeadBranchElimination);
     pipeline.add(CfgDetach);
 
-    // First run: must converge and leave no If nodes.
     pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
     let ifs_after_first = count_reachable(&fg, |k| matches!(k, NodeKind::If));
     let nodes_after_first = fg.walk().count();
     assert_eq!(ifs_after_first, 0, "first run must eliminate If(true)");
 
-    // Second run: graph is already at fixed-point; node count must not change.
+    // Graph is already at fixed point; node count must not change.
     pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
     let nodes_after_second = fg.walk().count();
     assert_eq!(

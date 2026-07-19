@@ -18,15 +18,14 @@ use common::*;
 use strider_pattern::{MatchPat, Matcher, add, any, call, mul};
 
 // mul_then_add covers `add(mul(_,_), _)` across all archs via:
-//   * Strider lifter side: Truncate-narrowing rules in ConstantFold (mips32
-//     hot path), drop-high-half-in-Or-Trunc, drop-low-mask-under-Trunc,
+//   * lifter side: Truncate-narrowing rules in ConstantFold (mips32 hot
+//     path), drop-high-half-in-Or-Trunc, drop-low-mask-under-Trunc,
 //     Truncate(Extend(x)) round-trip.
-//   * Matcher side: `Matcher::ignore_casts()` lets the matcher walk
-//     transparently through Extend / Truncate / CastTo* nodes that the
-//     optimizer couldn't fully eliminate (x64 `Add(Extend(Mul), arg)`
-//     register-merge chain — pushing Extend through Mul is not a valid
-//     identity in general, but skipping it during pattern matching is
-//     fine when the user opts in).
+//   * matcher side: `Matcher::ignore_casts()` walks transparently through
+//     Extend/Truncate/CastTo* nodes the optimizer couldn't fully eliminate
+//     (x64's `Add(Extend(Mul), arg)` register-merge chain). Pushing Extend
+//     through Mul isn't a valid identity in general, but skipping it during
+//     matching is fine when the user opts in.
 per_arch_test!("patterns", "mul_then_add", mac_pattern_finds_match);
 // chained_xor_mask: ConstantFold collapses the literal constants, so
 // the pattern matches only the structural shape.
@@ -36,7 +35,7 @@ per_arch_test!(
     xor_chain_pattern_finds_match
 );
 // if_returns_const exercises width-aware int_const matching.  ARM's
-// MVN-based -50 lifting (`mvnle r0, #49` → `~49`) requires constant_fold
+// MVN-based -50 lifting (`mvnle r0, #49` -> `~49`) requires constant_fold
 // to fold the canonical `Xor(IntConst(49), IntConst(all_ones))` shape
 // (the former BitNot unary-op was removed in favour of `Xor(_, all_ones)`)
 // while keeping `IntUnaryOp::Neg` (two's complement) distinct.
@@ -59,11 +58,9 @@ per_arch_test!(
 );
 
 fn mac_pattern_finds_match(function: &strider_ir::Function) {
-    // Pattern: add(mul(?, ?), ?).  We use `.ignore_casts()` because some
-    // arches (notably x64) lower this as `Add(Extend_zext(Mul@W), arg)`
-    // — the Mul is one hop deeper than the matcher's exact-walk would
-    // see otherwise.  Other arches don't have intervening casts, so the
-    // flag is a no-op there (direct match still tried first).
+    // `.ignore_casts()`: x64 lowers this as `Add(Extend_zext(Mul@W), arg)`,
+    // one hop deeper than the matcher's exact walk would see otherwise.
+    // Other arches have no intervening casts, so the flag is a no-op there.
     let m = Matcher::new(function);
     let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
     let hits = m.find_all(&pat).unwrap();
@@ -75,13 +72,11 @@ fn mac_pattern_finds_match(function: &strider_ir::Function) {
 }
 
 fn xor_chain_pattern_finds_match(function: &strider_ir::Function) {
-    // ConstantFold collapses (x ^ k1) & m1 ^ k2  →  (x & m1) ^ (k1^k2)
-    // before pattern matching — the inner xor disappears, so the original
-    // three-deep xor(and(xor)) query never matches.  The post-fold shape
-    // retains at least one Xor and one And; assert that union of nodes
-    // survives.  An IntConst-aware variant of this query would require
-    // constants the optimiser can't fold (e.g. volatile-loaded); that's a
-    // separate, larger fixture redesign.
+    // ConstantFold collapses (x ^ k1) & m1 ^ k2 into (x & m1) ^ (k1^k2)
+    // before matching, so the original three-deep xor(and(xor)) query
+    // never matches; assert only that the post-fold shape retains a Xor
+    // and an And. A query immune to this would need constants the
+    // optimiser can't fold (e.g. volatile-loaded), a bigger fixture redesign.
     use strider_ir::IntBinaryOp;
     assert!(
         common::count_int_binop(function, IntBinaryOp::Xor) >= 1,
@@ -96,16 +91,12 @@ fn xor_chain_pattern_finds_match(function: &strider_ir::Function) {
 }
 
 fn if_const_pattern_finds_two_consts(function: &strider_ir::Function) {
-    // After PhiCollapse, both arms of the If feed a Phi resolving to either
-    // IntConst(100) or IntConst(-50).  Pin both constants.
-    //
-    // On 32-bit archs (arm, mips32) the -50 constant lives in a I32 IntConst
-    // (0xffff_ffce).  On x86-64, the compiler zero-extends a 32-bit move so the
-    // constant appears as IntConst(0xffff_ffce) at I64 width, which is the same
-    // bit pattern but semantically +4294967246 (not -50) at I64.  The raw
-    // has_constant check covers all archs correctly:
-    //   has_constant(g, 0xffff_ffce) matches the node regardless of its output type
-    //   because the stored u128 value equals u128::from(0xffff_ffce as u64).
+    // After PhiCollapse, both arms feed a Phi resolving to IntConst(100)
+    // or IntConst(-50). On 32-bit archs (arm, mips32) -50 is an I32
+    // IntConst (0xffff_ffce); on x86-64 the compiler zero-extends a
+    // 32-bit move, so it appears as IntConst(0xffff_ffce) at I64 width,
+    // same bits but semantically +4294967246, not -50. has_constant
+    // covers both: it compares the raw u128 value regardless of type.
     assert!(
         has_constant(function, 100),
         "expected IntConst(100) — true-branch return value"
@@ -119,11 +110,10 @@ fn if_const_pattern_finds_two_consts(function: &strider_ir::Function) {
 }
 
 fn invariant_load_pattern_finds_load(function: &strider_ir::Function) {
-    // Pattern: any Load.  Primary check is that the Load pattern matches.
-    // We don't assert the loop survives — the compiler is free to close-form
-    // the triangle-sum (e.g. x86_kernel collapses the loop entirely into
-    // arithmetic on n and the invariant *p), which is a valid optimization
-    // that strider faithfully represents as "no back-edge".
+    // Only asserts a Load is present; doesn't require the loop to survive.
+    // The compiler is free to close-form the triangle-sum (e.g. x86_kernel
+    // collapses it into arithmetic on n and the invariant *p), a valid
+    // optimization strider faithfully represents as "no back-edge".
     let m = Matcher::new(function);
     let pat = strider_pattern::load().build();
     let hits = m.find_all(&pat).unwrap();

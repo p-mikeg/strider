@@ -30,8 +30,8 @@ fn cond_with_true_branch_matches_direct() {
 #[test]
 fn inverted_cond_no_match_until_canonicalised() {
     // Inverted graph: cond is `Not(IntEq(...))`, branches swapped.
-    // Direct-layout `IfPat` must NOT match — the cond doesn't match the
-    // pattern shape (the pattern asks for `IntEq`, not `BoolNeg(IntEq)`).
+    // Direct-layout `IfPat` must not match: the pattern asks for `IntEq`,
+    // not `BoolNeg(IntEq)`.
     let function = shapes::if_cmp_then_return_inverted(4);
     let pat = if_node()
         .cond(int_eq(int_const(4u128), int_const(1u128)))
@@ -64,8 +64,6 @@ fn inverted_cond_matches_after_if_cond_inversion() {
     a::matches(&function, pat, 1);
 }
 
-// ── Cond mismatch still doesn't match ────────────────────────────────────────
-
 #[test]
 fn cond_mismatch_no_match_in_direct() {
     let function = shapes::if_cmp_then_return(4);
@@ -76,20 +74,16 @@ fn cond_mismatch_no_match_in_direct() {
     a::none(&function, pat);
 }
 
-// ── No cond: matches both fixtures (direct and inverted) ─────────────────────
-
 #[test]
 fn no_cond_only_true_branch_matches_either_fixture() {
     // With no cond constraint, the matcher just looks for an `If` with a
-    // consumer on its true output — both fixtures qualify.
+    // consumer on its true output; both fixtures qualify.
     let g_direct = shapes::if_cmp_then_return(4);
     let g_inverted = shapes::if_cmp_then_return_inverted(4);
     let build_pat = || if_node().with_true(any().into_pattern()).build();
     a::matches(&g_direct, build_pat(), 1);
     a::matches(&g_inverted, build_pat(), 1);
 }
-
-// ── Capture sees the If node either way ──────────────────────────────────────
 
 #[test]
 fn captured_if_node_id_works_after_canonicalisation() {
@@ -109,8 +103,8 @@ fn captured_if_node_id_works_after_canonicalisation() {
         strider_ir::node::NodeKind::If
     ));
 
-    // Inverted fixture: same pattern matches AFTER the canonicalisation
-    // pass runs — verifying the capture also survives the in-place rewrite.
+    // Inverted fixture: same pattern matches after the canonicalisation
+    // pass runs, verifying the capture also survives the in-place rewrite.
     let mut g_inverted = shapes::if_cmp_then_return_inverted(4);
     strider_orchestrator::opt::run_one(
         &IfCondInversion::new(),
@@ -125,16 +119,14 @@ fn captured_if_node_id_works_after_canonicalisation() {
     ));
 }
 
-// ── Shared Capture across cond and branch must agree ────────────────────────
-
 /// A `Capture` referenced both by `cond` and by `true_branch` must bind
-/// to the same node — `Bindings::bind_capture` rejects re-binds with a
-/// different node id.  Pre-pass: cond's IntCmpOp and branch's consumer
-/// disagree, so no match.  Post-pass (canonicalised): same disagreement,
-/// still no match.  The test pins the constraint regardless of layout
-/// to guard against bind-resolution regressions.
+/// to the same node: `Bindings::bind_capture` rejects re-binds with a
+/// different node id. Pre-pass, cond's IntCmpOp and branch's consumer
+/// disagree, so no match; post-pass (canonicalised), same disagreement,
+/// still no match. Pins the constraint regardless of layout to guard
+/// against bind-resolution regressions.
 // TODO: re-enable after strider-pattern IfPat threads captures through the
-// branch-walk post_match.  Current impl evaluates the branch sub-pattern
+// branch-walk post_match. Current impl evaluates the branch sub-pattern
 // against a throwaway `Bindings`, so a capture shared between `cond` and
 // `true_branch` never collides at match time (see the IfPat branch-capture
 // isolation docs in strider-pattern/src/node_builders/flow.rs).

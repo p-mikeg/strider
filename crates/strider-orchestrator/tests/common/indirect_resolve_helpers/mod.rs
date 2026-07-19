@@ -11,7 +11,7 @@
 //! API; tests should not import from sub-modules directly.
 //!
 //! IMPORTANT: the target returned is **NOT** the original
-//! `ValueId` recorded at lift time — that id can be invalidated
+//! `ValueId` recorded at lift time; that id can be invalidated
 //! by `ConstantFold`'s `replace_all_uses` rewires.  Instead, helpers
 //! resolve the placeholder Return's current value-input on the
 //! post-optimisation graph and return that.

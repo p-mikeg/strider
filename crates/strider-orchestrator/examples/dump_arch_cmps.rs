@@ -4,7 +4,7 @@
 //! `cmp`+cond emits a fixed boolean tree of named flag varnodes that
 //! can then be matched and rewritten.
 //!
-//! Run: `cargo run -p strider --example dump_arch_cmps`
+//! Run: `cargo run -p strider-orchestrator --example dump_arch_cmps`
 
 use rsleigh::mem_readers::VecMemReader;
 use rsleigh::{Insn, MemReader, Sleigh, SleighRegs, Vn, VnSpace};
@@ -57,7 +57,7 @@ fn aarch64_samples() -> (SleighArch, Vec<Sample>) {
 
 /// x86_64 `cmp rax, rbx; jcc +0` for every 1-byte-rel8 cond.
 fn x86_64_samples() -> (SleighArch, Vec<Sample>) {
-    // 48 39 D8 — cmp rax, rbx (REX.W + 39 /r, ModR/M=mod3 reg=rbx rm=rax).
+    // 48 39 D8: cmp rax, rbx (REX.W + 39 /r, ModR/M=mod3 reg=rbx rm=rax).
     let cmp = [0x48u8, 0x39, 0xD8];
     let mut samples = Vec::new();
     samples.push(Sample {
@@ -197,18 +197,18 @@ fn arm_thumb_samples() -> (SleighArch, Vec<Sample>) {
     (SleighArch::arm_thumb(), samples)
 }
 
-/// MIPS (32-bit, BE) — has no flag register.  Show what the `slt`-then-`bnez`
+/// MIPS (32-bit, BE) has no flag register. Show what the `slt`-then-`bnez`
 /// idiom and the direct register-comparison branches lift to.
 fn mips_samples() -> (SleighArch, Vec<Sample>) {
     let mut samples = Vec::new();
-    // slt $4, $5, $6 — set $4 to 1 if $5 < $6 signed (R-type, op=0, funct=0x2A)
+    // slt $4, $5, $6: set $4 to 1 if $5 < $6 signed (R-type, op=0, funct=0x2A)
     //   bits: 000000 00101 00110 00100 00000 101010
     let slt = 0x00A6_202Au32;
     samples.push(Sample {
         label: "slt $4, $5, $6".into(),
         bytes: slt.to_be_bytes().to_vec(),
     });
-    // sltu $4, $5, $6 — funct=0x2B
+    // sltu $4, $5, $6: funct=0x2B
     let sltu = 0x00A6_202Bu32;
     samples.push(Sample {
         label: "sltu $4, $5, $6".into(),
@@ -236,33 +236,9 @@ fn mips_samples() -> (SleighArch, Vec<Sample>) {
 /// PPC (32-bit, BE).  cmp + bc-form conditional branches.
 fn ppc_samples() -> (SleighArch, Vec<Sample>) {
     let mut samples = Vec::new();
-    // cmpw cr0, r3, r4 — primary=31, BF=0, L=0, RA=3, RB=4, secondary=0
-    //   = 011111 000 0 0 00011 00100 0000000000 0
-    //   word: 0111_1100_0001_1000_0010_0000_0000_0000 = 0x7C18_2000  (let me re-derive)
-    //   Actually: 011111(0x1F) 000 0 0 00011 00100 0000000000 0
-    //     bits 0-5: 011111
-    //     bits 6-8: 000
-    //     bit 9:    0
-    //     bit 10:   0
-    //     bits 11-15: 00011
-    //     bits 16-20: 00100
-    //     bits 21-30: 0000000000
-    //     bit 31:   0
-    //   Concatenated MSB→LSB: 011111_000_0_0_00011_00100_0000000000_0
-    //     = 0111 1100 0000 0001 1001 0000 0000 0000
-    //   That's 0x7C019000 — hmm, let me verify with a known reference.
-    //
-    //   Actually `cmpw r3, r4` on PPC is well-documented as 0x7C03_2000.
-    //   Encoding decode for 0x7C032000: 0111 1100 0000 0011 0010 0000 0000 0000
-    //     bits 0-5: 011111 ✓
-    //     bits 6-8: 000 (BF=0)
-    //     bit 9:    0
-    //     bit 10:   0 (L=0)
-    //     bits 11-15: 00011 = 3 ✓
-    //     bits 16-20: 00100 = 4 ✓
-    //     bits 21-30: 0000000000 = 0 (cmp subop) ✓
-    //     bit 31:   0 ✓
-    //   Yes, 0x7C032000 is correct.
+    // cmpw cr0, r3, r4: primary=31, BF=0, L=0, RA=3, RB=4, secondary=0.
+    //   bits 0-5=011111, 6-8=000(BF), 9=0, 10=0(L), 11-15=00011(RA=3),
+    //   16-20=00100(RB=4), 21-30=0(cmp subop), 31=0 -> 0x7C032000.
     let cmpw = 0x7C03_2000u32;
     samples.push(Sample {
         label: "cmpw cr0, r3, r4".into(),
@@ -277,32 +253,32 @@ fn ppc_samples() -> (SleighArch, Vec<Sample>) {
         label: "beq cr0, +4".into(),
         bytes: beq.to_be_bytes().to_vec(),
     });
-    // bne cr0, +4: BO=4 (00100), BI=2 → 010000 00100 00010 00000000000001 0 0
+    // bne cr0, +4: BO=4 (00100), BI=2 -> 010000 00100 00010 00000000000001 0 0
     //   = 0100 0000 1000 0010 0000 0000 0000 0100 = 0x40820004
     let bne = 0x4082_0004u32;
     samples.push(Sample {
         label: "bne cr0, +4".into(),
         bytes: bne.to_be_bytes().to_vec(),
     });
-    // blt cr0, +4: BO=12, BI=0 → 010000 01100 00000 00000000000001 0 0 = 0x41800004
+    // blt cr0, +4: BO=12, BI=0 -> 010000 01100 00000 00000000000001 0 0 = 0x41800004
     let blt = 0x4180_0004u32;
     samples.push(Sample {
         label: "blt cr0, +4".into(),
         bytes: blt.to_be_bytes().to_vec(),
     });
-    // bgt cr0, +4: BO=12, BI=1 → 010000 01100 00001 00000000000001 0 0 = 0x41810004
+    // bgt cr0, +4: BO=12, BI=1 -> 010000 01100 00001 00000000000001 0 0 = 0x41810004
     let bgt = 0x4181_0004u32;
     samples.push(Sample {
         label: "bgt cr0, +4".into(),
         bytes: bgt.to_be_bytes().to_vec(),
     });
-    // bge cr0, +4: BO=4, BI=0 → 0x40800004
+    // bge cr0, +4: BO=4, BI=0 -> 0x40800004
     let bge = 0x4080_0004u32;
     samples.push(Sample {
         label: "bge cr0, +4".into(),
         bytes: bge.to_be_bytes().to_vec(),
     });
-    // ble cr0, +4: BO=4, BI=1 → 0x40810004
+    // ble cr0, +4: BO=4, BI=1 -> 0x40810004
     let ble = 0x4081_0004u32;
     samples.push(Sample {
         label: "ble cr0, +4".into(),
@@ -310,8 +286,6 @@ fn ppc_samples() -> (SleighArch, Vec<Sample>) {
     });
     (SleighArch::ppc32be(), samples)
 }
-
-// ── Pretty-printer ────────────────────────────────────────────────────────
 
 fn fmt_vn<R: MemReader>(sleigh: &Sleigh<R>, regs: &SleighRegs, vn: Vn) -> String {
     if vn.addr_space == VnSpace::CONST {

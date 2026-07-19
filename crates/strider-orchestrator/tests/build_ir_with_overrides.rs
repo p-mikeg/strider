@@ -1,9 +1,8 @@
-//! Per-call test: `Lifter::build_ir_with` applies the
-//! per-address-cc override at lift time without going through
-//! `strider_orchestrator::Strider::analyze`.  Mirrors `tests/per_address_cc.rs` but exercises the
-//! new options-bag API directly so a strider-py custom pipeline
-//! (which calls `build_ir_with` instead of running the orchestrator)
-//! gets the same override behaviour.
+//! `Lifter::build_ir_with` applies the per-address-cc override at lift time
+//! without going through `strider_orchestrator::Strider::analyze`. Mirrors
+//! `tests/per_address_cc.rs` but exercises the options-bag API directly, so
+//! a strider-py custom pipeline (which calls `build_ir_with` instead of
+//! running the orchestrator) gets the same override behaviour.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -29,7 +28,6 @@ fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
 fn build_ir_with_applies_per_address_override() {
     let (bytes, entry, call_target) = x86_64_call_then_ret();
     let reader = BufMemReader::new(bytes, entry);
-    // The driver OWNS the Sleigh and builds the CFG itself.
     let (mut strider, _cc) = common::strider_x86_64(reader);
     let cfg = strider
         .build_cfg(
@@ -39,8 +37,8 @@ fn build_ir_with_applies_per_address_override() {
         )
         .unwrap();
 
-    // Build the override map against the driver's register table — the
-    // same table the function-default CC was built against.
+    // Must be built against the driver's own register table: the same
+    // table the function-default CC below is built against.
     let mut built: FxHashMap<u64, strider_target::BuiltCallingConvention> = FxHashMap::default();
     built.insert(
         call_target,
@@ -49,7 +47,6 @@ fn build_ir_with_applies_per_address_override() {
             .unwrap(),
     );
 
-    // Function-default CC (resolved against the driver's regs).
     let cc = TargetCC::x86_64_systemv()
         .build(strider.sleigh_regs())
         .unwrap();
@@ -95,7 +92,6 @@ fn build_ir_with_applies_per_address_override() {
 fn build_ir_with_default_options_matches_build_ir() {
     let (bytes, entry, _) = x86_64_call_then_ret();
     let reader = BufMemReader::new(bytes, entry);
-    // The driver OWNS the Sleigh and builds the CFG itself.
     let (mut strider, cc) = common::strider_x86_64(reader);
     let cfg = strider
         .build_cfg(

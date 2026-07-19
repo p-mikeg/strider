@@ -24,7 +24,7 @@ per_arch_test!("calls", "pass_through", pass_through_has_one_call);
 per_arch_test!("calls", "apply_indirect", indirect_has_call);
 
 fn fib_has_two_calls(function: &strider_ir::Function) {
-    // fib(n-1) + fib(n-2) — two recursive calls.
+    // fib(n-1) + fib(n-2): two recursive calls.
     assert!(
         count_calls(function) >= 2,
         "fib has 2 self-recursive calls; got {}",
@@ -54,8 +54,8 @@ fn pass_through_has_one_call(function: &strider_ir::Function) {
     assert!(count_calls(function) >= 1, "pass_through calls leaf");
 }
 fn indirect_has_call(function: &strider_ir::Function) {
-    // Indirect calls are still emitted as Call nodes; the address input is
-    // not an IntConst.  We pin only that the call site exists.
+    // Indirect calls are still Call nodes, just with a non-IntConst
+    // address input; we pin only that the call site exists.
     assert!(
         count_calls(function) >= 1,
         "apply_indirect has an indirect Call"

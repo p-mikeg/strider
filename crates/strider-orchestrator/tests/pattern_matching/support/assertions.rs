@@ -7,14 +7,11 @@ use strider_pattern::{Match, Matcher, Pattern};
 
 // Callers finalise their pattern before handing it to these helpers:
 // typed value builders seal via `.into_pattern()`, control builders
-// (`if_node()`, `phi_for()`, …) via `.build()`. Accepting a finished
+// (`if_node()`, `phi_for()`, ...) via `.build()`. Accepting a finished
 // `Pattern` keeps the helper signatures free of the match-vs-template
 // trait split.
 
-// ── Core assertions ───────────────────────────────────────────────────────────
-
-/// Runs `pat` against `g` and returns the matches, panicking with a
-/// descriptive message if the count differs from `expected`.
+/// Panics with a descriptive message if `pat` doesn't match `expected` times.
 #[track_caller]
 pub(crate) fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec<Match> {
     let hits = Matcher::new(function).find_all(&pat).unwrap();
@@ -42,9 +39,9 @@ pub(crate) fn none(function: &Function, pat: Pattern) {
 
 /// Asserts `pat` matches at least once and returns the first [`Match`].
 ///
-/// Useful when the graph may legitimately contain the same shape in multiple
-/// places (e.g. a constant used twice) but the test only cares about *any*
-/// success, not exactly one.
+/// Use this over [`unique`] when the graph may legitimately contain the same
+/// shape more than once (e.g. a constant used twice) and the test only cares
+/// that a match exists.
 #[track_caller]
 pub(crate) fn first(function: &Function, pat: Pattern) -> Match {
     let mut hits = Matcher::new(function).find_all(&pat).unwrap();
@@ -52,8 +49,7 @@ pub(crate) fn first(function: &Function, pat: Pattern) -> Match {
     hits.swap_remove(0)
 }
 
-/// Returns the first node in `g` whose kind satisfies `pred`, panicking if
-/// none exists.
+/// Returns the first node whose kind satisfies `pred`, panicking if none exists.
 #[track_caller]
 pub(crate) fn find_node<F: Fn(&NodeKind) -> bool>(function: &Function, pred: F) -> NodeId {
     function

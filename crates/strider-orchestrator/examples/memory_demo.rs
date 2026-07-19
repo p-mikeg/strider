@@ -5,17 +5,17 @@
     clippy::unreachable
 )]
 
-//! Renders the IR graph of `memory.elf::main` on x86_64 — a function rich
+//! Renders the IR graph of `memory.elf::main` on x86_64, a function rich
 //! in both stack stores (`int buf[4] = {...}`, `int dst[4]`, `int x = 7`,
 //! `struct point p = {1, 2}`, `union tag t`) and calls (`array_copy`,
 //! `array_fill`, `array_sum`, `pointer_chase`, `struct_field_load`,
 //! `struct_field_store`, `tagged_union_read`).
 //!
-//! After the optimizer pipeline runs, the rendered graph exercises
-//! the stack-aware dot-rendering features: Store/Load nodes whose
-//! addr-input edge is SUPPRESSED because their `stack_offsets`
-//! side-table entry is present — the offset label (e.g. `[sp+0x10]`)
-//! on the node itself replaces the redundant addr edge.
+//! After the optimizer pipeline runs, the rendered graph exercises the
+//! stack-aware dot-rendering features: Store/Load nodes whose addr-input
+//! edge is suppressed because their `stack_offsets` side-table entry is
+//! present; the offset label (e.g. `[sp+0x10]`) on the node itself
+//! replaces the redundant addr edge.
 
 use object::{Object, ObjectSymbol};
 

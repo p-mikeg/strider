@@ -10,11 +10,10 @@
 //! }
 //! ```
 //!
-//! The macro expands to six `#[test]` functions, one per supported arch
-//! (`x86`, `x64`, `aarch64`, `arm`, `mips32le`, `mips32be`).  Each arch test
-//! loads its binary at `fixtures/out/<arch>/<case>.elf`, analyses the named
+//! The macro expands to one `#[test]` per supported arch (see `ALL_ARCHES`).
+//! Each arch test loads `fixtures/out/<arch>/<case>.elf`, analyses the named
 //! symbol, runs the optimiser pipeline (with `LoadReadOnly` wired to the
-//! binary's `.rodata`), and invokes the user-provided assertion closure.
+//! binary's `.rodata`), and invokes the assertion closure.
 
 #![allow(
     clippy::panic,
@@ -31,13 +30,9 @@ use std::path::PathBuf;
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::IrWalkerEx;
 
-// Sub-module containing fixture builders for the indirect-branch classifier
-// integration tests in `tests/indirect_resolve_classify.rs`.  Kept as a sub-module
-// so the rest of the per-arch fixture infrastructure above remains
-// unchanged.
+// Fixture builders for the indirect-branch classifier integration tests
+// (see `indirect_resolve_helpers/mod.rs`).
 pub(crate) mod indirect_resolve_helpers;
-
-// ── Architecture enum ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Arch {
@@ -110,7 +105,7 @@ impl Arch {
     }
     pub(crate) fn sleigh(self) -> strider_target::SleighArch {
         match self {
-            // x86_kernel uses the same Sleigh spec as x86 — only the
+            // x86_kernel uses the same Sleigh spec as x86; only the
             // calling convention differs.
             Arch::X86 | Arch::X86Kernel => strider_target::SleighArch::x86(),
             Arch::X64 => strider_target::SleighArch::x86_64(),
@@ -136,7 +131,7 @@ impl Arch {
             Arch::X64 => strider_target::CallingConvention::x86_64_systemv(),
             // AAPCS64 is byte-order independent; same CC for LE and BE AArch64.
             Arch::Aarch64 | Arch::Aarch64Be => strider_target::CallingConvention::aarch64_aapcs64(),
-            // AAPCS32 is byte-order- and mode-independent — same CC for
+            // AAPCS32 is byte-order- and mode-independent; same CC for
             // ARM (LE), ARM-BE, and Thumb.
             Arch::Arm | Arch::ArmBe | Arch::ArmThumb => {
                 strider_target::CallingConvention::arm_aapcs()
@@ -156,15 +151,9 @@ impl Arch {
     }
 }
 
-// ── Synthetic-fixture Strider builders ───────────────────────────────────────
-
-/// Construct a `Lifter` (owning a `Sleigh` built from `reader`) plus
-/// the resolved calling convention for `arch`.
-///
-/// The lifter now OWNS the Sleigh and builds CFGs itself, so a driver is
-/// always bound to one concrete memory reader.  Callers build the CFG via
-/// `driver.build_cfg(entry, &opts)` and lift via
-/// `driver.build_ir(&cfg, cc)`.
+/// Build a `Lifter` (owning a `Sleigh` over `reader`) plus the resolved
+/// calling convention for `arch`.  The `Lifter` owns the `Sleigh`, so it's
+/// bound to this one memory reader for its lifetime.
 pub(crate) fn driver_for_reader<R: rsleigh::MemReader>(
     arch: Arch,
     reader: R,
@@ -207,8 +196,6 @@ pub(crate) fn strider_aarch64<R: rsleigh::MemReader>(
     driver_for_reader(Arch::Aarch64, reader)
 }
 
-// ── Synthetic x86-64 jump-table fixture builders ─────────────────────────────
-
 /// Build a synthetic x86-64 binary: `jmp rax` (2 bytes at `0x1000`)
 /// followed by `n_targets` × `ret` (0xc3), padded with 16 × `int3`
 /// (0xcc) so speculative look-ahead past the last `ret` doesn't fault
@@ -216,10 +203,10 @@ pub(crate) fn strider_aarch64<R: rsleigh::MemReader>(
 ///
 /// Returns `(bytes, base_addr, branch_indirect_addr, target_addrs)`.
 /// `branch_indirect_addr == base_addr == 0x1000`; targets are at
-/// `0x1002`, `0x1003`, … (each `ret` is 1 byte).
+/// `0x1002`, `0x1003`, ... (each `ret` is 1 byte).
 pub(crate) fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64, Vec<u64>) {
     let base = 0x1000u64;
-    let mut bytes = vec![0xffu8, 0xe0]; // jmp rax — 2 bytes at 0x1000
+    let mut bytes = vec![0xffu8, 0xe0]; // jmp rax
     let mut target_addrs = Vec::with_capacity(n_targets);
     for i in 0..n_targets {
         let target_addr = base + 2 + i as u64; // 0x1002, 0x1003, ...
@@ -231,12 +218,10 @@ pub(crate) fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64
     (bytes, base, branch_indirect_addr, target_addrs)
 }
 
-/// Lift `bytes` via `build_ir` with `LiftOptions::known_targets`
-/// seeding the `BranchIndirect` at `branch_indirect_addr` to
-/// `Multiple(targets)`.
+/// Lift `bytes` via `build_ir`, seeding `CfgOptions::known_targets` so the
+/// `BranchIndirect` at `branch_indirect_addr` resolves to `Multiple(targets)`.
 ///
-/// Returns `(graph, driver, cc)` so callers can drive the optimizer with
-/// the convention-aware pipeline.  Panics on any construction failure.
+/// Returns `(function, driver, cc)`. Panics on any construction failure.
 pub(crate) fn analyze_with_known_targets(
     bytes: &[u8],
     base: u64,
@@ -269,16 +254,14 @@ pub(crate) fn analyze_with_known_targets(
         .build_cfg(MachineInsnAddr::from(base), &cfg_opts, &Default::default())
         .expect("cfg build with Multiple known targets");
 
-    // `build_ir` now takes `cc` by value; clone here so the caller still
-    // gets back an owned `cc` alongside the lifted function.
+    // build_ir consumes cc by value; clone so the caller also gets an
+    // owned cc back.
     let function = driver
         .build_ir(&cfg, cc.clone())
         .expect("build_ir")
         .function;
     (function, driver, cc)
 }
-
-// ── Binary path resolution ───────────────────────────────────────────────────
 
 pub(crate) fn binary_path(arch: Arch, case: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -287,18 +270,15 @@ pub(crate) fn binary_path(arch: Arch, case: &str) -> PathBuf {
         .join(format!("{case}.elf"))
 }
 
-// ── Pipeline runner ──────────────────────────────────────────────────────────
-
-/// Internal helper: load the (arch, case) ELF, build a CFG at `fn_name`,
-/// and lift it to IR.  Returns the full [`LiftOutcome`] (so callers
-/// that need `unresolved_branches` get it), the strider instance, the
-/// sleigh arch (for endianness), and an Arc-shared ROM that callers
-/// can use to drive their optimizer pipeline.
+/// Load the (arch, case) ELF, build a CFG at `fn_name`, and lift it to IR.
+/// Returns the full [`LiftOutcome`] (so callers that need
+/// `unresolved_branches` get it), the strider instance, the sleigh arch
+/// (for endianness), and an owned ROM reader callers can use to drive
+/// their optimizer pipeline.
 ///
-/// Shared between [`analyze`] (which discards
-/// `unresolved_branches`) and `indirect_branch.rs`'s
-/// `assert_no_unresolved_indirect_branch` (which needs both halves of
-/// the outcome).
+/// Shared between [`analyze`] (which discards `unresolved_branches`) and
+/// `indirect_branch.rs`'s `assert_no_unresolved_indirect_branch` (which
+/// needs both halves of the outcome).
 pub(crate) fn lift_for_pipeline(
     arch: Arch,
     case: &str,
@@ -322,8 +302,6 @@ pub(crate) fn lift_for_pipeline(
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
     let obj = obj.file();
     let sleigh_arch = arch.sleigh();
-    // The driver OWNS the Sleigh built from the ELF memory reader and
-    // builds the CFG itself.
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let (mut ana, cc) = driver_for_reader(arch, mem);
     let raw_addr = obj
@@ -349,8 +327,8 @@ pub(crate) fn lift_for_pipeline(
             &Default::default(),
         )
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
-    // `build_ir` now takes `cc` by value; clone here so the caller still
-    // gets back an owned `cc` alongside the outcome.
+    // build_ir consumes cc by value; clone so the caller also gets an
+    // owned cc back.
     let outcome = ana
         .build_ir(&cfg, cc.clone())
         .unwrap_or_else(|e| panic!("build_ir for {fn_name}: {e:?}"));
@@ -366,22 +344,19 @@ pub(crate) fn lift_for_pipeline(
 /// Test fixtures are well-behaved compiler-emitted binaries (gcc/clang
 /// at -O0/-O2 from `fixtures/cases/*.c`), so the default alias precision
 /// ([`crate::opt::AliasMode::StackGlobalDisjoint`], carried by the
-/// `OptCtx` below) is appropriate — globals never alias the stack frame
+/// `OptCtx` below) is appropriate: globals never alias the stack frame
 /// in such binaries, and the relaxed walker recovers the spill/reload
 /// forwarding the assertions depend on.  Tests of the strict mode belong
 /// in unit tests with a directly-configured `OptCtx`.
 ///
-/// Panics on any failure — system tests are pass/fail end-to-end checks.  If
-/// the binary is missing, the panic carries an actionable message including
-/// the `make -C fixtures` instruction.
+/// Panics on any failure; system tests are pass/fail end-to-end checks. If
+/// the binary is missing, the panic names the `make -C fixtures` command
+/// to build it.
 pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
     let (outcome, _lifter, _cc, _sleigh_arch, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
     let mut function = outcome.function;
-    // The default pipeline already includes `LoadReadOnly`; it folds rodata
-    // loads when the ctx carries a ROM.  The reader serves RAW bytes —
-    // `LoadReadOnly` decodes them with the function's own endianness (so
-    // big-endian fixtures fold correctly).  `OptCtx::new`'s default
-    // options carry `AliasMode::StackGlobalDisjoint`.
+    // The reader serves raw bytes; LoadReadOnly decodes them with the
+    // function's own endianness, so big-endian fixtures fold correctly.
     let p = strider_orchestrator::opt::default_pipeline();
     let mut ctx = strider_orchestrator::opt::OptCtx::new(Some(&rom_for_opt));
     p.run(&mut function, &mut ctx)
@@ -389,15 +364,13 @@ pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Func
     function
 }
 
-// ── Assertion vocabulary ─────────────────────────────────────────────────────
-//
 // All counters walk the graph in pre-order and filter on the node kind.
 // Naming convention: `count_<thing>` returns a `usize`; `has_<thing>` returns a `bool`.
 
 use strider_ir::node::NodeKind;
 
-// Re-export the canonical `Function::count_kind` / `Function::has_kind` under
-// their bare names so existing test call-sites need no qualification.
+// Re-exported under bare names so existing test call-sites need no
+// qualification.
 pub(crate) fn count_kind<F: Fn(&NodeKind) -> bool>(
     function: &strider_ir::Function,
     pred: F,
@@ -463,22 +436,14 @@ pub(crate) fn count_returns(function: &strider_ir::Function) -> usize {
 
 /// Counts the distinct control-flow paths converging at any `Return` node.
 ///
-/// Some ABIs (PPC, aarch64) share the function epilogue: at `-O0` the compiler
-/// still routes every source-level `return` through a single `blr`/`ret`, so
-/// the IR has one `Return` node fed by a `Region` that merges the
-/// individual paths.  `count_returns` reports `1` here even though there are
-/// two source-level return statements.  This helper counts those merged
-/// predecessors instead, giving a compiler-independent lower bound on the
-/// number of source-level return paths.
-///
-/// Algorithm: for each `Return` node, look at its first input (the Control
-/// predecessor — see `node_signature::expected_signature` for `Return`).  If
-/// that producer is a `Region`, contribute its *immediate* fan-in;
-/// otherwise contribute 1.  Sum across all reachable Return nodes.  Deeper
-/// joins (a `Region` whose own predecessor is another `Region`)
-/// are not transitively expanded — the result is therefore a lower bound on
-/// the number of source-level return paths, sufficient for the
-/// "≥ 2 return paths" assertions in this suite.
+/// Some ABIs (PPC, aarch64) share the function epilogue: at `-O0` the
+/// compiler routes every source-level `return` through one `blr`/`ret`, so
+/// the IR has one `Return` fed by a `Region` merging the individual paths,
+/// and `count_returns` would report 1 even with two source-level returns.
+/// This counts the `Region`'s immediate fan-in instead (not transitively
+/// expanded through a nested `Region`), giving a lower bound on the number
+/// of source-level return paths; sufficient for the "at least 2 paths"
+/// assertions in this suite.
 pub(crate) fn count_return_paths(function: &strider_ir::Function) -> usize {
     let mut total = 0usize;
     for nid in function.walk() {
@@ -507,13 +472,13 @@ pub(crate) fn count_return_paths(function: &strider_ir::Function) -> usize {
 }
 /// Counts loop headers in the lifted CFG.
 ///
-/// A "loop header" here is a `Region` whose predecessor set contains
-/// at least one back-edge — a predecessor that is itself reachable from
-/// the `Region` via forward control flow.  This is independent of
-/// any `VarPhi` count, which can drop to zero when *every* tracked
-/// variable is loop-invariant (e.g. a register that's read in the loop
-/// header but never modified by the body — `PhiCollapse`'s self-ref
-/// rule then collapses the phi to the entry value).
+/// A "loop header" here is a `Region` whose predecessor set contains at
+/// least one back-edge: a predecessor that is itself reachable from the
+/// `Region` via forward control flow.  This is independent of any `VarPhi`
+/// count, which can drop to zero when every tracked variable is
+/// loop-invariant (e.g. a register read in the loop header but never
+/// modified by the body; `PhiCollapse`'s self-ref rule then collapses the
+/// phi to the entry value).
 pub(crate) fn count_loops(function: &strider_ir::Function) -> usize {
     use entity_utils::DenseEntitySet;
     let mut count = 0;
@@ -599,7 +564,7 @@ pub(crate) fn has_constant(function: &strider_ir::Function, value: u64) -> bool 
 }
 
 /// Locates the unique `If` node in `g`.  Panics if zero or more than one
-/// is present — either case indicates a fixture-construction bug.  Use this
+/// is present; either case indicates a fixture-construction bug.  Use this
 /// helper when the test asserts on the condition of a known-unique `If` node
 /// rather than counting `If` nodes via [`count_ifs`].
 pub(crate) fn find_unique_if(function: &strider_ir::Function) -> strider_ir::node::NodeId {
@@ -614,27 +579,24 @@ pub(crate) fn find_unique_if(function: &strider_ir::Function) -> strider_ir::nod
     first
 }
 
-// ── per_arch_test! macro ─────────────────────────────────────────────────────
-
 /// Generates one `#[test]` per (architecture, function) pair.
 ///
-/// Basic form (all six archs run):
+/// Basic form (every arch in `ALL_ARCHES` runs):
 ///   per_arch_test!("<case>", "<fn_name>", <assertion_fn>);
 ///
 /// With per-arch ignores (specific archs are `#[ignore = "reason"]`-marked):
 ///   per_arch_test!("<case>", "<fn_name>", <assertion_fn>, ignore = {
-///       Mips32le: "BUG-N: <one-line reason>",
-///       Mips32be: "BUG-N: <one-line reason>",
+///       Mips32le: "<what fails and why>",
+///       Mips32be: "<what fails and why>",
 ///   });
 ///
 /// Ignore reasons should be a one-line diagnosis, not just a symptom, so
 /// a future reader can find the fix path from the reason alone.
 ///
-/// Implementation note: because Rust `macro_rules!` does not support ident
-/// equality matching, the ignore block is parsed with individual per-arch
-/// arms.  The outer macro converts each arch's entry into either a
-/// `[ignored "reason"]` or `[run]` group, then the inner `__one_arch_test!`
-/// helper uses that group as its last argument.
+/// `macro_rules!` has no ident equality, so the ignore block can't be
+/// compared directly: it's scanned by dedicated per-arch arms.  The outer
+/// macro hands each arch's entry to `__one_arch_test!`, which forwards it
+/// to that arch's scanner.
 #[macro_export]
 macro_rules! per_arch_test {
     // No-ignore shorthand.
@@ -671,59 +633,42 @@ macro_rules! per_arch_test {
     };
 }
 
-// `__one_arch_test!` is a thin dispatcher.  The `ignore` block is an
-// opaque `{ ... }` group; we forward it to a per-arch scanner
-// (`__scan_ignore_x86!` etc.) which digs into the braces and either emits
-// `#[ignore = $r] #[test] fn $fn() { ... }` or a plain `#[test] fn $fn() { ... }`.
-//
-// `paste!` builds the inner-macro name by lower-casing the arch token
-// (e.g. `Aarch64Be` → `__scan_ignore_aarch64be`).  This collapses what
-// used to be 15 hand-written dispatcher arms into a single arm.
-//
-// The `$fn:ident` token sequence after the function name is a literal
-// type-tag that the per-arch scanners require in their patterns; see
-// each `__scan_ignore_<arch>!` definition below.
-
+// Thin dispatcher: forwards the opaque `ignore` block to the matching
+// per-arch scanner (`__scan_ignore_x86!` etc.), which emits either an
+// `#[ignore = reason] #[test]` or a plain `#[test]`.  `paste!` builds the
+// scanner name by lower-casing the arch token (e.g. `Aarch64Be` ->
+// `__scan_ignore_aarch64be`).  The literal `$fn:ident` token after the
+// function name below isn't a typo: the scanner arms require it in their
+// match pattern (see `__define_scan_ignore!`).
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __one_arch_test {
     ($arch:ident, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
         paste::paste! {
-            // Per-arch scanners are emitted by `__define_scan_ignore!` (a
-            // macro-generated `#[macro_export] macro_rules!`).  Rust does
-            // not allow `$crate::name` lookup for macros that are
-            // themselves the output of macro expansion (issue #52234), so
-            // we reach the scanner by its unqualified name — `#[macro_export]`
-            // hoists it to the test crate's root prelude.
+            // Scanners are emitted by `__define_scan_ignore!`.  Rust can't
+            // resolve `$crate::name` for a macro that is itself
+            // macro-generated (rust-lang/rust#52234), so we call it by its
+            // unqualified name; `#[macro_export]` hoists it to the crate
+            // root regardless.
             [<__scan_ignore_ $arch:lower>]!($fn:ident, $case, $fn_name, $assert, $ignore_block);
         }
     };
 }
 
-// Per-arch scanners.  Each scanner needs three arms: match-self (head of
-// the ignore list names this arch — emit an ignored test); skip-other
-// (head names some other arch — recurse on the tail); empty (no entry —
-// emit a plain test).  The match-self arm needs its arch ident as a
-// literal token because `macro_rules!` lacks ident equality — so we
-// generate one scanner per arch.
+// Each per-arch scanner needs three arms: match-self (emit an ignored
+// test), skip-other (recurse past an entry for a different arch), and
+// empty (emit a plain test).  The match-self arm needs the arch as a
+// literal token, and `macro_rules!` has no ident equality, so we generate
+// one scanner per arch via `__define_scan_ignore!($arch_lower,
+// $arch_camel)` (invoked once per arch below).
 //
-// `__define_scan_ignore!($arch_lower, $arch_camel)` stamps out one
-// scanner.  All 16 scanners are listed in the invocations below; adding
-// a new arch is a one-line addition.
+// `$d:tt` is the standard "dollar token" trick for nesting `macro_rules!`
+// on stable: an outer macro can't write a bare `$` for an inner macro's
+// metavariables (it would bind in the outer scope), so `$d` stands in for
+// a literal `$` in the emitted scanner.
 //
-// The `$d:tt` parameter is the classic "dollar token" trick for nesting
-// `macro_rules!` definitions on stable Rust: when an outer macro emits
-// an inner `macro_rules!`, we cannot write a bare `$` for the inner
-// metavariables (it would bind in the outer scope), so we accept `$` as
-// a token parameter and use `$d` wherever we need a literal `$` in the
-// emitted inner macro.
-//
-// (Earlier comments worried that adding a generator macro on top of the
-// existing per-arch scanners would deepen the recursion past the default
-// `recursion_limit`.  That concern only applied to the *runtime* dispatch
-// — the skip-other arm recurses through the ignore list once per arch.
-// `__define_scan_ignore!` runs at macro definition time and does not
-// participate in the runtime recursion chain.)
+// The generator runs at definition time, not as part of the runtime
+// skip-other recursion, so it adds nothing to `recursion_limit` pressure.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __define_scan_ignore {

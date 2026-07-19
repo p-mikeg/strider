@@ -1,25 +1,21 @@
 //! `Switch`-node integration tests for jump-table lifting.
 //!
-//! Drives the full `build_ir` → `handle_switch` → `build_switch` path
-//! with a real x86-64 BranchIndirect that's resolved to
-//! `Multiple([t0, t1, ...])` via the cfg builder's
-//! `LiftOptions::known_targets` feedback path — the same path the
-//! strider fixed-point orchestrator uses to commit an IR-level
+//! Drives the full `build_ir` -> `handle_switch` -> `build_switch` path with
+//! a real x86-64 BranchIndirect resolved to `Multiple([t0, t1, ...])` via
+//! the cfg builder's `LiftOptions::known_targets` feedback path, the same
+//! path the strider fixed-point orchestrator uses to commit an IR-level
 //! `Multiple` classification across iterations.
 //!
-//! Each test constructs a tiny x86-64 byte sequence whose control
-//! flow is `jmp rax` followed by N short target regions (each one
-//! `ret`), feeds the BranchIndirect's pcode address into
-//! `LiftOptions::known_targets` with a `Multiple` payload pointing at those
-//! targets, runs `build_ir`, and asserts on the resulting IR
-//! shape: a single `NodeKind::Switch` with one `Control` output per
-//! target (in target order), and zero `If` / `IntCmpOp::Equal` nodes
-//! arising from the dispatch (the old if-ladder lowering —
-//! `IntCmpOp::Equal` + `If` per arm — was replaced by `handle_switch`
-//! emitting one `Switch` node directly; case addresses now live in the
-//! `switch_targets` side table instead of as IR comparison constants).
+//! Each test builds a tiny x86-64 `jmp rax` followed by N short target
+//! regions (each one `ret`), feeds the BranchIndirect's pcode address into
+//! `known_targets` with a `Multiple` payload, runs `build_ir`, and asserts
+//! the result is a single `NodeKind::Switch` with one `Control` output per
+//! target (in target order) and zero `If` / `IntCmpOp::Equal` nodes: the
+//! old if-ladder lowering was replaced by `handle_switch` emitting one
+//! `Switch` node directly, with case addresses in the `switch_targets` side
+//! table instead of as IR comparison constants.
 //!
-//! The unit-level coverage of `build_switch`'s primitive lives in
+//! Unit-level coverage of `build_switch`'s primitive lives in
 //! `crates/strider-lift/src/lift/control.rs::tests`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -41,8 +37,8 @@ fn count_switches(function: &Function) -> usize {
     function.count_kind(|k| matches!(k, NodeKind::Switch))
 }
 
-/// Locates the unique `Switch` node in `function`. Panics if zero or more
-/// than one is present — either case indicates a fixture-construction bug.
+/// Panics if zero or more than one `Switch` node is present; either case
+/// indicates a fixture-construction bug.
 fn find_unique_switch(function: &Function) -> strider_ir::node::NodeId {
     let mut iter = function
         .walk()
@@ -73,11 +69,8 @@ fn count_int_consts_eq(function: &Function, want: u64) -> usize {
 
 #[test]
 fn switch_terminator_lifts_to_plain_branch_for_one_target() {
-    // 1-target Switch — `handle_switch`'s degenerate case emits a plain
-    // `build_branch`: no `Switch` node, no `If`, no `IntCmpOp`, and no
-    // comparison constant for the dispatch value.  Pinning this shape
-    // ensures the single-target case doesn't regress into a spurious
-    // 1-arm `Switch` (or a 1-arm `If` with a dead default).
+    // 1-target Switch: handle_switch's degenerate case emits a plain
+    // build_branch, not a 1-arm Switch or a 1-arm If with a dead default.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(1);
     let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(
@@ -91,8 +84,6 @@ fn switch_terminator_lifts_to_plain_branch_for_one_target() {
         0,
         "no equality cmp for 1-target dispatch"
     );
-    // Still no comparison-constant for K_0 — there is no cmp at all in
-    // the plain-branch degenerate case.
     assert_eq!(
         count_int_consts_eq(&g, targets[0]),
         0,
@@ -102,15 +93,10 @@ fn switch_terminator_lifts_to_plain_branch_for_one_target() {
 
 #[test]
 fn switch_terminator_lifts_to_single_switch_node_for_three_targets() {
-    // 3-target Switch — `handle_switch` emits exactly one
-    // `NodeKind::Switch` with N=3 `Control` outputs (one per target
-    // region, in target order).  There is no if-ladder anymore, so
-    // zero `If` nodes and zero `IntCmpOp::Equal` cmps.  The target
-    // addresses live in the `switch_targets` side table (not as IR
-    // comparison constants) — assert they match the fixture's targets,
-    // in order.  Pinning this shape catches any future regression that
-    // reintroduces a decomposed cmp/If ladder or scrambles target
-    // order.
+    // handle_switch emits exactly one Switch with N=3 Control outputs (one
+    // per target region, in target order); no if-ladder, so zero If and
+    // zero IntCmpOp::Equal. Target addresses live in the switch_targets
+    // side table, not as IR comparison constants.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
     let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(
@@ -143,19 +129,12 @@ fn switch_terminator_lifts_to_single_switch_node_for_three_targets() {
 
 #[test]
 fn switch_with_const_index_collapses_through_default_pipeline() {
-    // `handle_switch` + the default pipeline: a `Switch`'s `address`
-    // input is just another value input, so when the dispatch value is a
-    // compile-time constant (as here — `mov rax, K_target; jmp rax`),
-    // `ConstantFold` reduces it to an `IntConst` and `DeadBranchElimination`
-    // then collapses the constant-address `Switch` to its single matching
-    // arm.  This test pins that contract: pre-optimization there is exactly
-    // one `Switch` with 3 `Control` outputs; post-optimization the `Switch`
-    // is gone (collapsed to case 1), and — since a `Switch` never decomposes
-    // into an if-ladder — the `If` count is zero both before and after.
-    //
-    // Synthetic shape: `mov rax, K_target; jmp rax` where
-    // K_target is one of the Multiple targets we feed via
-    // known_targets.
+    // A Switch's address input is just another value input: when the
+    // dispatch value is a compile-time constant (mov rax, K_target; jmp
+    // rax), ConstantFold reduces it to an IntConst and
+    // DeadBranchElimination collapses the Switch to its single matching
+    // arm. A Switch never decomposes into an if-ladder, so the If count
+    // stays zero pre- and post-optimization.
     //
     // x86-64 encoding:
     //   48 c7 c0 LL LL LL LL   mov rax, imm32 (sign-extended; 7 bytes)
@@ -173,7 +152,6 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
     let branch_indirect_addr = 0x1007u64; // jmp rax sits right after the mov
 
     let reader = BufMemReader::new(bytes, base);
-    // The driver OWNS the Sleigh and builds the CFG itself.
     let (mut strider, cc) = common::strider_x86_64(reader);
     let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known_targets.insert(
@@ -194,8 +172,6 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     let mut function = outcome.function;
 
-    // Pre-optimization: exactly one Switch node, zero If nodes (a
-    // Switch never decomposes into a cmp/If ladder).
     assert_eq!(
         count_switches(&function),
         1,
@@ -215,11 +191,6 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
         )
         .expect("optimizer pipeline");
 
-    // Post-optimization: `ConstantFold` reduces the dispatch value to
-    // `IntConst(K_1)` (== `target_addrs[1]`, i.e. case 1), so
-    // `DeadBranchElimination` collapses the constant-address `Switch` to its
-    // single matching arm — the `Switch` is killed and control flows straight
-    // to case 1's region.  No `Switch` survives, and the If count stays zero.
     assert_eq!(
         count_switches(&function),
         0,
@@ -234,19 +205,18 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
 
 #[test]
 fn switch_targets_are_not_double_linked_by_the_region_linker() {
-    // Regression: a `Switch` region's per-target CFG edges carry the
-    // `Unconditional` edge kind, but the region's *IR* control flow is
-    // wired exclusively by `handle_switch`'s dispatch (`build_switch` /
-    // `build_branch`).  The post-loop `link_region_edges` linker MUST
-    // therefore skip a `Switch` region's `Unconditional` edges — re-linking
-    // them adds the switch region's pre-If control as a spurious second
-    // predecessor to every target region.  The structural validator can't
-    // catch it on its own because the target's `Region` fan-in and `MemPhi`
-    // arity inflate in lock-step (both grow by one per spurious link).
+    // Regression: a Switch region's per-target CFG edges carry the
+    // Unconditional edge kind, but the region's IR control flow is wired
+    // exclusively by handle_switch's dispatch. The post-loop
+    // link_region_edges linker must skip a Switch region's Unconditional
+    // edges; re-linking them adds the switch region's pre-If control as a
+    // spurious second predecessor to every target region. The structural
+    // validator can't catch it alone, since the target's Region fan-in and
+    // MemPhi arity inflate in lock-step.
     //
-    // The synthetic fixture (`jmp rax` → N single-`ret` targets) has no
+    // The synthetic fixture (jmp rax -> N single-ret targets) has no
     // merging control flow, so a correctly-lifted graph is a pure control
-    // tree: every `Region` node has at most one control predecessor.  The
+    // tree: every Region node has at most one control predecessor. The
     // double-link gave each of the N target regions two.
     for n in [1usize, 2, 3] {
         let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(n);
@@ -269,19 +239,12 @@ fn switch_targets_are_not_double_linked_by_the_region_linker() {
 
 #[test]
 fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
-    // End-to-end pin: a CFG that has a `BranchIndirect` resolved
-    // to `Multiple([t0, t1])` via `with_known_targets` produces an
-    // IR graph containing the `Switch` node corresponding to those
-    // targets.  Verifies the full
-    // `build_ir → handle_switch → build_switch`
-    // pipeline produces visible IR structure that downstream
-    // consumers (pattern queries, dot rendering) can pattern-match
-    // against — closing the gap that pre-`Switch` CFG edges
-    // had no IR encoding for the dispatch.
+    // End-to-end pin: a CFG with a BranchIndirect resolved to
+    // Multiple([t0, t1]) via with_known_targets must produce IR containing
+    // the corresponding Switch node, closing the gap where pre-Switch CFG
+    // edges had no IR encoding for the dispatch.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(2);
     let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
-    // 2-target Switch: zero Ifs, zero equality cmps, exactly one Switch
-    // node with 2 Control outputs.
     assert_eq!(
         common::count_ifs(&g),
         0,
@@ -304,10 +267,8 @@ fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
         targets.as_slice(),
         "switch_targets side table must list both target addresses in target order",
     );
-    // No leftover IndirectBranch placeholder: the orchestrator's
-    // unresolved-branch table should be empty here because the
-    // BranchIndirect was fully classified to Multiple before lift
-    // (no UnresolvedIndirectBranch placeholder generated).
+    // No BranchIndirect was fully classified to Multiple before lift, so no
+    // UnresolvedIndirectBranch placeholder is generated.
     let placeholder_count = g
         .walk()
         .filter(|nid| matches!(g.node_kind(*nid), NodeKind::IndirectBranch))

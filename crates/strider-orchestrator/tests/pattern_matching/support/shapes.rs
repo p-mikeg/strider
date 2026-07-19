@@ -7,8 +7,7 @@ use strider_ir::{FloatBinaryOp, Function, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use strider_ir_test_utils::{Tb, reg_vn, stack_vn_x86_64 as stack_vn};
 
-// ── Minimal op-rooted graphs ─────────────────────────────────────────────────
-// Each builds `return(op(5, 3))` (or similar) at I64 width.  Parameterising
+// Each builds `return(op(5, 3))` (or similar) at I64 width. Parameterising
 // the op lets every test module drive the full op enum without open-coding
 // the boilerplate.
 
@@ -44,20 +43,20 @@ pub(crate) fn int_cmp_5_3(op: IntCmpOp) -> Function {
     t.ret_val(cast)
 }
 
-/// `return(5 <= 3)` built as the lowered shape `BoolNeg(IntLess(3, 5))`,
-/// matching the canonical form pcode-lift produces for `IntLessEqual`.
+/// `return(5 <= 3)` built as the lowered shape `Xor(IntLess(3, 5), 1):I1`,
+/// matching the canonical form pcode-lift produces for `IntLessEqual`
+/// (`5 <= 3` becomes `!(3 < 5)`, i.e. `Less` with operands swapped).
 pub(crate) fn int_le_lowered_5_3() -> Function {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
-    // `5 <= 3`  →  `!(3 < 5)`  →  Less(rhs=3, lhs=5).
     let lt = t.int_cmp(r, l, IntCmpOp::Less);
     let neg = t.bool_not(lt);
     let cast = t.as_int(neg, ValueType::I64);
     t.ret_val(cast)
 }
 
-/// Signed analogue of [`int_le_lowered_5_3`]: `BoolNeg(IntSless(3, 5))`.
+/// Signed analogue of [`int_le_lowered_5_3`]: `Xor(IntSless(3, 5), 1):I1`.
 pub(crate) fn int_sle_lowered_5_3() -> Function {
     let mut t = Tb::empty();
     let l = t.u64(5);
@@ -86,7 +85,6 @@ pub(crate) fn float_bin(l: f64, r: f64, op: FloatBinaryOp) -> Function {
     t.ret_val(as_int)
 }
 
-/// `return(a + b)` — both operands are `IntConst` of type `I64`.
 pub(crate) fn add_consts(a: u64, b: u64) -> Function {
     let mut t = Tb::empty();
     let la = t.u64(a);
@@ -95,7 +93,6 @@ pub(crate) fn add_consts(a: u64, b: u64) -> Function {
     t.ret_val(s)
 }
 
-/// `return(((a + b) + c))` — three-deep nested add.
 pub(crate) fn add_nested_3(a: u64, b: u64, c: u64) -> Function {
     let mut t = Tb::empty();
     let la = t.u64(a);
@@ -106,14 +103,12 @@ pub(crate) fn add_nested_3(a: u64, b: u64, c: u64) -> Function {
     t.ret_val(s)
 }
 
-/// `call(addr)` then `return` — no args, no return value.
 pub(crate) fn call_at(addr: u64) -> Function {
     let mut t = Tb::empty();
     t.call_at(addr);
     t.ret_nothing()
 }
 
-/// `store(ram, addr=a, data=d)` then `load(ram, addr=a)` then return.
 pub(crate) fn store_then_load_ram(addr: u64, data: u64) -> Function {
     let mut t = Tb::empty();
     let a = t.u64(addr);
@@ -123,8 +118,8 @@ pub(crate) fn store_then_load_ram(addr: u64, data: u64) -> Function {
     t.ret_val(v)
 }
 
-/// `if c == 1 { return 10 } else { return 20 }` where `c` is a u64 const
-/// supplied by the caller.  Useful for If-pattern and dead-branch tests.
+/// `if c == 1 { return 10 } else { return 20 }`, for If-pattern and
+/// dead-branch tests.
 pub(crate) fn if_cmp_then_return(c: u64) -> Function {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let entry = t.region();
@@ -152,10 +147,9 @@ pub(crate) fn if_cmp_then_return(c: u64) -> Function {
     t.finish()
 }
 
-/// Compiler-inverted equivalent of [`if_cmp_then_return`].  Same source-level
-/// program — `if (c == 1) { return 10 } else { return 20 }` — but the IR has
-/// the cond wrapped in `Not(...)` and the branches swapped, so the literal
-/// IR shape is `if (!(c == 1)) { return 20 } else { return 10 }`.
+/// Compiler-inverted equivalent of [`if_cmp_then_return`]: same source
+/// program, but the cond is wrapped in a negation and the branches swapped,
+/// so the literal IR shape is `if (!(c == 1)) { return 20 } else { return 10 }`.
 pub(crate) fn if_cmp_then_return_inverted(c: u64) -> Function {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let entry = t.region();
@@ -184,9 +178,9 @@ pub(crate) fn if_cmp_then_return_inverted(c: u64) -> Function {
     t.finish()
 }
 
-/// Graph with a single tracked register and `return(reg)` — yields one
-/// `InitialVar(reg)` node.  Returns the register so tests can construct
-/// `phi_for` / `initial_var_for` patterns against it.
+/// Graph with a single tracked register and `return(reg)`: one `InitialVar(reg)`
+/// node. Returns the register so tests can construct `phi_for` /
+/// `initial_var_for` patterns against it.
 pub(crate) fn single_initial_var() -> (Function, rsleigh::Vn) {
     let reg = reg_vn(0x00, 8);
     let mut t = Tb::with_vars(&[reg]);

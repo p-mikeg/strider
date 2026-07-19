@@ -1,6 +1,6 @@
 //! Cross-arch verification that `FlagCmpCanonicalize` folds every
 //! conditional-branch flavour down to a single direct `IntCmpOp` on the
-//! original operands — on real lifted code, not synthetic flag trees.
+//! original operands, on real lifted code rather than synthetic flag trees.
 //!
 //! The `cmp_branches` fixture has one `if (a <cmp> b)` branch per comparison
 //! (see `fixtures/cases/cmp_branches.c`), wrapped in `memory` asm barriers so
@@ -8,10 +8,10 @@
 //!
 //! AArch64 emits the canonical flag tree the rules were first written for;
 //! ARM/Thumb lift the branch with inverted sense (an outer `BoolNeg`), so by
-//! the time the pass runs ConstantFold has decomposed the sub-terms into
-//! direct comparisons — which the "decomposed-form" rules (10–13) recognise.
-//! x86 / x64 (EFLAGS) reach the canonical form directly.  This test pins that
-//! every flag-register arch ends at the same single-`IntCmpOp` shape.
+//! the time the pass runs, ConstantFold has decomposed the sub-terms into
+//! direct comparisons, which the "decomposed-form" rules recognise. x86 / x64
+//! (EFLAGS) reach the canonical form directly. This test pins that every
+//! flag-register arch ends at the same single-`IntCmpOp` shape.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 

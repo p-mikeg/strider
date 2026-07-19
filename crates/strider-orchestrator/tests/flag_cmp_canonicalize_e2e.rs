@@ -2,13 +2,12 @@
 //!
 //! Lifts a hand-encoded AArch64 `cmp w0, #5; b.eq +8; ret; ret` byte
 //! sequence through the full strider + opt pipeline and asserts that
-//! the resulting `If` node's cond is a direct `IntCmpOp::Equal` —
-//! i.e. the rule fired against real Sleigh-lifted IR (not a synthetic
-//! `FunctionBuilder` fixture).
+//! the resulting `If` node's cond is a direct `IntCmpOp::Equal`, i.e.
+//! the rule fired against real Sleigh-lifted IR, not a synthetic
+//! `FunctionBuilder` fixture.
 //!
 //! Mirrors `tests/common/indirect_resolve_helpers::run_pipeline_x86_64`
-//! shape but targets AArch64 and asserts on the post-pipeline cond
-//! kind.
+//! but targets AArch64 and asserts on the post-pipeline cond kind.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -21,9 +20,8 @@ use strider_target::{CallingConvention, SleighArch};
 
 mod common;
 
-/// Lift the supplied bytes starting at `0x1000` and run the full
-/// strider optimiser pipeline (which now includes
-/// `FlagCmpCanonicalize`).  Returns the post-pipeline graph.
+/// Lifts the supplied bytes starting at `0x1000` and runs the full
+/// strider optimiser pipeline (including `FlagCmpCanonicalize`).
 fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let base = 0x1000u64;
     let reader = BufMemReader::new(bytes, base);
@@ -55,10 +53,10 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
 /// Build the AArch64 byte sequence:
 ///
 /// ```text
-/// 0x1000: cmp w0, #5      (subs wzr, w0, #5)  — 0x7100141F
-/// 0x1004: b.eq +8         (skip the next ret)  — 0x54000040
-/// 0x1008: ret                                    — 0xD65F03C0
-/// 0x100C: ret                                    — 0xD65F03C0
+/// 0x1000: cmp w0, #5      (subs wzr, w0, #5)  = 0x7100141F
+/// 0x1004: b.eq +8         (skip the next ret)  = 0x54000040
+/// 0x1008: ret                                    = 0xD65F03C0
+/// 0x100C: ret                                    = 0xD65F03C0
 /// ```
 fn aarch64_cmp_eq_branch_bytes() -> Vec<u8> {
     let mut out = Vec::with_capacity(16);
@@ -96,7 +94,7 @@ fn aarch64_b_eq_after_pipeline_has_direct_int_cmp_cond() {
     );
 }
 
-/// `cmp rax, rbx; je +1; ret; ret` — x86_64.
+/// `cmp rax, rbx; je +1; ret; ret`, x86_64.
 ///
 /// ```text
 /// 0x1000: cmp rax, rbx     48 39 D8       (3 bytes)

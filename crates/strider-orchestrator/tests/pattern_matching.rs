@@ -4,8 +4,8 @@
 //! The bulk of pattern-only tests now live in `crates/strider-pattern/tests/`.
 //! What remains here are pattern queries whose fixtures need a
 //! strider-opt optimizer pass (PhiCollapse, IfCondInversion,
-//! FunctionArgDetect) to be applied before the pattern runs — moving them
-//! out would require strider-pattern to depend on strider-orchestrator and
+//! FunctionArgDetect) applied before the pattern runs; moving them out
+//! would require strider-pattern to depend on strider-orchestrator and
 //! invert the crate graph.
 
 #![allow(

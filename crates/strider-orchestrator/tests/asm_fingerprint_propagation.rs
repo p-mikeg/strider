@@ -21,7 +21,7 @@ use strider_orchestrator::opt::{ConstantFold, KnownBits};
 
 #[test]
 fn constant_fold_add_consts_preserves_fingerprints() {
-    // Build `IntConst(3)@0x100 + IntConst(4)@0x104 → IntConst(7)`.
+    // Build `IntConst(3)@0x100 + IntConst(4)@0x104 -> IntConst(7)`.
     // After folding, the surviving IntConst(7) MUST carry the Add's
     // address (and the sub-operand addresses, which the engine
     // propagates via after_replace).
@@ -45,7 +45,6 @@ fn constant_fold_add_consts_preserves_fingerprints() {
         .unwrap()
         .changed()
     );
-    // The surviving node feeds the Return; find it.
     let const7 = fg
         .walk()
         .find(|&nid| {
@@ -82,8 +81,8 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
         .unwrap()
         .changed()
     );
-    // Result is IntConst(0); its fingerprint must include 0x204 (the
-    // Xor's address — absorbed via after_replace).
+    // Result is IntConst(0); its fingerprint must include 0x204, the
+    // Xor's address, absorbed via after_replace.
     let const0 = fg
         .walk()
         .find(|&nid| {
@@ -102,8 +101,8 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
 
 #[test]
 fn known_bits_fold_preserves_fingerprints() {
-    // `(0xFFu64 & 0x4) | 0x07` — ConstantFold + KnownBits will collapse
-    // to a single IntConst; the surviving node must carry at least one
+    // `(0xFFu64 & 0x4) | 0x07`: ConstantFold + KnownBits collapse this to a
+    // single IntConst; the surviving node must carry at least one
     // contributor address from the chain.
     let mut fg = make_empty_fn(|b| {
         b.set_lift_addr(Some(0x300));
@@ -130,8 +129,6 @@ fn known_bits_fold_preserves_fingerprints() {
         &mut fg,
         &mut strider_orchestrator::opt::OptCtx::new(None),
     );
-    // The eventual return value should be an IntConst with at least one
-    // of the rewritten addresses absorbed into it.
     let ret = fg
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
@@ -149,9 +146,9 @@ fn known_bits_fold_preserves_fingerprints() {
 
 #[test]
 fn constant_fold_and_mask_merge_preserves_fingerprints() {
-    // `(x & 0x4) & 0x7 → x & (0x4 & 0x7)` = `x & 0x4`.  The fold
-    // rewrites the outer And's value; the surviving And node must
-    // carry the rewritten outer-And's address.
+    // `(x & 0x4) & 0x7 -> x & (0x4 & 0x7)` = `x & 0x4`. The fold rewrites
+    // the outer And's value; the surviving And node must carry the
+    // rewritten outer-And's address.
     let mut fg = make_empty_fn(|b| {
         b.set_lift_addr(Some(0x500));
         let x = b.build_int_const(0xFFu64, ValueType::I64)?;
@@ -174,7 +171,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
     )
     .unwrap();
     // Whatever value reaches the Return must carry the outer-And's
-    // address — that's the canonical "rewrite root".
+    // address: that's the canonical "rewrite root".
     let ret = fg
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))

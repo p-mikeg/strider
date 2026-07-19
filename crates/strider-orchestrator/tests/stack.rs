@@ -16,7 +16,7 @@ per_arch_test!(
     volatile_preserves_three_stores
 );
 // escape_via_ptr keeps the call alive via an asm-volatile barrier in
-// external_take_ptr's body — see fixtures/cases/stack.c.  arm's
+// external_take_ptr's body (see fixtures/cases/stack.c). arm's
 // `pop {pc}` placeholder resolves via the indirect-branch resolver's
 // `LinkRegister` arm once `LoadForward` simplifies the loaded
 // target back to `InitialVar(lr)`.
@@ -36,7 +36,7 @@ per_arch_test!(
 );
 
 fn volatile_preserves_three_stores(function: &strider_ir::Function) {
-    // *p = v; *p = v+1; *p = v+2  — opt must not collapse these.
+    // *p = v; *p = v+1; *p = v+2: opt must not collapse these.
     assert!(
         count_stores(function) >= 3,
         "volatile must preserve 3 stores; got {}",

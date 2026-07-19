@@ -8,9 +8,8 @@
 use object::{Object, ObjectSymbol};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Use a real fixture that ships with the workspace.  Build via
-    // `make -C fixtures` if the file isn't present (the example expects
-    // the fixture to be pre-built — see CLAUDE.md).
+    // Build via `make -C fixtures` if this fixture isn't present yet
+    // (the example expects it pre-built; see CLAUDE.md).
     let binary_path = "fixtures/out/x86/arithmetic.elf";
     let symbol = "add";
 

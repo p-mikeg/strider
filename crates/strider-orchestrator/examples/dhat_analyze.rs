@@ -5,8 +5,8 @@
 //! cargo run --release --example dhat_analyze
 //! ```
 //!
-//! Writes `dhat-heap.json` (parse with scratchpad/dhat_top.py or the dh_view
-//! web viewer) — ranks allocation sites by total bytes / blocks.
+//! Writes `dhat-heap.json`, ranked by allocation site total bytes / blocks
+//! (parse with scratchpad/dhat_top.py or the dh_view web viewer).
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 use object::{Object, ObjectSymbol};

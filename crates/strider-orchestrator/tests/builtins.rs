@@ -30,17 +30,11 @@ per_arch_test!("builtins", "ctz32", ctz_lowers);
 per_arch_test!("builtins", "expect_branch", expect_compiles_normally);
 
 /// `__builtin_popcount` lowering varies massively across (compiler, arch):
-///
-///   - x86_64 with -mpopcnt: native `popcnt` instruction (rsleigh may emit
-///     a CallOther, a Popcount node, or a few moves — none guaranteed).
-///   - aarch64: scalar pipeline through NEON `cnt` + sum reduction (uses
-///     vector-load/store pairs).
-///   - mips32: no native popcount; full SWAR loop unrolled or function call.
-///   - arm: similar to mips32.
-///
-/// The test asserts only that the function lowers to a non-trivial graph —
-/// the analyzer doesn't crash, and the result depends on the input.
-/// Pinning "popcount" to a specific node kind is too brittle.
+/// x86_64 with -mpopcnt uses the native `popcnt` (a CallOther, a Popcount
+/// node, or a few moves, none guaranteed); aarch64 goes through NEON `cnt`
+/// plus a sum reduction; mips32/arm have no native popcount and unroll a
+/// SWAR loop or call out. Pinning "popcount" to a specific node kind would
+/// be too brittle, so this only asserts the graph is non-trivial.
 fn popcount_lowers(function: &strider_ir::Function) {
     let nodes = function.walk().count();
     assert!(
@@ -49,8 +43,7 @@ fn popcount_lowers(function: &strider_ir::Function) {
     );
 }
 fn lzcount_lowers(function: &strider_ir::Function) {
-    // Same loose check as popcount: clz / __builtin_clz lowering is even
-    // more variable — graph just needs to be non-trivial.
+    // Same loose check as popcount: clz lowering is even more variable.
     let nodes = function.walk().count();
     assert!(
         nodes > 5,
@@ -65,6 +58,6 @@ fn ctz_lowers(function: &strider_ir::Function) {
     );
 }
 fn expect_compiles_normally(function: &strider_ir::Function) {
-    // __builtin_expect is a hint, not a real op — should reduce to plain control flow.
+    // __builtin_expect is a hint, not a real op; reduces to plain control flow.
     assert!(count_ifs(function) >= 1, "expect_branch has an if");
 }

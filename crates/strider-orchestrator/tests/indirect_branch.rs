@@ -1,32 +1,27 @@
 //! Computed-goto fixture tests for the IR-level indirect-branch resolver.
 //!
-//! `fixtures/cases/indirect_branch.c::indirect_branch_resolved` lowers
-//! the indirect goto to a load from a local stack array of label
-//! addresses on every supported toolchain at every optimisation level
-//! we can target — gcc/clang collapse direct constant computed-gotos
-//! into straight-line `mov; ret`, so the surviving lowering is
-//! always: write label addresses to the local stack array, load the
-//! per-iteration target from the array, branch through the loaded
-//! value.
+//! `fixtures/cases/indirect_branch.c::indirect_branch_resolved` lowers the
+//! indirect goto to a load from a local stack array of label addresses on
+//! every supported toolchain/optimisation level we target (gcc/clang
+//! collapse direct constant computed-gotos into straight-line `mov; ret`,
+//! so the surviving lowering is always: write label addresses to the local
+//! stack array, load the per-iteration target from the array, branch
+//! through the loaded value).
 //!
-//! Resolving this lowering requires **cross-region stack-load
-//! forwarding** (`StackOffsetDetect` + `LoadForward` joined
-//! across the function's region graph), routed through the
-//! IR-level resolver's unified table-dispatch arm
-//! (`strider_orchestrator::opt::classify_table_dispatch`, SP-rooted
-//! base).  Cfg-time the
-//! builder defers every `BranchIndirect` via `UnresolvedIndirectBranch`;
-//! the IR-level resolver gets visibility into cross-region flow +
-//! `LoadForward` results and resolves the dispatch into
+//! Resolving this requires cross-region stack-load forwarding
+//! (`StackOffsetDetect` + `LoadForward` joined across the function's region
+//! graph), routed through the IR-level resolver's unified table-dispatch
+//! arm (`strider_orchestrator::opt::classify_table_dispatch`, SP-rooted
+//! base). Cfg-time the builder defers every `BranchIndirect` via
+//! `UnresolvedIndirectBranch`; the IR-level resolver has cross-region
+//! visibility plus `LoadForward` results and resolves the dispatch to
 //! `ResolvedTargets::Multiple`.
 //!
-//! Consequence: x86, x86_64, AArch64, ARM (LE/BE/Thumb), and MIPS-32
-//! pass end-to-end.  Seven arches keep `#[ignore]` for specific
-//! lifter-shape gaps documented on each test (AArch64-BE `Or(SP,K)` +
-//! `Truncate`-wrapped labels, MIPS64 PIC GOT-indirect, PPC32/64).
-//! When a gap closes, the ignore can be lifted and the assertion
-//! ("no `UnresolvedIndirectBranch` terminator survives") will start
-//! holding without any test rewrite.
+//! x86, x86_64, AArch64, ARM (LE/BE/Thumb), and MIPS-32 pass end-to-end.
+//! Seven arches stay `#[ignore]` for specific lifter-shape gaps documented
+//! on each test (AArch64-BE `Or(SP,K)` + `Truncate`-wrapped labels, MIPS64
+//! PIC GOT-indirect, PPC32/64). When a gap closes, the ignore can be lifted
+//! and the assertion will start holding with no test rewrite.
 
 #![allow(
     clippy::panic,
@@ -39,16 +34,14 @@ mod common;
 use common::*;
 use strider_ir::{IRViewer, IRWalker};
 
-/// Build the CFG for `indirect_branch_resolved` with the same setup
-/// `common::analyze` uses (read-only-memory threaded through the cfg
-/// builder), and panic if any region still carries
-/// `RegionTerminator::UnresolvedIndirectBranch` at fixed point.
+/// Builds the CFG for `indirect_branch_resolved` and panics if any region
+/// still carries `RegionTerminator::UnresolvedIndirectBranch` at fixed
+/// point.
 ///
-/// Reuses `common::lift_for_pipeline` for the load-ELF /
-/// Sleigh / CFG-build / `build_ir` prologue so this test does not
-/// drift from the canonical lift path; only diverges by inspecting
-/// `unresolved_branches` on the returned `LiftOutcome` and
-/// classifying each one through the IR-level resolver.
+/// Reuses `common::lift_for_pipeline` for the load-ELF / Sleigh /
+/// CFG-build / `build_ir` prologue, diverging only to inspect
+/// `unresolved_branches` and classify each one through the IR-level
+/// resolver.
 fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let (outcome, _ana, _cc, _sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, "indirect_branch", "indirect_branch_resolved");
@@ -57,12 +50,9 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
 
     let mut ctx = strider_orchestrator::opt::OptCtx::new(Some(&rom_for_opt));
     if unresolved.is_empty() {
-        // The fixture lifted with no indirect branch to resolve (e.g.
-        // an -O? collapse to straight-line code).
-        // The test's promise is "no UnresolvedIndirectBranch survives";
-        // that promise holds vacuously.  Mirror common::analyze's
-        // post-lift sanity by running the optimiser pipeline so any
-        // pipeline regression on the placeholder code-path is caught.
+        // Fixture lifted with nothing to resolve (e.g. an -O? collapse to
+        // straight-line code); the test's promise holds vacuously. Still
+        // run the pipeline to catch a regression on the placeholder path.
         let p = strider_orchestrator::opt::default_pipeline();
         p.run(&mut function, &mut ctx).unwrap_or_else(|e| {
             panic!(
@@ -72,19 +62,18 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         });
         return;
     }
-    // Run the stable optimizer subset + LoadReadOnly so the stack-store
-    // detect, KnownBits, and rodata-load resolutions run before
-    // classification — same shape as the orchestrator's per-iteration
-    // pre-classify pass.
+    // Stable optimizer subset + LoadReadOnly so stack-store detection,
+    // KnownBits, and rodata-load resolution run before classification,
+    // mirroring the orchestrator's per-iteration pre-classify pass.
     let p = strider_orchestrator::opt::default_pipeline();
     p.run(&mut function, &mut ctx)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
     let rom_for_classify: &dyn strider_orchestrator::opt::ReadOnlyMemory = &rom_for_opt;
     for (target_addr, _placeholder) in &unresolved {
-        // Mirror the orchestrator's `IndirectBranchClassify` post-pass:
-        // walk every reachable `IndirectBranch` node and classify it (the
-        // classifier reads its *current* slot-2 dispatch value off the node).
+        // Mirrors the orchestrator's IndirectBranchClassify post-pass: walk
+        // every reachable IndirectBranch and classify it off its current
+        // slot-2 dispatch value.
         let mut live_branches: Vec<strider_ir::node::NodeId> = Vec::new();
         for n in function.walk() {
             if matches!(
@@ -94,9 +83,9 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
                 live_branches.push(n);
             }
         }
-        // If no placeholder survived, the optimizer collapsed the
+        // No surviving placeholder means the optimizer collapsed the
         // dispatch entirely (e.g. ConstantFold proved a single target and
-        // the placeholder became an ABI Return).  The test's promise holds
+        // the placeholder became an ABI Return); the promise holds
         // vacuously.
         if live_branches.is_empty() {
             continue;
@@ -133,15 +122,12 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     }
 }
 
-// One #[test] per architecture.  stack-array IR-level classifier (stack-array
-// arm) covers x86 / x64 / aarch64 / arm / arm-be / arm-thumb /
-// mips32le / mips32be — those tests pass without `#[ignore]`.  Seven
-// archs remain ignored (aarch64be / mips64 / ppc32 / ppc64 — both
-// endiannesses each), each with a focused reason naming the lifter
-// quirk that keeps the stack-array classifier shape match from firing.
-// Closing the remaining seven is incremental — the assertion body is
-// identical across arches and does not need a rewrite when each
-// arch's specific shape gap is closed.
+// One #[test] per architecture. The stack-array classifier arm covers
+// x86/x64/aarch64/arm/arm-be/arm-thumb/mips32le/mips32be without
+// #[ignore]. The remaining seven (aarch64be/mips64/ppc32/ppc64, both
+// endiannesses) are ignored with a focused reason naming the lifter quirk
+// blocking the shape match; the assertion body is identical across
+// arches, so closing each gap needs no test rewrite.
 
 #[test]
 fn indirect_branch_resolved_x86() {

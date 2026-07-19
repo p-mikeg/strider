@@ -1,6 +1,6 @@
 //! Runs `Strider::analyze` on a real, heavy function (FreeBSD 12.4
-//! `x86emu_exec`) with no profiler wiring — a clean target for an external
-//! sampling profiler.  Run under samply:
+//! `x86emu_exec`) with no profiler wiring, so an external sampling
+//! profiler gets a clean target.  Run under samply:
 //!
 //! ```text
 //! cargo build --release --example analyze_kernel

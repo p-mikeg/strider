@@ -1,27 +1,24 @@
 //! Regression: `function_max_size` must define the function's exact
 //! extent, so the cfg builder never reaches back into an adjacent
-//! function via a backward direct branch — *even with*
+//! function via a backward direct branch, even with
 //! `allow_code_before_start_addr=true`.
 //!
-//! Pre-fix behaviour: with `allow_code_before_start_addr=true` and
+//! Pre-fix: with `allow_code_before_start_addr=true` and
 //! `function_max_size` set, the cfg builder followed a backward `jmp`
-//! whose target lay below `start_addr` into the previous function's
-//! body.  On real binaries this surfaced as
-//! `UnresolvedIndirectBranchError` from an indirect branch inside the
-//! *neighbouring* function — completely unrelated to the function the
-//! user asked to lift.
+//! whose target lay below `start_addr` into the previous function's body.
+//! On real binaries this surfaced as `UnresolvedIndirectBranchError` from
+//! an indirect branch inside the neighbouring function, unrelated to the
+//! function the user asked to lift.
 //!
 //! Post-fix: `is_addr_tail_call` honours `fn_max_size` as the exact
-//! extent regardless of the legacy reach-back flag, so the backward
-//! `jmp` is classified as a `RegionTerminator::TailCall` and the lift
-//! stays inside `[start_addr, start_addr + fn_max_size)`.
+//! extent regardless of the legacy reach-back flag, so the backward `jmp`
+//! is classified as a `RegionTerminator::TailCall` and the lift stays
+//! inside `[start_addr, start_addr + fn_max_size)`.
 //!
-//! The companion test in `bounded_lift_tail_call.rs` asserts the
-//! *positive* shape (the backward jmp becomes a `Call + Return`); this
-//! test asserts the *negative* invariant — no node in the lifted
-//! graph carries an asm-fingerprint address from the previous
-//! function's range, i.e. the cfg builder really didn't decode any
-//! `prev_fn` instructions.
+//! The companion test in `bounded_lift_tail_call.rs` asserts the positive
+//! shape (the backward jmp becomes a `Call + Return`); this test asserts
+//! the negative invariant: no node in the lifted graph carries an
+//! asm-fingerprint address from the previous function's range.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
@@ -37,8 +34,8 @@ use strider_target::{CallingConvention, SleighArch};
 /// Synthetic layout:
 ///
 /// ```text
-/// 0x1000..0x1020:  prev_fn — 32 bytes of `nop`s ending in `ret`.
-/// 0x1020..0x102A:  target_fn — `mov eax, 5; jmp 0x1000` (10 bytes).
+/// 0x1000..0x1020:  prev_fn: 32 bytes of `nop`s ending in `ret`.
+/// 0x1020..0x102A:  target_fn: `mov eax, 5; jmp 0x1000` (10 bytes).
 /// ```
 ///
 /// `jmp 0x1000` from 0x1020+5 (insn after `mov`) = rel32 of
@@ -52,10 +49,10 @@ const TARGET_FN_END: u64 = TARGET_FN + TARGET_FN_SIZE;
 
 fn synthetic_bytes() -> Vec<u8> {
     let mut bs = Vec::new();
-    // 0x1000..0x101F: 31 × nop.
+    // 0x1000..0x101F: 31 x nop.
     bs.extend(std::iter::repeat_n(0x90u8, 31));
-    // 0x101F: ret (so prev_fn is a "real" function the cfg builder
-    // could plausibly decode if it strayed into this range).
+    // 0x101F: ret (prev_fn is a "real" function the cfg builder could
+    // plausibly decode if it strayed into this range).
     bs.push(0xC3);
     debug_assert_eq!(bs.len() as u64, PREV_FN_END - PREV_FN);
 
@@ -75,16 +72,13 @@ fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
 }
 
 /// The cfg builder must not decode any `prev_fn` byte when lifting
-/// `target_fn` under `function_max_size`, even with the reach-back
-/// flag on.  We prove this by walking the lifted graph's
-/// asm-fingerprint addresses and asserting every contributor address
-/// lies in `[TARGET_FN, TARGET_FN_END)`.
+/// `target_fn` under `function_max_size`, even with the reach-back flag
+/// on. Proved by walking the lifted graph's asm-fingerprint addresses and
+/// asserting every contributor address lies in `[TARGET_FN, TARGET_FN_END)`.
 #[test]
 fn bounded_lift_does_not_walk_backward_into_prev_fn() {
-    // The bug only surfaced with the reach-back flag ON — without
-    // it the lower-bound check alone would have blocked the
-    // backward jmp.  This pin is what guards against regression
-    // of the `allow_code_before_start_addr && fn_max_size` combo.
+    // The bug only surfaced with the reach-back flag ON; without it the
+    // lower-bound check alone would have blocked the backward jmp.
     let sleigh = make_sleigh();
     let regs = sleigh.regs().expect("regs");
     let cc = CallingConvention::x86_64_systemv()
@@ -104,11 +98,10 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
         .expect("bounded lift with reach-back flag must complete without reaching prev_fn")
         .function;
 
-    // Walk every reachable node and collect every asm-fingerprint
-    // contributor address.  Filter out the empty-fingerprint nodes
-    // (Entry/InitialMemory/InitialVar/Region/MemPhi/Phi — see the
-    // "Asm-fingerprint side-table" contract in CLAUDE.md).  Every
-    // remaining address MUST lie inside `target_fn`'s extent.
+    // Filter out the empty-fingerprint kinds (Entry/InitialMemory/
+    // InitialVar/Region/MemPhi/Phi; see the asm-fingerprint side-table
+    // contract in CLAUDE.md); every remaining address must lie inside
+    // target_fn's extent.
     let mut violators: Vec<(u64, &'static str)> = Vec::new();
     for nid in function.walk() {
         for addr in function.side_tables().asm_fingerprint(nid) {
@@ -132,9 +125,7 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
          violators (addr, kind) = {violators:?}",
     );
 
-    // Sanity floor: the lift must have produced a non-trivial graph
-    // (Entry + Call + Return at minimum) — an empty graph would
-    // satisfy the "no violators" check vacuously.
+    // Sanity floor: an empty graph would satisfy "no violators" vacuously.
     let node_count = function.walk().count();
     assert!(
         node_count >= 3,

@@ -60,15 +60,10 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("function lifts to one Call");
     let outs = bfg.node_outputs(call_id);
-    // Override applied: the override CC is recorded (`call_cc` is Some) and
-    // every clobber output carries its varnode tag (`get_vn_for_value`).
-    // Before per-address CC was added, this Call emits a SystemV clobber
-    // set with ~16+ slots; with the override, the only tracked variables
-    // that survive the all-preserving filter are the Sleigh-generated
-    // temporaries (UNIQUE / RAM varnodes) the override's by-name
-    // callee_saved list can't reach.  The pinned invariant: the override
-    // is recorded AND every clobber output is tagged AND the override
-    // clobber count is strictly less than the function-default SystemV set.
+    // With the all-preserving override, the only tracked variables that
+    // survive its callee_saved filter are Sleigh-generated temporaries
+    // (UNIQUE / RAM) the by-name list can't reach, so the clobber count
+    // must come in well below the full SystemV set.
     assert_ne!(
         bfg.get_cc(call_id),
         bfg.default_cc(),
@@ -86,7 +81,6 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         2 + tagged_outputs,
         "Call's outputs = Control + Memory + tagged ret-val/clobber slots"
     );
-    // The override total must be strictly smaller than the default total.
     let (default_ret, default_clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
     let default_total = default_ret.len() + default_clob.len();
     assert!(

@@ -1,5 +1,4 @@
-//! Comprehensive walk-through behaviour tests for the matcher's
-//! `CastMask` setting.
+//! Walk-through behaviour tests for the matcher's `CastMask` setting.
 //!
 //! Each test builds a tiny IR fixture of shape `Add(<wrapped>, IntConst)`
 //! where `<wrapped>` is a chain of cast nodes around an `InitialVar`, and
@@ -34,8 +33,6 @@ fn collapse_phis(function: &mut Function) {
     )
     .expect("RegionCollapse");
 }
-
-// ── Fixture builder ─────────────────────────────────────────────────────────
 
 /// The varnode the InitialVar reads from in every fixture below.
 fn x_vn() -> rsleigh::Vn {
@@ -79,13 +76,10 @@ fn pat() -> Pattern {
     .into_pattern()
 }
 
-/// Run the pattern under `mask` and return the match count.
 fn count(function: &Function, mask: CastMask) -> usize {
     let p = pat().ignore_casts_mask(mask);
     Matcher::new(function).find_all(&p).unwrap().len()
 }
-
-// ── Add(Truncate(InitialVar), IntConst) ─────────────────────────────────────
 
 /// `Add(Truncate(InitialVar : I64) : I32, IntConst(7) : I32) : I32`.
 fn fixture_truncate_then_add() -> Function {
@@ -117,8 +111,6 @@ fn truncate_initial_var_all_mask_one_match() {
     let function = fixture_truncate_then_add();
     assert_eq!(count(&function, CastMask::all()), 1);
 }
-
-// ── Add(ZeroExtend(InitialVar), IntConst) ───────────────────────────────────
 
 /// I32 register varnode used for the extend fixtures.
 fn x_u32_vn() -> rsleigh::Vn {
@@ -169,8 +161,6 @@ fn zext_initial_var_extend_mask_one_match() {
     assert_eq!(count_u32(&function, CastMask::EXTEND), 1);
 }
 
-// ── Add(SignExtend(InitialVar), IntConst) ───────────────────────────────────
-
 /// `Add(SignExt(InitialVar : I32) : I64, IntConst(7) : I64) : I64`.
 fn fixture_sext_then_add() -> Function {
     build_add_wrapped(x_u32_vn(), ValueType::I64, |fb, x| {
@@ -196,8 +186,6 @@ fn sext_initial_var_extend_mask_one_match() {
     let function = fixture_sext_then_add();
     assert_eq!(count_u32(&function, CastMask::EXTEND), 1);
 }
-
-// ── Add(Truncate(ZeroExtend(InitialVar)), IntConst) — chained casts ─────────
 
 fn x_u16_vn() -> rsleigh::Vn {
     rsleigh::Vn {
@@ -251,10 +239,8 @@ fn truncate_of_zext_truncate_or_zero_extend_mask_one_match() {
     );
 }
 
-// ── Stress test: deep cast chain ─────────────────────────────────────────
-
 /// Builds `Add(<truncate-extend tower>(InitialVar : I64), IntConst(7) : I64)`
-/// with `levels` round-trips of `Truncate(I64 → I32)` → `Extend(I32 → I64)`.
+/// with `levels` round-trips of `Truncate(I64 -> I32)` -> `Extend(I32 -> I64)`.
 fn fixture_deep_cast_chain(levels: usize) -> Function {
     build_add_wrapped(x_vn(), ValueType::I64, |fb, x| {
         let mut current = x;

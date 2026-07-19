@@ -34,7 +34,7 @@ use super::orchestrator::{run_pipeline_x86_64, target_value_input};
 /// Concatenate hand-assembled x86_64 instructions into one snippet,
 /// appending 64 × `int3` (0xcc) padding.  Each tuple pairs the
 /// instruction's encoding with its asm mnemonic (the `&str` is pure
-/// documentation — it keeps the per-instruction comments next to the
+/// documentation; it keeps the per-instruction comments next to the
 /// bytes they encode).
 ///
 /// The padding exists so any stray look-ahead the Sleigh lifter
@@ -52,7 +52,7 @@ pub(crate) fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
 }
 
 // NOTE: there is no `build_int_const_target_scenario(K)` because cfg-time
-// always classifies a literal constant target — the synthetic shape
+// always classifies a literal constant target: the synthetic shape
 // `mov rax, K; jmp *rax` resolves at cfg-build time before
 // `classify_target` ever sees it.  Tests that want the
 // IntConst-classifier arm route through a runtime-computed target that
@@ -62,12 +62,11 @@ pub(crate) fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
 /// Build a function whose only indirect branch resolves to a
 /// constant `k` *only after* the optimiser has run on the lifted IR.
 ///
-/// Approach: write `k` to a stack slot via a function-entry push,
-/// then load that slot through a register-indirect load and jump
-/// through the loaded value.  The cfg builder defers the BranchIndirect
-/// via `UnresolvedIndirectBranch`.  After strider runs the full
-/// optimiser pipeline (including `LoadForward`), the loaded
-/// value folds to `IntConst(k)` —
+/// Approach: write `k` to a stack slot via a function-entry push, then
+/// load that slot through a register-indirect load and jump through the
+/// loaded value.  The cfg builder defers the BranchIndirect via
+/// `UnresolvedIndirectBranch`.  After the full optimiser pipeline runs
+/// (including `LoadForward`), the loaded value folds to `IntConst(k)`,
 /// exactly the shape the IR-level resolver's IntConst arm classifies.
 pub(crate) fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, strider_ir::Value) {
     // The `pop rax` step gives the optimiser an SP-rooted load that
@@ -87,15 +86,13 @@ pub(crate) fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, st
 }
 
 /// Build a function whose only indirect branch is `jmp *rax` with no
-/// prior write to `rax` — the placeholder's value-input is therefore
+/// prior write to `rax`; the placeholder's value-input is therefore
 /// `InitialVar(rax)` after the optimiser runs.
 ///
 /// On x86_64 there is no architectural link register, so the
 /// "InitialVar(target_vn) == InitialVar(lr_vn)" arm in the classifier
 /// returns `None` here regardless of caller-supplied lr.
 pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Value) {
-    // Just `jmp rax`.  RAX is a function-entry value with no constant
-    // write; the placeholder's input is `InitialVar(rax)`.
     let bytes = x86_64_snippet(&[(&[0xff, 0xe0], "jmp rax")]);
     let (function, target, _lr) = run_pipeline_x86_64(bytes);
     (function, target)
@@ -105,19 +102,17 @@ pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_i
 /// `push {lr}; ...; pop {pc}` epilogue using FunctionBuilder
 /// directly (not through cfg + build_ir).
 ///
-/// Steps in the IR:
-///   1. Single region.  Tracked vars: `sp`, `lr`.
-///   2. Store `InitialVar(lr)` at `sp - 4` — this is the "push lr".
-///   3. Load `*(sp - 4)` — this is the "pop into pc".
-///   4. Placeholder `Return(loaded)` — targets the dispatch value.
+/// Steps in the IR: single region; tracked vars `sp`, `lr`; store
+/// `InitialVar(lr)` at `sp - 4` (the "push lr"); load `*(sp - 4)` (the
+/// "pop into pc"); placeholder `Return(loaded)`.
 ///
-/// `LoadForward` then collapses the load directly to
-/// `InitialVar(lr)` (same offset, no aliasing stores in between).
-/// The classifier's LinkRegister arm matches the resulting shape.
+/// `LoadForward` then collapses the load directly to `InitialVar(lr)`
+/// (same offset, no aliasing stores in between); the classifier's
+/// LinkRegister arm matches the resulting shape.
 ///
-/// This is the headline soundness test — it pins the design's
-/// claim that the natural pop-pc shape resolves to LinkRegister
-/// via LoadForward without any special-cased heuristic.
+/// This is the headline soundness test: it pins the claim that the
+/// natural pop-pc shape resolves to LinkRegister via LoadForward, with
+/// no special-cased heuristic.
 pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
 -> (Function, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::ValueType;
@@ -143,20 +138,18 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
         .build_fn_single_region()
         .expect("build_fn_single_region");
 
-    // Compute `sp - 4` — the slot we'll push lr to.
+    // The push-lr slot: sp - 4.
     let sp_v = b.read_variable(&sp).expect("read sp");
     let four = b.build_int_const(4u64, ValueType::I32).unwrap();
     let store_addr = b
         .build_sub_as_add_neg(sp_v, four, ValueType::I32)
         .expect("sp - 4");
-    // Store the function-entry lr value there.
     let lr_v = b.read_variable(&lr).expect("read lr");
     b.build_store(store_addr, lr_v, rsleigh::VnSpace::RAM)
         .expect("store lr");
 
-    // Load from the same slot and use as the placeholder target.
-    // The address is structurally identical (sp - 4), so
-    // LoadForward will fold the load directly to lr_v.
+    // Structurally identical address (sp - 4), so LoadForward folds this
+    // load directly to lr_v.
     let sp_v2 = b.read_variable(&sp).expect("read sp again");
     let four2 = b.build_int_const(4u64, ValueType::I32).unwrap();
     let load_addr = b
@@ -170,11 +163,10 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
     b.set_lift_addr(None);
     let mut fg = b.build().expect("build");
 
-    // Include `PhiCollapse` so the trivial single-input
-    // VarPhi(lr) at the entry region collapses back to
-    // `InitialVar(lr)` — that's the shape IR-level indirect-branch resolver's LinkRegister
-    // arm classifies, and it's what the production strider
-    // pipeline (`default_pipeline()` includes PhiCollapse)
+    // PhiCollapse so the trivial single-input VarPhi(lr) at the entry
+    // region collapses back to `InitialVar(lr)`, the shape the
+    // IR-level resolver's LinkRegister arm classifies; this matches what
+    // the production pipeline (`default_pipeline()` includes PhiCollapse)
     // produces in real-binary integration tests.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
@@ -208,13 +200,12 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
 /// as `build_pop_pc_via_stack_load_forward_scenario`, but the
 /// stored value is an IntConst rather than `InitialVar(lr)`.
 ///
-/// Distinguishing this case from a real pop-pc is the soundness
-/// gate that killed the prior in-place heuristic: a naïve
-/// "Load(InitialVar(sp)+K) means return" classifier would mark
-/// this as LinkRegister, sending the analyser down the
-/// wrong-edge-set path.  the IR-level orchestrator resolver dodges that trap because
-/// LoadForward folds the load to the **stored constant** K,
-/// not to InitialVar(lr); the IntConst arm then classifies as
+/// Distinguishing this case from a real pop-pc is the soundness gate that
+/// killed the prior in-place heuristic: a naive "Load(InitialVar(sp)+K)
+/// means return" classifier would mark this as LinkRegister, sending the
+/// analyser down the wrong edge set.  The IR-level resolver avoids that
+/// trap because LoadForward folds the load to the **stored constant** K,
+/// not to InitialVar(lr); the IntConst arm then classifies it as
 /// Single(K).
 ///
 /// Also returns the `lr` VN we added to the tracked-vars set so
@@ -287,27 +278,22 @@ pub(crate) fn build_push_target_pop_pc_scenario(
     (fg, target, lr)
 }
 
-// ── jump-table fixtures ──────────────────────────────────────────────────
+// Each helper builds a `Graph` whose placeholder Return's value-input is
+// shaped like a jump-table dispatch (`Load(IntAdd(IntConst(base),
+// IntMul(idx, IntConst(stride))))`) and runs the stable optimiser subset
+// so the structure matches what the IR-level resolver's classifier sees
+// in production.  Helpers vary how `idx` is bounded:
 //
-// Each helper builds a `Graph` whose placeholder Return's
-// value-input is shaped like a jump-table dispatch — `Load(IntAdd(
-// IntConst(base), IntMul(idx, IntConst(stride))))` — and runs the
-// stable optimiser subset so the structure is exactly what IR-level indirect-branch resolver's
-// classifier sees in production.  Helpers parameterise over how `idx`
-// is bounded:
-//
-//   * AND-mask (KnownBits route) — `build_jump_table_known_bits_*`.
-//   * Predecessor `If(idx < N)` — `build_jump_table_predecessor_if_*`.
-//   * Neither (unbounded; classifier must return None) —
+//   * AND-mask (KnownBits route): `build_jump_table_known_bits_*`.
+//   * Predecessor `If(idx < N)`: `build_jump_table_predecessor_if_*`.
+//   * Neither (unbounded; classifier must return None):
 //     `build_jump_table_unbounded`.
 //
-// All helpers go through `FunctionBuilder::new_raw` rather than the
-// cfg-builder + build_ir path because (a) we don't
-// need the cfg builder's cfg-time resolver here, (b) constructing real
-// arch bytes that lift to a jump-table-shaped IR is fixture overkill,
-// and (c) the FunctionBuilder API is the same code path the cfg
-// builder ultimately goes through, so we exercise the same lift
-// semantics.
+// All helpers build via `strider-ir-test-utils`'s `RegisterSet` /
+// `empty_builder()` rather than the cfg-builder + build_ir path: there's
+// no need for the cfg builder's cfg-time resolver here, real arch bytes
+// that lift to a jump-table shape would be fixture overkill, and this
+// builder API is the same code path the cfg builder ultimately uses.
 
 /// Build a placeholder `Return(load)` whose load is jump-table-shaped
 /// with `idx & idx_mask` bounding the index.  After the stable
@@ -326,9 +312,9 @@ pub(crate) fn build_jump_table_known_bits_scenario(
     use strider_ir_test_utils::RegisterSet;
     use strider_orchestrator::opt::{ConstantFold, OptimizerPipeline};
 
-    // Single tracked variable — a register-shaped VN.  We seed `idx`
-    // from `read_variable` so it's a non-IntConst (else the matcher
-    // would mis-disambiguate stride vs idx in commuted multiplications).
+    // A register-shaped VN, read via `read_variable` so it's a non-IntConst
+    // (else the matcher would mis-disambiguate stride vs idx in commuted
+    // multiplications).
     let idx_var = rsleigh::Vn {
         addr_off: 0x10,
         addr_space: rsleigh::VnSpace::REGISTER,
@@ -360,12 +346,10 @@ pub(crate) fn build_jump_table_known_bits_scenario(
     b.set_lift_addr(None);
     let mut fg = b.build().expect("build");
 
-    // Stable optimiser subset.  We deliberately omit PhiCollapse
-    // and DeadBranchElim because the spec routes the jump-table
-    // classifier through the same destructive-omitted pipeline that
-    // intermediate iterations of the orchestrator use, so the graph
-    // shape we hand to classify_target here matches the orchestrator's
-    // intermediate-iteration sees.
+    // Deliberately omit PhiCollapse and DeadBranchElimination: this
+    // stable subset matches what an intermediate (pre-convergence)
+    // orchestrator iteration hands the jump-table classifier, so the
+    // fixture's shape matches production.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline
@@ -377,8 +361,8 @@ pub(crate) fn build_jump_table_known_bits_scenario(
 }
 
 /// Build a placeholder `Return(load)` whose load is jump-table-shaped
-/// with the index bounded by a *predecessor* `If(idx < bound)` —
-/// the dispatch region is on the true branch.  The stable optimiser
+/// with the index bounded by a *predecessor* `If(idx < bound)`: the
+/// dispatch region is on the true branch.  The stable optimiser
 /// subset is run, but PhiCollapse is OMITTED so the trivial-phi
 /// rule doesn't strip the entry merge-region's structure.
 ///
@@ -437,10 +421,10 @@ pub(crate) fn build_jump_table_predecessor_if_scenario(
     b.build_indirect_branch(loaded)
         .expect("placeholder IndirectBranch");
 
-    // Exit: a real, non-placeholder Return.  Now that the placeholder
-    // is its own `NodeKind::IndirectBranch`, distinguishing real vs
-    // placeholder is by NodeKind, not input count — but we still emit
-    // a 2-input Return (just control + memory) as a clean exit shape.
+    // Exit: a real, non-placeholder Return.  The placeholder is its own
+    // `NodeKind::IndirectBranch`, so distinguishing real vs placeholder is
+    // by NodeKind, not input count; we still emit a 2-input Return (just
+    // control + memory) as a clean exit shape.
     b.set_region(exit);
     b.build_return(None, &[]).expect("exit return");
     b.set_lift_addr(None);
@@ -509,8 +493,8 @@ pub(crate) fn build_jump_table_unbounded_scenario(
     (fg, target)
 }
 
-/// Build a placeholder `Return(load)` whose load is NOT jump-table-
-/// shaped — used to verify the classifier's Load arm falls through
+/// Build a placeholder `Return(load)` whose load is NOT jump-table
+/// shaped; used to verify the classifier's Load arm falls through
 /// to None on unrelated load shapes (e.g. `Load(IntConst(addr))` for
 /// a simple global read).
 pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
@@ -565,11 +549,10 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Val
 /// * stride)]`.
 ///
 /// Pipeline run: `ConstantFold + KnownBits + PhiCollapse + RegionCollapse`.
-/// `LoadForward` is **deliberately omitted** — including it
-/// would forward the Load to the matching IntConst directly,
-/// eliminating the Load entirely and turning the target into an
-/// IntConst (the Single-target arm), defeating the stack-array
-/// classifier exercise.
+/// `LoadForward` is **deliberately omitted**: including it would forward
+/// the Load to the matching IntConst directly, eliminating the Load
+/// entirely and turning the target into an IntConst (the Single-target
+/// arm), defeating the stack-array classifier exercise.
 pub(crate) fn build_stack_array_dispatch_scenario(
     targets: &[u64],
     base_offset: i64,
@@ -610,7 +593,7 @@ pub(crate) fn build_stack_array_dispatch_scenario(
         .expect("build_fn_single_region");
     let sp_val = b.read_variable(&sp).expect("read sp");
 
-    // N entry stores: target[i] → *(sp + base_offset + i*stride).
+    // N entry stores: target[i] -> *(sp + base_offset + i*stride).
     for (i, &target_addr) in targets.iter().enumerate() {
         let off = base_offset
             + i64::try_from(i).expect("i fits") * i64::try_from(stride).expect("stride fits");
@@ -684,9 +667,8 @@ pub(crate) fn build_stack_array_dispatch_scenario(
     p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
-    // Locate the surviving Load from the IndirectBranch's value-input.
-    // After the partial pipeline, the placeholder's target IS the Load
-    // — `target_value_input` returns inputs[2], which is the Load output.
+    // After the partial pipeline, the placeholder's target IS the surviving
+    // Load: `target_value_input` returns inputs[2], the Load output.
     let target: ValueId = target_value_input(&fg).expect("placeholder target");
     (fg, target, sp)
 }
@@ -700,18 +682,18 @@ pub(crate) fn build_stack_array_dispatch_scenario(
 /// (LE/BE-32) lifter wraps every register-indirect dispatch in a
 /// thumb-interworking AND-mask (`reg & 0xfffffffe`), which leaves
 /// the optimised IR's producer as `IntBinaryOp(And)` instead of
-/// `InitialVar(lr_vn)` — that doesn't match this round's
-/// classifier arms.  AArch64 has no thumb interworking, so
-/// `mov x0, x30; br x0` lifts cleanly to `Copy + BranchIndirect`
-/// and the optimiser folds `r0 = x30 = InitialVar(lr_vn)` directly.
+/// `InitialVar(lr_vn)`; that doesn't match this round's classifier
+/// arms.  AArch64 has no thumb interworking, so `mov x0, x30; br x0`
+/// lifts cleanly to `Copy + BranchIndirect` and the optimiser folds
+/// `r0 = x30 = InitialVar(lr_vn)` directly.
 ///
 /// The cfg builder does no indirect-branch classification of its own,
 /// so it defers the `br x0` via `UnresolvedIndirectBranch` and the
 /// IR-level indirect-branch resolver sees the cleaned-up shape.
 pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     // AArch64 (little-endian) encoding:
-    //   mov x0, x30  →  e0 03 1e aa   (alias for `orr x0, xzr, x30`)
-    //   br  x0       →  00 00 1f d6
+    //   mov x0, x30  ->  e0 03 1e aa   (alias for `orr x0, xzr, x30`)
+    //   br  x0       ->  00 00 1f d6
     let base = 0x1000u64;
     let mut bytes: Vec<u8> = vec![0xe0, 0x03, 0x1e, 0xaa, 0x00, 0x00, 0x1f, 0xd6];
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
@@ -720,7 +702,6 @@ pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::V
     let sleigh =
         rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create aarch64 sleigh");
 
-    // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
     let cc = CallingConvention::aarch64_aapcs64()
         .build(strider.sleigh_regs())
@@ -730,8 +711,8 @@ pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::V
         .expect("AArch64 AAPCS has a link register");
 
     // The cfg builder does no cfg-time indirect-branch resolution, so
-    // the `br x0` is deferred via `UnresolvedIndirectBranch` and the
-    // IR-level resolver classifies it — exactly the path this test
+    // `br x0` is deferred via `UnresolvedIndirectBranch` and classified
+    // by the IR-level resolver instead: exactly the path this test
     // exercises.
     let cfg = strider
         .build_cfg(

@@ -1,8 +1,7 @@
 //! End-to-end scaling benchmark for the strider pipeline.
 //!
 //! Runs the full lift + optimizer pipeline against a representative set of
-//! x86 / x86_64 ELF fixtures.  Used to track the per-task wins in the
-//! 2026-05-01 scaling-bottlenecks plan.
+//! x86 / x86_64 ELF fixtures.
 //!
 //! Run via: `cargo bench --bench scaling -- --save-baseline before`
 //! Compare:  `cargo bench --bench scaling -- --baseline before`
@@ -87,10 +86,8 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     let cc = match c.arch_name {
         "x86" => strider_target::CallingConvention::x86_cdecl(),
         "x64" => strider_target::CallingConvention::x86_64_systemv(),
-        // The earlier `match c.arch_name` guards this — we only
-        // reach this point on supported arches.  Use `panic!`
-        // (the bench's `clippy::panic` is allow-listed) rather
-        // than `unreachable!` (not on the allow list).
+        // Already matched above. Uses panic! (not unreachable!) since
+        // only clippy::panic is on this bench's allow list.
         _ => panic!("unsupported arch {}", c.arch_name),
     };
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
@@ -129,7 +126,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
 
 fn bench_pipeline(c: &mut Criterion) {
     let mut group = c.benchmark_group("strider/pipeline");
-    group.sample_size(20); // pipeline runs are slow-ish; fewer samples
+    group.sample_size(20); // slow pipeline runs; fewer samples than default
     for case in CASES {
         let id = format!("{}/{}::{}", case.arch_name, case.case, case.fn_name);
         group.bench_function(&id, |b| {
@@ -142,37 +139,25 @@ fn bench_pipeline(c: &mut Criterion) {
     group.finish();
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// O12-O15 P4 SCALING BENCHMARKS
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Synthetic-fixture benches that don't depend on ELF fixtures.  Each
-// bench parameterises over a problem-size N so we can plot scaling
-// curves separately from the absolute pipeline cost.
-//
-// Helpers live in a private module so the bench-level globs stay
-// disciplined.  None of the helpers recurse (Criterion's
-// `iter_batched` calls them per-iteration; recursion would inflate
-// per-sample cost unpredictably).
+// Synthetic benches independent of ELF fixtures; each parameterises over
+// problem size N to plot scaling curves separately from pipeline cost.
+// Helpers stay in a private module and never recurse: recursion would
+// inflate Criterion's per-iteration `iter_batched` cost unpredictably.
 
 mod synthetic {
     use super::*;
 
-    /// Synthetic 8-byte stack-pointer VN.  Same shape used in the
-    /// existing `stack_array.rs` tests.  Doesn't have to match a real
-    /// arch — `LoadForward` only cares that it's the SP varnode
-    /// passed into the pass constructor.
+    /// Synthetic 8-byte stack-pointer VN. Doesn't have to match a real
+    /// arch: `LoadForward` only cares that it's the SP varnode passed
+    /// into the pass constructor.
     pub fn stack_vn() -> rsleigh::Vn {
         stack_vn_aarch64()
     }
 
-    /// Build a function with `n` SP-relative `Store`s at distinct
-    /// offsets (`-8 * (i+1)`), each storing a fresh `IntConst(i)`,
-    /// followed by `n` `Load`s at the matching offsets that feed a
-    /// chain of `Add`s producing the function's return value.
-    /// The returned graph is ready to feed into `LoadForward`
-    /// for the bench.  Pre-pass: `ConstantFold` is run inside the
-    /// helper so the bench measures `LoadForward` in isolation.
+    /// Builds `n` SP-relative `Store`s at distinct offsets, each storing
+    /// a fresh `IntConst`, followed by `n` matching `Load`s chained
+    /// through `Add`s into the return value. Runs `ConstantFold` first
+    /// so the bench measures `LoadForward` in isolation.
     pub fn build_stack_store_chain(n: usize) -> strider_ir::Function {
         let sp = stack_vn();
         let mut b = RegisterSet::new()
@@ -181,7 +166,6 @@ mod synthetic {
             .build_fn_single_region()
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
-        // Build N stores at distinct SP offsets.
         let mut load_addrs: Vec<strider_ir::Value> = Vec::with_capacity(n);
         for i in 0..n {
             let off = -((i as i64 + 1) * 8) as u64;
@@ -193,9 +177,7 @@ mod synthetic {
             b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
             load_addrs.push(addr);
         }
-        // Build N loads at the same offsets.  Combine via a left-
-        // folding chain of Adds so every loaded value reaches the
-        // return.
+        // Left-fold the loads through Add so every one reaches the return.
         let mut acc = b.build_int_const(0u64, ValueType::I64).unwrap();
         for addr in load_addrs {
             let loaded = b
@@ -207,9 +189,6 @@ mod synthetic {
         }
         b.build_return(Some(acc), &[]).unwrap();
         let mut fg = b.build().unwrap();
-        // Pre-pass: ConstantFold so the graph the bench measures
-        // is ready for LoadForward.  This isolates the
-        // forward-pass cost from the fold-pass cost.
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
         p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
@@ -217,11 +196,9 @@ mod synthetic {
         fg
     }
 
-    /// Build a function with `n` if-else diamonds chained sequentially.
-    /// Each diamond merges back to the same control-state before the
-    /// next branches; the merge varphi count grows linearly in `n`.
-    /// Used to bench scaling of the validator + optimiser loop on
-    /// merge-heavy IRs.
+    /// Builds `n` if-else diamonds chained sequentially, each merging
+    /// back before the next branches; merge-phi count grows linearly
+    /// in `n`. Benches validator + optimiser scaling on merge-heavy IRs.
     pub fn run_diamond_cfg(n: usize) -> strider_ir::Function {
         let sp = stack_vn();
         let mut b = RegisterSet::new()
@@ -232,10 +209,8 @@ mod synthetic {
         let entry = b.create_region_all().unwrap();
         b.set_entry_region_all(entry).unwrap();
 
-        // Build N diamonds.  prev_region is the predecessor for the
-        // next branch; on each iteration we create true / false / merge
-        // sub-regions and route prev → If(true) / If(false) → merge,
-        // then set prev = merge for the next iteration.
+        // Each iteration creates true/false/merge regions, routes
+        // prev -> If -> merge, then advances prev to merge.
         let mut prev_region = entry;
         for _ in 0..n {
             let true_arm = b.create_region_all().unwrap();
@@ -246,9 +221,8 @@ mod synthetic {
             let cond = b.build_boolean_const(true);
             b.build_if(cond, true_arm, false_arm).unwrap();
 
-            // Each arm reads SP, adds a unique offset constant, and
-            // branches to the merge.  This keeps both arms data-
-            // distinct so `PhiCollapse` doesn't collapse the merge.
+            // Distinct offset constants per arm so PhiCollapse can't
+            // collapse the merge.
             b.set_region(true_arm);
             let sp_t = b.read_variable(&sp).unwrap();
             let off_t = b.build_int_const(0xa_au64, ValueType::I64).unwrap();
@@ -268,14 +242,12 @@ mod synthetic {
             prev_region = merge;
         }
 
-        // Final region: a clean Return.
         b.set_region(prev_region);
         let sp_final = b.read_variable(&sp).unwrap();
         b.build_return(Some(sp_final), &[]).unwrap();
         let mut fg = b.build().unwrap();
-        // Run a small pipeline on the diamond graph.  Bench measures
-        // build + pipeline together — the build dominates, but the
-        // pipeline run pins the validator's per-region cost too.
+        // Measures build + pipeline together: build dominates, but this
+        // also pins the validator's per-region cost.
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
         p.add(PhiCollapse);
@@ -285,12 +257,10 @@ mod synthetic {
         fg
     }
 
-    /// Build a function shaped like a stack-array indirect-branch
-    /// dispatch with `n` targets (constants stored at contiguous
-    /// SP-relative offsets, loaded via `arg & (n-1) * stride`).  `n`
-    /// must be a power of 2.  The bench measures the full lift +
-    /// stable-subset cost; the indirect-branch resolver isn't run
-    /// here — callers can layer it on top if they want the resolve cost.
+    /// Builds a stack-array indirect-branch dispatch with `n` targets
+    /// (`n` must be a power of 2): constants at contiguous SP-relative
+    /// offsets, loaded via `arg & (n-1) * stride`. Measures lift +
+    /// stable-subset cost only; the indirect-branch resolver isn't run.
     pub fn run_jump_table_scenario(n: usize) -> strider_ir::Function {
         assert!(
             n.is_power_of_two(),
@@ -323,9 +293,8 @@ mod synthetic {
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        // Route through the attributed builder so the synthetic node carries an
-        // asm-fingerprint (the raw graph create_node bypasses attribution and
-        // trips the always-on fingerprint validator).
+        // create_node_attributed, not raw create_node: the latter bypasses
+        // attribution and trips the always-on fingerprint validator.
         let arg_u32 = b.create_node_attributed(
             strider_ir::node::NodeKind::Truncate,
             [arg_val],
@@ -375,9 +344,8 @@ mod synthetic {
         let region = b.create_region_all().unwrap();
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
-        // N consts → N adds → return.  Each `IntConst(i)` is a
-        // distinct cache key (they hash on value), so we get N distinct
-        // root nodes for the matcher to walk.
+        // Each IntConst(i) is a distinct dedup-cache key, so this yields
+        // N distinct root nodes for the matcher to walk.
         let mut acc = b.build_int_const(0u64, ValueType::I64).unwrap();
         for i in 1..=n {
             let c = b.build_int_const(i as u64, ValueType::I64).unwrap();
