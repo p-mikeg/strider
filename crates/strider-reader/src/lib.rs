@@ -1,8 +1,3 @@
-//! Memory readers: generic region storage ([`MemRegion`],
-//! [`MemRegionsLookupTable`]) plus an [`elf`] backend that serves both
-//! [`rsleigh::MemReader`] (instruction fetch) and [`ReadOnlyMemory`]
-//! (constant-load folding) from the same regions.
-
 use std::collections::BTreeMap;
 
 pub type Result<T> = anyhow::Result<T>;

@@ -81,21 +81,15 @@ def negate(c: JoinConstraint) -> JoinConstraint:
     """
 
 def any_of(constraints: List[JoinConstraint]) -> JoinConstraint:
-    """Disjunction: a result survives if it passes ANY listed constraint. An
-    empty list passes nothing.
+    """A constraint that passes when ANY of the listed constraints passes.
 
-    The top-level `constraints=[...]` list is already an implicit AND, so
-    `any_of` is how you reach a disjunction. Evaluation is three-valued: the
-    row is dropped as unknown when no listed constraint is true and at least
-    one references a capture unbound in that row.
+    The top-level `constraints=[...]` list is already an AND, so `any_of` is
+    how you express OR. An empty list passes nothing.
     """
 
 def all_of(constraints: List[JoinConstraint]) -> JoinConstraint:
-    """Conjunction: a result survives only if it passes EVERY listed
-    constraint. An empty list passes everything.
+    """A constraint that passes only when EVERY listed constraint passes.
 
-    Use it to AND constraints inside an `any_of`, since the flat top-level
-    list cannot nest. Evaluation is three-valued: the row is dropped as
-    unknown when no listed constraint is false and at least one references a
-    capture unbound in that row.
+    Use it to AND constraints inside an `any_of` (the top-level list does not
+    nest). An empty list passes everything.
     """

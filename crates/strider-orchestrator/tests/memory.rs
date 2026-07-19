@@ -1,5 +1,3 @@
-//! Load / Store at the default code space and on the stack.
-
 #![allow(
     clippy::panic,
     clippy::unwrap_used,

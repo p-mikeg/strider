@@ -8,9 +8,6 @@
     )
 )]
 
-//! Binary function to a [`Cfg`] of basic blocks, via GHIDRA's Sleigh p-code
-//! lifter ([`rsleigh`]).  Each region holds a sequence of [`rsleigh::Insn`].
-
 mod builder;
 mod dot;
 mod indirect_resolver;

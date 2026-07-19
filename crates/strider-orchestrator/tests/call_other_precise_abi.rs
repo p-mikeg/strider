@@ -1,5 +1,3 @@
-//! Integration tests for precise per-op CallOther ABI lifting.
-
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use rsleigh::mem_readers::BufMemReader;

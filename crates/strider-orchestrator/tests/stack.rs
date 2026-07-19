@@ -1,5 +1,3 @@
-//! Stack-frame allocation and volatile store preservation.
-
 #![allow(
     clippy::panic,
     clippy::unwrap_used,

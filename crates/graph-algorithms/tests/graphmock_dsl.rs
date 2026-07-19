@@ -1,5 +1,3 @@
-//! Tests for the `common::graph` DSL itself.
-
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 mod common;

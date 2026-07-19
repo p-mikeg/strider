@@ -1,9 +1,3 @@
-//! `ReadOnlyMemory`: read access to a statically-known region of memory
-//! (typically a binary's `.rodata` or `.text`).
-//!
-//! Its own crate so the optimizer can depend on the trait without depending
-//! on the ELF-parsing `strider-reader`, which owns the concrete impls.
-
 /// Read access to a statically-known region of memory.
 ///
 /// # Immutability contract

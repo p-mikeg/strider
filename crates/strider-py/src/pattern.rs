@@ -1171,7 +1171,7 @@ impl PyCastMask {
     fn __hash__(&self) -> u64 {
         u64::from(self.inner.bits())
     }
-    /// The raw bitset.
+    /// The mask as a raw integer bitset.
     fn bits(&self) -> u32 {
         self.inner.bits()
     }

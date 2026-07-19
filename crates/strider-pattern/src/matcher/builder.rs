@@ -111,12 +111,10 @@ impl MatcherBuilder {
         self.add_output(node, PatValue::memory(slot))
     }
 
-    /// Pins `out` to an exact value type.
     pub fn set_value_ty(&mut self, out: PatValueRef, ty: ValueType) {
         self.out_of(out).kind = OutputKindSpec::Value(ty);
     }
 
-    /// Relaxes `out` to a control-flow output.
     pub fn set_output_control(&mut self, out: PatValueRef) {
         self.out_of(out).kind = OutputKindSpec::Control;
     }

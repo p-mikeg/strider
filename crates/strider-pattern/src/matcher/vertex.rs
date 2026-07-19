@@ -18,7 +18,6 @@ pub enum KindSpec {
 }
 
 impl KindSpec {
-    /// The discriminant this spec pins, if any.
     pub fn discriminant(&self) -> Option<Discriminant<NodeKind>> {
         match self {
             Self::Any => None,

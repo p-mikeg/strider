@@ -10,7 +10,6 @@ use crate::ids::{NodeId, UseId, UseIdList, ValueId, ValueIdList};
 pub(crate) struct ValueData<V> {
     pub(crate) kind: V,
     pub(crate) source_id: NodeId,
-    /// Index of this output in the source node's output list.
     pub(crate) output_index: u32,
     /// Head of the use-list: every input consuming this output.
     pub(crate) first_use: PackedOption<UseId>,
@@ -36,7 +35,6 @@ pub(crate) struct UseData {
     pub(crate) next: PackedOption<UseId>,
     /// The consuming node.
     pub(crate) node_id: NodeId,
-    /// Position of this input in the consuming node's input list.
     pub(crate) input_index: u32,
 }
 

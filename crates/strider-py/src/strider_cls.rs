@@ -224,7 +224,6 @@ fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc
 }
 
 impl PyLifter {
-    /// The owned `Sleigh`.
     pub(crate) fn sleigh(&self) -> &rsleigh::Sleigh<AnyMemReader> {
         self.inner.sleigh()
     }

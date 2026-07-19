@@ -1,6 +1,3 @@
-//! The tracked varnode set is always scanned fresh from the CFG at lift time,
-//! so it is deliberately not a knob here.
-
 use rustc_hash::FxHashMap;
 
 /// `Default` is unbounded function, no pre-start code, no known targets, no CC

@@ -1,5 +1,3 @@
-//! Direct, indirect, mutual, and recursive Call nodes.
-
 #![allow(
     clippy::panic,
     clippy::unwrap_used,

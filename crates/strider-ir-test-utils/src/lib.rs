@@ -1,13 +1,3 @@
-//! Shared mock-IR helpers used by tests across the workspace.
-//!
-//! Every helper sets [`SENTINEL_LIFT_ADDR`] as the builder's lift address for
-//! the duration of its closure, so nodes built through the `build_*` API
-//! inherit a non-empty asm-fingerprint and mock graphs satisfy the always-on
-//! fingerprint check without per-node stamping.
-//!
-//! Its own crate so consumers can dev-depend on it without strider-ir carrying
-//! a feature flag.
-
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
 use std::collections::BTreeMap;

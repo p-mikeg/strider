@@ -16,9 +16,9 @@ pub(crate) struct Region {
     terminated: bool,
     control_node: NodeId,
     memory_node: NodeId,
-    /// Advances through calls.
+    /// Advances through Call and CallOther.
     cur_ctrl: ValueId,
-    /// Advances through stores and calls.
+    /// Advances through Store, Call, and CallOther.
     cur_memory: ValueId,
     variables: SecondaryMap<InitialVnId, ValueId>,
     /// One `Phi` output per `phi_vars` entry. Entries outside `phi_vars` are

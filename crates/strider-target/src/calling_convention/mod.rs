@@ -109,7 +109,6 @@ fn first_in_both<'a>(a: &'a [rsleigh::Vn], b: &[rsleigh::Vn]) -> Option<&'a rsle
     a.iter().find(|vn| b.contains(vn))
 }
 
-/// First varnode appearing twice in `list`.
 fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
     list.iter()
         .enumerate()

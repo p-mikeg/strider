@@ -12,9 +12,6 @@
     )
 )]
 
-//! Pure data describing the machine and ABI being analysed: architecture
-//! descriptors and calling conventions.
-
 pub mod arch;
 pub mod call_other_abi;
 pub mod calling_convention;

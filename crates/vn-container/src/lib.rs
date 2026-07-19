@@ -1,12 +1,3 @@
-//! Varnode container geometry: the single home for register-aliasing
-//! containment reasoning, so neither the IR nor the lifter duplicates it.
-//!
-//! Overlapping machine registers (x86 `rax`/`eax`/`ax`/`al`, AArch64
-//! `q0`/`d0`/`s0`, x87 `ST*`, ...) collapse onto their largest tracked container.
-//!
-//! A pure-geometry leaf: nothing here knows about calling conventions or the IR
-//! graph, only `(space, offset, size)` ranges.
-
 use rustc_hash::FxHashMap;
 
 fn is_aliasable_space(space: rsleigh::VnSpace) -> bool {

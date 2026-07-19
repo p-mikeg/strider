@@ -1,5 +1,3 @@
-//! `Load` / `Store` pattern matching.
-
 use strider_ir::IRViewer;
 use strider_ir::node::ValueType;
 use strider_pattern::*;

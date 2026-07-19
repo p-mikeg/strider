@@ -44,7 +44,6 @@ impl Pattern {
         self.root.clone().map_err(anyhow::Error::msg)
     }
 
-    /// Every [`Capture`](crate::capture::Capture) this pattern binds.
     pub fn bound_captures(&self) -> impl Iterator<Item = crate::capture::Capture> + '_ {
         self.graph
             .all_node_ids()

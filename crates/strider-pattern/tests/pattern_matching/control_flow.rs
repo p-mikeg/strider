@@ -1,5 +1,3 @@
-//! `Call`, `CallOther`, `Return`, and `If` node patterns.
-
 use strider_ir::{IRViewer, IntCmpOp};
 use strider_pattern::matcher::{KindSpec, MatcherBuilder};
 use strider_pattern::*;

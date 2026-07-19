@@ -1,15 +1,3 @@
-//! IR optimization passes.
-//!
-//! Passes implement `Optimizer` and report whether they changed the graph via
-//! [`OptimizationResult`]. [`OptimizerPipeline`] runs them in a shared
-//! fixed-point loop that repeats until a full iteration reports no change,
-//! then runs post-passes once on the converged graph. [`default_pipeline`] is
-//! the canned pass list.
-//!
-//! No pass takes construction arguments: SP-aware passes read the calling
-//! convention from the function's own `default_cc`, and alias precision plus
-//! the `LoadReadOnly` ROM from the per-run [`OptCtx`].
-
 pub mod error;
 pub(crate) mod mem_ssa;
 mod options;
@@ -56,7 +44,6 @@ pub use post_opt::indirect_branch_resolve::{IndirectBranchClassify, classify_tar
 pub use post_opt::stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;
 
-/// The canned pass list.
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold::new());

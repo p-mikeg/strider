@@ -1,15 +1,3 @@
-//! Graphviz `.dot` and interactive `.html` rendering for any graph type that
-//! implements [`GraphDotDumper`]. Domain-agnostic.
-//!
-//! ```text
-//! GraphDotDumper::dump_as_dot() ──► DotEmitter ──► .dot string ──► as_html_from_dot
-//! ```
-//!
-//! The HTML embeds the DOT source and renders it client-side via Graphviz
-//! WASM ([`@viz-js/viz`]), so no local `dot` install is needed.
-//!
-//! [`@viz-js/viz`]: https://github.com/mdaines/viz-js
-
 use std::fmt::{Debug, Write};
 use std::path::Path;
 

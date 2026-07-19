@@ -8,14 +8,6 @@
     )
 )]
 
-//! Sea-of-nodes pattern (match side) + template (build side).
-//!
-//! Both [`matcher::Pattern`] and [`template::Template`] are the generic
-//! [`strider_graph::Graph`] under `NeverCacheable`: pattern nodes are never
-//! deduplicated, since two structurally identical positions in a pattern are
-//! distinct match sites. `graph_ext` restores the read vocabulary the matcher
-//! and the instantiation walk need on top of the generic graph.
-
 pub mod bindings;
 pub mod capture;
 pub mod error;

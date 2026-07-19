@@ -1,5 +1,3 @@
-//! Control / variadic builder matching.
-
 #![allow(
     clippy::panic,
     clippy::unwrap_used,

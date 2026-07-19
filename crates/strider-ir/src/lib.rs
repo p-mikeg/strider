@@ -8,13 +8,6 @@
     )
 )]
 
-//! Sea-of-nodes IR: a lifted function as a bipartite graph of
-//! [`node::NodeId`] computations producing typed [`node::ValueId`] outputs.
-//! [`Graph`] holds the structure, [`Function`] the per-function overlay.
-//!
-//! Booleans are the 1-bit integer `I1`; there is no separate bool type or
-//! bool-specific op family.
-
 mod builder;
 mod control_flow_view;
 pub use control_flow_view::{CtrlKey, control_dominators, control_edge_dominators, dominates};

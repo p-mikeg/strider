@@ -49,10 +49,7 @@ pub enum IntBinaryOp {
     Mul,
 }
 
-/// Naming trap: Sleigh inverts the usual convention. Its `IntNeg` is bitwise
-/// complement and its `Int2Comp` is arithmetic negation. The IR's `Neg` means
-/// `-x` and comes from `Int2Comp`; bitwise complement has no unary op at all,
-/// the lifter emits `Xor(x, all_ones)`.
+/// `Neg` is two's-complement negation `-x`, not bitwise complement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntUnaryOp {
     Neg,

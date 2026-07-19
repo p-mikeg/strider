@@ -8,29 +8,6 @@
     )
 )]
 
-//! Top-level analysis driver.
-//!
-//! [`Strider`] is a per-binary handle owning the `Sleigh` and an optional
-//! ROM; each [`Strider::analyze`] call lifts one function.
-//!
-//! ## Indirect-branch resolution loop
-//!
-//! 1. Build the CFG under the current `known_targets`, lift, optimise, and
-//!    run the [`strider_opt::IndirectBranchClassify`] post-pass.
-//! 2. Stop if no `IndirectBranch` placeholder was deferred.
-//! 3. Else fold the classifications into `known_targets` and re-lift. Stop
-//!    if nothing new resolved: the rest are unresolvable.
-//!
-//! Resolution is rebuild-driven (the CFG builder seats `Return` /
-//! `TailCall` / `Unconditional` / `Switch` terminators from
-//! `known_targets`), so the orchestrator never edits IR in place and there
-//! is no per-iteration index to protect from node-removing passes.
-//!
-//! Termination is step 3's "nothing new resolved" check, NOT monotone
-//! growth: `apply_resolutions` overwrites entries. What bounds the loop is
-//! that an unchanged cone re-derives an equal classification, which the
-//! edge-set diff sees as no growth.
-
 pub use strider_opt as opt;
 
 pub use strider_lift::LiftOptions;

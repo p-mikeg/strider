@@ -1,5 +1,3 @@
-//! Float arithmetic, comparisons, and conversions.
-
 #![allow(
     clippy::panic,
     clippy::unwrap_used,

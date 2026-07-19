@@ -201,7 +201,7 @@ impl PyMatch {
         }
     }
 
-    /// True when the capture has a binding.
+    /// True when `key` is bound in this match.
     fn has(&self, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
         Ok(self.is_bound(cap))

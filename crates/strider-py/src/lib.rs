@@ -1,5 +1,3 @@
-//! Python bindings for the Strider binary analysis pipeline.
-
 // All three fire on PyO3 0.22 macro expansions, not on our own code, and are
 // fixed upstream in 0.23.
 #![allow(unsafe_op_in_unsafe_fn)]
