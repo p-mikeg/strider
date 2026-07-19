@@ -1,13 +1,8 @@
-//! Dominator tree + dominance frontiers over a CFG's region graph — the
-//! strider-specific *wiring* for pruned-SSA construction.
-//!
-//! The CFG itself knows nothing about dominance: it only exposes its region
-//! graph ([`Cfg::region_graph`] / [`Cfg::region_ids`] / [`Cfg::entry`]).  This
-//! module computes immediate dominators over that graph with petgraph's
-//! Cooper–Harvey–Kennedy `simple_fast`, then hands the idom relation to the
-//! generic, CFG-agnostic routines in [`graph_algorithms::dominance`] (dominance
-//! frontiers, dom-tree preorder, iterated-DF φ placement) via a thin
-//! [`DomTree`] adapter.  Nothing graph-theoretic lives here — only the bridge.
+//! Wiring only, no graph theory: petgraph's `simple_fast` computes immediate
+//! dominators over the CFG's region graph, and a thin [`DomTree`] adapter hands
+//! the idom relation to the generic routines in
+//! [`graph_algorithms::dominance`].  The CFG itself knows nothing about
+//! dominance; it exposes only its region graph.
 
 use graph_algorithms::dominance::{DefSites, DomTree, Frontiers};
 use petgraph::Direction::Incoming;
@@ -15,9 +10,6 @@ use petgraph::algo::dominators::{Dominators, simple_fast};
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{Cfg, RegionId};
 
-/// [`DomTree`] adapter over a CFG plus its petgraph-computed idoms — the bridge
-/// that lets the generic `graph_algorithms` dominance routines run on a strider
-/// CFG through only the CFG's public region-graph surface.
 struct CfgDomTree<'a> {
     cfg: &'a Cfg,
     doms: &'a Dominators<RegionId>,
@@ -36,30 +28,23 @@ impl DomTree for CfgDomTree<'_> {
     }
 }
 
-/// Dominator tree + dominance frontiers for one CFG, plus a dominator-tree
-/// pre-order (the traversal order the SSA renaming walk uses, so a region is
-/// visited only after every region that dominates it).
 pub(crate) struct DomInfo {
     doms: Dominators<RegionId>,
-    /// `frontiers[r]` = the dominance frontier of `r` (the regions where a
-    /// definition in `r` first stops dominating — i.e. where a phi may be
-    /// needed).  Absent key = empty frontier.
+    /// Where a definition in `r` first stops dominating, hence where a phi may
+    /// be needed.  An absent key means an empty frontier.
     frontiers: Frontiers<RegionId>,
-    /// Dominator-tree pre-order from the entry: every region appears after its
+    /// The order the SSA renaming walk uses: every region appears after its
     /// immediate dominator.
     preorder: Vec<RegionId>,
 }
 
 impl DomInfo {
-    /// Computes the dominator tree, dominance frontiers, and dom-tree pre-order
-    /// for `cfg` (all reachable from the entry region).
     #[must_use]
     pub(crate) fn compute(cfg: &Cfg) -> Self {
         let doms = simple_fast(cfg.region_graph(), cfg.entry());
 
-        // Derive the dominance frontiers and dom-tree preorder with the generic
-        // routines, driven through the CFG adapter.  The adapter only borrows
-        // `doms`; that borrow ends before `doms` is moved into `Self`.
+        // The adapter only borrows `doms`; that borrow ends before `doms` moves
+        // into `Self`.
         let (frontiers, preorder) = {
             let adapter = CfgDomTree { cfg, doms: &doms };
             (
@@ -75,25 +60,20 @@ impl DomInfo {
         }
     }
 
-    /// The immediate dominator of `r`, or `None` for the entry region and any
-    /// region unreachable from the entry.
+    /// `None` for the entry region and for any region unreachable from it.
     #[must_use]
     pub(crate) fn immediate_dominator(&self, r: RegionId) -> Option<RegionId> {
         self.doms.immediate_dominator(r)
     }
 
-    /// Dominator-tree pre-order: every region appears after its immediate
-    /// dominator.  Regions unreachable from the entry are excluded.
+    /// Excludes regions unreachable from the entry.
     #[must_use]
     pub(crate) fn preorder(&self) -> &[RegionId] {
         &self.preorder
     }
 
-    /// Iterated-dominance-frontier φ placement: given a `variable → defining
-    /// regions` map, returns the set of variables that need a value `Phi` at each
-    /// region (Cytron pruned SSA).  Delegates to [`graph_algorithms::dominance::phi_placement`];
-    /// `def_sites` is any [`DefSites`] over `RegionId` nodes (e.g. the lifter's
-    /// `FxHashMap<InitialVnId, FxHashSet<RegionId>>`).
+    /// Cytron phi placement: maps `variable -> defining regions` to the
+    /// variables needing a value `Phi` at each region.
     #[must_use]
     pub(crate) fn iterated_frontier<D>(
         &self,

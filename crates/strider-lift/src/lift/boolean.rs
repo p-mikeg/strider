@@ -1,13 +1,7 @@
-//! Boolean value-producing pcode opcodes: `BoolNeg`, `BoolAnd`, `BoolOr`,
-//! `BoolXor`.
-//!
-//! Booleans are modelled as the 1-bit integer `I1`, so these lower to
-//! ordinary integer operations: `BoolAnd`/`BoolOr`/`BoolXor` →
-//! `IntBinaryOp::{And,Or,Xor}` at `I1`, and `BoolNeg` (logical not of a
-//! 1-bit value) → `Xor(x, IntConst(1)):I1` (the I1 all-ones constant is 1,
-//! and `x ^ 1` flips the single bit).  Sleigh always feeds these ops
-//! already-`I1` operands (comparison / flag results), so no int→bool
-//! conversion is needed.
+//! Boolean opcodes.  Booleans are the 1-bit integer `I1`, so these lower to
+//! ordinary integer ops: and/or/xor at `I1`, and `BoolNeg` to
+//! `Xor(x, IntConst(1)):I1`.  Sleigh always supplies already-`I1` operands
+//! (comparison and flag results), so no int-to-bool conversion is needed.
 
 use strider_ir::{IRBuilderExt, IntBinaryOp, ValueType};
 
@@ -15,8 +9,6 @@ use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// Translates a p-code boolean binary instruction into an `I1` integer
-    /// binary operation node and writes the result to the output varnode.
     pub(super) fn process_bool_binary_op(
         &mut self,
         insn: &rsleigh::Insn,
@@ -33,12 +25,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.write_vn(out_vn, result)
     }
 
-    /// Translates a p-code boolean unary instruction (`BoolNeg`) into an `I1`
-    /// `Xor(x, IntConst(1)):I1` node and writes the result to the output varnode.
-    ///
-    /// `BoolNeg` is logical NOT of a 1-bit value.  Since the former BitNot unary-op
-    /// was removed in favour of `Xor(x, all_ones)`, a 1-bit complement is
-    /// `Xor(x, IntConst(1))` at `I1` (the I1 all-ones constant is 1).
+    /// `BoolNeg`, lowered to `Xor(x, IntConst(1)):I1`.
     pub(super) fn process_bool_unary_op(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;

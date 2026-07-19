@@ -1,14 +1,10 @@
-//! Varnode read/write dispatch for the per-CFG lifter.
+//! Varnode read/write dispatch, and the sole owner of register aliasing.
 //!
-//! Translates a [`rsleigh::Vn`] (Sleigh's location descriptor — register,
-//! unique temp, constant, or memory address) into the IR primitives the
-//! caller needs.  This module OWNS the machine-specific register-aliasing
-//! logic: overlapping sub-registers (`al`/`ah`/`ax`/`eax`/`rax` on x86-64,
-//! low-byte slices of x87 ST registers, the s/d/q SIMD views on aarch64,
-//! etc.) are handled by always reading and writing through the largest
-//! containing tracked register and inserting bit-shift / mask operations for
-//! sub-register slices.  strider-ir itself treats the varnodes it is given as
-//! an opaque universe; the lifter is the sole owner of sub-register slicing.
+//! Overlapping sub-registers (x86-64 `al`/`ah`/`ax`/`eax`/`rax`, x87 ST
+//! slices, aarch64 s/d/q SIMD views) are always read and written through the
+//! largest containing tracked register, with shift/mask operations inserted
+//! for the slice.  strider-ir treats varnodes as an opaque universe and does
+//! no slicing of its own.
 
 use anyhow::{anyhow, bail};
 use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, Value, ValueType, VnTypeExt};
@@ -16,30 +12,17 @@ use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, Value, ValueType, VnTypeEx
 use super::FunctionLifter;
 use super::pcode_util::Result;
 
-/// Returns a bitmask that covers all bits for a varnode's width in bytes.
+/// Bitmask covering a varnode's width, used to merge a sub-register with the
+/// surrounding bits of its container.
 ///
-/// Used when reading or writing a sub-register inside a larger container
-/// register — the mask selects only the bits belonging to the sub-register
-/// so they can be merged with the surrounding bits of the container.
-///
-/// Supported sizes:
-/// * 1, 2, 4, 8 bytes — standard integer-register widths.
-/// * 10 bytes — x87 ST0/STn 80-bit FPU stack registers.  Models the
-///   80-bit extended-precision width via `(1u128 << 80) - 1`.
-/// * 16 bytes — wider sub-register writes through 16-byte SIMD container
-///   registers (XMM0 on x86_64, q0 on aarch64).
-/// * 32 / 64 bytes — AVX-2 `ymm` / AVX-512 `zmm` registers: **fail
-///   closed**.  A 256-/512-bit mask has no `u128` representation, so
-///   `vn_mask` returns an error rather than a silently-truncated
-///   `u128::MAX`.  These widths are still valid *containers*; a full-width
-///   access takes the direct container read/write path which never consults
-///   the mask (`read_vn`/`write_vn` early-out when `reg` equals its own
-///   container); a sub-register *read* of a >16-byte container slices it via
-///   shift+truncate (no mask); and a sub-register *write* into a >16-byte
-///   container is rejected in `write_reg_vn` before any mask is computed.  So
-///   `vn_mask` is only ever called for ≤16-byte registers in production, and
-///   erroring here makes a wrong degraded mask impossible by construction
-///   instead of relying solely on that guard.
+/// 10 bytes is x87 ST0/STn extended precision.  32/64 bytes (ymm/zmm) fail
+/// closed: a 256-/512-bit mask has no `u128` representation, and returning a
+/// truncated `u128::MAX` would be silently wrong.  Those widths are still
+/// valid *containers*: full-width access takes the direct path (no mask), a
+/// sub-register read slices via shift+truncate (no mask), and a sub-register
+/// write is rejected in `write_reg_vn`.  So this arm is unreachable in
+/// production; it exists so a wrong mask is impossible by construction rather
+/// than only by that guard.
 fn vn_mask(reg: &rsleigh::Vn) -> Result<u128> {
     match reg.size {
         1 => Ok(u128::from(u8::MAX)),
@@ -58,15 +41,11 @@ fn vn_mask(reg: &rsleigh::Vn) -> Result<u128> {
     }
 }
 
-/// Outcome of the shared sub-register entry check — either the direct
-/// container-equals-reg case, or a fully-vetted sub-register context.
 enum SubRegOutcome {
     Direct { container_reg: rsleigh::Vn },
     SubReg(SubRegContext),
 }
 
-/// Sub-register entry context produced by the shared prelude check, consumed
-/// by the read / write specialisations.
 struct SubRegContext {
     container_reg: rsleigh::Vn,
     container_ty: ValueType,
@@ -74,11 +53,8 @@ struct SubRegContext {
 }
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    /// Builds an address-width integer constant for `off` in `space`.
-    ///
-    /// The constant's width is the address size of `space` (queried from
-    /// Sleigh's `space_info`). `what` names the space in the error when the
-    /// lookup fails, preserving each call site's diagnostic.
+    /// Width comes from `space`'s address size; `what` names the space in the
+    /// lookup-failure error.
     pub(crate) fn build_addr_const(
         &mut self,
         space: rsleigh::VnSpace,
@@ -96,12 +72,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         )
     }
 
-    /// Reads a sequence of varnodes into IR values, preserving order.
     pub(crate) fn read_vns(&mut self, vns: &[rsleigh::Vn]) -> Result<Vec<strider_ir::Value>> {
         vns.iter().map(|vn| self.read_vn(vn)).collect()
     }
 
-    /// Reads the value of input varnode `n` of `insn` (checked index).
     pub(super) fn read_input(
         &mut self,
         insn: &rsleigh::Insn,
@@ -111,22 +85,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.read_vn(vn)
     }
 
-    /// Reads any varnode into an IR value.
-    ///
-    /// Dispatches based on the varnode's address space:
-    /// - `CONST` → an integer constant node.
-    /// - `UNIQUE` / `REGISTER` → the register-aliasing read path
-    ///   ([`Self::read_reg_vn`]): sub-register views are sliced out of their
-    ///   largest tracked container (Sleigh occasionally writes a wide unique
-    ///   and reads a narrow slice of it — e.g. MIPS MULT writes a 64-bit
-    ///   unique then Copy reads a 32-bit slice).
-    /// - `RAM` → a `Load` from the RAM address space.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the varnode lives in an unsupported address
-    /// space, has an unsupported size, or the IR builder rejects the
-    /// resulting node.
+    /// UNIQUE goes through the same aliasing path as REGISTER: Sleigh
+    /// sometimes writes a wide unique and reads a narrow slice of it (MIPS
+    /// MULT writes a 64-bit unique, then Copy reads 32 bits of it).
     pub(crate) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<strider_ir::Value> {
         let space = vn.addr_space;
         match space {
@@ -140,19 +101,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
     }
 
-    /// Writes an IR value into any writable varnode.
-    ///
-    /// Dispatches based on the varnode's address space:
-    /// - `CONST` → error (constants cannot be written).
-    /// - `UNIQUE` / `REGISTER` → the register-aliasing write path
-    ///   ([`Self::write_reg_vn`]).
-    /// - `RAM` → a `Store` to the RAM address space.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the varnode lives in an unsupported or
-    /// non-writable address space, has an unsupported size, or the IR
-    /// builder rejects the resulting node.
     pub(crate) fn write_vn(&mut self, vn: &rsleigh::Vn, val: strider_ir::Value) -> Result<()> {
         let space = vn.addr_space;
         match space {
@@ -166,46 +114,26 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
     }
 
-    // ── register-aliasing read/write (moved from strider-ir) ─────────────────
-
-    /// Finds the largest tracked variable in the same space that fully
-    /// contains `reg`.
-    ///
-    /// For REGISTER space this is the architectural register containment
-    /// (e.g. `al` -> `rax` on x86-64).  For UNIQUE space the same
-    /// containment logic applies — Sleigh sometimes writes a wider unique
-    /// varnode and reads a narrow slice of it (e.g. MIPS MULT writes a
-    /// 64-bit unique and the next instruction Copies a 4-byte slice to a
-    /// register).  Without this aliasing the narrow read returns an
-    /// undefined InitialVar.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `reg` is not in a fixed-offset space (REGISTER
-    /// or UNIQUE).
+    /// Largest tracked varnode in the same space that fully contains `reg`
+    /// (`al` -> `rax`).  Without it a narrow read of a wide unique would
+    /// return an undefined InitialVar.
     fn find_largest_fitting_register(&self, reg: &rsleigh::Vn) -> Result<rsleigh::Vn> {
         let space = reg.addr_space;
         if space != rsleigh::VnSpace::REGISTER && space != rsleigh::VnSpace::UNIQUE {
             bail!("unsupported varnode space {space:?}");
         }
-        // The lifter's `container_of` covers every tracked vn + CC register
-        // (fast map hit) and falls back to an `all_vns` containment scan for
-        // ad-hoc vns.  It returns `reg` unchanged when nothing tracked contains
-        // it — for this caller that means `reg` is its own container (a
-        // legitimate full-width access).
+        // `container_of` returns `reg` unchanged when nothing tracked contains
+        // it, which here means `reg` is its own container: a legitimate
+        // full-width access, not a failure.
         Ok(self.container_of(reg))
     }
 
-    /// Computes the bit-shift needed to move `reg`'s bits to/from their
-    /// position inside `container_reg`.
+    /// Bit distance between `reg`'s slot and the container's LSB.
     ///
-    /// Little-endian: bit position = `8 * (reg.off − container.off)` —
-    /// the LSB byte is at offset 0, so shifting right by the byte distance
-    /// from the container's start places `reg`'s bits at the bottom.
-    ///
-    /// Big-endian: the MSB byte is at offset 0, so a sub-register sits
-    /// `(container.size − reg.size − (reg.off − container.off))` bytes above
-    /// the LSB.  Multiplied by 8 this is the right-shift count.
+    /// Little-endian: the LSB byte is at offset 0, so the byte distance from
+    /// the container's start is the shift.  Big-endian: the MSB byte is at
+    /// offset 0, so the sub-register sits `container.size - reg.size -
+    /// (reg.off - container.off)` bytes above the LSB.
     fn calculate_reg_shift_from_container(
         &self,
         reg: &rsleigh::Vn,
@@ -221,34 +149,18 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
     }
 
-    /// Emits IR nodes to read the value of a register varnode.
-    ///
-    /// If `reg` is a sub-register (e.g. `al` inside `rax`) the method reads
-    /// the container register and inserts a right-shift to extract the
-    /// relevant bits.  If `reg` is already the container (or is its own
-    /// largest container) the value is returned directly.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `reg` is not in REGISTER / UNIQUE space, has no
-    /// enclosing tracked container, is a sub-slice of a wide (>16-byte)
-    /// container, has an unsupported byte size, or an underlying builder
-    /// node-construction call fails.
+    /// Reads `reg` by shifting its slice out of the container and truncating.
     pub(crate) fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<Value> {
         let ctx = match self.enter_sub_register(reg, "read_reg_vn")? {
             SubRegOutcome::Direct { container_reg } => {
-                // Direct-container read: no aliasing slicing needed.
                 return self.builder.read_variable(&container_reg);
             }
             SubRegOutcome::SubReg(ctx) => ctx,
         };
-        // Sub-register read: shift the container's bits down to the LSB
-        // position, then truncate to the sub-register's width.  Even when
-        // the shift is zero (sub at offset 0 of the container), the
-        // truncate is required — without it the caller receives the full
-        // container width, which breaks downstream type-aware operations
-        // (e.g. bitcasting a I64 read to F32 is ill-defined — the widths differ —
-        // IntBitsToFloat and the optimizer ends up dropping the chain).
+        // The truncate is required even at shift 0: without it the caller gets
+        // the full container width, and width-sensitive downstream ops break
+        // (bitcasting an I64 read to F32 is ill-defined, so IntBitsToFloat
+        // plus the optimizer drop the chain).
         let reg_ty: ValueType = reg.int_type()?;
         let curr_reg_val = self.builder.read_variable(&ctx.container_reg)?;
         let shifted = self.builder.build_shift_by_const(
@@ -260,55 +172,34 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.builder.truncate_if_needed(shifted, reg_ty)
     }
 
-    /// Emits IR nodes to write `val` into a register varnode.
+    /// Writes `val` into `reg`: read container, position `val` into reg's bit
+    /// slot, clear that slot in the container, OR the two, write back.
     ///
-    /// If `reg` is a sub-register the method:
-    /// 1. Reads the current container value.
-    /// 2. Extends `val` to container width and shifts it into reg's bit slot.
-    /// 3. Masks the bits *not* belonging to `reg` from the container.
-    /// 4. ORs the two together and writes back to the container.
-    ///
-    /// All masks are computed in **container coordinates** — the reg's
-    /// `vn_mask` (always low-bits domain) is shifted by `shift_bits` to land
-    /// at reg's actual position inside the container, and the container's
-    /// "preserve" mask is the complement.  Without this positioning, an
-    /// upper-half write (e.g. AArch64's "FCVT D0,S0 zeroes upper 64 bits of
-    /// V0") inverts the mask and silently zeros the lower half of the
-    /// container.
-    ///
-    /// If `reg` is equal to its own container the write is direct.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `reg` is not in REGISTER / UNIQUE space, has no
-    /// enclosing tracked container, is a sub-slice of a wide (>16-byte)
-    /// container, has an unsupported byte size, or an underlying builder
-    /// node-construction call fails.
+    /// Masks are computed in *container* coordinates: reg's `vn_mask` is
+    /// always in the low-bits domain, so it must be shifted by `shift_bits`
+    /// to land at reg's real position, and the preserve mask is its
+    /// complement.  Skipping that positioning inverts the mask on an
+    /// upper-half write (AArch64 `FCVT D0,S0` zeroing the upper 64 bits of
+    /// V0) and silently zeros the container's lower half.
     pub(crate) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: Value) -> Result<()> {
         let ctx = match self.enter_sub_register(reg, "write_reg_vn")? {
             SubRegOutcome::Direct { container_reg: _ } => {
-                // Direct full-container write.  Register variables hold
-                // integer-typed values at the register's natural width.
-                // Coerce `val` to that width: a same-width value is stored
-                // unchanged, a same-width float is bit-reinterpreted, and a
-                // 1-bit `I1` (a comparison / flag result, value 0 or 1) is
-                // zero-extended to the register width.  This guarantees no
-                // sub-width value — notably `I1` — ever lives in a register
-                // SSA slot, so cross-region `Phi`s over a register are
-                // type-homogeneous.  The flag→`If` flow stays correct: the
-                // cond-branch lifter narrows the register read back to `I1`,
-                // and ConstantFold collapses the extend/truncate round-trip.
+                // Register SSA slots hold integers at the register's natural
+                // width, so coerce: same-width float is bit-reinterpreted, a
+                // 1-bit `I1` flag result is zero-extended.  Keeping `I1` out
+                // of register slots is what makes cross-region `Phi`s over a
+                // register type-homogeneous.  The flag-to-`If` flow survives:
+                // the cond-branch lifter narrows the read back to `I1` and
+                // ConstantFold collapses the extend/truncate round trip.
                 let reg_ty: ValueType = reg.int_type()?;
                 let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
                 return self.builder.write_variable(reg, coerced);
             }
             SubRegOutcome::SubReg(ctx) => ctx,
         };
-        // A sub-register WRITE into a wide (>16-byte) container needs a mask in
-        // container coordinates (`build_masked_insert` → `vn_mask`), which has
-        // no `u128` representation for 32-/64-byte ymm/zmm containers.  Fail
-        // closed with a clear error rather than producing a wrong value.  (The
-        // READ counterpart needs no mask and is handled in `read_reg_vn`.)
+        // A sub-register write into a >16-byte ymm/zmm container would need a
+        // container-coordinate mask that `u128` cannot hold.  Fail closed.
+        // The read path needs no mask, so it has no such guard.
         if ctx.container_reg.size > 16 {
             return Err(anyhow!(
                 "write_reg_vn: sub-register write within a wide ({}-byte) \
@@ -319,79 +210,48 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 ctx.container_reg,
             ));
         }
-        // Coerce `val` to the sub-register's integer width through the SAME
-        // prelude the direct-container arm uses (`convert_to_int_if_needed`):
-        // a 1-bit `I1` flag result is zero-extended to the sub-register width,
-        // and a non-integer `val` (e.g. a scalar-FP write into a SIMD slice)
-        // surfaces the identical "bitcast required first" error here rather
-        // than the divergent "cannot integer-extend non-integer" that
-        // `build_masked_insert`'s `extend_if_needed` would raise.  This makes
-        // both write paths accept exactly the same operand-type set.  The
-        // subsequent `build_masked_insert` zero-extends this reg-width value to
-        // the container width before positioning it.
+        // Same coercion prelude as the direct-container arm, so both write
+        // paths accept exactly the same operand types.  Going straight to
+        // `build_masked_insert` would instead surface `extend_if_needed`'s
+        // divergent "cannot integer-extend non-integer" for a scalar-FP write
+        // into a SIMD slice.
         let reg_ty: ValueType = reg.int_type()?;
         let val = self.builder.convert_to_int_if_needed(val, reg_ty)?;
 
-        // SOUNDNESS: this sub-register write PRESERVES the bits outside
-        // `reg`, and that is correct.  Some ISAs zero the upper bits of the
-        // containing vector register on a scalar-FP write (AArch64 `fmov s0`
-        // zeroes V0[32:]; x86 VEX `vmovss` zeroes the upper YMM/ZMM) while
-        // others preserve them (x86 legacy SSE `movss`).  Crucially, Sleigh
-        // models this difference itself by emitting the zeroing as *separate
-        // explicit pcode ops* alongside the scalar write — e.g.
-        //   AArch64 `fmov s0,w0` →  s0 = Copy(w0); reg(V0[4..]) = Copy(#0)…
-        //   x86 VEX  `vmovss`    →  XMM0_Da = …;   ZMM0 = IntZext(XMM0)
-        // The lifter processes those zeroing ops as ordinary sub-register
-        // writes here, so the resulting IR reflects the exact upper-bits
-        // semantics with no per-arch policy needed: preserving within the
-        // scalar op is right *because* the zeroing arrives as its own op.
-        // (Verified by lifting these instructions and inspecting the pcode.)
+        // This write PRESERVES the bits outside `reg`, and that is correct
+        // even on ISAs that zero the rest of the vector register on a
+        // scalar-FP write (AArch64 `fmov s0`, x86 VEX `vmovss`) rather than
+        // preserving it (legacy SSE `movss`).  Sleigh models the difference
+        // itself, emitting the zeroing as separate explicit pcode ops:
+        //   AArch64 `fmov s0,w0` ->  s0 = Copy(w0); reg(V0[4..]) = Copy(#0)
+        //   x86 VEX  `vmovss`    ->  XMM0_Da = ...; ZMM0 = IntZext(XMM0)
+        // Those arrive here as ordinary sub-register writes, so preserving
+        // within the scalar op is right precisely because the zeroing is its
+        // own op.  No per-arch policy needed.
         let final_container_value = self.build_masked_insert(val, reg, &ctx)?;
         self.write_reg_vn(&ctx.container_reg, final_container_value)?;
         Ok(())
     }
 
-    /// Runs the shared sub-register entry checks for `reg`.
+    /// Shared read/write prelude.  `op` prefixes the shift-bound error so it
+    /// names the originating call site.
     ///
-    /// Returns:
-    /// * `SubRegOutcome::Direct { container_reg }` — `reg` is its own largest
-    ///   container; caller takes the direct-container path (no shift / mask
-    ///   needed).
-    /// * `SubRegOutcome::SubReg(SubRegContext { .. })` — `reg` is a strict
-    ///   sub-slice of its container; caller specialises read (shift right +
-    ///   truncate) or write (extend + shift left + mask + OR).
-    ///
-    /// Wide (>16-byte) containers are NOT rejected here: a read slices them via
-    /// shift+truncate on the container's `I256`/`I512` type, and the
-    /// mask-dependent write path rejects the wide-container write in
-    /// `write_reg_vn`'s own arm.  This prelude surfaces only the defensive
-    /// shift-bound check (correctness-critical).  `op` is the caller's function
-    /// name, used as a prefix in the shift-bound error so the failure points at
-    /// the originating site.
+    /// Wide (>16-byte) containers are deliberately NOT rejected here: reads
+    /// slice them via shift+truncate on the container's `I256`/`I512` type and
+    /// need no mask.  Only the write path needs the guard, and it lives in
+    /// `write_reg_vn`.
     fn enter_sub_register(&self, reg: &rsleigh::Vn, op: &'static str) -> Result<SubRegOutcome> {
         let container_reg = self.find_largest_fitting_register(reg)?;
         if container_reg == *reg {
             return Ok(SubRegOutcome::Direct { container_reg });
         }
-        // A sub-slice of a WIDE (>16-byte) container is representable on the
-        // READ path — `read_reg_vn` shifts the container's wide integer value
-        // (`I256`/`I512`) right by `shift_bits` and truncates to the slice
-        // width, never consulting `vn_mask`.  Only the WRITE path needs a wide
-        // mask (which `u128` cannot represent); `write_reg_vn` rejects the
-        // wide-container write in its sub-register arm before it reaches
-        // `build_masked_insert`/`vn_mask`.  So the guard lives on the write
-        // side, and this shared prelude lets wide-container reads through.
         let container_ty: ValueType = container_reg.int_type()?;
         let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
-        // Defensive bound: any shift ≥ container_bits is undefined per the
-        // IR's `ShiftRight` / `ShiftLeft` semantics (the lifted shift would
-        // silently wrap via `shift % bit_width` on x86 hardware in release
-        // builds).  By construction the largest legitimate sub-register
-        // offset is `(container.size - 1) * 8`, well below the bit width,
-        // and `find_largest_fitting_register` upstream enforces containment.
-        // A malformed Sleigh spec that ever emits an out-of-container
-        // sub-register surfaces as a clean lift failure rather than silently
-        // corrupting the IR.
+        // A shift >= container bits is undefined under the IR's shift
+        // semantics and would silently wrap via `shift % bit_width` on x86.
+        // Containment upstream makes this unreachable (max legitimate offset
+        // is `(container.size - 1) * 8`); the check turns a malformed Sleigh
+        // spec into a clean lift failure instead of corrupt IR.
         if shift_bits >= (container_reg.size as u64) * 8 {
             return Err(anyhow!(
                 "{op}: shift {shift_bits} >= container bit width {} \
@@ -409,15 +269,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }))
     }
 
-    /// Positions `val` into the container value at the given bit slot, merges
-    /// with the preserved container bits, and returns the combined value.
-    ///
-    /// Steps:
-    ///  1. Zero-extend `val` to `ty`, then shift left by `shift_bits` to place
-    ///     it at the correct bit position inside the container.
-    ///  2. AND the positioned value with `reg_mask` to isolate its bits.
-    ///  3. AND the container's current value with `container_mask` to clear the slot.
-    ///  4. OR the two halves together.
+    /// Positions `val` at its bit slot in the container and merges it with the
+    /// preserved container bits.
     fn build_masked_insert(
         &mut self,
         val: Value,
@@ -430,7 +283,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let container_mask = vn_mask(&ctx.container_reg)? & !reg_mask;
         let container_val = self.builder.read_variable(&ctx.container_reg)?;
 
-        // Extend `val` to container width, then shift into position.
         let val_extended = self
             .builder
             .extend_if_needed(val, ty, ExtendOp::ZeroExtend)?;
@@ -441,10 +293,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             ty,
         )?;
 
-        // Isolate the positioned value's bits (`shifted_value & reg_mask`) and
-        // clear that slot in the container (`container_val & container_mask`); both
-        // ANDs fold the const + binary-op via `build_const_binop` (And is
-        // commutative, so the operand order matches the former explicit form).
         let reg_val =
             self.builder
                 .build_const_binop(reg_mask, shifted_value, IntBinaryOp::And, ty)?;
@@ -456,11 +304,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             .build_int_binary_operation(preserved, reg_val, IntBinaryOp::Or, ty)
     }
 }
-
-// ── Self-contained unit tests for the bit-shift formulas ──────────────────────
-//
-// These test pure arithmetic (no IR builder needed).  They live here now
-// since the formulas they cover live here.
 
 #[cfg(test)]
 mod shift_formula_tests {
@@ -474,9 +317,7 @@ mod shift_formula_tests {
         }
     }
 
-    /// Shift placement for little-endian: byte offset within container × 8.
-    /// 4-byte container at off=0 with sub-registers at every (off, size) the
-    /// formula must support.
+    /// Little-endian shift is byte offset within the container times 8.
     #[test]
     fn le_shift_for_subregs_in_4byte_container() {
         let cases = [
@@ -499,8 +340,8 @@ mod shift_formula_tests {
         }
     }
 
-    /// Shift placement for big-endian: most-significant byte at offset 0,
-    /// least-significant at offset (container.size − sub.size).
+    /// Big-endian puts the MSB at offset 0, the LSB at
+    /// `container.size - sub.size`.
     #[test]
     fn be_shift_for_subregs_in_4byte_container() {
         let cases = [
@@ -523,7 +364,6 @@ mod shift_formula_tests {
         }
     }
 
-    /// 8-byte container exercises the wider arithmetic path.
     #[test]
     fn be_shift_for_subregs_in_8byte_container() {
         let container = reg(0, 8);
@@ -533,8 +373,8 @@ mod shift_formula_tests {
         assert_eq!(compute_shift_be(&reg(7, 1), &container), 0);
     }
 
-    // Free helpers mirroring calculate_reg_shift_from_container's two arms,
-    // unit-testable without spinning up a full lifter.
+    // Mirror calculate_reg_shift_from_container's two arms so the formulas are
+    // testable without spinning up a lifter.
     fn compute_shift_le(reg: &Vn, container: &Vn) -> u64 {
         8 * (reg.addr_off - container.addr_off)
     }
@@ -543,17 +383,12 @@ mod shift_formula_tests {
     }
 }
 
-// ── Positioned reg-mask: AArch64 SIMD upper-half write regression tests ──────
-//
-// Sub-register writes need a mask that picks out **reg's position inside the
-// container**, not reg's bits in low-bytes domain.  A pre-fix version used
-// `vn_mask(reg)` directly — which is always in low-bytes domain regardless of
-// where reg sits inside the container.  For shift==0 (low sub-register) it
-// accidentally worked; for shift>0 (e.g. upper 8 bytes of a 16-byte SIMD
+// Regression: the write mask must select reg's position INSIDE the container,
+// not reg's bits in the low-bytes domain.  Using `vn_mask(reg)` unshifted
+// happens to work at shift 0 but at shift > 0 (upper 8 bytes of a 16-byte SIMD
 // register, written when AArch64 FCVT D0,S0 zeroes the upper half of V0) it
-// produced an inverted container_mask that silently zeroed the lower half —
-// orphaning the FCVT chain through ConstantFold's
-// `(a&C1 | b&C2) & C3 → (a&(C1&C3)) | (b&(C2&C3))` and `x & 0 → 0` rules.
+// inverts container_mask and zeros the lower half, orphaning the FCVT chain
+// through ConstantFold's `(a&C1 | b&C2) & C3` and `x & 0 -> 0` rules.
 
 #[cfg(test)]
 mod positioned_mask_tests {
@@ -568,19 +403,18 @@ mod positioned_mask_tests {
         }
     }
 
-    /// Positioned mask = `vn_mask(reg) << shift_bits` must select exactly the
-    /// bits reg occupies inside its container.
+    /// `vn_mask(reg) << shift_bits` must select exactly the bits reg occupies.
     #[test]
     fn positioned_mask_isolates_reg_bits_inside_16byte_container() {
         let q0 = reg_at(0, 16);
         let s0 = reg_at(0, 4); // lower 4 bytes
         let d0 = reg_at(0, 8); // lower 8 bytes
-        let v0_upper8 = reg_at(8, 8); // upper 8 bytes (the AArch64 SIMD upper-half hot spot)
+        let v0_upper8 = reg_at(8, 8); // the AArch64 SIMD upper-half hot spot
 
         let q0_mask = vn_mask(&q0).unwrap();
         assert_eq!(q0_mask, u128::MAX, "container mask should be all-ones");
 
-        let s0_pos = vn_mask(&s0).unwrap(); // shift = 0 → no shift needed
+        let s0_pos = vn_mask(&s0).unwrap(); // shift 0
         assert_eq!(s0_pos, 0xFFFF_FFFF, "s0 occupies bits 0..32");
 
         let d0_pos = vn_mask(&d0).unwrap();
@@ -592,13 +426,11 @@ mod positioned_mask_tests {
             "upper 8-byte sub at offset 8 occupies bits 64..128"
         );
 
-        // The two halves are disjoint and union to the full container mask.
         assert_eq!(d0_pos & upper8_pos, 0, "d0 and upper-half are disjoint");
         assert_eq!(d0_pos | upper8_pos, q0_mask, "d0 ∪ upper-half = full q0");
     }
 
-    /// `container_mask = vn_mask(container) & !positioned_reg_mask` must
-    /// preserve exactly the bits that DON'T belong to reg.
+    /// The preserve mask must keep exactly the bits that don't belong to reg.
     #[test]
     fn container_mask_for_upper_half_write_keeps_lower_half() {
         let q0 = reg_at(0, 16);
@@ -617,7 +449,7 @@ mod positioned_mask_tests {
         );
     }
 
-    /// `container_mask` for the lower-half write path (shift=0).
+    /// Same, for the shift-0 lower-half write.
     #[test]
     fn container_mask_for_lower_half_write_keeps_upper_half() {
         let q0 = reg_at(0, 16);
@@ -632,37 +464,28 @@ mod positioned_mask_tests {
         );
     }
 
-    /// Scalar-FP upper-bits zeroing is sound because Sleigh emits the
-    /// zeroing as separate explicit pcode ops (e.g. `fmov s0,w0` →
-    /// `s0 = Copy(w0)` then `reg(V0[4..]) = Copy(#0)`).  The lifter
-    /// processes each as an ordinary sub-register masked-insert.  This pins
-    /// the invariant that makes that approach exact: the scalar write's
-    /// positioned mask and the upper-bytes zero-write's positioned mask are
-    /// disjoint and together tile the whole container — so after both writes
-    /// the container is fully determined (low = value, upper = 0), with no
-    /// preserved-stale bits and no gaps.
+    /// Pins the invariant that makes preserve-then-let-Sleigh-zero exact: the
+    /// scalar write's positioned mask and the zero-writes' positioned masks
+    /// are disjoint and together tile the container, so after all of them the
+    /// container is fully determined with no stale bits and no gaps.
     #[test]
     fn aarch64_scalar_fp_write_then_upper_zero_tiles_the_container() {
-        // `fmov s0,w0` lifts (per Sleigh) to: s0 = Copy(w0) then aligned
-        // zero-writes covering the rest of the container — observed as a
-        // 4-byte write at offset 4 and an 8-byte write at offset 8.
+        // Sleigh lifts `fmov s0,w0` to `s0 = Copy(w0)` plus aligned zero-writes
+        // over the rest: observed as 4 bytes at offset 4 and 8 at offset 8.
         let v0 = reg_at(0, 16);
         let s0 = reg_at(0, 4);
-        let zero_mid = reg_at(4, 4); // bytes 4..8
-        let zero_hi = reg_at(8, 8); // bytes 8..16
+        let zero_mid = reg_at(4, 4);
+        let zero_hi = reg_at(8, 8);
 
         let s0_pos = vn_mask(&s0).unwrap(); // shift 0
         let mid_pos = vn_mask(&zero_mid).unwrap() << 32;
         let hi_pos = vn_mask(&zero_hi).unwrap() << 64;
 
-        // Pairwise disjoint: the scalar write and each zero-fill touch no
-        // common bit (so no write clobbers another).
+        // Disjoint: no write clobbers another.
         assert_eq!(s0_pos & mid_pos, 0);
         assert_eq!(s0_pos & hi_pos, 0);
         assert_eq!(mid_pos & hi_pos, 0);
-        // Covering: together they are exactly the full V0 container, so after
-        // the scalar write + Sleigh's zero-fills the container is fully
-        // determined (low 4 = value, upper 12 = 0) with no stale bits.
+        // Covering: low 4 bytes = value, upper 12 = 0, nothing stale.
         assert_eq!(
             s0_pos | mid_pos | hi_pos,
             vn_mask(&v0).unwrap(),
@@ -670,8 +493,7 @@ mod positioned_mask_tests {
         );
     }
 
-    /// 4-byte container with byte-sized sub-registers at each offset —
-    /// exercises every shift count the LE formula produces.
+    /// Exercises every shift count the LE formula produces.
     #[test]
     fn container_mask_byte_subregs_in_4byte_container() {
         let container = reg_at(0, 4);
@@ -708,7 +530,6 @@ mod vn_mask_tests {
         }
     }
 
-    /// Masks must exactly cover each supported byte width with no extra bits.
     #[test]
     fn mask_covers_only_the_declared_width() -> Result<()> {
         assert_eq!(vn_mask(&reg(1))?, u128::from(u8::MAX));
@@ -720,7 +541,6 @@ mod vn_mask_tests {
         Ok(())
     }
 
-    /// 10-byte mask is exactly the low 80 bits.
     #[test]
     fn vn_mask_for_10_bytes_is_low_80_bits() -> Result<()> {
         let mask = vn_mask(&reg(10))?;
@@ -730,7 +550,6 @@ mod vn_mask_tests {
         Ok(())
     }
 
-    /// Wider masks are supersets of narrower masks.
     #[test]
     fn narrower_mask_is_subset_of_wider_mask() -> Result<()> {
         let m1 = vn_mask(&reg(1))?;
@@ -745,7 +564,6 @@ mod vn_mask_tests {
         Ok(())
     }
 
-    /// Every unsupported size produces an "unsupported register size" error.
     #[test]
     fn unsupported_sizes_return_unsupported_reg_size_error() {
         for &bad in &[0u32, 3, 5, 6, 7, 9, 17, 33, 65, u32::MAX] {
@@ -775,12 +593,10 @@ mod wide_register_tests {
         }
     }
 
-    // A 256-/512-bit mask has no `u128` representation, so `vn_mask` fails
-    // closed for ymm/zmm rather than handing back a silently-truncated
-    // `u128::MAX`.  These widths are still valid *containers*; a full-width
-    // access takes the direct container path (which never consults the mask)
-    // and a sub-register slice of a >16-byte container is rejected in
-    // `enter_sub_register` before any mask is computed.
+    // ymm/zmm fail closed rather than returning a truncated `u128::MAX`.  They
+    // are still valid containers: full-width access takes the direct path, a
+    // sub-register read slices without a mask, and a sub-register write is
+    // rejected in `write_reg_vn`.
     #[test]
     fn vn_mask_rejects_32_bytes_ymm_no_representable_mask() {
         let ymm = reg(0x1000, 32);

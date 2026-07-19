@@ -1,18 +1,7 @@
-//! Register-aliasing unit tests exercising the REAL production aliasing
-//! code on [`FunctionLifter`] (`read_reg_vn` / `write_reg_vn` and the
-//! shift/mask machinery in [`crate::lift::vn_io`]).
+//! Register-aliasing tests against the production `read_reg_vn` /
+//! `write_reg_vn` and the shift/mask machinery in [`crate::lift::vn_io`].
 //!
-//! These were ported from `strider-ir`'s builder tests, which previously
-//! ran against a byte-identical *copy* of the aliasing logic on
-//! `FunctionBuilder`.  That copy is being deleted; the behavioural
-//! coverage lives here now, against the prod `FunctionLifter` path.
-//!
-//! Each test drives the aliasing code through the shared
-//! [`super::handler_tests::with_test_lifter_tracking_arch`] harness, which
-//! seeds a `FunctionLifter` whose IR builder tracks the given container
-//! varnodes and has a single entry region.  Little-endian tests use the
-//! x86 harness; big-endian tests use the `ppc32be` harness (`blr`
-//! terminator, no delay slot).
+//! Little-endian tests use the x86 harness, big-endian ones `ppc32be`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -26,7 +15,6 @@ use crate::lift::FunctionLifter;
 
 type TestReader = rsleigh::mem_readers::BufMemReader<Vec<u8>>;
 
-/// x86 little-endian throwaway-CFG scaffolding (`ret`).
 fn x86() -> strider_target::SleighArch {
     strider_target::SleighArch::x86()
 }
@@ -34,7 +22,7 @@ fn x86_term() -> Vec<u8> {
     vec![0xc3]
 }
 
-/// Big-endian PowerPC scaffolding (`blr` — a return, no delay slot).
+/// `blr` is a return with no delay slot.
 fn ppc32be() -> strider_target::SleighArch {
     strider_target::SleighArch::ppc32be()
 }
@@ -42,7 +30,6 @@ fn ppc32be_term() -> Vec<u8> {
     vec![0x4e, 0x80, 0x00, 0x20]
 }
 
-/// REGISTER-space varnode of byte width `size` at offset `off`.
 fn reg_vn(off: u64, size: u32) -> Vn {
     Vn {
         size,
@@ -51,7 +38,6 @@ fn reg_vn(off: u64, size: u32) -> Vn {
     }
 }
 
-/// UNIQUE-space varnode of byte width `size` at offset `off`.
 fn unique_vn(off: u64, size: u32) -> Vn {
     Vn {
         size,
@@ -60,17 +46,13 @@ fn unique_vn(off: u64, size: u32) -> Vn {
     }
 }
 
-/// The node kind of `value`'s producer (inline replacement for the
-/// strider-ir `producer_kind` helper).
 fn pk(d: &FunctionLifter<'_, TestReader>, v: Value) -> NodeKind {
     let f = d.builder.function();
     *f.node_kind(f.producer(v))
 }
 
-/// Scan a merge `Or`'s two `And` arms (`lhs` / `rhs`), asserting each is an
-/// `And`, and split them into `(preserve_arm, insert_arm)`: the arm that
-/// consumes the pre-write container value `initial` preserves the container;
-/// the other inserts the shifted sub-register value.
+/// Splits a merge `Or`'s two `And` arms into `(preserve, insert)`: the arm
+/// consuming the pre-write container value `initial` is the preserve arm.
 fn classify_preserve_insert_arms(
     d: &FunctionLifter<'_, TestReader>,
     lhs: Value,
@@ -103,10 +85,8 @@ fn classify_preserve_insert_arms(
     )
 }
 
-/// Scan a merge `Or`'s two `And` arms (`lhs` / `rhs`), asserting each is an
-/// `And`, collecting every `int_const_u128` across both arms' inputs into a
-/// sorted `Vec`, and flagging whether the pre-write container value `initial`
-/// appears as an arm input.
+/// Sorted constants across both `And` arms, plus whether `initial` appears as
+/// an arm input.
 fn collect_and_arm_consts(
     d: &FunctionLifter<'_, TestReader>,
     lhs: Value,
@@ -138,10 +118,8 @@ fn collect_and_arm_consts(
     (consts, saw_initial)
 }
 
-// ── ported tests ────────────────────────────────────────────────────────────
-
-/// Reading a sub-register when only the wider container is tracked routes
-/// through the tracked-container scan, shifting/masking out of the container.
+/// A sub-register read when only the container is tracked must route through
+/// the container scan rather than minting a fresh variable.
 #[test]
 fn read_subregister_routes_through_container_map() {
     let rax = reg_vn(0x0, 8);
@@ -156,13 +134,12 @@ fn read_subregister_routes_through_container_map() {
     });
 }
 
-/// Reading a 1-byte sub-register (`AL`) out of a tracked 8-byte container
-/// (`RAX`) under little-endian: shift 0 → a direct `Truncate` of the
-/// container read with no `ShiftRight` in between.
+/// `AL` out of `RAX` under little-endian is shift 0, so a direct `Truncate`
+/// with no `ShiftRight`.
 #[test]
 fn read_reg_vn_truncates_subregister_of_tracked_container() {
     let rax = reg_vn(0x100, 8);
-    let al = reg_vn(0x100, 1); // low byte, same offset → shift 0
+    let al = reg_vn(0x100, 1); // low byte, same offset -> shift 0
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![rax], |d, _| {
         let read = d.read_reg_vn(&al).unwrap();
         assert_eq!(
@@ -182,12 +159,11 @@ fn read_reg_vn_truncates_subregister_of_tracked_container() {
     });
 }
 
-/// Writing a 1-byte sub-register (`al`) into a tracked 8-byte container
-/// (`rax`) merges via the positioned-mask shape and preserves the high bytes.
+/// The merge must preserve `rax`'s high bytes.
 #[test]
 fn write_subregister_merge_preserves_container_high_bytes() {
     let rax = reg_vn(0x100, 8);
-    let al = reg_vn(0x100, 1); // low byte → LE shift 0
+    let al = reg_vn(0x100, 1); // low byte -> LE shift 0
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![rax], |d, _| {
         let initial_rax = d.builder.read_variable(&rax).unwrap();
         let byte_val = d.builder.build_int_const(0xABu64, ValueType::I8).unwrap();
@@ -218,13 +194,11 @@ fn write_subregister_merge_preserves_container_high_bytes() {
     });
 }
 
-/// Writing a 4-byte sub-register into a 10-byte x87 extended container
-/// (`I80`) merges via the positioned-mask `Or` shape with the 80-bit
-/// container mask `(1<<80)-1`.
+/// x87 `I80` container: the mask must be the 80-bit `(1<<80)-1`.
 #[test]
 fn write_subregister_into_x87_80bit_container_preserves_high_bits() {
     let st = reg_vn(0x200, 10); // x87 80-bit extended register
-    let lo4 = reg_vn(0x200, 4); // low 4 bytes → LE shift 0
+    let lo4 = reg_vn(0x200, 4); // low 4 bytes -> LE shift 0
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![st], |d, _| {
         let initial = d.builder.read_variable(&st).unwrap();
         let val = d
@@ -261,12 +235,11 @@ fn write_subregister_into_x87_80bit_container_preserves_high_bits() {
     });
 }
 
-/// Writing the x86 high-byte sub-register `ah` (offset 1 → LE shift 8) into
-/// `rax` positions the byte mask at bits 8..16 and left-shifts the value by 8.
+/// `ah` sits at offset 1, so LE shift 8 and a mask at bits 8..16.
 #[test]
 fn write_high_byte_subregister_positions_mask_and_shift() {
     let rax = reg_vn(0x100, 8);
-    let ah = reg_vn(0x101, 1); // offset 1 byte → LE shift 8
+    let ah = reg_vn(0x101, 1); // offset 1 byte -> LE shift 8
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![rax], |d, _| {
         let initial_rax = d.builder.read_variable(&rax).unwrap();
         let byte_val = d.builder.build_int_const(0xABu64, ValueType::I8).unwrap();
@@ -338,12 +311,12 @@ fn write_high_byte_subregister_positions_mask_and_shift() {
     });
 }
 
-/// Big-endian sub-register WRITE: the offset-0 byte inside a 4-byte container
-/// is the HIGH byte under BE → shift 24.
+/// Under big-endian the offset-0 byte of a 4-byte container is the HIGH byte,
+/// so the shift is 24, not 0.
 #[test]
 fn write_high_byte_subregister_big_endian_positions_mask_and_shift() {
     let container = reg_vn(0x100, 4);
-    let sub = reg_vn(0x100, 1); // BE: offset-0 byte is the HIGH byte → shift 24
+    let sub = reg_vn(0x100, 1); // BE: offset-0 byte is the HIGH byte -> shift 24
     with_test_lifter_tracking_arch(ppc32be(), ppc32be_term(), vec![container], |d, _| {
         let initial = d.builder.read_variable(&container).unwrap();
         let byte_val = d.builder.build_int_const(0xABu64, ValueType::I8).unwrap();
@@ -409,11 +382,11 @@ fn write_high_byte_subregister_big_endian_positions_mask_and_shift() {
     });
 }
 
-/// Big-endian sub-register READ companion: `Truncate(ShiftRight(container, 24))`.
+/// Read counterpart: `Truncate(ShiftRight(container, 24))`.
 #[test]
 fn read_high_byte_subregister_big_endian_shifts_then_truncates() {
     let container = reg_vn(0x100, 4);
-    let sub = reg_vn(0x100, 1); // BE high byte → shift 24
+    let sub = reg_vn(0x100, 1); // BE high byte -> shift 24
     with_test_lifter_tracking_arch(ppc32be(), ppc32be_term(), vec![container], |d, _| {
         let read = d.read_reg_vn(&sub).unwrap();
         assert_eq!(
@@ -444,11 +417,10 @@ fn read_high_byte_subregister_big_endian_shifts_then_truncates() {
     });
 }
 
-/// Writing an `I1` value directly into a tracked full-width register goes
-/// through the direct-container branch and zero-extends the I1 to I64.
+/// The direct-container branch must zero-extend an `I1` to the reg width.
 #[test]
 fn write_i1_into_register_zero_extends_to_container_width() {
-    let reg = reg_vn(0x200, 8); // tracked 8-byte register → I64
+    let reg = reg_vn(0x200, 8); // tracked 8-byte register -> I64
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![reg], |d, _| {
         let lhs = d.builder.build_int_const(1u64, ValueType::I32).unwrap();
         let rhs = d.builder.build_int_const(2u64, ValueType::I32).unwrap();
@@ -487,12 +459,11 @@ fn write_i1_into_register_zero_extends_to_container_width() {
     });
 }
 
-/// Reading a UNIQUE-space sub-slice of a tracked UNIQUE container routes
-/// through the same aliasing path: `Truncate(ShiftRight(container, 32))`.
+/// UNIQUE space takes the same aliasing path as REGISTER.
 #[test]
 fn read_unique_subslice_of_tracked_unique_container() {
     let container = unique_vn(0x400, 8);
-    let sub = unique_vn(0x404, 4); // upper 4 bytes → LE shift 32
+    let sub = unique_vn(0x404, 4); // upper 4 bytes -> LE shift 32
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![container], |d, _| {
         let read = d.read_reg_vn(&sub).unwrap();
         assert_eq!(
@@ -513,16 +484,14 @@ fn read_unique_subslice_of_tracked_unique_container() {
     });
 }
 
-/// Sub-register access inside a >16-byte (ymm-like) container: the READ slices
-/// the wide container via `Truncate(ShiftRight(container, off))` (no mask
-/// needed — this is what unblocks SSE `palignr`-style low-slice Copies), while
-/// the WRITE still fails closed (a >16-byte mask has no u128 representation).
+/// In a >16-byte container the READ slices via shift+truncate with no mask,
+/// which is what unblocks SSE `palignr`-style low-slice Copies, while the
+/// WRITE fails closed since a >16-byte mask has no u128 form.
 #[test]
 fn wide_container_subregister_read_slices_but_write_fails_closed() {
     let ymm = reg_vn(0x1000, 32);
-    let mid8 = reg_vn(0x1008, 8); // strict sub-slice at offset 8 → LE shift 64
+    let mid8 = reg_vn(0x1008, 8); // strict sub-slice at offset 8 -> LE shift 64
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![ymm], |d, _| {
-        // READ now succeeds: the wide container is sliced via shift + truncate.
         let read = d
             .read_reg_vn(&mid8)
             .expect("read of a ymm sub-slice must slice the wide container");
@@ -542,8 +511,7 @@ fn wide_container_subregister_read_slices_but_write_fails_closed() {
             "mid-container wide slice must shift before truncating"
         );
 
-        // WRITE still fails closed: `build_masked_insert` would need a 256-bit
-        // mask, which `u128` cannot represent.
+        // `build_masked_insert` would need a 256-bit mask.
         let val = d.builder.build_int_const(1u64, ValueType::I64).unwrap();
         let write_err = d
             .write_reg_vn(&mid8, val)
@@ -555,8 +523,7 @@ fn wide_container_subregister_read_slices_but_write_fails_closed() {
     });
 }
 
-/// A sub-register write of a 1-bit `I1` value must succeed exactly like the
-/// direct-container arm: zero-extended to the sub-register width and merged.
+/// An `I1` sub-register write must behave like the direct-container arm.
 #[test]
 fn write_reg_vn_subregister_accepts_i1_like_direct_arm() {
     let container = reg_vn(0x0, 8);
@@ -574,8 +541,8 @@ fn write_reg_vn_subregister_accepts_i1_like_direct_arm() {
     });
 }
 
-/// A sub-register write of a NON-integer (float) value must fail with the SAME
-/// "bitcast required first" diagnostic the direct-container arm raises.
+/// A float sub-register write must raise the SAME "bitcast required first"
+/// diagnostic as the direct-container arm, not a divergent one.
 #[test]
 fn write_reg_vn_subregister_float_errors_like_direct_arm() {
     let container = reg_vn(0x0, 8);

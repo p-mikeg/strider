@@ -1,12 +1,5 @@
-//! Miscellaneous opaque value-producing pcode opcodes:
-//! `SegmentOp` (segmented-address lookup), `CPoolRef` (JVM constant-pool
-//! lookup), and `New` (JVM object allocation).
-//!
-//! `CallOther` (CPU intrinsics) and `MultiEqual` (decompiler-internal
-//! phi) stay in strider — `CallOther` because it touches the memory
-//! chain and resolves user-op names against the sleigh context that
-//! strider owns; `MultiEqual` because we currently raise it as an error
-//! and that's a strider-level concern.
+//! Opaque value-producing opcodes: `SegmentOp` (segmented-address lookup),
+//! `CPoolRef` (JVM constant-pool lookup), `New` (JVM object allocation).
 
 use strider_ir::{IRBuilderExt, VnTypeExt};
 
@@ -14,11 +7,9 @@ use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// SegmentOp: segmented-address lookup.
-    /// inputs[0] = CONST op id, inputs[1] = segment, inputs[2] = offset.
+    /// inputs are (CONST op id, segment, offset).
     pub(super) fn handle_segment_op(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        // No arity pre-check: each `nth_input_or_err` / `read_input` below
-        // already errors per-slot when its input is missing.
+        // No arity pre-check: each accessor below errors per-slot.
         let id_vn = nth_input_or_err(insn, 0)?;
         crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
         let op_id = id_vn.addr_off;
@@ -31,7 +22,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.write_vn(out_vn, result)
     }
 
-    /// CPoolRef: JVM constant-pool lookup.  Opaque, variadic refs.
     pub(super) fn handle_cpool_ref(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let refs = self.read_vns(&insn.inputs)?;
         let out_vn = require_output_vn(insn)?;
@@ -39,7 +29,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.write_vn(out_vn, result)
     }
 
-    /// New: JVM object allocation.  Opaque.
     pub(super) fn handle_new(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let args = self.read_vns(&insn.inputs)?;
         let out_vn = require_output_vn(insn)?;

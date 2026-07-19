@@ -1,7 +1,5 @@
-//! Memory opcodes: `Load` and `Store`.
-//!
-//! `Load` is value-producing; `Store` advances the unified memory chain.
-//! Both decode their address space via `pcode_util::decode_space_id`.
+//! Memory opcodes.  `Load` produces a value; `Store` advances the unified
+//! memory chain.
 
 use strider_ir::VnTypeExt;
 

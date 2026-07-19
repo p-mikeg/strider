@@ -1,12 +1,7 @@
-//! Value-opcode lifting unit tests.
-//!
-//! These hand-build `rsleigh::Insn` structs (chosen REGISTER/CONST
-//! varnodes — not decoded from bytes) and lift them through the unified
-//! per-CFG dispatch ([`FunctionLifter::process_insn`]).  The CFG and
-//! calling convention handed to the lifter are throwaway scaffolding:
-//! value lifting touches only the IR builder and the Sleigh context, and
-//! never consults the region id or the region map (an empty
-//! `RegionMap::default()` is passed).
+//! Value-opcode lifting tests over hand-built `rsleigh::Insn` structs, not
+//! bytes decoded from a binary.  The CFG and calling convention are throwaway
+//! scaffolding: value lifting touches only the IR builder and Sleigh context,
+//! and never consults the region id or the region map.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -20,7 +15,6 @@ use crate::lift::{FunctionLifter, Lifter};
 
 type TestReader = BufMemReader<Vec<u8>>;
 
-/// Default endianness for these tests.
 const TEST_ENDIAN: strider_target::Endianness = strider_target::Endianness::Little;
 
 /// 4-byte register at the given REGISTER-space offset.
@@ -32,7 +26,6 @@ fn reg(off: u64) -> Vn {
     }
 }
 
-/// CONST-space varnode of byte width `size` carrying integer `val`.
 fn const_vn(val: u64, size: u32) -> Vn {
     Vn {
         size,
@@ -41,18 +34,14 @@ fn const_vn(val: u64, size: u32) -> Vn {
     }
 }
 
-/// A throwaway pcode address for the `process_insn` funnel.  Tests that
-/// don't inspect asm-fingerprints use this; the funnel's
-/// `set_lift_addr(Some(..))/set_lift_addr(None)` bracket leaves the builder
-/// back at `lift_addr = None` afterward.
+/// Throwaway address for tests that don't inspect asm fingerprints.  The
+/// funnel's bracket leaves the builder back at `lift_addr = None`.
 fn test_addr() -> strider_cfg::PcodeInsnAddr {
     strider_cfg::PcodeInsnAddr::at_machine_start(0x1000)
 }
 
-/// An empty (no-arg, no-clobber) convention — matches the synthetic
-/// builder the pre-merge value-lifter tests used (the value handlers
-/// never consult the convention).  Struct-literal construction skips the
-/// ABI-disjointness validation, fine for a synthetic fixture.
+/// No args, no clobbers.  The value handlers never consult the convention.
+/// Struct-literal construction skips ABI-disjointness validation, fine here.
 pub(super) fn empty_cc() -> strider_target::BuiltCallingConvention {
     let _ = TEST_ENDIAN;
     strider_target::BuiltCallingConvention {
@@ -73,23 +62,16 @@ pub(super) fn empty_cc() -> strider_target::BuiltCallingConvention {
     }
 }
 
-/// Runs `f` with a `FunctionLifter` whose builder tracks three 4-byte
-/// REGISTER vars at offsets 0/4/8 and has a single entry region — the
-/// same synthetic state the pre-merge value-lifter unit tests used.
-///
-/// The Sleigh + CFG are throwaway scaffolding (a single `ret` at 0x1000);
-/// the helper owns all the borrowed locals so the per-CFG lifter — which
-/// borrows them — need not be returned.
+/// Runs `f` with a lifter tracking three 4-byte REGISTER vars at 0/4/8 and a
+/// single entry region.  The helper owns every borrowed local, so the lifter
+/// that borrows them need not be returned.
 fn with_test_lifter(f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId)) {
     with_test_lifter_tracking(vec![reg(0), reg(4), reg(8)], f);
 }
 
-/// Like [`with_test_lifter`] but with an explicit tracked-varnode list
-/// (`all_vns`).  Tests exercising registers wider than the default 4-byte
-/// regs (e.g. a 32-byte YMM / 64-byte ZMM `IntNeg`) seed those containers
-/// here so `read_vn` finds them rather than erroring on an unknown variable.
-/// `all_vns` must be pre-sorted by `(space, offset, size)` like the lifter
-/// expects.
+/// Explicit tracked-varnode list, for tests using registers wider than the
+/// default 4-byte regs.  `all_vns` must be pre-sorted by
+/// `(space, offset, size)`.
 fn with_test_lifter_tracking(
     all_vns: Vec<Vn>,
     f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
@@ -97,11 +79,10 @@ fn with_test_lifter_tracking(
     with_test_lifter_tracking_arch(strider_target::SleighArch::x86(), vec![0xc3], all_vns, f);
 }
 
-/// Like [`with_test_lifter_tracking`] but for an arbitrary `arch` and
-/// caller-provided terminator `term_bytes` (the single-instruction throwaway
-/// CFG must terminate cleanly — e.g. `0xc3` `ret` on x86, or `4e 80 00 20`
-/// `blr` on big-endian PowerPC).  This lets the aliasing tests exercise the
-/// prod `read_reg_vn`/`write_reg_vn` methods under both endiannesses.
+/// Arbitrary `arch`, so the aliasing tests can exercise `read_reg_vn` /
+/// `write_reg_vn` under both endiannesses.  `term_bytes` must terminate the
+/// single-instruction throwaway CFG cleanly (`0xc3` ret on x86, `4e 80 00 20`
+/// blr on big-endian PowerPC).
 pub(super) fn with_test_lifter_tracking_arch(
     arch: strider_target::SleighArch,
     term_bytes: Vec<u8>,
@@ -122,18 +103,14 @@ pub(super) fn with_test_lifter_tracking_arch(
     )
     .build()
     .expect("throwaway cfg");
-    // The throwaway CFG's entry region id — handed to `process_insn` as the
-    // `region_id` arg.  Value opcodes never consult it (or the region map),
-    // so any valid id is fine.
+    // Value opcodes never consult the region id or map, so any valid id works.
     let region_id = cfg.entry();
-    // The Lifter now owns the Sleigh; CC is a per-call argument.
     let cc = empty_cc();
     let lifter = Lifter::new(arch, sleigh).expect("lifter");
     let no_overrides = rustc_hash::FxHashMap::default();
     let mut driver =
         FunctionLifter::new(&lifter, cc, &cfg, all_vns, &no_overrides).expect("driver");
-    // Entry-region setup (matches the old `make_builder`).  Clear the
-    // lift address so tests start from `lift_addr = None`.
+    // Clear the lift address so tests start from `lift_addr = None`.
     driver.builder.set_lift_addr(None);
     driver.builder.build_entry().expect("build_entry");
     let region = driver.builder.create_region_all().expect("create_region");
@@ -145,16 +122,10 @@ pub(super) fn with_test_lifter_tracking_arch(
     f(&mut driver, region_id);
 }
 
-/// Like [`with_test_lifter_tracking_arch`] but with a CALLER-PROVIDED
-/// calling convention instead of the harness's `empty_cc()`.  The
-/// projection tests need this because `with_test_lifter_tracking*` seeds
-/// `empty_cc`'s `stack_vn` (0x9000) into the tracked set — a register that
-/// the caller's test cc neither owns nor callee-saves, so it would be
-/// misclassified as an extra clobber and pollute exact clobber-list
-/// assertions.  Passing the test cc directly means the tracked set is
-/// exactly the caller's regs plus its own `stack_vn` (which the projection
-/// correctly excludes).  Body mirrors `with_test_lifter_tracking_arch`
-/// (x86, `ret` terminator) but hands `cc` to `FunctionLifter::new`.
+/// Caller-provided CC instead of `empty_cc()`.  The projection tests need this:
+/// the other helpers seed `empty_cc`'s `stack_vn` (0x9000) into the tracked
+/// set, and a test CC that neither owns nor callee-saves it would misclassify
+/// it as an extra clobber, polluting exact clobber-list assertions.
 pub(super) fn with_test_lifter_cc(
     cc: strider_target::BuiltCallingConvention,
     all_vns: Vec<Vn>,
@@ -191,10 +162,7 @@ pub(super) fn with_test_lifter_cc(
     f(&mut driver, region_id);
 }
 
-/// Shared scaffold: lift one hand-built `Insn` through the unified
-/// `process_insn` dispatch and assert it succeeds (the opcode lifts
-/// cleanly).  Value opcodes never resolve a region, so an empty
-/// `RegionMap` is passed.
+/// Lifts one hand-built `Insn` and asserts it succeeds.
 fn assert_lifts_one(opcode: Opcode, output: Option<Vn>, inputs: Vec<Vn>) {
     with_test_lifter(|d, rid| {
         let insn = Insn {
@@ -206,8 +174,6 @@ fn assert_lifts_one(opcode: Opcode, output: Option<Vn>, inputs: Vec<Vn>) {
             .unwrap_or_else(|e| panic!("process_insn failed for {opcode:?}: {e}"));
     });
 }
-
-// ── Smoke tests (validation subset; full port follows) ───────────────────
 
 #[test]
 fn lift_int_add_of_consts() {
@@ -257,8 +223,6 @@ fn lift_insert_field_past_dest_width_errors() {
     });
 }
 
-// ── Boolean family ──────────────────────────────────────────────────────────
-
 #[test]
 fn lift_bool_or_of_consts() {
     assert_lifts_one(
@@ -272,8 +236,6 @@ fn lift_bool_or_of_consts() {
 fn lift_bool_neg_of_const() {
     assert_lifts_one(Opcode::BoolNeg, Some(reg(0)), vec![const_vn(0, 1)]);
 }
-
-// ── Integer family (Copy + Sext/Zext) ───────────────────────────────────────
 
 #[test]
 fn lift_int_copy_from_const() {
@@ -290,8 +252,6 @@ fn lift_int_sext_extends_const() {
     assert_lifts_one(Opcode::IntSext, Some(reg(0)), vec![const_vn(0xff, 1)]);
 }
 
-// ── Arithmetic family ───────────────────────────────────────────────────────
-
 #[test]
 fn lift_int_mul_of_consts() {
     assert_lifts_one(
@@ -301,8 +261,7 @@ fn lift_int_mul_of_consts() {
     );
 }
 
-/// `IntNeg` (Sleigh bitwise complement) at a narrow width lowers to
-/// `Xor(x, all_ones)` with the all-ones constant materialised inline.
+/// Narrow `IntNeg` lowers to `Xor(x, all_ones)` with the constant inline.
 #[test]
 fn lift_int_neg_narrow_lowers_to_xor_all_ones() {
     assert_lifts_one(Opcode::IntNeg, Some(reg(0)), vec![const_vn(0x1234, 4)]);
@@ -318,7 +277,6 @@ fn lift_int_neg_narrow_lowers_to_xor_all_ones() {
             graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Xor)),
             "narrow IntNeg must lower to an Xor"
         );
-        // The I32 all-ones constant has value 0xFFFF_FFFF.
         assert!(
             find_int_const_node(&d.builder, 0xFFFF_FFFF).is_some(),
             "narrow IntNeg must materialise the I32 all-ones constant"
@@ -326,22 +284,19 @@ fn lift_int_neg_narrow_lowers_to_xor_all_ones() {
     });
 }
 
-/// A register-wide (256-bit YMM / 512-bit ZMM) `IntNeg` is a well-defined
-/// bitwise complement.  The lift must SUCCEED and produce `Xor(x, all_ones)`
-/// at the wide type with the wide all-ones constant — the all-ones operand
-/// goes through the wide-const path rather than `build_int_const` (which
-/// rejects I256/I512).
+/// A YMM/ZMM-wide `IntNeg` is a well-defined bitwise complement and must lift,
+/// with the all-ones operand routed through the wide-const path rather than
+/// `build_int_const`, which rejects I256/I512.
 #[test]
 fn lift_int_neg_register_wide_lowers_to_xor_all_ones() {
-    // (label, output byte width, wide ValueType).
     let cases: [(&str, u32, strider_ir::ValueType); 2] = [
         ("ymm_i256", 32, strider_ir::ValueType::I256),
         ("zmm_i512", 64, strider_ir::ValueType::I512),
     ];
     for (label, width, _ty) in cases {
-        // A wide REGISTER varnode (own container — direct access, no
-        // sub-register masking).  Offset well clear of the default 4-byte
-        // regs at 0/4/8; tracked so the read resolves to its InitialVar.
+        // Its own container, so direct access with no sub-register masking.
+        // Offset clear of the default regs at 0/4/8, and tracked so the read
+        // resolves to its InitialVar.
         let wide = Vn {
             size: width,
             addr_off: 0x100,
@@ -365,11 +320,8 @@ fn lift_int_neg_register_wide_lowers_to_xor_all_ones() {
     }
 }
 
-// ── Cast family ─────────────────────────────────────────────────────────────
-
 #[test]
 fn lift_truncate_extracts_low_bits() {
-    // Subpiece(value, byte_offset, out_size).
     assert_lifts_one(
         Opcode::Subpiece,
         Some(Vn {
@@ -396,7 +348,6 @@ fn lift_piece_concatenates() {
 
 #[test]
 fn lift_extract_returns_slice() {
-    // Extract(value, lsb, bit_count).
     assert_lifts_one(
         Opcode::Extract,
         Some(Vn {
@@ -410,8 +361,7 @@ fn lift_extract_returns_slice() {
 
 #[test]
 fn lift_extract_field_past_input_width_errors() {
-    // Extract(value, lsb=28, bit_count=8) from a 4-byte (32-bit) input:
-    // 28 + 8 = 36 > 32 — the slice runs past the input.  Must error.
+    // lsb 28 + len 8 = 36 bits, past the 32-bit input.
     with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::Extract,
@@ -435,16 +385,13 @@ fn lift_lzcount() {
     assert_lifts_one(Opcode::Lzcount, Some(reg(0)), vec![const_vn(0xF, 4)]);
 }
 
-// ── Float family ────────────────────────────────────────────────────────────
-
 #[test]
 fn lift_float_add_of_consts() {
     with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::FloatAdd,
             output: Some(reg(0)),
-            // 4-byte (F32) varnodes — float-typed when read via read_vn,
-            // but const space carries arbitrary bits.
+            // 4-byte varnodes read as F32; const space carries any bits.
             inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
         };
         d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
@@ -457,16 +404,9 @@ fn lift_float_neg() {
     assert_lifts_one(Opcode::FloatNeg, Some(reg(0)), vec![const_vn(0, 4)]);
 }
 
-// ── mem_load family ─────────────────────────────────────────────────────────
-
-// `Load` is a recognised value-op — its dispatch arm exists in
-// `value::lift`.  We don't end-to-end exercise it here: the
-// `VnSpace::by_id` decode path expects an inputs[0] whose offset
-// is the raw pointer to a Sleigh AddrSpace object, which a synthetic
-// test cannot construct safely.  The strider per-arch tests cover
-// the real-decoded Load paths.
-
-// ── misc_value family ───────────────────────────────────────────────────────
+// `Load` is deliberately untested here: `VnSpace::by_id` expects inputs[0] to
+// hold a raw pointer to a Sleigh AddrSpace, which a synthetic test cannot
+// construct safely.  The per-arch tests cover real-decoded Loads.
 
 #[test]
 fn lift_segment_op_recognised() {
@@ -477,15 +417,6 @@ fn lift_segment_op_recognised() {
     );
 }
 
-// ── Lift-time canonicalisation shape checks ─────────────────────────────────
-//
-// `IntLessEqual` / `IntSlessEqual` are not primitives in this IR; they are
-// lowered to `BoolNeg(IntLess(b, a))` / `BoolNeg(IntSless(b, a))` at lift
-// time.  These tests assert the produced node shape so that any
-// regression (e.g. accidental round-trip back to a `LessEqual` variant
-// in some code path) fails immediately.
-
-/// Returns true if the graph contains at least one node of `target` kind.
 fn graph_has_kind(builder: &FunctionBuilder, target: NodeKind) -> bool {
     builder
         .function()
@@ -494,7 +425,6 @@ fn graph_has_kind(builder: &FunctionBuilder, target: NodeKind) -> bool {
         .any(|id| builder.function().node_kind(id) == &target)
 }
 
-/// Returns the first node-id in the graph matching `target`, or `None`.
 fn find_first_node(builder: &FunctionBuilder, target: NodeKind) -> Option<NodeId> {
     builder
         .function()
@@ -503,8 +433,6 @@ fn find_first_node(builder: &FunctionBuilder, target: NodeKind) -> Option<NodeId
         .find(|id| builder.function().node_kind(*id) == &target)
 }
 
-/// Returns the first `IntConst` node-id whose output value equals `expected`,
-/// or `None` if no such node is present.
 fn find_int_const_node(builder: &FunctionBuilder, expected: u128) -> Option<NodeId> {
     builder.function().graph().all_node_ids().find(|&id| {
         if !matches!(builder.function().node_kind(id), NodeKind::IntConst(_)) {
@@ -519,11 +447,8 @@ fn find_int_const_node(builder: &FunctionBuilder, expected: u128) -> Option<Node
 
 #[test]
 fn signed_binary_op_sign_extends_narrower_operand() {
-    // IntSdiv with a 2-byte dividend (0xFFFF = -1) and a 4-byte output.
-    // A signed op must SIGN-extend the narrower operand to the op width
-    // (0xFFFF -> 0xFFFF_FFFF), not zero-extend it (-> 0x0000_FFFF).  Under
-    // the prior build_int_binary_operation zero-extension the 32-bit value
-    // 0xFFFF_FFFF never appeared.
+    // A 2-byte dividend 0xFFFF is -1, so a signed op must SIGN-extend it to
+    // 0xFFFF_FFFF at the 4-byte op width, not zero-extend it to 0x0000_FFFF.
     with_test_lifter(|d, rid| {
         {
             let insn = Insn {
@@ -547,13 +472,9 @@ fn signed_binary_op_sign_extends_narrower_operand() {
 
 #[test]
 fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
-    // IntSless of a 4-byte operand (0xFFFFFFFF = -1) and an 8-byte operand.
-    // Compare at the MAX of the two widths (8 bytes) so the wider operand is
-    // never truncated, and SIGN-extend the narrower *signed* operand so -1
-    // stays -1 (0xFFFF_FFFF_FFFF_FFFF), not the zero-extended
-    // 0x0000_0000_FFFF_FFFF.  Under the old inputs[0]-width behavior the
-    // 8-byte operand was truncated to 4 bytes and this 64-bit sign-extended
-    // constant never appeared.
+    // Compare at the MAX of the two widths so the 8-byte operand is never
+    // truncated, and sign-extend the 4-byte -1 so it stays
+    // 0xFFFF_FFFF_FFFF_FFFF rather than 0x0000_0000_FFFF_FFFF.
     with_test_lifter(|d, rid| {
         {
             let insn = Insn {
@@ -579,10 +500,8 @@ fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
 #[test]
 fn lift_with_set_lift_addr_records_asm_fingerprint() {
     with_test_lifter(|d, rid| {
-        // `process_insn` owns the fingerprint funnel: it brackets the lift
-        // with the machine address carried by its `addr` argument, so we
-        // drive the fingerprint via that address (0x4242) rather than a
-        // manual `set_lift_addr`.
+        // `process_insn` owns the funnel, so drive the fingerprint via its
+        // `addr` argument rather than a manual `set_lift_addr`.
         {
             let insn = Insn {
                 opcode: Opcode::IntAdd,
@@ -605,7 +524,6 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
             rustc_hash::FxHashSet::from_iter([0x4242]),
             "Add node fingerprint should record 0x4242"
         );
-        // The two IntConst inputs should also carry the address.
         let const3 = find_int_const_node(&d.builder, 3).expect("IntConst(3) must be present");
         let const4 = find_int_const_node(&d.builder, 4).expect("IntConst(4) must be present");
         assert_eq!(
@@ -621,10 +539,8 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
 
 #[test]
 fn lift_without_lift_addr_leaves_fingerprint_empty() {
-    // `process_insn` always brackets the lift with its `addr` argument and
-    // resets `lift_addr` to `None` on exit.  This pins the funnel's reset
-    // arm: a node built AFTER `process_insn` returns (with no lift addr in
-    // effect) carries an empty fingerprint.
+    // Pins the funnel's reset arm: a node built after `process_insn` returns
+    // carries an empty fingerprint.
     with_test_lifter(|d, rid| {
         {
             let insn = Insn {
@@ -635,8 +551,6 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .unwrap();
         }
-        // The funnel has reset `lift_addr` to `None`; a fresh node minted
-        // now must have no fingerprint.
         let outside = d
             .builder
             .build_int_const(0x55u64, strider_ir::ValueType::I32)
@@ -656,16 +570,14 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
 
 #[test]
 fn lift_dedup_unions_two_addresses() {
-    // Same insn lifted twice from two different machine addresses; the
-    // dedup cache returns the same NodeId; both contributors are unioned.
+    // The same insn from two addresses dedups to one NodeId, so both
+    // contributors must be unioned into its fingerprint.
     with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::IntAdd,
             output: Some(reg(0)),
             inputs: vec![const_vn(3, 4), const_vn(4, 4)].into(),
         };
-        // Drive the two contributing machine addresses through
-        // `process_insn`'s fingerprint funnel (its `addr` argument).
         d.process_insn(
             rid,
             &insn,
@@ -703,9 +615,7 @@ fn lift_int_less_equal_lowers_to_boolneg_less() {
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .unwrap();
         }
-        // Canonical shape: `Xor(IntLess(_, _), IntConst(1)):I1` (a 1-bit
-        // logical NOT — the former BitNot unary-op was removed in favour of the
-        // Xor-with-all-ones shape).  Pin the I1 Xor and the IntCmpOp::Less.
+        // Canonical shape is `Xor(IntLess(_, _), IntConst(1)):I1`.
         assert!(
             graph_has_kind(
                 &d.builder,
@@ -720,16 +630,12 @@ fn lift_int_less_equal_lowers_to_boolneg_less() {
     });
 }
 
-/// `IntLessEqual(a, b)` lowers to `Xor(IntLess(b, a), 1):I1` — a SWAP.
-/// Feeding two DISTINCT register operands lets us assert the `Less` node's
-/// inputs are in SWAPPED order (rhs-then-lhs vs instruction order): the
-/// first cmp input is the read of `b` (reg(4)), the second is the read of
-/// `a` (reg(0)).  Existing const-fed tests could not catch a dropped swap.
+/// The lowering SWAPS operands.  Two distinct register operands are needed to
+/// see it: the const-fed tests above cannot catch a dropped swap.
 #[test]
 fn lift_int_less_equal_swaps_operands() {
     with_test_lifter(|d, rid| {
         {
-            // IntLessEqual(reg(0), reg(4)): a = reg(0), b = reg(4).
             let insn = Insn {
                 opcode: Opcode::IntLessEqual,
                 output: Some(reg(8)),
@@ -745,9 +651,8 @@ fn lift_int_less_equal_swaps_operands() {
             .function()
             .node_inputs_exact::<2>(less)
             .expect("Less has two inputs");
-        // Swapped: cmp_lhs is the read of b (reg(4)), cmp_rhs is the read of
-        // a (reg(0)).  An entry-region register read materialises as a Phi
-        // whose source-varnode tag (get_vn_for_value) names the register.
+        // An entry-region register read materialises as a Phi whose
+        // source-varnode tag names the register.
         assert_eq!(
             d.builder.function().get_vn_for_value(cmp_lhs),
             Some(reg(4)),
@@ -773,7 +678,6 @@ fn lift_int_sub_lowers_to_add_neg() {
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .unwrap();
         }
-        // Canonical shape: IntBinaryOp::Add over (lhs, IntUnaryOp::Neg(rhs)).
         assert!(
             graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add)),
             "expected IntBinaryOp::Add in graph (the lowering wrap)"
@@ -785,13 +689,8 @@ fn lift_int_sub_lowers_to_add_neg() {
     });
 }
 
-/// Two `IntSub` lifts with VARIABLE operands must dedupe via the IR's
-/// node cache: the canonical lowered shape `Add(a, Neg(b))` is built
-/// from cacheable node kinds, so the second lift reuses both the inner
-/// `Neg(b)` node and the outer `Add` node.  Variable operands are the
-/// strict case — constant-operand lifts dedupe trivially because the
-/// `IntConst` keys match — so this test reads a register varnode for
-/// both inputs.  Regression guard against the lowering accidentally
+/// Variable operands are the strict dedup case: constant-operand lifts dedup
+/// trivially because the `IntConst` keys match.  Guards against the lowering
 /// synthesising fresh non-cacheable nodes.
 #[test]
 fn lift_int_sub_caches_lowered_shape_variable_operands() {
@@ -804,7 +703,6 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
                 .count()
         };
         {
-            // IntSub reg(0), reg(4)  →  reg(8).  Variable inputs.
             let insn = Insn {
                 opcode: Opcode::IntSub,
                 output: Some(reg(8)),
@@ -824,8 +722,7 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
             "first IntSub lift must produce exactly one Neg"
         );
         {
-            // Same inputs (reg(0), reg(4)), DIFFERENT output reg.  Cache must
-            // dedupe the inner Neg(reg(4)) and outer Add(reg(0), Neg(reg(4))).
+            // Same inputs, different output reg.
             let insn = Insn {
                 opcode: Opcode::IntSub,
                 output: Some(reg(0)),
@@ -847,9 +744,7 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
     });
 }
 
-/// Companion to the variable-operand cache test: two const-operand lifts
-/// must also dedupe.  Cheaper to detect cache-bypass regressions on the
-/// happy path before they cause graph bloat in real binaries.
+/// Const-operand companion to the variable-operand cache test.
 #[test]
 fn lift_int_sub_caches_lowered_shape() {
     with_test_lifter(|d, rid| {
@@ -876,8 +771,7 @@ fn lift_int_sub_caches_lowered_shape() {
         }
         let after_first = count_subs_in_graph(&d.builder);
         {
-            // Same operands, different output reg — the value-producing nodes
-            // should still dedupe through the cache.
+            // Same operands, different output reg.
             let insn = Insn {
                 opcode: Opcode::IntSub,
                 output: Some(reg(4)),
@@ -920,23 +814,9 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
     });
 }
 
-// ── Control-flow / call / store opcodes (now dispatched, not declined) ──────
-//
-// Before the value/control dispatch merge these opcodes were *declined* by
-// the value lifter (`lift_value` returned `Ok(false)`) and routed through a
-// second control match.  With the unified `process_insn` there is one match
-// and each opcode is dispatched to its real handler.  These tests pin that
-// routing: opcodes whose handler reads operands surface a typed error on the
-// empty (no-input) insns used here; the no-operand handlers (Nop / Branch /
-// Return / BranchIndirect) succeed.  An empty region map is passed —
-// none of these handlers consults it on these inputs (`CondBranch`
-// errors on its missing condition operand before any lookup).
-
-/// Shared scaffold for the no-operand `process_insn` dispatch tests: lift a
-/// hand-built operand-less `Insn` for `opcode` and assert the dispatch result
-/// matches `expect_ok` (`true` = the no-operand handler succeeds; `false` =
-/// the handler reads an absent operand and surfaces a typed error).  `label`
-/// documents the routing being pinned and appears in the failure message.
+/// Lifts an operand-less `Insn` and asserts the dispatch result.  `expect_ok`
+/// is false for handlers that read an operand and so error on an absent one.
+/// `label` appears in the failure message.
 fn assert_process_insn(opcode: Opcode, expect_ok: bool, label: &str) {
     with_test_lifter(|d, rid| {
         let insn = Insn {
@@ -951,13 +831,8 @@ fn assert_process_insn(opcode: Opcode, expect_ok: bool, label: &str) {
 
 #[test]
 fn process_insn_no_operand_dispatch_routing() {
-    // One row per original no-operand dispatch test: (opcode, expect_ok, label).
-    // Opcodes whose handler reads operands surface a typed error on the empty
-    // (no-input) insns used here; the no-operand handlers (Nop / Branch /
-    // Return / BranchIndirect) succeed.  An empty region map is passed — none
-    // of these handlers consults it on these inputs (CondBranch errors on its
-    // missing condition operand before any lookup).  The two CallOther rows
-    // preserve the two original byte-identical tests pinning that routing.
+    // The empty region map is never consulted: CondBranch errors on its
+    // missing condition operand before any lookup.
     let cases: &[(Opcode, bool, &str)] = &[
         (
             Opcode::Branch,
@@ -1011,21 +886,11 @@ fn process_insn_no_operand_dispatch_routing() {
     }
 }
 
-// ── vn_io tests ─────────────────────────────────────────────────────────────
-
 #[test]
 fn read_vn_unknown_returns_initial_var_or_phi() {
-    // First read of an architectural register that's never been
-    // written in this region should yield either an `InitialVar` (the
-    // value at function entry) or a `Phi` (the SSA-style merge node
-    // the FunctionBuilder lazily inserts at region entries pointing
-    // back to the entry InitialVar).  Either is correct — the
-    // producer is NOT some random arithmetic node.
-    //
-    // Note: `NodeKind::Phi` is now a unit variant; the Vn tag lives
-    // in the `value_vn` map keyed by the Phi's output ValueId
-    // (queried via `Function::get_vn_for_value`; the pre-rewrite
-    // enum carried the tag inline as `VarPhi(_)`).
+    // Either kind is correct: `InitialVar` is the entry value, `Phi` the
+    // merge node the builder lazily inserts at a region entry pointing back to
+    // it.  What matters is that the producer is not some arithmetic node.
     with_test_lifter(|d, _rid| {
         let value = d.read_vn(&reg(0)).expect("read_vn should succeed");
         let producer = d.builder.function().producer(value);
@@ -1040,13 +905,11 @@ fn read_vn_unknown_returns_initial_var_or_phi() {
 #[test]
 fn write_vn_then_read_vn_round_trip() {
     with_test_lifter(|d, _rid| {
-        // Write 42 to reg(0).
         let const_42 = d
             .builder
             .build_int_const(42u64, strider_ir::ValueType::I32)
             .unwrap();
         d.write_vn(&reg(0), const_42).expect("write_vn");
-        // Read it back.
         let value = d.read_vn(&reg(0)).expect("read_vn");
         let producer = d.builder.function().producer(value);
         assert!(
@@ -1077,11 +940,8 @@ fn write_vn_to_const_space_errors() {
     });
 }
 
-// ── Error paths ─────────────────────────────────────────────────────────────
-
 #[test]
 fn lift_subpiece_out_of_range_errors() {
-    // byte_offset >= input.size  →  SubpieceOffsetOutOfRange.
     with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::Subpiece,
@@ -1090,7 +950,7 @@ fn lift_subpiece_out_of_range_errors() {
                 addr_off: 0,
                 addr_space: VnSpace::REGISTER,
             }),
-            // input is 4 bytes wide, byte_offset = 5 (> 4) ⇒ error.
+            // byte_offset 5 exceeds the 4-byte input.
             inputs: vec![const_vn(0, 4), const_vn(5, 4)].into(),
         };
         let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
@@ -1125,15 +985,12 @@ fn lift_missing_output_errors_for_op_that_needs_one() {
 
 #[test]
 fn lift_binary_op_with_too_few_inputs_errors_not_panics() {
-    // A binary opcode (IntAdd) given only ONE input must surface a
-    // typed "too few inputs" error rather than panicking on the
-    // out-of-bounds `insn.inputs[1]` access.  Regression guard for the
-    // panic-safety conversion of raw slice indexing to checked accessors.
+    // Guards the checked-accessor conversion: a missing inputs[1] must error,
+    // not panic on an out-of-bounds index.
     with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::IntAdd,
             output: Some(reg(0)),
-            // Only one input — the binary handler reads inputs[1].
             inputs: vec![const_vn(7, 4)].into(),
         };
         let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
@@ -1143,8 +1000,6 @@ fn lift_binary_op_with_too_few_inputs_errors_not_panics() {
         );
     });
 }
-
-// ── Float lift-time canonicalisation shape checks ─────────────────────────────
 
 #[test]
 fn lift_float_sub_lowers_to_float_add_neg() {
@@ -1206,8 +1061,7 @@ fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
 
 #[test]
 fn lift_float_less_equal_lowers_to_or_less_equal() {
-    // `a <= b` (IEEE 754) lowers to `Or(Less(a, b), Equal(a, b))`,
-    // NaN-aware (both children false on NaN, so Or is false).
+    // NaN-aware: both children are false on NaN, so the Or is false.
     with_test_lifter(|d, rid| {
         {
             let insn = Insn {
@@ -1239,15 +1093,13 @@ fn lift_float_less_equal_lowers_to_or_less_equal() {
     });
 }
 
-/// `FloatNan(x)` lowers to `Xor(FloatEqual(x, x), 1):I1` — `is_nan(x)` ≡
-/// `x != x`.  Assert the `FloatEqual`'s two inputs are the SAME value, and
-/// that it is wrapped by an `IntBinaryOp::Xor` at I1 (the I1 logical-NOT).
+/// `FloatNan(x)` lowers to `Xor(FloatEqual(x, x), 1):I1`, so the cmp's two
+/// inputs must be the SAME value and the wrap must be at I1.
 #[test]
 fn lift_float_nan_lowers_to_self_inequality() {
     with_test_lifter(|d, rid| {
         {
-            // Single 4-byte (F32) input read from a register so both
-            // FloatEqual operands resolve to the same value.
+            // Read from a register so both operands resolve to one value.
             let insn = Insn {
                 opcode: Opcode::FloatNan,
                 output: Some(reg(4)),
@@ -1272,7 +1124,6 @@ fn lift_float_nan_lowers_to_self_inequality() {
              must be the identical value"
         );
 
-        // The FloatEqual (I1) feeds the I1 logical-NOT Xor.
         let xor = find_first_node(
             &d.builder,
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor),
@@ -1304,12 +1155,8 @@ fn lift_float_nan_lowers_to_self_inequality() {
     });
 }
 
-// ── Signed-op width-mismatch guard (MED-2) ───────────────────────────────────
-
-/// `IntSdiv` with a LHS wider than the output must not silently truncate the
-/// wider operand before the signed division (which would drop high bits with
-/// no sign awareness).  The dispatched signed-op path now guards on
-/// equal input widths, surfacing the mismatch as a loud lift-time error.
+/// A LHS wider than the output must error rather than be truncated before the
+/// signed division, which would drop high bits with no sign awareness.
 #[test]
 fn sdiv_with_wider_lhs_does_not_silently_truncate() {
     with_test_lifter_tracking(
@@ -1323,9 +1170,8 @@ fn sdiv_with_wider_lhs_does_not_silently_truncate() {
             reg(4),
         ],
         |d, rid| {
-            // lhs is an 8-byte register, rhs + output are 4 bytes.  The old
-            // path would `extend_if_needed(lhs, I32, SignExtend)` which
-            // truncates the 8-byte lhs to 4 bytes *before* the signed div.
+            // 8-byte lhs, 4-byte rhs and output: `extend_if_needed` cannot
+            // narrow, so an unguarded path truncates before the divide.
             let wide_lhs = Vn {
                 size: 8,
                 addr_off: 0x200,
@@ -1342,8 +1188,7 @@ fn sdiv_with_wider_lhs_does_not_silently_truncate() {
                 "IntSdiv with lhs wider than output must error (no silent truncate)"
             );
             if let Err(e) = res {
-                // `{:#}` renders the full anyhow cause chain (the per-insn
-                // funnel wraps the inner error with asm context).
+                // `{:#}` renders the full cause chain past the asm context.
                 let msg = format!("{e:#}");
                 assert!(
                     msg.contains("width mismatch"),
@@ -1354,12 +1199,9 @@ fn sdiv_with_wider_lhs_does_not_silently_truncate() {
     );
 }
 
-/// `IntDiv` / `IntRem` are unsigned, but the permissive arm still routes a
-/// wider-than-output operand through `convert_to_int_if_needed`, which
-/// SILENTLY TRUNCATES it.  Unlike the bitwise / shift-left / add / mul ops,
-/// a divide's (or remainder's) low bits are NOT width-agnostic, so a
-/// truncated wider dividend yields the wrong quotient.  They must guard the
-/// wider-than-output operand exactly as the signed `Sdiv` / `Srem` do.
+/// The unsigned divide and remainder need the same guard as their signed
+/// counterparts: their low bits are not width-agnostic, so a silently
+/// truncated wider dividend yields the wrong quotient.
 #[test]
 fn unsigned_div_rem_with_wider_lhs_does_not_silently_truncate() {
     for opcode in [Opcode::IntDiv, Opcode::IntRem] {
@@ -1401,11 +1243,8 @@ fn unsigned_div_rem_with_wider_lhs_does_not_silently_truncate() {
     }
 }
 
-// ── Wide SUBPIECE high-lane extract (MED-3) ──────────────────────────────────
-
-/// A YMM (I256) SUBPIECE with a nonzero byte_offset builds its right-shift at
-/// the *input* width (I256).  The shift constant must route through the
-/// wide-const path so the extract lifts cleanly rather than hard-aborting on
+/// A wide SUBPIECE with a nonzero byte_offset shifts at the INPUT width, so the
+/// shift constant must route through the wide-const path rather than hitting
 /// `build_int_const`'s I256/I512 rejection.
 #[test]
 fn subpiece_ymm_high_lane() {
@@ -1420,8 +1259,7 @@ fn subpiece_ymm_high_lane() {
         addr_space: VnSpace::REGISTER,
     };
     with_test_lifter_tracking(vec![out, wide], |d, rid| {
-        // SUBPIECE(ymm, byte_offset=16, out=xmm) — extract the high 128-bit
-        // lane of a 256-bit YMM register.
+        // Extract the high 128-bit lane of a 256-bit YMM.
         let insn = Insn {
             opcode: Opcode::Subpiece,
             output: Some(out),
@@ -1436,18 +1274,13 @@ fn subpiece_ymm_high_lane() {
     });
 }
 
-// ── Odd-width load asm-attribution (MED-1) ───────────────────────────────────
-
-/// A 7-byte load has no supported integer `ValueType`, so
-/// `int_for_byte_size` hard-errors.  (6-byte is `I48`; 7 remains unsupported.)
-/// The lifter cannot widen that type, but the lift error must name the
-/// offending machine instruction (its address / opcode) so a failed lift is
-/// debuggable instead of being a bare "unsupported node output size".
+/// A 7-byte width has no integer `ValueType`, so the lift must fail.  The
+/// error has to name the offending machine instruction, otherwise a failed
+/// whole-function lift is just a bare "unsupported node output size".
 #[test]
 fn load_odd_byte_width_errors_with_asm_context() {
     with_test_lifter(|d, rid| {
-        // A 7-byte output varnode — no supported integer type.  Use a Copy
-        // from a 7-byte CONST so the size flows through `int_type`/output.
+        // Copy from a 7-byte CONST so the size flows through `int_type`.
         let insn = Insn {
             opcode: Opcode::Copy,
             output: Some(Vn {
@@ -1459,15 +1292,12 @@ fn load_odd_byte_width_errors_with_asm_context() {
         };
         let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
         let err = res.expect_err("7-byte output must error (unsupported width)");
-        // `{:#}` renders the full anyhow cause chain — both the asm context
-        // (outer) and the inner unsupported-width cause.
+        // `{:#}` renders the outer asm context and the inner width cause.
         let msg = format!("{err:#}");
         assert!(
             msg.contains("unsupported node output size") || msg.contains("7 bytes"),
             "error must still describe the unsupported width; got: {msg}"
         );
-        // The machine address (0x1000, from `test_addr`) and/or opcode must
-        // appear so the failed lift names the offending instruction.
         assert!(
             msg.contains("0x1000") || msg.contains("4096") || msg.contains("Copy"),
             "lift error must attach the machine address / opcode for context; got: {msg}"

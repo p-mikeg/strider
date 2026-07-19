@@ -2,50 +2,32 @@ use anyhow::Result;
 
 use super::Lifter;
 
-/// Per-function translation context that converts a [`strider_cfg::Cfg`] into an IR
-/// graph region by region.
-///
-/// Borrows the shared [`Lifter`] engine (arch / owned Sleigh / register
-/// table — reach the Sleigh via `self.lifter.sleigh()`) and the
-/// per-function calling convention, and owns a fresh
-/// [`strider_ir::FunctionBuilder`].
+/// Per-function translation context, borrowing the shared [`Lifter`] engine
+/// and owning a fresh [`strider_ir::FunctionBuilder`].
 pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     pub(crate) lifter: &'a Lifter<R>,
     pub(crate) builder: strider_ir::FunctionBuilder,
     pub(crate) cfg: &'a strider_cfg::Cfg,
-    /// Anchors for the indirect-branch resolver.  Each entry maps a
-    /// `BranchIndirect`'s pcode address to the `NodeId` of the
-    /// `IndirectBranch` placeholder lifted for it.  Populated by
-    /// `handle_unresolved_indirect_branch` at lift time, drained by
-    /// `build_ir` into the [`super::LiftOutcome`].  The resolver reads each
-    /// placeholder's live dispatch input from the node directly, so the
-    /// correlation never goes stale under optimizer rewrites.
+    /// Maps each `BranchIndirect`'s pcode address to its `IndirectBranch`
+    /// placeholder node, drained by `build_ir` into the [`super::LiftOutcome`].
+    /// The resolver reads the placeholder's live dispatch input off the node,
+    /// so the correlation never goes stale under optimizer rewrites.
     pub(crate) unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
-    /// Per-target-address CC override map.  Empty when the caller has no
-    /// overrides (the `LiftOptions` default), so lookups are a plain `.get`.
+    /// Empty by default, so lookups are a plain `.get`.
     pub(crate) per_address_ccs:
         &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    /// `vn → largest tracked container` map ([`vn_container::ContainerMap`]):
-    /// the machine-register-container knowledge that lives with the lifter (not
-    /// the target-agnostic IR).  Built once from the raw collected varnode set
-    /// plus every calling-convention register, it is the O(1) fast path the
-    /// register-aliasing read/write (`vn_io`) and the CC / CallOther register
-    /// projections read on every access.  Ad-hoc varnodes absent from the map
-    /// fall through to its `all_vns` scan fallback in
-    /// [`FunctionLifter::container_of`].
+    /// Machine-register container knowledge, which lives with the lifter rather
+    /// than the target-agnostic IR.  Built once over the raw varnode set plus
+    /// every CC register; it is the O(1) fast path the register-aliasing
+    /// read/write and the CC / CallOther projections hit on every access.
+    /// Varnodes absent from it fall through to the scan in `container_of`.
     pub(crate) container_map: vn_container::ContainerMap,
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// Creates a new `FunctionLifter` for the given CFG.
-    ///
-    /// Constructs the IR [`FunctionBuilder`] with the supplied
-    /// `all_vns` (the set of every varnode any instruction in `cfg`
-    /// references); the deterministic ordering that gives stable `InitialVnId`
-    /// numbering is applied by [`strider_ir::FunctionBuilder::new`].  The
-    /// Sleigh is reached through the `lifter` (which owns it).
-    /// `per_address_ccs` is the lift-time CC override map; pass an empty map
-    /// when the caller has no overrides.
+    /// `all_vns` is every varnode any instruction in `cfg` references; ordering
+    /// is applied by `FunctionBuilder::new`.  Pass an empty `per_address_ccs`
+    /// for no CC overrides.
     pub(crate) fn new(
         lifter: &'a Lifter<R>,
         cc: strider_target::BuiltCallingConvention,
@@ -53,29 +35,22 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         mut all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<Self> {
-        // The lifter is the SSoT for tracking the stack pointer: add
-        // `cc.stack_vn` to the tracked set here (a function may never reference
-        // SP by name yet still need it tracked for stack analysis).
-        // `FunctionBuilder::new` no longer seeds it.
+        // The lifter is the SSoT for tracking SP; `FunctionBuilder::new` does
+        // not seed it.  A function may never name SP yet still need it tracked
+        // for stack analysis.
         if !all_vns.contains(&cc.stack_vn) {
             all_vns.push(cc.stack_vn);
         }
-        // `FunctionBuilder::new` seeds the CC registers and drops enclosed
-        // sub-registers, so `builder.function().all_vns()` is the canonical
-        // tracked set (universe construction — shared by every fixture — lives
-        // there).  Resolving a varnode INTO that set is the machine-register
-        // concern owned here in the lifter: precompute the `vn → container` map
-        // over every raw collected varnode plus every CC register (arg / ret /
-        // float-ret / stack / callee-saved), so a CC register narrower than its
-        // tracked container (ABI says `eax`, function tracks `rax`) resolves to
-        // the container.  This is the O(1) fast path the register-aliasing
-        // read/write and CC projections read on every access.
+        // `FunctionBuilder::new` owns universe construction (seeding CC
+        // registers, dropping enclosed sub-registers), so its `all_vns()` is
+        // the canonical tracked set.  Resolving a varnode INTO that set is the
+        // machine-register concern owned here: query every raw varnode plus
+        // every CC register, so an ABI register narrower than its tracked
+        // container (ABI says `eax`, the function tracks `rax`) resolves.
         //
-        // All `&cc` reads needed after construction (the container-map query
-        // set + the stack-vn debug assertion) are captured into owned locals
-        // BEFORE `cc` is moved into `FunctionBuilder::new` below — `cc` is
-        // threaded by value all the way into `Function::default_cc` with no
-        // clone.
+        // Every `&cc` read is captured into an owned local BEFORE `cc` moves
+        // into `FunctionBuilder::new`; `cc` threads by value all the way to
+        // `Function::default_cc` with no clone.
         let stack_vn = cc.stack_vn;
         let cc_regs: Vec<rsleigh::Vn> = cc
             .ret_val_regs
@@ -91,9 +66,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let queries = all_vns.iter().copied().chain(cc_regs);
         let container_map =
             vn_container::ContainerMap::build(builder.function().all_vns(), queries);
-        // The lifter added `cc.stack_vn` to `all_vns`, so after dedup the stack
-        // vn must resolve to a container that IS in the tracked set (either the
-        // stack vn itself, or a larger tracked vn that encloses it).
+        // Since the stack vn was added to `all_vns` above, after dedup it must
+        // resolve to a tracked container: itself, or a larger tracked vn.
         debug_assert!(
             {
                 let tracked = builder.function().all_vns();
@@ -114,10 +88,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         })
     }
 
-    /// Asm-fingerprint attribution funnel: set the lift address, run a
-    /// fallible body, then always clear the address — even on the error
-    /// path — so every IR node born inside `f` picks up `addr` in its
-    /// fingerprint side-table while no later node is mis-attributed.
+    /// Every IR node born inside `f` picks up `addr` in its fingerprint
+    /// side-table.  The address is cleared even on the error path, so a later
+    /// node is never mis-attributed.
     pub(crate) fn with_lift_addr<T>(
         &mut self,
         addr: Option<u64>,

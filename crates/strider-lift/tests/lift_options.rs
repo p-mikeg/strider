@@ -1,22 +1,17 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Tests for `LiftOptions` — the composed binary → IR lift options
-//! (an embedded [`strider_cfg::CfgOptions`] plus the IR-lift knobs
-//! `all_vns` / `per_address_ccs`).
+//! `LiftOptions`: an embedded [`strider_cfg::CfgOptions`] plus the IR-lift
+//! knobs.
 
 use strider_lift::LiftOptions;
 
 #[test]
 fn lift_options_default() {
     let d = LiftOptions::default();
-    // Embedded CFG knobs default to unbounded / no-pre-start / no targets.
     assert_eq!(d.cfg.fn_max_size, None);
     assert!(!d.cfg.allow_code_before_start_addr);
     assert!(d.cfg.known_targets.is_empty());
-    // IR-lift knob defaults to no CC overrides.
     assert!(d.per_address_ccs.is_empty());
-    // Post-analysis knob defaults to compaction ON (the analyze/run
-    // drivers compact the IR arena after the pipeline).
     assert!(d.compact);
 }
 
@@ -36,10 +31,8 @@ fn lift_options_embeds_cfg_knobs() {
 
 #[test]
 fn lift_options_embeds_known_targets_seed() {
-    // The third CFG knob — `known_targets` — is carried through the
-    // embedded `CfgOptions` too (the orchestrator's analyze loop owns
-    // its own map, but the raw lift path passes this one to the CFG
-    // builder verbatim).
+    // The orchestrator's analyze loop owns its own map, but the raw lift path
+    // passes this one to the CFG builder verbatim.
     use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 
     let site = PcodeInsnAddr {

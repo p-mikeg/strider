@@ -1,16 +1,9 @@
-//! Unit tests for the CC-projection methods
-//! [`FunctionLifter::call_ret_vals_for`] and
-//! [`FunctionLifter::call_clobbered_for`] (in `cc_projection.rs`).
+//! CC-projection tests.  Each projection resolves every CC register to its
+//! largest tracked container and excludes callee-saved registers plus the CC
+//! `stack_vn`.
 //!
-//! Each projection derives, from a resolved
-//! [`strider_target::BuiltCallingConvention`] + the function's tracked
-//! varnodes (`all_vns`), a register group with every CC register resolved to
-//! its largest tracked container, callee-saved + the CC `stack_vn` excluded.
-//! These tests build a `FunctionLifter` via the harness variant
-//! [`with_test_lifter_cc`], which threads a caller-provided cc so the tracked
-//! set is exactly the test's regs plus the test cc's own `stack_vn` (the
-//! projection correctly excludes that) — avoiding the injected-`empty_cc`
-//! extra-clobber pollution the default harness would cause.
+//! These use [`with_test_lifter_cc`] rather than the default harness, whose
+//! injected `empty_cc` stack_vn would pollute the clobber lists.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -18,7 +11,6 @@ use rsleigh::{Vn, VnSpace};
 
 use super::handler_tests::with_test_lifter_cc;
 
-/// A REGISTER-space varnode of `size` bytes at `off`.
 fn reg(off: u64, size: u32) -> Vn {
     Vn {
         size,
@@ -27,10 +19,8 @@ fn reg(off: u64, size: u32) -> Vn {
     }
 }
 
-/// Build a `BuiltCallingConvention` with the given ret/callee-saved/stack
-/// fields; every other field is the trivial default.  Struct-literal
-/// construction skips the ABI-disjointness validation, fine for a synthetic
-/// fixture.
+/// Every other field takes its trivial default.  Struct-literal construction
+/// skips ABI-disjointness validation, fine for a synthetic fixture.
 fn make_cc(
     ret_val_regs: Vec<Vn>,
     callee_saved_regs: Vec<Vn>,
@@ -50,8 +40,8 @@ fn make_cc(
     }
 }
 
-/// A sub-register ret reg (e.g. `eax`) resolves to its tracked container
-/// (`rax`) both in the ret-val list and in the clobber exclusion.
+/// A sub-register ret reg (`eax`) must resolve to its container (`rax`) in
+/// BOTH the ret-val list and the clobber exclusion.
 #[test]
 fn sub_register_ret_reg_routes_to_container() {
     let rax = reg(0x0, 8);
@@ -72,8 +62,6 @@ fn sub_register_ret_reg_routes_to_container() {
     });
 }
 
-/// Full-width ret / callee-saved split: ret goes to the ret list, the
-/// non-ret non-saved non-SP register is the sole clobber.
 #[test]
 fn ret_and_clobber_split_full_width() {
     let rax = reg(0x00, 8);
@@ -93,8 +81,7 @@ fn ret_and_clobber_split_full_width() {
     });
 }
 
-/// An override CC (fewer ret regs, more callee-saved) yields a strictly
-/// smaller combined (ret ++ clobber) set than the default CC.
+/// Fewer ret regs and more callee-saved must shrink the combined set.
 #[test]
 fn override_cc_yields_smaller_clobber_set() {
     let r0 = reg(0x10, 8);
@@ -103,9 +90,9 @@ fn override_cc_yields_smaller_clobber_set() {
     let sp = reg(0x40, 8);
     let all_vns = vec![r0, r1, r2, sp];
 
-    // cc_A: ret=[r0], callee-saved=[r2] → clobber=[r1].
+    // cc_A: ret=[r0], callee-saved=[r2], so clobber=[r1].
     let cc_a = make_cc(vec![r0], vec![r2], sp);
-    // cc_B: ret=[], callee-saved=[r1, r2] → clobber=[r0].
+    // cc_B: ret=[], callee-saved=[r1, r2], so clobber=[r0].
     let cc_b = make_cc(Vec::new(), vec![r1, r2], sp);
 
     with_test_lifter_cc(cc_a.clone(), all_vns, |d, _rid| {

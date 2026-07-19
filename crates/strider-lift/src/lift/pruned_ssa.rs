@@ -1,17 +1,13 @@
-//! Cytron pruned-SSA value-phi placement.
+//! Cytron pruned-SSA value-phi placement: per region, the iterated dominance
+//! frontier of each variable's definition sites.  Placing a phi for every
+//! tracked varnode at every region instead is `O(regions * varnodes)`, which
+//! reached 4M nodes on a 32 KB kernel function, nearly all dead.
 //!
-//! The old lifter minted a value `Phi` for EVERY tracked varnode at EVERY
-//! region (`O(regions × varnodes)` — millions of dead phis on large functions,
-//! e.g. 4M nodes for a 32 KB kernel function).  This module computes, per
-//! region, the small set of variables that actually need a phi there: the
-//! iterated dominance frontier of each variable's definition sites (Cytron et
-//! al.).
-//!
-//! Def-sites are collected here in the lifter so they reuse the EXACT write-set
-//! logic the lift emits — `container_of` for instruction outputs, the CC's
-//! ret/clobber projection for calls, the CallOther ABI's implicit writes — so
-//! there is no divergence between "where a phi is placed" and "what actually
-//! gets written".
+//! Def-sites are collected here in the lifter, not in a generic pass, so they
+//! reuse the EXACT write-set logic the lift emits (`container_of` for outputs,
+//! the CC ret/clobber projection for calls, the CallOther ABI's implicit
+//! writes).  Otherwise "where a phi is placed" could diverge from "what
+//! actually gets written".
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::RegionId;
@@ -23,17 +19,11 @@ use strider_target::call_other_abi::{CallOtherClass, classify};
 use super::call::decode_user_op;
 use super::function_lifter::FunctionLifter;
 
-/// The set of variables that need a value `Phi` at each region — the output of
-/// Cytron placement, keyed by CFG region.  This is the return type of the
-/// generic [`graph_algorithms::dominance::phi_placement`] (via
-/// [`super::dominance::DomInfo::iterated_frontier`]).
+/// Variables needing a value `Phi` at each region.
 pub(crate) type PhiPlacement = FxHashMap<RegionId, FxHashSet<InitialVnId>>;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    /// For each tracked variable, the set of CFG regions that WRITE it.
-    ///
-    /// Exact — mirrors every write path the lift emits (instruction outputs,
-    /// call ret/clobber registers + SP, CallOther implicit writes).
+    /// Exact, not conservative: mirrors every write path the lift emits.
     pub(crate) fn collect_def_sites(&self) -> FxHashMap<InitialVnId, FxHashSet<RegionId>> {
         let mut defs: FxHashMap<InitialVnId, FxHashSet<RegionId>> = FxHashMap::default();
         for r in self.cfg.region_ids() {
@@ -49,8 +39,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         defs
     }
 
-    /// Records every tracked variable that `insn` writes into `defs` under
-    /// region `r`.
     fn record_insn_defs(
         &self,
         insn: &rsleigh::Insn,
@@ -58,10 +46,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         defs: &mut FxHashMap<InitialVnId, FxHashSet<RegionId>>,
     ) {
         match insn.opcode {
-            // A direct / indirect call writes the CC's return + clobber
-            // registers and adjusts the stack pointer — none of which appear as
-            // pcode outputs, so they must come from the CC here (mirrors
-            // `build_cc_call`).
+            // A call writes the CC's ret + clobber registers and adjusts SP,
+            // none of which appear as pcode outputs, so they come from the CC.
+            // Mirrors `build_cc_call`.
             Opcode::Call | Opcode::CallIndirect => {
                 let cc = self.call_cc_for(insn);
                 let (rets, clobbers) = cc
@@ -73,8 +60,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 }
                 self.add_def(&cc.stack_vn, r, defs);
             }
-            // A CallOther writes its pcode output (if any) plus the ABI's
-            // implicit-write registers (mirrors `build_abi_call_other`).
+            // Mirrors `build_abi_call_other`: pcode output plus the ABI's
+            // implicit writes.
             Opcode::CallOther => {
                 if let Some(out) = insn.output.as_ref() {
                     self.add_def(out, r, defs);
@@ -90,7 +77,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     }
                 }
             }
-            // Pure control / memory ops write no tracked variable.
+            // Write no tracked variable.
             Opcode::Store
             | Opcode::Branch
             | Opcode::CondBranch
@@ -98,7 +85,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             | Opcode::BranchIndirect
             | Opcode::Nop
             | Opcode::MultiEqual => {}
-            // Every value-producing op writes its (container-resolved) output.
             _ => {
                 if let Some(out) = insn.output.as_ref() {
                     self.add_def(out, r, defs);
@@ -107,9 +93,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
     }
 
-    /// Resolves `vn` to its tracked container variable and records region `r` as
-    /// one of that variable's definition sites.  Writes to a non-tracked
-    /// varnode (e.g. a RAM address) resolve to no `InitialVnId` and are ignored.
+    /// A write to a non-tracked varnode (a RAM address) resolves to no
+    /// `InitialVnId` and is ignored.
     fn add_def(
         &self,
         vn: &rsleigh::Vn,
@@ -122,9 +107,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
     }
 
-    /// The calling convention that governs the callee `insn` targets — the
-    /// per-address override for a direct call whose target is registered, else
-    /// the function default.  Mirrors `handle_call`'s CC selection.
+    /// Mirrors `handle_call`'s CC selection: the per-address override for a
+    /// registered direct-call target, else the function default.
     fn call_cc_for(&self, insn: &rsleigh::Insn) -> &strider_target::BuiltCallingConvention {
         if insn.opcode == rsleigh::Opcode::Call
             && let Some(target) = insn.inputs.first().map(|v| v.addr_off)

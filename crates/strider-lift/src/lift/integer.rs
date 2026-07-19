@@ -1,9 +1,5 @@
-//! Integer value-producing pcode opcodes that are NOT arithmetic:
-//! `Copy`, `IntZext`, `IntSext`.
-//!
-//! Pure integer arithmetic (`IntAdd`, `IntSub`, `IntMul`, …) lives in
-//! [`super::arithmetic`].  Slice/extract/insert/popcount/etc. live in
-//! [`super::cast`].
+//! Non-arithmetic integer opcodes: `Copy`, `IntZext`, `IntSext`.  Arithmetic
+//! is in [`super::arithmetic`], bit-positioning in [`super::cast`].
 
 use strider_ir::{ExtendOp, IRBuilderExt, VnTypeExt};
 
@@ -11,20 +7,14 @@ use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// Translates a p-code `Copy` instruction.
     pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
         self.write_vn(out_vn, value)
     }
 
-    /// Translates a p-code zero-extend or sign-extend instruction into an IR
-    /// extend node and writes the result to the output varnode.
-    ///
-    /// Sleigh's `IntZext` / `IntSext` contract requires `output.size >=
-    /// input.size`.  `extend_if_needed` now rejects a wider-than-target input
-    /// outright, but check here first to surface the `.sla` inversion as a
-    /// clearer, extend-specific lift-time error.
+    /// Sleigh contracts `output.size >= input.size`.  `extend_if_needed` would
+    /// also reject an inverted pair, but checking here names the `.sla` bug.
     pub(super) fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) -> Result<()> {
         let out_vn = require_output_vn(insn)?;
         let in0_size = nth_input_or_err(insn, 0)?.size;

@@ -8,11 +8,8 @@
     )
 )]
 
-//! Strider lift: pcode → IR value lifting and CFG → IR translation.
-//! Consumes a [`strider_cfg::Cfg`] and produces a `strider_ir::Function`.
-//! Sits between `strider-cfg` (CFG construction) / `strider-target`
-//! (architecture descriptors) and `strider-orchestrator` (orchestrator +
-//! opt + pattern).
+//! Consumes a [`strider_cfg::Cfg`] and produces a `strider_ir::Function`,
+//! lifting p-code to IR values region by region.
 
 pub mod lift;
 pub mod lift_options;
