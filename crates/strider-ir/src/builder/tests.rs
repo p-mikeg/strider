@@ -484,6 +484,7 @@ fn empty_call_other_abi() -> strider_target::BuiltCallOtherAbi {
         implicit_reads: Vec::new(),
         implicit_writes: Vec::new(),
         clobbers_memory: false,
+        no_return: false,
     }
 }
 
@@ -799,6 +800,7 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
         implicit_reads: vec![rcx],
         implicit_writes: vec![rax, rdx],
         clobbers_memory: true,
+        no_return: false,
     };
 
     let mem_before = b.cur_region_memory()?;
@@ -887,6 +889,7 @@ fn build_call_other_rejects_untracked_implicit_write() -> Result<()> {
         implicit_reads: Vec::new(),
         implicit_writes: vec![untracked],
         clobbers_memory: false,
+        no_return: false,
     };
     let res = b.build_call_other_abi(11, "bogus", &[], &abi, None, false);
     assert!(res.is_err(), "untracked implicit-write register must error");
@@ -1954,9 +1957,10 @@ mod build_call_with_cc {
         let rax = regs.name_to_vn("RAX").unwrap();
         let rdi = regs.name_to_vn("RDI").unwrap();
         let rsp = regs.name_to_vn("RSP").unwrap();
-        // `FunctionBuilder::new` seeds every CC register into the tracked set
-        // even when the caller does not list it, so an all-preserving override
-        // must mark each one callee-saved or it shows up as a clobber output.
+        // `FunctionBuilder::new` seeds the CC arg-passing and return-value
+        // registers into the tracked set even when the caller does not list
+        // them, so an all-preserving override must mark each one callee-saved
+        // or it shows up as a clobber output.
         let rdx = regs.name_to_vn("RDX").unwrap();
         let xmm0 = regs.name_to_vn("XMM0").unwrap();
         let xmm1 = regs.name_to_vn("XMM1").unwrap();

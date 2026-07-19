@@ -1642,6 +1642,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
                 implicit_reads: Vec::new(),
                 implicit_writes: Vec::new(),
                 clobbers_memory: false,
+                no_return: false,
             },
             None,
             false,

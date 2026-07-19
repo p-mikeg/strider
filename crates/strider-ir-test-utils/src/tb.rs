@@ -278,6 +278,7 @@ impl Tb {
             implicit_reads: implicit_read_vns.to_vec(),
             implicit_writes: implicit_write_vns.to_vec(),
             clobbers_memory: false,
+            no_return: false,
         };
         let (_node, result) = self
             .fb

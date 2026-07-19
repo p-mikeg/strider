@@ -1225,6 +1225,7 @@ fn callother_on_chain_gated_only_by_calls_clobber() -> Result<()> {
                 implicit_reads: Vec::new(),
                 implicit_writes: Vec::new(),
                 clobbers_memory: false,
+                no_return: false,
             },
             None,
             false,
@@ -1354,11 +1355,12 @@ fn calls_clobber_toggle_gates_arg_across_call() -> Result<()> {
     Ok(())
 }
 
-/// `combine_phi` OR-combines its predecessors, which is the safety net letting
-/// `cycle_verdict` return "clean for this edge" without losing soundness.
+/// The production phi join (`join_phi_results`) is dirty if any predecessor is
+/// dirty, which is the safety net letting the `InProgress` cycle sentinel
+/// contribute `None` ("clean for this edge") without losing soundness.
 #[test]
 fn function_args_combine_phi_or_semantics_pinned() {
-    // Mirrors `combine_phi`: any dirty predecessor makes the phi dirty.
+    // Mirrors production `join_phi_results`: any dirty predecessor makes the phi dirty.
     fn combine_phi(preds: Vec<bool>) -> bool {
         preds.into_iter().any(|d| d)
     }
@@ -1378,9 +1380,10 @@ fn function_args_combine_phi_or_semantics_pinned() {
         !combine_phi(vec![]),
         "empty pred set combines to clean (no information => assume clean for this edge)"
     );
-    // `cycle_verdict`'s `false` sentinel is sound precisely because
-    // `combine_phi` is `any()`: a cycle-broken sibling can still upgrade the
-    // verdict to dirty.  Pinned together so neither can be swapped alone.
+    // The `InProgress` cycle sentinel's clean (`None`) contribution is sound
+    // precisely because the phi join is `any()`: a cycle-broken sibling can
+    // still upgrade the verdict to dirty.  Pinned together so neither can be
+    // swapped alone.
     let cycle_sentinel: bool = false;
     assert!(
         combine_phi(vec![cycle_sentinel, true]),

@@ -45,7 +45,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             &explicit_args,
             &built_abi,
             output_vn,
-            abi.no_return,
+            built_abi.no_return,
         )?;
         Ok(())
     }
@@ -171,6 +171,32 @@ mod tests {
             "RAX must be in implicit_writes"
         );
         assert!(built.clobbers_memory, "syscall must clobber memory");
+    }
+
+    /// `build` must carry `no_return` onto the resolved ABI. Guards against
+    /// build silently dropping the flag, which would let a consumer of the
+    /// built form miss that a CallOther never returns.
+    #[test]
+    fn call_other_abi_build_preserves_no_return() {
+        let regs = x86_64_sleigh_regs();
+        let no_return_abi = CallOtherAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            clobbers_memory: false,
+            no_return: true,
+        };
+        assert!(
+            no_return_abi.build(&regs).expect("must build").no_return,
+            "build must preserve no_return = true"
+        );
+        let returning_abi = CallOtherAbi {
+            no_return: false,
+            ..no_return_abi
+        };
+        assert!(
+            !returning_abi.build(&regs).expect("must build").no_return,
+            "build must preserve no_return = false"
+        );
     }
 
     #[test]

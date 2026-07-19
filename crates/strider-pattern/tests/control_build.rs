@@ -191,6 +191,7 @@ fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
                 implicit_reads: Vec::new(),
                 implicit_writes: Vec::new(),
                 clobbers_memory: false,
+                no_return: false,
             },
             None,
             false,

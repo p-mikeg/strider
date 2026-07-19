@@ -348,6 +348,7 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
                 implicit_reads: Vec::new(),
                 implicit_writes: Vec::new(),
                 clobbers_memory: false,
+                no_return: false,
             },
             None,
             false,

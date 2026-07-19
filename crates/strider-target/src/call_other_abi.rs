@@ -7,6 +7,7 @@ pub struct BuiltCallOtherAbi {
     pub implicit_reads: Vec<rsleigh::Vn>,
     pub implicit_writes: Vec<rsleigh::Vn>,
     pub clobbers_memory: bool,
+    pub no_return: bool,
 }
 
 /// Per-user-op ABI covering the ISA-fixed effects Sleigh's pcode does NOT
@@ -45,6 +46,7 @@ impl CallOtherAbi {
             implicit_reads: regs_to_vns(sleigh_regs, self.implicit_reads)?,
             implicit_writes: regs_to_vns(sleigh_regs, self.implicit_writes)?,
             clobbers_memory: self.clobbers_memory,
+            no_return: self.no_return,
         })
     }
 }
@@ -145,9 +147,10 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
         ("storeDoubleWordConditionalIndexed", MEM_CLOBBER),
         ("storeWordConditionalIndexed", MEM_CLOBBER),
         ("syscall", MEM_CLOBBER),
-        // Byte-reverse load, SLB reads, and the hardware RNG produce a
-        // pcode-explicit output and touch no RAM.  Altivec/VSX/vector compute
-        // is covered by the `altv`/`vsx`/`vector` prefix below.
+        // Byte-reverse load, the vector shift-control generator (lvsl/lvsr),
+        // SLB reads, and the hardware RNG produce a pcode-explicit output and
+        // touch no RAM.  Altivec/VSX/vector compute is covered by the
+        // `altv`/`vsx`/`vector` prefix below.
         ("LoadDoublewordByteReverseIndexed", PURE),
         ("loadVectorForShiftLeft", PURE),
         ("random", PURE),
@@ -815,9 +818,11 @@ mod tests {
 
     #[test]
     fn truly_invisible_decoder_context_classifies_as_noop() {
-        // Only decoder-context user-ops are NoOp.  Memory markers (LOCK /
-        // UNLOCK / barriers) and CPU hints are promoted to Call so patterns
-        // can find them.
+        // On x86/x86_64 the only NoOp user-ops are the Sleigh decoder-context
+        // ops (setEndianState / setISAMode).  Memory markers (LOCK / UNLOCK /
+        // barriers) and CPU hints are promoted to Call so patterns can find
+        // them.  (PowerPC additionally treats some prefetch / MSR-state hints
+        // as NoOp; see `classify_ppc`.)
         for n in ["setEndianState", "setISAMode"] {
             assert_eq!(
                 classify(crate::ArchPreset::X86_64, n),
