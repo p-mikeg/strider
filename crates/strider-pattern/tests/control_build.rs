@@ -1,5 +1,6 @@
 //! Control / variadic builder matching: `call` / `call_other` / `ret`
-//! / `if_node` / `phi` / `mem_phi` / `value_phi` / `function_arg`.
+//! / `if_node` / `phi` / `mem_phi` / `value_phi` / `function_arg` / `entry`
+//! / `region`.
 
 #![allow(
     clippy::panic,
@@ -9,11 +10,12 @@
 )]
 
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer};
+use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     Capture, CaptureExt, CastMask, MatchPat, Matcher, add, any, any_int_const, call, call_other,
-    if_node, indirect_branch, int_const, load, mem_phi, phi, ret, store, switch, unreachable, var,
+    entry, if_node, indirect_branch, int_const, load, mem_phi, phi, region, ret, store, switch,
+    unreachable, var,
 };
 
 // ── Call ──────────────────────────────────────────────────────────────────────
@@ -1027,9 +1029,7 @@ fn phi_token_wildcard_binds_the_phi_token_edge() {
     let function = phi_over_two_consts();
     let matcher = Matcher::new(&function);
     let c = Capture::new();
-    let hits = matcher
-        .find_all(&phi().phi_token(var(c)).build())
-        .unwrap();
+    let hits = matcher.find_all(&phi().phi_token(var(c)).build()).unwrap();
     assert_eq!(hits.len(), 1);
     let bound = hits[0].value(c).unwrap();
     assert!(
@@ -1584,7 +1584,7 @@ fn call_and_clobber(function: &strider_ir::Function) -> (NodeKind, strider_ir::n
         .iter()
         .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::I64))
         .expect("64-bit clobber value output at slot 2");
-    (function.node_kind(call).clone(), clobber)
+    (*function.node_kind(call), clobber)
 }
 
 /// `call().output(2).capture(c)` binds the Call's sibling output at slot 2
@@ -1648,5 +1648,110 @@ fn call_output_slot_type_constraint() {
             .len(),
         0,
         "slot-2 output is not I32",
+    );
+}
+
+// ── entry / region ──────────────────────────────────────────────────────────
+
+/// Entry → if/else → join. Four `Region` nodes total (the entry region, the
+/// true/false branch regions, and the join region) plus one `Entry` node.
+fn branching_fn() -> strider_ir::Function {
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
+
+    let entry_region = b.create_region_all().unwrap();
+    let region_t = b.create_region_all().unwrap();
+    let region_f = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
+
+    b.set_entry_region_all(entry_region).unwrap();
+    b.set_region(entry_region);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, region_t, region_f).unwrap();
+
+    for region in [region_t, region_f] {
+        b.set_region(region);
+        b.build_branch(join).unwrap();
+    }
+
+    b.set_region(join);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    b.build().unwrap()
+}
+
+/// `entry()` matches exactly the function's unique `Entry` node.
+#[test]
+fn entry_matches_exactly_one() {
+    let function = branching_fn();
+    assert_eq!(
+        Matcher::new(&function)
+            .find_all(&entry().build())
+            .unwrap()
+            .len(),
+        1,
+    );
+}
+
+/// `region()` matches every `Region` node — cross-checked against the same
+/// `walk_kind` sweep the Python-facing `count_regions` uses.
+#[test]
+fn region_matches_every_region_node() {
+    let function = branching_fn();
+    let expected = function
+        .walk_kind(|k| matches!(k, NodeKind::Region))
+        .count();
+    assert_eq!(expected, 4, "sanity: entry + true + false + join regions");
+    assert_eq!(
+        Matcher::new(&function)
+            .find_all(&region().build())
+            .unwrap()
+            .len(),
+        expected,
+    );
+}
+
+/// `region().any_input(entry())` reaches a control predecessor: only the
+/// entry region is directly preceded by `Entry`.
+#[test]
+fn region_any_input_reaches_entry_predecessor() {
+    let function = branching_fn();
+    assert_eq!(
+        Matcher::new(&function)
+            .find_all(&region().any_input(entry()).build())
+            .unwrap()
+            .len(),
+        1,
+        "only the entry region has Entry as a direct control predecessor",
+    );
+}
+
+/// `region().input(0, entry())` pins the same control predecessor to the
+/// fixed raw slot 0 (Region has no fixed prefix ahead of its variadic tail,
+/// so slot 0 IS predecessor 0).
+#[test]
+fn region_input_slot_zero_reaches_entry_predecessor() {
+    let function = branching_fn();
+    assert_eq!(
+        Matcher::new(&function)
+            .find_all(&region().input(0, entry()).build())
+            .unwrap()
+            .len(),
+        1,
+    );
+}
+
+/// A typed value sub can never bind a `Region`'s Control predecessor edge —
+/// `any_input` on a control-only node family must discriminate the same way
+/// `mem_phi_any_input_binds_a_memory_predecessor` proved for `MemPhi`.
+#[test]
+fn region_any_input_typed_value_sub_matches_nothing() {
+    let function = branching_fn();
+    assert_eq!(
+        Matcher::new(&function)
+            .find_all(&region().any_input(int_const(0u128)).build())
+            .unwrap()
+            .len(),
+        0,
     );
 }

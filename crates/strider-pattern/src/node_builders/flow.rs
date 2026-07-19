@@ -1,5 +1,6 @@
 //! Control-flow builders: `CallPat`, `CallOtherPat`, `RetPat`, `IfPat`,
-//! `IndirectBranchPat`, `UnreachablePat`, `SwitchPat`.
+//! `IndirectBranchPat`, `UnreachablePat`, `SwitchPat`, `EntryPat`,
+//! `RegionPat`.
 //!
 //! They all accumulate sparse positional sub-pattern constraints on the
 //! IR's input slots and wire them at the right slot. They return a
@@ -494,6 +495,105 @@ impl UnreachablePat {
 /// Construct a fresh [`UnreachablePat`].
 pub fn unreachable() -> UnreachablePat {
     UnreachablePat(NodePat::node(KindSpec::Exact(NodeKind::Unreachable)))
+}
+
+// ── EntryPat ─────────────────────────────────────────────────────────────────
+
+/// Builder for `Entry` node patterns. Created by [`entry`].
+///
+/// `Entry` is the function's unique entry node: no inputs, one control
+/// output (slot 0) — the function's initial control edge. Since it
+/// produces a control output, an `EntryPat` also nests as a control
+/// operand (e.g. `region().input(0, entry())`, `.ctrl(entry())`).
+pub struct EntryPat(NodePat);
+
+impl EntryPat {
+    /// Bind the matched `Entry`'s control output to `c`.
+    pub fn capture(self, c: Capture) -> Self {
+        Self(self.0.capture(c))
+    }
+
+    /// Seal the builder into a finished [`Pattern`] rooted on the
+    /// `Entry`'s control output.
+    pub fn build(self) -> Pattern {
+        self.0.build()
+    }
+}
+
+impl MatchPat for EntryPat {
+    /// `Entry`'s control output (slot 0) is the anchor; nesting an
+    /// `EntryPat` wires that control edge into whatever control-consuming
+    /// slot it's passed to.
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.compile_anchored(b)
+    }
+}
+
+/// Construct a fresh [`EntryPat`]. Matches the function's unique `Entry`
+/// node.
+pub fn entry() -> EntryPat {
+    // `Entry` is node-rooted with a control output at slot 0.
+    EntryPat(NodePat::node(KindSpec::Exact(NodeKind::Entry)).with_control_value(0))
+}
+
+// ── RegionPat ────────────────────────────────────────────────────────────────
+
+/// Builder for `Region` node patterns. Created by [`region`].
+///
+/// `Region` joins control edges at a CFG merge point: a variadic Control
+/// input per predecessor (raw slots `0..N`, no fixed prefix ahead of the
+/// tail — unlike `Phi` / `MemPhi`, which reserve slot 0 for the
+/// `PhiToken` edge), a control output (slot 0, the anchor here) and a
+/// `PhiToken` output (slot 1, not modelled by this builder — see
+/// [`super::phi::PhiPat::phi_token`] / [`super::phi::MemPhiPat::phi_token`]
+/// for matching the
+/// phis it owns).
+pub struct RegionPat(NodePat);
+
+impl RegionPat {
+    /// Constrain predecessor `idx`'s control edge (raw input slot `idx`).
+    /// The sub-pattern must itself be control-rooted (`entry()` /
+    /// `region()`) or an untyped wildcard (`var` / `anything`) — a typed
+    /// value sub can never bind a Control edge.
+    pub fn input<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
+        Self(self.0.input(idx, p))
+    }
+
+    /// Require that *some* predecessor of the `Region` matches `p`,
+    /// without pinning which slot — see [`CallPat::any_input`] for the
+    /// general model. Every `Region` input is Control, so only an untyped
+    /// wildcard or another control-rooted pattern reaches one; a typed
+    /// value sub matches nothing. Repeatable: each call adds a separate
+    /// existential constraint.
+    pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_any(p))
+    }
+
+    /// Bind the matched `Region`'s control output to `c`.
+    pub fn capture(self, c: Capture) -> Self {
+        Self(self.0.capture(c))
+    }
+
+    /// Seal the builder into a finished [`Pattern`] rooted on the
+    /// `Region`'s control output.
+    pub fn build(self) -> Pattern {
+        self.0.build()
+    }
+}
+
+impl MatchPat for RegionPat {
+    /// `Region`'s control output (slot 0) is the anchor; nesting a
+    /// `RegionPat` wires that control edge into whatever control-consuming
+    /// slot it's passed to.
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.compile_anchored(b)
+    }
+}
+
+/// Construct a fresh [`RegionPat`]. Matches any CFG-merge `Region` node.
+pub fn region() -> RegionPat {
+    // `Region` is node-rooted with a control output at slot 0.
+    RegionPat(NodePat::node(KindSpec::Exact(NodeKind::Region)).with_control_value(0))
 }
 
 // ── SwitchPat ────────────────────────────────────────────────────────────────

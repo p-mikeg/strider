@@ -36,6 +36,8 @@ pub(crate) enum AnchorKind {
     /// A memory-token output at the given slot (`Call` / `CallOther` /
     /// `Store` / `MemPhi`).
     Memory(usize),
+    /// A control output at the given slot (`Entry` / `Region`).
+    Control(usize),
     /// No output vertex at all (`Return`): captures attach to the node
     /// directly and no node-limit can be anchored.
     None,
@@ -136,6 +138,16 @@ impl NodePat {
     /// handle exposed by the memory-rooted wrappers via [`MemPat`]).
     pub(crate) fn with_mem_value(mut self, slot: usize) -> Self {
         self.anchor = AnchorKind::Memory(slot);
+        self
+    }
+
+    /// Declare a control anchor output at `slot` (`Entry` / `Region`).
+    /// Lets the wrapper implement [`MatchPat`] via
+    /// [`compile_anchored`](Self::compile_anchored) so it nests as a
+    /// control operand (a `Region` predecessor, `.ctrl()` /
+    /// `preceded_by()`).
+    pub(crate) fn with_control_value(mut self, slot: usize) -> Self {
+        self.anchor = AnchorKind::Control(slot);
         self
     }
 
@@ -279,6 +291,7 @@ impl NodePat {
                 Some(out)
             }
             AnchorKind::Memory(slot) => Some(b.memory_output(node, slot)),
+            AnchorKind::Control(slot) => Some(b.control_output(node, slot)),
             AnchorKind::None => None,
         };
         if let Some(bits) = output_width
@@ -588,6 +601,20 @@ mod tests {
                 .len(),
             0,
             "a typed value sub must not bind a Memory or PhiToken predecessor",
+        );
+    }
+
+    /// A node-rooted pattern anchored on a control output (`AnchorKind::Control`,
+    /// the shape `entry()` / `region()` lower to) seals into a single-rooted
+    /// `Pattern` whose root resolves without error.
+    #[test]
+    fn control_anchored_node_pat_seals_and_roots() {
+        let pat = NodePat::node(KindSpec::Exact(NodeKind::Entry))
+            .with_control_value(0)
+            .build();
+        assert!(
+            pat.root().is_ok(),
+            "a control-anchored NodePat must seal into a rooted Pattern"
         );
     }
 }

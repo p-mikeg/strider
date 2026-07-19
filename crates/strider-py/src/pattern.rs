@@ -379,6 +379,15 @@ pub(crate) fn compile_operand_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch>
     if let Ok(b) = ob.downcast::<PyCallOtherPat>() {
         return b.borrow().compile_value(py);
     }
+    // `entry()` / `region()` produce a control output; nesting one wires
+    // that control edge into whatever control-consuming slot it's passed
+    // to (e.g. `region().any_input(entry())`).
+    if let Ok(b) = ob.downcast::<PyEntryPat>() {
+        return b.borrow().compile_value(py);
+    }
+    if let Ok(b) = ob.downcast::<PyRegionPat>() {
+        return b.borrow().compile_value(py);
+    }
     Err(into_strider_err(anyhow::anyhow!(
         "expected a value pattern (Pat / Capture / str / value builder); \
          a control / variadic builder (store / ret / if / mem_phi) \
@@ -1005,6 +1014,8 @@ pub enum PatLike<'py> {
     IndirectBranchPat(Bound<'py, PyIndirectBranchPat>),
     UnreachablePat(Bound<'py, PyUnreachablePat>),
     SwitchPat(Bound<'py, PySwitchPat>),
+    EntryPat(Bound<'py, PyEntryPat>),
+    RegionPat(Bound<'py, PyRegionPat>),
 }
 
 /// Query input for `Function.find_all` / `find_unique`: a
@@ -1076,6 +1087,8 @@ impl PatLike<'_> {
             PatLike::IndirectBranchPat(b) => b.borrow().build_pattern_py(py),
             PatLike::UnreachablePat(b) => b.borrow().build_pattern_py(py),
             PatLike::SwitchPat(b) => b.borrow().build_pattern_py(py),
+            PatLike::EntryPat(b) => b.borrow().build_pattern_py(py),
+            PatLike::RegionPat(b) => b.borrow().build_pattern_py(py),
         }
     }
 }
@@ -2542,6 +2555,12 @@ macro_rules! node_builder {
             /// Build a core `*Pat` with all set fields + `common.capture`
             /// applied (the `.when()` predicate is applied per root flavor).
             fn core_builder(&self, py: Python<'_>) -> PyResult<$core_ty> {
+                // A field-less builder (e.g. `EntryPat`, whose IR node has
+                // no inputs) never touches `self.inner` / `py` below —
+                // reference both unconditionally so that case doesn't trip
+                // `dead_code` / `unused_variables`.
+                let _ = &self.inner;
+                let _ = py;
                 let mut b = $core();
                 $( node_builder!(@apply self, py, b, $field); )*
                 if let Some(c) = self.common.borrow().capture {
@@ -2842,23 +2861,33 @@ pub struct PyCallOutput {
 impl PyCallOutput {
     /// Bind the sibling output's value to `c`.
     fn capture(&self, py: Python<'_>, c: PyRef<'_, PyCapture>) -> Py<PyCallPat> {
-        self.parent.borrow(py).inner.borrow_mut().outputs.push(OutputSpecPy {
-            slot: self.slot,
-            capture: Some(c.inner),
-            width: None,
-            ty: None,
-        });
+        self.parent
+            .borrow(py)
+            .inner
+            .borrow_mut()
+            .outputs
+            .push(OutputSpecPy {
+                slot: self.slot,
+                capture: Some(c.inner),
+                width: None,
+                ty: None,
+            });
         self.parent.clone_ref(py)
     }
 
     /// Constrain the sibling output to bit width `bits`.
     fn of_width(&self, py: Python<'_>, bits: u32) -> Py<PyCallPat> {
-        self.parent.borrow(py).inner.borrow_mut().outputs.push(OutputSpecPy {
-            slot: self.slot,
-            capture: None,
-            width: Some(bits),
-            ty: None,
-        });
+        self.parent
+            .borrow(py)
+            .inner
+            .borrow_mut()
+            .outputs
+            .push(OutputSpecPy {
+                slot: self.slot,
+                capture: None,
+                width: Some(bits),
+                ty: None,
+            });
         self.parent.clone_ref(py)
     }
 
@@ -2866,12 +2895,17 @@ impl PyCallOutput {
     /// (e.g. `"i64"`, `"f32"`).
     fn of_type(&self, py: Python<'_>, ty: &str) -> PyResult<Py<PyCallPat>> {
         let t = parse_value_ty(ty)?;
-        self.parent.borrow(py).inner.borrow_mut().outputs.push(OutputSpecPy {
-            slot: self.slot,
-            capture: None,
-            width: None,
-            ty: Some(t),
-        });
+        self.parent
+            .borrow(py)
+            .inner
+            .borrow_mut()
+            .outputs
+            .push(OutputSpecPy {
+                slot: self.slot,
+                capture: None,
+                width: None,
+                ty: Some(t),
+            });
         Ok(self.parent.clone_ref(py))
     }
 }
@@ -3337,6 +3371,64 @@ pub fn mem_phi() -> PyMemPhiPat {
     PyMemPhiPat::new()
 }
 
+// ── EntryPat (value-rooted: Entry produces a control output) ─────────────
+
+node_builder! {
+    ty: PyEntryPat,
+    inner: EntryInner,
+    py_name: "EntryPat",
+    doc: "Typed builder for the function's unique `Entry` node pattern. \
+          `Entry` has no inputs and one control output — the function's \
+          initial control edge. Nests as a control operand, e.g. \
+          `region().any_input(entry())`.",
+    core: strider_pattern::entry,
+    core_ty: strider_pattern::EntryPat,
+    root: value,
+    fields: [],
+}
+
+/// Start an `Entry` pattern builder. Matches the function's unique `Entry`
+/// node.
+#[pyfunction]
+pub fn entry() -> PyEntryPat {
+    PyEntryPat::new()
+}
+
+// ── RegionPat (value-rooted: Region's control output is the anchor) ──────
+
+node_builder! {
+    ty: PyRegionPat,
+    inner: RegionInner,
+    py_name: "RegionPat",
+    doc: "Typed builder for `Region` (CFG-merge) node patterns. Chain \
+          `.input(idx, p)` / `.any_input(p)` to constrain a control \
+          predecessor. Nests as a control operand, e.g. \
+          `region().any_input(region())`.",
+    core: strider_pattern::region,
+    core_ty: strider_pattern::RegionPat,
+    root: value,
+    fields: [
+        { multi_match inputs(usize): input
+            = "Constrain predecessor `idx`'s control edge (raw input slot \
+               `idx` — Region has no fixed prefix ahead of its variadic \
+               tail). The sub-pattern must be control-rooted (entry() / \
+               region()) or an untyped wildcard (var/anything) — a typed \
+               value sub can never bind a Control edge." },
+        { multi_pat any_input: any_input
+            = "Require SOME predecessor of the Region to match `p`, \
+               without pinning which slot. Every Region input is Control, \
+               so only an untyped wildcard or another control-rooted \
+               pattern reaches one; a typed value sub matches nothing. \
+               Repeatable." },
+    ],
+}
+
+/// Start a `Region` pattern builder. Matches any CFG-merge `Region` node.
+#[pyfunction]
+pub fn region() -> PyRegionPat {
+    PyRegionPat::new()
+}
+
 // ── FunctionArgPat (value-rooted) ────────────────────────────────────────
 
 /// Typed builder for `FunctionArg` carrier patterns. Chain `.index(i)` /
@@ -3615,6 +3707,8 @@ pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPhiPat>()?;
     m.add_class::<PyMemPhiPat>()?;
     m.add_class::<PyFunctionArgPat>()?;
+    m.add_class::<PyEntryPat>()?;
+    m.add_class::<PyRegionPat>()?;
     m.add_class::<PyCastMask>()?;
 
     macro_rules! add_fn {
@@ -3646,6 +3740,8 @@ pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(phi);
     add_fn!(phi_for);
     add_fn!(mem_phi);
+    add_fn!(entry);
+    add_fn!(region);
     add_fn!(predicate);
     add_fn!(int_cmp);
     add_fn!(add);

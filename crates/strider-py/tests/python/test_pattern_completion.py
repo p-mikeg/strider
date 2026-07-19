@@ -17,7 +17,19 @@ which shifts by `+1` to skip past it.
 from __future__ import annotations
 
 import strider
-from strider.pattern import Capture, call, load, mem_phi, phi, store, var, int_const, anything
+from strider.pattern import (
+    Capture,
+    call,
+    entry,
+    load,
+    mem_phi,
+    phi,
+    region,
+    store,
+    var,
+    int_const,
+    anything,
+)
 
 from .conftest import built_function
 
@@ -27,6 +39,23 @@ def _lift(code: bytes, addr: int = 0x1000):
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     _cfg, fn, _unresolved = lift.analyze(
         addr, strider.sleigh.CallingConvention.x86_64_systemv()
+    )
+    return fn
+
+
+def _lift_unoptimized(code: bytes, addr: int = 0x1000):
+    """Like `_lift`, but with an empty optimizer pipeline — the default
+    pipeline's `RedundantPhis` pass collapses every single-predecessor
+    `Region` (the entry region, and each side of a diamond that carries no
+    real join), which is desirable for most tests but hides the raw
+    multi-`Region` CFG shape `entry()` / `region()` structural tests want
+    to exercise."""
+    mem = strider.reader.BufferReader(addr, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    _cfg, fn, _unresolved = lift.analyze(
+        addr,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty()),
     )
     return fn
 
@@ -81,6 +110,22 @@ def _diamond_with_memory_join() -> "strider.Function":
         0xC3,                                                # ret
     ])
     return _lift(code)
+
+
+def _diamond_returning_eax_unoptimized() -> "strider.Function":
+    """Same bytes as `_diamond_returning_eax`, lifted with an empty
+    pipeline so the raw CFG shape (entry region, both branch regions, the
+    join region — four `Region`s total) survives instead of being folded
+    by `RedundantPhis`."""
+    code = bytes([
+        0x85, 0xFF,                          # test edi, edi
+        0x75, 0x07,                          # jne +7
+        0xB8, 0x01, 0x00, 0x00, 0x00,        # mov eax, 1
+        0xEB, 0x05,                          # jmp +5
+        0xB8, 0x02, 0x00, 0x00, 0x00,        # mov eax, 2
+        0xC3,                                # ret
+    ])
+    return _lift_unoptimized(code)
 
 
 # ── call().any_input ─────────────────────────────────────────────────────
@@ -244,3 +289,53 @@ def test_call_output_slot_type_and_width_constraints():
     assert fn.find_all(call().output(2).of_type("i32")) == []
     assert len(fn.find_all(call().output(2).of_width(64))) == 1
     assert fn.find_all(call().output(2).of_width(32)) == []
+
+
+# ── entry() / region() ────────────────────────────────────────────────────
+
+
+def test_entry_matches_exactly_one():
+    """`entry()` matches the function's unique `Entry` node — exactly one
+    hit regardless of how many `Region`s the CFG has, and regardless of
+    optimization (the default pipeline never removes `Entry` itself)."""
+    fn = _diamond_returning_eax()
+    assert len(fn.find_all(entry())) == 1
+
+
+def test_region_matches_every_region_node():
+    """`region()` matches every CFG-merge `Region` — cross-checked against
+    `count_regions`, the same `walk_kind(Region)` sweep. Lifted WITHOUT
+    optimization so the raw entry/true/false/join shape (four Regions)
+    survives — the default pipeline's `RedundantPhis` would otherwise
+    collapse every single-predecessor Region down to just the join."""
+    fn = _diamond_returning_eax_unoptimized()
+    assert fn.count_regions() == 4, "sanity: entry + true + false + join regions"
+    assert len(fn.find_all(region())) == fn.count_regions()
+
+
+def test_region_any_input_reaches_entry_predecessor():
+    """`region().any_input(entry())` reaches a genuine control predecessor:
+    only the function's entry region is directly preceded by `Entry`. Needs
+    the unoptimized lift — the default pipeline collapses the entry region
+    (merging `Entry`'s control edge directly into the `If`), which would
+    make no `Region` directly reachable from `Entry` at all."""
+    fn = _diamond_returning_eax_unoptimized()
+    hits = fn.find_all(region().any_input(entry()))
+    assert len(hits) == 1
+
+
+def test_region_any_input_typed_value_sub_matches_nothing():
+    """A typed value sub can never bind a `Region`'s Control predecessor
+    edge — same discrimination `any_input` proves on every other family."""
+    fn = _diamond_returning_eax_unoptimized()
+    assert fn.find_all(region().any_input(int_const(0))) == []
+
+
+def test_region_any_input_wildcard_reaches_every_predecessor():
+    """A wildcard (`var`/`anything`) any_input on `region()` reaches EVERY
+    predecessor across every region — at least as many hits as there are
+    Regions (one per predecessor, and the join region has two)."""
+    fn = _diamond_returning_eax_unoptimized()
+    c = Capture()
+    hits = fn.find_all(region().any_input(var(c)))
+    assert len(hits) >= fn.count_regions()
