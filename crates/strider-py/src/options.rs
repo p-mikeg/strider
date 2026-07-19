@@ -1,6 +1,3 @@
-//! Python opts structs mirroring `strider_cfg::CfgOptions` and
-//! `strider_lift::LiftOptions`, with the same `cfg` nesting.
-
 use std::collections::HashMap;
 
 use pyo3::prelude::*;
@@ -9,9 +6,7 @@ use crate::cc::PyCallingConvention;
 use crate::opt::PyOptimizerPipeline;
 use crate::strider_cls::{parse_alias_mode, reject_zero_max_size};
 
-/// CFG-shaping knobs, keyword-only.  (The orchestrator-internal
-/// `known_targets` feedback field is deliberately not exposed: the
-/// indirect-branch resolution loop inside `analyze` owns it.)
+/// CFG-shaping knobs, keyword-only.
 #[pyclass(name = "CfgOptions", module = "strider.cfg")]
 #[derive(Clone, Copy, Default)]
 pub struct PyCfgOptions {
@@ -86,8 +81,7 @@ pub struct PyLifterOptions {
 }
 
 impl PyLifterOptions {
-    /// All-defaults fallback for `opts=None`.  The nested `CfgOptions` is
-    /// fresh too, never a shared mutable instance.
+    /// All-defaults fallback for `opts=None`.
     pub(crate) fn new_default(py: Python<'_>) -> PyResult<Self> {
         Self::new(
             py,
@@ -146,10 +140,8 @@ impl PyLifterOptions {
     }
 
     /// These options with `cfg` replaced and every other field carried over.
-    ///
     /// The supported way to override the nested `CfgOptions`, since the fields
-    /// are read-only. Rebuilding `LifterOptions(...)` by hand silently drops
-    /// any option added later back to its default at that call site.
+    /// are read-only.
     fn with_cfg(&self, py: Python<'_>, cfg: Py<PyCfgOptions>) -> Self {
         Self {
             cfg,

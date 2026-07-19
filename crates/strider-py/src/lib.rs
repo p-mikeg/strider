@@ -1,17 +1,12 @@
 //! Python bindings for the Strider binary analysis pipeline.
 
 // All three fire on PyO3 0.22 macro expansions, not on our own code, and are
-// fixed upstream in 0.23: unsafe calls emitted without an explicit `unsafe`
-// block, the legacy `gil-refs` cfg gate, and `?` over `PyResult<_>` expanding
-// to an `Into::<PyErr>::into` on something already a `PyErr`.  Suppressed at
-// the crate root instead of on ~109 individual sites.
+// fixed upstream in 0.23.
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
 #![allow(clippy::useless_conversion)]
 // `#[pymethods]` receivers must be `&self` / `&mut self`, so the `into_pat`
-// finaliser on every pattern builder can't take `self` by value.  The name is
-// the Python-facing API contract; renaming to `to_pat` would break every
-// doc and example.
+// finaliser on every pattern builder can't take `self` by value.
 #![allow(clippy::wrong_self_convention)]
 
 use pyo3::prelude::*;
@@ -35,14 +30,11 @@ mod sleigh;
 mod strider_cls;
 mod template;
 
-/// Makes anyhow capture a backtrace at every error site, so a `StriderError`
-/// on the Python side always carries source frames.
-///
-/// Anyhow reads `RUST_LIB_BACKTRACE`, falling back to `RUST_BACKTRACE`, and
-/// treats `0` as off.  Seeding only when neither is set honours a deliberate
-/// opt-out; seeding only `RUST_LIB_BACKTRACE` leaves panic-time
-/// `RUST_BACKTRACE` semantics alone.
+/// Makes anyhow capture a backtrace at every error site.
 fn force_anyhow_backtrace_capture() {
+    // Anyhow reads `RUST_LIB_BACKTRACE`, falling back to `RUST_BACKTRACE`.
+    // Seeding only when neither is set honours a deliberate opt-out; seeding
+    // only `RUST_LIB_BACKTRACE` leaves panic-time semantics alone.
     if std::env::var_os("RUST_LIB_BACKTRACE").is_none()
         && std::env::var_os("RUST_BACKTRACE").is_none()
     {
@@ -61,9 +53,7 @@ fn force_anyhow_backtrace_capture() {
 // `inventory::submit!` calls are collected per-rlib.
 pyo3_stub_gen::define_stub_info_gatherer!(stub_info);
 
-/// Vendored viz.js (Graphviz-in-Wasm), so the explorer's local server stays
-/// offline with no CDN.  Underscore-prefixed to keep it off the public
-/// `strider` surface.
+/// Vendored viz.js (Graphviz-in-Wasm).
 #[pyfunction]
 #[pyo3(name = "_viz_standalone_js")]
 fn viz_standalone_js() -> &'static str {

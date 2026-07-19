@@ -1,7 +1,3 @@
-//! The one place p-code rendering lives, shared by the CFG lookup path
-//! (`Cfg.pcode_at` / `Cfg.fingerprint_pcode`) and the linear-sweep path
-//! (`Lifter.pcode_at`).
-
 use pyo3::prelude::*;
 
 use crate::errors::into_strider_err;
@@ -10,8 +6,7 @@ use crate::errors::into_strider_err;
 /// `(text, machine_insn_len)`.
 ///
 /// An instruction that lifts to zero p-code ops (`endbr64`, say) yields empty
-/// text but still advances by its byte length.  Generic over the reader so
-/// `PyLifter::pcode_at` can reuse it over its own `Sleigh` clone.
+/// text but still advances by its byte length.
 pub(crate) fn lift_one_text<R: rsleigh::MemReader>(
     sleigh: &mut rsleigh::Sleigh<R>,
     addr: u64,

@@ -1,13 +1,7 @@
-//! A `Cfg` owns no Sleigh, so `PyCfg` keeps a `Py<PyLifter>` handle on the
-//! `Lifter` that built it and borrows that Sleigh on demand for dot rendering
-//! and register-name resolution.
-//!
-//! `Cfg::regions()` already holds every decoded p-code op, decoded in the exact
-//! context the real lift used, so `pcode_at` / `fingerprint_pcode` are LOOKUPS
-//! against those stored decodes rather than a fresh re-decode. That keeps them
-//! correct on context-dependent architectures (ARM/Thumb, MIPS16) where a
-//! default-context Sleigh would render the wrong p-code for a mid-function
-//! mode switch.
+//! `pcode_at` / `fingerprint_pcode` are LOOKUPS against the CFG's own
+//! lift-time decodes rather than a fresh re-decode, so they stay correct on
+//! context-dependent architectures (ARM/Thumb, MIPS16) where a default-context
+//! Sleigh would render the wrong p-code for a mid-function mode switch.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -29,7 +23,7 @@ pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
     /// The `Lifter` that built `inner`, borrowed for its Sleigh.
     pub(crate) lifter: Py<PyLifter>,
-    /// `machine_addr -> joined p-code text`, built on first lookup.
+    /// `machine_addr -> joined p-code text`.
     pcode_map: OnceLock<HashMap<u64, String>>,
 }
 
@@ -51,7 +45,6 @@ impl PyCfg {
         f(lifter_borrow.sleigh())
     }
 
-    /// `style` arrives already resolved so each caller keeps its own default.
     fn dispatch_dot(
         &self,
         py: Python<'_>,
@@ -79,8 +72,7 @@ impl PyCfg {
     }
 
     /// Ops of one machine instruction are joined with `"; "` in `insn_index`
-    /// order. An instruction lifting to zero p-code ops (e.g. `endbr64`) has
-    /// no `RegionInstruction` at all, so it gets no entry.
+    /// order.
     fn pcode_map(&self) -> &HashMap<u64, String> {
         self.pcode_map.get_or_init(|| {
             let mut grouped: HashMap<u64, Vec<(u64, String)>> = HashMap::new();
@@ -115,8 +107,6 @@ enum CfgDotOp<'a> {
     DotStr,
 }
 
-/// A sum so one dispatch helper covers both the unit-returning dump ops and
-/// the string-returning ones.
 enum CfgDotResult {
     Unit,
     Html(String),
@@ -176,24 +166,17 @@ impl PyCfg {
     /// nothing at `addr`.
     ///
     /// Known limitation: an instruction lifting to ZERO p-code ops (x86
-    /// `endbr64`, AArch64 `paciasp`) leaves no `RegionInstruction`, since a
-    /// region stores one entry per p-code OP. Such an address is
-    /// indistinguishable from one never decoded; both give `None`.
-    /// `Lifter.pcode_at` re-decodes instead of looking up, so it returns `""`.
+    /// `endbr64`, AArch64 `paciasp`) is indistinguishable from an address
+    /// never decoded; both give `None`.  `Lifter.pcode_at` returns `""`.
     fn pcode_at(&self, addr: u64) -> Option<String> {
         self.pcode_map().get(&addr).cloned()
     }
 
     /// `node`'s asm fingerprint as `(addr, text)` p-code pairs sorted by
-    /// address: the audit trail, read from this CFG's lift-time decodes rather
-    /// than re-decoded. `[]` for structural nodes carrying no fingerprint
-    /// (Entry, InitialMemory, InitialVar, Region, phis).
+    /// address. `[]` for structural nodes carrying no fingerprint.
     ///
-    /// An address this CFG has no decode for is skipped rather than emitted
-    /// with empty text, so every pair is a genuine hit. That only happens when
-    /// `node` came from a different `Cfg`; a fingerprint address always names
-    /// a p-code-producing instruction, since a zero-op one like `endbr64`
-    /// never contributes to a node's value.
+    /// An address this CFG has no decode for is skipped, so every pair is a
+    /// genuine hit.
     fn fingerprint_pcode(
         &self,
         py: Python<'_>,
@@ -232,10 +215,7 @@ impl PyCfg {
         })
     }
 
-    /// Disassembly text per region index: the search corpus for the CFG
-    /// explorer. Same per-instruction text as the dot renderer, joined with
-    /// `"\n"` rather than the renderer's `"\\l"`, which is a DOT-label
-    /// left-justified newline and means nothing outside a label string.
+    /// Disassembly text per region index, joined with `"\n"`.
     #[pyo3(name = "_region_texts")]
     fn region_texts(&self, py: Python<'_>) -> PyResult<HashMap<u32, String>> {
         self.with_sleigh(py, |sleigh| {
@@ -261,8 +241,6 @@ impl PyCfg {
     }
 
     /// The region index whose instruction range contains `addr`, if any.
-    /// Returns the first match; regions don't overlap in practice, so "first"
-    /// is also "only".
     fn region_at(&self, addr: u64) -> Option<u32> {
         let g = self.inner.region_graph();
         for idx in g.node_indices() {

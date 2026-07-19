@@ -1,5 +1,3 @@
-//! Target-arch wrapper with one Python classmethod per Rust preset.
-
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 

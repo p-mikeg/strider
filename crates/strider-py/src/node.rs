@@ -1,10 +1,3 @@
-//! A handle on one IR node: a `Py<PyFunction>`, a raw node id, and a
-//! generation snapshot. Any arena-reshuffle (`compact`, `optimize`, ...) bumps
-//! the function's generation, so a stale id surfaces as a `StriderError`
-//! instead of dereferencing the wrong node. All construction goes through
-//! [`PyNode::new`] so the validation and generation plumbing lives in one
-//! place.
-
 use std::hash::{Hash, Hasher};
 
 use pyo3::basic::CompareOp;
@@ -16,10 +9,7 @@ use strider_ir::node::NodeKind;
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
 
-/// A handle on a single node in the IR graph, returned by `Function.node(id)`
-/// and `Match.node(capture)`. Walk the edges feeding it (`inputs()`), read its
-/// `kind()`, pull constants (`const_int()` / `const_bool()`), recover
-/// provenance (`asm_fingerprint()`).
+/// A handle on a single node in the IR graph.
 ///
 /// Every accessor raises `StriderError` once the function has been compacted
 /// or otherwise reshuffled, rather than dereferencing a stale node id.
@@ -109,18 +99,13 @@ impl PyNode {
 
     /// The node's kind as a string. Payload-carrying kinds render with their
     /// payload (`"IntBinaryOp(Add)"`, `"Load(Ram)"`), others render bare
-    /// (`"Region"`, `"Phi"`). See `op()` for just the op variant.
+    /// (`"Region"`, `"Phi"`).
     fn kind(&self, py: Python<'_>) -> PyResult<String> {
         self.with_node(py, |function, nid| format!("{:?}", function.node_kind(nid)))
     }
 
     /// The operation variant of an op-carrying node (`"Add"`, `"Less"`,
-    /// `"Sqrt"`), or `None` for kinds carrying no operation. The op family is
-    /// in `kind()` instead.
-    ///
-    /// A boolean op is an `IntBinaryOp` at `I1`, so pair this with
-    /// `value_type()` to tell `Xor:I1` (a logical NOT) from a wide bitwise
-    /// `Xor`.
+    /// `"Sqrt"`), or `None` for kinds carrying no operation.
     pub(crate) fn op(&self, py: Python<'_>) -> PyResult<Option<String>> {
         self.with_node(py, |function, nid| match function.node_kind(nid) {
             NodeKind::IntBinaryOp(op) => Some(format!("{op:?}")),
@@ -135,7 +120,7 @@ impl PyNode {
 
     /// The node's value-output type as a string (`"I1"`, `"I32"`, `"F64"`), or
     /// `None` for a node with no value output. Booleans are the 1-bit integer
-    /// `I1`. The name is accepted verbatim by the pattern-side `value_ty(...)`.
+    /// `I1`.
     pub(crate) fn value_type(&self, py: Python<'_>) -> PyResult<Option<String>> {
         self.with_node(py, |function, nid| {
             let value = Self::value_output(function, nid)?;
@@ -163,9 +148,8 @@ impl PyNode {
         Ok(out)
     }
 
-    /// The nodes consuming this node's outputs, the forward counterpart to
-    /// `inputs()`. A consumer appears once per edge it draws from this node,
-    /// in output-slot then use order.
+    /// The nodes consuming this node's outputs. A consumer appears once per
+    /// edge it draws from this node, in output-slot then use order.
     fn outputs(&self, py: Python<'_>) -> PyResult<Vec<PyNode>> {
         // Collect ids under the read borrow, build the child `PyNode`s after
         // dropping it: `PyNode::new` re-borrows the function.
@@ -196,8 +180,7 @@ impl PyNode {
     }
 
     /// Integer constant value, masked to the declared width. `None` when the
-    /// value output isn't an integer `IntConst` or exceeds 128 bits (use
-    /// `wide_const_bytes()` for I256/I512).
+    /// value output isn't an integer `IntConst` or exceeds 128 bits.
     pub(crate) fn const_uint(&self, py: Python<'_>) -> PyResult<Option<u128>> {
         self.with_node(py, |function, nid| {
             Self::value_output(function, nid).and_then(|value| function.int_const_u128(value))
@@ -243,8 +226,7 @@ impl PyNode {
 
     /// Sorted, deduped machine-instruction addresses whose lift or subsequent
     /// rewrite contributed to this node's value. Empty for structural kinds
-    /// (Entry, InitialMemory, phis, Region), which the IR builder synthesises
-    /// rather than tying to an asm instruction.
+    /// (Entry, InitialMemory, phis, Region).
     pub(crate) fn asm_fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
         self.with_node(py, |function, nid| {
             // The side table yields an unordered set; sort for the documented
@@ -261,8 +243,7 @@ impl PyNode {
 
     /// Raw little-endian bytes of a wide integer constant (10 for I80, 16 for
     /// I128, 32 for I256, 64 for I512), or `None` for a narrow constant and
-    /// any non-const kind. Width comes from the declared type, so this works
-    /// whether the value is stored inline or interned.
+    /// any non-const kind.
     fn wide_const_bytes(&self, py: Python<'_>) -> PyResult<Option<Vec<u8>>> {
         self.with_node(py, |function, nid| function.int_const_wide_le_bytes(nid))
     }

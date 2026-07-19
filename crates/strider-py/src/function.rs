@@ -1,6 +1,3 @@
-//! Pretty dot rendering needs a borrowed `Sleigh` for register names, so
-//! `PyFunction` holds a `Py<PyCfg>` to keep one alive and reachable.
-
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
@@ -12,16 +9,10 @@ use crate::cfg::PyCfg;
 use crate::dot::reject_style_without_pretty;
 
 /// A lifted IR function: pattern queries, rewrites, walks and dot rendering.
-///
-/// `Rc<RefCell<_>>` lets passes mutate the graph without `&mut self` and lets
-/// several Python handles share it. `Rc` (not `Arc`) and `unsendable` because
-/// the workspace is single-threaded and `Function` is `!Sync`; Python access is
-/// GIL-serialised regardless.
 #[pyclass(name = "Function", module = "strider.ir", unsendable)]
 pub struct PyFunction {
     pub(crate) inner: Rc<RefCell<strider_ir::Function>>,
-    /// Keeps the Sleigh alive for dot rendering; also forces graph-then-cfg
-    /// destruction order.
+    /// The `Cfg` this function was lifted from.
     pub(crate) cfg: Py<PyCfg>,
 }
 
@@ -34,10 +25,6 @@ impl PyFunction {
     }
 
     /// Pretty render for `to_dot(pretty=True)` / `to_html(pretty=True)`.
-    ///
-    /// A `Function` owns no `Sleigh`; it borrows back down the
-    /// function -> cfg -> lifter chain to reach one, so the Sleigh needs no
-    /// `Rc`/`Arc` sharing (the borrow never outlives the `PyRef` guard).
     fn pretty_dot(
         &self,
         py: Python<'_>,
@@ -66,9 +53,7 @@ impl PyFunction {
             .map_err(|_| anyhow::anyhow!("Function is currently borrowed for mutation"))
     }
 
-    /// Fallible so a re-entrant call from inside a `.when()` predicate (which
-    /// holds the read borrow for all of `find_all`) surfaces a typed error
-    /// instead of panicking on the already-borrowed `RefCell`.
+    /// The mutable borrow, or an error if the function is already borrowed.
     pub(crate) fn try_write_inner(&self) -> anyhow::Result<RefMut<'_, strider_ir::Function>> {
         self.inner.try_borrow_mut().map_err(|_| {
             anyhow::anyhow!(
@@ -93,8 +78,7 @@ impl PyFunction {
     }
 
     /// Run `pipeline` over this graph in place; `label` names the operation in
-    /// the surfaced error. `pub(crate)` so `Lifter.optimize` shares the
-    /// borrow-then-bump contract instead of re-deriving it.
+    /// the surfaced error.
     pub(crate) fn run_pipeline_in_place(
         &self,
         pipeline: strider_orchestrator::opt::OptimizerPipeline,
@@ -201,8 +185,7 @@ impl PyFunction {
     }
 
     /// Number of node ids in the IR arena: every allocated slot, reachable or
-    /// not. Culled-but-uncompacted nodes still count, so compact first if you
-    /// want live nodes only.
+    /// not.
     fn node_count(&self) -> PyResult<usize> {
         self.with_read_value(|function| function.graph().all_node_ids().count())
     }
@@ -213,8 +196,7 @@ impl PyFunction {
     }
 
     /// Render the depth-`depth` neighborhood around node `center` exactly as
-    /// stored (same BFS and budget as the pretty explorer view, but no
-    /// virtuals, const-dup or Sleigh names). Needs no Sleigh.
+    /// stored.
     #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60))]
     fn neighborhood_dot(
         &self,
@@ -254,8 +236,6 @@ impl PyFunction {
     }
 
     /// Re-validate the graph: `None` on success, else an error message.
-    /// Includes the always-on asm-fingerprint check (every reachable
-    /// non-exempt node must carry a non-empty contributor list).
     fn validate(&self) -> PyResult<Option<String>> {
         self.with_read(|function| match strider_ir::validate::validate(function) {
             Ok(()) => Ok(None),
@@ -275,9 +255,8 @@ impl PyFunction {
         Ok(())
     }
 
-    /// Deep-copy into an independent `Function` with its own graph,
-    /// side-tables and generation counter, so `rewrite` / `Lifter.optimize`
-    /// on it leave the original untouched. The parent `Cfg` is shared.
+    /// Deep-copy into an independent `Function`, leaving this one untouched.
+    /// The parent `Cfg` is shared.
     #[pyo3(name = "clone")]
     fn py_clone(&self, py: Python<'_>) -> PyResult<PyFunction> {
         let cloned = self
@@ -353,9 +332,8 @@ impl PyFunction {
     /// `strider.template` free functions (a build-valid `strider.pattern.Pat`,
     /// a `Capture` or a capture-name string are accepted for back-compat).
     ///
-    /// The RHS is validated here, not at first-match time: every node must be
-    /// a concrete builder or a capture bound by the LHS, so a wildcard or
-    /// kind-`Any` shape raises `StriderError` up front.
+    /// The RHS is validated up front: every node must be a concrete builder or
+    /// a capture bound by the LHS.
     fn rewrite(
         &self,
         py: Python<'_>,
@@ -396,16 +374,14 @@ impl PyFunction {
         apply_rules_count_on(&mut function, &rules)
     }
 
-    /// A `Node` handle on the node at `node_id`, for reading its `kind()`,
-    /// walking `inputs()`, pulling `const_int()` / `const_bool()` and reading
-    /// `asm_fingerprint()`. Raises `StriderError` for an invalid `node_id`.
+    /// A `Node` handle on the node at `node_id`. Raises `StriderError` for an
+    /// invalid `node_id`.
     fn node(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<crate::node::PyNode> {
         crate::node::PyNode::new(py, slf, node_id)
     }
 
     /// Control-only reachability (the CFG skeleton) from the entry, in
-    /// ascending node-id order. Unlike `data_walk` / `mem_walk` this is not
-    /// pre-order: control reachability is computed as a set.
+    /// ascending node-id order.
     fn cfg_walk(slf: Py<Self>, py: Python<'_>) -> PyResult<Vec<crate::node::PyNode>> {
         let ids: Vec<u32> = slf.borrow(py).with_read_value(|function| {
             strider_ir::walk::cfg_reachable(function.graph(), function.entry())
@@ -477,10 +453,8 @@ fn reject_conflicting_cast_flags(
     Ok(())
 }
 
-/// Pops `crate::pattern::CURRENT_QUERY_FUNCTION` from `Drop`, so it fires on
-/// every exit path out of [`run_query`] including a panic unwinding through
-/// `run`. A plain trailing call would leak a stale entry on that thread-local
-/// stack forever.
+/// Pops `crate::pattern::CURRENT_QUERY_FUNCTION` on every exit path out of
+/// [`run_query`], including a panic.
 struct QueryFunctionGuard;
 
 impl Drop for QueryFunctionGuard {
@@ -489,14 +463,12 @@ impl Drop for QueryFunctionGuard {
     }
 }
 
-/// Run a matcher query and snapshot the generation, which each raw `Match`
-/// must be tagged with so a later rewrite or compaction invalidates the
-/// derived `PyMatch` handles.
+/// Run a matcher query, returning its result and the graph generation it ran
+/// against.
 ///
 /// Pushes `slf` + the generation onto `crate::pattern::CURRENT_QUERY_FUNCTION`
-/// for the duration of `run` so a `.when()` predicate can build a `Match`
-/// handle back onto this live function: patterns are built long before any
-/// `Function` exists, so the predicate closure cannot capture `slf` itself.
+/// for the duration of `run`, so a `.when()` predicate can build a `Match`
+/// handle back onto this live function.
 fn run_query<T>(
     slf: &Py<PyFunction>,
     py: Python<'_>,
@@ -526,8 +498,7 @@ fn run_query<T>(
     Ok((raw, generation))
 }
 
-/// `ignore_casts` means `ignore_casts_mask = CastMask::all()`; the caller has
-/// already rejected passing both.
+/// `ignore_casts` means `ignore_casts_mask = CastMask::all()`.
 fn apply_cast_mask(
     pattern: strider_pattern::Pattern,
     ignore_casts: bool,
@@ -565,8 +536,7 @@ fn collect_constraints(
 }
 
 /// One sub-match group per result: a single pattern gives one-element groups,
-/// several patterns join on shared captures and give one sub-match per pattern
-/// (which `PyMatch` presents as a merged binding).
+/// several patterns join on shared captures and give one sub-match per pattern.
 fn run_pattern_query(
     slf: &Py<PyFunction>,
     py: Python<'_>,
@@ -586,8 +556,7 @@ fn run_pattern_query(
 }
 
 /// Dedup key is `(roots, capture-signatures)`, or capture-signatures alone
-/// under `ignore_root`, so commutative-symmetry and multi-path hits collapse
-/// and `ignore_root` also collapses one binding reached from several roots.
+/// under `ignore_root`.
 fn dedup_matches(
     slf: &Py<PyFunction>,
     py: Python<'_>,
@@ -611,11 +580,6 @@ fn dedup_matches(
 }
 
 /// Returns the total per-`(node, rule)` fire count.
-///
-/// An in-place rewrite mutates the arena without compacting it, so node ids
-/// stay valid and nothing bumps the generation on its own. Bump it here, or
-/// outstanding `Match` / `Node` handles pass their staleness guard and
-/// silently read the post-rewrite graph.
 fn apply_rules_count_on<R>(function: &mut strider_ir::Function, rules: &[R]) -> PyResult<usize>
 where
     R: for<'g> Fn(
@@ -627,6 +591,9 @@ where
         let mut ctx = strider_opt::EditFunction::new(function);
         strider_opt::apply_rules_count(&mut ctx, rules).map_err(crate::errors::into_strider_err)?
     };
+    // An in-place rewrite bumps nothing on its own, so outstanding `Match` /
+    // `Node` handles would pass their staleness guard and read the rewritten
+    // graph.
     function.graph_mut().bump_generation();
     Ok(count)
 }

@@ -108,8 +108,7 @@ class Function:
 
     @property
     def cfg(self) -> "Cfg":
-        """The `Cfg` this function was lifted from, kept alive so the pretty
-        render can reach its disassembler."""
+        """The `Cfg` this function was lifted from."""
         ...
     def entry_node(self) -> int:
         """The node id of the function's `Entry` node, the natural starting
@@ -265,10 +264,8 @@ class Function:
     def clone(self) -> "Function":
         """A deep, fully independent copy of this function.
 
-        The clone shares no mutable state with the original (graph,
-        calling-convention overlay, side tables and constant interner are all
-        duplicated), so `g2 = fn.clone(); g2.rewrite(lhs, rhs)` never touches
-        the original. The parent `Cfg` handle is shared by reference; it is
-        read-only and kept alive only for rendering.
+        The clone shares no mutable state with the original, so
+        `g2 = fn.clone(); g2.rewrite(lhs, rhs)` never touches the original.
+        The parent `Cfg` handle is shared by reference.
         """
         ...

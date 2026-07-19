@@ -1,10 +1,3 @@
-//! `PyLifter` (Python `strider.Lifter`), wrapping
-//! `strider_orchestrator::Strider<AnyMemReader>`: `build_cfg` is
-//! structural-only, `analyze` runs the full lift/optimise/resolve loop.
-//!
-//! `cc` is a per-`analyze` argument, not handle state, so one handle can
-//! analyse functions under different calling conventions.
-
 use std::path::Path;
 
 use pyo3::prelude::*;
@@ -52,8 +45,7 @@ pub(crate) fn build_per_address_ccs(
         .collect::<PyResult<_>>()
 }
 
-/// Rejected at the Python boundary because the Rust builder would
-/// silently coerce zero to unbounded.
+/// Error on `Some(0)`; zero is not a meaningful bound.
 pub(crate) fn reject_zero_max_size(function_max_size: Option<u64>) -> PyResult<()> {
     if matches!(function_max_size, Some(0)) {
         return Err(pyo3::exceptions::PyValueError::new_err(
@@ -84,8 +76,7 @@ pub(crate) fn build_orch_sleigh(
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))
 }
 
-/// Shared by `PyLifter::new` and `PyLifter::rebuild` so both paths build
-/// the handle identically.
+/// Build the orchestrator handle for `arch` over `mem` and optional `rom`.
 pub(crate) fn build_strider(
     arch: PySleighArch,
     mem: MemInput,
@@ -130,9 +121,8 @@ pub(crate) fn check_pending_control_flow() -> PyResult<()> {
 }
 
 /// On failure, prefer a stashed control-flow exception over the
-/// operation's own error: a Ctrl-C inside a `MemReader.read` should
-/// surface as the interrupt, not as the `StriderError` the aborted read
-/// produced.  Success leaves the cell for `check_pending_control_flow`.
+/// operation's own error.  Success leaves the cell for
+/// [`check_pending_control_flow`].
 pub(crate) fn prefer_pending_control_flow<T>(result: PyResult<T>) -> PyResult<T> {
     match result {
         Ok(v) => Ok(v),
@@ -146,10 +136,8 @@ pub(crate) fn prefer_pending_control_flow<T>(result: PyResult<T>) -> PyResult<T>
 /// What `Lifter.analyze` returns: the CFG, the lifted and optimised IR,
 /// and the addresses of any indirect branch that stayed unresolved.
 ///
-/// Named fields, but the sequence protocol below also yields them in that
-/// order so `cfg, function, unresolved = lifter.analyze(...)` unpacks.
-///
-/// `unsendable`: holds `Py<PyCfg>` / `Py<PyFunction>`, both GIL-bound.
+/// Named fields, but it also unpacks as
+/// `cfg, function, unresolved = lifter.analyze(...)`.
 #[pyclass(name = "AnalyzeResult", module = "strider.lift", unsendable)]
 pub struct PyAnalyzeResult {
     /// The FINAL resolve/re-lift iteration's CFG, the one `function` was
@@ -159,8 +147,7 @@ pub struct PyAnalyzeResult {
     #[pyo3(get)]
     function: Py<PyFunction>,
     /// Machine addresses of indirect branches that could not be resolved.
-    /// A non-empty list is NOT an error, it is the honest report that some
-    /// edges are unknown.
+    /// A non-empty list is NOT an error.
     #[pyo3(get)]
     unresolved: Vec<u64>,
 }
@@ -191,8 +178,7 @@ impl PyAnalyzeResult {
         }
     }
 
-    /// Iterate the three fields in order; this is what makes tuple
-    /// destructuring work.
+    /// Iterate the three fields in order.
     fn __iter__(&self, py: Python<'_>) -> PyResult<PyObject> {
         let items = pyo3::types::PyTuple::new_bound(
             py,
@@ -216,24 +202,13 @@ impl PyAnalyzeResult {
 /// The lift+optimise+resolve handle.  Construct via
 /// `strider.lifter(arch, mem, rom=None)`; call `build_cfg` for a
 /// structural-only CFG, or `analyze(entry, cc, ...)` for the full lift.
-///
-/// `unsendable`: the inner `Strider` owns a `Sleigh` whose `MemReader`
-/// may be a non-`Send` Python callback.  Like every wrapper here it is
-/// only ever touched while holding the GIL.
-///
-/// `subclass`: lets the Python facade define `ElfLifter` as a pure-Python
-/// subclass that adds the symbol backend and a name-aware `analyze`
-/// override, reusing this `#[new]` via `super().__new__(...)`.
 #[pyclass(name = "Lifter", module = "strider.lift", unsendable, subclass)]
 pub struct PyLifter {
-    /// Owns the Sleigh, cached register table and optional rom.  Both
-    /// `build_cfg` and `analyze` drive the same instance.
+    /// Owns the Sleigh, cached register table and optional rom.
     inner: strider_orchestrator::Strider<AnyMemReader>,
-    /// The SAME `Arc<Py<PyAny>>`s the Sleigh's / rom's adapters hold, so
-    /// the Python objects' refcounts stay at one.  `__traverse__` visiting
-    /// these makes the otherwise-buried lifter to reader edge visible to
-    /// the cyclic GC, so a reader/lifter cycle is collected instead of
-    /// leaked.  Empty for the owned-data `BufferReader` / ELF path.
+    /// The same Python reader/rom callback objects the adapters hold, so
+    /// `__traverse__` can make the otherwise-buried lifter to reader edge
+    /// visible to the cyclic GC.  Empty for the owned-data path.
     py_deps: Vec<std::sync::Arc<Py<PyAny>>>,
 }
 
@@ -249,19 +224,13 @@ fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc
 }
 
 impl PyLifter {
-    /// The owned `Sleigh`, for register-name resolution when rendering
-    /// dot: `PyCfg`/`PyFunction` hold a back-reference to this handle
-    /// rather than to the Sleigh.  Also what `pcode_at` clones a
-    /// throwaway instance from, since it must not lift through this
-    /// persistent one.
+    /// The owned `Sleigh`.
     pub(crate) fn sleigh(&self) -> &rsleigh::Sleigh<AnyMemReader> {
         self.inner.sleigh()
     }
 
-    /// Backs `Function.to_dot(pretty=True)` / `to_html(pretty=True)`,
-    /// which reach this handle back through `PyFunction.cfg ->
-    /// PyCfg.lifter`: a bare `Function` owns no Sleigh to resolve
-    /// register names with, but the Lifter that produced it does.
+    /// Pretty-render `function`, resolving register names against this
+    /// handle's Sleigh.
     pub(crate) fn dispatch_dot(
         &self,
         function: &PyFunction,
@@ -306,8 +275,7 @@ pub(crate) enum DotResult {
 #[pymethods]
 impl PyLifter {
     /// Construct a lift handle over `mem` for `arch`, with optional
-    /// read-only `rom` for constant-load folding.  Same thing as the
-    /// `strider.lifter(arch, mem, rom=None)` free function.
+    /// read-only `rom` for constant-load folding.
     #[new]
     #[pyo3(signature = (arch, mem, rom = None))]
     fn new(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<Self> {
@@ -332,17 +300,8 @@ impl PyLifter {
         self.py_deps.clear();
     }
 
-    /// INTERNAL. Replace this handle's inner orchestrator state in place,
-    /// the seam `ElfLifter.add_elf` needs: the existing Sleigh was built
-    /// from a point-in-time snapshot of `mem`/`rom`, so it never observes
-    /// later region growth, and a merged-in ELF is invisible until the
-    /// Sleigh/Strider are rebuilt from the merged map.
-    ///
-    /// Because `ElfLifter` is a pure-Python subclass, anything it calls on
-    /// itself must be Python-callable, which unavoidably exposes this on
-    /// every `Lifter` handle. Not fixable without changing the subclassing
-    /// strategy. The leading underscore is the only enforcement (and keeps
-    /// it out of `strider/__init__.pyi`); general handles must not call it.
+    /// INTERNAL. Rebuild this handle's Sleigh and orchestrator state from
+    /// `arch`/`mem`/`rom`, so a newly merged-in ELF becomes visible.
     #[pyo3(name = "_rebuild", signature = (arch, mem, rom = None))]
     fn rebuild(
         &mut self,
@@ -396,19 +355,16 @@ impl PyLifter {
     /// its indirect branches, and return an `AnalyzeResult` carrying
     /// `.cfg`, `.function` and `.unresolved` (it also unpacks as a
     /// 3-tuple).  `cfg` is the FINAL resolve/re-lift iteration's CFG, the
-    /// one `function` was lifted from, so its resolved branches are seated
-    /// as real terminators and it matches the returned IR exactly.
+    /// one `function` was lifted from.
     ///
     /// Args:
-    ///     entry: Address of the function to analyse.  Typed `int | str`
-    ///         so the `ElfLifter` subclass, which resolves a `str` symbol
-    ///         name, is a signature-compatible override.  A plain `Lifter`
-    ///         has no symbol table, so a `str` raises `StriderError`.
+    ///     entry: Address of the function to analyse.  A `str` symbol name
+    ///         needs an `ElfLifter`; on a plain `Lifter` it raises
+    ///         `StriderError`.
     ///     cc: Calling convention for this analysis, with
     ///         per-target-address overrides via `opts.per_address_ccs`.
-    ///         Optional for the same reason as `entry`: `ElfLifter`
-    ///         defaults it to the ELF-derived CC, a plain `Lifter` has no
-    ///         default and raises `StriderError` on `None`.
+    ///         Required on a plain `Lifter`; `ElfLifter` defaults it to the
+    ///         ELF-derived CC.
     ///     opts: A `LifterOptions`, defaulting to all-defaults.  A set
     ///         `opts.pipeline` replaces the built-in default optimizer
     ///         pipeline for this call only.
@@ -423,9 +379,6 @@ impl PyLifter {
         cc: Option<PyCallingConvention>,
         opts: Option<Py<PyLifterOptions>>,
     ) -> PyResult<PyAnalyzeResult> {
-        // The widened signature is what makes `ElfLifter`'s override
-        // Liskov-clean; these two guards keep the widened parameters
-        // honest on a base handle, which has neither affordance.
         let entry: u64 = entry.extract().map_err(|_| {
             into_strider_err(anyhow::anyhow!(
                 "`entry` must be an address (int); a symbol name (str) needs \
@@ -540,9 +493,7 @@ impl PyLifter {
     /// `Node`/`Match` handles.
     ///
     /// A custom `pipeline` runs without a rom image, so any `LoadReadOnly`
-    /// pass in it short-circuits silently.  For rom-driven folding go
-    /// through `strider.lifter(arch, mem, rom=mem).analyze(...)` or
-    /// `strider.load_elf(...)`, which wires the rom automatically.
+    /// pass in it short-circuits silently.
     #[pyo3(signature = (function, pipeline=None))]
     fn optimize(
         &self,
@@ -564,14 +515,10 @@ impl PyLifter {
     /// Render the depth-`depth` neighborhood (inputs and outputs) around
     /// IR node `center` to a standalone Graphviz DOT string, one DOT node
     /// per IR node (a DOT node id IS the IR node id) with `center`
-    /// highlighted.  Drives the explorer's neighborhood view.
+    /// highlighted.
     ///
     /// A node whose degree exceeds `hub_cap` is shown but not expanded
-    /// through, so a widely-used value (the memory token, a constant used
-    /// hundreds of times) doesn't pull the whole function in.  `max_nodes`
-    /// caps the total, nearest first: depth alone doesn't bound size, and
-    /// a dense region reaches hundreds of nodes, which the browser's
-    /// synchronous Graphviz layout can't render without freezing.
+    /// through.  `max_nodes` caps the total, nearest first.
     #[pyo3(signature = (function, center, depth=5, hub_cap=12, max_nodes=60))]
     fn neighborhood_dot(
         &self,
@@ -594,8 +541,7 @@ impl PyLifter {
     }
 
     /// Look up a register by Sleigh name, or `None` when the name is not
-    /// in this arch's table.  Mirrors `Sleigh.reg`, so a caller holding a
-    /// `Lifter` need not build a second `Sleigh`.
+    /// in this arch's table.
     fn reg(&self, name: &str) -> Option<crate::sleigh::PyVn> {
         self.inner
             .sleigh_regs()
@@ -616,12 +562,9 @@ impl PyLifter {
     /// `"; "`, empty for an instruction that lifts to none, e.g.
     /// `endbr64`).
     ///
-    /// Unlike `Cfg.pcode_at`, which looks up an already-built CFG's stored
-    /// decodes, this is a stand-alone sweep, so it works for an `addr`
-    /// outside any analysed CFG.  It does NOT follow control flow: `addr`
-    /// must be reachable via the linear stream from `entry`, the same
-    /// assumption the lifter makes.  A target reachable only via a branch
-    /// with an intervening context switch is out of scope.
+    /// A stand-alone sweep, so it works for an `addr` outside any analysed
+    /// CFG.  It does NOT follow control flow: `addr` must be reachable via
+    /// the linear stream from `entry`.
     ///
     /// Raises `StriderError` if `addr < entry`, or if the sweep steps PAST
     /// `addr` without landing on it (not an instruction boundary on the
@@ -632,11 +575,9 @@ impl PyLifter {
                 "pcode_at: addr {addr:#x} is before entry {entry:#x}"
             )));
         }
-        // `Sleigh::lift_one` carries context-register state across calls,
-        // so sweeping through the handle's persistent Sleigh would leave
-        // it dirtied for a later `analyze`/`build_cfg`. `Sleigh::clone`
-        // builds a brand-new engine context from the same
-        // `(sla_spec, pspec)`, inheriting no context state.
+        // `Sleigh::lift_one` carries context-register state across calls, so
+        // sweeping through the persistent Sleigh would dirty it for a later
+        // `analyze`/`build_cfg`. A clone inherits no context state.
         let mut sleigh = self.sleigh().clone();
         let mut cur = entry;
         loop {
@@ -672,14 +613,12 @@ impl PyLifter {
     /// `explore.visualize`'s kwargs (`port=0` picks an ephemeral port).
     ///
     /// **Calling this off the main thread requires `explore.shutdown`.**
-    /// Because it blocks inside this Rust frame, a thread still parked
-    /// here when the interpreter finalizes is killed by CPython with
-    /// `pthread_exit`; the forced unwind cannot pass back through PyO3's
-    /// `catch_unwind`, and glibc aborts the process.  Stop the server with
-    /// `strider.explore.shutdown(port)` and join the thread before
-    /// exiting.  A `Function`/`Cfg` created INSIDE such a thread is also
-    /// `unsendable`, so if it outlives the thread PyO3 refuses to drop it
-    /// from another thread and leaks it with an unraisable warning.
+    /// A thread still parked in this call when the interpreter exits aborts
+    /// the process, so stop the server with
+    /// `strider.explore.shutdown(port)` and join the thread before exiting.
+    /// A `Function`/`Cfg` created INSIDE such a thread must not outlive it
+    /// either; it cannot be dropped from another thread and leaks with an
+    /// unraisable warning.
     #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=5))]
     fn visualize(
         slf: Py<Self>,
@@ -704,11 +643,9 @@ impl PyLifter {
 /// if given, is folded by the `LoadReadOnly` pass.
 ///
 /// The calling convention is NOT fixed here: it is a required argument of
-/// every `analyze` call, so one handle can analyse functions under
-/// different conventions.
+/// every `analyze` call.
 ///
-/// For an ELF prefer `strider.load_elf(path)`, whose `ElfLifter` wires
-/// `mem`/`rom` from the loaded sections and adds symbol lookups.
+/// For an ELF prefer `strider.load_elf(path)`.
 ///
 /// Raises `StriderError` on Sleigh-construction failure.
 #[pyfunction]

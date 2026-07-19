@@ -1,23 +1,17 @@
-//! `OptimizerPipeline::add` is generic (`O: Optimizer + 'static`), so a
-//! type-erased `Box<dyn Optimizer>` cannot be fed back into it.  The Python
-//! wrapper accumulates erased boxes and, at run time, transfers them into a
-//! real pipeline through forwarder adapters that satisfy the bound.
-
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 use std::sync::{Mutex, MutexGuard};
 
 use crate::errors::into_strider_err;
 
-/// `Optimizer` is not `Send + Sync` (strider is single-threaded, and the
-/// wrapper crosses the PyO3 boundary under the GIL), so `PipelineState`'s
-/// mutex is the sole synchronisation point.
+/// A type-erased fixed-point pass.
 pub(crate) type ErasedPass = Box<dyn strider_orchestrator::opt::Optimizer>;
 
-/// Post-passes run once after the fixed-point loop and return no
-/// `Change`/`NoChange`, so they live on a distinct trait from [`ErasedPass`].
+/// A type-erased post-pass, run once after the fixed-point loop.
 pub(crate) type ErasedPostPass = Box<dyn strider_orchestrator::opt::PostOptimizer>;
 
+// `OptimizerPipeline::add` is generic, so a type-erased box cannot be fed back
+// into it.  These forwarders satisfy the bound.
 struct ForwardPass(ErasedPass);
 
 impl Clone for ForwardPass {
@@ -81,10 +75,7 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
 struct PipelineState {
     passes: Vec<ErasedPass>,
     post_passes: Vec<ErasedPostPass>,
-    /// Tracked explicitly rather than inferred from "both lists empty":
-    /// a deliberately-empty pipeline (`OptimizerPipeline.empty()`) is
-    /// otherwise indistinguishable from one a prior drain emptied, and it
-    /// must still be drainable exactly once.
+    /// Whether the pass lists have already been drained into a real pipeline.
     drained: bool,
 }
 
@@ -97,8 +88,7 @@ impl PipelineState {
         }
     }
 
-    /// Iterating the canonical pipeline rather than hand-mirroring it makes
-    /// drift from the Rust-side pipeline factories structurally impossible.
+    /// Clone every pass out of `pipeline`.
     fn snapshot_from(pipeline: &strider_orchestrator::opt::OptimizerPipeline) -> Self {
         let mut s = Self::new();
         for pass in pipeline.passes() {
@@ -113,13 +103,10 @@ impl PipelineState {
 
 /// Builder for an optimizer pipeline.  Construct via `empty()` or
 /// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
-/// `Lifter.optimize(function, pipeline)`.  (`Lifter.analyze` drives its
-/// own internal default pipeline unless `LifterOptions.pipeline` is set,
-/// in which case that pipeline runs instead, for that call only.)
-/// Applying a pipeline drains it, so rebuild before reuse.
-// The boxed `dyn Optimizer` passes are not `Send + Sync`, so `unsendable`
-// pins the wrapper to its creating thread; cross-thread access raises a
-// Python `RuntimeError` instead of silently allowing UB.
+/// `Lifter.optimize(function, pipeline)`.  Applying a pipeline drains it, so
+/// rebuild before reuse.
+// `unsendable` pins the wrapper to its creating thread; cross-thread access
+// raises a Python `RuntimeError`.
 #[pyclass(name = "OptimizerPipeline", module = "strider.opt", unsendable)]
 pub struct PyOptimizerPipeline {
     state: Mutex<PipelineState>,
@@ -144,13 +131,10 @@ impl PyOptimizerPipeline {
     }
 
     /// Drains the wrapper's pass lists into a fresh real pipeline.  Draining
-    /// twice errors rather than silently running an empty pipeline and
-    /// reporting success, which would mask reuse bugs at the call site.
+    /// twice is an error.
     ///
-    /// `prepend_load_read_only` prepends a `LoadReadOnly` so a caller-supplied
-    /// rom is consumed even if the hand-built pipeline omitted that pass.  The
-    /// prepend lands on the materialised pipeline, never on `state`, so a
-    /// second `run` cannot double up on it.
+    /// `prepend_load_read_only` prepends a `LoadReadOnly` to the materialised
+    /// pipeline.
     pub(crate) fn drain_into_pipeline(
         &self,
         prepend_load_read_only: bool,
@@ -193,10 +177,8 @@ impl PyOptimizerPipeline {
         Self::new_full_default()
     }
 
-    /// Append a fixed-point `strider.opt.*` pass.
-    ///
-    /// The single-shot post-passes (`StackOffsetDetect`, `FunctionArgDetect`,
-    /// `CallStackArgCollect`) are rejected here; use `add_post` instead.
+    /// Append a fixed-point `strider.opt.*` pass.  A single-shot post-pass is
+    /// rejected here; use `add_post` instead.
     fn add(&self, pass_obj: PyOptPass) -> PyResult<()> {
         let erased = pass_obj.into_erased()?;
         let mut state = self.lock_state()?;
@@ -274,19 +256,15 @@ pure_pass_class!("IfCondInversion" => PyIfCondInversion,
     "Rewrites `If(BitNot(C)){A}{B}` → `If(C){B}{A}` so patterns match the \
      canonical, un-negated condition shape.");
 
-// These four read the calling convention from the function under analysis at
-// run time, so they carry no per-instance state and take no constructor args.
-
 pure_pass_class!("LoadForward" => PyLoadForward,
     "`LoadForward()` — forwards values from stack-tagged `Store` nodes to \
      subsequent same-offset `Load` nodes.");
 pure_pass_class!("StackOffsetDetect" => PyStackOffsetDetect,
-    "`StackOffsetDetect()` — stamps every SP-relative Store/Load's concrete \
-     offset in the `stack_offsets` decomposition cache.");
+    "`StackOffsetDetect()` — stamps every SP-relative Store/Load with its \
+     concrete offset.");
 pure_pass_class!("FunctionArgDetect" => PyFunctionArgDetect,
     "Post-pass that canonicalises register / stack argument reads into the \
-     `Function.arg_index_to_values` side-table (carrier `InitialVar` for \
-     register args, `Load` for stack args).");
+     function's argument-index table.");
 pure_pass_class!("CallStackArgCollect" => PyCallStackArgCollect,
     "Post-pass that wires positional stack arguments into `Call` nodes per \
      the calling convention's stack-arg layout.");
@@ -294,15 +272,10 @@ pure_pass_class!("CallStackArgCollect" => PyCallStackArgCollect,
 pure_pass_class!("LoadReadOnly" => PyLoadReadOnly,
     "`LoadReadOnly()` — folds constant-address loads against the rom \
      supplied via `strider.lifter(arch, mem, rom=mem)` / \
-     `strider.load_elf(...)`.  The rom flows through the \
-     orchestrator's `Strider::rom` → `OptCtx` plumbing rather than being \
-     attached to the pass; an instance constructed here is a marker, and \
-     the pass short-circuits to no-change when no rom is available.");
+     `strider.load_elf(...)`.  No-change when no rom is available.");
 
 /// Aggregates every pass-wrapper class so `add` / `add_post` accept any of
-/// them via PyO3 enum dispatch.  Payloads are the zero-sized wrapper classes
-/// themselves: the derived dispatcher picks the variant by type alone, and
-/// `into_erased` discards the marker.
+/// them via PyO3 enum dispatch.
 #[derive(FromPyObject)]
 pub enum PyOptPass {
     ConstantFold(PyConstantFold),
@@ -321,8 +294,7 @@ pub enum PyOptPass {
 }
 
 impl PyOptPass {
-    /// The single-shot post-passes are `PostOptimizer`s and cannot run in the
-    /// fixed-point loop, so they error out here pointing at `add_post`.
+    /// Erase to a fixed-point pass; a post-pass-only kind is an error.
     fn into_erased(self) -> PyResult<ErasedPass> {
         Ok(match self {
             PyOptPass::ConstantFold(_) => Box::new(strider_orchestrator::opt::ConstantFold::new()),

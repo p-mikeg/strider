@@ -1,12 +1,6 @@
-//! The build-side rewrite-RHS DSL, `strider.template`.
-//!
-//! Python's `strider.pattern` fuses match and build: a `Pat` compiles to
-//! either a `Pattern` or a `Template`.  This module makes the split explicit
-//! at the Python type level without duplicating the compile pipeline:
-//! [`PyTemplate`] wraps the same `Rc<PatRepr>` a `Pat` does, but the free
-//! functions here construct only the build-valid subset of variants.  No
-//! `.when()`, no commutativity toggle, no `.ordered()`: those are match-only
-//! concepts with no build-side meaning.
+//! The free functions here construct only the build-valid subset of pattern
+//! variants: no `.when()`, no commutativity toggle, no `.ordered()`, which are
+//! match-only concepts with no build-side meaning.
 
 use pyo3::prelude::*;
 #[allow(unused_imports)]

@@ -1,7 +1,3 @@
-//! Sleigh register-table handle, plus the `Vn` / `VnSpace` value types.
-//! The `Lifter` owns the real `rsleigh::Sleigh`; this wrapper keeps only the
-//! arch name and the probed register table.
-
 use pyo3::prelude::*;
 
 use crate::arch::PySleighArch;
@@ -13,14 +9,12 @@ use crate::reader::{AnyMemReader, MemInput};
 #[pyclass(name = "Sleigh", module = "strider.sleigh")]
 pub struct PySleigh {
     pub(crate) arch_name: &'static str,
-    /// Probed once at construction; the probe is not cheap enough to redo
-    /// per `reg(...)` lookup.
+    /// Probed once at construction.
     pub(crate) regs: rsleigh::SleighRegs,
 }
 
 impl PySleigh {
-    /// Bypasses PyO3's argument conversion for internal callers.  Builds a
-    /// `Sleigh` transiently to probe the register table, then drops it.
+    /// Probe the register table for `arch`, keeping only the table.
     pub(crate) fn new_internal(arch: PySleighArch, reader: AnyMemReader) -> PyResult<Self> {
         let sleigh = crate::strider_cls::build_orch_sleigh(&arch, reader)?;
         let regs = sleigh
@@ -50,16 +44,13 @@ impl PySleigh {
     }
 
     /// Look up a register's varnode by Sleigh name, or `None` if this arch's
-    /// table has no such name.  Feed the `Vn` to pattern constructors like
-    /// `phi_for(vn)` / `initial_var_for(vn)` / `function_arg_reg(vn)`.
+    /// table has no such name.
     fn reg(&self, name: &str) -> Option<PyVn> {
         self.regs.name_to_vn(name).map(PyVn::from_inner)
     }
 
     /// Reverse of `reg(...)`.  `None` for a non-REGISTER space, or a
     /// REGISTER offset/size pair absent from this arch's table; never raises.
-    /// Useful for decoding a varnode off a lifted function, which otherwise
-    /// reprs as a raw `%[0x20]:8` that reads like a stack slot.
     fn reg_name(&self, vn: &PyVn) -> Option<&str> {
         self.regs.vn_to_name(vn.inner)
     }
@@ -71,9 +62,7 @@ impl PySleigh {
 }
 
 /// A Sleigh address space, exposed as the `RAM` / `REGISTER` / `CONST` /
-/// `UNIQUE` class constants (instances, not callables).  Pass one to builder
-/// methods taking a space constraint (`load().space(...)`,
-/// `function_arg_stack(...)`) without threading a `Sleigh` through.
+/// `UNIQUE` class constants (instances, not callables).
 // `gen_stub_pyclass` derives `PyStubType` so macro-emitted
 // `.space(s: PyVnSpace)` signatures compile under `gen_stub_pymethods`.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
@@ -153,10 +142,7 @@ impl PyVnSpace {
     }
 }
 
-/// A Sleigh varnode: `(space, offset, size_in_bytes)`.  Argument to the
-/// pattern builders that pin a specific varnode (`phi_for(vn)`,
-/// `initial_var_for(vn)`, `function_arg_reg(vn)`,
-/// `function_arg_stack(space, offset)`).
+/// A Sleigh varnode: `(space, offset, size_in_bytes)`.
 ///
 /// Construct via:
 /// * `Sleigh.reg("RAX")`, or `None` if the name isn't a register.

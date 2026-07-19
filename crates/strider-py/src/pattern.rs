@@ -1,15 +1,3 @@
-//! `strider.pattern` submodule.
-//!
-//! The `strider_pattern` core is compile-time generic (`fn add<L: MatchPat,
-//! R: MatchPat>`), has no `impl MatchPat for Pattern`, and offers no splice
-//! primitive, so a finished `Pattern` cannot be nested into a parent value
-//! builder. Python's runtime recursion bridges onto it with type-erased
-//! shims local to this crate: [`DynMatch`], [`DynTemplate`], [`DynMem`].
-//! Operands recurse into shims and thread into the core's typed free
-//! functions, which already encode the right `KindSpec` / output type /
-//! lowering (`sub` becomes `add(l, neg(r))`). Sealing happens only at the
-//! top level.
-//!
 //! Anywhere a sub-pattern is accepted, a string works too: it interns to a
 //! `Capture` so `add("x", "x")` back-references. The intern table is global
 //! per process.
@@ -34,8 +22,7 @@ use strider_pattern::{
 use crate::errors::into_strider_err;
 
 /// Binds a matched node so its value, op variant or fingerprint can be read
-/// back from the `Match`. Each `Capture()` is globally unique; pass it to
-/// `var(c)`, `any_int_const(c)`, `.capture(c)`, etc.
+/// back from the `Match`. Each `Capture()` is globally unique.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Capture", module = "strider.pattern", frozen)]
 #[derive(Clone)]
@@ -45,8 +32,7 @@ pub struct PyCapture {
 
 #[pymethods]
 impl PyCapture {
-    /// A fresh, globally-unique capture variable. Read the binding back via
-    /// `Match[c]` / `Match.const_uint(c)` / etc.
+    /// A fresh, globally-unique capture variable.
     #[new]
     fn new() -> Self {
         Self {
@@ -99,8 +85,7 @@ impl TemplatePat for DynTemplate {
     }
 }
 
-/// Type-erased sub-pattern yielding a memory token, for `load().mem_in(..)`
-/// and `call().mem(..)`.
+/// Type-erased sub-pattern yielding a memory token.
 pub(crate) struct DynMem(pub(crate) Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>);
 
 impl MemPat for DynMem {
@@ -138,10 +123,7 @@ pub(crate) enum CastKind {
     FloatToFloat,
 }
 
-/// The recursive shape of a `PyPat`. Operands are stored as eagerly
-/// extracted data (captures, consts) plus child `Py<PyAny>` references, so a
-/// fresh `DynMatch` / `DynTemplate` is re-emitted on every compile and one
-/// `PyPat` can drive many queries.
+/// The recursive shape of a `PyPat`; recompiled fresh on every query.
 ///
 /// Match-only variants have no rewrite-RHS form and error from
 /// `compile_template`.
@@ -201,16 +183,12 @@ pub(crate) enum PatRepr {
     ValueTy(Rc<PatRepr>, strider_ir::node::ValueType),
     /// A finished control / variadic [`Pattern`] from a control builder's
     /// `.into_pat()`. One-shot: consumed when queried, and not nestable as a
-    /// value operand since the core has no splice primitive.
-    ///
-    /// Boxed so the other (small) variants do not inherit a `Pattern`'s
-    /// ~256-byte size.
+    /// value operand.
     Finished(Box<std::cell::RefCell<Option<Pattern>>>),
 }
 
-/// Holds an `Rc<PatRepr>` so it recompiles to a fresh `Pattern` / `Template`
-/// per query and one `Pat` can drive multiple `find_all` / rewrite calls.
-/// The `Rc` is local to strider-py; the pattern core stays refcount-free.
+/// A finished pattern. Reusable: one `Pat` can drive many `find_all` /
+/// rewrite calls.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Pat", module = "strider.pattern", unsendable)]
 pub struct PyPat {
@@ -857,11 +835,8 @@ pub enum PatLike<'py> {
 /// One pattern, or a list matched as a join: every pattern runs, captures
 /// unify on shared `Capture` objects, and each result collapses to one
 /// merged `Match`.
-///
-/// Variant order matters. `Single` is tried first so a bare capture-name
-/// string, itself a sequence, is read as one pattern and not as a list of
-/// one-character patterns. Only a genuine list or tuple, which no `PatLike`
-/// variant accepts, reaches `Many`.
+// Variant order matters: `Single` is tried first so a bare capture-name
+// string, itself a sequence, is read as one pattern.
 #[derive(FromPyObject)]
 pub enum PatQuery<'py> {
     Single(PatLike<'py>),
@@ -1038,9 +1013,6 @@ fn current_query_function(py: Python<'_>) -> Option<(Py<crate::function::PyFunct
 /// `node` becomes the `Match.root` the predicate sees. Control-flow
 /// exceptions are stashed for the outer boundary; an ordinary predicate
 /// exception goes to stderr and counts as no-match.
-///
-/// Shared by [`wrap_when`] and [`make_root_post_match`] so the value-rooted
-/// and control-rooted paths behave identically.
 fn run_when_predicate(
     node: strider_ir::node::NodeId,
     bindings: &strider_pattern::Bindings,
@@ -1102,9 +1074,8 @@ fn run_when_predicate(
     })
 }
 
-/// Bypasses `CaptureExt::when_match`, whose closure signature drops the
-/// matched `NodeId`, and calls `set_post_match` with a full `PostMatchFn`
-/// instead. The predicate needs that `NodeId` to get a real `Match.root`.
+/// Attaches the predicate as a full `PostMatchFn`, which keeps the matched
+/// `NodeId` the predicate needs for a real `Match.root`.
 pub(crate) fn wrap_when<P: MatchPat + 'static>(inner: P, py_func: PyObject) -> impl MatchPat {
     DynMatch(Box::new(move |b: &mut MatcherBuilder| {
         let o = inner.compile(b);
@@ -1312,8 +1283,7 @@ pub fn int_const(value: i128) -> PyPat {
 /// Match a signed `IntConst` across width encodings (exact, sign-extended,
 /// zero-extended-narrow). More permissive than `int_const`.
 ///
-/// The core signed matcher carries an `i64`, so a `value` outside `i64` range
-/// raises rather than being silently truncated.
+/// A `value` outside `i64` range raises.
 #[pyfunction]
 pub fn signed_int_const(value: i128) -> PyResult<PyPat> {
     let v = checked_signed_i64(value)?;
@@ -1323,8 +1293,7 @@ pub fn signed_int_const(value: i128) -> PyResult<PyPat> {
 /// Match an `IntConst` equal (masked) to any of `values`. An empty list
 /// vacuously fails. Match-only.
 ///
-/// Candidates are carried as `u64`, so an element outside `u64` range raises
-/// rather than being silently truncated.
+/// An element outside `u64` range raises.
 #[pyfunction]
 pub fn int_const_any_of(values: Vec<i128>) -> PyResult<PyPat> {
     let u64_values: Vec<u64> = values
@@ -1430,11 +1399,9 @@ pub fn predicate(f: PyObject) -> PyPat {
 }
 
 // The canonical spelling each parser accepts is the op variant's `Debug`
-// output, the same string `crate::matcher::op_name` emits, keeping the
-// find_all -> recover op -> reconstruct pattern round-trip on one source of
-// truth. Canonical names come from an exhaustive `match` rather than string
-// literals, so adding a variant in strider-ir is a compile error here instead
-// of a silent desync. The short lowercase aliases are py-only sugar.
+// output, the same string `crate::matcher::op_name` emits. Canonical names
+// come from an exhaustive `match`, so adding a variant in strider-ir is a
+// compile error here instead of a silent desync.
 
 /// Tries exact, then alias, then case-insensitive on both.
 fn lookup_op<Op: Copy>(
@@ -1870,15 +1837,10 @@ pub fn float_cmp_any(c: PyRef<'_, PyCapture>, l: Py<PyAny>, r: Py<PyAny>) -> PyP
     PyPat::from_repr(PatRepr::FloatCmpAny(c.inner, l, r))
 }
 
-// A typed builder accumulates field state in a `RefCell<*Inner>` and replays
-// it onto the core builder at finalise time. Pat-operand fields stay as
-// `Py<PyAny>` and recompile per build, so one builder can drive many queries.
-//
-// The chaining verbs return the same builder to keep further chaining typed;
-// `.into_pat()`, or passing the builder as a `PatLike`, seals it. `.when()`
-// reaches the core two ways: value-rooted builders wrap it via `wrap_when` at
-// the `MatchPat` level, node-rooted ones attach it as a root post-match guard
-// on the finished `Pattern`.
+// A typed builder accumulates field state and replays it onto the core builder
+// at finalise time. `.when()` reaches the core two ways: value-rooted builders
+// wrap it via `wrap_when` at the `MatchPat` level, node-rooted ones attach it
+// as a root post-match guard on the finished `Pattern`.
 
 /// Leaves the original in place so the builder stays reusable.
 fn clone_opt(py: Python<'_>, slot: &Option<Py<PyAny>>) -> Option<Py<PyAny>> {
@@ -2352,8 +2314,7 @@ struct CallInner {
     outputs: Vec<OutputSpecPy>,
 }
 
-/// One `.output(j)` sibling-output constraint. Exactly one of `capture` /
-/// `width` / `ty` is set, since each terminal commits a single aspect.
+/// One `.output(j)` sibling-output constraint.
 #[derive(Clone, Copy)]
 struct OutputSpecPy {
     slot: usize,
@@ -2800,9 +2761,8 @@ impl PyIfPat {
         slf.inner.borrow_mut().false_branch = Some(p);
         slf
     }
-    /// Bind the If's true control-output value to `c`. Stable under region
-    /// collapse, and the handle used as the edge operand of `dominates` /
-    /// `phi_input_from_edge`.
+    /// Bind the If's true control-output value to `c`, the edge operand
+    /// `dominates` / `phi_input_from_edge` take.
     fn capture_true<'py>(slf: PyRef<'py, Self>, c: PyRef<'py, PyCapture>) -> PyRef<'py, Self> {
         slf.inner.borrow_mut().capture_true = Some(c.inner);
         slf
@@ -2832,11 +2792,9 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
     b
 }
 
-// These live in the `strider.pattern.constraints` submodule, not in
-// `strider.pattern`. A pattern describes graph SHAPE and is passed as
-// `find_all(pats, ...)`; a constraint is a relational predicate over captures
-// evaluated post-join and passed as `find_all(..., constraints=[..])`. Sharing
-// one namespace hid that split behind identically-spelled calls.
+// These live in the `strider.pattern.constraints` submodule: a pattern
+// describes graph SHAPE, a constraint is a relational predicate over captures
+// evaluated post-join.
 
 /// A CFG relation between captured entities, passed to
 /// `Function.find_all([...], constraints=[...])` to filter joined tuples.
@@ -2882,9 +2840,7 @@ pub fn dominates(a: PyRef<'_, PyCapture>, b: PyRef<'_, PyCapture>) -> PyJoinCons
 ///
 /// `value` is a `Capture` bound by another pattern in the same `find_all`
 /// list, compared by identity. Bind it on the PHI PATTERN itself via
-/// `.any_input(...)` rather than as an independent root: `any_input` is
-/// anchored at the phi's own inputs, so it costs O(arity) instead of ranging
-/// over the whole function.
+/// `.any_input(...)` rather than as an independent root.
 ///
 /// ```python
 /// v, ph = Capture(), Capture()
@@ -3248,11 +3204,8 @@ macro_rules! binary_op_builder {
         impl $ty {
             /// Force left-to-right operand matching, disabling commutativity.
             ///
-            /// Chainable, not terminal: it flips a flag and hands the builder
-            /// back, so the result stays lazy and nests as a value operand
-            /// just like the bare commutative builder. `compile_value` honours
-            /// the flag at seal time. Sealing here into a `PatRepr::Finished`
-            /// instead is what once made `.ordered()` un-nestable.
+            /// Chainable, not terminal: the result stays lazy and nests as a
+            /// value operand just like the bare commutative builder.
             fn ordered(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
                 slf.ordered.set(true);
                 slf

@@ -1,9 +1,3 @@
-//! Python-visible memory readers: the data-only `BufferReader` and the
-//! Python-subclassable `MemReader` / `ReadOnlyMemory` callback paths.
-//!
-//! `AnyMemReader` unifies both so downstream wrappers instantiate a single
-//! `Sleigh<AnyMemReader>` instead of monomorphising the pipeline twice.
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -26,12 +20,7 @@ pub(crate) struct PyBufferReaderInner {
 /// clones share state with the original.
 ///
 /// The low-level reader for non-ELF / firmware / custom sources.  For an
-/// ELF prefer `strider.load_elf(path)`, which builds the multi-region
-/// reader from the sections and adds symbol lookups.
-///
-/// `unsendable`: only ever touched from the GIL-holding Python thread.
-/// Consumers needing `Send + Sync` take a `PyBufferReaderView` snapshot
-/// (`reader_view`) instead of forcing thread-safety onto the pyclass.
+/// ELF prefer `strider.load_elf(path)`.
 #[pyclass(name = "BufferReader", module = "strider.reader", unsendable)]
 #[derive(Clone)]
 pub struct PyBufferReader {
@@ -49,16 +38,14 @@ impl PyBufferReader {
         t
     }
 
-    /// `Send + Sync` snapshot implementing both `rsleigh::MemReader` and
-    /// `ReadOnlyMemory`, so consumers of either trait don't force
-    /// thread-safety onto the surface pyclass.
+    /// Point-in-time snapshot implementing both `rsleigh::MemReader` and
+    /// `ReadOnlyMemory`.
     pub(crate) fn reader_view(&self) -> PyBufferReaderView {
         let table = self.lookup_table();
         PyBufferReaderView { table }
     }
 
     /// Longest contiguous run mapped from `addr` (`0` when unmapped).
-    /// Clamps the read allocation against an unbounded caller `size`.
     fn available_at(&self, addr: u64) -> usize {
         self.inner
             .borrow()
@@ -155,10 +142,8 @@ fn elf_to_mem_regions(
 }
 
 /// Code + read-only sections only; writable ones (`.data`, `.got`,
-/// `.data.rel.ro`) are EXCLUDED.  `LoadReadOnly` folds a constant-address
-/// load without consulting the memory chain, so every address it can
-/// resolve must be runtime-immutable: a writable global that is stored
-/// then reloaded must not fold to its file-initial value.
+/// `.data.rel.ro`) are EXCLUDED, so every address here is
+/// runtime-immutable.
 fn elf_to_rom_regions(
     obj: &object::File<'_>,
     source: ElfRegionSource,
@@ -185,23 +170,17 @@ fn elf_to_rom_regions(
     }
 }
 
-/// Parsed ELF binary.  Internal by convention (leading underscore):
-/// construct via `strider.load_elf(path)`, whose `ElfLifter` wraps one of
-/// these and is the user-facing surface.
+/// Parsed ELF binary.  Construct via `strider.load_elf(path)`.
 #[pyclass(name = "_LoadedElf", module = "strider.reader", unsendable)]
 pub struct PyLoadedElf {
-    /// Load order; the first wins on symbol-name collisions.  Each
-    /// `OwnedElf` frees its backing bytes on drop, so collecting the
-    /// Python object reclaims everything.
+    /// Load order; the first wins on symbol-name collisions.
     elfs: Vec<strider_reader::OwnedElf>,
     /// Instruction fetch / raw reads; includes writable sections when
     /// relocations were applied.
     mem: PyBufferReader,
-    /// Runtime-immutable subset for `LoadReadOnly`, which trusts it
-    /// unconditionally.
+    /// The runtime-immutable subset.
     rom: PyBufferReader,
-    /// Reused by `add_elf` so a later merge keeps the caller's original
-    /// collection strategy.
+    /// The region-collection strategy this ELF was loaded with.
     source: ElfRegionSource,
 }
 
@@ -257,13 +236,12 @@ impl PyLoadedElf {
 #[pymethods]
 impl PyLoadedElf {
     /// The instruction-fetch / raw-read `BufferReader` for this ELF.
-    /// Pass it to `strider.lifter(arch, mem=...)`.
     fn reader(&self) -> PyBufferReader {
         self.mem.clone()
     }
 
     /// The runtime-immutable `BufferReader` (code + read-only sections
-    /// only).  Pass it to `strider.lifter(arch, mem, rom=...)`.
+    /// only).
     fn ro_reader(&self) -> PyBufferReader {
         self.rom.clone()
     }
@@ -276,8 +254,7 @@ impl PyLoadedElf {
 
     /// The ELF-recorded `st_size` of `name`, or `None` when recorded as 0
     /// (typical for stripped data symbols and stubs).  Raises
-    /// `StriderError` when the symbol is undefined.  Pair with `symbol`
-    /// to derive a `function_max_size`.
+    /// `StriderError` when the symbol is undefined.
     fn symbol_size(&self, name: &str) -> PyResult<Option<u64>> {
         self.find_symbol(name, |sym| nonzero_size(sym.size()))
     }
@@ -381,10 +358,8 @@ pub fn load_elf_from_sections(path: &str, apply_relocations: bool) -> PyResult<P
 }
 
 /// Abstract base; subclasses MUST override
-/// `read(addr, size) -> Optional[bytes]`.
-///
-/// Every `read` crosses the Rust/Python boundary.  Prefer `BufferReader`
-/// when the data can live in-process.
+/// `read(addr, size) -> Optional[bytes]`.  Prefer `BufferReader` when the
+/// data can live in-process.
 #[pyclass(name = "MemReader", module = "strider.reader", subclass)]
 pub struct PyMemReader;
 
@@ -417,15 +392,14 @@ impl PyMemReader {
 }
 
 /// Shared `read`-callback prologue for both Python reader adapters, run
-/// inside the caller's `Python::with_gil`.  Each adapter keeps its own
-/// tail (None handling, length checks, copy semantics).
+/// inside the caller's `Python::with_gil`.
 ///
 /// `KeyboardInterrupt` / `SystemExit` are STASHED, not `PyErr::restore`d:
 /// restoring would leave the error indicator set, so the next callback
 /// would trip CPython's "returned a result with an exception set" guard
 /// and destroy the original exception.  A stashed exception also
 /// short-circuits every later call until the outer boundary drains the
-/// cell and surfaces it.  Soundness-critical, so it lives in ONE place.
+/// cell and surfaces it.
 fn call_py_read<A>(
     py: Python<'_>,
     py_obj: &Py<PyAny>,
@@ -456,13 +430,9 @@ where
 /// Holds the user's Python reader object and implements
 /// `rsleigh::MemReader` by `Python::with_gil` per call.
 ///
-/// The `Py<PyAny>` sits behind an `Arc` so a `Lifter` can share the SAME
-/// `Py<>` for cyclic-GC traversal (`PyLifter::__traverse__`): one
-/// `Py<PyAny>` per Python reader means the reader's refcount rises by
-/// one, not once per adapter clone, so the Lifter visiting that shared
-/// reference balances the GC's accounting and a reader/lifter cycle is
-/// collectable. `Arc` not `Rc` keeps the adapter `Send + Sync` for the
-/// `Sleigh<R>: Send` contract.
+/// The `Py<PyAny>` is shared, not cloned per adapter, so a `Lifter` can
+/// visit the same reference for cyclic-GC traversal
+/// (`PyLifter::__traverse__`) and a reader/lifter cycle stays collectable.
 #[derive(Clone)]
 pub struct PyMemReaderAdapter {
     pub py_obj: std::sync::Arc<Py<PyAny>>,
@@ -540,9 +510,8 @@ impl PyReadOnlyMemory {
     }
 }
 
-/// Wraps a Python `ReadOnlyMemory` subclass.  `Arc<Py<PyAny>>` for the
-/// same cyclic-GC reason as [`PyMemReaderAdapter`]: the `Lifter` shares
-/// the one `Py<>` so a rom/lifter cycle is collectable.
+/// Wraps a Python `ReadOnlyMemory` subclass.  Shares one `Py<>` for the
+/// same cyclic-GC reason as [`PyMemReaderAdapter`].
 pub struct PyReadOnlyMemoryAdapter {
     pub py_obj: std::sync::Arc<Py<PyAny>>,
 }
@@ -575,14 +544,8 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
     }
 }
 
-/// Unified `MemReader` for every downstream Python wrapper: either a
-/// `PyBufferReader` snapshot or a callback into a Python subclass.
-///
-/// Both variants clone cheaply (an `Arc` or refcount bump), which is what
-/// makes `Sleigh<AnyMemReader>: Clone` available.  Cloning a `Sleigh`
-/// builds a genuinely fresh engine context from `(sla_spec, pspec,
-/// cloned reader)`, which is the throwaway instance `Lifter.pcode_at`
-/// needs so its sweep can't dirty the persistent Sleigh's context.
+/// Unified `MemReader`: either a `PyBufferReader` snapshot or a callback
+/// into a Python subclass.  Both variants clone cheaply.
 #[derive(Clone)]
 pub enum AnyMemReader {
     Buffer(PyBufferReaderView),
@@ -600,16 +563,9 @@ impl rsleigh::MemReader for AnyMemReader {
     }
 }
 
-/// Point-in-time snapshot of a `PyBufferReader`'s region table.
-///
-/// Decoupling the trait impls from the pyclass keeps the rsleigh
-/// dependency local and satisfies `Send + Sync` (the table is an `Arc`)
-/// without making the pyclass thread-safe.  A snapshot also matters
-/// semantically: Sleigh consumes its reader by value, so it must not
-/// observe later region changes in flight.
-///
-/// Both impls fill the caller buffer with RAW bytes; integer decode
-/// happens in the optimizer per `Function::endianness`.
+/// Point-in-time snapshot of a `PyBufferReader`'s region table: it does not
+/// observe later region changes.  Both `read` impls fill the caller buffer
+/// with RAW bytes, never byte-swapped.
 #[derive(Clone)]
 pub struct PyBufferReaderView {
     pub table: Arc<MemRegionsLookupTable>,
@@ -628,8 +584,7 @@ impl rsleigh::MemReader for PyBufferReaderView {
     }
 }
 
-/// Fill-all-or-error: a partial or unmapped range errors, so
-/// `LoadReadOnly` never folds a partial word.
+/// Fill-all-or-error: a partial or unmapped range errors.
 impl ReadOnlyMemory for PyBufferReaderView {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         self.table.read_exact(addr, buf)
@@ -638,8 +593,6 @@ impl ReadOnlyMemory for PyBufferReaderView {
 
 /// The memory argument every Python entry point accepts: either a
 /// `BufferReader` or any Python object with a `read(...)` method.
-/// Consumed by [`into_box`](Self::into_box) for the rom role or
-/// [`into_any`](Self::into_any) for the Sleigh-reader role.
 pub enum MemInput {
     Buffer(PyBufferReader),
     Cb(std::sync::Arc<Py<PyAny>>),
@@ -660,10 +613,9 @@ impl<'py> FromPyObject<'py> for MemInput {
 }
 
 impl MemInput {
-    /// The Python callback object backing this input, if any.  Clones the
-    /// SHARED `Arc<Py<PyAny>>`, the exact `Py<>` the Sleigh's or rom's
-    /// adapter holds, so a `Lifter` can register it for cyclic-GC
-    /// traversal without inflating the object's refcount past one.
+    /// The Python callback object backing this input, if any.  Shares the
+    /// exact reference the adapter holds, so registering it for cyclic-GC
+    /// traversal does not inflate the object's refcount.
     pub fn py_callback(&self) -> Option<std::sync::Arc<Py<PyAny>>> {
         match self {
             MemInput::Cb(obj) => Some(std::sync::Arc::clone(obj)),
@@ -673,9 +625,7 @@ impl MemInput {
 }
 
 impl MemInput {
-    /// `Box` not `Arc`: strider is single-threaded, so the orchestrator's
-    /// `Strider::rom` owns the rom for the whole run and threads it down
-    /// as `&dyn ReadOnlyMemory`.  No Rust-level sharing is needed.
+    /// This input in the rom role.
     pub fn into_box(self) -> Box<dyn ReadOnlyMemory> {
         match self {
             MemInput::Buffer(m) => Box::new(m.reader_view()),
@@ -693,11 +643,9 @@ impl MemInput {
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBufferReader>()?;
-    // `_LoadedElf` is deliberately unregistered: it is an internal backend
-    // owned by the Python `ElfLifter`. Its pyclass methods are bound on the
-    // type object regardless, so the `load_elf_from_*` pyfunctions (which
-    // `lib.rs` registers on the TOP-LEVEL module, reached as
-    // `_ext._load_elf_from_*`) still hand back a fully usable instance.
+    // `_LoadedElf` is deliberately unregistered: its methods are bound on the
+    // type object regardless, so `load_elf_from_*` still hands back a fully
+    // usable instance.
     m.add_class::<PyMemReader>()?;
     m.add_class::<PyReadOnlyMemory>()?;
     Ok(())

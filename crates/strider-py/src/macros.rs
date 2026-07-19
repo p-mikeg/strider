@@ -1,9 +1,7 @@
 //! `forall_preset!` stamps out one `#[classmethod]` per preset name for the
-//! `SleighArch` / `CallingConvention` wrappers, where the name would
-//! otherwise be repeated three times per method (Python name, Rust factory,
-//! stored `preset_name`).  Needs PyO3's `multiple-pymethods` feature so a
-//! `#[pyclass]` can carry more than one `#[pymethods]` block.  Every named
-//! preset has a registered row, so the inner factories are infallible.
+//! `SleighArch` / `CallingConvention` wrappers.  Needs PyO3's
+//! `multiple-pymethods` feature so a `#[pyclass]` can carry more than one
+//! `#[pymethods]` block.
 
 macro_rules! forall_preset {
     // CC wrapper: stores the inner preset in `CcImpl::Preset(...)`.
