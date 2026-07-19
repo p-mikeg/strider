@@ -339,7 +339,7 @@ impl graph_algorithms::walk::GraphRef for MemorySuccs<'_> {
 /// A `Memory`-typed value's use-list can include a non-chain consumer that
 /// merely reads the final token without itself touching memory (a `Return`'s
 /// or `Unreachable`'s memory input, an `IndirectBranch`'s memory slot, …);
-/// [`is_memory_chain_kind`] excludes those from both the output and any
+/// `is_memory_chain_kind` excludes those from both the output and any
 /// further traversal (they produce no `Memory` output of their own, so
 /// excluding them from the walk changes nothing structurally — only the
 /// reported node set).
