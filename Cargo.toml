@@ -62,5 +62,8 @@ todo             = "deny"
 redundant_closure = "warn"
 map_unwrap_or    = "warn"
 match_same_arms  = "warn"
-missing_errors_doc = "warn"
+# Deliberately off: a `# Errors` section that only restates the return type
+# ("returns an error when the operation fails") is noise. Where a caller can
+# actually act on the failure, say so in the doc body instead.
+missing_errors_doc = "allow"
 
