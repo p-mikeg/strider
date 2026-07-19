@@ -356,6 +356,35 @@ class _CfgVisualizer:
         return []  # (region-start addresses can be added later)
 
 
+#: Explorer servers currently serving, keyed by the port they bound.
+#: `visualize` blocks, so a caller that runs it on another thread has no
+#: handle on the server; this registry is how `shutdown` reaches it.
+_RUNNING: dict[int, socketserver.TCPServer] = {}
+
+
+def shutdown(port=None):
+    """Stop explorer server(s) started by `visualize`, unblocking the
+    thread parked in it. Returns the ports actually stopped.
+
+    `port=None` stops every running explorer. Safe to call when nothing is
+    running (returns `[]`), and safe to call from a different thread than
+    the one serving — that is the point of it.
+
+    Stopping matters beyond tidiness: `visualize` blocks inside a PyO3
+    frame, and a thread killed there during interpreter finalization takes
+    a pthread forced-unwind through PyO3's `catch_unwind`, which cannot
+    rethrow it — glibc then aborts the process. A server left running on a
+    daemon thread will eventually crash the interpreter on exit, so any
+    non-main-thread caller must shut it down.
+    """
+    targets = list(_RUNNING.items()) if port is None else [
+        (p, s) for p, s in _RUNNING.items() if p == port
+    ]
+    for _p, srv in targets:
+        srv.shutdown()  # returns once serve_forever has exited
+    return [p for p, _s in targets]
+
+
 def visualize(lifter, target, *, host="127.0.0.1", port=0, depth=5):
     """Start the explorer for `target` — a `Function` (from `analyze`) or a
     `Cfg` (from `build_cfg`/`analyze`), dispatching on `type(target).__name__`
@@ -450,9 +479,14 @@ def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
         allow_reuse_address = True
 
     srv = Server((host, port), Handler)
-    url = f"http://{host}:{srv.server_address[1]}/"
+    bound_port = srv.server_address[1]
+    url = f"http://{host}:{bound_port}/"
     print(f"strider explorer → {url}  (Ctrl-C to stop)")
+    _RUNNING[bound_port] = srv
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         srv.shutdown()
+    finally:
+        _RUNNING.pop(bound_port, None)
+        srv.server_close()

@@ -10,6 +10,11 @@ The public API is the domain submodules — `strider.ir`, `strider.lift`,
 from __future__ import annotations
 
 # Publish the domain submodules under their public dotted names.
+# `explore` is bound on the package as a side effect of `Lifter.visualize`
+# importing it. Declared here so it is part of the surface by intent rather
+# than by import order; `explore.shutdown(port)` is the supported way to
+# stop an explorer started on another thread.
+from . import explore as explore
 from . import cfg as cfg
 from . import ir as ir
 from . import lift as lift
