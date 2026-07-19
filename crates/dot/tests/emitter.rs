@@ -1,8 +1,7 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! Pins the exact DOT string `DotEmitter` produces for representative inputs:
-//! digraph-name quoting, push_str-vs-format! output, and the `extra` attr
-//! interface contract.
+//! Pins the exact DOT string `DotEmitter` produces: digraph-name quoting,
+//! id/label escaping, and the `extra` attribute contract.
 
 use dot::{DotEmitter, DotStyle};
 
@@ -75,7 +74,7 @@ fn edge_with_extra_emits_bracketed_attrs() {
     let mut e = DotEmitter::new("G", &style);
     e.edge("a", "b", &[("label", "Branch"), ("style", "dashed")]);
     let out = e.finish();
-    // `label` values are quoted+escaped (free text); other attrs stay bare.
+    // `label` is free text so it gets quoted; other attrs stay bare.
     assert!(
         out.contains("\"a\" -> \"b\" [label=\"Branch\", style=dashed];\n"),
         "unexpected DOT: {out}"
@@ -94,7 +93,6 @@ fn finish_appends_closing_brace_and_newline_exactly_once() {
 fn digraph_name_with_special_chars_is_quoted_and_escaped() {
     let style = DotStyle::empty();
     let out = DotEmitter::new("my graph \"X\"", &style).finish();
-    // The name lives inside double-quotes, internal quotes are backslash-escaped.
     assert!(
         out.starts_with("digraph \"my graph \\\"X\\\"\" {\n"),
         "expected quoted+escaped header, got: {out}",
@@ -105,8 +103,7 @@ fn digraph_name_with_special_chars_is_quoted_and_escaped() {
 fn digraph_name_with_backslash_is_doubled() {
     let style = DotStyle::empty();
     let out = DotEmitter::new("path\\sub", &style).finish();
-    // A bare backslash in the name doubles, since `escape_dot_label` only
-    // passes through `\n`/`\l`/`\r` and a bare `\s` is not one of those.
+    // `\s` is not one of the passed-through DOT escapes, so it doubles.
     assert!(
         out.starts_with("digraph \"path\\\\sub\" {\n"),
         "expected doubled backslash, got: {out}",
@@ -117,8 +114,6 @@ fn digraph_name_with_backslash_is_doubled() {
 fn node_id_with_special_chars_is_escaped() {
     let style = DotStyle::empty();
     let mut e = DotEmitter::new("G", &style);
-    // An id containing internal double-quote and backslash must escape both
-    // so the surrounding "..." in the DOT output stays well-formed.
     e.node("a\"b\\c", "lbl", "box", &[]);
     let out = e.finish();
     assert!(

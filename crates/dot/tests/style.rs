@@ -1,8 +1,7 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! Pins the contract of `DotStyle::{dark, dark_cfg, empty}`: empty has no
-//! attributes; dark has the documented dark-theme attributes; dark_cfg is
-//! identical to dark except for the fontname swap.
+//! Pins `DotStyle::{dark, dark_cfg, empty}`, in particular that `dark_cfg`
+//! differs from `dark` only in the fontname.
 
 use dot::DotStyle;
 

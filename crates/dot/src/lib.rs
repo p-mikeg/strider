@@ -1,74 +1,55 @@
-//! Graphviz `.dot` and interactive `.html` rendering for any graph type
-//! that implements [`GraphDotDumper`] (this crate is domain-agnostic).
-//!
-//! Implement [`GraphDotDumper`] for a graph type to obtain `.dot` and `.html`
-//! output via [`GraphDot`].
-//!
-//! # Rendering pipeline
+//! Graphviz `.dot` and interactive `.html` rendering for any graph type that
+//! implements [`GraphDotDumper`]. Domain-agnostic.
 //!
 //! ```text
 //! GraphDotDumper::dump_as_dot() ──► DotEmitter ──► .dot string ──► as_html_from_dot
 //! ```
 //!
-//! [`GraphDot::as_html_from_dot`] embeds the raw DOT source in an HTML page
-//! that renders it client-side via Graphviz WASM ([`@viz-js/viz`]).  No local
-//! `dot` install is required.  This is what [`GraphDot::dump_as_html`] uses.
-//!
-//! [`DotStyle`] provides pre-built dark and empty visual themes.
-//! [`DotEmitter`] is a low-level string builder for Graphviz DOT syntax.
+//! The HTML embeds the DOT source and renders it client-side via Graphviz
+//! WASM ([`@viz-js/viz`]), so no local `dot` install is needed.
 //!
 //! [`@viz-js/viz`]: https://github.com/mdaines/viz-js
 
 use std::fmt::{Debug, Write};
 use std::path::Path;
 
-/// Crate-level `Result` alias.  Every fallible function in `dot` returns
-/// this type.
 pub type Result<T> = anyhow::Result<T>;
 
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
 
-/// Vendored `@viz-js/viz` v3.5.0 standalone build (Graphviz 11.x compiled
-/// to Wasm, with the Wasm itself base64-embedded in the JS).  Inlined at
-/// build time into [`HTML_DOT_TEMPLATE`] so the generated HTML is fully
-/// self-contained — no CDN fetch, no `.wasm` side-load.
+/// `@viz-js/viz` v3.5.0 standalone build: Graphviz 11.x as Wasm, the Wasm
+/// itself base64-embedded in the JS. Inlined into the template so the
+/// generated HTML is self-contained: no CDN fetch, no `.wasm` side-load.
 const VIZ_STANDALONE_JS: &str = include_str!("../assets/vendored/viz-standalone.js");
 
-/// The vendored `@viz-js/viz` standalone JS (Graphviz-in-Wasm). Exposed so a
-/// host (e.g. the interactive explorer's local server) can serve it directly,
-/// keeping the whole tool offline — no CDN fetch.
+/// Exposed so a host (e.g. the explorer's local server) can serve the payload
+/// directly and stay offline.
 pub fn viz_standalone_js() -> &'static str {
     VIZ_STANDALONE_JS
 }
 
-/// Vendored `svg-pan-zoom` v3.6.1 minified build.  Same rationale as
+/// `svg-pan-zoom` v3.6.1 minified. Inlined for the same reason as
 /// [`VIZ_STANDALONE_JS`].
 const SVG_PAN_ZOOM_JS: &str = include_str!("../assets/vendored/svg-pan-zoom.min.js");
 
 /// A graph type that can be serialised to Graphviz DOT format node by node.
 pub trait GraphDotDumper {
     type Node;
-    // Bound is `Debug + Display + Send + Sync + 'static`, NOT
-    // `std::error::Error + Send + Sync + 'static`, so impls can pick
-    // `type Error = anyhow::Error` (anyhow's `Error` does not
-    // implement `std::error::Error`, by design).  `render_dot_string` wraps
-    // any returned error via `anyhow::anyhow!("dot dump error: {e}")`,
-    // which only needs `Display`.
+    // Bound is Display, not `std::error::Error`, so impls can pick
+    // `type Error = anyhow::Error`. anyhow's `Error` deliberately does not
+    // implement `std::error::Error`.
     type Error: Debug + std::fmt::Display + Send + Sync + 'static;
     type State;
 
     /// Creates the mutable state threaded through all [`Self::dump_as_dot`] calls.
     fn create_initial_state(&self) -> Self::State;
 
-    /// Returns all nodes that should appear in the DOT output.
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node>;
 
     /// Emits DOT statements (nodes + edges) for a single graph node.
     ///
     /// # Errors
-    /// Returns the dumper's own error type (`Self::Error`) if the dumper
-    /// cannot produce DOT for `node` — for example, if a referenced subnode
-    /// is missing or the dumper's data source returns an I/O error.
+    /// Whatever the dumper's own data source raises.
     fn dump_as_dot(
         &self,
         node: Self::Node,
@@ -86,8 +67,8 @@ pub struct DotStyle {
 }
 
 impl DotStyle {
-    /// Builds the dark theme with a caller-chosen node `fontname`, the single
-    /// attribute that differs between [`Self::dark`] and [`Self::dark_cfg`].
+    /// `fontname` is the only attribute that differs between [`Self::dark`]
+    /// and [`Self::dark_cfg`].
     fn dark_with_font(fontname: &'static str) -> Self {
         Self {
             graph: vec![
@@ -112,21 +93,17 @@ impl DotStyle {
         }
     }
 
-    /// Returns a dark-background theme suitable for modern editors / terminals.
     pub fn dark() -> Self {
         Self::dark_with_font("monospace")
     }
 
-    /// Like [`Self::dark`] but with CFG-appropriate node typography: uses
-    /// `Courier`, whose character-width metrics are bundled into the
-    /// Graphviz/viz.js layout engine, instead of the generic `monospace`.
-    /// Without this swap, multiline labels overflow their node boxes in
-    /// WASM-rendered HTML.
+    /// `Courier` instead of `monospace`: only Courier's character-width
+    /// metrics are bundled into the Graphviz/viz.js layout engine, and
+    /// without them multiline labels overflow their boxes in the WASM render.
     pub fn dark_cfg() -> Self {
         Self::dark_with_font("Courier")
     }
 
-    /// Returns an empty theme (no default attributes).
     pub fn empty() -> Self {
         Self {
             graph: vec![],
@@ -136,17 +113,12 @@ impl DotStyle {
     }
 }
 
-// ── DOT string helpers ────────────────────────────────────────────────────────
-
 /// Escapes a string for use as a DOT double-quoted label.
 ///
-/// - `"` → `\"`
-/// - `\` (followed by recognised DOT label escape `n`/`l`/`r`) is
-///   passed through verbatim so callers can hand-emit DOT line breaks
-///   (`\n` centre-justified, `\l` left-justified, `\r` right-justified).
-/// - `\` (followed by anything else) → `\\`
-/// - literal newline → `\n` (the DOT centre-justify line-break escape).
-/// - any other character (including literal `\r`) is passed through unchanged.
+/// The two-char sequences `\n` / `\l` / `\r` pass through verbatim: they are
+/// DOT's own line-break escapes (centre / left / right justified) and callers
+/// hand-emit them. Any other backslash doubles. A literal newline becomes
+/// `\n`; a literal carriage return is left alone.
 fn escape_dot_label(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -154,7 +126,6 @@ fn escape_dot_label(s: &str) -> String {
         match ch {
             '"' => out.push_str("\\\""),
             '\\' => match chars.peek() {
-                // Pass through recognised DOT label escapes: \n \l \r.
                 Some(&c @ ('n' | 'l' | 'r')) => {
                     chars.next();
                     out.push('\\');
@@ -169,13 +140,11 @@ fn escape_dot_label(s: &str) -> String {
     out
 }
 
-/// Wraps `s` in a JSON string literal with full escaping.
+/// Wraps `s` in a JSON string literal.
 ///
-/// Tailored for embedding the DOT source inside an HTML
-/// `<script type="application/json">` element: in addition to the JSON
-/// escapes (`"`, `\`, `\n`, `\r`, `\t`, low control chars as `\uXXXX`),
-/// `<` is unconditionally emitted as `<` so a label containing
-/// `</script>` cannot break out of the surrounding script tag.
+/// Beyond the usual JSON escapes, `<` is unconditionally escaped so a label
+/// containing `</script>` cannot break out of the
+/// `<script type="application/json">` element the DOT source is embedded in.
 fn json_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -186,16 +155,10 @@ fn json_quote(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            // Escape `<` to `<` so a label containing "</script>" can't
-            // terminate the surrounding <script type="application/json"> tag
-            // in `as_html_from_dot`'s output.
             '<' => out.push_str("\\u003c"),
             c if (c as u32) < 0x20 => {
-                // writing to a `String` via `Write` is infallible
-                // (`String::write_str` returns `Ok(())` unconditionally),
-                // but clippy::expect_used flags the literal `.expect`.
-                // `let _ =` documents that the `fmt::Result` is
-                // intentionally discarded.
+                // Writing to a `String` is infallible, but clippy::expect_used
+                // forbids the literal `.expect`, hence `let _ =`.
                 let _ = write!(out, "\\u{:04x}", c as u32);
             }
             c => out.push(c),
@@ -205,22 +168,17 @@ fn json_quote(s: &str) -> String {
     out
 }
 
-// ── DotEmitter ────────────────────────────────────────────────────────────────
-
 /// Low-level builder that accumulates a Graphviz `digraph { … }` string.
 pub struct DotEmitter {
     out: String,
 }
 
 impl DotEmitter {
-    /// Creates a new emitter for a digraph named `name` with the given style.
     pub fn new(name: &str, style: &DotStyle) -> Self {
         let mut s = String::new();
-        // Always wrap the digraph name in double-quotes (with `"` and `\`
-        // escaped via the same rules as a label) so any caller-supplied
-        // name — including one with whitespace or punctuation — produces
-        // valid DOT. Graphviz parses quoted and bare identifiers
-        // identically when the bare form is legal.
+        // Always quote the digraph name so a caller-supplied name with
+        // whitespace or punctuation still produces valid DOT. Graphviz parses
+        // quoted and bare identifiers identically where both are legal.
         s.push_str("digraph \"");
         s.push_str(&escape_dot_label(name));
         s.push_str("\" {\n");
@@ -232,14 +190,9 @@ impl DotEmitter {
         Self { out: s }
     }
 
-    /// Emits a node statement. Both `id` and `label` are escaped via
-    /// `escape_dot_label` before being wrapped in DOT double-quotes, so any
-    /// caller-supplied id with `"` / `\` / newline produces valid DOT.
-    ///
-    /// `extra` attributes are inserted verbatim as `key=value` pairs — the
-    /// caller is responsible for any quoting or escaping of the value
-    /// (e.g. `("fillcolor", "\"#3a2a10\"")` for a hex colour, or
-    /// `("style", "dashed")` for a bare identifier).
+    /// `id` and `label` are escaped and quoted. `extra` attributes are
+    /// inserted verbatim; the caller owns quoting the value (a hex colour
+    /// needs its own `"..."`, a bare ident like `dashed` does not).
     pub fn node(&mut self, id: &str, label: &str, shape: &str, extra: &[(&str, &str)]) {
         let id = escape_dot_label(id);
         let label = escape_dot_label(label);
@@ -258,12 +211,8 @@ impl DotEmitter {
         self.out.push_str("];\n");
     }
 
-    /// Emits a directed edge statement. Both endpoints (`from`, `to`) are
-    /// escaped via `escape_dot_label` for the same reason as
-    /// [`DotEmitter::node`].
-    ///
-    /// `extra` attributes follow the same caller-quotes-the-value contract
-    /// as [`DotEmitter::node`] — they are inserted verbatim as `key=value`.
+    /// Endpoints are escaped; `extra` follows the same caller-quotes-the-value
+    /// contract as [`DotEmitter::node`].
     pub fn edge(&mut self, from: &str, to: &str, extra: &[(&str, &str)]) {
         let from = escape_dot_label(from);
         let to = escape_dot_label(to);
@@ -287,24 +236,19 @@ impl DotEmitter {
         self.out.push_str(";\n");
     }
 
-    /// Finalises the digraph and returns the complete DOT string.
     pub fn finish(mut self) -> String {
         self.out.push_str("}\n");
         self.out
     }
 }
 
-/// Appends a single `key=value` DOT attribute to `out`.  Shared by every
-/// attribute emitter so the `key=value` shape lives in one place; callers
-/// supply their own framing (leading comma, separator, bracket block).
+/// Appends one `key=value` attribute; callers supply their own framing
+/// (leading comma, separator, bracket block).
 ///
-/// A `label` value is free text (edge and node-`extra` labels flow through
-/// here), so it is quoted and escaped exactly like [`DotEmitter::node`]'s
-/// dedicated label — otherwise a value with a DOT-special character (a hyphen
-/// as in `if-true`/`if-false`, a colon, a space, a quote) is invalid unquoted
-/// and Graphviz aborts with "syntax error near '-'".  Every other attribute
-/// keeps the caller-owns-quoting contract (the style blocks pass pre-quoted
-/// colors like `"#1e1e1e"` alongside bare idents like `TB` / `dashed`).
+/// `label` is the one exception to the caller-owns-quoting contract: its value
+/// is free text, and a DOT-special character in it (a hyphen, colon, space)
+/// makes Graphviz abort with "syntax error near '-'". So labels are quoted and
+/// escaped here; everything else is passed through as given.
 fn push_attr(out: &mut String, k: &str, v: &str) {
     out.push_str(k);
     out.push('=');
@@ -333,24 +277,19 @@ fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
     out.push_str("  ];\n\n");
 }
 
-/// Node-statement count above which the HTML viewer defaults to `sfdp`
-/// instead of `dot`: `dot`'s layered layout is superlinear and stalls the
-/// browser on large graphs, while `sfdp` (force-directed) handles them.
-/// The viewer's engine picker still lets the user switch.
+/// Node count above which the viewer defaults to `sfdp`: `dot`'s layered
+/// layout is superlinear and stalls the browser on large graphs. The viewer's
+/// engine picker still lets the user switch back.
 pub const DEFAULT_SFDP_NODE_THRESHOLD: usize = 2000;
 
-/// Approximate node-statement count of a DOT source (counts `[label=`
-/// occurrences — an over-count that also catches edge-label attribute
-/// blocks, but it only drives the default engine choice, so a small
-/// over-count harmlessly biases large graphs toward `sfdp`).
+/// Approximate: counting `[label=` also catches edge-label attribute blocks.
+/// It only picks the default engine, so over-counting harmlessly biases large
+/// graphs toward `sfdp`.
 pub(crate) fn dot_node_count(dot: &str) -> usize {
     dot.matches("[label=").count()
 }
 
-// ── GraphDot ──────────────────────────────────────────────────────────────────
-
-/// Wraps a [`GraphDotDumper`] and produces DOT / HTML output (the HTML
-/// renders to SVG client-side via viz.js).
+/// Wraps a [`GraphDotDumper`] and produces DOT / HTML output.
 pub struct GraphDot<G: GraphDotDumper> {
     dumper: G,
     style: DotStyle,
@@ -358,8 +297,6 @@ pub struct GraphDot<G: GraphDotDumper> {
 }
 
 impl<G: GraphDotDumper> GraphDot<G> {
-    /// Creates a new `GraphDot` with the given dumper and visual style.
-    ///
     /// The emitted digraph is named `"G"`.
     pub fn new(dumper: G, style: DotStyle) -> Self {
         Self {
@@ -369,26 +306,20 @@ impl<G: GraphDotDumper> GraphDot<G> {
         }
     }
 
-    /// Returns the raw DOT source string.
-    ///
     /// # Errors
-    /// Forwards any `Self::Error` returned by the underlying
-    /// [`GraphDotDumper::dump_as_dot`] for any node.
+    /// Forwards any error from [`GraphDotDumper::dump_as_dot`].
     pub fn as_dot(&self) -> anyhow::Result<String> {
         self.as_dot_with_state().map(|(dot, _)| dot)
     }
 
-    /// The DOT source plus the dumper state that produced it.
-    ///
-    /// The state is what a dumper accumulates *while* rendering — notably, for
-    /// dumpers whose DOT ids are not the node ids themselves, the mapping back
-    /// from an emitted id to the graph node it stands for. [`as_dot`](Self::as_dot)
-    /// drops it; take this instead when you need to resolve ids the render
-    /// chose (an explorer turning a clicked box back into a node).
+    /// The DOT source plus the state the dumper accumulated while rendering.
+    /// For dumpers whose DOT ids are not the node ids, that state is the
+    /// mapping back from an emitted id to the node it stands for. Use this over
+    /// [`as_dot`](Self::as_dot) when ids the render chose must be resolvable
+    /// (an explorer turning a clicked box back into a node).
     ///
     /// # Errors
-    /// Forwards any `Self::Error` returned by the underlying
-    /// [`GraphDotDumper::dump_as_dot`] for any node.
+    /// Forwards any error from [`GraphDotDumper::dump_as_dot`].
     pub fn as_dot_with_state(&self) -> anyhow::Result<(String, G::State)> {
         let mut dot = DotEmitter::new(&self.name, &self.style);
         let mut state = self.dumper.create_initial_state();
@@ -401,25 +332,15 @@ impl<G: GraphDotDumper> GraphDot<G> {
         Ok((dot.finish(), state))
     }
 
-    /// Produces an interactive HTML page that renders the DOT source
-    /// client-side via Graphviz WASM.  No local `dot` install required.
-    ///
-    /// The DOT source is embedded as a JSON string inside a
-    /// `<script type="application/json">` element, so it is safe regardless of
-    /// what characters appear in node labels.
-    ///
-    /// The vendored `@viz-js/viz` and `svg-pan-zoom` JS payloads are
-    /// inlined directly into the output, so the resulting HTML works
-    /// fully offline — no CDN fetch, no `.wasm` side-load.
+    /// An interactive HTML page rendering the DOT client-side via Graphviz
+    /// WASM. The vendored JS payloads are inlined, so the page works offline.
     ///
     /// # Errors
     /// Same as [`Self::as_dot`].
     pub fn as_html_from_dot(&self) -> anyhow::Result<String> {
         let dot_src = self.as_dot()?;
-        // `dot`'s layered layout does not scale to large sea-of-nodes graphs
-        // (a ~1800-node IR is ~1400 ranks deep, and mincross explodes on the
-        // resulting virtual nodes — it hangs the browser). Default such graphs
-        // to `sfdp`; the viewer's picker still exposes `dot` for small ones.
+        // A ~1800-node IR is ~1400 ranks deep, and `dot`'s mincross explodes
+        // on the resulting virtual nodes, hanging the browser.
         let engine = if dot_node_count(&dot_src) > DEFAULT_SFDP_NODE_THRESHOLD {
             "sfdp"
         } else {
@@ -432,20 +353,13 @@ impl<G: GraphDotDumper> GraphDot<G> {
             .replace("__DOT_JSON__", &json_quote(&dot_src)))
     }
 
-    /// Writes an interactive HTML viewer for this graph to `out_path`.
-    ///
-    /// Uses client-side Graphviz WASM rendering — no local `dot` binary needed.
-    ///
     /// # Errors
-    /// - Propagated from the dumper.
-    /// - Returns an error if writing `out_path` fails.
+    /// From the dumper, or if writing `out_path` fails.
     pub fn dump_as_html(&self, out_path: impl AsRef<Path>) -> anyhow::Result<()> {
         std::fs::write(out_path, self.as_html_from_dot()?)?;
         Ok(())
     }
 
-    /// Writes the raw DOT source to `out_path`.
-    ///
     /// # Errors
     /// Same as [`Self::dump_as_html`].
     pub fn dump_as_dot(&self, out_path: impl AsRef<Path>) -> anyhow::Result<()> {
@@ -464,8 +378,6 @@ impl<G: GraphDotDumper> GraphDot<G> {
 mod label_tests {
     use super::{escape_dot_label, json_quote};
 
-    // ── escape_dot_label ────────────────────────────────────────────────────
-
     #[test]
     fn escape_dot_label_passes_through_plain_ascii() {
         assert_eq!(escape_dot_label("hello world"), "hello world");
@@ -483,15 +395,11 @@ mod label_tests {
 
     #[test]
     fn escape_dot_label_literal_newline_becomes_backslash_n() {
-        // A real \n char in the input is rendered as the DOT centre-justify escape.
         assert_eq!(escape_dot_label("a\nb"), "a\\nb");
     }
 
     #[test]
     fn escape_dot_label_recognised_dot_escapes_pass_through() {
-        // The two-char sequences \n, \l, \r in the input are DOT escape codes
-        // (centre / left / right justified line break) and must survive
-        // unchanged so callers can hand-emit DOT line breaks.
         assert_eq!(escape_dot_label("a\\nb"), "a\\nb");
         assert_eq!(escape_dot_label("a\\lb"), "a\\lb");
         assert_eq!(escape_dot_label("a\\rb"), "a\\rb");
@@ -505,22 +413,17 @@ mod label_tests {
 
     #[test]
     fn escape_dot_label_carriage_return_passes_through_as_is() {
-        // Locks the implementation: a literal '\r' character is passed
-        // through to the output unchanged (the doc above the function
-        // matches this — '\r' is not stripped despite an earlier doc claim).
+        // A *literal* '\r' is not stripped, unlike the two-char `\r` escape.
         assert_eq!(escape_dot_label("a\rb"), "a\rb");
     }
 
     #[test]
     fn escape_dot_label_combined_inputs_round_trip() {
-        // A realistic node label from the IR/CFG dumper: contains both a
-        // recognised DOT escape (\l) and a literal newline.
+        // A real IR/CFG label: both a DOT escape (\l) and a literal newline.
         let input = "Instruction(addr=0x401000)\n\\l0x401000: ADD";
         let want = "Instruction(addr=0x401000)\\n\\l0x401000: ADD";
         assert_eq!(escape_dot_label(input), want);
     }
-
-    // ── json_quote ──────────────────────────────────────────────────────────
 
     #[test]
     fn json_quote_wraps_empty_input_in_double_quotes() {
@@ -543,8 +446,6 @@ mod label_tests {
 
     #[test]
     fn json_quote_escapes_low_control_chars_as_unicode() {
-        // \u{0001} is < 0x20 and not one of the recognised short escapes,
-        // so the implementation falls through to \uXXXX form.
         assert_eq!(json_quote("\u{0001}"), "\"\\u0001\"");
         assert_eq!(json_quote("\u{001f}"), "\"\\u001f\"");
         // 0x20 (space) is the boundary: it must NOT be unicode-escaped.
@@ -553,35 +454,30 @@ mod label_tests {
 
     #[test]
     fn json_quote_passes_through_high_unicode_unchanged() {
-        // Non-ASCII chars >= 0x20 are emitted verbatim (no surrogate
-        // expansion). Any compliant JSON parser accepts UTF-8 directly.
+        // No surrogate expansion; any compliant JSON parser takes UTF-8.
         assert_eq!(json_quote("café"), "\"café\"");
         assert_eq!(json_quote("→"), "\"→\"");
     }
 
     #[test]
     fn json_quote_escapes_left_angle_to_avoid_script_break_out() {
-        // The JSON payload is embedded inside `<script type="application/json">`
-        // in the HTML template. If a DOT label contained `</script>`, the HTML
-        // parser would terminate the script tag and the rest of the JSON would
-        // leak into the document body. Escape `<` to `<` to forbid that.
+        // A `</script>` in a label would otherwise terminate the surrounding
+        // script tag and spill the rest of the JSON into the document body.
         assert_eq!(json_quote("</script>"), "\"\\u003c/script>\"");
     }
 
     #[test]
     fn json_quote_escapes_bare_left_angle_too() {
-        // The escape is unconditional on `<` (not just `</`) — tagging only `</`
-        // would force whitespace / case-tolerance reasoning into the encoder.
+        // Unconditional on `<`, not just `</`. Matching only `</` would drag
+        // whitespace and case tolerance into the encoder.
         assert_eq!(json_quote("a<b"), "\"a\\u003cb\"");
     }
 }
 
 #[cfg(test)]
 mod template_tests {
-    /// Guards that the viewer template keeps the controls the JS wires up:
-    /// the edge-label / node-name fields and the NodeKind picker. A typo in
-    /// an element id or a deleted control would silently break the feature in
-    /// the browser; this fails the build instead.
+    /// A typo in an element id, or a deleted control, would silently break the
+    /// viewer in the browser. Fail the build instead.
     #[test]
     fn template_contains_new_viewer_controls() {
         let t = super::HTML_DOT_TEMPLATE;
@@ -602,10 +498,8 @@ mod template_tests {
 mod attr_quoting_tests {
     use super::{DotEmitter, DotStyle};
 
-    /// An edge `label` containing DOT-special characters (a hyphen, as in the
-    /// CFG's `if-true` / `if-false` branch labels) must be emitted quoted, or
-    /// Graphviz fails with "syntax error near '-'". Regression test for a
-    /// corrupted CFG HTML dump.
+    /// A hyphen in an edge label (the CFG's `if-true` / `if-false`) makes
+    /// Graphviz fail with "syntax error near '-'" unless the label is quoted.
     #[test]
     fn edge_label_with_hyphen_is_quoted() {
         let mut e = DotEmitter::new("G", &DotStyle::dark_cfg());
@@ -619,14 +513,13 @@ mod attr_quoting_tests {
             !dot.contains("label=if-false"),
             "raw unquoted label present:\n{dot}"
         );
-        // Non-label attrs keep the caller-owns-quoting contract (bare ident).
+        // Non-label attrs keep the caller-owns-quoting contract.
         assert!(
             dot.contains("style=dashed"),
             "style should stay bare:\n{dot}"
         );
     }
 
-    /// A node `extra` label is quoted+escaped the same way.
     #[test]
     fn node_extra_label_is_quoted() {
         let mut e = DotEmitter::new("G", &DotStyle::dark_cfg());

@@ -1,25 +1,13 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! End-to-end checks for the HTML emit path (`GraphDot::as_html_from_dot`):
+//! End-to-end checks for `GraphDot::as_html_from_dot`.
 //!
-//! - All placeholder tokens in `graph_template_dot.html`
-//!   (`__DEFAULT_ENGINE__`, `__VIZ_STANDALONE_JS__`, `__SVG_PAN_ZOOM_JS__`,
-//!   `__DOT_JSON__`) are replaced — none leak through.
-//! - The auto engine choice resolves to one of the two engines the policy
-//!   produces (`dot` or `sfdp`) and is visibly present in the output.
-//! - The output is recognisably HTML (starts with the `<!doctype html>`
-//!   declaration the template embeds).
-//!
-//! Tightens the contract that `as_html_from_dot` is the single place
-//! responsible for substituting every placeholder; if a future template
-//! revision adds a placeholder without wiring up its replacement, these
-//! tests catch the leak.
+//! `as_html_from_dot` is the single place responsible for substituting every
+//! placeholder in `graph_template_dot.html`; a template revision that adds one
+//! without wiring up its replacement shows up here as a leaked token.
 
 use dot::{DotEmitter, DotStyle, GraphDot, GraphDotDumper};
 
-/// Minimal dumper that emits a configurable number of nodes — enough to
-/// drive `as_html_from_dot` and to cross the auto-sfdp threshold when
-/// the test wants to exercise the large-graph branch.
 struct TestDumper {
     n: usize,
 }
@@ -54,8 +42,6 @@ fn render_html(n: usize) -> String {
     gd.as_html_from_dot().expect("html emit succeeded")
 }
 
-/// A dumper whose `dump_as_dot` always fails — used to pin the error path of
-/// `as_dot` / `as_html_from_dot` / `dump_as_html`.
 struct FailingDumper;
 
 impl GraphDotDumper for FailingDumper {
@@ -81,9 +67,8 @@ impl GraphDotDumper for FailingDumper {
 
 #[test]
 fn dumper_error_propagates_wrapped() {
-    // `render_dot_string` wraps a dumper error as `anyhow!("dot dump error: {e}")`
-    // and propagates it through `as_dot` / `as_html_from_dot`.  Pin both the
-    // failure and the wrapping prefix so the error path stays observable.
+    // Pin the "dot dump error" prefix as well as the failure itself, so the
+    // wrapping stays observable to callers matching on it.
     let gd = GraphDot::new(FailingDumper, DotStyle::dark());
 
     let dot_err = gd
@@ -107,9 +92,7 @@ fn dumper_error_propagates_wrapped() {
 #[test]
 fn html_emit_substitutes_every_placeholder() {
     let html = render_html(3);
-    // All four template placeholders must be substituted — if one slips
-    // through, the resulting page is broken (Viz can't load, no JS, no
-    // DOT source).
+    // One leaked token means a broken page: no Viz, no JS, or no DOT source.
     assert!(
         !html.contains("__DEFAULT_ENGINE__"),
         "__DEFAULT_ENGINE__ leaked into the emitted HTML"
@@ -130,9 +113,8 @@ fn html_emit_substitutes_every_placeholder() {
 
 #[test]
 fn html_emit_resolves_engine_to_dot_or_sfdp() {
-    // The default policy (`HtmlEngineChoice::Auto`) only ever picks one of
-    // these two literals.  Verify the substitution lands in the
-    // `pickDefaultEngine` IIFE — that's where the viewer reads it.
+    // The needles sit inside the `pickDefaultEngine` IIFE, which is where the
+    // viewer actually reads the engine from.
     let html = render_html(3);
     let needle_dot = "const e=\"dot\"";
     let needle_sfdp = "const e=\"sfdp\"";
@@ -147,7 +129,6 @@ fn html_emit_resolves_engine_to_dot_or_sfdp() {
 
 #[test]
 fn html_emit_picks_dot_for_small_graph() {
-    // A 3-node graph is far below the sfdp threshold, so it defaults to `dot`.
     let html = render_html(3);
     assert!(
         html.contains("const e=\"dot\""),
@@ -157,9 +138,8 @@ fn html_emit_picks_dot_for_small_graph() {
 
 #[test]
 fn html_emit_starts_with_doctype() {
-    // Cheap sanity check that the template wasn't accidentally truncated
-    // or mangled — the very first non-replaceable byte sequence is
-    // `<!doctype html>` (lowercase, per the template file).
+    // Cheap check that the template was not truncated or mangled. Lowercase,
+    // matching the template file.
     let html = render_html(3);
     assert!(
         html.starts_with("<!doctype html>"),
@@ -170,10 +150,8 @@ fn html_emit_starts_with_doctype() {
 
 #[test]
 fn html_emit_inlines_vendored_payloads() {
-    // The viz-js and svg-pan-zoom payloads must be inlined verbatim —
-    // they're megabytes of base64-encoded Wasm/JS, so the emitted HTML
-    // is necessarily large.  A trivial 3-node graph still produces a
-    // hundreds-of-KB document because of these payloads.
+    // The vendored payloads are megabytes of base64 Wasm/JS, so even a 3-node
+    // graph must emit a hundreds-of-KB document. Size stands in for presence.
     let html = render_html(3);
     assert!(
         html.len() > 100_000,
