@@ -1,20 +1,15 @@
 //! petgraph trait impls over the bipartite [`Vertex`] view.
 //!
-//! The graph is bipartite — nodes produce values, values are consumed by
-//! nodes — so a single petgraph "node" is a [`Vertex`] (either a `Node` or a
-//! `Value`). The directed edge relation is:
+//! One petgraph "node" is a [`Vertex`], and the directed edge relation is:
 //!
-//! - `Node(n)`  → `Value(v)` for each output `v` of `n`.
-//! - `Value(v)` → `Node(c)` for each consumer `c` of `v` (via the use-list).
+//! - `Node(n)`  -> `Value(v)` for each output `v` of `n`.
+//! - `Value(v)` -> `Node(c)` for each consumer `c` of `v` (via the use-list).
 //!
-//! With that relation, a producer node always precedes its consumer nodes in a
-//! topological order, so `petgraph::algo::toposort` and
-//! `petgraph::visit::DfsPostOrder` (plus `Reversed`) operate directly on the
-//! graph.
+//! Under that relation a producer node always precedes its consumers in a
+//! topological order, so `toposort` and `DfsPostOrder` (plus `Reversed`) work
+//! directly on the graph.
 //!
-//! The impls live on `&Graph` (a shared reference is `Copy`, satisfying
-//! petgraph's `GraphRef: Copy` requirement). Visited tracking uses an
-//! [`FxHashSet`] of vertices.
+//! The impls live on `&Graph` because petgraph requires `GraphRef: Copy`.
 
 use petgraph::Direction;
 use petgraph::visit::{
@@ -32,7 +27,6 @@ impl<N, V, C: NodeCacheable<N, V>> GraphBase for Graph<N, V, C> {
 }
 
 impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
-    /// Outgoing neighbours of `v` in the bipartite forward relation.
     fn out_neighbors(&self, v: Vertex) -> std::vec::IntoIter<Vertex> {
         let out: Vec<Vertex> = match v {
             Vertex::Node(n) => self
@@ -52,12 +46,10 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         out.into_iter()
     }
 
-    /// Incoming neighbours of `v` (the reverse of [`Self::out_neighbors`]).
+    /// The reverse of [`Self::out_neighbors`].
     fn in_neighbors(&self, v: Vertex) -> std::vec::IntoIter<Vertex> {
         let inc: Vec<Vertex> = match v {
-            // A value's sole producer.
             Vertex::Value(val) => vec![Vertex::Node(self.producer(val))],
-            // A node's inputs are the values it consumes.
             Vertex::Node(n) => {
                 let mut seen: FxHashSet<crate::ids::ValueId> = FxHashSet::default();
                 self.node_inputs(n)
