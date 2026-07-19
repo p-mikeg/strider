@@ -27,4 +27,3 @@ __pycache__/
 # Deep-review workflow report output (.claude/workflows/deep-review.mjs).
 /.reviews/
 
-/uv.lock
