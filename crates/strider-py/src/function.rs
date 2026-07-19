@@ -154,7 +154,8 @@ impl PyFunction {
     /// `None`, else writes it to `path` and returns `None`.
     #[pyo3(signature = (path=None))]
     fn to_dot(&self, path: Option<&str>) -> PyResult<Option<String>> {
-        let s = self.with_read_value(strider_ir::Function::raw_dot)?
+        let s = self
+            .with_read_value(strider_ir::Function::raw_dot)?
             .map_err(crate::errors::into_strider_err)?;
         match path {
             Some(p) => {
@@ -169,7 +170,8 @@ impl PyFunction {
     /// (embedded viz.js; no external `dot` binary needed).
     #[pyo3(signature = (path=None))]
     fn to_html(&self, path: Option<&str>) -> PyResult<Option<String>> {
-        let s = self.with_read_value(strider_ir::Function::raw_html)?
+        let s = self
+            .with_read_value(strider_ir::Function::raw_html)?
             .map_err(crate::errors::into_strider_err)?;
         match path {
             Some(p) => {

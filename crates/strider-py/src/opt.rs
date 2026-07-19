@@ -294,7 +294,11 @@ impl PyOptimizerPipeline {
     #[getter]
     fn post_passes(&self) -> PyResult<Vec<String>> {
         let state = self.lock_state()?;
-        Ok(state.post_passes.iter().map(|p| p.name().to_string()).collect())
+        Ok(state
+            .post_passes
+            .iter()
+            .map(|p| p.name().to_string())
+            .collect())
     }
 }
 
