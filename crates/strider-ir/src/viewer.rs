@@ -598,6 +598,13 @@ pub trait IRWalker: IRViewer {
         crate::walk::walk_graph(f.graph(), f.entry())
     }
 
+    /// Like [`Self::walk`] but seeded from `seed` instead of the function's
+    /// entry — a pre-order over every node reachable from `seed`
+    /// (control-out forward + data-in backward).
+    fn walk_from(&self, seed: NodeId) -> crate::walk::GraphWalk<'_> {
+        crate::walk::walk_graph(self.function().graph(), seed)
+    }
+
     /// [`Self::walk`] restricted to nodes whose [`NodeKind`] satisfies `pred`.
     fn walk_kind<'a>(
         &'a self,
@@ -634,5 +641,62 @@ fn ensure_value_type(value_id: ValueId, ok: bool, noun: &str) -> crate::Result<(
         Ok(())
     } else {
         Err(anyhow!("output {value_id:?} is not {noun}"))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    //! `IRWalker::walk_from` tests build their own fixture rather than using
+    //! `strider_ir_test_utils`' type-returning builders (`RegisterSet`,
+    //! `make_empty_fn`): under `cargo test` the dev-dep links a *separate*
+    //! compilation of strider-ir, so a helper returning `strider_ir::Function`
+    //! would mismatch this unit-test crate's own `Function` (see
+    //! `function::edit::test_fixtures` for the same pattern).
+
+    use crate::builder::IRBuilderExt;
+    use crate::node::ValueType;
+    use crate::{FunctionBuilder, IRViewer, IRWalker, IntBinaryOp};
+    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+
+    /// A trivial-convention, single-region function: `Entry -> Region ->
+    /// Return(Add(1, 2))` — a small data cone (the `Add` plus its two
+    /// `IntConst` operands) hanging off the control spine, so there's a
+    /// non-entry node with a known reachable set to seed `walk_from` with.
+    #[test]
+    fn walk_from_seed_visits_only_the_seed_cone() {
+        let cc = strider_target::BuiltCallingConvention::default();
+        let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
+            .expect("FunctionBuilder::new");
+        let region = b.create_region_all().expect("create_region");
+        b.set_entry_region_all(region).expect("set_entry_region");
+        b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let one = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let two = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let add = b
+            .build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let add_node = b.producer(add);
+        b.build_return(Some(add), &[]).unwrap();
+        b.set_lift_addr(None);
+        let f = b.build().unwrap();
+
+        let entry = f.entry();
+        let all: Vec<_> = f.walk().collect();
+        let mid = *all.iter().find(|&&n| n != entry).unwrap();
+        let from_mid: std::collections::HashSet<_> = f.walk_from(mid).collect();
+        assert!(from_mid.contains(&mid));
+        let all_set: std::collections::HashSet<_> = all.into_iter().collect();
+        assert!(from_mid.is_subset(&all_set));
+
+        // Seeding at the `Add` node specifically reaches exactly its data
+        // cone ({add, one, two}) — neither the Return consumer nor the
+        // entry/region spine — confirming `walk_from` is genuinely seeded,
+        // not just `walk()` in disguise.
+        let from_add: std::collections::HashSet<_> = f.walk_from(add_node).collect();
+        assert!(from_add.contains(&add_node));
+        assert!(from_add.len() < all_set.len());
+        assert!(from_add.is_subset(&all_set));
     }
 }
