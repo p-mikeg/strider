@@ -1,8 +1,3 @@
-//! Input-slot navigation over a node's intrusive input list.
-//!
-//! Pure list navigation: borrows the store's arenas and yields `ValueId`s,
-//! never touching the payloads.
-
 use core::ops::Index;
 use core::slice;
 

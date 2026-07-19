@@ -1,9 +1,3 @@
-//! The generic bipartite sea-of-nodes graph plus its structural verbs.
-//!
-//! Generic over the node payload `N` and value payload `V`, with the
-//! dedup-or-create policy in `C: NodeCacheable<N, V>`. Imposes NO `Hash`/`Eq`
-//! bound on `N`/`V`: dedup, if any, is entirely the policy's concern.
-
 use std::marker::PhantomData;
 
 use anyhow::anyhow;
@@ -15,15 +9,8 @@ use crate::ids::{NodeId, UseId, UseIdList, ValueId, ValueIdList};
 use crate::iter::{InputCursor, Inputs};
 use crate::storage::{Node, RawStore, UseData, ValueData};
 
-/// Nodes, their input/output slots, the dedup `NodeCache`, and a generation
-/// counter bumped on every arena-reshuffling operation.
-///
-/// The policy `C` is a stateless ZST consulted only through its associated
-/// functions, hence `PhantomData`; all cache state lives in the `NodeCache`.
-///
-/// This is the pure structural arena. Payload-specific side-tables keyed by
-/// `NodeId` / `ValueId` live on the consumer, which fixes them up through the
-/// remap [`Graph::retain_reachable`] returns.
+/// Nodes, their input/output slots, the dedup cache, and a generation counter
+/// bumped on every arena-reshuffling operation.
 pub struct Graph<N, V, C: NodeCacheable<N, V>> {
     pub(crate) store: RawStore<N, V>,
     cache: NodeCache,
@@ -79,9 +66,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.kind_of(node_id)
     }
 
-    /// By value: every consumer's value payload is a small `Copy` discriminant,
-    /// and by-value keeps the common `value_kind(v) == V::Foo` ergonomic. The
-    /// `V: Copy` bound lives only here, not on the struct.
     #[inline]
     pub fn value_kind(&self, value_id: ValueId) -> V
     where
@@ -90,8 +74,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         *self.store.value_kind(value_id)
     }
 
-    /// By-reference companion to [`Self::value_kind`], for consumers whose
-    /// value payload is not `Copy` (e.g. one carrying `Box<dyn Fn>`).
+    /// By-reference companion to [`Self::value_kind`], for a `V` that is not
+    /// `Copy`.
     #[inline]
     pub fn value_kind_ref(&self, value_id: ValueId) -> &V {
         self.store.value_kind(value_id)
@@ -231,9 +215,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.generation
     }
 
-    /// `retain_reachable` bumps the counter implicitly since it invalidates
-    /// ids. An in-place mutation leaves ids valid but still changes the graph a
-    /// snapshot was taken against, so its caller bumps explicitly here.
+    /// Marks the graph as changed without invalidating any id.
     #[inline]
     pub fn bump_generation(&mut self) {
         self.generation = self.generation.wrapping_add(1);
@@ -249,17 +231,15 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.outputs.keys()
     }
 
-    /// Rewriting a payload in place leaves the structure, and so the
-    /// use-lists, valid. The cache is NOT notified: if the payload feeds the
-    /// cache key, call [`rebuild_cache`](Self::rebuild_cache) afterwards.
+    /// The cache is NOT notified: if the payload feeds the cache key, call
+    /// [`rebuild_cache`](Self::rebuild_cache) afterwards.
     #[inline]
     pub fn node_kind_mut(&mut self, node_id: NodeId) -> &mut N {
         self.store.node_kind_mut(node_id)
     }
 
-    /// Call after mutating node payloads that feed the cache key in a way the
-    /// mutation verbs cannot observe, e.g. an interned-id renumber that
-    /// rewrites cacheable payloads after compaction.
+    /// Re-keys the cache after node payloads feeding the cache key were
+    /// rewritten in place.
     pub fn rebuild_cache(&mut self)
     where
         V: Clone,
@@ -299,9 +279,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         }
     }
 
-    /// Invalidates `node_id` in the dedup cache BEFORE the structure changes,
-    /// so an entry keyed on the old shape is dropped rather than left pointing
-    /// at the now-different node.
+    /// Appends `value_id` as the node's last input.
     pub fn add_node_input(&mut self, node_id: NodeId, value_id: ValueId) {
         self.cache.invalidate(node_id);
         let input_index = self.store.nodes[node_id].inputs.len(&self.store.input_pool) as u32;
@@ -316,8 +294,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 
     /// Compacts the remaining inputs' indices. `false` if `index` is out of
-    /// bounds; such a no-op call still invalidates the cache entry, which is
-    /// harmless since a re-create restores it.
+    /// bounds.
     pub fn remove_node_input(&mut self, node_id: NodeId, index: u32) -> bool {
         self.cache.invalidate(node_id);
         let index = index as usize;
@@ -339,8 +316,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         true
     }
 
-    /// Equivalent to [`Self::remove_node_input`] per index, but in one linear
-    /// filter-rebuild instead of K independent O(tail) shifts: removing K of a
+    /// Equivalent to [`Self::remove_node_input`] per index, but removing K of a
     /// node's D inputs is O(D), not O(K*D). Out-of-bounds indices and
     /// duplicates are ignored.
     pub fn remove_node_inputs_batch(
@@ -424,10 +400,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
     /// Clears `value`'s use-list head, severing the producer's forward link to
     /// its consumers WITHOUT touching the consumers' input edges. Deliberately
-    /// corrupting: it exists so a downstream validator's use-list-consistency
-    /// check has a broken graph to detect. Never part of the production
-    /// mutation vocabulary, hence gated behind `test-injectors` and hidden from
-    /// docs so it cannot surface as discoverable API.
+    /// leaves the graph inconsistent, for tests that need a broken graph.
     #[doc(hidden)]
     #[cfg(any(test, feature = "test-injectors"))]
     pub fn corrupt_clear_first_use(&mut self, value: ValueId) {
@@ -437,18 +410,11 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Rebuilds the arena to retain exactly the nodes in `reachable`, dropping
     /// every other node. Returns the old-to-new id translation table.
     ///
-    /// The graph does NOT compute reachability itself: it cannot know the right
-    /// reachability for the payload's edge semantics (the IR follows
-    /// forward-control plus backward-data, and a pure backward-input closure
-    /// would miss a `Region` reached only via control). The caller-supplied set
-    /// MUST be backward-input-closed, i.e. every input's producing node is
-    /// present, or the second pass panics on a dangling edge.
+    /// `reachable` MUST be backward-input-closed, i.e. every input's producing
+    /// node is present, or this panics on a dangling edge.
     ///
-    /// Invalidates every pre-compaction `NodeId` / `ValueId` / `UseId`: holders
-    /// must rewrite them through the returned [`NodeIdRemap`] or drop them.
-    /// Bumps the generation counter so a snapshot can detect the reshuffle.
-    /// Only the structural arena is compacted; consumer side-tables remap
-    /// themselves via the returned table.
+    /// Invalidates every pre-compaction `NodeId` / `ValueId` / `UseId`, and
+    /// bumps the generation counter.
     pub fn retain_reachable(&mut self, reachable: impl IntoIterator<Item = NodeId>) -> NodeIdRemap
     where
         N: Clone,

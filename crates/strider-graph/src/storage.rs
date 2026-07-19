@@ -1,11 +1,3 @@
-//! The per-arena entries: per-node payload, the use-list backbone, the stable
-//! `(producer, output_index)` mapping, and the single place that mutates the
-//! arenas.
-//!
-//! No `Hash`/`Eq` bound is imposed on `N`/`V` here: `RawStore` only allocates
-//! and links, never compares payloads. Structural comparison lives in the
-//! caching policy ([`crate::cache`]), which adds its own bounds.
-
 use cranelift_entity::packed_option::PackedOption;
 use cranelift_entity::{ListPool, PrimaryMap};
 use smallvec::SmallVec;
@@ -80,9 +72,7 @@ impl<N> Node<N> {
     }
 }
 
-/// The structural arena backing a [`crate::graph::Graph`]: three `PrimaryMap`s
-/// plus the two pools behind the per-node slot lists. The single place that
-/// mutates them; the graph's verbs and the caching policy both route here.
+/// The structural arena backing a [`crate::graph::Graph`].
 #[derive(Clone)]
 pub struct RawStore<N, V> {
     pub(crate) nodes: PrimaryMap<NodeId, Node<N>>,
@@ -103,8 +93,7 @@ impl<N, V> RawStore<N, V> {
         }
     }
 
-    /// ALWAYS allocates a fresh [`NodeId`]: dedup, if any, is the caching
-    /// policy's job and happens before this is called.
+    /// ALWAYS allocates a fresh [`NodeId`]; never deduplicates.
     pub(crate) fn alloc_node(
         &mut self,
         kind: N,
@@ -164,8 +153,6 @@ impl<N, V> RawStore<N, V> {
             .collect()
     }
 
-    /// Mutating the payload leaves the slot lists, and so the use-lists,
-    /// untouched.
     #[inline]
     pub(crate) fn node_kind_mut(&mut self, node_id: NodeId) -> &mut N {
         &mut self.nodes[node_id].kind

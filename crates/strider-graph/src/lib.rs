@@ -12,8 +12,6 @@
 //! `petgraph::algo::toposort` and `petgraph::visit::DfsPostOrder` run directly
 //! on a `&Graph`.
 
-/// Aliased to `anyhow::Result` so a downstream crate with its own such alias
-/// unifies with it across the crate boundary.
 pub type Result<T> = anyhow::Result<T>;
 
 mod cache;
