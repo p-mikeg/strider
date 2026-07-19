@@ -1,7 +1,5 @@
-//! The function data structures: the [`Function`] graph-plus-overlay
-//! ([`data`]), the self-cleaning editing context [`EditFunction`] ([`edit`])
-//! and its [`FunctionState`] bookkeeping ([`state`]), and the IR-specific dot
-//! rendering ([`dot`]).
+//! [`Function`] (graph plus overlay), the self-cleaning [`EditFunction`] and
+//! its [`FunctionState`] bookkeeping, and IR-specific dot rendering.
 
 pub(crate) mod dot;
 mod edit;
@@ -15,12 +13,8 @@ pub use func::Function;
 #[cfg(any(test, feature = "test-util"))]
 pub use func::cc_ret_and_clobber_vns;
 
-/// The trivial-convention [`Function`] used throughout the in-crate tests.
-///
-/// [`Function::new`] builds the `Entry` node; this helper then mints the
-/// `InitialMemory` node (normally `FunctionBuilder::build_entry`'s job) so the
-/// result is a fully-formed (entry + memory) starting point with no tracked
-/// varnodes.
+/// Trivial-convention [`Function`] with no tracked varnodes, used by the
+/// in-crate tests.
 #[cfg(test)]
 pub(crate) fn test_function() -> Function {
     let mut f = Function::new(
@@ -28,8 +22,8 @@ pub(crate) fn test_function() -> Function {
         strider_target::Endianness::Little,
         Vec::new(),
     );
-    // The builder owns the memory spine; this test helper bypasses the builder,
-    // so mint the `InitialMemory` node directly to mirror a built function.
+    // The builder owns the memory spine; this bypasses it, so mint
+    // `InitialMemory` directly to mirror a built function.
     f.graph_mut().create_node(
         crate::node::NodeKind::InitialMemory,
         [],
@@ -38,9 +32,6 @@ pub(crate) fn test_function() -> Function {
     f
 }
 
-/// The `InitialMemory` node of a [`test_function`]-shaped graph (the
-/// auto-built node 1).  Convenience for in-crate tests that wire a `Memory`
-/// edge into a Return / Call without re-deriving the skeleton node.
 #[cfg(test)]
 pub(crate) fn test_initial_memory(f: &Function) -> crate::node::NodeId {
     use crate::IRViewer;

@@ -6,31 +6,29 @@
     clippy::todo
 )]
 
-//! Layer-C asm-fingerprint check must fire on default `validate()`.
-//!
-//! Every optimization pass that forgets `extend_asm_fingerprint_from`
-//! would otherwise produce silently invalid output.
+//! The asm-fingerprint check must fire on a plain `validate()`, otherwise a
+//! pass that forgets `extend_asm_fingerprint_from` silently produces invalid
+//! output.
 
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir::{Function, IRViewer, IntBinaryOp};
 
 #[test]
 fn default_validate_flags_missing_asm_fingerprint() {
-    // `Function::new` builds the Entry + InitialMemory skeleton automatically.
     let mut function = Function::new(
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
         Vec::new(),
     );
     let entry = function.entry();
-    // Entry + InitialMemory are deduped from the auto-built skeleton.
+    // Dedups against the skeleton `Function::new` already built.
     let mem = function
         .graph_mut()
         .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
 
-    // Two constants and an Add — these are NOT structural / exempt kinds,
-    // so they MUST carry a non-empty asm fingerprint to pass the graph-invariants check.
+    // Consts and Add are not fingerprint-exempt kinds, so leaving them
+    // unstamped is what the check should catch.
     let a_id = function.intern_int_const(1, ValueType::I64);
     let a = function.graph_mut().create_node(
         NodeKind::IntConst(a_id),
@@ -52,7 +50,7 @@ fn default_validate_flags_missing_asm_fingerprint() {
     );
     let add_value = function.node_outputs(add).iter().copied().next().unwrap();
 
-    // Wire reachability: Entry → Region → Return(Add).
+    // Entry -> Region -> Return(Add), so the nodes are reachable.
     let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
     let cs = function.graph_mut().create_node(
         NodeKind::Region,

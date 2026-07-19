@@ -1,12 +1,7 @@
-//! White-box tests for the `node` submodules.
-
 use super::*;
 use cranelift_entity::EntityRef;
 
-// ── ValueType ───────────────────────────────────────────────────────
-
-/// `get_unsigned_int` must mask the value to the declared width.
-/// Bits above the type's width must be cleared even if they are set.
+/// Bits above the declared width must be cleared even when set.
 #[test]
 fn unsigned_int_masks_to_declared_width() {
     let wide: u128 = u128::MAX;
@@ -28,7 +23,6 @@ fn unsigned_int_masks_to_declared_width() {
     );
 }
 
-/// `I1` is a 1-bit integer, so `get_unsigned_int` masks to the low bit.
 #[test]
 fn unsigned_int_masks_i1_to_low_bit() {
     assert_eq!(ValueType::I1.get_unsigned_int(1), Some(1));
@@ -36,9 +30,7 @@ fn unsigned_int_masks_i1_to_low_bit() {
     assert_eq!(ValueType::I1.get_unsigned_int(0xFE), Some(0));
 }
 
-/// `get_signed_int` must sign-extend values.  The MSB of the declared
-/// width acts as the sign bit, so a value with the MSB set must come out
-/// negative.
+/// The MSB of the declared width is the sign bit.
 #[test]
 fn signed_int_sign_extends_from_declared_width() {
     assert_eq!(ValueType::I8.get_signed_int(u128::from(u8::MAX)), Some(-1));
@@ -60,15 +52,13 @@ fn signed_int_sign_extends_from_declared_width() {
     );
 }
 
-/// `I1` is a 1-bit signed integer: bit 0 set reads as `-1`, clear as `0`.
+/// Read signed, a 1-bit integer holds only 0 and -1.
 #[test]
 fn signed_int_for_i1_is_one_bit() {
     assert_eq!(ValueType::I1.get_signed_int(1), Some(-1));
     assert_eq!(ValueType::I1.get_signed_int(0), Some(0));
 }
 
-/// `bit_width` equals `byte_size * 8` for every variant except `I1`, which
-/// is 1 bit despite occupying 1 byte.
 #[test]
 fn bit_width_is_eight_times_byte_size_except_i1() {
     assert_eq!(ValueType::I1.bit_width(), 1);
@@ -93,9 +83,6 @@ fn bit_width_is_eight_times_byte_size_except_i1() {
     }
 }
 
-// ── ValueKind ───────────────────────────────────────────────────────
-
-/// `is_value` must be `true` only for `Typed` variants.
 #[test]
 fn is_value_only_for_output_type() {
     assert!(ValueKind::Typed(ValueType::I64).is_value());
@@ -104,7 +91,6 @@ fn is_value_only_for_output_type() {
     assert!(!ValueKind::Memory.is_value());
 }
 
-/// `is_bool` must be `true` only when the wrapped type is `Bool`.
 #[test]
 fn is_bool_only_for_bool_output_type() {
     assert!(ValueKind::Typed(ValueType::I1).is_bool());
@@ -112,9 +98,7 @@ fn is_bool_only_for_bool_output_type() {
     assert!(!ValueKind::Control.is_bool());
 }
 
-/// `is_integer` must be `true` for all integer `Typed` variants
-/// (including the 1-bit `I1`) and `false` for `Control`, `PhiToken`,
-/// `Memory`, and floats.
+/// `I1` counts as an integer; floats and the non-value kinds do not.
 #[test]
 fn is_integer_for_all_integer_output_types() {
     for ty in [
@@ -142,11 +126,6 @@ fn is_integer_for_all_integer_output_types() {
     assert!(!ValueKind::Memory.is_integer());
 }
 
-// ── NodeKind ─────────────────────────────────────────────────────────────
-
-/// Only constant kinds (`IntConst`, `FloatConst`) should be
-/// considered constants; all other variants must not.  Booleans are
-/// `IntConst(Small(0|1))` values typed `I1`.
 #[test]
 fn is_const_only_for_constant_kinds() {
     assert!(NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)).is_const());
@@ -155,15 +134,12 @@ fn is_const_only_for_constant_kinds() {
     assert!(!NodeKind::Return.is_const());
 }
 
-/// Non-cacheable node kinds must cover all nodes that receive inputs
-/// dynamically after creation.
+/// Every kind that receives inputs after creation must be non-cacheable.
 #[test]
 fn non_cacheable_kinds_are_not_cacheable() {
     let space = rsleigh::VnSpace::RAM;
-    // Entry / InitialMemory / InitialVar are cacheable (identity fully
-    // determined by NodeKind fields; dedup prevents accidental
-    // duplicates).  Region / MemPhi / Phi / Return / Call remain
-    // non-cacheable: their identity depends on construction context.
+    // These five take their identity from construction context, unlike the
+    // initial-state kinds whose identity is fully in the NodeKind payload.
     let non_cacheable = [
         NodeKind::Return,
         NodeKind::Region,
@@ -171,14 +147,13 @@ fn non_cacheable_kinds_are_not_cacheable() {
         NodeKind::Phi,
         NodeKind::Call,
     ];
-    let _ = space; // silence unused variable warning
+    let _ = space;
     for kind in non_cacheable {
         assert!(!kind.is_cacheable(), "{kind:?} should not be cacheable");
     }
 }
 
-/// Arithmetic and logical operations are always cacheable — equal nodes
-/// with equal inputs produce the same result and can be deduplicated.
+/// Equal operands give equal results, so these always dedup.
 #[test]
 fn arithmetic_kinds_are_cacheable() {
     assert!(NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)).is_cacheable());
@@ -186,8 +161,6 @@ fn arithmetic_kinds_are_cacheable() {
     assert!(NodeKind::IntUnaryOp(crate::node::IntUnaryOp::Neg).is_cacheable());
     assert!(NodeKind::If.is_cacheable());
 }
-
-// ── Float ValueType ─────────────────────────────────────────────────
 
 #[test]
 fn float_byte_sizes() {
@@ -234,8 +207,6 @@ fn get_signed_int_returns_none_for_floats() {
     assert_eq!(ValueType::F64.get_signed_int(0x3FF0000000000000), None);
 }
 
-// ── Float NodeKind ───────────────────────────────────────────────────────
-
 #[test]
 fn float_const_is_const_and_cacheable() {
     let fc = NodeKind::FloatConst(0x3F800000);
@@ -255,8 +226,6 @@ fn float_ops_are_cacheable() {
     assert!(NodeKind::FloatBitsToInt.is_cacheable());
 }
 
-// ── as_value_or_err ────────────────────────────────────────────────────
-
 #[test]
 fn as_value_or_err_value_case() {
     let kind = ValueKind::Typed(ValueType::I32);
@@ -275,8 +244,6 @@ fn as_value_or_err_control_case() {
 
 #[test]
 fn type_info_table_matches_variants() {
-    // Table indices must match discriminant order. Enumerate every variant
-    // explicitly and check `info().name` / category.
     let cases: &[(ValueType, &str, usize, bool, bool, bool)] = &[
         (ValueType::I1, "i1", 1, true, true, false),
         (ValueType::I8, "i8", 1, true, false, false),
@@ -321,13 +288,10 @@ fn int_for_byte_size_to_node_output_type() {
     }
 }
 
-// ── NodeKind predicates ───────────────────────────────────────────────────
-
-/// Returns one constructor for every [`NodeKind`] variant.  Hand-maintained;
-/// adding a new variant requires appending it here so the equivalence tests
-/// below continue to cover every kind.  The exhaustive matches in
-/// `is_cacheable` and `asm_fingerprint_exempt` catch new variants at compile
-/// time, but a forgotten append here would silently shrink runtime coverage.
+/// Hand-maintained: a new variant must be appended here or the equivalence
+/// tests below silently stop covering it. The exhaustive matches in
+/// `is_cacheable` / `asm_fingerprint_exempt` catch the variant at compile
+/// time, but nothing catches a missing entry in this list.
 fn every_node_kind_smoke() -> Vec<NodeKind> {
     use crate::node::{
         ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -335,26 +299,20 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
     use cranelift_entity::EntityRef;
     let space = rsleigh::VnSpace::RAM;
     vec![
-        // initial state
         NodeKind::Entry,
         NodeKind::InitialMemory,
         NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
-        // region
         NodeKind::Region,
-        // phis
         NodeKind::MemPhi,
         NodeKind::Phi,
-        // terminator
         NodeKind::If,
         NodeKind::Switch,
         NodeKind::Call,
         NodeKind::Return,
         NodeKind::IndirectBranch,
         NodeKind::CallOther { user_op_id: 0 },
-        // memory operations
         NodeKind::Load(space),
         NodeKind::Store(space),
-        // pure value: integer
         NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
         NodeKind::IntConst(crate::node::const_value::ConstId::new(0)),
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
@@ -364,29 +322,23 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Extend(ExtendOp::ZeroExtend),
         NodeKind::Popcount,
         NodeKind::Lzcount,
-        // pure value: float
         NodeKind::FloatConst(0),
         NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
         NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
         NodeKind::FloatCmpOp(FloatCmpOp::Equal),
-        // pure value: conversions
         NodeKind::IntToFloat,
         NodeKind::IntBitsToFloat,
         NodeKind::FloatToInt,
         NodeKind::FloatBitsToInt,
         NodeKind::FloatToFloat,
-        // pure value: sleigh pure user-op
         NodeKind::SegmentOp { op_id: 0 },
-        // if is pure-value above; opaque user-ops left:
-        // opaque call
         NodeKind::CPoolRef,
         NodeKind::New,
     ]
 }
 
-/// Original (pre-refactor) hand-written `is_cacheable` predicate.  Pinned
-/// here so the new direct implementation can be checked for
-/// byte-identical behaviour on every NodeKind variant.
+/// Independent restatement of `is_cacheable` as a single negated `matches!`,
+/// pinned so the exhaustive match in the real implementation cannot drift.
 fn legacy_is_cacheable(kind: &NodeKind) -> bool {
     !matches!(
         kind,
@@ -403,7 +355,7 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
     )
 }
 
-/// Original (pre-refactor) hand-written `asm_fingerprint_exempt` predicate.
+/// Independent restatement of `asm_fingerprint_exempt`, same purpose.
 fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
     matches!(
         kind,
@@ -416,8 +368,6 @@ fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
     )
 }
 
-/// `NodeKind::is_cacheable` must agree with the legacy hand-written
-/// predicate on every NodeKind variant.
 #[test]
 fn is_cacheable_matches_legacy() {
     for k in every_node_kind_smoke() {
@@ -429,8 +379,6 @@ fn is_cacheable_matches_legacy() {
     }
 }
 
-/// `NodeKind::asm_fingerprint_exempt` must agree with the legacy
-/// hand-written predicate on every NodeKind variant.
 #[test]
 fn asm_fingerprint_exempt_matches_legacy() {
     for k in every_node_kind_smoke() {
@@ -447,19 +395,18 @@ fn same_value_distinct_width_shares_const_id_distinct_node() {
     use crate::node::{NodeKind, ValueType};
     use crate::{IRBuilderExt, IRViewer};
     let mut f = crate::function::test_function();
-    // build_int_const interns by value; I80 and I128 both hold 42.
+    // Interning is by value, and both widths hold 42.
     let v80 = f.build_int_const(42u128, ValueType::I80).unwrap();
     let v128 = f.build_int_const(42u128, ValueType::I128).unwrap();
     let n80 = f.producer(v80);
     let n128 = f.producer(v128);
-    // One interned ConstId (same value) ...
     let (NodeKind::IntConst(id80), NodeKind::IntConst(id128)) =
         (*f.node_kind(n80), *f.node_kind(n128))
     else {
         panic!("expected IntConst nodes")
     };
     assert_eq!(id80, id128, "equal value must share one ConstId");
-    // ... but two distinct nodes (output type differs).
+    // Same ConstId, but the differing output type must keep them separate.
     assert_ne!(
         n80, n128,
         "different declared widths must be distinct nodes"

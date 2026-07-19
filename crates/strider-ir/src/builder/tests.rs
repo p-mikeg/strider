@@ -9,15 +9,14 @@ use crate::node::{
 use cranelift_entity::EntityRef;
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
-/// Local mock-construction helper mirroring the convention-from-parts
-/// shape these tests want.  strider-ir's own unit tests cannot use
-/// `strider_ir_test_utils::builder` — under `cargo test` the dev-dep
-/// links a *separate* compilation of strider-ir, so a helper returning
-/// `strider_ir::FunctionBuilder` would mismatch the unit-test crate's own
-/// `FunctionBuilder`.  So we synthesise the convention and call the local
-/// [`FunctionBuilder::new`] directly.  Unlike the test-utils helper, it does
-/// NOT stamp the sentinel lift address (it mirrors the old `new_raw`); tests
-/// that build fingerprint-bearing nodes set the lift address themselves.
+/// strider-ir's own unit tests cannot use `strider_ir_test_utils::builder`:
+/// under `cargo test` the dev-dep links a separate compilation of strider-ir,
+/// so a helper returning its `FunctionBuilder` would mismatch this crate's.
+/// Hence the local synthesis of a convention plus a direct
+/// [`FunctionBuilder::new`] call.
+///
+/// Leaves `lift_addr` as `None`, so tests building fingerprint-bearing nodes
+/// must set the address themselves.
 fn raw_builder(
     tracked: Vec<rsleigh::Vn>,
     arg_passing: &[rsleigh::Vn],
@@ -40,14 +39,9 @@ fn raw_builder(
         preserves_memory: false,
         no_return: false,
     };
-    // Note: unlike the test-utils `RegisterSet`, this local helper does NOT
-    // stamp the sentinel lift address — it mirrors the old `new_raw`, which
-    // left `lift_addr` as `None`.  Tests that build fingerprint-bearing
-    // nodes set the lift address themselves.
-    //
-    // `FunctionBuilder::new` no longer seeds the stack vn (the lifter is the
-    // SSoT for that in production); mirror the lifter here so `build_call`,
-    // which reads SP, finds it tracked.
+    // `FunctionBuilder::new` does not seed the stack vn, the lifter is the
+    // SSoT for that in prod. Mirror the lifter so `build_call`, which reads
+    // SP, finds it tracked.
     let mut tracked = tracked;
     if !tracked.contains(&cc.stack_vn) {
         tracked.push(cc.stack_vn);
@@ -55,8 +49,6 @@ fn raw_builder(
     FunctionBuilder::new(tracked, cc, endianness)
 }
 
-/// Build a minimal builder with no variables so tests that do not need
-/// SSA variables remain simple.
 fn empty_builder() -> Result<FunctionBuilder> {
     raw_builder(
         vec![],
@@ -69,14 +61,12 @@ fn empty_builder() -> Result<FunctionBuilder> {
     )
 }
 
-/// The node kind of `value`'s producer.
 fn producer_kind(b: &FunctionBuilder, value: ValueId) -> NodeKind {
     *b.function().kind_of_value(value)
 }
 
-/// Assert `value` reads back as the unsigned constant `expected` and its
-/// producer is an `IntConst` node — i.e. the const path folded instead of
-/// emitting an op node.
+/// An `IntConst` producer means the const path folded rather than emitting
+/// an op node.
 #[track_caller]
 fn assert_const_folded(b: &FunctionBuilder, value: ValueId, expected: u64) {
     assert_eq!(
@@ -91,26 +81,20 @@ fn assert_const_folded(b: &FunctionBuilder, value: ValueId, expected: u64) {
     );
 }
 
-/// Build a non-constant value of type `ty`: `Add(1, 2)` at that width.
-/// The builder does not constant-fold binary ops, so the producer is a
-/// real `IntBinaryOp` node — the shape the "non-const emits a node"
-/// tests need.
+/// `Add(1, 2)` at width `ty`. The builder never constant-folds binary ops, so
+/// the producer really is an `IntBinaryOp`, the shape the non-const tests need.
 fn non_const_add(b: &mut FunctionBuilder, ty: ValueType) -> Result<ValueId> {
     let lhs = b.build_int_const(1u64, ty)?;
     let rhs = b.build_int_const(2u64, ty)?;
     b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, ty)
 }
 
-// ── get_as_unsigned_int ──────────────────────────────────────────────────
-
-/// A I8 constant built from a wider raw value must be masked to `u8::MAX`.
+/// An I8 constant built from a wider raw value must be masked.
 #[test]
 fn get_unsigned_int_truncates_to_declared_width() -> Result<()> {
     let mut b = empty_builder()?;
-    // Store u8::MAX + 1 — only the low byte is in-range for I8
+    // Only the low byte is in range for I8.
     let value = b.build_int_const(u8::MAX as u64 + 1, ValueType::I8)?;
-    // The node was created with kind IntConst(256) but the type is I8,
-    // so get_as_unsigned_int must mask it.
     let val = b.int_const_u128(value);
     assert_eq!(val, Some(0)); // 256 & 0xFF == 0
     Ok(())
@@ -121,8 +105,8 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
     let mut b = empty_builder()?;
     let bt = b.build_boolean_const(true);
     let bf = b.build_boolean_const(false);
-    // Booleans are 1-bit integers: the single bit is the sign bit, so a
-    // `true` (bit 1) sign-extends to -1, while its unsigned view is 1.
+    // In a 1-bit integer the single bit IS the sign bit, so `true` reads as
+    // -1 signed and 1 unsigned.
     assert_eq!(
         b.int_const_u128(bt).zip(b.int_const_i128(bt)),
         Some((1u128, -1i128))
@@ -134,7 +118,6 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
     Ok(())
 }
 
-/// `get_as_unsigned_int` on a non-const node must return `None`.
 #[test]
 fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
@@ -143,14 +126,9 @@ fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
     Ok(())
 }
 
-// ── get_as_signed_int ────────────────────────────────────────────────────
-
-/// `get_as_signed_int` on I8 constants: a value with the MSB set
-/// (`u8::MAX`) sign-extends to -1 as i64; a value below the sign bit
-/// (`i8::MAX`) stays positive.
+/// An I8 with the MSB set sign-extends negative; one below it stays positive.
 #[test]
 fn get_signed_int_sign_extension_cases() -> Result<()> {
-    // Rows: (label = former test name, raw value, expected signed read-back).
     let cases: [(&str, u64, i128); 2] = [
         (
             "get_signed_int_sign_extends_negative_u8",
@@ -171,30 +149,22 @@ fn get_signed_int_sign_extension_cases() -> Result<()> {
     Ok(())
 }
 
-// ── truncate_if_needed ───────────────────────────────────────────────────
-
-/// Truncating a constant folds into a new constant of the target type,
-/// not a Truncate node.
+/// A constant folds to a narrower constant rather than gaining a Truncate.
 #[test]
 fn truncate_const_folds_to_const() -> Result<()> {
     let mut b = empty_builder()?;
     let value = b.build_int_const(0xABCDu64, ValueType::I16)?;
     let truncated = b.truncate_if_needed(value, ValueType::I8)?;
-    // Must fold to a constant (low byte of 0xABCD); no Truncate node emitted.
     assert_const_folded(&b, truncated, 0xCD);
     Ok(())
 }
 
-/// For a **non-const** value already at the target width (or narrower),
-/// `truncate_if_needed` must return the same output id unchanged.
-/// (Const values are always folded into a new constant node regardless of
-/// direction, so the no-op path only applies to non-const values.)
+/// The no-op path applies only to non-const values: a constant always folds
+/// into a fresh node whichever direction the width moves.
 #[test]
 fn truncate_noop_when_already_narrow_non_const() -> Result<()> {
     let mut b = empty_builder()?;
-    // Build a non-const I8 expression: add(1u8, 2u8)
     let add = non_const_add(&mut b, ValueType::I8)?;
-    // "Truncating" to a wider type must return the same node unchanged
     let result = b.truncate_if_needed(add, ValueType::I16)?;
     assert_eq!(
         result, add,
@@ -203,7 +173,6 @@ fn truncate_noop_when_already_narrow_non_const() -> Result<()> {
     Ok(())
 }
 
-/// A non-constant I32 truncated to I8 must emit a Truncate node.
 #[test]
 fn truncate_emits_truncate_node_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
@@ -217,14 +186,10 @@ fn truncate_emits_truncate_node_for_non_const() -> Result<()> {
     Ok(())
 }
 
-// ── extend_if_needed ─────────────────────────────────────────────────────
-
-/// Extending a constant must fold to a wider constant — no Extend node.
-/// The input is the I8 constant 0xFF: zero-extension clears the high bits
-/// of the I32 result, sign-extension of -1i8 sets every bit.
+/// A constant folds to a wider constant with no Extend node. From I8 0xFF,
+/// zero-extension clears the new high bits and sign-extension sets them all.
 #[test]
 fn extend_const_folds_to_wider_const() -> Result<()> {
-    // Rows: (label = former test name, extend op, expected folded value).
     let cases: [(&str, ExtendOp, u128); 2] = [
         (
             "zero_extend_const_folds_to_wider_const",
@@ -250,7 +215,6 @@ fn extend_const_folds_to_wider_const() -> Result<()> {
     Ok(())
 }
 
-/// Extending a non-constant must emit an Extend node.
 #[test]
 fn extend_emits_extend_node_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
@@ -263,8 +227,6 @@ fn extend_emits_extend_node_for_non_const() -> Result<()> {
     Ok(())
 }
 
-/// If the value is already the target width, `extend_if_needed` must
-/// return it unchanged.
 #[test]
 fn extend_noop_when_already_wide_enough() -> Result<()> {
     let mut b = empty_builder()?;
@@ -274,9 +236,8 @@ fn extend_noop_when_already_wide_enough() -> Result<()> {
     Ok(())
 }
 
-/// `extend_if_needed` must NOT narrow: a value wider than the target is a
-/// caller error (the caller must `truncate_if_needed` first).  Covers both a
-/// non-constant value and a constant (which previously folded-and-masked).
+/// Extending must never narrow, constants included. A wider input is a caller
+/// error: truncate first.
 #[test]
 fn extend_rejects_value_wider_than_target() -> Result<()> {
     let mut b = empty_builder()?;
@@ -295,10 +256,7 @@ fn extend_rejects_value_wider_than_target() -> Result<()> {
     Ok(())
 }
 
-// ── build_int_binary_operation ────────────────────────────────────────────
-
-/// Building an Add on two constants of the same type must produce an
-/// `IntBinaryOp(Add)` node (no constant folding at this layer).
+/// This layer does no constant folding, so two constants still get a node.
 #[test]
 fn build_int_binary_op_produces_binary_op_node() -> Result<()> {
     let mut b = empty_builder()?;
@@ -313,9 +271,8 @@ fn build_int_binary_op_produces_binary_op_node() -> Result<()> {
     Ok(())
 }
 
-/// The builder is strict: when an operand is narrower than the target
-/// type, the *caller* inserts the coercion (`convert_to_int_if_needed`)
-/// so both operands reach the target type before the build.
+/// The builder is strict, so the caller coerces a narrow operand up to the
+/// target type before building.
 #[test]
 fn build_int_binary_op_coerces_narrower_operand() -> Result<()> {
     let mut b = empty_builder()?;
@@ -323,16 +280,12 @@ fn build_int_binary_op_coerces_narrower_operand() -> Result<()> {
     let rhs = b.build_int_const(2u64, ValueType::I64)?;
     let lhs = b.convert_to_int_if_needed(lhs, ValueType::I64)?;
     let result = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, ValueType::I64)?;
-    // The result must be typed as I64
     let kind = b.function().value_kind(result);
     assert_eq!(kind, ValueKind::Typed(ValueType::I64));
     Ok(())
 }
 
-// ── build_int_cmp_operation ───────────────────────────────────────────────
-
-/// A comparison must always produce a `Bool` output regardless of the
-/// operand type.
+/// A comparison outputs `I1` whatever the operand width.
 #[test]
 fn build_int_cmp_produces_bool_output() -> Result<()> {
     let mut b = empty_builder()?;
@@ -344,10 +297,7 @@ fn build_int_cmp_produces_bool_output() -> Result<()> {
     Ok(())
 }
 
-// ── boolean (I1) bitwise operation ──────────────────────────────────────────
-
-/// Boolean AND of two I1 constants is modelled as a bitwise
-/// `IntBinaryOp(And)` typed `I1` (booleans are 1-bit integers).
+/// Boolean AND is a bitwise `IntBinaryOp(And)` at `I1`, not a distinct op.
 #[test]
 fn build_boolean_operation_produces_bool_binary_node() -> Result<()> {
     let mut b = empty_builder()?;
@@ -366,10 +316,7 @@ fn build_boolean_operation_produces_bool_binary_node() -> Result<()> {
     Ok(())
 }
 
-// ── deduplication across build helpers ────────────────────────────────────
-
-/// Two identical constants must alias to the same output id (graph-level
-/// deduplication).
+/// Identical constants alias to one output id via graph-level dedup.
 #[test]
 fn identical_constants_are_deduplicated() -> Result<()> {
     let mut b = empty_builder()?;
@@ -379,7 +326,6 @@ fn identical_constants_are_deduplicated() -> Result<()> {
     Ok(())
 }
 
-/// Two constants with different values must NOT alias.
 #[test]
 fn different_constants_are_distinct() -> Result<()> {
     let mut b = empty_builder()?;
@@ -389,13 +335,9 @@ fn different_constants_are_distinct() -> Result<()> {
     Ok(())
 }
 
-// ── Float builder methods ────────────────────────────────────────────────
-
-/// `build_float_const` stores the raw bits in the `FloatConst` payload and
-/// types the output by the declared float type.
+/// The raw bits go in the payload; the declared type sets the output kind.
 #[test]
 fn build_float_const_has_correct_bits() -> Result<()> {
-    // Rows: (label = former test name, bits, declared type).
     let cases: [(&str, u64, ValueType); 2] = [
         (
             "build_float_const_f32_has_correct_bits",
@@ -431,7 +373,6 @@ fn int_bits_to_float_folds_int_const_immediately() -> Result<()> {
     let bits = 1.0f32.to_bits() as u64;
     let int_value = b.build_int_const(bits, ValueType::I32)?;
     let float_value = b.build_int_bits_to_float(int_value, ValueType::F32)?;
-    // Should be a FloatConst, not an IntBitsToFloat node
     let kind = *b.function().kind_of_value(float_value);
     assert_eq!(kind, NodeKind::FloatConst(bits));
     Ok(())
@@ -443,7 +384,6 @@ fn float_bits_to_int_folds_float_const_immediately() -> Result<()> {
     let bits = 1.0f64.to_bits();
     let float_value = b.build_float_const(bits, ValueType::F64);
     let int_value = b.build_float_bits_to_int(float_value, ValueType::I64)?;
-    // Should be an IntConst, not a FloatBitsToInt node
     let kind = *b.function().kind_of_value(int_value);
     assert!(matches!(kind, NodeKind::IntConst(_)));
     assert_eq!(
@@ -456,8 +396,7 @@ fn float_bits_to_int_folds_float_const_immediately() -> Result<()> {
 #[test]
 fn int_bits_to_float_rejects_width_mismatch() -> Result<()> {
     let mut b = empty_builder()?;
-    // A bit-reinterpret must be same-width: I64 (8 bytes) -> F32 (4 bytes)
-    // is nonsensical and must error rather than silently truncate.
+    // A narrowing reinterpret must error rather than silently truncate.
     let int_value = b.build_int_const(0u64, ValueType::I64)?;
     assert!(
         b.build_int_bits_to_float(int_value, ValueType::F32)
@@ -469,7 +408,6 @@ fn int_bits_to_float_rejects_width_mismatch() -> Result<()> {
 #[test]
 fn float_bits_to_int_rejects_width_mismatch() -> Result<()> {
     let mut b = empty_builder()?;
-    // F64 (8 bytes) -> I32 (4 bytes) reinterpret is a width mismatch.
     let float_value = b.build_float_const(0u64, ValueType::F64);
     assert!(
         b.build_float_bits_to_int(float_value, ValueType::I32)
@@ -507,7 +445,7 @@ fn build_int_bits_to_float_inserts_node_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
     let int_val = b.build_int_const(0x3F800000u64, ValueType::I32)?;
     let zero = b.build_int_const(0u64, ValueType::I32)?;
-    // Build an Add(x, 0) so the result is not an IntConst node.
+    // Add(x, 0) keeps the result off the IntConst fold path.
     let non_const =
         b.build_int_binary_operation(int_val, zero, crate::node::IntBinaryOp::Add, ValueType::I32)?;
     let float_value = b.build_int_bits_to_float(non_const, ValueType::F32)?;
@@ -516,16 +454,14 @@ fn build_int_bits_to_float_inserts_node_for_non_const() -> Result<()> {
     Ok(())
 }
 
-// ── int→float bitcast tests ────────────────────────────────────────────────
-
 #[test]
 fn cast_to_float_of_int_is_int_bits_to_float() -> Result<()> {
     let mut b = empty_builder()?;
-    // A non-const int so the immediate IntConst→FloatConst fold doesn't apply.
+    // Non-const, so the immediate constant fold does not apply.
     let raw = b.build_int_const(42u64, ValueType::I64)?;
     let opaque = b.build_int_unary_operation(raw, crate::node::IntUnaryOp::Neg, ValueType::I64)?;
     let cast = b.cast_to_float_if_needed(opaque, ValueType::F64)?;
-    // No CastToFloat node exists: a same-width int→float is a bitcast.
+    // No CastToFloat node exists; a same-width conversion is a bitcast.
     assert_eq!(*b.function().kind_of_value(cast), NodeKind::IntBitsToFloat);
     assert_eq!(b.value_type(cast)?, ValueType::F64);
     Ok(())
@@ -536,7 +472,6 @@ fn cast_to_float_if_needed_is_identity_for_same_type() -> Result<()> {
     let mut b = empty_builder()?;
     let float_val = b.build_float_const(1.0f32.to_bits() as u64, ValueType::F32);
     let result = b.cast_to_float_if_needed(float_val, ValueType::F32)?;
-    // Should be the same output — no new node inserted.
     assert_eq!(result, float_val);
     Ok(())
 }
@@ -544,14 +479,13 @@ fn cast_to_float_if_needed_is_identity_for_same_type() -> Result<()> {
 #[test]
 fn build_float_binary_op_with_int_inputs_bitcasts() -> Result<()> {
     let mut b = empty_builder()?;
-    // Non-const I32 operands (a const would immediately fold IntBitsToFloat
-    // into a FloatConst, hiding the bitcast node).
+    // Non-const operands: a constant would fold into a FloatConst and hide
+    // the bitcast node.
     let c1 = b.build_int_const(0x3F800000u64, ValueType::I32)?;
     let c2 = b.build_int_const(0x40000000u64, ValueType::I32)?;
     let i1 = b.build_int_unary_operation(c1, crate::node::IntUnaryOp::Neg, ValueType::I32)?;
     let i2 = b.build_int_unary_operation(c2, crate::node::IntUnaryOp::Neg, ValueType::I32)?;
-    // Both inputs are I32 — the caller reinterprets each as F32 via
-    // IntBitsToFloat (`cast_to_float_if_needed`) before the strict build.
+    // The strict build needs both operands already at F32.
     let i1 = b.cast_to_float_if_needed(i1, ValueType::F32)?;
     let i2 = b.cast_to_float_if_needed(i2, ValueType::F32)?;
     let result = b.build_float_binary_op(i1, i2, FloatBinaryOp::Add, ValueType::F32)?;
@@ -567,10 +501,7 @@ fn build_float_binary_op_with_int_inputs_bitcasts() -> Result<()> {
     Ok(())
 }
 
-// ── CallOther / SegmentOp / CPoolRef / New ──────────────────────────────
-
-/// Helper: an empty CallOther footprint (no implicit reads/writes, no
-/// memory clobber) for the trap-class / no-footprint builder tests.
+/// No implicit reads or writes, no memory clobber.
 fn empty_call_other_abi() -> strider_target::BuiltCallOtherAbi {
     strider_target::BuiltCallOtherAbi {
         implicit_reads: Vec::new(),
@@ -579,7 +510,6 @@ fn empty_call_other_abi() -> strider_target::BuiltCallOtherAbi {
     }
 }
 
-/// Helper: build a single-region builder with an active region set.
 fn builder_with_region() -> Result<FunctionBuilder> {
     let mut b = empty_builder()?;
     let r = b.create_region_all()?;
@@ -588,9 +518,8 @@ fn builder_with_region() -> Result<FunctionBuilder> {
     Ok(b)
 }
 
-/// Helper: build a single-region builder that tracks `vns` (so a CallOther
-/// `output` / implicit-write register has a tracked container for the
-/// builder's `write_reg_vn` result writeback).
+/// Tracks `vns` so a CallOther result or implicit-write register has a
+/// container to write back into.
 fn builder_with_region_tracking(vns: Vec<rsleigh::Vn>) -> Result<FunctionBuilder> {
     let mut b = raw_builder(
         vns,
@@ -617,7 +546,7 @@ fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
         b.build_call_other_abi(7, "NEON_rev64", &[], &empty_call_other_abi(), None, false)?;
     assert!(result.is_none(), "no output vn -> no ret-val output");
 
-    // Ctrl advances; memory does NOT (empty footprint, clobbers_memory=false).
+    // Control advances; memory does not, the footprint being empty.
     let ctrl_after = b.cur_region_control()?;
     let mem_after = b.cur_region_memory()?;
     assert_ne!(ctrl_before, ctrl_after);
@@ -632,9 +561,7 @@ fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
 
 #[test]
 fn build_call_other_with_result_returns_typed_value() -> Result<()> {
-    let out_vn = reg_vn(0x10, 4); // 4-byte reg → I32 output
-    // Track `out_vn` so the builder's `write_reg_vn` result writeback has a
-    // container.
+    let out_vn = reg_vn(0x10, 4);
     let mut b = builder_with_region_tracking(vec![out_vn])?;
     let arg = b.build_int_const(0x42u64, ValueType::I64)?;
     let (node, result) = b.build_call_other_abi(
@@ -659,9 +586,7 @@ fn build_call_other_with_result_returns_typed_value() -> Result<()> {
 
 #[test]
 fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
-    // C2 (strider): pin Graph::memory_output_of as the named accessor
-    // for what handle_call_other previously read as `node_outputs[1]`.
-    let out_vn = reg_vn(0x20, 4); // 4-byte reg → I32 output
+    let out_vn = reg_vn(0x20, 4);
     let mut b = builder_with_region_tracking(vec![out_vn])?;
     let (node, _) = b.build_call_other_abi(
         4,
@@ -691,15 +616,13 @@ fn memory_output_of_errors_on_node_with_no_memory_output() -> Result<()> {
 
 #[test]
 fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
-    // Pins the memory-token slot fact shared by the memory-SSA walker and
-    // the stack-arg collector: slot 0 for Store/Load, slot 1 for Call, and
-    // None for a MemPhi (whose slot 0 is the phi-token, NOT a memory input)
-    // and for the InitialMemory root.
+    // Pins the token-slot layout the memory-SSA walker and the stack-arg
+    // collector both rely on: slot 0 for Store/Load, slot 1 for Call, none
+    // for MemPhi or the InitialMemory root.
     let mut b = builder_with_region()?;
 
-    // The entry region's memory is produced by a MemPhi (create_region mints
-    // one). A MemPhi must report no memory input — its memory predecessors
-    // are variadic and reached separately.
+    // A MemPhi reports no memory input: its predecessors are variadic and
+    // reached separately, and slot 0 holds the phi-token.
     let mem_value = b.cur_region_memory()?;
     let mem_phi = b.function().producer(mem_value);
     assert!(matches!(b.function().node_kind(mem_phi), NodeKind::MemPhi));
@@ -709,7 +632,6 @@ fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
         "MemPhi slot 0 is the phi-token, not a memory input"
     );
 
-    // Store: memory token is input slot 0.
     let space = rsleigh::VnSpace::RAM;
     let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
     let data = b.build_int_const(7u64, ValueType::I32)?;
@@ -727,7 +649,6 @@ fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
         b.function().node_inputs(store).into_iter().next(),
     );
 
-    // Load: memory token is input slot 0.
     let loaded = b.build_load(addr, space, ValueType::I32)?;
     let load = b.function().producer(loaded);
     assert!(matches!(b.function().node_kind(load), NodeKind::Load(_)));
@@ -737,7 +658,6 @@ fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
         "Load reads its memory token from input slot 0"
     );
 
-    // Call: memory token is input slot 1.
     let target = b.build_int_const(0x2000u64, ValueType::I64)?;
     let call = b.build_call_cc(target, None)?;
     assert_eq!(
@@ -746,7 +666,6 @@ fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
         "Call reads its memory token from input slot 1"
     );
 
-    // A non-memory node has no memory input.
     let int_node = b.function().producer(addr);
     assert_eq!(b.function().memory_input_of(int_node), None);
 
@@ -766,10 +685,7 @@ fn build_call_other_rejects_non_value_arg() -> Result<()> {
     Ok(())
 }
 
-/// Helper: construct a register-space Vn for CallOther implicit-write
-/// tests.  CallOther's per-node clobber-override side-table records
-/// these Vns verbatim; they don't need to correspond to any
-/// tracked-variable entry.
+/// These need not correspond to any tracked-variable entry.
 fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     rsleigh::Vn {
         size,
@@ -778,13 +694,10 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     }
 }
 
-/// Regression: high-offset register varnodes (e.g. ppc64 / aarch64be
-/// condition-register slices) can have `addr_off + size` overflow `u64`.
-/// Every value that fits `u128` is interned as `ConstValue::Bits` regardless
-/// of the declared width — the width lives in the output `ValueKind`, not the
-/// stored value.  Both a small and a large-but-`u128`-fitting I128 value read
-/// back at the declared width, and `build_int_const` / `build_int_const_limbs`
-/// canonicalize to one node for the same value (dedup).
+/// Any value fitting `u128` interns as `Bits` whatever the declared width,
+/// which lives on the output `ValueKind` rather than in the stored value.
+/// `build_int_const` and `build_int_const_limbs` therefore canonicalize to one
+/// interned value.
 #[test]
 fn fitting_values_intern_as_bits() -> Result<()> {
     use crate::node::const_value::ConstValue;
@@ -799,7 +712,6 @@ fn fitting_values_intern_as_bits() -> Result<()> {
         strider_target::Endianness::Little,
     )?;
 
-    // Small I128 value → `Bits`, read back as I128.
     let small = b.build_int_const(5u64, ValueType::I128)?;
     let small_node = b.function().producer(small);
     let NodeKind::IntConst(small_id) = *b.function().node_kind(small_node) else {
@@ -809,7 +721,7 @@ fn fitting_values_intern_as_bits() -> Result<()> {
     assert_eq!(b.function().int_const_u128(small), Some(5u128));
     assert_eq!(b.function().value_type(small)?, ValueType::I128);
 
-    // A value that exceeds u64 but still fits u128 → still `Bits`.
+    // Exceeds u64, still fits u128, so still `Bits`.
     let big_val: u128 = 1u128 << 100;
     let big = b.build_int_const(big_val, ValueType::I128)?;
     let big_node = b.function().producer(big);
@@ -819,11 +731,9 @@ fn fitting_values_intern_as_bits() -> Result<()> {
     assert_eq!(b.function().const_value(big_id), &ConstValue::Bits(big_val));
     assert_eq!(b.function().int_const_u128(big), Some(big_val));
 
-    // Canonical: build_int_const_limbs for the same small value (limbs that fit
-    // u128) collapses to `Bits` and dedups to the same node.
+    // Limbs that fit u128 collapse to `Bits` too. The differing width keeps
+    // this a distinct node, but the value is interned only once.
     let small2 = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::I256)?;
-    // I256 vs I128 differ by output width, so they are distinct NODES but the
-    // value (5) is interned once: same ConstId.
     let small2_node = b.function().producer(small2);
     let NodeKind::IntConst(small2_id) = *b.function().node_kind(small2_node) else {
         panic!("expected IntConst");
@@ -832,13 +742,12 @@ fn fitting_values_intern_as_bits() -> Result<()> {
     Ok(())
 }
 
-/// `FunctionBuilder::new` is the SSoT for vn ordering: the tracked
-/// `all_vns` set must come out sorted by (space, offset, size)
-/// regardless of the order the vns were handed in, so `InitialVnId`
-/// assignment (and every derived clobber-slot index) is deterministic.
+/// `FunctionBuilder::new` is the SSoT for vn ordering: `all_vns` comes out
+/// sorted whatever order the caller passed, so `InitialVnId` assignment and
+/// every derived clobber-slot index are deterministic.
 #[test]
 fn function_builder_sorts_all_vns_deterministically() -> Result<()> {
-    // Three disjoint registers handed in OUT of sorted order.
+    // Handed in out of sorted order.
     let r_hi = reg_vn(0x40, 8);
     let r_lo = reg_vn(0x10, 8);
     let r_mid = reg_vn(0x20, 8);
@@ -862,17 +771,15 @@ fn function_builder_sorts_all_vns_deterministically() -> Result<()> {
     Ok(())
 }
 
-/// `largest_container_in` resolves a sub-register query to its tracked
-/// largest container, so a calling convention that names `eax` (4 bytes)
-/// while the function tracks `rax` (8 bytes) maps correctly.  A vn that
-/// is its own container maps to itself; a vn with no tracked container
-/// maps to itself.
+/// A convention naming `eax` while the function tracks `rax` must still
+/// resolve. A vn that is its own container, or has none tracked, maps to
+/// itself.
 #[test]
 fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
     let rax = reg_vn(0x0, 8);
     let eax = reg_vn(0x0, 4);
     let sp = reg_vn(0x7000, 8);
-    // Hand in BOTH rax and eax; dedup keeps rax (container), map records eax -> rax.
+    // Dedup keeps rax; eax resolves through to it.
     let b = raw_builder(
         vec![rax, eax],
         &[],
@@ -895,25 +802,19 @@ fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
     Ok(())
 }
 
-/// The footprint-resolving `build_call_other` reads each
-/// `abi.implicit_reads` register itself (via `read_reg_vn`), appends those
-/// reads after the explicit args, emits the result + per-implicit-write
-/// clobber outputs, writes each clobber back to its register, and records
-/// the CallOther footprint inline — reproducing the IR
-/// the lifter used to assemble by hand.
+/// The whole footprint round trip: implicit reads become inputs, implicit
+/// writes become clobber outputs written back to their registers, and the
+/// result is tagged with its output vn.
 #[test]
 fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
     use strider_target::Endianness;
 
-    // Track RCX (implicit read) + RAX, RDX (implicit writes), all full
-    // 8-byte containers so read_reg_vn/write_reg_vn map straight to the
+    // All full 8-byte containers, so reads and writes map straight to the
     // tracked variable.
     let rcx = reg_vn(0x10, 8);
     let rax = reg_vn(0x00, 8);
     let rdx = reg_vn(0x20, 8);
-    let out_vn = reg_vn(0x40, 4); // distinct 4-byte reg → I32 result
-    // Track `out_vn` too so the builder's `write_reg_vn` result writeback
-    // resolves to its container.
+    let out_vn = reg_vn(0x40, 4);
     let mut b = raw_builder(
         vec![rcx, rax, rdx, out_vn],
         &[],
@@ -939,8 +840,8 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
     let (node, result) =
         b.build_call_other_abi(5, "syscall", &[explicit], &abi, Some(out_vn), false)?;
 
-    // Inputs: [ctrl, mem] ++ [read(RCX)] ++ explicit_args.  Implicit reads
-    // come FIRST, then the explicit pcode operands.  No target.
+    // Inputs are [ctrl, mem], then the implicit reads, then the explicit
+    // pcode operands. No call target.
     let inputs: Vec<ValueId> = b.function().node_inputs(node).into_iter().collect();
     assert_eq!(inputs.len(), 4, "ctrl + mem + 1 implicit read + explicit");
     assert!(matches!(
@@ -951,9 +852,7 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
         b.function().value_kind(inputs[1]),
         ValueKind::Memory
     ));
-    // inputs[2] is the read of RCX (implicit read, FIRST): the builder reads
-    // it via read_reg_vn, so it equals the current SSA value of the RCX
-    // variable (an I64-typed value edge — RCX is an 8-byte container).
+    // The implicit read equals RCX's current SSA value.
     assert_eq!(
         inputs[2],
         b.read_variable(&rcx)?,
@@ -969,7 +868,7 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
         "explicit arg follows the implicit read"
     );
 
-    // Outputs: [ctrl, mem, result(tagged out_vn), RAX, RDX].
+    // Outputs are [ctrl, mem, result, RAX, RDX].
     let outs: Vec<ValueId> = b.function().node_outputs(node).to_vec();
     assert_eq!(outs.len(), 5, "ctrl + mem + result + 2 clobbers");
     assert!(matches!(
@@ -1003,17 +902,15 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
         "clobber slot tags RDX"
     );
 
-    // Implicit-write registers were written back: a later read of RAX
-    // returns the clobber output (outs[3]).
+    // Written back, so a later read of RAX returns the clobber output.
     let rax_after = b.read_variable(&rax)?;
     assert_eq!(rax_after, outs[3], "RAX rebound to its clobber output");
 
-    // Memory advanced (clobbers_memory = true).
     let mem_after = b.cur_region_memory()?;
     assert_ne!(mem_before, mem_after, "clobbers_memory → memory advances");
 
-    // The ABI footprint is consumed inline (clobbers/reads/memory checked
-    // above); it is not stored, so only the user-op name is recorded.
+    // The footprint is consumed inline, not stored, so only the user-op name
+    // survives on the node.
     assert_eq!(
         b.function().side_tables().call_other_name(node),
         Some("syscall")
@@ -1021,13 +918,12 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
     Ok(())
 }
 
-/// An implicit-write register that has no tracked container cannot be
-/// written back: `build_call_other` surfaces the `write_reg_vn` error
-/// rather than silently dropping the clobber.
+/// An untracked implicit-write register cannot be written back, and the
+/// error must surface rather than the clobber being silently dropped.
 #[test]
 fn build_call_other_rejects_untracked_implicit_write() -> Result<()> {
     let mut b = builder_with_region()?;
-    // No tracked variables, so this register has no enclosing container.
+    // No tracked variables, so this has no enclosing container.
     let untracked = reg_vn(0, 4);
     let abi = strider_target::BuiltCallOtherAbi {
         implicit_reads: Vec::new(),
@@ -1041,20 +937,17 @@ fn build_call_other_rejects_untracked_implicit_write() -> Result<()> {
 
 #[test]
 fn create_node_attributed_unions_contributor_fingerprints() -> Result<()> {
-    // Pin the contract: create_node_attributed unions every contributor's
-    // asm-fingerprint into the resulting node, so opt-pass synthesised
-    // nodes carry a superset of their contributors' attribution.
+    // A synthesised node must carry a superset of its contributors'
+    // attribution.
     let mut b = builder_with_region()?;
-    // Seed two IntConsts under different lift_addrs.
     b.set_lift_addr(Some(0x100));
     let l = b.build_int_const(5u64, ValueType::I8)?;
     let l_node = b.function().producer(l);
     b.set_lift_addr(Some(0x104));
     let r = b.build_int_const(7u64, ValueType::I8)?;
     let r_node = b.function().producer(r);
-    // Synthesise a fresh Or node attributing both.  Use the IR graph's
-    // create_node_attributed directly (rather than going through the
-    // builder) to test the helper in isolation.
+    // Go through the graph directly rather than the builder, to isolate the
+    // helper from the ambient lift_addr stamp.
     b.set_lift_addr(None);
     let or_node = b.function_mut().create_node_attributed(
         NodeKind::IntBinaryOp(IntBinaryOp::Or),
@@ -1072,22 +965,16 @@ fn create_node_attributed_unions_contributor_fingerprints() -> Result<()> {
 
 #[test]
 fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
-    // Pin the asm-fingerprint contract: when create_node hits the
-    // dedup cache (returning a previously-built equivalent NodeId),
-    // the wrapping FunctionBuilder must STILL union the current
-    // lift_addr into the cached node's fingerprint.  Without this
-    // union the second lift's contributing address would be silently
-    // lost — patterns matching the cached node would not see the
-    // second lift's attribution.
+    // On a dedup-cache hit the builder must still union the current
+    // lift_addr in. Otherwise the second lift's contributing address is lost
+    // and patterns matching the cached node never see it.
     let mut b = builder_with_region()?;
 
-    // First build of IntConst(42, I64) under lift_addr 0x100.
     b.set_lift_addr(Some(0x100));
     let c1 = b.build_int_const(42u64, ValueType::I64)?;
     let c1_node = b.function().producer(c1);
 
-    // Second build under lift_addr 0x104.  Same kind+type+inputs, so
-    // create_node returns the cached NodeId.
+    // Same kind, type and inputs, so this hits the cache.
     b.set_lift_addr(Some(0x104));
     let c2 = b.build_int_const(42u64, ValueType::I64)?;
     let c2_node = b.function().producer(c2);
@@ -1107,10 +994,8 @@ fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
 
 #[test]
 fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
-    // Pin the trap (NoReturn-class) CallOther's output shape: with no
-    // args / clobbers / result, exactly two outputs, both structural
-    // (Control + Memory).  terminate=true closes the region as part of
-    // the no-return classification.
+    // A trap CallOther with no args, clobbers or result has exactly the two
+    // structural outputs.
     let mut b = builder_with_region()?;
     let (node, result) =
         b.build_call_other_abi(0, "ud2", &[], &empty_call_other_abi(), None, true)?;
@@ -1135,9 +1020,7 @@ fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
 
 #[test]
 fn build_return_self_terminates() -> Result<()> {
-    // build_return owns its own region termination — no external
-    // termination call is needed.  After build_return
-    // returns, the region is already closed and cur_region_control() errors.
+    // The region is already closed on return, so reading its control errors.
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let val = b.build_int_const(0u64, ValueType::I64)?;
@@ -1152,8 +1035,7 @@ fn build_return_self_terminates() -> Result<()> {
 
 #[test]
 fn build_call_other_terminate_true_closes_region() -> Result<()> {
-    // build_call_other with terminate=true (the NoReturn class) must
-    // close the region on its own — no external termination call.
+    // The NoReturn class closes the region itself.
     let mut b = builder_with_region()?;
     b.build_call_other_abi(0, "ud2", &[], &empty_call_other_abi(), None, true)?;
     let ctrl = b.cur_region_control();
@@ -1166,9 +1048,7 @@ fn build_call_other_terminate_true_closes_region() -> Result<()> {
 
 #[test]
 fn build_call_other_terminate_false_keeps_region_open() -> Result<()> {
-    // build_call_other with terminate=false (the modeled Call class) must
-    // leave the region open — control advances to the CallOther's Control
-    // output, but the region is still live.
+    // The modeled Call class advances control but leaves the region live.
     let mut b = builder_with_region()?;
     b.build_call_other_abi(0, "cpuid", &[], &empty_call_other_abi(), None, false)?;
     let ctrl = b.cur_region_control();
@@ -1252,20 +1132,14 @@ fn build_new_is_not_deduplicated() -> Result<()> {
     Ok(())
 }
 
-// ── extend_if_needed with an I1 (boolean) input ───────────────────────────
-
-/// `extend_if_needed` widening an I1 (boolean) value to a wider integer
-/// must emit a real `ZeroExtend` — I1 is now an ordinary 1-bit integer, so
-/// no separate bool→int cast is needed.
-///
-/// Concretely: MIPS/ARM comparison instructions emit an I1 result that may
-/// then be zero-extended into a wider register.
+/// Widening an I1 emits a real `ZeroExtend`; being an ordinary 1-bit integer,
+/// it needs no separate bool-to-int cast. MIPS and ARM comparisons produce
+/// exactly this shape when their result lands in a wider register.
 #[test]
 fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
     let mut b = empty_builder()?;
 
-    // Build an I1 value: an integer comparison 1 < 2 (always true, but
-    // not folded at this layer — the builder does not constant-fold cmps).
+    // Always true, but this layer does not constant-fold comparisons.
     let lhs = b.build_int_const(1u64, ValueType::I32)?;
     let rhs = b.build_int_const(2u64, ValueType::I32)?;
     let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, ValueType::I32)?;
@@ -1308,15 +1182,10 @@ fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
     Ok(())
 }
 
-// ── F80 / I80 bit-conversion: skip the immediate-fold ────────────────────
-//
-// `build_int_bits_to_float(IntConst, F32/F64)` and
-// `build_float_bits_to_int(FloatConst, I8..I128)` immediate-fold to the
-// other constant kind because F32/F64 fit in `FloatConst`'s u64 payload.
-// F80 is 80 bits — doesn't fit — so the immediate-fold must be skipped
-// and a real bit-conversion node emitted.  This pins that behavior so a
-// future contributor doesn't accidentally truncate F80 by re-enabling
-// the fold for all widths.
+// The bit-conversion constructors immediate-fold to the other constant kind
+// because F32/F64 fit `FloatConst`'s u64 payload. F80 does not, so the fold
+// must be skipped there. These pin that, so re-enabling the fold for all
+// widths cannot silently truncate F80.
 
 #[test]
 fn int_bits_to_float_f80_emits_node_not_const() -> Result<()> {
@@ -1329,8 +1198,6 @@ fn int_bits_to_float_f80_emits_node_not_const() -> Result<()> {
         &NodeKind::IntBitsToFloat,
         "F80 path must emit IntBitsToFloat node, not fold to FloatConst"
     );
-    // Non-F80 path still folds for safety regression: F64 IntBitsToFloat
-    // collapses to FloatConst.
     let int_const64 = b.build_int_const(0u64, ValueType::I64)?;
     let result_f64 = b.build_int_bits_to_float(int_const64, ValueType::F64)?;
     let node_f64 = b.function().producer(result_f64);
@@ -1352,7 +1219,6 @@ fn float_bits_to_int_f80_emits_node_not_const() -> Result<()> {
         &NodeKind::FloatBitsToInt,
         "F80 input must emit FloatBitsToInt node, not fold to IntConst"
     );
-    // Non-F80 path still folds: F64 FloatBitsToInt collapses to IntConst.
     let float_const64 = b.build_float_const(0u64, ValueType::F64);
     let result_u64 = b.build_float_bits_to_int(float_const64, ValueType::I64)?;
     let node_u64 = b.function().producer(result_u64);
@@ -1363,13 +1229,10 @@ fn float_bits_to_int_f80_emits_node_not_const() -> Result<()> {
     Ok(())
 }
 
-// ── post-call SP adjust ─────────────────────────────────────────────────
-
 use strider_ir_test_utils::stack_vn_x86_64 as sp_vn_u64;
 
-/// After `build_call` returns, SP must be rebound to
-/// `Add(pre_call_SP, IntConst(ret_stack_pop))` — the caller-visible effect
-/// of the callee's `ret` on stack-push ISAs.
+/// SP must come out rebound to `Add(pre_call_SP, IntConst(ret_stack_pop))`,
+/// the caller-visible effect of the callee's `ret` on a stack-push ISA.
 #[test]
 fn build_call_emits_post_call_sp_adjust() -> Result<()> {
     let sp = sp_vn_u64();
@@ -1396,7 +1259,6 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
         "SP must be rebound after Call when ret_stack_pop != 0"
     );
 
-    // The new SP must be an Add node.
     let add_node = b.function().producer(post_sp);
     assert_eq!(
         b.function().node_kind(add_node),
@@ -1406,7 +1268,6 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
     let inputs: Vec<ValueId> = b.function().node_inputs(add_node).into_iter().collect();
     assert_eq!(inputs.len(), 2, "Add has two inputs");
 
-    // One input is the pre-call SP; the other is an IntConst(8).
     let (lhs, rhs) = (inputs[0], inputs[1]);
     assert_eq!(lhs, pre_sp, "Add consumes the pre-call SP output");
     let rhs_kind = *b.function().kind_of_value(rhs);
@@ -1419,10 +1280,8 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
     Ok(())
 }
 
-/// When `ret_stack_pop == 0` (link-register ISAs) no SP-adjust node is
-/// emitted — SP flows through the `Call` unchanged (or, when SP is
-/// excluded from the clobbered set but ret_stack_pop is 0, remains
-/// bound to its pre-call value).
+/// A link-register ISA passes `ret_stack_pop == 0`, so SP flows through the
+/// `Call` unchanged and no adjust node appears.
 #[test]
 fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
     let sp = sp_vn_u64();
@@ -1444,7 +1303,6 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
     b.build_call_cc(target, None)?;
 
     let post_sp = b.read_variable(&sp)?;
-    // No Add node was emitted — SP is unchanged.
     assert_eq!(
         pre_sp, post_sp,
         "ret_stack_pop = 0 must not introduce a new Add node"
@@ -1452,18 +1310,13 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
     Ok(())
 }
 
-// ── UNIQUE-space overlapping varnode filtering ─────────
-//
-// Sleigh occasionally writes a wider UNIQUE varnode and reads a narrow slice
-// of it (e.g. on MIPS, MULT writes a 64-bit unique then a Copy reads a 4-byte
-// slice into $v0).  Without filtering, the 4-byte and 8-byte unique varnodes
-// were treated as independent SSA variables — the narrow read returned an
-// undefined `InitialVar` and the multiplication never materialised in IR.
-//
-// The fix in `FunctionBuilder::new` extends the same overlap-filter that
-// REGISTER space uses to UNIQUE space: when both an outer and an inner
-// varnode are touched, the outer wins, and the pcode-lift register-aliasing
-// logic rebuilds the inner via shift/truncate when needed.
+// Sleigh can write a wide UNIQUE varnode then read a narrow slice of it: on
+// MIPS, MULT writes a 64-bit unique and a Copy reads 4 bytes of it into $v0.
+// Treating the two as independent SSA variables makes the narrow read return
+// an undefined `InitialVar` and drops the multiplication entirely. Hence
+// `FunctionBuilder::new` applies the REGISTER-space overlap filter to UNIQUE
+// space too: the outer varnode wins, and register-aliasing rebuilds the inner
+// via shift/truncate on demand.
 
 fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
     rsleigh::Vn {
@@ -1473,16 +1326,10 @@ fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
     }
 }
 
-/// When two UNIQUE-space varnodes overlap (a narrow one fully contained in
-/// a wider one), only the wider one must be tracked as an SSA variable —
-/// whether the narrow one starts at the container's offset or mid-container
-/// (mirroring REGISTER-space `ah`-at-offset-1-inside-`ax` handling).
-/// Regression check: without this filter, MIPS MULT's 64-bit result and
-/// the 32-bit Copy slice are kept as two independent variables and the
-/// multiplication is dropped.
+/// Only the container is tracked, whether the contained varnode starts at the
+/// container's offset or mid-container, mirroring `ah` inside `ax`.
 #[test]
 fn new_raw_filters_contained_unique_varnodes() -> Result<()> {
-    // Rows: (label = former test name, container, contained sub-varnode).
     let cases: [(&str, rsleigh::Vn, rsleigh::Vn); 2] = [
         (
             "new_raw_filters_overlapping_unique_varnodes",
@@ -1518,9 +1365,7 @@ fn new_raw_filters_contained_unique_varnodes() -> Result<()> {
     Ok(())
 }
 
-/// Non-overlapping UNIQUE varnodes (different offsets, no containment)
-/// must both remain tracked.  Sanity check that the filter does not over-
-/// reach.
+/// The filter must not over-reach: disjoint varnodes both stay tracked.
 #[test]
 fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
     let a = unique_vn(0x300, 4);
@@ -1540,24 +1385,15 @@ fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
     Ok(())
 }
 
-// ── Bool-to-flag-register write must coerce to int ─────
-//
-// ARM/AArch64 status flags (N, Z, V, C) are 1-byte register varnodes.  The
-// Sleigh lifter for `cmp` writes Bool-producing ops (`IntCmpOp::Sless`,
-// `IntCmpOp::Sborrow`, ...) into those flag registers.  If the write side
-// stores the Bool node directly into the variable, downstream phi-reductions
-// can collapse a chain like `phi(I8) ← Sless@Bool, Sless@Bool` into a direct
-// Sless@Bool feed of a consumer that expects AnyInt — failing the IR
-// validator after the optimizer pipeline.
-//
-// The mitigation that lives at the IR layer is `convert_to_int_if_needed`:
-// when called on a Bool with an integer target type, it must produce a
-// CastToInt-wrapped value of the integer type.  The pcode-lift `write_reg_vn`
-// invokes this helper at every variable write; this test pins the helper's
-// contract so future refactors don't silently regress the bool-into-int cycle.
+// ARM/AArch64 status flags are 1-byte registers, and Sleigh's `cmp` writes
+// I1-producing comparisons into them. Storing the I1 value straight into the
+// variable lets a later phi reduction feed an I1 to a consumer expecting a
+// wider integer, which the validator then rejects. `convert_to_int_if_needed`
+// is the guard, invoked by the lifter's `write_reg_vn` at every variable
+// write; these tests pin its contract.
 
 fn flag_reg_byte() -> rsleigh::Vn {
-    // Generic 1-byte REGISTER varnode shaped like ARM N/Z/V/C flags.
+    // Shaped like an ARM N/Z/V/C flag.
     rsleigh::Vn {
         addr_off: 0x60,
         addr_space: rsleigh::VnSpace::REGISTER,
@@ -1565,9 +1401,8 @@ fn flag_reg_byte() -> rsleigh::Vn {
     }
 }
 
-/// `convert_to_int_if_needed` on an I1 (boolean) with an I8 target produces
-/// an I8-typed output.  Because the boolean here is a *constant* (true), the
-/// width change folds directly into an `IntConst(1)` typed I8.
+/// The boolean here is constant, so the width change folds straight into an
+/// `IntConst(1)` typed I8.
 #[test]
 fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
     let mut b = empty_builder()?;
@@ -1596,17 +1431,10 @@ fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
     Ok(())
 }
 
-// ── ret-val regs are the raw declared list ──────────────────────────────
-//
-// `ret_val_vars()` now returns the CC's declared return registers
-// verbatim (int then float), with no tracked-container projection.  The
-// Return / Call read paths resolve each declared register to its tracked
-// container via `read_reg_vn`, so the raw list is the right shape — a
-// wider register is read at its full declared width rather than narrowed
-// to a tracked sub-register.
-
-/// `ret_val_vars()` returns the declared ret reg verbatim, even when a
-/// wider view is the tracked one.
+/// The declared ret regs come back verbatim, with no container projection,
+/// even when a wider view is the tracked one. The Return and Call read paths
+/// resolve each register to its container themselves, so a wider register is
+/// read at full declared width rather than narrowed to a tracked slice.
 #[test]
 fn ret_val_vars_returns_declared_reg_verbatim() -> Result<()> {
     let f0_4byte = rsleigh::Vn {
@@ -1619,8 +1447,7 @@ fn ret_val_vars_returns_declared_reg_verbatim() -> Result<()> {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    // Both varnodes referenced: the overlap filter keeps only the 8-byte
-    // view, but `ret_val_vars` reports the declared 4-byte ret reg as-is.
+    // The overlap filter keeps only the 8-byte view as tracked.
     let b = raw_builder(
         vec![f0_4byte, f0_f1_8byte],
         &[],
@@ -1638,20 +1465,9 @@ fn ret_val_vars_returns_declared_reg_verbatim() -> Result<()> {
     Ok(())
 }
 
-// ── Derived register lists + function return ──────────────────────────
-//
-// These tests pin the register-list projections (`ret_val_regs`,
-// `call_clobbered`, `call_other_clobbered`) and the
-// `build_function_return` lowering.  The projections are no longer stored
-// fields — they are derived on demand from `Function::all_vns` +
-// `Function::default_cc` (the raw declared lists + the clobber filter), so
-// these tests confirm the derivations reproduce the same shapes the
-// formerly build-time-computed lists held.
-
-/// The built function's `ret_val_regs()` / `call_clobbered_regs()`
-/// accessors surface exactly the projected lists `new` computed —
-/// the representative ABI shape with a sub-register ret upgrade and a
-/// caller-clobbered split (ret-prefix then the rest).
+/// The register-list projections are derived on demand from `all_vns` plus
+/// `default_cc`, never stored. Pins a representative ABI shape: a sub-register
+/// ret upgrade and a caller-clobbered split of ret-prefix then the rest.
 #[test]
 fn projected_cc_lists_match_built_function_fields() -> Result<()> {
     let r0 = reg_vn(0x10, 8); // ret + arg + clobbered
@@ -1669,15 +1485,15 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
         strider_target::Endianness::Little,
     )?;
 
-    // ret_val_regs: r0 is tracked, no upgrade needed.
+    // r0 is tracked, so no upgrade is needed.
     assert_eq!(
         b.function().ret_val_regs(),
         &[r0],
         "ret_val_regs projects the ABI ret list"
     );
 
-    // The default-CC ret / clobber projection: r0 is the tracked, clobbered
-    // ret reg; r1 the non-ret caller-clobbered; r2 (callee-saved) and sp excluded.
+    // r0 is the clobbered ret reg, r1 the non-ret caller-clobbered; the
+    // callee-saved r2 and sp are excluded.
     let (ret_group, clobber_group) =
         crate::cc_ret_and_clobber_vns(b.function(), b.function().default_cc());
     assert_eq!(
@@ -1690,7 +1506,6 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
         vec![r1],
         "clobber group is only the non-ret caller-clobbered reg (r1)"
     );
-    // The full combined set (ret-vals ++ clobbers) reproduces the old list.
     let combined: Vec<_> = ret_group.into_iter().chain(clobber_group).collect();
     assert_eq!(
         combined,
@@ -1698,8 +1513,8 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
         "combined ret-val + clobbers equals the old full clobber list"
     );
 
-    // call_other_clobbered is populated by `build()`: complete the
-    // function with a minimal terminated region first.
+    // `build()` populates call_other_clobbered, so the function needs a
+    // terminated region first.
     let region = b.create_region_all()?;
     b.set_entry_region_all(region)?;
     b.set_region(region);
@@ -1708,7 +1523,6 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
     b.set_lift_addr(None);
     let f = b.build()?;
 
-    // call_other_clobbered: every tracked var except SP.
     let sp_vn = f.stack_vn();
     let mut coc: Vec<_> = f
         .all_vns()
@@ -1726,9 +1540,8 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
     Ok(())
 }
 
-/// `build_function_return` wires exactly the function's resolved CC
-/// return registers (in `ret_val_regs()` order) as the Return node's
-/// value inputs — no caller threads the list anymore.
+/// The Return's value inputs are exactly the CC return registers, in
+/// `ret_val_regs()` order. No caller threads the list.
 #[test]
 fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
     let r0 = reg_vn(0x10, 8);
@@ -1746,7 +1559,6 @@ fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
     b.set_entry_region_all(region)?;
     b.set_region(region);
 
-    // The current value of each ret var is its InitialVar value.
     let expected: Vec<ValueId> = b
         .function()
         .ret_val_regs()
@@ -1760,13 +1572,12 @@ fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
     b.set_lift_addr(None);
     let f = b.build()?;
 
-    // Find the Return node and inspect its value inputs (skip ctrl + mem).
     let entry = f.entry();
     let ret = crate::walk::walk_graph(f.graph(), entry)
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
         .expect("function-return path emits a Return node");
     let inputs: Vec<ValueId> = f.node_inputs(ret).into_iter().collect();
-    // inputs[0] = control, inputs[1] = memory, the rest are ret values.
+    // Slots 0 and 1 are control and memory.
     let ret_values: Vec<ValueId> = inputs[2..].to_vec();
     assert_eq!(
         ret_values, expected,
@@ -1776,11 +1587,9 @@ fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
     Ok(())
 }
 
-/// End-to-end: write a Bool to a 1-byte register variable through the
-/// coerce-then-write sequence pcode-lift's `write_reg_vn` uses.  Reading
-/// the variable back must return an integer-typed output, never the raw
-/// Bool — that was the root state that fed Bool into AnyInt-expecting
-/// phi consumers post-optimization.
+/// End to end through the lifter's coerce-then-write sequence: the variable
+/// must read back integer-typed, never as the raw I1 that fed wrong-width phi
+/// consumers.
 #[test]
 fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     let flag = flag_reg_byte();
@@ -1797,19 +1606,16 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     b.set_entry_region_all(region)?;
     b.set_region(region);
 
-    // Synthesise a Bool-producing op (compare) — the same shape as
-    // IntCmpOp::Sless that lifts from `cmp r0, #100`.
+    // The same shape `cmp r0, #100` lifts to.
     let lhs = b.build_int_const(1u64, ValueType::I32)?;
     let rhs = b.build_int_const(2u64, ValueType::I32)?;
     let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, ValueType::I32)?;
 
-    // Mirror pcode-lift's write_reg_vn coercion: convert to reg's
-    // declared int type (I8 for a 1-byte flag), then write.
+    // Mirror the lifter: coerce to the register's declared int type, write.
     let reg_ty = ValueType::int_for_byte_size(flag.size)?;
     let coerced = b.convert_to_int_if_needed(bool_val, reg_ty)?;
     b.write_variable(&flag, coerced)?;
 
-    // Read back — must be I8-typed, never Bool.
     let read_back = b.read_variable(&flag)?;
     assert_eq!(
         b.function().value_kind(read_back),
@@ -1819,27 +1625,19 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     Ok(())
 }
 
-// ── graph_mut / entry / non-consuming use of the builder ─────────────────
-//
-// These tests pin the contract: the builder exposes `graph_mut()` and
-// `entry()` so callers can mutate the underlying `Graph` in place (e.g.
-// run optimizer passes) without consuming the builder via `build()`.
+// `graph_mut()` and `entry()` let a caller mutate the graph in place, e.g. run
+// optimizer passes, without consuming the builder via `build()`.
 
-/// `graph_mut()` must return a mutable reference to the same `Graph` that
-/// `graph()` exposes immutably — so a write through `graph_mut()` is visible
-/// through the immutable view.
+/// A write through `graph_mut()` must be visible through the immutable view.
 #[test]
 fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let mut b = empty_builder()?;
-    // Capture the node count via the immutable view first.
     let count_before = b.function().graph().all_node_ids().count();
-    // Mutate via graph_mut() — create an IntConst node directly.
     let node_id = b.function_mut().graph_mut().create_node(
         NodeKind::IntConst(crate::node::const_value::ConstId::new((42_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
-    // Read back via the immutable view; the new node must be visible.
     let count_after = b.function().graph().all_node_ids().count();
     assert_eq!(
         count_after,
@@ -1853,15 +1651,12 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     Ok(())
 }
 
-/// `entry()` must return the same `NodeId` that `build()` would record on the
-/// produced `Graph`.  This is the contract opt passes rely on
-/// when they take `(graph, entry)` from a builder that hasn't been consumed.
+/// Opt passes taking `(graph, entry)` from an unconsumed builder rely on this
+/// matching what `build()` would record.
 #[test]
 fn entry_returns_recorded_entry_node_id() -> Result<()> {
     let b = empty_builder()?;
     let entry_via_accessor = b.entry();
-    // The builder delegates entry() to the underlying Function's entry,
-    // which is set atomically in build_entry().
     let entry_via_function = b.function().entry();
     assert_eq!(
         entry_via_accessor, entry_via_function,
@@ -1870,13 +1665,10 @@ fn entry_returns_recorded_entry_node_id() -> Result<()> {
     Ok(())
 }
 
-/// Calling `build()` after mutating via `graph_mut()` must still succeed
-/// and the resulting `Graph` must be consistent with the
-/// in-place mutations.
 #[test]
 fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     let mut b = empty_builder()?;
-    // Set up a one-region function so build() has something to validate.
+    // build() needs something to validate.
     let region = b.create_region_all()?;
     b.set_entry_region_all(region)?;
     b.set_region(region);
@@ -1884,19 +1676,17 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     let val = b.build_int_const(7u64, ValueType::I64)?;
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);
-    // Mutate via graph_mut() in the same way an opt pass would.
+    // Mutate the way an opt pass would.
     let extra = b.function_mut().graph_mut().create_node(
         NodeKind::IntConst(crate::node::const_value::ConstId::new((99_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
-    // The extra IntConst is detached / not reachable from the entry —
-    // validation skips unreachable nodes via the reachability gate.  No
-    // fingerprint stamp needed on `extra`.
-    // After the mutation, build() must still succeed.
+    // `extra` is unreachable from the entry, and validation skips unreachable
+    // nodes, so it needs no fingerprint stamp.
     let built = b.build()?;
-    // The extra node is in the arena (graph keeps every node it ever
-    // creates; reachability is independent of presence in the map).
+    // Still present: the graph keeps every node it creates, independent of
+    // reachability.
     assert!(
         built.graph().all_node_ids().any(|n| n == extra),
         "build() after graph_mut() mutation must preserve the new node"
@@ -1904,19 +1694,16 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     Ok(())
 }
 
-/// Two consecutive in-place mutations via `graph_mut()` must both be visible
-/// in the final state — i.e. the second mutation sees the first's effect.
+/// The second mutation must see the first's effect.
 #[test]
 fn consecutive_inplace_optimizations_compose() -> Result<()> {
     let mut b = empty_builder()?;
-    // First mutation: create constant A.
     let a = b.function_mut().graph_mut().create_node(
         NodeKind::IntConst(crate::node::const_value::ConstId::new((1_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
-    // Second mutation: create constant B.  The second call sees the first
-    // mutation (the underlying graph counter advanced) — node ids must differ.
+    // The graph counter advanced, so the ids must differ.
     let b_id = b.function_mut().graph_mut().create_node(
         NodeKind::IntConst(crate::node::const_value::ConstId::new((2_u64) as usize)),
         std::iter::empty(),
@@ -1926,7 +1713,6 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
         a, b_id,
         "consecutive create_node calls must produce distinct ids"
     );
-    // Both nodes are in the arena.
     assert!(matches!(b.function().node_kind(a), NodeKind::IntConst(_)));
     assert!(matches!(
         b.function().node_kind(b_id),
@@ -1937,11 +1723,8 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
 
 #[test]
 fn set_lift_addr_pair_scopes_attribution_and_restores_on_exit() -> Result<()> {
-    // The bare set_lift_addr(Some(addr)) … set_lift_addr(None) pattern
-    // is what every production site uses.  This pins that the
-    // attribution scope behaves as expected: the inner value applies
-    // while set, and after clearing the lift_addr returns to whatever
-    // it was before.
+    // The set-then-clear pattern every production site uses: the inner value
+    // applies while set, and clearing restores the prior state.
     let mut b = builder_with_region()?;
     assert_eq!(b.lift_addr, None);
     b.set_lift_addr(Some(0x100));
@@ -1949,8 +1732,7 @@ fn set_lift_addr_pair_scopes_attribution_and_restores_on_exit() -> Result<()> {
     b.set_lift_addr(None);
     assert_eq!(b.lift_addr, None, "manual restore returns to prior addr");
 
-    // Nested: outer 0x200, transiently override to 0xA then 0xB then
-    // back up to 0xA, finally back to 0x200.
+    // Nested overrides and their unwind.
     b.set_lift_addr(Some(0x200));
     b.set_lift_addr(Some(0xA));
     b.set_lift_addr(Some(0xB));
@@ -1964,8 +1746,6 @@ fn set_lift_addr_pair_scopes_attribution_and_restores_on_exit() -> Result<()> {
 
 #[test]
 fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
-    // A node created while lift_addr is set picks up that addr in its
-    // asm-fingerprint side-table entry.
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(0x10));
     let outside_pre = b.build_int_const(1u64, ValueType::I64)?;
@@ -1993,13 +1773,12 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
     Ok(())
 }
 
-/// A genuinely-wide (> u128) constant built via `build_int_const_limbs`
-/// stores an interned `Wide` value whose interner lookup returns the
+/// A value genuinely past `u128` interns as `Wide` and reads back as the
 /// original limbs.
 #[test]
 fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
     use crate::node::const_value::ConstValue;
-    // Rows: (label, limbs, declared type). High limbs set ⇒ genuinely Wide.
+    // High limbs set, so these are genuinely Wide.
     let cases: [(&str, Vec<u64>, ValueType); 2] = [
         (
             "u256_round_trips_through_graph",
@@ -2053,7 +1832,7 @@ fn int_const_i128_sign_extends_and_rejects_non_const() -> Result<()> {
 #[test]
 fn build_int_const_limbs_dedups_repeated_values() -> Result<()> {
     let mut b = builder_with_region()?;
-    // High limb set ⇒ genuinely Wide; repeated builds must dedup.
+    // High limb set => genuinely Wide; repeated builds must dedup.
     let limbs = [42u64, 0, 0, 0x8000_0000_0000_0000];
     let o1 = b.build_int_const_limbs(&limbs, ValueType::I256)?;
     let o2 = b.build_int_const_limbs(&limbs, ValueType::I256)?;
@@ -2063,9 +1842,8 @@ fn build_int_const_limbs_dedups_repeated_values() -> Result<()> {
     Ok(())
 }
 
-/// `build_int_const` now covers I1..I512: a value that fits `u128` interns as
-/// `Bits` regardless of declared width, so I256/I512 are accepted (no longer
-/// rejected).
+/// A value fitting `u128` interns as `Bits` whatever the declared width, so
+/// the widest types are accepted here rather than needing the limb path.
 #[test]
 fn build_int_const_accepts_u256_and_u512() -> Result<()> {
     let mut b = builder_with_region()?;
@@ -2079,7 +1857,6 @@ fn build_int_const_accepts_u256_and_u512() -> Result<()> {
 
 #[test]
 fn build_int_const_limbs_rejects_non_wide_output_type() -> Result<()> {
-    // I64 is not a valid wide-const output type; I80/I128/I256/I512 are.
     let mut b = builder_with_region()?;
     let err = b
         .build_int_const_limbs(&[0; 4], ValueType::I64)
@@ -2096,15 +1873,13 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     use crate::validate::validate;
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    // Genuinely-wide value (high limb set).
+    // High limb set, so genuinely wide.
     let value =
         b.build_int_const_limbs(&[0x1234_5678, 0, 0, 0x8000_0000_0000_0000], ValueType::I256)?;
     b.set_lift_addr(None);
-    // Wire the wide const into the reachable spine via Return[ctrl, mem, value].
-    // Chain control off the entry Region (which already consumes Entry's
-    // Control) rather than Entry directly: feeding this Return from Entry's
-    // Control would fan it out to two consumers (the region AND the Return),
-    // which the single-successor control invariant rejects.
+    // Wire the const into the reachable spine through a Return. Chain control
+    // off the entry Region, not Entry: Entry's Control already feeds the
+    // region, and a second consumer breaks the single-successor invariant.
     let region_node = b
         .function()
         .graph()
@@ -2118,7 +1893,7 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
         .copied()
         .next()
         .unwrap();
-    // Build a minimal Return — needs Memory input; pull it from InitialMemory.
+    // The Return also needs a memory input.
     let mem_node = b
         .function()
         .graph()
@@ -2149,14 +1924,11 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
 fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    // High limb set ⇒ genuinely Wide values (distinct, interned separately).
+    // High limbs set, so both are genuinely wide and interned separately.
     let _live = b.build_int_const_limbs(&[1, 1, 1, 1], ValueType::I256)?;
-    // Build an additional wide const that we'll never wire into the
-    // reachable graph — `compact()` should drop it.
+    // Never wired into the reachable graph, so `compact()` should drop it.
     let _zombie = b.build_int_const_limbs(&[2, 2, 2, 2], ValueType::I256)?;
     b.set_lift_addr(None);
-    // Zombie isn't referenced by `_live` and the only Return walk-spine
-    // visits `_live` (we wire it through Return to keep it reachable).
     let mem_node = b
         .function()
         .graph()
@@ -2170,10 +1942,9 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         .copied()
         .next()
         .unwrap();
-    // Chain control off the entry Region (which already consumes Entry's
-    // Control) rather than Entry directly: feeding this Return from Entry's
-    // Control would fan it out to two consumers (the region AND the Return),
-    // which the single-successor control invariant rejects.
+    // Chain control off the entry Region, not Entry: Entry's Control already
+    // feeds the region, and a second consumer breaks the single-successor
+    // invariant.
     let region_node = b
         .function()
         .graph()
@@ -2213,8 +1984,6 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     Ok(())
 }
 
-// ── build_call_with_cc — per-Call CC override ───────────────────────────
-
 mod build_call_with_cc {
     use super::*;
     use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
@@ -2229,10 +1998,8 @@ mod build_call_with_cc {
             .unwrap()
     }
 
-    /// The SystemV integer arg-passing registers (RDI, RSI, RDX, RCX, R8,
-    /// R9).  Every CC arg register is read at the Call site via
-    /// `read_reg_vn`, which requires a tracked container — so a Call-
-    /// building fixture must track the full arg set, not just RDI.
+    /// A Call reads every CC arg register, and each read needs a tracked
+    /// container, so a Call-building fixture must track the whole set.
     fn x86_64_arg_regs(regs: &rsleigh::SleighRegs) -> Vec<rsleigh::Vn> {
         ["RDI", "RSI", "RDX", "RCX", "R8", "R9"]
             .iter()
@@ -2247,8 +2014,7 @@ mod build_call_with_cc {
         let rax = regs.name_to_vn("RAX").unwrap();
         let rdi = regs.name_to_vn("RDI").unwrap();
         let rsp = regs.name_to_vn("RSP").unwrap();
-        // Track the full SystemV arg-register set: every CC arg register is
-        // read via `read_reg_vn`, which errors on an untracked register.
+        // Reading an untracked arg register errors, so track them all.
         let mut tracked = vec![rax, rsp];
         tracked.extend(x86_64_arg_regs(&regs));
         let mut b = FunctionBuilder::new(tracked, cc, strider_target::Endianness::Little).unwrap();
@@ -2258,8 +2024,6 @@ mod build_call_with_cc {
         b.set_region(region);
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
         b.build_call_cc(addr, None).unwrap();
-        // The Call output kinds match `build_call(addr, None)` exactly: Control,
-        // Memory, then one slot per `call_clobbered_variables` entry.
         let function = b.function();
         let call_node = function
             .graph()
@@ -2284,12 +2048,9 @@ mod build_call_with_cc {
         let rax = regs.name_to_vn("RAX").unwrap();
         let rdi = regs.name_to_vn("RDI").unwrap();
         let rsp = regs.name_to_vn("RSP").unwrap();
-        // FunctionBuilder::new auto-adds the cc.ret_val_regs (rax, rdx),
-        // ret_val_regs_float (xmm0, xmm1), the arg-passing regs (rdi, rsi,
-        // rdx, rcx, r8, r9), and the stack pointer into the tracked set even
-        // when the caller's `all_used_variables` doesn't list them.  An
-        // "all-preserving" override must mark every one of those
-        // callee-saved or they'll appear as clobber outputs.
+        // `FunctionBuilder::new` seeds every CC register into the tracked set
+        // even when the caller does not list it, so an all-preserving override
+        // must mark each one callee-saved or it shows up as a clobber output.
         let rdx = regs.name_to_vn("RDX").unwrap();
         let xmm0 = regs.name_to_vn("XMM0").unwrap();
         let xmm1 = regs.name_to_vn("XMM1").unwrap();
@@ -2300,7 +2061,7 @@ mod build_call_with_cc {
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
 
-        // Override CC: every tracked variable is callee-saved → 0 clobbers.
+        // Every tracked variable callee-saved means zero clobbers.
         let mut callee_saved = vec![rax, rdx, xmm0, xmm1];
         callee_saved.extend(x86_64_arg_regs(&regs));
         let override_cc = BuiltCallingConvention {
@@ -2325,14 +2086,12 @@ mod build_call_with_cc {
             .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
             .unwrap();
         let outs = function.node_outputs(call_node);
-        // Outputs: Control + Memory + 0 clobbered slots.
         assert_eq!(
             outs.len(),
             2,
             "fentry-style Call has 0 clobbered output slots"
         );
         let inputs: Vec<_> = function.node_inputs(call_node).into_iter().collect();
-        // Inputs: control + memory + target + sp.  No arg slots.
         assert_eq!(
             inputs.len(),
             4,
@@ -2343,7 +2102,6 @@ mod build_call_with_cc {
             &override_cc,
             "override CC is the effective CC even when it clobbers nothing"
         );
-        // No clobber outputs → no value_vn clobber tags on this Call.
         assert!(
             function
                 .node_outputs(call_node)
@@ -2353,9 +2111,8 @@ mod build_call_with_cc {
         );
     }
 
-    /// A built Call's inputs must be `[ctrl, mem, target, sp, ...args]`:
-    /// the stack-pointer value is wired at slot `[3]` (ahead of the
-    /// arguments) and the first arg follows at slot `[4]`.
+    /// Inputs are `[ctrl, mem, target, sp, ...args]`: SP sits ahead of the
+    /// arguments, so the first arg lands at slot 4.
     #[test]
     fn call_sp_input_precedes_args() {
         let cc = x86_64_built_cc();
@@ -2363,9 +2120,7 @@ mod build_call_with_cc {
         let rax = regs.name_to_vn("RAX").unwrap();
         let rdi = regs.name_to_vn("RDI").unwrap();
         let rsp = regs.name_to_vn("RSP").unwrap();
-        // Track RSP and the full SystemV arg-register set: every CC arg
-        // register is read via `read_reg_vn`, which errors on an untracked
-        // register.  RDI is still slot [4] (the first arg).
+        // Reading an untracked arg register errors, so track them all.
         let mut tracked = vec![rax, rsp];
         tracked.extend(x86_64_arg_regs(&regs));
         let mut b = FunctionBuilder::new(tracked, cc, strider_target::Endianness::Little).unwrap();
@@ -2373,10 +2128,7 @@ mod build_call_with_cc {
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
 
-        // The current SP value at the call site — the value wired into
-        // input slot [3].
         let sp_value = b.read_variable(&rsp).unwrap();
-        // The current RDI value — the lone arg, wired into slot [4].
         let arg0_value = b.read_variable(&rdi).unwrap();
 
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
@@ -2400,12 +2152,9 @@ mod build_call_with_cc {
         assert_eq!(inputs[4], arg0_value, "slot [4] is the first arg (RDI)");
     }
 
-    // ── FunctionBuilder extended-use round-trip ────────────────────────
-
-    /// Drive the builder through several rounds of in-place mutation
-    /// (mimicking an iterative analysis loop) without consuming it
-    /// via `build()`.  At each step `entry()` must stay stable and
-    /// `graph_mut()` must keep producing fresh node ids.
+    /// Several rounds of in-place mutation without consuming the builder, as
+    /// an iterative analysis loop would. `entry()` must stay stable throughout
+    /// and `graph_mut()` must keep minting fresh ids.
     #[test]
     fn analysis_loop_without_build_round_trips() {
         let mut b = empty_builder().unwrap();
@@ -2436,16 +2185,12 @@ mod build_call_with_cc {
         assert_eq!(b.entry(), entry, "entry() stable after second mutation");
         assert_ne!(r1, r2, "consecutive create_node calls produce distinct ids");
 
-        // Both synthesized nodes are live in the arena.
         assert!(matches!(b.function().node_kind(r1), NodeKind::IntConst(_)));
         assert!(matches!(b.function().node_kind(r2), NodeKind::IntConst(_)));
     }
 
-    /// After driving the builder through several rounds of in-place
-    /// mutation, calling `build()` must still produce a valid graph
-    /// (passes `validate`).  Pins the "build still works after
-    /// extended use" contract that every imperative opt pass relies
-    /// on.
+    /// `build()` must still validate after extended in-place use, the contract
+    /// every imperative opt pass relies on.
     #[test]
     fn final_build_after_extended_use_yields_valid_built() {
         let mut b = empty_builder().unwrap();
@@ -2457,9 +2202,8 @@ mod build_call_with_cc {
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
 
-        // N rounds of in-place mutation via graph_mut() — synthesize
-        // a fresh node, leave it detached.  The validator skips
-        // unreachable nodes, so detached extras are still valid.
+        // Each round leaves a detached node behind. The validator skips
+        // unreachable nodes, so these stay legal.
         for k in 1u64..=5 {
             b.function_mut().graph_mut().create_node(
                 NodeKind::IntConst(crate::node::const_value::ConstId::new((k) as usize)),
@@ -2474,22 +2218,19 @@ mod build_call_with_cc {
     }
 }
 
-// ── call_ret_val — Call emits ret-val outputs before clobbers ─────────────
-//
-// Verifies that after the ret-val / clobber split:
-//   - `call_ret_vals_for(cc)` returns exactly the ret-val registers.
-//   - `call_clobbered_for(cc)` returns only the non-ret caller-saved regs.
-//   - A built Call emits `[Control, Memory, <ret-val outputs...>, <clobbers...>]`
-//     in that exact order, with each ret-val output's `value_vn` tagged.
+/// The ret-val / clobber split: the ret group holds exactly the ret-val
+/// registers, the clobber group only the non-ret caller-saved ones, and a
+/// built Call emits `[Control, Memory, ret-vals..., clobbers...]` in that
+/// order with every output tagged by its varnode.
 #[test]
 fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
-    // rax: both ret-val and would-be caller-clobbered
+    // Both ret-val and would-be caller-clobbered.
     let rax = reg_vn(0x00, 8);
-    // rcx: plain caller-clobbered (not a ret reg)
+    // Plain caller-clobbered.
     let rcx = reg_vn(0x08, 8);
-    // rbx: callee-saved (excluded from clobbers)
+    // Callee-saved, so excluded from clobbers.
     let rbx = reg_vn(0x10, 8);
-    // rsp: stack pointer (excluded from clobbers)
+    // Stack pointer, likewise excluded.
     let sp = reg_vn(0x18, 8);
 
     let mut b = raw_builder(
@@ -2504,8 +2245,6 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 
     let cc = b.function().default_cc().clone();
 
-    // (a)/(b) the CC ret / clobber projection: rax is the ret reg, rcx a plain
-    // caller-clobber, rbx (callee-saved) + rsp excluded.
     let (ret_vals, clobbered) = crate::cc_ret_and_clobber_vns(b.function(), &cc);
     assert_eq!(
         ret_vals,
@@ -2516,14 +2255,11 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
         !clobbered.contains(&rax),
         "call_clobbered_for must not contain the ret-val register rax; got {clobbered:?}"
     );
-    // rcx is caller-clobbered and not a ret reg, so it stays in clobbered.
     assert!(
         clobbered.contains(&rcx),
         "call_clobbered_for must still contain the plain caller-clobbered reg rcx"
     );
 
-    // (c) Build a Call and verify output order:
-    //   [Control, Memory, <rax-ret-val>, <rcx-clobber>]
     let region = b.create_region_all()?;
     b.set_entry_region_all(region)?;
     b.set_region(region);
@@ -2541,14 +2277,12 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
         .expect("exactly one Call node must be present");
     let outs = f.node_outputs(call_node);
 
-    // Outputs: [Control, Memory] + ret_vals + clobbers
     assert_eq!(
         outs.len(),
         2 + ret_vals.len() + clobbered.len(),
         "Call output count must be Control + Memory + ret_vals + clobbers"
     );
 
-    // Slot 2 is the ret-val (rax).
     let rax_out = outs[2];
     assert_eq!(
         f.get_vn_for_value(rax_out),
@@ -2556,7 +2290,6 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
         "ret-val output at slot 2 must carry value_vn = rax"
     );
 
-    // Slot 3 is the clobber (rcx).
     let rcx_out = outs[3];
     assert_eq!(
         f.get_vn_for_value(rcx_out),
@@ -2567,11 +2300,8 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
     Ok(())
 }
 
-// ── create_node_attributed canonicalisation edge cases ────────────────────
-
-/// I80 value parity: a small-valued I80 constant is interned as `Bits` (every
-/// fitting value is `Bits`), reads back at the declared width, and an equal
-/// value re-built dedups to one node.
+/// Every fitting value is `Bits`, I80 included; it reads back at the declared
+/// width and an equal value dedups to one node.
 #[test]
 fn small_valued_i80_const_interns_as_bits() -> Result<()> {
     use crate::node::const_value::ConstValue;
@@ -2594,10 +2324,9 @@ fn small_valued_i80_const_interns_as_bits() -> Result<()> {
     Ok(())
 }
 
-/// I256 parity: limbs that fit `u128` canonicalise to `ConstValue::Bits`, so a
-/// small-valued I256 constant built via `build_int_const_limbs` and one built
-/// via `build_int_const` at the same value share ONE `ConstId` (distinct nodes
-/// only when the declared width differs).
+/// Limbs that fit `u128` canonicalise to `Bits`, so the limb path and the
+/// scalar path share one `ConstId` for the same value. Only the declared width
+/// separates the nodes.
 #[test]
 fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
     use crate::node::const_value::ConstValue;
@@ -2615,8 +2344,6 @@ fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
     );
     assert_eq!(b.function().value_type(via_limbs)?, ValueType::I256);
 
-    // The same value at a different width shares the ConstId (one interned 5)
-    // but is a distinct node (different output width).
     let via_i64 = b.build_int_const(5u64, ValueType::I64)?;
     let i64_node = b.function().producer(via_i64);
     let NodeKind::IntConst(i64_id) = *b.function().node_kind(i64_node) else {
@@ -2627,9 +2354,8 @@ fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
     Ok(())
 }
 
-/// An `IntConst` whose value exceeds its declared 1-bit width is masked at
-/// interning: value 3 at I1 becomes 1, and therefore dedups with the canonical
-/// boolean `true` constant.
+/// Interning masks to the declared width, so 3 at I1 becomes 1 and dedups
+/// with the canonical boolean true.
 #[test]
 fn i1_const_payload_masks_to_one_bit() -> Result<()> {
     use crate::node::const_value::ConstValue;
@@ -2654,8 +2380,7 @@ fn i1_const_payload_masks_to_one_bit() -> Result<()> {
     Ok(())
 }
 
-/// Masking at exactly 64 bits is the identity: `build_int_const(u64::MAX,
-/// I64)` keeps every bit.
+/// Masking at exactly the carrier's width is the identity.
 #[test]
 fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
     use crate::node::const_value::ConstValue;
@@ -2675,23 +2400,16 @@ fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
     Ok(())
 }
 
-// ── register-aliasing read/write edge cases ────────────────────────────────
-
-// ── IR-6: symmetric sub-register write coercion ─────────────────────────────
-
-// ── largest_container_in edge cases ─────────────────────────────────────────
-
-/// A callee-saved CC register is recorded in the container map but NOT
-/// seeded into the tracked set (only ret / float-ret / arg / SP registers
-/// are): with nothing tracked containing it, it resolves to itself.  An
-/// ad-hoc UNIQUE vn the function never saw also resolves to itself.
+/// Only ret, float-ret, arg and SP registers are seeded into the tracked set,
+/// so a callee-saved register has nothing tracked containing it and resolves
+/// to itself, as does a varnode the function never saw.
 #[test]
 fn container_of_untracked_callee_saved_and_adhoc_vns_resolve_to_self() -> Result<()> {
     let r_cs = reg_vn(0x200, 8);
     let b = raw_builder(
         vec![],
         &[],
-        &[r_cs], // callee-saved only — not part of the tracked-set seeding
+        &[r_cs], // callee-saved, so not seeded into the tracked set
         &[],
         None,
         0,
@@ -2752,8 +2470,7 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
     let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], cc, strider_target::Endianness::Little)?;
     let region = b.create_region_all()?;
     b.set_entry_region_all(region)?;
-    // The lifter records register-arg carriers after `set_entry_region`; the
-    // test-util helper reproduces that here (direct-builder tests have no lifter).
+    // In prod the lifter does this right after `set_entry_region`.
     b.record_register_arg_carriers();
     b.set_region(region);
 
@@ -2772,19 +2489,16 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
     Ok(())
 }
 
-/// An arg-passing register that is a SUB-register of a wider tracked
-/// container (e.g. `edi` while the function tracks `rdi`) must still be
-/// recorded in `arg_index_to_values`: the arg register is resolved to its
-/// tracked container before the var-table lookup, mirroring how the CC
-/// register derivations (`call_ret_vals_for` / `call_clobbered_for`)
-/// resolve through `largest_container_in`.
+/// An arg register that is a sub-register of a tracked container must still be
+/// recorded: it resolves to its container before the var-table lookup, as the
+/// other CC register derivations do.
 #[test]
 fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
     let rdi = reg_vn(0x38, 8);
-    let edi = reg_vn(0x38, 4); // sub-register of rdi
+    let edi = reg_vn(0x38, 4);
     let sp = reg_vn(0x20, 8);
     let cc = strider_target::BuiltCallingConvention {
-        arg_passing_regs: vec![edi], // arg passed in the NARROW alias
+        arg_passing_regs: vec![edi], // passed in the narrow alias
         callee_saved_regs: vec![],
         ret_val_regs: vec![],
         ret_val_regs_float: vec![],
@@ -2795,14 +2509,12 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
         preserves_memory: false,
         no_return: false,
     };
-    // Track only the wider container rdi (+ sp). FunctionBuilder::new seeds
-    // edi (the narrow arg alias) then drops it as enclosed by rdi, so the var
-    // table is keyed by rdi, not edi.
+    // `FunctionBuilder::new` seeds edi then drops it as enclosed by rdi, so
+    // the var table is keyed by rdi.
     let mut b = FunctionBuilder::new(vec![rdi, sp], cc, strider_target::Endianness::Little)?;
     let region = b.create_region_all()?;
     b.set_entry_region_all(region)?;
-    // The lifter records register-arg carriers after `set_entry_region`; the
-    // test-util helper reproduces that here (direct-builder tests have no lifter).
+    // In prod the lifter does this right after `set_entry_region`.
     b.record_register_arg_carriers();
     b.set_region(region);
 
@@ -2821,11 +2533,9 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
 
 #[test]
 fn build_switch_makes_n_control_outputs_and_records_targets() -> Result<()> {
-    // Use this file's local `empty_builder()` (not
-    // `strider_ir_test_utils::empty_builder`) — the latter is built against
-    // the *separate* dev-dependency compilation of strider-ir (see the
-    // `raw_builder` doc comment above), whose `FunctionBuilder`/`Function`
-    // don't implement this file's `IRViewer`/`IRBuilderExt` traits.
+    // Must be the local `empty_builder()`: the test-utils one is built
+    // against the separate dev-dependency compilation of strider-ir, whose
+    // types do not implement this crate's traits.
     let mut b = empty_builder()?;
     let entry = b.create_region_all()?;
     let a = b.create_region_all()?;
@@ -2835,13 +2545,12 @@ fn build_switch_makes_n_control_outputs_and_records_targets() -> Result<()> {
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
     b.build_switch(addr, &[(a, 0x1000), (c, 0x1020)])?;
-    // terminate the arms so the function is valid
+    // The arms need terminating for the function to validate.
     b.set_region(a);
     b.build_return(None, &[])?;
     b.set_region(c);
     b.build_return(None, &[])?;
     let f = b.build()?;
-    // Find the Switch node.
     let sw = f
         .graph()
         .all_node_ids()

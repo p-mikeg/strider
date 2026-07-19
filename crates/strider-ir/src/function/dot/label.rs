@@ -5,21 +5,14 @@ use super::{FunctionDotDumper, node_fillcolor};
 use crate::IRViewer;
 use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
-/// Render a varnode to its display name by delegating to rsleigh's
-/// [`rsleigh::Vn::ctx_fmt`].  REGISTER
-/// varnodes whose byte range matches a named register resolve to the
-/// register name (e.g. `"RAX"`); every other varnode renders as
-/// `<space-name>[0x<off>]:<size>` for non-CONST spaces, or `0x<off>:<size>`
-/// for CONST.  Unknown space-shortcut bytes fall back to the raw
-/// shortcut character via [`rsleigh::VnSpace`]'s `Display`.
+/// A REGISTER varnode matching a named register renders as that name (`"RAX"`);
+/// anything else as `<space>[0x<off>]:<size>`, or `0x<off>:<size>` for CONST.
+/// Formatting itself is infallible (unknown spaces fall back to the shortcut
+/// char), so the only error is a `sleigh.regs()` failure.
 ///
 /// # Errors
 ///
-/// Propagates `sleigh.regs()` failures.  The format itself is infallible:
-/// rsleigh's `VnCtxFmt` covers every space variant via `space_info` /
-/// shortcut-character fallback, so the previous `InvalidRegVn` and
-/// `UnsupportedVnSpaceDisplay` error paths no longer fire — those inputs
-/// now produce a best-effort fallback string.
+/// Propagates `sleigh.regs()` failures.
 pub(crate) fn vn_to_display_name<R: MemReader>(
     sleigh: &rsleigh::Sleigh<R>,
     vn: &rsleigh::Vn,
@@ -33,9 +26,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         vn_to_display_name(self.sleigh, vn).map_err(|e| io::Error::other(e.to_string()))
     }
 
-    /// Returns the display name for a VnSpace, checking the default code space
-    /// so that architectures where the code space isn't literally `RAM` still
-    /// render as "ram".
+    /// Checks the default code space first so arches whose code space isn't
+    /// literally `RAM` still render as "ram".
     fn pretty_vnspace(&self, space: rsleigh::VnSpace) -> &'static str {
         let default = self.sleigh.default_code_space();
         if space == default {
@@ -50,16 +42,12 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         }
     }
 
-    /// Returns the [`ValueType`] of the first value output of `node`,
-    /// or `None` if it has no value output.
     fn out_type(&self, node: NodeId) -> Option<ValueType> {
         self.function
             .first_value_output_of(node)
             .and_then(|o| self.function.value_type_opt(o))
     }
 
-    /// Returns the [`ValueType`] of the `ValueId` at input index
-    /// `idx` of `node`, or `None` if it is not a value output.
     fn input_type(&self, node: NodeId, idx: usize) -> Option<ValueType> {
         self.function
             .node_inputs(node)
@@ -68,35 +56,31 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             .and_then(|o| self.function.value_type_opt(o))
     }
 
-    /// Type name of the first value output of `node`, or `"?"` if absent.
     fn out_type_str(&self, node: NodeId) -> &'static str {
         self.out_type(node).map_or("?", ValueType::as_str)
     }
 
-    /// Type name of input `idx` of `node`, or `"?"` if absent / non-value.
     fn input_type_str(&self, node: NodeId, idx: usize) -> &'static str {
         self.input_type(node, idx).map_or("?", ValueType::as_str)
     }
 
-    /// Type suffix `"<sep><name>"` for the first value output of `node`, or an
-    /// empty string when the node has no value output. `sep` is typically
-    /// `":"`, `" "`, or `"\n→ "` depending on the rendering convention.
+    /// `"<sep><type>"`, or empty when the node has no value output. `sep` is
+    /// typically `":"`, `" "`, or `"\n-> "`.
     fn out_type_suffix(&self, node: NodeId, sep: &str) -> String {
         self.out_type(node)
             .map_or_else(String::new, |t| format!("{sep}{}", t.as_str()))
     }
 
-    /// Same as [`Self::out_type_suffix`] but reads input slot `idx` instead.
+    /// [`Self::out_type_suffix`] for input slot `idx`.
     fn input_type_suffix(&self, node: NodeId, idx: usize, sep: &str) -> String {
         self.input_type(node, idx)
             .map_or_else(String::new, |t| format!("{sep}{}", t.as_str()))
     }
 
     /// Appends a `base sp ± K` line to a Store/Load label when the node has a
-    /// `stack_offsets` entry.  The base is shown generically as `base sp`
-    /// (rather than the literal `sp`) because the SP-derived base can be the
-    /// entry SP *or* an alignment-masked SP — the address-input edge resolves
-    /// which one concretely; this line is just the quick-read offset.
+    /// `stack_offsets` entry.  Written generically as `base sp` because the
+    /// SP-derived base may be the entry SP or an alignment-masked SP; the
+    /// address-input edge is what resolves it concretely.
     fn with_sp_offset(&self, node: NodeId, label: String) -> String {
         match self.function.stack_offset(node) {
             Some((_, k)) if k < 0 => format!("{label}\nbase sp - {}", -k),
@@ -109,7 +93,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         let kind = self.function.node_kind(node);
 
         let label = match kind {
-            // ── entry / structural ────────────────────────────────────────────
             NodeKind::InitialVar(id) => match self.function.initial_vn_opt(*id) {
                 Some(vn) => format!("init\n{}", self.vn_to_name(&vn)?),
                 None => format!("init\n#{}", id.index()),
@@ -123,15 +106,13 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 Some(var) => format!("φ {}", self.vn_to_name(&var)?),
             },
 
-            // ── constants ─────────────────────────────────────────────────────
             NodeKind::IntConst(id) => {
                 let out_ty = self.out_type(node);
                 // A dangling id (malformed graph) labels rather than panics.
                 match self.function.const_interner.get(*id) {
                     None => format!("const <dangling const {id:?}>"),
                     Some(_) if out_ty.is_some_and(|t| t.is_wide_int()) => {
-                        // Wide (I80 / I128 / I256 / I512): little-endian bytes,
-                        // rendered high→low.  Read through the SSoT accessor.
+                        // Stored little-endian; render high->low.
                         let bits = out_ty.map_or(0, |t| t.byte_size() * 8);
                         let bytes = self
                             .function
@@ -144,8 +125,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     }
                     Some(_) => {
                         let ty = self.out_type_suffix(node, ":");
-                        // Read value through the SSoT funnel rather than matching
-                        // the interned payload directly.
+                        // Read through the accessor, not the interned payload.
                         let v = self
                             .function
                             .first_value_output_of(node)
@@ -161,12 +141,9 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     format!("const {v}:f32")
                 }
                 Some(ValueType::F80) => {
-                    // F80 (x87 extended precision) has no native Rust type;
-                    // display the raw bit pattern.  In practice F80
-                    // FloatConst nodes don't get created (the bit-conversion
-                    // builders skip the immediate-fold for F80), but if
-                    // one ever appears we don't want a crash or a silently-
-                    // misformatted f64 label.
+                    // No native Rust f80, so show raw bits.  These nodes
+                    // shouldn't exist (the bit-conversion builders skip the
+                    // immediate-fold for F80), but don't mis-render as f64.
                     format!("const {bits:#x}:f80")
                 }
                 _ => {
@@ -175,7 +152,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 }
             },
 
-            // ── memory operations ─────────────────────────────────────────────
             NodeKind::Load(space) => {
                 let space = self.pretty_vnspace(*space);
                 let ty = self.out_type_suffix(node, " ");
@@ -187,22 +163,18 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 let ty = self.input_type_suffix(node, 2, " ");
                 self.with_sp_offset(node, format!("Store{ty}\n→ {space}"))
             }
-            // ── casts / width changes ─────────────────────────────────────────
             NodeKind::Truncate => self.width_change_label(node, "Truncate"),
             NodeKind::Extend(op) => self.width_change_label(node, &format!("{op:?}")),
             NodeKind::Popcount => self.width_change_label(node, "Popcount"),
             NodeKind::Lzcount => self.width_change_label(node, "Lzcount"),
-            // ── arithmetic / logical ──────────────────────────────────────────
             NodeKind::IntBinaryOp(op) => format!("{op:?}{}", self.out_type_suffix(node, ":")),
             NodeKind::IntUnaryOp(op) => self.width_change_label(node, &format!("{op:?}")),
             NodeKind::IntCmpOp(op) => self.cmp_label(node, op),
 
-            // ── float arithmetic / logical ────────────────────────────────────
             NodeKind::FloatBinaryOp(op) => format!("{op:?}{}", self.out_type_suffix(node, ":")),
             NodeKind::FloatUnaryOp(op) => self.width_change_label(node, &format!("{op:?}")),
             NodeKind::FloatCmpOp(op) => self.cmp_label(node, op),
 
-            // ── float / integer conversions ───────────────────────────────────
             NodeKind::IntToFloat => self.width_change_label(node, "IntToFloat"),
             NodeKind::FloatToInt => self.width_change_label(node, "FloatToInt"),
             NodeKind::FloatToFloat => self.width_change_label(node, "FloatToFloat"),
@@ -210,12 +182,9 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 self.width_change_label(node, "bitcast")
             }
 
-            // ── user-defined / opaque opcodes ────────────────────────────────
             NodeKind::CallOther { user_op_id } => {
-                // Show the resolved Sleigh user-op name when the analyzer
-                // recorded one (e.g. `setISAMode #62`); fall back to the bare
-                // id for synthetic nodes (tests, third-party graph builders)
-                // that bypass the name side-table.
+                // Synthetic nodes (tests, third-party builders) bypass the name
+                // side-table, so fall back to the bare id.
                 let name_prefix = self
                     .function
                     .side_tables()
@@ -244,16 +213,14 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 format!("Switch{cases}")
             }
 
-            // ── everything else ───────────────────────────────────────────────
             _ => format!("{kind:?}"),
         };
 
         Ok(label)
     }
 
-    /// `"{prefix}\n{from} → {to}"` for a unary width-changing node whose
-    /// from-type is input 0 and to-type is the node's own value output.
-    /// (Truncate / Extend / Popcount / Lzcount / unary ops / int↔float casts.)
+    /// `"{prefix}\n{from} -> {to}"`, from-type off input 0 and to-type off the
+    /// node's own value output.
     fn width_change_label(&self, node: NodeId, prefix: &str) -> String {
         format!(
             "{prefix}\n{} → {}",
@@ -262,7 +229,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         )
     }
 
-    /// `"{op:?}\n{from} → i1"` for a comparison node (output is always `i1`).
+    /// Comparison output is always `i1`, so only the input type varies.
     fn cmp_label(&self, node: NodeId, op: impl core::fmt::Debug) -> String {
         format!("{op:?}\n{} → i1", self.input_type_str(node, 0))
     }
@@ -270,20 +237,16 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     pub(super) fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut ::dot::DotEmitter) {
         let kind = self.function.node_kind(node);
         let fc = node_fillcolor(kind);
-        // Use pretty_label so const nodes get their type annotation too.
+        // pretty_label, so const boxes carry their type annotation too.
         let label = self
             .pretty_label(node)
             .unwrap_or_else(|_| format!("{kind:?}"));
         out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
     }
 
-    /// Returns the label for a Call / CallOther output past `[Control, Memory]`.
-    ///
-    /// Since every ret-val and clobber output carries a `value_vn` tag,
-    /// the name is derived directly from that tag.  Falls back to a
-    /// synthetic `outN` label when no tag is present (e.g. synthetic test
-    /// graphs with no CC metadata) or for the structural Control / Memory
-    /// slots.
+    /// Label for a Call / CallOther output past `[Control, Memory]`, taken from
+    /// the output's `value_vn` tag.  Falls back to `outN` for the two structural
+    /// slots and for untagged outputs (synthetic graphs with no CC metadata).
     pub(super) fn call_clobbered_name(&self, value_id: ValueId) -> io::Result<String> {
         let (_call_id, output_index) = self.function.value_definition(value_id);
         if output_index < 2 {
@@ -295,11 +258,9 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         }
     }
 
-    /// Returns the register name for a `Return` input at the given input
-    /// slot.  Return inputs are `[ctrl(0), mem(1), ret_val_regs[0](2), …]`
-    /// so slot `i + 2` corresponds to `ret_val_regs[i]`.  Returns `None` if
-    /// the slot is out of range of the stored calling-convention ret regs
-    /// (e.g. synthetic test graphs that don't carry a convention).
+    /// Return inputs are `[ctrl, mem, ret_val_regs[0], ...]`, so slot `i + 2` is
+    /// `ret_val_regs[i]`.  `None` when the slot is out of range of the stored
+    /// convention (synthetic graphs carry none).
     pub(super) fn return_ret_name(&self, input_slot: usize) -> io::Result<Option<String>> {
         let Some(i) = input_slot.checked_sub(2) else {
             return Ok(None);
@@ -316,17 +277,11 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     //! Per-VnSpace formatting tests for [`vn_to_display_name`].
-    //!
-    //! After the rsleigh-4 migration, `vn_to_display_name` delegates to
-    //! `rsleigh::Vn::ctx_fmt`; the formerly-erroring paths
-    //! (unknown-register offset, exotic-space byte) now produce a
-    //! best-effort fallback string instead of an error.
 
     use super::vn_to_display_name;
     use rsleigh::{Vn, VnSpace};
 
-    /// Probe `Sleigh` backed by an empty buffer.  Sufficient for the
-    /// format tests — no instructions are decoded.
+    /// Empty-buffer probe: these tests decode no instructions.
     fn probe_sleigh() -> rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
         let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
         rsleigh::Sleigh::new(
@@ -377,8 +332,8 @@ mod tests {
     fn register_known_offset_returns_register_name() {
         let sleigh = probe_sleigh();
         let regs = sleigh.regs().expect("regs");
-        // Pick a well-known x86-64 register name; try a few until one
-        // resolves (Sleigh's table varies subtly across .sla versions).
+        // Sleigh's register table varies subtly across .sla versions, so try
+        // several until one resolves.
         let candidates = ["RAX", "RDI", "RSI", "EAX", "AX"];
         let (name, vn) = candidates
             .iter()
@@ -404,9 +359,8 @@ mod tests {
     #[test]
     fn unknown_space_byte_falls_back_to_shortcut_char() {
         let sleigh = probe_sleigh();
-        // A space shortcut that is neither CONST (#), REGISTER (%),
-        // RAM (r), nor UNIQUE (u).  rsleigh renders the raw shortcut
-        // char via `Display for VnSpace`.
+        // A shortcut that is none of CONST/REGISTER/RAM/UNIQUE; rsleigh falls
+        // back to rendering the raw char.
         let exotic = Vn {
             addr_off: 0,
             addr_space: VnSpace::new(b'?'),

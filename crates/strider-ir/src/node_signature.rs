@@ -1,55 +1,33 @@
-//! Expected input/output signatures of every [`NodeKind`] variant.
+//! Single source of truth for every node's slot shape: kind (validation),
+//! name (dot labels), and role (dot colors).
 //!
-//! This module is the single source of truth for every node's input and
-//! output slot shape: slot kind (for validation), slot name (for dot
-//! labels), and slot role (for dot colors and IR-aware rendering).
+//! [`ExpectedValueKind`] is coarser than the concrete [`ValueKind`] stored on
+//! real outputs: integer slots accept any width, float slots accept
+//! `F32`/`F64`/`F80`, and the `Bool` selector matches exactly the 1-bit
+//! integer `I1`.
 //!
-//! Slots are described by [`Slot`] carrying [`ExpectedValueKind`] —
-//! a coarser classification than the concrete [`ValueKind`] stored on
-//! actual outputs.  Integer slots accept any width via
-//! [`ExpectedValueKind::AnyInt`], float slots accept `F32`/`F64`/`F80` via
-//! [`ExpectedValueKind::AnyFloat`].  The signature-level
-//! [`ExpectedValueKind::Bool`] selector matches exactly the 1-bit integer
-//! `I1` (there is no distinct boolean type).
-//!
-//! Variadic arity is modelled by [`SlotList::tail`]: a `None` tail means
-//! the slot list is fixed-arity (equal to `head.len()`), while `Some(tail)`
-//! means any index past the head repeats `tail`.  Variadic kinds include
-//! [`NodeKind::Region`], [`NodeKind::MemPhi`],
-//! [`NodeKind::Phi`], [`NodeKind::Call`], [`NodeKind::CallOther`],
-//! [`NodeKind::Return`], [`NodeKind::CPoolRef`], and [`NodeKind::New`].
+//! Variadic arity lives in [`SlotList::tail`]: `None` means fixed arity of
+//! `head.len()`, `Some(tail)` means every index past the head repeats
+//! `tail`.
 
 use crate::node::NodeKind;
 
-/// The expected kind of an input or output slot of a [`NodeKind`].
-///
-/// Stays `pub` because it is reachable from the public
-/// [`crate::validate::ValidationError`] enum via
-/// `NodeInputKindMismatch::expected` and `NodeOutputKindMismatch::expected`.
-/// The remaining types in this module ([`SlotRole`], [`Slot`], [`SlotList`],
-/// [`Signature`]) are `pub(crate)` because they have no external consumers.
+/// `pub` only because [`crate::validate::ValidationError`] exposes it; the
+/// rest of this module has no external consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedValueKind {
-    /// A `Control` token.
     Control,
-    /// A `Memory` token.
     Memory,
-    /// A `PhiToken` dispatch token.
     PhiToken,
-    /// The 1-bit boolean integer `I1` (a comparison / logical-op result).
+    /// Exactly `I1`.
     Bool,
-    /// Any integer-typed value (I1, I8, I16, I32, I64, I80, I128, I256, I512).
     AnyInt,
-    /// Any float-typed value (F32, F64, F80).
     AnyFloat,
-    /// Any value-typed output: `AnyInt` or `AnyFloat`.  Used for `Phi`
-    /// outputs and the `ARG` / `RET` / `CALL_OUT` / `IN_PHI` input tails,
-    /// which accept a value of any type.
+    /// `AnyInt` or `AnyFloat`.
     AnyValue,
 }
 
-/// Semantic role of a slot, independent of its kind.  Drives label colors
-/// in dot rendering and could be used by future IR-aware consumers.
+/// Drives label colors in dot rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SlotRole {
     Control,
@@ -71,7 +49,6 @@ pub(crate) enum SlotRole {
     In,
 }
 
-/// A single input or output slot.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Slot {
     pub(crate) kind: ExpectedValueKind,
@@ -79,11 +56,6 @@ pub(crate) struct Slot {
     pub(crate) role: SlotRole,
 }
 
-/// A list of slots, possibly with a variadic repeating tail.
-///
-/// `head` describes the fixed-arity prefix.  If `tail` is `Some`, any index
-/// `>= head.len()` repeats `tail`; otherwise the list is exactly
-/// `head.len()` slots long.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SlotList {
     head: &'static [Slot],
@@ -106,38 +78,29 @@ impl SlotList {
         self.tail.is_some()
     }
 
-    /// Fixed-prefix length.  Callers validating a variadic tail must read
-    /// indices `>= head_len()` via [`SlotList::at`] (or against
-    /// [`SlotList::tail`] directly).
+    /// Length of the fixed prefix only. Validating a variadic tail means
+    /// reading past-head indices through [`SlotList::at`].
     pub(crate) fn head_len(&self) -> usize {
         self.head.len()
     }
 
-    /// Slot at index `idx`.  For fixed-arity lists returns `None` past the
-    /// head; for variadic lists returns the tail slot for any past-head index.
+    /// Past the head: `None` when fixed-arity, the tail slot when variadic.
     pub(crate) fn at(&self, idx: usize) -> Option<Slot> {
         self.head.get(idx).copied().or(self.tail)
     }
 }
 
-/// Full input/output signature of a [`NodeKind`].
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Signature {
     pub(crate) inputs: SlotList,
     pub(crate) outputs: SlotList,
 }
 
-// ── Slot constants ────────────────────────────────────────────────────────────
-
 use ExpectedValueKind::*;
 use SlotRole as R;
 
-/// Terse constructor for the slot table below.
-///
-/// A `Slot { kind, name, role }` literal is under rustfmt's struct-lit width,
-/// so it formats across five lines; that turns a 23-row table into 130 lines
-/// you have to scroll. A `const fn` keeps each row on one scannable line and
-/// stays a compile-time constant.
+/// A struct literal here would reflow across five lines per row, turning the
+/// table below into 130 lines. This keeps each row scannable and const.
 const fn slot(kind: ExpectedValueKind, name: &'static str, role: SlotRole) -> Slot {
     Slot { kind, name, role }
 }
@@ -157,35 +120,19 @@ const ANY_VAL: Slot = slot(AnyValue, "val", R::Val);
 const ADDR: Slot = slot(AnyInt, "addr", R::Addr);
 const DATA: Slot = slot(AnyInt, "data", R::Data);
 const TARGET: Slot = slot(AnyInt, "target", R::Target);
-// Stack-pointer input for `Call`, wired ahead of the args.  Same
-// integer relaxation as `TARGET` — SP is an integer pointer value of
-// the target's word width.
 const SP: Slot = slot(AnyInt, "sp", R::Sp);
-// `ARG` and `RET` are AnyValue, not AnyInt: registers used for argument
-// passing or return values can hold integer or float values (e.g. the x86
-// flag registers CF/ZF/SF, modelled as I1 in the IR, are caller-clobbered
-// and therefore appear in Call / Return tails on real binaries — AnyInt
-// accepts them, but float-holding registers do not, so AnyValue is needed).
+// AnyValue rather than AnyInt: argument and return registers hold floats
+// too, and AnyInt would reject them.
 const ARG: Slot = slot(AnyValue, "arg", R::Arg);
 const RET: Slot = slot(AnyValue, "ret", R::Ret);
-/// Call output tail: clobbered-register outputs. Same any-value relaxation
-/// as `ARG`/`RET` — flag registers are Bool-typed and routinely appear here.
+/// Clobbered-register outputs, AnyValue for the same reason as `ARG`/`RET`.
 const CALL_OUT: Slot = slot(AnyValue, "val", R::Val);
 const SEG: Slot = slot(AnyInt, "seg", R::Seg);
 const OFF: Slot = slot(AnyInt, "off", R::Off);
 const REF: Slot = slot(AnyInt, "ref", R::Ref);
-// Per-predecessor value input for Phi nodes (both Vn-tagged and
-// anonymous).  AnyValue (not AnyInt) because flag-register phis are
-// routinely Bool-typed — same rationale as ARG / RET / CALL_OUT above.
+// Per-predecessor Phi input; AnyValue for the same reason as ARG / RET.
 const IN_PHI: Slot = slot(AnyValue, "in", R::In);
 
-// ── Signatures ────────────────────────────────────────────────────────────────
-
-/// Expected input/output [`Signature`] for a given [`NodeKind`].
-///
-/// For variable-arity kinds, the returned [`SlotList`] carries both the
-/// fixed prefix in `head` and the repeating slot in `tail`.  See the
-/// module-level docs.
 pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
     macro_rules! sig {
         (inputs: [$($i:expr),* $(,)?], outputs: [$($o:expr),* $(,)?] $(,)?) => {
@@ -206,7 +153,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
                 outputs: SlotList::variadic(&[$($o),*], $ot),
             }
         };
-        // fixed inputs, variadic outputs (out_tail without in_tail)
         (inputs: [$($i:expr),* $(,)?], outputs: [$($o:expr),* $(,)?]; out_tail: $ot:expr $(,)?) => {
             Signature {
                 inputs: SlotList::fixed(&[$($i),*]),
@@ -216,62 +162,40 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
     }
 
     match kind {
-        // ── Initial state ───────────────────────────────────────────────────
         NodeKind::Entry => sig!(inputs: [], outputs: [CTRL]),
         NodeKind::InitialMemory => sig!(inputs: [], outputs: [MEM]),
         NodeKind::InitialVar(_) | NodeKind::IntConst(_) => sig!(inputs: [], outputs: [INT_VAL]),
 
-        // ── Region / join nodes (variadic inputs) ───────────────────────────
-        // Region: one Control input per predecessor (variadic).
+        // One Control input per predecessor.
         NodeKind::Region => sig!(inputs: []; in_tail: CTRL, outputs: [CTRL, PHI]),
-        // MemPhi: [phi_token, ...per-predecessor Memory tokens].
         NodeKind::MemPhi => sig!(inputs: [PHI]; in_tail: MEM, outputs: [MEM]),
-        // Phi: SSA φ.  The optional source-level varnode tag lives in
-        //   the `value_vn` side-table (keyed by the Phi's output ValueId,
-        //   queried via `Function::get_vn_for_value`) — `Some(vn)` is the
-        //   lift-time tagged shape; `None` is the anonymous value-phi
-        //   synthesised by LoadForward.  Both share this shape:
-        //   `[phi_token, ...per-predecessor values]`.
-        // Output is AnyValue (not AnyInt): the phi's output type matches its
-        // value inputs, which routinely include Bool-typed flag-register phis.
+        // Tagged and anonymous phis share this shape; the optional varnode
+        // tag lives in the `value_vn` side-table, keyed by the output value.
         NodeKind::Phi => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [ANY_VAL]),
 
-        // ── Conditional branch ──────────────────────────────────────────────
         NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),
-        // Switch: [control, address] -> N Control outputs, one per target
-        // region in target order (variadic; exhaustive, no default arm).
+        // One Control output per target region, in target order. Exhaustive:
+        // there is no default arm.
         NodeKind::Switch => sig!(inputs: [CTRL, INT_VAL], outputs: [CTRL]; out_tail: CTRL),
 
-        // ── Calls and returns ───────────────────────────────────────────────
-        // Call: [control, memory, call_address, stack_pointer, ...args].
-        // Outputs: [Control, Memory, ...clobbered varnode values].  SP is an
-        // input-only anchor (no SP output).
+        // SP is an input-only anchor; the outputs are the clobbered varnodes.
         NodeKind::Call => sig!(
             inputs: [CTRL, MEM, TARGET, SP]; in_tail: ARG,
             outputs: [CTRL, MEM]; out_tail: CALL_OUT,
         ),
-        // Return: [control, memory, ...return values]. Return values are the
-        // calling convention's ret_val_regs when built by the strider lifter; synthetic
-        // test builds may supply a single explicit value via `build_return`.
+        // The tail is the calling convention's ret_val_regs when lifted;
+        // synthetic builds may pass one explicit value.
         NodeKind::Return => sig!(inputs: [CTRL, MEM]; in_tail: RET, outputs: []),
-        // IndirectBranch: [control, memory, target_value].  Placeholder for
-        // an unresolved indirect branch; mutated in-place by the indirect-
-        // branch resolver into a real Return / Call+Return.  Memory is
-        // anchored so the resolver can wire the replacement at the same
-        // program point.
+        // Placeholder for an unresolved branch. Memory is an input so the
+        // resolver can wire its replacement at the same program point.
         NodeKind::IndirectBranch => sig!(inputs: [CTRL, MEM, TARGET], outputs: []),
-        // Unreachable: control sink for a no-return trap.  Consumes the single
-        // dangling Control edge; produces nothing.
+        // Control sink for a no-return trap.
         NodeKind::Unreachable => sig!(inputs: [CTRL], outputs: []),
 
-        // ── Memory operations ───────────────────────────────────────────────
         NodeKind::Load(_) => sig!(inputs: [MEM, ADDR], outputs: [INT_VAL]),
         NodeKind::Store(_) => sig!(inputs: [MEM, ADDR, DATA], outputs: [MEM]),
 
-        // ── Integer constants and operations ────────────────────────────────
-        // (`IntConst` shape is folded into the Initial-state arm above —
-        // they share the `inputs: [], outputs: [INT_VAL]` shape.)
-        // Unary integer ops: same single-input single-output shape.
+        // `IntConst` shares the input-less arm above.
         NodeKind::IntUnaryOp(_)
         | NodeKind::Truncate
         | NodeKind::Popcount
@@ -280,34 +204,25 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::IntBinaryOp(_) => sig!(inputs: [LHS, RHS], outputs: [INT_VAL]),
         NodeKind::IntCmpOp(_) => sig!(inputs: [LHS, RHS], outputs: [BOOL_VAL]),
 
-        // ── Float constants and operations ──────────────────────────────────
         NodeKind::FloatConst(_) => sig!(inputs: [], outputs: [FLOAT_VAL]),
         NodeKind::FloatBinaryOp(_) => sig!(inputs: [FLHS, FRHS], outputs: [FLOAT_VAL]),
-        // float→float of one input: FloatUnaryOp and FloatToFloat share shape.
         NodeKind::FloatUnaryOp(_) | NodeKind::FloatToFloat => {
             sig!(inputs: [FLOAT_VAL], outputs: [FLOAT_VAL])
         }
         NodeKind::FloatCmpOp(_) => sig!(inputs: [FLHS, FRHS], outputs: [BOOL_VAL]),
-        // int→float of one input.
         NodeKind::IntToFloat | NodeKind::IntBitsToFloat => {
             sig!(inputs: [INT_VAL], outputs: [FLOAT_VAL])
         }
-        // float→int of one input.
         NodeKind::FloatToInt | NodeKind::FloatBitsToInt => {
             sig!(inputs: [FLOAT_VAL], outputs: [INT_VAL])
         }
 
-        // ── User-defined / opaque opcodes ───────────────────────────────────
-        // CallOther: [control, memory, ...args].
-        // Outputs: [Control, Memory] or [Control, Memory, Typed].
         NodeKind::CallOther { .. } => sig!(
             inputs: [CTRL, MEM]; in_tail: ARG,
             outputs: [CTRL, MEM]; out_tail: ANY_VAL,
         ),
         NodeKind::SegmentOp { .. } => sig!(inputs: [SEG, OFF], outputs: [INT_VAL]),
-        // CPoolRef: [...refs] (variadic).
         NodeKind::CPoolRef => sig!(inputs: []; in_tail: REF, outputs: [INT_VAL]),
-        // New: [...args] (variadic, typically a size).
         NodeKind::New => sig!(inputs: []; in_tail: ARG, outputs: [INT_VAL]),
     }
 }
@@ -318,8 +233,6 @@ mod tests {
     use crate::node::NodeKind;
     use cranelift_entity::EntityRef;
 
-    /// Convenience: projects the head slot kinds of a signature into the
-    /// `(Vec<Kind>, Vec<Kind>)` shape used by the pre-refactor assertions.
     fn kinds(kind: &NodeKind) -> (Vec<ExpectedValueKind>, Vec<ExpectedValueKind>) {
         let sig = expected_signature(kind);
         (
@@ -475,8 +388,6 @@ mod tests {
         assert_eq!(outputs, vec![ExpectedValueKind::AnyFloat]);
     }
 
-    // ── Slot-level metadata tests ────────────────────────────────────────────
-
     #[test]
     fn load_input_slots_have_mem_and_addr_roles() {
         let space = rsleigh::VnSpace::RAM;
@@ -491,14 +402,12 @@ mod tests {
     fn call_is_variadic_in_args() {
         let sig = expected_signature(&NodeKind::Call);
         assert!(sig.inputs.is_variadic());
-        // Head: ctrl, mem, target, sp.
         assert_eq!(sig.inputs.head_len(), 4);
         assert_eq!(sig.inputs.at(0).unwrap().name, "ctrl");
         assert_eq!(sig.inputs.at(1).unwrap().name, "mem");
         assert_eq!(sig.inputs.at(2).unwrap().name, "target");
         assert_eq!(sig.inputs.at(3).unwrap().name, "sp");
         assert_eq!(sig.inputs.at(3).unwrap().role, SlotRole::Sp);
-        // Tail: arg.
         assert_eq!(sig.inputs.at(4).unwrap().role, SlotRole::Arg);
         assert_eq!(sig.inputs.at(999).unwrap().role, SlotRole::Arg);
     }
@@ -528,13 +437,9 @@ mod tests {
         assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Rhs);
     }
 
-    /// Calling `expected_signature` on every NodeKind variant must succeed
-    /// and return a self-consistent Signature.
-    ///
-    /// The list below is hand-maintained; if you add a new `NodeKind`
-    /// variant, append a constructor here so this test continues to cover
-    /// every kind. The `expected_signature` `match` is exhaustive at compile
-    /// time, but a forgotten append here would silently shrink coverage.
+    /// The kind list is hand-maintained: `expected_signature`'s match is
+    /// exhaustive at compile time, but forgetting to append a new variant
+    /// here silently shrinks coverage instead of failing.
     #[test]
     fn expected_signature_covers_every_node_kind() {
         use crate::node::{
@@ -579,14 +484,12 @@ mod tests {
         ];
         for k in &kinds {
             let sig = expected_signature(k);
-            // Self-consistency: head-len must be reachable through `at`.
             for i in 0..sig.inputs.head_len() {
                 assert!(sig.inputs.at(i).is_some(), "input.at({i}) for {k:?}");
             }
             for i in 0..sig.outputs.head_len() {
                 assert!(sig.outputs.at(i).is_some(), "output.at({i}) for {k:?}");
             }
-            // For variadic lists, past-head index returns the tail slot.
             if sig.inputs.is_variadic() {
                 let tail = sig.inputs.at(sig.inputs.head_len());
                 assert!(tail.is_some(), "variadic input tail for {k:?}");
@@ -598,8 +501,7 @@ mod tests {
         }
     }
 
-    /// Pin the variadic-tail kinds — would have caught the IN_PHI / CALL_OUT
-    /// regressions where an integer-only kind was used for tails that need to
+    /// Guards against an integer-only kind creeping into a tail that must
     /// admit Bool flag-register values.
     #[test]
     fn variadic_tail_kinds_match_intent() {
@@ -623,7 +525,6 @@ mod tests {
             assert_eq!(tail.kind, *expected, "input tail kind for {k:?}");
         }
 
-        // Call's *output* tail (clobbered registers) is also AnyValue.
         let sig = expected_signature(&NodeKind::Call);
         let tail = sig
             .outputs
@@ -635,10 +536,8 @@ mod tests {
     #[test]
     fn expected_signature_switch_is_ctrl_val_in_variadic_ctrl_out() {
         let sig = expected_signature(&NodeKind::Switch);
-        // inputs: fixed [CTRL, INT_VAL]
         assert_eq!(sig.inputs.head.len(), 2);
         assert!(sig.inputs.tail.is_none(), "switch inputs are fixed-arity");
-        // outputs: variadic Control (head [CTRL] + out_tail CTRL)
         assert!(
             sig.outputs.tail.is_some(),
             "switch has variadic control outputs"

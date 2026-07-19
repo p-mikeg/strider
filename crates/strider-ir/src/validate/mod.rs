@@ -1,29 +1,11 @@
-//! Whole-graph validator for the IR.
+//! Whole-graph IR validator, rooted at the function's entry node.
 //!
-//! The validator walks a built [`crate::graph::Graph`] starting from the
-//! function's own entry node and checks structural invariants across two
-//! groups:
-//!   - **Local typing** (`local_typing`): per-node input/output kind checks
-//!     against `node_signature::expected_signature` (reachability-scoped).
-//!   - **Graph invariants** (`graph_invariants`): whole-graph rules —
-//!     Entry/InitialMemory uniqueness, Region predecessor kinds,
-//!     phi-token ownership, phi per-predecessor arity,
-//!     Call/Return calling-convention arity (output / input slot counts
-//!     against the calling convention, honouring per-`Call` clobber
-//!     overrides), `Switch` output/target-address arity (one recorded
-//!     `switch_targets` case address per control output), wide-const
-//!     consistency (including that an
-//!     `IntConst(Wide(..))` declares an `I80`/`I128`/`I256`/`I512`
-//!     output type matching its interned byte size), `Extend`/`Truncate`
-//!     width direction (Extend strictly widens, Truncate strictly
-//!     narrows), non-empty
-//!     asm-fingerprints on every reachable non-exempt node, and that every
-//!     reachable `Store`'s Memory output stays consumed (anchored in the
-//!     live memory chain).
+//! Two groups of checks: per-node typing against
+//! `node_signature::expected_signature` (`local_typing`), and whole-graph
+//! structural rules (`graph_invariants`).
 //!
-//! On failure the validator returns a [`ValidationErrors`] bundle that
-//! aggregates every [`ValidationError`] it found during a single pass, so
-//! callers can see all problems at once rather than only the first.
+//! Errors are aggregated into a [`ValidationErrors`] bundle rather than
+//! failing fast, so one call reports every problem.
 
 use crate::IRViewer;
 use crate::function::Function;
@@ -45,37 +27,22 @@ use graph_invariants::{
 };
 use local_typing::check_local_typing;
 
-/// Validates the structural invariants of `function`, starting the walk from
-/// the function's own entry node.
+/// Validates `function`, walking from its entry node.
 ///
-/// Returns `Ok(())` if every checked invariant holds, or a
-/// [`ValidationErrors`] bundle describing every violation otherwise.  Every
-/// `Function` is built with an entry node (the `Function::new` skeleton), so
-/// the walk always has a root.
+/// Every check is scoped to the entry-reachable set: detached zombies left
+/// behind by optimization passes (dead-branch residue, collapsed phis) carry
+/// stale shapes and would otherwise produce false positives.
 ///
-/// Local per-node checks (`check_local_typing`) are scoped to nodes
-/// reachable from the entry so that detached zombie nodes left behind by
-/// optimization passes (e.g. orphaned dead-branch residue) do not trigger
-/// false positives.  The graph-invariants checks iterate all nodes but are
-/// naturally tolerant of detached nodes: `detach_node_inputs` scrubs the
-/// use-lists of the producers it disconnects, so a detached node contributes
-/// no inputs and no live use-list entries anywhere.
-///
-/// (Input ↔ use-list consistency is a structural `strider_graph` invariant
-/// maintained by construction by every mutating graph verb, so it is
-/// guaranteed at the graph layer, not re-checked here.)
+/// Input/use-list consistency is a structural `strider_graph` invariant held
+/// by construction, so it is not re-checked here.
 ///
 /// # Errors
 ///
-/// Returns a [`ValidationErrors`] bundle aggregating every local-typing and
-/// graph-invariants violation found in `function`. Validation
-/// does not fail fast — every check runs to completion so the caller sees
-/// the full set of problems at once.
+/// Returns a [`ValidationErrors`] bundle aggregating every violation found.
 pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     let entry = function.entry();
-    // Drive the walk to completion and reuse its internal DenseEntitySet
-    // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
-    // and one extra allocation per validate call.
+    // Reuse the walk's own visited set instead of re-collecting the yielded
+    // NodeIds: saves N inserts and an allocation per call.
     let mut walk = crate::walk::walk_graph(function.graph(), entry);
     walk.by_ref().for_each(|_| {});
     let reachable: NodeIdSet = walk.into_visited();
@@ -103,14 +70,6 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     }
 }
 
-/// Returns whether an actual [`ValueKind`] satisfies the
-/// [`ExpectedValueKind`] declared by a [`NodeKind`]'s signature.
-///
-/// `AnyInt` matches any integer-typed output (I1, I8, I16, I32, I64, I80,
-/// I128, I256, I512); `AnyFloat` matches F32, F64, or F80; `Bool`
-/// matches only the 1-bit `Typed(I1)`.  `Control`, `Memory`, and
-/// `PhiToken` match their identically-named [`ValueKind`]
-/// variants.
 fn kind_matches(expected: ExpectedValueKind, actual: ValueKind) -> bool {
     match expected {
         ExpectedValueKind::Control => matches!(actual, ValueKind::Control),
@@ -129,10 +88,8 @@ fn kind_matches(expected: ExpectedValueKind, actual: ValueKind) -> bool {
     }
 }
 
-/// A bundle of [`ValidationError`]s produced by a single [`validate`] call.
 pub struct ValidationErrors(pub Vec<ValidationError>);
 
-/// An individual IR validation failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
     #[error("node {node:?} has {actual} inputs, expected {expected}")]

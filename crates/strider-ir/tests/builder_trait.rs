@@ -1,20 +1,14 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-//! Integration tests for the `IRBuilder` creation trait.
-//!
-//! Lives here (not in `src/builder/build_trait.rs`) because
-//! `strider_ir_test_utils` is a dev-dependency; using it from within
-//! `strider-ir`'s own unit-test blocks would cause a double-compile
-//! mismatch.  Integration tests get the same compilation of `strider-ir`
-//! that downstream crates use, so there is no mismatch.
+//! Not a unit test in `src/builder/`: `strider_ir_test_utils` is a dev-dep
+//! returning `strider-ir`'s own types, and a unit-test block would see a
+//! second compilation of the crate. Integration tests link the same
+//! `strider-ir` downstream crates do.
 
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir::{IRBuilder, IRViewer};
 use strider_ir_test_utils::empty_builder;
 
-/// `FunctionBuilder`'s `IRBuilder` impl stamps the active `lift_addr` into
-/// the resulting node's asm fingerprint, delegating to the inherent
-/// `create_node` attribution policy.
 #[test]
 fn lift_builder_trait_stamps_lift_addr() {
     let mut b = empty_builder().unwrap();

@@ -8,18 +8,10 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::RegionId;
 
 impl FunctionBuilder {
-    /// Builds the function's `InitialMemory` node and captures its starting
-    /// memory token as the builder's `entry_memory`.
-    ///
     /// `Function::new` builds only the `Entry` node; the memory spine is the
-    /// builder's responsibility, so this creates the `InitialMemory` node
-    /// (an asm-fingerprint-exempt initial-state kind, minted straight on the
-    /// graph) and records its single `Memory` output — no graph search.
-    ///
-    /// # Errors
-    ///
-    /// Returns `WrongOutputCount` if the freshly-built `InitialMemory` node does
-    /// not have its expected single output (a graph-construction bug).
+    /// builder's job. Mints `InitialMemory` straight on the graph, being a
+    /// fingerprint-exempt initial-state kind, and keeps its `Memory` output as
+    /// `entry_memory` so nothing has to search for it later.
     pub fn build_entry(&mut self) -> Result<()> {
         let memory_node = self.function_mut().graph_mut().create_node(
             NodeKind::InitialMemory,
@@ -31,29 +23,14 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Emits a `Return` node into the current region from already-resolved
-    /// return-value inputs.
+    /// Value slots are `value` when present, then `ret_values` in order.
     ///
-    /// Terminates the current region with a `Return` node whose value
-    /// slots are the explicitly-provided `value` (when `Some`) followed
-    /// by `ret_values` in order.  This is a **dumb** node emitter: the
-    /// caller (the lifter) resolves the calling-convention return registers
-    /// and reads them through its own aliasing-aware `read_vn` before
-    /// handing the resulting values here — strider-ir knows nothing about
-    /// which varnodes those values came from.
+    /// A dumb emitter: the lifter resolves the convention's return registers
+    /// through its own aliasing-aware `read_vn` first, and strider-ir never
+    /// learns which varnodes the values came from.
     ///
-    /// This method **terminates** the current region unconditionally —
-    /// callers must not terminate it again afterwards; doing so would
-    /// be a double-termination error.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion`
-    /// when there is no active region; `ExpectedControl`
-    /// or `ExpectedMemory` if the region's snapshotted ctrl/mem
-    /// edges are mistyped (graph-construction bug); or
-    /// `ExpectedValue` when `value` or any element of `ret_values`
-    /// is not a value edge.
+    /// Terminates the current region unconditionally. Terminating it again is
+    /// a double-termination error.
     pub fn build_return(&mut self, value: Option<ValueId>, ret_values: &[ValueId]) -> Result<()> {
         let mut ret_inputs: SmallVec<[ValueId; 4]> = SmallVec::new();
         if let Some(v) = value {
@@ -61,7 +38,6 @@ impl FunctionBuilder {
         }
         ret_inputs.extend_from_slice(ret_values);
 
-        // Terminate the region and snapshot ctrl/mem in one step.
         let res = self.terminate_cur_region()?;
         self.require_terminator_kinds(&res)?;
         self.validate_value_inputs(&ret_inputs)?;
@@ -74,24 +50,13 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Terminates the current region with an `Unreachable` node, sinking the
-    /// region's control edge.
+    /// Control sink for a no-return direct `Call`, whose fall-through lands
+    /// outside the function bound because the callee never returns. The
+    /// direct-call analogue of what [`Self::build_call_other`] emits for the
+    /// NoReturn `CallOther` class. The memory edge is deliberately left
+    /// dangling: `Unreachable` consumes control only.
     ///
-    /// This is the control-sink for a no-return direct `Call` — a call whose
-    /// fall-through (return address) lies outside the function bound because
-    /// the callee never returns (e.g. FreeBSD `exit1`/`__dead2`). It is the
-    /// direct-`Call` analogue of the `Unreachable` that [`Self::build_call_other`]
-    /// emits for the NoReturn `CallOther` class. The memory edge is
-    /// intentionally left dangling — `Unreachable` consumes only control.
-    ///
-    /// This method **terminates** the current region unconditionally — callers
-    /// must not terminate it again afterwards.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion` / `RegionTerminated` when there is no active
-    /// region; `ExpectedControl` or `ExpectedMemory` if the region's
-    /// snapshotted control/memory edges are mistyped (graph-construction bug).
+    /// Terminates the current region unconditionally.
     pub fn build_unreachable(&mut self) -> Result<()> {
         let res = self.terminate_cur_region()?;
         self.require_terminator_kinds(&res)?;
@@ -99,27 +64,13 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Terminates the current region with an `IndirectBranch` placeholder
-    /// node anchoring `target_value`, returning the created node's
-    /// [`NodeId`].  Inputs: `[control, memory, target_value]`.  Outputs:
-    /// `[]`.  The returned id lets the lifter correlate the placeholder
-    /// with its pcode address so the resolver can key its classification
-    /// back to the dispatch site.
+    /// Anchors `target_value` on a placeholder so the resolver can later
+    /// inspect its producer and rewrite the node into a `Return` or a
+    /// `Call`+`Return` pair. The returned id lets the lifter correlate the
+    /// placeholder with its pcode address, keying the classification back to
+    /// the dispatch site.
     ///
-    /// Used by the lifter when the CFG terminator is
-    /// `RegionTerminator::UnresolvedIndirectBranch`: the value at the
-    /// dispatch site is anchored as a value-typed slot on the placeholder
-    /// so the indirect-branch resolver can later inspect its producer and
-    /// either rewrite the placeholder into a real `Return` or splice in a
-    /// `Call`+`Return` pair.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion` / `RegionTerminated` when there is no
-    /// active region; `ExpectedControl` or `ExpectedMemory` if the
-    /// region's snapshotted control/memory edges are mistyped
-    /// (graph-construction bug); or `ExpectedValue` when `target_value`
-    /// is not a value edge.
+    /// Terminates the current region unconditionally.
     pub fn build_indirect_branch(&mut self, target_value: ValueId) -> Result<NodeId> {
         let res = self.terminate_cur_region()?;
 
@@ -135,28 +86,13 @@ impl FunctionBuilder {
     }
 
     /// Terminates the current region with an unconditional branch to `dest`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion` / `RegionTerminated`
-    /// when there is no active region; `ExpectedControl` /
-    /// `ExpectedMemory` when the region's snapshotted edges are
-    /// mistyped (graph-construction bug).
     pub fn build_branch(&mut self, dest: RegionId) -> Result<()> {
         let res = self.terminate_cur_region()?;
         self.require_terminator_kinds(&res)?;
         self.link_region(dest, res.control, res.memory, res.region_id)
     }
 
-    /// Terminates the current region with a conditional branch.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion` / `RegionTerminated`
-    /// when there is no active region; `ExpectedValue` when
-    /// `cond` is not a `Bool` value; `ExpectedControl` when the
-    /// region's snapshotted control edge is mistyped;
-    /// `WrongOutputCount` from the freshly created `If` node.
+    /// `cond` must be an `I1` value. Terminates the current region.
     pub fn build_if(
         &mut self,
         cond: ValueId,
@@ -179,16 +115,10 @@ impl FunctionBuilder {
         self.link_region(false_region, false_ctrl_id, res.memory, res.region_id)
     }
 
-    /// Terminates the current region with a `Switch`: one `Control` output per
-    /// arm, wired to that arm's target region in order, plus the per-output
-    /// case addresses recorded in `switch_targets`.  `address` is the
-    /// dispatch value (output `i` is taken when `address == arms[i].1`).
-    ///
-    /// # Errors
-    /// `NoCurrentRegion` / `RegionTerminated` if no active region;
-    /// `ExpectedValue` if `address` is not a value edge; `ExpectedControl` if
-    /// the region's snapshotted control edge is mistyped.  Requires `arms`
-    /// non-empty.
+    /// One `Control` output per arm, wired to that arm's region in order, with
+    /// the case addresses recorded in `switch_targets`. Output `i` is taken
+    /// when `address == arms[i].1`. Requires `arms` non-empty, and terminates
+    /// the current region.
     pub fn build_switch(&mut self, address: ValueId, arms: &[(RegionId, u64)]) -> Result<()> {
         debug_assert!(!arms.is_empty(), "build_switch requires at least one arm");
         let res = self.terminate_cur_region()?;
@@ -200,7 +130,7 @@ impl FunctionBuilder {
             [res.control, address],
             std::iter::repeat_n(ValueKind::Control, arms.len()),
         );
-        // Dynamic arity: snapshot outputs, cloning to end the immutable borrow.
+        // Dynamic arity, so snapshot the outputs to end the immutable borrow.
         let out_ctrls: Vec<ValueId> = self.function().node_outputs(sw).to_vec();
         for (&(region, _addr), &ctrl) in arms.iter().zip(&out_ctrls) {
             self.link_region(region, ctrl, res.memory, res.region_id)?;
@@ -212,15 +142,7 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Emits a `Store` node writing `data` to `addr` in `space` and advances
-    /// the region's memory token.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion` / `RegionTerminated`
-    /// when there is no active region; `ExpectedMemory` /
-    /// `ExpectedValue` when the memory, address, or data edge is
-    /// mistyped.
+    /// Advances the region's memory token.
     pub fn build_store(
         &mut self,
         addr: ValueId,
@@ -241,15 +163,6 @@ impl FunctionBuilder {
         self.advance_cur_region_memory(new_mem)
     }
 
-    /// Emits a `Load` node reading from `addr` in `space` and returns the
-    /// loaded value output.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion` / `RegionTerminated`
-    /// when there is no active region; `ExpectedMemory` when the
-    /// memory edge is mistyped; `ExpectedValue` when `addr` is
-    /// not a value edge.
     pub fn build_load(
         &mut self,
         addr: ValueId,
@@ -262,12 +175,9 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(NodeKind::Load(space), [memory, addr], output_type))
     }
 
-    /// Emits a `Phi` node tagged with varnode `var` via the
-    /// `value_vn` side-table.
-    ///
-    /// `phi_token` must be the `PhiToken` output of the owning `Region`.
-    /// `incoming_values` are the data inputs, one per predecessor (may be empty
-    /// when first created; filled in later via `add_region_predecessor`).
+    /// `phi_token` must be the owning `Region`'s `PhiToken` output.
+    /// `incoming_values` holds one value per predecessor, and may be empty at
+    /// first: `add_region_predecessor` fills them in later.
     pub(crate) fn build_vn_phi(
         &mut self,
         var: rsleigh::Vn,
@@ -282,9 +192,8 @@ impl FunctionBuilder {
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
             output_type,
         );
-        // A phi's source varnode is always a tracked variable, so it has a
-        // `VnId`; tag the phi output with it (set_vn_for_value no-ops on the
-        // impossible untracked case, matching the Call/CallOther path).
+        // A phi's source varnode is always tracked, so it always has a VnId.
+        // The untracked case is unreachable and no-ops, as on the Call path.
         self.function_mut().set_vn_for_value(phi_value, var);
         Ok(phi_value)
     }

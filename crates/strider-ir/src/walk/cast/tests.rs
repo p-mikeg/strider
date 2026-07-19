@@ -1,13 +1,7 @@
-//! Semantics tests for [`CastMask`] and [`cast_mask_of`].
-
 use super::*;
 use crate::{ExtendOp, FloatBinaryOp, IntBinaryOp, IntUnaryOp};
 use cranelift_entity::EntityRef;
 
-// ── Bit-distinctness ────────────────────────────────────────────────────────
-
-/// All individual flags must use distinct, non-overlapping bits.
-/// If any two share a bit, `bit_a & bit_b` will be non-empty.
 #[test]
 fn individual_flags_use_distinct_bits() {
     let flags = [
@@ -18,7 +12,6 @@ fn individual_flags_use_distinct_bits() {
         CastMask::FLOAT_BITS_TO_INT,
     ];
     for (i, &a) in flags.iter().enumerate() {
-        // Each flag must be non-empty (a single bit).
         assert!(!a.is_empty(), "flag #{i} ({a:?}) should be a single bit");
         for (j, &b) in flags.iter().enumerate() {
             if i == j {
@@ -32,7 +25,6 @@ fn individual_flags_use_distinct_bits() {
     }
 }
 
-/// `EXTEND` is exactly the union of `ZERO_EXTEND | SIGN_EXTEND`.
 #[test]
 fn extend_is_zero_or_sign_extend() {
     assert_eq!(
@@ -43,9 +35,6 @@ fn extend_is_zero_or_sign_extend() {
     assert!(CastMask::EXTEND.contains(CastMask::SIGN_EXTEND));
 }
 
-// ── all() / empty() ─────────────────────────────────────────────────────────
-
-/// `CastMask::all()` must contain every individual flag.
 #[test]
 fn all_contains_every_individual_flag() {
     let individuals = [
@@ -61,44 +50,33 @@ fn all_contains_every_individual_flag() {
     }
 }
 
-/// `CastMask::empty().is_empty()`; `CastMask::all().is_empty()` is false.
 #[test]
 fn empty_and_all_predicates() {
     assert!(CastMask::empty().is_empty());
     assert!(!CastMask::all().is_empty());
 }
 
-// ── Bit operators round-trip ────────────────────────────────────────────────
-
-/// `BitOr` adds bits; `BitAnd` intersects; `Not` flips within the
-/// defined-flags universe (bitflags 2.x semantics).
 #[test]
 fn bit_operators_round_trip() {
     let trunc = CastMask::TRUNCATE;
     let zext = CastMask::ZERO_EXTEND;
 
-    // OR adds.
     let both = trunc | zext;
     assert!(both.contains(trunc));
     assert!(both.contains(zext));
 
-    // AND intersects.
     assert_eq!(both & trunc, trunc);
     assert_eq!(both & zext, zext);
     assert_eq!(trunc & zext, CastMask::empty());
 
-    // NOT (within defined bits): bitflags 2.x defines `!x` as
-    // `Self::all() ^ x`, so `!empty == all` and `!all == empty`.
+    // bitflags 2.x defines `!x` as `Self::all() ^ x`, so complement stays
+    // within the declared flags.
     assert_eq!(!CastMask::empty(), CastMask::all());
     assert_eq!(!CastMask::all(), CastMask::empty());
 
-    // `!trunc | trunc == all` (set complement is full).
     assert_eq!((!trunc) | trunc, CastMask::all());
-    // `!trunc & trunc == empty`.
     assert_eq!((!trunc) & trunc, CastMask::empty());
 }
-
-// ── cast_mask_of: cast kinds ────────────────────────────────────────────────
 
 #[test]
 fn cast_mask_of_zero_extend() {
@@ -137,12 +115,8 @@ fn cast_mask_of_float_bits_to_int() {
     );
 }
 
-// ── cast_mask_of: non-cast kinds ────────────────────────────────────────────
-
-/// A representative selection of non-cast `NodeKind`s must yield
-/// `CastMask::empty()`.  (Exhaustive coverage is enforced by the no-`_`
-/// match in `cast_mask_of` itself — adding a `NodeKind` variant without
-/// classifying it is a compile error.)
+/// Spot check only; exhaustiveness is enforced by the no-`_` match in
+/// `cast_mask_of`.
 #[test]
 fn cast_mask_of_non_cast_kinds_is_empty() {
     let non_casts = [
@@ -161,7 +135,6 @@ fn cast_mask_of_non_cast_kinds_is_empty() {
     }
 }
 
-/// All value-passthrough cast kinds must yield a non-empty mask.
 #[test]
 fn cast_mask_of_returns_non_empty_for_all_cast_kinds() {
     let casts = [
@@ -179,10 +152,6 @@ fn cast_mask_of_returns_non_empty_for_all_cast_kinds() {
     }
 }
 
-/// A broader representative selection of non-cast kinds must yield
-/// empty.  Complements `cast_mask_of_non_cast_kinds_is_empty` above
-/// by covering more node families (unary/binary ops, bools, floats,
-/// memory, region/control, call).
 #[test]
 fn cast_mask_of_returns_empty_for_non_cast_kinds() {
     let non_casts = [
@@ -211,11 +180,9 @@ fn cast_mask_of_returns_empty_for_non_cast_kinds() {
     }
 }
 
-/// Sanity check on FloatToFloat / FloatToInt / IntToFloat — these
-/// are float **conversions** (semantic value change), not bit-level
-/// casts.  They must NOT be in the walk-through set: a pattern
-/// looking for a Mul should not silently match through a
-/// FloatToInt that semantically changed the value.
+/// Float conversions change the value, unlike bit-level casts, so they stay
+/// out of the walk-through set: a pattern looking for a Mul must not match
+/// through a FloatToInt.
 #[test]
 fn cast_mask_of_excludes_float_conversions() {
     assert_eq!(cast_mask_of(&NodeKind::FloatToFloat), CastMask::empty());

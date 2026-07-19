@@ -1,7 +1,5 @@
-//! Integration coverage for the semantic-slot accessors on [`IRViewer`]
-//! (`if_cond`, `indirect_branch_target`, `store_addr`, `store_data`,
-//! `load_addr`): each derives a logically-named operand from the node already
-//! in hand, replacing the positional `node_inputs_exact::<N>(n)[k]` idiom.
+//! The semantic-slot accessors on [`IRViewer`] must pick the operand slots the
+//! positional `node_inputs_exact::<N>(n)[k]` idiom used to index by hand.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -9,8 +7,6 @@ use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
-/// `store_addr` / `store_data` return the Store's address (slot 1) and data
-/// (slot 2) inputs; `load_addr` returns the Load's address (slot 1).
 #[test]
 fn store_and_load_address_data_accessors() {
     let mut b = strider_ir_test_utils::empty_builder().unwrap();
@@ -43,7 +39,6 @@ fn store_and_load_address_data_accessors() {
     assert_eq!(f.load_addr(load), load_addr_val, "load_addr is slot 1");
 }
 
-/// `if_cond` returns the `If` node's condition input (slot 1).
 #[test]
 fn if_cond_accessor() {
     let mut b = strider_ir_test_utils::empty_builder().unwrap();
@@ -72,8 +67,6 @@ fn if_cond_accessor() {
     assert_eq!(f.if_cond(if_node), cond, "if_cond is slot 1");
 }
 
-/// `indirect_branch_target` returns the `IndirectBranch` dispatch value
-/// (slot 2).
 #[test]
 fn indirect_branch_target_accessor() {
     let mut b = strider_ir_test_utils::empty_builder().unwrap();

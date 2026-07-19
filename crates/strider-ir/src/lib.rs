@@ -8,43 +8,27 @@
     )
 )]
 
-//! Strider IR: sea-of-nodes graph, validation, traversal.
+//! Sea-of-nodes IR: a lifted function as a bipartite graph of
+//! [`node::NodeId`] computations producing typed [`node::ValueId`] outputs.
+//! Structurally equal cacheable nodes with equal inputs are deduplicated
+//! inside [`Graph`].
 //!
-//! Sea-of-nodes intermediate representation for the Strider binary analysis
-//! framework.  Generic helpers live in their own unprefixed sibling crates:
-//! `dot` (Graphviz rendering), `entity-utils` (cranelift-entity helpers),
-//! `graph-algorithms` (graph traversal).
+//! [`Graph`] holds structural state only; per-function overlay state (entry,
+//! calling convention, side-tables) lives on [`Function`].
 //!
-//! The IR represents a lifted function as a directed graph where each
-//! [`node::NodeId`] is a computation or control-flow primitive.  Nodes have
-//! typed outputs ([`node::ValueId`]) connected as inputs to downstream
-//! nodes.  Structurally equal nodes with the same inputs are deduplicated and
-//! cached inside [`Graph`].
+//! Access is split across four traits, since a reader cannot tell them apart
+//! from the method names alone:
 //!
-//! # Building the IR
+//! - [`IRViewer`]: point reads, one required method (`function()`); everything
+//!   else is a default method.
+//! - [`IRWalker`]: control-aware walks, blanket-impl'd over every `IRViewer`.
+//!   [`EditFunction`] shadows the order-producing methods to reuse its cached
+//!   live/roots bookkeeping instead of re-walking from entry.
+//! - [`IRBuilder`]: the node-creation seam.
+//! - [`IRBuilderExt`]: the blanket `build_*` construction vocabulary.
 //!
-//! Use [`FunctionBuilder`] to construct the IR for a single function.  The
-//! builder tracks SSA-like variable state per basic block and inserts
-//! [`node::NodeKind::Phi`] nodes automatically at join points.
-//!
-//! The high-level entry point is the `strider-orchestrator` crate's
-//! `orchestrator::Strider::analyze`, which feeds a per-region driver that in turn
-//! drives [`FunctionBuilder`] from the p-code CFG built by `strider-lift`
-//! against `rsleigh`.
-//!
-//! # Key types
-//!
-//! - [`Function`] — lifted function: [`Graph`] plus per-function state
-//!   (`entry`, calling convention); produced by [`FunctionBuilder::build`] and
-//!   consumed by optimizer passes and pattern queries
-//! - [`Graph`] — sea-of-nodes IR store (structural state only; no entry/CC)
-//! - [`FunctionBuilder`] — constructs the graph with SSA variable tracking
-//! - [`RegionId`] — identifies a basic block within the function
-//! - [`node::ValueType`] — integers `I1` (the 1-bit boolean)/`I8`/`I16`/`I32`/`I64`/`I80`/`I128`/`I256`/`I512`,
-//!   floats `F32`/`F64`/`F80`
-//! - [`IntBinaryOp`], [`IntUnaryOp`], [`IntCmpOp`], [`ExtendOp`] —
-//!   operation enumerations used in node kinds (logical ops on booleans
-//!   are integer ops at `I1`)
+//! Booleans are the 1-bit integer `I1`; there is no separate bool type or
+//! bool-specific op family.
 
 mod builder;
 mod control_flow_view;

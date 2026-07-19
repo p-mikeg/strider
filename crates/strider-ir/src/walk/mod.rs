@@ -11,71 +11,44 @@ use crate::node::{NodeId, NodeKind, ValueId};
 mod cast;
 pub use cast::{CastMask, cast_mask_of};
 
-/// Convenience alias for the `cfg_reachable` return shape.  Re-exported so
-/// downstream crates can take `&NodeIdSet` parameters without depending on
-/// `entity_utils` directly.
+/// Re-exported so downstream crates can name this in signatures without
+/// depending on `entity_utils`.
 pub type NodeIdSet = DenseEntitySet<NodeId>;
 
-/// Returns the set of all nodes reachable from `entry` following only
-/// `Control`-kind edges — the CFG skeleton.
-///
-/// Data edges (value, memory, PhiToken) are not followed, so only
-/// control-flow nodes (`Entry`, `Region`, `If`, `Return`, `Call`, …)
-/// appear in the result.
-///
-/// This is used by optimisation passes (e.g. `PhiCollapse`) to determine
-/// which basic-block headers are live and which predecessor slots on `Region`,
-/// `Phi`, and `MemPhi` nodes are dead.
+/// The CFG skeleton: only `Control` edges are followed, so the result holds
+/// control-flow nodes alone. Passes use it to tell live basic-block headers
+/// from dead predecessor slots on `Region` / `Phi` / `MemPhi`.
 pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
-    // A pre-order walk over the control-only successor relation ([`CfgSuccs`])
-    // visits exactly the control-reachable nodes (the generic `PreOrder`'s
-    // `DenseEntitySet` tracker is the same insert-as-dedup gate the old
-    // hand-rolled worklist used); its visited set IS the result.
+    // The walk's visited set IS the answer, so the yielded items are dropped.
     let mut walk = PreOrder::new(CfgSuccs(graph), iter::once(entry));
     walk.by_ref().for_each(drop);
     walk.into_visited()
 }
 
-/// A pre-order walk over the IR graph using a [`DenseEntitySet`] as the
-/// visited tracker.
 pub type PreOrder<G> = graph_algorithms::walk::PreOrder<G, DenseEntitySet<NodeId>>;
 
-/// A post-order walk over the IR graph using a [`DenseEntitySet`] as the
-/// visited tracker.
 pub type PostOrder<G> = graph_algorithms::walk::PostOrder<G, DenseEntitySet<NodeId>>;
 
-/// A [`graph_algorithms::walk::GraphRef`] implementation that drives successor enumeration
-/// for IR graph walks.
-///
-/// Successors are derived by following both data inputs (so every producer is
-/// visited before a consumer in a reverse-topological traversal) and outgoing
-/// control edges.
+/// Successors follow data inputs backward and control edges forward; see
+/// `graph_walk_succs`.
 #[derive(Clone, Copy)]
 pub struct GraphWalkSuccs<'a>(&'a Graph);
 
 impl<'a> GraphWalkSuccs<'a> {
-    /// Wraps `graph` in a `GraphWalkSuccs` adaptor.
     #[inline]
     pub(crate) fn new(graph: &'a Graph) -> Self {
         Self(graph)
     }
 }
 
-/// Returns the combined "successor" set used by the general graph walk.
+/// Two disjoint sets: every data predecessor (walking value / memory /
+/// dispatch edges BACKWARD, so each def precedes its uses) and every CFG
+/// successor (walking control edges FORWARD).
 ///
-/// Yields two disjoint sets of nodes:
-/// 1. Every **data predecessor** (producer of each of `node`'s inputs) — walks
-///    backward through value, memory, and dispatch edges so that every def is
-///    visited before any use in the resulting traversal.
-/// 2. Every **CFG successor** (consumer of each of `node`'s `Control` outputs)
-///    — walks forward so the whole reachable control graph is covered.
-///
-/// The mix of backward-data and forward-control is intentional: it ensures
-/// that neither producers nor consumers are missed in a single pass starting
-/// from the function entry node.  Dead CFG inputs (nodes whose control
-/// predecessor was eliminated) are still visited if they remain attached as
-/// data inputs to live nodes; callers that need to distinguish live from dead
-/// nodes should consult [`cfg_reachable`].
+/// The mixed direction is what lets one pass from the entry miss neither
+/// producers nor consumers. It also means dead CFG inputs still show up while
+/// they hang off a live node as data; use [`cfg_reachable`] to tell live from
+/// dead.
 pub(crate) fn graph_walk_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     graph
         .node_inputs(node)
@@ -84,7 +57,6 @@ pub(crate) fn graph_walk_succs(graph: &Graph, node: NodeId) -> impl Iterator<Ite
         .chain(cfg_succs(graph, node))
 }
 
-/// Returns an iterator over all `Control`-kind outputs of `node`.
 pub(crate) fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = ValueId> + '_ {
     graph
         .node_outputs(node)
@@ -93,16 +65,14 @@ pub(crate) fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = V
         .filter(|&output| graph.value_kind(output).is_control())
 }
 
-/// Returns an iterator over all nodes that consume a `Control` output of `node`.
 pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     cfg_outputs(graph, node)
         .flat_map(|output| graph.value_uses(output))
         .map(|(succ_node, _succ_input_idx)| succ_node)
 }
 
-/// Forward def→use successors of `node`: every node consuming one of `node`'s
-/// outputs, unrestricted by liveness.  Shared by [`RawDefUseSuccs`] (directly)
-/// and [`DefUseSuccs`] (live-filtered).
+/// Forward def-use successors, unrestricted by liveness. Shared by
+/// [`RawDefUseSuccs`] directly and by [`DefUseSuccs`] under a live filter.
 fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     graph
         .node_outputs(node)
@@ -123,9 +93,7 @@ impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     }
 }
 
-/// A [`graph_algorithms::walk::GraphRef`] over forward **control** edges only
-/// (via [`cfg_succs`]) — the successor relation [`cfg_reachable`] walks to find
-/// the control-live node set.
+/// Forward control edges only; the relation [`cfg_reachable`] walks.
 #[derive(Clone, Copy)]
 struct CfgSuccs<'a>(&'a Graph);
 
@@ -141,40 +109,27 @@ impl graph_algorithms::walk::GraphRef for CfgSuccs<'_> {
     }
 }
 
-/// The concrete pre-order walk type used by [`crate::IRWalker::walk`].
 pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 
-/// Walks all nodes reachable in `graph` from `entry` in an unspecified order.
+/// Unspecified order, and "reachable" includes dead CFG inputs. `entry` comes
+/// last whenever it has no inputs, as it does in a well-formed graph.
 ///
-/// Note that "reachable" nodes here include dead CFG inputs.
-///
-/// `entry` is guaranteed to be the last node returned if it has no inputs (as should be the case
-/// with every well-formed graph).
-///
-/// Crate-private: external callers must route through [`crate::IRWalker::walk`]
-/// so the `Graph` methods stay the single public entry-point surface.
+/// Crate-private: external callers go through [`crate::IRWalker::walk`].
 pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), iter::once(entry))
 }
 
-/// The forward def→use post-order walk backing the real reverse-post-order
-/// ([`GraphWalkInfo::reverse_postorder`]).
+/// Backs [`GraphWalkInfo::reverse_postorder`].
 pub type DefUsePostorder<'a> = PostOrder<DefUseSuccs<'a>>;
 
-/// A [`graph_algorithms::walk::GraphRef`] over the forward def→use edges, **unrestricted**
-/// by liveness — the raw counterpart of [`DefUseSuccs`].
-///
-/// Driving a post-order with this relation from a set of roots visits every
-/// transitive consumer of those roots, including dead ones (consumers no
-/// longer reachable from the function entry).  The self-cleaning rewrite
-/// context's initial cull needs exactly this: it must reach the pre-existing
-/// dead consumers of still-live producers so their stale input edges can be
-/// detached.
+/// The liveness-unrestricted counterpart of [`DefUseSuccs`]: a post-order
+/// from some roots reaches every transitive consumer, dead ones included.
+/// The editing context's cull needs exactly that, since it must reach dead
+/// consumers of still-live producers to detach their stale input edges.
 #[derive(Clone, Copy)]
 pub struct RawDefUseSuccs<'a>(&'a Graph);
 
 impl<'a> RawDefUseSuccs<'a> {
-    /// Wraps `graph` in an unrestricted forward def→use successor adaptor.
     #[inline]
     pub fn new(graph: &'a Graph) -> Self {
         Self(graph)
@@ -193,10 +148,9 @@ impl graph_algorithms::walk::GraphRef for RawDefUseSuccs<'_> {
     }
 }
 
-/// A [`graph_algorithms::walk::GraphRef`] over the forward def→use edges, restricted to a
-/// precomputed live set. Driving a post-order with it yields every node
-/// after all of its uses, so reversing the post-order gives a true RPO
-/// (every producer strictly before its consumers).
+/// Forward def-use edges restricted to a precomputed live set. A post-order
+/// over it yields every node after all of its uses, so reversing gives a true
+/// RPO with every producer strictly before its consumers.
 #[derive(Clone, Copy)]
 pub struct DefUseSuccs<'a> {
     graph: &'a Graph,
@@ -204,7 +158,6 @@ pub struct DefUseSuccs<'a> {
 }
 
 impl<'a> DefUseSuccs<'a> {
-    /// Wraps `graph` and the reachable `live_nodes` set in a successor adaptor.
     #[inline]
     pub fn new(graph: &'a Graph, live_nodes: &'a DenseEntitySet<NodeId>) -> Self {
         Self { graph, live_nodes }
@@ -225,27 +178,22 @@ impl graph_algorithms::walk::GraphRef for DefUseSuccs<'_> {
     }
 }
 
-/// The reachable set of a graph walk plus its source `roots`, the inputs to
-/// a real reverse-post-order.
+/// A walk's reachable set plus its input-less `roots`, the two inputs a real
+/// reverse-post-order needs.
 ///
-/// [`compute_full`](Self::compute_full) discovers the entry-reachable nodes
-/// (via the mixed `GraphWalkSuccs` relation, identical to `walk_graph`)
-/// and records the input-less `roots` (`Entry` / constants / `InitialVar` /
-/// `InitialMemory`). [`reverse_postorder`](Self::reverse_postorder) then
-/// post-orders the forward def→use graph from those roots and reverses it,
-/// so every producer precedes its consumers — a genuine RPO, unlike a
-/// post-order over the mixed (part-backward) successor relation.
+/// [`reverse_postorder`](Self::reverse_postorder) post-orders the FORWARD
+/// def-use graph from those roots and reverses it. Post-ordering the mixed,
+/// part-backward relation instead would not give a genuine RPO.
 #[derive(Debug, Clone)]
 pub struct GraphWalkInfo {
-    /// Input-less source nodes reachable from the walk entry.
+    /// Input-less source nodes: `Entry`, constants, `InitialVar`,
+    /// `InitialMemory`.
     pub roots: Vec<NodeId>,
-    /// Every node reachable from the walk entry.
     pub live_nodes: DenseEntitySet<NodeId>,
 }
 
 impl GraphWalkInfo {
-    /// Walk `graph` from `entry` (mixed backward-data + forward-control),
-    /// recording the reachable `live_nodes` and the input-less `roots`.
+    /// Walks the mixed backward-data plus forward-control relation.
     pub fn compute_full(graph: &Graph, entry: NodeId) -> Self {
         let mut walk = walk_graph(graph, entry);
         let roots: Vec<NodeId> = walk
@@ -259,8 +207,7 @@ impl GraphWalkInfo {
         }
     }
 
-    /// Post-order over the forward def→use graph from `roots`, restricted to
-    /// `live_nodes`: every node is yielded after all of its consumers.
+    /// Every node is yielded after all of its consumers.
     pub fn postorder<'a>(&'a self, graph: &'a Graph) -> DefUsePostorder<'a> {
         PostOrder::new(
             DefUseSuccs::new(graph, &self.live_nodes),
@@ -268,8 +215,7 @@ impl GraphWalkInfo {
         )
     }
 
-    /// Reverse-post-order (real RPO): the reverse of [`postorder`](Self::postorder),
-    /// so every producer is yielded strictly before its consumers, roots first.
+    /// Every producer strictly before its consumers, roots first.
     pub fn reverse_postorder(&self, graph: &Graph) -> Vec<NodeId> {
         let mut rpo: Vec<_> = self.postorder(graph).collect();
         rpo.reverse();
@@ -277,10 +223,9 @@ impl GraphWalkInfo {
     }
 }
 
-/// Whether `kind` is one of the memory-chain node kinds `memory_reachable`
-/// walks and reports: the `InitialMemory` root plus every node that both
-/// consumes and re-produces a `Memory` token (`Load` is the one exception —
-/// it consumes but produces none, so it is always a leaf of the walk).
+/// The `InitialMemory` root plus every node that consumes and re-produces a
+/// `Memory` token. `Load` is the exception: it consumes but produces none, so
+/// it is always a leaf.
 fn is_memory_chain_kind(kind: &NodeKind) -> bool {
     matches!(
         kind,
@@ -293,12 +238,9 @@ fn is_memory_chain_kind(kind: &NodeKind) -> bool {
     )
 }
 
-/// Returns `node`'s memory-chain successors: the consumers of its `Memory`
-/// output (if it has one) that are themselves memory-chain kinds
-/// (`is_memory_chain_kind`). `Load` has no `Memory` output, so it is
-/// naturally a leaf. Non-chain consumers of a `Memory` value (e.g. a
-/// `Return`'s memory input) are filtered out here, at the successor
-/// relation, rather than by the caller.
+/// Consumers of `node`'s `Memory` output that are themselves chain kinds.
+/// Non-chain consumers (a `Return`'s memory input, say) are filtered here at
+/// the successor relation rather than by each caller.
 fn mem_succs(function: &Function, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     function
         .memory_output_of(node)
@@ -309,9 +251,7 @@ fn mem_succs(function: &Function, node: NodeId) -> impl Iterator<Item = NodeId> 
         .filter(|&consumer| is_memory_chain_kind(function.node_kind(consumer)))
 }
 
-/// A [`graph_algorithms::walk::GraphRef`] over the forward memory-token chain
-/// ([`mem_succs`]) — the successor relation [`memory_reachable`] walks from
-/// the function's `InitialMemory` root.
+/// The forward memory-token chain; the relation [`memory_reachable`] walks.
 #[derive(Clone, Copy)]
 struct MemorySuccs<'a>(&'a Function);
 
@@ -327,52 +267,28 @@ impl graph_algorithms::walk::GraphRef for MemorySuccs<'_> {
     }
 }
 
-/// The memory-touching nodes reachable by following memory-token edges
-/// forward from `function`'s `InitialMemory` root, in pre-order.
+/// The memory-touching nodes reachable forward from `function`'s
+/// `InitialMemory` root, in pre-order, the root included.
 ///
-/// The memory chain is rooted at the unique `InitialMemory` node; its
-/// `Memory` output feeds the next memory op (`Load` / `Store` / `Call` /
-/// `CallOther` / `MemPhi`), and each producer's own `Memory` output
-/// continues the chain. `Load` is a leaf — it consumes a memory token but
-/// produces none. The `InitialMemory` root is included.
+/// A `Memory` value's use-list can hold a consumer that merely reads the
+/// final token without touching memory (a `Return` or `Unreachable` memory
+/// input, an `IndirectBranch`'s memory slot). Those are excluded from both
+/// the result and the traversal; they produce no `Memory` output, so dropping
+/// them changes only the reported set, not the structure.
 ///
-/// A `Memory`-typed value's use-list can include a non-chain consumer that
-/// merely reads the final token without itself touching memory (a `Return`'s
-/// or `Unreachable`'s memory input, an `IndirectBranch`'s memory slot, …);
-/// `is_memory_chain_kind` excludes those from both the output and any
-/// further traversal (they produce no `Memory` output of their own, so
-/// excluding them from the walk changes nothing structurally — only the
-/// reported node set).
+/// O(V+E) over the whole function, not O(memory chain). `InitialMemory` is a
+/// data root, invisible to the cheap `cfg_reachable` walk, so finding it costs
+/// a full data-inclusive pass before the chain walk starts. Caching the
+/// `InitialMemory` `NodeId` on `Function`, as `entry` already is, would remove
+/// that prefix.
 ///
-/// `InitialMemory` is a data root with no control edges of its own, so it is
-/// located via the same mixed backward-data + forward-control reachable set
-/// [`crate::validate::validate`] uses ([`GraphWalkInfo::compute_full`]), not
-/// the control-only [`cfg_reachable`] skeleton (which would never see it).
+/// Empty only when no `InitialMemory` is reachable from `entry`, i.e. a
+/// partial graph where nothing consumes the initial token. A validated
+/// function keeps it live through its `Return`'s memory input.
 ///
-/// **Complexity: O(V+E) over the whole function, not O(memory nodes +
-/// edges).** Locating the root requires a full data-inclusive reachability
-/// pass — `InitialMemory` is a data root, not control-reachable, so the
-/// cheap `cfg_reachable` walk can't find it — before the memory-chain walk
-/// even starts. That walk itself is only O(memory nodes + edges), but it's
-/// dominated by the O(V+E) `compute_full` prefix. This runs once per call,
-/// which is acceptable for a user-facing query — [`crate::validate::validate`]
-/// and `data_walk` pay the identical O(V+E) cost. A future O(memory-chain)
-/// version would need `Function` to cache the `InitialMemory` `NodeId`
-/// directly (the way it already caches `entry`), skipping the root-finding
-/// walk entirely; that's a deferred follow-up, out of scope here.
-///
-/// Returns an empty `Vec` only when no `InitialMemory` node is reachable from
-/// `entry` — a partial or unterminated graph where nothing consumes the
-/// initial memory token. A validated function normally keeps `InitialMemory`
-/// live through its `Return`'s memory input, so even a function with no
-/// `Load` / `Store` / `Call` still returns `InitialMemory` (plus any entry
-/// `MemPhi`).
-///
-/// The forward walk follows structural memory use-lists, so on a
-/// non-compacted graph the result can include a memory op that is not itself
-/// reachable from `entry` (a dead `Store` still consumes the live token). On
-/// the normal compacted analysis path such nodes are already gone, so the
-/// result is the entry-reachable memory chain.
+/// The walk follows structural use-lists, so on a NON-compacted graph the
+/// result can include a memory op that is not itself reachable from `entry`,
+/// e.g. a dead `Store` still consuming the live token.
 pub fn memory_reachable(function: &Function, entry: NodeId) -> Vec<NodeId> {
     let graph = function.graph();
     let live = GraphWalkInfo::compute_full(graph, entry).live_nodes;
@@ -384,11 +300,8 @@ pub fn memory_reachable(function: &Function, entry: NodeId) -> Vec<NodeId> {
         return Vec::new();
     };
 
-    // A pre-order walk over the memory-chain successor relation
-    // ([`MemorySuccs`]) visits exactly the memory-chain-reachable nodes; the
-    // generic `PreOrder`'s `DenseEntitySet` tracker dedups and breaks cycles
-    // (e.g. a loop-header `MemPhi` back-edge) the same way the old
-    // hand-rolled worklist's `seen` set did.
+    // The walk's visited tracker dedups and breaks cycles, such as a
+    // loop-header `MemPhi` back-edge.
     PreOrder::new(MemorySuccs(function), iter::once(root)).collect()
 }
 
@@ -398,19 +311,14 @@ mod tests {
     use crate::node::{NodeKind, ValueKind, ValueType};
     use cranelift_entity::EntityRef;
 
-    // ── helpers ───────────────────────────────────────────────────────────────
-
-    /// Creates an Entry node with a single Control output.  Returns the node
-    /// id and the control output id.
     fn make_entry(graph: &mut Graph) -> (NodeId, ValueId) {
         let entry = graph.create_node(NodeKind::Entry, [], [ValueKind::Control]);
         let [ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
         (entry, ctrl)
     }
 
-    /// Creates a non-cacheable Region node that produces one Control
-    /// output, and wires `ctrl_value` as its first input so that the producer
-    /// of `ctrl_value` has this node as a CFG successor.
+    /// Wires `ctrl_value` as the Region's first input, making its producer a
+    /// CFG predecessor.
     fn make_ctrl_node(graph: &mut Graph, ctrl_value: ValueId) -> (NodeId, ValueId) {
         let node = graph.create_node(NodeKind::Region, [], [ValueKind::Control]);
         graph.add_node_input(node, ctrl_value);
@@ -418,15 +326,11 @@ mod tests {
         (node, value)
     }
 
-    /// Creates a Return node (leaf, non-cacheable) that consumes `ctrl_value`
-    /// as its only input, making the producer of `ctrl_value` a CFG predecessor.
     fn make_return(graph: &mut Graph, ctrl_value: ValueId) -> NodeId {
         let node = graph.create_node(NodeKind::Return, [], []);
         graph.add_node_input(node, ctrl_value);
         node
     }
-
-    // ── walk_graph ────────────────────────────────────────────────────────────
 
     /// An entry node with no successors must be visited exactly once.
     #[test]
@@ -437,8 +341,7 @@ mod tests {
         assert_eq!(visited, vec![entry]);
     }
 
-    /// A linear chain entry → A → B must be fully traversed: all three nodes
-    /// must appear exactly once.
+    /// A linear chain must be fully traversed, each node exactly once.
     #[test]
     fn walk_linear_chain_visits_all_nodes() {
         let mut graph = Graph::new();
@@ -453,7 +356,6 @@ mod tests {
         assert!(visited.contains(&b));
     }
 
-    /// A longer chain entry → A → B → C → D must be fully traversed.
     #[test]
     fn walk_long_chain_visits_all_nodes() {
         let mut graph = Graph::new();
@@ -470,13 +372,11 @@ mod tests {
         }
     }
 
-    /// A diamond-shaped graph (entry → left, right → merge) must visit each
-    /// node exactly once despite the converging control edges.
+    /// Converging control edges must not cause a second visit.
     #[test]
     fn walk_diamond_visits_each_node_once() {
         let mut graph = Graph::new();
 
-        // Entry with two control outputs: one for left, one for right.
         let entry = graph.create_node(
             NodeKind::Entry,
             [],
@@ -487,7 +387,6 @@ mod tests {
         let (_left, left_ctrl) = make_ctrl_node(&mut graph, ctrl_l);
         let (_right, right_ctrl) = make_ctrl_node(&mut graph, ctrl_r);
 
-        // Merge consumes both branch ctrl outputs.
         let merge = graph.create_node(NodeKind::Return, [], []);
         graph.add_node_input(merge, left_ctrl);
         graph.add_node_input(merge, right_ctrl);
@@ -495,20 +394,16 @@ mod tests {
         let visited: Vec<_> = walk_graph(&graph, entry).collect();
         assert_eq!(visited.len(), 4, "diamond must produce exactly 4 nodes");
 
-        // No duplicates.
         let mut seen = std::collections::HashSet::new();
         for n in &visited {
             assert!(seen.insert(*n), "node {n:?} was visited more than once");
         }
     }
 
-    /// Nodes that are not reachable from the entry (no control or data path)
-    /// must not appear in the walk output.
     #[test]
     fn walk_does_not_visit_unreachable_nodes() {
         let mut graph = Graph::new();
         let (entry, _ctrl) = make_entry(&mut graph);
-        // Isolated node: completely disconnected.
         let isolated = graph.create_node(NodeKind::Return, [], []);
 
         let visited: Vec<_> = walk_graph(&graph, entry).collect();
@@ -519,12 +414,9 @@ mod tests {
         assert!(visited.contains(&entry));
     }
 
-    /// A data-only fan-out (one value consumed by multiple sinks) must
-    /// visit the source and all sinks.
     #[test]
     fn walk_follows_data_inputs_to_producer() {
         let mut graph = Graph::new();
-        // A pure data source (no control outputs).
         let src = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
@@ -532,24 +424,18 @@ mod tests {
         );
         let [data_value] = graph.node_outputs_exact::<1>(src).unwrap();
 
-        // Entry → sink1 and sink2, both also consuming the data value.
         let (entry, entry_ctrl) = make_entry(&mut graph);
         let sink1 = graph.create_node(NodeKind::Return, [], []);
         graph.add_node_input(sink1, entry_ctrl);
         graph.add_node_input(sink1, data_value);
 
         let sink2 = graph.create_node(NodeKind::Return, [], []);
-        // sink2 is only reachable via data input from sink1's producer (entry_ctrl consumed by sink1, not sink2)
-        // Actually attach sink2 to data_value only - it won't be reachable from entry via control
-        // but via data: walk from entry visits sink1 (cfg succ), sink1's inputs point to entry and src,
-        // src has no inputs, so src is visited. sink2 is not reachable at all.
         graph.add_node_input(sink2, data_value);
 
         let visited: Vec<_> = walk_graph(&graph, entry).collect();
-        // entry → sink1 (cfg succ), sink1's inputs → entry (visited), src (not visited yet)
-        // src has no inputs or cfg succs.
-        // sink2 is reachable only as a consumer of data_value (via value_uses), but
-        // graph_walk_succs does NOT follow output uses — it follows inputs.
+        // src is reached backward through sink1's inputs. sink2 only CONSUMES
+        // data_value, and the walk follows inputs, not output uses, so it
+        // stays unreachable.
         assert!(visited.contains(&entry));
         assert!(visited.contains(&sink1));
         assert!(
@@ -561,8 +447,6 @@ mod tests {
             "sink2 has no path from entry through inputs"
         );
     }
-
-    // ── cfg_succs ─────────────────────────────────────────────────────────────
 
     /// A node with no Control outputs must have no CFG successors.
     #[test]
@@ -580,8 +464,6 @@ mod tests {
         );
     }
 
-    /// A node whose single Control output is consumed by two different nodes
-    /// must appear as a predecessor of both.
     #[test]
     fn cfg_succs_returns_all_control_consumers() {
         let mut graph = Graph::new();
@@ -596,8 +478,6 @@ mod tests {
         assert!(succs.contains(&r1));
     }
 
-    /// A node with two Control outputs leading to different successors must
-    /// report both successors.
     #[test]
     fn cfg_succs_two_control_outputs_two_successors() {
         let mut graph = Graph::new();
@@ -617,25 +497,19 @@ mod tests {
         assert!(succs.contains(&right));
     }
 
-    /// A node with a Control output that has no consumers must not report any
-    /// CFG successors for that output.
     #[test]
     fn cfg_succs_unconsumed_control_output_yields_nothing() {
         let mut graph = Graph::new();
         let (entry, _ctrl) = make_entry(&mut graph);
-        // ctrl is produced but never consumed.
         let succs: Vec<_> = cfg_succs(&graph, entry).collect();
         assert!(succs.is_empty());
     }
 
-    // ── cfg_outputs ───────────────────────────────────────────────────────────
-
-    /// `cfg_outputs` must only return outputs with `ValueKind::Control`.
     /// Data and memory outputs must be excluded.
     #[test]
     fn cfg_outputs_excludes_non_control_outputs() {
         let mut graph = Graph::new();
-        // Region is non-cacheable so we can give it arbitrary outputs.
+        // Region is non-cacheable, so it accepts arbitrary outputs here.
         let node = graph.create_node(
             NodeKind::Region,
             [],
@@ -661,8 +535,6 @@ mod tests {
         }
     }
 
-    /// A node with no outputs at all must yield an empty iterator from
-    /// `cfg_outputs`.
     #[test]
     fn cfg_outputs_empty_for_node_with_no_outputs() {
         let mut graph = Graph::new();
@@ -671,8 +543,6 @@ mod tests {
         assert!(outs.is_empty());
     }
 
-    /// A node whose outputs are all non-control must yield nothing from
-    /// `cfg_outputs`.
     #[test]
     fn cfg_outputs_empty_when_all_outputs_are_data() {
         let mut graph = Graph::new();
@@ -685,10 +555,7 @@ mod tests {
         assert!(outs.is_empty());
     }
 
-    // ── rpo (defs-before-uses data-cone walk) ─────────────────────────────────
-
-    /// `rpo` over `Add(InitialVar, IntConst)` must emit BOTH operands before
-    /// the `Add` that consumes them (defs-before-uses). The seed node is last.
+    /// Both operands must precede the Add, and the seed comes last.
     #[test]
     fn rpo_emits_operands_before_consumer() {
         let mut graph = Graph::new();
@@ -725,7 +592,7 @@ mod tests {
         assert_eq!(order[2], add, "seed (Add) is emitted last");
     }
 
-    /// `rpo` follows only data inputs and visits a shared operand once.
+    /// A shared operand is visited once.
     #[test]
     fn rpo_visits_shared_operand_once() {
         let mut graph = Graph::new();
@@ -751,9 +618,6 @@ mod tests {
         );
     }
 
-    // ── GraphWalkInfo / real RPO machinery ────────────────────────────────────
-
-    /// Builds an `IntConst` and returns `(node, value)`.
     fn int_const(graph: &mut Graph, v: u64) -> (NodeId, ValueId) {
         let n = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new((v) as usize)),
@@ -764,7 +628,6 @@ mod tests {
         (n, out)
     }
 
-    /// Builds an `IntBinaryOp(op)` over `[l, r]` and returns `(node, value)`.
     fn int_bin(
         graph: &mut Graph,
         op: crate::IntBinaryOp,
@@ -780,8 +643,6 @@ mod tests {
         (n, out)
     }
 
-    /// `compute_full` records exactly the input-less nodes as `roots` and
-    /// every reachable node in `live_nodes`.
     #[test]
     fn compute_full_records_roots_and_live_set() {
         let mut graph = Graph::new();
@@ -805,12 +666,9 @@ mod tests {
         }
     }
 
-    /// A diamond — two consts feeding two ops that both feed a sink — must
-    /// come out in strict defs-before-uses order: every operand strictly
-    /// precedes each op that consumes it, along EVERY path.  This is the
-    /// property a real RPO (post-order over the forward def→use graph,
-    /// reversed) guarantees but a post-order over a part-backward relation
-    /// does not.
+    /// Two consts feeding two ops that both feed a sink: every operand must
+    /// strictly precede each consuming op along EVERY path. A real RPO
+    /// guarantees this; a post-order over the part-backward relation does not.
     #[test]
     fn rpo_is_strict_defs_before_uses_on_a_diamond() {
         let mut graph = Graph::new();
@@ -832,10 +690,9 @@ mod tests {
         assert_eq!(*order.last().unwrap(), sink, "sink (sole consumer) is last");
     }
 
-    /// A cycle (a back-edge feeding an earlier node) must terminate and visit
-    /// each reachable node exactly once, roots first.  Built with the
-    /// non-cacheable `Region` nodes (cacheable data nodes reject post-hoc
-    /// input edits), matching a real loop-carried control back-edge.
+    /// A back-edge must terminate and visit each node once, roots first.
+    /// Built from non-cacheable `Region` nodes, since cacheable data nodes
+    /// reject post-hoc input edits.
     #[test]
     fn rpo_terminates_and_dedups_on_a_cycle() {
         use std::collections::HashSet;
@@ -843,7 +700,7 @@ mod tests {
         let (entry, e_ctrl) = make_entry(&mut graph);
         let (a, a_ctrl) = make_ctrl_node(&mut graph, e_ctrl);
         let (b, b_ctrl) = make_ctrl_node(&mut graph, a_ctrl);
-        // Back-edge: A also consumes B's control → cycle A → B → A.
+        // A also consumes B's control, closing the cycle.
         graph.add_node_input(a, b_ctrl);
 
         let order =
@@ -867,16 +724,13 @@ mod tests {
         );
     }
 
-    // ── RawDefUseSuccs (unfiltered forward def→use) ───────────────────────────
-
-    /// A raw def→use post-order from an input-less root reaches a consumer
-    /// that is NOT in the live set — the case the filtered [`DefUseSuccs`]
-    /// would skip but the initial cull needs.
+    /// The raw relation must reach a consumer that is NOT in the live set:
+    /// the case the filtered [`DefUseSuccs`] skips and the cull needs.
     #[test]
     fn raw_def_use_postorder_reaches_dead_consumer() {
         let mut graph = Graph::new();
-        // const → Neg(const).  `Neg` is the "dead" consumer: it's reachable
-        // from the const via def→use, but we don't put it in any live set.
+        // `Neg` is the dead consumer: reachable from the const through
+        // def-use, but absent from every live set here.
         let (k, kv) = int_const(&mut graph, 3);
         let neg = graph.create_node(
             NodeKind::IntUnaryOp(crate::IntUnaryOp::Neg),
@@ -884,13 +738,11 @@ mod tests {
             [ValueKind::Typed(ValueType::I64)],
         );
 
-        // Filtered walk with an empty live set never leaves the root.
         let empty: DenseEntitySet<NodeId> = DenseEntitySet::new();
         let filtered: Vec<NodeId> =
             PostOrder::new(DefUseSuccs::new(&graph, &empty), std::iter::once(k)).collect();
         assert_eq!(filtered, vec![k], "filtered walk stays at the root");
 
-        // Raw walk reaches the dead consumer.
         let raw: Vec<NodeId> =
             PostOrder::new(RawDefUseSuccs::new(&graph), std::iter::once(k)).collect();
         assert!(
@@ -898,7 +750,6 @@ mod tests {
             "raw walk must reach the dead consumer: {raw:?}"
         );
         assert!(raw.contains(&k), "raw walk includes the root: {raw:?}");
-        // Post-order: consumer before producer.
         let pos = |n: NodeId| raw.iter().position(|&x| x == n).unwrap();
         assert!(
             pos(neg) < pos(k),
@@ -906,18 +757,13 @@ mod tests {
         );
     }
 
-    // ── reverse_postorder (global reverse-post-order) ─────────────────────────
-
-    /// Global RPO over a linear chain entry → A → B (plus an unconnected
-    /// data const consumed by the Return) must put `entry` FIRST and visit
-    /// each reachable node exactly once.
+    /// Global RPO must put `entry` first and visit each node exactly once.
     #[test]
     fn rpo_entry_first_visits_each_once() {
         use std::collections::HashSet;
         let mut graph = Graph::new();
         let (entry, c0) = make_entry(&mut graph);
         let (a, c1) = make_ctrl_node(&mut graph, c0);
-        // Data const consumed by the terminator so it is reachable.
         let data = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
@@ -931,13 +777,11 @@ mod tests {
         let order: Vec<NodeId> =
             crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
 
-        // Entry first.
         assert_eq!(
             order.first(),
             Some(&entry),
             "RPO must start at entry: {order:?}"
         );
-        // Each reachable node exactly once.
         let unique: HashSet<NodeId> = order.iter().copied().collect();
         assert_eq!(
             order.len(),
@@ -949,13 +793,11 @@ mod tests {
         }
     }
 
-    /// A kind filter (`Region` only) yields just the regions, preserving
-    /// their relative RPO order (the earlier Region precedes the later).
+    /// A kind filter must preserve the relative RPO order of what survives.
     #[test]
     fn reverse_postorder_filter_kind_yields_only_matching_in_order() {
         let mut graph = Graph::new();
         let (entry, c0) = make_entry(&mut graph);
-        // entry → A (Region) → B (Region) → ret.
         let (a, c1) = make_ctrl_node(&mut graph, c0);
         let (b, c2) = make_ctrl_node(&mut graph, c1);
         let _ret = make_return(&mut graph, c2);
@@ -972,7 +814,6 @@ mod tests {
         );
     }
 
-    /// Unreachable nodes are excluded from the RPO.
     #[test]
     fn reverse_postorder_filter_excludes_unreachable() {
         let mut graph = Graph::new();
@@ -988,8 +829,7 @@ mod tests {
         );
     }
 
-    /// Global RPO is deterministic: two calls on the same graph yield the
-    /// identical order, and `entry` is always first.
+    /// Two calls on one graph must yield the identical order.
     #[test]
     fn reverse_postorder_filter_is_deterministic_entry_first() {
         let mut graph = Graph::new();
@@ -1022,7 +862,6 @@ mod tests {
             crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
         assert_eq!(order1, order2, "RPO must be deterministic");
         assert_eq!(order1[0], entry, "entry first: {order1:?}");
-        // Every reachable node present exactly once.
         for n in [entry, a, c, add, ret] {
             assert_eq!(
                 order1.iter().filter(|&&x| x == n).count(),
@@ -1032,21 +871,15 @@ mod tests {
         }
     }
 
-    /// General no-duplicate-visit property: build a richer graph
-    /// (diamond + data + back-edge approximation) and assert that
-    /// `walk_graph` visits every reachable node at most once.  The
-    /// existing inline tests cover specific shapes (single, linear,
-    /// diamond); this test pins the general invariant on a less
-    /// regular shape.
+    /// The no-duplicate-visit invariant on a less regular shape than the
+    /// single / linear / diamond cases above.
     #[test]
     fn walk_visits_no_node_more_than_once() {
         use std::collections::HashSet;
         let mut graph = Graph::new();
         let (entry, e_ctrl) = make_entry(&mut graph);
-        // entry → A → B (linear).
         let (a, a_ctrl) = make_ctrl_node(&mut graph, e_ctrl);
         let (b, b_ctrl) = make_ctrl_node(&mut graph, a_ctrl);
-        // Pure data node referenced as Return's value input.
         let data = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
@@ -1064,17 +897,14 @@ mod tests {
             unique.len(),
             "walk_graph must visit each node at most once: visited={visited:?}"
         );
-        // All 5 reachable nodes (entry, a, b, data, ret) must appear.
         for nid in [entry, a, b, data, ret] {
             assert!(unique.contains(&nid), "missing {nid:?}");
         }
     }
 
-    /// Post-order over a control DIAMOND (entry forks to two regions that
-    /// re-join at a Return) visits each of the four nodes exactly once,
-    /// covers exactly the control-aware reachable set, and puts the lone
-    /// root (entry) last — converging control edges must not duplicate the
-    /// join.
+    /// Over a control diamond, post-order must visit each node once, cover
+    /// exactly the reachable set, and put the lone root last. Converging
+    /// control edges must not duplicate the join.
     #[test]
     fn postorder_on_control_diamond_visits_each_node_once() {
         let mut graph = Graph::new();
@@ -1111,10 +941,9 @@ mod tests {
         );
     }
 
-    /// Walking from a MID-graph seed reaches only that node's cone —
-    /// its transitive data operands — never its consumers or the function
-    /// spine: a data node has no forward control edges, and use-edges are
-    /// not followed.
+    /// A mid-graph seed reaches only its transitive data operands, never its
+    /// consumers or the spine: a data node has no forward control edges and
+    /// use-edges are not followed.
     #[test]
     fn walk_from_mid_graph_node_reaches_only_its_cone() {
         let mut graph = Graph::new();
@@ -1122,7 +951,6 @@ mod tests {
         let (k1, k1v) = int_const(&mut graph, 1);
         let (k2, k2v) = int_const(&mut graph, 2);
         let (add, addv) = int_bin(&mut graph, crate::IntBinaryOp::Add, k1v, k2v);
-        // Return consumes both the control spine and the Add's value.
         let ret = graph.create_node(NodeKind::Return, [], []);
         graph.add_node_input(ret, e_ctrl);
         graph.add_node_input(ret, addv);
@@ -1140,15 +968,9 @@ mod tests {
         assert!(!cone.contains(&ret) && !cone.contains(&entry));
     }
 
-    // ── memory_reachable ──────────────────────────────────────────────────────
-
-    /// Constructs a minimal `FunctionBuilder` with no tracked variables and one
-    /// active entry region. Mirrors the local `empty_builder` /
-    /// `builder_with_region` helpers duplicated per test module in this crate
-    /// (`builder/tests.rs`, `builder/build_trait.rs`) — a dev-dep on
+    /// Duplicated per in-crate test module on purpose: a dev-dep on
     /// `strider-ir-test-utils` would double-compile a DIFFERENT
-    /// `FunctionBuilder` under `cargo test`, so each in-crate test module
-    /// grows its own tiny copy instead.
+    /// `FunctionBuilder` under `cargo test`.
     fn builder_with_region() -> crate::Result<crate::FunctionBuilder> {
         let mut b = crate::FunctionBuilder::new(
             vec![],
@@ -1161,10 +983,8 @@ mod tests {
         Ok(b)
     }
 
-    /// `memory_reachable` must walk the InitialMemory -> Store -> Load chain:
-    /// every returned node touches memory, InitialMemory is the (included)
-    /// root, and the Store is found. A pure-arithmetic node with no memory
-    /// edge must not appear.
+    /// The InitialMemory -> Store -> Load chain must come back whole, and a
+    /// pure-arithmetic node with no memory edge must not.
     #[test]
     fn memory_reachable_covers_the_store_load_chain() {
         use crate::IRBuilderExt;
@@ -1177,7 +997,7 @@ mod tests {
         b.build_store(addr, data, space).unwrap();
         b.build_load(addr, space, ValueType::I32).unwrap();
 
-        // Pure-arithmetic node with no memory edge — must NOT appear.
+        // Must not appear in the result.
         let (arith, _) = int_bin(
             b.function_mut().graph_mut(),
             crate::IntBinaryOp::Add,
@@ -1185,11 +1005,9 @@ mod tests {
             data,
         );
 
-        // Terminate: without a terminator consuming the region's final
-        // memory token, nothing forward-control-reachable ever backward-data
-        // -walks into the Store/MemPhi/InitialMemory chain, so
-        // `GraphWalkInfo::compute_full` (which `memory_reachable` uses to
-        // locate the root) would never find `InitialMemory` at all.
+        // Without a terminator consuming the region's final memory token,
+        // nothing control-reachable walks backward into the memory chain, so
+        // the root-finding pass would never see `InitialMemory`.
         b.build_return(None, &[]).unwrap();
 
         let entry = b.entry();
@@ -1232,11 +1050,9 @@ mod tests {
         );
     }
 
-    /// Even with zero `Store`/`Load`/`Call` in the function body,
-    /// `set_entry_region_all` wires the entry region's `MemPhi` to
-    /// `InitialMemory` (`link_memory_regions`), so `InitialMemory` is always
-    /// reachable and `memory_reachable` returns exactly the two-node
-    /// `[InitialMemory, MemPhi]` chain rather than an empty `Vec`.
+    /// With no memory ops at all, entry setup still wires the entry region's
+    /// `MemPhi` to `InitialMemory`, so the result is the two-node chain rather
+    /// than empty.
     #[test]
     fn memory_reachable_finds_the_entry_mem_phi_with_no_memory_ops() {
         let mut b = builder_with_region().unwrap();
@@ -1263,21 +1079,13 @@ mod tests {
         }
     }
 
-    /// `memory_reachable`'s walk must terminate — and dedup correctly — on a
-    /// genuinely cyclic memory chain: a loop-header `MemPhi` (`r1`) with a
-    /// memory predecessor (`r2`'s `MemPhi`) that is itself reachable
-    /// FORWARD from `r1`'s own `MemPhi` output (the loop-continue arm `r1 ->
-    /// r2`), which then flows back into `r1` as its back-edge predecessor
-    /// (`r2 -> r1`). This is a real back-edge cycle, not merely a diamond:
-    /// `r1`'s `MemPhi` output reaches `r2`'s `MemPhi`, which feeds back into
-    /// `r1`'s `MemPhi` as an input, closing the loop the `seen` set must
-    /// break.
+    /// The walk must terminate and dedup on a genuinely cyclic memory chain,
+    /// not just a diamond: `r1`'s `MemPhi` output reaches `r2`'s `MemPhi`,
+    /// which feeds back into `r1`'s as an input.
     ///
-    /// Shape: `r0` (entry) branches to loop header `r1`; `r1` conditionally
-    /// branches to loop body `r2` (continue) or exit `r3` (`build_if`); `r2`
-    /// branches back to `r1` (the back-edge); `r3` returns. No Store/Load/Call
-    /// is needed — the memory-token plumbing alone (every region's `MemPhi`)
-    /// is enough to construct the cycle from the raw builder API.
+    /// `r0` branches to header `r1`, which branches to body `r2` or exit
+    /// `r3`; `r2` branches back to `r1`. Per-region `MemPhi` plumbing alone
+    /// builds the cycle, with no Store / Load / Call needed.
     #[test]
     fn memory_reachable_terminates_on_a_loop_header_mem_phi_cycle() {
         use crate::IRBuilderExt;
@@ -1294,7 +1102,6 @@ mod tests {
         b.set_entry_region_all(r0).unwrap();
         b.set_region(r0);
 
-        // Loop header.
         let r1 = b.create_region_all().unwrap();
         b.build_branch(r1).unwrap();
 
@@ -1304,8 +1111,7 @@ mod tests {
         let cond = b.build_int_const(1u64, ValueType::I1).unwrap();
         b.build_if(cond, r2, r3).unwrap();
 
-        // Back-edge: loop body branches back to the header, wiring r2's
-        // MemPhi output as r1's MemPhi's second predecessor.
+        // The back-edge wires r2's MemPhi output as r1's second predecessor.
         b.set_region(r2);
         b.build_branch(r1).unwrap();
 
@@ -1315,9 +1121,7 @@ mod tests {
         let entry = b.entry();
         let f = b.function();
 
-        // Termination: this call must return rather than hang/overflow the
-        // stack despite the r1 <-> r2 MemPhi back-edge. Reaching the
-        // assertions below IS the termination proof.
+        // Reaching the assertions below IS the termination proof.
         let mem = memory_reachable(f, entry);
 
         assert!(
@@ -1328,7 +1132,6 @@ mod tests {
             "both the loop-header MemPhi (r1) and the loop-body MemPhi (r2) \
              forming the back-edge must be included: {mem:?}"
         );
-        // No duplicates despite the back-edge revisiting r1's MemPhi.
         let unique: HashSet<NodeId> = mem.iter().copied().collect();
         assert_eq!(
             mem.len(),

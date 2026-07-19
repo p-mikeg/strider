@@ -4,18 +4,17 @@ use crate::node_signature::expected_signature;
 
 use super::{ValidationError, kind_matches};
 
-/// Local node typing.  For each node, compare its actual input and
-/// output [`ValueKind`]s against the [`Signature`] expected for its
-/// [`NodeKind`].  For fixed-arity slot lists both arity and each slot kind
-/// are checked; for variadic slot lists the head prefix is checked fully,
-/// plus every tail index is checked against the repeating tail kind.
+/// Checks a node's input/output [`ValueKind`]s against its signature.
+///
+/// Fixed-arity slot lists are checked for exact length and per-slot kind;
+/// variadic lists check the head prefix fully, then every past-head index
+/// against the repeating tail kind.
 pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<ValidationError>) {
     let kind = *graph.node_kind(node);
     let sig = expected_signature(&kind);
 
-    // Most IR nodes have ≤4 inputs/outputs.  Inline up to 4 to skip the heap
-    // allocation on the hot validation path; spills transparently for variadic
-    // shapes (Call clobber lists, Return arg lists).
+    // Most nodes have <= 4 slots; inlining skips the allocation on this hot
+    // path and spills for variadic shapes (Call clobbers, Return args).
     let actual_inputs: smallvec::SmallVec<[ValueId; 4]> =
         graph.node_inputs(node).into_iter().collect();
     let actual_outputs: smallvec::SmallVec<[ValueKind; 4]> = graph
@@ -24,12 +23,8 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
         .map(|&oid| graph.value_kind(oid))
         .collect();
 
-    // Arity: fixed lists demand exact length; variadic lists demand at
-    // least the head length.  Variadic CTRL lists with `head_len = 0`
-    // (e.g. `Region`) trivially pass this check at zero
-    // predecessors; the per-kind "must be reachable with >= 1
-    // predecessor" rule for those cases is enforced by the
-    // graph-invariants checks.
+    // A variadic list with `head_len = 0` (e.g. `Region`) passes trivially at
+    // zero inputs; the ">= 1 predecessor" rule lives in graph_invariants.
     let input_head_len = sig.inputs.head_len();
     let output_head_len = sig.outputs.head_len();
 
@@ -59,17 +54,12 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
         });
     }
 
-    // Kinds: check the head prefix slot-by-slot, then — if the slot list
-    // is variadic — check every past-head index against the repeating
-    // tail slot. The signature table is the source of truth: tails that
-    // need to accept any value type declare AnyValue (or AnyInt for
-    // integer-only tails); honest narrow tails like `MemPhi`'s MEM and
-    // `Region`'s CTRL are caught here when violated, regardless of
-    // what the graph-invariants checks do.
+    // The signature table is the source of truth for tail kinds: permissive
+    // tails declare AnyValue / AnyInt, so narrow ones (`MemPhi`'s MEM,
+    // `Region`'s CTRL) are genuinely enforced here.
     for (idx, &input) in actual_inputs.iter().enumerate() {
         let Some(slot) = sig.inputs.at(idx) else {
-            // Past the head of a fixed-arity list — arity check above
-            // already reported a count mismatch.
+            // Past a fixed head; the arity check above already reported it.
             break;
         };
         let actual = graph.value_kind(input);

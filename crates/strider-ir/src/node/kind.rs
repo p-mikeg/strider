@@ -1,264 +1,194 @@
-//! `NodeKind` — the closed enum of every operation/role a node can take.
-
 use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 
-/// Where a function argument originates in the calling convention.
-///
-/// Used by the `strider-pattern` pattern builder `FunctionArgPat` to
-/// filter matches by ABI source — register-passed (`Register`) or
-/// stack-passed (`Stack`).  No longer embedded in a `NodeKind` variant; arg
-/// tracking lives in the `Function::arg_index_to_values` side-table.
+/// Not a `NodeKind` payload: arg tracking lives in
+/// `Function::arg_index_to_values`. This only exists so pattern builders can
+/// filter matches by ABI source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FunctionArgSource {
-    /// The argument was passed in the given register varnode.  This is always
-    /// the full-width container register (e.g. `RDI`, not `EDI`) so that
-    /// sub-register reads can be expressed as `Truncate(InitialVar(rdi))`.
+    /// Always the full-width container register (`RDI`, never `EDI`), so a
+    /// sub-register read is expressible as `Truncate(InitialVar(rdi))`.
     Register(rsleigh::Vn),
-    /// The argument was passed on the stack at byte offset `offset` from the
-    /// entry-time stack pointer (`InitialVar(sp)`).  `space` is the address
-    /// space of the stack (typically the architecture's RAM space).
+    /// Byte `offset` from the entry-time stack pointer (`InitialVar(sp)`), in
+    /// the stack's address `space` (usually RAM).
     Stack {
         space: rsleigh::VnSpace,
         offset: i128,
     },
 }
 
-/// Dense id of a tracked varnode, interned in
-/// [`crate::Function`]'s `vn_interner` — the single identity that serves
-/// BOTH as the payload of an [`NodeKind::InitialVar`] node AND as the
-/// [`crate::FunctionBuilder`]'s per-region SSA-variable key
-/// (`SecondaryMap<InitialVnId, ValueId>` bookkeeping).
+/// Dense id of a tracked varnode, interned in `Function::vn_interner`. One
+/// identity serves both as the [`NodeKind::InitialVar`] payload and as the
+/// builder's per-region SSA-variable key.
 ///
-/// Stored instead of an inline `rsleigh::Vn` so the largest `NodeKind`
-/// payload is 4 bytes rather than 16.  The interner assigns ids in
-/// deterministic `(space, offset, size)` order, so id assignment is stable
-/// and reproducible.  Resolve back to the varnode with
+/// Interned rather than inlining `rsleigh::Vn` so the largest `NodeKind`
+/// payload stays 4 bytes instead of 16. Ids are assigned in `(space, offset,
+/// size)` order, so assignment is deterministic across runs. Resolve via
 /// [`crate::Function::initial_vn`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InitialVnId(u32);
 cranelift_entity::entity_impl!(InitialVnId);
 
 impl InitialVnId {
-    /// Wraps a raw position into an [`InitialVnId`].  Alias for
-    /// [`cranelift_entity::EntityRef::new`], kept for call sites that read
-    /// more clearly as "the id at this index".
     #[inline]
     pub fn from_index(index: usize) -> Self {
         Self(index as u32)
     }
 
-    /// The position this id refers to.  Alias for
-    /// [`cranelift_entity::EntityRef::index`].
     #[inline]
     pub fn index(self) -> usize {
         self.0 as usize
     }
 }
 
-/// The operation or role of a node in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
-    // ── Initial state ──────────────────────────────────────────────────────────
-    /// Function entry point.  Produces a single `Control` output.
+    /// Outputs `[Control]`.
     Entry,
-    /// Initial memory state.  Produces a single `Memory` output.
+    /// Outputs `[Memory]`.
     InitialMemory,
-    /// Initial value, at function entry, of the tracked varnode at this
-    /// [`InitialVnId`] (an index into [`crate::Function::all_vns`]).  Produces
-    /// a value output of the appropriate integer type.  Resolve the varnode
-    /// via [`crate::Function::initial_vn`].
+    /// Entry-time value of the tracked varnode at this id. Outputs one integer
+    /// value. Resolve the varnode via [`crate::Function::initial_vn`].
     InitialVar(InitialVnId),
 
-    // ── Region / join nodes ────────────────────────────────────────────────────
-    /// Region header.  Consumes incoming control edges (one per predecessor)
-    /// and produces a fresh `Control` output plus a `PhiToken`.
+    /// Inputs: one `Control` per predecessor. Outputs: `[Control, PhiToken]`.
     Region,
-    /// Memory phi: selects the live memory token at a join point.
+    /// Selects the live memory token at a join.
     MemPhi,
-    /// SSA φ at a join point.  Inputs: `[phi_token, val_0, val_1, …]`
-    /// where `phi_token` is the `PhiToken` output of the joining
-    /// `Region` and the rest are one value per CFG predecessor
-    /// in the same order as the `Region`'s `Control` inputs.
-    /// Output: `[value]`.
+    /// Inputs: `[phi_token, val_0, val_1, ...]`, one value per predecessor in
+    /// the same order as the joining `Region`'s `Control` inputs. Output:
+    /// `[value]`.
     ///
-    /// Some phis carry a source-level varnode tag (lifter-emitted SSA
-    /// φ for register-aliased reads); others are anonymous value phis
-    /// synthesised by `LoadForward` when forwarding a
-    /// `Load[sp+K]` across a `MemPhi`.  The tag (when present) is
-    /// stored in the `value_vn` side-table keyed by the Phi's output
-    /// `ValueId`; query it via
-    /// [`crate::Function::get_vn_for_value`] on `node_outputs(phi)[0]`.
-    /// Anonymous phis have no entry (the accessor returns `None`).
-    /// Non-cacheable: phi identity matters.
+    /// A lifter-emitted phi for a register-aliased read carries a source
+    /// varnode tag in the `value_vn` side-table, keyed by the phi's output
+    /// `ValueId` (see [`crate::Function::get_vn_for_value`]); anonymous phis
+    /// have no entry. Non-cacheable: phi identity matters.
     Phi,
 
-    // ── Conditional branch ─────────────────────────────────────────────────────
-    /// Conditional branch.  Consumes `(control, bool_cond)` and produces two
-    /// `Control` outputs: index 0 for the true branch, index 1 for the false branch.
+    /// Inputs: `(control, cond:I1)`. Outputs: `[Control, Control]`, index 0
+    /// true, index 1 false.
     If,
-    /// Multi-way branch (resolved jump table).  Consumes `(control, address)`
-    /// and produces N `Control` outputs, one per target region in target order;
-    /// output `i` is taken when `address == switch_targets[i]` (the per-output
-    /// case addresses live in the `Function::switch_targets` side table).  The
-    /// lifter emits this for a `RegionTerminator::Switch`; the table is
-    /// exhaustive (no default arm).
+    /// Resolved jump table. Inputs: `(control, address)`. Outputs: one
+    /// `Control` per target, output `i` taken when `address ==
+    /// switch_targets[i]` (case addresses live in `Function::switch_targets`).
+    /// Exhaustive: no default arm.
     Switch,
 
-    // ── Calls and returns ──────────────────────────────────────────────────────
-    /// Function call.  Clobbers caller-saved registers and the memory token.
+    /// Clobbers caller-saved registers and the memory token.
     Call,
-    /// Function return.  Consumes the outgoing control edge and any return-value outputs.
+    /// Consumes the outgoing control edge plus any return values.
     Return,
-    /// Unresolved indirect-branch placeholder.  Emitted by the lifter when
-    /// the CFG terminator is `UnresolvedIndirectBranch`.  Inputs:
-    /// `[control, memory, target_value]`.  Outputs: `[]`.
+    /// Placeholder for a branch the CFG could not resolve. Inputs:
+    /// `[control, memory, target_value]`. Outputs: `[]`.
     ///
-    /// The indirect-branch resolver inspects the producer of `target_value`
-    /// after the stable optimiser pipeline has run, then either rewrites
-    /// this node into a `Return` (link-register tail-return shapes) or
-    /// splices in a `Call`+`Return` pair (tail-call shape).  An
-    /// `IndirectBranch` surviving the destructive pipeline means the
-    /// resolver couldn't classify the producer; the IR is still valid.
+    /// The resolver classifies the producer of `target_value` once the
+    /// optimiser has converged, then rewrites this into a `Return` (link
+    /// register) or a `Call`+`Return` pair (tail call). Surviving the pipeline
+    /// just means classification failed; the IR stays valid.
     ///
-    /// The `memory` slot is anchored alongside `control` so the resolver
-    /// can wire a real `Return` (or `Call`+`Return`) at the same program
-    /// point without re-walking the CFG to find the live memory token.
+    /// `memory` is anchored here alongside `control` so the resolver can wire
+    /// the replacement at the same program point without re-walking the CFG
+    /// for the live memory token.
     IndirectBranch,
-    /// Control sink for a no-return trap (`break`, `ud2`, `int3`, `abort`,
-    /// `BUG_ON`-class).  Consumes the single dangling `Control` edge a
-    /// NoReturn `CallOther` leaves behind and produces nothing — control flow
-    /// ends here.  Inputs: `[control]`.  Outputs: `[]`.  Mirrors spidir's
-    /// `Unreachable`; it makes "every control edge reaches a terminator" hold
-    /// so the validator can enforce the single-successor control invariant.
+    /// Control sink for a no-return trap (`ud2`, `int3`, `abort`, `BUG_ON`).
+    /// Inputs: `[control]`. Outputs: `[]`. Consumes the dangling `Control`
+    /// edge a NoReturn `CallOther` leaves behind, so "every control edge
+    /// reaches a terminator" holds and the validator can enforce the
+    /// single-successor control invariant.
     Unreachable,
 
-    // ── Memory operations ──────────────────────────────────────────────────────
-    /// Load from the given address space.
     Load(rsleigh::VnSpace),
-    /// Store to the given address space.
     Store(rsleigh::VnSpace),
 
-    // ── Integer constants and operations ──────────────────────────────────────
-    /// An integer constant; the value is interned in
-    /// `Function::const_interner`, read via `IRViewer::int_const_u128`.
+    /// Value is interned in `Function::const_interner`; read it via
+    /// `IRViewer::int_const_u128`, never by matching the payload.
     IntConst(crate::node::const_value::ConstId),
-    /// Integer unary operation — two's-complement negate (`-x`).  Bitwise
-    /// complement (`~x`) is no longer a unary op; it is `Xor(x, all_ones)`
-    /// at lift time and beyond.
+    /// Negation only. Bitwise complement is `Xor(x, all_ones)`.
     IntUnaryOp(crate::node::IntUnaryOp),
-    /// Integer binary operation (e.g. add, shift, bitwise AND).
     IntBinaryOp(crate::node::IntBinaryOp),
-    /// Integer comparison operation; produces an `I1` (1-bit) output.
-    /// Logical operations on booleans are ordinary integer ops at `I1`
-    /// (`IntBinaryOp::{And,Or,Xor}`); logical NOT is `Xor(_, IntConst(1))`
-    /// at `I1`.
+    /// Outputs `I1`. Boolean logic reuses `IntBinaryOp::{And,Or,Xor}` at `I1`;
+    /// logical NOT is `Xor(_, IntConst(1)):I1`.
     IntCmpOp(crate::node::IntCmpOp),
-    /// Narrow an integer value by dropping high bits.
+    /// Drop high bits.
     Truncate,
-    /// Count the number of set bits in an integer value.
     Popcount,
-    /// Count the number of leading zero bits in an integer value.
+    /// Leading zero count.
     Lzcount,
-    /// Widen an integer value by zero- or sign-extending it.
     Extend(crate::node::ExtendOp),
 
-    // ── Float constants and operations ────────────────────────────────────────
-    /// A compile-time IEEE 754 floating-point constant.  The value is stored
-    /// as its raw bit pattern in a `u64` (upper 32 bits are zero for `F32`).
+    /// Raw IEEE 754 bit pattern; upper 32 bits are zero for `F32`.
     FloatConst(u64),
-    /// Floating-point binary operation (add, mul, div).
     FloatBinaryOp(crate::node::FloatBinaryOp),
-    /// Floating-point unary operation (neg, abs, sqrt, ceil, floor, round).
     FloatUnaryOp(crate::node::FloatUnaryOp),
-    /// Floating-point comparison; produces an `I1` (1-bit) output.
+    /// Outputs `I1`.
     FloatCmpOp(crate::node::FloatCmpOp),
 
-    // ── Float / integer conversions ───────────────────────────────────────────
-    /// Convert an integer value to the nearest representable float
-    /// (like C's `(float)n`).  Input is integer, output is `F32` or `F64`.
+    /// Integer to nearest representable float, like C's `(float)n`.
     IntToFloat,
-    /// Convert a float to an integer by truncating toward zero
-    /// (like C's `(int)f`).  Input is `F32`/`F64`, output is an integer type.
+    /// Float to integer, truncating toward zero, like C's `(int)f`.
     FloatToInt,
-    /// Change floating-point precision (`F32` ↔ `F64`).
+    /// Reprecision between float types.
     FloatToFloat,
 
-    // ── Bitcasts (reinterpretation of bit patterns) ───────────────────────────
-    /// Reinterpret an integer's raw bits as a float of the same size.
-    /// `I32` → `F32`, `I64` → `F64`.  No value conversion — bits are unchanged.
+    /// Same-size bitcast, `I32` to `F32` or `I64` to `F64`. Bits unchanged.
     IntBitsToFloat,
-    /// Reinterpret a float's raw bits as an integer of the same size.
-    /// `F32` → `I32`, `F64` → `I64`.  No value conversion — bits are unchanged.
+    /// Same-size bitcast, `F32` to `I32` or `F64` to `I64`. Bits unchanged.
     FloatBitsToInt,
 
-    // ── User-defined / opaque opcodes ─────────────────────────────────────────
-    /// User-defined operation (`CallOther` in Sleigh p-code): CPU intrinsics
-    /// such as `cpuid`, `rdtsc`, `syscall`, x87 transcendentals, etc.
+    /// Sleigh `CallOther`: CPU intrinsics such as `cpuid`, `rdtsc`, `syscall`,
+    /// x87 transcendentals.
     ///
-    /// Inputs: `[control, memory, arg0, arg1, …]`.
-    /// Outputs: `[Control, Memory]` if the instruction has no output varnode,
-    /// or `[Control, Memory, Typed]` if it does.  Memory is always
-    /// clobbered — downstream loads must depend on the new memory token.
-    /// Non-cacheable.
-    CallOther { user_op_id: u64 },
+    /// Inputs: `[control, memory, arg0, arg1, ...]`. Outputs:
+    /// `[Control, Memory]`, plus a `Typed` slot when the instruction has an
+    /// output varnode. Memory is always clobbered, so downstream loads must
+    /// depend on the new token. Non-cacheable.
+    CallOther {
+        user_op_id: u64,
+    },
 
-    /// Segmented-address lookup (`SegmentOp` in Sleigh p-code).  Resolves a
-    /// (segment, offset) pair to a flat pointer.  Pure computation.
+    /// Sleigh `SegmentOp`: resolves a (segment, offset) pair to a flat
+    /// pointer. Pure, so cacheable.
     ///
-    /// Inputs: `[segment, offset]`.  Outputs: `[Typed]` (pointer-sized).
-    /// Cacheable.
-    SegmentOp { op_id: u64 },
+    /// Inputs: `[segment, offset]`. Outputs: `[Typed]` (pointer-sized).
+    SegmentOp {
+        op_id: u64,
+    },
 
-    /// Java constant-pool reference (`CPoolRef` in Sleigh p-code).  Looks up a
-    /// value in the class's constant pool.  Opaque.
+    /// Sleigh `CPoolRef`: Java constant-pool lookup.
     ///
-    /// Inputs: `[ref0, ref1, …]`.  Outputs: `[Typed]`.  Non-cacheable
-    /// because resolution may have observable side effects (class loading).
+    /// Inputs: `[ref0, ref1, ...]`. Outputs: `[Typed]`. Non-cacheable:
+    /// resolution can have observable side effects (class loading).
     CPoolRef,
 
-    /// Java object allocation (`New` in Sleigh p-code).  Allocates a fresh
-    /// object of the given type.  Opaque.
+    /// Sleigh `New`: Java object allocation.
     ///
-    /// Inputs: `[size, …]`.  Outputs: `[Typed]` (pointer-sized).
-    /// Non-cacheable — each allocation yields a distinct object.
+    /// Inputs: `[size, ...]`. Outputs: `[Typed]` (pointer-sized).
+    /// Non-cacheable: each allocation yields a distinct object.
     New,
 }
 
 impl NodeKind {
-    /// Returns `true` if this node represents a compile-time constant
-    /// (`IntConst` or `FloatConst`).
-    ///
-    /// A constant is the interned `IntConst` / `FloatConst` shape; every
-    /// other `NodeKind` is non-const by construction (constants only ever
-    /// enter the graph via the const interners), so this is a `matches!`
-    /// over the two const kinds rather than an exhaustive no-`_` match —
-    /// the same trade made for [`Self::has_side_effects`].
+    /// Constants only enter the graph via the const interners, so a
+    /// `matches!` is exhaustive in practice and no new variant can become
+    /// const without going through `IntConst` / `FloatConst`.
     #[inline]
     pub fn is_const(self) -> bool {
         matches!(self, Self::IntConst(..) | Self::FloatConst(..))
     }
 
-    /// Returns `true` if nodes of this kind may be deduplicated in the graph
-    /// cache.
+    /// Whether the graph may dedup nodes of this kind.
     ///
-    /// Nodes whose inputs are added incrementally after construction (e.g.
-    /// `Region`, `Phi`) or that must always produce a fresh node (e.g.
-    /// `Return`) are not cacheable.
-    ///
-    /// The match is exhaustive (no `_` arm) so adding a new [`NodeKind`]
-    /// variant is a compile error here — forcing an explicit cacheability
-    /// decision at every new variant.
+    /// Not cacheable: kinds whose inputs grow after construction (`Region`,
+    /// `Phi`) and kinds where each occurrence is a distinct event (`Return`,
+    /// `Call`). Matched without a `_` arm so a new variant fails to compile
+    /// until someone decides.
     #[inline]
     pub fn is_cacheable(&self) -> bool {
         match self {
-            // Initial-state singletons: immutable post-construction; identity
-            // is fully determined by NodeKind fields (the InitialVnId for
-            // InitialVar; nothing for Entry/InitialMemory).  Dedup catches accidental
-            // double-construction and enforces the one-per-function invariant.
+            // Initial-state singletons: identity is fully determined by the
+            // NodeKind payload, so dedup enforces one-per-function.
             Self::Entry
             | Self::InitialMemory
             | Self::InitialVar(..)
-            // Pure value-producing computation: cacheable.
             | Self::If
             | Self::Load(..)
             | Self::Store(..)
@@ -281,41 +211,32 @@ impl NodeKind {
             | Self::FloatBitsToInt
             | Self::SegmentOp { .. } => true,
 
-            // Region header (inputs grow dynamically post-construction).
+            // Inputs grow after construction.
             Self::Region
-            // Phis (per-region identity matters; inputs added incrementally).
             | Self::Phi
             | Self::MemPhi
-            // Control-flow terminators / call-shaped (each occurrence is
-            // a distinct event).
+            // Each occurrence is a distinct event.
             | Self::Return
             | Self::IndirectBranch
             | Self::Unreachable
             | Self::Switch
             | Self::Call
             | Self::CallOther { .. }
-            // Sleigh user-ops with opaque per-occurrence identity.
+            // Opaque per-occurrence identity.
             | Self::CPoolRef
             | Self::New => false,
         }
     }
 
-    /// Returns `true` if nodes of this kind are exempt from the
-    /// asm-fingerprint non-empty invariant checked by
-    /// `validate::graph_invariants`.
+    /// Exempt from the non-empty asm-fingerprint invariant.
     ///
-    /// Exempt: region headers, initial-state nodes, phis — these are
-    /// synthesised by the lifter without a contributing machine instruction,
-    /// so their fingerprint legitimately stays empty.  Everything else must
-    /// carry at least one fingerprint entry (superset-only contract).
-    ///
-    /// The match is exhaustive (no `_` arm) so adding a new [`NodeKind`]
-    /// variant is a compile error here — forcing an explicit exemption
-    /// decision at every new variant.
+    /// Region headers, initial state and phis are synthesised without a
+    /// contributing machine instruction, so an empty fingerprint is legal.
+    /// Everything else must carry at least one entry. No `_` arm, so a new
+    /// variant fails to compile until someone decides.
     #[inline]
     pub fn asm_fingerprint_exempt(&self) -> bool {
         match self {
-            // Exempt: synthetic nodes with no contributing machine instruction.
             Self::Entry
             | Self::InitialMemory
             | Self::InitialVar(..)
@@ -323,7 +244,6 @@ impl NodeKind {
             | Self::Phi
             | Self::MemPhi => true,
 
-            // Non-exempt: everything else requires fingerprints.
             Self::If
             | Self::Switch
             | Self::Load(..)
@@ -356,17 +276,11 @@ impl NodeKind {
         }
     }
 
-    /// Whether this node participates in control flow (carries a `Control`
-    /// input or output): `Entry` / `Region` / `If` / `Return` / `Call` /
-    /// `CallOther` / `IndirectBranch`.
-    ///
-    /// The match is exhaustive (no `_` arm) so adding a new [`NodeKind`]
-    /// variant is a compile error here — forcing an explicit control-flow
-    /// decision at every new variant.
+    /// Whether the node carries a `Control` input or output. No `_` arm, so a
+    /// new variant fails to compile until someone decides.
     #[inline]
     pub fn has_control_flow(&self) -> bool {
         match self {
-            // Control-flow participants: carry a Control input or output.
             Self::Entry
             | Self::Region
             | Self::If
@@ -377,8 +291,6 @@ impl NodeKind {
             | Self::IndirectBranch
             | Self::Unreachable => true,
 
-            // Every other variant — explicitly named so adding a new
-            // `NodeKind` is a compile error here.
             Self::InitialMemory
             | Self::InitialVar(..)
             | Self::MemPhi
@@ -408,16 +320,13 @@ impl NodeKind {
         }
     }
 
-    /// Whether a node may NOT be removed even when all its outputs are
-    /// unused.  Control-flow nodes, a memory **write** (`Store` — removing it
-    /// would be dead-store elimination, which needs deliberate aliasing
-    /// reasoning), and opaque ops (`CPoolRef` / `New`, whose resolution may
-    /// observe state).  Pure value nodes and memory **reads** (`Load`) /
-    /// joins (`MemPhi`) are NOT side-effecting and are culled when unused.
+    /// Whether the node must survive even with all outputs unused.
     ///
-    /// Any future non-control-flow variant with observable side effects must
-    /// be added to the `matches!` arm below alongside `Store`, `CPoolRef`,
-    /// and `New`.
+    /// `Store` counts: removing it is dead-store elimination, which needs
+    /// aliasing reasoning this does not do. `CPoolRef` / `New` count because
+    /// resolution can observe state. `Load` and `MemPhi` do not, and are
+    /// culled when unused. New non-control-flow variants with observable
+    /// effects must be added to the `matches!` below.
     #[inline]
     pub fn has_side_effects(&self) -> bool {
         self.has_control_flow()
@@ -427,24 +336,13 @@ impl NodeKind {
             )
     }
 
-    /// Returns `true` if this node kind is commutative under operand swap.
+    /// Single source of truth for whether a pattern may try both operand
+    /// orderings at this node.
     ///
-    /// A binary operator `op(a, b)` is commutative iff `op(a, b) == op(b, a)`
-    /// always holds.  Patterns matching commutative nodes can match both
-    /// operand orderings; non-commutative nodes match only the declared order.
-    ///
-    /// Float operators that ignore NaN ordering (`FloatAdd`, `FloatMul`) are
-    /// commutative per the IEEE-754 commutativity-up-to-NaN convention used
-    /// throughout the IR.  Comparison ops are commutative only when symmetric
-    /// (`IntCmpOp::Equal` yes; `IntCmpOp::Less` no, etc.).  `Carry(l, r)` and
-    /// `Scarry(l, r)` ask whether `l + r` overflows (unsigned / signed
-    /// respectively); since addition commutes, so do these comparisons.
-    /// `FloatCmpOp::Equal` is symmetric for IEEE 754 (yields the same result
-    /// regardless of operand order, including for NaN inputs).
-    ///
-    /// All other kinds (non-binary ops, calls, loads, phis, …) return `false`.
-    /// This method is the single source of truth — replaces the per-op-enum
-    /// helpers that previously lived under `pattern::matcher::commutativity`.
+    /// `FloatAdd` / `FloatMul` count under the IEEE-754
+    /// commutativity-up-to-NaN convention the IR uses throughout. `Carry` and
+    /// `Scarry` ask whether `l + r` overflows, and addition commutes, so they
+    /// do too. `FloatCmpOp::Equal` is symmetric including on NaN.
     #[inline]
     pub fn is_commutative(&self) -> bool {
         match self {
@@ -466,9 +364,8 @@ impl NodeKind {
     }
 }
 
-// Permanent compile-time size guard: with `InitialVar` carrying a 4-byte
-// `InitialVnId` (not a 16-byte `rsleigh::Vn`), the largest inline payload is a
-// `u64` (FloatConst / CallOther / SegmentOp), keeping NodeKind at 16 bytes.
+// The largest inline payload is a u64 (FloatConst / CallOther / SegmentOp);
+// InitialVar interns its varnode rather than inlining a 16-byte rsleigh::Vn.
 const _: () = assert!(
     std::mem::size_of::<NodeKind>() <= 16,
     "NodeKind must stay <= 16 bytes (no inline payload may exceed 8 bytes)"
@@ -482,7 +379,6 @@ mod tests {
 
     #[test]
     fn has_side_effects_is_control_flow_plus_memory_writes_and_opaque() {
-        // Control-flow nodes: side effects, and report control flow.
         for k in [
             NodeKind::Entry,
             NodeKind::Region,
@@ -496,7 +392,7 @@ mod tests {
             assert!(k.has_control_flow(), "{k:?} should be control flow");
             assert!(k.has_side_effects(), "{k:?} should have side effects");
         }
-        // Non-control side-effecting nodes: a memory WRITE + opaque ops.
+        // A memory write plus the opaque ops.
         for k in [
             NodeKind::Store(rsleigh::VnSpace::RAM),
             NodeKind::CPoolRef,
@@ -505,7 +401,7 @@ mod tests {
             assert!(!k.has_control_flow(), "{k:?} is not control flow");
             assert!(k.has_side_effects(), "{k:?} should have side effects");
         }
-        // Pure value / read nodes: killable when unused (incl. a memory READ).
+        // Killable when unused, memory reads included.
         for k in [
             NodeKind::IntConst(ConstId::new(0)),
             NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add),

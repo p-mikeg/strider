@@ -1,39 +1,26 @@
-//! Interned integer-constant values. Every `NodeKind::IntConst(ConstId)`
-//! references one entry in `crate::Function::const_interner`.
-//!
-//! Storage dedups by VALUE MAGNITUDE: a value that fits `u128` is `Bits`
-//! (covers I1..I512 whose value ≤ u128); a value that needs more than 128
-//! bits is `Wide` (boxed little-endian limbs, I256/I512). The constant's
-//! WIDTH is carried by the node's output `ValueKind`, never by this storage,
-//! so `IntConst(42):I80` and `IntConst(42):I128` share one `ConstId` and are
-//! distinguished only at the node level (different output kind ⇒ different
-//! dedup-cache key). Read values through `crate::IRViewer` accessors.
+//! Storage dedups by value MAGNITUDE, not width: anything fitting `u128` is
+//! `Bits`, only genuinely wider values become `Wide`. Width lives on the
+//! node's output `ValueKind`, so `IntConst(42):I80` and `IntConst(42):I128`
+//! share a `ConstId` and are told apart only by the node's dedup key.
+//! Read values through the `crate::IRViewer` accessors.
 
 use cranelift_entity::entity_impl;
 
-/// Dense id of an interned integer-constant value
-/// (`crate::Function::const_interner`). Opaque; resolve via
-/// `crate::Function::const_value`.
+/// Opaque; resolve via `crate::Function::const_value`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ConstId(u32);
 entity_impl!(ConstId, "const");
 
-/// The interned value of an integer constant.
-///
-/// `Bits` holds any value ≤ 128 bits inline. `Wide` boxes the little-endian
-/// limbs of a value that exceeds 128 bits (`limbs[0]` low, `limbs[N-1]` high);
-/// only I256 (4 limbs) / I512 (8 limbs) reach it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstValue {
-    /// Value ≤ 128 bits, held inline.
     Bits(u128),
-    /// Value > 128 bits, boxed little-endian limbs.
+    /// Little-endian limbs, `limbs[0]` low. Only I256 (4 limbs) and I512
+    /// (8 limbs) values exceeding 128 bits land here.
     Wide(Box<[u64]>),
 }
 
 impl ConstValue {
-    /// The value as `u128` if it fits (always for `Bits`; for `Wide` only
-    /// when every limb above the low two is zero), else `None`.
+    /// `Wide` fits only when every limb above the low two is zero.
     pub fn fits_u128(&self) -> Option<u128> {
         match self {
             Self::Bits(v) => Some(*v),
@@ -73,14 +60,12 @@ mod tests {
     use super::*;
     use crate::function::test_function;
 
-    /// The limb path masks a fits-`u128` value to the declared width, exactly
-    /// like the scalar path — so no unmasked `Bits` can slip in via limbs.
+    /// No unmasked `Bits` may slip in via the limb path.
     #[test]
     fn intern_int_const_limbs_masks_fits_u128_to_width() {
         use crate::node::ValueType;
         let mut f = test_function();
-        // High limb mixes one bit inside I80's 80-bit width (bit 69) and one
-        // above it (bit 84); only the in-width bit must survive.
+        // Bit 69 is inside I80's width, bit 84 is above it; only 69 survives.
         let hi: u64 = (1 << 5) | (1 << 20);
         let value = u128::from(hi) << 64;
         let limbed = f.intern_int_const_limbs(&[0, hi], ValueType::I80);
@@ -102,11 +87,8 @@ mod tests {
         }
     }
 
-    /// Interning the same value twice returns the same id, for both the inline
-    /// `Bits` form and the boxed `Wide` form.
     #[test]
     fn intern_dedups_equal_values() {
-        // Rows: (label, value).
         let cases: [(&str, ConstValue); 2] = [
             ("intern_dedups_equal_bits", ConstValue::Bits(0xABCD)),
             (
@@ -125,7 +107,6 @@ mod tests {
         }
     }
 
-    /// Distinct values get distinct ids.
     #[test]
     fn intern_assigns_distinct_ids_for_distinct_values() {
         let cases: [(&str, ConstValue, ConstValue); 2] = [
@@ -152,8 +133,6 @@ mod tests {
         assert_eq!(g.const_value(id), &v);
     }
 
-    /// `fits_u128`: `Bits(v)` always fits; a `Wide` whose high limbs are zero
-    /// fits; a `Wide` with a nonzero limb above the low two does not.
     #[test]
     fn fits_u128_cases() {
         assert_eq!(ConstValue::Bits(0xDEAD_BEEF).fits_u128(), Some(0xDEAD_BEEF));
@@ -161,30 +140,28 @@ mod tests {
             ConstValue::Wide(vec![1, 0, 0, 0].into_boxed_slice()).fits_u128(),
             Some(1)
         );
-        // limb index 2 nonzero ⇒ exceeds 128 bits.
+        // A nonzero limb at index 2 puts the value over 128 bits.
         assert_eq!(
             ConstValue::Wide(vec![0, 0, 1, 0].into_boxed_slice()).fits_u128(),
             None
         );
     }
 
-    /// `to_le_bytes` serialises little-endian, zero-padded / truncated to the
-    /// requested byte size, for both `Bits` and `Wide`.
     #[test]
     fn to_le_bytes_serialises_little_endian() {
-        // The low 8 bytes are 0x0807_0605_0403_0201 — bytes 1..=8 LE.
+        // Bytes 1..=8 little-endian.
         let low: u128 = 0x0807_0605_0403_0201;
-        // Bits at byte_size 10 (I80 width): low 8 bytes then zero pad.
+        // I80 width: low 8 bytes then zero pad.
         assert_eq!(
             ConstValue::Bits(low).to_le_bytes(10),
             vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0]
         );
-        // Bits at byte_size 16 (I128 width).
+        // I128 width.
         assert_eq!(
             ConstValue::Bits(low).to_le_bytes(16),
             vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0]
         );
-        // Wide([low, 0, 0, 0]) at byte_size 32 (I256 width).
+        // I256 width.
         let wide = ConstValue::Wide(vec![low as u64, 0, 0, 0].into_boxed_slice());
         let mut expected: Vec<u8> = (1u8..=8).collect();
         expected.extend(std::iter::repeat_n(0u8, 24));

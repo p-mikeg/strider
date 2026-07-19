@@ -1,25 +1,17 @@
-//! Property-based invariants for the value-only IR.
+//! Property-based invariants over value-only DAGs, generated as a sequence of
+//! [`FunctionBuilder`] actions against type-tagged operand buckets.
 //!
-//! **Scope.** Value-only DAG generation via a sequence of
-//! [`FunctionBuilder`] actions, mirroring
-//! `cranelift-fuzzgen`'s imperative-action pattern with type-tag operand
-//! buckets.  Control-flow invariants (`PhiCollapse`,
-//! `DeadBranchElimination`, indirect-resolver) stay in hand-authored
-//! fixtures — random control-flow generation would require reimplementing
-//! most of `FunctionBuilder`'s region/phi machinery.
+//! Value-only on purpose: random control flow would mean reimplementing most
+//! of `FunctionBuilder`'s region/phi machinery, so control-flow invariants
+//! stay in hand-authored fixtures.
 //!
-//! **Property checked here.**
+//! The strategy stamps a lift address per action, so every emitted node has a
+//! non-empty fingerprint by construction and any validation failure is a real
+//! bug rather than a strategy artifact.
 //!
-//!  Every random `Graph` produced by the action-driven strategy passes
-//!  `validate(function)` (Layer-A + Layer-B + always-on Layer-C
-//!  asm-fingerprint check).  The strategy stamps a per-action lift address
-//!  via [`FunctionBuilder::set_lift_addr`] so every emitted node carries a
-//!  non-empty fingerprint by construction; if the strategy ever produces a
-//!  graph that fails validation, that's a real bug worth investigating.
-//!
-//! Properties that require the optimizer (`opt::default_pipeline`)
-//! live in `strider-orchestrator/tests/proptest_optimizer.rs` because
-//! `strider-ir` cannot depend on the analyzer.
+//! Optimizer-dependent properties live in
+//! `strider-orchestrator/tests/proptest_optimizer.rs`; `strider-ir` cannot
+//! depend on the analyzer.
 
 #![allow(
     clippy::unwrap_used,
@@ -36,18 +28,12 @@ use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir::node::ValueType;
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-/// Sentinel lift-address base; per-step `lift_off` is added on top.
-/// Mirrors `strider_ir_test_utils::SENTINEL_LIFT_ADDR`.
+/// Duplicated from `strider_ir_test_utils::SENTINEL_LIFT_ADDR`; per-step
+/// `lift_off` is added on top.
 const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
-// ── Strategy primitives ───────────────────────────────────────────────────
-
-/// Integer widths the strategy emits.  We restrict to the four "common"
-/// widths (I8..I64) because:
-///   - they all fit in `u128` (no `ConstValue::Wide` limbs required),
-///   - they all admit binary ops directly without crossing the
-///     `ConstValue::Wide` boundary,
-///   - they exercise truncate / extend behaviour with `convert_to_int_if_needed`.
+/// I8..I64 only: they fit `u128` inline, so no step crosses the
+/// `ConstValue::Wide` boundary, while still exercising truncate / extend.
 fn int_ty() -> impl Strategy<Value = ValueType> {
     prop_oneof![
         Just(ValueType::I8),
@@ -70,8 +56,7 @@ fn binary_op() -> impl Strategy<Value = IntBinaryOp> {
 }
 
 fn unary_op() -> impl Strategy<Value = IntUnaryOp> {
-    // `IntUnaryOp` has only `Neg` since `BitNot` was removed (bitwise
-    // complement is `Xor(x, all_ones)`).
+    // `Neg` is the only variant: bitwise complement is `Xor(x, all_ones)`.
     Just(IntUnaryOp::Neg)
 }
 
@@ -87,19 +72,12 @@ fn extend_op() -> impl Strategy<Value = ExtendOp> {
     prop_oneof![Just(ExtendOp::ZeroExtend), Just(ExtendOp::SignExtend)]
 }
 
-/// One step in a value-only DAG construction sequence.
+/// Operand indices are taken modulo the bucket size at replay time, so no
+/// step is ever out of bounds; a step needing an empty bucket is a no-op.
 ///
-/// Operand indices (`u8`) are interpreted modulo the current bucket size at
-/// replay time, so the strategy never generates "out of bounds" steps — a
-/// step that requires a non-empty operand bucket of a given width simply
-/// becomes a no-op when no operand is available.
-///
-/// Per-step `lift_addr_offset: u16` is added to a base sentinel address at
-/// replay time so each step stamps a distinct (yet deterministic, given the
-/// step sequence) asm-fingerprint on its emitted nodes.  This makes the
-/// always-on Layer-C check meaningful: a strategy that always used the
-/// same lift address would technically still produce valid fingerprints,
-/// but stamping per step exercises the side-table-extension code path.
+/// `lift_off` is added to the sentinel base at replay time. Per-step
+/// addresses are not required for validity, but they exercise the
+/// side-table-extension path that one fixed address would not.
 #[derive(Debug, Clone)]
 enum Step {
     EmitIntConst {
@@ -169,10 +147,7 @@ fn step_seq() -> impl Strategy<Value = Vec<Step>> {
     proptest::collection::vec(step_strategy(), 1..50)
 }
 
-// ── Session: replays a step sequence into a `FunctionBuilder` ────────────
-
-/// Per-width operand buckets — separate `Vec<ValueId>` per
-/// `ValueType`.  Sized to the 4 common widths used by `int_ty()`.
+/// One operand bucket per width `int_ty()` emits, plus I1 for comparisons.
 #[derive(Default)]
 struct Pools {
     u8s: Vec<strider_ir::Value>,
@@ -214,9 +189,7 @@ impl Pools {
         }
     }
 
-    /// Returns *some* value with width `ty` if any exists; else falls back
-    /// to any tracked value (used by [`close_with_return`] to ensure the
-    /// function has a return value).
+    /// Any tracked value, so the replay always has something to return.
     fn any_value(&self) -> Option<strider_ir::Value> {
         for b in [&self.u64s, &self.u32s, &self.u16s, &self.u8s, &self.bools] {
             if let Some(&v) = b.last() {
@@ -227,9 +200,8 @@ impl Pools {
     }
 }
 
-/// Replay a sequence into a fresh empty function and close with a Return.
-/// Returns `None` only when the resulting graph would be empty (no value
-/// to return).  Such sequences are uninteresting and proptest will retry.
+/// `None` when the graph would be empty (nothing to return); proptest retries
+/// those rather than treating them as failures.
 fn replay(steps: &[Step]) -> Option<strider_ir::Function> {
     let mut b = strider_ir_test_utils::empty_builder().ok()?;
     let region = b.create_region_all().ok()?;
@@ -239,8 +211,6 @@ fn replay(steps: &[Step]) -> Option<strider_ir::Function> {
     let mut pools = Pools::default();
 
     for s in steps {
-        // Per-step stamp ensures fingerprints are diverse without coupling
-        // to address values that could collide with real machine code.
         let lift_addr = SENTINEL_LIFT_ADDR.wrapping_add(step_lift_off(s) as u64);
         b.set_lift_addr(Some(lift_addr));
         apply_step(&mut b, &mut pools, s);
@@ -285,9 +255,6 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
             let Some(rhs) = pools.pick(*width, *rhs_idx) else {
                 return;
             };
-            // Guard against div / shift edge-cases that would emit invalid IR.
-            // (`build_int_binary_operation` itself accepts any value-bucketed
-            // operands; the validator does not reject const-zero divisors.)
             if let Ok(v) = b.build_int_binary_operation(lhs, rhs, *op, *width) {
                 pools.bucket_mut(*width).push(v);
             }
@@ -328,9 +295,8 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
             let Some(src) = pools.pick(*src_width, *src_idx) else {
                 return;
             };
-            // `truncate_if_needed` accepts widening too (it becomes a no-op
-            // returning the input unchanged), so the only failure mode is
-            // a non-integer input — guarded above by typed buckets.
+            // Widening is a no-op returning the input, so the only failure
+            // mode is a non-integer input, which the typed buckets exclude.
             if let Ok(v) = b.truncate_if_needed(src, *dst_width) {
                 pools.bucket_mut(*dst_width).push(v);
             }
@@ -352,27 +318,17 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
     }
 }
 
-// ── Property ──────────────────────────────────────────────────────────────
-
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 1000,
-        // Default max_shrink_iters is fine; default max_global_rejects is fine.
         .. ProptestConfig::default()
     })]
 
-    /// Every graph the value-only strategy produces passes `validate`,
-    /// including the always-on Layer-C asm-fingerprint check.
-    ///
-    /// `FunctionBuilder::build()` runs `validate` internally — reaching
-    /// `Some(_)` already implies validation passed.  We also re-run
-    /// `validate` post-build to catch any post-build mutation we might
-    /// add later.
+    /// `build()` already validates, so reaching `Some(_)` implies a pass; the
+    /// explicit re-run guards against any post-build mutation added later.
     #[test]
     fn prop_validate_always_passes(steps in step_seq()) {
         let Some(fg) = replay(&steps) else {
-            // Empty pool / build failure is uninteresting; not a property
-            // violation.
             return Ok(());
         };
         let res = strider_ir::validate::validate(&fg);
@@ -383,10 +339,8 @@ proptest! {
         );
     }
 
-    /// `Function::preorder` visits each reachable node at most once.
-    /// The walker's `DenseEntitySet`-backed visited check is the
-    /// load-bearing invariant; this proptest exercises it against
-    /// arbitrary action-driven graphs.
+    /// The walk's `DenseEntitySet` visited check must never yield a node
+    /// twice, whatever shape the graph took.
     #[test]
     fn prop_preorder_visits_each_node_at_most_once(steps in step_seq()) {
         let Some(fg) = replay(&steps) else {
@@ -403,20 +357,16 @@ proptest! {
         );
     }
 
-    /// Cacheable kinds dedup deterministically: creating an `IntConst`
-    /// node with the same `(kind, inputs, output_kinds)` returns the
-    /// same `NodeId` regardless of construction history.  Pins the
-    /// `Graph::node_to_id` dedup cache's correctness against an
-    /// arbitrary prior construction sequence.
+    /// Dedup must be independent of construction history: the same
+    /// `(kind, inputs, output_kinds)` yields the same `NodeId` no matter what
+    /// the graph was built from first.
     #[test]
     fn prop_dedup_determinism(steps in step_seq()) {
         let Some(mut fg) = replay(&steps) else {
             return Ok(());
         };
-        // IntConst(42 : I32) — cacheable, no input dependencies, so
-        // construction is independent of the graph's prior state.  The value
-        // is interned (equal values share one ConstId), so two creations of
-        // the same logical constant dedup to one node.
+        // IntConst is cacheable with no inputs, and equal values share one
+        // interned ConstId, so both creations must land on one node.
         use strider_ir::node::{NodeKind, ValueKind, ValueType};
         let id = fg.intern_int_const(42, ValueType::I32);
         let a = fg.graph_mut().create_node(

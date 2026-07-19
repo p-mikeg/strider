@@ -1,14 +1,9 @@
 //! Neighborhood selection for the interactive explorer.
 //!
-//! Picks the depth-N node set around a centre; the RENDER is the ordinary
-//! pretty dumper restricted to that set (`FunctionDotDumper.nodes` /
-//! `.center`), so styling, labels, edge roles, const-per-use boxes and the
-//! `if.true` / `Post Call` virtuals are shared rather than reimplemented.
-//!
-//! A real node's DOT id is its IR `NodeId` (see
-//! `FunctionDotDumperState::get_dot_id`), so the explorer navigates by id;
-//! const (`c*`) and virtual (`v*`) boxes are not navigation targets, and
-//! `FunctionDotDumperState::node_of_dot_id` resolves any of them back.
+//! Only the node SET is computed here; the render is the ordinary pretty dumper
+//! restricted to it (`FunctionDotDumper.nodes` / `.center`), so styling, labels,
+//! edge roles, const-per-use boxes and the virtuals are shared rather than
+//! reimplemented.
 
 use std::collections::VecDeque;
 use std::io;
@@ -21,9 +16,8 @@ use crate::function::Function;
 use crate::node::NodeId;
 use crate::{IRViewer, IRWalker};
 
-/// Maps each node to the nodes that consume one of its outputs (the forward
-/// edges the IR doesn't index directly). Built by walking every reachable
-/// node's inputs once — `O(V+E)`.
+/// Forward edges, which the IR doesn't index directly.  One `O(V+E)` pass over
+/// every reachable node's inputs.
 pub(super) fn build_consumers(f: &Function) -> FxHashMap<NodeId, Vec<NodeId>> {
     let mut consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
     for node in f.walk() {
@@ -35,7 +29,6 @@ pub(super) fn build_consumers(f: &Function) -> FxHashMap<NodeId, Vec<NodeId>> {
     consumers
 }
 
-/// The producer node feeding each of `node`'s inputs.
 fn producers(f: &Function, node: NodeId) -> Vec<NodeId> {
     f.node_inputs(node)
         .into_iter()
@@ -43,18 +36,15 @@ fn producers(f: &Function, node: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
-/// BFS the depth-`depth` neighborhood around `center` over **both** input and
-/// output edges. A node whose total degree exceeds `hub_cap` is included but
-/// not expanded *through* (a value like the memory token or a constant used in
-/// hundreds of places would otherwise pull the whole function in at hop 1);
+/// BFS around `center` over **both** input and output edges.  A node whose total
+/// degree exceeds `hub_cap` is included but not expanded *through*; otherwise
+/// the memory token or a hot constant pulls the whole function in at hop 1.
 /// `center` always expands.
 ///
-/// `max_nodes` bounds the total node count: because BFS visits in level order,
-/// the budget keeps the *nearest* `max_nodes` nodes and stops. Depth alone
-/// doesn't bound size — a densely-connected region blows up to hundreds of
-/// nodes, which the browser's synchronous Graphviz layout can't render without
-/// freezing — so the count cap is what actually keeps a neighborhood renderable.
-/// Returns the set of nodes to draw.
+/// Depth alone doesn't bound size (a dense region blows up to hundreds of nodes,
+/// which the browser's synchronous Graphviz layout can't render without
+/// freezing), so `max_nodes` is the real cap.  BFS visits in level order, so the
+/// budget keeps the nearest nodes.
 pub(super) fn neighborhood_nodes(
     f: &Function,
     center: NodeId,
@@ -73,11 +63,11 @@ pub(super) fn neighborhood_nodes(
         let prod = producers(f, node);
         let cons = consumers.get(&node).cloned().unwrap_or_default();
         if node != center && prod.len() + cons.len() > hub_cap {
-            continue; // don't expand through a hub
+            continue; // hub: include, don't expand through
         }
         for nb in prod.into_iter().chain(cons) {
             if seen.len() >= max_nodes {
-                break 'bfs; // budget reached — keep the nearest max_nodes
+                break 'bfs; // budget spent; the nearest nodes are already in
             }
             if seen.insert(nb) {
                 queue.push_back((nb, dist + 1));
@@ -88,9 +78,9 @@ pub(super) fn neighborhood_nodes(
 }
 
 impl<R: MemReader> FunctionDotDumper<'_, R> {
-    /// Renders the structural depth-`depth` neighborhood around `center` to a
-    /// standalone DOT string, with `center` highlighted.  DOT node ids are IR
-    /// node ids (see the module docs).
+    /// Standalone DOT for the depth-`depth` neighborhood around `center`, with
+    /// `center` highlighted.  Real nodes keep their IR `NodeId` as the DOT id,
+    /// so the explorer can navigate by it.
     ///
     /// # Errors
     /// Propagates a `pretty_label` IO error (e.g. a Sleigh register-name

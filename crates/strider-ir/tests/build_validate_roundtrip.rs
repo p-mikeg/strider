@@ -1,7 +1,5 @@
-//! Integration tests asserting that `FunctionBuilder::build` returns
-//! a graph that passes `validate` for every node-kind variant.  These
-//! exercise the IR construction API end-to-end (build → validate) and
-//! catch silent breakage in either layer.
+//! `FunctionBuilder::build` must return a graph that passes `validate`, for
+//! every node-kind variant.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -41,8 +39,7 @@ fn every_int_binary_op_validates() {
 
 #[test]
 fn every_int_unary_op_validates() {
-    // `IntUnaryOp` now has only `Neg` (bitwise complement is
-    // `Xor(x, all_ones)`, not a dedicated unary).
+    // `Neg` is the only variant: bitwise complement is `Xor(x, all_ones)`.
     let op = IntUnaryOp::Neg;
     make_empty_fn(|fb| {
         let x = fb.build_int_const(5u64, ValueType::I64)?;
@@ -56,10 +53,8 @@ fn every_int_unary_op_validates() {
 
 #[test]
 fn bool_ops_validate() {
-    // Booleans are I1 integers: bitwise And/Or/Xor on I1 model the former
-    // BoolBinaryOp, and `Xor(x, IntConst(1))` at `I1` models the former
-    // BoolUnaryOp (logical NOT) — the former BitNot unary-op was removed in
-    // favour of `Xor(_, all_ones)`.
+    // Booleans are I1 integers, so logical and/or/xor are the bitwise ops
+    // at I1 and logical NOT is `Xor(x, IntConst(1)):I1`.
     for op in [IntBinaryOp::And, IntBinaryOp::Or, IntBinaryOp::Xor] {
         make_empty_fn(|fb| {
             let t = fb.build_boolean_const(true);
@@ -71,7 +66,6 @@ fn bool_ops_validate() {
         })
         .unwrap_or_else(|e| panic!("op {op:?} invalid: {e}"));
     }
-    // I1 logical NOT — `Xor(x, IntConst(1)):I1`.
     make_empty_fn(|fb| {
         let t = fb.build_boolean_const(true);
         let one = fb.build_int_const(u128::MAX, ValueType::I1)?;
@@ -85,7 +79,7 @@ fn bool_ops_validate() {
 
 #[test]
 fn float_ops_validate() {
-    // FloatBinaryOp variants.  Sub is absent (lowered to Add+Neg at lift time).
+    // Sub is absent: lowered to Add+Neg at lift time.
     for op in [FloatBinaryOp::Add, FloatBinaryOp::Mul, FloatBinaryOp::Div] {
         make_empty_fn(|fb| {
             let a = fb.build_float_const(0x3FF0_0000_0000_0000u64, ValueType::F64); // 1.0
@@ -97,7 +91,6 @@ fn float_ops_validate() {
         })
         .unwrap_or_else(|e| panic!("FloatBinaryOp::{op:?} invalid: {e}"));
     }
-    // FloatUnaryOp variants.
     for op in [
         FloatUnaryOp::Neg,
         FloatUnaryOp::Abs,
@@ -134,12 +127,10 @@ fn loads_and_stores_validate() {
         .build_int_binary_operation(sp_val, offset, IntBinaryOp::Add, ValueType::I64)
         .expect("addr");
 
-    // Load
     let loaded = b
         .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .expect("load");
 
-    // Store
     let data = b.build_int_const(0x42u64, ValueType::I64).expect("data");
     b.build_store(addr, data, rsleigh::VnSpace::RAM)
         .expect("store");
@@ -155,9 +146,8 @@ fn loads_and_stores_validate() {
 fn region_join_with_phi_validates() {
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
-    // Diamond: entry → if(true) { region_t → var=1 } { region_f → var=2 } → join → return var
-    // Uses a tracked register variable so FunctionBuilder's create_region
-    // automatically creates a tagged Phi at the join point.
+    // A diamond over a tracked register variable, so create_region mints a
+    // tagged Phi at the join.
     let var_vn = reg_vn(0x10, 8);
     let mut b = RegisterSet::new()
         .tracked(var_vn)
@@ -176,19 +166,17 @@ fn region_join_with_phi_validates() {
     let cond = b.build_boolean_const(true);
     b.build_if(cond, region_t, region_f).expect("build_if");
 
-    // True arm: write var=1 and branch to join.
     b.set_region(region_t);
     let v1 = b.build_int_const(1u64, ValueType::I64).expect("v1");
     b.write_variable(&var_vn, v1).expect("write var true");
     b.build_branch(join).expect("branch to join from true");
 
-    // False arm: write var=2 and branch to join.
     b.set_region(region_f);
     let v2 = b.build_int_const(2u64, ValueType::I64).expect("v2");
     b.write_variable(&var_vn, v2).expect("write var false");
     b.build_branch(join).expect("branch to join from false");
 
-    // Join: read var — this produces the Region-scoped Phi output.
+    // Reading at the join is what produces the Phi output.
     b.set_region(join);
     let phi_val = b.read_variable(&var_vn).expect("read var at join");
     b.build_return(Some(phi_val), &[]).expect("return");
@@ -200,10 +188,6 @@ fn region_join_with_phi_validates() {
 
 #[test]
 fn const_then_return_validates() {
-    // Pin: a graph consisting of just `Return(IntConst(K))` validates,
-    // for both narrow and wide integer return-value widths.  Catches
-    // regressions in the Return's value-input typing or the IntConst
-    // node's output-kind plumbing.
     for (val, ty) in [
         (0u128, ValueType::I32),
         (0xCAFE_BABE_u128, ValueType::I64),
@@ -217,11 +201,8 @@ fn const_then_return_validates() {
 
 #[test]
 fn every_int_cmp_op_validates() {
-    // Pin: every IntCmpOp variant (Equal, Less, Sless, Carry, Scarry,
-    // Sborrow) builds-validates against same-typed operands.  Two
-    // lowered shapes (LessEqual / SlessEqual / NotEqual) are
-    // intentionally absent — the lifter lowers them at lift time
-    // (see CLAUDE.md lift-time canonicalisations).
+    // LessEqual / SlessEqual / NotEqual are absent on purpose: the lifter
+    // lowers them.
     for op in [
         IntCmpOp::Equal,
         IntCmpOp::Less,
@@ -241,10 +222,6 @@ fn every_int_cmp_op_validates() {
 
 #[test]
 fn extend_and_truncate_validate() {
-    // Pin: zero-extend, sign-extend, and truncate all produce
-    // validate-acceptable graphs.  Catches regressions in
-    // `extend_if_needed` / `truncate_if_needed` / the underlying
-    // Extend(ExtendOp) / Truncate node types.
     make_empty_fn(|b| {
         let v8 = b.build_int_const(0xFFu64, ValueType::I8)?;
         let v32_zero = b.extend_if_needed(v8, ValueType::I32, ExtendOp::ZeroExtend)?;
@@ -294,10 +271,6 @@ fn switch_target_arity_mismatch_is_rejected() {
 
 #[test]
 fn float_int_conversions_validate() {
-    // Pin: every int↔float conversion op
-    // (IntToFloat, FloatToInt, IntBitsToFloat, FloatBitsToInt,
-    // FloatToFloat) builds-validates.  Catches regressions in the
-    // conversion node typing (input vs output width + kind).
     make_empty_fn(|b| {
         let i = b.build_int_const(42u64, ValueType::I32)?;
         let f32_via_to_float = b.build_int_to_float(i, ValueType::F32)?;
