@@ -1,20 +1,9 @@
-"""Every public binding must carry a non-empty ``__doc__``.
+"""Every public binding must carry a non-empty ``__doc__``, so a new one
+added without a doc comment trips here rather than shipping undocumented.
 
-PyO3 turns a Rust ``///`` doc comment into the Python ``__doc__`` of the
-generated class / method / function, and a ``#[pyo3(get)]`` field's
-doc comment into its getset-descriptor ``__doc__``.  This test walks the
-public surface of ``strider``, ``strider.pattern``,
-``strider.pattern.constraints``, and ``strider.opt``
-and asserts each public binding is documented, so a future binding added
-without a doc comment trips here rather than shipping undocumented.
-
-Scope (public = name not starting with ``_``):
-  * module-level classes and their own (non-inherited) public members:
-    methods, ``#[classmethod]`` / ``#[staticmethod]``, ``#[getter]``
-    properties, and ``#[pyo3(get)]`` field getset-descriptors.
-  * module-level functions (``#[pyfunction]``).
-
-Dunder names and inherited members are skipped.
+Public means a name not starting with ``_``: module-level classes and
+their own methods / properties / field getters, plus module-level
+functions.  Dunders and inherited members are skipped.
 """
 
 import inspect
@@ -26,9 +15,8 @@ import strider.pattern
 import strider.pattern.constraints
 
 
-# Tiny, justified allow-list of public bindings exempt from the
-# non-empty-doc requirement.  Keep this empty unless a binding genuinely
-# cannot carry a doc; document the reason inline.
+# Keep empty unless a binding genuinely cannot carry a doc; document the
+# reason inline.
 _DOC_ALLOWLIST: set[str] = set()
 
 
@@ -37,18 +25,16 @@ def _is_public(name: str) -> bool:
 
 
 def _member_doc_targets(cls):
-    """Yield ``(qualname, obj)`` for each own public member of ``cls``
-    whose ``__doc__`` we require — methods, classmethods, properties, and
-    ``#[pyo3(get)]`` field getset-descriptors.  Skips inherited members
-    (only ``vars(cls)`` entries) and dunders.
+    """Own public members of ``cls`` that must be documented: methods,
+    classmethods, properties, and field getters.  ``vars``, not ``dir``,
+    so inherited members belong to the base class instead.
     """
     for mname, member in vars(cls).items():
         if not _is_public(mname):
             continue
-        # PyO3 surfaces methods/classmethods as builtin functions /
-        # method descriptors, getters as ``property``, and
-        # ``#[pyo3(get)]`` fields as ``getset_descriptor``.  All carry a
-        # meaningful ``__doc__`` when documented on the Rust side.
+        # Methods/classmethods surface as builtin functions or method
+        # descriptors, getters as ``property``, fields as
+        # ``getset_descriptor``.
         if isinstance(member, property) or callable(member) or (
             type(member).__name__ == "getset_descriptor"
         ):

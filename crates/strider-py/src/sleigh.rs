@@ -1,9 +1,6 @@
-//! `PySleigh` — a lightweight Sleigh handle keyed off a `PySleighArch`
-//! plus a memory reader (`PyBufferReader` or any `MemReader` subclass).
-//! It no longer owns a constructed `rsleigh::Sleigh` (the owning lift
-//! engine, `strider_lift::lift::Lifter`, does); it retains the arch name
-//! and the cached `SleighRegs` table, building a transient `Sleigh` only
-//! where one is needed (e.g. p-code dumping).
+//! Sleigh register-table handle, plus the `Vn` / `VnSpace` value types.
+//! The `Lifter` owns the real `rsleigh::Sleigh`; this wrapper keeps only the
+//! arch name and the probed register table.
 
 use pyo3::prelude::*;
 
@@ -11,31 +8,19 @@ use crate::arch::PySleighArch;
 use crate::errors::into_strider_err;
 use crate::reader::{AnyMemReader, MemInput};
 
-/// A `Sleigh` register-table handle keyed off a (SleighArch, reader)
-/// pair.
-///
-/// The `Lifter` now OWNS the `rsleigh::Sleigh` it builds CFGs with, so
-/// this standalone wrapper no longer needs to retain the Sleigh itself:
-/// it builds one transiently at construction to probe the register table
-/// and keeps only the cached `SleighRegs` (for `reg(...)` lookups) plus
-/// the arch preset name (for `arch_name()` / `__repr__`).  It is the
-/// public `strider.Sleigh` class — a standalone register-table lookup
-/// independent of any `Lifter`, constructed directly via
-/// `strider.Sleigh(arch, mem)`.
+/// Register-table lookup for an arch, independent of any `Lifter`.
+/// Construct via `strider.sleigh.Sleigh(arch, mem)`.
 #[pyclass(name = "Sleigh", module = "strider.sleigh")]
 pub struct PySleigh {
     pub(crate) arch_name: &'static str,
-    /// Cached register table, probed once at construction.  Backs
-    /// `reg(...)` lookups so callers can resolve register names without
-    /// re-running the (non-trivial) regs probe.
+    /// Probed once at construction; the probe is not cheap enough to redo
+    /// per `reg(...)` lookup.
     pub(crate) regs: rsleigh::SleighRegs,
 }
 
 impl PySleigh {
-    /// Internal constructor (mirrors `#[new]`).  Lets the run-style
-    /// helpers in `run.rs` build a PySleigh without going through
-    /// PyO3's argument-conversion path.  Builds a `Sleigh` transiently to
-    /// probe the register table, then drops it.
+    /// Bypasses PyO3's argument conversion for internal callers.  Builds a
+    /// `Sleigh` transiently to probe the register table, then drops it.
     pub(crate) fn new_internal(arch: PySleighArch, reader: AnyMemReader) -> PyResult<Self> {
         let sleigh = crate::strider_cls::build_orch_sleigh(&arch, reader)?;
         let regs = sleigh
@@ -64,25 +49,17 @@ impl PySleigh {
         self.arch_name
     }
 
-    /// Look up a register by Sleigh name and return its varnode.
-    /// Returns `None` when the name is not in the register table for
-    /// this arch.  Use the resulting `Vn` with pattern constructors
-    /// like `phi_for(vn)` / `initial_var_for(vn)` /
-    /// `function_arg_reg(vn)` to query the IR for occurrences of
-    /// that specific register.
+    /// Look up a register's varnode by Sleigh name, or `None` if this arch's
+    /// table has no such name.  Feed the `Vn` to pattern constructors like
+    /// `phi_for(vn)` / `initial_var_for(vn)` / `function_arg_reg(vn)`.
     fn reg(&self, name: &str) -> Option<PyVn> {
         self.regs.name_to_vn(name).map(PyVn::from_inner)
     }
 
-    /// Look up a varnode's Sleigh register name — the reverse of
-    /// `reg(...)`.  Returns `None` when `vn` names no register: a
-    /// non-REGISTER space (RAM / CONST / UNIQUE), or a REGISTER-space
-    /// offset/size pair that isn't an entry in this arch's table.
-    /// Never raises.
-    ///
-    /// Use this to decode a varnode reached from a lifted function
-    /// (`function.node(m.root).vn()`), which otherwise reprs as a raw
-    /// `%[0x20]:8` that is easy to misread as a stack slot.
+    /// Reverse of `reg(...)`.  `None` for a non-REGISTER space, or a
+    /// REGISTER offset/size pair absent from this arch's table; never raises.
+    /// Useful for decoding a varnode off a lifted function, which otherwise
+    /// reprs as a raw `%[0x20]:8` that reads like a stack slot.
     fn reg_name(&self, vn: &PyVn) -> Option<&str> {
         self.regs.vn_to_name(vn.inner)
     }
@@ -93,21 +70,12 @@ impl PySleigh {
     }
 }
 
-// ── PyVnSpace + PyVn ────────────────────────────────────────────────
-
-/// One of Sleigh's built-in address spaces.  Frozen pyclass so users
-/// can pass `VnSpace.RAM` to builder methods that take a space
-/// constraint (`load().space(...)`, `function_arg_stack(...)`, etc.)
-/// without having to thread a `Sleigh` through.
-///
-/// Strider exposes the four standard Sleigh spaces as the `RAM`,
-/// `REGISTER`, `CONST`, and `UNIQUE` class constants (`VnSpace`
-/// instances, not callables).
-// `#[gen_stub_pyclass]` derives `PyStubType` for `PyVnSpace` so the
-// macro-emitted `.space(s: PyVnSpace)` signatures compile under
-// `#[gen_stub_pymethods]`.  The existing `#[pymethods]` block below is
-// unchanged — the hand-written `pattern.pyi` already documents the
-// surface.
+/// A Sleigh address space, exposed as the `RAM` / `REGISTER` / `CONST` /
+/// `UNIQUE` class constants (instances, not callables).  Pass one to builder
+/// methods taking a space constraint (`load().space(...)`,
+/// `function_arg_stack(...)`) without threading a `Sleigh` through.
+// `gen_stub_pyclass` derives `PyStubType` so macro-emitted
+// `.space(s: PyVnSpace)` signatures compile under `gen_stub_pymethods`.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "VnSpace", module = "strider.sleigh", frozen)]
 #[derive(Clone, Copy)]
@@ -176,34 +144,25 @@ impl PyVnSpace {
         self.inner == other.inner
     }
 
-    /// Hash consistent with `__eq__` (keyed on the space identity).
+    /// Hash consistent with `__eq__`.
     fn __hash__(&self) -> u64 {
-        // Hash the inner identity (the shortcut byte that's the
-        // PartialEq/Hash key on `rsleigh::VnSpace`) — NOT the heap
-        // address of `self.inner`.  Two PyVnSpace instances wrapping
-        // the same `VnSpace::RAM` live at different `&self.inner`
-        // addresses, so address-based hashing violated Python's
-        // `a == b ⇒ hash(a) == hash(b)` contract.
+        // Hash the shortcut byte (rsleigh's own PartialEq/Hash key), NOT the
+        // address of `self.inner`: two instances wrapping `VnSpace::RAM` sit
+        // at different addresses, which broke `a == b => hash(a) == hash(b)`.
         u64::from(self.inner.shortcut_raw())
     }
 }
 
-/// A Sleigh varnode — `(space, offset, size_in_bytes)`.  Used as the
-/// argument to pattern builders that pin a specific varnode
-/// (`phi_for(vn)`, `initial_var_for(vn)`, `function_arg_reg(vn)`,
+/// A Sleigh varnode: `(space, offset, size_in_bytes)`.  Argument to the
+/// pattern builders that pin a specific varnode (`phi_for(vn)`,
+/// `initial_var_for(vn)`, `function_arg_reg(vn)`,
 /// `function_arg_stack(space, offset)`).
 ///
 /// Construct via:
-/// * `Sleigh.reg("RAX")` — looks up a register's varnode by Sleigh
-///   register name; returns `None` when the name isn't a register.
-/// * `Vn(space, off, size)` — direct construction (for stack
-///   varnodes, custom spaces).
-// `#[gen_stub_pyclass]` derives `PyStubType` for `PyVn` so the
-// `#[strider_pattern]`-emitted setter `for_vn(vn: PyVn)` (on
-// `PyPhiPat`) type-checks under `#[gen_stub_pymethods]`.  Per
-// EMISSION_SPEC's "type-info rules", every PyClass referenced as a
-// method-argument type from a stub-gen-instrumented impl needs the
-// derive even if its surface is hand-written in `pattern.pyi`.
+/// * `Sleigh.reg("RAX")`, or `None` if the name isn't a register.
+/// * `Vn(space, off, size)`, for stack varnodes and custom spaces.
+// Every PyClass used as a method-argument type from a stub-gen-instrumented
+// impl needs `gen_stub_pyclass`, even though `pattern.pyi` is hand-written.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Vn", module = "strider.sleigh", frozen)]
 #[derive(Clone, Copy)]
@@ -251,10 +210,7 @@ impl PyVn {
 
     /// rsleigh's `Display` form, e.g. `%[0x20]:8` for a register varnode.
     fn __repr__(&self) -> String {
-        // Delegate to rsleigh's `impl Display for Vn` (core_types.rs:139)
-        // so the spelling tracks rsleigh upstream.  For a register varnode
-        // this yields `<space-shortcut>[0x<off>]:<size>` (e.g. `%[0x20]:8`
-        // for x86_64 RSP); for CONST-space, `0x<off>:<size>`.
+        // Delegate to rsleigh's `Display` so the spelling tracks upstream.
         format!("{}", self.inner)
     }
 
@@ -263,12 +219,10 @@ impl PyVn {
         self.inner == other.inner
     }
 
-    /// Hash consistent with `__eq__` (mixes space, offset, and size).
+    /// Hash consistent with `__eq__`.
     fn __hash__(&self) -> u64 {
-        // Mix all three Vn fields into the hash so varnodes that differ
-        // only in `addr_space` (e.g. RAM[0x10]:8 vs REGISTER[0x10]:8)
-        // don't collide.  Without `addr_space` in the mix, equal-offset/
-        // equal-size varnodes in different spaces shared a bucket.
+        // `addr_space` must be in the mix: without it, RAM[0x10]:8 and
+        // REGISTER[0x10]:8 shared a bucket.
         let mut h = self.inner.addr_off;
         h ^= u64::from(self.inner.size).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         h ^= u64::from(self.inner.addr_space.shortcut_raw()).wrapping_mul(0xBF58_476D_1CE4_E5B9);

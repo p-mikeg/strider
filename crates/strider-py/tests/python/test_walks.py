@@ -15,7 +15,6 @@ def test_cfg_walk_is_control_only_and_subset_of_data_walk():
     cfg_ids = {n.id for n in cfg}
     data_ids = {n.id for n in data}
     assert cfg_ids <= data_ids                 # control-reachable ⊆ all-reachable
-    # cfg_walk yields only control-flow kinds (no pure-arithmetic node)
     kinds = {n.kind() for n in cfg}
     assert "Entry" in kinds
 
@@ -23,7 +22,7 @@ def test_cfg_walk_is_control_only_and_subset_of_data_walk():
 def test_walk_from_node_is_subset_of_data_walk():
     fn = _fn()
     data = fn.data_walk()
-    seeded = fn.walk(data[-1].id)   # from some reachable node
+    seeded = fn.walk(data[-1].id)
     assert {n.id for n in seeded} <= {n.id for n in data}
 
 
@@ -33,22 +32,18 @@ def test_mem_walk_returns_memory_touching_nodes():
     assert mem
     kinds = {n.kind() for n in mem}
     assert "InitialMemory" in kinds
-    # array_sum touches memory, so at least one Load or Store. kind()
-    # renders the full Debug repr (e.g. "Load(VnSpace { shortcut: 'r' })"),
+    # kind() renders the full repr (e.g. "Load(VnSpace { shortcut: 'r' })"),
     # so match on the variant prefix rather than an exact string.
     assert any(k.startswith(("Load", "Store")) for k in kinds)
-    # every returned node is memory-touching (no bare arithmetic kind)
     assert not any(k.startswith(("IntBinaryOp", "IntConst")) for k in kinds)
 
 
 def test_node_outputs_are_the_consumers():
     fn = _fn()
-    # entry's outputs feed the first control/region nodes
     entry = fn.node(fn.entry_node())
     outs = entry.outputs()
     assert all(isinstance(n, strider.ir.Node) for n in outs)
-    # round-trip: some output's consumer lists entry among ITS inputs
-    # (pick any node that has inputs and verify inputs/outputs are inverse on one edge)
+    # inputs/outputs must be inverse; checking one edge suffices.
     data = fn.data_walk()
     for n in data:
         for i in n.inputs():
@@ -57,4 +52,4 @@ def test_node_outputs_are_the_consumers():
         else:
             continue
         break
-    assert not hasattr(entry, "input")  # sanity: only inputs/outputs exist
+    assert not hasattr(entry, "input")  # only inputs/outputs exist

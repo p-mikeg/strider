@@ -1,20 +1,13 @@
-//! `PyCallingConvention` — opaque wrapper over `strider_target::CallingConvention`
-//! with one Python classmethod per Rust preset.
+//! Calling-convention wrapper with one Python classmethod per Rust preset.
 
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 
 use crate::macros::forall_preset;
 
-/// Backing storage for [`PyCallingConvention`].
-///
-/// `Preset` carries a built-in `CallingConvention` whose static-string
-/// register names are resolved lazily against a Sleigh at consumption
-/// time.  `Custom` carries an already-resolved
-/// `BuiltCallingConvention` produced by [`PyCallingConvention::custom`]
-/// from user-supplied register-name lists — pre-resolution allows
-/// validation to surface bad inputs (typos, ABI-invariant violations)
-/// at construction time rather than at first use.
+/// `Preset` resolves its static register names against a Sleigh lazily, at
+/// consumption time.  `Custom` is resolved eagerly instead, so typos and
+/// ABI-invariant violations in user-supplied names surface at construction.
 #[derive(Clone)]
 pub(crate) enum CcImpl {
     Preset(strider_target::CallingConvention),
@@ -29,25 +22,19 @@ pub(crate) enum CcImpl {
 pub struct PyCallingConvention {
     pub(crate) inner: CcImpl,
     pub(crate) preset_name: &'static str,
-    /// `true` when this convention has been marked no-return via
-    /// [`PyCallingConvention::no_return`].  Applied to the built
-    /// [`strider_target::BuiltCallingConvention::no_return`] when this CC is
-    /// resolved as a per-address override (see `build_per_address_ccs`); a call
-    /// TARGET carrying a no-return CC terminates its calling region.
+    /// Only meaningful when this CC is resolved as a per-address override: a
+    /// call TARGET carrying a no-return CC terminates its calling region.
     pub(crate) no_return: bool,
 }
 
-// `x86_64_all_preserving` stays hand-written below because it carries
-// a Python docstring that the macro form cannot reproduce.
-// `x86_linux_kernel` is the sole Linux preset that diverges from a
-// userland ABI (regparm-3); every other arch's kernel CC equals its
-// userland preset, and syscalls are `CallOther` (not calling
-// conventions), so neither has a preset here.
+// `x86_64_all_preserving` is hand-written below: it needs a Python docstring
+// the macro form can't reproduce.  `x86_linux_kernel` is the only Linux CC
+// that diverges from its userland ABI (regparm-3); every other arch's kernel
+// CC equals the userland preset, and syscalls are `CallOther`, not CCs.
 forall_preset!(
     cc PyCallingConvention,
     strider_target::CallingConvention,
     [
-        // Userland presets
         x86_64_systemv,
         aarch64_aapcs64,
         arm_aapcs,
@@ -57,7 +44,6 @@ forall_preset!(
         powerpc64_elf_v1,
         powerpc64_elf_v2,
         x86_cdecl,
-        // Linux kernel preset (x86 32-bit regparm-3 is the only divergent one)
         x86_linux_kernel,
     ]
 );
@@ -77,20 +63,18 @@ impl PyCallingConvention {
         }
     }
 
-    /// Returns a copy of this calling convention marked **no-return** — a
-    /// callee that never returns (`exit` / `abort` / `panic` /
-    /// `__stack_chk_fail` / …).
+    /// A copy of this convention marked no-return, for a callee that never
+    /// returns (`exit` / `abort` / `panic` / `__stack_chk_fail`).
     ///
-    /// Use it as a per-address CC override — `CallingConvention.x86_64_systemv()
-    /// .no_return()`, or `CallingConvention.custom(...).no_return()` to also
-    /// capture the call's arguments precisely.  During analysis the CFG builder
-    /// terminates the calling region at a call to such a target (lowered to
-    /// `Call + Unreachable`), so the unreachable fall-through — including a
-    /// *mid-function* one, e.g. `if (err) panic();` followed by live code — is
-    /// not lifted as reachable.  This is the precise counterpart to the
-    /// function-end structural fallback (a call whose return address leaves the
-    /// function bound is already treated as unreachable-after without any
-    /// override).
+    /// Use it as a per-address CC override:
+    /// `CallingConvention.x86_64_systemv().no_return()`, or
+    /// `CallingConvention.custom(...).no_return()` to also capture the call's
+    /// arguments precisely.  The CFG builder terminates the calling region at
+    /// a call to such a target (lowered to `Call + Unreachable`), so the
+    /// unreachable fall-through is not lifted, including a mid-function one
+    /// such as `if (err) panic();` followed by live code.  A call whose return
+    /// address leaves the function bound already gets this treatment
+    /// structurally, with no override needed.
     fn no_return(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -99,17 +83,11 @@ impl PyCallingConvention {
         }
     }
 
-    /// Build a custom calling convention from explicit register-name
-    /// lists.  Resolves every name against `sleigh`'s register table
-    /// and validates the canonical ABI invariants via
-    /// [`strider_target::BuiltCallingConvention::try_new`] — typos
-    /// (unknown register name) and invariant violations
-    /// (SP listed in arg_passing_regs, LR not in callee_saved, etc.)
-    /// surface as `StriderError` at construction time.
-    ///
-    /// Use this when none of the built-in presets matches the binary's
-    /// ABI (custom hardware ABIs, in-house RPC dispatchers, hot-patch
-    /// trampolines that pin a non-standard register set).
+    /// Build a calling convention from explicit register-name lists, for a
+    /// binary whose ABI matches no built-in preset.  Every name is resolved
+    /// against `sleigh`'s register table and the ABI invariants are checked,
+    /// so typos and violations (SP in `arg_passing_regs`, LR missing from
+    /// `callee_saved_regs`) raise `StriderError` here, not at first use.
     ///
     /// Args:
     ///     sleigh: The `Sleigh` instance to resolve register names against.
@@ -185,12 +163,10 @@ impl PyCallingConvention {
             base_offset,
             increment: stack_arg_increment,
         });
-        // Route through the shared validating constructor via the named-field
-        // parts struct so this path can't transpose the two same-typed return
-        // lists (the whole point of the parts struct).  The Python-facing
-        // keyword signature above stays as individual PyO3 arguments — PyO3
-        // needs them named individually to preserve the public API — so this
-        // method keeps `#[allow(clippy::too_many_arguments)]`.
+        // The named-field parts struct is what stops this path transposing the
+        // two same-typed return lists.  PyO3 still needs the individual
+        // arguments above to keep the public keyword signature, hence the
+        // `too_many_arguments` allow.
         let built = strider_target::BuiltCallingConvention::try_new(
             strider_target::BuiltCallingConventionParts {
                 arg_passing_regs: arg_vns,
@@ -218,8 +194,7 @@ impl PyCallingConvention {
         self.preset_name
     }
 
-    /// `CallingConvention.<preset>()` — the constructor call that produces
-    /// this convention.
+    /// `CallingConvention.<preset>()`, the call that produces this convention.
     fn __repr__(&self) -> String {
         format!("CallingConvention.{}()", self.preset_name)
     }

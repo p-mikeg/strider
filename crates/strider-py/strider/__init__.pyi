@@ -1,15 +1,14 @@
 """Type stubs for the strider Python bindings.
 
-The public API is the domain submodules — `strider.ir`, `strider.lift`,
+The public API is the domain submodules `strider.ir`, `strider.lift`,
 `strider.cfg`, `strider.sleigh`, `strider.reader`, `strider.opt`,
-`strider.pattern`, `strider.template` — plus the single top-level
-`StriderError`.  Import classes from their home submodule
-(`from strider.ir import Function`, `from strider.lift import Lifter`, …).
+`strider.pattern` and `strider.template`, plus the single top-level
+`StriderError`. Import classes from their home submodule
+(`from strider.ir import Function`, `from strider.lift import Lifter`).
 """
 
 from __future__ import annotations
 
-# Publish the domain submodules under their public dotted names.
 # `explore` is bound on the package as a side effect of `Lifter.visualize`
 # importing it. Declared here so it is part of the surface by intent rather
 # than by import order; `explore.shutdown(port)` is the supported way to
@@ -26,9 +25,8 @@ from . import template as template
 
 __version__: str
 
-# The one cross-cutting top-level symbol.  Every Rust error lands here
-# carrying an informative message; the hierarchy is flat (no typed
-# subclasses).
 class StriderError(Exception):
-    """The single exception type raised by strider."""
+    """The single exception type strider raises. The hierarchy is
+    deliberately flat: there are no typed subclasses, only an informative
+    message."""
     ...

@@ -1,25 +1,12 @@
-//! `strider.template` submodule — the build-side rewrite-RHS DSL.
+//! The build-side rewrite-RHS DSL, `strider.template`.
 //!
-//! `strider-pattern` already separates match ([`strider_pattern::Pattern`])
-//! from build ([`strider_pattern::Template`]) at the Rust level (see
-//! `crates/strider-pattern/src/template/`). Python's `strider.pattern`
-//! fuses the two: a `Pat` compiles to a `Pattern` for `find` OR to a
-//! `Template` for a rewrite RHS via `crate::pattern`'s `compile_repr_template`
-//! (which already rejects match-only shapes with a `StriderError`).
-//!
-//! This module makes that split explicit at the Python type level without
-//! reimplementing the compile pipeline: [`PyTemplate`] wraps the SAME
-//! `Rc<PatRepr>` representation `Pat` uses, and every free function below
-//! constructs one from the build-valid subset of `PatRepr` variants only
-//! (the ones `crate::pattern::compile_repr_template` already accepts) —
-//! node/op/const constructors plus `var(capture)`. There is deliberately
-//! no `.when()`, no commutativity toggle, and no `.ordered()` here: those
-//! are match-only concepts with no build-side meaning.
-//!
-//! `Function.rewrite(find, replace)` / `rewrite_all(pairs)` type `replace`
-//! as `crate::pattern::TemplateLike`, which accepts a `Template` (this
-//! module) as the primary path, plus a `Pat` / `Capture` / `str` for
-//! back-compat (see that type's doc comment).
+//! Python's `strider.pattern` fuses match and build: a `Pat` compiles to
+//! either a `Pattern` or a `Template`.  This module makes the split explicit
+//! at the Python type level without duplicating the compile pipeline:
+//! [`PyTemplate`] wraps the same `Rc<PatRepr>` a `Pat` does, but the free
+//! functions here construct only the build-valid subset of variants.  No
+//! `.when()`, no commutativity toggle, no `.ordered()`: those are match-only
+//! concepts with no build-side meaning.
 
 use pyo3::prelude::*;
 #[allow(unused_imports)]
@@ -27,16 +14,9 @@ use pyo3_stub_gen::derive::gen_stub_pyclass;
 
 use crate::pattern::{CastKind, FloatUnaryKind, IntUnaryKind, PatRepr, PyCapture};
 
-// ── Template — the build-side sealed handle ──────────────────────────────
-
-/// A build-side, type-checked rewrite-RHS expression. Construct via the
-/// free functions in `strider.template` (`var(c)`, `add(...)`, `int_const`,
-/// …); pass as `replace` to `Function.rewrite` / `rewrite_all`.
-///
-/// Holds an `Rc<PatRepr>` — the same representation `strider.pattern.Pat`
-/// uses — but is only ever built here from the build-valid subset, so
-/// `PatRepr::compile_template` (reused, not reimplemented) never sees a
-/// match-only variant through this path.
+/// A type-checked rewrite-RHS expression. Construct via the free functions in
+/// `strider.template` (`var(c)`, `add(...)`, `int_const`, ...); pass as
+/// `replace` to `Function.rewrite` / `rewrite_all`.
 #[gen_stub_pyclass]
 #[pyclass(name = "Template", module = "strider.template", unsendable)]
 pub struct PyTemplate {
@@ -50,7 +30,6 @@ impl PyTemplate {
         }
     }
 
-    /// Seal into a finished build [`strider_pattern::Template`].
     pub(crate) fn to_template(&self, py: Python<'_>) -> PyResult<strider_pattern::Template> {
         self.repr.to_template(py)
     }
@@ -58,13 +37,10 @@ impl PyTemplate {
 
 #[pymethods]
 impl PyTemplate {
-    /// Opaque `Template(...)` repr.
     fn __repr__(&self) -> String {
         "Template(...)".to_string()
     }
 }
-
-// ── tpl_fn! — one-line thunk macro (mirrors `pat_fn!` in `pattern.rs`) ───
 
 macro_rules! tpl_fn {
     (binary $name:ident, $repr:ident, $op:expr, $doc:literal) => {
@@ -90,26 +66,22 @@ macro_rules! tpl_fn {
     };
 }
 
-// ── Leaves ────────────────────────────────────────────────────────────
-
-/// Build-side substitution: at rewrite time, replaced by the node bound to
-/// `c` on the matched LHS. The one build-valid "wildcard" — there is no
-/// build-side `any()`.
+/// Substituted at rewrite time by the node bound to `c` on the matched LHS.
+/// The one build-valid wildcard; there is no build-side `any()`.
 #[pyfunction]
 pub fn var(c: PyRef<'_, PyCapture>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::Var(c.inner))
 }
 
-/// Build an `IntConst` whose stored value (masked to output width) is
-/// `value` (bit-pattern equality; negative values use the sign-extended
-/// form) — mirrors `strider.pattern.int_const`.
+/// Build an `IntConst` whose stored value, masked to the output width, is
+/// `value`. Bit-pattern equality; negatives use the sign-extended form.
 #[pyfunction]
 pub fn int_const(value: i128) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::IntConst(value as u128))
 }
 
-/// Build a signed `IntConst`. The core signed builder carries an `i64`; a
-/// `value` outside the `i64` range is rejected with `StriderError`.
+/// Build a signed `IntConst`. A `value` outside the `i64` range raises
+/// `StriderError`.
 #[pyfunction]
 pub fn signed_int_const(value: i128) -> PyResult<PyTemplate> {
     let v = crate::pattern::checked_signed_i64(value)?;
@@ -127,8 +99,6 @@ pub fn bool_const(value: bool) -> PyTemplate {
 pub fn float_const(bits: u64) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::FloatConst(bits))
 }
-
-// ── Integer binary ops ───────────────────────────────────────────────────
 
 tpl_fn!(binary
     add, IntBinary, strider_ir::IntBinaryOp::Add,
@@ -178,8 +148,6 @@ pub fn sub(l: Py<PyAny>, r: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::Sub(l, r))
 }
 
-// ── Integer comparisons ──────────────────────────────────────────────────
-
 /// Build a specific `IntCmpOp` variant by name (e.g. `"Equal"`, `"Less"`,
 /// `"Sless"`, `"Carry"`, `"Scarry"`, `"Sborrow"`).
 #[pyfunction]
@@ -213,33 +181,29 @@ tpl_fn!(binary
     "Build: `IntCmpOp::Sborrow` (signed subtract overflow)."
 );
 
-// ── Integer unary ops ────────────────────────────────────────────────────
-
-/// Build: `IntUnaryOp::Neg` — two's-complement negation (`-x`).
+/// Build `IntUnaryOp::Neg`, two's-complement negation (`-x`).
 #[pyfunction]
 pub fn neg(operand: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::IntUnary(IntUnaryKind::Neg, operand))
 }
 
-/// Build: bitwise complement (`~x`) — `Xor(x, all_ones)`.
+/// Build bitwise complement (`~x`), i.e. `Xor(x, all_ones)`.
 #[pyfunction(name = "int_not")]
 pub fn bit_not(operand: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::BitNot(operand))
 }
 
-/// Build: `Popcount` — count of set bits.
+/// Build `Popcount`, the count of set bits.
 #[pyfunction]
 pub fn popcount(operand: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::IntUnary(IntUnaryKind::Popcount, operand))
 }
 
-/// Build: `Lzcount` — count of leading zero bits.
+/// Build `Lzcount`, the count of leading zero bits.
 #[pyfunction]
 pub fn lzcount(operand: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::IntUnary(IntUnaryKind::Lzcount, operand))
 }
-
-// ── Bool ops (booleans are the 1-bit integer `I1`) ───────────────────────
 
 tpl_fn!(binary
     bool_and, BoolBinary, strider_ir::IntBinaryOp::And,
@@ -254,13 +218,11 @@ tpl_fn!(binary
     "Build: boolean `a ^ b` (`IntBinaryOp::Xor` at `I1`)."
 );
 
-/// Build: boolean negation (`!x`) — `Xor(x, IntConst(1)):I1`.
+/// Build boolean negation (`!x`), i.e. `Xor(x, IntConst(1)):I1`.
 #[pyfunction]
 pub fn bool_not(operand: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::BoolNot(operand))
 }
-
-// ── Float binary / unary / cmp ───────────────────────────────────────────
 
 tpl_fn!(binary
     float_add, FloatBinary, strider_ir::FloatBinaryOp::Add,
@@ -312,8 +274,6 @@ pub fn float_lt(l: Py<PyAny>, r: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::FloatCmp(strider_ir::FloatCmpOp::Less, l, r))
 }
 
-// ── Conversions / casts ───────────────────────────────────────────────────
-
 tpl_fn!(unary
     int_to_float, Cast, CastKind::IntToFloat,
     "Build: `IntToFloat` — int→float conversion."
@@ -349,11 +309,7 @@ pub fn extend(op: &str, operand: Py<PyAny>) -> PyResult<PyTemplate> {
     Ok(PyTemplate::from_repr(PatRepr::Extend(extend_op, operand)))
 }
 
-// ── Module registration ──────────────────────────────────────────────────
-
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // `m` is the `strider.template` submodule (created + inserted by `lib.rs`):
-    // add the `Template` class and every build free-function directly to it.
     m.add_class::<PyTemplate>()?;
 
     macro_rules! add_fn {

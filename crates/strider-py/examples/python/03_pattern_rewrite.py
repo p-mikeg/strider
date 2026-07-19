@@ -1,16 +1,9 @@
-"""03 — Pattern → pattern rewrite + re-optimize.
+"""Pattern-to-pattern rewriting, then re-optimizing.
 
-Strider's optimizer has constant folding built in, so contrived
-identities like `x + 0` rarely survive long enough to demonstrate
-rewriting. Instead this example shows the *mechanism* — apply a
-pattern-substitution rule, then re-run the optimizer so downstream
-passes (PhiCollapse, DeadBranchElimination) collapse what the rewrite
-exposed.
-
-Read this example to understand:
-  - How `find` and `replace` patterns share captures by name.
-  - How to call `Lifter.optimize(function)` after a manual rewrite.
-  - That `rewrite_all` lets you stage multiple rules in one pass.
+The rules here are deliberately trivial; constant folding has already eaten
+any real `x + 0` in this fixture. What matters is the call shape: how `find`
+and `replace` share captures, when to re-run the optimizer, and how
+`rewrite_all` stages several rules at once.
 
 Run from the workspace root:
     python crates/strider-py/examples/python/03_pattern_rewrite.py
@@ -32,17 +25,12 @@ _cfg, function, _unresolved = elf.analyze(
     addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
 )
 
-# Snapshot the load count before rewriting.
 before = len(function.find_all(load()))
 print(f"before rewrite: {before} loads")
 
-# A no-op rewrite that demonstrates the API: replace `x + 0` with `x`
-# wherever it appears. ConstantFold has likely already eaten any such
-# expression in `array_sum`, so the rewrite is a no-op here — but the
-# call shape is what matters as a template for real rewrites.
-# `find` accepts string-shorthand captures, but `replace` needs a real Pat
-# — strings on the replace side would be ambiguous (new wildcard? back-
-# reference to a find-side capture?). Use a shared `Capture` object so
+# `find` accepts string-shorthand captures, but `replace` needs a real Pat: a
+# bare string on the replace side would be ambiguous (a new wildcard, or a
+# back-reference to a find-side capture?). Share a `Capture` object instead so
 # both sides agree.
 x = Capture()
 rule_find = add(var(x), int_const(0))
@@ -50,18 +38,16 @@ rule_repl = var(x)
 n = function.rewrite(find=rule_find, replace=rule_repl)
 print(f"`x + 0 → x` substitution: {n} site(s) rewritten")
 
-# After any structural change you should re-optimize. `Lifter.optimize`
-# (called with no pipeline) re-runs the full default pipeline (constant
-# folding, known-bits, and the node-removing passes that collapse
-# phi/dead-branch noise the rewrite may have exposed).
+# Re-optimize after any structural change. With no pipeline argument this
+# re-runs the full default pipeline, including the node-removing passes that
+# collapse phi and dead-branch noise the rewrite may have exposed.
 elf.optimize(function)
 
 after = len(function.find_all(load()))
 print(f"after rewrite + reoptimize: {after} loads")
 
-# A staged-rules example: apply two rules in order, first-match-wins per
-# node. Useful for migration / canonicalization passes where the order
-# matters.
+# `rewrite_all` applies rules in order, first match wins per node. That
+# ordering is the point when you are writing a canonicalization pass.
 y = Capture()
 z = Capture()
 function.rewrite_all([

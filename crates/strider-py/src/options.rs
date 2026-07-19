@@ -1,11 +1,5 @@
-//! `CfgOptions` / `LifterOptions` — Python opts structs that mirror the
-//! Rust `strider_cfg::CfgOptions` / `strider_lift::LiftOptions` (nested
-//! `cfg`), replacing the kwargs pile that used to sit directly on
-//! `Lifter.build_cfg` / `Lifter.analyze`.
-//!
-//! `LifterOptions.pipeline`, when set, overrides the optimizer pipeline
-//! `Lifter.analyze` runs for THAT call only (never on `strider.lifter(...)`
-//! itself) — the per-function override the design calls for.
+//! Python opts structs mirroring `strider_cfg::CfgOptions` and
+//! `strider_lift::LiftOptions`, with the same `cfg` nesting.
 
 use std::collections::HashMap;
 
@@ -15,21 +9,15 @@ use crate::cc::PyCallingConvention;
 use crate::opt::PyOptimizerPipeline;
 use crate::strider_cls::{parse_alias_mode, reject_zero_max_size};
 
-/// Mirrors `strider_cfg::CfgOptions` (the user-facing subset — the
-/// orchestrator-internal `known_targets` feedback field is not exposed
-/// to Python; it's populated purely by the indirect-branch resolution
-/// loop inside `analyze`).
-///
-/// Construct with keyword-only arguments; every field defaults to the
-/// Rust struct's own default (`function_max_size=None`,
-/// `allow_code_before_start_addr=False`).
+/// CFG-shaping knobs, keyword-only.  (The orchestrator-internal
+/// `known_targets` feedback field is deliberately not exposed: the
+/// indirect-branch resolution loop inside `analyze` owns it.)
 #[pyclass(name = "CfgOptions", module = "strider.cfg")]
 #[derive(Clone, Copy, Default)]
 pub struct PyCfgOptions {
-    /// When set, any unconditional branch whose target lies at or past
-    /// `entry + function_max_size` is treated as a tail call (bounds the
-    /// lift). Must be `> 0` — `CfgOptions(function_max_size=0)` raises
-    /// `ValueError`.
+    /// When set, an unconditional branch targeting at or past
+    /// `entry + function_max_size` is treated as a tail call, bounding the
+    /// lift. Must be `> 0`.
     #[pyo3(get)]
     pub function_max_size: Option<u64>,
     /// When `False` (the default), an unconditional branch targeting an
@@ -41,8 +29,8 @@ pub struct PyCfgOptions {
 
 #[pymethods]
 impl PyCfgOptions {
-    /// Raises `ValueError` for `function_max_size=0` (zero is meaningless
-    /// — omit the argument for unbounded).
+    /// Raises `ValueError` for `function_max_size=0`; omit the argument
+    /// for an unbounded lift.
     #[new]
     #[pyo3(signature = (*, function_max_size = None, allow_code_before_start_addr = false))]
     fn new(function_max_size: Option<u64>, allow_code_before_start_addr: bool) -> PyResult<Self> {
@@ -61,18 +49,13 @@ impl PyCfgOptions {
     }
 }
 
-/// Mirrors `strider_lift::LiftOptions` (nested `cfg`, exactly like the
-/// Rust struct) plus the optimize-side knobs historically flattened into
-/// `analyze(**kwargs)`, plus the per-function optimizer-pipeline
-/// override `pipeline`.
+/// Lift, optimize, and CFG knobs for one `analyze` call.
 ///
-/// Raises `ValueError` for an unrecognised `alias_mode` (see
-/// `strider_cls::parse_alias_mode`) or a nested `function_max_size=0`
-/// (raised by `CfgOptions` itself).
+/// Raises `ValueError` for an unrecognised `alias_mode`, or for a nested
+/// `function_max_size=0`.
 #[pyclass(name = "LifterOptions", module = "strider.lift")]
 pub struct PyLifterOptions {
-    /// The nested `CfgOptions` controlling CFG shape (`function_max_size`,
-    /// `allow_code_before_start_addr`) — mirrors `strider_lift::LiftOptions.cfg`.
+    /// Nested CFG-shape knobs.
     #[pyo3(get)]
     pub cfg: Py<PyCfgOptions>,
     /// Compact the IR arena after analysis (default `True`).
@@ -90,24 +73,21 @@ pub struct PyLifterOptions {
     /// disjoint from the incoming-arg slots (default `False`).
     #[pyo3(get)]
     pub assume_distinct_sp_bases_disjoint: bool,
-    /// SP-aware alias precision for every memory pass —
+    /// SP-aware alias precision for every memory pass.
     /// `"stack_global_disjoint"` (default) trusts that stack and
     /// global/constant memory never overlap; `"strict"` is the
     /// always-sound floor.
     #[pyo3(get)]
     pub alias_mode: String,
-    /// Per-function optimizer-pipeline override: when set, `analyze` runs
-    /// THIS `OptimizerPipeline` instead of the built-in default, for this
-    /// call only. `None` (the default) means "run the built-in default".
+    /// When set, `analyze` runs this pipeline instead of the built-in
+    /// default, for this call only.
     #[pyo3(get)]
     pub pipeline: Option<Py<PyOptimizerPipeline>>,
 }
 
 impl PyLifterOptions {
-    /// Build a fresh all-defaults `LifterOptions` (a nested fresh
-    /// `CfgOptions` too — never a shared mutable instance). Used as the
-    /// `opts=None` sentinel fallback in `Lifter.analyze` /
-    /// `ElfLifter.analyze`.
+    /// All-defaults fallback for `opts=None`.  The nested `CfgOptions` is
+    /// fresh too, never a shared mutable instance.
     pub(crate) fn new_default(py: Python<'_>) -> PyResult<Self> {
         Self::new(
             py,
@@ -146,8 +126,8 @@ impl PyLifterOptions {
         alias_mode: &str,
         pipeline: Option<Py<PyOptimizerPipeline>>,
     ) -> PyResult<Self> {
-        // Validate eagerly so a bad `alias_mode` fails at construction,
-        // not silently deferred until `analyze` runs.
+        // Eager, so a bad `alias_mode` fails here rather than deep inside
+        // `analyze`.
         parse_alias_mode(alias_mode)?;
         let cfg = match cfg {
             Some(c) => c,
@@ -168,10 +148,8 @@ impl PyLifterOptions {
     /// These options with `cfg` replaced and every other field carried over.
     ///
     /// The supported way to override the nested `CfgOptions`, since the fields
-    /// are read-only. Rebuilding `LifterOptions(...)` by hand from Python
-    /// instead means every field must be re-listed, and any option added later
-    /// is silently dropped back to its default at that call site; this carries
-    /// them over in one place the compiler checks.
+    /// are read-only. Rebuilding `LifterOptions(...)` by hand silently drops
+    /// any option added later back to its default at that call site.
     fn with_cfg(&self, py: Python<'_>, cfg: Py<PyCfgOptions>) -> Self {
         Self {
             cfg,
@@ -208,13 +186,11 @@ impl PyLifterOptions {
     }
 }
 
-/// Register `CfgOptions` onto the `strider.cfg` submodule.
 pub fn register_cfg(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCfgOptions>()?;
     Ok(())
 }
 
-/// Register `LifterOptions` onto the `strider.lift` submodule.
 pub fn register_lift(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLifterOptions>()?;
     Ok(())

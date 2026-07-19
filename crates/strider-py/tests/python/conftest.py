@@ -1,8 +1,8 @@
 """Shared pytest fixtures for strider-py integration tests.
 
-The test ELFs live under `fixtures/out/<arch>/<case>.elf` after
-`make` runs in `fixtures/`.  Tests skip cleanly when fixtures are
-absent so a fresh checkout doesn't fail.
+Test ELFs live under `fixtures/out/<arch>/<case>.elf`, built by `make` in
+`fixtures/`.  Tests skip cleanly when a fixture is absent so a fresh
+checkout doesn't fail.
 """
 
 from __future__ import annotations
@@ -13,11 +13,7 @@ import pytest
 
 import strider
 
-# crates/strider-py/tests/python/conftest.py → workspace root is parents[4]:
-#   /python/.. = /tests
-#   /tests/..  = /strider-py
-#   /strider-py/.. = /crates
-#   /crates/..     = workspace root
+# python/ -> tests/ -> strider-py/ -> crates/ -> workspace root.
 WORKSPACE_ROOT = pathlib.Path(__file__).resolve().parents[4]
 FIXTURES_DIR = WORKSPACE_ROOT / "fixtures" / "out"
 
@@ -30,9 +26,7 @@ def _ensure_pyelftools():
 
 
 def fixture_path(arch: str, case: str) -> pathlib.Path:
-    """Returns the path to fixtures/out/<arch>/<case>.elf, skipping
-    cleanly if the fixture is missing.
-    """
+    """fixtures/out/<arch>/<case>.elf; skips if the fixture is missing."""
     p = FIXTURES_DIR / arch / f"{case}.elf"
     if not p.exists():
         pytest.skip(f"fixture missing: {p} (run `make` in fixtures/)")
@@ -40,9 +34,8 @@ def fixture_path(arch: str, case: str) -> pathlib.Path:
 
 
 def symbol_addr(elf_path: pathlib.Path, name: str) -> int:
-    """Resolves the address of a function symbol in an ELF, skipping
-    cleanly if the symbol or pyelftools is missing.
-    """
+    """Address of a function symbol; skips if the symbol or pyelftools is
+    missing."""
     _ensure_pyelftools()
     import elftools.elf.elffile
 
@@ -57,8 +50,7 @@ def symbol_addr(elf_path: pathlib.Path, name: str) -> int:
     pytest.skip(f"{elf_path}: symbol {name!r} not found")
 
 
-# Arch presets for `built_function`, keyed by the fixtures/out/<arch>
-# directory name.
+# Keyed by the fixtures/out/<arch> directory name.
 _ARCH_PRESETS = {
     "x86": (strider.sleigh.SleighArch.x86, strider.sleigh.CallingConvention.x86_cdecl),
     "x64": (strider.sleigh.SleighArch.x86_64, strider.sleigh.CallingConvention.x86_64_systemv),
@@ -68,22 +60,13 @@ _ARCH_PRESETS = {
 def built_lifter_and_function(
     arch_name: str, case: str, symbol: str, *, optimize: bool = True
 ):
-    """Lift `fixtures/out/<arch_name>/<case>.elf::<symbol>` and return the
-    `(Lifter, Function)` pair — the `Lifter` is needed by callers that
-    want the Sleigh-needing pretty renders (`to_dot` / `to_html`), which
-    live on it rather than on the bare `Function`.
-    (The p-code audit trail, `fingerprint_pcode`, lives on the `Cfg`
-    `analyze` returns instead — discarded here as `_cfg`; callers that
-    need it should call `lift.analyze(...)` directly.)
+    """Lift `fixtures/out/<arch_name>/<case>.elf::<symbol>` to a
+    `(Lifter, Function)` pair.  Callers wanting the `Cfg` (for
+    `fingerprint_pcode`) must call `lift.analyze(...)` themselves.
 
-    The single `Lifter.analyze` handle always drives the full
-    lift+optimise+resolve pipeline (there is no lower-level "lift only,
-    skip the optimizer" entry point any more — `Lifter.build_cfg` stops
-    at the structural CFG, one level below IR).  `optimize` is kept as a
-    no-op parameter for call-site compatibility with tests that predate
-    the single-`Lifter` collapse; both branches behave identically.
-
-    Skips cleanly (via `fixture_path`) when the fixture ELF is missing.
+    `optimize` is a no-op kept for call-site compatibility: `analyze`
+    always runs the full lift+optimise+resolve pipeline, so both values
+    behave identically.
     """
     del optimize
     arch_ctor, cc_ctor = _ARCH_PRESETS[arch_name]
@@ -103,9 +86,8 @@ def built_lifter_and_function(
 
 
 def built_function(arch_name: str, case: str, symbol: str, *, optimize: bool = True):
-    """Like `built_lifter_and_function`, but returns just the `Function`
-    for callers that only need Sleigh-free reads (pattern queries,
-    `node_count`, `to_dot`, ...)."""
+    """`built_lifter_and_function` without the `Lifter`, for callers that
+    only need Sleigh-free reads (pattern queries, `node_count`, ...)."""
     _lift, function = built_lifter_and_function(
         arch_name, case, symbol, optimize=optimize
     )
@@ -114,11 +96,8 @@ def built_function(arch_name: str, case: str, symbol: str, *, optimize: bool = T
 
 @pytest.fixture
 def x86_memory_elf() -> pathlib.Path:
-    """Path to fixtures/out/x86/memory.elf — a small binary with
-    several exercise functions (`array_sum`, `pointer_chase`,
-    `struct_field_load`, etc.).  This replaces the plan's reference
-    to a non-existent `test.elf` / `struct_test` symbol.
-    """
+    """fixtures/out/x86/memory.elf: `array_sum`, `pointer_chase`,
+    `struct_field_load`, etc."""
     return fixture_path("x86", "memory")
 
 

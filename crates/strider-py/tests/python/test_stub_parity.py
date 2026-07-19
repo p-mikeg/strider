@@ -1,23 +1,18 @@
 """The shipped `.pyi` stubs must describe the module that actually ships.
 
-Nothing else enforces this. The stubs are hand-written (`stub_gen` emits
-to a gitignored `_generated/` used as an oracle, not to the shipped
-files), so a new `#[pyfunction]` or `#[pymethods]` entry reaches users'
-type checkers only if someone remembers to hand-edit the matching stub.
-Nobody remembered for a while: `strider.pattern` shipped 1.0 missing
-`entry`, `region`, `indirect_branch`, `switch`, `unreachable`,
-`CallOutputPat`, `CallPat.mem` and `CallPat.output`.
+Nothing else enforces this. The stubs are hand-written, so a new binding
+reaches users' type checkers only if someone remembers to hand-edit the
+matching stub. Nobody remembered for a while: `strider.pattern` shipped
+1.0 missing `entry`, `region`, `indirect_branch`, `switch`,
+`unreachable`, `CallOutputPat`, `CallPat.mem` and `CallPat.output`.
 
-The rule enforced here, in both directions:
+Both directions are checked: a runtime name with no stub entry makes
+correct user code fail type-checking, and a stub entry with no runtime
+name promises an API that raises `AttributeError`.
 
-* every public runtime name must be DECLARED in the stub — otherwise
-  users get "X is not a known attribute of module Y" on working code;
-* every stub `def`/`class` must EXIST at runtime — otherwise the stub
-  promises an API that raises `AttributeError`.
-
-A bare module-level assignment (`PatLike = Union[...]`, `ValueTy =
-Literal[...]`) is a type alias: stub-only by nature, so it is exempt
-from the second direction rather than needing an allowlist to grow.
+A bare module-level assignment (`PatLike = Union[...]`) is a type alias,
+stub-only by nature, so it is exempt from the second direction rather
+than needing an allowlist to grow.
 """
 
 from __future__ import annotations
@@ -95,8 +90,8 @@ def _public(names) -> set[str]:
 
 @pytest.mark.parametrize("mod_name", sorted(MODULES))
 def test_every_public_runtime_name_is_declared_in_the_stub(mod_name):
-    """Direction 1: shipping a symbol with no stub entry makes correct user
-    code fail type-checking."""
+    """Shipping a symbol with no stub entry makes correct user code fail
+    type-checking."""
     module = importlib.import_module(mod_name)
     real, aliases = _declared(_stub_ast(MODULES[mod_name]))
     missing = _public(dir(module)) - real - aliases
@@ -109,8 +104,8 @@ def test_every_public_runtime_name_is_declared_in_the_stub(mod_name):
 
 @pytest.mark.parametrize("mod_name", sorted(MODULES))
 def test_every_stub_declaration_exists_at_runtime(mod_name):
-    """Direction 2: a stub entry with no runtime symbol promises an API
-    that raises `AttributeError`."""
+    """A stub entry with no runtime symbol promises an API that raises
+    `AttributeError`."""
     module = importlib.import_module(mod_name)
     real, _aliases = _declared(_stub_ast(MODULES[mod_name]))
     phantom = {n for n in real if not hasattr(module, n)}

@@ -10,32 +10,26 @@ def test_sleigh_construct_with_buffer_reader():
     assert "Sleigh" in repr(sleigh)
 
 
-# ── Vn.__repr__ uses rsleigh's native `Display` impl ────────────────────
-#
-# rsleigh 4.0.0 ships `impl Display for Vn` (see core_types.rs:139), which
-# formats a register varnode as `<space-shortcut>[0x<off>]:<size>` and a
-# CONST-space varnode as `0x<off>:<size>`.  Strider-py's `PyVn.__repr__`
-# delegates to that — there is no Python-side spelling drift, so when
-# rsleigh updates its formatter, strider-py picks up the change for free.
+# `Vn.__repr__` delegates to rsleigh's own formatter, so there is no
+# Python-side spelling to drift; a formatter change upstream lands here
+# for free (and these expectations move with it).
 
 
 def test_vn_repr_for_register_uses_rsleigh_display():
-    # x86_64 RSP — Sleigh always assigns it REGISTER:0x20, size 8.
+    # Sleigh always assigns x86_64 RSP to REGISTER:0x20, size 8.
     arch = strider.sleigh.SleighArch.x86_64()
     mem = strider.reader.BufferReader(0x1000, b"\x00")
     sleigh = strider.sleigh.Sleigh(arch, mem)
     rsp = sleigh.reg("RSP")
     assert rsp is not None
-    # rsleigh's `impl Display for Vn` (core_types.rs:139) formats register
-    # varnodes as `<space-shortcut>[0x<off>]:<size>` — the REGISTER space
+    # Registers format as `<space-shortcut>[0x<off>]:<size>`; REGISTER's
     # shortcut character is `%`.
     assert repr(rsp) == "%[0x20]:8"
 
 
 def test_vn_repr_for_const_drops_space_prefix():
-    # CONST-space varnodes (`Vn(VnSpace.CONST, off, size)`) are formatted
-    # by rsleigh's `Display` as `0x<off>:<size>` — no space prefix and no
-    # `[]`, since the offset alone identifies the constant.
+    # Constants format as `0x<off>:<size>`, no space prefix and no `[]`,
+    # since the offset alone identifies them.
     const_space = strider.sleigh.VnSpace.CONST
     vn = strider.sleigh.Vn(const_space, 0x42, 4)
     assert repr(vn) == "0x42:4"
@@ -50,14 +44,10 @@ def test_vnspace_constants_are_instances_not_callables():
     assert VnSpace.REGISTER.name() == "REGISTER"
 
 
-# ── Hash/eq contract regression tests ─────────────────────────────────────
-
-
 def test_vn_space_hash_consistent_with_eq():
-    """Regression: PyVnSpace.__hash__ must be a function
-    of the inner identity, not the field's stack address.  Two separately
-    obtained VnSpace.RAM references must hash equally so they work as
-    dict keys / set members.
+    """Regression: `VnSpace.__hash__` used to hash the object's address,
+    so two separately obtained `VnSpace.RAM` values hashed differently and
+    broke as dict keys / set members.
     """
     a = strider.sleigh.VnSpace.RAM
     b = strider.sleigh.VnSpace.RAM
@@ -65,7 +55,6 @@ def test_vn_space_hash_consistent_with_eq():
     assert hash(a) == hash(b), (
         f"equal VnSpaces must hash equally; got hash(a)={hash(a)}, hash(b)={hash(b)}"
     )
-    # And they must work as dict / set members.
     d = {a: 1}
     assert d[b] == 1, "VnSpace.RAM must work as a dict key after fresh construction"
     s = {a, b}
@@ -73,10 +62,9 @@ def test_vn_space_hash_consistent_with_eq():
 
 
 def test_vn_space_distinct_spaces_compare_unequal():
-    """Different spaces must compare unequal.  Hash inequality is not
-    a contract requirement, but the implementation hashes the shortcut
-    byte so RAM and REGISTER end up in different buckets — a quality-of-
-    bucketing signal worth pinning.
+    """Hash inequality is not a contract requirement, but hashing the
+    shortcut byte keeps RAM and REGISTER in different buckets, which is
+    worth pinning as a bucketing-quality signal.
     """
     ram = strider.sleigh.VnSpace.RAM
     reg = strider.sleigh.VnSpace.REGISTER
@@ -85,10 +73,8 @@ def test_vn_space_distinct_spaces_compare_unequal():
 
 
 def test_vn_hash_includes_addr_space():
-    """Regression: Vn.__hash__ must mix in addr_space so
-    same-offset/same-size varnodes in different spaces don't share a
-    bucket.  Without this, `RAM[0x10]:8` and `REGISTER[0x10]:8` would
-    collide and hash-table chains would degrade to O(n).
+    """Regression: `Vn.__hash__` omitted addr_space, so `RAM[0x10]:8` and
+    `REGISTER[0x10]:8` collided and hash-table chains degraded to O(n).
     """
     ram_vn = strider.sleigh.Vn(strider.sleigh.VnSpace.RAM, 0x10, 8)
     reg_vn = strider.sleigh.Vn(strider.sleigh.VnSpace.REGISTER, 0x10, 8)

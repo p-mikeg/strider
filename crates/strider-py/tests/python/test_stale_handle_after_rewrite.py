@@ -1,11 +1,9 @@
 """Stale-handle invalidation after in-place rewrites.
 
-An in-place `rewrite` / `rewrite_all` mutates the graph without
-compacting it (node ids stay valid), so outstanding `Match` / `Node`
-handles created beforehand would otherwise read post-rewrite graph
-state.  The mutators bump the function generation so those handles fail
-their staleness guard with a `StriderError`; a handle obtained AFTER the
-rewrite keeps working.
+`rewrite` / `rewrite_all` mutate without compacting, so node ids stay
+valid and pre-existing `Match` / `Node` handles would silently read
+post-rewrite state. Instead they must raise `StriderError`; handles
+obtained after the rewrite keep working.
 """
 
 from __future__ import annotations
@@ -19,7 +17,7 @@ from .conftest import built_function
 
 
 def _build_graph():
-    # Unoptimized so the `add(a, b)` shapes survive for the rewrite to fire.
+    # Unoptimized so `add(a, b)` shapes survive for the rewrite to fire.
     return built_function("x86", "memory", "array_sum", optimize=False)
 
 
@@ -74,12 +72,11 @@ def test_handle_obtained_after_rewrite_still_works():
     x, y = Capture(), Capture()
     g.rewrite(find=add(var(x), var(y)), replace=var(x))
 
-    # A fresh query after the rewrite samples the post-rewrite
-    # generation, so its handles read the mutated graph without erroring.
+    # A fresh query samples the post-rewrite generation, so its handles
+    # read the mutated graph without tripping the staleness guard.
     a = Capture()
     fresh = g.find_all(var(a))
     assert fresh
     node = fresh[0].node(a)
     assert node is not None
-    # Reading through the fresh handle must not raise.
     assert isinstance(node.kind(), str)

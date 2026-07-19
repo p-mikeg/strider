@@ -1,12 +1,8 @@
-"""08 — Custom `MemReader` + `ReadOnlyMemory`, then capture + rewrite.
+"""Both reader callbacks in one lift, then capture and rewrite the result.
 
-Combines the two callback ABCs (see examples 02 and 07) into one lift,
-then shows two things you do with the resulting IR:
-
-  - `DictMem(strider.reader.MemReader)` serves the *code* bytes sleigh
-    disassembles (the instruction-fetch path).
-  - `DictRom(strider.reader.ReadOnlyMemory)` serves the *data* the optimizer's
-    `LoadReadOnly` pass folds constant-address loads against.
+`DictMem` serves the code bytes the disassembler fetches; `DictRom` serves
+the data LoadReadOnly folds constant-address loads against. Compare
+02_python_reader.py and 07_callback_rom.py, which use one each.
 
 The code at 0x0 computes `arg0 + *(uint64*)0x1000` and returns it:
 
@@ -14,14 +10,9 @@ The code at 0x0 computes `arg0 + *(uint64*)0x1000` and returns it:
     48 89 f8                   mov rax, rdi
     c3                         ret
 
-`Lifter.analyze(...)` (built via `strider.lift.lifter(arch, mem, rom=rom)`)
-runs the full default optimizer pipeline. `LoadReadOnly` folds the load
-into `IntConst(42)`, leaving `Add(arg0, 42)` in the graph. We then:
-
-  1. Query it with a capturing pattern and read the captured constant
-     back as a Python int (`Match.const_uint`).
-  2. Template-rewrite `arg0 + 42 → arg0 + 0` and re-optimize via
-     `Lifter.optimize`, so ConstantFold collapses the add away entirely.
+`analyze` runs the default pipeline, so LoadReadOnly folds the load into
+`IntConst(42)` and leaves `Add(arg0, 42)`. The rest of the script captures
+that constant, then rewrites it to 0 and lets ConstantFold delete the add.
 
 Run from the workspace root:
     python crates/strider-py/examples/python/08_custom_readers.py
@@ -36,8 +27,8 @@ CODE_ADDR = 0x0
 DATA_ADDR = 0x1000
 DATA_VALUE = 0x2A  # what the ROM serves at 0x1000 → what the load folds to
 
-# add rdi, [0x1000] ; mov rax, rdi ; ret  — padded with NOPs so sleigh's
-# prefetch window always has bytes to read past the real instruction stream.
+# Trailing NOPs so the disassembler's prefetch always has bytes to read past
+# the real instruction stream.
 CODE = (
     bytes([0x48, 0x03, 0x3C, 0x25, 0x00, 0x10, 0x00, 0x00])  # add rdi, [0x1000]
     + bytes([0x48, 0x89, 0xF8])                              # mov rax, rdi
@@ -47,7 +38,7 @@ CODE = (
 
 
 class DictMem(strider.reader.MemReader):
-    """Serve code bytes from a dict; count callbacks to prove it fired."""
+    """Serve code bytes from a dict, counting calls to prove it fired."""
 
     def __init__(self, regions: dict[int, bytes]) -> None:
         super().__init__()
@@ -73,8 +64,8 @@ class DictRom(strider.reader.ReadOnlyMemory):
         self.calls = 0
 
     def read(self, addr: int, size: int) -> bytes | None:
-        # Return the RAW `size` bytes (no endianness swap — the optimizer
-        # decodes them per the run's endianness). Must be exactly `size` long.
+        # Return exactly `size` RAW bytes. Do not byte-swap; the optimizer
+        # decodes them per the run's endianness.
         self.calls += 1
         if addr < self.base or addr + size > self.base + len(self.blob):
             return None
@@ -99,11 +90,10 @@ assert mem.calls > 0 and rom.calls > 0, "a reader never fired — wiring bug"
 assert len(fn.find_all(load())) == 0, "load should have folded away"
 
 
-# --- 1. Query a capture and read the matched value back ------------------
-# A bare `Capture` in the operand slot binds whatever value sits there;
-# `Match.const_uint` reads it back as a Python int (None if it's not a constant).
-# `ignore_casts=True` sees through the register-width truncate/extend nodes
-# the lifter inserts around rdi.
+# A bare `Capture` in an operand slot binds whatever value sits there;
+# `Match.const_uint` reads it back as a Python int, or None if it is not a
+# constant. `ignore_casts=True` sees through the register-width truncate and
+# extend nodes the lifter inserts around rdi.
 print("\n=== capture the folded constant ===")
 k = Capture()
 matches = fn.find_all(add(function_arg(0), var(k)), ignore_casts=True)
@@ -113,18 +103,15 @@ for m in matches:
 assert any(m.const_uint(k) == DATA_VALUE for m in matches), "expected to capture 42"
 
 
-# --- 2. Template rewrite on a CLONE: arg0 + 42 → arg0 + 0 -----------------
-# Rewrite mutates in place, so clone first to keep `fn` pristine. The clone
-# owns a fresh graph + side-tables. Share a Capture between find and replace
-# so both sides agree on `x`; the replace side is a template DAG built from
-# the same pattern builders.
+# Rewrite mutates in place, so clone first to keep `fn` pristine; the clone
+# owns a fresh graph and side-tables. Sharing one Capture between find and
+# replace is what makes both sides agree on `x`.
 print("\n=== template rewrite (on a clone): arg0 + 42 → arg0 + 0 ===")
 edited = fn.clone()
 x = Capture()
 n = edited.rewrite(find=add(x, int_const(DATA_VALUE)), replace=add(x, int_const(0)))
 print(f"rewrote {n} site(s)")
 
-# Re-optimize the clone so ConstantFold collapses `x + 0 → x`.
 lft.optimize(edited)
 orig_shapes = len(fn.find_all(add(function_arg(0), var(k)), ignore_casts=True))
 edited_shapes = len(edited.find_all(add(function_arg(0), var(k)), ignore_casts=True))

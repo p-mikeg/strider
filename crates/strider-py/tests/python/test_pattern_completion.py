@@ -1,17 +1,12 @@
-"""Tests for `any_input(p)` (wired onto the remaining node-family
-builders) and `phi_token(p)` (new on `PhiPat` / `MemPhiPat`).
+"""`any_input(p)` across the node-family builders, plus `phi_token(p)`.
 
-`any_input` was previously only exposed on `phi()` (see
-`test_any_input_ignore_casts.py`); this file exercises it on `call()`,
-`call_other()`, `ret()`, `indirect_branch()`, `unreachable()`, `switch()`,
-`load()`, `store()`, and `mem_phi()`. Same semantics everywhere: EVERY
-input slot is a candidate, and the sub-pattern discriminates — a typed
-value sub only binds a value-kind input, while `var()`/`anything()` can
-also reach the control / memory / PhiToken edges a typed sub never can.
+`any_input` semantics are the same everywhere: EVERY input slot is a
+candidate and the sub-pattern discriminates. A typed value sub only binds a
+value-kind input, while `var()`/`anything()` also reach the control /
+memory / PhiToken edges a typed sub never can.
 
-`phi_token(p)` targets the `Phi` / `MemPhi`'s raw input slot 0 directly
-(the `PhiToken` edge from the owning `Region`) — unlike `.input(i, p)`,
-which shifts by `+1` to skip past it.
+`phi_token(p)` targets raw input slot 0 (the PhiToken edge from the owning
+Region); `.input(i, p)` shifts by +1 to skip past it.
 """
 
 from __future__ import annotations
@@ -44,12 +39,12 @@ def _lift(code: bytes, addr: int = 0x1000):
 
 
 def _lift_unoptimized(code: bytes, addr: int = 0x1000):
-    """Like `_lift`, but with an empty optimizer pipeline — the default
-    pipeline's `RedundantPhis` pass collapses every single-predecessor
-    `Region` (the entry region, and each side of a diamond that carries no
-    real join), which is desirable for most tests but hides the raw
-    multi-`Region` CFG shape `entry()` / `region()` structural tests want
-    to exercise."""
+    """Empty optimizer pipeline, so the raw multi-Region CFG shape survives.
+
+    The default pipeline's `RedundantPhis` collapses every
+    single-predecessor `Region`, which hides the shape the `entry()` /
+    `region()` structural tests need.
+    """
     mem = strider.reader.BufferReader(addr, code)
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     _cfg, fn, _unresolved = lift.analyze(
@@ -113,10 +108,8 @@ def _diamond_with_memory_join() -> "strider.Function":
 
 
 def _diamond_returning_eax_unoptimized() -> "strider.Function":
-    """Same bytes as `_diamond_returning_eax`, lifted with an empty
-    pipeline so the raw CFG shape (entry region, both branch regions, the
-    join region — four `Region`s total) survives instead of being folded
-    by `RedundantPhis`."""
+    """Same bytes as `_diamond_returning_eax`, unoptimized so all four
+    Regions (entry, both branches, join) survive `RedundantPhis`."""
     code = bytes([
         0x85, 0xFF,                          # test edi, edi
         0x75, 0x07,                          # jne +7
@@ -126,9 +119,6 @@ def _diamond_returning_eax_unoptimized() -> "strider.Function":
         0xC3,                                # ret
     ])
     return _lift_unoptimized(code)
-
-
-# ── call().any_input ─────────────────────────────────────────────────────
 
 
 def test_call_any_input_binds_the_target():
@@ -143,9 +133,8 @@ def test_call_any_input_typed_sub_misses_unrelated_const():
 
 
 def test_call_any_input_wildcard_reaches_control_and_memory():
-    """A wildcard `any_input` on a Call also reaches ctrl/mem — edges a
-    typed sub can never bind — matching the general model documented on
-    the Rust `CallPat::any_input`."""
+    """A wildcard `any_input` on a Call also reaches ctrl/mem, edges a typed
+    sub can never bind."""
     fn = _direct_call_and_ret(0x2000)
     c = Capture()
     hits = fn.find_all(call().any_input(var(c)))
@@ -154,20 +143,15 @@ def test_call_any_input_wildcard_reaches_control_and_memory():
 
 
 def test_call_any_input_on_real_fixture_binds_an_arg():
-    """Exercised against a real optimised function (not synthetic bytes)
-    to confirm `any_input` composes with the full lift+optimise pipeline."""
+    """A real optimised function, not synthetic bytes: `any_input` must
+    compose with the full lift+optimise pipeline."""
     fn = built_function("x86", "switch", "dispatch_value")
-    # Unconstrained: any_input must bind SOMETHING on every matched call
-    # without raising, and every call in the function has a target.
     calls = fn.find_all(call())
     if not calls:
         return
     c = Capture()
     hits = fn.find_all(call().any_input(var(c)))
     assert len(hits) >= len(calls)
-
-
-# ── load()/store().any_input ─────────────────────────────────────────────
 
 
 def test_load_any_input_binds_addr():
@@ -193,12 +177,9 @@ def test_store_any_input_binds_data():
     assert len(hits) == 1
 
 
-# ── mem_phi().any_input ──────────────────────────────────────────────────
-
-
 def test_mem_phi_any_input_wildcard_reaches_memory_and_phi_token():
-    # A real if/else store join, so the join's MemPhi has TWO genuine memory
-    # predecessors (a trivial single-predecessor phi would optimize away).
+    # Needs a real if/else store join: a trivial single-predecessor MemPhi
+    # would optimize away.
     fn = _diamond_with_memory_join()
     c = Capture()
     hits = fn.find_all(mem_phi().any_input(var(c)))
@@ -206,9 +187,6 @@ def test_mem_phi_any_input_wildcard_reaches_memory_and_phi_token():
 
     # A typed value sub can never bind a Memory or PhiToken predecessor.
     assert fn.find_all(mem_phi().any_input(int_const(1))) == []
-
-
-# ── phi().phi_token / mem_phi().phi_token ────────────────────────────────
 
 
 def test_phi_token_typed_sub_never_matches():
@@ -224,9 +202,9 @@ def test_phi_token_wildcard_binds_the_phi_token_edge():
 
 
 def test_phi_token_differs_from_shifted_input():
-    """`.phi_token(p)` (raw slot 0) and `.input(0, p)` (shifted to raw
-    slot 1) must address different edges: a typed const sub matches via
-    `.input(0, _)` (a real data predecessor) but never via `.phi_token(_)`."""
+    """`.phi_token(p)` (raw slot 0) and `.input(0, p)` (raw slot 1) address
+    different edges: a typed const sub matches via `.input(0, _)`, a real
+    data predecessor, but never via `.phi_token(_)`."""
     fn = _diamond_returning_eax()
     via_input = fn.find_all(phi().input(0, int_const(1)))
     via_token = fn.find_all(phi().phi_token(int_const(1)))
@@ -247,43 +225,38 @@ def test_mem_phi_phi_token_typed_sub_never_matches():
 
 
 def test_mem_phi_phi_token_differs_from_shifted_input():
-    """`.input(0, p)` (shifted to raw slot 1) reaches the join's genuine
-    first memory predecessor — a `store(data=1)` — while `.phi_token(p)`
-    (raw slot 0) never does (typed subs can't bind PhiToken)."""
+    """`.input(0, p)` (raw slot 1) reaches the join's genuine first memory
+    predecessor, a `store(data=1)`; `.phi_token(p)` (raw slot 0) never does,
+    since typed subs can't bind PhiToken."""
     fn = _diamond_with_memory_join()
     via_input = fn.find_all(mem_phi().input(0, store().data(int_const(1))))
     assert len(via_input) >= 1
     assert fn.find_all(mem_phi().phi_token(int_const(1))) == []
 
 
-# ── call().output(j): sibling-output binding ─────────────────────────────
-
-
 def test_call_output_slot_binds_sibling_value():
-    """`call().output(2).capture(c)` binds the value the Call produces at
-    raw output slot 2 (its first caller-saved clobber / return value) — a
-    leaf sibling-output binding, no recursion into what the output feeds."""
+    """`call().output(2)` binds the value the Call produces at raw output
+    slot 2 (its first caller-saved clobber / return value). A leaf
+    sibling-output binding: no recursion into what the output feeds."""
     fn = _direct_call_and_ret(0x2000)
     c = Capture()
     hits = fn.find_all(call().output(2).capture(c))
     assert len(hits) == 1
     assert hits[0].has(c)
-    # The bound value's producer is the Call node itself (a sibling output).
     assert hits[0].node(c) is not None
 
 
 def test_call_output_missing_slot_never_matches():
-    """A slot the Call does not produce fails the whole match — the
-    sibling-output constraint is genuinely checked, not silently skipped."""
+    """A slot the Call does not produce fails the whole match: the
+    sibling-output constraint is checked, not silently skipped."""
     fn = _direct_call_and_ret(0x2000)
     c = Capture()
     assert fn.find_all(call().output(500).capture(c)) == []
 
 
 def test_call_output_slot_type_and_width_constraints():
-    """`.of_type` / `.of_width` constrain the sibling output; the wrong
-    type/width rejects the match. On x86-64 every caller-saved clobber
-    output is a 64-bit register value."""
+    """`.of_type` / `.of_width` constrain the sibling output. On x86-64 every
+    caller-saved clobber output is a 64-bit register value."""
     fn = _direct_call_and_ret(0x2000)
     assert len(fn.find_all(call().output(2).of_type("i64"))) == 1
     assert fn.find_all(call().output(2).of_type("i32")) == []
@@ -291,23 +264,17 @@ def test_call_output_slot_type_and_width_constraints():
     assert fn.find_all(call().output(2).of_width(32)) == []
 
 
-# ── entry() / region() ────────────────────────────────────────────────────
-
-
 def test_entry_matches_exactly_one():
-    """`entry()` matches the function's unique `Entry` node — exactly one
-    hit regardless of how many `Region`s the CFG has, and regardless of
-    optimization (the default pipeline never removes `Entry` itself)."""
+    """`entry()` matches the function's unique Entry node: one hit whatever
+    the Region count, and whatever the pipeline (Entry is never removed)."""
     fn = _diamond_returning_eax()
     assert len(fn.find_all(entry())) == 1
 
 
 def test_region_matches_every_region_node():
-    """`region()` matches every CFG-merge `Region` — cross-checked against
-    `count_regions`, the same `walk_kind(Region)` sweep. Lifted WITHOUT
-    optimization so the raw entry/true/false/join shape (four Regions)
-    survives — the default pipeline's `RedundantPhis` would otherwise
-    collapse every single-predecessor Region down to just the join."""
+    """`region()` matches every CFG-merge Region, cross-checked against
+    `count_regions`. Unoptimized so the entry/true/false/join shape survives;
+    `RedundantPhis` would otherwise leave only the join."""
     fn = _diamond_returning_eax_unoptimized()
     assert fn.count_regions() == 4, "sanity: entry + true + false + join regions"
     assert len(fn.find_all(region())) == fn.count_regions()
@@ -315,26 +282,24 @@ def test_region_matches_every_region_node():
 
 def test_region_any_input_reaches_entry_predecessor():
     """`region().any_input(entry())` reaches a genuine control predecessor:
-    only the function's entry region is directly preceded by `Entry`. Needs
-    the unoptimized lift — the default pipeline collapses the entry region
-    (merging `Entry`'s control edge directly into the `If`), which would
-    make no `Region` directly reachable from `Entry` at all."""
+    only the entry region is directly preceded by Entry. Needs the
+    unoptimized lift, since the default pipeline merges Entry's control edge
+    straight into the If, leaving no Region reachable from Entry at all."""
     fn = _diamond_returning_eax_unoptimized()
     hits = fn.find_all(region().any_input(entry()))
     assert len(hits) == 1
 
 
 def test_region_any_input_typed_value_sub_matches_nothing():
-    """A typed value sub can never bind a `Region`'s Control predecessor
-    edge — same discrimination `any_input` proves on every other family."""
+    """A typed value sub can never bind a Region's Control predecessor edge,
+    the same discrimination `any_input` proves on every other family."""
     fn = _diamond_returning_eax_unoptimized()
     assert fn.find_all(region().any_input(int_const(0))) == []
 
 
 def test_region_any_input_wildcard_reaches_every_predecessor():
-    """A wildcard (`var`/`anything`) any_input on `region()` reaches EVERY
-    predecessor across every region — at least as many hits as there are
-    Regions (one per predecessor, and the join region has two)."""
+    """A wildcard any_input on `region()` reaches EVERY predecessor across
+    every region: one hit per predecessor, and the join region has two."""
     fn = _diamond_returning_eax_unoptimized()
     c = Capture()
     hits = fn.find_all(region().any_input(var(c)))

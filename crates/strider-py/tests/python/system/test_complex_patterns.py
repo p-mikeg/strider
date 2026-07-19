@@ -1,13 +1,8 @@
-"""Per-arch complex pattern tests.
+"""Per-arch complex pattern tests: pin the load / store / call / if shapes
+per fixture, i.e. "the structural pattern survives the optimiser".
 
-Mirror of `crates/strider/tests/complex_patterns.rs` (the high-level
-structural assertions the Rust suite makes).  A complete 1:1 port is
-out of scope — Python's `Matcher` doesn't yet expose the full
-`ignore_casts_mask` or every `IntCmpOp` variant — but we can pin the
-load / store / call / if shapes per fixture, which covers the same
-"structural pattern survives the optimiser" contract.
-
-Each test runs once per arch via the parametrised `arch_id` fixture.
+Narrower than the Rust suite because Python's matcher exposes neither the
+full `ignore_casts_mask` nor every `IntCmpOp` variant.
 """
 
 from __future__ import annotations
@@ -37,28 +32,24 @@ def test_write_struct_fields(arch_id, fixtures_dir):
 
 def test_nested_struct_field(arch_id, fixtures_dir):
     g = analyze(arch_id, "complex", "nested_struct_field", fixtures_dir=fixtures_dir)
-    # The C source dereferences `outer->inner->x`.  At -O2 most arches
-    # collapse the chain via ConstantFold + LoadForward into a
-    # single surviving Load (the innermost field read).  Pin ≥1 — the
-    # structural property we care about is "the field-read shape
-    # survives the optimiser".
+    # The source dereferences `outer->inner->x`, but at -O2 most arches
+    # collapse the chain to a single surviving Load. Only the field-read
+    # shape surviving matters, hence >= 1.
     assert count_loads(g) >= 1
 
 
 def test_bit_test_zero(arch_id, fixtures_dir):
     g = analyze(arch_id, "complex", "bit_test_zero", fixtures_dir=fixtures_dir)
-    # The bit-test idiom takes several shapes after optimisation: x86
-    # keeps `And`; some compilers strength-reduce to `ShiftRight`; ARM
-    # at -O2 emits `tst rN, #imm` which lifts to `IntCarry / IntSless`
-    # against zero with no AND.  All paths must end in a branch on the
-    # bit-test result, so we anchor on the If.
+    # The bit-test idiom takes several shapes after optimisation: x86 keeps
+    # `And`, some compilers strength-reduce to `ShiftRight`, and ARM at -O2
+    # emits `tst rN, #imm` which lifts to a compare against zero with no
+    # AND at all. Every path ends in a branch, so anchor on the If.
     assert count_pat(g, pat.if_else()) >= 1
 
 
 def test_if_bit_clear_call(arch_id, fixtures_dir):
     g = analyze(arch_id, "complex", "if_bit_clear_call", fixtures_dir=fixtures_dir)
-    # The function calls helper() iff a single bit is clear — at least
-    # one If and one Call must survive.
+    # Calls helper() iff a single bit is clear.
     assert count_pat(g, pat.if_else()) >= 1
     assert count_calls(g) >= 1
 

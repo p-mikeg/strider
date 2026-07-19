@@ -1,10 +1,9 @@
 """Regression: `strider.lift.load_elf` must not leak its backing bytes.
 
-The loader used to `Box::leak` the whole file to fabricate a `'static`
-`object::File`, so every `load_elf` call retained one file-sized buffer that
-`del` + `gc.collect()` could never reclaim — RSS grew without bound (visibly
-so on a vmlinux: ~file-size per call).  This loops the loader far more times
-than its working set and asserts resident memory stays bounded.
+Each call used to retain one file-sized buffer that `del` +
+`gc.collect()` could never reclaim, so RSS grew without bound (roughly
+file-size per call, glaring on a vmlinux). Loops the loader far past its
+working set and asserts resident memory stays bounded.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ def test_load_elf_does_not_leak_backing_bytes():
     path = str(fixture_path("x64", "arithmetic"))
     file_size = __import__("os").path.getsize(path)
 
-    # Warm up so the baseline is steady (allocator arenas, one-time tables).
+    # Warm up so the baseline is steady: allocator arenas, one-time tables.
     for _ in range(10):
         del_target = strider.lift.load_elf(path)
         del del_target
@@ -44,8 +43,7 @@ def test_load_elf_does_not_leak_backing_bytes():
         gc.collect()
     growth = _rss_bytes() - base
 
-    # Pre-fix, growth ≈ iters * file_size (one leaked copy per call).
-    # Post-fix the bytes free on drop, so growth is allocator noise.
+    # Leaking, growth is about iters * file_size; fixed, it is allocator noise.
     budget = max(file_size * 8, 4 * 1024 * 1024)
     assert growth < budget, (
         f"RSS grew {growth} B over {iters} load_elf calls "

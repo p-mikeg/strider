@@ -1,13 +1,9 @@
-"""Tests for the discoverable `Node` handle + graph traversal API.
+"""The `Node` handle and graph traversal API.
 
-Covers `Function.node(id)`, `Match.node(capture)`, and the `Node`
-accessors (`id`, `kind()`, `inputs()`, `const_int()`, `const_uint()`,
-`const_bool()`, `asm_fingerprint()`, `__repr__`, `__eq__`/`__hash__`).
-`Node` is the single source of truth for per-node reads — `Function`
-does not duplicate the id-keyed readers, and `Match`'s value/op readers
-are thin forwarders onto `Match.node(key)`.  Built on the high-level
-`strider.lift.load_elf(...).analyze(...)` facade against the
-`x64/arithmetic.elf` fixture so the test exercises a real lifted graph.
+`Node` is the single source of truth for per-node reads: `Function` does
+not duplicate the id-keyed readers, and `Match`'s value/op readers just
+forward onto `Match.node(key)`.  Runs against a real lifted graph
+(`x64/arithmetic.elf`) rather than a mock.
 """
 
 from __future__ import annotations
@@ -26,11 +22,7 @@ def _analyze_add():
     return function
 
 
-# ── Function.node(id) ──────────────────────────────────────────────────
-
-
 def test_function_node_returns_node():
-    """`Function.node(id)` returns a `Node` for a valid id."""
     a = _analyze_add()
     some_id = a.node_ids()[0]
     n = a.node(some_id)
@@ -39,7 +31,6 @@ def test_function_node_returns_node():
 
 
 def test_function_node_invalid_id_raises():
-    """An out-of-range node id surfaces as `StriderError`."""
     a = _analyze_add()
     bad = max(a.node_ids()) + 10_000
     with pytest.raises(strider.StriderError):
@@ -47,10 +38,8 @@ def test_function_node_invalid_id_raises():
 
 
 def test_function_has_no_id_keyed_readers():
-    """Reads are single-source on `Node`: `Function` no longer exposes
-    the duplicate id-keyed readers (`node_kind`, `asm_fingerprint`,
-    `wide_const_bytes`, `call_other_name`) — use `Function.node(id).*()`
-    instead."""
+    """Reads are single-source on `Node`; the duplicate id-keyed readers
+    must not come back on `Function`."""
     a = _analyze_add()
     assert not hasattr(a, "node_kind")
     assert not hasattr(a, "asm_fingerprint")
@@ -59,17 +48,15 @@ def test_function_has_no_id_keyed_readers():
 
 
 def test_node_kind_is_consistent_across_handles():
-    """`Node.kind()` is stable: two separately-constructed `Node`
-    handles for the same id agree."""
+    """Two separately-constructed handles for the same id must agree."""
     a = _analyze_add()
     for nid in a.node_ids():
         assert a.node(nid).kind() == a.node(nid).kind()
 
 
 def test_node_inputs_returns_nodes():
-    """`Node.inputs()` returns a list of `Node`s — the producers feeding
-    each input edge.  At least one node in `add(a, b)` (the Add op) has
-    inputs."""
+    """`Node.inputs()` returns the producer `Node`s feeding each input
+    edge."""
     a = _analyze_add()
     saw_inputs = False
     for nid in a.node_ids():
@@ -78,7 +65,6 @@ def test_node_inputs_returns_nodes():
         assert isinstance(ins, list)
         for child in ins:
             assert isinstance(child, strider.ir.Node)
-            # The child must itself be a valid, kind-readable node.
             assert isinstance(child.kind(), str)
         if ins:
             saw_inputs = True
@@ -86,8 +72,7 @@ def test_node_inputs_returns_nodes():
 
 
 def test_node_inputs_map_to_real_producers():
-    """Every input `Node` is a node whose id round-trips through
-    `Function.node`."""
+    """Every input `Node`'s id must round-trip through `Function.node`."""
     a = _analyze_add()
     valid_ids = set(a.node_ids())
     add_matches = a.find_all(add(anything(), anything()))
@@ -100,8 +85,7 @@ def test_node_inputs_map_to_real_producers():
 
 
 def test_node_const_int_on_int_const():
-    """`Node.const_int()` returns the value on an IntConst node and
-    `None` on a non-const node."""
+    """The value on an IntConst node, `None` on anything else."""
     a = _analyze_add()
     c = Capture()
     const_hits = a.find_all(any_int_const(c))
@@ -112,7 +96,6 @@ def test_node_const_int_on_int_const():
         v = cnode.const_int()
         assert v is None or isinstance(v, int)
 
-    # A non-const node (the Add op) must return None.
     add_hits = a.find_all(add(anything(), anything()))
     assert add_hits
     add_node = a.node(add_hits[0].root)
@@ -120,7 +103,6 @@ def test_node_const_int_on_int_const():
 
 
 def test_node_const_bool_is_none_on_non_bool():
-    """`Node.const_bool()` returns `None` on a non-bool node."""
     a = _analyze_add()
     add_hits = a.find_all(add(anything(), anything()))
     assert add_hits
@@ -129,8 +111,7 @@ def test_node_const_bool_is_none_on_non_bool():
 
 
 def test_node_asm_fingerprint_is_int_list():
-    """`Node.asm_fingerprint()` returns a list of ints, stable across
-    separately-constructed `Node` handles for the same id."""
+    """A list of ints, stable across handles for the same id."""
     a = _analyze_add()
     add_hits = a.find_all(add(anything(), anything()))
     assert add_hits
@@ -145,8 +126,8 @@ def test_node_asm_fingerprint_is_int_list():
 
 
 def test_node_asm_fingerprint_name():
-    """`Node.fingerprint` was renamed to `Node.asm_fingerprint` — the
-    old name must no longer be reachable on a real lifted `Node`."""
+    """`Node.fingerprint` was renamed to `Node.asm_fingerprint`; the old
+    name must not be reachable."""
     a = _analyze_add()
     add_hits = a.find_all(add(anything(), anything()))
     assert add_hits
@@ -168,14 +149,13 @@ def test_node_repr():
 
 
 def test_node_eq_and_hash():
-    """Two `Node`s on the same function + id are equal and hash-equal."""
+    """Equal and hash-equal, so `Node` works as a set / dict key."""
     a = _analyze_add()
     nid = a.node_ids()[0]
     n1 = a.node(nid)
     n2 = a.node(nid)
     assert n1 == n2
     assert hash(n1) == hash(n2)
-    # Usable as a set/dict key.
     assert len({n1, n2}) == 1
 
     other_id = a.node_ids()[-1]
@@ -183,25 +163,19 @@ def test_node_eq_and_hash():
         assert n1 != a.node(other_id)
 
 
-# ── Match.node(key) ────────────────────────────────────────────────────
-
-
 def test_match_node_returns_node_for_bound_capture():
-    """`Match.node(capture)` resolves the bound node id to a `Node`."""
+    """`add(c, anything())` binds `c` to the left operand's producer."""
     a = _analyze_add()
     c = Capture()
-    # `add(c, anything())` binds `c` to the left operand's producer node.
     hits = a.find_all(add(c, anything()))
     assert hits
     child = hits[0].node(c)
     assert isinstance(child, strider.ir.Node)
-    # The bound node id must be a valid node in the function.
     assert child.id in set(a.node_ids())
 
 
 def test_match_node_unbound_capture_returns_none():
-    """`Match.node(unbound)` returns `None` for a capture not present in
-    the match."""
+    """A capture absent from the match reads back as `None`."""
     a = _analyze_add()
     add_hits = a.find_all(add(anything(), anything()))
     assert add_hits
@@ -218,8 +192,8 @@ def test_function_node_invalid_id_message_names_the_id():
 
 
 def test_function_node_negative_id_overflows_at_conversion():
-    """A negative id fails the pyo3 unsigned conversion eagerly —
-    OverflowError, not StriderError."""
+    """A negative id fails the unsigned conversion eagerly: OverflowError,
+    not StriderError."""
     a = _analyze_add()
     with pytest.raises(OverflowError):
         a.node(-1)

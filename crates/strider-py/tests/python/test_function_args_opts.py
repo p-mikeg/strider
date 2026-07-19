@@ -1,11 +1,8 @@
-"""The FunctionArgDetect alias tuning knobs must be reachable from the
-high-level `analyze()` surface.
+"""The alias tuning knobs must stay reachable from `analyze()`.
 
-`MemAliasOptions` carries two real optimizer knobs
-(`assume_distinct_sp_bases_disjoint` and `calls_clobber`) that were fully
-plumbed through the Rust alias core but hardcoded to the `OptOptions`
-default at the Python boundary, so no Python caller could ever set them.
-These tests pin them as settable keyword arguments.
+`assume_distinct_sp_bases_disjoint` and `calls_clobber` were once
+hardcoded to their defaults at the Python boundary, so no caller could
+set them. These pin them as settable keyword arguments.
 """
 
 from __future__ import annotations

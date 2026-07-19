@@ -1,21 +1,13 @@
-//! `PyCfg` — wraps `strider_cfg::Cfg` and exposes dot rendering plus the
-//! p-code lookup surface (`pcode_at` / `fingerprint_pcode`).
+//! A `Cfg` owns no Sleigh, so `PyCfg` keeps a `Py<PyLifter>` handle on the
+//! `Lifter` that built it and borrows that Sleigh on demand for dot rendering
+//! and register-name resolution.
 //!
-//! A `Cfg` is built by `Lifter.build_cfg`/`Lifter.analyze`, which borrows
-//! the `Lifter`'s owned `Sleigh` mutably for the duration of the build.
-//! The `Cfg` is a pure data structure and does not own the Sleigh; `PyCfg`
-//! keeps a shared `Py<PyLifter>` handle (the `Lifter` that built it) and
-//! borrows the owned Sleigh from it on demand for dot rendering and
-//! register-name resolution.
-//!
-//! `Cfg::regions()` already holds every decoded p-code op
-//! (`strider_cfg::RegionInstruction { addr: PcodeInsnAddr, insn:
-//! rsleigh::Insn }`), decoded in the exact context the real lift used
-//! (sequential-within-region, from entry).  So `pcode_at` /
-//! `fingerprint_pcode` are LOOKUPS against those stored decodes, not a
-//! fresh re-decode — correct even on context-dependent architectures
-//! (ARM/Thumb, MIPS16) where a fresh default-context Sleigh would render
-//! the wrong p-code for a mid-function mode switch.
+//! `Cfg::regions()` already holds every decoded p-code op, decoded in the exact
+//! context the real lift used, so `pcode_at` / `fingerprint_pcode` are LOOKUPS
+//! against those stored decodes rather than a fresh re-decode. That keeps them
+//! correct on context-dependent architectures (ARM/Thumb, MIPS16) where a
+//! default-context Sleigh would render the wrong p-code for a mid-function
+//! mode switch.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -29,28 +21,19 @@ use crate::node::PyNode;
 use crate::reader::AnyMemReader;
 use crate::strider_cls::PyLifter;
 
-/// Control-flow graph of a single function, produced by `Lifter.build_cfg`
-/// / returned as element 0 of `Lifter.analyze`.  Renderable to Graphviz
-/// dot / dark-themed HTML for inspection; also the p-code audit-trail
-/// lookup (`pcode_at` / `fingerprint_pcode`).
+/// Control-flow graph of a single function, from `Lifter.build_cfg` or
+/// `Lifter.analyze`. Renders to Graphviz dot / dark-themed HTML, and serves
+/// the p-code audit trail (`pcode_at` / `fingerprint_pcode`).
 #[pyclass(name = "Cfg", module = "strider.cfg", unsendable)]
 pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
-    /// Shared handle to the `Lifter` that built `inner`.  The `Cfg` is a
-    /// pure data structure and does not own the Sleigh; the `Lifter` owns
-    /// it.  Dot rendering and the IR lift (`Lifter.analyze_cfg`) borrow
-    /// the Sleigh through this handle to resolve register names.
+    /// The `Lifter` that built `inner`, borrowed for its Sleigh.
     pub(crate) lifter: Py<PyLifter>,
-    /// Lazily-built `machine_addr -> joined p-code text` lookup, built
-    /// once from `inner.regions()` on the first `pcode_at` /
-    /// `fingerprint_pcode` call and reused thereafter.
+    /// `machine_addr -> joined p-code text`, built on first lookup.
     pcode_map: OnceLock<HashMap<u64, String>>,
 }
 
 impl PyCfg {
-    /// Construct a `PyCfg` over an already-built `strider_cfg::Cfg` and
-    /// its owning `Lifter` handle.  The single constructor keeps the
-    /// `pcode_map` cache initialisation in one place.
     pub(crate) fn new(inner: strider_cfg::Cfg, lifter: Py<PyLifter>) -> Self {
         Self {
             inner,
@@ -59,8 +42,6 @@ impl PyCfg {
         }
     }
 
-    /// Borrow the parent `Lifter` and run `f` with the `Lifter`'s owned
-    /// `rsleigh::Sleigh`.
     fn with_sleigh<R>(
         &self,
         py: Python<'_>,
@@ -70,12 +51,7 @@ impl PyCfg {
         f(lifter_borrow.sleigh())
     }
 
-    /// Borrow the parent `Lifter`'s owned `Sleigh`, build a `GraphDot` over
-    /// this CFG at `style`, and dispatch to `op`.  Centralises the
-    /// `with_sleigh` + `GraphDot::new` + terminal-render skeleton shared by
-    /// `to_html` / `to_dot` (mirrors `PyLifter::dispatch_dot`).  `style` is
-    /// already resolved by each caller so their exact per-method defaults
-    /// are preserved.
+    /// `style` arrives already resolved so each caller keeps its own default.
     fn dispatch_dot(
         &self,
         py: Python<'_>,
@@ -102,12 +78,9 @@ impl PyCfg {
         })
     }
 
-    /// The cached `machine_addr -> joined p-code text` map, built ONCE by
-    /// a single pass over every region's `RegionInstruction`s.  Ops
-    /// belonging to the same machine instruction (same `machine_addr`,
-    /// distinguished by `insn_index`) are joined with `"; "` in
-    /// `insn_index` order; a machine instruction that lifts to zero
-    /// p-code ops (e.g. `endbr64`) still gets an entry, mapped to `""`.
+    /// Ops of one machine instruction are joined with `"; "` in `insn_index`
+    /// order. An instruction lifting to zero p-code ops (e.g. `endbr64`) has
+    /// no `RegionInstruction` at all, so it gets no entry.
     fn pcode_map(&self) -> &HashMap<u64, String> {
         self.pcode_map.get_or_init(|| {
             let mut grouped: HashMap<u64, Vec<(u64, String)>> = HashMap::new();
@@ -135,10 +108,6 @@ impl PyCfg {
     }
 }
 
-/// Discriminator for [`PyCfg::dispatch_dot`], mirroring
-/// [`crate::strider_cls`]'s `DotOp`.  Each variant carries the per-op
-/// arguments the public `to_html` / `to_dot` accessors would otherwise
-/// duplicate the sleigh-borrow / dumper-construction ritual for.
 enum CfgDotOp<'a> {
     ToHtml(&'a str),
     ToDot(&'a str),
@@ -146,10 +115,8 @@ enum CfgDotOp<'a> {
     DotStr,
 }
 
-/// Return shape of [`PyCfg::dispatch_dot`].  Returning a sum lets a single
-/// helper cover both the unit-returning dump methods and the
-/// string-returning `HtmlStr`/`DotStr` ops without separate variants per
-/// dispatch.
+/// A sum so one dispatch helper covers both the unit-returning dump ops and
+/// the string-returning ones.
 enum CfgDotResult {
     Unit,
     Html(String),
@@ -158,11 +125,11 @@ enum CfgDotResult {
 
 #[pymethods]
 impl PyCfg {
-    /// Expose the strong `Py<PyLifter>` back-reference to Python's cyclic
-    /// GC so a cycle routed through a `Cfg` (and on to the Lifter's Python
-    /// reader) is detectable.  The cycle is broken at the reader's `__dict__`
-    /// or `PyLifter::__clear__`, so this class needs no `__clear__` of its
-    /// own (the `lifter` handle is load-bearing while the `Cfg` is alive).
+    /// Exposes the strong `lifter` back-reference so the cyclic GC can see a
+    /// cycle routed through a `Cfg` and on to the Lifter's Python reader. No
+    /// `__clear__`: the cycle is broken at the reader's `__dict__` /
+    /// `PyLifter::__clear__`, and `lifter` is load-bearing while the `Cfg`
+    /// lives.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.lifter)
     }
@@ -204,47 +171,29 @@ impl PyCfg {
         }
     }
 
-    /// Look up the lifted p-code for the machine instruction at `addr`.
+    /// The lifted p-code for the machine instruction at `addr`: every p-code
+    /// op decoded there, joined with `"; "`, or `None` when this CFG decoded
+    /// nothing at `addr`.
     ///
-    /// Returns the joined p-code op text — every `RegionInstruction`
-    /// whose `machine_addr == addr` (a machine instruction lifts to one
-    /// or more p-code ops, one `RegionInstruction` each), rendered via
-    /// `rsleigh::Insn`'s `Display` impl and joined with `"; "` — or
-    /// `None` when `addr` has no `RegionInstruction` in this CFG.
-    ///
-    /// **Known limitation:** a machine instruction that lifts to ZERO
-    /// p-code ops (e.g. x86 `endbr64`, AArch64 `paciasp`) has no
-    /// `RegionInstruction` at all — `strider_cfg::Region` only stores an
-    /// entry per decoded p-code OP, so a zero-op machine instruction
-    /// leaves no trace.  Such an address is therefore indistinguishable
-    /// from one this CFG never decoded — both return `None` here.
-    /// `Lifter.pcode_at`, which re-decodes rather than looking up, still
-    /// returns `""` for it (see that method's doc).
-    ///
-    /// This is otherwise a LOOKUP against the CFG's own stored decodes
-    /// (the exact lift-time context — correct even for context-dependent
-    /// architectures like ARM/Thumb or MIPS16), never a fresh re-decode.
-    /// The lookup table is built once (on first call) and cached.
+    /// Known limitation: an instruction lifting to ZERO p-code ops (x86
+    /// `endbr64`, AArch64 `paciasp`) leaves no `RegionInstruction`, since a
+    /// region stores one entry per p-code OP. Such an address is
+    /// indistinguishable from one never decoded; both give `None`.
+    /// `Lifter.pcode_at` re-decodes instead of looking up, so it returns `""`.
     fn pcode_at(&self, addr: u64) -> Option<String> {
         self.pcode_map().get(&addr).cloned()
     }
 
-    /// The asm-fingerprint of `node` as `(addr, text)` p-code pairs,
-    /// sorted by address — the CFG-lookup companion to
-    /// `Node.asm_fingerprint()` (addr-only).  Each fingerprint address is
-    /// resolved via `pcode_at`; an address `pcode_at` returns `None` for
-    /// (not present in this CFG — e.g. `node` belongs to a different
-    /// `Cfg`/`Function`) is SKIPPED rather than emitting an empty-text
-    /// entry, so every returned pair is a genuine lookup hit.  In
-    /// practice a fingerprint address always names a real p-code-
-    /// producing instruction (a zero-op instruction like `endbr64` never
-    /// contributes a node's value), so this skip is purely a
-    /// cross-CFG-mismatch safeguard, not an expected case.
+    /// `node`'s asm fingerprint as `(addr, text)` p-code pairs sorted by
+    /// address: the audit trail, read from this CFG's lift-time decodes rather
+    /// than re-decoded. `[]` for structural nodes carrying no fingerprint
+    /// (Entry, InitialMemory, InitialVar, Region, phis).
     ///
-    /// `[]` for structural nodes with no fingerprint (Entry,
-    /// InitialMemory, InitialVar, Region, phis).  This is the audit
-    /// trail — correct by construction, since it reads the exact
-    /// lift-time decodes stored in this CFG rather than re-decoding.
+    /// An address this CFG has no decode for is skipped rather than emitted
+    /// with empty text, so every pair is a genuine hit. That only happens when
+    /// `node` came from a different `Cfg`; a fingerprint address always names
+    /// a p-code-producing instruction, since a zero-op one like `endbr64`
+    /// never contributes to a node's value.
     fn fingerprint_pcode(
         &self,
         py: Python<'_>,
@@ -260,14 +209,13 @@ impl PyCfg {
         Ok(out)
     }
 
-    /// The region index of the CFG entry — the default explorer center.
+    /// Region index of the CFG entry.
     fn entry(&self) -> u32 {
         self.inner.entry().index() as u32
     }
 
-    /// Pretty neighborhood DOT around region `center` (BFS over
-    /// predecessor+successor regions, capped at `max_nodes`; needs the
-    /// Lifter's Sleigh to resolve register names).
+    /// Pretty neighborhood DOT around region `center`: BFS over predecessor
+    /// and successor regions, capped at `max_nodes`.
     #[pyo3(signature = (center, depth=5, max_nodes=60))]
     fn neighborhood_dot(
         &self,
@@ -284,13 +232,10 @@ impl PyCfg {
         })
     }
 
-    /// Disassembly text for every region, keyed by region index — the
-    /// text-search corpus for the CFG explorer's search bar
-    /// (`_CfgVisualizer.search` in `explore.py`). Mirrors the dot
-    /// renderer's per-region text (`CfgDotDumper::dump_as_dot`): for each
-    /// region, each instruction's `ctx_fmt(sleigh, &regs)`, joined here
-    /// with `"\n"` (the dot renderer uses `"\\l"`, a DOT-label
-    /// left-justified newline — not meaningful outside a label string).
+    /// Disassembly text per region index: the search corpus for the CFG
+    /// explorer. Same per-instruction text as the dot renderer, joined with
+    /// `"\n"` rather than the renderer's `"\\l"`, which is a DOT-label
+    /// left-justified newline and means nothing outside a label string.
     #[pyo3(name = "_region_texts")]
     fn region_texts(&self, py: Python<'_>) -> PyResult<HashMap<u32, String>> {
         self.with_sleigh(py, |sleigh| {
@@ -316,8 +261,8 @@ impl PyCfg {
     }
 
     /// The region index whose instruction range contains `addr`, if any.
-    /// Returns the first containing region (regions don't overlap in
-    /// practice, so "first" is also "only").
+    /// Returns the first match; regions don't overlap in practice, so "first"
+    /// is also "only".
     fn region_at(&self, addr: u64) -> Option<u32> {
         let g = self.inner.region_graph();
         for idx in g.node_indices() {

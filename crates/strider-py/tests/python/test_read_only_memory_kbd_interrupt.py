@@ -1,26 +1,11 @@
-"""Regression: a Python `ReadOnlyMemory.read` that raises
-`KeyboardInterrupt` or `SystemExit` propagates out of the Rust
-adapter rather than being swallowed and surfaced as a generic
-`StriderError`.
+"""Regression: `KeyboardInterrupt` / `SystemExit` raised inside a Python
+`ReadOnlyMemory.read` propagates out of `analyze` instead of being
+swallowed and resurfaced as a generic `StriderError`.
 
-The exercise path: pass the rom into `strider.lift.lifter(..., rom=...)`;
-`LoadReadOnly` (part of the canonical default pipeline `Lifter.analyze`
-always runs) then consults the rom via the orchestrator's `OptCtx`,
-forcing a callback into the Python rom on the constant-address load
-below.  Bytes encoding a load from a constant absolute address (`mov
-eax, ds:[0x2000]`) then force the optimizer to consult the ROM for the
-bytes at `0x2000`, which is where the Rust
-`PyReadOnlyMemoryAdapter::read` adapter calls through to the Python
-subclass.
-
-The Rust side stashes control-flow exceptions in the thread-local
-PENDING_CONTROL_FLOW cell (see `pattern.rs`) rather than
-`PyErr::restore`-ing them on the spot — restoring would leave the
-error indicator set between callbacks, and the next callback would
-trip CPython's "returned a result with an exception set" guard,
-destroying the original `KeyboardInterrupt`/`SystemExit` signal.
-The outer `Lifter.analyze` boundary then drains the cell and surfaces
-the saved PyErr as `Err(...)` to Python.
+The bytes below load from a constant absolute address, so constant-load
+folding must consult the rom, driving a callback into the Python
+subclass mid-analysis.  Control-flow exceptions have to survive that
+callback boundary intact and re-raise unchanged at `analyze`'s edge.
 """
 
 import pytest

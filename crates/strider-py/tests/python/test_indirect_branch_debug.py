@@ -1,12 +1,7 @@
-"""Reproduces the indirect-branch breakage via Python.
+"""Indirect-branch resolution through the Python API.
 
-Mirror of `crates/strider/tests/indirect_branch.rs` for the x86 fixture
-(`fixtures/out/x86/indirect_branch.elf::indirect_branch_resolved`).
-End-to-end: build the CFG, run `strider.lift.lifter(...).analyze(...)`
-(which drives the indirect-branch fixed-point loop), assert the run
-completed without returning an UnresolvedIndirectBranch error and that
-the produced graph contains an IR Return node (proof the dispatch was
-lowered to a real control-flow tail rather than left as a placeholder).
+Mirror of `crates/strider/tests/indirect_branch.rs` for the x86
+`indirect_branch.elf::indirect_branch_resolved` fixture.
 """
 
 from __future__ import annotations
@@ -37,15 +32,10 @@ def test_run_resolves_indirect_branch_x86():
     assert function.node_count() > 0
 
 
-# ── unresolved-site reporting (hand-assembled bytes) ─────────────────────
-#
-# `unresolved_indirect_branches` must list the machine address of EVERY
-# indirect branch the orchestrator could not resolve — not just flag
-# that some exist.  Hand-assembled x86-64 keeps the addresses exact.
-
-
 def test_run_reports_single_unresolved_indirect_site_address():
-    # 0x2000: ff e0    jmp rax   (rax = entry InitialVar — unresolvable)
+    # Every unresolvable site must be reported by exact address, not just
+    # flagged as existing; hand-assembled bytes keep the addresses exact.
+    # 0x2000: ff e0    jmp rax   (rax = entry InitialVar, unresolvable)
     code = bytes([0xFF, 0xE0])
     mem = strider.reader.BufferReader(0x2000, code)
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
@@ -53,8 +43,7 @@ def test_run_reports_single_unresolved_indirect_site_address():
         0x2000, strider.sleigh.CallingConvention.x86_64_systemv(),
         opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=len(code))),
     )
-    # Unresolvable is NOT an error — the run completes and the exact
-    # branch address is reported.
+    # Unresolvable is not an error: the run completes and reports.
     assert unresolved == [0x2000]
 
 
@@ -71,5 +60,4 @@ def test_run_reports_both_unresolved_indirect_site_addresses():
         0x1000, strider.sleigh.CallingConvention.x86_64_systemv(),
         opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=len(code))),
     )
-    # BOTH sites are reported, by exact machine address.
     assert sorted(unresolved) == [0x1005, 0x1007]

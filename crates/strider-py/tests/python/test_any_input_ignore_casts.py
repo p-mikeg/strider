@@ -1,12 +1,11 @@
 """`phi().any_input(p)` composes with the query-level cast-transparency
 controls (`ignore_casts` / `ignore_casts_mask`).
 
-Cast-transparency in this API is a QUERY-level flag, not a per-operand one:
-`find_all(pat, ignore_casts=True)` folds a `CastMask` onto the whole sealed
-`Pattern`, and the matcher routes existential (`any_input`) candidates
-through the same `try_operand` as fixed-slot operands.  These tests pin that
-an extend-wrapped phi arm — the mips64/thumb "widen before merging" shape —
-is reachable without spelling the extend out.
+Cast-transparency is a QUERY-level flag, not a per-operand one: it applies to
+the whole pattern, and existential `any_input` candidates go through the same
+operand path as fixed slots. These tests pin that an extend-wrapped phi arm
+(the mips64/thumb "widen before merging" shape) is reachable without
+spelling the extend out.
 """
 
 import strider
@@ -56,8 +55,8 @@ def test_any_input_finds_the_extend_wrapped_arm_under_ignore_casts():
 
 
 def test_any_input_ignore_casts_spans_mixed_sign_and_zero_extends():
-    """mips64/thumb gcc widen before merging, and the two arms need not
-    agree on the extend flavour."""
+    """The two arms need not agree on the extend flavour (mips64/thumb gcc
+    widens before merging, not always with the same sign)."""
     fn = _phi_of_extended_loads(_MOVZX_RSI)
     assert len(fn.find_all(p.phi().any_input(p.load()), ignore_casts=True)) >= 1
 

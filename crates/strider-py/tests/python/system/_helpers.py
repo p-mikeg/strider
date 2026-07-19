@@ -1,14 +1,11 @@
 """Shared helpers for the per-arch system test suite.
 
-Mirror of `crates/strider/tests/common/mod.rs` for the Python bindings:
-provides an `analyze(arch_id, case, fn_name) → Function` entry that runs
-the full strider pipeline (CFG → IR → indirect-branch fixed-point loop
-→ optimiser pipeline) against a fixture ELF, plus the same
-`count_*` / `has_*` assertion vocabulary the Rust suite exposes.
+`analyze(arch_id, case, fn_name)` runs the full pipeline against a
+fixture ELF and returns the Function; the `count_*` / `has_*` helpers
+mirror the Rust suite's assertion vocabulary.
 
-The arch registry is a list of `(arch_id, arch_factory, cc_factory)`
-triples — pytest parametrises over it via the `arch_id` fixture in
-conftest.py.  Adding a new arch is mechanical: add a row here.
+Adding a new arch means adding a row to ARCHES; conftest.py parametrises
+the `arch_id` fixture over it.
 """
 
 from __future__ import annotations
@@ -23,9 +20,6 @@ from strider import pattern as pat
 from strider.pattern import anything, var, Capture
 
 
-# ── Architecture registry ────────────────────────────────────────────────
-
-
 @dataclass(frozen=True)
 class ArchSpec:
     id: str
@@ -36,11 +30,8 @@ class ArchSpec:
 
 ARCHES: list[ArchSpec] = [
     ArchSpec("x86", strider.sleigh.SleighArch.x86, strider.sleigh.CallingConvention.x86_cdecl),
-    # x86_kernel: same Sleigh as x86, but the fixtures live in a
-    # separate directory (`fixtures/out/x86_kernel/`) where every case
-    # is compiled with `-mregparm=3` and analysed under
-    # `x86_linux_kernel`.  Mirrors the Rust `Arch::X86Kernel`
-    # variant in crates/strider/tests/common/mod.rs.
+    # Same Sleigh as x86, but its fixtures live in fixtures/out/x86_kernel/
+    # and are compiled with -mregparm=3 to match x86_linux_kernel.
     ArchSpec("x86_kernel", strider.sleigh.SleighArch.x86, strider.sleigh.CallingConvention.x86_linux_kernel),
     ArchSpec("x64", strider.sleigh.SleighArch.x86_64, strider.sleigh.CallingConvention.x86_64_systemv),
     ArchSpec("aarch64", strider.sleigh.SleighArch.aarch64, strider.sleigh.CallingConvention.aarch64_aapcs64),
@@ -52,7 +43,6 @@ ARCHES: list[ArchSpec] = [
     ArchSpec("mips32be", strider.sleigh.SleighArch.mipsbe32, strider.sleigh.CallingConvention.mips_o32),
 ]
 
-# Lookup helper: id → spec.
 _BY_ID: dict[str, ArchSpec] = {a.id: a for a in ARCHES}
 
 
@@ -62,9 +52,6 @@ def arch_spec(arch_id: str) -> ArchSpec:
     return _BY_ID[arch_id]
 
 
-# ── Pipeline runner ──────────────────────────────────────────────────────
-
-
 def analyze(
     arch_id: str,
     case: str,
@@ -72,21 +59,13 @@ def analyze(
     *,
     fixtures_dir,
 ):
-    """Lift fixtures/out/<arch>/<case>.elf::<fn_name> to IR and run the
-    full optimiser pipeline + LoadReadOnly against it.  Returns the
-    Function.  Skip the test if the fixture is missing.
+    """Lift fixtures/out/<arch>/<case>.elf::<fn_name> under the default
+    optimiser pipeline (which already includes LoadReadOnly), returning
+    the Function.  Skips if the fixture or symbol is missing.
 
-    Mirrors `crates/strider/tests/common/mod.rs::analyze` — drives the
-    orchestrator's fixed-point loop through `Lifter.analyze`, which
-    always runs the canonical default pipeline (this already includes
-    `LoadReadOnly`, so no custom pipeline is needed — the old
-    `build_optimizer_pipeline()` + hand-added `LoadReadOnly()` path was
-    removed by the single-`Lifter` collapse).  Unresolved indirect
-    branches show up as `IndirectBranch` placeholders in the IR rather
-    than failing the run.  Pattern-shape tests don't depend on
-    indirect-branch resolution; the orchestrator path is exercised
-    separately by `test_indirect_branch_debug.py` and
-    `test_switch_jump_table.py`.
+    Unresolved indirect branches stay as `IndirectBranch` placeholders
+    instead of failing the run: pattern-shape tests don't depend on
+    resolution, which is covered by the dedicated jump-table tests.
     """
     spec = arch_spec(arch_id)
     elf = fixtures_dir / arch_id / f"{case}.elf"
@@ -114,21 +93,15 @@ def analyze(
     return function
 
 
-# ── Assertion vocabulary (mirror of common/mod.rs counters) ──────────────
-#
-# The Rust suite uses `count_int_binop(g, IntBinaryOp::Add)`-style
-# counters keyed on the IR's `NodeKind`.  Python's pattern surface
-# doesn't expose `NodeKind` directly, so we map each counter onto the
-# pattern's structural matcher.  The matcher walks every reachable node;
+# The counters below stand in for the Rust suite's NodeKind-keyed ones:
+# Python doesn't expose NodeKind, so each maps onto a structural pattern.
 # `find_all` returns one Match per root binding, so its length is the
-# count.  For commutative ops (add/mul/and/or/xor and the cmp ops the
-# pattern crate marks commutative), each match shape is counted once.
+# count, and commutative ops still count each shape once.
 
 
 def _to_pat(p):
-    """Coerce builder objects (IntBinaryPat / etc.) to a Pat — most
-    typed builders expose `.into_pat()`; plain Pats round-trip
-    unchanged."""
+    """Coerce builder objects (IntBinaryPat etc.) to a Pat via
+    `.into_pat()`; plain Pats round-trip unchanged."""
     return p.into_pat() if hasattr(p, "into_pat") else p
 
 
@@ -161,11 +134,9 @@ def count_int_binop(g, op: str) -> int:
 
 
 def count_int_unop(g, op: str) -> int:
-    # Variant names: `Neg` is two's-complement negation (`-x`, the only
-    # remaining `IntUnaryOp` variant).  `"BitNot"` is accepted for
-    # backwards compatibility — bitwise complement (`~x`) is now
-    # `Xor(_, IntConst(all_ones))` (the former BitNot unary-op was
-    # removed in favour of the Xor shape), matched via `pat.int_not`.
+    # `Neg` (two's-complement negation) is the only real IntUnaryOp left.
+    # `"BitNot"` is kept for back-compat: `~x` is now
+    # `Xor(_, IntConst(all_ones))`, matched via `pat.int_not`.
     if op == "Neg":
         return count_pat(g, pat.neg(anything()))
     if op == "BitNot":
@@ -190,18 +161,14 @@ def count_loads(g) -> int:
 
 
 def count_stores(g) -> int:
-    # Every memory write is a `Store(VnSpace)` — stack-relative writes
-    # are the same node kind, just with the SP-relative offset recorded
-    # in `Function::stack_offsets`.  A single `pat.store()` count is
-    # the right answer.
+    # Stack-relative writes are the same node kind as any other store,
+    # so one `pat.store()` count covers every memory write.
     return count_pat(g, pat.store())
 
 
 def count_regions(g) -> int:
-    # Counts reachable `Region` (control-flow join) nodes.  Used by the
-    # control/pattern suites to assert that a loop's join survives
-    # optimisation: a real loop with no surviving VarPhi at its header
-    # still leaves a Region behind, so the count stays >= 1.
+    # Control-flow joins. The loop tests count these rather than phis: a
+    # real loop whose header phi is optimised away still leaves a Region.
     return g.count_regions()
 
 
@@ -211,13 +178,8 @@ def count_int_consts(g) -> int:
 
 
 def has_constant(g, value: int) -> bool:
-    """Returns True iff some `IntConst(value)` node exists.
-
-    Comparison is performed against the typed extractor `match.const_uint(c)`
-    masked to the constant's output width — matches the Rust
-    `has_constant` which compares the stored u128 against `u64::from
-    (value)`.
-    """
+    """True iff some `IntConst(value)` node exists, compared at 64-bit
+    width so a value's storage width doesn't affect the answer."""
     c = Capture()
     hits = g.find_all(pat.any_int_const(c))
     target = value & 0xFFFF_FFFF_FFFF_FFFF

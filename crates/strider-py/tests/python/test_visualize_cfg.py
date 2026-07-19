@@ -1,21 +1,14 @@
 """Explorer HTTP surface, plus the shutdown contract that keeps it from
 crashing the interpreter.
 
-These tests used to start `visualize` on a daemon thread and never stop
-it. That leaks a thread parked inside the Rust `PyLifter::visualize`
-frame; when the interpreter finalizes, CPython kills the daemon thread
-via `pthread_exit`, and the resulting glibc forced unwind has to cross
-PyO3's `catch_unwind` trampoline, which converts rather than rethrows it.
-glibc's `__pthread_unwind` then aborts the process — SIGABRT at exit,
-after every test had already passed. It reproduced roughly one run in
-seven: it needs a 500ms `serve_forever` poll tick to land inside the
-finalization window, so only a teardown as slow as a full pytest session
-is long enough to get hit.
+Never let the interpreter exit with an explorer still serving: a thread
+still inside `visualize` at shutdown aborts the whole process (SIGABRT),
+after every test has already passed. Always call
+`strider.explore.shutdown(port)` and join the thread. It only bites
+about one run in seven, so it looks like a flake rather than a leak.
 
-Every test here now shuts its server down and joins the thread, and the
-join assertion IS the regression test: a leaked explorer thread fails
-deterministically here instead of aborting the interpreter one run in
-seven.
+The join assertion in `_stop` IS the regression test: a leaked explorer
+thread fails here deterministically instead.
 """
 
 import json
@@ -28,8 +21,6 @@ import strider.explore
 
 
 def _serve_bg(target_kind, port):
-    """Start the explorer on a background thread; return the thread."""
-
     def run():
         lift = strider.lift.lifter(
             strider.sleigh.SleighArch.x86_64(),
@@ -44,17 +35,16 @@ def _serve_bg(target_kind, port):
             ).function
         lift.visualize(target, port=port)
 
-    # Non-daemon on purpose. A daemon thread lets the interpreter exit with
-    # the server still parked in the Rust frame — the abort above.
-    # Non-daemon turns that leak into a hang at exit, which is loud and
-    # debuggable rather than intermittent and fatal.
+    # Non-daemon on purpose: a daemon thread lets the interpreter exit with
+    # the server still running (the abort above). Non-daemon turns that leak
+    # into a hang at exit, which is loud and debuggable rather than
+    # intermittent and fatal.
     t = threading.Thread(target=run, daemon=False)
     t.start()
     return t
 
 
 def _stop(port, thread):
-    """Shut the server down and require the thread to actually die."""
     assert strider.explore.shutdown(port) == [port], f"no explorer on port {port}"
     thread.join(timeout=10)
     assert not thread.is_alive(), (
@@ -82,19 +72,15 @@ def test_visualize_cfg_serves_neighborhood_and_search():
     try:
         entry = int(_get(port, "/entry"))
         pretty = _get(port, f"/dot?center={entry}&depth=1&raw=0")
-        # `Cfg` dropped its raw (structure-faithful) neighborhood view as part
-        # of the renderer-method unification (`Cfg.raw_neighborhood_dot` was
-        # removed — the raw view lives on `Function`, over IR node ids, a
-        # different id space than a CFG region index). The explorer's "raw"
-        # toggle is now a no-op for a Cfg-backed visualizer: both modes render
-        # the same pretty neighborhood.
+        # The raw view only exists on `Function` (it is keyed by IR node id,
+        # not CFG region index), so the explorer's "raw" toggle is a no-op on
+        # a Cfg: both modes render the same pretty neighborhood.
         raw = _get(port, f"/dot?center={entry}&depth=1&raw=1")
         assert "#ffcc00" in pretty              # center highlighted
         assert raw == pretty
         # address search centers the containing block
         res = json.loads(_get(port, "/pattern?q=0x1000"))
         assert res.get("center") is not None or res.get("highlight") is not None
-        # frontend loads
         assert "viz" in _get(port, "/").lower()
     finally:
         _stop(port, t)
@@ -112,9 +98,8 @@ def test_visualize_ir_still_works():
 
 
 def test_shutdown_is_safe_when_nothing_is_running():
-    """`shutdown` is the documented way to stop an explorer, so it has to be
-    callable defensively — in a `finally`, twice over, or for a port that
-    never served — without raising."""
+    """`shutdown` must be callable defensively (in a `finally`, twice over,
+    or for a port that never served) without raising."""
     assert strider.explore.shutdown(9999) == []
     assert strider.explore.shutdown() == []
 
@@ -122,8 +107,7 @@ def test_shutdown_is_safe_when_nothing_is_running():
 def test_no_explorer_survives_this_module():
     """Nothing may still be serving once this module's tests are done.
 
-    The abort needed a live explorer at interpreter finalization, so
-    asserting the registry is empty pins the defect directly: any test
-    that forgets to shut its server down fails here, deterministically.
+    A live explorer at interpreter exit is what aborts the process, so any
+    test that forgets to shut its server down fails here instead.
     """
     assert strider.explore.shutdown() == [], "an explorer server is still running"

@@ -32,6 +32,6 @@ def test_any_int_const_with_capture_still_binds():
 
 def test_any_bool_and_float_const_without_capture_are_accepted():
     g = _g()
-    # Just needs to build + run without a TypeError; match count is fixture-dependent.
+    # Match count is fixture-dependent; only "builds and runs" is pinned.
     g.find_all(any_bool_const())
     g.find_all(any_float_const())

@@ -1,29 +1,13 @@
-"""Regression tests for the AArch64 zero-pcode-op gap bugs.
+"""Regression tests for AArch64 instructions that lift to zero pcode ops.
 
-AArch64 instructions like ``nop``, ``paciasp``, ``autiasp``, and
-several hint-class encodings lift to **zero** pcode ops on the Sleigh
-spec strider uses.  Two distinct cfg-builder failures were caused by
-this:
+``nop``, ``paciasp``, ``autiasp`` and several hint encodings produce no
+pcode at all, leaving address holes in a region's instruction list.  Two
+cfg-builder failures came out of that: a fall-through across such a hole
+finalising a region with no instructions, and a branch target landing on
+a hole address that ``contains_addr`` claimed but exact-match lookup
+could not find.
 
-1. **"region at PcodeInsnAddr ... has no instructions"** — the cfg
-   builder's outer loop walked across one or more zero-pcode-op
-   machine instructions before reaching an already-explored
-   region's start.  The fall-through path tried to finalise the
-   current builder with empty ``insns`` and region finalisation
-   rejected it.  Fix: when ``self.insns`` is empty at fall-through, hot-wire
-   the parent edge straight into the existing region instead.
-
-2. **"split address ... not found in region's instruction list"** —
-   a branch target landed at the address of a zero-pcode-op
-   instruction that wasn't recorded in the region's ``insns``, so
-   ``contains_addr``'s lexicographic range test said yes but the
-   exact-match ``position`` lookup said no.  Fix: round down to the
-   largest insn whose address is ≤ the requested split address.
-
-The two regression shapes live in the in-repo aarch64 fixture
-``fixtures/cases/zero_pcode_holes.S`` — ``nop_fallthrough`` for bug 1
-and ``autiasp_split`` for bug 2.  Each test skips cleanly when the
-fixture wasn't built (no aarch64 toolchain in a contributor's env).
+The two shapes live in ``fixtures/cases/zero_pcode_holes.S``.
 """
 
 from __future__ import annotations
@@ -52,28 +36,19 @@ def _lift_aarch64(elf_path: pathlib.Path, symbol: str):
     return function
 
 
-# ── Bug 1: empty-insns fall-through across zero-pcode-op stretches ────────────
-
-
 def test_aarch64_nop_fallthrough_lifts_cleanly():
-    """``nop_fallthrough`` is a hand-written aarch64 stub whose
-    fall-through path crosses a literal ``nop`` (zero pcode ops) into
-    an already-explored region's start.  Pre-fix this tripped
-    the region-finalisation non-empty invariant with
-    ``"region at PcodeInsnAddr ... has no instructions"``."""
+    """``nop_fallthrough`` falls through a literal ``nop`` into an
+    already-explored region's start.  Used to raise ``"region at
+    PcodeInsnAddr ... has no instructions"``."""
     elf = fixture_path("aarch64", "zero_pcode_holes")
     g = _lift_aarch64(elf, "nop_fallthrough")
     assert g.node_count() > 0
 
 
-# ── Bug 2: split-into-zero-pcode-op-hole ──────────────────────────────────────
-
-
 def test_aarch64_autiasp_split_lifts_cleanly():
-    """``autiasp_split``'s ``cbz`` branches to the address of an
-    ``autiasp`` (zero pcode ops) sitting inside an already-built
-    region.  Pre-fix this raised ``"split address ... not found in
-    region NodeIndex(N)'s instruction list"``."""
+    """``autiasp_split``'s ``cbz`` branches to an ``autiasp`` address
+    inside an already-built region.  Used to raise ``"split address ...
+    not found in region NodeIndex(N)'s instruction list"``."""
     elf = fixture_path("aarch64", "zero_pcode_holes")
     g = _lift_aarch64(elf, "autiasp_split")
     assert g.node_count() > 0

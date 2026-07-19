@@ -1,24 +1,11 @@
-"""End-to-end jump-table resolution + post-resolution pattern rewrites.
+"""End-to-end jump-table resolution plus post-resolution pattern rewrites.
 
-`fixtures/cases/switch.c::dispatch_value` is a 9-arm dense switch that
-gcc -O2 lowers to a real `jmp *.rodata[idx*4]` jump table on x86.  The
-orchestrator must:
-
-1.  Lift the function with the BranchIndirect placeholder at the jump
-    table site.
-2.  Classify the placeholder via the rodata-load arm
-    (`opt::indirect_branch_resolve`) into `Multiple([L0..L7, default])`.
-3.  Rebuild the CFG with those targets so each case body becomes a real
-    basic block.
-4.  Re-lift; the BranchIndirect is gone, replaced by switch edges.
-5.  Run the destructive pipeline once at fixed point.
-
-After resolution the IR carries one `add(FunctionArg(x), IntConst(K))`
-expression per case (K = 1..8).  We assert the orchestrator converged
-(no exception), that the user can `find_all` on the case bodies, and
-that `Function.rewrite` can collapse a recognisable case shape — proving
-the post-collapse pattern surface still composes with the optimised
-graph.
+`switch.c::dispatch_value` is a 9-arm dense switch that gcc -O2 lowers to a
+real `jmp *.rodata[idx*4]` table on x86, so it drives the whole resolution
+loop: lift with an indirect-branch placeholder, classify it into the case
+targets, rebuild the CFG so each case body is its own block, re-lift, then
+optimise to fixed point.  Resolution leaves one `add(x, IntConst(K))` per
+case, which the tests below query and rewrite against.
 """
 
 from __future__ import annotations
@@ -41,20 +28,16 @@ def _run(elf_path):
 
 
 def test_orchestrator_resolves_jump_table_x86(x86_switch_elf):
-    # Pre-fix, this raised StriderError("indirect-branch resolver did
-    # not converge after 6 iterations").  Post-fix the orchestrator
-    # converges and produces a non-empty graph.
+    # Regression: this used to raise "indirect-branch resolver did not
+    # converge after 6 iterations".
     _lift, g = _run(x86_switch_elf)
     assert g.node_count() > 0
 
 
 def test_case_bodies_match_add_const_pattern(x86_switch_elf):
-    # Cases 0..4 and 6..7 have body `return x + K`.  Case 5 calls
-    # `f(value->a)` so its IR shape is a Load + Call, not an Add —
-    # those `add(_, IntConst(K))` queries must therefore NOT match the
-    # case-5 constant K=6 (since case 5 doesn't add anything).  We
-    # assert ≥4 of the surviving K values (1, 2, 3, 4, 5, 7, 8) — same
-    # tolerance as before.
+    # Cases 0..4 and 6..7 are `return x + K`.  Case 5 calls `f(value->a)`,
+    # so it lifts to a Load + Call and K=6 must not match.  The threshold is
+    # loose because the optimiser is free to fold or reshape individual arms.
     _lift, g = _run(x86_switch_elf)
     seen_constants = set()
     for k in range(1, 9):
@@ -67,11 +50,8 @@ def test_case_bodies_match_add_const_pattern(x86_switch_elf):
 
 
 def test_case5_calls_helper_with_struct_field(x86_switch_elf):
-    # case 5: `return f(value->a)` lifts to `Load(addr)` feeding a
-    # `Call` node.  Pin both shapes — at minimum, the post-resolution
-    # IR must contain a Call (helper invocation) and a Load (the
-    # struct-field read).  This proves the full lift+resolve+optimise
-    # pipeline kept the case-5 arm intact.
+    # Case 5's `return f(value->a)` lifts to a Load feeding a Call; both
+    # surviving proves lift+resolve+optimise kept that arm intact.
     _lift, g = _run(x86_switch_elf)
     call_hits = g.find_all(call())
     assert len(call_hits) >= 1, "case 5 must produce a Call to f()"
@@ -80,10 +60,9 @@ def test_case5_calls_helper_with_struct_field(x86_switch_elf):
 
 
 def test_rewrite_collapses_add_zero_then_reoptimize(x86_switch_elf):
-    # `add(x, 0) → x` is a trivial collapse rule.  ConstantFold already
-    # applies this in the default pipeline, so the rewrite normally
-    # fires zero times — exercise the API surface end-to-end and confirm
-    # `Lifter.optimize` is callable on the post-rewrite graph.
+    # ConstantFold already collapses `add(x, 0)`, so this rewrite normally
+    # fires zero times; the point is that the API composes and `optimize`
+    # still works on the post-rewrite graph.
     lift, g = _run(x86_switch_elf)
     x = Capture()
     n = g.rewrite(find=add(var(x), int_const(0)), replace=var(x))
@@ -93,19 +72,16 @@ def test_rewrite_collapses_add_zero_then_reoptimize(x86_switch_elf):
 
 
 def test_rewrite_collapses_add_one_to_marker(x86_switch_elf):
-    # Demonstrate a non-trivial rewrite that DOES alter graph state:
-    # collapse `add(x, IntConst(1))` to `x` (drop the +1 chain).
-    # This is intentionally lossy — we only care that the rewrite fires
-    # and re-optimization succeeds afterwards.
+    # Collapsing `add(x, 1)` to `x` is intentionally lossy; it exists to
+    # alter graph state and confirm re-optimization survives it.
     lift, g = _run(x86_switch_elf)
     n_before_const_1 = len(g.find_all(int_const(1), ignore_casts=True))
     x = Capture()
     fired = g.rewrite(find=add(var(x), int_const(1)), replace=var(x))
     lift.optimize(g)
     n_after_const_1 = len(g.find_all(int_const(1), ignore_casts=True))
-    # Either the rule fired (collapsing one or more `add(_, 1)` chains
-    # and pruning the constants the node-removing passes can collect) or
-    # ConstantFold absorbed it before our find — both are valid outcomes
-    # for the rewrite-API contract.
+    # Either the rule fired and the node-removing passes pruned the freed
+    # constants, or ConstantFold absorbed the shape first.  Both satisfy the
+    # rewrite-API contract, so only the direction of the count is pinned.
     assert fired >= 0
     assert n_after_const_1 <= n_before_const_1

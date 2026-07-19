@@ -1,4 +1,4 @@
-"""Type stubs for strider.cfg — the control-flow graph and its options."""
+"""Type stubs for strider.cfg: the control-flow graph and its options."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ from typing import List, Literal, Optional, Tuple
 
 from .ir import Node
 
-#: Dot colour themes accepted by every `to_html` / `to_dot` renderer.
+#: Colour themes accepted by every `to_html` / `to_dot` renderer.
 DotStyle = Literal["dark", "dark_cfg", "empty"]
 
 class Cfg:
     """Control-flow graph of a single function, produced by
-    `Lifter.build_cfg` / returned as element 0 of `Lifter.analyze`."""
+    `Lifter.build_cfg` and returned as `AnalyzeResult.cfg`."""
 
     def to_dot(self, path: Optional[str] = ...) -> Optional[str]:
         """Render the CFG to DOT. Returns the DOT string when `path` is
@@ -20,60 +20,59 @@ class Cfg:
     def to_html(
         self, path: Optional[str] = ..., style: Optional[DotStyle] = ...
     ) -> Optional[str]:
-        """Render the CFG to a standalone HTML page. Returns the HTML
-        string when `path` is `None`, otherwise writes it and returns
-        `None`. `style` selects the dot theme (default `"dark_cfg"`)."""
+        """Render the CFG to a standalone HTML page. Returns the HTML string
+        when `path` is `None`, otherwise writes it and returns `None`.
+        `style` selects the theme (default `"dark_cfg"`)."""
         ...
     def pcode_at(self, addr: int) -> Optional[str]:
-        """Look up the lifted p-code for the machine instruction at
-        `addr` — an exact LOOKUP against this CFG's own stored decodes
-        (the exact lift-time context, correct even for context-dependent
-        architectures like ARM/Thumb or MIPS16), never a fresh re-decode.
+        """The p-code lifted from the machine instruction at `addr`, joined
+        with `"; "`, or `None` when this CFG stored no decode for `addr`.
 
-        Returns the joined p-code op text (ops rendered via their
-        `rsleigh::Insn` `Display` impl, joined with `"; "`), or `None`
-        when `addr` has no stored decode in this CFG.
+        This is a lookup against decodes this CFG already made, so it is
+        correct even on architectures where decoding depends on accumulated
+        context (ARM/Thumb, MIPS16).
 
-        Known limitation: a machine instruction that lifts to ZERO
-        p-code ops (e.g. `endbr64`) leaves no trace in the CFG at all,
-        so such an address is indistinguishable from one never decoded
-        — both return `None` here (`Lifter.pcode_at`, which re-decodes
-        instead of looking up, still returns `""` for it)."""
+        An instruction that lifts to zero p-code operations (`endbr64`, say)
+        leaves no trace here, so it is indistinguishable from an address that
+        was never decoded: both give `None`. `Lifter.pcode_at` re-decodes and
+        returns `""` for that case instead.
+        """
         ...
     def fingerprint_pcode(self, node: Node) -> List[Tuple[int, str]]:
-        """The asm-fingerprint of `node` as `(addr, text)` p-code pairs,
-        sorted by address — the CFG-lookup companion to
-        `Node.asm_fingerprint()` (addr-only).  Each fingerprint address is
-        resolved via `pcode_at`; an address not present in this CFG is
-        SKIPPED (not emitted with empty text).  `[]` for structural
-        nodes with no fingerprint (Entry, InitialMemory, InitialVar,
-        Region, phis)."""
+        """The asm addresses recorded on `node` paired with their p-code
+        text, sorted by address.
+
+        The lookup companion to `Node.asm_fingerprint()`, which gives the
+        addresses alone. An address not present in this CFG is skipped rather
+        than emitted with empty text. Structural nodes (Entry, InitialMemory,
+        InitialVar, Region, phis) carry no fingerprint and give `[]`.
+        """
         ...
     def entry(self) -> int:
-        """The region index of the CFG entry — the default explorer
-        center."""
+        """The region index of the CFG entry, the default explorer center."""
         ...
     def neighborhood_dot(
         self, center: int, depth: int = ..., max_nodes: int = ...
     ) -> str:
-        """Pretty neighborhood DOT around region `center` (BFS over
-        predecessor+successor regions, capped at `max_nodes`; needs the
-        Lifter's Sleigh to resolve register names)."""
+        """DOT for the regions within `depth` hops of region `center`
+        (predecessors and successors), capped at `max_nodes`."""
         ...
     def region_at(self, addr: int) -> Optional[int]:
-        """The region index whose instruction range contains `addr`,
+        """The index of the region whose instruction range contains `addr`,
         else `None`."""
         ...
     def _region_texts(self) -> dict:
-        """Disassembly text for every region, keyed by region index —
-        the text-search corpus for the CFG explorer's search bar."""
+        """Disassembly text for every region, keyed by region index. The
+        search corpus for the CFG explorer."""
         ...
 
 class CfgOptions:
-    """Mirrors `strider_cfg::CfgOptions` (the user-facing subset — the
-    orchestrator-internal `known_targets` feedback field is not
-    exposed).  Raises `ValueError` for `function_max_size=0` (zero is
-    meaningless — omit the argument for unbounded)."""
+    """Options controlling how the CFG is built.
+
+    `function_max_size` bounds how far past the entry to decode; omit it for
+    unbounded (`0` raises `ValueError`). `allow_code_before_start_addr`
+    permits blocks below the entry address.
+    """
 
     function_max_size: Optional[int]
     allow_code_before_start_addr: bool
@@ -82,4 +81,7 @@ class CfgOptions:
         *,
         function_max_size: Optional[int] = ...,
         allow_code_before_start_addr: bool = ...,
-    ) -> None: ...
+    ) -> None:
+        """Build the options. Raises `ValueError` for
+        `function_max_size=0`."""
+        ...

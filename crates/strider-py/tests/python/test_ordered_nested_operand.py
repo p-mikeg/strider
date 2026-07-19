@@ -1,10 +1,9 @@
 """`.ordered()` must be nestable below the pattern root.
 
-`.ordered()` used to eagerly seal its builder into a finished `Pattern`,
-which the operand-nesting check then rejected ("a finished control /
-variadic pattern cannot be nested as a value operand").  It now stays a
-lazy builder, so it composes as a value operand exactly like the bare
-(commutative) builder does.
+Regression: `.ordered()` used to eagerly seal its builder into a finished
+`Pattern`, which the operand-nesting check then rejected ("a finished control /
+variadic pattern cannot be nested as a value operand").  It now stays a lazy
+builder and composes exactly like the bare commutative builder.
 """
 
 import strider
@@ -12,12 +11,8 @@ from strider import pattern as p
 
 
 def _shl_add_fn():
-    # A deliberately asymmetric binary op so operand ORDER is observable:
-    #   shl edi, 2      ->  Mul(edi, 4)  after canonicalisation
-    #   add eax, edi
-    #   ret
-    # We instead pin on a plain non-commutative-in-spelling `Add` whose two
-    # operands are distinguishable (a const and a non-const).
+    # An Add with distinguishable operands (one const, one not) so operand
+    # ORDER is observable.
     code = bytes([
         0x83, 0xc7, 0x07,  # add edi, 7        -> Add(edi, 7)
         0x89, 0xf8,        # mov eax, edi
@@ -49,7 +44,7 @@ def _store_and_fn():
 
 
 def test_ordered_builds_and_matches_as_a_value_operand():
-    """The user-reported repro: an `.ordered()` binary op nested in a
+    """User-reported repro: an `.ordered()` binary op nested in a
     `store(data=...)` slot used to raise StriderError at seal time."""
     fn = _store_and_fn()
     pat = p.store(data=p.int_binary("And", p.anything(), p.anything()).ordered())
@@ -57,8 +52,8 @@ def test_ordered_builds_and_matches_as_a_value_operand():
 
 
 def test_nested_ordered_actually_enforces_operand_order():
-    """`.ordered()` below the root must still DISABLE commutativity: the
-    swapped spelling matches only via the commutative (bare) builder."""
+    """`.ordered()` below the root must still disable commutativity, not just
+    survive nesting: the swapped spelling matches only via the bare builder."""
     fn = _store_and_fn()
 
     # Canonical IR order for `and edi, 0xf` is And(<value>, IntConst(0xf)).
@@ -76,22 +71,21 @@ def test_nested_ordered_actually_enforces_operand_order():
     n_swapped = len(fn.find_all(swapped))
     n_commutative = len(fn.find_all(commutative))
 
-    # Exactly one of the two ordered spellings fires (whichever matches the
-    # stored operand order); the other must not.  The non-ordered form
-    # fires regardless of which way round it is spelled.
+    # Exactly one ordered spelling fires (whichever matches the stored operand
+    # order); the non-ordered form fires either way round.
     assert (n_canonical > 0) != (n_swapped > 0)
     assert n_commutative > 0
 
 
 def test_ordered_at_root_still_works():
-    """The pre-existing root-level use of `.ordered()` must keep working."""
+    """Root-level `.ordered()` must keep working after the lazy-builder fix."""
     fn = _shl_add_fn()
     assert len(fn.find_all(p.int_binary("Add", p.anything(), p.anything()).ordered())) >= 1
 
 
 def test_ordered_is_chainable_with_capture():
-    """Staying a lazy builder means `.ordered()` composes with the other
-    chainable verbs instead of terminating the chain."""
+    """Staying lazy means `.ordered()` composes with the other chainable verbs
+    instead of terminating the chain."""
     fn = _store_and_fn()
     c = p.Capture()
     hits = fn.find_all(

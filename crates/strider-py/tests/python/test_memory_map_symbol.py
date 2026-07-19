@@ -1,9 +1,6 @@
-"""Tests for `ElfLifter.symbol` / `.symbols` / `.entry_point`.
-
-These collapse the pyelftools-based symbol-lookup boilerplate that
-every other test/example used to carry.  `strider.lift.load_elf(path)`
-parses the ELF once and answers symbol lookups directly through the
-`object` crate instead of re-parsing the file.
+"""`ElfLifter.symbol` / `.symbols` / `.entry_point`: symbol lookup off a
+single parse, replacing the pyelftools boilerplate every test and example
+used to carry.
 """
 
 from __future__ import annotations
@@ -33,15 +30,12 @@ def test_symbols_returns_dict(x86_memory_elf):
     assert isinstance(syms, dict)
     assert "array_sum" in syms
     assert syms["array_sum"] == elf.symbol("array_sum")
-    # Sanity: should have at least a handful of real symbols.
     assert len(syms) > 5
 
 
 def test_entry_point(x86_memory_elf):
-    """Pin the API shape (returns an int, doesn't raise).  We don't
-    assert `> 0` here because `fixtures/out/x86/memory.elf` is a
-    freestanding function-export ELF whose `e_entry` is 0 by
-    construction — there is no `_start`."""
+    """No `> 0` assert: `memory.elf` is a freestanding function-export ELF
+    with no `_start`, so its `e_entry` is 0 by construction."""
     elf = strider.lift.load_elf(str(x86_memory_elf))
     ep = elf.entry_point()
     assert isinstance(ep, int)
@@ -53,7 +47,6 @@ def test_two_elfs_first_wins(x86_memory_elf, x86_calls_elf):
     elf = strider.lift.load_elf(str(x86_memory_elf))
     elf.add_elf(str(x86_calls_elf))
     syms = elf.symbols()
-    # The earlier ELF (memory.elf) wins for shared names.
     mem_only = strider.lift.load_elf(str(x86_memory_elf))
     if "_start" in syms:
         assert syms["_start"] == mem_only.symbol("_start")
@@ -62,21 +55,13 @@ def test_two_elfs_first_wins(x86_memory_elf, x86_calls_elf):
 def test_add_elf_then_analyze_sees_merged_regions(x86_memory_elf, x86_calls_elf):
     """Regression: `analyze` must see regions merged by `add_elf`.
 
-    The `ElfLifter`'s base `Lifter` state snapshots the memory map when
-    it is built.  Before the fix it was built once at construction, so
-    a function whose code lives ONLY in a later `add_elf`-merged ELF
-    was invisible to `analyze` — the lift had no bytes to read.
-    `add_elf` now rebuilds the base `Lifter` from the merged regions
-    (via `Lifter._rebuild`), so analysing a calls.elf-only function
-    succeeds.
+    The lifter snapshots the memory map when it is built.  That snapshot
+    used to predate any later `add_elf`, so a function living only in a
+    merged-in ELF was invisible: the lift had no bytes to read there.
     """
     elf = strider.lift.load_elf(str(x86_memory_elf))
     # `fib_recursive` is defined only in calls.elf, not in memory.elf.
     assert "fib_recursive" not in strider.lift.load_elf(str(x86_memory_elf)).symbols()
     elf.add_elf(str(x86_calls_elf))
     _cfg, function, _unresolved = elf.analyze("fib_recursive")
-    # A real lift of `fib_recursive` produces a non-trivial IR graph;
-    # before the fix this raised because the inner run handle's memory
-    # snapshot predated the merge, so the lifter had no bytes to read at
-    # the calls.elf-only address.
     assert function.node_count() > 0

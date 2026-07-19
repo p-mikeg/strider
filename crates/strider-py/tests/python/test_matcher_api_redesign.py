@@ -1,14 +1,12 @@
-"""Tests for the unified binding-centric matcher API:
+"""The binding-centric matcher API.
 
-- `find_all(pat, ...)` accepts a single `Pattern` *or* a `list[Pattern]`
-  (a list behaves like the old `find_joined`, returning merged bindings),
-  and returns a deduplicated `list[Match]`.
-- `find_all(pat, ...)[0]` is the first binding; `[]` means no match.
-- `find_unique(pat, ...)` returns the single binding, erroring on 0 and >1.
+`find_all` takes a single `Pattern` or a `list[Pattern]` (a list joins on
+shared captures, returning merged bindings) and returns a deduplicated
+`list[Match]`.  `find_unique` errors on 0 and on >1.
 
-Dedup is controlled by `ignore_root`: default keys on captures+root(s);
-`ignore_root=True` keys on captures only, collapsing one binding reached
-from several roots.
+Dedup is controlled by `ignore_root`: the default keys on captures plus
+root(s); `ignore_root=True` keys on captures only, collapsing one binding
+reached from several roots.
 """
 
 from __future__ import annotations
@@ -30,7 +28,7 @@ def _roots(matches):
 
 
 def test_find_all_single_equals_one_element_list():
-    # The 1-element-join invariant: find_all(p) == find_all([p]).
+    # The 1-element-join invariant.
     g = _switch_graph()
     single = g.find_all(call())
     listed = g.find_all([call()])
@@ -43,17 +41,16 @@ def test_find_all_empty_list_is_empty():
 
 
 def test_ignore_root_collapses_captureless_pattern():
-    # 5 loads at 5 distinct roots.  Default dedup keeps them apart (5);
-    # ignore_root=True keys on captures only — with no captures every
-    # binding is identical, so they collapse to one.
+    # 5 loads at 5 distinct roots.  With no captures every binding is
+    # identical, so ignore_root=True collapses them to one.
     g = _switch_graph()
     assert len(g.find_all(load())) == 5
     assert len(g.find_all(load(), ignore_root=True)) == 1
 
 
 def test_ignore_root_keeps_distinct_captures():
-    # Each load binds a distinct node to `c`, so ignore_root=True still
-    # yields 5 (the captures differ even though the pattern is the same).
+    # Each load binds a distinct node to `c`, so the captures differ and
+    # ignore_root=True still yields 5.
     g = _switch_graph()
     c = Capture()
     assert len(g.find_all(load().capture(c), ignore_root=True)) == 5
@@ -85,8 +82,8 @@ def test_find_all_returns_empty_when_no_match():
 
 
 def test_find_all_list_merges_shared_capture():
-    # Two patterns share `target`; a list input returns MERGED bindings —
-    # each Match reads the shared capture directly (no per-pattern tuple).
+    # Two patterns share `target`; each merged Match reads the shared
+    # capture directly, with no per-pattern tuple.
     elf = fixture_path("x86", "switch")
     f_addr = strider.lift.load_elf(str(elf)).symbol("f")
     g = _switch_graph()
@@ -101,7 +98,6 @@ def test_find_all_list_merges_shared_capture():
 
 
 def test_find_all_list_with_unmatchable_pattern_is_empty():
-    # A pattern that cannot match anywhere makes the whole join empty.
     g = _switch_graph()
     impossible = int_const(0xDEAD_BEEF_CAFE_BABE)
     assert g.find_all([call(), impossible]) == []

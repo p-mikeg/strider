@@ -1,10 +1,5 @@
-//! `PyFunction` — wraps `strider_ir::Function` and exposes dot rendering
-//! plus pattern queries and rewrites.
-//!
-//! The IR graph's dot dumper requires a borrowed `Sleigh` for
-//! register-name resolution.  PyFunction keeps a `Py<PyCfg>` reference
-//! so the Sleigh stays alive for the graph's lifetime and is
-//! reachable through `strider_cfg::Cfg::sleigh`.
+//! Pretty dot rendering needs a borrowed `Sleigh` for register names, so
+//! `PyFunction` holds a `Py<PyCfg>` to keep one alive and reachable.
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
@@ -16,19 +11,17 @@ use strider_ir::node::NodeKind;
 use crate::cfg::PyCfg;
 use crate::dot::reject_style_without_pretty;
 
-/// Opaque wrapper over `strider_ir::Function`.
+/// A lifted IR function: pattern queries, rewrites, walks and dot rendering.
 ///
-/// The graph is held in `Rc<RefCell<...>>` so optimization passes can
-/// mutate it without requiring `&mut self` on the PyFunction wrapper, and
-/// so the same graph can be shared across multiple Python references.  `Rc`
-/// (not `Arc`) and the `unsendable` pyclass because the workspace is
-/// single-threaded and `Function` is `!Sync` (its SP-decomposition cache is a
-/// `RefCell`); Python access is GIL-serialised regardless.
+/// `Rc<RefCell<_>>` lets passes mutate the graph without `&mut self` and lets
+/// several Python handles share it. `Rc` (not `Arc`) and `unsendable` because
+/// the workspace is single-threaded and `Function` is `!Sync`; Python access is
+/// GIL-serialised regardless.
 #[pyclass(name = "Function", module = "strider.ir", unsendable)]
 pub struct PyFunction {
     pub(crate) inner: Rc<RefCell<strider_ir::Function>>,
-    /// Strong reference to the parent Cfg; keeps the Sleigh alive for
-    /// dot rendering and ensures destruction order is graph-then-cfg.
+    /// Keeps the Sleigh alive for dot rendering; also forces graph-then-cfg
+    /// destruction order.
     pub(crate) cfg: Py<PyCfg>,
 }
 
@@ -40,14 +33,11 @@ impl PyFunction {
         }
     }
 
-    /// The Sleigh-backed pretty render, shared by `to_dot(pretty=True)`
-    /// and `to_html(pretty=True)`.
+    /// Pretty render for `to_dot(pretty=True)` / `to_html(pretty=True)`.
     ///
-    /// A `Function` owns no `Sleigh`, but it holds a strong handle on the
-    /// `Cfg` it was lifted from, which holds one on the `Lifter` that owns
-    /// the Sleigh — so the pretty renderer is reachable by borrowing back
-    /// down that chain, with no extra field and no `Rc`/`Arc` sharing of
-    /// the Sleigh itself (the borrow never outlives the `PyRef` guard).
+    /// A `Function` owns no `Sleigh`; it borrows back down the
+    /// function -> cfg -> lifter chain to reach one, so the Sleigh needs no
+    /// `Rc`/`Arc` sharing (the borrow never outlives the `PyRef` guard).
     fn pretty_dot(
         &self,
         py: Python<'_>,
@@ -70,20 +60,15 @@ impl PyFunction {
         }
     }
 
-    /// Borrow the inner graph for read.  Returns an `anyhow::Error` if the
-    /// graph is currently borrowed for mutation (a `RefCell` conflict).
     pub(crate) fn read_inner(&self) -> anyhow::Result<Ref<'_, strider_ir::Function>> {
         self.inner
             .try_borrow()
             .map_err(|_| anyhow::anyhow!("Function is currently borrowed for mutation"))
     }
 
-    /// Try to borrow the inner graph mutably.  Used by mutating methods
-    /// (`compact`, `rewrite`, and the `run_pipeline_in_place` helper
-    /// `Lifter.optimize` drives) so that a re-entrant call from inside a
-    /// `.when()` predicate (which holds the read borrow for the duration of
-    /// `find_all`) surfaces a typed error rather than panicking on the
-    /// already-borrowed `RefCell`.
+    /// Fallible so a re-entrant call from inside a `.when()` predicate (which
+    /// holds the read borrow for all of `find_all`) surfaces a typed error
+    /// instead of panicking on the already-borrowed `RefCell`.
     pub(crate) fn try_write_inner(&self) -> anyhow::Result<RefMut<'_, strider_ir::Function>> {
         self.inner.try_borrow_mut().map_err(|_| {
             anyhow::anyhow!(
@@ -96,33 +81,20 @@ impl PyFunction {
         })
     }
 
-    /// Borrow the inner graph for read, then run `f` against it.  Centralises
-    /// the `self.read_inner().map_err(into_strider_err)?` incantation that
-    /// every read-only `#[pymethods]` accessor would otherwise repeat.  Use
-    /// this variant when `f` itself returns a `PyResult` (e.g. it builds an
-    /// error from graph state).
     fn with_read<R>(&self, f: impl FnOnce(&strider_ir::Function) -> PyResult<R>) -> PyResult<R> {
         let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
         f(&function)
     }
 
-    /// Like [`Self::with_read`] but for accessors whose closure just
-    /// produces a value with no further fallible step — saves the
-    /// per-site `Ok(...)` wrapping.
+    /// [`Self::with_read`] for infallible closures.
     fn with_read_value<R>(&self, f: impl FnOnce(&strider_ir::Function) -> R) -> PyResult<R> {
         let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
         Ok(f(&function))
     }
 
-    /// Run `pipeline` over this graph in place, bumping the generation
-    /// first so any stale handle is invalidated even if a pass errors
-    /// mid-run and leaves the arena partially rewritten.  `label` names
-    /// the operation in the surfaced error.
-    ///
-    /// `pub(crate)` (rather than a private fn) because `Lifter.optimize`
-    /// (`strider_cls.rs`) drives the same in-place-run logic — it lives
-    /// here so `PyFunction`'s lock-acquisition/generation-bump contract
-    /// stays in one place rather than being duplicated at the call site.
+    /// Run `pipeline` over this graph in place; `label` names the operation in
+    /// the surfaced error. `pub(crate)` so `Lifter.optimize` shares the
+    /// borrow-then-bump contract instead of re-deriving it.
     pub(crate) fn run_pipeline_in_place(
         &self,
         pipeline: strider_orchestrator::opt::OptimizerPipeline,
@@ -131,11 +103,9 @@ impl PyFunction {
         let mut function = self
             .try_write_inner()
             .map_err(crate::errors::into_strider_err)?;
-        // Bump the generation BEFORE running: the pipeline mutates the
-        // arena in place, and a pass that errors mid-run can leave the
-        // graph partially rewritten.  Invalidating outstanding handles
-        // unconditionally means a stale handle can never silently read
-        // that partially-optimized graph after the error is surfaced.
+        // Bump BEFORE running: a pass that errors mid-run leaves the arena
+        // partially rewritten, and outstanding handles must not be able to
+        // read that state after the error surfaces.
         function.graph_mut().bump_generation();
         pipeline
             .run(
@@ -149,48 +119,37 @@ impl PyFunction {
     }
 }
 
-/// Write `contents` to `path`, mapping any I/O error to a `StriderError`.
-/// Shared by the `to_dot` / `to_html` file-dump paths.
 fn write_to(path: &str, contents: String) -> PyResult<()> {
     std::fs::write(path, contents).map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
 }
 
 #[pymethods]
 impl PyFunction {
-    /// Expose the strong `Py<PyCfg>` back-reference to Python's cyclic GC
-    /// so a cycle routed through a `Function` is detectable (broken at the
-    /// reader's `__dict__` / `PyLifter::__clear__`; the `cfg` handle is
-    /// load-bearing while the `Function` is alive, so no `__clear__` here).
+    /// Exposes the strong `cfg` back-reference so the cyclic GC can see a
+    /// cycle routed through a `Function`. No `__clear__`: the cycle is broken
+    /// at the reader's `__dict__` / `PyLifter::__clear__`, and `cfg` is
+    /// load-bearing for as long as the `Function` lives.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.cfg)
     }
 
-    /// The snapshot `Cfg` this function was lifted from — kept alive for
-    /// dot rendering (its `Sleigh` resolves register names).  Combine
-    /// with `Lifter.to_html(function, path)` (or the `Cfg`'s own
-    /// `to_html`) for a self-describing render without a separate result
-    /// wrapper.
+    /// The `Cfg` this function was lifted from.
     #[getter(cfg)]
     fn get_cfg(&self, py: Python<'_>) -> Py<PyCfg> {
         self.cfg.clone_ref(py)
     }
 
-    /// Render the IR graph to Graphviz DOT.  Returns the string when
-    /// `path` is `None`, else writes it to `path` and returns `None`.
+    /// Render the IR graph to Graphviz DOT. Returns the string when `path` is
+    /// `None`, else writes it to `path` and returns `None`.
     ///
-    /// `pretty=False` (the default) renders the graph **exactly as
-    /// stored**: one node per `NodeId` (every arena node, incl. detached
-    /// ones), one edge per input edge, side-tables (stack offset, phi tag,
-    /// asm fingerprints, call-other name, clobber override, arg index)
-    /// shown inline, no constant inlining or virtual nodes.  It is the
-    /// debugging view of the real graph shape, and it cannot fail.
+    /// `pretty=False` (the default) renders the graph exactly as stored: one
+    /// node per `NodeId` including detached ones, one edge per input edge,
+    /// side-tables inline, no constant inlining or virtual nodes.
     ///
     /// `pretty=True` inlines constants, adds virtual nodes and resolves
-    /// register names.  That needs a `Sleigh`, which this function reaches
-    /// back through its parent `Cfg`'s `Lifter` — so it is only available
-    /// for a function obtained from `analyze` (and raises `StriderError`
-    /// if the graph has no entry).  `style` selects the dot theme and
-    /// applies to the pretty render only.
+    /// register names. That needs a `Sleigh`, so it only works for a function
+    /// obtained from `analyze`, and raises `StriderError` if the graph has no
+    /// entry. `style` selects the dot theme and applies to pretty only.
     #[pyo3(signature = (path=None, *, pretty=false, style=None))]
     fn to_dot(
         &self,
@@ -215,9 +174,8 @@ impl PyFunction {
         }
     }
 
-    /// Like `to_dot` but wraps the DOT in a self-contained HTML page
-    /// (embedded viz.js; no external `dot` binary needed).  Takes the same
-    /// `pretty` / `style` arguments and the same caveats.
+    /// Like `to_dot` but wraps the DOT in a self-contained HTML page (embedded
+    /// viz.js, no external `dot` binary). Same arguments and caveats.
     #[pyo3(signature = (path=None, *, pretty=false, style=None))]
     fn to_html(
         &self,
@@ -242,26 +200,21 @@ impl PyFunction {
         }
     }
 
-    /// Returns the number of node ids in the IR arena — every allocated
-    /// slot, reachable or not.  After in-place optimization, culled-but-not-
-    /// compacted nodes are still counted; analyze with compaction (or compare
-    /// against [`count_regions`], which walks from entry) to exclude them.
+    /// Number of node ids in the IR arena: every allocated slot, reachable or
+    /// not. Culled-but-uncompacted nodes still count, so compact first if you
+    /// want live nodes only.
     fn node_count(&self) -> PyResult<usize> {
         self.with_read_value(|function| function.graph().all_node_ids().count())
     }
 
-    /// The IR node id of the function's `Entry` node — the natural starting
-    /// center for the interactive explorer's neighborhood view.
+    /// Node id of the function's `Entry` node.
     fn entry_node(&self) -> PyResult<u32> {
         self.with_read_value(|function| function.entry().as_u32())
     }
 
-    /// Raw (structure-faithful) render of the depth-`depth` neighborhood around
-    /// node `center` — the same BFS/budget as the pretty explorer view, but
-    /// showing the graph exactly as stored (one `n<id>` box per IR node, edges
-    /// as stored, side-tables inline, no virtuals / const-dup / Sleigh names).
-    /// Needs no Sleigh, so it lives on `Function`; the debug view for when the
-    /// pretty output can't be trusted.
+    /// Render the depth-`depth` neighborhood around node `center` exactly as
+    /// stored (same BFS and budget as the pretty explorer view, but no
+    /// virtuals, const-dup or Sleigh names). Needs no Sleigh.
     #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60))]
     fn neighborhood_dot(
         &self,
@@ -280,12 +233,7 @@ impl PyFunction {
         .map_err(crate::errors::into_strider_err)
     }
 
-    /// Returns the count of `Region` (control-flow join) nodes
-    /// reachable from entry.  This is a single linear pre-order sweep
-    /// using the IR's own kind-filtered walker, whose visited-set is a
-    /// `DenseEntitySet<NodeId>` (see [`strider_ir::walk::PreOrder`]),
-    /// so it satisfies the "use entity-set bookkeeping" memory
-    /// directive by routing through the canonical IR traversal helper.
+    /// Number of `Region` (control-flow join) nodes reachable from entry.
     fn count_regions(&self) -> PyResult<usize> {
         self.with_read_value(|function| {
             function
@@ -294,9 +242,7 @@ impl PyFunction {
         })
     }
 
-    /// Returns a list of all node ids in the IR arena (reachable or not) as
-    /// raw integers.  Useful for iterating from Python without going
-    /// through pattern matching.
+    /// All node ids in the IR arena, reachable or not, as raw integers.
     fn node_ids(&self) -> PyResult<Vec<u32>> {
         self.with_read_value(|function| {
             function
@@ -307,11 +253,9 @@ impl PyFunction {
         })
     }
 
-    /// Re-validates the graph and returns `None` on success or a
-    /// human-readable error message on failure.
-    ///
-    /// The asm-fingerprint Layer-C check is always-on: every reachable
-    /// non-exempt node must carry a non-empty contributor list.
+    /// Re-validate the graph: `None` on success, else an error message.
+    /// Includes the always-on asm-fingerprint check (every reachable
+    /// non-exempt node must carry a non-empty contributor list).
     fn validate(&self) -> PyResult<Option<String>> {
         self.with_read(|function| match strider_ir::validate::validate(function) {
             Ok(()) => Ok(None),
@@ -319,9 +263,8 @@ impl PyFunction {
         })
     }
 
-    /// Compact the graph arena: drop every node not reachable from
-    /// `entry` via [`strider_ir::graph::Graph::walk_from`].  Mutates in place.
-    /// Pre-compaction node ids become invalid across this call.
+    /// Drop every node unreachable from `entry`. Mutates in place, and
+    /// invalidates all pre-compaction node ids.
     fn compact(&self) -> PyResult<()> {
         let mut function = self
             .try_write_inner()
@@ -332,13 +275,9 @@ impl PyFunction {
         Ok(())
     }
 
-    /// Deep-copy this function into a fully independent `Function`.
-    ///
-    /// The clone owns a fresh graph + side-tables (its own generation
-    /// counter), so mutating it via `rewrite(...)` / `Lifter.optimize(...)`
-    /// leaves the original untouched — the idiom for a non-destructive
-    /// rewrite is `g2 = fn.clone(); g2.rewrite(find, replace)`.  The parent
-    /// `Cfg` (Sleigh for dot rendering) is shared by handle.
+    /// Deep-copy into an independent `Function` with its own graph,
+    /// side-tables and generation counter, so `rewrite` / `Lifter.optimize`
+    /// on it leave the original untouched. The parent `Cfg` is shared.
     #[pyo3(name = "clone")]
     fn py_clone(&self, py: Python<'_>) -> PyResult<PyFunction> {
         let cloned = self
@@ -351,20 +290,16 @@ impl PyFunction {
         })
     }
 
-    /// Find every site where `pat` matches.  `pat` accepts any
-    /// `PatLike` (a `Pat`, a typed builder like `CallPat`, a
-    /// `Capture`, or a string capture-name) — typed builders (e.g.
-    /// `call().arg(0, int_const(8))`) are finalised implicitly so
-    /// the call site stays uncluttered by `.into_pat()`.
+    /// Find every site where `pat` matches. `pat` takes a `Pat`, a typed
+    /// builder like `CallPat`, a `Capture`, or a capture-name string; typed
+    /// builders are finalised implicitly, no `.into_pat()` needed.
     ///
     /// Matcher options:
-    /// * `ignore_casts=True` — walk through every value-passthrough
-    ///   cast `NodeKind` (Extend / Truncate / CastTo* / Bits-cast).
-    ///   Equivalent to `ignore_casts_mask=CastMask.all()`.
-    /// * `ignore_casts_mask=mask` — granular per-cast walk-through.
-    ///   Compose via `CastMask.extend() | CastMask.truncate()`.
-    ///   Mutually exclusive with `ignore_casts`; passing both is an
-    ///   error.
+    /// * `ignore_casts=True`: walk through every value-passthrough cast kind
+    ///   (Extend / Truncate / CastTo* / Bits-cast). Same as
+    ///   `ignore_casts_mask=CastMask.all()`.
+    /// * `ignore_casts_mask=mask`: granular per-cast walk-through, composed via
+    ///   `CastMask.extend() | CastMask.truncate()`. Passing both is an error.
     #[pyo3(signature = (pat, ignore_root=false, ignore_casts=false, ignore_casts_mask=None, constraints=None))]
     fn find_all(
         slf: Py<Self>,
@@ -382,13 +317,10 @@ impl PyFunction {
         dedup_matches(&slf, py, raw, generation, ignore_root)
     }
 
-    /// Find the single binding of `pat`, erroring if there is not exactly
-    /// one.  Replaces the `hits = find_all(p); assert len(hits) == 1; hits[0]`
-    /// idiom with distinct error messages for the 0-match and >1-match cases.
-    ///
-    /// `pat`, `ignore_root`, and the matcher options mirror `find_all` — the
-    /// count is taken *after* deduplication, so `ignore_root` controls whether
-    /// distinct roots binding the same captures count as one or many.
+    /// Find the single binding of `pat`, erroring if there is not exactly one.
+    /// Arguments mirror `find_all`. The count is taken after deduplication, so
+    /// `ignore_root` decides whether distinct roots binding the same captures
+    /// count as one match or many.
     #[pyo3(signature = (pat, ignore_root=false, ignore_casts=false, ignore_casts_mask=None, constraints=None))]
     fn find_unique(
         slf: Py<Self>,
@@ -415,21 +347,15 @@ impl PyFunction {
         }
     }
 
-    /// Apply a single `find → replace` rewrite rule across the graph.
-    /// Returns the number of times the rule fired.  `find` accepts
-    /// `PatLike` (so e.g. `g.rewrite(find=call().arg(0, …), replace=…)`
-    /// works without an explicit `.into_pat()` conversion); `replace`
-    /// is typed as `strider.template.Template` — build it via the
-    /// `strider.template` free functions (`tpl.var(c)`, `tpl.add(...)`,
-    /// …).  A bare `strider.pattern.Pat` (its build-valid subset only),
-    /// a `Capture`, or a string capture-name is still accepted for
-    /// back-compat.
+    /// Apply one find/replace rewrite rule across the graph, returning the
+    /// number of times it fired. `find` takes any pattern-like value;
+    /// `replace` is a `strider.template.Template` built from the
+    /// `strider.template` free functions (a build-valid `strider.pattern.Pat`,
+    /// a `Capture` or a capture-name string are accepted for back-compat).
     ///
-    /// The RHS is validated at rule-construction time via
-    /// `rewrite_rule_dynamic` — every node must be either a concrete
-    /// builder (e.g. `int_const(0)`, `add(...)`) or a capture bound by
-    /// the LHS.  Using a wildcard / kind-`Any` shape on the RHS
-    /// surfaces a `StriderError` here rather than at first-match time.
+    /// The RHS is validated here, not at first-match time: every node must be
+    /// a concrete builder or a capture bound by the LHS, so a wildcard or
+    /// kind-`Any` shape raises `StriderError` up front.
     fn rewrite(
         &self,
         py: Python<'_>,
@@ -446,10 +372,8 @@ impl PyFunction {
         apply_rules_count_on(&mut function, std::slice::from_ref(&rule))
     }
 
-    /// Apply a list of `(find, replace)` pairs across the graph round-
-    /// robin at every reachable node.  Returns the total fire count
-    /// (sum across pairs and nodes).  `replace` is typed as
-    /// `strider.template.Template` — see `rewrite`'s doc comment.
+    /// Apply `(find, replace)` pairs round-robin at every reachable node,
+    /// returning the total fire count across pairs and nodes. See `rewrite`.
     fn rewrite_all(
         &self,
         py: Python<'_>,
@@ -458,8 +382,6 @@ impl PyFunction {
             crate::pattern::TemplateLike<'_>,
         )>,
     ) -> PyResult<usize> {
-        // Build a match `Pattern` (LHS) and a build `Template` (RHS) per
-        // pair, then box each rule.
         let mut rules: Vec<strider_opt::BoxedRule> = Vec::with_capacity(pairs.len());
         for (lhs, rhs) in pairs {
             let lhs_pat = lhs.to_pattern(py)?;
@@ -474,22 +396,16 @@ impl PyFunction {
         apply_rules_count_on(&mut function, &rules)
     }
 
-    /// Returns a `Node` handle on the node at `node_id`.
-    ///
-    /// The handle is a discoverable entry point into the IR graph: from
-    /// it you can read the node's `kind()`, walk its `inputs()` (which
-    /// return more `Node`s), pull out `const_int()` / `const_bool()`
-    /// values, and recover the `asm_fingerprint()` — instead of juggling
-    /// raw `u32` ids through the typed `node_*` getters.
-    ///
-    /// Raises `StriderError` for an invalid `node_id`.
+    /// A `Node` handle on the node at `node_id`, for reading its `kind()`,
+    /// walking `inputs()`, pulling `const_int()` / `const_bool()` and reading
+    /// `asm_fingerprint()`. Raises `StriderError` for an invalid `node_id`.
     fn node(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<crate::node::PyNode> {
         crate::node::PyNode::new(py, slf, node_id)
     }
 
-    /// Control-only reachability (the CFG skeleton) from the entry, as `Node`s,
-    /// in ascending node-id order (unlike `data_walk` / `mem_walk`, which are
-    /// pre-order — control reachability is returned as a set).
+    /// Control-only reachability (the CFG skeleton) from the entry, in
+    /// ascending node-id order. Unlike `data_walk` / `mem_walk` this is not
+    /// pre-order: control reachability is computed as a set.
     fn cfg_walk(slf: Py<Self>, py: Python<'_>) -> PyResult<Vec<crate::node::PyNode>> {
         let ids: Vec<u32> = slf.borrow(py).with_read_value(|function| {
             strider_ir::walk::cfg_reachable(function.graph(), function.entry())
@@ -508,9 +424,9 @@ impl PyFunction {
         Self::nodes_from_ids(slf, py, ids)
     }
 
-    /// The memory-touching nodes (Load / Store / Call / CallOther / MemPhi and
-    /// the InitialMemory root) reachable by following memory-token edges
-    /// forward from the function's InitialMemory, in pre-order.
+    /// Memory-touching nodes (Load / Store / Call / CallOther / MemPhi plus
+    /// the InitialMemory root) reached by following memory-token edges forward
+    /// from InitialMemory, pre-order.
     fn mem_walk(slf: Py<Self>, py: Python<'_>) -> PyResult<Vec<crate::node::PyNode>> {
         let ids: Vec<u32> = slf.borrow(py).with_read_value(|function| {
             strider_ir::walk::memory_reachable(function, function.entry())
@@ -534,9 +450,7 @@ impl PyFunction {
 }
 
 impl PyFunction {
-    /// Build `Node` handles for `ids`, cloning the `Py<Self>` handle per node
-    /// (mirrors `Node.inputs`). Ids are collected under a read borrow that has
-    /// been dropped before this runs.
+    /// Callers must have dropped the read borrow they collected `ids` under.
     fn nodes_from_ids(
         slf: Py<Self>,
         py: Python<'_>,
@@ -550,9 +464,6 @@ impl PyFunction {
     }
 }
 
-/// Reject the mutually-exclusive `ignore_casts` + `ignore_casts_mask`
-/// combination, naming `op` (`"find_all"` /
-/// `"find_unique"`) in the error so the message points at the caller.
 fn reject_conflicting_cast_flags(
     op: &str,
     ignore_casts: bool,
@@ -566,13 +477,10 @@ fn reject_conflicting_cast_flags(
     Ok(())
 }
 
-/// RAII guard pairing a `crate::pattern::push_current_query_function`
-/// call with its `pop_current_query_function` counterpart: the pop runs
-/// from `Drop`, so it fires on every exit path out of [`run_query`] —
-/// normal return, an early `?`, or a Rust panic unwinding through
-/// `run` — instead of only the fall-through path a plain function-call
-/// pair would cover. Without this, a panic inside `run` would leave a
-/// stale `(Py<PyFunction>, u64)` on the thread-local stack forever.
+/// Pops `crate::pattern::CURRENT_QUERY_FUNCTION` from `Drop`, so it fires on
+/// every exit path out of [`run_query`] including a panic unwinding through
+/// `run`. A plain trailing call would leak a stale entry on that thread-local
+/// stack forever.
 struct QueryFunctionGuard;
 
 impl Drop for QueryFunctionGuard {
@@ -581,24 +489,14 @@ impl Drop for QueryFunctionGuard {
     }
 }
 
-/// Run a matcher query and snapshot the generation, collapsing the
-/// borrow → `read_inner` → `Matcher::new` → run → generation-snapshot
-/// → drop-guards → pending-control-flow scaffold the three query entry
-/// points (`find_all` / `find_unique`) share.
-///
-/// `run` receives the freshly-built `Matcher` and produces the raw match
-/// payload; the returned `generation` is what each raw `Match` must be
-/// tagged with so a later in-place rewrite / compaction invalidates the
+/// Run a matcher query and snapshot the generation, which each raw `Match`
+/// must be tagged with so a later rewrite or compaction invalidates the
 /// derived `PyMatch` handles.
 ///
-/// Pushes `slf` + the sampled generation onto
-/// `crate::pattern::CURRENT_QUERY_FUNCTION` for the duration of `run`, so
-/// a `.when()` predicate fired from inside the matcher can build a
-/// genuine `Match` handle back onto this same live function (patterns
-/// are built well before any `Function` is known, so the predicate
-/// closure itself can't capture `slf`). The push is paired with its pop
-/// via a [`QueryFunctionGuard`] rather than a plain trailing call so the
-/// pop still runs if `run` panics.
+/// Pushes `slf` + the generation onto `crate::pattern::CURRENT_QUERY_FUNCTION`
+/// for the duration of `run` so a `.when()` predicate can build a `Match`
+/// handle back onto this live function: patterns are built long before any
+/// `Function` exists, so the predicate closure cannot capture `slf` itself.
 fn run_query<T>(
     slf: &Py<PyFunction>,
     py: Python<'_>,
@@ -617,23 +515,19 @@ fn run_query<T>(
     let raw = raw.map_err(crate::errors::into_strider_err)?;
     drop(function_guard);
     drop(function_borrow);
-    // If a `.when()` predicate stashed a control-flow exception
-    // (KeyboardInterrupt / SystemExit) or a bad return-type PyErr in the
-    // thread-local pending-control-flow cell, surface it here.  See
-    // `crate::pattern::PENDING_CONTROL_FLOW` for why a cell is used
-    // instead of `PyErr::restore`/`take`: restore would leave the error
-    // set between predicate calls and the next `call_bound` would replace
-    // the original error with `SystemError`.
+    // Surface anything a `.when()` predicate stashed: a control-flow exception
+    // (KeyboardInterrupt / SystemExit) or a bad-return-type PyErr. A
+    // thread-local cell, not `PyErr::restore`/`take`, because restore leaves
+    // the error set between predicate calls and the next `call_bound` would
+    // replace the original with `SystemError`.
     if let Some(err) = crate::pattern::take_pending_control_flow() {
         return Err(err);
     }
     Ok((raw, generation))
 }
 
-/// Fold the matcher cast-walk-through flags onto a freshly-built
-/// `Pattern`. `ignore_casts` is equivalent to `ignore_casts_mask =
-/// CastMask::all()`; the two are mutually exclusive (checked by the
-/// caller).
+/// `ignore_casts` means `ignore_casts_mask = CastMask::all()`; the caller has
+/// already rejected passing both.
 fn apply_cast_mask(
     pattern: strider_pattern::Pattern,
     ignore_casts: bool,
@@ -648,9 +542,6 @@ fn apply_cast_mask(
     }
 }
 
-/// Seal a query input into one `Pattern` per pattern, folding the shared
-/// cast-walk-through mask onto each.  A single pattern yields one; a list
-/// yields one per element (empty list → no patterns).
 fn build_query_patterns(
     py: Python<'_>,
     pat: crate::pattern::PatQuery<'_>,
@@ -664,11 +555,6 @@ fn build_query_patterns(
         .collect())
 }
 
-/// Run the matcher for `patterns`, returning one sub-match group per result:
-/// a single pattern maps each `find_all` hit to a one-element group; several
-/// patterns join on shared captures (each group holds one sub-match per
-/// pattern, which `PyMatch` presents as a merged binding).
-/// Unwrap the optional Python constraint list into plain `JoinConstraint`s.
 fn collect_constraints(
     constraints: &Option<Vec<PyRef<'_, crate::pattern::PyJoinConstraint>>>,
 ) -> Vec<strider_pattern::JoinConstraint> {
@@ -678,6 +564,9 @@ fn collect_constraints(
         .unwrap_or_default()
 }
 
+/// One sub-match group per result: a single pattern gives one-element groups,
+/// several patterns join on shared captures and give one sub-match per pattern
+/// (which `PyMatch` presents as a merged binding).
 fn run_pattern_query(
     slf: &Py<PyFunction>,
     py: Python<'_>,
@@ -686,9 +575,8 @@ fn run_pattern_query(
 ) -> PyResult<(Vec<Vec<strider_pattern::Match>>, u64)> {
     let refs: Vec<&strider_pattern::Pattern> = patterns.iter().collect();
     run_query(slf, py, |matcher| {
-        // Single pattern with no constraints: the fast `find_all` path. Any
-        // constraint (even over one pattern's own captures) routes through the
-        // constrained join so the CFG filter runs.
+        // Any constraint, even over a single pattern's own captures, routes
+        // through the constrained join so the CFG filter actually runs.
         if refs.len() == 1 && constraints.is_empty() {
             Ok(matcher.matches(refs[0])?.map(|m| vec![m]).collect())
         } else {
@@ -697,10 +585,9 @@ fn run_pattern_query(
     })
 }
 
-/// Wrap each raw sub-match group as a `PyMatch` and deduplicate.  The dedup
-/// key is `(roots, capture-signatures)` — or capture-signatures alone when
-/// `ignore_root` — so commutative-symmetry and multi-path hits collapse, and
-/// `ignore_root` additionally collapses one binding reached from several roots.
+/// Dedup key is `(roots, capture-signatures)`, or capture-signatures alone
+/// under `ignore_root`, so commutative-symmetry and multi-path hits collapse
+/// and `ignore_root` also collapses one binding reached from several roots.
 fn dedup_matches(
     slf: &Py<PyFunction>,
     py: Python<'_>,
@@ -723,16 +610,12 @@ fn dedup_matches(
     Ok(out)
 }
 
-/// Drive a slice of rewrite rules round-robin across every reachable
-/// node of `function`, returning the total per-`(node, rule)` fire
-/// count (Python users assert "this rule fired N times").  The single-
-/// rule caller passes `std::slice::from_ref(&rule)`.
+/// Returns the total per-`(node, rule)` fire count.
 ///
-/// An in-place rewrite mutates the arena without compacting it (node
-/// ids stay valid), so it does NOT bump the generation on its own —
-/// outstanding `Match` / `Node` handles would silently read the
-/// post-rewrite graph.  Bump the generation afterwards so those handles
-/// fail their staleness guard.
+/// An in-place rewrite mutates the arena without compacting it, so node ids
+/// stay valid and nothing bumps the generation on its own. Bump it here, or
+/// outstanding `Match` / `Node` handles pass their staleness guard and
+/// silently read the post-rewrite graph.
 fn apply_rules_count_on<R>(function: &mut strider_ir::Function, rules: &[R]) -> PyResult<usize>
 where
     R: for<'g> Fn(

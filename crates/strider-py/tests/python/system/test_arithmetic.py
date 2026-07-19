@@ -1,9 +1,5 @@
-"""Per-arch arithmetic tests.
-
-Mirror of `crates/strider/tests/arithmetic.rs`: pin every IntBinaryOp /
-IntUnaryOp variant the analyser must lower for the `arithmetic` fixture
-case.  Each (case, fn_name, arch_id) triple is one parametrised pytest.
-"""
+"""Per-arch arithmetic tests: every IntBinaryOp / IntUnaryOp variant the
+analyser must lower for the `arithmetic` fixture, once per arch."""
 
 from __future__ import annotations
 
@@ -36,8 +32,7 @@ def test_mul(arch_id, fixtures_dir):
 
 def test_udiv(arch_id, fixtures_dir):
     g = analyze(arch_id, "arithmetic", "udiv", fixtures_dir=fixtures_dir)
-    # ARM soft-float lowers udiv to a library call.  Either Div or Call
-    # counts as evidence the lifter found the operation.
+    # ARM soft-float lowers udiv to a library call, so Call also counts.
     assert count_int_binop(g, "Div") >= 1 or count_calls(g) >= 1
 
 
@@ -81,11 +76,8 @@ def test_bit_xor(arch_id, fixtures_dir):
 
 def test_bit_not(arch_id, fixtures_dir):
     g = analyze(arch_id, "arithmetic", "bit_not", fixtures_dir=fixtures_dir)
-    # Sleigh's `IntNeg` opcode (bitwise complement, `~x`) lifts to
-    # `Xor(_, IntConst(all_ones))` — the canonical form since the
-    # former BitNot unary-op was removed.  `count_int_unop(g, "BitNot")`
-    # is a back-compat wrapper that pattern-matches the Xor-with-all-ones
-    # shape via `pat.int_not`.
+    # `~x` lifts to `Xor(_, IntConst(all_ones))`; the "BitNot" counter is
+    # a back-compat wrapper that matches that shape.
     assert count_int_unop(g, "BitNot") >= 1
 
 

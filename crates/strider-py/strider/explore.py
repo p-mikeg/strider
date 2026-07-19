@@ -1,16 +1,14 @@
-"""Interactive IR explorer: a tiny local server + graphviz (viz.js) frontend.
+"""Interactive IR explorer: a small local server plus a graphviz frontend.
 
-`Lifter.visualize(target)` opens a browser tab showing the depth-N
-neighborhood (inputs + outputs) around the entry node, rendered by graphviz.
-Click a node to re-center on it (the clicked node stays put); click an edge to
-walk along it, shift-click to mark it. A search bar runs a strider pattern
-(with autocomplete) and highlights the matching nodes as pivots.
+`Lifter.visualize(target)` serves a page showing the neighborhood (inputs and
+outputs) around the entry node. Click a node to re-center on it, click an edge
+to walk along it, shift-click to mark it. The search bar runs a strider
+pattern, with autocomplete, and highlights the matching nodes.
 
-The graph is never rendered whole — only a small neighborhood — so graphviz is
-always fast and pretty. Real DOT node ids are IR node ids, so pattern matches
-(`find_all(...).root`) line up 1:1 with what's drawn. Per-use constant boxes
-(`c*`) and virtual nodes (`v*`: if.true / if.false / Post Call) aren't
-navigation targets.
+The graph is never rendered whole, only a small neighborhood, so rendering
+stays fast. Drawn node ids are IR node ids, so pattern matches line up one to
+one with what you see. Per-use constant boxes (`c*`) and virtual nodes (`v*`:
+if.true, if.false, Post Call) are not navigation targets.
 """
 
 from __future__ import annotations
@@ -29,9 +27,9 @@ def _pattern_names():
 
 
 def _run_pattern(function, expr: str):
-    """Evaluate a `strider.pattern` expression against `function`, returning the
-    IR node ids of the (deduplicated) matches. `expr` is the pattern DSL text,
-    e.g. `load(addr=add(initial_var(), any_int_const()))`."""
+    """Evaluate the `strider.pattern` expression `expr` against `function`,
+    returning the node ids of the deduplicated matches, e.g.
+    `load(addr=add(initial_var(), any_int_const()))`."""
     from strider import pattern as _p
 
     names = {k: getattr(_p, k) for k in dir(_p) if not k.startswith("_")}
@@ -105,7 +103,7 @@ _FRONTEND = r"""<!doctype html>
   <button id="raw" class="navbtn" title="Toggle raw (structure-faithful) view" style="width:auto;padding:0 8px">raw</button>
   <div id="qwrap">
     <input id="q" type="text" spellcheck="false"
-      placeholder="strider pattern — e.g.  load(addr=add(initial_var(), any_int_const()))">
+      placeholder="strider pattern, e.g.  load(addr=add(initial_var(), any_int_const()))">
     <div id="ac"></div>
   </div>
   <span id="msg"></span>
@@ -115,7 +113,7 @@ _FRONTEND = r"""<!doctype html>
   <h3>Neighbors <span id="nbc" class="cnt"></span></h3><div id="nb"></div>
   <h3 style="margin-top:14px">History</h3><div id="histlist"></div>
   <h3 style="margin-top:14px">Matches <span id="hitc" class="cnt"></span></h3>
-  <div id="hits"><div style="color:var(--text2);font-size:11px">— none —</div></div>
+  <div id="hits"><div style="color:var(--text2);font-size:11px">none</div></div>
   <h3 style="margin-top:14px">Edge roles</h3>
   <div class="legend" id="legend"></div>
 </div>
@@ -226,7 +224,7 @@ function wire(){
   }
 }
 
-const NONE='<div style="color:var(--text2);font-size:11px">— none —</div>';
+const NONE='<div style="color:var(--text2);font-size:11px">none</div>';
 async function search(){
   const q=qEl.value.trim(); msg.className=""; msg.textContent="";
   if(!q){ matches=new Set(); highlight(); hits.innerHTML=NONE; pushHist(); return; }
@@ -291,60 +289,65 @@ Viz.instance().then(async v=>{
 
 
 class _IrVisualizer:
-    """Adapts a `(lifter, function)` pair to the `_Visualizer` protocol
-    `_serve` expects: `entry()`, `dot(center, depth, raw)`, `search(query)`,
+    """Adapts a `(lifter, function)` pair to what `_serve` expects:
+    `entry()`, `dot(center, depth, raw)`, `search(query)`,
     `completions()`."""
 
-    supports_raw = True  # Function.neighborhood_dot gives a no-Sleigh raw view
+    supports_raw = True
 
     def __init__(self, lifter, function):
+        """Explore `function`, rendering pretty views through `lifter`."""
         self._lifter, self._fn = lifter, function
 
     def entry(self):
+        """The node id to center the first view on."""
         return self._fn.entry_node()
 
     def dot(self, center, depth, raw):
+        """DOT for the neighborhood around `center`; `raw` selects the
+        structure-faithful view for when the pretty one cannot be trusted."""
         if raw:
-            # Structure-faithful view for when the pretty output can't be
-            # trusted (no Sleigh needed → on the Function).
             return self._fn.neighborhood_dot(center, depth=depth)
         return self._lifter.neighborhood_dot(self._fn, center, depth=depth)
 
     def search(self, query):
+        """Node ids matching the pattern expression `query`."""
         return {"highlight": _run_pattern(self._fn, query)}
 
     def completions(self):
+        """Autocomplete candidates for the search bar."""
         return _pattern_names()
 
 
 class _CfgVisualizer:
-    """Adapts a `Cfg` to the `_Visualizer` protocol `_serve` expects:
-    `entry()`, `dot(center, depth, raw)`, `search(query)`,
-    `completions()`."""
+    """Adapts a `Cfg` to what `_serve` expects: `entry()`,
+    `dot(center, depth, raw)`, `search(query)`, `completions()`."""
 
-    supports_raw = False  # Cfg has no raw view; the frontend hides the toggle
+    supports_raw = False
 
     def __init__(self, cfg):
+        """Explore `cfg`, building its per-region disassembly text once for
+        reuse by every text search."""
         self._cfg = cfg
-        # Disassembly text per region, built once (Sleigh-backed — not
-        # cheap per call) and reused for every text search.
         self._texts = cfg._region_texts()
 
     def entry(self):
+        """The region index to center the first view on."""
         return self._cfg.entry()
 
     def dot(self, center, depth, raw):
-        # Cfg has no raw (structure-faithful) neighborhood view — that lives
-        # on Function over IR node ids, a different id space than a CFG region
-        # index. `supports_raw = False` hides the toggle, so `raw` is never
-        # set here; ignore it defensively.
+        """DOT for the regions around `center`. A `Cfg` has no raw view (that
+        lives on `Function`, over a different id space), so `supports_raw` is
+        false and `raw` is ignored."""
         del raw
         return self._cfg.neighborhood_dot(center, depth=depth)
 
     def search(self, query):
+        """Center the region containing `query` when it parses as an address,
+        else highlight every region whose disassembly contains it."""
         q = query.strip()
         try:
-            addr = int(q, 0)  # bare address -> center the containing region
+            addr = int(q, 0)
             blk = self._cfg.region_at(addr)
             return {"center": blk} if blk is not None else {"highlight": []}
         except ValueError:
@@ -353,51 +356,49 @@ class _CfgVisualizer:
             return {"highlight": hits}
 
     def completions(self):
-        return []  # (region-start addresses can be added later)
+        """No autocomplete candidates for CFG search."""
+        return []
 
 
 #: Explorer servers currently serving, keyed by the port they bound.
-#: `visualize` blocks, so a caller that runs it on another thread has no
+#: `visualize` blocks, so a caller running it on another thread holds no
 #: handle on the server; this registry is how `shutdown` reaches it.
 _RUNNING: dict[int, socketserver.TCPServer] = {}
 
 
 def shutdown(port=None):
-    """Stop explorer server(s) started by `visualize`, unblocking the
-    thread parked in it. Returns the ports actually stopped.
+    """Stop explorer servers started by `visualize`, unblocking whatever
+    thread is parked in it. Returns the ports actually stopped.
 
     `port=None` stops every running explorer. Safe to call when nothing is
-    running (returns `[]`), and safe to call from a different thread than
-    the one serving — that is the point of it.
+    running (returns `[]`), and safe to call from a thread other than the one
+    serving, which is the point of it.
 
-    Stopping matters beyond tidiness: `visualize` blocks inside a PyO3
-    frame, and a thread killed there during interpreter finalization takes
-    a pthread forced-unwind through PyO3's `catch_unwind`, which cannot
-    rethrow it — glibc then aborts the process. A server left running on a
-    daemon thread will eventually crash the interpreter on exit, so any
-    non-main-thread caller must shut it down.
+    This matters beyond tidiness. A thread still parked in `visualize` when
+    the interpreter shuts down is killed in a way strider cannot recover
+    from, and the process aborts. A server left running on a daemon thread
+    will eventually crash the interpreter on exit, so any caller that started
+    one off the main thread must shut it down.
     """
     targets = list(_RUNNING.items()) if port is None else [
         (p, s) for p, s in _RUNNING.items() if p == port
     ]
     for _p, srv in targets:
-        srv.shutdown()  # returns once serve_forever has exited
+        srv.shutdown()  # returns once the serve loop has exited
     return [p for p, _s in targets]
 
 
 def visualize(lifter, target, *, host="127.0.0.1", port=0, depth=5):
-    """Start the explorer for `target` — a `Function` (from `analyze`) or a
-    `Cfg` (from `build_cfg`/`analyze`), dispatching on `type(target).__name__`
-    to avoid importing the pyclass types here. Blocks serving requests until
+    """Start the explorer for `target`, a `Function` from `analyze` or a
+    `Cfg` from `build_cfg` / `analyze`. Blocks serving requests until
     interrupted.
 
-    Off the main thread, pair this with `shutdown(port)` and join the
-    thread before the interpreter exits — a thread left parked in here is
-    killed with `pthread_exit` at finalization, and that forced unwind
-    aborts the process on its way back out through PyO3. A `Function` /
-    `Cfg` created inside such a thread is also `unsendable`: if it
-    outlives the thread, PyO3 leaks it (with an unraisable warning)
-    instead of dropping it from a foreign thread."""
+    Off the main thread you must pair this with `shutdown(port)` and join
+    the thread before the interpreter exits. A thread still parked here at
+    interpreter shutdown is killed in a way strider cannot recover from, and
+    the process aborts. A `Function` or `Cfg` created inside such a thread
+    is also leaked, with a warning, rather than freed if it outlives the
+    thread."""
     tn = type(target).__name__
     if tn == "Function":
         vis = _IrVisualizer(lifter, target)
@@ -409,8 +410,8 @@ def visualize(lifter, target, *, host="127.0.0.1", port=0, depth=5):
 
 
 def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
-    """Start the explorer server over any `_Visualizer`-shaped object. Prints
-    the URL to stdout (never opens a browser). Blocks serving requests until
+    """Serve the explorer over any visualizer-shaped object. Prints the URL
+    to stdout and never opens a browser. Blocks serving requests until
     interrupted."""
     entry = visualizer.entry()
 
@@ -427,11 +428,10 @@ def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
                 pass  # client cancelled the request (e.g. clicked again); nothing to do
 
         def do_GET(self):
-            # Close after each response. This server is single-threaded (the
-            # Function is unsendable), so it must never sit blocked in a
-            # keep-alive read waiting for the next request on an idle connection
-            # — that would stall every other request (a click) until the idle
-            # connection times out. One request per connection keeps it snappy.
+            # Close after each response. This server is single-threaded, so
+            # it must never sit blocked in a keep-alive read on an idle
+            # connection: that would stall every other request until the idle
+            # connection times out.
             self.close_connection = True
             u = urllib.parse.urlparse(self.path)
             q = urllib.parse.parse_qs(u.query)
@@ -464,7 +464,7 @@ def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
                     self.send_error(404)
             except (BrokenPipeError, ConnectionError):
                 pass  # client went away mid-request; not an error
-            except Exception as e:  # noqa: BLE001 — surface the error to the UI
+            except Exception as e:  # noqa: BLE001 (surface the error to the UI)
                 self._send(f"{type(e).__name__}: {e}", "text/plain", code=400)
 
         def handle_one_request(self):
@@ -476,13 +476,12 @@ def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
             except (BrokenPipeError, ConnectionError):
                 self.close_connection = True
 
-        def log_message(self, format, *args):  # noqa: A002 — matches base signature
-            pass  # quiet
+        def log_message(self, format, *args):  # noqa: A002 (base signature)
+            pass
 
-    # Single-threaded on purpose: `Function` is a PyO3 `unsendable` object, so
-    # every request must be handled on the same thread that created it — the
-    # caller's thread, which blocks here in `serve_forever`. A local single-user
-    # explorer serialises its handful of requests just fine.
+    # Single-threaded on purpose: a `Function` may only be touched from the
+    # thread that created it, which is the caller's thread blocking here. A
+    # local single-user explorer serialises its handful of requests fine.
     class Server(socketserver.TCPServer):
         allow_reuse_address = True
 

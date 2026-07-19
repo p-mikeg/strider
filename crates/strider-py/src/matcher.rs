@@ -1,16 +1,10 @@
-//! `PyMatch` — result wrapper for a successful pattern match.
+//! Result wrapper for a successful pattern match.
 //!
-//! The Rust `strider_pattern::Matcher` borrows the Function
-//! immutably for its lifetime; we cannot store one across Python
-//! method calls without an unsafe lifetime extension.  Instead each
-//! call constructs a fresh `Matcher`, runs the query, and converts
-//! every `strider_pattern::Match` to a `PyMatch` that carries:
-//! - The `strider_pattern::Match` itself (for capture lookup).
-//! - A `Py<PyFunction>` reference so accessors like `get_uint` can
-//!   re-borrow the function and call `Match::get_uint(c, &function)`.
-//!
-//! The `Function.find_all` / `Function.find_unique`
-//! entry points live on PyFunction in `function.rs`.
+//! A `strider_pattern::Matcher` borrows the Function for its lifetime and
+//! cannot be stored across Python method calls without an unsafe lifetime
+//! extension, so each query builds a fresh one and converts its `Match`es into
+//! `PyMatch`es that hold a `Py<PyFunction>` to re-borrow from. The query entry
+//! points themselves live on `PyFunction`.
 
 use pyo3::prelude::*;
 
@@ -20,35 +14,27 @@ use crate::pattern::{PyCapture, intern_str};
 
 /// Result of a successful pattern match.
 ///
-/// Snapshots the function's generation counter at construction so that
-/// any subsequent arena-reshuffling op (`Function.compact`,
-/// `retain_reachable`, etc.) bumps `Function::generation()` and every
-/// subsequent capture accessor returns a typed `StriderError` rather
-/// than silently dereferencing a stale `ValueId` on the
-/// post-bump arena.
+/// Every capture accessor raises `StriderError` once the function has been
+/// compacted or otherwise reshuffled, rather than dereferencing the stored
+/// `ValueId`s against the new arena.
 #[pyclass(name = "Match", module = "strider.pattern", unsendable)]
 pub struct PyMatch {
-    /// The per-input-pattern sub-matches (non-empty).  A single-pattern
-    /// query yields a one-element vec; a list (join) query yields one entry
-    /// per pattern, whose shared captures the matcher already unified.  A
-    /// capture accessor reads the first sub-match that binds it, so the
-    /// `Match` presents the *union* of every pattern's captures.
+    /// Per-input-pattern sub-matches, non-empty. A join query yields one entry
+    /// per pattern, with shared captures already unified by the matcher. A
+    /// capture accessor reads the first sub-match binding it, so the `Match`
+    /// presents the union of every pattern's captures.
     pub(crate) inner: Vec<strider_pattern::Match>,
     pub(crate) function: Py<PyFunction>,
-    /// Generation counter sampled at `PyMatch` construction time.
-    /// Compared against `Function::generation()` on every accessor; a
-    /// mismatch means the underlying arena was reshuffled since the
-    /// match was created and the stored `ValueId`s are stale.
+    /// Sampled at construction, compared on every accessor.
     pub(crate) generation: u64,
 }
 
-/// Deduplication key for a `Match`: the per-pattern roots (empty when
-/// `ignore_root`) paired with each sub-match's `(capture-id, node-id)`
-/// signature.  `Hash + Eq` via its component `Vec`s.
+/// Per-pattern roots (empty under `ignore_root`) paired with each sub-match's
+/// `(capture-id, node-id)` signature.
 type DedupKey = (Vec<u32>, Vec<Vec<(u32, u32)>>);
 
-/// Polymorphic capture key: a `Capture` instance or a string name
-/// (looked up in the global intern table).
+/// A `Capture` instance or a string name, looked up in the global intern
+/// table.
 #[derive(FromPyObject)]
 pub enum CaptureKey<'py> {
     Capture(Bound<'py, PyCapture>),
@@ -64,19 +50,14 @@ impl CaptureKey<'_> {
     }
 }
 
-/// Convert a capture's already-resolved value Options to a Python object
-/// per the `m[c]` precedence used by `PyMatch::__getitem__` (shared by
-/// both a finished match and the in-progress `Match` passed to a
-/// `.when()` predicate — both go through this same `PyMatch`).
+/// The `m[c]` value precedence, shared by a finished match and the in-progress
+/// one handed to a `.when()` predicate.
 ///
-/// Check bool (an `I1`-typed IntConst) BEFORE the general uint path:
-/// `get_uint` also matches an `I1` value (returning 0/1), so probing it
-/// first would make a boolean capture surface as a plain int, contradicting
-/// the "bool if it's a bool" contract.  `get_bool` is `I1`-only, so wider
-/// ints still fall through to uint.  Then uint (pass `u128` directly — PyO3
-/// handles the conversion; casting to `i128` first would silently
-/// sign-truncate any I128 value with bit 127 set), then raw float bits, then
-/// `None` for control-flow captures.
+/// Bool must be probed BEFORE uint: the uint read also matches an `I1` value
+/// (as 0/1), so checking it first would surface a boolean capture as a plain
+/// int. The bool read is `I1`-only, so wider ints still fall through. `u128`
+/// goes to PyO3 directly; casting via `i128` would sign-truncate any I128
+/// value with bit 127 set.
 pub(crate) fn capture_value_to_py(
     py: Python<'_>,
     bool_val: Option<bool>,
@@ -96,13 +77,8 @@ pub(crate) fn capture_value_to_py(
 }
 
 impl PyMatch {
-    /// Confirm the function's generation counter is still what it was
-    /// when this `PyMatch` was constructed.  A mismatch indicates an
-    /// arena-reshuffling op (`Function.compact`, `retain_reachable`,
-    /// `optimize`) ran between match construction and this accessor —
-    /// the stored `ValueId`s are stale.  Returns a
-    /// `StriderError` rather than silently dereferencing the wrong
-    /// node.
+    /// A mismatch means the arena was reshuffled since this match was built,
+    /// so its `ValueId`s are stale.
     fn assert_generation(&self, function: &strider_ir::Function) -> PyResult<()> {
         if function.graph().generation() != self.generation {
             return Err(into_strider_err(anyhow::anyhow!(
@@ -116,21 +92,19 @@ impl PyMatch {
         Ok(())
     }
 
-    /// The first sub-match that binds `cap`, if any.  Shared captures agree
-    /// across sub-matches (the join unified them), so "first" is well-defined.
+    /// "First" is well-defined because the join already unified shared
+    /// captures, so every sub-match binding `cap` agrees on it.
     fn binding_for(&self, cap: strider_pattern::Capture) -> Option<&strider_pattern::Match> {
         self.inner.iter().find(|m| m.is_bound(cap))
     }
 
-    /// Whether any sub-match binds `cap`.
     fn is_bound(&self, cap: strider_pattern::Capture) -> bool {
         self.inner.iter().any(|m| m.is_bound(cap))
     }
 
-    /// Dedup key for `find_all`.  With `ignore_root == false` the per-pattern
-    /// roots are part of the key (distinct sites stay apart); with `true` only
-    /// the captured bindings matter (collapses diamonds and capture-less hits).
-    /// Reads the function once to resolve capture signatures.
+    /// Without `ignore_root` the per-pattern roots join the key, keeping
+    /// distinct sites apart; with it only bindings matter, which collapses
+    /// diamonds and capture-less hits.
     pub(crate) fn dedup_key(&self, py: Python<'_>, ignore_root: bool) -> PyResult<DedupKey> {
         let function = self.function.borrow(py);
         let function = function.read_inner().map_err(into_strider_err)?;
@@ -151,13 +125,10 @@ impl PyMatch {
 
 #[pymethods]
 impl PyMatch {
-    /// The operation variant of the node bound to `key` — `"Add"`,
-    /// `"Less"`, `"Neg"` — or `None` when `key` is unbound or names a
-    /// node that carries no operation.  Thin forwarder to `Node.op()`.
-    ///
-    /// One accessor covers every op family (integer / float, binary /
-    /// unary / compare); pair it with [`PyMatch::value_type`] to tell a
-    /// boolean op (`Xor` at `I1`) from a wide bitwise one.
+    /// The operation variant of the node bound to `key` (`"Add"`, `"Less"`),
+    /// or `None` when `key` is unbound or names a node carrying no operation.
+    /// Covers every op family; pair with `value_type` to tell a boolean op
+    /// (`Xor` at `I1`) from a wide bitwise one.
     fn op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
         match self.node(py, key)? {
             Some(node) => node.op(py),
@@ -165,9 +136,8 @@ impl PyMatch {
         }
     }
 
-    /// The value-output type of the node bound to `key` — `"I1"`,
-    /// `"I64"`, `"F64"` — or `None` when `key` is unbound or names a node
-    /// with no value output.  Thin forwarder to `Node.value_type()`.
+    /// The value-output type of the node bound to `key` (`"I1"`, `"I64"`,
+    /// `"F64"`), or `None` when unbound or the node has no value output.
     fn value_type(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
         match self.node(py, key)? {
             Some(node) => node.value_type(py),
@@ -178,27 +148,24 @@ impl PyMatch {
 
 #[pymethods]
 impl PyMatch {
-    /// The root node where the top-level pattern matched, as a `u32`
-    /// node id.  Pair with `Function.node(node_id).asm_fingerprint()` /
-    /// `Cfg.fingerprint_pcode(node)` (both accept this `Match` or its
-    /// raw `root` id directly) for proof-of-correctness queries that
-    /// don't carry an explicit `Capture` (the root has no user-visible
-    /// capture binding).
+    /// Node id where the top-level pattern matched. The root carries no
+    /// user-visible capture binding, so pair this with
+    /// `Function.node(id).asm_fingerprint()` or `Cfg.fingerprint_pcode(node)`
+    /// for proof queries that name no `Capture`.
     #[getter]
     fn root(&self) -> u32 {
         self.inner[0].root().as_u32()
     }
 
-    /// The per-input-pattern root node ids as a `list[int]` — one entry per
-    /// pattern passed to the query (a single-pattern query yields `[root]`).
-    /// `root` is the convenience accessor for the first (single-pattern) case.
+    /// One root node id per pattern passed to the query. `root` is the
+    /// convenience accessor for the single-pattern case.
     #[getter]
     fn roots(&self) -> Vec<u32> {
         self.inner.iter().map(|m| m.root().as_u32()).collect()
     }
 
-    /// `m["name"]` / `m[capture]` — best-effort: integer if value
-    /// output is an int, bool if it's a bool, raw bits otherwise.
+    /// Best-effort value of a capture: bool if it is one, else int, else raw
+    /// float bits, else `None`.
     fn __getitem__(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<PyObject> {
         let node = match self.node(py, key)? {
             Some(node) => node,
@@ -210,16 +177,14 @@ impl PyMatch {
         Ok(capture_value_to_py(py, b, v, f))
     }
 
-    /// `capture in m` — True if `key` (a `Capture` or string name) has
-    /// a binding in this match.
+    /// True when `key` (a `Capture` or string name) is bound in this match.
     fn __contains__(&self, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
         Ok(self.is_bound(cap))
     }
 
-    /// The capture's value as an unsigned `int`, or `None` when the
-    /// capture isn't bound to an integer-valued node.  Thin forwarder to
-    /// `Node.const_uint()`.
+    /// The capture's value as an unsigned `int`, or `None` when it isn't
+    /// bound to an integer-valued node.
     fn const_uint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u128>> {
         match self.node(py, key)? {
             Some(node) => node.const_uint(py),
@@ -227,9 +192,8 @@ impl PyMatch {
         }
     }
 
-    /// The capture's value as a signed `int` (sign-interpreted at the
-    /// node's width), or `None` when not bound to an integer node.  Thin
-    /// forwarder to `Node.const_int()`.
+    /// The capture's value as a signed `int`, sign-interpreted at the node's
+    /// width, or `None` when it isn't bound to an integer node.
     #[pyo3(name = "const_int")]
     fn int_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<i128>> {
         match self.node(py, key)? {
@@ -238,8 +202,8 @@ impl PyMatch {
         }
     }
 
-    /// The capture's value as a `bool`, or `None` when not bound to a
-    /// boolean-valued node.  Thin forwarder to `Node.const_bool()`.
+    /// The capture's value as a `bool`, or `None` when it isn't bound to a
+    /// boolean-valued node.
     #[pyo3(name = "const_bool")]
     fn bool_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<bool>> {
         match self.node(py, key)? {
@@ -248,9 +212,8 @@ impl PyMatch {
         }
     }
 
-    /// The capture's value as raw float bits (`u64`), or `None` when not
-    /// bound to a float-valued node.  Thin forwarder to
-    /// `Node.float_bits()`.
+    /// The capture's value as raw float bits, or `None` when it isn't bound to
+    /// a float-valued node.
     fn float_bits(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u64>> {
         match self.node(py, key)? {
             Some(node) => node.float_bits(py),
@@ -258,25 +221,14 @@ impl PyMatch {
         }
     }
 
-    /// Returns True if the capture has a binding.
+    /// True when the capture has a binding.
     fn has(&self, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
         Ok(self.is_bound(cap))
     }
 
-    // ── Op-variant accessors (for *_any captures) ───────────────────
-    //
-    // When you match via `int_bin_any(c, l, r)`, the bound capture
-    // `c` carries the matched op variant.  The accessors below
-    // recover that variant as the op's canonical Sleigh-style
-    // string ("Add", "Sub", "Less", "Equal", ...).  Returns `None`
-    // when the capture isn't bound or the bound node isn't of the
-    // matching kind family.  See the `op_forwarders!` block above.
-
-    /// Recover the matched varnode from `key`.  Returns the `Vn`
-    /// associated with the captured `InitialVar` / `Call`/`CallOther`
-    /// clobber output, or `None` when `key` doesn't bind such a node.
-    /// Thin forwarder to `Node.vn()`.
+    /// The varnode behind a captured `InitialVar` or `Call` / `CallOther`
+    /// clobber output, or `None` when `key` binds neither.
     fn vn(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
         match self.node(py, key)? {
             Some(node) => node.vn(py),
@@ -284,17 +236,10 @@ impl PyMatch {
         }
     }
 
-    /// Returns the asm-instruction-address fingerprint of the node
-    /// bound to `key` as a sorted-deduplicated `list[int]`.  Returns an
-    /// empty list when the capture is unbound or when the captured
-    /// node is one of the documented exempt kinds (see
-    /// `strider_ir::Graph::asm_fingerprint`).  Thin forwarder to
-    /// `Node.asm_fingerprint()`.
-    ///
-    /// The fingerprint is the proof-of-correctness aid: when a pattern
-    /// query captures a value node, this list names the machine
-    /// instructions whose lifting (or subsequent rewrite) contributed
-    /// to that node's value.
+    /// Sorted, deduped machine-instruction addresses whose lift or subsequent
+    /// rewrite contributed to the value of the node bound to `key`: the
+    /// proof-of-correctness aid for a query. Empty when `key` is unbound or
+    /// binds one of the exempt structural kinds.
     fn asm_fingerprint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Vec<u64>> {
         match self.node(py, key)? {
             Some(node) => node.asm_fingerprint(py),
@@ -302,22 +247,15 @@ impl PyMatch {
         }
     }
 
-    /// Returns a `Node` handle on the node bound to `key` (a `Capture`
-    /// or string capture-name), or `None` when `key` is unbound in this
-    /// match.
-    ///
-    /// The returned `Node` is a discoverable entry point into the IR
-    /// graph: walk its `inputs()`, read its `kind()`, pull out constant
-    /// values, etc.  Unlike `Match.root` (which always returns the raw
-    /// top-level `u32` id), this resolves an explicit capture binding.
-    /// Every other value/op reader on `Match` is a thin forwarder built
-    /// on top of this resolution — `Node` is the single source of truth
-    /// for per-node reads.
+    /// A `Node` handle on the node bound to `key`, or `None` when `key` is
+    /// unbound. Unlike `root`, this resolves an explicit capture binding;
+    /// every other value/op reader on `Match` forwards to the `Node` it
+    /// returns.
     fn node(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<crate::node::PyNode>> {
         let cap = key.resolve()?;
-        // Re-borrow the function to validate the generation hasn't drifted
-        // before handing out a node id that may point at a stale arena,
-        // and to resolve an `Output` binding back to its owning node.
+        // Re-borrow to check the generation before handing out a node id that
+        // could point into a stale arena, and to resolve an `Output` binding
+        // back to its owning node.
         let nid = {
             let function = self.function.borrow(py);
             let function = function.read_inner().map_err(into_strider_err)?;

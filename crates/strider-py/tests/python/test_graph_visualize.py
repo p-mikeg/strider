@@ -12,11 +12,10 @@ def _build_lifter_and_graph():
 
 
 def test_pretty_render_is_a_flag_not_a_receiver():
-    """Pretty renders need a `Sleigh` (register-name resolution, constant
-    inlining, virtual nodes), which a `Function` reaches through its
-    parent `Cfg`'s `Lifter`.  So pretty-vs-raw is chosen by the `pretty`
-    FLAG on one method, not by which object you happen to call — the two
-    renders no longer hide behind the same verb on different receivers."""
+    """Pretty renders need a `Sleigh` (register names, constant inlining,
+    virtual nodes), reached through the `Function`'s parent `Cfg`.  Even
+    so, pretty-vs-raw is a FLAG on one method, not two identical verbs on
+    different receivers."""
     graph = _build_graph()
     html = graph.to_html(pretty=True)
     assert isinstance(html, str) and len(html) > 0
@@ -51,7 +50,7 @@ def test_pretty_to_html_returns_html_str():
 
 
 def test_style_requires_pretty():
-    """`style` themes the pretty render only.  Accepting-and-ignoring it
+    """`style` themes the pretty render only.  Accepting and ignoring it
     on the raw path would be the same silent-success defect as the old
     unknown-style fallback."""
     import pytest
@@ -64,8 +63,8 @@ def test_style_requires_pretty():
 
 
 def test_lifter_render_methods_removed():
-    """The pretty renders moved onto `Function` behind `pretty=True`;
-    the `Lifter`-side duplicates are gone, so one verb has one home."""
+    """The pretty renders live on `Function` behind `pretty=True`; the
+    `Lifter`-side duplicates are gone, so one verb has one home."""
     lift, g = _build_lifter_and_graph()
     del g
     for gone in ("to_dot", "to_html", "dump_html", "dump_dot", "html_str"):
@@ -73,8 +72,8 @@ def test_lifter_render_methods_removed():
 
 
 def test_elf_lifter_has_no_render_methods_either():
-    """`ElfLifter` is a pure-Python `Lifter` subclass, so it inherits the
-    removal too — rendering lives on the `Function` it returns."""
+    """`ElfLifter` subclasses `Lifter`, so it inherits the removal too;
+    rendering lives on the `Function` it returns."""
     prog = strider.lift.load_elf(str(fixture_path("x86", "memory")))
     for gone in ("to_dot", "to_html", "dump_html", "dump_dot", "html_str"):
         assert not hasattr(prog, gone)
@@ -87,10 +86,9 @@ def test_graph_node_count_positive():
 
 def test_raw_dot_is_one_node_per_reachable_node():
     # The raw renderer reflects the graph as stored: one DOT node per node
-    # reachable from entry, no constant inlining or synthetic virtual nodes
-    # (which the pretty renderer adds).  Reachable nodes are a subset of the
-    # arena (g.node_ids()); the strict 1:1 + detached-exclusion contract is
-    # pinned by the Rust unit test.
+    # reachable from entry, none of the pretty renderer's constant inlining
+    # or virtual nodes.  Reachable nodes are a subset of the arena, so only
+    # the bound is checked here; the Rust unit test pins strict 1:1.
     g = _build_graph()
     dot = g.to_dot()
     assert isinstance(dot, str) and "digraph" in dot.lower()

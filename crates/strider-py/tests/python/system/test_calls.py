@@ -1,8 +1,4 @@
-"""Per-arch call tests.
-
-Mirror of `crates/strider/tests/calls.rs`: direct, indirect, mutual,
-recursive Call nodes.
-"""
+"""Per-arch call tests: direct, indirect, mutual and recursive calls."""
 
 from __future__ import annotations
 

@@ -1,8 +1,7 @@
-"""The single lift handle: `strider.lift.lifter(arch, mem, rom=None) -> Lifter`.
+"""The single lift handle: `strider.lift.lifter(arch, mem, rom=None)`.
 
-Collapses the four former entry points (`strider.strider`/`Strider`,
-`strider.run`, and the old low-level `Lifter`/`AnalyzeOutcome`) into one
-handle with `build_cfg(entry, ...)` and `analyze(entry, cc, ...)`.
+One object with `build_cfg(entry, ...)` and `analyze(entry, cc, ...)`,
+replacing the four former entry points.
 """
 
 import strider
@@ -16,8 +15,8 @@ def test_lifter_analyze_returns_graph_and_unresolved(x86_memory_elf):
     cc = strider.sleigh.CallingConvention.x86_cdecl()
     mem = strider.lift.load_elf(str(x86_memory_elf)).reader()
 
-    lift = strider.lift.lifter(arch, mem)  # no cc at construction
-    _cfg, graph, unresolved = lift.analyze(  # cc per call, tuple result
+    lift = strider.lift.lifter(arch, mem)  # cc is per-call, not construction
+    _cfg, graph, unresolved = lift.analyze(
         addr, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
     )
     assert graph.node_count() > 0

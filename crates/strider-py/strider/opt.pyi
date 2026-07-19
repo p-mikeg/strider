@@ -1,16 +1,25 @@
-"""Type stubs for strider.opt."""
+"""Type stubs for strider.opt: the optimizer pipeline and its passes."""
 
 from __future__ import annotations
 
 from typing import Any, List
 
 class OptimizerPipeline:
-    """An ordered list of optimizer passes plus a set of post-passes run
-    once after the fixed-point loop converges."""
+    """An ordered list of optimizer passes plus post-passes run once after
+    the fixed-point loop converges.
+
+    Pass one to `Lifter.optimize(function, pipeline)`, or to
+    `LifterOptions(pipeline=...)` to override the default for a single
+    `analyze` call.
+    """
     @classmethod
-    def empty(cls) -> OptimizerPipeline: ...
+    def empty(cls) -> OptimizerPipeline:
+        """A pipeline with no passes; add them with `add` / `add_post`."""
+        ...
     @classmethod
-    def default(cls) -> OptimizerPipeline: ...
+    def default(cls) -> OptimizerPipeline:
+        """The canonical pipeline strider uses when none is supplied."""
+        ...
     @property
     def passes(self) -> List[str]:
         """The registered fixed-point passes, by name, in order."""
@@ -19,47 +28,98 @@ class OptimizerPipeline:
     def post_passes(self) -> List[str]:
         """The registered post-passes (run once after convergence), by name."""
         ...
-    def add(self, pass_obj: Any) -> None: ...
-    def add_post(self, pass_obj: Any) -> None: ...
+    def add(self, pass_obj: Any) -> None:
+        """Append a pass to the fixed-point loop."""
+        ...
+    def add_post(self, pass_obj: Any) -> None:
+        """Append a post-pass, run once after the loop converges."""
+        ...
 
-# Pure no-arg passes.
 class ConstantFold:
-    def __init__(self) -> None: ...
+    """Evaluates constant expressions and applies algebraic identities
+    (`x+0` to `x`, `x^x` to `0`, AND-mask merging)."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
 class KnownBits:
-    def __init__(self) -> None: ...
+    """Propagates a per-bit known-zero / known-one lattice and simplifies
+    operations whose result is fully determined."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
 class FlagCmpCanonicalize:
-    def __init__(self) -> None: ...
+    """Folds an architecture's condition-flag tree into a single direct
+    comparison node."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
 class IfCondInversion:
-    def __init__(self) -> None: ...
+    """Rewrites a branch on a negated condition into a branch on the plain
+    condition with its two arms swapped."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
 class PhiCollapse:
-    def __init__(self) -> None: ...
+    """Removes phi nodes whose inputs all agree or that have a single
+    reachable predecessor."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
 class RegionCollapse:
-    def __init__(self) -> None: ...
+    """Removes control-flow regions with a single reachable predecessor."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
 class DeadBranchElimination:
-    def __init__(self) -> None: ...
+    """Removes branches on a constant condition and strips the control
+    edges that become dead."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
 class CfgDetach:
-    def __init__(self) -> None: ...
+    """Detaches control-flow subgraphs that entry can no longer reach."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
-# Formerly CC/arch-aware passes — now zero-arg (the calling convention is
-# read from the function under analysis at run time).
 class LoadForward:
-    def __init__(self) -> None: ...
+    """Forwards a store's value to a later load of the same location when
+    no intervening write, call, or control merge can clobber it."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
 class StackOffsetDetect:
-    def __init__(self) -> None: ...
+    """Annotates stack-pointer-relative loads and stores with their frame
+    offsets."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
 class FunctionArgDetect:
-    def __init__(self) -> None: ...
+    """Records which values carry each incoming stack-passed argument.
+    Register arguments are recorded at lift time."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
 class CallStackArgCollect:
-    def __init__(self) -> None: ...
+    """Wires the stack slots written before a call in as that call's
+    positional arguments."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...
 
 class LoadReadOnly:
-    def __init__(self) -> None: ...
+    """Folds a load from a constant address into a constant, reading the
+    bytes from the read-only memory image (`rom=`)."""
+    def __init__(self) -> None:
+        """Build the pass."""
+        ...

@@ -1,16 +1,5 @@
-"""End-to-end test for `strider.sleigh.CallingConvention.custom(...)`.
-
-The `custom` constructor lets a Python user build a calling convention
-from runtime register-name lists when none of the built-in presets
-matches the binary's ABI.  Tests:
-
-1. A custom CC built from x86_64 register names matches the
-   pre-existing `x86_64_systemv` preset's resolved varnodes (parity).
-2. An unknown register name surfaces as `StriderError`.
-3. An invariant violation (LR not in callee_saved when LR is set)
-   surfaces as `StriderError`.
-4. The custom CC drives a full `strider.lift.lifter(...).analyze(...)` lift
-   end-to-end.
+"""`strider.sleigh.CallingConvention.custom(...)`: building a CC from
+runtime register-name lists when no built-in preset matches the ABI.
 """
 
 from __future__ import annotations
@@ -21,25 +10,20 @@ import strider
 
 
 def _mem_with_func_bytes() -> tuple[strider.reader.BufferReader, int]:
-    """Build a BufferReader with a tiny x86_64 function: `mov eax, 1; ret`."""
     # mov eax, 1 (b8 01 00 00 00) ; ret (c3)
     mem = strider.reader.BufferReader(0x1000, b"\xb8\x01\x00\x00\x00\xc3")
     return mem, 0x1000
 
 
 def test_custom_cc_matches_x86_64_systemv_for_equivalent_input():
-    """Build a custom CC that mirrors the x86_64 SystemV register set
-    and confirm it lifts identically to the preset.  Pin: the
-    `custom(...)` builder produces a structurally-equivalent
-    BuiltCallingConvention given identical register-name input."""
+    """Identical register-name input must produce a CC equivalent to the
+    `x86_64_systemv` preset."""
     mem, entry = _mem_with_func_bytes()
     arch = strider.sleigh.SleighArch.x86_64()
     sleigh = strider.sleigh.Sleigh(arch, mem)
 
-    # x86_64 SystemV: arg_passing = RDI/RSI/RDX/RCX/R8/R9; callee-saved
-    # = RBX/R12/R13/R14/R15/RBP; ret-val int = RAX/RDX, float =
-    # XMM0/XMM1; SP = RSP; ret_stack_pop = 8 (the `ret` instruction
-    # pops the return address).  Mirrors the preset's static lists.
+    # Mirrors the preset's static lists; ret_stack_pop = 8 because `ret`
+    # pops the return address.
     custom_cc = strider.sleigh.CallingConvention.custom(
         sleigh=sleigh,
         arg_passing_regs=["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
@@ -55,15 +39,13 @@ def test_custom_cc_matches_x86_64_systemv_for_equivalent_input():
     )
     assert custom_cc.name() == "custom"
 
-    # Run the lifter with the custom CC.  Must not raise.
     lift = strider.lift.lifter(arch, mem)
     _cfg, function, _unresolved = lift.analyze(entry, custom_cc)
     assert function is not None, "Lifter.analyze must produce a Function"
 
 
 def test_custom_cc_rejects_unknown_register_name():
-    """Typos in register names must surface as `StriderError` at
-    construction time, not at first use."""
+    """Typos must fail at construction time, not at first use."""
     mem, _ = _mem_with_func_bytes()
     arch = strider.sleigh.SleighArch.x86_64()
     sleigh = strider.sleigh.Sleigh(arch, mem)
@@ -84,14 +66,10 @@ def test_custom_cc_rejects_unknown_register_name():
 
 
 def test_custom_cc_rejects_invariant_violation_lr_not_in_callee_saved():
-    """The CC builder's invariant: when `link_register` is `Some`, it
-    MUST appear in `callee_saved_regs`.  Violation surfaces as
-    `StriderError`."""
+    """A set `link_register` MUST also appear in `callee_saved_regs`."""
     mem = strider.reader.BufferReader(0x1000, b"\x00\x00\x00\xd6")  # arbitrary 4 bytes
     arch = strider.sleigh.SleighArch.aarch64()
     sleigh = strider.sleigh.Sleigh(arch, mem)
-    # Set link_register=x30 but do NOT include x30 in callee_saved.
-    # try_new must reject this.
     with pytest.raises(strider.StriderError):
         strider.sleigh.CallingConvention.custom(
             sleigh=sleigh,
@@ -109,10 +87,8 @@ def test_custom_cc_rejects_invariant_violation_lr_not_in_callee_saved():
 
 
 def test_custom_cc_preserves_memory_chain():
-    """A custom CC with `preserves_memory=True` must produce a
-    Strider that suppresses memory clobber on its Calls — mirrors
-    `x86_64_all_preserving` behaviour but reachable via the custom
-    builder."""
+    """`preserves_memory=True` must suppress memory clobber on Calls,
+    same as the `x86_64_all_preserving` preset."""
     mem, entry = _mem_with_func_bytes()
     arch = strider.sleigh.SleighArch.x86_64()
     sleigh = strider.sleigh.Sleigh(arch, mem)
@@ -132,7 +108,6 @@ def test_custom_cc_preserves_memory_chain():
         link_register=None,
         preserves_memory=True,
     )
-    # Must build the Lifter and analyze without error.
     lift = strider.lift.lifter(arch, mem)
     _cfg, function, _unresolved = lift.analyze(entry, custom_cc)
     assert function is not None

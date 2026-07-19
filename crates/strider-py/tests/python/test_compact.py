@@ -1,4 +1,4 @@
-"""End-to-end Python smoke for `Lifter.analyze(compact=...)`."""
+"""`Lifter.analyze(compact=...)`."""
 
 import strider
 from strider.reader import BufferReader
@@ -33,8 +33,7 @@ def test_compact_default_true_does_not_grow_graph():
 
 
 def test_compact_default_is_true():
-    """Calling `Lifter.analyze` without an explicit compact= keyword
-    applies compaction."""
+    """Omitting compact= applies compaction."""
     arch, cc = _x86_64_strider()
     mem = BufferReader(0x1000, _trivial_function_bytes())
     lift = strider.lift.lifter(arch, mem)
@@ -43,15 +42,11 @@ def test_compact_default_is_true():
     assert default_function.node_count() == explicit_function.node_count()
 
 
-# ── per-call override isolation on the persistent ElfLifter handle ──────
-
-
 def test_elf_analyze_compact_override_does_not_leak_into_next_call():
-    """`ElfLifter.analyze(target, compact=False)` is a per-call
-    override on a persistent handle (the base `Lifter` state is reused
-    across calls).  A subsequent `.analyze()` WITHOUT the override must
-    get the default (`compact=True`) — observable because the
-    uncompacted arena keeps culled nodes (much larger node_count).
+    """`compact=False` is a per-call override on a handle whose state is
+    reused across calls, so a later `.analyze()` without it must get the
+    default back.  Observable because an uncompacted arena keeps culled
+    nodes, giving a much larger node_count.
     """
     from .conftest import fixture_path
 
@@ -59,11 +54,10 @@ def test_elf_analyze_compact_override_does_not_leak_into_next_call():
     elf = strider.lift.load_elf(str(elf_path))
 
     _cfg, uncompacted, _unresolved = elf.analyze("add", opts=strider.lift.LifterOptions(compact=False))
-    _cfg, after, _unresolved = elf.analyze("add")  # no override — must be compact again
+    _cfg, after, _unresolved = elf.analyze("add")  # no override; compact again
     _cfg, fresh, _unresolved = strider.lift.load_elf(str(elf_path)).analyze("add")
 
-    # The override call itself observably differs from the default…
     assert uncompacted.node_count() > after.node_count()
-    # …and the follow-up default call matches a fresh handle's default
-    # exactly (no leak of compact=False into later calls).
+    # The follow-up default call matches a fresh handle's default exactly,
+    # so compact=False did not leak.
     assert after.node_count() == fresh.node_count()

@@ -1,5 +1,4 @@
-//! `PySleighArch` — opaque wrapper over `strider_target::SleighArch` with one
-//! Python classmethod per Rust preset.
+//! Target-arch wrapper with one Python classmethod per Rust preset.
 
 use pyo3::prelude::*;
 use pyo3::types::PyType;
@@ -23,7 +22,7 @@ impl PySleighArch {
         self.preset_name
     }
 
-    /// `SleighArch.<preset>()` — the constructor call that produces this arch.
+    /// `SleighArch.<preset>()`, the call that produces this arch.
     fn __repr__(&self) -> String {
         format!("SleighArch.{}()", self.preset_name)
     }

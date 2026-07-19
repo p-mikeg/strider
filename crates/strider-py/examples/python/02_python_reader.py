@@ -1,21 +1,12 @@
-"""02 — Custom Python `MemReader`: lift bytes the binary reader can't reach.
+"""Subclass `strider.reader.MemReader` to serve code bytes from Python.
 
-The fast path is `BufferReader` (data lives entirely in Rust). The flexible
-path is subclassing `strider.reader.MemReader` so your `read(addr, size)` runs
-in Python — useful for lazy formats, paged-from-disk firmware, decrypted
-ROM dumps, or any source the standard ELF reader doesn't cover.
-
-This example serves a single hand-assembled x86 instruction stream
-(two NOPs and a RET) from a Python dict, lifts it, and confirms the
-resulting IR contains a `Return` node — and that Python's `read` was
-actually called from Rust.
+Useful for lazy formats, paged-from-disk firmware, decrypted ROM dumps, or
+anything the ELF reader doesn't cover. Every byte fetched during disassembly
+costs one Python call, so prefer `BufferReader` when you already hold the
+bytes.
 
 Run from the workspace root:
     python crates/strider-py/examples/python/02_python_reader.py
-
-The performance contract: every byte fetched during sleigh disassembly
-takes one GIL acquire + one Python method call. Fine for tiny snippets
-or unusual sources; use `BufferReader` when you have the bytes already.
 """
 
 from __future__ import annotations
@@ -25,10 +16,9 @@ from strider.pattern import ret
 
 
 class DictMem(strider.reader.MemReader):
-    """Serve bytes from a Python dict mapping address → bytes object.
+    """Serve bytes from a dict of base address to blob.
 
-    Tracks how often Rust called us, so we can prove the callback
-    really fired (and not just satisfied a Rust-side cache hit).
+    Counts calls so the example can prove the callback really fired.
     """
 
     def __init__(self, regions: dict[int, bytes]) -> None:
@@ -47,22 +37,19 @@ class DictMem(strider.reader.MemReader):
         return None
 
 
-# Two NOPs (0x90) followed by a RET (0xc3) at virtual address 0x1000.
-# Pad with extra NOPs so sleigh's prefetch window has bytes to read
-# past the actual instruction stream — readers must serve any address
-# the disassembler asks for, even speculatively.
+# nop ; nop ; ret, at virtual address 0x1000. The trailing NOP padding matters:
+# the disassembler prefetches past the real instruction stream, and a reader
+# must serve whatever address it asks for, even speculatively.
 INSTR = bytes([0x90, 0x90, 0xc3]) + bytes([0x90] * 64)
 mem = DictMem({0x1000: INSTR})
 
 lft = strider.lift.lifter(strider.sleigh.SleighArch.x86(), mem)
 _cfg, function, _unresolved = lft.analyze(0x1000, strider.sleigh.CallingConvention.x86_cdecl())
 
-# Confirm the IR has at least one return.
 hits = function.find_all(ret())
 print(f"lifted graph contains {len(hits)} Return node(s)")
 assert len(hits) >= 1, "expected at least one Return"
 
-# Confirm the Python callback actually fired.
 print(f"DictMem.read was called {mem.calls} time(s) by Rust")
 assert mem.calls > 0, "Rust never invoked the Python reader — wiring bug"
 

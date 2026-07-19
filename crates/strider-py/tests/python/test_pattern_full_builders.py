@@ -1,14 +1,9 @@
-"""End-to-end tests for the typed pattern builders newly exposed in
-strider-py — `RetPat`, `IfPat`, `CallOtherPat`, `LoadPat`,
-`StorePat`, `PhiPat`, `FunctionArgPat` — plus the free constructors
-`phi_for`, `initial_var_for`, `function_arg_reg`, `function_arg_stack`,
-`int_cmp`, the op-variant accessors on `Match`, and the
-`CastMask` matcher option.
+"""The typed pattern builders (`RetPat`, `IfPat`, `CallOtherPat`, `LoadPat`,
+`StorePat`, `PhiPat`, `FunctionArgPat`), the free constructors, the
+op-variant accessors on `Match`, and the `CastMask` matcher option.
 
-Each test runs against a real fixture graph (the `switch` /
-`patterns` / `complex` ELFs) so a regression in the builder->Pat
-plumbing surfaces as a missed match rather than a silent type
-error.
+Tests run against real fixture graphs so a regression in the builder to Pat
+plumbing surfaces as a missed match rather than a silent type error.
 """
 
 from __future__ import annotations
@@ -40,14 +35,10 @@ def _control_graph(fn: str):
     return built_function("x86", "control", fn)
 
 
-# ── builder-finalisation contract (all node-rooted builders) ─────────
-#
-# Every node-rooted builder constructor shares the same chaining
-# contract: the bare constructor finalises via `.into_pat()`,
-# `.capture(c)` returns the SAME chainable builder, and `.when(f)`
-# does too.  One parametrized triad covers them all; the
-# builder-specific constraint chains (e.g. `.ret_val`, `.user_op_id`)
-# keep their dedicated tests below.
+# Every node-rooted builder shares one chaining contract: the bare
+# constructor finalises via `.into_pat()`, and `.capture(c)` / `.when(f)`
+# both return the SAME chainable builder.  Builder-specific constraint
+# chains (`.ret_val`, `.user_op_id`, ...) keep their own tests below.
 
 NODE_BUILDER_CTORS = [
     pytest.param(ret, id="ret"),
@@ -68,8 +59,6 @@ def test_builder_bare_ctor_finalises_to_pat(ctor):
 
 @pytest.mark.parametrize("ctor", NODE_BUILDER_CTORS)
 def test_builder_capture_chains_and_finalises(ctor):
-    # `.capture(c)` returns the same builder (chainable); call
-    # `.into_pat()` to get a `Pat`.
     c = Capture()
     b = ctor().capture(c)
     assert isinstance(b.into_pat(), Pat)
@@ -77,20 +66,15 @@ def test_builder_capture_chains_and_finalises(ctor):
 
 @pytest.mark.parametrize("ctor", NODE_BUILDER_CTORS)
 def test_builder_when_chains_and_finalises(ctor):
-    # Same builder-chain contract as `.capture(c)`.
     b = ctor().when(lambda m: True)
     assert isinstance(b.into_pat(), Pat)
 
 
-# ── RetPat ───────────────────────────────────────────────────────────
-
-
 def test_ret_pat_returns_builder_chainable():
-    # `preceded_by` now matches the Return's ctrl predecessor against a
-    # value pattern relaxed to a control edge (the rewritten core types
-    # `preceded_by` as `MatchPat`).  Passing a node-rooted control builder
-    # (`call()`) into `preceded_by` was loose typing the rewrite removed —
-    # use a value predecessor to exercise builder chainability.
+    # `preceded_by` takes a value pattern relaxed onto the Return's ctrl
+    # predecessor.  Passing a node-rooted control builder (`call()`) used to
+    # be accepted under looser typing and no longer is, hence the value
+    # predecessor here.
     p = ret().preceded_by(anything())
     assert isinstance(p.into_pat(), Pat)
 
@@ -101,15 +85,10 @@ def test_ret_pat_ret_val_constraint_chains():
 
 
 def test_ret_pat_finds_returns_in_real_graph():
-    # `recursive_with_accumulator` returns from the base case via a
-    # standard `Return` node; the builder un-finalised must be
-    # accepted by `find_all` via PatLike.
+    # An un-finalised builder must be accepted by `find_all` directly.
     g = _patterns_graph()
     hits = g.find_all(ret())
     assert len(hits) >= 1
-
-
-# ── IfPat ────────────────────────────────────────────────────────────
 
 
 def test_if_pat_chain_sets_branches():
@@ -124,25 +103,17 @@ def test_if_pat_finds_branches_in_real_graph():
     assert len(hits) >= 2
 
 
-# ── CallOtherPat ─────────────────────────────────────────────────────
-
-
 def test_call_other_pat_chain_compiles():
-    # CallOtherPat.arg(i) addresses raw inputs[i]: i=0 ctrl, i=1 mem,
-    # i>=2 pcode args + implicit reads.  This compiles a chain
-    # constraining arg position 2 (= first pcode-explicit arg).
+    # `arg(i)` addresses raw inputs[i]: i=0 ctrl, i=1 mem, i>=2 pcode args
+    # plus implicit reads.  So arg 2 is the first pcode-explicit arg.
     p = call_other().user_op_id(7).arg(2, int_const(42))
     assert isinstance(p.into_pat(), Pat)
 
 
 def test_call_other_pat_name_smoke():
-    # builder accepts name and converts to a Pat without error
     p = call_other().name("cpuid")
     assert p is not None
     assert isinstance(p.into_pat(), Pat)
-
-
-# ── LoadPat / StorePat ───────────────────────────────────────────────
 
 
 def test_load_pat_space_constraint_compiles():
@@ -157,28 +128,21 @@ def test_store_pat_full_chain():
 
 def test_load_pat_finds_loads_in_real_graph():
     g = _switch_graph()
-    # Case-5 reads `value->a` — at least one Load survives.
+    # Case 5 reads `value->a`, so at least one Load survives.
     hits = g.find_all(load())
     assert len(hits) >= 1
 
 
 def test_load_pat_via_addr_chain():
     g = _switch_graph()
-    # Constrain to load whose address is some Add expression.
     hits = g.find_all(load().addr(add(anything(), anything())))
     assert isinstance(hits, list)
-
-
-# ── StorePat stack_only ──────────────────────────────────────────────
 
 
 def test_store_stack_only_chain():
     # stack_only() restricts the match to stores whose SP offset is known.
     p = store().stack_only().data(int_const(42))
     assert isinstance(p.into_pat(), Pat)
-
-
-# ── PhiPat / phi_for ─────────────────────────────────────────────────
 
 
 def test_phi_pat_input_chain():
@@ -205,9 +169,6 @@ def test_initial_var_for_constructs():
     assert isinstance(p, Pat)
 
 
-# ── FunctionArgPat / function_arg_reg / function_arg_stack ────────────
-
-
 def test_function_arg_pat_index_chain():
     p = function_arg(0)
     assert isinstance(p.into_pat(), Pat)
@@ -228,29 +189,23 @@ def test_function_arg_stack_constructor():
     assert isinstance(p.into_pat(), Pat)
 
 
-# ── signed_int_const ────────────────────────────────────────────────
-
-
 def _patterns_graph_for(arch_id, fn_name="if_returns_const"):
     return built_function(arch_id, "patterns", fn_name)
 
 
 def test_signed_int_const_matches_neg50_on_x86_u32():
-    # 32-bit x86: `IntConst(0xFFFFFFCE)` at U32 — bit-pattern equality
-    # at output width.  Both `int_const(-50)` and `signed_int_const(-50)`
-    # match here.
+    # 32-bit x86 stores -50 as `IntConst(0xFFFFFFCE)` at U32, so plain
+    # bit-pattern equality at output width already matches.
     g = _patterns_graph_for("x86")
     assert len(g.find_all(int_const(-50))) >= 1
     assert len(g.find_all(signed_int_const(-50))) >= 1
 
 
 def test_signed_int_const_handles_x64_zero_extended_neg50():
-    # 64-bit x64: gcc -O2 lowers `return -50;` as `mov eax, 0xffffffce;
-    # ret`, leaving high 32 bits of RAX zero.  IR carries
-    # `IntConst(0x00000000FFFFFFCE)` at U64 — value `+4294967246`,
-    # NOT -50.  `int_const(-50)` (strict bit-pattern) misses it;
-    # `signed_int_const(-50)` recognises the U32-narrow signed form
-    # via the zero-extension check.
+    # gcc -O2 lowers `return -50;` as `mov eax, 0xffffffce; ret`, leaving
+    # RAX's high 32 bits zero.  The IR constant is 0x00000000FFFFFFCE at U64,
+    # i.e. +4294967246, so strict bit-pattern `int_const(-50)` misses it and
+    # only `signed_int_const` recognises the narrow signed form.
     g = _patterns_graph_for("x64")
     assert len(g.find_all(int_const(-50))) == 0, (
         "int_const should NOT match the zero-extended form — that's the whole point of signed_int_const"
@@ -259,36 +214,26 @@ def test_signed_int_const_handles_x64_zero_extended_neg50():
 
 
 def test_signed_int_const_neg1_matches_at_every_width():
-    # `-1` has bit pattern all-ones at every width AND the
-    # zero-extension check handles narrower-stored-zero-extended
-    # variants.  Either way `signed_int_const(-1)` should fire on
-    # any function that returns a negative literal.
+    # -1 is all-ones at every width, and the zero-extension check covers the
+    # narrower-stored variants, so `signed_int_const(-1)` fires on any
+    # function returning a negative literal.  Whether -1 appears in
+    # if_returns_const at all is compiler-dependent, so only pin "no raise".
     g64 = _patterns_graph_for("x64")
-    # Whether or not -1 actually appears in if_returns_const, the
-    # call must succeed without raising and the result is a list.
     assert isinstance(g64.find_all(signed_int_const(-1)), list)
 
 
 def test_signed_int_const_round_trips_via_match_int():
-    # When a match fires, Match.const_int(c) recovers the SIGNED i128
-    # value, so a captured signed_int_const round-trips.
     c = Capture()
     g = _patterns_graph_for("x64")
     hits = g.find_all(signed_int_const(-50).capture(c))
     if not hits:
         pytest.skip("no -50 constant in this graph (compiler may have folded it)")
-    # The first hit's captured constant: stored as u128, recovered as
-    # signed i128.  For the x64 zero-extended-neg50 case the stored
-    # value is +4294967246 at U64; Match.int treats THAT as i128
-    # (no further sign extension), so the recovered i128 is
-    # +4294967246, not -50.  The pattern's job was to recognise the
-    # source-level value; recovering the raw bit pattern is
-    # `Match.uint`'s job.
+    # For the x64 zero-extended -50 the stored value is +4294967246 at U64
+    # and const_int does no further sign extension, so it recovers
+    # +4294967246, not -50.  The pattern recognises the source-level value;
+    # recovering the raw bit pattern is const_uint's job.
     val = hits[0].const_uint(c)
     assert val is not None
-
-
-# ── int_cmp + int_cmp_any ────────────────────────────────────────────
 
 
 def test_int_cmp_concrete_op():
@@ -302,14 +247,10 @@ def test_int_cmp_unknown_op_raises():
 
 
 def test_int_cmp_no_not_equal_op():
-    # The IR doesn't have a NotEqual variant — the lifter expresses
-    # `a != b` as `BoolNeg(IntEqual(a, b))`.  `int_cmp("NotEqual",
-    # ...)` must therefore raise rather than silently accepting.
+    # The IR has no NotEqual variant; the lifter lowers `a != b` to a
+    # negated IntEqual.  So the name must raise, not be silently accepted.
     with pytest.raises(strider.StriderError):
         int_cmp("NotEqual", "x", "y")
-
-
-# ── Match accessors: op + value_type + vn ────────────────────────────
 
 
 def test_int_binary_op_recovery():
@@ -318,7 +259,6 @@ def test_int_binary_op_recovery():
     p = int_bin_any(c, anything(), anything())
     hits = g.find_all(p)
     assert len(hits) >= 1
-    # Recover a real op variant from the first match.
     op_name = hits[0].op(c)
     assert op_name in {
         "Add", "Sub", "Mul", "Div", "Sdiv", "Rem", "Srem",
@@ -327,11 +267,11 @@ def test_int_binary_op_recovery():
 
 
 def test_op_and_value_type_replace_the_seven_family_accessors():
-    """One `op()` covers every op family, and `value_type()` carries the
-    signal the old `bool_binary_op` encoded — a boolean op is an
-    `IntBinaryOp` at `I1`, so the pair distinguishes it from a wide
-    bitwise op of the same shape.  `kind()` already names the family, so
-    the seven per-family accessors were pure duplication."""
+    """One `op()` covers every op family, and `value_type()` carries what the
+    old `bool_binary_op` encoded: a boolean op is an `IntBinaryOp` at `I1`,
+    so the pair distinguishes it from a same-shaped wide bitwise op. With
+    `kind()` naming the family, the seven per-family accessors were pure
+    duplication and must stay gone."""
     g = _patterns_graph()
     c = Capture()
     hits = g.find_all(int_bin_any(c, anything(), anything()))
@@ -353,8 +293,8 @@ def test_op_and_value_type_replace_the_seven_family_accessors():
 
 
 def test_op_is_none_for_a_node_carrying_no_operation():
-    """`op()` answers "which operation", so a node that is not an
-    operation answers `None` rather than raising."""
+    """A node that is not an operation answers `None` from `op()` rather
+    than raising."""
     g = _patterns_graph()
     c = Capture()
     hits = g.find_all(any_int_const(c))
@@ -370,31 +310,23 @@ def test_int_cmp_op_recovery():
     hits = g.find_all(p)
     assert len(hits) >= 1
     op_name = hits[0].op(c)
-    # Regression: the previous allowed set included
-    # `LessEqual`, `SlessEqual`, `Borrow` — none of these exist in
-    # `ir::IntCmpOp`; they are lift-time-lowered shapes, never emitted
-    # as primitive nodes.  Listing them was a phantom assertion: the
-    # test passed for the wrong reason because the actual return is
-    # always one of the six real names.  Narrow to the truth.
+    # Regression: the allowed set used to also list LessEqual, SlessEqual and
+    # Borrow, which are lift-time-lowered shapes and never exist as primitive
+    # nodes.  That made this a phantom assertion (it passed only because the
+    # real answer is always one of the six below).
     assert op_name in {"Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow"}
 
 
 def test_get_vn_returns_vn_for_initial_var_capture():
     g = _control_graph("abs_val")
     c = Capture()
-    # `initial_var()` matches *any* InitialVar; capture so we can ask
-    # which Vn it bound.
     hits = g.find_all(initial_var().capture(c))
     if not hits:
         pytest.skip("no InitialVar nodes in abs_val (compiler may have folded entry args)")
     vn = hits[0].vn(c)
     assert vn is not None
-    # Smoke: the Vn round-trips a sensible space + size.
     assert vn.space.name() in {"REGISTER", "RAM"}
     assert vn.size > 0
-
-
-# ── CastMask ─────────────────────────────────────────────────────────
 
 
 def test_cast_mask_combines_via_or():
@@ -409,13 +341,12 @@ def test_cast_mask_all_vs_none():
 
 def test_find_all_accepts_ignore_casts_mask():
     g = _patterns_graph()
-    # Equivalent to ignore_casts=True but per-cast.
+    # The mask form is ignore_casts=True narrowed to specific cast kinds.
     hits_strict = g.find_all(add(mul(anything(), anything()), anything()))
     hits_relaxed = g.find_all(
         add(mul(anything(), anything()), anything()),
         ignore_casts_mask=CastMask.extend() | CastMask.truncate(),
     )
-    # The relaxed walk must find at least as many matches as strict.
     assert len(hits_relaxed) >= len(hits_strict)
 
 
@@ -429,15 +360,11 @@ def test_find_all_rejects_both_ignore_casts_options():
         )
 
 
-# ── VnSpace + Vn ─────────────────────────────────────────────────────
-
-
 def test_vn_space_constants_round_trip():
     assert strider.sleigh.VnSpace.RAM.name() == "RAM"
     assert strider.sleigh.VnSpace.REGISTER.name() == "REGISTER"
     assert strider.sleigh.VnSpace.CONST.name() == "CONST"
     assert strider.sleigh.VnSpace.UNIQUE.name() == "UNIQUE"
-    # Equality + hash work.
     assert strider.sleigh.VnSpace.RAM == strider.sleigh.VnSpace.RAM
 
 
@@ -446,11 +373,9 @@ def test_vn_constructor_and_repr():
     assert vn.space == strider.sleigh.VnSpace.REGISTER
     assert vn.off == 0x10
     assert vn.size == 4
-    # `repr(vn)` delegates to rsleigh's `impl Display for Vn`
-    # (core_types.rs:139): REGISTER-space varnodes render as
-    # `<space-shortcut>[0x<off>]:<size>` with `%` as the REGISTER
-    # shortcut.  See test_sleigh.test_vn_repr_for_register_uses_rsleigh_display
-    # for the full contract.
+    # REGISTER-space varnodes repr as `<space-shortcut>[0x<off>]:<size>`,
+    # with `%` for REGISTER.  Full contract in
+    # test_sleigh.test_vn_repr_for_register_uses_rsleigh_display.
     assert repr(vn) == "%[0x10]:4"
 
 
@@ -461,11 +386,8 @@ def test_sleigh_reg_returns_vn_or_none():
     eax = sleigh.reg("EAX")
     assert eax is not None
     assert eax.size == 4
-    # Unknown name → None (not an exception).
+    # Unknown name yields None, not an exception.
     assert sleigh.reg("DEFINITELY_NOT_A_REG") is None
-
-
-# ── new mem-walk + bit-width API ─────────────────────────────────────
 
 
 def test_load_mem_in_chain_compiles():
@@ -489,16 +411,12 @@ def test_store_mem_in_bit_width_chain_compiles():
     assert isinstance(p.into_pat(), Pat)
 
 
-# ── operand-type validation (pinned current behaviour) ──────────────
-
-
 def test_load_addr_with_raw_int_rejected_at_finalise():
-    # Operand slots take a Pat / Capture / str / value builder — NOT a
-    # raw int (a literal address must be wrapped as `int_const(0x100)`).
-    # The chain call itself is lazy (no validation), so the builder is
-    # returned; the type error surfaces at finalisation as a
-    # StriderError, not a TypeError.
-    b = load().addr(123)  # chain itself does not raise
+    # Operand slots take a Pat / Capture / str / value builder, never a raw
+    # int (a literal address must be wrapped as `int_const(0x100)`).  Chain
+    # calls are lazy, so the error surfaces at finalisation as a
+    # StriderError, not as a TypeError at the call.
+    b = load().addr(123)
     with pytest.raises(strider.StriderError, match="expected a value pattern"):
         b.into_pat()
 
@@ -510,10 +428,10 @@ def test_store_data_with_raw_int_rejected_at_finalise():
 
 
 def test_mem_in_rejects_value_operand():
-    # A memory-input slot requires a memory-token producer. Feeding a value
-    # producer (a bare load(), which produces a value, not a memory token)
-    # builds a pattern that can never match a real IR memory chain, so the
-    # builder must reject it instead of silently producing a dead pattern.
+    # A memory-input slot requires a memory-token producer.  A bare load()
+    # produces a value, so accepting it would build a pattern that can never
+    # match a real memory chain; the builder must reject it rather than
+    # silently yield a dead pattern.
     with pytest.raises(strider.StriderError):
         store().addr(int_const(0x100)).mem_in(load().addr(int_const(0x200))).into_pat()
     with pytest.raises(strider.StriderError):

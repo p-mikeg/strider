@@ -1,9 +1,5 @@
-"""End-to-end Python smoke for `CfgOptions` / `LifterOptions` and the
-per-function `LifterOptions.pipeline` override.
-
-`Lifter.build_cfg` / `Lifter.analyze` (and `ElfLifter.analyze`) take a
-single opts struct — `CfgOptions` / `LifterOptions` — instead of the old
-kwargs pile.
+"""`CfgOptions` / `LifterOptions` and the per-function
+`LifterOptions.pipeline` override.
 """
 
 from __future__ import annotations
@@ -59,18 +55,16 @@ def test_lifter_options_rejects_bad_alias_mode():
 
 
 def test_lifter_options_defaults_are_not_shared_mutable():
-    """Two default `LifterOptions()`/`CfgOptions()` instances must be
-    independent — no shared mutable default object leaking across
-    construction sites."""
+    """Two default `LifterOptions()` must not share one mutable default
+    `CfgOptions` object across construction sites."""
     a = strider.lift.LifterOptions()
     b = strider.lift.LifterOptions()
     assert a.cfg is not b.cfg
 
 
 def test_pipeline_override_runs_custom_pipeline():
-    """`LifterOptions(pipeline=...)` overrides the default pipeline for
-    this call only: an empty pipeline leaves the graph much less folded
-    (more node ids) than the default pipeline does."""
+    """`LifterOptions(pipeline=...)` overrides the pipeline for this call
+    only: an empty pipeline leaves the graph less folded."""
     fixture = fixture_path("x64", "arithmetic")
     lift = strider.lift.load_elf(str(fixture))
 
@@ -81,9 +75,6 @@ def test_pipeline_override_runs_custom_pipeline():
         opts=strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty()),
     )
 
-    # The empty pipeline runs no fixed-point passes at all, so it should
-    # leave at least as many (and, on this fixture, strictly more) node
-    # ids than the fully-optimised default pipeline.
     assert empty_fn.node_count() >= default_fn.node_count()
     assert empty_fn.node_count() > default_fn.node_count()
 
@@ -91,11 +82,10 @@ def test_pipeline_override_runs_custom_pipeline():
 def test_with_cfg_carries_over_every_other_field():
     """`with_cfg` replaces only `cfg`.
 
-    The fields are read-only, so overriding the nested `CfgOptions` used to
-    mean re-listing all seven from Python — and anything the caller had set
-    but forgot to re-list silently reverted to its default.  Every non-cfg
-    field here is deliberately set away from its default, so a carry-over
-    that drops one fails loudly.
+    Fields are read-only, so overriding the nested `CfgOptions` once meant
+    re-listing all seven; anything forgotten silently reverted to its
+    default.  Every non-cfg field here is set away from its default, so a
+    dropped carry-over fails loudly.
     """
     pipeline = strider.opt.OptimizerPipeline.empty()
     opts = strider.lift.LifterOptions(
@@ -110,9 +100,7 @@ def test_with_cfg_carries_over_every_other_field():
 
     out = opts.with_cfg(strider.cfg.CfgOptions(function_max_size=128))
 
-    # The replaced field.
     assert out.cfg.function_max_size == 128
-    # ...and every other one, carried over intact.
     assert out.compact is False
     assert out.per_address_ccs is not None and 0x1000 in out.per_address_ccs
     assert out.calls_clobber is True
@@ -122,5 +110,5 @@ def test_with_cfg_carries_over_every_other_field():
     # SAME object, matching what passing `pipeline=opts.pipeline` did.
     assert out.pipeline is pipeline
 
-    # The receiver is untouched — `with_cfg` copies, it does not mutate.
+    # `with_cfg` copies, it does not mutate the receiver.
     assert opts.cfg.function_max_size == 64

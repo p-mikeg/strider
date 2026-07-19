@@ -16,8 +16,7 @@ def _build_graph(symbol="array_sum"):
 def test_rewrite_returns_fire_count():
     g = _build_graph()
     x = Capture()
-    # Identity-ish rewrite that may or may not fire — just verify the
-    # call returns an integer.
+    # May or may not fire; only the return type is pinned.
     n = g.rewrite(find=add(var(x), int_const(0)), replace=var(x))
     assert isinstance(n, int)
     assert n >= 0
@@ -42,12 +41,9 @@ def test_rewrite_then_reoptimize():
     assert g.node_count() > 0
 
 
-# ── strider.template — the explicit build-side DSL (Task 7) ─────────────
-
-
 def test_rewrite_takes_template():
-    """The Task 7 brief's TDD case: `replace` accepts a `strider.template`
-    build expression, not just a bare `strider.pattern.Pat`."""
+    """`replace` accepts a `strider.template` build expression, not just a
+    bare `strider.pattern.Pat`."""
     g = _build_graph()
     c = Capture()
     n = g.rewrite(find=add(var(c), int_const(0)), replace=tpl.var(c))
@@ -55,7 +51,7 @@ def test_rewrite_takes_template():
 
 
 def test_rewrite_with_nested_template_build():
-    """`replace` composes purely from `strider.template` constructors —
+    """`replace` composes purely from `strider.template` constructors, with
     no `strider.pattern.Pat` anywhere on the RHS."""
     g = _build_graph()
     x = Capture()
@@ -79,9 +75,9 @@ def test_template_is_a_distinct_type_from_pat():
 
 
 def test_match_only_pat_rejected_as_replace():
-    """A match-only `Pat` (e.g. a wildcard) is still rejected as a
-    rewrite RHS — `strider.template` narrows the type but the back-compat
-    `Pat` path still runs through the same build-valid-subset check."""
+    """A match-only `Pat` (e.g. a wildcard) is still rejected as a rewrite
+    RHS: the back-compat `Pat` path runs the same build-valid-subset check
+    that `strider.template` enforces by type."""
     g = _build_graph()
     x = Capture()
     with pytest.raises(strider.StriderError):

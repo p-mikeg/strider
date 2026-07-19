@@ -1,8 +1,8 @@
 """`find_all` must report EVERY distinct binding, not just the first.
 
 A commutative node whose operands both satisfy a captured sub-pattern admits
-two valid bindings.  Reporting only one silently makes "one hit => unambiguous"
-false, which is the guarantee `find_unique` is built on.
+two valid bindings.  Reporting only one silently falsifies "one hit means
+unambiguous", the guarantee `find_unique` is built on.
 
 Dedup is by the capture->binding MAP, not by root: two orderings that produce
 the SAME map are ONE match; two that produce DIFFERENT maps are two.
@@ -49,8 +49,6 @@ def test_no_captures_on_commutative_operands_does_not_duplicate(add_fn):
 def test_identical_operand_binding_dedups_to_one(add_fn):
     """add(var(x), var(x))-shaped: the swap yields an identical map => 1 hit."""
     x = p.Capture()
-    # Bind the same capture to both operands: only a single-value operand pair
-    # matches, and both orderings then produce the identical map.
     hits = add_fn.find_all(p.add(p.var(x), p.var(x)))
     # The two operands of this `add` are distinct, so identity binding fails.
     assert hits == []
@@ -70,7 +68,7 @@ def test_find_all_first_hit_is_the_natural_ordering(add_fn):
     """Enumeration order is deterministic: natural operand order first.
 
     `find_all(...)[0]` is the idiom that replaced `find_one`, so which
-    binding lands at index 0 is now part of the contract, not an accident.
+    binding lands at index 0 is part of the contract, not an accident.
     """
     k = p.Capture()
     hits = add_fn.find_all(p.add(p.anything().capture(k), p.anything()))

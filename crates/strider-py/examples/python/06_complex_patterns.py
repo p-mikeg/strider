@@ -1,18 +1,8 @@
-"""06 — Complex patterns: captures, back-references, predicates, commutative.
+"""Composing patterns: capture chains, back-references, guards, commutativity.
 
-Patterns get interesting once you compose them. This example walks through
-the four "you'll want this" features beyond simple node-shape matching:
+The four things you reach for beyond plain node-shape matching. Run from the
+workspace root:
 
-  1. Multi-level capture chains — bind operands of nested operations and
-     read their values back as Python ints.
-  2. Back-references — re-use a capture name to require the same value
-     in two positions (e.g. `int_xor(x, x)` → must be the same x).
-  3. `.when` predicate guards — filter matches with arbitrary Python
-     code that sees the partial Match.
-  4. Commutative matching — `add(a, b)` automatically also matches
-     `add(b, a)`; use `.ordered()` on the typed builder to disable.
-
-Run from the workspace root:
     python crates/strider-py/examples/python/06_complex_patterns.py
 """
 
@@ -40,18 +30,13 @@ _cfg, function, unresolved = prog.analyze(
 )
 
 
-# ---------------------------------------------------------------------------
-# 1. Multi-level capture chain.
+# Capture chains bind operands of nested operations. `load(base + idx*stride)`
+# is the canonical indexed-array-load shape.
 #
-# Pattern: load(addr = base + (idx * 4))
-# Capture both the base and idx, plus the matched stride constant.
-# This is the canonical "indexed array load" shape — useful for finding
-# bounds-check-free array accesses.
-# ---------------------------------------------------------------------------
+# Each unique string interns to a Capture scoped to this pattern. `var(c)`
+# only accepts Capture objects; a bare string goes straight into the slot,
+# with `var(name)` implied.
 print("=== 1. multi-level capture chain ===")
-# String-shorthand form: each unique string interns to a Capture for
-# this pattern. `var(c)` only accepts Capture objects; bare strings go
-# directly into the slot (and `var(name)` is implicit on a string).
 pat1 = load(addr=add("base", mul("idx", "stride")))
 hits = function.find_all(pat1, ignore_casts=True)
 print(f"found {len(hits)} indexed-array-load shapes")
@@ -62,13 +47,9 @@ for h in hits[:3]:
     )
 
 
-# ---------------------------------------------------------------------------
-# 2. Back-reference: same name twice → must be same value.
-#
-# `int_xor("v","v")` matches only when both operands of the XOR are the same
-# IR value. This is the textbook "zero a register" idiom (`xor eax, eax`)
+# Reusing a capture name forces both positions to bind the same IR value, so
+# `int_xor("v", "v")` matches only the zero-a-register idiom (`xor eax, eax`)
 # and is a strict subset of the general two-operand xor count.
-# ---------------------------------------------------------------------------
 print("\n=== 2. back-reference (xor x, x) ===")
 all_xors = function.find_all(int_xor("a", "b"))
 self_xors = function.find_all(int_xor("v", "v"))
@@ -78,13 +59,7 @@ print(
 )
 
 
-# ---------------------------------------------------------------------------
-# 3. `.when` predicate guard.
-#
-# Filter the indexed-load matches to only those whose stride is small
-# (< 16 bytes). The lambda receives the partial Match and returns bool;
-# return False to drop the match.
-# ---------------------------------------------------------------------------
+# `.when` takes a lambda over the partial Match; return False to drop it.
 print("\n=== 3. .when predicate guard ===")
 unfiltered = function.find_all(load(), ignore_casts=True)
 small_addr = function.find_all(
@@ -99,14 +74,8 @@ print(
 )
 
 
-# ---------------------------------------------------------------------------
-# 4. Commutative matching.
-#
-# `add(const(8), function_arg(0))` and `add(function_arg(0), const(8))`
-# describe the same IR shape because Add is commutative. Strider tries
-# both orderings automatically. Use the typed builder with `.ordered()`
-# to opt out (rarely needed).
-# ---------------------------------------------------------------------------
+# Add is commutative, so both operand orderings are tried automatically and
+# the two counts below agree. `.ordered()` on the typed builder opts out.
 print("\n=== 4. commutative matching ===")
 const_then_arg = function.find_all(add(int_const(8), function_arg(0)))
 arg_then_const = function.find_all(add(function_arg(0), int_const(8)))
@@ -119,18 +88,13 @@ print(
 print(f"int_binary(Add, ...).ordered() (left-to-right only): {len(ordered_only)}")
 
 
-# ---------------------------------------------------------------------------
-# Bonus — `_any` variant-agnostic constructors. These bind the matched
-# operator variant to a Capture so you can post-filter or report which
-# specific op fired (Add vs Sub vs Mul, etc.).
-# ---------------------------------------------------------------------------
+# `int_bin_any` matches any integer binary op and binds the variant (Add, Mul,
+# ...) to a Capture, so you can post-filter or report which op fired. The
+# first argument must be a Capture, not a string; variant captures are not
+# interned the way value captures are.
 print("\n=== bonus: int_bin_any binds the op variant ===")
 from strider.pattern import Capture, int_bin_any
 
-# `int_bin_any` binds the matched IntBinaryOp variant (Add/Sub/Mul/...)
-# to a Capture so you can introspect which op fired per match. The first
-# arg must be a Capture (not a string) since variant captures aren't
-# interned the same way value captures are.
 op = Capture()
 pat = int_bin_any(op, "l", "r")
 matches = function.find_all(pat)

@@ -34,10 +34,7 @@ def test_add_with_strings():
 
 
 def test_load_with_addr():
-    # `load()` now returns a `LoadPat` typed builder; finalise via
-    # `.into_pat()` for the back-compat assertion.  Builder forms
-    # (`load().addr(...)`, `load().space(...)`) are accepted by
-    # `Function.find_all` directly via `PatLike`.
+    # `load()` returns a typed builder, not a Pat; `find_all` accepts either.
     p = load(addr=add("base", "off"))
     assert isinstance(p.into_pat(), Pat)
 
@@ -48,9 +45,8 @@ def test_store_with_addr_and_data():
 
 
 def test_underscore_string_means_wildcard():
-    # "_" and "any_" are reserved wildcards — they convert to any()
-    # silently rather than raising.  Trying to use them as capture
-    # names via PyCapture-aware methods (e.g. .cap("_")) IS an error.
+    # "_" and "any_" are reserved wildcards: they convert to a wildcard
+    # silently.  Using them as capture NAMES (`.cap("_")`) is an error.
     p = add("_", "x")
     assert isinstance(p, Pat)
     p = add("any_", "x")
@@ -76,17 +72,11 @@ def test_cap_method_on_pat():
 
 
 def test_call_constructor():
-    # `call()` returns a `CallPat` typed builder so chaining
-    # `.at(addr)`, `.target(p)`, `.arg(idx, p)` is legal.  The builder
-    # is a `PatLike` (accepted directly by `Function.find_all`); use
-    # `.into_pat()` to get a finalised `Pat`.
     assert isinstance(call().into_pat(), Pat)
     assert isinstance(call(at=0x1000).into_pat(), Pat)
 
 
 def test_ret_constructor():
-    # `ret()` returns a `RetPat` typed builder (chain `.preceded_by`,
-    # `.ret_val(idx, p)`).  Finalise via `.into_pat()`.
     assert isinstance(ret().into_pat(), Pat)
 
 
@@ -98,15 +88,11 @@ def test_control_node_patterns_exist():
 
 
 def test_if_constructor():
-    # `if_else()` returns an `IfPat` typed builder (chain `.cond`,
-    # `.true_branch`, `.false_branch`).
     assert isinstance(if_else().into_pat(), Pat)
     assert isinstance(if_else(cond="cnd").into_pat(), Pat)
 
 
 def test_phi_constructor():
-    # `phi()` returns a `PhiPat` typed builder (chain `.for_vn`,
-    # `.input(idx, p)`).
     assert isinstance(phi().into_pat(), Pat)
 
 
@@ -116,7 +102,6 @@ def test_initial_var_constructor():
 
 def test_pattern_submodule_dir():
     import strider.pattern as p
-    # Smoke check that the most common builders are present.
     for name in ["add", "sub", "mul", "load", "store", "call", "ret",
                  "if_else", "phi", "var", "anything", "int_const",
                  "bool_const", "Capture", "Pat"]:
@@ -124,10 +109,9 @@ def test_pattern_submodule_dir():
 
 
 def test_capture_hash_distinct_for_first_100_ids():
-    """Regression: PyCapture.__hash__ used to be `len(repr(...))`, which
-    collapsed every same-decimal-digit-count id (10..99 → 11, 100..999 → 12,
-    etc.) to one bucket — breaking any dict/set keyed on Capture.  The fix
-    hashes the underlying u32 id directly."""
+    """Regression: `hash(Capture())` used to be the repr's length, collapsing
+    every id with the same digit count into one bucket and breaking any
+    dict/set keyed on Capture."""
     captures = [Capture() for _ in range(100)]
     hashes = {hash(c) for c in captures}
     assert len(hashes) == 100, (
@@ -142,27 +126,26 @@ def test_capture_usable_as_dict_key():
 
 
 def test_float_is_nan_constructs_pattern():
-    """float_is_nan(x) used to raise NotImplementedError; it now produces
-    a valid Pat via the IEEE-754 self-inequality (x != x) which matches
-    the same IR shape Sleigh's FLOAT_NAN lowering produces at lift time."""
+    """Regression: `float_is_nan(x)` used to raise NotImplementedError. It
+    now builds the IEEE-754 self-inequality (x != x), the same IR shape
+    Sleigh's FLOAT_NAN lowering produces at lift time."""
     from strider.pattern import float_is_nan, anything
     p = float_is_nan(anything())
     assert isinstance(p, Pat)
 
 
 def test_pyat_ordered_on_finalized_pat_raises():
-    """Pat.ordered() on a finalized Pat (e.g. add(...)) used to silently
-    return self; it now raises PatternError, pointing users to the typed
-    builder (int_binary(...).ordered())."""
+    """Regression: `Pat.ordered()` on a finalized Pat used to silently return
+    self.  It now raises, pointing at `int_binary(...).ordered()`."""
     with pytest.raises(strider.StriderError):
         add(var(Capture()), var(Capture())).ordered()
 
 
 def test_renamed_constructors():
-    """Task 8: keyword-colliding / needless-underscore constructors were
-    renamed to descriptive names (`and_`→`int_and`, `or_`→`int_or`,
-    `xor`→`int_xor`, `not_`/`bit_not`→`int_not`, `if_`→`if_else`,
-    `any_`→`anything`); the old names must no longer exist."""
+    """Keyword-colliding and underscore-suffixed constructors were renamed to
+    descriptive ones (`and_` to `int_and`, `not_`/`bit_not` to `int_not`,
+    `if_` to `if_else`, `any_` to `anything`, ...). The old names must not
+    come back as aliases."""
     from strider import pattern as pat
 
     assert hasattr(pat, "int_and")

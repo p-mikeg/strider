@@ -1,18 +1,10 @@
 """Tests for the `CallPat` builder exposed via `pattern.call()`.
 
-`fixtures/cases/switch.c::dispatch_value` case 5 calls a noinline
-helper `f(value->a)`.  After resolution the IR contains a `Call`
-node whose:
-
-  - target is the resolved address of `f` (an `IntConst`),
-  - arg slot 0 is the loaded `value->a` (the `Load` shape).
-
-Those properties give us a real graph to exercise every builder
-method that strider-py now exposes.
-
-Mirrors `crates/pattern/src/pat/builders/call.rs::CallPat` —
-`.at(addr)`, `.target(pat)`, `.arg(idx, pat)`, plus the universal
-`.capture(c)` / `.cap(name)` / `.when(f)` / `.into_pat()`.
+The fixture is `switch.c::dispatch_value`, whose case 5 calls a noinline
+helper `f(value->a)`.  After resolution that yields a `Call` whose target is
+an `IntConst` of `f`'s address and whose arg 0 is a `Load`, giving a real
+graph for `.at()` / `.target()` / `.arg()` and the universal `.capture()` /
+`.cap()` / `.when()` / `.into_pat()`.
 """
 
 from __future__ import annotations
@@ -29,12 +21,9 @@ def _switch_graph():
     return built_function("x86", "switch", "dispatch_value")
 
 
-# ── builder-shape sanity ─────────────────────────────────────────────────
-
-
 def test_call_returns_builder_chainable():
-    # `.at()` / `.arg()` return the SAME builder (chain).  The test
-    # validates the chain stays valid; semantics are exercised below.
+    # `.at()` / `.arg()` return the same builder so chaining stays valid;
+    # the semantics are exercised further down.
     b = call().at(0x1000).arg(0, int_const(8))
     assert b is not None
     p = b.into_pat()
@@ -46,11 +35,9 @@ def test_into_pat_returns_pat():
     assert isinstance(p, Pat)
 
 
-# After the `#[strider_pattern]` macro migration the `.capture(c)` /
-# `.cap(name)` / `.when(f)` builder methods return the same builder
-# (so further chaining stays typed), not an eagerly finalised `Pat`.
-# Call `.into_pat()` (or pass the builder directly as a `PatLike`) to
-# materialise.
+# `.capture()` / `.cap()` / `.when()` return the builder rather than an
+# eagerly finalised `Pat`, so chaining stays typed.  Materialise with
+# `.into_pat()`, or pass the builder straight in as a PatLike.
 def test_capture_returns_builder_with_into_pat_then_pat():
     c = Capture()
     b = call().capture(c)
@@ -71,11 +58,8 @@ def test_when_predicate_returns_builder_with_into_pat_then_pat():
 
 
 def test_when_predicate_filters_control_builder():
-    # `.when()` on a node-rooted control builder must actually FILTER —
-    # a rejecting predicate finds 0 where the unguarded pattern finds ≥1,
-    # and a passing predicate keeps the match. (Regression: the predicate
-    # used to be silently dropped on control builders, letting every node
-    # through.)
+    # Regression: `.when()` used to be silently dropped on control builders,
+    # letting every node through.
     g = _switch_graph()
 
     baseline = g.find_all(call())
@@ -89,7 +73,7 @@ def test_when_predicate_filters_control_builder():
 
 
 def test_target_accepts_pat_like():
-    # PatLike: Pat, Capture, str ("name"), or another typed builder.
+    # PatLike is a Pat, a Capture, a str name, or another typed builder.
     assert isinstance(call().target(int_const(0x1234)).into_pat(), Pat)
     assert isinstance(call().target("tgt").into_pat(), Pat)
     assert isinstance(call().target(anything()).into_pat(), Pat)
@@ -101,19 +85,14 @@ def test_arg_accepts_pat_like():
     assert isinstance(call().arg(0, function_arg(0)).into_pat(), Pat)
 
 
-# ── end-to-end pattern matches against switch.elf ────────────────────────
-
-
 def test_find_all_accepts_unfinalised_builder():
-    # Function.find_all takes PatLike; passing the builder directly
-    # (no .into_pat()) must work and find the case-5 call site.
+    # find_all takes PatLike, so an unfinalised builder works as-is.
     g = _switch_graph()
     hits = g.find_all(call())
     assert len(hits) >= 1, "expected at least one Call (case 5 → f())"
 
 
 def test_call_at_address_matches_known_target():
-    # Look up f's address; assert call(at=f_addr) finds the case-5 site.
     elf = fixture_path("x86", "switch")
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
@@ -124,36 +103,34 @@ def test_call_at_address_matches_known_target():
 
 
 def test_call_at_any_matches_when_target_in_set():
-    # `.at_any([...])` fires if the call target equals any address in
-    # the list — natural for queries that look for "any of these
-    # known callees" (e.g. multiple lock-acquire helpers).
+    # `.at_any([...])` fires if the target equals any address in the list,
+    # for queries like "any of these known callees".
     elf = fixture_path("x86", "switch")
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
     f_addr = loaded.symbol("f")
     g = _switch_graph()
 
-    # Set contains f's actual address among unrelated noise → must fire.
+    # f's address among unrelated noise: must fire.
     hits = g.find_all(call().at_any([0xDEAD_BEEF, f_addr, 0xCAFE_BABE]))
     assert len(hits) >= 1, (
         f"expected ≥1 Call when {f_addr:#x} is in the target set; got {len(hits)}"
     )
 
-    # Set without f's address → no match.
+    # Without f's address: no match.
     hits_none = g.find_all(call().at_any([0xDEAD_BEEF, 0xCAFE_BABE]))
     assert len(hits_none) == 0
 
 
 def test_call_at_any_empty_set_matches_nothing():
-    # An empty target set is vacuously false — pin the contract so
-    # callers don't accidentally fall through to "match anything".
+    # An empty target set is vacuously false, not "match anything".
     g = _switch_graph()
     hits = g.find_all(call().at_any([]))
     assert len(hits) == 0
 
 
 def test_int_const_any_of_standalone():
-    # The underlying primitive — usable independently of CallPat.
+    # The primitive under `.at_any()`, usable without CallPat.
     from strider.pattern import int_const_any_of
     elf = fixture_path("x86", "switch")
     loaded = strider.lift.load_elf(str(elf))
@@ -165,31 +142,27 @@ def test_int_const_any_of_standalone():
 
 
 def test_call_arg0_constraint_filters_out_non_matches():
-    # `f` is called with `value->a` as arg 0 — a `Load` value (after
-    # the destructive optimiser pipeline runs, the surrounding casts
-    # may collapse but the Load itself survives).  Constrain arg 0 to
-    # `Load` and assert the Call still matches.
+    # `f` takes `value->a` as arg 0.  The optimiser may collapse the
+    # surrounding casts, but the Load itself survives.
     g = _switch_graph()
     hits = g.find_all(call().arg(0, load()))
     assert len(hits) >= 1, (
         "expected case-5 Call whose arg 0 is a Load(value->a)"
     )
 
-    # Sanity: an arg-0 constraint that CANNOT match (impossible
-    # IntConst on the load operand) must yield zero hits.  Uses a
-    # very specific constant unlikely to appear by accident.
+    # An unsatisfiable arg-0 constraint yields nothing.  The constant is
+    # picked to be unlikely to appear by accident.
     hits_neg = g.find_all(call().arg(0, int_const(0xDEAD_BEEF_CAFE)))
     assert len(hits_neg) == 0
 
 
 def test_call_target_capture_round_trips():
-    # `.target(var(c))` binds c to the target's IntConst output —
-    # users can then read its value via Match.const_uint(c).
+    # `.target(var(c))` binds c to the target's IntConst output, readable
+    # back via Match.const_uint(c).
     g = _switch_graph()
     c = Capture()
     hits = g.find_all(call().target(var(c)))
     assert len(hits) >= 1
-    # At least one match's target binding must round-trip to f's address.
     elf = fixture_path("x86", "switch")
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
@@ -205,13 +178,9 @@ def test_call_target_capture_round_trips():
 
 
 
-# ── arg-index boundaries (pinned current behaviour) ─────────────────────
-
-
 def test_call_arg_huge_index_builds_but_never_matches():
-    # An out-of-range positional index is NOT a build-time error: the
-    # builder finalises fine, the constraint simply can never bind, so
-    # find_all returns no matches.
+    # An out-of-range positional index is not a build-time error; the
+    # constraint simply can never bind.
     b = call().arg(1_000_000, anything())
     assert isinstance(b.into_pat(), Pat)
     g = _switch_graph()
@@ -219,9 +188,8 @@ def test_call_arg_huge_index_builds_but_never_matches():
 
 
 def test_call_arg_negative_index_overflows_at_chain_time():
-    # The index is a u32 on the Rust side; a negative Python int fails
-    # the pyo3 conversion eagerly (chain time), as OverflowError — not
-    # StriderError.
+    # The index is unsigned, so a negative int fails eagerly at chain time
+    # as OverflowError, not StriderError.
     import pytest
 
     with pytest.raises(OverflowError):

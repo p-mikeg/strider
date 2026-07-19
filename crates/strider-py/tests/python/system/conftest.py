@@ -1,8 +1,7 @@
 """Per-arch system-test parametrisation.
 
-Mirrors `crates/strider/tests/common/mod.rs::per_arch_test!` for the
-Python bindings.  Every test that takes the `arch_id` fixture runs once
-per supported architecture; missing fixture binaries skip cleanly.
+Every test taking the `arch_id` fixture runs once per supported
+architecture; missing fixture binaries skip cleanly.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ import pytest
 from ._helpers import ARCHES
 
 
-# Fixture path: <repo>/fixtures/out
+# Fixture binaries come from <repo>/fixtures/out (built by fixtures/Makefile).
 WORKSPACE_ROOT = pathlib.Path(__file__).resolve().parents[5]
 FIXTURES_OUT = WORKSPACE_ROOT / "fixtures" / "out"
 

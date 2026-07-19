@@ -1,7 +1,7 @@
-"""`strider.pattern.constraints` — the join constraints' own namespace.
+"""`strider.pattern.constraints`, the join constraints' own namespace.
 
 A pattern describes graph SHAPE (`find_all(pats, ...)`); a constraint is a
-relational predicate over captures (`find_all(..., constraints=[...])`).  The
+relational predicate over captures (`find_all(..., constraints=[...])`). The
 split is namespaced so the two cannot be confused for one another.
 """
 

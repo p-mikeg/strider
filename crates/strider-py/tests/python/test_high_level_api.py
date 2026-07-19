@@ -1,10 +1,6 @@
-"""Tests for the high-level Python API facade.
+"""High-level API facade: `load_elf`, `ElfLifter.analyze`, `functions()`.
 
-Covers `strider.lift.load_elf(path)` / `load_elf(path, from_segments=False)`,
-`ElfLifter.analyze(name)` (returns the same
-`(Cfg, Function, unresolved)` tuple as the base `Lifter.analyze`), and the
-`ElfLifter.functions()` iterator.  Each test skips cleanly when the
-required fixture isn't built so a fresh checkout doesn't fail.
+Tests skip cleanly when a fixture isn't built, so a fresh checkout passes.
 """
 
 from __future__ import annotations
@@ -17,29 +13,23 @@ from strider import _api
 from .conftest import FIXTURES_DIR, fixture_path
 
 
-# ── ARM Thumb interworking arch selection (pure unit, no lifting) ──────
-
-
 def test_effective_arch_arm_odd_addr_picks_thumb():
-    """An ARM (non-Thumb) arch with an odd entry address is a Thumb
-    function (interworking convention): pick `arm_thumb` and strip
-    the low bit before lifting."""
+    """ARM interworking: an odd entry address means Thumb, so pick
+    `arm_thumb` and strip the low bit."""
     arch, addr = _api._effective_arch_and_addr(strider.sleigh.SleighArch.arm(), 0x8001)
     assert arch.name() == "arm_thumb"
     assert addr == 0x8000
 
 
 def test_effective_arch_arm_even_addr_keeps_arm():
-    """An ARM arch with an even (halfword-aligned) entry is a plain
-    ARM function: keep `arm`, keep the address."""
+    """An even (halfword-aligned) entry is plain ARM: keep both."""
     arch, addr = _api._effective_arch_and_addr(strider.sleigh.SleighArch.arm(), 0x8000)
     assert arch.name() == "arm"
     assert addr == 0x8000
 
 
 def test_effective_arch_arm_thumb_odd_addr_strips_bit():
-    """When the arch is already `arm_thumb`, an odd entry still gets
-    its interworking low bit stripped to a halfword-aligned address."""
+    """An already-Thumb arch still gets the interworking low bit stripped."""
     arch, addr = _api._effective_arch_and_addr(
         strider.sleigh.SleighArch.arm_thumb(), 0x8001
     )
@@ -48,8 +38,7 @@ def test_effective_arch_arm_thumb_odd_addr_strips_bit():
 
 
 def test_effective_arch_non_arm_odd_addr_unchanged():
-    """x86 (and other non-ARM arches) never interwork: an odd address
-    is passed through verbatim with the arch unchanged."""
+    """Non-ARM arches never interwork: odd addresses pass through verbatim."""
     arch, addr = _api._effective_arch_and_addr(
         strider.sleigh.SleighArch.x86_64(), 0x401001
     )
@@ -57,13 +46,8 @@ def test_effective_arch_non_arm_odd_addr_unchanged():
     assert addr == 0x401001
 
 
-# ── Basic load + analyze + find ────────────────────────────────────────
-
-
 def test_load_returns_elf_lifter():
-    """`strider.lift.load_elf(path)` returns an `ElfLifter` (which IS a
-    `Lifter`) with the auto-picked arch + cc.  The arch name should
-    match what `file(1)` reports for the fixture."""
+    """`load_elf` auto-picks arch + cc from the ELF header."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     assert isinstance(s, strider.lift.Lifter)
@@ -72,13 +56,8 @@ def test_load_returns_elf_lifter():
 
 
 def test_load_elf_accepts_os_pathlike():
-    """Every loader takes an `os.PathLike`, not just `str`.
-
-    `fixture_path` (and `pathlib.Path` generally) is what callers actually
-    have in hand; requiring `str(path)` at every call site is friction the
-    stdlib already solves with `os.fspath`.  A custom `__fspath__` object
-    must work too — that is the whole point of the protocol.
-    """
+    """Every loader takes any `os.PathLike`, not just `str`, including a
+    custom `__fspath__` object."""
     elf = fixture_path("x64", "arithmetic")
     if not elf.exists():
         pytest.skip("fixture not built")
@@ -101,7 +80,6 @@ def test_load_elf_rejects_non_path():
 
 
 def test_load_x86_32bit():
-    """x86 (32-bit) fixtures pick the `x86` arch + `x86_cdecl` cc."""
     elf = fixture_path("x86", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     assert s.arch.name() == "x86"
@@ -109,7 +87,6 @@ def test_load_x86_32bit():
 
 
 def test_load_aarch64():
-    """aarch64 fixtures pick `aarch64` + `aarch64_aapcs64`."""
     elf = fixture_path("aarch64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     assert s.arch.name() == "aarch64"
@@ -117,13 +94,11 @@ def test_load_aarch64():
 
 
 def test_load_missing_file_raises():
-    """Non-existent paths surface as FileNotFoundError."""
     with pytest.raises(FileNotFoundError):
         strider.lift.load_elf("/nonexistent/path/foo.elf")
 
 
 def test_load_non_elf_raises(tmp_path):
-    """A file that isn't an ELF surfaces as ValueError (no magic)."""
     p = tmp_path / "not-an-elf.bin"
     p.write_bytes(b"NOTELF\x00" * 16)
     with pytest.raises(ValueError):
@@ -131,9 +106,8 @@ def test_load_non_elf_raises(tmp_path):
 
 
 def test_functions_iterator_lists_add():
-    """The `add` symbol is defined in every arithmetic.elf fixture
-    (added by the test harness Makefile).  `ElfLifter.functions()`
-    should yield it."""
+    """Every arithmetic.elf fixture defines `add`, so `functions()` must
+    yield it."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     fns = list(s.functions())
@@ -141,10 +115,8 @@ def test_functions_iterator_lists_add():
 
 
 def test_load_elf_from_segments_symbol_analyze():
-    """`strider.lift.load_elf(path)` (segments, the default) returns an
-    `ElfLifter` (an `ElfLifter` IS a `Lifter`); `symbol()` resolves a
-    name and `analyze(name)` returns the base `(Cfg, Function,
-    unresolved)` tuple."""
+    """Default (segment-walk) load: `symbol()` resolves a name and
+    `analyze(name)` returns the base `(Cfg, Function, unresolved)` tuple."""
     elf = fixture_path("x64", "arithmetic")
     lift = strider.lift.load_elf(str(elf))
     assert isinstance(lift, strider.lift.Lifter)
@@ -156,9 +128,8 @@ def test_load_elf_from_segments_symbol_analyze():
 
 
 def test_load_elf_from_sections_symbol_analyze():
-    """`strider.lift.load_elf(path, from_segments=False)` forces the
-    section-walk region strategy but produces an equally-usable
-    `ElfLifter`."""
+    """`from_segments=False` forces the section-walk strategy but yields an
+    equally usable lifter."""
     elf = fixture_path("x64", "arithmetic")
     lift = strider.lift.load_elf(str(elf), from_segments=False)
     assert isinstance(lift, strider.lift.Lifter)
@@ -170,9 +141,8 @@ def test_load_elf_from_sections_symbol_analyze():
 
 
 def test_load_elf_flag_selects_strategy():
-    """`from_segments` picks the ELF region-collection strategy, and the
-    old `load_elf_from_segments`/`load_elf_from_sections` top-level names
-    no longer exist."""
+    """`from_segments` is the only strategy selector; the old
+    `load_elf_from_segments` / `load_elf_from_sections` names are gone."""
     elf = fixture_path("x64", "arithmetic")
     a = strider.lift.load_elf(str(elf))
     b = strider.lift.load_elf(str(elf), from_segments=False)
@@ -183,8 +153,7 @@ def test_load_elf_flag_selects_strategy():
 
 
 def test_analyze_returns_cfg_first():
-    """`analyze` returns the final CFG as the FIRST tuple element,
-    followed by `Function` then the unresolved-indirect-branch list."""
+    """Tuple order is pinned: cfg, function, unresolved."""
     elf = fixture_path("x64", "arithmetic")
     lift = strider.lift.load_elf(str(elf))
     cfg, function, unresolved = lift.analyze("add")
@@ -193,8 +162,8 @@ def test_analyze_returns_cfg_first():
 
 
 def test_analyze_by_name_returns_named_result():
-    """`ElfLifter.analyze(symbol_name)` returns the same `AnalyzeResult`
-    as the base `Lifter.analyze`, with a non-empty IR graph."""
+    """Analyzing by symbol name returns the same `AnalyzeResult` as the
+    base `Lifter.analyze`."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     result = s.analyze("add")
@@ -205,9 +174,8 @@ def test_analyze_by_name_returns_named_result():
 
 
 def test_analyze_result_unpacks_as_a_triple():
-    """`AnalyzeResult` keeps the legacy destructuring shape: it is a
-    3-sequence yielding `(cfg, function, unresolved)` in that order, so
-    `cfg, fn, unresolved = lifter.analyze(...)` still works."""
+    """`AnalyzeResult` keeps the legacy destructuring shape: a 3-sequence of
+    `(cfg, function, unresolved)`, so old tuple-unpacking call sites work."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     result = s.analyze("add")
@@ -216,14 +184,12 @@ def test_analyze_result_unpacks_as_a_triple():
     assert cfg is result.cfg
     assert function is result.function
     assert unresolved == result.unresolved
-    # Positional indexing agrees with the named fields, negative included.
     assert result[0] is result.cfg and result[-1] == result.unresolved
     with pytest.raises(IndexError):
         result[3]
 
 
 def test_analyze_by_address_returns_tuple():
-    """`ElfLifter.analyze(<int>)` also works."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     addr = s.symbol("add")
@@ -233,7 +199,6 @@ def test_analyze_by_address_returns_tuple():
 
 
 def test_analyze_unknown_symbol_raises():
-    """An undefined symbol surfaces as ReaderError."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     with pytest.raises(strider.StriderError):
@@ -241,7 +206,6 @@ def test_analyze_unknown_symbol_raises():
 
 
 def test_analyze_wrong_type_raises():
-    """Passing a non-str/non-int raises TypeError."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     with pytest.raises(TypeError):
@@ -249,12 +213,11 @@ def test_analyze_wrong_type_raises():
 
 
 def test_find_against_pattern_returns_list():
-    """`Function.find_all(pat)` works directly on the tuple's function."""
+    """`find_all` works directly on the function `analyze` returns, with no
+    wrapper object."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     _cfg, function, _unresolved = s.analyze("add")
-    # `add(a, b)` returns `a + b` — find every IntBinaryOp("Add") in
-    # the lifted graph (at least one must exist: the actual add op).
     matches = function.find_all(
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
@@ -263,19 +226,17 @@ def test_find_against_pattern_returns_list():
 
 
 def test_find_all_returns_empty_when_absent():
-    """`Function.find_all(pat)` returns `[]` when the pattern has no
-    match anywhere in the graph."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     _cfg, function, _unresolved = s.analyze("add")
-    # An impossible IntConst literal that cannot occur in `add(a, b)`.
+    # A literal that cannot occur in `add(a, b)`.
     impossible = strider.pattern.int_const(0xDEAD_BEEF_CAFE_BABE)
     assert function.find_all(impossible) == []
 
 
 def test_fingerprint_returns_machine_addresses():
-    """Every matched value node should carry a non-empty
-    asm-fingerprint (asm-fingerprints are always-on per G3)."""
+    """Asm-fingerprints are always on, so every matched value node carries
+    at least one plausible machine address."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     addr = s.symbol("add")
@@ -287,16 +248,12 @@ def test_fingerprint_returns_machine_addresses():
     fp = function.node(matches[0].root).asm_fingerprint()
     assert isinstance(fp, list)
     assert all(isinstance(a, int) for a in fp)
-    # An IntBinaryOp("Add") lifted from a real add instruction must
-    # carry at least one source address — empty fingerprints are only
-    # allowed on structural node kinds (phis / Entry / InitialMemory /
-    # FunctionArg).
+    # Empty fingerprints are legal only on structural kinds (phis, Entry,
+    # InitialMemory), never on an Add lifted from a real instruction.
     assert len(fp) >= 1, f"empty fingerprint on Add match {matches[0].root}"
-    # The fingerprint addresses should be plausible machine instruction
-    # addresses (within or near the function entry).
     for a in fp:
-        # No tight bound on function size but addresses must be within
-        # the loaded ELF text region — a generous 1 MB window.
+        # No tight bound on function size; a 1 MB window around the entry
+        # is enough to catch a fingerprint pointing somewhere absurd.
         assert addr - (1 << 20) <= a <= addr + (1 << 20), (
             f"fingerprint address {a:#x} is implausibly far from "
             f"function entry {addr:#x}"
@@ -304,9 +261,8 @@ def test_fingerprint_returns_machine_addresses():
 
 
 def test_fingerprint_matches_via_node_and_match_forwarder():
-    """`Node` is the single source of truth for the addr-only
-    fingerprint; `Match.asm_fingerprint(key)` is a thin forwarder onto
-    `Node.asm_fingerprint()` for a captured node."""
+    """`Match.asm_fingerprint(key)` is a thin forwarder onto the captured
+    node's own `asm_fingerprint()`; the two must agree."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     _cfg, function, _unresolved = s.analyze("add")
@@ -321,9 +277,7 @@ def test_fingerprint_matches_via_node_and_match_forwarder():
 
 
 def test_fingerprint_rejects_bad_type():
-    """`Function.node(<float>)` should raise TypeError — the same `u32`
-    conversion the removed id-keyed `asm_fingerprint(id)` used to reject
-    on."""
+    """`Function.node()` rejects a non-integer id rather than coercing it."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     _cfg, function, _unresolved = s.analyze("add")
@@ -332,7 +286,7 @@ def test_fingerprint_rejects_bad_type():
 
 
 def test_elf_lifter_repr():
-    """`ElfLifter.__repr__` includes the arch + cc names."""
+    """repr includes the arch + cc names."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     r = repr(s)
@@ -340,17 +294,11 @@ def test_elf_lifter_repr():
     assert "x86_64_systemv" in r
 
 
-# ── Analyse-many: hold an ElfLifter, call analyze repeatedly ────────────
-
-
 def test_analyze_many_reuse():
-    """One `ElfLifter`, many functions: each `analyze()` yields a valid
-    tuple with a non-empty graph.  The handle survives repeated calls
-    (the analyse-many workflow: one handle, repeated analyze)."""
+    """One handle, many analyze calls: the analyse-many workflow. Sleigh
+    context state is per-analyze, so reuse must not corrupt later lifts."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
-    # Analyze the same function twice and (when present) other names —
-    # proving a single handle survives repeated calls.
     _cfg, function1, _unresolved1 = s.analyze("add")
     _cfg, function2, _unresolved2 = s.analyze("add")
     assert function1.node_count() > 0
@@ -361,39 +309,33 @@ def test_analyze_many_reuse():
         try:
             _cfg, other_function, _unresolved = s.analyze(name)
         except strider.StriderError:
-            # Data symbols / non-code names may not lift; skip them.
+            # Data symbols / non-code names may not lift.
             continue
         assert other_function.node_count() >= 0
 
 
 def test_analyze_function_max_size_clips_mid_function():
-    """`function_max_size` is observable: lifting `add` unbounded
-    succeeds, but clipping to `4` bytes cuts the function mid-stream so
-    sequential fall-through past the bound is a function-boundary error
-    (not a tail call)."""
+    """A bound that cuts mid-function must be a function-boundary error, not
+    silently reinterpreted as a tail call."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
-    # Unbounded lifts cleanly.
     _cfg, function, _unresolved = s.analyze("add")
     assert function.node_count() > 0
-    # A per-call bound of 4 clips mid-function -> function-boundary error.
     with pytest.raises(strider.StriderError) as exc:
         s.analyze("add", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4)))
     assert "function-boundary error" in str(exc.value)
 
 
 def test_analyze_explicit_none_lifts_whole_function():
-    """An explicit `function_max_size=None` lifts the whole function;
-    a tiny explicit bound clips it.  Using an address target avoids the
-    symbol-size default so the bound is the only thing in play."""
+    """Explicit `function_max_size=None` means unbounded, not "fall back to
+    a default". An address target is used so the symbol-size default cannot
+    interfere."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     addr = s.symbol("add")
-    # A tiny bound (4) -> sequential overflow error.
     with pytest.raises(strider.StriderError) as exc:
         s.analyze(addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4)))
     assert "function-boundary error" in str(exc.value)
-    # Explicit None -> unbounded -> lifts cleanly.
     _cfg, full_function, _unresolved = s.analyze(
         addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=None))
     )
@@ -401,8 +343,7 @@ def test_analyze_explicit_none_lifts_whole_function():
 
 
 def test_analyze_allow_code_before_start_addr():
-    """`allow_code_before_start_addr=True` does not raise and yields a
-    valid analysis."""
+    """`allow_code_before_start_addr=True` is accepted and still analyses."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     _cfg, function, _unresolved = s.analyze(
@@ -411,15 +352,10 @@ def test_analyze_allow_code_before_start_addr():
     assert function.node_count() > 0
 
 
-# ── Standalone Strider (non-ELF, address-only) ──────────────────────────
-
-
 def test_standalone_strider_by_address():
-    """`strider.lift.lifter(arch, mem)` over a raw BufferReader lifts a
-    function by address; pattern queries work directly on the returned
-    `Function` and `fingerprint_pcode` works directly on the `Cfg`
-    `analyze` returns — no wrapper needed even though there is no
-    backing ELF symbol table."""
+    """A raw BufferReader with no symbol table still supports the full
+    query surface: pattern matching on the function and `fingerprint_pcode`
+    on the CFG."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded._elf.reader()
@@ -432,8 +368,6 @@ def test_standalone_strider_by_address():
         strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches, "expected at least one Add node"
-    # The standalone path must keep fingerprint_pcode working via the
-    # Cfg that produced the function.
     pcode = cfg.fingerprint_pcode(fn.node(matches[0].root))
     assert isinstance(pcode, list)
     for addr_, text in pcode:
@@ -442,8 +376,8 @@ def test_standalone_strider_by_address():
 
 
 def test_standalone_strider_rejects_name_targets():
-    """A standalone `Lifter` accepts only address targets; a name
-    target raises rather than misbehaving (it is not a symbol table)."""
+    """A standalone `Lifter` has no symbol table, so a name target must
+    raise rather than misbehave."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded._elf.reader()
@@ -454,8 +388,8 @@ def test_standalone_strider_rejects_name_targets():
 
 def test_standalone_strider_requires_an_explicit_cc():
     """`cc` is optional in the base signature only so `ElfLifter` (which
-    derives one from the ELF header) is a compatible override — a plain
-    `Lifter` stores no default and says so rather than guessing."""
+    derives one from the ELF header) stays a compatible override. A plain
+    `Lifter` stores no default and must say so rather than guess."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded._elf.reader()
@@ -464,49 +398,32 @@ def test_standalone_strider_requires_an_explicit_cc():
         s.analyze(loaded.symbol("add"))
 
 
-# The custom-pipeline path used to live on `strider.run(..., pipeline=)`:
-# passing an `OptimizerPipeline` lifted once and applied it, skipping the
-# orchestrator's indirect-branch loop.  The single-`Lifter` collapse (Task
-# 2 of the strider-py API redesign) removed that entry point —
-# `Lifter.analyze` always drives the canonical default pipeline plus
-# indirect-branch resolution.  A caller wanting extra passes on top of
-# the fully-resolved graph now calls `Lifter.optimize(function, pipeline)`
-# afterwards (already covered by `test_optimizer_pipeline.py`).
-
-
-# ── ET_REL object-file loading (`*.o`, no PT_LOAD program headers) ──────
+# There is deliberately no custom-pipeline test here: `Lifter.analyze` always
+# drives the default pipeline plus indirect-branch resolution.  Extra passes on
+# a resolved graph go through `Lifter.optimize`, covered in
+# test_optimizer_pipeline.py.
 
 
 def test_load_x64_object_file_lifts_tzcount():
-    """`strider.lift.load_elf(<path>.o)` opens an ET_REL relocatable object
-    file and lifts a function from it.  ET_REL has no PT_LOAD program
-    headers — the loader (`load_elf_from_segments`'s underlying
-    strategy) has to walk sections (with first-wins VMA dedup, since
-    `.text` and `.text.startup` share VMA 0 pre-link).
+    """ET_REL objects have no PT_LOAD headers, so the loader must fall back
+    to a section walk with first-wins VMA dedup (`.text` and `.text.startup`
+    both sit at VMA 0 pre-link).
 
-    Pre-fix, the loader produced an empty memory map for `.o` files,
-    so `analyze()` here would lift an empty CFG.  Post-fix the lift
-    succeeds and yields a non-trivial IR graph.
+    Regression: the loader used to build an empty memory map for `.o` files,
+    so `analyze()` silently lifted an empty CFG instead of failing.
     """
     obj = FIXTURES_DIR / "x64" / "tzcount.o"
     if not obj.exists():
         pytest.skip(f"fixture missing: {obj} (run `make CASE=tzcount` in fixtures/)")
-    # Load without relocation autoload: this fixture's reloc sites widen
-    # the section set and stitch `tzcount` to its callees, extending the
-    # lifted body past its recorded `st_size` — but this test only cares
-    # that the ET_REL section-walker surfaces `.text` and lifts a
-    # non-empty graph, so keep the raw section bytes.
+    # No relocation autoload: this fixture's reloc sites widen the section set
+    # and stitch `tzcount` to its callees, extending the lifted body past its
+    # recorded `st_size`.  Only the section walk is under test here.
     p = strider.lift.load_elf(str(obj), apply_relocations=False)
-    # `tzcount` is the first global function in `.text`.  Note that
-    # `p.symbols()` filters out symbols with address 0 (the safer
-    # default for stripped binaries that have synthetic zero-address
-    # entries), and every ET_REL symbol's `st_value` is a
-    # section-relative offset that's 0 for the first symbol — so we
-    # look it up by direct `symbol()` instead of through the dict.
+    # Looked up via symbol() rather than the symbols() dict: that dict drops
+    # address-0 symbols, and every ET_REL st_value is section-relative, so the
+    # first symbol in .text has address 0.
     assert p.symbol("tzcount") is not None
     _cfg, function, _unresolved = p.analyze("tzcount")
-    # Non-empty IR graph: the loader surfaced the `.text` bytes and
-    # Sleigh / strider-lift turned them into a function.
     assert function.node_count() > 0, (
         "loading an ET_REL .o should yield a non-empty IR graph; an "
         "empty graph means the loader produced no readable bytes for "

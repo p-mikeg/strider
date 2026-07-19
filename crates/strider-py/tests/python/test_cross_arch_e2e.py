@@ -1,14 +1,7 @@
-"""Cross-arch end-to-end smoke tests via the Python API.
+"""Cross-arch smoke tests over the Python boundary.
 
-Pin that AArch64 and MIPS32 fixtures lift cleanly through the full
-strider pipeline.  Mirrors the rust-side `arithmetic.rs` matrix but
-exercises the Python boundary: ELF load → BufferReader →
-SleighArch + CallingConvention → run → graph.
-
-Each test asserts the lift produces a non-empty IR graph
-(specifically, at least one Add node from the `add` function).
-Ignores fingerprint absorption details — the goal is "Python lifts
-this arch at all", not "the IR is byte-identical".
+Pins "Python lifts this arch at all", not IR shape: each test only
+requires the `add` fixture to yield at least one Add node.
 """
 
 from __future__ import annotations

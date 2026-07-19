@@ -1,11 +1,10 @@
 """Regression: a reference cycle through a custom Python reader and its
-`Lifter` must be collectable by Python's cyclic GC.
+`Lifter` must be collectable by the cyclic GC.
 
-The Lifter's `Sleigh` holds the Python reader via a Rust adapter
-(`Py<PyAny>`).  If the user's reader also references the Lifter, that forms
-a cycle with one edge living inside Rust.  Without a `__traverse__` that
-exposes the buried reference, Python's GC cannot see the cycle and never
-collects it — both objects leak for the process lifetime.
+A Lifter holds its reader internally, so a reader that points back at the
+Lifter closes a cycle whose second edge is invisible to Python. Until the
+Lifter exposed that edge to the GC, both objects leaked for the process
+lifetime.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ def test_custom_reader_lifter_cycle_is_collectable():
 
     r = _Reader()
     lift = L(strider.sleigh.SleighArch.x86_64(), r)
-    r.back = lift  # cycle: reader -> lifter -> (Rust Sleigh holds Py<reader>) -> reader
+    r.back = lift  # cycle: reader -> lifter -> (held internally) -> reader
 
     wl, wr = weakref.ref(lift), weakref.ref(r)
     del lift, r

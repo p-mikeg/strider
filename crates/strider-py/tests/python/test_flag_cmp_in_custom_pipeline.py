@@ -1,29 +1,14 @@
-"""Regression test: the default pipeline's `FlagCmpCanonicalize` must
-canonicalise `head->next == &head`-style flag-cmp shapes.
+"""Regression: `FlagCmpCanonicalize` must run in the pipeline
+`Lifter.analyze` drives, or `head->next == &head` shapes stay as
+flag-trees and pattern queries fail silently.
 
-The canonical bug shape is `list_empty(head)`: `head->next == &head`
-compiles on x86_64 (`-O2`) to a `cmp QWORD PTR [rdi+K], rdi+K`
-(mem vs reg+K), which Sleigh expands to a flag-tree the lifter
-normalises to::
+`list_empty(head)` compiles on x86_64 -O2 to `cmp QWORD PTR [rdi+K],
+rdi+K`, which Sleigh expands to a flag-tree the lifter normalises to
+`Equal(Add(LOAD(rdi+K), Neg(Add(rdi, K))), 0)`.  The pass rewrites that
+to the queryable `Equal(LOAD(rdi+K), Add(rdi, K))`.
 
-    Equal(Add(LOAD(rdi+K), Neg(Add(rdi, K))), 0)
-
-`opt::FlagCmpCanonicalize` rewrites this to::
-
-    Equal(LOAD(rdi+K), Add(rdi, K))
-
-— the canonical shape pattern queries match on
-(``int_eq(load(<base>+K), add(<base>, K))``).  ``FlagCmpCanonicalize``
-must run in the pipeline `Lifter.analyze` drives, or the flag-tree
-shape stays in the IR and pattern queries fail silently.  (There used
-to be a custom-pipeline entry point that could omit it entirely; the
-single-`Lifter` collapse removed that knob — `analyze` always runs the
-canonical default pipeline, which includes `FlagCmpCanonicalize`.)
-
-This test uses the in-repo fixture `fixtures/cases/list_empty.c` —
-`is_thread_group_empty(task*)` — which has the exact ``head->next ==
-&head`` shape at struct offset 64 (4 bytes `pid` + 60 bytes pad =
-64).  See the C file for the layout.
+Fixture: `fixtures/cases/list_empty.c::is_thread_group_empty`, whose
+`head` sits at struct offset 64 (4-byte `pid` + 60 bytes pad).
 """
 
 from __future__ import annotations
@@ -42,10 +27,8 @@ from .conftest import fixture_path
 
 
 def test_list_empty_pattern_matches_under_custom_pipeline_with_fcc():
-    """`FlagCmpCanonicalize` (part of the canonical default pipeline
-    `Lifter.analyze` always runs) must canonicalise the
-    `head->next == &head` shape so it is matchable as
-    `int_eq(load(<base>+K), add(<base>, K))`."""
+    """The `head->next == &head` shape must be matchable as
+    `int_eq(load(<base>+K), add(<base>, K))` after `analyze`."""
     elf = fixture_path("x64", "list_empty")
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
@@ -66,8 +49,8 @@ def test_list_empty_pattern_matches_under_custom_pipeline_with_fcc():
     )
     hits = list(function.find_all(pat, ignore_casts=True))
     offsets = sorted({h.const_uint(o) for h in hits if h.const_uint(o) is not None})
-    # `offsetof(struct task, head)` in the C fixture: int (4) + char[60]
-    # (60) = 64.  GCC at -O2 emits exactly `cmp [rdi+0x40], rdi+0x40`.
+    # offsetof(struct task, head) = 4 + 60 = 64; GCC -O2 emits exactly
+    # `cmp [rdi+0x40], rdi+0x40`.
     assert 64 in offsets, (
         f"expected list_empty test at offset 64 to canonicalise; "
         f"got hits at {offsets}"
