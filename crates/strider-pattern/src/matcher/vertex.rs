@@ -1,6 +1,3 @@
-//! Vertex weights for the bipartite pattern graph: [`PatNode`] mirrors an IR
-//! `Node`, [`PatValue`] a `ValueData`.
-
 use std::mem::Discriminant;
 
 use strider_ir::node::{NodeId, NodeKind, ValueType};
@@ -21,8 +18,7 @@ pub enum KindSpec {
 }
 
 impl KindSpec {
-    /// The discriminant this spec pins, if any. The matcher's kind index uses
-    /// it to narrow candidates before attempting a full match.
+    /// The discriminant this spec pins, if any.
     pub fn discriminant(&self) -> Option<Discriminant<NodeKind>> {
         match self {
             Self::Any => None,
@@ -71,13 +67,11 @@ pub struct PatNode {
     pub force_ordered: bool,
     /// Marks a `one_of` node: its inputs are independent alternative
     /// sub-patterns tried against the *same* IR node, not operands. First
-    /// match wins, with the usual backtracking. Its own kind is
-    /// [`KindSpec::Any`]; the alternatives carry the real kind checks.
+    /// match wins, with the usual backtracking.
     pub alternation: bool,
     /// Consumer input slot per input, parallel to the generic graph's input
-    /// order. The generic graph stores inputs densely, but a pattern's inputs
-    /// are sparse (`call().arg(0, ..)` wires only raw slot 4), so the original
-    /// slot is recorded here and recovered by the matcher / instantiation walk.
+    /// order. A pattern's inputs are sparse (`call().arg(0, ..)` wires only
+    /// raw slot 4), so the original slot is recorded here.
     pub input_slots: Vec<usize>,
 }
 
@@ -107,7 +101,7 @@ impl PatNode {
 }
 
 pub enum OutputKindSpec {
-    /// Value, control, memory, or phi-token. The unconstrained wildcard behind
+    /// Value, control, memory, or phi-token: the unconstrained wildcard behind
     /// `any()` / `var()`. A `width` constraint can still narrow it to a value
     /// output of that width.
     Any,
@@ -124,14 +118,10 @@ pub struct PatValue {
     pub kind: OutputKindSpec,
     pub width: Option<u32>,
     /// Enforced producer output-slot constraint. `None` leaves the slot
-    /// unchecked, so any output kind-ok against `kind` matches; that is what
-    /// lets a nested Call/CallOther value operand match any value output.
-    /// `Some(s)` pins the slot, as `call_other().res()` does to select the
-    /// declared result and exclude clobbers.
+    /// unchecked, so any output kind-ok against `kind` matches; `Some(s)` pins
+    /// the slot.
     pub match_slot: Option<usize>,
-    /// Where value captures live: `add(var(x), ..)` binds `x` here. Takes
-    /// precedence over the producing node's [`PatNode::capture`], which covers
-    /// only value-less roots.
+    /// Where value captures live: `add(var(x), ..)` binds `x` here.
     pub capture: Option<crate::capture::Capture>,
 }
 
@@ -157,8 +147,7 @@ impl PatValue {
         }
     }
 
-    /// The IR's memory side channel: `InitialMemory` / `Store` / `MemPhi` /
-    /// `Call` produce a token a later `Load` / `Store` consumes.
+    /// The IR's memory side channel.
     pub fn memory(slot: usize) -> Self {
         Self {
             slot,

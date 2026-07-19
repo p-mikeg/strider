@@ -34,26 +34,20 @@ use crate::bindings::Bindings;
 use crate::graph_ext::{PatGraphRead, reachable_topo};
 use crate::matcher::OutputKindSpec;
 
-/// Named to keep [`TemplateKind`] under clippy's `type_complexity` lint.
-/// `Box`, not `Arc` / `Rc`: the core is single-threaded.
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
 
 /// The `u128` return caps the expressible range: an I256/I512 output
-/// materialises only the low 128 bits, leaving the high limbs zero. Every
-/// current rewrite folds at 128 bits or below; a full-range I256/I512
-/// constant would need a wider closure.
+/// materialises only the low 128 bits, leaving the high limbs zero.
 pub type TemplateKindFnIntConst = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<u128>>;
 
 /// How a template node materialises into fresh IR.
 pub enum TemplateKind {
     Exact(NodeKind),
     /// The closure returns the `NodeKind` to materialise, given a
-    /// [`TemplateCtx`]. Drives the `*_const_with` builders, whose constants
-    /// are computed from captured operand values at rewrite time.
+    /// [`TemplateCtx`].
     Fn(TemplateKindFn),
-    /// The closure computes a `u128` at rewrite time and the instantiator
-    /// interns it through the unified `ConstId` interner, never truncating to
-    /// `u64` first, so an I128 rewrite preserves values wider than 64 bits.
+    /// The closure computes a `u128` at rewrite time, interned at the
+    /// resolved output width.
     FnIntConst(TemplateKindFnIntConst),
 }
 
@@ -63,11 +57,10 @@ pub enum TemplateKind {
 pub enum TemplateTy {
     /// The rewrite root's output type.
     InheritRoot,
-    /// The width of the value a bound LHS capture matched. For a materialised
-    /// interior node whose width comes from a captured operand the root's
-    /// shape does not expose: in
-    /// `Sless(x<<C, 0) -> Xor(Equal(And(x,mask),0),1)` the `I1` `Xor` root has
-    /// no `x`-wide input, so `And` and its mask cannot inherit from it.
+    /// The width of the value a bound LHS capture matched, for an interior
+    /// node whose width comes from a captured operand the root does not
+    /// expose (`Sless(x<<C, 0) -> Xor(Equal(And(x,mask),0),1)`: the `I1` root
+    /// has no `x`-wide input for `And` and its mask to inherit).
     InheritBinding(crate::Capture),
     /// Independent of the root.
     Fixed(ValueType),
@@ -77,32 +70,20 @@ pub enum TemplateTy {
 ///
 /// `root_ty` types any node whose [`TemplateTy`] is
 /// [`TemplateTy::InheritRoot`]. `lhs_root` reaches [`TemplateKind::Fn`]
-/// closures as [`TemplateCtx::root`]; a pure-`Exact` template ignores it, so
-/// a standalone caller may pass any valid `NodeId` from `function`.
+/// closures as [`TemplateCtx::root`]; a pure-`Exact` template ignores it.
 ///
 /// `proof_nodes` is unioned into the asm-fingerprint of every node created
-/// here. Callers pass the matched LHS footprint so each fresh RHS node, root
-/// and interior alike, carries the whole rewrite's proof rather than just the
-/// matched root. `lhs_root` stays separate because the dynamic-`Fn` closures
-/// need the single matched-root node for `InheritRoot` typing.
+/// here.
 ///
-/// Interior nodes may be multi-output, such as a built `Store` or `Call`
-/// producing a memory token a later node consumes. The root always yields a
-/// single value output, which is the contract the single-value rewrite rule
-/// relies on.
+/// Interior nodes may be multi-output; the root always yields a single value
+/// output.
 ///
 /// # Author-owned output-signature validity
 ///
-/// Nodes are created with their **declared** output signature, and neither
-/// this function nor the rewrite path afterwards runs
-/// [`strider_ir::validate`]. Matching each declared signature to its
-/// `NodeKind`'s `expected_signature` is the [`Template`] author's
-/// responsibility.
-///
-/// Input-slot wiring IS checked here: a gap or a duplicate errors out rather
-/// than being silently closed or overwritten. The typed `template::` builders
-/// wire contiguous single-occupancy slots by construction, so only a
-/// hand-built [`Template`] can trip this.
+/// Nodes are created with their **declared** output signature, and
+/// [`strider_ir::validate`] is not run: matching each declared signature to
+/// its `NodeKind`'s `expected_signature` is the author's responsibility.
+/// Input-slot wiring IS checked here: a gap or a duplicate errors out.
 ///
 /// # Errors
 ///
@@ -234,9 +215,8 @@ fn resolve_ty(
     }
 }
 
-/// Resolves every `InheritBinding(cap)` width once, from the value each
-/// capture matched. A capture that is unbound or bound to a non-typed value is
-/// omitted, leaving the consumer to fall back to the root type.
+/// Resolves every `InheritBinding(cap)` width, from the value each capture
+/// matched. An unbound or non-typed capture is omitted.
 fn resolve_binding_tys(
     template: &Template,
     bindings: &Bindings,
@@ -262,22 +242,14 @@ fn resolve_binding_tys(
     out
 }
 
-/// `v` is a `u128`, so even an I256/I512 output has zero high limbs and the
-/// limb path would canonicalise back through `intern_int_const` regardless.
-/// That masks `v` to `value_ty`'s width and stores it as `Bits`.
+/// Masks `v` to `value_ty`'s width and stores it.
 fn intern_fn_int_const<B: IRBuilder>(builder: &mut B, value_ty: ValueType, v: u128) -> NodeKind {
     NodeKind::IntConst(builder.function_mut().intern_int_const(v, value_ty))
 }
 
 /// In slot order, reading each producer's already-materialised IR output from
-/// `materialised`.
-///
-/// The raw `TemplateBuilder` verbs enforce neither contiguous nor
-/// single-occupancy slots. A gap (slots 0 and 2 but not 1) would be silently
-/// CLOSED by `into_values()`, and a duplicate slot would silently overwrite
-/// the earlier edge; both yield wrong IR with no diagnostic, since the
-/// rewrite path skips validation. Hence both are rejected here. The typed
-/// builders always wire `0..n` exactly once and never trip it.
+/// `materialised`. A gapped or duplicate input slot is rejected here rather
+/// than silently closed or overwritten.
 fn collect_inputs(
     template: &Template,
     node_vtx: NodeId,
@@ -312,8 +284,7 @@ fn collect_inputs(
     Ok(inputs_by_slot.into_values().collect())
 }
 
-/// The single source of truth for the `OutputKindSpec` to [`ValueKind`]
-/// mapping, shared by [`node_value_ty`] and [`output_kinds_for`].
+/// Maps an `OutputKindSpec` to its [`ValueKind`].
 fn resolved_output_kind(
     o: &TmplOutput,
     root_ty: ValueType,
@@ -333,7 +304,7 @@ fn resolved_output_kind(
 
 /// The [`TemplateTy`] of the node's first value output vertex, resolved
 /// against `root_ty`. A node with no value output vertex falls back to
-/// `root_ty` itself.
+/// `root_ty`.
 fn node_value_ty(
     template: &Template,
     node_vtx: NodeId,
@@ -358,8 +329,8 @@ fn node_value_ty(
 }
 
 /// Each value output resolves its own [`TemplateTy`] against `root_ty`. A
-/// node with no explicit output vertex, the common value-expression case,
-/// falls back to a single value output of the root's type.
+/// node with no explicit output vertex falls back to a single value output of
+/// the root's type.
 fn output_kinds_for(
     template: &Template,
     node_vtx: NodeId,

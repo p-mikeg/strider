@@ -1,9 +1,3 @@
-//! The bipartite build-side graph, counterpart to
-//! [`Pattern`](crate::matcher::Pattern): the generic
-//! [`strider_graph::Graph`] under
-//! [`NeverCacheable`](strider_graph::NeverCacheable), over the payloads
-//! [`TmplNode`] and [`TmplValue`].
-//!
 //! Unlike the match side, a template carries no kindspecs or predicates. A
 //! node is either a [`Build`](TmplNodeKind::Build) declaring a
 //! [`TemplateKind`], or a [`Capture`](TmplNodeKind::Capture) leaf marker

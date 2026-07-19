@@ -6,9 +6,8 @@ use std::fmt;
 
 pub type Result<T> = anyhow::Result<T>;
 
-/// Returned by a closure inside a rewrite RHS to decline the rewrite. The
-/// `rewrite_rule` interpreter detects it via [`is_skip`] and reports "no
-/// change" instead of failing.
+/// Returned by a closure inside a rewrite RHS to decline the rewrite,
+/// detected via [`is_skip`].
 #[derive(Debug)]
 pub struct RewriteSkip;
 
@@ -30,7 +29,7 @@ pub fn is_skip(err: &anyhow::Error) -> bool {
 }
 
 /// A builder referenced a capture the LHS never bound. Carries the capture
-/// kind name (`"uint"`, `"int_binary_op"`, ...) to locate the bug.
+/// kind name (`"uint"`, `"int_binary_op"`, ...).
 #[derive(Debug)]
 pub struct MissingBinding(&'static str);
 

@@ -1,5 +1,3 @@
-//! Wildcard / capture / width-filter typed builders.
-
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueType};
 

@@ -1,9 +1,4 @@
 //! Capture-to-binding journal backing every pattern match.
-//!
-//! Rebind-conflict detection is an O(1) hashed lookup against a capture index
-//! kept in lockstep with the entry list; rollback (`mark` / `restore`) drains
-//! that list's tail. The typed extractors (`get_uint`, `get_int_binary_op`,
-//! ...) look up the bound `NodeId` and read its `NodeKind`.
 
 use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -27,35 +22,18 @@ pub(crate) enum Binding {
 /// Bindings accumulated during one match attempt. Append-only: rebinding a
 /// `Capture` to a different value fails the containing match.
 ///
-/// Backtracking is journal-based rather than a state copy. A site attempting
-/// a speculative sub-match calls `mark` first and `restore` on failure; the
-/// marker is a cursor into the entry `Vec`, so rollback allocates nothing.
-/// `restore` also de-indexes the rolled-back captures, work bounded by the
-/// number of binds being undone, keeping each bind amortized O(1) including
-/// its eventual rollback.
-///
-/// A capture binds at most once, so the index is a bijection and
-/// `bind_capture` / `get_binding` / `is_bound` are O(1). The `Vec` stays the
-/// source of truth for `iter()` order and `restore`.
-///
-/// Read-only to external callers: construction is `Default::default()` and
-/// both the mutation path and the `mark` / `restore` journal are
-/// `pub(crate)`, since only the matcher's speculative paths need them.
+/// Backtracking is journal-based: a speculative sub-match calls `mark` first
+/// and `restore` on failure, which drops the entry `Vec`'s tail and de-indexes
+/// the rolled-back captures.
 #[derive(Clone, Default)]
 pub struct Bindings {
-    /// In production order, which is what `iter()` reports.
+    /// In production order.
     entries: Vec<(Capture, Binding)>,
-    /// Each bound capture to its sole `entries` index, avoiding a linear
-    /// scan.
+    /// Each bound capture to its sole `entries` index.
     index: FxHashMap<Capture, usize>,
     /// The match's structural footprint: root, interior and captured leaves.
-    /// Shares the `entries` journal's mark / restore lifecycle, so a node
-    /// recorded during a failed commutative ordering rolls back like a
-    /// capture. A separate un-journaled accumulator would leak
-    /// failed-ordering nodes into the footprint.
-    ///
-    /// May hold duplicates when a DAG sub-pattern matched twice; consumers
-    /// that union fingerprints do not care.
+    /// Shares the `entries` journal's mark / restore lifecycle. May hold
+    /// duplicates when a DAG sub-pattern matched twice.
     matched: Vec<NodeId>,
 }
 
@@ -91,9 +69,7 @@ impl Bindings {
         }
     }
 
-    /// Idempotent: restoring to an already-current mark is a no-op. The two
-    /// journals are the sole source of truth, so dropping their tails fully
-    /// restores the pre-mark view.
+    /// Idempotent: restoring to an already-current mark is a no-op.
     pub(crate) fn restore(&mut self, mark: BindingsMark) {
         for (c, _) in self.entries.drain(mark.entries..) {
             self.index.remove(&c);
@@ -101,9 +77,7 @@ impl Bindings {
         self.matched.truncate(mark.matched);
     }
 
-    /// Called only once a pat node has *fully* matched `node`, meaning kind,
-    /// outputs, predicates, inputs and capture, so the footprint holds only
-    /// committed matches.
+    /// Call only once a pat node has *fully* matched `node`.
     pub(crate) fn record_matched(&mut self, node: NodeId) {
         self.matched.push(node);
     }
@@ -135,16 +109,11 @@ impl Bindings {
         }
     }
 
-    /// A match's identity for [`crate::Matcher::find_all`]'s dedup.
-    ///
-    /// The matcher enumerates every operand ordering of every commutative
-    /// node, so one root is reachable through several configurations. Two
-    /// that bind the same captures to the same things are the SAME match:
-    /// `add(x, x)` swapped is one match, not two. Two that bind a capture to
-    /// different operands are genuinely distinct and both get reported.
-    /// Keying on the bindings alone, not the root, the `matched` footprint or
-    /// `entries` order, is what draws that line; a capture-free pattern
-    /// collapses to the empty key and so can never duplicate.
+    /// A match's identity, keying [`crate::Matcher::find_all`]'s dedup: two
+    /// configurations binding the same captures to the same things are one
+    /// match (`add(x, x)` swapped is one, not two). Keyed on the bindings
+    /// alone, not the root, so a capture-free pattern collapses to the empty
+    /// key and can never duplicate.
     ///
     /// Sorted by capture id, making the key independent of bind order.
     pub(crate) fn binding_signature(&self) -> Vec<(u32, Binding)> {
@@ -153,7 +122,7 @@ impl Bindings {
         sig
     }
 
-    /// Graph-free, for when no `&Graph` is in scope.
+    /// Graph-free.
     pub fn is_bound(&self, c: Capture) -> bool {
         self.index.contains_key(&c)
     }
@@ -167,8 +136,7 @@ impl Bindings {
         }
     }
 
-    /// In bind order, which is preorder of the pattern tree. Drives
-    /// `Matcher::find_joined`'s cross-pattern shared-capture agreement.
+    /// In bind order, which is preorder of the pattern tree.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (Capture, Binding)> + '_ {
         self.entries.iter().map(|(c, b)| (*c, *b))
     }

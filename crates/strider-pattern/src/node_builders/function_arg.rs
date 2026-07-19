@@ -2,12 +2,9 @@
 //! post-pass records in `Function::arg_index_to_values`: an `InitialVar(vn)`
 //! for a register-passed arg, a `Load` for a stack-passed one.
 //!
-//! The carrier produces a value output, so the pattern is value-rooted. Its
-//! kind spec has to be [`KindSpec::Any`]: carriers are `InitialVar` or `Load`
-//! depending on the ABI, so no discriminant separates a carrier from a
-//! non-carrier. The index and source constraints instead ride one node-only
-//! predicate that consults the side-table at match time, short-circuiting
-//! before the matcher walks any child inputs.
+//! The kind spec has to be [`KindSpec::Any`], since no discriminant separates
+//! a carrier from a non-carrier. The index and source constraints ride a
+//! node-only predicate consulting the side-table at match time.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{FunctionArgSource, NodeKind};
@@ -41,9 +38,7 @@ impl FunctionArgPat {
         self
     }
 
-    /// Returns the value output at slot 0. Shared by
-    /// [`build`](Self::build), which seals on it, and [`MatchPat::compile`],
-    /// which nests the carrier as a value operand.
+    /// Returns the value output at slot 0.
     fn lower(self, b: &mut MatcherBuilder) -> PatValueRef {
         let FunctionArgPat {
             source,
@@ -135,8 +130,7 @@ pub fn function_arg(idx: u32) -> FunctionArgPat {
     FunctionArgPat::default().index(idx)
 }
 
-/// Any carrier, whatever its index or source: for passes enumerating every
-/// function-arg carrier.
+/// Any carrier, whatever its index or source.
 pub fn function_arg_any() -> FunctionArgPat {
     FunctionArgPat::default()
 }

@@ -1,7 +1,4 @@
-//! The single lowering target for every build-side
-//! ([`TemplatePat`](crate::template::template_pat::TemplatePat)) typed struct.
-//!
-//! It exposes construction verbs only, and deliberately no match verbs
+//! Exposes construction verbs only, and deliberately no match verbs
 //! (`set_node_predicate`, `set_value_width`, `set_force_ordered`,
 //! `set_post_match`, predicate kindspecs): a [`Template`] is a build recipe,
 //! not a query.
@@ -11,13 +8,6 @@
 //! [`set_template_kind`](TemplateBuilder::set_template_kind), or a
 //! [`TmplNodeKind::Capture`] leaf. A finished [`Template`] is therefore
 //! materialisable by construction.
-//!
-//! Like the match-side [`MatcherBuilder`](crate::matcher::MatcherBuilder), it
-//! stages nodes into the shared [`StagedGraph`] and materialises the whole DAG
-//! at [`finish`](TemplateBuilder::finish). Staging is unavoidable: the generic
-//! graph creates a node with all its outputs and resolved inputs at once, so
-//! the incremental `node()` / `*_output()` / `input()` verbs cannot write
-//! straight through.
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ConstId, IntBinaryOp};
@@ -48,27 +38,15 @@ impl SealNode for TmplNodeKind {
     }
 }
 
-/// The returned [`TmplValueRef`] / [`TmplNodeRef`] handles are scoped to the
-/// builder that produced them, and are distinct types from the match side's
-/// `PatValueRef` / `PatNodeRef`, so handles cannot be crossed between the two
-/// builders.
-///
 /// # Output-signature validity is author-owned
 ///
-/// The high-level verbs (`leaf`, `unary`, `binary`) and the typed
-/// `template::` free functions over them declare canonical output signatures
-/// and wire each input slot exactly once, so what they build always
-/// materialises a structurally valid IR node.
-///
-/// The raw verbs ([`node`](Self::node), [`input`](Self::input), the
-/// `*_output` slot verbs) enforce nothing: a hand-built node may declare an
-/// output signature contradicting its `NodeKind`'s `expected_signature`, and
-/// since [`instantiate`](crate::template::instantiate) does not run
-/// [`strider_ir::validate`], nothing catches it. Authors using the raw verbs
-/// own that invariant.
-///
-/// Input-slot wiring IS validated at instantiation: gapped or duplicate slots
-/// error out rather than being silently closed or overwritten.
+/// The high-level verbs (`leaf`, `unary`, `binary`) declare canonical output
+/// signatures and wire each input slot exactly once. The raw verbs
+/// ([`node`](Self::node), [`input`](Self::input), the `*_output` slot verbs)
+/// enforce nothing, and [`instantiate`](crate::template::instantiate) does not
+/// run [`strider_ir::validate`], so an author using them owns output-signature
+/// validity. Input-slot wiring IS validated at instantiation: gapped or
+/// duplicate slots error out.
 pub struct TemplateBuilder {
     core: StagedGraph<TmplNodeKind, TmplValue>,
 }
@@ -135,33 +113,26 @@ impl TemplateBuilder {
         self.out_data_of(out).ty = TemplateTy::InheritBinding(cap);
     }
 
-    /// The `*_const_with` materialiser path: replaces the producing node's
-    /// build spec with a dynamic-kind closure.
+    /// Replaces the producing node's build spec with a dynamic-kind closure.
     pub fn set_template_kind(&mut self, out: TmplValueRef, kind: TemplateKind) {
         *self.core.kind_mut(out.node) = TmplNodeKind::Build(kind);
     }
 
     /// Adds a payload-less [`TmplNodeKind::Capture`] marker producing a
     /// [`TmplValue::ValueCapture`]. At instantiation it resolves to the LHS
-    /// binding for `c`, reused verbatim, giving the `add(x, 0) -> x` shape.
-    ///
-    /// Returning only a [`TmplValueRef`] and never a node handle is what
-    /// makes "captures are leaves" a structural invariant rather than a
-    /// convention: there is no way to wire an input into a capture node.
+    /// binding for `c`, reused verbatim. Returns only a [`TmplValueRef`], so
+    /// an input can never be wired into a capture node.
     pub fn capture(&mut self, c: crate::capture::Capture) -> TmplValueRef {
         let n = TmplNodeRef(self.core.add_node(TmplNodeKind::Capture));
         self.add_value(n, TmplValue::ValueCapture(c))
     }
 
     /// Materialises every staged node in producer-before-consumer order,
-    /// with no structural validation: the root is derived as the unique sink
-    /// at instantiation, so a multi-sink template surfaces as an
-    /// [`instantiate`](crate::template::instantiate) error rather than
-    /// panicking here.
+    /// with no structural validation: a multi-sink template surfaces as an
+    /// [`instantiate`](crate::template::instantiate) error, not here.
     ///
     /// # Panics
-    /// On a cyclic staged graph, which cannot happen for a well-formed
-    /// template.
+    /// On a cyclic staged graph (a builder bug).
     #[allow(clippy::expect_used)]
     pub fn finish(self) -> Template {
         let graph = self.core.seal().expect("cyclic staged template graph");
@@ -181,7 +152,7 @@ impl TemplateBuilder {
     }
 
     /// A non-exact spec (`Variant`, `Any`, `VariantWith`) has no concrete
-    /// `NodeKind`, so the caller MUST overwrite it via
+    /// `NodeKind` and MUST be overwritten via
     /// [`set_template_kind`](Self::set_template_kind) before sealing.
     fn add_buildable(&mut self, kind: KindSpec) -> TmplNodeRef {
         // A template only ever passes `Exact`, stamped directly, or a

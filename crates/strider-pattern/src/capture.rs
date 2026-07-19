@@ -1,5 +1,3 @@
-//! Capture variables for pattern matching.
-//!
 //! One handle type for both data and control positions. After a match,
 //! `Match::node` gives the `NodeId` and `Match::value` the `ValueId`, the
 //! latter `None` for control-flow nodes with no single value output.
@@ -12,9 +10,7 @@ fn next_id() -> u32 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Ids are globally unique via a process-wide atomic counter, so the matcher's
-/// append-only [`crate::Bindings`] `Vec` can identify entries without
-/// per-pattern bookkeeping.
+/// Ids are globally unique via a process-wide atomic counter.
 ///
 /// The same `Capture` may appear in several pattern positions; the matcher
 /// then requires every occurrence to bind the **same** node (and the same
@@ -30,8 +26,7 @@ impl Capture {
         Self(next_id())
     }
 
-    /// An opaque hash key for downstream consumers such as the PyO3 bindings.
-    /// The id space is neither dense nor sequential.
+    /// An opaque hash key. The id space is neither dense nor sequential.
     pub fn id(self) -> u32 {
         self.0
     }

@@ -1,14 +1,7 @@
-//! The build-side mirror of [`MatchPat`](crate::MatchPat), implemented only
-//! by the buildable typed structs: `Var`, the const structs, the
-//! fixed-variant value ops / casts / cmps / unary ops whose operands are
-//! themselves `TemplatePat`, the lowered-shape structs, and
-//! [`Captured<P>`](crate::Captured) over them.
-//!
-//! The match-only structs (`Any`, the `*Any` wildcards, `Predicate`,
-//! `ValueOfWidth`, `InputsOfWidth`, `Guarded`, `Limited`, `Ordered`)
-//! deliberately do NOT implement it, since they have no build form. That
-//! omission is what makes a wildcard in a rewrite RHS a compile error:
-//! `rewrite_rule<L, T: TemplatePat>` cannot accept one.
+//! The build-side mirror of [`MatchPat`](crate::MatchPat), implemented only by
+//! the buildable typed structs. The match-only structs deliberately do NOT
+//! implement it, which is what makes a wildcard in a rewrite RHS a compile
+//! error: `rewrite_rule<L, T: TemplatePat>` cannot accept one.
 
 use crate::template::{Template, TemplateBuilder, TmplValueRef};
 

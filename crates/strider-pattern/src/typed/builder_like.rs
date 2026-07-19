@@ -1,8 +1,4 @@
-//! The construction verbs shared by [`MatcherBuilder`] and [`TemplateBuilder`],
-//! so a fixed-op typed struct declares its node shape once instead of in twin
-//! `MatchPat` / `TemplatePat` bodies.
-//!
-//! The match/template split still holds: [`CompileInto`] is blanket-implemented
+//! The match/template split holds through these shared verbs: [`CompileInto`] is blanket-implemented
 //! for `MatchPat` over the match builder and `TemplatePat` over the template
 //! builder, so an operand only lowers into a builder its own side admits. That
 //! is what keeps the compile-time wildcard-in-RHS guard.

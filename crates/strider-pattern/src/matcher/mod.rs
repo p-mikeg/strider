@@ -1,13 +1,3 @@
-//! Pattern matcher over a lifted [`strider_ir::Function`].
-//!
-//! [`Matcher`] owns no per-match state beyond a lazy `KindIndex` bucketing
-//! reachable IR nodes by `NodeKind` discriminant. A discriminant-rooted pattern
-//! iterates just the matching bucket; a kind-`Any` root falls back to a full
-//! reachable walk.
-//!
-//! The recursive match engine lives in `walk`. The cast mask is carried on the
-//! [`Pattern`], not on the matcher.
-
 pub(crate) mod builder;
 mod cast_walk_through;
 pub(crate) mod graph;
@@ -23,9 +13,8 @@ pub use vertex::{KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, Pos
 
 /// Sentinel consumer slot marking an existential (`any_input`) input edge: the
 /// sub-pattern is matched against some input slot of the consumer rather than a
-/// fixed one, so `phi().any_input(p)` matches a `Phi` one of whose inputs
-/// matches `p` without naming the predecessor. A typed sub only reaches value
-/// edges; a wildcard can also reach control/memory/`PhiToken` slots.
+/// fixed one. A typed sub only reaches value edges; a wildcard can also reach
+/// control/memory/`PhiToken` slots.
 pub(crate) const ANY_INPUT_SLOT: usize = usize::MAX;
 
 use std::cell::OnceCell;
@@ -44,8 +33,7 @@ use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
 use crate::match_result::Match;
 
-/// Pre-filter discriminant for the `find_*` dispatch. `None` for a kind-`Any`
-/// root, which makes the matcher scan every reachable node.
+/// `None` for a kind-`Any` root.
 fn root_kind_discriminant(pat: &Pattern, root: PatNodeId) -> Option<Discriminant<NodeKind>> {
     pat.graph.node_weight(root).kind.discriminant()
 }
@@ -55,8 +43,7 @@ pub struct Matcher<'f> {
     kind_index: OnceCell<KindIndex>,
 }
 
-/// Reachable `NodeKind` discriminant to node list, built on first query and
-/// reused after.
+/// Reachable nodes bucketed by `NodeKind` discriminant.
 struct KindIndex {
     by_kind: FxHashMap<Discriminant<NodeKind>, Vec<NodeId>>,
 }
@@ -77,9 +64,7 @@ impl KindIndex {
 }
 
 impl<'f> Matcher<'f> {
-    /// Performs no whole-graph validation: the orchestrator pipeline drives
-    /// `validate::validate` separately, and in-place-editor integration tests
-    /// deliberately work with partially-built fixtures.
+    /// Performs no whole-graph validation.
     pub fn new(function: &'f Function) -> Self {
         Self {
             function,
@@ -87,14 +72,11 @@ impl<'f> Matcher<'f> {
         }
     }
 
-    /// Single-threaded (`OnceCell`, not `OnceLock`).
     fn kind_index(&self) -> &KindIndex {
         self.kind_index
             .get_or_init(|| KindIndex::build(self.function))
     }
 
-    /// The sole data-access point for match-time closures (`when_match`,
-    /// `predicate`, `PostMatchFn`) that need to inspect IR side-tables.
     pub fn function(&self) -> &Function {
         self.function
     }
@@ -112,8 +94,6 @@ impl<'f> Matcher<'f> {
     /// `k` to each operand in turn and is TWO. A pattern with no captures on
     /// commutative operands never duplicates. Ordering is deterministic:
     /// natural operand order before swapped.
-    ///
-    /// The root is resolved once per query, not per candidate.
     ///
     /// # Errors
     /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
@@ -138,8 +118,7 @@ impl<'f> Matcher<'f> {
 
     /// The IR nodes to attempt `pat` at: a discriminant-rooted pattern scans
     /// only its `KindIndex` bucket, a kind-`Any` root the whole reachable
-    /// graph. `Either` keeps this static-dispatch, so neither arm allocates or
-    /// pays a per-candidate virtual call.
+    /// graph.
     fn candidates<'p>(
         &'p self,
         pat: &Pattern,
@@ -154,13 +133,11 @@ impl<'f> Matcher<'f> {
     /// Attempt `pat` at `node`, iterating value outputs for value-producing
     /// nodes and falling back to a node-rooted attempt for zero-output kinds.
     ///
-    /// `first_only` stops at the first match, which is what keeps
-    /// [`Self::match_at`] cheap enough for the rewrite driver to call at every
-    /// node. Otherwise every distinct match is enumerated, deduplicated by
-    /// capture-to-binding map. The dedup set is per-node: two different roots
-    /// are different matches whatever their bindings, while one node's outputs
-    /// share the set so a pattern reachable through several outputs does not
-    /// double-report an identical binding.
+    /// `first_only` stops at the first match. Otherwise every distinct match is
+    /// enumerated, deduplicated by capture-to-binding map. The dedup set is
+    /// per-node: two different roots are different matches whatever their
+    /// bindings, while one node's outputs share the set, so a pattern reachable
+    /// through several outputs does not double-report an identical binding.
     fn matches_at_node(
         &self,
         node: NodeId,
@@ -207,11 +184,8 @@ impl<'f> Matcher<'f> {
     /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
     pub fn match_at(&self, node: NodeId, pat: &Pattern) -> anyhow::Result<Option<Match>> {
         let root = pat.root()?;
-        // Root-kind gate: reject a mismatched candidate before iterating
-        // outputs, allocating a `Bindings` per output, and walking in only to
-        // bail on the first kind check. This is what makes `match_at` cheap to
-        // call at every node; `matches` gets the same prefilter from its
-        // `KindIndex` bucket. A kind-`Any` root skips the gate.
+        // Root-kind gate: reject a mismatched candidate before allocating a
+        // `Bindings` per output and walking in. A kind-`Any` root skips it.
         if let Some(rk) = root_kind_discriminant(pat, root)
             && std::mem::discriminant(self.function.node_kind(node)) != rk
         {
@@ -238,30 +212,26 @@ impl<'f> Matcher<'f> {
     ///
     /// # Shared-capture requirement
     ///
-    /// A capture-bearing pattern sharing no capture with the others is almost
-    /// always a mis-wired correlation, and without a shared capture
-    /// `prefix_agrees` approves every tuple, turning the join into an unbounded
-    /// cartesian explosion. Such a pattern is rejected. A capture-free pattern
-    /// (a pure filter like `call().at(0x1234).build()`) is exempt and degrades
-    /// to a deliberate cross-product.
+    /// A capture-bearing pattern sharing no capture with the others is
+    /// rejected. A capture-free pattern (a pure filter like
+    /// `call().at(0x1234).build()`) is exempt and degrades to a deliberate
+    /// cross-product.
     ///
     /// # Deduplication
     ///
     /// Surviving tuples are deduplicated by their shared-capture binding
     /// signature resolved to nodes: two tuples agreeing on every shared capture
-    /// but differing on an uncaptured or non-shared internal binding are
-    /// indistinguishable to a correlated-site consumer, so only the first is
-    /// kept.
+    /// but differing on an uncaptured or non-shared internal binding collapse
+    /// to one.
     ///
     /// # Constraints
     ///
     /// `constraints` are post-correlation [`JoinConstraint`] filters over
     /// captured entities; a tuple survives iff it passes every one. Every
     /// capture a constraint mentions must be bound by some pattern in the join
-    /// (range restriction); an unbound one is an error, not a silent
-    /// drop-everything. A constraint whose captured node has no CFG position
-    /// simply fails and drops its tuple, which is not an error. Pass `&[]` for
-    /// an unconstrained join.
+    /// (range restriction); an unbound one is an error. A constraint whose
+    /// captured node has no CFG position simply fails and drops its tuple,
+    /// which is not an error. Pass `&[]` for an unconstrained join.
     ///
     /// # Errors
     /// If any pattern is not a single-rooted, acyclic graph (see
@@ -312,13 +282,9 @@ impl<'f> Matcher<'f> {
         // (`guard` captures `t`, `call` captures `c`, joined by
         // `dominates(t, c)`).
         for con in constraints {
-            // Range restriction, one rule rather than a negation carve-out.
-            // An unbound capture makes a positive constraint fail for want of a
-            // binding, silently dropping every tuple and returning an ambiguous
-            // empty result; under `Not` the same failure flips to a vacuous
-            // true and matches everything. Same authoring bug either way, so
-            // reject it here. That also makes the vacuity impossible by
-            // construction and lets the union below be total.
+            // Range restriction. An unbound capture silently drops every tuple
+            // when positive, and matches everything under `Not`; reject it
+            // here, which also lets the union below be total.
             let caps = con.captures();
             if let Some(c) = caps.iter().find(|c| !cap_owner.contains_key(c)) {
                 anyhow::bail!(
@@ -403,8 +369,8 @@ impl<'f> Matcher<'f> {
 /// A CFG relation between captured entities, applied by
 /// [`Matcher::find_joined_constrained`] as a post-correlation filter.
 ///
-/// Each captured entity resolves to a [`CtrlKey`] by WHAT IT BOUND (see
-/// `ConstraintEval::ctrl_key_of`): a control-output capture (e.g. via
+/// Each captured entity resolves to a [`CtrlKey`] by WHAT IT BOUND: a
+/// control-output capture (e.g. via
 /// [`IfPat::capture_true`](crate::IfPat::capture_true)) becomes a
 /// `CtrlKey::Edge`, anything else a `CtrlKey::Node` (a value's producer).
 ///
@@ -425,10 +391,6 @@ pub enum JoinConstraint {
     ///     post-merge nodes sit inside the branch.
     ///   * EDGE dominates EDGE: every path through the inner edge first
     ///     traversed the outer one.
-    ///
-    /// Dispatch is dominator-first: node to node runs on the plain node
-    /// dominator tree, any edge operand on the subsuming but slower-to-walk
-    /// edge-split tree.
     Dominates {
         dominator: crate::Capture,
         dominated: crate::Capture,
@@ -441,42 +403,28 @@ pub enum JoinConstraint {
     /// A predecessor qualifies when `edge` dominates its control input as an
     /// EDGE, i.e. every path traversing that predecessor first traversed
     /// `edge`. That covers the direct case (`edge` IS the region's control
-    /// input; see `ConstraintEval::phi_arms_from_edge` on why that is a
-    /// zero-length path, not a special case) and an arm merged across
-    /// intervening control such as a `Call` or a whole guarded loop.
+    /// input) and an arm merged across intervening control such as a `Call` or
+    /// a whole guarded loop.
     ///
-    /// `edge` must bind a control-output value and `phi` a value. Bind `value`
-    /// with [`PhiPat::any_input`](crate::PhiPat::any_input) on the same phi
-    /// pattern where possible: that anchors it at the phi's own inputs
-    /// (O(arity)) instead of letting it float as an independent whole-graph
-    /// root.
+    /// `edge` must bind a control-output value and `phi` a value.
     PhiInputFromEdge {
         phi: crate::Capture,
         edge: crate::Capture,
         value: crate::Capture,
     },
-    /// A tuple survives iff `inner` does NOT hold on it.
-    ///
-    /// Two independent guards keep this sound:
-    ///   * declared-ness (static): [`Matcher::find_joined_constrained`] rejects
-    ///     a constraint mentioning a capture no pattern binds, which could
-    ///     never be satisfied and under `Not` would match everything.
-    ///   * bound-ness (per-tuple): evaluation is three-valued (see
-    ///     `ConstraintEval::passes`). An unbound capture in THIS row makes
-    ///     `inner` return `None`, and `Not(None) == None` drops the row rather
-    ///     than producing the vacuous `true` of a two-valued `!false`.
+    /// A tuple survives iff `inner` does NOT hold on it. A capture left unbound
+    /// by the row makes `inner` unanswerable, which drops the row rather than
+    /// vacuously passing it.
     Not(Box<JoinConstraint>),
     /// Passes iff any listed constraint does. An empty list passes nothing.
     Or(Vec<JoinConstraint>),
     /// Passes iff every listed constraint does. An empty list passes
-    /// everything. The top-level `constraints` slice is already an implicit
-    /// `And`; this one nests inside an `Or`, where the flat slice cannot reach.
+    /// everything.
     And(Vec<JoinConstraint>),
 }
 
 impl JoinConstraint {
-    /// Every capture this constraint correlates, used to link their owner
-    /// patterns for the connectivity check.
+    /// Every capture this constraint correlates.
     fn captures(&self) -> Vec<crate::Capture> {
         match self {
             JoinConstraint::Dominates {
@@ -484,9 +432,7 @@ impl JoinConstraint {
                 dominated,
             } => vec![*dominator, *dominated],
             JoinConstraint::PhiInputFromEdge { phi, edge, value } => vec![*phi, *edge, *value],
-            // A negation / connective correlates exactly the captures it
-            // wraps; contributing them links the owner patterns and feeds the
-            // range-restriction check.
+            // A negation / connective correlates exactly the captures it wraps.
             JoinConstraint::Not(inner) => inner.captures(),
             JoinConstraint::Or(cs) | JoinConstraint::And(cs) => {
                 cs.iter().flat_map(JoinConstraint::captures).collect()
@@ -496,10 +442,6 @@ impl JoinConstraint {
 }
 
 /// One row of a join: one [`Match`] per pattern, in input order.
-///
-/// Named because [`Matcher::find_all`] returns a `Vec<Match>` meaning a list of
-/// INDEPENDENT matches, whereas here a `Vec<Match>` is a single row. Same type,
-/// opposite meanings.
 pub type JoinedMatch = Vec<Match>;
 
 /// Kleene OR: `Some(true)` if any input is (truth dominates and
@@ -534,37 +476,10 @@ fn kleene_and(it: impl Iterator<Item = Option<bool>>) -> Option<bool> {
 
 /// Evaluates [`JoinConstraint`]s against joined tuples, memoising both
 /// dominator trees for the whole `find_joined_constrained` call.
-///
-/// # Why TWO trees, when one would do
-///
-/// The split tree subsumes the node tree: edge-splitting preserves paths 1:1,
-/// so `dominates(split_doms, Node(a), Node(b))` equals `dominates(doms, a, b)`
-/// exactly (`strider-ir`'s `split_dominance_subsumes_node_dominance` pins it).
-/// `doms` is therefore deletable on correctness grounds and kept on measured
-/// performance grounds alone.
-///
-/// Collapsing onto `split_doms` was benchmarked (`benches/matcher.rs`,
-/// `join_dominates_only` / `join_dominates_and_branch` over a diamond chain):
-///
-/// ```text
-///                        two trees   one tree
-/// Dominates-only          4.18 ms     5.80 ms   +39%   (60 diamonds)
-/// Dominates-only         33.6  µs    44.2  µs   +31%   ( 6 diamonds)
-/// mixed (Dominates+edge)  8.06 ms     9.68 ms   +20%   (60 diamonds)
-/// mixed (Dominates+edge) 52.4  µs    46.7  µs   -11%   ( 6 diamonds)
-/// ```
-///
-/// What matters is the per-tuple chain walk, not the one-off build: `Edge`
-/// vertices interleave, so a node-dominance chain in the split tree is ~2x
-/// longer, and `Dominates` is re-evaluated per tuple (K guards by M calls).
-/// Saving a build is a constant; doubling the walk scales with tuples * depth.
-/// Hence the mixed shape, which saves a whole build, still wins at 6 diamonds
-/// and loses at 60.
 struct ConstraintEval<'f> {
     function: &'f Function,
     doms: OnceCell<petgraph::algo::dominators::Dominators<NodeId>>,
-    /// Edge-split control subgraph. Lazy: a join with no edge constraint never
-    /// builds it.
+    /// Edge-split control subgraph.
     split_doms: OnceCell<petgraph::algo::dominators::Dominators<CtrlKey>>,
 }
 
@@ -577,8 +492,11 @@ impl<'f> ConstraintEval<'f> {
         }
     }
 
-    /// Kept alongside [`Self::split_doms`] on measured grounds (see the type
-    /// doc): node-to-node dominance walks it ~39% faster.
+    // `split_doms` subsumes this tree, so it is redundant for correctness and
+    // kept on measured grounds alone: `Edge` vertices interleave, making a
+    // node-dominance chain in the split tree ~2x longer to walk, and
+    // `Dominates` is re-evaluated per tuple. Benchmarked at ~39% faster
+    // (`benches/matcher.rs`, `join_dominates_only`).
     fn doms(&self) -> &petgraph::algo::dominators::Dominators<NodeId> {
         self.doms.get_or_init(|| control_dominators(self.function))
     }
@@ -588,8 +506,7 @@ impl<'f> ConstraintEval<'f> {
             .get_or_init(|| control_edge_dominators(self.function))
     }
 
-    /// Resolve a capture to a [`CtrlKey`] by what it bound, which is the
-    /// node-or-edge choice [`JoinConstraint::Dominates`] dispatches on:
+    /// Resolve a capture to a [`CtrlKey`] by what it bound:
     ///   1. a bound value of kind `Control` (an `If`'s
     ///      `capture_true`/`capture_false` edge) gives [`CtrlKey::Edge`];
     ///   2. any other bound value, [`CtrlKey::Node`] of its producer;
@@ -615,13 +532,7 @@ impl<'f> ConstraintEval<'f> {
     }
 
     /// Three-valued verdict: `Some(b)` is real, `None` means a referenced
-    /// capture was unbound in this row so the relation is unanswerable. The
-    /// top-level fold keeps a row only on `Some(true)`, so an unbound capture
-    /// never survives.
-    ///
-    /// This is what makes `Not` sound without the static range check carrying
-    /// the whole burden: `Not(None) == None` drops the row instead of producing
-    /// the vacuous `true` of a two-valued `!false`.
+    /// capture was unbound in this row so the relation is unanswerable.
     fn passes(&self, c: &JoinConstraint, tuple: &JoinedMatch) -> Option<bool> {
         match *c {
             JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
@@ -666,8 +577,7 @@ impl<'f> ConstraintEval<'f> {
     }
 
     /// Every value the `Phi`/`MemPhi` producing `phi_v` merges on a predecessor
-    /// reached through branch edge `edge_v`. Backs
-    /// [`JoinConstraint::PhiInputFromEdge`].
+    /// reached through branch edge `edge_v`.
     ///
     /// Slot alignment: a phi's inputs are `[PhiToken, v0, v1, ...]`, so data
     /// input `i+1` is predecessor `i`'s value, while its owning `Region` (the
@@ -683,28 +593,13 @@ impl<'f> ConstraintEval<'f> {
     /// ```
     ///
     /// One clause, edge against edge: both are control edges, so in the
-    /// edge-split graph this is plain dominance.
-    ///
-    /// The direct case is a zero-length path, not a special case: when
-    /// `c_i == edge_v` it holds because `dominates(x, x)` is true, which is why
-    /// there is no `||` with an `==` test. Do NOT rewrite this as edge against
-    /// `producer(c_i)`: that producer is the `If`, which PRECEDES the edge, so
-    /// the edge cannot dominate it and the direct case breaks. The direct-case
-    /// tests are what catch that.
+    /// edge-split graph this is plain dominance. The direct case
+    /// (`c_i == edge_v`) is subsumed, since `dominates(x, x)` is true.
     ///
     /// The relation is exclusive, holding only where every path traverses
     /// `edge_v`, so an arm reachable from both sides of the branch belongs to
-    /// neither. It needs no sole-entry gate: a guarded loop header has two
-    /// predecessors (the guard's edge and its own latch), and edge dominance
-    /// still reports correctly that every path into the loop traverses the
-    /// guard's edge.
-    ///
-    /// Lazy and allocation-free; the caller `.any(..)`s and short-circuits.
-    ///
-    /// A branch whose block splits and reaches the join more than once yields
-    /// one arm per qualifying predecessor, for the caller to enumerate. Under a
-    /// direct-only `==` at most one could qualify; dominance can qualify
-    /// several, and choosing among them would be a silent coin-flip.
+    /// neither. A branch whose block splits and reaches the join more than once
+    /// yields one arm per qualifying predecessor.
     fn phi_arms_from_edge(
         &self,
         phi_v: ValueId,
@@ -719,8 +614,9 @@ impl<'f> ConstraintEval<'f> {
                     .into_iter()
                     .enumerate()
                     .filter(move |(_, c)| {
-                        // The split tree is memoised across the whole
-                        // `find_joined_constrained` call.
+                        // Edge against EDGE. Do NOT rewrite the right operand
+                        // as `producer(*c)`: that is the `If`, which PRECEDES
+                        // the edge, so the direct `c == edge_v` case breaks.
                         dominates(self.split_doms(), CtrlKey::Edge(edge_v), CtrlKey::Edge(*c))
                     })
                     // Region control input `i` maps to phi data input `i + 1`.
@@ -728,8 +624,7 @@ impl<'f> ConstraintEval<'f> {
             })
     }
 
-    /// The phi's inputs and its region's control inputs. `Inputs` is a `Copy`
-    /// borrow of the use-list, so carrying both views costs no allocation.
+    /// The phi's inputs and its region's control inputs.
     fn arm_scan(&self, phi_v: ValueId) -> Option<(strider_ir::Inputs<'f>, strider_ir::Inputs<'f>)> {
         let f = self.function;
         let phi_node = f.producer(phi_v);
@@ -747,12 +642,8 @@ impl<'f> ConstraintEval<'f> {
 }
 
 /// Deduplicate joined tuples by capture binding signature: every capture bound
-/// anywhere in the tuple, resolved to its node and sorted. Equal signatures are
-/// indistinguishable to a capture-consuming caller, so only the first is kept,
-/// order-preserving.
-///
-/// An empty signature is always kept: that is the capture-free cross-product,
-/// whose tuples are intentionally distinct despite binding nothing.
+/// anywhere in the tuple, resolved to its node and sorted. Of equal signatures
+/// only the first is kept, order-preserving. An empty signature is always kept.
 fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>, graph: &Graph) {
     let mut seen: FxHashSet<Vec<(u32, NodeId)>> = FxHashSet::default();
     acc.retain(|tuple| {
@@ -778,12 +669,10 @@ fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>, graph: &Graph) {
 
 /// Whether every capture shared between `m` and `prefix` agrees.
 ///
-/// Agreement is at the resolved-NODE level, matching the join's contract, so
-/// one IR node captured as `Value(v)` by one pattern and `Node(producer(v))` by
-/// another still agrees; a raw `Binding`-variant compare would call them
-/// different and silently drop a valid tuple. Two value captures are still
-/// compared at value granularity, so distinct outputs of one multi-output node
-/// do not falsely agree.
+/// Agreement is at the resolved-NODE level, so one IR node captured as
+/// `Value(v)` by one pattern and `Node(producer(v))` by another still agrees.
+/// Two value captures are compared at value granularity, so distinct outputs of
+/// one multi-output node do not falsely agree.
 fn prefix_agrees(prefix: &[Match], m: &Match, graph: &Graph) -> bool {
     for prev in prefix {
         for (cap, prev_binding) in prev.bindings.iter() {

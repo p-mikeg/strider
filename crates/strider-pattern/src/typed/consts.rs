@@ -35,7 +35,7 @@ pub struct IntConst {
 }
 
 /// The stored value of `node`'s first value output, with that output's type.
-/// Returns `None` for an I256/I512 value too wide for `u128`.
+/// `None` for an I256/I512 value too wide for `u128`.
 fn first_int_const_value(f: &strider_ir::Function, node: NodeId) -> Option<(u128, ValueType)> {
     let out = f
         .node_outputs(node)
@@ -47,8 +47,8 @@ fn first_int_const_value(f: &strider_ir::Function, node: NodeId) -> Option<(u128
     Some((stored, ty))
 }
 
-/// An `IntConst`-variant leaf gated on `pred(stored_value, output_type)`. The
-/// match fails if the value can't be read at all.
+/// An `IntConst`-variant leaf gated on `pred(stored_value, output_type)`,
+/// failing if the value can't be read at all.
 fn int_const_leaf(
     b: &mut MatcherBuilder,
     pin: Option<ValueType>,
@@ -79,9 +79,8 @@ impl MatchPat for IntConst {
     }
 }
 
-/// Build-side twin for a value known at pattern-build time. Goes through
-/// [`TemplateKind::FnIntConst`] so the instantiator interns the full `u128` at
-/// the resolved output width instead of truncating to `u64`.
+/// Build-side twin for a value known at pattern-build time, interned at the
+/// resolved output width.
 fn const_template(v: u128, ty: TemplateTy) -> ConstWith {
     ConstWith {
         kind: TemplateKind::FnIntConst(Box::new(move |_ctx| Ok(v))),
@@ -260,9 +259,8 @@ impl MatchPat for IntConstAnyOf {
     }
 }
 
-/// Match an `IntConst` whose value is one of `set`. An I256/I512 value too wide
-/// for `u128` never matches. The set takes `u64` inputs; the driving use-case is
-/// jump-table target addresses, which are at most pointer-width.
+/// Match an `IntConst` whose value is one of `set`. An I256/I512 value too
+/// wide for `u128` never matches. The set takes `u64` inputs.
 pub fn int_const_any_of<I: IntoIterator<Item = u64>>(set: I) -> IntConstAnyOf {
     IntConstAnyOf {
         set: set.into_iter().map(u128::from).collect(),
@@ -270,8 +268,7 @@ pub fn int_const_any_of<I: IntoIterator<Item = u64>>(set: I) -> IntConstAnyOf {
 }
 
 /// A constant whose [`NodeKind`] is computed at rewrite time from the captured
-/// LHS [`Bindings`](crate::Bindings). [`TemplatePat`] only, so landing one on a
-/// rule's LHS is a compile error.
+/// LHS [`Bindings`](crate::Bindings). [`TemplatePat`] only.
 pub struct ConstWith {
     kind: TemplateKind,
     ty: TemplateTy,
@@ -293,10 +290,10 @@ impl TemplatePat for ConstWith {
     }
 }
 
-/// Types the wrapped node's value output to the width of a bound LHS capture.
-/// Needed when an interior node's width comes from a captured operand the
-/// rewrite root does not expose: in `Sless(x<<C, 0)` to
-/// `Xor(Equal(And(x,mask),0),1)` the `I1` root has no `x`-wide input to inherit.
+/// Types the wrapped node's value output to the width of a bound LHS capture,
+/// for when an interior node's width comes from a captured operand the rewrite
+/// root does not expose (`Sless(x<<C, 0) -> Xor(Equal(And(x,mask),0),1)`: the
+/// `I1` root has no `x`-wide input to inherit).
 pub struct CaptureTyped<P> {
     cap: crate::Capture,
     inner: P,

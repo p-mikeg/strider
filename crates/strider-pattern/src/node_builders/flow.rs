@@ -1,26 +1,16 @@
-//! Control-flow builders.
-//!
-//! Each accumulates sparse positional sub-pattern constraints and wires them
-//! at the right IR input slot, returning a finished [`Pattern`] from
-//! `.build()`. All but `IfPat` are thin slot-convention wrappers over the
-//! shared `NodePat` core; `IfPat`'s branch-walk shape does not fit the slot
-//! map, so it stays hand-written.
-//!
 //! # Slot conventions, per the IR `expected_signature`
 //!
 //! * `Call` inputs `[ctrl(0), mem(1), target(2), sp(3), arg0(4), arg1(5),
 //!   ...]`, outputs `[Control(0), Memory(1), clobbers...]`.
-//!   [`CallPat::arg`] shifts by +4 so callers address positional arguments
-//!   directly, past the stack-pointer anchor at raw slot 3. A `Call` clobbers
-//!   memory, and its token at output slot 1 is exposed via [`MemPat`] so a
-//!   downstream `load` / `store` can chain off it.
+//!   [`CallPat::arg`] shifts by +4, past the stack-pointer anchor at raw
+//!   slot 3.
 //! * `CallOther` inputs `[ctrl(0), mem(1), arg0(2), ...]`, outputs
 //!   `[Control(0), Memory(1), ...]`. [`CallOtherPat::arg`] writes the raw
 //!   input slot, unshifted.
 //! * `Return` inputs `[ctrl(0), mem(1), retval0(2), retval1(3), ...]`, no
 //!   outputs. [`RetPat::ret_val`] shifts by +2.
-//! * `If` inputs `[ctrl(0), cond(1)]`, outputs `[Control(0) true, Control(1)
-//!   false]`, both modelled as genuine control-output vertices.
+//! * `If` inputs `[ctrl(0), cond(1)]`, outputs `[Control(0) true,
+//!   Control(1) false]`.
 
 use itertools::Itertools;
 use strider_ir::IRViewer;
@@ -108,8 +98,7 @@ impl CallPat {
     }
 }
 
-/// The seam letting [`OutputPat`] commit a sibling-output constraint back
-/// onto a multi-output family builder.
+/// Commits a sibling-output constraint onto a multi-output family builder.
 pub trait WithOutput {
     fn capture_output(self, slot: usize, c: Capture) -> Self;
     fn output_width(self, slot: usize, bits: u32) -> Self;
@@ -160,8 +149,7 @@ impl MemPat for CallPat {
 
 impl MatchPat for CallPat {
     /// Nests as a value operand, anchored on the first value output. Loose:
-    /// any value output matches, since the matcher's `output_ok` checks the
-    /// operand's kind rather than its slot. `.res()` tightens it.
+    /// any value output matches. `.res()` tightens it.
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.0
             .with_value_anchor(FIRST_VALUE_OUT_SLOT)
@@ -432,13 +420,8 @@ pub fn entry() -> EntryPat {
 }
 
 /// Joins control edges at a CFG merge: one variadic Control input per
-/// predecessor at raw slots `0..N`, with no fixed prefix ahead of the tail,
-/// unlike `Phi` / `MemPhi` which reserve slot 0 for the `PhiToken` edge.
-/// Anchored on the control output at slot 0.
-///
-/// The `PhiToken` output at slot 1 is not modelled here; see
-/// [`super::phi::PhiPat::phi_token`] and
-/// [`super::phi::MemPhiPat::phi_token`] to match the phis it owns.
+/// predecessor at raw slots `0..N`, no fixed prefix. Anchored on the control
+/// output at slot 0. Its `PhiToken` output at slot 1 is not modelled here.
 pub struct RegionPat(NodePat);
 
 impl RegionPat {
@@ -511,12 +494,11 @@ pub fn switch() -> SwitchPat {
 }
 
 /// An `If` carries two control-output vertices, true at slot 0 and false at
-/// slot 1, a representation invariant modelled explicitly here.
+/// slot 1.
 ///
 /// `.with_true(q)` / `.with_false(r)` forward-walk from the matched If's
 /// control output to its single consumer and match there. Both fail the match
-/// when that output has zero or several consumers: picking arbitrarily from a
-/// forked control output would be wrong.
+/// when that output has zero or several consumers.
 #[derive(Default)]
 pub struct IfPat {
     cond: Option<crate::node_builders::SubCompiler>,
@@ -536,23 +518,20 @@ impl IfPat {
 
     /// Matches `pat` against the single consumer of control output slot 0.
     ///
-    /// A branch consumer is matched node-wise, the consumer being a `Region` /
-    /// `Return` / `Call` rather than a value operand, so this slot takes a
-    /// finished [`Pattern`]: a control builder's `.build()`, or a value
-    /// builder sealed via [`MatchPat::into_pattern`].
+    /// A branch consumer is matched node-wise, so this slot takes a finished
+    /// [`Pattern`]: a control builder's `.build()`, or a value builder sealed
+    /// via [`MatchPat::into_pattern`].
     ///
     /// # Captures
     ///
-    /// A capture bound inside `pat` matches against an *isolated* `Bindings`.
-    /// It is observable to `pat`'s own `when_match` predicates, a supported
-    /// idiom, but does not propagate into the outer `Match`, where reading it
-    /// returns `None`. Match the branch separately if you need its bindings.
+    /// A capture bound inside `pat` matches against an *isolated* `Bindings`,
+    /// observable to `pat`'s own `when_match` predicates but not propagated
+    /// into the outer `Match`. Match the branch separately if you need its
+    /// bindings.
     ///
     /// # Panics
     ///
     /// If `pat` is not a single-rooted acyclic graph the matcher can handle.
-    /// Surfaced eagerly at build time rather than degrading into a silent
-    /// "branch did not match", which hid user typos.
     pub fn with_true(self, pat: Pattern) -> Self {
         self.with_branch(0, pat)
     }
@@ -582,17 +561,9 @@ impl IfPat {
         self
     }
 
-    /// Binds control output slot 0, propagated into the outer `Match`.
-    ///
-    /// Unlike the successor `Region`, this value survives
-    /// single-input-region collapse, making it the stable handle for the edge
-    /// join constraints: a control-output capture resolves to an edge in
-    /// [`JoinConstraint::Dominates`], giving edge-to-node and edge-to-edge
-    /// dominance, and in [`JoinConstraint::PhiInputFromEdge`], where it
-    /// discriminates the true path.
-    ///
-    /// [`JoinConstraint::Dominates`]: crate::JoinConstraint::Dominates
-    /// [`JoinConstraint::PhiInputFromEdge`]: crate::JoinConstraint::PhiInputFromEdge
+    /// Binds control output slot 0, propagated into the outer `Match`. Unlike
+    /// the successor `Region`, this value survives single-input-region
+    /// collapse, so it is the stable handle for the edge join constraints.
     pub fn capture_true(mut self, c: Capture) -> Self {
         self.capture_true = Some(c);
         self
@@ -657,16 +628,10 @@ impl IfPat {
     }
 }
 
-/// A branch pattern is matched node-wise against the If's single branch
-/// consumer, so it must be single-rooted and matchable. A multi-sink,
-/// rootless or cyclic one would make `match_at` return `Err` at match time,
-/// which reads as a silent "branch did not match" and hides a user typo.
-///
-/// Branch *captures* are deliberately not rejected: one bound inside the
-/// sub-pattern is observable to that sub-pattern's own `when_match`
-/// predicates, which is a supported idiom such as an arg-carrier guard. Its
-/// invisibility to the *outer* match is documented on [`IfPat::with_true`]
-/// rather than enforced, so in-branch scratch captures keep working.
+/// Rejects a branch pattern that is not single-rooted and matchable, so a
+/// multi-sink / rootless / cyclic one fails eagerly at build time instead of
+/// reading as a silent "branch did not match" at match time. Branch captures
+/// are deliberately NOT rejected.
 ///
 /// # Panics
 ///

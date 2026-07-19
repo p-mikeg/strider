@@ -1,5 +1,3 @@
-//! Compile-time-typed match-side builders.
-//!
 //! Operand fields stay generic type parameters so the template/rewrite side can
 //! restate the same shape under a `TemplatePat` bound. Finalise with
 //! `.into_pattern()`.

@@ -1,12 +1,3 @@
-//! The bipartite match pattern: a [`strider_graph::Graph`] over [`PatNode`] /
-//! [`PatValue`] under the always-allocate
-//! [`NeverCacheable`](strider_graph::NeverCacheable) policy.
-//!
-//! The read vocabulary the matcher needs (`consumed_inputs` with per-edge
-//! slots, `derive_root`, ...) is added by [`crate::graph_ext`]; construction
-//! lives in [`MatcherBuilder`](crate::matcher::MatcherBuilder), which stages
-//! nodes and materialises them at seal time.
-
 use strider_graph::{Graph, NeverCacheable, NodeId};
 
 use super::CastMask;
@@ -18,16 +9,13 @@ pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 pub struct Pattern {
     pub(crate) graph: PatGraph,
     pub(crate) cast_mask: CastMask,
-    /// Resolved once at seal and memoized, verdict included: caching the
-    /// `Err` too keeps [`Matcher::match_at`](crate::Matcher::match_at) from
-    /// re-deriving the root and re-walking for acyclicity on every candidate
-    /// node the rewrite driver probes.
+    /// Resolved once at seal and memoized, verdict included.
     root: Result<NodeId, String>,
 }
 
 impl Pattern {
-    /// Seal point of [`MatcherBuilder`]. The graph structure is fixed from
-    /// here on, so the match root is resolved and memoized now.
+    /// Seal point of [`MatcherBuilder`]: resolves and memoizes the match
+    /// root.
     pub(crate) fn from_graph(graph: PatGraph) -> Self {
         let root = Self::resolve_root(&graph).map_err(|e| e.to_string());
         Self {
@@ -51,16 +39,12 @@ impl Pattern {
     /// O(1) read of the verdict memoized at construction.
     ///
     /// # Errors
-    /// The recorded error if the pattern is rootless, cyclic, or multi-sink.
-    /// A multi-sink graph is legal to build (shared captures produce one) but
-    /// not matchable.
+    /// If the pattern is rootless, cyclic, or multi-sink.
     pub fn root(&self) -> anyhow::Result<NodeId> {
         self.root.clone().map_err(anyhow::Error::msg)
     }
 
-    /// Every [`Capture`](crate::capture::Capture) this pattern binds. Value
-    /// captures live on the producing output vertex, value-less roots on the
-    /// node; both are collected.
+    /// Every [`Capture`](crate::capture::Capture) this pattern binds.
     pub fn bound_captures(&self) -> impl Iterator<Item = crate::capture::Capture> + '_ {
         self.graph
             .all_node_ids()
@@ -73,14 +57,11 @@ impl Pattern {
     }
 
     /// Runs after root and all inputs have matched; returning `false` rejects
-    /// the match. Control / variadic builders finalise straight to a `Pattern`
-    /// with no value-output `MatchPat` form to wrap, so this is the only way
-    /// to give them a root guard.
+    /// the match.
     ///
     /// # Panics
     ///
-    /// If the pattern has no unique sink root, which a finished pattern
-    /// always has.
+    /// If the pattern has no unique sink root.
     #[allow(clippy::expect_used)]
     pub(crate) fn set_root_post_match(&mut self, f: PostMatchFn) {
         let root = self

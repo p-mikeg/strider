@@ -41,8 +41,6 @@ use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
 use crate::matcher::{Matcher, OutputKindSpec, PatValue, Pattern, skip_casts};
 
-/// Both fields are fixed for a whole `try_match*` call, so bundling them lets
-/// the recursion carry one pointer instead of re-threading a pair per frame.
 struct Ctx<'a> {
     matcher: &'a Matcher<'a>,
     pat: &'a Pattern,
@@ -87,9 +85,8 @@ pub(crate) fn try_match(
 /// `node`, with no associated output.
 ///
 /// Such a node can only satisfy a root whose output vertex imposes no value
-/// requirement (a bare `any()` / `var()`, or a control builder). A root
-/// demanding a value output is rejected here rather than having its constraint
-/// silently skipped, which would let `bool_value()` match a `Return`.
+/// requirement (a bare `any()` / `var()`, or a control builder); a root
+/// demanding a value output is rejected.
 ///
 /// `k` is the root continuation; see [`try_match`].
 pub(crate) fn try_match_node(
@@ -118,16 +115,10 @@ fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
 /// The root pat node's output vertex carrying the root-level constraints to
 /// check against `root_value`; `None` if it declares no output vertex.
 ///
-/// A value root declares exactly one output vertex, and its constraint applies
-/// to whichever output is being matched: [`Matcher::matches`] roots an attempt
-/// at every IR output of a node, so matching by slot instead would silently
-/// skip the constraint whenever a multi-output `Region` / `Call` is rooted at a
-/// non-slot-0 output.
-///
-/// The one multi-output-vertex root is the `If` control builder (two `Control`
+/// A value root declares exactly one output vertex, whose constraint applies to
+/// whichever output is being matched, not to a fixed slot. The one
+/// multi-output-vertex root is the `If` control builder (two `Control`
 /// vertices), which keeps the per-slot lookup.
-///
-/// [`Matcher::matches`]: crate::Matcher::matches
 fn root_output_vertex_for(
     pat: &Pattern,
     root: PatNodeId,
@@ -210,9 +201,7 @@ fn try_match_at(
 
     // Captures for THIS node, independent of operand ordering. An
     // output-vertex capture binds the matched VALUE; a node-declared capture
-    // (control nodes like `If`) binds the matched NODE. Both can be present and
-    // are independent: an `If` may carry `capture_true(t)` and `capture(g)`, so
-    // binding only one would silently drop the other.
+    // binds the matched NODE. Both can be present, and both must be bound.
     let cap_bindings = [
         out_vertex
             .and_then(|ov| ctx.pat.graph.output_weight(ov).capture)
@@ -292,9 +281,7 @@ fn try_match_at(
     // No value-kind filter: the sub-pattern discriminates. A typed sub carries
     // a value output-kind and so skips control/memory/PhiToken inputs, while a
     // bare wildcard (`OutputKindSpec::Any`) binds any input including a
-    // `PhiToken`. That one mechanism covers a phi's value predecessors, a
-    // region's control predecessors, a mem_phi's memory predecessors, and a
-    // call's args.
+    // `PhiToken`.
     let ext_slots: Vec<usize> = if n_fixed == inputs.len() {
         Vec::new()
     } else {
@@ -329,10 +316,8 @@ fn try_match_at(
                 return false;
             }
             // Secondary (non-anchor) output vertices, checked and bound at
-            // each vertex's slot. This is how `If::capture_true` /
-            // `capture_false` and the generic `output(j)` builder reach a
-            // sibling output; the matcher never descends into a node's outputs
-            // otherwise. The anchor output and node captures are handled above.
+            // each vertex's slot: the only way a pattern reaches a sibling
+            // output. The anchor output and node captures are handled above.
             for &ov_idx in ctx.pat.graph.produced_outputs(pat_node).iter() {
                 if Some(ov_idx) == out_vertex {
                     continue;
@@ -399,9 +384,7 @@ fn try_match_at(
 /// when the direct sub-pattern yields no configuration at all, never to offer a
 /// second binding beside a direct one. Under an enumerating `k` the return
 /// value can't tell those apart (it is always `false`), hence the `reached`
-/// flag. Fallback-only also bounds enumeration by the PATTERN's commutative
-/// nodes; offering the cast-peeled value as an extra binding would multiply
-/// matches by the GRAPH's cast-chain depth.
+/// flag.
 fn try_operand(
     ctx: &Ctx,
     edge: &InputEdge,
@@ -480,11 +463,7 @@ struct InputEdge {
 /// | existential (`any_input`) | `OneOf(every input slot)` |
 #[derive(Clone, Copy)]
 enum Candidates<'a> {
-    /// The common case, and why this is an enum rather than a uniform slice:
-    /// [`match_assignments`] serves it with one direct `node_input_id_at`
-    /// index, no candidate loop, no injectivity check, no allocation. A
-    /// one-element `OneOf` would be correct but trades an indexed lookup for a
-    /// scan, so keep the singleton arm.
+    /// A pinned slot: exactly one candidate.
     Only(usize),
     /// Ordered; the input takes the first slot both unclaimed by an enclosing
     /// assignment and matching the sub-pattern.
@@ -502,10 +481,7 @@ struct Assign<'a> {
     cands: Candidates<'a>,
 }
 
-/// Slots already claimed by enclosing [`Candidates::OneOf`] assignments, as a
-/// borrowed cons list living in the recursion's own stack frames: the chain is
-/// bounded by the input count, so injectivity costs no allocation and nothing
-/// needs threading back out through the continuation closures.
+/// Slots already claimed by enclosing [`Candidates::OneOf`] assignments.
 ///
 /// Distinctness is by slot index, never by value, so
 /// `any_input(1).any_input(1)` still matches a phi with two separate `1`
@@ -584,9 +560,7 @@ fn match_assignments(
 }
 
 /// Bind every present capture all-or-nothing: on the first rebind conflict,
-/// roll back what THIS call bound and return `false`. It takes its own rollback
-/// mark, which restores to the same point a caller's would, since no mutation
-/// happens between the caller's mark and this call.
+/// roll back what THIS call bound and return `false`.
 fn bind_all_captures(b: &mut Bindings, caps: &[Option<(crate::Capture, Binding)>]) -> bool {
     let mark = b.mark();
     for &(cap, binding) in caps.iter().flatten() {
@@ -604,9 +578,7 @@ fn input_at(ctx: &Ctx, ir_node: NodeId, slot: usize) -> Option<ValueId> {
 }
 
 /// Whether the vertex constrains anything at all: a capture to bind, or a kind
-/// / width / slot filter. A vertex imposing nothing is the bare `any()`
-/// wildcard, vacuously satisfied node-rooted against a value-less node, which
-/// is what lets `any()` match a `Return`.
+/// / width / slot filter.
 fn vertex_imposes_requirement(o: &PatValue) -> bool {
     o.capture.is_some()
         || o.width.is_some()

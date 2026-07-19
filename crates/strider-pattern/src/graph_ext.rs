@@ -1,9 +1,4 @@
-//! Read vocabulary the matcher and the instantiation walk need on top of the
-//! generic [`strider_graph::Graph`], shared by the match side
-//! ([`Pattern`](crate::matcher::Pattern)) and the build side
-//! ([`Template`](crate::template::Template)).
-//!
-//! ## The sparse-slot bridge
+//! # The sparse-slot bridge
 //!
 //! Pattern inputs are **sparse**: `call().arg(0, ...)` wires only raw input
 //! slot 4. The generic graph stores inputs densely, so each input's original
@@ -29,8 +24,7 @@ pub(crate) trait PatGraphRead<N: HasInputSlots, V> {
     fn producer_of(&self, value: ValueId) -> NodeId;
     /// Recovers each input's sparse consumer slot from the node payload.
     fn consumed_inputs(&self, node: NodeId) -> Vec<(usize, ValueId)>;
-    /// Borrows the generic graph's contiguous output slice, so the matcher
-    /// and instantiate hot paths allocate nothing per node.
+    /// Borrows the generic graph's contiguous output slice.
     fn produced_outputs(&self, node: NodeId) -> &[ValueId];
     /// The root is the unique sink, derived structurally rather than stored.
     ///
@@ -89,10 +83,7 @@ impl<N: HasInputSlots, V> PatGraphRead<N, V> for Graph<N, V, NeverCacheable> {
 }
 
 /// `root` plus its transitive input cone, in producer-before-consumer order.
-///
-/// Reachability walks reversed edges from `root`; the global toposort is then
-/// filtered to that set and projected back to node vertices. Errors on a
-/// cycle.
+/// Errors on a cycle.
 pub(crate) fn reachable_topo<N, V>(
     graph: &Graph<N, V, NeverCacheable>,
     root: NodeId,

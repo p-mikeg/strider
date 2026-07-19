@@ -1,6 +1,3 @@
-//! Phi-family builders, thin slot-convention wrappers over the shared
-//! `NodePat` core and distinguished by `NodeKind` discriminant.
-//!
 //! Raw input slot 0 is the phi-token edge from the owning `Region`, so
 //! predecessor 0's value sits at slot 1. `.input(i, p)` shifts by +1 to let
 //! callers address predecessor slots directly.
@@ -43,30 +40,23 @@ impl PhiPat {
         self
     }
 
-    /// The usual way to constrain a phi operand: incoming values are one per
-    /// predecessor and normally order-irrelevant. Captures inside `p` bind out
-    /// normally.
-    ///
-    /// A typed sub matches only value predecessors; `var` / `anything` also
-    /// binds the `PhiToken` ownership edge, which
-    /// [`phi_token`](Self::phi_token) targets explicitly.
+    /// Matches some incoming value predecessor without pinning one. A typed
+    /// sub matches only value predecessors; `var` / `anything` also binds the
+    /// `PhiToken` ownership edge.
     pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.inner = self.inner.input_any(p);
         self
     }
 
     /// The ownership edge: raw slot 0, carrying the owning `Region`'s
-    /// `PhiToken` output. [`input`](Self::input) shifts past this slot; this
-    /// targets it directly, to pin which `Region` owns the phi. Bind a
-    /// `var(c)` here and cross-check `c`'s producer elsewhere, or hang a
-    /// node-only guard off it with `.when()`.
+    /// `PhiToken` output.
     pub fn phi_token<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.inner = self.inner.input(0, p);
         self
     }
 
-    /// Narrows to the lifter-emitted SSA phi whose `value_vn` entry, read via
-    /// `Function::get_vn_for_value`, is `Some(vn)`.
+    /// Narrows to the lifter-emitted SSA phi whose `value_vn` entry is
+    /// `Some(vn)`.
     pub fn for_vn(mut self, vn: rsleigh::Vn) -> Self {
         self.var_filter = Some(vn);
         self
@@ -93,8 +83,7 @@ impl PhiPat {
 
 impl MatchPat for PhiPat {
     /// Nests as a value operand anchored on the value output, as in
-    /// `store(data=phi())` or `add(x, phi())`. `MemPhi` implements [`MemPat`]
-    /// instead.
+    /// `store(data=phi())` or `add(x, phi())`.
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.configured().compile_anchored(b)
     }
@@ -125,9 +114,8 @@ impl MemPhiPat {
     }
 
     /// Candidates are every input: `PhiToken` at slot 0 and each memory
-    /// predecessor after it. Both fall outside `MatchPat`'s value domain, so a
-    /// typed value sub can bind neither and only `var` / `anything` reaches
-    /// them. Repeatable.
+    /// predecessor after it. A typed value sub binds neither; only
+    /// `var` / `anything` reaches them. Repeatable.
     pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_any(p))
     }

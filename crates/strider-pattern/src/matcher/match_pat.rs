@@ -1,11 +1,3 @@
-//! The compile-time-typed match-side builder trait, implemented by every typed
-//! builder struct in [`crate::typed`].
-//!
-//! The combinator wrappers ([`Captured`] / [`Limited`] / [`Guarded`] /
-//! [`Ordered`] / [`OfWidth`] / [`ValueTy`]) decorate an inner [`MatchPat`] with
-//! the builder's annotator surface, and are produced by the [`CaptureExt`]
-//! blanket trait.
-
 use crate::matcher::{MatcherBuilder, PatValueRef, Pattern};
 
 pub trait MatchPat: Sized {
@@ -19,10 +11,8 @@ pub trait MatchPat: Sized {
     }
 }
 
-/// A pre-compiled output handle re-presented as a [`MatchPat`], so a lowered
-/// builder like `float_le` can compile a shared operand once and feed it to
-/// several consumers. One output vertex fanning out to several `Consumes`
-/// edges is still a DAG.
+/// A pre-compiled output handle re-presented as a [`MatchPat`], so a shared
+/// operand compiled once can feed several consumers.
 pub(crate) struct Pre(pub(crate) PatValueRef);
 impl MatchPat for Pre {
     fn compile(self, _b: &mut MatcherBuilder) -> PatValueRef {
@@ -97,9 +87,7 @@ decorator! {
 }
 
 decorator! {
-    /// Pins the output-vertex width. Checked both at the root (where it
-    /// applies to whichever output is rooted, regardless of slot) and when the
-    /// node is consumed nested.
+    /// Pins the output-vertex width.
     OfWidth<P>
     { bits: u32 }
     |b, o, self| { b.set_value_width(o, self.bits); }

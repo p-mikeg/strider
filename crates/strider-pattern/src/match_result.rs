@@ -1,7 +1,3 @@
-//! The [`Match`] returned by every successful pattern match: a root
-//! [`NodeId`] plus the accumulated [`Bindings`] journal. Typed per-capture
-//! reads live on [`Bindings`], reached via [`Match::bindings`].
-
 use rustc_hash::FxHashSet;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Graph, IRViewer};
@@ -16,12 +12,9 @@ pub struct Match {
 }
 
 impl Match {
-    /// `pub` so a language binding such as `strider-py` can view an
-    /// in-progress [`Bindings`] journal: this is how a `.when()` predicate
-    /// receives a real `Match` for the attempt still in flight, `root` set to
-    /// the node the guarded sub-pattern matched at. Only the matcher can
-    /// produce [`Bindings`] (its mutation API stays `pub(crate)`), so this
-    /// re-packages rather than opening up construction.
+    /// Packages an in-progress [`Bindings`] journal as a `Match`, so a
+    /// `.when()` predicate receives a real `Match` for the attempt still in
+    /// flight, `root` set to the node the guarded sub-pattern matched at.
     pub fn from_root(root: NodeId, bindings: Bindings) -> Self {
         Self { root, bindings }
     }
@@ -31,14 +24,14 @@ impl Match {
         self.root
     }
 
-    /// Typed value / op accessors (`get_uint`, `get_float_bits`, `get_*_op`,
-    /// ...) all live on [`Bindings`]: `m.bindings().get_uint(c, function)`.
+    /// Typed value / op accessors all live on [`Bindings`]:
+    /// `m.bindings().get_uint(c, function)`.
     pub fn bindings(&self) -> &Bindings {
         &self.bindings
     }
 
-    /// Value-producing captures store only a `ValueId`, so the owning node is
-    /// recovered via [`strider_ir::Graph::producer`]. Hence the `&Graph`.
+    /// A value-producing capture recovers its owning node via
+    /// [`strider_ir::Graph::producer`], hence the `&Graph`.
     pub fn node(&self, c: Capture, graph: &Graph) -> Option<NodeId> {
         self.bindings.get_node(c, graph)
     }
@@ -49,21 +42,15 @@ impl Match {
         self.bindings.get_value(c)
     }
 
-    /// Graph-free, unlike [`node`](Self::node): answers only "did this
-    /// capture fire?".
+    /// Graph-free: answers only "did this capture fire?".
     pub fn is_bound(&self, c: Capture) -> bool {
         self.bindings.is_bound(c)
     }
 
-    /// The output-to-varnode mapping is well-defined for only two producer
-    /// kinds, and `None` for everything else:
+    /// Well-defined for only two producer kinds, `None` for everything else:
     ///
     /// * `InitialVar(vn)`: the varnode read at function entry.
-    /// * `Call` / `CallOther` clobber outputs: the clobbered register. Every
-    ///   clobber output is tagged at build time, on both the function-default
-    ///   and the override / implicit-write paths, so one
-    ///   [`strider_ir::Function::get_vn_for_value`] lookup keyed by the bound
-    ///   value suffices, with no slot arithmetic.
+    /// * `Call` / `CallOther` clobber outputs: the clobbered register.
     pub fn get_vn(&self, c: Capture, function: &strider_ir::Function) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
         if let Binding::Value(value) = binding {
@@ -99,28 +86,20 @@ impl Match {
         }
     }
 
-    /// Lets the rewrite-rule interpreter drop the `Matcher` borrow before
-    /// mutating the graph.
+    /// Drops the `Matcher` borrow, e.g. before mutating the graph.
     pub fn bindings_clone(&self) -> Bindings {
         self.bindings.clone()
     }
 
     /// Every IR node that matched a pat node: root, interior and captured
-    /// leaves, as recorded by the matcher rather than reconstructed. May hold
-    /// duplicates when a DAG sub-pattern matched along two paths, which
-    /// consumers that union over the slice do not care about.
-    ///
-    /// The rewrite engine absorbs the matched interior's asm-fingerprints
-    /// through this before culling those nodes. A backward BFS from the root
-    /// would miss matched nodes outside a single backward cone.
+    /// leaves. May hold duplicates when a DAG sub-pattern matched along two
+    /// paths.
     pub fn matched_nodes(&self) -> &[NodeId] {
         self.bindings.matched_nodes()
     }
 
-    /// Sorted, deduplicated `(capture-id, bound-node-id)` pairs. Language
-    /// bindings deduplicate matches by *what they bind* rather than by root
-    /// identity, since one binding is reachable from several roots in a
-    /// sea-of-nodes graph.
+    /// Sorted, deduplicated `(capture-id, bound-node-id)` pairs: a match's
+    /// identity by *what it binds* rather than by root.
     pub fn capture_signature(&self, graph: &Graph) -> Vec<(u32, u32)> {
         let mut sig: Vec<(u32, u32)> = self
             .bindings

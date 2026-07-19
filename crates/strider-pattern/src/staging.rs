@@ -1,16 +1,9 @@
-//! Staging core shared by the match- and build-side builders.
+//! A DAG is built incrementally: a bare node is staged, outputs are added
+//! later, inputs are wired once the producers exist. Sealing materialises the
+//! whole DAG in `toposort` order.
 //!
-//! Both [`MatcherBuilder`](crate::matcher::MatcherBuilder) and
-//! [`TemplateBuilder`](crate::template::TemplateBuilder) build their DAG
-//! incrementally: a bare node is staged, outputs are added later, inputs are
-//! wired once the producers exist. They embed a [`StagedGraph`] rather than
-//! sharing a type, so the match / template split (and its compile-time
-//! wildcard-in-RHS guard) survives.
-//!
-//! The store is a petgraph [`DiGraph`], one edge per producer/consumer
-//! dependency, so the seal order is `toposort` rather than a hand-rolled
-//! sort. Input order and each input's sparse consumer slot ride on the node
-//! weight: petgraph edge iteration order is unspecified.
+//! Input order and each input's sparse consumer slot ride on the node weight,
+//! because petgraph edge iteration order is unspecified.
 
 use anyhow::anyhow;
 use petgraph::algo::toposort;
@@ -71,8 +64,7 @@ impl<N, V> StagedGraph<N, V> {
         slot
     }
 
-    /// Records both the dependency edge, for the toposort, and the ordered
-    /// `(slot, producer)` triple, for materialisation.
+    /// Records the dependency edge and the ordered `(slot, producer)` triple.
     pub(crate) fn add_input(
         &mut self,
         consumer: usize,

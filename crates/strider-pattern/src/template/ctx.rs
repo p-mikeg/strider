@@ -1,5 +1,3 @@
-//! Context struct threaded through template instantiation.
-
 use strider_ir::Function;
 use strider_ir::node::{NodeId, ValueType};
 

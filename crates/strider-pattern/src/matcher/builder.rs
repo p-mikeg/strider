@@ -1,8 +1,4 @@
-//! The single lowering target for every match-side pattern API. Its build-side
-//! mirror is [`TemplateBuilder`](crate::template::TemplateBuilder), a separate
-//! type over a separate graph, so neither carries a `template` flag.
-//!
-//! ## Why staging
+//! # Why staging
 //!
 //! [`strider_graph::Graph`] creates a node with all its outputs and resolves
 //! its inputs at creation time. The builder API is incremental: a bare `node()`
@@ -18,16 +14,14 @@ use strider_ir::node::{NodeKind, ValueType};
 use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
 use crate::staging::{SealNode, StagedGraph};
 
-/// A value/control output a downstream node can consume. Names a staged node's
-/// output by position.
+/// Names a staged node's output by position.
 #[derive(Clone, Copy)]
 pub struct PatValueRef {
     node: usize,
     output: usize,
 }
 
-/// Names a staged node by position; used by the variadic / control builders
-/// that wire inputs and outputs by hand.
+/// Names a staged node by position.
 #[derive(Clone, Copy)]
 pub struct PatNodeRef(pub(crate) usize);
 
@@ -87,10 +81,10 @@ impl MatcherBuilder {
         self.stage(PatNode::from_kind(kind))
     }
 
-    /// Matches a value if any alternative does. The alternatives are wired as
-    /// this node's inputs, but the matcher tries each against the *same* IR
-    /// node rather than as operands, first match winning. An empty `alts`
-    /// matches nothing.
+    /// Matches a value if any alternative does. The alternatives wire as this
+    /// node's inputs, but the matcher tries each against the *same* IR node
+    /// rather than as operands, first match winning. Empty `alts` matches
+    /// nothing.
     pub fn one_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
         let mut alt_node = PatNode::from_kind(KindSpec::Any);
         alt_node.alternation = true;
@@ -122,9 +116,7 @@ impl MatcherBuilder {
         self.out_of(out).kind = OutputKindSpec::Value(ty);
     }
 
-    /// Relaxes `out` to a control-flow output. Used by the control builders
-    /// (`ctrl` / `preceded_by`), whose sub-pattern roots produce a `Control`
-    /// edge rather than a value.
+    /// Relaxes `out` to a control-flow output.
     pub fn set_output_control(&mut self, out: PatValueRef) {
         self.out_of(out).kind = OutputKindSpec::Control;
     }
@@ -139,20 +131,20 @@ impl MatcherBuilder {
         self.out_of(out).width = Some(bits);
     }
 
-    /// See [`PatValue::match_slot`]. Pins a nested Call/CallOther value
-    /// operand to a specific output, as `.res()` does.
+    /// See [`PatValue::match_slot`]. Pins the value operand to a specific
+    /// output slot.
     pub fn set_value_out_slot(&mut self, out: PatValueRef, slot: usize) {
         self.out_of(out).match_slot = Some(slot);
     }
 
-    /// Binds the matched output's value (`Binding::Value`). The common case:
+    /// Binds the matched output's value (`Binding::Value`), e.g.
     /// `add(var(x), ..)` captures `x`'s value, not its node.
     pub fn capture_output(&mut self, out: PatValueRef, c: crate::capture::Capture) {
         self.out_of(out).capture = Some(c);
     }
 
     /// Binds the matched node (`Binding::Node`), for zero-value-output roots
-    /// like `Return` / `If` with nothing to anchor a value capture on.
+    /// like `Return` / `If`.
     pub fn capture_node(&mut self, node: PatNodeRef, c: crate::capture::Capture) {
         self.core.kind_mut(node.0).capture = Some(c);
     }
@@ -170,8 +162,7 @@ impl MatcherBuilder {
         self.core.kind_mut(out.node).force_ordered = true;
     }
 
-    /// Backs `inputs_of_width`: sets `bits` on every value input consumed by
-    /// `out`'s producer.
+    /// Sets `bits` on every value input consumed by `out`'s producer.
     pub fn constrain_input_widths(&mut self, out: PatValueRef, bits: u32) {
         for (pn, po) in self.core.input_producers(out.node) {
             self.core.output_mut(pn, po).width = Some(bits);
@@ -179,12 +170,11 @@ impl MatcherBuilder {
     }
 
     /// Materialises every staged node in producer-before-consumer order.
-    /// Performs no structural validation: whether the result is single-rooted
-    /// and acyclic is reported at match time, not here.
+    /// Performs no structural validation: single-rootedness and acyclicity are
+    /// reported at match time, not here.
     ///
     /// # Panics
-    /// On a cyclic staged graph, which would be a builder bug rather than a
-    /// user error.
+    /// On a cyclic staged graph (a builder bug).
     #[allow(clippy::expect_used)]
     pub fn finish(self) -> Pattern {
         let graph = self.core.seal().expect("cyclic staged pattern graph");

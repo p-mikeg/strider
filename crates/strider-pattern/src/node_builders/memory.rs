@@ -1,6 +1,3 @@
-//! `Load` / `Store` builders with first-class memory-token vertices. Both are
-//! thin slot-convention wrappers over the shared `NodePat` core.
-//!
 //! Slot conventions, per the IR `expected_signature`:
 //!
 //! * `Load` inputs `[mem(0), addr(1)]`, output the loaded value at slot 0.
@@ -8,14 +5,7 @@
 //!   at slot 0.
 //!
 //! `Load` is value-producing and nests as a value operand; `Store` is a
-//! memory-token root exposing its token via [`MemPat`]. Both model their
-//! memory predecessor, wired through `mem_in`.
-//!
-//! Where each filter lands: `space` fires at kind-match time via
-//! [`KindSpec::VariantWith`]; `bit_width` is a declarative output-vertex width
-//! the matcher's `output_ok` checks; `stack_only` and `stack_offset` are
-//! `Function::stack_offset` side-table lookups, so they lower to a node
-//! predicate.
+//! memory-token root exposing its token via [`MemPat`].
 
 use strider_ir::node::{NodeId, NodeKind};
 
@@ -54,9 +44,7 @@ impl StackAccessSpec {
         true
     }
 
-    /// A no-op when inactive. The filter is an irreducible
-    /// `Function::stack_offset` side-table lookup, so it lowers to a node
-    /// predicate.
+    /// A no-op when inactive.
     fn apply(self, n: NodePat) -> NodePat {
         if !self.active() {
             return n;
@@ -68,7 +56,7 @@ impl StackAccessSpec {
 }
 
 /// Variant-agnostic without a space constraint; with one, pins the exact
-/// `VnSpace` through `VariantWith` so the check fires at kind-match time.
+/// `VnSpace`.
 fn load_store_kind(exemplar: NodeKind, space: Option<rsleigh::VnSpace>) -> KindSpec {
     let discriminant = std::mem::discriminant(&exemplar);
     let is_load = matches!(exemplar, NodeKind::Load(_));
@@ -83,21 +71,12 @@ fn load_store_kind(exemplar: NodeKind, space: Option<rsleigh::VnSpace>) -> KindS
     variant_kind(discriminant, check)
 }
 
-/// What `LoadPat` and `StorePat` share verbatim. Each embeds one as `common`
-/// and forwards its fluent methods here; the per-builder `configured()` reads
-/// `space` for the kind spec, then wires the rest through
-/// [`wire_mem_and_capture`](Self::wire_mem_and_capture) and
-/// [`apply_stack`](Self::apply_stack).
-///
-/// `addr`, `data`, the anchor choice (value root versus memory-token root)
-/// and where the width pins (output versus input slot 2) all diverge, so they
-/// stay on the per-builder structs.
+/// What `LoadPat` and `StorePat` share verbatim, embedded as `common`.
 #[derive(Default)]
 struct MemAccessSpec {
     space: Option<rsleigh::VnSpace>,
     mem_in: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
-    /// Applied in order. Unlike `mem_in`, which is one fixed slot, each call
-    /// adds a separate constraint.
+    /// Applied in order; each call adds a separate constraint.
     any_input: Vec<Box<dyn FnOnce(NodePat) -> NodePat>>,
     bit_width: Option<u32>,
     stack: StackAccessSpec,
@@ -142,9 +121,7 @@ impl LoadPat {
         self
     }
 
-    /// `inputs[0]`, taking a `store` / `mem_phi` / `call`. Wires that
-    /// producer's memory token into the load's memory input, so the IR memory
-    /// chain is walked like the value chain.
+    /// `inputs[0]`, taking a `store` / `mem_phi` / `call`.
     pub fn mem_in<M: MemPat + 'static>(mut self, p: M) -> Self {
         self.common.mem_in = Some(Box::new(move |n: NodePat| n.input_mem(0, p)));
         self
@@ -165,8 +142,7 @@ impl LoadPat {
         self
     }
 
-    /// Requires the address to decompose to exactly `sp + k`, an O(1)
-    /// `Function::stack_offset` read.
+    /// Requires the address to decompose to exactly `sp + k`.
     pub fn stack_offset(mut self, k: i128) -> Self {
         self.common.stack.stack_offset_filter = Some(k);
         self
