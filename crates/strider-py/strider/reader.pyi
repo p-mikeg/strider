@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 class BufferReader:
-    """Low-level raw-byte reader for firmware / custom byte sources.
+    """Raw byte reader for firmware or custom sources.
 
-    Serves both the instruction-fetch (`mem=`) and read-only-memory (`rom=`)
-    roles, so one `BufferReader` can be passed as either argument to
-    `strider.lift.lifter` / `strider.sleigh.Sleigh`.
+    Works as both the `mem` (instruction fetch) and `rom` (read-only memory)
+    argument to `strider.lift.lifter` and `strider.sleigh.Sleigh`.
     """
     def __init__(self, base_addr: int, data: bytes) -> None:
         """Serve `data` as the bytes mapped starting at `base_addr`."""
@@ -19,36 +18,29 @@ class BufferReader:
         ...
 
 class MemReader:
-    """Instruction-fetch source backed by Python.
+    """Instruction source backed by Python.
 
-    Subclass and override `read(addr, size) -> Optional[bytes]` to feed the
-    analysis pipeline from your own data source. Each `read` is a Python call
-    made once per memory access.
+    Subclass and override `read(addr, size)` to feed the pipeline from your
+    own data source.
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args, **kwargs) -> None:
         """Base initialiser; subclasses may take whatever arguments they like."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Override this: return the `size` bytes at `addr`, or `None` when
-        the range is unmapped."""
+        """Return the `size` bytes at `addr`, or `None` when unmapped."""
         ...
 
 class ReadOnlyMemory:
-    """Read-only memory image backed by Python, for the `LoadReadOnly` pass.
+    """Read-only memory backed by Python, used by the `LoadReadOnly` pass.
 
-    Subclass and override `read(addr, size) -> Optional[bytes]` to return the
-    `size` RAW bytes at `addr` (no endianness swap; the optimizer decodes them
-    per the target byte order), or `None` for unmapped addresses.
-
-    Only RAM loads reach `read`; other spaces (REGISTER, CONST, UNIQUE) never
-    do, so subclasses need not filter on space.
+    Subclass and override `read(addr, size)` to return the raw bytes at
+    `addr`. Only RAM loads reach it, so subclasses need not filter on space.
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args, **kwargs) -> None:
         """Base initialiser; subclasses may take whatever arguments they like."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Override this: return the `size` raw bytes at `addr`, or `None`
-        when the range is unmapped."""
+        """Return the `size` raw bytes at `addr`, or `None` when unmapped."""
         ...

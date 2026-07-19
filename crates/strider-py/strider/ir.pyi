@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from .cfg import Cfg, DotStyle
-from .pattern import Match, PatLike as _PatLike
+from .pattern import CastMask, Match, PatLike as _PatLike
+from .pattern.constraints import JoinConstraint
 from .sleigh import Vn
 from .template import Template as _Template
 
@@ -94,7 +95,7 @@ class Node:
         """
         ...
     def __repr__(self) -> str: ...
-    def __eq__(self, other: object) -> bool: ...
+    def __eq__(self, other) -> bool: ...
     def __hash__(self) -> int: ...
 
 class Function:
@@ -200,56 +201,42 @@ class Function:
         ...
     def find_all(
         self,
-        pat: Any,  # strider.pattern.PatLike | list[strider.pattern.PatLike]
+        pat: Union[_PatLike, List[_PatLike]],
         ignore_root: bool = ...,
         ignore_casts: bool = ...,
-        ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
-        constraints: Optional[List[Any]] = ...,  # list[strider.pattern.constraints.JoinConstraint]
+        ignore_casts_mask: Optional[CastMask] = ...,
+        constraints: Optional[List[JoinConstraint]] = ...,
     ) -> List[Match]:
         """Every deduplicated `Match` for `pat`.
 
         `pat` is a single pattern or a list of them; a list joins on shared
-        `Capture`s (every pattern must match and their captures must unify),
-        returning one merged `Match` per result. Dedup keys on captures plus
-        root(s) by default; `ignore_root=True` keys on captures alone,
-        collapsing one binding reached from several roots. `constraints`
-        filters a joined result by control-flow relations (`dominates`,
-        `phi_input_from_edge`) over captured entities; patterns linked only
-        by a constraint still count as correlated for the shared-capture
-        connectivity check.
+        `Capture`s and returns one merged `Match` per result. `ignore_root`
+        keys dedup on captures alone. `constraints` filters joined results by
+        control-flow relations (`dominates`, `phi_input_from_edge`).
 
-        A single root can yield several matches, one per distinct
-        capture-to-binding map. A commutative node (`add`, `mul`, `int_and`)
-        whose operands both satisfy a captured sub-pattern binds that capture
-        to each operand in turn, and every binding is reported:
-        `add(anything().capture(k), anything())` on `add(x, y)` returns TWO
-        matches, `k=x` and `k=y`. Patterns that bind identically under both
-        orderings (`add(var(x), var(x))`), or that capture nothing on the
-        operands, collapse to one, so a capture-free pattern never
-        duplicates. Call `.ordered()` on a binary builder to pin operand
-        slots and suppress the commutative alternative. Ordering is
-        deterministic: natural operand order before swapped. `one_of` stays
-        first-match-wins, so a later arm never adds a second binding.
+        A single root can yield several matches, one per distinct binding. A
+        commutative op whose operands both satisfy a captured sub-pattern
+        reports one match per operand: `add(anything().capture(k),
+        anything())` on `add(x, y)` returns both `k=x` and `k=y`. Call
+        `.ordered()` on a binary builder to pin operand slots and suppress
+        the commutative alternative.
         """
         ...
     def find_unique(
         self,
-        pat: Any,  # strider.pattern.PatLike | list[strider.pattern.PatLike]
+        pat: Union[_PatLike, List[_PatLike]],
         ignore_root: bool = ...,
         ignore_casts: bool = ...,
-        ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
-        constraints: Optional[List[Any]] = ...,  # list[strider.pattern.constraints.JoinConstraint]
+        ignore_casts_mask: Optional[CastMask] = ...,
+        constraints: Optional[List[JoinConstraint]] = ...,
     ) -> Match:
         """The single `Match` for `pat`, raising `StriderError` if there is
-        not exactly one (with distinct messages for none and for several).
-        The count is taken after dedup, so `ignore_root`, a list `pat`, and
-        `constraints` behave as in `find_all`.
+        not exactly one. The count is taken after dedup, so `ignore_root`, a
+        list `pat`, and `constraints` behave as in `find_all`.
 
-        This fails closed. Because `find_all` reports every distinct binding,
-        an ambiguous pattern raises here instead of silently returning one of
-        several. `add(anything().capture(k), anything())` binds `k` to either
-        operand and so is ambiguous: pin the intent with `.ordered()`, or
-        narrow the operand sub-patterns, to make it unique.
+        An ambiguous pattern raises here rather than returning one of several:
+        `add(anything().capture(k), anything())` binds `k` to either operand,
+        so pin the intent with `.ordered()` or narrow the operands.
         """
         ...
     def rewrite(self, find: _PatLike, replace: _Template) -> int:

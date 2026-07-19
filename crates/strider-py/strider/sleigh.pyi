@@ -3,7 +3,9 @@ low-level disassembler and varnode surface."""
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional, Union
+
+from .reader import BufferReader, MemReader
 
 class SleighArch:
     """A target architecture: instruction-set specification plus byte order.
@@ -184,7 +186,7 @@ class VnSpace:
     def name(self) -> str:
         """The space's name, e.g. `"ram"` or `"register"`."""
         ...
-    def __eq__(self, other: object) -> bool: ...
+    def __eq__(self, other) -> bool: ...
     def __hash__(self) -> int: ...
 
 class Vn:
@@ -208,7 +210,7 @@ class Vn:
     def size(self) -> int:
         """The width in bytes."""
         ...
-    def __eq__(self, other: object) -> bool: ...
+    def __eq__(self, other) -> bool: ...
     def __hash__(self) -> int: ...
 
 class Sleigh:
@@ -217,9 +219,10 @@ class Sleigh:
     Most workflows never build one directly: `Lifter` owns a `Sleigh` and
     forwards `reg` / `reg_name`.
     """
-    def __init__(self, arch: SleighArch, mem: Any) -> None:
-        """Build a decoder for `arch` reading bytes from `mem` (a
-        `BufferReader` or `MemReader`)."""
+    def __init__(
+        self, arch: SleighArch, mem: Union[MemReader, BufferReader]
+    ) -> None:
+        """Build a decoder for `arch` reading bytes from `mem`."""
         ...
     def arch_name(self) -> str:
         """The architecture's short name."""

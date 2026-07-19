@@ -24,10 +24,12 @@ FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 OUT_DIR = pathlib.Path("/tmp")
 
 prog = strider.lift.load_elf(str(FIXTURE))
-cfg, function, _unresolved = prog.analyze(
+result = prog.analyze(
     "array_sum",
     opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
 )
+cfg = result.cfg
+function = result.function
 
 # CFG neighborhood: the regions within 2 hops of the entry region.
 cfg_dot = OUT_DIR / "array_sum-cfg-neighborhood.dot"

@@ -254,8 +254,8 @@ pure_pass_class!("FlagCmpCanonicalize" => PyFlagCmpCanonicalize,
     "Rewrites a flag-tree (e.g. AArch64 NZCV-style chains) into a single \
      `IntCmpOp`.");
 pure_pass_class!("IfCondInversion" => PyIfCondInversion,
-    "Rewrites `If(BitNot(C)){A}{B}` → `If(C){B}{A}` so patterns match the \
-     canonical, un-negated condition shape.");
+    "Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) into \
+     a branch on the plain condition with its two arms swapped.");
 
 pure_pass_class!("LoadForward" => PyLoadForward,
     "`LoadForward()` — forwards values from stack-tagged `Store` nodes to \
@@ -271,9 +271,9 @@ pure_pass_class!("CallStackArgCollect" => PyCallStackArgCollect,
      the calling convention's stack-arg layout.");
 
 pure_pass_class!("LoadReadOnly" => PyLoadReadOnly,
-    "`LoadReadOnly()` — folds constant-address loads against the rom \
-     supplied via `strider.lifter(arch, mem, rom=mem)` / \
-     `strider.load_elf(...)`.  No-change when no rom is available.");
+    "`LoadReadOnly()` folds constant-address loads against the rom supplied \
+     via `strider.lift.lifter(arch, mem, rom=mem)` or \
+     `strider.lift.load_elf(...)`. No change when no rom is available.");
 
 /// Aggregates every pass-wrapper class so `add` / `add_post` accept any of
 /// them via PyO3 enum dispatch.

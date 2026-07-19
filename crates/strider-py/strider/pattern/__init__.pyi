@@ -10,10 +10,10 @@ compiles: no `.when`, no wildcard, no commutativity.
 
 from __future__ import annotations
 
-from typing import Any, Callable, List, Literal, Optional, Union
+from typing import Callable, List, Literal, Optional, Union
 
 from ..ir import Node
-from ..sleigh import Vn
+from ..sleigh import Vn, VnSpace
 
 # A pattern describes graph shape; a constraint is a relational predicate
 # over the captures patterns bind. Separate namespaces so the two kinds
@@ -58,23 +58,23 @@ class Match:
         """One root node id per pattern passed to the query (`[root]` for a
         single-pattern query)."""
         ...
-    def const_uint(self, key: Any) -> Optional[int]:
+    def const_uint(self, key: Union[Capture, str]) -> Optional[int]:
         """The unsigned constant value bound to `key`."""
         ...
-    def const_int(self, key: Any) -> Optional[int]:
+    def const_int(self, key: Union[Capture, str]) -> Optional[int]:
         """The signed constant value bound to `key`."""
         ...
-    def const_bool(self, key: Any) -> Optional[bool]:
+    def const_bool(self, key: Union[Capture, str]) -> Optional[bool]:
         """The boolean constant value bound to `key`."""
         ...
-    def float_bits(self, key: Any) -> Optional[int]:
+    def float_bits(self, key: Union[Capture, str]) -> Optional[int]:
         """The raw float bit pattern bound to `key`."""
         ...
-    def has(self, key: Any) -> bool:
+    def has(self, key: Union[Capture, str]) -> bool:
         """Whether `key` bound to anything. Captures under an alternative
         that did not fire are left unbound."""
         ...
-    def op(self, key: Any) -> Optional[str]:
+    def op(self, key: Union[Capture, str]) -> Optional[str]:
         """The operation variant of the node bound to `key` (`"Add"`,
         `"Less"`, `"Neg"`), or `None` when `key` is unbound or names a node
         carrying no operation.
@@ -84,26 +84,26 @@ class Match:
         (`Xor` at `I1`) from a wide bitwise one.
         """
         ...
-    def value_type(self, key: Any) -> Optional[str]:
+    def value_type(self, key: Union[Capture, str]) -> Optional[str]:
         """The value-output type of the node bound to `key` (`"I1"`,
         `"I64"`, `"F64"`), or `None` when `key` is unbound or names a node
         with no value output."""
         ...
-    def vn(self, key: Any) -> Optional[Vn]:
+    def vn(self, key: Union[Capture, str]) -> Optional[Vn]:
         """The varnode bound by `key` (an initial register read, or a call's
         return-value or clobber output), else `None`."""
         ...
-    def asm_fingerprint(self, key: Any) -> List[int]:
+    def asm_fingerprint(self, key: Union[Capture, str]) -> List[int]:
         """The machine-instruction addresses recorded on the node bound to
         `key`; `[]` when `key` is unbound."""
         ...
-    def node(self, key: Any) -> Optional[Node]:
+    def node(self, key: Union[Capture, str]) -> Optional[Node]:
         """A `Node` handle on what `key` bound to (`key` is a `Capture` or a
         capture name), or `None` when unbound. Every other reader here is
         built on this."""
         ...
-    def __getitem__(self, key: Any) -> Any: ...
-    def __contains__(self, key: Any) -> bool: ...
+    def __getitem__(self, key: Union[Capture, str]) -> Optional[Union[bool, int]]: ...
+    def __contains__(self, key: Union[Capture, str]) -> bool: ...
 
 class Capture:
     """A capture variable: attach it to a sub-pattern, then read the node it
@@ -153,7 +153,7 @@ class CastMask:
         ...
     def __or__(self, other: CastMask) -> CastMask: ...
     def __and__(self, other: CastMask) -> CastMask: ...
-    def __eq__(self, other: object) -> bool: ...
+    def __eq__(self, other) -> bool: ...
     def __hash__(self) -> int: ...
 
 class Pat:
@@ -445,7 +445,7 @@ class LoadPat:
     def bit_width(self, n: int) -> "LoadPat":
         """Require the loaded value to be `n` bits wide."""
         ...
-    def space(self, s: object) -> "LoadPat":
+    def space(self, s: VnSpace) -> "LoadPat":
         """Require the load to target address space `s`."""
         ...
     def stack_offset(self, k: int) -> "LoadPat":
@@ -484,7 +484,7 @@ class StorePat:
     def bit_width(self, n: int) -> "StorePat":
         """Require the stored value to be `n` bits wide."""
         ...
-    def space(self, s: object) -> "StorePat":
+    def space(self, s: VnSpace) -> "StorePat":
         """Require the store to target address space `s`."""
         ...
     def stack_offset(self, k: int) -> "StorePat":
@@ -509,7 +509,7 @@ class StorePat:
 class PhiPat:
     """Builder for value-phi patterns, returned by `phi()` /
     `phi_for(vn)`."""
-    def for_vn(self, vn: object) -> "PhiPat":
+    def for_vn(self, vn: Vn) -> "PhiPat":
         """Require the phi to carry varnode `vn`."""
         ...
     def input(self, idx: int, p: PatLike) -> "PhiPat":
@@ -696,10 +696,10 @@ class FunctionArgPat:
     def index(self, i: int) -> "FunctionArgPat":
         """Require the argument's position to be `i`."""
         ...
-    def source_register(self, vn: object) -> "FunctionArgPat":
+    def source_register(self, vn: Vn) -> "FunctionArgPat":
         """Require the argument to arrive in register varnode `vn`."""
         ...
-    def source_stack(self, space: object, offset: int) -> "FunctionArgPat":
+    def source_stack(self, space: VnSpace, offset: int) -> "FunctionArgPat":
         """Require the argument to arrive on the stack at `(space,
         offset)`."""
         ...
@@ -763,7 +763,7 @@ def any_float_const(c: Capture | None = ...) -> Pat:
     """Match any float constant, optionally binding it to `c`."""
 def initial_var() -> Pat:
     """Match any initial-state register read."""
-def initial_var_for(vn: object) -> Pat:
+def initial_var_for(vn: Vn) -> Pat:
     """Match the initial-state read of varnode `vn`."""
 def one_of(patterns: List[PatLike]) -> Pat:
     """Match a value if ANY of the listed sub-patterns matches it.
@@ -797,14 +797,14 @@ def function_arg(i: int) -> FunctionArgPat:
     `i`."""
 def function_arg_any() -> FunctionArgPat:
     """Start a function-argument pattern matching any argument index."""
-def function_arg_reg(vn: object) -> FunctionArgPat:
+def function_arg_reg(vn: Vn) -> FunctionArgPat:
     """Match a function argument arriving in register varnode `vn`."""
-def function_arg_stack(space: object, offset: int) -> FunctionArgPat:
+def function_arg_stack(space: VnSpace, offset: int) -> FunctionArgPat:
     """Match a function argument arriving on the stack at `(space,
     offset)`."""
 def phi() -> PhiPat:
     """Start a value-phi pattern builder."""
-def phi_for(vn: object) -> PhiPat:
+def phi_for(vn: Vn) -> PhiPat:
     """Start a value-phi pattern builder for varnode `vn`."""
 def mem_phi() -> MemPhiPat:
     """Start a memory-token phi pattern builder."""

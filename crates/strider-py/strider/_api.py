@@ -1,8 +1,4 @@
-"""High-level Python facade for the strider pipeline.
-
-The lower-level building blocks (`BufferReader`, `Sleigh`, `Lifter`,
-`Function`, `OptimizerPipeline`) stay available for users who need granular
-control. This module adds the three-line workflow:
+"""High-level Python facade: the ELF loader and the `ElfLifter` it returns.
 
 ```python
 import strider
@@ -11,26 +7,19 @@ cfg, function, unresolved = lift.analyze("function_name")
 matches = function.find_all(strider.pattern.call())
 ```
 
-`load_elf` returns an `ElfLifter`, which IS a `Lifter`
-(`isinstance(lift, strider.lift.Lifter)` is true): it holds the ELF symbol
-table alongside the persistent lift, optimise and resolve state, wired with
-the ELF's memory as both the code reader and the read-only image for
-constant folding. `from_segments` picks the region-collection strategy:
-PT_LOAD program headers by default, section headers when `False`.
-
-For non-ELF, firmware or custom sources, build a `Lifter` directly with
-`strider.lift.lifter(arch, mem, rom=None)` and call `analyze(addr, cc,
-...)`.
-
-The architecture is detected from the ELF header; there is no pyelftools
-dependency at runtime.
+For non-ELF or custom sources, build a `Lifter` directly with
+`strider.lift.lifter(arch, mem, rom=None)`.
 """
 
 from __future__ import annotations
 
 import os
 import struct
-from typing import Iterator, Optional, Union
+from typing import TYPE_CHECKING, Iterator, Optional, Union
+
+if TYPE_CHECKING:
+    from .lift import MemLike, RomLike
+    from .reader import BufferReader
 
 # Resolve the extension submodule by its full dotted path so `_ext` is
 # unambiguous regardless of what `__init__.py` binds into the package
@@ -198,38 +187,18 @@ def load_elf(
     arch: Optional[SleighArch] = None,
     cc: Optional[CallingConvention] = None,
 ) -> "ElfLifter":
-    """Load an ELF binary and return an `ElfLifter`, which IS a `Lifter`
-    (`isinstance(lift, strider.lift.Lifter)` is true), with the architecture
-    and userland calling convention picked from the ELF header.
+    """Load an ELF binary, picking the architecture and calling convention
+    from its header, and return an `ElfLifter`.
 
-    `from_segments=True` (the default) walks PT_LOAD program headers, the
-    runtime memory layout, for executables and shared objects, falling back
-    to the section walker for relocatable objects, which carry no program
-    headers. Pass `from_segments=False` to force the section walk even for a
-    linked binary that does carry PT_LOAD segments; that gives
-    section-granular regions (`.text`, `.rodata`, `.plt` as separate
-    mappings) instead of the segment loader's coalesced ranges. Both
-    strategies resolve overlapping addresses first-wins.
-
-    For non-userland workflows (Linux kernel, syscall stubs, embedded
-    firmware with a custom convention) pass an explicit `arch=` / `cc=`:
-
-    ```python
-    lift = strider.lift.load_elf(
-        "vmlinux-i386",
-        arch=strider.sleigh.SleighArch.x86(),
-        cc=strider.sleigh.CallingConvention.x86_linux_kernel(),
-    )
-    ```
-
-    `apply_relocations` (default `True`) widens the loaded section set
-    (`.data.rel.ro`, `.got`) and patches every understood relocation in
-    place. Shared objects and PIE binaries need it: their code and
-    function-pointer tables ship with unresolved relocations.
+    `from_segments=True` (the default) walks PT_LOAD program headers, falling
+    back to sections for relocatable objects; `from_segments=False` forces
+    the section walk for section-granular regions. Override the detected
+    `arch=` / `cc=` for kernel or custom-ABI workflows. `apply_relocations`
+    (default `True`) patches relocations in place, which shared objects and
+    PIE binaries need.
 
     Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
-    when the file is not an ELF or its architecture is unsupported (the
-    latter only when `arch` and `cc` are not both supplied).
+    when the file is not an ELF or its architecture is unsupported.
     """
     loader = _ext._load_elf_from_segments if from_segments else _ext._load_elf_from_sections
     return _load_elf_with(
@@ -238,27 +207,16 @@ def load_elf(
 
 
 class ElfLifter(Lifter):
-    """A loaded ELF binary as a `Lifter`.
+    """A loaded ELF binary as a `Lifter`, returned by
+    `strider.lift.load_elf(path)`.
 
-    An `ElfLifter` IS a `Lifter` (`isinstance(lift, strider.lift.Lifter)` is
-    true): it carries the same lift, optimise and resolve state as a plain
-    `strider.lift.lifter(...)` handle, wired with the ELF's memory as both
-    the code reader and (for its code and read-only sections) the read-only
-    image used for constant folding. On top of that it adds the symbol table
-    (`symbol`, `symbols`, `symbol_size`, `entry_point`, `functions`) and an
-    `analyze(target)` that accepts a symbol name.
-
-    Build one with `strider.lift.load_elf(path)`, optionally with
-    `from_segments=False` or explicit `arch=` / `cc=` for kernel, syscall or
-    custom-ABI workflows. Never construct `ElfLifter(...)` directly. Analyse
+    It carries the ELF's memory as both code reader and read-only image, plus
+    the symbol table (`symbol`, `symbols`, `symbol_size`, `entry_point`,
+    `functions`) and an `analyze(target)` that accepts a symbol name. Analyse
     many functions by calling `analyze` repeatedly:
 
     ```python
-    lift = strider.lift.load_elf(
-        "vmlinux-i386",
-        arch=strider.sleigh.SleighArch.x86(),
-        cc=strider.sleigh.CallingConvention.x86_linux_kernel(),
-    )
+    lift = strider.lift.load_elf("path/to/file.elf")
     for fn in lift.functions():
         cfg, function, unresolved = lift.analyze(fn)
     ```
@@ -268,11 +226,11 @@ class ElfLifter(Lifter):
 
     def __new__(
         cls,
-        elf: object,  # the internal loaded-ELF handle the loader returns
+        elf,  # the internal loaded-ELF handle the loader returns
         arch: SleighArch,
         cc: CallingConvention,
-        mem: object,
-        rom: Optional[object] = None,
+        mem: "MemLike",
+        rom: Optional["RomLike"] = None,
     ) -> "ElfLifter":
         """Build the base `Lifter`, which takes only `(arch, mem, rom=...)`;
         the ELF-specific state is attached in `__init__`."""
@@ -280,11 +238,11 @@ class ElfLifter(Lifter):
 
     def __init__(
         self,
-        elf: object,
+        elf,
         arch: SleighArch,
         cc: CallingConvention,
-        mem: object,
-        rom: Optional[object] = None,
+        mem: "MemLike",
+        rom: Optional["RomLike"] = None,
     ) -> None:
         """Attach the ELF backend, architecture and default calling
         convention; `mem` and `rom` were already consumed by `__new__`."""
@@ -310,10 +268,7 @@ class ElfLifter(Lifter):
         return f"ElfLifter(arch={self._arch.name()}, cc={self._cc.name()})"
 
     def functions(self) -> Iterator[str]:
-        """Yield every function and data symbol name from every ELF loaded
-        into this handle, sorted. Symbols with empty names or zero addresses
-        are skipped, and the first-loaded ELF wins on name collisions.
-        """
+        """Every function and data symbol name in the loaded ELFs, sorted."""
         for name in sorted(self._elf.symbols().keys()):
             yield name
 
@@ -323,14 +278,12 @@ class ElfLifter(Lifter):
         return self._elf.symbol(name)
 
     def symbol_size(self, name: str) -> Optional[int]:
-        """The recorded size in bytes of `name`, or `None` when the symbol
-        exists but its size is recorded as zero. Raises `StriderError` when
-        the symbol is not defined."""
+        """The recorded size of `name` in bytes, or `None` when the size is
+        recorded as zero. Raises `StriderError` when undefined."""
         return self._elf.symbol_size(name)
 
-    def symbols(self) -> dict:
-        """Every function and data symbol as a name-to-address dict. The
-        first-loaded ELF wins on name collisions."""
+    def symbols(self) -> dict[str, int]:
+        """Every symbol as a name-to-address dict."""
         return self._elf.symbols()
 
     def entry_point(self) -> int:
@@ -342,17 +295,13 @@ class ElfLifter(Lifter):
         `None` when `addr` is unmapped."""
         return self._elf.read(addr, size)
 
-    def reader(self) -> object:
-        """The multi-region `BufferReader` assembled from the ELF's loaded
-        sections, for handing to `strider.lift.lifter` or
-        `strider.sleigh.Sleigh` when dropping below `analyze`."""
+    def reader(self) -> "BufferReader":
+        """The `BufferReader` over the ELF's loaded sections."""
         return self._elf.reader()
 
     def add_elf(self, path: str, *, apply_relocations: bool = False) -> None:
-        """Merge another ELF, such as a shared library, into this handle,
-        extending both the loaded regions and the symbol set. The
-        earlier-loaded ELF wins on name collisions. Later `analyze`, `read`
-        and `symbol` calls see the new ELF."""
+        """Merge another ELF, such as a shared library, into this handle.
+        The earlier-loaded ELF wins on name collisions."""
         self._elf.add_elf(path, apply_relocations)
         self._rebuild(self._arch, self._elf.reader(), rom=self._elf.ro_reader())
 
@@ -362,20 +311,12 @@ class ElfLifter(Lifter):
         cc: Optional[CallingConvention] = None,
         opts: Optional[LifterOptions] = None,
     ):
-        """Lift the function at `entry`, a symbol name or an absolute
-        address, returning the same `AnalyzeResult` as `Lifter.analyze`.
+        """Lift the function at `entry`, a symbol name or an address,
+        returning the same `AnalyzeResult` as `Lifter.analyze`.
 
-        A `str` entry is resolved through the ELF symbol table; when that
-        symbol records a non-zero size and the caller passed no explicit
-        `opts.cfg.function_max_size`, the recorded size becomes the bound. An
-        `int` entry is used verbatim.
-
-        `cc` defaults to this handle's convention. `opts` forwards verbatim
-        to `Lifter.analyze`, including the per-function `opts.pipeline`
-        override.
-
-        Constant folding reads the ELF's code and read-only sections (not its
-        writable data).
+        A `str` entry is resolved through the ELF symbol table, and its
+        recorded size bounds the lift unless `opts.cfg.function_max_size` is
+        set. `cc` defaults to this handle's convention.
 
         Raises `TypeError` when `entry` is neither `str` nor `int`.
         """

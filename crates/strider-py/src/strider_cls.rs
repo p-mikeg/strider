@@ -199,9 +199,9 @@ impl PyAnalyzeResult {
     }
 }
 
-/// The lift+optimise+resolve handle.  Construct via
-/// `strider.lift.lifter(arch, mem, rom=None)`; call `build_cfg` for a
-/// structural-only CFG, or `analyze(entry, cc, ...)` for the full lift.
+/// Lifts, optimises and resolves functions for one architecture.  Build
+/// one with `strider.lift.lifter(arch, mem, rom=None)`; the calling
+/// convention is an argument of every `analyze` call.
 #[pyclass(name = "Lifter", module = "strider.lift", unsendable, subclass)]
 pub struct PyLifter {
     /// Owns the Sleigh, cached register table and optional rom.
@@ -273,8 +273,8 @@ pub(crate) enum DotResult {
 
 #[pymethods]
 impl PyLifter {
-    /// Construct a lift handle over `mem` for `arch`, with optional
-    /// read-only `rom` for constant-load folding.
+    /// Build a handle for `arch` reading code from `mem`, with `rom` as the
+    /// optional read-only memory for constant folding.
     #[new]
     #[pyo3(signature = (arch, mem, rom = None))]
     fn new(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<Self> {
@@ -314,12 +314,8 @@ impl PyLifter {
         Ok(())
     }
 
-    /// Build a control-flow graph for the function at `entry`: no lift, no
-    /// optimisation, no indirect-branch resolution (indirect branches are
-    /// left unresolved, since resolving them is `analyze`'s job).
-    ///
-    /// `opts` is a `CfgOptions`, defaulting to all-defaults.  Raises
-    /// `StriderError` on a build failure.
+    /// Build the control-flow graph of the function at `entry`, without
+    /// lifting or optimising.  Raises `StriderError` on a build failure.
     #[pyo3(signature = (entry, opts=None))]
     fn build_cfg(
         slf: Py<Self>,
@@ -349,25 +345,14 @@ impl PyLifter {
         Ok(PyCfg::new(inner, slf))
     }
 
-    /// Lift the function at `entry`, optimise it to a fixed point, resolve
-    /// its indirect branches, and return an `AnalyzeResult` carrying
-    /// `.cfg`, `.function` and `.unresolved` (it also unpacks as a
-    /// 3-tuple).  `cfg` is the FINAL resolve/re-lift iteration's CFG, the
-    /// one `function` was lifted from.
+    /// Lift, optimise and resolve the function at `entry`, returning an
+    /// `AnalyzeResult` (`cfg`, `function`, `unresolved`; also unpacks as a
+    /// 3-tuple).
     ///
-    /// Args:
-    ///     entry: Address of the function to analyse.  A `str` symbol name
-    ///         needs an `ElfLifter`; on a plain `Lifter` it raises
-    ///         `StriderError`.
-    ///     cc: Calling convention for this analysis, with
-    ///         per-target-address overrides via `opts.per_address_ccs`.
-    ///         Required on a plain `Lifter`; `ElfLifter` defaults it to the
-    ///         ELF-derived CC.
-    ///     opts: A `LifterOptions`, defaulting to all-defaults.  A set
-    ///         `opts.pipeline` replaces the built-in default optimizer
-    ///         pipeline for this call only.
-    ///
-    /// Raises `ValueError` for a nested `function_max_size == 0` or an
+    /// A plain `Lifter` needs an address and a `cc`; it raises
+    /// `StriderError` for a symbol name or a missing `cc` (`ElfLifter`
+    /// accepts a symbol name and supplies a default `cc`).  Raises
+    /// `ValueError` for a nested `function_max_size == 0` or an
     /// unrecognised `alias_mode`, and `StriderError` on lift failure.
     #[pyo3(signature = (entry, cc=None, opts=None))]
     fn analyze(
@@ -479,19 +464,9 @@ impl PyLifter {
         })
     }
 
-    /// Run an optimizer pipeline over `function`'s IR in place.  Useful
-    /// after a manual `Function.rewrite(...)` to re-converge the graph, or
-    /// to layer extra passes on an already-analyzed function.
-    ///
-    /// `pipeline=None` runs the canonical default, the same one `analyze`
-    /// drives internally.  A given `OptimizerPipeline` is DRAINED, so
-    /// rebuild it before reusing it.
-    ///
-    /// Invalidates any outstanding `Node` / `Match` handles created from
-    /// `function`.
-    ///
-    /// A custom `pipeline` runs without a rom image, so any `LoadReadOnly`
-    /// pass in it short-circuits silently.
+    /// Run an optimizer pipeline over `function` in place.  `pipeline=None`
+    /// runs the default pipeline; a given `OptimizerPipeline` is drained.
+    /// Invalidates outstanding `Node` / `Match` handles for `function`.
     #[pyo3(signature = (function, pipeline=None))]
     fn optimize(
         &self,
@@ -510,13 +485,9 @@ impl PyLifter {
         }
     }
 
-    /// Render the depth-`depth` neighborhood (inputs and outputs) around
-    /// IR node `center` to a standalone Graphviz DOT string, one DOT node
-    /// per IR node (a DOT node id IS the IR node id) with `center`
-    /// highlighted.
-    ///
-    /// A node whose degree exceeds `hub_cap` is shown but not expanded
-    /// through.  `max_nodes` caps the total, nearest first.
+    /// Pretty DOT for the nodes within `depth` hops of node `center`, with
+    /// register names resolved.  A node whose degree exceeds `hub_cap` is
+    /// shown but not expanded through, and `max_nodes` caps the total.
     #[pyo3(signature = (function, center, depth=5, hub_cap=12, max_nodes=60))]
     fn neighborhood_dot(
         &self,
@@ -554,19 +525,13 @@ impl PyLifter {
         self.inner.sleigh_regs().vn_to_name(vn.inner)
     }
 
-    /// Decode LINEARLY from `entry`, one machine instruction at a time,
-    /// replaying context-register state as a real lift would, until the
-    /// cursor reaches `addr`; return that instruction's p-code (ops joined
-    /// `"; "`, empty for an instruction that lifts to none, e.g.
-    /// `endbr64`).
+    /// Decode from `entry` one instruction at a time until `addr`, and
+    /// return that instruction's p-code (ops joined `"; "`, empty for an
+    /// instruction that lifts to none).
     ///
     /// A stand-alone sweep, so it works for an `addr` outside any analysed
-    /// CFG.  It does NOT follow control flow: `addr` must be reachable via
-    /// the linear stream from `entry`.
-    ///
-    /// Raises `StriderError` if `addr < entry`, or if the sweep steps PAST
-    /// `addr` without landing on it (not an instruction boundary on the
-    /// linear path).
+    /// CFG.  `addr` must be reachable through the linear instruction stream
+    /// from `entry`; raises `StriderError` otherwise.
     fn pcode_at(&self, entry: u64, addr: u64) -> PyResult<String> {
         if addr < entry {
             return Err(into_strider_err(anyhow::anyhow!(
@@ -606,17 +571,11 @@ impl PyLifter {
     }
 
     /// Start the interactive explorer for `target`, a `Function` or a
-    /// `Cfg`.  Prints the local URL to stdout and BLOCKS serving requests
-    /// on this thread until interrupted.  `host`/`port`/`depth` mirror
-    /// `explore.visualize`'s kwargs (`port=0` picks an ephemeral port).
+    /// `Cfg`.  Prints the local URL and blocks on this thread until Ctrl-C.
     ///
-    /// **Calling this off the main thread requires `explore.shutdown`.**
-    /// A thread still parked in this call when the interpreter exits aborts
-    /// the process, so stop the server with
-    /// `strider.explore.shutdown(port)` and join the thread before exiting.
-    /// A `Function`/`Cfg` created INSIDE such a thread must not outlive it
-    /// either; it cannot be dropped from another thread and leaks with an
-    /// unraisable warning.
+    /// Off the main thread you MUST pair this with
+    /// `strider.explore.shutdown(port)` and a thread join before the
+    /// interpreter exits, or the process aborts.
     #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=5))]
     fn visualize(
         slf: Py<Self>,
@@ -636,14 +595,9 @@ impl PyLifter {
     }
 }
 
-/// Construct a lift+optimise+resolve handle for `arch`.  `mem` backs
-/// instruction fetch (a `BufferReader` or `MemReader` subclass); `rom`,
-/// if given, is folded by the `LoadReadOnly` pass.
-///
-/// The calling convention is supplied as a required argument of every
-/// `analyze` call, not fixed here.
-///
-/// Raises `StriderError` on Sleigh-construction failure.
+/// Create a lifter for `arch` that can lift and analyze functions.  `mem`
+/// supplies the code bytes; `rom` is the optional read-only memory for
+/// constant folding.
 #[pyfunction]
 #[pyo3(name = "lifter", signature = (arch, mem, rom = None))]
 pub fn lifter(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<PyLifter> {

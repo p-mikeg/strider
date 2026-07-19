@@ -16,11 +16,9 @@ pub(crate) struct PyBufferReaderInner {
     pub(crate) table: Option<Arc<MemRegionsLookupTable>>,
 }
 
-/// Raw-bytes reader over one or more mapped regions.  Cheap to clone;
-/// clones share state with the original.
-///
-/// Low-level reader for firmware / custom sources. Serves both the `mem=`
-/// (instruction fetch) and `rom=` (read-only memory) roles.
+/// Raw byte reader for firmware or custom sources.  Works as both the
+/// `mem` (instruction fetch) and `rom` (read-only memory) argument.  Cheap
+/// to clone; clones share state with the original.
 #[pyclass(name = "BufferReader", module = "strider.reader", unsendable)]
 #[derive(Clone)]
 pub struct PyBufferReader {
@@ -357,9 +355,8 @@ pub fn load_elf_from_sections(path: &str, apply_relocations: bool) -> PyResult<P
     load_elf_impl(path, ElfRegionSource::Sections, apply_relocations)
 }
 
-/// Abstract base; subclasses MUST override
-/// `read(addr, size) -> Optional[bytes]` to serve instruction bytes from a
-/// custom source.
+/// Instruction source backed by Python.  Subclass and override
+/// `read(addr, size)` to feed the pipeline from a custom data source.
 #[pyclass(name = "MemReader", module = "strider.reader", subclass)]
 pub struct PyMemReader;
 
@@ -479,10 +476,10 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
     }
 }
 
-/// Abstract base for `LoadReadOnly`.  Subclasses override
-/// `read(addr, size) -> Optional[bytes]`, returning the `size` RAW bytes
-/// at `addr` (no endianness swap; the optimizer decodes per the run's
-/// arch) or `None` for unmapped.
+/// Read-only memory backed by Python, used by the `LoadReadOnly` pass.
+/// Subclass and override `read(addr, size)` to return the raw bytes at
+/// `addr`.  Only RAM loads reach it, so subclasses need not filter on
+/// space.
 #[pyclass(name = "ReadOnlyMemory", module = "strider.reader", subclass)]
 pub struct PyReadOnlyMemory;
 

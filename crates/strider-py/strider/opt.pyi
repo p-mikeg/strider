@@ -2,7 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Any, List
+from typing import List, Union
+
+#: A built-in optimizer pass instance, accepted by `OptimizerPipeline.add`
+#: and `add_post`.
+OptimizerPass = Union[
+    "ConstantFold",
+    "KnownBits",
+    "FlagCmpCanonicalize",
+    "IfCondInversion",
+    "PhiCollapse",
+    "RegionCollapse",
+    "DeadBranchElimination",
+    "CfgDetach",
+    "LoadForward",
+    "StackOffsetDetect",
+    "FunctionArgDetect",
+    "CallStackArgCollect",
+    "LoadReadOnly",
+]
 
 class OptimizerPipeline:
     """An ordered list of optimizer passes, plus post-passes that run once
@@ -28,11 +46,11 @@ class OptimizerPipeline:
     def post_passes(self) -> List[str]:
         """The registered post-passes (run once at the end), by name."""
         ...
-    def add(self, pass_obj: Any) -> None:
+    def add(self, pass_obj: OptimizerPass) -> None:
         """Append a pass to the main list, which runs repeatedly until the
         graph stops changing."""
         ...
-    def add_post(self, pass_obj: Any) -> None:
+    def add_post(self, pass_obj: OptimizerPass) -> None:
         """Append a post-pass, run once after the main passes finish."""
         ...
 
