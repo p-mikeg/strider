@@ -1,11 +1,8 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! The section-walker behind `elf_get_loadable_regions` and
-//! `elf_get_loadable_regions_including_writable`.
-//!
-//! Both presets share one walker, so the propagation / empty-data / overflow
-//! contracts are pinned through whichever preset's filter accepts the synthetic
-//! section under test.
+//! Both loadable-region presets share one section walker, so the propagation /
+//! empty-data / overflow contracts are pinned through whichever preset's filter
+//! accepts the synthetic section under test.
 
 #[path = "common/mod.rs"]
 mod common;

@@ -7,11 +7,8 @@
 //! prunes the code that only fed the real target. This replicates the loader's
 //! work statically.
 //!
-//! Architecture-independence comes from `object`'s `RelocationKind`
-//! (`Absolute` = `S + A`, `Relative` = `S + A - P`, `PltRelative` = `L + A - P`,
-//! modelled as `Relative` since no PLT stubs are materialised). Unrecognised
-//! kinds and unknown architectures are skipped silently rather than
-//! mis-patched.
+//! Unrecognised relocation kinds and unknown architectures are skipped
+//! silently rather than mis-patched.
 
 use anyhow::Context as _;
 use object::{
@@ -26,9 +23,7 @@ use crate::{MemRegion, Result};
 /// The `i64`-to-`u64` cast reinterprets a negative addend as its 2's-complement
 /// bit pattern, and `wrapping_add` then gives the correct fixed-width modular
 /// result, which is what every relocation field expects given `write_at`
-/// truncates to the field width. Centralised so the cast cannot drift to a
-/// checked or saturating variant, which would silently break common
-/// negative-addend relocations like PC-relative `S + A - P` with `A < 0`.
+/// truncates to the field width.
 #[inline]
 fn apply_addend(base: u64, addend: i64) -> u64 {
     base.wrapping_add(addend as u64)
@@ -88,8 +83,7 @@ pub fn apply_elf_relocations(regions: &mut [MemRegion], obj: &object::File<'_>) 
 /// **absolute** virtual address in the coordinate system the loaded regions
 /// live in.
 ///
-/// Owns the kind dispatch and site-address derivation so the patch loop and the
-/// autoload staging pass cannot drift apart on the address contract:
+/// Kind dispatch:
 ///
 /// * ET_REL: per-section tables. A section's `relocations()` yields
 ///   `(r_offset, Relocation)` where `r_offset` is relative to the section the
@@ -234,14 +228,12 @@ fn apply_one_relocation(
     );
 }
 
-/// Start-keyed index over a set of `MemRegion`s, answering both coverage
-/// questions the relocation pass asks:
+/// Start-keyed index over a set of `MemRegion`s, answering two coverage
+/// questions:
 ///
-/// * [`covers`](Self::covers): does any region contain this point? Used by the
-///   staging pass, which grows the index via [`insert`](Self::insert).
+/// * [`covers`](Self::covers): does any region contain this point?
 /// * [`covering_index`](Self::covering_index): which region fully covers a
-///   `[site, site+len)` field? Used by [`locate_and_write`] to find the slice
-///   index to write into.
+///   `[site, site+len)` field?
 ///
 /// One `(start, end, index)` list sorted by `start`, plus a prefix-maximum of
 /// `end` so `covers` is a binary search and one array read.
@@ -289,10 +281,7 @@ impl RegionStartIndex {
     }
 
     /// Inserts `[start, end)` keeping the sort by `start`. The slice index is a
-    /// placeholder that is never read: a staged region is only ever consulted
-    /// through `covers`, and the patch loop rebuilds a fresh index over the
-    /// final slice. Called once per staged section, a small count, so the O(n)
-    /// prefix-max rebuild is cheap against the per-site queries.
+    /// placeholder that is never read.
     fn insert(&mut self, start: u64, end: u64) {
         let pos = self.entries.partition_point(|&(s, _, _)| s <= start);
         self.entries.insert(pos, (start, end, usize::MAX));
@@ -311,9 +300,8 @@ impl RegionStartIndex {
     /// Slice index of the region fully covering
     /// `[site_addr, site_addr + size_bytes)`, if any.
     ///
-    /// Walks candidates from the highest `start <= site_addr` downward, the
-    /// same fall-through geometry as [`crate::MemRegionsLookupTable::read`], so
-    /// a field straddling a shorter higher-start region's end still resolves to
+    /// Walks candidates from the highest `start <= site_addr` downward, so a
+    /// field straddling a shorter higher-start region's end still resolves to
     /// a fully-covering lower-start region. Among entries sharing a `start`
     /// only the last-inserted is tested. On disjoint regions (the well-formed
     /// case) the first candidate matches, making this O(log N).
@@ -356,10 +344,7 @@ impl RegionStartIndex {
 ///
 /// **Partial only.** A patch loop that fails partway leaves `regions` truncated
 /// back to its pre-call length, but byte mutations already made to pre-existing
-/// regions are NOT reverted. Snapshotting every mutated byte range would double
-/// the memory cost of relocation application to serve a corner case that only
-/// arises when an extender materialises a region the patch loop then fails on.
-/// Callers needing atomicity should re-load the binary from disk on `Err`.
+/// regions are NOT reverted.
 pub(crate) fn apply_elf_relocations_with_extender<F>(
     regions: &mut Vec<MemRegion>,
     obj: &object::File<'_>,
@@ -393,12 +378,6 @@ where
 
 /// [`apply_elf_relocations`], but first extends `regions` with any `SHF_ALLOC`
 /// file-backed section holding a relocation site no existing region covers.
-///
-/// For callers that loaded a curated subset of the ELF (say code + rodata) and
-/// want relocation to work without knowing upfront which writable sections
-/// (`.got.plt`, `.data.rel.ro`, ...) the dynamic relocs target. The pure variant
-/// fails silently in that situation: every relocation gets skipped because the
-/// caller didn't pre-load the right sections.
 ///
 /// `SHT_NOBITS` sections (`.bss`) are never added, having nothing to patch, and
 /// their relocs are skipped by the inner call.
@@ -578,9 +557,8 @@ fn image_relative_reloc(
 }
 
 /// Matches `R_*_GLOB_DAT` (GOT data slot) and `R_*_JUMP_SLOT` (PLT lazy-bind
-/// slot): write the symbol's address S at the site, no PC subtraction. Resolved
-/// eagerly so a `Load(GOT[...])` reads the real target and indirect-call
-/// patterns work with no PLT model.
+/// slot): write the symbol's address S at the site, no PC subtraction, resolved
+/// eagerly.
 ///
 /// `object` reports both as `Unknown` with `size = 0`, so the size comes from
 /// the arch instead: 8 bytes on 64-bit, 4 on 32-bit. The caller computes the
@@ -639,9 +617,6 @@ fn got_or_plt_slot_reloc_size(
 /// Matches the defined-symbol half of `R_MIPS_REL32`, which `object` surfaces
 /// as a `Symbol` target and which needs the symbol's address. The undefined
 /// half (`S = 0`, addend-only) goes through [`image_relative_reloc`].
-///
-/// Common in MIPS shared objects for GOT / function-pointer slots; without it
-/// the slot reads `addend` (usually 0) instead of `symbol + addend`.
 ///
 /// The `Some(4)` field width is fixed on both MIPS32 and MIPS64; see
 /// [`image_relative_reloc`].

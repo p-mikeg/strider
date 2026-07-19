@@ -1,6 +1,3 @@
-//! Top-level convenience entries: parse an ELF from disk, and load + relocate
-//! in one call.
-
 use anyhow::Context as _;
 
 use crate::{MemRegion, Result};
@@ -29,19 +26,15 @@ pub fn elf_load_with_relocations(obj: &object::File<'_>) -> Result<Vec<MemRegion
 /// Loads only the runtime-immutable image (`.text` / `.rodata` / `.plt` /
 /// `.eh_frame`; writable sections excluded) and relocates it.
 ///
-/// This is the right rom for the optimizer's `LoadReadOnly`, which folds a
-/// constant-address load without consulting the memory chain and so trusts
-/// every resolvable address to be immutable at runtime. Writable sections are
-/// absent on purpose: a store-then-reload of such a global must not fold to its
-/// file-initial value.
+/// Writable sections are absent on purpose: a store-then-reload of such a
+/// global must not fold to its file-initial value.
 ///
 /// Uses the non-autoload applier so writable sections are not pulled back in;
 /// relocations whose site lands in an absent region go unapplied, while
 /// relocations into `.rodata` (PC-relative jump tables) do apply.
 ///
 /// RELRO sections (`.data.rel.ro`, `.got`) carry SHF_WRITE statically even
-/// though they are immutable post-RELRO, so they are excluded too. That loses
-/// some GOT-based folds; soundness over capability.
+/// though they are immutable post-RELRO, so they are excluded too.
 ///
 /// # Errors
 ///
@@ -63,16 +56,9 @@ pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<OwnedElf> {
 
 /// An owned ELF: the backing file bytes, freed on drop.
 ///
-/// Replaces an earlier `Box::leak` loader that fabricated a `'static`
-/// `object::File` by leaking the whole file, an unbounded per-call leak in a
-/// long-lived process.
-///
 /// Only the bytes are stored. [`object::File`] is a borrowing view with no
 /// owned variant, so holding one alongside its bytes would make this
-/// self-referential; [`file`](Self::file) re-parses instead. That parse is
-/// lazy and header-only (it records table offsets, does not copy), and callers
-/// resolve it once per load in cold setup code, so no `unsafe` is warranted to
-/// avoid it.
+/// self-referential; [`file`](Self::file) re-parses instead.
 pub struct OwnedElf {
     backing: Box<[u8]>,
 }
@@ -98,9 +84,6 @@ impl OwnedElf {
         })
     }
 
-    /// Borrowed for no longer than `self`, so the views it yields (symbols,
-    /// sections) cannot outlive the backing bytes.
-    ///
     /// Re-parses each call; see the type docs. Infallible because
     /// [`parse`](Self::parse) validated these exact immutable bytes.
     #[inline]

@@ -8,8 +8,8 @@ use super::sections::elf_get_loadable_regions;
 /// code and read-only mappings: instruction fetch and constant-load folding
 /// both served from the same regions.
 ///
-/// Bytes are copied into [`crate::MemRegion`]s at construction, so the reader
-/// borrows neither the `object::File` nor its buffer.
+/// Bytes are copied at construction, so the reader borrows neither the
+/// `object::File` nor its buffer.
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     lookup: MemRegionsLookupTable,
@@ -66,8 +66,7 @@ impl rsleigh::MemReader for ElfFileMemReader {
 
 impl crate::ReadOnlyMemory for ElfFileMemReader {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        // Raw bytes, no endianness swap; a short or unmapped fill errors so
-        // `LoadReadOnly` never folds a partial word.
+        // Raw bytes, no endianness swap; a short or unmapped fill errors.
         self.lookup.read_exact(addr, buf)
     }
 }

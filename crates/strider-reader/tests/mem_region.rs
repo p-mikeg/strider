@@ -1,7 +1,5 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! The backend-agnostic layer: `MemRegion` and `MemRegionsLookupTable`.
-
 use strider_reader::{MemRegion, MemRegionsLookupTable};
 
 /// Byte `i` of the region holds `i as u8`, so a read's contents identify the

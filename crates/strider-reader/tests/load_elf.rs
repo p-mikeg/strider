@@ -1,7 +1,5 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! The top-level `strider_reader::load_elf`.
-
 #[path = "common/mod.rs"]
 mod common;
 

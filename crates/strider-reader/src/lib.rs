@@ -48,9 +48,6 @@ pub use read_only_memory::ReadOnlyMemory;
 /// A contiguous range of bytes loaded at a fixed virtual address: one
 /// backend-specific mapping (ELF section, blob manifest entry, ...) into the
 /// target's address space.
-///
-/// Fields are private so the no-overflow invariant [`new`](Self::new)
-/// establishes cannot be bypassed after construction.
 #[derive(Clone, Debug)]
 pub struct MemRegion {
     start_addr: u64,
@@ -60,9 +57,7 @@ pub struct MemRegion {
 impl MemRegion {
     /// # Errors
     ///
-    /// Errors when `start_addr + data.len()` would exceed `u64::MAX`. This is
-    /// what lets [`end_addr`](Self::end_addr), [`contains`](Self::contains) and
-    /// [`read`](Self::read) treat the region's end as a plain `u64`.
+    /// Errors when `start_addr + data.len()` would exceed `u64::MAX`.
     pub fn new(start_addr: u64, data: Vec<u8>) -> Result<Self> {
         let len = data.len() as u64;
         start_addr.checked_add(len).ok_or_else(|| {
@@ -80,7 +75,7 @@ impl MemRegion {
     }
 
     /// A slice, so length can't change through it and the constructor's
-    /// no-overflow invariant survives. Relocation appliers patch through this.
+    /// no-overflow invariant survives.
     pub fn data_mut(&mut self) -> &mut [u8] {
         &mut self.data
     }
@@ -111,7 +106,7 @@ impl MemRegion {
     }
 
     /// `(index into data, non-zero bytes remaining)`, or `None` when `addr` is
-    /// outside. Lets a caller pick among overlapping regions before writing.
+    /// outside.
     fn available_at(&self, addr: u64) -> Option<(usize, usize)> {
         let offset = usize::try_from(addr.checked_sub(self.start_addr)?).ok()?;
         let available = self.data.len().checked_sub(offset)?;
@@ -120,10 +115,6 @@ impl MemRegion {
 
     /// This region covers all of `[addr, addr + len)`. An `addr + len` that
     /// overflows `u64` counts as not covered.
-    ///
-    /// Single source of truth for the must-fully-cover rule shared by
-    /// [`MemRegionsLookupTable::read`]'s fast path and the relocation patcher's
-    /// covering-region lookup.
     pub fn fully_covers(&self, addr: u64, len: usize) -> bool {
         match addr.checked_add(len as u64) {
             Some(end) => self.contains(addr) && end <= self.end_addr(),
@@ -164,10 +155,7 @@ impl MemRegionsLookupTable {
     ///
     /// Consequence worth knowing: a read straddling a shorter inner region's
     /// end falls through to the fully-covering outer region rather than
-    /// returning the inner region's truncated prefix. Overlapping regions that
-    /// disagree on bytes only arise from a malformed or synthesised region set
-    /// (well-formed ELF loadable ranges are disjoint), but the rule above
-    /// specifies that case rather than leaving it to iteration order.
+    /// returning the inner region's truncated prefix.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let mut best: Option<(&MemRegion, usize)> = None;
         for (_, region) in self.regions.range(..=addr).rev() {
@@ -187,11 +175,7 @@ impl MemRegionsLookupTable {
 
     /// Fill-all-or-error read: copies the mapped bytes into `buf` **raw**, with
     /// no endianness swap. Callers wanting an integer decode them themselves.
-    ///
-    /// Single source of truth for the `ReadOnlyMemory::read` contract every
-    /// region-backed reader (ELF, Python buffer) implements. Short fills must
-    /// error, not truncate, so `LoadReadOnly` can never fold a constant out of
-    /// partial bytes.
+    /// A short fill errors rather than truncating.
     ///
     /// # Errors
     ///

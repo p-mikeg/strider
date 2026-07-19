@@ -1,7 +1,3 @@
-//! Backend-agnostic assertions over `rsleigh::MemReader` and
-//! `strider_reader::ReadOnlyMemory`. A new backend (PE, Mach-O, raw blob, ...)
-//! calls these alongside its own backend-specific assertions.
-
 #![allow(dead_code)]
 
 use rsleigh::{MemReader, VnAddr, VnSpace};

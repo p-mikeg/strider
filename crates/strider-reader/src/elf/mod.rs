@@ -1,12 +1,3 @@
-//! The ELF backend: [`crate::MemRegion`] sets built from an [`object::File`],
-//! plus the reader that serves them.
-//!
-//! [`sections`] loaders are kind-dispatched on `obj.kind()`: ET_EXEC / ET_DYN
-//! walk PT_LOAD segments, ET_REL walks sections with first-wins VMA dedup. The
-//! `_sections_only` presets force the section walk regardless of kind.
-//! [`relocations`] patches sites in place: ET_DYN via the dynamic-relocations
-//! table, ET_REL via per-section tables.
-
 pub mod load;
 pub mod reader;
 pub mod relocations;

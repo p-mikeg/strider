@@ -2,10 +2,8 @@
 //!
 //! # Dispatch
 //!
-//! ET_EXEC / ET_DYN walk **program headers** (PT_LOAD). Those are the canonical
-//! runtime layout: the OS loads a linked binary from its program headers, and
-//! section headers can be stripped entirely without affecting that. The section
-//! view exists for debuggers and analysers.
+//! ET_EXEC / ET_DYN walk **program headers** (PT_LOAD), the canonical runtime
+//! layout: section headers can be stripped entirely without affecting it.
 //!
 //! ET_REL and every other kind fall back to walking **sections**, since a
 //! relocatable object has no program headers at all (PT_LOAD only appears
@@ -27,8 +25,7 @@ enum LoadFilter {
     /// `.text`, `.rodata`, `.plt`, `.eh_frame`: what an instruction fetch or a
     /// constant-address load may legitimately reference.
     CodeAndReadOnly,
-    /// Also `.data`, `.got`, `.data.rel.ro`, so relocations targeting writable
-    /// runtime data have something to patch.
+    /// Also `.data`, `.got`, `.data.rel.ro`.
     AllAllocatable,
 }
 
@@ -72,8 +69,7 @@ pub fn elf_get_loadable_regions(obj: &object::File<'_>) -> Result<Vec<MemRegion>
 }
 
 /// A strict superset of [`elf_get_loadable_regions`], adding writable mappings
-/// (`.data.rel.ro`, `.got.plt`, `.data`) so dynamic relocations targeting
-/// writable runtime data have somewhere to patch. Same dispatch.
+/// (`.data.rel.ro`, `.got.plt`, `.data`). Same dispatch.
 ///
 /// # Errors
 ///
@@ -86,8 +82,8 @@ pub fn elf_get_loadable_regions_including_writable(
 
 /// Forces the section walk (with first-wins VMA dedup) regardless of
 /// `obj.kind()`, even for an ET_EXEC / ET_DYN binary that does carry PT_LOAD
-/// segments. For callers wanting section-granular regions (`.text` / `.rodata`
-/// / `.plt` as separate mappings) instead of coalesced PT_LOAD ranges.
+/// segments. Yields section-granular regions (`.text` / `.rodata` / `.plt` as
+/// separate mappings) instead of coalesced PT_LOAD ranges.
 ///
 /// # Errors
 ///
@@ -144,7 +140,7 @@ fn collect_loadable_segments(obj: &object::File<'_>, filter: LoadFilter) -> Resu
 
 /// One [`MemRegion`] per accepted file-backed section, under **first-wins VMA
 /// dedup**: when two sections share an `sh_addr`, the first encountered keeps
-/// the slot. See the module docs for why last-wins is not acceptable here.
+/// the slot.
 fn collect_loadable_sections_dedup(
     obj: &object::File<'_>,
     filter: LoadFilter,

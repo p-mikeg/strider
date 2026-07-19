@@ -1,7 +1,5 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! `ElfFileMemReader` and its trait impls.
-
 #[path = "common/mod.rs"]
 mod common;
 
